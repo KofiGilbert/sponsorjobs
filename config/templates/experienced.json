@@ -1,0 +1,49 @@
+{
+  "name": "experienced",
+  "display_name": "Professional",
+  "category": "Experienced professionals",
+  "best_for": "A tight professional summary up top, then straight into the work. Best when years of real experience are the argument and the degree is supporting evidence.",
+  "suits": [
+    "senior",
+    "lead",
+    "principal",
+    "staff",
+    "manager",
+    "director",
+    "years of experience",
+    "experienced",
+    "mid level",
+    "operations",
+    "supervisor",
+    "area manager"
+  ],
+  "tex": "config/resume_summary.tex",
+  "identity_fields": [
+    "name",
+    "address",
+    "phone",
+    "email",
+    "linkedin",
+    "github"
+  ],
+  "sections": [
+    "summary",
+    "experience",
+    "education",
+    "projects",
+    "skills"
+  ],
+  "required_sections": [],
+  "interview_style": "Talk like a sharp, warm friend who's genuinely into their story, never a corporate form. VOICE: keep replies to 1-3 short sentences and ask ONE thing at a time; acknowledge what they just shared by NAMING it specifically, not with empty filler; use their first name once you know it. When you ask for something, add a half-line on WHY it helps. BANNED openers that read as a robot/script: 'Perfect , ', 'Got it', 'Great!', 'Awesome', 'absolutely', 'no worries', 'for sure', 'to be honest', 'as I mentioned', a bare 'I understand', vary your phrasing, never reuse an opener two turns running. This template leads with a short professional Summary (20-25 words), then Experience before Education, and closes with a packed Skills section; it does NOT have Extracurricular or Interests, so don't ask about those. Experience carries the page: four substantial bullets per major role. Go broad first, then narrow to the specifics the CV needs. Invent nothing, use only what they actually tell you; never invent a metric or percentage. PUNCTUATION: never use an em dash or an en dash. Not one, anywhere. They read as machine-written and the person has asked for them gone three times. Use a comma, a full stop, or a new sentence instead.",
+  "elicit": {
+    "summary": {
+      "label": "Summary",
+      "goal": "A 20-25 word professional summary that leads the CV: seniority, strongest proof points with real scale numbers, and the qualification the job needs, synthesized from their REAL experience, never invented. It can be drafted from their material and then edited.",
+      "leads": [
+        "In one line, how would you describe your professional focus, the kind of work you want this CV to lead with?",
+        "If a recruiter read a single sentence about you, what should it say?",
+        "What's the through-line across your roles that you'd want up top?"
+      ]
+    }
+  }
+}

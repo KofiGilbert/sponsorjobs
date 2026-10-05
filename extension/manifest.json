@@ -1,0 +1,69 @@
+{
+  "manifest_version": 3,
+  "name": "SponsorJobs: Visa Sponsor Badges",
+  "version": "0.2.0",
+  "description": "See H-1B / green-card / STEM-OPT sponsor badges on job postings, and pre-fill application forms from your saved profile, powered by your local SponsorJobs app. You review and submit; nothing is auto-submitted.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:57000/*",
+    "http://localhost:57000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SponsorJobs, visa sponsor badges"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.linkedin.com/jobs/*",
+        "https://*.indeed.com/*",
+        "https://boards.greenhouse.io/*",
+        "https://job-boards.greenhouse.io/*",
+        "https://jobs.lever.co/*",
+        "https://jobs.ashbyhq.com/*",
+        "https://*.myworkdayjobs.com/*",
+        "https://*.myworkdaysite.com/*",
+        "https://apply.workable.com/*",
+        "https://jobs.smartrecruiters.com/*",
+        "https://*.icims.com/*",
+        "https://*.adp.com/*",
+        "https://*.applytojob.com/*",
+        "https://*.avature.net/*",
+        "https://*.bamboohr.com/*",
+        "https://*.breezy.hr/*",
+        "https://*.comeet.co/*",
+        "https://*.dayforcehcm.com/*",
+        "https://*.eightfold.ai/*",
+        "https://*.jibeapply.com/*",
+        "https://*.jobvite.com/*",
+        "https://*.oraclecloud.com/*",
+        "https://*.paylocity.com/*",
+        "https://*.pinpointhq.com/*",
+        "https://*.recruitee.com/*",
+        "https://*.rippling.com/*",
+        "https://*.successfactors.com/*",
+        "https://*.successfactors.eu/*",
+        "https://*.ultipro.com/*",
+        "https://*.glassdoor.com/*",
+        "https://*.joinhandshake.com/*",
+        "https://*.ziprecruiter.com/*",
+        "https://www.idealist.org/*"
+      ],
+      "js": [
+        "parity_core.js",
+        "content.js",
+        "autofill_core.js",
+        "autofill.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

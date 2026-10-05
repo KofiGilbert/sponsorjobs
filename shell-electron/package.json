@@ -1,0 +1,74 @@
+{
+  "name": "sponsorjobs-shell",
+  "version": "0.1.0",
+  "description": "SponsorJobs desktop shell: app window + in-app browser pane with agent takeover (CDP)",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:dir": "electron-builder --win --dir",
+    "dist:mac": "electron-builder --mac",
+    "dist:mac:dir": "electron-builder --mac --dir"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "playwright": "^1.62.1"
+  },
+  "build": {
+    "appId": "org.blackorigin.sponsorjobs",
+    "productName": "SponsorJobs",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist/SponsorJobs",
+        "to": "engine"
+      },
+      {
+        "from": "../extension/autofill_core.js",
+        "to": "autofill_core.js"
+      }
+    ],
+    "icon": "../ui/static/icon.ico",
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "SponsorJobs-Setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "../ui/static/icon.png",
+      "identity": null,
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "artifactName": "SponsorJobs-${version}-${arch}.${ext}"
+    },
+    "afterPack": "scripts/adhoc-sign.js"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

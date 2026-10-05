@@ -1,0 +1,15 @@
+# Minimal dependencies to run ONLY the managed-AI broker (backend/) when it is HOSTED (P5).
+# The broker is self-contained: it imports flask at module load, and anthropic + stripe lazily at
+# call time. This deliberately AVOIDS the desktop app's heavy deps (OCR/onnxruntime, pdfium,
+# mempalace, docx/pptx), so the broker host stays small and builds fast.
+#   Render start: gunicorn "backend.server:create_broker_app()" --bind 0.0.0.0:$PORT
+#
+# PINNED (2026-08-17): these were ">=" ranges, so every fresh Render build pulled the NEWEST release
+# of each -- and a bad upstream release (or a Render Python-default bump) broke a build with a bare
+# "Exited with status 1" even though nothing in our code changed. Exact pins make the build
+# REPRODUCIBLE: the box installs the same verified set every time. Bump on purpose, not by accident.
+# (Verified to install cleanly together on Python 3.12 -- see the pinned PYTHON_VERSION in render.yaml.)
+flask==3.1.3
+anthropic==0.122.0
+stripe==15.5.0
+gunicorn==26.0.0

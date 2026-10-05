@@ -1,0 +1,71 @@
+name: feed
+
+# Builds the STATIC job feed (scripts/build_feed.py) and uploads it to Cloudflare R2
+# (scripts/upload_feed.py) every 3 hours. Replaces the always-on Render "kitchen": no server to
+# pay for or keep alive. See docs/feed.md for the secrets and the custom-domain setup.
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One build at a time: a slow crawl must never overlap the next tick's run.
+concurrency:
+  group: static-feed
+  cancel-in-progress: false
+
+jobs:
+  build-and-upload:
+    # Skip (no runner, no minutes, no failure email) until the Cloudflare R2 bucket is set up and
+    # the TAILOR_FEED_URL repository variable exists. See docs/feed.md.
+    if: ${{ vars.TAILOR_FEED_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      FEED_DATA_DIR: ${{ github.workspace }}/.feed-data
+      FEED_OUT_DIR: ${{ github.workspace }}/.feed-out
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # The crawl's state (jobs DB + sponsor overlay) persists between runs, so first_seen, the
+      # cross-run dedup and the 21-day prune work as they did on the server. A per-run key with a
+      # prefix restore means every run starts from the previous run's DB and saves a new copy.
+      - name: Restore crawl state
+        uses: actions/cache@v4
+        with:
+          path: .feed-data
+          key: feed-data-${{ github.run_id }}
+          restore-keys: |
+            feed-data-
+
+      - name: Install
+        run: pip install -e . boto3
+
+      - name: Build the feed
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
+          # Repository VARIABLES (Settings > Secrets and variables > Actions > Variables):
+          FEED_INCLUDE_AGGREGATORS: ${{ vars.FEED_INCLUDE_AGGREGATORS }}
+          JOBS_MAX_PER_COMPANY: ${{ vars.JOBS_MAX_PER_COMPANY || 500 }}
+          TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
+        run: |
+          python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
+            --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"
+
+      - name: Upload to R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PREFIX: ${{ vars.R2_PREFIX }}
+        run: python scripts/upload_feed.py --dir "$FEED_OUT_DIR"

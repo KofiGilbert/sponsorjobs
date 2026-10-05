@@ -1,0 +1,192 @@
+/* Visa-sponsor badges injected onto a job posting. Neutral, compact, readable on
+   LinkedIn/Indeed light backgrounds. */
+.tailor-badges {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 8px 0 4px !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.tailor-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  cursor: help;
+}
+.tailor-badge.tb-H-1B        { color: #067647; background: #ecfdf3; border-color: #abefc6; }
+.tailor-badge.tb-GREEN-CARD  { color: #0f766e; background: #ecfdf9; border-color: #a7f3e0; }
+.tailor-badge.tb-CAP-EXEMPT  { color: #6941c6; background: #f4f0ff; border-color: #d9cffb; }
+.tailor-badge.tb-STEM-OPT    { color: #1d4ed8; background: #eff4ff; border-color: #c2d6ff; }
+.tailor-badge.tb-none        { color: #667085; background: #f2f4f7; border-color: #e4e7ec; font-weight: 600; }
+.tailor-badge.tb-off         { color: #b54708; background: #fffaeb; border-color: #fedf89; font-weight: 600; }
+.tailor-badge.tb-tailor {
+  color: #fff; background: #4f46e5; border-color: #4f46e5;
+  cursor: pointer; text-decoration: none;
+}
+.tailor-badge.tb-tailor:hover { background: #4338ca; }
+
+/* --- Rich sponsorship profile panel (on the open posting) --- */
+.tailor-sponsor-profile {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  background: #fcfcfd;
+  padding: 9px 12px;
+  margin: 4px 0 8px !important;
+  max-width: 460px;
+  color: #344054;
+}
+.tailor-sp-hd {
+  font-size: 12px; font-weight: 700; color: #101828;
+  margin-bottom: 5px;
+}
+.tailor-sp-row {
+  font-size: 12px; line-height: 1.7;
+}
+.tailor-sp-k {
+  display: inline-block; min-width: 82px; font-weight: 700; color: #067647;
+}
+.tailor-sp-foot {
+  font-size: 10.5px; color: #98a2b3; margin-top: 5px;
+}
+
+/* --- Referral: draft-a-message action + panel (on the open posting) --- */
+.tailor-referral {
+  margin: 4px 0 8px !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  max-width: 460px;
+}
+.tailor-ref-btn {
+  border: 1px solid #c7c9f2; background: #f4f0ff; color: #4f46e5;
+  font-weight: 700; font-size: 12px; padding: 5px 12px; border-radius: 999px;
+  cursor: pointer; font-family: inherit;
+}
+.tailor-ref-btn:hover { background: #ebe6ff; }
+.tailor-ref-btn:disabled { opacity: 0.6; cursor: default; }
+.tailor-ref-body {
+  margin-top: 7px; border: 1px solid #e4e7ec; border-radius: 10px;
+  background: #fcfcfd; padding: 9px 11px; color: #344054;
+}
+.tailor-ref-text {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 132px;
+  border: 1px solid #e4e7ec; border-radius: 8px; padding: 8px 10px;
+  font: 12.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #1d2939; background: #fff;
+}
+.tailor-ref-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.tailor-ref-copy {
+  border: none; background: #4f46e5; color: #fff; font-weight: 700; font-size: 12.5px;
+  padding: 7px 14px; border-radius: 8px; cursor: pointer; font-family: inherit;
+}
+.tailor-ref-copy:hover { background: #4338ca; }
+.tailor-ref-find { color: #4f46e5; font-weight: 700; font-size: 12.5px; text-decoration: none; }
+.tailor-ref-find:hover { text-decoration: underline; }
+.tailor-ref-foot { font-size: 10.5px; color: #98a2b3; margin-top: 7px; }
+.tailor-ref-note { font-size: 12.5px; color: #475467; }
+.tailor-ref-note.warn { color: #b54708; }
+
+/* --- Assisted-apply panel (floating, bottom-right of an application form) --- */
+.tailor-af-panel {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483000;
+  width: 268px;
+  background: #fff;
+  color: #1d2939;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.18);
+  padding: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.tailor-af-head { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; }
+.tailor-af-dot { width: 8px; height: 8px; border-radius: 50%; background: #12b76a; flex: none; }
+.tailor-af-title { font-weight: 700; font-size: 12.5px; color: #101828; }
+.tailor-af-x {
+  margin-left: auto; border: none; background: none; cursor: pointer;
+  font-size: 17px; line-height: 1; color: #98a2b3; padding: 0 2px;
+}
+.tailor-af-x:hover { color: #475467; }
+.tailor-af-fill, .tailor-af-draft {
+  width: 100%; border: none; cursor: pointer;
+  background: #4f46e5; color: #fff; font-weight: 700; font-size: 13px;
+  padding: 9px 12px; border-radius: 8px; font-family: inherit;
+}
+.tailor-af-fill:hover, .tailor-af-draft:hover { background: #4338ca; }
+.tailor-af-fill:disabled, .tailor-af-draft:disabled { background: #c7c9f2; cursor: default; }
+.tailor-af-draft {
+  margin-top: 7px; background: #fff; color: #4f46e5;
+  border: 1px solid #c7c9f2;
+}
+.tailor-af-draft:hover { background: #f4f0ff; }
+.tailor-af-draft:disabled { background: #f4f0ff; color: #a9abe0; }
+.tailor-af-note { margin-top: 9px; color: #667085; }
+.tailor-af-note.ok   { color: #027a48; }
+.tailor-af-note.warn { color: #b54708; }
+.tailor-af-note.bad  { color: #b42318; }
+.tailor-af-note b { color: inherit; }
+.tailor-af-note a { color: #4f46e5; font-weight: 600; }
+
+/* A field the extension just filled, a brief green wash so you can see what changed. */
+.tailor-filled {
+  outline: 2px solid #12b76a !important;
+  background-color: #ecfdf3 !important;
+  transition: outline-color 0.4s ease, background-color 0.4s ease;
+}
+
+/* --- P6: match pill + JD skills panel (on the open posting) --- */
+.tailor-match-wrap {
+  display: flex !important; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin: 4px 0 8px !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.tailor-match-pill {
+  display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 800;
+  padding: 2px 10px; border-radius: 999px; border: 1px solid transparent; cursor: help;
+}
+.tailor-match-pill.tm-high { color: #067647; background: #ecfdf3; border-color: #abefc6; }
+.tailor-match-pill.tm-mid  { color: #b54708; background: #fffaeb; border-color: #fedf89; }
+.tailor-match-pill.tm-low  { color: #b42318; background: #fef3f2; border-color: #fecdca; }
+.tailor-skills {
+  flex-basis: 100%; margin-top: 2px; padding: 8px 10px;
+  background: #f9fafb; border: 1px solid #e4e7ec; border-radius: 10px; font-size: 11.5px;
+}
+.tailor-skills-hd { color: #667085; font-weight: 600; margin-bottom: 6px; }
+.tailor-skills-row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-top: 4px; }
+.tailor-skills-lab { font-size: 10.5px; font-weight: 700; color: #475467; text-transform: uppercase; margin-right: 4px; }
+.tailor-skill { display: inline-flex; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; cursor: help; }
+.tailor-skill.sk-have { color: #067647; background: #ecfdf3; border: 1px solid #abefc6; }
+.tailor-skill.sk-miss { color: #98a2b3; background: #f2f4f7; border: 1px dashed #d0d5dd; }
+
+/* --- P6: in-list card badge row --- */
+.tailor-card-badges { margin: 4px 0 2px !important; gap: 5px; }
+.tailor-card-badges .tailor-badge,
+.tailor-card-badges .tailor-match-pill { font-size: 10.5px; padding: 1px 8px; }
+
+/* --- P6: filter bar (sponsorship chips + match-rate slider) --- */
+.tailor-filterbar {
+  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+  z-index: 2147483000; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  max-width: 94vw; padding: 8px 14px; background: #fff; color: #1d2939;
+  border: 1px solid #e4e7ec; border-radius: 999px; box-shadow: 0 8px 28px rgba(16,24,40,0.18);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 12px;
+}
+.tailor-fb-lab { font-weight: 700; color: #475467; }
+.tailor-fb-chip {
+  border: 1px solid #d0d5dd; background: #f9fafb; color: #475467; cursor: pointer;
+  font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; font-family: inherit;
+}
+.tailor-fb-chip.on { color: #067647; background: #ecfdf3; border-color: #abefc6; }
+.tailor-fb-slider { display: inline-flex; align-items: center; gap: 6px; color: #475467; }
+.tailor-fb-slider input { accent-color: #4f46e5; }

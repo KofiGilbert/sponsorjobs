@@ -1,0 +1,51 @@
+[project]
+name = "sponsorjobs"
+version = "0.1.0"
+description = "SponsorJobs: a free, local-first job-hunt agent for international students (and everyone else)."
+license = "AGPL-3.0-only"
+readme = "README.md"
+requires-python = ">=3.11"
+# Durable verbatim + semantic memory layer. Base install only (audited 3.5.0);
+# NO extras — pgvector/extract/gpu/dev are excluded on purpose (see NOTICES.md).
+# Uses the minilm (Apache-2.0) embedder, local-only; no Gemma, no network features.
+dependencies = [
+    "mempalace==3.5.0",
+    # CV upload/extraction — all local, all permissive (see NOTICES.md):
+    "python-docx>=1.2.0",        # Word .docx (MIT)
+    "pypdf>=6.14.0",             # PDF text (BSD-3)
+    "python-pptx>=1.0.2",        # PowerPoint .pptx (MIT)
+    "pypdfium2>=5.11.0",         # rasterize scanned PDFs (Apache-2.0/BSD; bundles PDFium)
+    "rapidocr-onnxruntime>=1.4.4",  # OCR (Apache-2.0 code + Apache-2.0 PP-OCR models; onnxruntime already shipped)
+    "openpyxl>=3.1",             # read official DOL PERM / E-Verify .xlsx disclosure files (MIT)
+    # Local desktop app runtime (imported by ui/):
+    "flask>=3.0",                # local web UI + JSON API server, ui/app.py (BSD-3)
+    "cryptography>=42.0",        # App Lock: scrypt + AES-256-GCM at rest, ui/lock.py (Apache-2.0/BSD)
+    "openai>=1.0",               # optional OpenAI backend, llm/openai_client.py (Anthropic is the default; MIT)
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.40"]
+# Local, on-device speech-to-text for the recorded interview screen (P2). Heavy (~1GB+ with the
+# model), so it is OPT-IN: the feature self-skips to a typed transcript when it isn't installed.
+interview = ["faster-whisper>=1.0"]   # local Whisper (CTranslate2), no cloud STT (MIT)
+# Premium "Live Interviewer" avatar (P4, Fold 2): the ONE deliberate cloud exception, opt-in and
+# key-gated. Only the HTTP client, imported lazily; the free/local tier needs nothing.
+avatar = ["requests>=2.28"]           # Tavus REST (paid, per-minute; user supplies AVATAR_API_KEY)
+# Managed-AI billing (P4): Stripe one-time Checkout (passes, packs) + webhooks. SERVER-SIDE ONLY -- lives in the hosted
+# broker (backend/), which holds the secret key; the downloaded app never imports it.
+billing = ["stripe>=15.0"]
+# Production WSGI server for the HOSTED broker (P5). Only the broker host needs this; the desktop
+# app runs the engine on Flask's dev server locally. Install with .[llm,billing,serve].
+serve = ["gunicorn>=21.0"]
+dev = ["pytest>=8.0", "reportlab>=4.0",   # reportlab: generate sample PDFs in tests only
+       "curl_cffi>=0.7"]                   # scripts/build_perm_bundle.py only (browser-TLS download of the public DOL file); never shipped
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "latex: tests that invoke a real pdflatex/MiKTeX toolchain",
+]
+
+[tool.setuptools]
+packages = ["tailoring", "intake", "llm", "interview"]

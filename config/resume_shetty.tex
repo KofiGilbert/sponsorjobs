@@ -1,0 +1,172 @@
+\documentclass{article}
+
+% PACKAGES -----------------------------------------------------
+\usepackage{amsmath, amsthm, amsfonts, amsthm}
+\usepackage{bbm}
+\usepackage[letterpaper, portrait, margin=0cm, 
+left=0.7cm, right=0.7cm, top=0.7cm]{geometry}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{multicol}
+\usepackage{blindtext}
+\usepackage{graphicx}
+\graphicspath{ {./} }
+\usepackage[T1]{fontenc}
+% microtype = LaTeX's H and J engine: character protrusion + font expansion (glyph
+% scaling, about 2 percent). It fills justified lines with imperceptible glyph
+% adjustment instead of ugly word gaps, the trick InDesign and magazines use.
+\usepackage[protrusion=true,expansion=true,factor=1100]{microtype}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\setlength{\emergencystretch}{2em}
+
+% COMMANDS -----------------------------------------------------
+\newcommand{\vs}{\vspace{0.3cm}}
+\newcommand{\ee}{{\mathbb E}}
+\newcommand{\pp}{{\mathbb P}}
+\newcommand{\rr}{{\mathbb R}}
+\newcommand{\ff}{{ \mathcal{F} }}
+\newcommand{\indd}{\mathbbm{1}}
+
+% CONFIG -------------------------------------------------------
+\setlist{nolistsep}
+\hypersetup{
+  colorlinks,
+  urlcolor=blue}
+
+% BODY ---------------------------------------------------------
+\pagestyle{empty}
+\begin{document}
+
+\begin{center}
+	\textbf{\LARGE Jonathan Dobson}
+
+	240 E Rowan BLVD, Chicago, IL 60601 | (312) 555-0187 | \href{mailto:jonathandobson@example.com}{jonathandobson@example.com} | \href{https://www.example.com/in/jonathan-dobson/}{In} | \href{https://www.example.com/Jonathan27?tab=repositories}{GitHub} | \href{https://jonathansjournal.example.com}{Blog}
+\end{center}
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Education}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Education Block -------------------------------------------------
+\noindent \textbf{\textsc{Greenfield University}} \hfill \textbf{Chicago, IL}
+
+\noindent \textbf{Master of Science in Financial Mathematics} \hfill \textbf{December 2022}
+\begin{itemize}
+	\item Courses: Portfolio Theory \& Risk Management, Option Pricing, Regression and Quantitative Trading Strategies, Machine Learning in Finance, Big Data, C++, Python for Finance, Corporate and Credit Securities 
+\end{itemize}
+
+% Education Block -------------------------------------------------
+\noindent \textbf{\textsc{Weston College}} \hfill \textbf{Riverton, Oregon}
+
+\noindent \textbf{Bachelor of Science in Computer Science and Engineering(Minor in Data Science)} \hfill \textbf{May 2018}
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Skills}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Inline ----------------------------------------------------------
+\noindent \textbf{Computing:} Python, C++, Java, UNIX Shell, R, SQL, AWS\href{https://www.example.com/certification/certified-cloud-practitioner/}{(CCP)}, Azure, REST API, GitHub, MongoDb, Tableau, Alteryx, 
+
+\noindent \textbf{Knowledge:} CFA Level 1, Financial Markets, Derivatives, Statistical Modeling, Regression, Predictive Modeling, Risk Management
+
+\noindent \textbf{Trading Projects:} \href{https://www.example.com/Jonathan27/QuantTrading/blob/main/week5/HW5_Jonathan.ipynb}{Fixed Income-FX Carry}, \href{https://www.example.com/Jonathan27/QuantTrading/blob/main/week2/HW-2_jonathan.ipynb}{Equities-ETF Spread}, \href{https://www.example.com/Jonathan27/QuantTrading/blob/main/week4/Jonathan_HW4_submitted.ipynb}{Cryptocurrencies-Flow trading}, \href{}{Options}, \href{}{Futures}, \href{https://www.example.com/Jonathan27/QuantTrading/blob/main/week1/Jonathan_Dobson_HW1.ipynb}{Commodities}
+\noindent \textbf{Portfolio Theory:} Analyzed Factor models, OLS Regression (returns predictions), Asset Pricing (CAPM) and Risk Management
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Projects}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Research Block --------------------------------------------------
+\noindent \textbf{\textsc{Larkfield Trading(Greenfield Univ. Lab)}} \hfill \textbf{Chicago, IL}
+
+\noindent \textbf{Quantitative Research Intern, Project Lab} \hfill \textbf{April 2022 - June 2022}
+\begin{itemize}
+	\item Researched stable models to fit index options implied volatility; explored models based on log-moneyness, strike, and delta using quadratic and hyperbolic regression to fit the volatility curve. 
+\end{itemize}
+
+\noindent \textbf{\textsc{Datamarque Alternative Data(Greenfield Univ. Lab)}} \hfill \textbf{Chicago, IL}
+
+\noindent \textbf{Quantitative Research Intern, Project Lab} \hfill \textbf{Nov 2021 - Jan 2022}
+\begin{itemize}
+	\item Researched trading signals from alternate datasets (data vendor) to access short interest data; used python to implement feature engineering and create a feature set; applied penalized regression in order to generate alpha features
+
+\end{itemize}
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Experience}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Experience Block ------------------------------------------------
+\noindent \textbf{\textsc{Torbeck Capital}} \hfill \textbf{Chicago, IL}
+
+\noindent \textbf{Quantitative Risk Associate} \hfill \textbf{Feb 2023 - Present}
+\begin{itemize}
+	\item Researching and developing portfolio risk and stress-testing models for a listed-derivatives book, including scenario generation across cross-currency positions and backtesting model performance on historical market moves. 
+	\item Led validation of model changes and rolled out an updated risk framework across the book, improving coverage
+	\item Designed a tool to generate historical scenario data for interest-rate positions, streamlining periodic model recalibration
+\end{itemize}
+
+\noindent \textbf{Quantitative Risk Intern} \hfill \textbf{June 2022 - Present}
+\begin{itemize}
+	\item Developed an optimization tool based on differential evolution that suggests hedges to reduce portfolio risk and financing cost
+	\item The suggested hedges lower risk and cost by optimizing an objective computed from portfolio scenario P\&L
+\end{itemize}
+
+\noindent \textbf{\textsc{Zenith}} \hfill \textbf{Riverton, Oregon}
+
+\noindent \textbf{Senior Software Developer} \hfill \textbf{July 2018 - July 2021}
+\begin{itemize}
+	\item Developed a Bot in Python to integrate dev-ops tools such as JIRA, Confluence, GitLab with Slack and MS Teams,
+optimizing SDLC; built an NLP engine for the Bot, leveraging ML, to map natural user commands
+	\item Co-Developed a platform hosted on cloud to streamline software requests and approvals; built the web server, REST
+API integration, notification systems and the cloud infrastructure; platform is used by 500 daily users
+	\item Set-up and maintained chat platform called Chatterbox on AWS, used by Zenith employees across all locations
+\end{itemize}
+
+\noindent \textbf{\textsc{Kirkwood Bank}} \hfill \textbf{Riverton, Oregon}
+
+\noindent \textbf{Summer Intern} \hfill \textbf{Jan 2018 - June 2018}
+\begin{itemize}
+	\item Processed half million USD of equity derivatives brokerage payables across Asia, EMEA and US.
+	\item Developed exchange transformers to collect, process and convert exchange sent data into a standard format for
+processing by upstream systems for trade matching and brokerage reconciliation
+	\item Automated the process of feed generation and transferring, reducing process length by 9 hours
+\end{itemize}
+
+
+
+
+\vs
+
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Extracurricular}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Extracurricular Block -------------------------------------------
+
+\noindent \textbf{Volunteering for a Community Alerts Service by Building a Bot} \hfill \textbf{Mar 2020 - May 2020}
+\begin{itemize}
+	\item Developed a bot hosted on AWS that actively polled a public availability API and notified new openings in real time; providing alerts to approximately 200 people subscribed to the service.
+\end{itemize}
+
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Additional Information}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Inline ----------------------------------------------------------
+\noindent \textbf{Interests:}Football, Basketball(College \& Corporate - winner), Tennis(High School- winner), Poker, Tech, Geo-Politics, Trekking, Macro-Economics, Meditation, Traveling 
+\end{document}

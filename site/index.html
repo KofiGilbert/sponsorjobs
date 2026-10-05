@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SponsorJobs</title>
+  <meta name="description" content="A free, open-source job-hunt app for international students in the US. Finds employers that sponsor visas, rewrites your résumé for each job on one page, drafts the cover letter, and helps you practise the interview. Runs on your own computer.">
+  <meta property="og:title" content="SponsorJobs">
+  <meta property="og:description" content="Free, open-source job hunting for international students. Sponsorship records, a one-page tailored résumé for every job, cover letters, interview practice. Your data stays on your computer.">
+  <meta property="og:type" content="website">
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="#top" aria-label="SponsorJobs">
+    <img class="brand-mark" src="icon.svg" width="22" height="22" alt="">
+    <span class="brand-name">SponsorJobs</span>
+  </a>
+  <nav class="top-nav" aria-label="Page">
+    <a href="#what">What it does</a>
+    <a href="#data">Your data</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/KofiGilbert/sponsorjobs" data-link="repo">GitHub</a>
+  </nav>
+</header>
+
+<main id="top">
+
+  <!-- Hero: the one-line promise, then the two downloads. -->
+  <section class="hero">
+    <p class="kicker">Free and open source. For international students in the US.</p>
+    <h1>Find employers that sponsor, and send a résumé that fits the job.</h1>
+    <p class="lede">
+      SponsorJobs runs on your own computer. It finds jobs at employers with real sponsorship
+      records, rewrites your résumé for each one without breaking the one-page layout,
+      drafts the cover letter, and helps you practise the interview.
+    </p>
+    <div class="actions">
+      <a class="btn btn-primary" id="dl-mac" href="https://github.com/KofiGilbert/sponsorjobs/releases/latest" data-link="releases">
+        Download for macOS <span class="btn-sub">Apple Silicon</span>
+      </a>
+      <a class="btn btn-ghost" id="dl-win" href="https://github.com/KofiGilbert/sponsorjobs/releases/latest" data-link="releases">
+        Download for Windows
+      </a>
+    </div>
+    <p class="meta">
+      Linux and Intel Macs: <a href="https://github.com/KofiGilbert/sponsorjobs#install" data-link="repo-install">run it from source</a>.
+      You will also need LaTeX and an AI key. <a href="#install">How to install</a>.
+    </p>
+  </section>
+
+  <!-- Live numbers from the shared job list. Filled by script.js; the text below is the
+       fallback when the fetch fails, and it makes no claim it cannot back up. -->
+  <section class="live" aria-live="polite">
+    <p id="live-line" class="live-line">The shared job list is refreshed through the day from public job boards.</p>
+  </section>
+
+  <section id="what" class="section">
+    <h2>What it does</h2>
+    <div class="grid">
+      <article class="card">
+        <h3>Finds jobs at employers that sponsor</h3>
+        <p>Pulls postings from official public job boards. Each employer is tagged with its visa record from public US government data: H-1B, green card (PERM), E-Verify for STEM OPT, and cap-exempt status.</p>
+      </article>
+      <article class="card">
+        <h3>Flags "no sponsorship" postings</h3>
+        <p>Postings that say they will not sponsor are marked before you spend time on them.</p>
+      </article>
+      <article class="card">
+        <h3>Tailors your résumé to each job, on one page</h3>
+        <p>Rewords your real experience toward the job's own language, keeps the page from overflowing, and shows which of the job's keywords you cover and which you miss. It never adds a skill to a role where you did not use it.</p>
+      </article>
+      <article class="card">
+        <h3>Drafts the cover letter</h3>
+        <p>And answers to screening questions, written from your own history, for you to edit.</p>
+      </article>
+      <article class="card">
+        <h3>Interview practice</h3>
+        <p>A recorded, scored first-round screen, then a simulated interviewer that asks questions from the actual job description.</p>
+      </article>
+      <article class="card">
+        <h3>Assisted apply</h3>
+        <p>Fills application forms for you to review. You click submit. It never automates LinkedIn and never tries to get around a site's bot protection.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- PLACEHOLDER: demo video. Replace this whole block with a <video controls> (or a
+       link to a hosted recording) before launch. Do not ship the placeholder. -->
+  <section class="section">
+    <div class="demo-placeholder" role="note">
+      <p class="demo-title">Demo video</p>
+      <p>A 60 to 90 second screen recording goes here: find a job, tailor the résumé, review the result.</p>
+    </div>
+  </section>
+
+  <section id="data" class="section">
+    <h2>Your data</h2>
+    <ul class="plain">
+      <li><strong>Your data stays on your computer.</strong> Your profile, résumés, and applications are stored locally. SponsorJobs has no account system and no server that holds them.</li>
+      <li><strong>Text goes to the AI provider you choose, with your own key.</strong> To write, SponsorJobs sends the relevant text to Anthropic or OpenAI using an API key you create. You pay the provider directly for what you use. SponsorJobs stores none of it.</li>
+      <li><strong>The shared job list contains no personal data.</strong> It is a list of public job postings plus public government sponsorship records. Your profile is never sent to it.</li>
+    </ul>
+  </section>
+
+  <!-- Pricing (owner decision 2026-10-02). One-time passes, nothing auto-renews. Keep these
+       numbers in step with backend/metering.py and the prices set in Stripe. -->
+  <section id="pricing" class="section">
+    <h2>Pricing</h2>
+    <p class="section-lede">Pay once when you are actively applying. <strong>Nothing auto-renews</strong>: when a pass ends you are back on Free, with nothing to cancel.</p>
+    <div class="grid">
+      <article class="card">
+        <h3>Free</h3>
+        <p><strong>$0</strong>, no card.</p>
+        <p>Job board with visa badges, the recorded interview, and 3 tailored résumé packages a month. Unlimited tailoring with your own AI key.</p>
+      </article>
+      <article class="card">
+        <h3>Job Hunt Pass</h3>
+        <p><strong>$29</strong> once, for 30 days.</p>
+        <p>3 live interviews with an AI interviewer and 60 tailored packages on our best model.</p>
+      </article>
+      <article class="card">
+        <h3>Season Pass</h3>
+        <p><strong>$69</strong> once, for 90 days.</p>
+        <p>9 live interviews and 150 tailored packages. Buying a pass during a pass adds to it.</p>
+      </article>
+    </div>
+    <p class="meta">During a pass, extra live interviews are 1 for $9, 3 for $24 or 5 for $35, and they never expire.</p>
+  </section>
+
+  <section id="install" class="section">
+    <h2>How to install</h2>
+    <p class="section-lede">
+      Two things first. SponsorJobs typesets your résumé with <strong>LaTeX</strong>, so LaTeX must be
+      installed. And it needs an <strong>AI key</strong> from
+      <a href="https://console.anthropic.com/">Anthropic</a> (recommended) or
+      <a href="https://platform.openai.com/">OpenAI</a>; the first-run setup asks for it and
+      keeps it on your computer.
+    </p>
+    <div class="grid two">
+      <article class="card">
+        <h3>macOS (Apple Silicon)</h3>
+        <ol>
+          <li>Install LaTeX. In Terminal: <code>brew install --cask mactex-no-gui</code></li>
+          <li>Download the <code>.dmg</code>, open it, and drag SponsorJobs to Applications.</li>
+          <li>On first open, macOS will say it cannot verify the developer. Open <strong>System Settings &rarr; Privacy &amp; Security</strong> and click <strong>Open Anyway</strong>. Once.</li>
+        </ol>
+        <p class="note">The app is not yet signed with an Apple Developer certificate, which is why macOS asks.</p>
+      </article>
+      <article class="card">
+        <h3>Windows</h3>
+        <ol>
+          <li>Install LaTeX: <a href="https://miktex.org/download">MiKTeX</a>. Let it install missing packages on the fly.</li>
+          <li>Download <code>SponsorJobs-Setup.exe</code> and run it.</li>
+          <li>Windows SmartScreen may warn that the publisher is unknown. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
+        </ol>
+        <p class="note">The installer is not yet code-signed, which is why SmartScreen asks.</p>
+      </article>
+    </div>
+    <p class="meta">
+      Linux, Intel Macs, or just prefer source: see the
+      <a href="https://github.com/KofiGilbert/sponsorjobs#install" data-link="repo-install">README</a>.
+    </p>
+  </section>
+
+  <section id="source" class="section">
+    <h2>Free and open source</h2>
+    <p class="section-lede">
+      SponsorJobs is free software under the <abbr title="GNU Affero General Public License, version 3">AGPL-3.0</abbr>.
+      You can read every line, change it, and share it. It is free because the students who
+      need it most often cannot legally earn money yet.
+    </p>
+    <div class="actions">
+      <a class="btn btn-ghost" href="https://github.com/KofiGilbert/sponsorjobs" data-link="repo">Source on GitHub</a>
+      <a class="btn btn-ghost" href="https://github.com/KofiGilbert/sponsorjobs/issues" data-link="issues">Report a problem</a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <p>Built by <a href="https://github.com/KofiGilbert">Kofi Gilbert</a>. SponsorJobs is not affiliated with any employer, job board, or government agency.</p>
+</footer>
+
+<script src="script.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+node_modules/
+# the packaging steps symlink node_modules from the main checkout; ignore the link too
+node_modules

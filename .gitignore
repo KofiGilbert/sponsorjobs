@@ -1,0 +1,46 @@
+# Local-first: secrets, data, and build artifacts never enter the repo.
+config/credentials.env
+config/secrets*
+# Gmail OAuth: the client secret and the cached token are the person's own — never committed.
+config/gmail_credentials.json
+config/gmail_token.json
+data/
+*.db
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.pdf
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# scratch
+.build/
+.playwright-mcp/
+
+# stray Playwright screenshots
+e2e-*.png
+
+# Raw (uncompressed) E-Verify list — the app ships the gzipped bundle
+# (config/everify_employers.csv.gz), which IS committed; the plain .csv is a local
+# scratch artifact from the build/import path.
+config/everify_employers.csv
+packaging/seed/
+
+# Quarterly H-1B snapshot built by scripts/import_h1b_export.py for upload to the
+# TAILOR_DATA_URL host; the committed seed/ is the copy that lives in git.
+dist-data/
+
+# macOS folder metadata
+.DS_Store

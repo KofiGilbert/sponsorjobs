@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root { color-scheme: light; }
+    body { width: 320px; margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: #1d2939; }
+    header { padding: 14px 16px 10px; border-bottom: 1px solid #eaecf0; }
+    h1 { font-size: 14px; margin: 0; }
+    .sub { font-size: 11px; color: #667085; margin-top: 2px; }
+    .status { display: flex; align-items: center; gap: 7px; padding: 10px 16px; font-size: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #d0d5dd; flex: none; }
+    .dot.ok { background: #12b76a; } .dot.bad { background: #f04438; }
+    .body { padding: 4px 16px 14px; }
+    .row { display: flex; gap: 6px; margin-top: 6px; }
+    input { flex: 1; font-size: 13px; padding: 7px 9px; border: 1px solid #d0d5dd; border-radius: 8px; }
+    button { font-size: 13px; font-weight: 600; padding: 7px 12px; border: 0; border-radius: 8px; background: #4f46e5; color: #fff; cursor: pointer; }
+    button:hover { background: #4338ca; }
+    #result { margin-top: 12px; min-height: 22px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .b { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; border: 1px solid transparent; }
+    .b.H-1B { color: #067647; background: #ecfdf3; border-color: #abefc6; }
+    .b.GREEN-CARD { color: #0f766e; background: #ecfdf9; border-color: #a7f3e0; }
+    .b.CAP-EXEMPT { color: #6941c6; background: #f4f0ff; border-color: #d9cffb; }
+    .b.STEM-OPT { color: #1d4ed8; background: #eff4ff; border-color: #c2d6ff; }
+    .muted { font-size: 12px; color: #667085; }
+    footer { font-size: 10.5px; color: #98a2b3; padding: 10px 16px; border-top: 1px solid #eaecf0; line-height: 1.5; }
+    a { color: #4f46e5; }
+    .section { padding: 12px 16px; border-top: 1px solid #eaecf0; }
+    .section h2 { font-size: 12px; margin: 0 0 2px; }
+    .section .hint { font-size: 11px; color: #667085; margin-bottom: 8px; }
+    .frow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; font-size: 12px; }
+    .frow label { color: #344054; flex: 1; }
+    .frow select { font-size: 12px; padding: 5px 7px; border: 1px solid #d0d5dd; border-radius: 7px; background: #fff; }
+    .chk { display: flex; align-items: flex-start; gap: 7px; margin-top: 9px; font-size: 12px; color: #344054; }
+    .chk input { flex: none; margin-top: 2px; }
+    #prefsSaved { font-size: 11px; color: #12b76a; margin-top: 8px; min-height: 14px; }
+    .btn-ghost { background: #f2f4f7; color: #344054; }
+    .btn-ghost:hover { background: #e4e7ec; }
+    .track { display: flex; gap: 8px; margin-top: 4px; }
+    .track-cell { flex: 1; text-align: center; background: #f9fafb; border: 1px solid #eaecf0; border-radius: 10px; padding: 8px 4px; }
+    .track-cell b { display: block; font-size: 18px; color: #101828; font-variant-numeric: tabular-nums; }
+    .track-cell span { font-size: 10.5px; color: #667085; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SponsorJobs, visa sponsor badges</h1>
+    <div class="sub">H-1B · green card · cap-exempt · STEM-OPT, from official USCIS/DOL data.</div>
+  </header>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">Checking the SponsorJobs app…</span></div>
+  <div class="body">
+    <div class="muted">Check any employer:</div>
+    <div class="row">
+      <input id="company" placeholder="e.g. Google, Dropbox, Stripe" />
+      <button id="check">Check</button>
+    </div>
+    <div id="result"></div>
+  </div>
+
+  <div class="section" id="trackSection" hidden>
+    <h2>Your applications</h2>
+    <div class="hint">A read-only mirror of SponsorJobs. <a href="http://127.0.0.1:57000/" target="_blank">Open SponsorJobs</a> to manage them.</div>
+    <div class="track">
+      <div class="track-cell"><b id="tTotal">0</b><span>Tracked</span></div>
+      <div class="track-cell"><b id="tApplied">0</b><span>Applied</span></div>
+      <div class="track-cell"><b id="tReview">0</b><span>In review</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Application answers</h2>
+    <div class="hint">Saved once, reused when Assisted apply fills a form. You still review and submit.</div>
+    <div class="frow">
+      <label for="workAuth">Authorized to work in the US?</label>
+      <select id="workAuth"><option value="">, </option><option>Yes</option><option>No</option></select>
+    </div>
+    <div class="frow">
+      <label for="needSpon">Will you need visa sponsorship?</label>
+      <select id="needSpon"><option value="">, </option><option>Yes</option><option>No</option></select>
+    </div>
+    <div class="frow">
+      <label for="relocate">Willing to relocate?</label>
+      <select id="relocate"><option value="">, </option><option>Yes</option><option>No</option></select>
+    </div>
+    <div class="frow">
+      <label for="over18">Are you 18 or older?</label>
+      <select id="over18"><option value="">, </option><option>Yes</option><option>No</option></select>
+    </div>
+    <div class="frow">
+      <label for="yearsExp">Years of experience</label>
+      <input id="yearsExp" type="text" placeholder="e.g. 3" />
+    </div>
+    <div class="frow">
+      <label for="desiredSalary">Desired salary</label>
+      <input id="desiredSalary" type="text" placeholder="e.g. 120000" />
+    </div>
+    <div class="frow">
+      <label for="earliestStart">Earliest start / notice</label>
+      <input id="earliestStart" type="text" placeholder="e.g. 2 weeks" />
+    </div>
+    <div class="frow">
+      <label for="hearAbout">How did you hear about us?</label>
+      <input id="hearAbout" type="text" placeholder="e.g. LinkedIn" />
+    </div>
+    <label class="chk"><input type="checkbox" id="eeoDecline" />
+      Set EEO / demographic questions to <b>“Decline to self-identify.”</b></label>
+    <div class="row" style="margin-top:10px">
+      <button id="savePrefs">Save answers</button>
+    </div>
+    <div id="prefsSaved"></div>
+  </div>
+
+  <footer>
+    Read-only. It only reads the job page you open and never submits anything.
+    Needs the SponsorJobs app running on this computer (<a href="http://127.0.0.1:57000/" target="_blank">open it</a>).
+  </footer>
+  <script src="popup.js"></script>
+</body>
+</html>

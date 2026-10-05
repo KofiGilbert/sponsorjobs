@@ -1,0 +1,1436 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SponsorJobs</title>
+  <!-- The app's identity in the title bar, the taskbar and alt-tab. Without it Chrome's
+       --app window falls back to its generic globe, so the window introduces itself as a
+       website: the one thing this product is not. -->
+  <link rel="icon" href="{{ url_for('static', filename='icon.svg') }}" type="image/svg+xml" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <rect x="3" y="2" width="11" height="16" rx="2" fill="currentColor" opacity="0.15"/>
+            <path d="M6 6.2h6M6 9.4h6M6 12.6h3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            <path d="M13.5 12.5l3.4 3.4M15.2 10.8l2.9 2.9a1 1 0 0 1-1.4 1.4l-2.9-2.9z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <span class="brand-name">SponsorJobs</span>
+        <button class="rail-toggle" id="railToggle" type="button" title="Collapse menu"
+                aria-label="Collapse menu" aria-expanded="true">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6.1 2.6v10.8" stroke="currentColor" stroke-width="1.3"/></svg>
+        </button>
+      </div>
+
+      <nav class="nav" aria-label="Primary">
+        <button class="nav-item is-active" data-nav="dashboard" title="Dashboard">
+          <svg class="nav-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h5v4H2zM9 3.5h5v2.5H9zM9 8.5h5v4H9zM2 9.5h5v3H2z" fill="currentColor"/></svg>
+          <span class="nav-label" data-i18n="nav.dashboard">Dashboard</span>
+        </button>
+        <!-- No "My profile" nav item: the identity at the bottom IS the way to your profile
+             (click the row, or Settings menu > My profile). Two doors to one room is clutter. -->
+        <button class="nav-item" data-nav="cvs" title="Resumes">
+          <svg class="nav-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2h6l3 3v9H4z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10 2v3h3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+          <span class="nav-label" data-i18n="nav.cvs">Resumes</span>
+        </button>
+        <button class="nav-item" data-nav="jobs" title="Jobs">
+          <svg class="nav-ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="4.5" width="11" height="8" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 4.5V3.6A1 1 0 0 1 7 2.6h2a1 1 0 0 1 1 1v.9" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+          <span class="nav-label" data-i18n="nav.jobs">Jobs</span>
+        </button>
+        <button class="nav-item" data-nav="projects" title="Projects">
+          <svg class="nav-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5a1 1 0 0 1 1-1h3l1.3 1.5H13a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6.6 9.2l1.2 1.2 2-2.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="nav-label" data-i18n="nav.projects">Projects</span>
+        </button>
+        <button class="nav-item" data-nav="prep" title="Interview prep">
+          <svg class="nav-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M6.4 6.2a1.6 1.6 0 0 1 3 .5c0 1-1.4 1.2-1.4 2M8 10.2v.02" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          <span class="nav-label" data-i18n="nav.prep">Interview prep</span>
+        </button>
+        <button class="nav-item" data-nav="review" title="Review &amp; submit">
+          <svg class="nav-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="nav-label" data-i18n="nav.review">Review &amp; submit</span>
+        </button>
+        <button class="nav-item" data-nav="autoapply" title="Auto-apply">
+          <svg class="nav-ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.6 3.4 3.7.5-2.7 2.6.7 3.7L8 12.4 4.7 14.2l.7-3.7L2.7 7.9l3.7-.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+          <span class="nav-label" data-i18n="nav.autoapply">Auto-apply</span>
+        </button>
+        <!-- The CV currently open. A destination like any other, so getting back to work
+             you were doing seconds ago is one click from anywhere, not a card to find. -->
+        <div class="live-nav" id="liveNav" hidden></div>
+      </nav>
+
+      <div class="sidebar-foot">
+        <button class="acct" id="acctBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+          <span class="acct-ava" id="acctAva">·</span>
+          <span class="acct-meta">
+            <span class="acct-name" id="acctName">Your profile</span>
+            <span class="acct-plan" id="acctPlan">Free</span>
+          </span>
+          <svg class="acct-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5L8 10l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <!-- ============ HOME (prompt-first, Devin-style) ============
+           One hero element: the prompt. Typing fades everything else; Enter starts a
+           tailoring session with the text as the opening message (the old JD gate,
+           collapsed into the landing). Recent résumés live in Saved CVs, not here. -->
+      <section class="view view-dashboard is-active" id="view-dashboard">
+        <header class="page-head home-head">
+          <div></div>
+          <button class="btn btn-primary" id="newCvBtn">
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <span data-i18n="home.newcv">New Resume</span>
+          </button>
+        </header>
+
+        <div class="home-center">
+          <div class="home-fade">
+            <h1 class="home-hi" data-i18n="home.hi">What are you applying for?</h1>
+            <p class="home-hip" data-i18n="home.sub">Paste a job description or a link, or just tell me about the role. I'll tailor your resume from your saved profile.</p>
+          </div>
+
+          <div class="home-promptbox">
+            <textarea id="homePrompt" rows="4" spellcheck="false" aria-label="Job description or request"
+              placeholder="Paste the job description here…" data-i18n-ph="home.placeholder"></textarea>
+            <div class="home-prompt-foot">
+              <button class="btn btn-primary btn-sm" id="homeGo" type="button" data-i18n="home.start">Start tailoring</button>
+            </div>
+          </div>
+
+          <div class="home-fade">
+            <div class="home-block-head">
+              <h2 class="section-label" style="margin:0" data-i18n="home.today">Today · fresh best-fit roles</h2>
+              <button class="link-btn" data-nav-to="jobs" type="button" data-i18n="home.seeall">See all jobs →</button>
+            </div>
+            <div class="today-list" id="homeToday"><!-- top fresh roles injected --></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SAVED CVS (folders, rename, drag to reorder) ============ -->
+      <section class="view view-cvs" id="view-cvs">
+        <header class="page-head">
+          <div>
+            <h1 class="page-title" data-i18n="cvs.title">Resumes</h1>
+            <p class="page-sub" data-i18n="cvs.sub">Start from a template, or open a resume you've built.</p>
+          </div>
+        </header>
+        <section class="cvs-block">
+          <div class="cvs-sec-head">
+            <h2 class="section-label" style="margin:0" data-i18n="cvs.fromTemplate">Start from a template</h2>
+            <button class="link-btn" id="cvsMoreTpl" type="button" data-i18n="cvs.moreTemplates">More templates &rarr;</button>
+          </div>
+          <div class="cvs-tpl-strip" id="cvsTplStrip"><!-- template cards injected --></div>
+        </section>
+        <section class="cvs-block">
+          <div class="cvs-sec-head">
+            <h2 class="section-label" style="margin:0" data-i18n="cvs.yourCvs">Your Resumes</h2>
+            <input class="fld cvs-search" id="cvsSearch" type="search" placeholder="Search your Resumes" data-i18n-ph="cvs.search" aria-label="Search your Resumes" />
+            <button class="btn btn-ghost btn-sm" id="newFolderBtn" type="button">New folder</button>
+          </div>
+          <div id="cvManager"><!-- CV list injected --></div>
+          <button class="link-btn cvs-more-cvs" id="cvsMoreCvs" type="button" hidden>More Resumes &rarr;</button>
+        </section>
+      </section>
+
+      <!-- ============ JOBS (no-refresh master-detail feed) ============ -->
+      <section class="view view-jobs" id="view-jobs">
+        <header class="page-head">
+          <div>
+            <h1 class="page-title">Jobs</h1>
+          </div>
+        </header>
+
+        <!-- Faceted filter bar: search + location, then dropdown facets (date, work type,
+             sponsorship multi-select) and an entry-level toggle. Applied filters show as
+             removable chips below, LinkedIn/Glassdoor style. -->
+        <div class="jobs-filters" id="jobsFilters">
+          <label class="jf-search">
+            <svg class="jf-ic" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14 14l4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            <input class="jf-input" id="jfSearch" type="search" placeholder="Search job title or company" autocomplete="off" aria-label="Search jobs" />
+          </label>
+          <input class="jf-input jf-loc" id="jfLocation" type="text" placeholder="Location" autocomplete="off" aria-label="Location" />
+          <select class="jf-input jf-sel" id="jfDate" aria-label="Date posted">
+            <option value="0">Any time</option>
+            <option value="1">Past 24 hours</option>
+            <option value="7">Past week</option>
+            <option value="30">Past month</option>
+          </select>
+          <select class="jf-input jf-sel" id="jfRemote" aria-label="Work type">
+            <option value="">Any type</option>
+            <option value="remote">Remote</option>
+            <option value="hybrid">Hybrid</option>
+            <option value="onsite">On-site</option>
+          </select>
+          <select class="jf-input jf-sel" id="jfPay" aria-label="Minimum pay" title="Roles that state pay at or above this. Roles without a listed salary are hidden while this is on.">
+            <option value="0">Any pay</option>
+            <option value="50000">$50k+</option>
+            <option value="80000">$80k+</option>
+            <option value="100000">$100k+</option>
+            <option value="150000">$150k+</option>
+            <option value="200000">$200k+</option>
+          </select>
+          <select class="jf-input jf-sel" id="jfSort" aria-label="Sort by">
+            <option value="">Most recent</option>
+            <option value="pay">Top paid</option>
+          </select>
+          <details class="jf-dd" id="jfVisaDD">
+            <summary class="jf-input jf-sel" id="jfVisaSummary">Sponsorship</summary>
+            <div class="jf-dd-panel" role="group" aria-label="Sponsorship filters">
+              <label><input type="checkbox" data-visa="SPONSORED" /> <span>Sponsors a visa</span></label>
+              <label><input type="checkbox" data-visa="H-1B" /> <span>H-1B</span></label>
+              <label><input type="checkbox" data-visa="GREEN-CARD" /> <span>Green card (PERM)</span></label>
+              <label><input type="checkbox" data-visa="STEM-OPT" /> <span>STEM-OPT (E-Verify)</span></label>
+              <label><input type="checkbox" data-visa="E-3" /> <span>E-3 (Australia)</span></label>
+              <label><input type="checkbox" data-visa="H-1B1" /> <span>H-1B1 (Chile / Singapore)</span></label>
+              <label><input type="checkbox" data-visa="TN" /> <span>TN (Canada / Mexico)</span></label>
+            </div>
+          </details>
+          <button class="jf-toggle-btn" id="jfEntry" type="button" aria-pressed="false" title="Junior, new-grad, and internship roles. Most international students are new grads.">Entry-level</button>
+          <button class="jf-toggle-btn" id="jfSponsored" type="button" aria-pressed="false" title="Only roles whose posting itself states it offers visa sponsorship, the strongest, most current signal for international students.">States sponsorship</button>
+          <button class="jf-toggle-btn" id="jfSaved" type="button" aria-pressed="false" title="Only the roles you've bookmarked. Saved roles stay on this machine.">★ Saved</button>
+        </div>
+        <div class="active-filters" id="activeFilters" hidden></div>
+        <p class="feed-note" id="jobsNote"></p>
+
+        <div class="feed" id="feed">
+          <div class="feed-list" id="feedList"><!-- job rows injected --></div>
+          <div class="feed-detail" id="feedDetail"><!-- selected role JD + match injected --></div>
+        </div>
+      </section>
+
+      <!-- ============ BUILDER (chat + live preview) ============ -->
+      <section class="view view-builder" id="view-builder">
+        <header class="builder-head">
+          <button class="btn btn-ghost btn-back" id="backBtn">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Dashboard
+          </button>
+          <div class="builder-title">
+            <span class="builder-kicker">New Resume</span>
+            <span class="builder-role-line">
+              <span class="builder-role" id="builderRole">AI Architect · Synechron</span>
+              <span class="builder-tpl" id="builderTpl" hidden><b id="builderTplName"></b>
+                <button class="linkish" id="builderTplChange" type="button">change</button></span>
+            </span>
+          </div>
+          <div class="steps" id="steps" aria-label="Progress">
+            <span class="step is-active" data-step="details">Details</span>
+            <span class="step-sep"></span>
+            <span class="step" data-step="draft">Draft</span>
+            <span class="step-sep"></span>
+            <span class="step" data-step="review">Review</span>
+          </div>
+        </header>
+
+        <div class="split">
+          <!-- Chat -->
+          <div class="chat-panel">
+            <div class="chat-head">
+              <span class="chat-ava">S</span>
+              <div class="chat-head-t">
+                <span class="chat-head-name">SponsorJobs</span>
+                <span class="chat-head-sub">Building your Resume, answer as you go</span>
+              </div>
+            </div>
+            <div class="chat-scroll" id="chatScroll"><!-- messages injected --></div>
+            <form class="composer" id="composer" autocomplete="off">
+              <input type="file" id="uploadFile" accept=".docx,.pdf,.pptx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp" hidden>
+              <button class="btn btn-ghost btn-upload" type="button" id="uploadBtn" aria-label="Upload a document" title="Upload a document, resume, transcript, or certificate. I'll read it and figure out what it is.">
+                <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 10.5V2.5M4.5 6L8 2.5 11.5 6M3 12.5h10" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <textarea class="composer-input" id="composerInput" rows="1" placeholder="Type your answer…  (or upload a resume, transcript, or certificate with the ↑ button)" aria-label="Your answer"></textarea>
+              <button class="btn btn-primary btn-send" type="submit" aria-label="Send">
+                <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2.5 8h10M8.5 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </form>
+          </div>
+
+
+        </div>
+
+        <!-- JD entry gate (shown first when starting a new CV) -->
+        <div class="jd-gate" id="jdGate" hidden>
+          <div class="jd-card">
+            <span class="jd-kicker">New Resume</span>
+            <h2 class="jd-title">Paste the job description</h2>
+            <p class="jd-sub">I’ll draft from your saved profile and ask only what I can’t infer.</p>
+            <textarea class="jd-input" id="jdInput" placeholder="Paste the full posting here…"></textarea>
+            <div class="jd-actions">
+              <button class="btn btn-ghost" id="jdCancel" type="button">Cancel</button>
+              <button class="btn btn-primary" id="jdStart" type="button">Start tailoring</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ APPLICATION PACKAGE (review a finished application) ============ -->
+      <section class="view view-package" id="view-package">
+        <header class="builder-head">
+          <button class="btn btn-ghost btn-back" id="pkgBack">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span id="pkgBackLbl">Dashboard</span>
+          </button>
+          <div class="builder-title">
+            <span class="builder-kicker">Application package</span>
+            <span class="builder-role" id="pkgRole">Role · Company</span>
+          </div>
+          <a class="btn btn-ghost btn-sm" id="pkgDownload" download="resume.pdf" hidden>Download PDF</a>
+          <a class="btn btn-ghost btn-sm" id="pkgDownloadDocx" download="resume.docx" hidden
+             title="ATS-friendly Word version, parses more reliably than PDF on some systems">Download .docx</a>
+          <span class="pkg-status ready" id="pkgStatus">Ready to submit</span>
+        </header>
+
+        <div class="pkg-split">
+          <div class="pkg-doc">
+            <div class="pkg-doc-empty" id="pkgNoPdf" hidden>The compiled PDF for this application isn't on this machine.</div>
+            <iframe class="pkg-doc-frame" id="pkgPdf" title="Tailored Resume PDF"></iframe>
+          </div>
+          <aside class="pkg-side">
+            <div class="pkg-card" id="pkgSubmitCard">
+              <div class="pkg-card-h">Submission</div>
+              <div class="pkg-submit-tier"><span class="pkg-tier-pill" id="pkgTier"></span></div>
+              <p class="pkg-hint" id="pkgSubmitMsg"></p>
+              <div class="pkg-cl-foot">
+                <button class="btn btn-primary btn-sm" id="pkgSubmitBtn" type="button">Submit</button>
+              </div>
+            </div>
+
+            <!-- Desktop shell only: open the application in the in-app browser and
+                 pre-fill it from the saved profile. The submit click stays yours. -->
+            <div class="pkg-card" id="pkgAssistCard" hidden>
+              <div class="pkg-card-h">Apply in SponsorJobs' browser</div>
+              <p class="pkg-hint">Opens the application inside SponsorJobs and fills it for you. <b>AI auto-fill</b> reads the whole form and fills it intelligently (your personal details never go to the AI); <b>quick fill</b> just drops in your saved contact details. Either way you review every field and click submit yourself.</p>
+              <input class="fld" id="pkgAssistUrl" type="text" spellcheck="false" placeholder="Paste the application page URL" aria-label="Application page URL" />
+              <div class="pkg-cl-foot">
+                <button class="btn btn-primary btn-sm" id="pkgAutoBtn" type="button">AI auto-fill</button>
+                <button class="btn btn-ghost btn-sm" id="pkgAutoHereBtn" type="button">AI-fill the open page</button>
+                <button class="btn btn-ghost btn-sm" id="pkgAssistBtn" type="button">Quick fill</button>
+                <button class="btn btn-ghost btn-sm" id="pkgAssistHereBtn" type="button">Quick-fill open page</button>
+              </div>
+              <p class="pkg-hint" id="pkgAssistNote"></p>
+            </div>
+
+            <!-- One-button variants: same application, another layout or role selection.
+                 Runs on a scratch profile, the saved profile is never touched. -->
+            <div class="pkg-card" id="pkgVariantCard">
+              <div class="pkg-card-h">Variants</div>
+              <p class="pkg-hint">Rebuild this application in another layout, or with only some of your roles. Your saved profile stays untouched.</p>
+              <select class="fld" id="pkgVarTpl" aria-label="Template for the variant"></select>
+              <div class="pkg-var-roles" id="pkgVarRoles"></div>
+              <div class="pkg-cl-foot">
+                <button class="btn btn-primary btn-sm" id="pkgVarBtn" type="button">Build variant</button>
+              </div>
+              <p class="pkg-hint" id="pkgVarNote"></p>
+            </div>
+
+            <div class="pkg-card" id="pkgVisaCard" hidden>
+              <div class="pkg-card-h">Visa sponsorship</div>
+              <div class="pkg-visa" id="pkgVisa"></div>
+            </div>
+
+            <div class="pkg-card">
+              <div class="pkg-card-h">JD keyword coverage <span class="pkg-cov-num" id="pkgCovNum"></span></div>
+              <div class="pkg-cov" id="pkgCov"></div>
+              <p class="pkg-cov-key">
+                <span class="cov-chip on">in Resume</span>
+                <span class="cov-chip sup">you have, not shown</span>
+                <span class="cov-chip off">JD wants, not in profile</span>
+              </p>
+            </div>
+
+            <div class="pkg-card">
+              <div class="pkg-card-h">Cover letter
+                <span class="pkg-card-tools">
+                  <button class="btn btn-ghost btn-sm" id="pkgClGen" type="button">Draft</button>
+                  <button class="btn btn-ghost btn-sm" id="pkgClCopy" type="button">Copy</button>
+                  <a class="btn btn-ghost btn-sm" id="pkgClPdf" target="_blank" rel="noopener" hidden>PDF ↗</a>
+                  <a class="btn btn-ghost btn-sm" id="pkgClDocx" download="cover_letter.docx" hidden>.docx</a>
+                </span>
+              </div>
+              <textarea class="pkg-cl" id="pkgCl" placeholder="No cover letter yet, “Draft” writes one from your profile, grounded in your real material. You edit and own it."></textarea>
+              <div class="pkg-cl-foot">
+                <button class="btn btn-primary btn-sm" id="pkgClSave" type="button">Save</button>
+                <span class="pkg-hint" id="pkgClMsg"></span>
+              </div>
+              <!-- Honest craft check on the letter: hook, names the company, length, no unbacked
+                   claim, plus what it draws on. -->
+              <div class="cl-review" id="pkgClReview" hidden></div>
+            </div>
+
+            <div class="pkg-card" id="pkgScrCard" hidden>
+              <div class="pkg-card-h">Screening answers</div>
+              <div class="pkg-scr" id="pkgScr"></div>
+            </div>
+          </aside>
+        </div>
+
+        <div class="pkg-actionbar">
+          <span class="pkg-hint" id="pkgMsg">Review the package, then submit it yourself on the employer’s site.</span>
+          <button class="btn btn-danger-ghost" id="pkgDelete" type="button">Delete</button>
+          <div class="pkg-actions">
+            <button class="btn btn-ghost" id="pkgExport" type="button">Export package (.zip)</button>
+            <button class="btn btn-primary" id="pkgApplied" type="button">Mark as applied</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ MY PROFILE (view + edit the saved profile) ============ -->
+      <section class="view view-profile" id="view-profile">
+        <header class="page-head">
+          <div>
+            <h1 class="page-title">What SponsorJobs knows about you</h1>
+            <p class="page-sub">Drop your résumé once and I learn it all, then quietly reuse it on every résumé, letterhead, and cover letter. Nothing to fill in.</p>
+          </div>
+        </header>
+
+        <div class="prof-wrap">
+          <div class="prof-import" id="profImport">
+            <div class="prof-import-txt">
+              <div class="prof-import-h">Start with your résumé</div>
+              <div class="prof-import-p">We read it once and fill your whole profile. Faster than typing it out.</div>
+            </div>
+            <label class="prof-import-drop" id="profDrop">
+              <input type="file" id="profCvFile" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp" hidden />
+              <span class="btn btn-primary" id="profUploadBtn">Upload résumé</span>
+              <span class="prof-import-hint">PDF, Word, or an image</span>
+            </label>
+          </div>
+          <div class="prof-import-msg" id="profImportMsg" hidden></div>
+
+          <!-- Contact details read as "what SponsorJobs already knows", not a form to fill:
+               a read-only summary is the default face (magic), and Edit reveals the
+               inputs only when you want to correct something (the safety net the CV
+               flow can't always reach). -->
+          <div class="prof-card" id="identityCard">
+            <div class="prof-card-h">Contact details
+              <button class="btn btn-ghost btn-sm" id="idEdit" type="button" hidden>Edit</button>
+            </div>
+
+            <div class="prof-known" id="idKnown" hidden><!-- read-only rows injected --></div>
+
+            <form id="identityForm" autocomplete="off" hidden>
+              <div class="prof-grid">
+                <label class="prof-field"><span>Full name</span><input class="fld" id="idName" placeholder="Your name" /></label>
+                <label class="prof-field"><span>Email</span><input class="fld" id="idEmail" type="email" placeholder="you@example.com" /></label>
+                <label class="prof-field"><span>Phone</span><input class="fld" id="idPhone" placeholder="(312) 555-0134" /></label>
+                <label class="prof-field prof-wide"><span>Address</span><input class="fld" id="idAddress" placeholder="Street, City, ST ZIP" /></label>
+                <label class="prof-field"><span>LinkedIn URL</span><input class="fld" id="idLinkedin" placeholder="https://linkedin.com/in/…" /></label>
+                <label class="prof-field"><span>GitHub URL</span><input class="fld" id="idGithub" placeholder="https://github.com/…" /></label>
+                <label class="prof-field"><span>Website / blog URL</span><input class="fld" id="idBlog" placeholder="https://…" /></label>
+              </div>
+              <div class="prof-card-foot">
+                <button class="btn btn-primary btn-sm" type="submit">Save contact details</button>
+                <button class="btn btn-ghost btn-sm" id="idCancel" type="button">Cancel</button>
+                <span class="prof-saved" id="idSaved"></span>
+              </div>
+            </form>
+          </div>
+
+          <div class="prof-empty" id="profEmpty" hidden>
+            No profile yet. <b>Upload your résumé</b> to fill it in automatically, or click <b>New Resume</b> to build one as you tailor.
+          </div>
+
+          <div class="prof-sections" id="profSections"><!-- CV sections injected (read-only) --></div>
+          <p class="prof-note" id="profSecNote" hidden>Experience, education, skills, and projects are built and edited while you tailor a resume. Start or open a resume to change them.</p>
+        </div>
+      </section>
+
+      <!-- ============ TEMPLATES ============ -->
+      <section class="view view-templates" id="view-templates">
+        <header class="page-head">
+          <div>
+            <button class="btn btn-ghost btn-back tpl-back" id="tplBack" type="button">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span id="tplBackLbl">Resumes</span>
+            </button>
+            <h1 class="page-title">Choose a template</h1>
+            <p class="page-sub">Previews use sample data. Your pick sets the layout <em>and</em> the questions you'll be asked.</p>
+          </div>
+        </header>
+        <div class="tpl-grid" id="tplGrid"><!-- template cards injected --></div>
+      </section>
+
+      <!-- ============ REVIEW & SUBMIT ============ -->
+      <section class="view view-review" id="view-review">
+        <header class="page-head">
+          <div>
+            <h1 class="page-title">Review &amp; submit</h1>
+            <p class="page-sub">Filled applications waiting on you. Review here, or send the batch to your phone.</p>
+          </div>
+          <div class="rvw-head-actions">
+            <button class="btn btn-ghost" id="rvwTelegram" title="Send this batch to your Telegram">Send to Telegram</button>
+            <button class="btn btn-primary" id="rvwApprove">Approve selected</button>
+          </div>
+        </header>
+
+        <!-- Inbox: the person's OWN mailbox, read-first (CLAUDE.md §5). Verifications
+             surface with a button (your click is the consent; autonomous auto-verify is
+             a double opt-in); recruiter replies come back DRAFTED for you to send from
+             your own mail app. Nothing is ever sent by SponsorJobs. -->
+        <div class="pkg-card inbox-card" id="inboxCard">
+          <div class="prof-card-h">Inbox
+            <button class="btn btn-ghost btn-sm" id="inboxScan" type="button">Scan inbox</button>
+          </div>
+          <p class="pkg-hint" id="inboxStatus">Checking your mailbox connection…</p>
+          <div id="inboxResults"></div>
+        </div>
+
+        <div class="rvw-bar">
+          <label class="rvw-check"><input type="checkbox" id="rvwSelectAll" checked> Select all</label>
+          <span class="rvw-count" id="rvwCount"></span>
+          <span class="rvw-cap" id="rvwCap"></span>
+          <label class="rvw-toggle" title="When on, your Telegram batch gets an ‘Approve all’ button (off by default)">
+            <input type="checkbox" id="rvwApproveAll"> One-tap approve-all in Telegram
+          </label>
+        </div>
+
+        <div class="rvw-msg" id="rvwMsg" hidden></div>
+        <div class="rvw-list" id="rvwList"><!-- items injected --></div>
+        <div class="empty" id="rvwEmpty" hidden>Nothing waiting for review. Tailor a resume to a job and it lands here to approve.</div>
+      </section>
+
+      <!-- ============ AUTO-APPLY (Pro) ============ -->
+      <section class="view view-autoapply" id="view-autoapply">
+        <header class="page-head">
+          <div>
+            <h1 class="page-title">Auto-apply</h1>
+            <p class="page-sub">SponsorJobs builds your top fresh roles from your saved profile. You approve, then it applies where the site allows it.</p>
+          </div>
+          <span class="aa-badge">Pro</span>
+        </header>
+
+        <div class="aa-grid">
+          <div class="aa-card">
+            <div class="aa-card-h">Targets for today</div>
+            <p class="aa-p">Tell SponsorJobs what to focus on, then pick how many to tailor now. Each becomes a ready package in <b>Review &amp; submit</b>. Leave the focus blank for your freshest best-fit roles.</p>
+            <div class="aa-focus">
+              <input class="fld" id="aaFocus" type="text" placeholder="Roles to focus on, e.g. backend, data (optional)">
+              <input class="fld" id="aaLocation" type="text" placeholder="Location, e.g. New York or Remote (optional)">
+              <label class="aa-sponly"><input type="checkbox" id="aaSponsorOnly"> Only roles from employers with a visa-sponsorship record</label>
+            </div>
+            <div class="aa-run">
+              <label class="aa-count">Tailor
+                <select class="fld" id="aaCount"><option>3</option><option>5</option><option>8</option><option>10</option></select>
+                roles now
+              </label>
+              <button class="btn btn-primary" id="aaRun" type="button">Tailor &amp; queue →</button>
+            </div>
+            <div class="aa-msg" id="aaMsg" hidden></div>
+            <div class="aa-results" id="aaResults"></div>
+          </div>
+
+          <div class="aa-card">
+            <div class="aa-card-h">How it applies</div>
+            <ul class="aa-policy">
+              <li><span class="aa-dot go"></span><b>Auto-submit</b> only where the site has a verified, keyless application API (today: Recruitee). Honest identity, respects the site's limits.</li>
+              <li><span class="aa-dot warn"></span><b>Assisted everywhere else</b>, including LinkedIn, we prepare the package, you click Apply on the site. We never evade a site's rules.</li>
+            </ul>
+            <label class="aa-toggle">
+              <input type="checkbox" id="aaAutonomous" />
+              <span><b>Autonomous submit</b>, let SponsorJobs submit the verified-portal ones without a click. <span class="aa-off">Off by default.</span></span>
+            </label>
+            <p class="aa-reach" id="aaReach" hidden><!-- how many roles this can really submit --></p>
+            <div class="aa-cap" id="aaCap"></div>
+            <div class="aa-tg" id="aaTg"></div>
+            <button class="link-btn" data-nav-to="review" type="button">Go to Review &amp; submit →</button>
+          </div>
+        </div>
+
+        <!-- The apply TO-DO: built + reviewed applications still waiting for your on-site
+             submit, so nothing falls through the cracks (find -> tailor -> fill -> submit). -->
+        <div class="aa-ready" id="aaReadyCard" hidden>
+          <div class="aa-card-h">Ready to apply <span class="aa-ready-count" id="aaReadyCount"></span></div>
+          <p class="aa-p">Applications SponsorJobs built and you reviewed, still waiting for your submit. Open each one, the extension fills it, you click Apply on the site, then mark it done here.</p>
+          <div class="aa-ready-list" id="aaReadyList"></div>
+        </div>
+      </section>
+
+      <!-- ============ PROJECTS (build it, prove you can defend it, then add to CV) ============
+           The honesty keystone: a project can't reach the CV until you pass a defense test
+           showing you genuinely understand what you built. -->
+      <section class="view view-projects" id="view-projects">
+        <header class="page-head">
+          <div>
+            <h1 class="page-title" data-i18n="projects.title">Projects</h1>
+            <p class="page-sub" data-i18n="projects.sub">Add a project, prove you can defend it, then it's ready for your resume.</p>
+          </div>
+          <div class="page-head-actions">
+            <button class="btn btn-ghost" id="projSuggestBtn" type="button">
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.8a4.2 4.2 0 0 0-2.5 7.6c.5.4.8.9.8 1.5v.3h3.4v-.3c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8Z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/><path d="M6.6 13.6h2.8M7 15h2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+              Suggest a project
+            </button>
+            <button class="btn btn-primary" id="projNew" type="button">
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+              New project
+            </button>
+          </div>
+        </header>
+
+        <form class="proj-new" id="projForm" hidden>
+          <input class="fld" id="projTitle" type="text" placeholder="Project title, e.g. Credit-risk scoring model" autocomplete="off">
+          <textarea class="fld" id="projSummary" rows="3" placeholder="What does it do, and how did you build it? The more real detail, the sharper the defense test."></textarea>
+          <input class="fld" id="projTech" type="text" placeholder="Tech and tools, e.g. Python, scikit-learn, FastAPI" autocomplete="off">
+          <div class="proj-form-foot">
+            <button class="btn btn-primary btn-sm" id="projSave" type="submit">Add project</button>
+            <button class="btn btn-ghost btn-sm" id="projCancel" type="button">Cancel</button>
+          </div>
+          <p class="proj-msg" id="projMsg" hidden></p>
+        </form>
+
+        <!-- Suggest-a-project: turn the gap between the saved profile and a target role into
+             concrete, buildable ideas. Picking one prefills a draft that still faces the gate. -->
+        <form class="proj-suggest" id="projSuggestForm" hidden>
+          <p class="proj-suggest-lead">Not sure what to build? Name the role you're aiming for, or paste a job description, and I'll suggest projects that close the gap, grounded in your saved profile.</p>
+          <textarea class="fld" id="projTarget" rows="2" placeholder="Target role or pasted job description, e.g. Data Analyst at a fintech, needs SQL and dashboards"></textarea>
+          <div class="proj-form-foot">
+            <button class="btn btn-primary btn-sm" id="projSuggestGo" type="submit">Suggest projects</button>
+            <button class="btn btn-ghost btn-sm" id="projSuggestCancel" type="button">Cancel</button>
+          </div>
+          <p class="proj-msg" id="projSuggestMsg" hidden></p>
+          <div id="projSuggestList"><!-- suggestion cards injected --></div>
+        </form>
+
+        <div id="projList"><!-- project cards injected --></div>
+
+        <!-- Defense flow: the gate. Shown when you click "Prove you understand it". -->
+        <div class="proj-test" id="projTest" hidden>
+          <button class="btn btn-ghost btn-sm btn-back" id="projTestBack" type="button">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Back
+          </button>
+          <h2 class="proj-test-h" id="projTestTitle">Prove you understand it</h2>
+          <p class="proj-test-sub">Answer as you would in an interview. Passing this is what makes the project ready for your resume, no shortcut.</p>
+          <div id="projQuestions"><!-- questions injected --></div>
+          <div class="proj-test-foot">
+            <button class="btn btn-primary" id="projSubmit" type="button">Submit for review</button>
+          </div>
+          <div class="proj-result" id="projResult" hidden></div>
+        </div>
+
+        <!-- Guided build-and-teach loop: an ordered plan that teaches as you build, with a
+             per-step coach. Shown when you click "Build guide". Leads into the defend gate. -->
+        <div class="proj-build" id="projBuild" hidden>
+          <button class="btn btn-ghost btn-sm btn-back" id="projBuildBack" type="button">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Back
+          </button>
+          <h2 class="proj-test-h" id="projBuildTitle">Build it, step by step</h2>
+          <p class="proj-test-sub">A plan that teaches as you go. Build each step yourself and learn why it works, so when you defend it later, the understanding is genuinely yours.</p>
+          <div id="projPlan"><!-- milestones injected --></div>
+          <div class="proj-build-foot" id="projBuildFoot" hidden>
+            <button class="btn btn-primary" id="projBuildDefend" type="button">I've built it, prove I understand it</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Interview prep: practice BEFORE a landed interview, grounded in real experience.
+           Mock questions + coaching on the person's OWN answers. Never a live copilot. -->
+      <section class="view view-prep" id="view-prep">
+        <header class="page-head">
+          <div>
+            <h1 class="page-title" data-i18n="prep.title">Interview prep</h1>
+            <p class="page-sub" data-i18n="prep.sub">Practice for a real interview, built from the job you applied to.</p>
+          </div>
+        </header>
+
+        <!-- Guided-flow progress: shown only during a Full mock (Round 1, then Round 2). -->
+        <div class="prep-progress" id="prepProgress" hidden>
+          <span class="prep-progress-step" data-step="1"><span class="prep-progress-n">1</span> <span data-i18n="prep.round1">Round 1</span></span>
+          <span class="prep-progress-arrow">&rarr;</span>
+          <span class="prep-progress-step" data-step="2"><span class="prep-progress-n">2</span> <span data-i18n="prep.round2">Round 2</span></span>
+        </div>
+
+        <!-- Entry, two steps. Step 1 is the prep form (role, JD, optional resume); step 2 reveals the
+             two paths once the role is known. Wrapped in #prepList so the round show/hide toggles work. -->
+        <div id="prepList">
+        <div id="prepStep1">
+          <div class="prep-ctx" id="prepCtx"></div>
+          <div class="prep-open" id="prepOpen" hidden><!-- the role, JD and resume inputs are injected --></div>
+          <div class="prep-step1-acts">
+            <button class="btn btn-primary" id="prepContinue" type="button">Continue &rarr;</button>
+            <span class="prep-step1-msg" id="prepStep1Msg" hidden></span>
+          </div>
+        </div>
+
+        <!-- Step 2: which path, revealed after the role is chosen. A context line confirms the role. -->
+        <div id="prepStep2" hidden>
+          <div class="prep-chosen" id="prepChosen"><!-- "Interviewing for X" injected --></div>
+
+          <!-- Two entry paths. Full mock (recommended): Round 1, then Round 2, a pass unlocking the
+               live round. The tiles below run either round on its own. -->
+          <button class="prep-guided" id="prepFullMock" type="button">
+            <span class="prep-guided-main">
+              <span class="prep-guided-badge" data-i18n="prep.recommended">Recommended</span>
+              <span class="prep-guided-t" data-i18n="prep.fullMock">Full mock interview</span>
+              <span class="prep-guided-d" data-i18n="prep.fullMockD">Round 1, then Round 2. Pass the recorded round to unlock the live one.</span>
+            </span>
+            <span class="prep-guided-go">Start &rarr;</span>
+          </button>
+
+          <div class="prep-tiles-lab" data-i18n="prep.orOne">Or run one round</div>
+          <div class="prep-tiles" id="prepTiles">
+            <button class="prep-tile" id="tileRound1" type="button">
+              <span class="prep-tile-top"><span class="prep-tile-idx">01</span><span class="prep-tile-status" data-i18n="prep.tile1Status">Round 1 only</span></span>
+              <span class="prep-tile-d" data-i18n="prep.tile1D">Five timed questions on camera, recorded and scored.</span>
+              <span class="prep-tile-foot"><span class="prep-tile-name" data-i18n="prep.tile1Name">Recorded interview</span><span class="prep-tile-cta">Start &rarr;</span></span>
+            </button>
+            <button class="prep-tile" id="tileRound2" type="button">
+              <span class="prep-tile-top"><span class="prep-tile-idx">02</span><span class="prep-tile-status is-live"><span class="prep-tile-dot"></span><span data-i18n="prep.tile2Status">Round 2 only</span></span></span>
+              <span class="prep-tile-d" data-i18n="prep.tile2D">Fifteen minutes with a live interviewer.</span>
+              <span class="prep-tile-note" id="tileRound2Note" hidden></span>
+              <span class="prep-tile-foot"><span class="prep-tile-name" data-i18n="prep.tile2Name">Live interview</span><span class="prep-tile-cta">Start &rarr;</span></span>
+            </button>
+          </div>
+          <p class="prep-tiles-msg" id="prepTilesMsg" hidden></p>
+        </div>
+
+        <!-- STAR story bank: build a few strong interview stories once, from your REAL experience,
+             then deploy the right one for any behavioral question. "Suggest from my experience"
+             drafts candidates from your profile so you never face a blank page; nothing is invented. -->
+        <section class="story-bank" id="storyBank">
+          <div class="sb-head">
+            <div>
+              <h2 class="sb-title">Your STAR story bank</h2>
+              <p class="sb-sub">Build a few strong stories once, in Situation, Task, Action, Result form, then reuse them for any behavioral question. All from your real experience.</p>
+            </div>
+            <div class="sb-acts">
+              <button class="btn btn-ghost btn-sm" id="storySuggestBtn" type="button">Suggest from my experience</button>
+              <button class="btn btn-primary btn-sm" id="storyAddBtn" type="button">Add a story</button>
+            </div>
+          </div>
+
+          <div class="sb-suggest" id="storySuggestions" hidden></div>
+
+          <form class="story-form" id="storyForm" hidden>
+            <div class="sf-rough">
+              <textarea class="fld" id="storyRough" rows="2" placeholder="Optional: paste a few rough sentences about a real experience, and I'll shape them into STAR."></textarea>
+              <button class="btn btn-ghost btn-sm" id="storyStructure" type="button">Structure into STAR</button>
+            </div>
+            <input class="fld" id="storyTitle" placeholder="Short title (e.g. Payments migration)" />
+            <textarea class="fld" id="storyS" rows="2" placeholder="Situation, the context and challenge"></textarea>
+            <textarea class="fld" id="storyT" rows="2" placeholder="Task, what you were responsible for"></textarea>
+            <textarea class="fld" id="storyA" rows="2" placeholder="Action, what YOU specifically did"></textarea>
+            <textarea class="fld" id="storyR" rows="2" placeholder="Result, the outcome (with a number if you have one)"></textarea>
+            <input class="fld" id="storyComp" placeholder="Competencies, comma-separated (e.g. Ownership, Problem solving)" />
+            <div class="sf-acts">
+              <button class="btn btn-primary btn-sm" type="submit">Save story</button>
+              <button class="btn btn-ghost btn-sm" id="storyCancel" type="button">Cancel</button>
+              <span class="proj-msg" id="storyMsg" hidden></span>
+            </div>
+          </form>
+
+          <div class="story-list" id="storyList"></div>
+        </section>
+        </div><!-- /#prepList entry wrapper -->
+
+        <!-- Round 1: a HireVue-style one-way recorded interview. Landing, notice, device check,
+             practice, the questions, "All done", the report. Recordings never leave this machine. -->
+        <div class="prep-screen" id="prepScreen" hidden>
+          <div class="mock-top">
+            <button class="btn btn-ghost btn-sm" id="scrQuit" type="button">Quit</button>
+            <span class="mock-count" id="scrCount"></span>
+            <span class="mock-timer" id="scrTimer" hidden></span>
+          </div>
+          <div class="scr-stage" id="scrStage"><!-- consent / question / report injected --></div>
+        </div>
+
+        <!-- Round 2: one live interview with the Tavus interviewer, in the app's video pane.
+             Needs the person's own Tavus key (Settings). A practice simulation, not real. -->
+        <div class="prep-live" id="prepLive" hidden>
+          <div class="mock-top">
+            <button class="btn btn-ghost btn-sm" id="liveQuit" type="button">Quit</button>
+            <span class="mock-count" id="liveCount"></span>
+            <span class="mock-timer" id="liveTier" hidden></span>
+          </div>
+          <div class="live-stage" id="liveStage"><!-- consent / round / report injected --></div>
+        </div>
+      </section>
+
+      <div class="privacy-line" title="Everything runs on this machine">
+        <span class="dot"></span> Local. Your data stays on this machine.
+      </div>
+    </main>
+  </div>
+
+  <!-- SponsorJobs is unavailable. It is an ONLINE, real-model tool: with no connection, no key
+       or no credit it cannot write anything, so it stops and says exactly which of those it
+       is, with the one action that fixes it. Never a half-working app. -->
+  <div class="down" id="downModal" hidden>
+    <div class="down-card" role="alertdialog" aria-modal="true" aria-labelledby="downH">
+      <div class="down-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8.4 14.4a4 4 0 0 1 7.2 0" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M8.6 9.4h.02M15.4 9.4h.02" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </div>
+      <h2 class="down-h" id="downH">SponsorJobs is asleep</h2>
+      <p class="down-p" id="downP"></p>
+      <div class="down-actions">
+        <button class="btn btn-ghost" id="downRetry" type="button">Try again</button>
+        <a class="btn btn-primary" id="downFix" href="#" target="_blank" rel="noopener" hidden>Fix it</a>
+        <button class="btn btn-primary" id="downFixBtn" type="button" hidden>Fix it</button>
+      </div>
+      <button class="down-x" id="downClose" type="button" aria-label="Dismiss">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Account menu: the small popover the sidebar-foot identity opens. Deliberately
+       short, only what this app genuinely has (no sign-in, no billing, no logout). -->
+  <div class="acct-menu" id="acctMenu" role="menu" hidden>
+    <div class="acct-menu-head">
+      <div class="acct-menu-name" id="acctMenuName" data-i18n="acct.profileName">Your profile</div>
+      <div class="acct-menu-sub" data-i18n="acct.profileSub">Stored on this computer</div>
+    </div>
+    <button class="acct-menu-item" id="menuSettings" role="menuitem" type="button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M13.2 9.6a1 1 0 0 0 .2 1.1l.1.1a1.2 1.2 0 1 1-1.7 1.7l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9v.1a1.2 1.2 0 0 1-2.4 0v-.1a1 1 0 0 0-.7-.9 1 1 0 0 0-1.1.2l-.1.1a1.2 1.2 0 1 1-1.7-1.7l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6h-.1a1.2 1.2 0 0 1 0-2.4h.1a1 1 0 0 0 .9-.7 1 1 0 0 0-.2-1.1l-.1-.1a1.2 1.2 0 1 1 1.7-1.7l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .6-.9v-.1a1.2 1.2 0 0 1 2.4 0v.1a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1.2 1.2 0 1 1 1.7 1.7l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.6h.1a1.2 1.2 0 0 1 0 2.4h-.1a1 1 0 0 0-.9.6z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>
+      <span data-i18n="acct.settings">Settings</span>
+    </button>
+    <button class="acct-menu-item" id="menuLanguage" role="menuitem" type="button" aria-haspopup="menu">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2 8h12M8 2c1.8 1.6 2.8 3.8 2.8 6S9.8 12.4 8 14C6.2 12.4 5.2 10.2 5.2 8S6.2 3.6 8 2z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+      <span data-i18n="acct.language">Language</span>
+      <svg class="acct-item-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 4.5L10 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="acct-menu-item" id="menuProfile" role="menuitem" type="button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3 13.5c0-2.5 2.2-4 5-4s5 1.5 5 4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      <span data-i18n="acct.myProfile">My profile</span>
+    </button>
+    <div class="acct-menu-sep"></div>
+    <button class="acct-menu-item" id="menuUpgrade" role="menuitem" type="button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 11V5.4M5.6 7.4L8 5l2.4 2.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span data-i18n="acct.passes">Get a pass</span>
+    </button>
+    <!-- Opens the connect-AI picker (Claude or OpenAI), not a hardcoded Anthropic link, so
+         the choice of provider is respected and the "get your key" step links to the right console. -->
+    <button class="acct-menu-item" id="menuGetKey" role="menuitem" type="button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M7.9 8.1L13 3m-2 0h2v2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span data-i18n="acct.getKey">Get an API key</span>
+    </button>
+    <div class="acct-menu-sep"></div>
+    <!-- "Lock" not "Log out": this app has no account to sign out of. Locking drops the key
+         from memory and re-gates the app. If no passcode is set yet, it opens Settings to set one. -->
+    <button class="acct-menu-item" id="menuLock" role="menuitem" type="button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 7V5.4a2.5 2.5 0 0 1 5 0V7" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+      <span id="menuLockLabel">Lock</span>
+    </button>
+  </div>
+
+  <!-- App Lock screen: shown over everything when a passcode is set and the app is locked.
+       The engine also refuses data routes while locked, so this is a real gate, not decoration. -->
+  <div class="lockscreen" id="lockScreen" hidden>
+    <div class="lockscreen-card">
+      <div class="lockscreen-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+      </div>
+      <h1 class="lockscreen-h">SponsorJobs is locked</h1>
+      <p class="lockscreen-p">Enter your passcode to unlock.</p>
+      <form id="lockForm" autocomplete="off">
+        <input class="fld lockscreen-input" id="lockInput" type="password" inputmode="numeric" autocomplete="off" placeholder="Passcode" aria-label="Passcode" />
+        <button class="btn btn-primary lockscreen-btn" id="lockUnlock" type="submit">Unlock</button>
+      </form>
+      <p class="lockscreen-err" id="lockErr" hidden></p>
+    </div>
+  </div>
+
+  <!-- Upgrade: the passes (owner decision 2026-10-02). One payment each, NOTHING auto-renews; when
+       a pass ends the account is simply Free again. Free stays: job board, visa badges, the recorded
+       interview, 3 tailored packages a month, unlimited on your own AI key. Extra live interviews
+       are sold only while a pass is active. Prices here are display copy and must match Stripe. -->
+  <div class="upg" id="upgModal" hidden>
+    <div class="upg-card" role="dialog" aria-modal="true" aria-labelledby="upgH">
+      <button class="upg-x" id="upgClose" type="button" aria-label="Close">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+      <header class="upg-head">
+        <h2 class="upg-h" id="upgH" data-i18n="upg.title">Passes</h2>
+        <p class="upg-sub" data-i18n="upg.sub">Pay once. Nothing renews.</p>
+        <p class="upg-sub upg-current" id="upgCurrent" hidden></p>
+      </header>
+      <div class="upg-plans">
+        <section class="upg-plan">
+          <div class="upg-plan-hd">
+            <span class="upg-plan-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M14 3v4h4M10 12h6M10 16h4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
+            <div class="upg-plan-name" data-i18n="upg.pass30Name">Job Hunt Pass</div>
+            <div class="upg-plan-price"><span class="upg-price-amt" id="upgPrice_pass30">$29</span><span class="upg-price-unit" data-i18n="upg.for30">for 30 days</span></div>
+            <div class="upg-price-note" data-i18n="upg.noRenew">One payment, no auto-renew</div>
+            <button class="upg-cta is-get" data-pass="pass30" type="button" data-i18n="upg.get">Get the pass</button>
+          </div>
+          <ul class="upg-feats">
+            <li data-i18n="upg.pass30Interviews">3 live interviews</li>
+            <li data-i18n="upg.pass30Packages">60 tailored packages</li>
+            <li data-i18n="upg.betterModel">Tailoring on our best AI model</li>
+          </ul>
+        </section>
+        <section class="upg-plan is-pro">
+          <div class="upg-plan-hd">
+            <span class="upg-plan-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 4.8L18.7 9l-4.8 1.9L12 15l-1.9-4.1L5.3 9l4.8-1.2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M18 14.5l.7 1.9 1.8.7-1.8.7-.7 2-.7-2-1.8-.7 1.8-.7z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></span>
+            <div class="upg-plan-name" data-i18n="upg.pass90Name">Season Pass</div>
+            <div class="upg-plan-price"><span class="upg-price-amt" id="upgPrice_pass90">$69</span><span class="upg-price-unit" data-i18n="upg.for90">for 90 days</span></div>
+            <div class="upg-price-note" data-i18n="upg.noRenew">One payment, no auto-renew</div>
+            <button class="upg-cta is-get" data-pass="pass90" type="button" data-i18n="upg.get">Get the pass</button>
+          </div>
+          <ul class="upg-feats">
+            <li data-i18n="upg.pass90Interviews">9 live interviews</li>
+            <li data-i18n="upg.pass90Packages">150 tailored packages</li>
+            <li data-i18n="upg.betterModel">Tailoring on our best AI model</li>
+          </ul>
+        </section>
+      </div>
+      <!-- Extra live interviews: shown only while a pass is active (they are not sold otherwise). -->
+      <div class="upg-usage" id="upgPacks" hidden>
+        <p class="upg-usage-p" data-i18n="upg.packsH">Need more live interviews? They never expire.</p>
+        <div class="upg-usage-acts" id="upgPackBtns"></div>
+      </div>
+      <p class="upg-free" data-i18n="upg.free">Free keeps the job board, visa badges, the recorded interview and 3 tailored packages a month. Unlimited with your own AI key.</p>
+      <div class="upg-usage">
+        <!-- Create-account step at checkout (try-first): revealed when the install's account has no
+             email yet, so a paid plan follows the person to a new device. -->
+        <form class="upg-account" id="upgAccount" style="display:grid; gap:8px; margin-bottom:14px;" hidden>
+          <div class="upg-account-h" id="upgAccountH">Create your account to get your pass</div>
+          <button class="btn btn-ghost" id="upgGoogle" type="button" style="justify-content:center;">Continue with Google</button>
+          <div class="upg-account-or" style="text-align:center; opacity:.55; font-size:.82em; margin:2px 0;">or with email</div>
+          <input class="fld" id="upgEmail" type="email" placeholder="Email" autocomplete="email" required />
+          <input class="fld" id="upgPassword" type="password" placeholder="Password (8+ characters)" autocomplete="new-password" minlength="8" required />
+          <p class="upg-account-msg" id="upgAccountMsg" hidden></p>
+          <button class="btn btn-primary" id="upgAccountGo" type="submit">Create account &amp; continue</button>
+          <button class="btn btn-ghost btn-sm" id="upgAccountToggle" type="button">Already have an account? Log in</button>
+        </form>
+        <p class="upg-usage-p" id="upgMsg" data-i18n="upg.msg">Your pass starts when the payment goes through. It ends on its own, there is nothing to cancel.</p>
+        <div class="upg-usage-acts">
+          <!-- Power users can still run on their own API key instead of the managed plan. -->
+          <button class="btn btn-ghost btn-sm" id="upgOwnKey" type="button" data-i18n="upg.ownKey">Use your own AI key</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Language picker popover, opened from the account menu's "Language" item. -->
+  <div class="acct-menu lang-menu" id="langMenu" role="menu" hidden>
+    <div class="acct-menu-head"><div class="acct-menu-name" data-i18n="lang.title">Language</div></div>
+    <div id="langList"><!-- language options injected --></div>
+  </div>
+
+  <!-- Settings. The rail is short ON PURPOSE: too many categories force a choice
+       users can't make (overlapping meanings). These are the only things SponsorJobs
+       actually has to configure. -->
+  <div class="set" id="setModal" hidden>
+    <div class="set-card" role="dialog" aria-modal="true" aria-label="Settings">
+      <nav class="set-rail" aria-label="Settings sections">
+        <div class="set-rail-h" data-i18n="settings.title">Settings</div>
+        <button class="set-tab is-on" data-set="general" type="button" data-i18n="settings.appearance">Appearance</button>
+        <button class="set-tab" data-set="ai" type="button" data-i18n="settings.aiKey">AI key</button>
+        <button class="set-tab" data-set="lock" type="button" data-i18n="settings.appLock">App lock</button>
+        <button class="set-tab" data-set="connections" type="button" data-i18n="settings.connections">Connections</button>
+        <button class="set-tab" data-set="notify" type="button" data-i18n="notify.title">Notifications</button>
+        <button class="set-tab" data-set="applying" type="button" data-i18n="settings.applying">Applying</button>
+        <button class="set-tab" data-set="data" type="button" data-i18n="settings.dataPrivacy">Data &amp; privacy</button>
+      </nav>
+      <div class="set-body">
+        <button class="set-x" id="setClose" type="button" aria-label="Close settings">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+
+        <section class="set-pane is-on" data-pane="general">
+          <h2 class="set-h" data-i18n="settings.appearance">Appearance</h2>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="settings.theme">Theme</div>
+              <div class="set-row-d" data-i18n="settings.themeDesc">System follows your computer's setting.</div>
+            </div>
+            <div class="seg">
+              <button class="seg-b" data-theme-opt="system" type="button" data-i18n="settings.system">System</button>
+              <button class="seg-b" data-theme-opt="light" type="button" data-i18n="settings.light">Light</button>
+              <button class="seg-b" data-theme-opt="dark" type="button" data-i18n="settings.dark">Dark</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="set-pane" data-pane="ai">
+          <h2 class="set-h">AI key</h2>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n" id="setKeyLabel">Anthropic API key</div>
+              <div class="set-row-d" id="setKeyState">Not connected. SponsorJobs needs your key to write anything.</div>
+            </div>
+            <button class="btn btn-ghost" id="setKeyBtn" type="button">Manage key</button>
+          </div>
+          <p class="set-note">Your key is stored on this machine only, in a git-ignored file. You pay
+            Anthropic directly for what you use, SponsorJobs never proxies it.</p>
+
+          <!-- Round 2 of interview prep talks to a live interviewer on Tavus, on the person's OWN key.
+               Status comes from /api/interview/round2/status; save and revoke go to /api/avatar/settings. -->
+          <h2 class="set-h set-h-sub" data-i18n="tavus.h">Live interviewer (Tavus)</h2>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n"><span data-i18n="tavus.n">Tavus key</span> <span class="conn-status" id="tvStatus"></span></div>
+              <div class="set-row-d" id="tvState">Round 2 talks to a live interviewer on Tavus. It needs your own key.</div>
+            </div>
+            <button class="btn btn-ghost" id="tvToggle" type="button">Add key</button>
+          </div>
+          <form class="conn-form" id="tvForm" hidden>
+            <input class="fld" id="tvKey" type="password" placeholder="Tavus API key" data-i18n-ph="tavus.keyPh" autocomplete="off" spellcheck="false">
+            <div class="conn-form-foot">
+              <button class="btn btn-primary btn-sm" id="tvSave" type="submit" data-i18n="tavus.save">Save</button>
+              <button class="btn btn-danger-ghost btn-sm" id="tvRevoke" type="button" data-i18n="tavus.revoke" hidden>Remove key</button>
+              <button class="btn btn-ghost btn-sm" id="tvCancel" type="button" data-i18n="tavus.cancel">Cancel</button>
+            </div>
+            <p class="conn-msg" id="tvMsg" hidden></p>
+            <p class="conn-hint"><span data-i18n="tavus.hint">Get a free key at platform.tavus.io: 25 minutes a month, no card. The key stays on this computer.</span>
+              <a href="https://platform.tavus.io" target="_blank" rel="noopener">platform.tavus.io</a></p>
+          </form>
+        </section>
+
+        <section class="set-pane" data-pane="lock">
+          <h2 class="set-h">App lock</h2>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n">Passcode</div>
+              <div class="set-row-d" id="setLockState">Off. Anyone who opens SponsorJobs on this computer can use it and see your data.</div>
+            </div>
+            <button class="btn btn-primary" id="setLockBtn" type="button">Set passcode</button>
+          </div>
+          <!-- Inline form, shown when you click the button. Adapts to whether a passcode is set. -->
+          <form class="lock-form" id="setLockForm" hidden>
+            <input class="fld" id="lockCurrent" type="password" autocomplete="off" placeholder="Current passcode" aria-label="Current passcode" hidden>
+            <input class="fld" id="lockNew" type="password" autocomplete="new-password" placeholder="New passcode (at least 4)" aria-label="New passcode">
+            <input class="fld" id="lockConfirm" type="password" autocomplete="new-password" placeholder="Confirm passcode" aria-label="Confirm passcode">
+            <div class="lock-form-foot">
+              <button class="btn btn-primary btn-sm" id="lockSave" type="submit">Turn on</button>
+              <button class="btn btn-danger-ghost btn-sm" id="lockRemove" type="button" hidden>Turn off</button>
+              <button class="btn btn-ghost btn-sm" id="lockCancel" type="button">Cancel</button>
+            </div>
+            <!-- The irreversibility caveat lives HERE, at the moment you set the secret (where
+                 password managers / BitLocker surface it), not as always-on description text. -->
+            <p class="lock-form-hint">Forget the passcode and you re-enter your AI key to reset it. Your resumes and profile aren't lost.</p>
+            <p class="lock-form-msg" id="lockMsg" hidden></p>
+          </form>
+          <p class="set-note lock-note">Locks SponsorJobs and encrypts your saved AI key, so a passerby can't use it or open your resumes and profile through the app.</p>
+          <details class="set-more">
+            <summary>Learn more</summary>
+            <p>This protects access through the app. It does not encrypt the files on disk. For that, use a separate Windows account or full-disk encryption.</p>
+          </details>
+        </section>
+
+        <section class="set-pane" data-pane="connections">
+          <h2 class="set-h">Connections</h2>
+          <p class="set-note conn-intro">Connect the services SponsorJobs uses on your behalf. Each stays on this machine, using your own accounts.</p>
+
+          <!-- Browser extension: status + how to load. -->
+          <div class="conn-row">
+            <div class="conn-hd">
+              <div class="conn-name">Browser extension <span class="conn-status" id="extStatus"></span></div>
+              <div class="conn-desc">Assisted apply on sites like LinkedIn: SponsorJobs fills the form, you click submit.</div>
+            </div>
+            <button class="btn btn-ghost" id="extHelp" type="button">How to load</button>
+          </div>
+          <p class="conn-detail" id="extDetail" hidden></p>
+
+          <!-- Gmail: status now; full in-app OAuth connect is a follow-up. -->
+          <div class="conn-row">
+            <div class="conn-hd">
+              <div class="conn-name">Gmail <span class="conn-status" id="gmStatus"></span></div>
+              <div class="conn-desc">Complete application email verifications and surface recruiter replies. Read-first, on your consent.</div>
+            </div>
+            <button class="btn btn-ghost" id="gmHelp" type="button">Set up</button>
+          </div>
+          <p class="conn-detail" id="gmDetail" hidden></p>
+
+          <!-- GitHub: connect the person's own account so they can publish a verified project. -->
+          <div class="conn-row">
+            <div class="conn-hd">
+              <div class="conn-name">GitHub <span class="conn-status" id="ghStatus"></span></div>
+              <div class="conn-desc">Publish a project you've defended straight to your own GitHub, then link it on your resume.</div>
+            </div>
+            <button class="btn btn-ghost" id="ghToggle" type="button">Connect</button>
+          </div>
+          <form class="conn-form" id="ghForm" hidden>
+            <input class="fld" id="ghToken" type="password" placeholder="Personal access token with 'repo' scope" autocomplete="off" spellcheck="false">
+            <div class="conn-form-foot">
+              <button class="btn btn-primary btn-sm" id="ghSave" type="submit">Verify and connect</button>
+              <button class="btn btn-danger-ghost btn-sm" id="ghDisconnect" type="button" hidden>Disconnect</button>
+              <button class="btn btn-ghost btn-sm" id="ghCancel" type="button">Cancel</button>
+            </div>
+            <p class="conn-msg" id="ghMsg" hidden></p>
+            <p class="conn-hint">Create a token at github.com, Settings, Developer settings, Personal access tokens, with the 'repo' scope. It stays in your local config.</p>
+          </form>
+        </section>
+
+        <section class="set-pane" data-pane="notify">
+          <h2 class="set-h" data-i18n="notify.title">Notifications</h2>
+
+          <!-- Telegram: the official SponsorJobs bot (one tap) or, when it isn't available, the
+               person's own bot in three steps. Buttons in Telegram act while the app runs. -->
+          <div class="conn-row nt-first">
+            <div class="conn-hd">
+              <div class="conn-name">Telegram <span class="conn-status" id="ntStatus"></span></div>
+              <div class="conn-desc" data-i18n="notify.tgDesc">New job matches and what I did while you were away, with buttons to answer.</div>
+              <div class="conn-desc" id="ntPaused" hidden data-i18n="notify.paused">Paused, send /resume in Telegram</div>
+            </div>
+            <button class="btn btn-ghost" id="ntConnect" type="button" data-i18n="notify.connect">Connect Telegram</button>
+          </div>
+          <div class="nt-link" id="ntLink" hidden>
+            <div class="nt-qr" id="ntQr" aria-hidden="true"></div>
+            <div class="nt-link-t">
+              <p class="set-row-d" data-i18n="notify.scan">Scan with your phone, or open the link, then tap Start.</p>
+              <a class="btn btn-primary btn-sm" id="ntOpen" href="#" target="_blank" rel="noopener" data-i18n="notify.open">Open Telegram</a>
+              <p class="conn-hint" id="ntWait" data-i18n="notify.waiting">Waiting for Telegram&hellip;</p>
+            </div>
+          </div>
+          <form class="conn-form" id="tgForm" hidden>
+            <ol class="nt-steps">
+              <li data-i18n="notify.step1">In Telegram, message @BotFather, send /newbot and copy the token.</li>
+              <li data-i18n="notify.step2">Send your new bot any message, then get your chat ID from @userinfobot.</li>
+              <li data-i18n="notify.step3">Paste both here.</li>
+            </ol>
+            <input class="fld" id="tgToken" type="password" placeholder="Bot token" data-i18n-ph="notify.token" autocomplete="off" spellcheck="false">
+            <input class="fld" id="tgChat" type="text" placeholder="Your chat ID" data-i18n-ph="notify.chat" autocomplete="off" spellcheck="false">
+            <div class="conn-form-foot">
+              <button class="btn btn-primary btn-sm" id="tgSave" type="submit" data-i18n="notify.verify">Verify and connect</button>
+              <button class="btn btn-ghost btn-sm" id="tgCancel" type="button" data-i18n="notify.cancel">Cancel</button>
+            </div>
+            <p class="conn-msg" id="tgMsg" hidden></p>
+          </form>
+
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="notify.jobs">New job matches</div>
+              <div class="set-row-d" data-i18n="notify.jobsDesc">Strong fits for your profile from sponsoring employers.</div>
+            </div>
+            <label class="sw"><input type="checkbox" id="ntJobs"><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="notify.updates">Application updates</div>
+              <div class="set-row-d" data-i18n="notify.updatesDesc">A summary of what I tailored and submitted while you were away.</div>
+            </div>
+            <label class="sw"><input type="checkbox" id="ntUpdates"><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="notify.contact">Show my contact details in Telegram previews</div>
+              <div class="set-row-d" data-i18n="notify.contactDesc">Off: the picture of your CV in Telegram hides your address, phone and email behind a bar. Telegram keeps bot chats on its servers.</div>
+            </div>
+            <label class="sw"><input type="checkbox" id="ntContact"><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="notify.cap">Job alerts a day</div>
+            </div>
+            <div class="seg" id="ntCap">
+              <button class="seg-b" data-cap="1" type="button">1</button>
+              <button class="seg-b" data-cap="3" type="button">3</button>
+              <button class="seg-b" data-cap="5" type="button">5</button>
+            </div>
+          </div>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n" data-i18n="notify.quiet">Quiet hours</div>
+              <div class="set-row-d" data-i18n="notify.quietDesc">Alerts wait until morning.</div>
+            </div>
+            <div class="nt-quiet">
+              <select class="set-num" id="ntQuietStart" aria-label="Quiet hours start"></select>
+              <span class="nt-to" data-i18n="notify.to">to</span>
+              <select class="set-num" id="ntQuietEnd" aria-label="Quiet hours end"></select>
+            </div>
+          </div>
+          <p class="set-note" data-i18n="notify.note">Buttons work while SponsorJobs is open on this computer. Anything you tap while it's closed is done when you open it again.</p>
+          <button class="btn btn-danger-ghost btn-sm nt-disc" id="ntDisconnect" type="button" hidden data-i18n="notify.disconnect">Disconnect</button>
+        </section>
+
+        <section class="set-pane" data-pane="applying">
+          <h2 class="set-h">Applying</h2>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n">Autonomous submission</div>
+              <div class="set-row-d">Let SponsorJobs submit finished applications on verified sites,
+                without a per-application click. Off by default.</div>
+            </div>
+            <label class="sw"><input type="checkbox" id="setAuto"><span></span></label>
+          </div>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n">Daily cap</div>
+              <div class="set-row-d">The most applications SponsorJobs will submit in a day.</div>
+            </div>
+            <input class="set-num" id="setCap" type="number" min="1" max="200" step="1">
+          </div>
+          <p class="set-note">SponsorJobs only ever auto-submits on sites whose terms permit it. Everywhere
+            else it fills the form and you click submit.</p>
+        </section>
+
+        <section class="set-pane" data-pane="data">
+          <h2 class="set-h">Data &amp; privacy</h2>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n">Everything stays on this machine</div>
+              <div class="set-row-d">Your profile, resumes and job data live in a local folder. There is no
+                account. To write text, only what is needed goes to your AI provider on your own key.</div>
+            </div>
+          </div>
+          <div class="set-row">
+            <div class="set-row-t">
+              <div class="set-row-n">Where your data lives</div>
+              <div class="set-row-d"><code id="setDataDir">…</code></div>
+            </div>
+          </div>
+
+          <!-- Memory: what SponsorJobs has learned about you from your chats, and full control over it. -->
+          <div class="set-row set-row-block">
+            <div class="set-row-t">
+              <div class="set-row-n">Your memory</div>
+              <div class="set-row-d">What SponsorJobs has learned from your conversations, so it can decide what belongs on your resume for each role. <span id="memCount"></span></div>
+            </div>
+            <div class="mem-acts">
+              <button class="btn btn-ghost btn-sm" id="memExport" type="button">Export</button>
+              <button class="btn btn-danger-ghost btn-sm" id="memErase" type="button">Erase all</button>
+            </div>
+          </div>
+          <div class="mem-add">
+            <textarea class="fld" id="memAddText" rows="3" placeholder="Tell me anything about your career you want me to remember, a win, a project, feedback you got, a hard problem you solved. I'll keep it and draw on it when it helps."></textarea>
+            <div class="mem-add-acts">
+              <button class="btn btn-primary btn-sm" id="memAddBtn" type="button">Remember this</button>
+              <button class="btn btn-ghost btn-sm" id="memAssessBtn" type="button">Is this CV-worthy?</button>
+              <label class="btn btn-ghost btn-sm" for="memAddFile">Upload a document</label>
+              <input type="file" id="memAddFile" accept=".pdf,.docx,.pptx,.txt,.png,.jpg,.jpeg" hidden>
+            </div>
+            <div class="mem-assess" id="memAssessOut" hidden></div>
+            <p class="mem-add-note">A performance review, offer letter, old resume, or project doc. Read on your machine, remembered, and the file itself is not kept.</p>
+          </div>
+          <div id="memList" class="mem-list"><!-- fact rows injected --></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- floating title-confirm popover -->
+  <div class="title-pop" id="titlePop" hidden>
+    <div class="title-pop-h">Confirm job title</div>
+    <button class="title-pop-b" data-dec="keep" type="button"></button>
+    <button class="title-pop-b" data-dec="revert" type="button"></button>
+    <button class="title-pop-b" data-dec="custom" type="button">Type another…</button>
+  </div>
+
+  <!-- First-run setup wizard -->
+  <div class="wiz" id="wizard" hidden>
+    <div class="wiz-card">
+      <div class="wiz-dots" id="wizDots"><span class="wiz-dot"></span><span class="wiz-dot"></span><span class="wiz-dot"></span></div>
+
+      <div class="wiz-panel" data-panel="welcome">
+        <div class="wiz-kick">Welcome to SponsorJobs</div>
+        <h2 class="wiz-h">A perfect one-page résumé for every job, in a couple of clicks.</h2>
+        <p class="wiz-p">Two quick things and you're set: connect your AI, then drop in your current résumé. Your data is stored only on this computer. To write text, only what's needed goes to your AI provider on your own key, and SponsorJobs keeps none of it.</p>
+        <div class="wiz-foot">
+          <button class="btn btn-ghost" data-wiz="skip" type="button">Skip for now</button>
+          <button class="btn btn-primary" data-wiz="next" type="button">Get started →</button>
+        </div>
+      </div>
+
+      <div class="wiz-panel" data-panel="ai" hidden>
+        <div class="wiz-kick">Step 1 of 2 · Connect your AI</div>
+        <h2 class="wiz-h">Add your Anthropic key</h2>
+        <p class="wiz-p">SponsorJobs runs on your own AI key, about a few cents per résumé, paid to Anthropic directly. Your key stays on this machine; we never see it.</p>
+        <ol class="ai-steps">
+          <li>Open <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> and sign in.</li>
+          <li>Add <b>$5 of credit</b> under Billing <span class="ai-note">,  the key won't work without it.</span></li>
+          <li>Create a key and <b>copy it</b> (it's shown only once).</li>
+        </ol>
+        <input class="fld ai-input" id="wizKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
+        <div class="ai-msg" id="wizKeyMsg" hidden></div>
+        <div class="wiz-foot">
+          <button class="btn btn-ghost" data-wiz="skip-step" type="button">I'll do this later</button>
+          <button class="btn btn-primary" id="wizKeySave" type="button">Verify &amp; continue</button>
+        </div>
+      </div>
+
+      <div class="wiz-panel" data-panel="resume" hidden>
+        <div class="wiz-kick">Step 2 of 2 · Your résumé</div>
+        <h2 class="wiz-h">Drop in your current résumé</h2>
+        <p class="wiz-p">We'll read it once and fill your whole profile, name, experience, skills. After that, every job is one click.</p>
+        <label class="wiz-drop" id="wizDrop">
+          <input type="file" id="wizCvFile" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp" hidden />
+          <span class="btn btn-primary">Upload résumé</span>
+          <span class="wiz-drop-hint">PDF, Word, or an image</span>
+        </label>
+        <div class="ai-msg" id="wizCvMsg" hidden></div>
+        <div class="wiz-foot">
+          <button class="btn btn-ghost" data-wiz="skip-step" type="button">I'll build it as I go</button>
+        </div>
+      </div>
+
+      <div class="wiz-panel" data-panel="done" hidden>
+        <div class="wiz-kick">You're all set</div>
+        <h2 class="wiz-h">Ready to tailor.</h2>
+        <p class="wiz-p" id="wizDoneSummary"></p>
+        <div class="wiz-foot">
+          <button class="btn btn-ghost" data-wiz="finish-jobs" type="button">Browse jobs</button>
+          <button class="btn btn-primary" data-wiz="finish-new" type="button">Build my first Resume →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connect your AI (Anthropic API key) -->
+  <div class="ai-modal" id="aiModal" hidden>
+    <div class="ai-card">
+      <span class="jd-kicker">Connect your AI</span>
+      <h2 class="jd-title" id="aiTitle">Add your Claude key</h2>
+      <p class="jd-sub" id="aiSub">SponsorJobs runs on your own AI key, about a few cents per résumé, paid to your provider directly. Your key stays on this machine; we never see it.</p>
+
+      <div id="aiSetup">
+        <!-- Pick your provider. Claude is the recommended default (the prompts are tuned for
+             it); OpenAI is here for people who already have an OpenAI key. -->
+        <div class="ai-provider" id="aiProvider" role="group" aria-label="AI provider">
+          <button class="ai-prov-b is-on" data-provider="anthropic" type="button">Claude <span class="ai-prov-tag">recommended</span></button>
+          <button class="ai-prov-b" data-provider="openai" type="button">OpenAI</button>
+        </div>
+        <ol class="ai-steps" id="aiSteps"><!-- provider-specific steps injected --></ol>
+        <input class="fld ai-input" id="aiKeyInput" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
+        <div class="ai-msg" id="aiMsg" hidden></div>
+        <div class="jd-actions">
+          <button class="btn btn-ghost" id="aiLater" type="button">Maybe later</button>
+          <button class="btn btn-primary" id="aiSave" type="button">Verify &amp; save</button>
+        </div>
+      </div>
+
+      <div id="aiConnected" hidden>
+        <div class="ai-connected"><span class="ai-check">✓</span> Your AI is connected <code id="aiMasked"></code></div>
+        <div class="jd-actions">
+          <button class="btn btn-ghost" id="aiReplace" type="button">Replace key</button>
+          <button class="btn btn-primary" id="aiDone" type="button">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Template preview: clicking a template opens this to look at the layout first.
+       "Use this template" is the separate, explicit commit that starts the JD flow. -->
+  <div class="tpl-modal" id="tplModal" hidden role="dialog" aria-modal="true" aria-labelledby="tplModalName">
+    <div class="tpl-modal-card">
+      <button class="tpl-modal-x" id="tplModalX" type="button" aria-label="Close preview">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <div class="tpl-modal-stage">
+        <button class="tpl-arrow tpl-arrow-prev" id="tplPrev" type="button" aria-label="Previous template">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="tpl-modal-paper">
+          <iframe class="tpl-modal-frame" id="tplModalFrame" title="Template preview" tabindex="-1"></iframe>
+        </div>
+        <button class="tpl-arrow tpl-arrow-next" id="tplNext" type="button" aria-label="Next template">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div class="tpl-modal-bar">
+        <div class="tpl-modal-titlerow">
+          <h2 class="tpl-modal-name" id="tplModalName">Template</h2>
+          <span class="tpl-modal-pos" id="tplModalPos"></span>
+        </div>
+        <button class="btn btn-primary" id="tplModalUse" type="button">Use this template</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- In-app browser drawer: only shown inside the desktop shell (window.tailorShell).
+       The toolbar is ours; the page itself is a native Chromium view the shell lays
+       over #browserSlot, so any site loads (no iframe restrictions) and the agent can
+       drive it over CDP for assisted apply while the person watches. -->
+  <!-- The side panel: third column of the app (nav · work · panel), Cursor-style.
+       Two tenants share it, because they're the same concept, "the thing you look at
+       while you chat": the CV artifact (revealed when a build is DONE, Claude-Code
+       style) and the in-app browser (desktop shell only). The header toggle at the
+       top-right is always visible, so the panel is discoverable even when closed. -->
+  <!-- Right icon rail: the panel's permanent handles (no floating buttons,
+       nothing to overlap content). Document = CV workspace, globe = browser. -->
+  <div class="panel-rail" aria-label="Side panel controls">
+    <button class="rail-ic" id="railCvBtn" type="button" title="Resume" aria-label="Toggle Resume panel">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2h6l3 3v9H4z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10 2v3h3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+    </button>
+    <button class="rail-ic" id="railBrowserBtn" type="button" title="Browser" aria-label="Toggle browser panel">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2 8h12M8 2c2.2 2 2.2 10 0 12-2.2-2-2.2-10 0-12z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+    </button>
+  </div>
+
+  <aside class="side-panel" id="sidePanel" aria-label="Side panel">
+    <div class="sp-resize" id="spResize" title="Drag to resize"></div>
+    <div class="sp-head">
+      <div class="sp-tabs" role="tablist">
+        <button class="sp-tab is-active" id="spTabCv" role="tab" type="button">Resume</button>
+        <button class="sp-tab" id="spTabBrowser" role="tab" type="button">Browser</button>
+      </div>
+      <a class="btn btn-ghost btn-sm" id="spDownload" download="resume.pdf" hidden>Download</a>
+      <button class="bb-btn sp-close" id="spClose" title="Close panel" aria-label="Close panel">&#10005;</button>
+    </div>
+
+    <div class="sp-body" id="spBodyCv">
+          <!-- Live preview -->
+          <div class="preview-panel">
+            <div class="preview-toolbar">
+              <div class="pv-left">
+                <span class="preview-label">Live preview · PDF</span>
+                <button class="seg-btn" id="editToggle" type="button" hidden>Edit bullets</button>
+              </div>
+              <div class="coverage" id="coverage" hidden>
+                <span class="coverage-num" id="coverageNum">0%</span>
+                <span class="coverage-track"><span class="coverage-fill" id="coverageFill"></span></span>
+                <button class="cov-info" id="covInfo" type="button" title="Matched / missing terms">terms</button>
+              </div>
+            </div>
+            <div class="cov-detail" id="covDetail" hidden></div>
+
+            <!-- Honest pre-send check: does every skill shown trace back to the person's own
+                 profile (no tailor-introduced claim), plus easy wins, honest gaps, and page fit. -->
+            <div class="presend" id="presendReview" hidden></div>
+
+            <div class="paper-stage">
+              <div class="pdf-placeholder" id="pdfPlaceholder">
+                Your resume will appear here as a PDF, exactly the file you download, once I have enough to build it.
+              </div>
+              <iframe class="pdf-frame" id="pdfFrame" title="Compiled one-page PDF" hidden></iframe>
+              <div class="paper-wrap edit-panel" id="paperWrap" hidden>
+                <p class="edit-note">Editing bullets, each change re-renders the PDF (a second or two). Switch back to see the real result.</p>
+                <article class="paper" id="paper">
+                  <header class="cv-head">
+                    <h1 class="cv-name" data-slot="name">Your Name</h1>
+                    <p class="cv-contact" data-slot="contact">city · email · links</p>
+                  </header>
+                  <div class="cv-body" id="cvBody"><!-- sections injected --></div>
+                </article>
+              </div>
+            </div>
+
+            <div class="accept-bar">
+              <p class="accept-note" id="acceptNote">Answer a few questions and I’ll draft this for you.</p>
+              <div class="accept-actions">
+                <a class="btn btn-ghost" id="downloadBtn" hidden download="resume.pdf">Download PDF</a>
+                <button class="btn btn-primary" id="acceptBtn" disabled>Accept &amp; Save</button>
+              </div>
+            </div>
+          </div>
+    </div>
+
+    <div class="sp-body" id="spBodyBrowser" hidden>
+      <div class="browser-bar">
+        <button class="bb-btn" id="bbBack" title="Back" aria-label="Back">&#8592;</button>
+        <button class="bb-btn" id="bbFwd" title="Forward" aria-label="Forward">&#8594;</button>
+        <button class="bb-btn" id="bbReload" title="Reload" aria-label="Reload">&#8635;</button>
+        <input class="bb-url" id="bbUrl" type="text" spellcheck="false"
+               aria-label="Address" placeholder="Enter a URL and press Enter" />
+      </div>
+      <div class="browser-slot" id="browserSlot"></div>
+      <div class="pdf-placeholder" id="bbNoShell" hidden>The in-app browser needs the desktop app (shell-electron). Links open in your system browser instead.</div>
+    </div>
+  </aside>
+
+  <script src="{{ url_for('static', filename='i18n.js') }}"></script>
+  <script src="{{ url_for('static', filename='qr.js') }}"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

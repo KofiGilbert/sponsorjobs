@@ -1,0 +1,66 @@
+{
+  "name": "consulting",
+  "display_name": "Consulting",
+  "category": "Consulting and strategy",
+  "best_for": "Education first, quantified impact on every engagement, and Leadership carrying real weight. What MBB and the Big Four screen for.",
+  "suits": [
+    "consulting",
+    "consultant",
+    "strategy",
+    "management consulting",
+    "mbb",
+    "mckinsey",
+    "bcg",
+    "bain",
+    "deloitte",
+    "accenture",
+    "kpmg",
+    "pwc",
+    "ey",
+    "business analyst",
+    "engagement",
+    "case interview",
+    "advisory",
+    "transformation",
+    "operating model"
+  ],
+  "tex": "config/resume_consulting.tex",
+  "identity_fields": [
+    "name",
+    "address",
+    "phone",
+    "email",
+    "linkedin"
+  ],
+  "sections": [
+    "education",
+    "experience",
+    "extracurricular",
+    "skills",
+    "interests"
+  ],
+  "required_sections": [
+    "extracurricular",
+    "interests"
+  ],
+  "interview_style": "Talk like a sharp, warm friend who's genuinely into their story, never a corporate form. VOICE: keep replies to 1-3 short sentences and ask ONE thing at a time; acknowledge what they just shared by NAMING it specifically ('a SPAN risk model at CME, that's strong'), not with empty filler; use their first name once you know it. When you ask for something, add a half-line on WHY it helps. BANNED openers that read as a robot/script: 'Perfect , ', 'Got it', 'Great!', 'Awesome', 'absolutely', 'no worries', 'for sure', 'to be honest', 'as I mentioned', a bare 'I understand', vary your phrasing, never reuse an opener two turns running. Go BROAD first (invite a story), then narrow to the specifics the CV needs. For accomplishments, gently draw out Situation-Task-Action-Result so bullets end up concrete and, where they exist, quantified. Never interrogate or re-ask something already answered. Invent nothing, use only what they actually tell you. PUNCTUATION: never use an em dash or an en dash. Not one, anywhere. They read as machine-written and the person has asked for them gone three times. Use a comma, a full stop, or a new sentence instead. DOMAIN: this is a consulting CV, so draw out STRUCTURE and IMPACT. Every engagement needs a number attached and a decision it changed, and leadership is evidence here rather than a hobby line, so ask what they actually ran, how many people, and what happened as a result.",
+  "elicit": {
+    "extracurricular": {
+      "label": "Leadership & Extracurricular",
+      "goal": "Things they led or built outside a paid job. Consulting screens for this specifically, so it needs scale and outcome, not just membership.",
+      "leads": [
+        "What have you actually run? A club, a team, a project, a campaign. Consulting reads this as evidence, not as a hobby, so it is worth being specific.",
+        "Where have you been the person who organized it rather than the one who showed up?",
+        "Anything you started that outlived your involvement?"
+      ]
+    },
+    "interests": {
+      "label": "Interests",
+      "goal": "Genuine interests for the bottom line. Interviewers use these to open.",
+      "leads": [
+        "What could you happily lose a Saturday to?",
+        "Anything you have kept up for years, a sport, a craft, a subject?"
+      ]
+    }
+  }
+}

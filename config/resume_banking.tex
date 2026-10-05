@@ -1,0 +1,135 @@
+\documentclass{article}
+
+% PACKAGES -----------------------------------------------------
+\usepackage{amsmath, amsthm, amsfonts, amsthm}
+\usepackage{bbm}
+\usepackage[letterpaper, portrait, margin=0cm,
+left=0.7cm, right=0.7cm, top=0.7cm]{geometry}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{multicol}
+\usepackage{blindtext}
+\usepackage{graphicx}
+\graphicspath{ {./} }
+\usepackage[T1]{fontenc}
+% microtype = LaTeX's H and J engine: character protrusion + font expansion (glyph
+% scaling, about 2 percent). It fills justified lines with imperceptible glyph
+% adjustment instead of ugly word gaps, the trick InDesign and magazines use.
+\usepackage[protrusion=true,expansion=true,factor=1100]{microtype}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\setlength{\emergencystretch}{2em}
+
+% COMMANDS -----------------------------------------------------
+\newcommand{\vs}{\vspace{0.3cm}}
+\newcommand{\ee}{{\mathbb E}}
+\newcommand{\pp}{{\mathbb P}}
+\newcommand{\rr}{{\mathbb R}}
+\newcommand{\ff}{{ \mathcal{F} }}
+\newcommand{\indd}{\mathbbm{1}}
+
+% CONFIG -------------------------------------------------------
+\setlist{nolistsep}
+\hypersetup{
+  colorlinks,
+  urlcolor=blue}
+
+% BODY ---------------------------------------------------------
+\pagestyle{empty}
+\begin{document}
+
+\begin{center}
+	\textbf{\LARGE Alex Whitfield}
+
+	410 Harbour Lane, New York, NY 10004 | (212) 555-0142 | \href{mailto:alex.whitfield@example.com}{alex.whitfield@example.com} | \href{https://www.linkedin.com/in/alexwhitfield/}{In}
+\end{center}
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Education}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Education Block -------------------------------------------------
+\noindent \textbf{\textsc{Northwestern University}} \hfill \textbf{Evanston, IL}
+
+\noindent \textbf{B.S. in Economics, Minor in Statistics} \hfill \textbf{June 2021}
+
+\noindent \textbf{Courses:} Corporate Finance, Financial Accounting, Valuation, Econometrics, Derivatives, Fixed Income, Capital Markets, Financial Statement Analysis
+
+\noindent \textbf{Honors:} GPA 3.8/4.0; Dean's List (6 semesters); CFA Level II candidate; Kellogg Undergraduate Finance Prize
+
+\noindent \textbf{Activities:} Student Investment Fund (Portfolio Manager); Finance Society (VP, Recruiting); varsity cross country
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Experience}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Experience Block ------------------------------------------------
+\noindent \textbf{\textsc{Harbour Point Partners}} \hfill \textbf{New York, NY}
+
+\noindent \textbf{Investment Banking Analyst, Industrials} \hfill \textbf{July 2023 - Present}
+\begin{itemize}
+	\item Executed a \$1.2B carve-out of a specialty chemicals division, building the operating model and running diligence across four bidders through to signing.
+	\item Built the DCF, LBO, and comparable-companies analyses supporting a \$480M take-private, which the committee used to set the final offer range.
+	\item Drafted the confidential information memorandum and management presentation for a \$310M sell-side mandate that closed 11\% above the initial indication.
+	\item Rebuilt the sector's comps database in Excel and VBA, cutting a two-day refresh to under an hour and removing a recurring source of stale marks.
+	\item Modelled synergy cases for a \$2.1B strategic merger, reconciling management's plan to a defensible range the deal team took to the board.
+	\item Ran diligence on a \$95M bolt-on, surfacing a working-capital adjustment that moved the purchase price by \$4M before close.
+	\item Coached two summer analysts through their first models and set the desk's convention for footnoting sources in every output.
+	\item Built the weekly sector update circulated to the whole industrials group, tracking trading comps and announced transactions.
+\end{itemize}
+
+\noindent \textbf{\textsc{Meridian Capital Advisors}} \hfill \textbf{Chicago, IL}
+
+\noindent \textbf{Summer Analyst, Leveraged Finance} \hfill \textbf{June 2022 - August 2022}
+\begin{itemize}
+	\item Supported a \$650M unitranche financing, building the sources and uses and stress-testing covenant headroom across three downside cases.
+	\item Analyzed 40+ credit agreements to benchmark pricing and terms, producing the reference deck the team still uses on new mandates.
+	\item Presented a capital-structure recommendation to the managing director, who took it into the client meeting unchanged.
+	\item Built the ratings-agency deck for a first-time issuer, translating the operating plan into the metrics the agencies actually score.
+	\item Tracked the leveraged loan pipeline across 20 sponsors, flagging two refinancing windows the team acted on.
+	\item Received a full-time return offer at the end of the programme.
+\end{itemize}
+
+\noindent \textbf{\textsc{Lakeshore Research Group}} \hfill \textbf{Evanston, IL}
+
+\noindent \textbf{Research Assistant, Department of Economics} \hfill \textbf{Sept 2020 - May 2021}
+\begin{itemize}
+	\item Built the panel dataset behind a published study on regional credit supply, cleaning 1.4M loan records in Python and Stata.
+	\item Automated the quarterly data refresh, replacing a manual process that had taken a week each cycle.
+	\item Ran the robustness checks that survived referee review and made the results section of the final paper.
+	\item Presented preliminary findings at the department's undergraduate research symposium.
+\end{itemize}
+
+\noindent \textbf{\textsc{Northwestern Student Investment Fund}} \hfill \textbf{Evanston, IL}
+
+\noindent \textbf{Portfolio Manager, Industrials Sector} \hfill \textbf{Sept 2019 - June 2021}
+\begin{itemize}
+	\item Managed a \$400K sleeve of the university's student-run fund, pitching and sizing every position in the sector.
+	\item Pitched a long thesis on a mid-cap distributor that the committee funded and that returned 34\% over the holding period.
+	\item Wrote the fund's valuation handbook, still used to onboard each incoming analyst class.
+\end{itemize}
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Skills \& Interests}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Inline ----------------------------------------------------------
+\noindent \textbf{Modeling:} Three-statement modeling, DCF, LBO, M\&A accretion/dilution, comparable companies, precedent transactions
+
+\noindent \textbf{Technical:} Excel (advanced), VBA, PowerPoint, Python, SQL, Stata, Bloomberg, CapIQ, FactSet
+
+\noindent \textbf{Domain:} Industrials, specialty chemicals, leveraged finance, credit agreements, covenant analysis, valuation
+
+\noindent \textbf{Languages \& Certifications:} CFA Level II candidate; Series 79; fluent Spanish, conversational Mandarin
+
+\noindent \textbf{Interests:} Distance running (two marathons), chess, restoring vintage road bikes, cooking, jazz piano
+
+\noindent \textbf{Activities:} Volunteer tax preparer (VITA programme, three seasons); mentor with a first-generation college readiness charity
+
+\end{document}

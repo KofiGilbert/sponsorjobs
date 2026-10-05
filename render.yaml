@@ -1,0 +1,95 @@
+# Render blueprint for SponsorJobs' managed-AI broker (P5 hosting). Deploys backend/ ONLY -- the broker
+# holds the company keys server-side; the desktop app talks to it over HTTPS.
+#
+# NOTE (2026-09-30): the job feed this service also hosted at GET /feed ("the kitchen") is RETIRED
+# as the supported path. The desktop app now reads a STATIC feed built by a scheduled GitHub Action
+# and served from Cloudflare R2 (docs/feed.md) -- no server to keep alive. The JOBS_* vars below
+# still work if you deploy this blueprint, but nothing points the app at /feed any more.
+#
+# In Render: New > Blueprint > connect this repo. Render reads this file and creates the service +
+# disk. Then set the secret env var VALUES (the ones marked sync:false) in the dashboard -- never
+# commit them. Full step-by-step: docs/hosting-render.md.
+services:
+  - type: web
+    name: tailor-broker
+    runtime: python
+    plan: standard           # 2GB RAM (~$25/mo): the 340k-employer sponsor index is ~293MB
+                             # resident, which OOM'd the 512MB Starter box. Persistent disk + no
+                             # cold-start spin-down are still included. (See the memory analysis:
+                             # kept the in-memory index for fast per-job badge tagging rather than
+                             # trading it for slower on-demand SQL lookups.)
+    region: oregon           # choose the region closest to your users
+    branch: main
+    buildCommand: pip install -r requirements-broker.txt
+    # One worker, four threads: on the 512MB Starter box, two full worker PROCESSES each load
+    # a whole copy of the app (Anthropic SDK + Flask + the in-memory job feed + the 340k-row
+    # sponsor overlay), which pushed past the memory limit and forced auto-restarts. Threads
+    # share one process's memory, so 1 worker roughly halves the footprint while still serving
+    # several callers at once. The freshness robot is a single-process singleton anyway (flock),
+    # so the 2nd worker was mostly wasted memory. If real concurrency ever outgrows this, add
+    # memory (a bigger plan) before adding a 2nd worker.
+    startCommand: gunicorn "backend.server:create_broker_app()" --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    healthCheckPath: /health
+    disk:
+      name: tailor-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      # Pin the Python runtime so a Render default-version bump can't silently break the build
+      # (an unpinned build pulled a newer Python/deps and failed with "Exited with status 1").
+      # 3.12 is verified to install the pinned requirements-broker.txt cleanly.
+      - key: PYTHON_VERSION
+        value: "3.12.13"
+      # metering/usage DB on the persistent disk, so plans + usage survive a redeploy
+      - key: TAILOR_BROKER_DB
+        value: /var/data/broker_usage.db
+      # --- SECRETS: set the VALUES in the Render dashboard, never in git ---
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY          # sk_test_... to trial in the sandbox; sk_live_... to go live
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET      # from the Stripe webhook endpoint you create (see the doc)
+        sync: false
+      - key: STRIPE_PRICE_PASS30        # Job Hunt Pass, $29 one-time, 30 days (no auto-renew)
+        sync: false
+      - key: STRIPE_PRICE_PASS90        # Season Pass, $69 one-time, 90 days (no auto-renew)
+        sync: false
+      - key: STRIPE_PRICE_PACK_1        # 1 extra live interview, $9 one-time, never expires
+        sync: false
+      - key: STRIPE_PRICE_PACK_3        # 3 extra live interviews, $24 one-time, never expires
+        sync: false
+      - key: STRIPE_PRICE_PACK_5        # 5 extra live interviews, $35 one-time, never expires
+        sync: false
+      - key: TAVUS_API_KEY
+        sync: false
+      - key: TAVUS_PERSONA_ID
+        sync: false
+      # Official SponsorJobs Telegram bot (docs/notify.md). All three set -> the relay is on;
+      # any unset -> /notify/telegram/* answer 503. Then run `python -m backend.telegram_setup` once.
+      - key: TELEGRAM_BOT_TOKEN         # from @BotFather
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME      # e.g. SponsorJobsBot
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET    # any random string; Telegram echoes it on every webhook call
+        sync: false
+      - key: BROKER_PUBLIC_URL          # https URL of this service, for the setup helper only
+        sync: false
+      # --- LEGACY central job feed ("the kitchen"; superseded by the static feed, docs/feed.md).
+      # Serves public jobs at GET /feed on this same
+      # service (no second bill). Robot ON (option A): safe on the shared box because the
+      # sponsor overlay rebuilds from the committed seed (no 67MB upload), the watchlist is
+      # pre-seeded (seed/watchlist_seed.csv), and the heavy discovery sweep is DEFERRED off the
+      # first pass — so the recurring load is just a light board refresh. If payments ever
+      # feel it, set this to "0" or move the crawl to a separate worker. See docs/hosting-render.md. ---
+      - key: JOBS_AUTOUPDATE
+        value: "1"
+      - key: JOBS_DATA_DIR
+        value: /var/data
+      - key: ADZUNA_APP_ID
+        sync: false
+      - key: ADZUNA_APP_KEY
+        sync: false
+      - key: ADZUNA_PAGES
+        value: "10"
+      - key: RAPIDAPI_KEY          # JSearch (optional; leave unset to skip)
+        sync: false

@@ -1,0 +1,145 @@
+\documentclass{article}
+
+% PACKAGES -----------------------------------------------------
+\usepackage{amsmath, amsthm, amsfonts, amsthm}
+\usepackage{bbm}
+\usepackage[letterpaper, portrait, margin=0cm,
+left=0.7cm, right=0.7cm, top=0.7cm]{geometry}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{multicol}
+\usepackage{blindtext}
+\usepackage{graphicx}
+\graphicspath{ {./} }
+\usepackage[T1]{fontenc}
+% microtype = LaTeX's H and J engine: character protrusion + font expansion (glyph
+% scaling, about 2 percent). It fills justified lines with imperceptible glyph
+% adjustment instead of ugly word gaps, the trick InDesign and magazines use.
+\usepackage[protrusion=true,expansion=true,factor=1100]{microtype}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\setlength{\emergencystretch}{2em}
+
+% COMMANDS -----------------------------------------------------
+\newcommand{\vs}{\vspace{0.3cm}}
+\newcommand{\ee}{{\mathbb E}}
+\newcommand{\pp}{{\mathbb P}}
+\newcommand{\rr}{{\mathbb R}}
+\newcommand{\ff}{{ \mathcal{F} }}
+\newcommand{\indd}{\mathbbm{1}}
+
+% CONFIG -------------------------------------------------------
+\setlist{nolistsep}
+\hypersetup{
+  colorlinks,
+  urlcolor=blue}
+
+% BODY ---------------------------------------------------------
+\pagestyle{empty}
+\begin{document}
+
+\begin{center}
+	\textbf{\LARGE Priya Raman}
+
+	88 Beacon Street, Boston, MA 02108 | (617) 555-0173 | \href{mailto:priya.raman@example.com}{priya.raman@example.com} | \href{https://www.linkedin.com/in/priyaraman/}{In}
+\end{center}
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Education}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Education Block -------------------------------------------------
+\noindent \textbf{\textsc{Tufts University}} \hfill \textbf{Medford, MA}
+
+\noindent \textbf{B.A. in Economics and International Relations, magna cum laude} \hfill \textbf{May 2021}
+
+\noindent \textbf{Courses:} Microeconomics, Statistics, Game Theory, Operations Management, Data Analysis, Organizational Behavior, Public Policy
+
+\noindent \textbf{Honors:} GPA 3.85/4.0; Phi Beta Kappa; Dean's Scholar (4 years); Tufts Case Competition, first place (2020)
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Experience}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Experience Block ------------------------------------------------
+\noindent \textbf{\textsc{Brightwater Consulting Group}} \hfill \textbf{Boston, MA}
+
+\noindent \textbf{Consultant} \hfill \textbf{Aug 2023 - Present}
+\begin{itemize}
+	\item Led a 4-person workstream for a \$3B industrial client, redesigning the procurement operating model and delivering \$42M in annualized savings.
+	\item Ran 30+ interviews across three business units to diagnose why a prior transformation stalled, and reframed the problem the client had brought us.
+	\item Built the analytics that sized a market entry across 12 countries, which the client used to commit \$80M to two of them and drop the rest.
+	\item Presented findings to the client's executive committee monthly, owning the recommendation and the pushback that came with it.
+	\item Coached two analysts through their first client-facing modules; both were promoted at the earliest eligible cycle.
+	\item Wrote the firm's internal guide to procurement diagnostics, now used on every engagement in the practice.
+\end{itemize}
+
+\noindent \textbf{\textsc{Brightwater Consulting Group}} \hfill \textbf{Boston, MA}
+
+\noindent \textbf{Business Analyst} \hfill \textbf{July 2021 - July 2023}
+\begin{itemize}
+	\item Modelled the cost-to-serve for a retailer's 900-store network, identifying 140 stores where the format itself was the problem.
+	\item Rebuilt a client's demand forecast in Python, cutting error by 22\% and replacing a spreadsheet three people maintained by hand.
+	\item Synthesized diligence on four acquisition targets for a private equity client, who proceeded on one and walked from three.
+	\item Ran the pilot for a new frontline scheduling process across six sites before it was rolled out to 60.
+	\item Built the client's first weekly operating review, turning a monthly retrospective into a decision forum the leadership team still runs.
+	\item Sized the working-capital opportunity across three divisions and defended the number through two rounds of CFO challenge.
+\end{itemize}
+
+\noindent \textbf{\textsc{Massachusetts Governor's Office}} \hfill \textbf{Boston, MA}
+
+\noindent \textbf{Policy Intern, Economic Development} \hfill \textbf{June 2020 - Aug 2020}
+\begin{itemize}
+	\item Analyzed small-business relief uptake across 351 municipalities, surfacing the gap that redirected outreach funding.
+	\item Drafted the briefing memo the deputy director took into the legislature's hearing.
+	\item Built the dashboard the office used to track applications by region through the rest of the programme.
+\end{itemize}
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Leadership \& Extracurricular}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Extracurricular Block -------------------------------------------
+\noindent \textbf{\textsc{Tufts Consulting Collective}} \hfill \textbf{Medford, MA}
+
+\noindent \textbf{President} \hfill \textbf{2020 - 2021}
+\begin{itemize}
+	\item Grew the group from 18 to 70 members and set up the pro-bono programme that still serves six local nonprofits a year.
+	\item Ran the case-prep curriculum that placed 11 members into consulting and finance offers.
+	\item Negotiated the university funding that made the group's first paid summer fellowship possible.
+\end{itemize}
+
+\noindent \textbf{\textsc{Boston Refugee Support Network}} \hfill \textbf{Boston, MA}
+
+\noindent \textbf{Volunteer Case Advocate} \hfill \textbf{2019 - Present}
+\begin{itemize}
+	\item Supports two resettled families through housing, benefits, and school enrollment, roughly 6 hours a month for six years.
+	\item Built the intake tracker the network's 40 volunteers now use to hand cases between them without dropping context.
+\end{itemize}
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Skills \& Interests}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Inline ----------------------------------------------------------
+\noindent \textbf{Analytical:} Hypothesis-driven problem solving, market sizing, cost-to-serve, operating model design, business case development
+
+\noindent \textbf{Technical:} Excel (advanced), PowerPoint, Python, SQL, Tableau, Alteryx, Stata, Miro, Think-Cell
+
+\noindent \textbf{Domain:} Procurement, retail operations, market entry, commercial diligence, post-merger integration, public sector economic development
+
+\noindent \textbf{Communication:} Executive presentation, stakeholder interviewing, workshop facilitation, written synthesis
+
+\noindent \textbf{Languages \& Certifications:} Fluent Tamil and Hindi; conversational French; Lean Six Sigma Green Belt
+
+\noindent \textbf{Interests:} Long-distance swimming (English Channel relay, 2024), competitive Scrabble, food writing, urban cycling advocacy
+
+\end{document}

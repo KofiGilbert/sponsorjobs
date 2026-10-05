@@ -1,0 +1,3 @@
+# Phase 1 needs no third-party runtime deps — stdlib only (sqlite3, subprocess).
+# Tests run on pytest; the real LLM path optionally needs `anthropic`.
+pytest>=8.0

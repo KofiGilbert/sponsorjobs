@@ -1,0 +1,151 @@
+\documentclass{article}
+
+% PACKAGES -----------------------------------------------------
+\usepackage{amsmath, amsthm, amsfonts, amsthm}
+\usepackage{bbm}
+\usepackage[letterpaper, portrait, margin=0cm, 
+left=0.7cm, right=0.7cm, top=0.7cm]{geometry}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{multicol}
+\usepackage{blindtext}
+\usepackage{graphicx}
+\graphicspath{ {./} }
+\usepackage[T1]{fontenc}
+% microtype = LaTeX's H and J engine: character protrusion + font expansion (glyph
+% scaling, about 2 percent). It fills justified lines with imperceptible glyph
+% adjustment instead of ugly word gaps, the trick InDesign and magazines use.
+\usepackage[protrusion=true,expansion=true,factor=1100]{microtype}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\setlength{\emergencystretch}{2em}
+
+% COMMANDS -----------------------------------------------------
+\newcommand{\vs}{\vspace{0.3cm}}
+\newcommand{\ee}{{\mathbb E}}
+\newcommand{\pp}{{\mathbb P}}
+\newcommand{\rr}{{\mathbb R}}
+\newcommand{\ff}{{ \mathcal{F} }}
+\newcommand{\indd}{\mathbbm{1}}
+
+% CONFIG -------------------------------------------------------
+\setlist{nolistsep}
+\hypersetup{
+  colorlinks,
+  urlcolor=blue}
+
+% BODY ---------------------------------------------------------
+\pagestyle{empty}
+\begin{document}
+
+\begin{center}
+	\textbf{\LARGE Jordan Rivera}
+
+	123 Market St, San Francisco, CA 94105 | (415) 555-0100 | \href{mailto:jordan.rivera@example.com}{jordan.rivera@example.com} | \href{https://www.linkedin.com/in/jordanrivera/}{In} | \href{https://github.com/jordanrivera}{GitHub}
+\end{center}
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Summary}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Summary Block ---------------------------------------------------
+\noindent Product-minded software engineer with 8+ years building data-intensive platforms across fintech and healthcare. Turns ambiguous requirements into reliable, well-tested systems, and partners closely with stakeholders to ship outcomes that move the business. Owns work end to end, from design review through rollout and on-call, and prefers the boring solution that survives contact with production. Deep in Python, cloud infrastructure, event-driven design, and API architecture.
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Education}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Education Block -------------------------------------------------
+\noindent \textbf{\textsc{University of California, Berkeley}} \hfill \textbf{Berkeley, CA}
+
+\noindent \textbf{B.S. in Computer Science} \hfill \textbf{May 2015}
+
+\noindent \textbf{Courses:} Distributed Systems, Databases, Operating Systems, Algorithms, Machine Learning, Computer Security, Compilers, Networking
+
+\noindent \textbf{Honors:} Departmental citation for the senior project; teaching assistant for Databases (two semesters)
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Skills}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Inline ----------------------------------------------------------
+\noindent \textbf{Languages \& Tools:} Python, Go, SQL, JavaScript, TypeScript, Bash, Docker, Kubernetes, Terraform, Git, Linux
+
+\noindent \textbf{Data \& Cloud:} AWS (EC2, S3, Lambda, RDS), GCP, Airflow, Spark, Kafka, PostgreSQL, Redis, Snowflake, dbt
+
+\noindent \textbf{Practices:} REST \& gRPC API design, event-driven architecture, CI/CD, test automation, observability, code review, on-call
+
+\noindent \textbf{Domain:} Payments, double-entry ledgers, settlement \& reconciliation, risk, HIPAA-regulated clinical data
+
+\noindent \textbf{Leadership:} Mentoring, technical design review, incident command, hiring \& interview panels
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Projects}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Project Block ---------------------------------------------------
+\noindent \textbf{\textsc{Ledger Reconciliation Service}}~\href{https://github.com/jordanrivera/ledger}{$\nearrow$} \hfill \textbf{San Francisco, CA}
+
+\noindent \textbf{Lead Engineer} \hfill \textbf{2023 - 2024}
+\begin{itemize}
+	\item Designed a reconciliation engine that matched millions of daily transactions and cut manual review by 80\%.
+	\item Modelled every movement as double-entry journal lines, making imbalances impossible to represent rather than merely detectable.
+	\item Open-sourced the matching core; adopted by two other teams for their own settlement flows.
+\end{itemize}
+
+\noindent \textbf{\textsc{Clinical Records Ingestion Toolkit}}~\href{https://github.com/jordanrivera/ingest}{$\nearrow$} \hfill \textbf{Oakland, CA}
+
+\noindent \textbf{Author} \hfill \textbf{2021 - 2022}
+\begin{itemize}
+	\item Built a schema-mapping layer that normalised HL7 and FHIR feeds from 30+ provider systems into one model.
+	\item Added property-based tests over generated records, catching mapping regressions before they reached production.
+	\item Documented the mapping rules so clinical staff could audit them without reading the code.
+\end{itemize}
+\vs
+
+% Heading ---------------------------------------------------------
+\noindent \textbf{\textsc{\large Experience}}
+
+\noindent \rule[3pt]{\textwidth}{1pt}
+
+% Experience Block ------------------------------------------------
+\noindent \textbf{\textsc{Northwind Financial}} \hfill \textbf{San Francisco, CA}
+
+\noindent \textbf{Senior Software Engineer} \hfill \textbf{June 2019 - Present}
+\begin{itemize}
+	\item Built and scaled the payments platform's core ledger service handling \$2B in annual volume.
+	\item Led the migration to an event-driven architecture, cutting settlement latency from hours to minutes.
+	\item Cut p99 authorisation latency from 840ms to 120ms by reworking the hot path and its caching strategy.
+	\item Introduced contract testing across six services, taking integration incidents from roughly two a month to none in a year.
+	\item Mentored four engineers and set the team's testing and code-review standards.
+	\item Ran incident command for the 2023 settlement outage and wrote the postmortem that reshaped the on-call rota.
+\end{itemize}
+
+\noindent \textbf{\textsc{Cobalt Health}} \hfill \textbf{Oakland, CA}
+
+\noindent \textbf{Software Engineer} \hfill \textbf{July 2015 - May 2019}
+\begin{itemize}
+	\item Developed HIPAA-compliant data pipelines ingesting clinical records from 30+ provider systems.
+	\item Shipped a patient-facing API used by three mobile apps with 200k monthly active users.
+	\item Automated the quarterly compliance audit, replacing a two-week manual review with a half-day report.
+	\item Rebuilt the ingestion retry logic, recovering roughly 12k records a month that had previously been dropped.
+\end{itemize}
+
+\noindent \textbf{\textsc{Beacon Analytics}} \hfill \textbf{Berkeley, CA}
+
+\noindent \textbf{Software Engineering Intern} \hfill \textbf{June 2014 - August 2014}
+\begin{itemize}
+	\item Built an internal dashboard that surfaced query costs per team, prompting a rewrite that halved warehouse spend.
+	\item Wrote the ETL job that backfilled three years of historical events into the reporting warehouse.
+	\item Presented the cost findings to the engineering leads; the dashboard was kept on as a standing weekly review.
+\end{itemize}
+
+\end{document}
