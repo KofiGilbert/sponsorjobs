@@ -64,6 +64,7 @@ jobs:
           FEED_INCLUDE_AGGREGATORS: ${{ vars.FEED_INCLUDE_AGGREGATORS }}
           JOBS_MAX_PER_COMPANY: ${{ vars.JOBS_MAX_PER_COMPANY || 500 }}
           TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
+          FEED_CRAWL_MINUTES: ${{ vars.FEED_CRAWL_MINUTES || 70 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
             --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"
