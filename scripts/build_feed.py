@@ -21,6 +21,7 @@ set; Adzuna's developer terms forbid redistribution without written consent, so 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -35,6 +36,28 @@ PUBLIC_OK_AGGREGATORS = ("remotive", "remoteok", "freehire")
 # Keyed aggregators that MAY be included when FEED_INCLUDE_AGGREGATORS names them.
 REDISTRIBUTABLE_KEYED = ("jsearch",)
 DEFAULT_INCLUDE = "jsearch"
+# The board pass stops after this many minutes so the run always finishes inside the workflow's
+# 120-minute limit. A run the limit kills saves nothing (actions/cache only saves on success), so
+# every later run would start from zero and be killed too -- the first run on 2026-10-06 did that.
+DEFAULT_CRAWL_MINUTES = 70
+CURSOR_FILE = "crawl_cursor.json"     # where the next run resumes in the board list, under --data
+
+
+def rotate_boards(boards: list[dict], data_dir) -> tuple[list[dict], int]:
+    """The boards in crawl order for this run, starting where the last run stopped, and that start
+    index. A capped run that always began at "A" would never reach the end of the list."""
+    if not boards:
+        return [], 0
+    try:
+        start = int(json.loads((Path(data_dir) / CURSOR_FILE).read_text())["next"]) % len(boards)
+    except (OSError, ValueError, KeyError, TypeError):
+        start = 0
+    return boards[start:] + boards[:start], start
+
+
+def save_cursor(data_dir, start: int, crawled: int, total: int) -> None:
+    nxt = (start + crawled) % total if total else 0
+    (Path(data_dir) / CURSOR_FILE).write_text(json.dumps({"next": nxt}) + "\n")
 
 
 def aggregators_for_feed(env=None, log=print) -> list[str]:
@@ -57,11 +80,13 @@ def aggregators_for_feed(env=None, log=print) -> list[str]:
 
 
 def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = "",
-          limit: int | None = None, log=print, crawler=None) -> dict:
+          limit: int | None = None, log=print, crawler=None,
+          crawl_minutes: float | None = None) -> dict:
     """Crawl (unless crawl=False) into the DB under `data_dir`, then write the feed files into
     `out_dir`. Returns the manifest. `fetch` is injectable so tests run against canned JSON.
     `crawler(watchlist) -> summary` replaces the full refresh_watchlist crawl (the installer's
-    snapshot build passes the bounded, polite first_open_refresh)."""
+    snapshot build passes the bounded, polite first_open_refresh). `crawl_minutes` caps the board
+    pass; the next build resumes where this one stopped (rotate_boards)."""
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     os.environ["JOBS_DATA_DIR"] = str(data_dir)         # backend.feed derives its DB paths from this
@@ -89,8 +114,14 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
             if crawler is not None:
                 summary = crawler(w)
             else:
+                boards, start = rotate_boards(w.companies(active_only=True), data_dir)
                 summary = refresh_watchlist(w, **({"fetch": fetch} if fetch else {}),
-                                            detail_budgets=feed_detail_budgets())
+                                            detail_budgets=feed_detail_budgets(), boards=boards,
+                                            time_budget=crawl_minutes * 60 if crawl_minutes else None)
+                save_cursor(data_dir, start, summary.get("boards_crawled", 0), len(boards))
+                log(f"[build_feed] boards {summary.get('boards_crawled')}/{len(boards)} from #{start}"
+                    + (" (stopped at the time cap; the next run continues)"
+                       if summary.get("stopped_early") else ""))
             pruned = w.prune_stale(PRUNE_DAYS)
             log(f"[build_feed] crawl: fetched={summary.get('fetched')} matched={summary.get('matched')} "
                 f"new={summary.get('new')} duplicates={summary.get('duplicates')} pruned={pruned} "
@@ -121,8 +152,13 @@ def main(argv=None) -> int:
                     help="absolute URL of jobs.json.gz, recorded in manifest.json")
     ap.add_argument("--limit", type=int, default=None, help="cap rows (default JOBS_FEED_LIMIT, 50000)")
     ap.add_argument("--no-crawl", action="store_true", help="skip the crawl; publish what the DB holds")
+    ap.add_argument("--crawl-minutes", type=float,
+                    default=float(os.environ.get("FEED_CRAWL_MINUTES", DEFAULT_CRAWL_MINUTES)),
+                    help=f"stop the board pass after this long (default {DEFAULT_CRAWL_MINUTES}; "
+                         "0 = no cap); the next run resumes where it stopped")
     a = ap.parse_args(argv)
-    build(a.out, a.data, crawl=not a.no_crawl, jobs_url=a.jobs_url, limit=a.limit)
+    build(a.out, a.data, crawl=not a.no_crawl, jobs_url=a.jobs_url, limit=a.limit,
+          crawl_minutes=a.crawl_minutes)
     return 0
 
 

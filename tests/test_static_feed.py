@@ -133,6 +133,23 @@ def test_build_feed_from_a_fake_crawl(tmp_path, monkeypatch):
     assert "Build sync." in sh["greenhouse:dropbox:11"]
 
 
+def test_a_capped_crawl_resumes_where_the_last_run_stopped(tmp_path):
+    # The first real run (2026-10-06) went past the workflow's 2-hour limit and was killed, which
+    # saves nothing. Capped runs must instead walk the whole board list across runs.
+    from scripts import build_feed
+    boards = [{"company": c} for c in "ABCDE"]
+    order, start = build_feed.rotate_boards(boards, tmp_path)
+    assert start == 0 and [b["company"] for b in order] == list("ABCDE")   # no cursor yet
+    build_feed.save_cursor(tmp_path, start, crawled=3, total=5)            # stopped after A, B, C
+    order, start = build_feed.rotate_boards(boards, tmp_path)
+    assert start == 3 and [b["company"] for b in order] == list("DEABC")
+    build_feed.save_cursor(tmp_path, start, crawled=5, total=5)            # a full lap: same spot
+    assert build_feed.rotate_boards(boards, tmp_path)[1] == 3
+    assert build_feed.rotate_boards(boards[:2], tmp_path)[1] == 1          # the list shrank
+    (tmp_path / build_feed.CURSOR_FILE).write_text("garbage")
+    assert build_feed.rotate_boards(boards, tmp_path)[1] == 0              # unreadable: start over
+
+
 def test_aggregator_policy_refuses_adzuna_and_defaults_to_jsearch():
     from scripts import build_feed
     assert build_feed.aggregators_for_feed({}, log=lambda *a: None) == ["remotive", "remoteok", "freehire", "jsearch"]
