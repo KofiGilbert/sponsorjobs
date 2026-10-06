@@ -1776,8 +1776,12 @@
   let FEED_POLL = null;
   let FEED_SOURCE = "local";   // "central" when the list came from the hosted kitchen, else local
   let FEED_LOADED = false;     // false until the first server response, so the skeleton shows
-  let FEED_UPDATED = null;
-  let FEED_REQ = 0;            // request counter, to ignore out-of-order responses
+  // When the newest job ARRIVED (server's newest_at). The board shows this, not the build time:
+  // builds and polls carry on regardless, so "updated 2m ago" sat over a month of no new postings
+  // in August 2026.
+  let FEED_NEWEST = null;
+  const QUIET_AFTER_MS = 6 * 3600000; // the feed rebuilds every 3h; two empty builds is a fault
+  let FEED_REQ = 0;           // request counter, to ignore out-of-order responses
   let FEED_OK = false;         // have we ever loaded a trustworthy (non-degraded) board?
   let FEED_RECONNECTING = false;
   let FEED_CRAWLING = false;     // the engine is filling an empty local store for the first time
@@ -1829,10 +1833,7 @@
       }
       clearReconnect();
       FEED_SOURCE = r.source || "local";
-      // Prefer the server's build time; if a source omits it, fall back to NOW (we just fetched a
-      // live page) rather than keeping a stale value. Keeping the old value froze the label on a
-      // made-up age ("updated 33h ago") that never advanced even though the board was polling fine.
-      FEED_UPDATED = r.refreshed_at || new Date().toISOString();
+      FEED_NEWEST = r.newest_at || null;
       FEED_TOTAL = r.count != null ? r.count : (r.jobs || []).length;
       FEED_ALLTOTAL = r.total != null ? r.total : FEED_TOTAL;
       LAST_JOBS = r.jobs || [];
@@ -1901,9 +1902,21 @@
         : I18N.t("jobs.crawlingFirst", "fetching jobs from the job boards for the first time, this takes a few minutes");
       return;
     }
-    // "updated never" reads as broken when a feed has no server timestamp; we did just load it.
-    const when = FEED_UPDATED && ago(FEED_UPDATED) !== "never" ? ago(FEED_UPDATED) : "just now";
-    el.textContent = `${count} · updated ${when} · updates on its own`;
+    // The age of the NEWEST JOB, never the age of the last rebuild. If nothing new has arrived for
+    // a while, say so: a quiet board that admits it beats a fresh-looking one that isn't.
+    const newest = tsUTC(FEED_NEWEST);
+    const quiet = newest == null ? null : Math.max(0, Date.now() - newest);
+    const isQuiet = quiet != null && quiet > QUIET_AFTER_MS;
+    el.classList.toggle("feed-note-quiet", isQuiet);
+    if (quiet == null) el.textContent = `${count} · updates on its own`;
+    else if (isQuiet) el.textContent = `${count} · no new jobs for ${spanShort(quiet / 1000)}`;
+    else el.textContent = `${count} · newest job ${relAgo(quiet / 1000)} · updates on its own`;
+  }
+
+  // "7h" / "3d": a LENGTH of time, where relAgo gives a point in the past.
+  function spanShort(s) {
+    if (s < 172800) return Math.max(1, Math.round(s / 3600)) + "h";
+    return Math.round(s / 86400) + "d";
   }
 
   // Shimmer placeholder rows while the first feed loads, so the pane never looks broken/stuck.

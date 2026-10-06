@@ -2958,6 +2958,14 @@ def jobs_refresh():
         w.close()
 
 
+def _newest_arrival(jobs) -> str | None:
+    """When the newest job on the board first ARRIVED (its first_seen), or None. This is what the
+    board's freshness label shows. refreshed_at only says when the list was last rebuilt, and that
+    keeps ticking while no new job comes in: in August 2026 the board read "updated 2m ago" over a
+    month of no new postings."""
+    return max((str(j.get("first_seen") or "") for j in jobs), default="") or None
+
+
 @app.get("/api/jobs")
 @_guard
 def jobs_list():
@@ -3001,6 +3009,7 @@ def jobs_list():
                 refreshed = header.get("generated_at")
                 return jsonify({"jobs": page_jobs, "count": count, "total": len(jobs),
                                 "page": page, "per_page": per_page, "refreshed_at": refreshed,
+                                "newest_at": _newest_arrival(jobs),
                                 "stale": _is_stale(refreshed, hours=12) if refreshed else False,
                                 "source": "central"})
         except Exception:                            # noqa: BLE001 - fall back to the local feed
@@ -3080,6 +3089,7 @@ def jobs_list():
         # this is a genuine local-only install, so it is NOT degraded.
         return jsonify({"jobs": page_jobs, "count": count, "total": len(jobs),
                         "page": page, "per_page": per_page, "refreshed_at": refreshed,
+                        "newest_at": _newest_arrival(jobs),
                         "stale": _is_stale(refreshed, hours=12),
                         # Only the shared snapshot on screen = the central list, honestly aged.
                         "source": "central" if (snapshot_at and not local_count) else "local",

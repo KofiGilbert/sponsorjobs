@@ -347,7 +347,7 @@ def _install_origin(monkeypatch, rows, jd=None):
 
 
 def test_app_filters_the_static_feed_locally_and_overlays_bookmarks(client, monkeypatch):
-    rows = [_row("greenhouse:acme:1"),
+    rows = [_row("greenhouse:acme:1", first_seen="2026-09-30 11:00:00"),
             _row("lever:beta:2", title="New Grad Nurse", company="Beta Health", source="lever",
                  url="https://beta.example/2", entry_level=True, salary="")]
     srv = _install_origin(monkeypatch, rows)
@@ -357,6 +357,9 @@ def test_app_filters_the_static_feed_locally_and_overlays_bookmarks(client, monk
     assert d["refreshed_at"] == "2026-09-30T12:00:00+00:00" and d.get("degraded") is None
     d = c.get("/api/jobs?q=nurse").get_json()
     assert d["count"] == 1 and d["jobs"][0]["source_id"] == "lever:beta:2" and d["total"] == 2
+    # The freshness label reads when the newest job ARRIVED, not when the list was built, and
+    # over the whole board, not just the filtered page (the nurse row arrived at 10:00).
+    assert d["newest_at"] == "2026-09-30 11:00:00"
     assert c.get("/api/jobs?level=entry").get_json()["count"] == 1
     assert c.get("/api/jobs?pay=100000").get_json()["count"] == 1
     assert c.get("/api/jobs?visa=H-1B").get_json()["count"] == 2
