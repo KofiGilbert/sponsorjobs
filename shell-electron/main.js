@@ -11,7 +11,7 @@
  *    the app window is never carried away -- and the pane is CDP-debuggable, which is
  *    the assisted-apply takeover hook (agent fills, the person watches and clicks).
  */
-const { app, BrowserWindow, WebContentsView, ipcMain, session, net, nativeTheme } = require("electron");
+const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, net, nativeTheme } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -71,7 +71,16 @@ function resolvePython() {
 }
 
 async function ensureServer() {
-  if (await ping(SERVER + "/")) return;               // reuse a running dev server
+  if (await ping(SERVER + "/")) {
+    // Something already answers on the engine port. A dev checkout reuses it. An installed app
+    // first checks it can actually serve the UI: on 2026-10-06 an engine left running from a
+    // deleted checkout answered "/" but 404'd every stylesheet, and the installed app attached to
+    // it and showed a bare, unstyled page.
+    if (!app.isPackaged || await ping(SERVER + "/static/styles.css")) return;
+    throw new Error("Another program is using SponsorJobs' port (127.0.0.1:57000) and is not " +
+                    "working, most likely an older SponsorJobs engine that was left running. " +
+                    "Restart your computer, then open SponsorJobs again.");
+  }
   const env = { ...process.env, TAILOR_SERVER_ONLY: "1",
     // Pull the jobs board from the static feed (fresh, high-volume) unless the user pointed us
     // elsewhere. This is what turns "82 stale local roles" into the full central feed.
@@ -647,8 +656,15 @@ app.whenReady().then(async () => {
   // WSLg, where the Windows host already paints the frame dark. backgroundColor (below) only
   // themes the content, never the OS-drawn frame, which is why it wasn't enough on its own.
   nativeTheme.themeSource = "dark";
-  await ensureServer();
-  ensureBroker();          // best-effort, in the background; do not block the window on it
+  try {
+    await ensureServer();
+  } catch (e) {
+    // Say why and quit, rather than leaving a window-less app or a broken page behind.
+    dialog.showErrorBox("SponsorJobs could not start", String((e && e.message) || e));
+    app.quit();
+    return;
+  }
+  ensureBroker();         // best-effort, in the background; do not block the window on it
   await createWindow();
 });
 
