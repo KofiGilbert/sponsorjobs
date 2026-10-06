@@ -7,11 +7,8 @@ file costs one 304). Filtering + pagination then run locally over the cached lis
 descriptions are fetched per shard when a role is opened and cached for a day.
 
 Every network failure degrades, never raises, as long as a cached copy exists; with no cache at
-all `FeedUnavailable` tells the caller to fall back to the local crawl. The installer ships a
-SNAPSHOT of the list (`seed/feed/jobs.json.gz`, staged by scripts/bundle_feed_snapshot.py): a data
-dir with no cache yet adopts it as the initial cache, so a fresh install shows the board at once
-with the snapshot's own `generated_at` as its age, and the hourly download replaces it as usual. The
-snapshot is never copied over a cache that already exists. A failed download is
+all `FeedUnavailable` tells the caller to fall back to the local crawl. A data dir with no cache
+yet downloads the list at once (the app shows "fetching jobs" meanwhile). A failed download is
 remembered and not retried for a short, growing back-off (5 min doubling up to the hourly slot), so
 an unreachable host costs one short timeout per window instead of one per request. Flask serves
 requests from several threads: refresh/load run under a per-instance lock, every file lands via a
@@ -36,14 +33,6 @@ from urllib.parse import urlsplit
 
 from .feedfile import JD_DIR, JOBS_FILE, loads_maybe_gz, shard_for
 
-ROOT = Path(__file__).resolve().parents[1]
-# The bundled snapshot. packaging/tailor.spec places packaging/seed/feed/ at seed/feed/ inside the
-# frozen app, where ROOT resolves to the bundle dir (the same convention as seed/sponsors.db). A
-# dev checkout has no seed/feed/ and simply runs without one. JOBS_FEED_SNAPSHOT overrides the
-# path (empty = none), for tests and for pointing a dev run at a staged snapshot.
-BUNDLED_SNAPSHOT = ROOT / "seed" / "feed" / JOBS_FILE
-_DEFAULT = object()
-
 CHECK_EVERY = 3600          # a new list is looked for at most once an hour
 RETRY_AFTER = 300           # a failed download is not retried for 5 min, doubling per failure...
 RETRY_MAX = CHECK_EVERY     # ...up to the hourly slot
@@ -65,14 +54,6 @@ def is_placeholder(url: str) -> bool:
     return not host or host == "example" or host.endswith(".example")
 
 
-def bundled_snapshot_path() -> Path | None:
-    """Where the installer's feed snapshot lives, or None when this build has none."""
-    env = os.environ.get("JOBS_FEED_SNAPSHOT")
-    if env is not None:
-        return Path(env) if env.strip() else None
-    return BUNDLED_SNAPSHOT
-
-
 def _http_fetch(url: str, headers: dict, timeout: float = DEFAULT_TIMEOUT) -> tuple[int, dict, bytes]:
     """(status, response headers, body). A 304 is returned as a status, not raised."""
     req = urllib.request.Request(url, headers={"User-Agent": _UA, **headers})
@@ -87,36 +68,18 @@ def _http_fetch(url: str, headers: dict, timeout: float = DEFAULT_TIMEOUT) -> tu
         raise
 
 
-SNAPSHOT_MAX_DAYS = int(os.environ.get("JOBS_SNAPSHOT_MAX_DAYS", "45"))   # = the feed's freshness window
-
-
-def _snapshot_too_old(generated_at, now: float) -> bool:
-    """True when a bundled snapshot's generated_at is past SNAPSHOT_MAX_DAYS, or unreadable."""
-    try:
-        from datetime import datetime, timezone
-        g = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
-        if g.tzinfo is None:
-            g = g.replace(tzinfo=timezone.utc)
-        return (now - g.timestamp()) > SNAPSHOT_MAX_DAYS * 86400
-    except Exception:                                     # noqa: BLE001 - no date = no trust
-        return True
-
-
 class StaticFeed:
     """One install's view of the static feed, cached under `cache_dir`.
 
     `fetch(url, headers) -> (status, headers, body)` and `clock() -> epoch seconds` are injectable
-    so the hourly schedule, ETag handling and failure modes are unit-testable offline. `snapshot`
-    is the bundled list adopted as the initial cache (default: the installer's, if any; None for
-    none). With no `base_url` (feed not configured) nothing is ever downloaded: the reader only
-    serves whatever cache -- typically the adopted snapshot -- it holds."""
+    so the hourly schedule, ETag handling and failure modes are unit-testable offline. With no
+    `base_url` (feed not configured) nothing is ever downloaded: the reader only serves whatever
+    cache it already holds."""
 
     def __init__(self, base_url: str, cache_dir, fetch=None, clock=time.time,
-                 timeout: float = DEFAULT_TIMEOUT, snapshot=_DEFAULT):
+                 timeout: float = DEFAULT_TIMEOUT):
         self.base_url = (base_url or "").rstrip("/")
         self.cache_dir = Path(cache_dir)
-        self.snapshot = bundled_snapshot_path() if snapshot is _DEFAULT else (
-            Path(snapshot) if snapshot else None)
         self._fetch = fetch or (lambda u, h: _http_fetch(u, h, timeout))
         self._clock = clock
         # Flask is threaded: /api/jobs and /api/jobs/detail can both find the list due at the same
@@ -261,39 +224,6 @@ class StaticFeed:
         self._by_id = None
         self._bench = None
 
-    def _adopt_snapshot(self) -> bool:
-        """With NO cached list, copy the bundled snapshot in as the initial cache. True when it
-        was adopted. Only ever into an empty slot: a cache that exists (however old) was downloaded
-        later than the installer was built, or is this same snapshot, so it is never overwritten.
-        `last_check` is left unset, so a configured feed downloads the live list at once; the
-        snapshot's generated_at is recorded so the UI's "updated X ago" states the real age."""
-        if self.snapshot is None or self.jobs_path.exists():
-            return False
-        try:
-            if not self.snapshot.exists():
-                return False
-            body = self.snapshot.read_bytes()
-            data = loads_maybe_gz(body)
-            if not (isinstance(data, dict) and isinstance(data.get("jobs"), list)):
-                return False
-            # A snapshot older than the feed's freshness window is all expired postings: an
-            # installer downloaded months after it was built must not show them even briefly.
-            # The app then shows its normal "fetching jobs" state until the live list arrives.
-            if _snapshot_too_old(data.get("generated_at"), self._clock()):
-                return False
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-            _atomic_write(self.jobs_path, body if body[:2] == b"\x1f\x8b"
-                          else gzip.compress(body, mtime=0))
-            self._state.pop("etag", None)                 # the snapshot is nobody's ETag
-            self._state.pop("last_check", None)           # a configured feed downloads right away
-            self._state["generated_at"] = data.get("generated_at")
-            self._state["snapshot_generated_at"] = data.get("generated_at")
-            self._save_state()
-            return True
-        except Exception:                                 # noqa: BLE001 - no snapshot, no harm
-            traceback.print_exc()
-            return False
-
     def _cached_rows_exist(self) -> bool:
         """Does the in-memory list or the on-disk cache hold at least one row?"""
         if self._jobs:
@@ -307,19 +237,16 @@ class StaticFeed:
         return False
 
     def has_cache(self) -> bool:
-        """Is there a list to serve without the network (a download, or the bundled snapshot,
-        which is adopted here if it has not been yet)?"""
+        """Is there a downloaded list to serve without the network?"""
         with self._lock:
-            self._adopt_snapshot()
             return self.jobs_path.exists()
 
     def _load_cached(self) -> None:
         """Load the cached list into memory if the file changed. A corrupt file (a half-written or
         truncated download) is DELETED and treated as no cache, so the next refresh is due at once
         instead of every request failing until the hourly slot; an older copy already in memory
-        keeps serving meanwhile. A data dir with no cache at all adopts the bundled snapshot."""
+        keeps serving meanwhile."""
         with self._lock:
-            self._adopt_snapshot()
             if not self.jobs_path.exists():
                 return
             mtime = self.jobs_path.stat().st_mtime

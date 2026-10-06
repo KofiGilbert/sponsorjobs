@@ -99,35 +99,30 @@ At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
 
 ### What a fresh install sees
 
-A fresh install has an empty local store and no cached list. Three things keep its Jobs page from
+A fresh install has an empty local store and no cached list. Two things keep its Jobs page from
 sitting on "0 live roles" -- or from crawling 1,105 boards from the person's laptop (one brisk run of
 that got an IP barred by Workable for 19 hours, and during a feed outage every new install would have
 done it at once):
 
-1. **The bundled snapshot.** The installer ships a slim copy of the list (`seed/feed/jobs.json.gz`,
-   staged at build time by `scripts/bundle_feed_snapshot.py` from the published feed, or from a bounded
-   polite crawl when no feed URL is configured; no JD shards, descriptions come from the company's own
-   board endpoint on click). `StaticFeed` adopts it as the **initial cache** the first time the data dir
-   has none -- copied in once, aged by its own `generated_at` so "updated X ago" is honest -- and never
-   over a cache that already exists.
-2. **The hourly feed.** With a real `JOBS_FEED_URL`, the first request downloads the live list and
-   replaces the snapshot; from then on the hourly, ETag-conditional download keeps it fresh. If the
-   origin is down the snapshot (or the last download) keeps serving.
-3. **The polite fallback crawl**, only when the feed is genuinely absent: `JOBS_FEED_URL` unset or the
-   placeholder (nothing will ever refresh the board; the snapshot, if any, is shown meanwhile and the
-   local store takes over once it holds rows), or a configured feed whose downloads have **failed for
-   30 minutes** (`StaticFeed.failing_for`, persisted in `feed_state.json`) with **nothing cached at
-   all** -- a bundled snapshot counts as a cache. One failed download never starts a crawl. The crawl
-   itself is `sourcing.service.first_open_refresh`: the top **300** boards (`JOBS_FIRST_CRAWL_BOARDS`)
-   ranked by the company's H-1B approvals with a few of every ATS, one request at a time with
-   per-host spacing from `sourcing/growth.PoliteFetch` (Workable on its slow lane, all Workday tenants
-   on one lane, a 429 backs the host off and a cooling host is skipped), a **10-minute** wall-clock
-   cap (`JOBS_FIRST_CRAWL_MINUTES`), and **20** descriptions per Workday / SmartRecruiters board
-   (`JOBS_FIRST_CRAWL_DETAIL`). It runs once per process; `JOBS_FIRST_CRAWL=0` switches it off. The
-   in-app auto-updater (`RESUME_AGENT_AUTOUPDATE`) is unchanged.
+1. **The live feed.** With a real `JOBS_FEED_URL`, the first request downloads the live list at once;
+   the client shows its "connecting" state meanwhile and re-polls until the list arrives. From then on
+   the hourly, ETag-conditional download keeps it fresh, and if the origin is down the last download
+   keeps serving.
+2. **The polite fallback crawl**, only when the feed is genuinely absent: `JOBS_FEED_URL` unset or the
+   placeholder (nothing will ever fill the board otherwise), or a configured feed whose downloads have
+   **failed for 30 minutes** (`StaticFeed.failing_for`, persisted in `feed_state.json`) with **nothing
+   cached at all**, or one that has served an empty list for that long. One failed download never
+   starts a crawl. The crawl itself is `sourcing.service.first_open_refresh`: the top **300** boards
+   (`JOBS_FIRST_CRAWL_BOARDS`) ranked by the company's H-1B approvals with a few of every ATS, one
+   request at a time with per-host spacing from `sourcing/growth.PoliteFetch` (Workable on its slow
+   lane, all Workday tenants on one lane, a 429 backs the host off and a cooling host is skipped), a
+   **10-minute** wall-clock cap (`JOBS_FIRST_CRAWL_MINUTES`), and **20** descriptions per Workday /
+   SmartRecruiters board (`JOBS_FIRST_CRAWL_DETAIL`). It runs once per process (retried after a
+   back-off if it fails); `JOBS_FIRST_CRAWL=0` switches it off. The in-app auto-updater
+   (`RESUME_AGENT_AUTOUPDATE`) is unchanged.
 
-A dev checkout has no snapshot (`packaging/seed/` is git-ignored) and behaves as before; the
-`client` says `"crawling": true` while the fallback crawl runs and re-polls until rows arrive.
+The `/api/jobs` response says `"crawling": true` while the fallback crawl runs, and the client
+re-polls until rows arrive.
 
 ## Costs
 

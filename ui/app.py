@@ -368,11 +368,10 @@ def _feed_empty_for() -> float:
 
 def _first_crawl_allowed(feed_url: str | None) -> bool:
     """May this install crawl the boards itself? Only when no feed will fill the board: no feed
-    configured (unset, or the unbought-domain placeholder -- the bundled snapshot, if any, is shown
-    meanwhile but nothing will ever refresh it); or a configured feed whose downloads have been
-    failing for FIRST_CRAWL_AFTER_FAILING with nothing cached at all; or one that has been serving
-    an EMPTY list for that long (see _FEED_EMPTY). A bundled snapshot counts as a cache there: the
-    hourly download will replace it, so there is nothing to crawl for."""
+    configured (unset, or the unbought-domain placeholder); or a configured feed whose downloads
+    have been failing for FIRST_CRAWL_AFTER_FAILING with nothing cached at all; or one that has
+    been serving an EMPTY list for that long (see _FEED_EMPTY). While a configured feed's first
+    download is in flight the board shows "fetching jobs" instead of crawling."""
     if feed_url is None:
         return True
     sf = _static_feed()
@@ -440,18 +439,17 @@ def _feed_base_url() -> str | None:
 
 
 def _feed_serving() -> bool:
-    """Is the static feed where the board's rows come from -- a configured feed, or (no feed
-    configured) the installer's bundled snapshot? The detail / tailor paths resolve a clicked row
-    from the feed's cached list in either case; its JD comes from the shard when there is a feed,
-    else straight from the company's own public board endpoint (fetch_board_jd)."""
-    return bool(_feed_base_url()) or _static_feed().has_cache()
+    """Is the static feed where the board's rows come from (a feed is configured)? The detail /
+    tailor paths then resolve a clicked row from the feed's cached list, its JD from the shard or,
+    failing that, from the company's own public board endpoint (fetch_board_jd)."""
+    return bool(_feed_base_url())
 
 
 def _static_feed():
     """This install's reader for the static feed, cached under the data dir (docs/feed.md). It
     downloads jobs.json.gz at most hourly (ETag-conditional, per-install minute offset) and the JD
-    shards on demand; all filtering happens here, locally. With no feed configured it still holds
-    the installer's bundled snapshot, if this build has one, and never downloads anything."""
+    shards on demand; all filtering happens here, locally. With no feed configured it never
+    downloads anything."""
     from sourcing.feedclient import StaticFeed
     key = (_feed_base_url(), str(_DATA))
     with _STATIC_FEEDS_LOCK:
@@ -3038,17 +3036,6 @@ def jobs_list():
                 and is_jd_checked(j) and is_sponsor_relevant(j)]
         for j in jobs:
             j["entry_level"] = is_entry_level(j.get("title", ""))
-        # No feed configured but this build ships a snapshot of the shared list: the board is the
-        # UNION of that snapshot and whatever the polite crawl has stored so far (local rows win on
-        # a clash). Swapping the 2,855-row snapshot for the crawl's first 23 rows, as the local
-        # path alone would, made the count drop in front of the person (seen 2026-10-01).
-        snapshot_at = None
-        local_count = len(jobs)
-        if not feed_url:
-            snap_rows, snapshot_at = _snapshot_rows()
-            if snap_rows:
-                have = {j.get("source_id") for j in jobs}
-                jobs = jobs + [j for j in snap_rows if j.get("source_id") not in have]
         # Same facets + pagination the static-feed path uses.
         a = request.args
         facets = _facets(a)
@@ -3071,11 +3058,10 @@ def jobs_list():
             except Exception:                            # noqa: BLE001 - search still returns the local matches
                 pass
         page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1), a.get("per_page", 30))
-        refreshed = _sponsors().get_meta("jobs_refreshed_at") or snapshot_at
+        refreshed = _sponsors().get_meta("jobs_refreshed_at")
         # An empty local store on a fresh install: start the first-open crawl (only when the feed is
         # genuinely absent, see _first_crawl_allowed) and say so, so the client shows "fetching
-        # jobs" and re-polls instead of an empty board. The snapshot does not count as "crawled":
-        # nothing will ever refresh it while no feed is configured.
+        # jobs" and re-polls instead of an empty board.
         store_empty = not _sponsors().get_meta("jobs_refreshed_at") and not _local_crawl_running()
         crawling = (_kick_local_crawl() if store_empty and _first_crawl_allowed(feed_url)
                     else _local_crawl_running())
@@ -3091,25 +3077,11 @@ def jobs_list():
                         "page": page, "per_page": per_page, "refreshed_at": refreshed,
                         "newest_at": _newest_arrival(jobs),
                         "stale": _is_stale(refreshed, hours=12),
-                        # Only the shared snapshot on screen = the central list, honestly aged.
-                        "source": "central" if (snapshot_at and not local_count) else "local",
+                        "source": "local",
                         "degraded": bool(feed_url), "crawling": crawling,
                         "crawl_error": crawl_error or None})
     finally:
         w.close()
-
-
-def _snapshot_rows() -> tuple[list[dict], str | None]:
-    """The bundled snapshot's rows (copies) and its generated_at, or ([], None) when this build
-    has none, it is too old, or it cannot be read."""
-    try:
-        sf = _static_feed()
-        if not sf.has_cache():
-            return [], None
-        jobs, header = sf.jobs()
-    except Exception:                                # noqa: BLE001 - no snapshot: the local rows stand
-        return [], None
-    return [dict(j) for j in jobs], header.get("generated_at")
 
 
 @app.get("/api/jobs/detail")

@@ -8,7 +8,6 @@ desktop icon, and no terminal window.
 ```
 pip install pyinstaller
 python packaging/bundle_sponsor_db.py      # vet + stage the visa-data snapshot (55MB)
-python scripts/bundle_feed_snapshot.py     # stage the job-list snapshot (a few MB; see below)
 pyinstaller packaging/tailor.spec          # -> dist/SponsorJobs/SponsorJobs.exe
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\tailor.iss
                                            # -> dist/installer/SponsorJobsSetup.exe
@@ -24,7 +23,6 @@ machine it runs on, so an Apple Silicon Mac makes an `arm64` build.
 ```
 pip install pyinstaller
 python packaging/bundle_sponsor_db.py
-python scripts/bundle_feed_snapshot.py
 pyinstaller packaging/tailor.spec --noconfirm        # -> dist/SponsorJobs/SponsorJobs
 cd shell-electron
 npm install
@@ -96,24 +94,12 @@ button stays for freshness.
 At scale this also moves the download load onto OUR installer instead of a million fresh
 installs each pulling files from a government website.
 
-## The job list ships inside the installer too
+## The job list is not bundled
 
-A fresh install also had an EMPTY jobs board, and the fix for that -- crawl the committed 1,105-board
-watchlist from the person's laptop on first open -- was too aggressive: one brisk run got an IP
-barred by Workable for 19 hours, and during a feed outage every new install would crawl at once.
-
-`scripts/bundle_feed_snapshot.py` stages a slim snapshot of the job list (public postings only, no
-descriptions; those are fetched from the company's own board endpoint on click) at
-`packaging/seed/feed/jobs.json.gz` + `manifest.json`, and the spec bundles it as `seed/feed/`. It
-downloads the published feed when `TAILOR_FEED_URL` (env, or `--from-url`) names a real base URL;
-with the placeholder or nothing set it runs the same bounded, polite crawl a fresh install would
-(`--max-minutes`, default 20; `--max-boards`; `--detail-budget`). On first use the app copies the
-snapshot into the person's data dir as the feed's initial cache, aged honestly by its
-`generated_at`, and the hourly feed download replaces it; a cache that already exists is never
-overwritten. The release workflow runs the script before PyInstaller using the `TAILOR_FEED_URL`
-repository variable. Optional, like the sponsor DB: a dev build without it works, but an installer
-without it makes every new install run the (now small and polite) first-open crawl. Details:
-`docs/feed.md`, "What a fresh install sees".
+The installer ships no job list. A fresh install downloads the live feed (`JOBS_FEED_URL`) on first
+open and shows a "connecting" state meanwhile; only when the feed is absent, or has failed for 30
+minutes with nothing cached, does it run a small, polite first-open crawl. Details: `docs/feed.md`,
+"What a fresh install sees".
 
 ## The browser extension
 

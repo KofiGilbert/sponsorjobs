@@ -84,8 +84,8 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
           crawl_minutes: float | None = None) -> dict:
     """Crawl (unless crawl=False) into the DB under `data_dir`, then write the feed files into
     `out_dir`. Returns the manifest. `fetch` is injectable so tests run against canned JSON.
-    `crawler(watchlist) -> summary` replaces the full refresh_watchlist crawl (the installer's
-    snapshot build passes the bounded, polite first_open_refresh). `crawl_minutes` caps the board
+    `crawler(watchlist) -> summary` replaces the full refresh_watchlist crawl (e.g. the bounded,
+    polite first_open_refresh). `crawl_minutes` caps the board
     pass; the next build resumes where this one stopped (rotate_boards)."""
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)

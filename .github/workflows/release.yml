@@ -76,24 +76,12 @@ jobs:
         shell: bash
         run: python packaging/bundle_sponsor_db.py
 
-      # Stages packaging/seed/feed/jobs.json.gz (public job postings, no personal data): the board a
-      # fresh install shows at once. From the published feed when TAILOR_FEED_URL is set, else a
-      # bounded, polite crawl (top boards by H-1B volume, per-host spacing, 20-minute cap). Without
-      # it every new install would crawl the boards itself on first open.
-      - name: Stage the feed snapshot
-        shell: bash
-        env:
-          TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
-          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
-        run: python scripts/bundle_feed_snapshot.py --max-minutes 40
-
       - name: Build the engine (PyInstaller)
         shell: bash
         run: |
           pyinstaller packaging/tailor.spec --noconfirm
           test -d dist/SponsorJobs
           test -f packaging/seed/sponsors.db
-          test -f packaging/seed/feed/jobs.json.gz
 
       # The installer file names carry package.json's version (SponsorJobs-Setup-<v>.exe,
       # SponsorJobs-<v>-arm64.dmg). Make that the tag's version so the asset matches the release.
@@ -122,18 +110,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # The job-list snapshot that went into the installer, published alongside it so a
-      # maintainer on a slow connection can fetch the 5 MB list instead of crawling locally.
-      - uses: actions/upload-artifact@v4
-        if: runner.os == 'macOS'
-        with:
-          name: feed-snapshot
-          path: |
-            packaging/seed/feed/jobs.json.gz
-            packaging/seed/feed/manifest.json
-          if-no-files-found: error
-          retention-days: 14
-
   publish:
     name: Attach to the release
     needs: build
@@ -156,8 +132,6 @@ jobs:
           files: |
             assets/*.exe
             assets/*.dmg
-            assets/jobs.json.gz
-            assets/manifest.json
           fail_on_unmatched_files: true
           generate_release_notes: true
           draft: false

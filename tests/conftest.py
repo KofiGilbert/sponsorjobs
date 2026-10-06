@@ -163,16 +163,12 @@ def _no_first_open_crawl(monkeypatch):
     """The Jobs route starts a real background crawl of 1,100 boards when the local store is
     empty (ui.app._kick_local_crawl). Under test that would hit the network from every test
     that touches /api/jobs. An env switch is used rather than a monkeypatched function because
-    several fixtures reload ui.app, which would discard a patched attribute. The installer's
-    bundled feed snapshot (seed/feed/jobs.json.gz) is likewise switched off, so a checkout that
-    happens to hold one behaves like the plain dev tree; tests that want a snapshot point
-    JOBS_FEED_SNAPSHOT at their own file. The bundled H-1B seed loads SYNCHRONOUSLY here
-    (JOBS_SYNC_SEED=1): the app merges it on a background thread, but tests that open a fresh
-    sponsor DB and read its counts straight away need it in place; the one test of the
-    background path unsets this itself (tests/test_h1b_data.py). NOTIFY_OFFICIAL=0 keeps the
-    notification hub off the broker (the official Telegram bot); tests that exercise it inject
-    fakes and set it back themselves."""
+    several fixtures reload ui.app, which would discard a patched attribute. The bundled H-1B
+    seed loads SYNCHRONOUSLY here (JOBS_SYNC_SEED=1): the app merges it on a background thread,
+    but tests that open a fresh sponsor DB and read its counts straight away need it in place;
+    the one test of the background path unsets this itself (tests/test_h1b_data.py).
+    NOTIFY_OFFICIAL=0 keeps the notification hub off the broker (the official Telegram bot);
+    tests that exercise it inject fakes and set it back themselves."""
     monkeypatch.setenv("JOBS_FIRST_CRAWL", "0")
     monkeypatch.setenv("NOTIFY_OFFICIAL", "0")
-    monkeypatch.setenv("JOBS_FEED_SNAPSHOT", "")
     monkeypatch.setenv("JOBS_SYNC_SEED", "1")

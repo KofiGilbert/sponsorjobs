@@ -52,17 +52,6 @@ else:
     print("WARNING: packaging/seed/sponsors.db missing; this build ships NO visa data. "
           "Run: python packaging/bundle_sponsor_db.py")
 
-# The job-list snapshot (public postings only, staged by scripts/bundle_feed_snapshot.py from the
-# published feed or a bounded polite crawl). A fresh install shows this board at once instead of
-# crawling 1,100 boards from the person's laptop; the hourly feed download replaces it. Optional,
-# so a dev build still works -- but an installer without it makes every new install crawl.
-_feed_snapshot = ROOT / "packaging" / "seed" / "feed"
-if (_feed_snapshot / "jobs.json.gz").exists():
-    datas.append((str(_feed_snapshot), "seed/feed"))
-else:
-    print("WARNING: packaging/seed/feed/jobs.json.gz missing; this build ships NO job snapshot "
-          "(a fresh install will run the first-open crawl). Run: python scripts/bundle_feed_snapshot.py")
-
 hiddenimports = [
     # Flask/Werkzeug reach for these dynamically, so static analysis misses them.
     "flask", "jinja2", "werkzeug", "click", "itsdangerous", "markupsafe",
