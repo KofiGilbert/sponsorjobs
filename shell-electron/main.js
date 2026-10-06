@@ -24,7 +24,7 @@ const SERVER = "http://127.0.0.1:57000";
 // alive. Override with TAILOR_FEED_URL (e.g. a staging bucket). The `.example` placeholder is an
 // RFC 2606 reserved name the engine recognises as "not configured", so until the real domain is
 // set the app simply runs on its local crawl instead of waiting on a lookup that cannot succeed.
-const FEED_URL = process.env.TAILOR_FEED_URL || "https://tailor.example/feed"; // TODO: set to the real domain
+const FEED_URL = process.env.TAILOR_FEED_URL || "https://feed.sponsorjobs.ai/feed";
 // Fixed CDP port so the Python side (assisted apply) can attach to the pane.
 app.commandLine.appendSwitch("remote-debugging-port", "9223");
 

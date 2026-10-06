@@ -5,7 +5,7 @@
 
 // TODO: replace with the real feed host once the broker has a domain. This is the ONE
 // place the host lives; site/_headers connect-src must list the same host.
-const FEED_BASE = "https://tailor.example";
+const FEED_BASE = "https://feed.sponsorjobs.ai";
 
 // TODO: replace with the real repository once it is public under its launch name.
 const REPO_URL = "https://github.com/KofiGilbert/sponsorjobs";

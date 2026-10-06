@@ -1,10 +1,44 @@
 # The static job feed
 
 **Status: the supported path (2026-09-30).** It replaces the hosted "kitchen" (`backend/feed.py` on
-Render, now suspended). Nothing is served by a process we run: a scheduled GitHub Action crawls the
-GREEN-lane sources, writes three kinds of file, and uploads them to a Cloudflare R2 bucket behind our
-domain. Every install downloads the slim list at most once an hour and filters it locally. There is no
-server to pay for or keep alive, and the local crawl remains the fallback, so the app works offline.
+Render, now suspended), and is hosted on GitHub Pages for now (see "Where the feed is hosted"). Nothing is served by a process we run: a scheduled GitHub Action crawls the
+GREEN-lane sources, writes three kinds of file, and publishes them behind our domain. Every install
+downloads the slim list at most once an hour and filters it locally. There is no server to pay for
+or keep alive, and the local crawl remains the fallback, so the app works offline.
+
+## Where the feed is hosted
+
+**Now: GitHub Pages** (decided 2026-10-06), at `https://feed.sponsorjobs.ai/feed`. Cloudflare would
+not activate R2 on our account (a billing hold that support could not clear), and Pages costs
+nothing and needs no card on a public repo. The `feed` workflow builds the files and publishes them
+as a Pages site; the domain stays on Cloudflare as a DNS record pointing at GitHub.
+
+**Move back to R2 when either of these happens:**
+1. Cloudflare billing is sorted out on the account that owns the domain, or
+2. paid plans launch. GitHub's terms say Pages is not free hosting for a commercial business or
+   SaaS, so the feed should leave Pages before SponsorJobs charges money.
+
+**How to move back** (the app does not change; it only knows the address): do the R2 set-up
+below (steps 1 to 4), set the repository variable `FEED_HOST` to `r2`, run the workflow once,
+then in Cloudflare DNS replace the `feed` CNAME record with the R2 custom domain, and turn Pages
+off in the repo (Settings -> Pages).
+
+Pages limits (soft): 1 GB site (the feed is ~10 MB) and 100 GB of downloads a month. GitHub serves
+the `.json.gz` files as plain gzip without `Content-Encoding`; the app checks the gzip magic bytes
+and unpacks either form (`sourcing/feedfile.loads_maybe_gz`, `sourcing/feedclient.py`), so nothing
+breaks. Every file gets GitHub's fixed `Cache-Control: max-age=600`.
+
+### Pages set-up, step by step
+
+1. Cloudflare -> the `sponsorjobs.ai` domain -> **DNS** -> **Add record**: type `CNAME`, name
+   `feed`, target `kofigilbert.github.io`, proxy status **DNS only** (grey cloud; GitHub has to
+   reach the name directly to issue its HTTPS certificate).
+2. Repo -> **Settings** -> **Pages**: Source **GitHub Actions**. Custom domain
+   `feed.sponsorjobs.ai`, Save. When the check passes, tick **Enforce HTTPS**.
+3. Repo -> Settings -> Secrets and variables -> Actions -> **Variables**: `TAILOR_FEED_URL` =
+   `https://feed.sponsorjobs.ai/feed`. (`FEED_HOST` unset means Pages.)
+4. **Actions -> feed -> Run workflow**. Smoke test:
+   `curl -s https://feed.sponsorjobs.ai/feed/manifest.json` shows `generated_at` and `count`.
 
 ## What the list contains
 

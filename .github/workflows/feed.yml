@@ -1,8 +1,11 @@
 name: feed
 
-# Builds the STATIC job feed (scripts/build_feed.py) and uploads it to Cloudflare R2
-# (scripts/upload_feed.py) every 3 hours. Replaces the always-on Render "kitchen": no server to
-# pay for or keep alive. See docs/feed.md for the secrets and the custom-domain setup.
+# Builds the STATIC job feed (scripts/build_feed.py) every 3 hours and publishes it to one of two
+# hosts, chosen by the FEED_HOST repository variable (see docs/feed.md, "Where the feed is hosted"):
+#   pages (default)  GitHub Pages from this public repo: free, no card, no secrets.
+#   r2               Cloudflare R2 via scripts/upload_feed.py (needs the R2_* secrets).
+# Either way the app reads the same address (TAILOR_FEED_URL), so switching hosts is a settings
+# change here, never an app release. Replaces the always-on Render "kitchen".
 on:
   schedule:
     - cron: "23 */3 * * *"
@@ -10,6 +13,8 @@ on:
 
 permissions:
   contents: read
+  pages: write       # the Pages deploy job publishes the built feed
+  id-token: write    # ...and proves it is this repo's workflow doing it
 
 # One build at a time: a slow crawl must never overlap the next tick's run.
 concurrency:
@@ -18,14 +23,16 @@ concurrency:
 
 jobs:
   build-and-upload:
-    # Skip (no runner, no minutes, no failure email) until the Cloudflare R2 bucket is set up and
-    # the TAILOR_FEED_URL repository variable exists. See docs/feed.md.
+    # Skip (no runner, no minutes, no failure email) until the host is set up and the
+    # TAILOR_FEED_URL repository variable exists. See docs/feed.md.
     if: ${{ vars.TAILOR_FEED_URL != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
       FEED_DATA_DIR: ${{ github.workspace }}/.feed-data
-      FEED_OUT_DIR: ${{ github.workspace }}/.feed-out
+      # Built under .site/feed so the Pages artifact (.site) serves it at <domain>/feed/...,
+      # the same paths R2 serves with R2_PREFIX=feed.
+      FEED_OUT_DIR: ${{ github.workspace }}/.site/feed
     steps:
       - uses: actions/checkout@v4
 
@@ -62,6 +69,7 @@ jobs:
             --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"
 
       - name: Upload to R2
+        if: ${{ vars.FEED_HOST == 'r2' }}
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -69,3 +77,20 @@ jobs:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           R2_PREFIX: ${{ vars.R2_PREFIX }}
         run: python scripts/upload_feed.py --dir "$FEED_OUT_DIR"
+
+      - name: Package for GitHub Pages
+        if: ${{ vars.FEED_HOST != 'r2' }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .site
+
+  deploy-pages:
+    needs: build-and-upload
+    if: ${{ vars.TAILOR_FEED_URL != '' && vars.FEED_HOST != 'r2' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
