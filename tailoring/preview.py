@@ -14,9 +14,17 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 from .compiler import no_window_kwargs
+
+# PDFium is NOT thread-safe, and Flask serves requests on several threads. The Resumes page asks
+# for every template thumbnail at once, and five renders in parallel crashed the whole engine
+# (seen 2026-10-06 in the 0.1.0 installer: blank templates, then a dead app). EVERY pypdfium2 call
+# in the app holds this lock. Re-entrant, because notify.redact.render_preview calls contact_band
+# while holding it. PyMuPDF is not thread-safe either, so it shares the lock.
+PDFIUM_LOCK = threading.RLock()
 
 
 def render_first_page_png(pdf_path, png_path, dpi: int = 150) -> str:
@@ -72,18 +80,19 @@ def _render_pdfium(pdf_path: Path, png_path: Path, dpi: int) -> bool:
     except Exception:
         return False
     doc = None
-    try:
-        doc = pdfium.PdfDocument(str(pdf_path))
-        doc[0].render(scale=dpi / 72.0).to_pil().save(str(png_path))
-        return png_path.exists() and png_path.stat().st_size > 0
-    except Exception:
-        return False
-    finally:
-        if doc is not None:
-            try:
-                doc.close()
-            except Exception:
-                pass
+    with PDFIUM_LOCK:
+        try:
+            doc = pdfium.PdfDocument(str(pdf_path))
+            doc[0].render(scale=dpi / 72.0).to_pil().save(str(png_path))
+            return png_path.exists() and png_path.stat().st_size > 0
+        except Exception:
+            return False
+        finally:
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
 
 
 def _render_pymupdf(pdf_path: Path, png_path: Path, dpi: int) -> bool:
@@ -92,11 +101,12 @@ def _render_pymupdf(pdf_path: Path, png_path: Path, dpi: int) -> bool:
     except Exception:
         return False
     try:
-        doc = fitz.open(str(pdf_path))
-        try:
-            doc.load_page(0).get_pixmap(dpi=dpi).save(str(png_path))
-        finally:
-            doc.close()
+        with PDFIUM_LOCK:                                 # not thread-safe either
+            doc = fitz.open(str(pdf_path))
+            try:
+                doc.load_page(0).get_pixmap(dpi=dpi).save(str(png_path))
+            finally:
+                doc.close()
         return png_path.exists() and png_path.stat().st_size > 0
     except Exception:
         return False

@@ -2,7 +2,7 @@
 
 **A free, open-source job-hunt agent for international students in the US, and anyone else
 job hunting.** SponsorJobs finds jobs, flags which employers actually sponsor visas, rewrites your
-résumé for each job without breaking its one-page layout, drafts the cover letter, and helps
+resume for each job without breaking its one-page layout, drafts the cover letter, and helps
 you practise the interview. It runs on your own computer with your own AI key.
 
 <!-- Demo: add a 60-90 second screen recording here before launch. -->
@@ -10,7 +10,7 @@ you practise the interview. It runs on your own computer with your own AI key.
 ## Why this exists
 
 Job hunting as an international student is the hard version of job hunting. You need
-employers who sponsor, a résumé in the American one-page style, and answers ready for
+employers who sponsor, a resume in the American one-page style, and answers ready for
 US-style interviews. Most tools that help charge a monthly fee to people who often cannot
 legally earn money yet. SponsorJobs is free so that the students who need it most can use it.
 
@@ -21,8 +21,8 @@ legally earn money yet. SponsorJobs is free so that the students who need it mos
    visa-sponsorship record from public U.S. government data: H-1B, green card (PERM),
    E-Verify for STEM OPT, and cap-exempt status. Postings that say "no sponsorship" are
    flagged too.
-2. **Tailor your résumé.** Rewords your real experience toward the job's language, keeps it
-   on one page, and shows which of the job's keywords your résumé covers and which it
+2. **Tailor your resume.** Rewords your real experience toward the job's language, keeps it
+   on one page, and shows which of the job's keywords your resume covers and which it
    misses. It never adds a skill to a role where you did not use it.
 3. **Write the rest.** Drafts a cover letter and answers to screening questions from your
    own history.
@@ -33,7 +33,7 @@ legally earn money yet. SponsorJobs is free so that the students who need it mos
 
 ## Your data
 
-- Your profile, résumés, and applications are stored only on your computer.
+- Your profile, resumes, and applications are stored only on your computer.
 - To write text, SponsorJobs sends the relevant text to the AI provider you choose (Anthropic
   or OpenAI) using **your own API key**. SponsorJobs itself stores none of it.
 - The jobs list comes from a shared feed of public job postings. Your profile is never
@@ -47,7 +47,7 @@ Download `SponsorJobs-Setup.exe` from the [Releases](../../releases) page and ru
 may show a SmartScreen warning because the installer is not yet code-signed. Click
 **More info**, then **Run anyway**.
 
-You also need LaTeX, which SponsorJobs uses to typeset your résumé. Install
+You also need LaTeX, which SponsorJobs uses to typeset your resume. Install
 [MiKTeX](https://miktex.org/download) and let it install missing packages on the fly.
 
 ### macOS and Linux (from source for now)

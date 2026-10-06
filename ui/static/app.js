@@ -793,10 +793,10 @@
     }
     const bits = [];
     if (r.filled) bits.push(r.filled + " field" + (r.filled === 1 ? "" : "s"));
-    if (r.uploaded) bits.push("résumé attached");
+    if (r.uploaded) bits.push("resume attached");
     note.textContent = (bits.length
       ? "Filled " + bits.join(", ") + "."
-        + (r.pending_upload ? " Attach your résumé PDF yourself." : "")
+        + (r.pending_upload ? " Attach your resume PDF yourself." : "")
         + " Review every field, the submit click is yours."
       : "Nothing to fill on this step. Continue to the next page of the application and AI-fill again.");
   }
@@ -1058,7 +1058,7 @@
     // codes. When the posting states it but we hold no filing history, this replaces the neutral
     // "No sponsorship record" (the role is explicitly sponsor-friendly).
     const stated = j.sponsorship_stated === true
-      ? `<span class="vbadge vb-stated" title="This posting states it offers visa sponsorship (from the employer's own listing). The strongest, most current signal.">States sponsorship</span>`
+      ? `<span class="vbadge vb-stated" title="The job ad itself says the company offers visa sponsorship. The strongest, most current signal.">Sponsorship in ad</span>`
       : "";
     if (!v.length) {
       return stated || `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa. They still might, it's worth asking.">No sponsorship record</span>`;
@@ -1240,7 +1240,7 @@
     if (JF_DATE) chips.push({ k: "date", label: DATE_LABELS[JF_DATE] });
     if (JF_REMOTE) chips.push({ k: "remote", label: REMOTE_LABELS[JF_REMOTE] || JF_REMOTE });
     if (JF_LEVEL === "entry") chips.push({ k: "level", label: "Entry-level" });
-    if (JF_SPONSORED) chips.push({ k: "sponsored", label: "States sponsorship" });
+    if (JF_SPONSORED) chips.push({ k: "sponsored", label: "Sponsorship in ad" });
     [...VISA_SET].forEach(v => chips.push({ k: "visa:" + v, label: VISA_LABELS[v] || v }));
     if (JF_PAY) chips.push({ k: "pay", label: "$" + Math.round(JF_PAY / 1000) + "k+ pay" });
     if (JF_LOC) chips.push({ k: "loc", label: `"${JF_LOC}"` });
@@ -1544,8 +1544,8 @@
   function renderMatch(m, job) {
     const el = $("#fdMatch");
     if (!el) return;
-    if (!m) { el.innerHTML = `<div class="fd-match-none">Drop your résumé in the chat and I'll instantly show how you match this role, and every other one.</div>`; return; }
-    if (!m.total) { el.innerHTML = `<div class="fd-match-none">No specific skills called out in this posting, tailoring will still align your résumé to it.</div>`; return; }
+    if (!m) { el.innerHTML = `<div class="fd-match-none">Drop your resume in the chat and I'll instantly show how you match this role, and every other one.</div>`; return; }
+    if (!m.total) { el.innerHTML = `<div class="fd-match-none">No specific skills called out in this posting, tailoring will still align your resume to it.</div>`; return; }
     const pct = Math.round((m.ratio || 0) * 100);
     const v = VERDICT[m.verdict];
     const label = v ? v[0] : `${pct}% match`;
@@ -2662,9 +2662,9 @@
     const missing = Object.keys(ID_FIELDS).filter(k => !(id[k] || "").trim());
     let html = rows.join("");
     if (!rows.length) {
-      html = `<p class="prof-note">Nothing here yet, upload your résumé and I'll fill it in.</p>`;
+      html = `<p class="prof-note">Nothing here yet, upload your resume and I'll fill it in.</p>`;
     } else if (missing.length) {
-      html += `<p class="prof-note">I'll ask for the rest (${missing.map(k => ID_LABELS[k].toLowerCase()).join(", ")}) if a résumé needs it.</p>`;
+      html += `<p class="prof-note">I'll ask for the rest (${missing.map(k => ID_LABELS[k].toLowerCase()).join(", ")}) if a resume needs it.</p>`;
     }
     $("#idKnown").innerHTML = html;
   }
@@ -2910,13 +2910,13 @@
     $("#idSaved").textContent = "";
   });
 
-  // Profile-first: drop a résumé, we parse it into the whole profile.
+  // Profile-first: drop a resume, we parse it into the whole profile.
   $("#profCvFile")?.addEventListener("change", async e => {
     const file = e.target.files[0];
     if (!file) return;
     const msg = $("#profImportMsg"), btn = $("#profUploadBtn");
     msg.hidden = false; msg.className = "prof-import-msg working";
-    msg.textContent = "Reading your résumé and filling your profile…";
+    msg.textContent = "Reading your resume and filling your profile…";
     if (btn) btn.textContent = "Reading…";
     try {
       const fd = new FormData(); fd.append("file", file);
@@ -2935,7 +2935,7 @@
       msg.className = "prof-import-msg err";
       msg.textContent = "Couldn't build your profile, " + err.message;
     } finally {
-      if (btn) btn.textContent = "Upload résumé";
+      if (btn) btn.textContent = "Upload resume";
       e.target.value = "";   // allow re-uploading the same file
     }
   });
@@ -3098,7 +3098,7 @@
   }
 
   // Apply means APPLY. The click is there so a person authorises each submission, not so
-  // they can be shown a form they never asked to read: it fills, attaches the résumé and
+  // they can be shown a form they never asked to read: it fills, attaches the resume and
   // submits in one action. It stops short only where the site says no -- a captcha or a
   // login wall -- and then hands the open page back rather than trying to get past it.
   $("#rvwList")?.addEventListener("click", async (e) => {
@@ -5289,7 +5289,7 @@
     // done
     const bits = [
       wizDone.ai ? "AI connected" : "AI not connected yet, add it any time from the sidebar",
-      wizDone.resume ? "profile filled from your résumé" : "no profile yet, you can build one as you tailor",
+      wizDone.resume ? "profile filled from your resume" : "no profile yet, you can build one as you tailor",
     ];
     $("#wizDoneSummary").textContent = bits.join(" · ") + ".";
     wizShow("done");
@@ -5328,7 +5328,7 @@
   $("#wizCvFile")?.addEventListener("change", async e => {
     const file = e.target.files[0]; if (!file) return;
     const msg = $("#wizCvMsg");
-    wizMsg(msg, "Reading your résumé and filling your profile…", "working");
+    wizMsg(msg, "Reading your resume and filling your profile…", "working");
     try {
       const fd = new FormData(); fd.append("file", file);
       const res = await fetch("/api/profile/from_cv", { method: "POST", body: fd });
@@ -5389,15 +5389,31 @@
   let tab = "cv";
   let lastPdf = "";
 
+  // The pane is a NATIVE view drawn above the whole page, so a pop-up can never cover it: in 0.1.0
+  // the pane sat on top of the first-run box, whose dimmed backdrop covered only the pane's own
+  // header, so the browser looked cut off at the top. While any pop-up is showing, hide the pane.
+  const OVERLAYS = ".ai-modal, .wiz, .tpl-modal, [aria-modal=true]";
+  const overlayOpen = () => [...document.querySelectorAll(OVERLAYS)]
+    .some((el) => el.getClientRects().length > 0);
+  let sentBounds = "";
   function sendBounds() {
     if (!shell) return;
-    if (body.classList.contains("panel-open") && tab === "browser") {
+    let rect = { x: 0, y: 0, width: 0, height: 0 };
+    if (body.classList.contains("panel-open") && tab === "browser" && !overlayOpen()) {
       const r = slot.getBoundingClientRect();
-      shell.setBounds({ x: r.x, y: r.y, width: r.width, height: r.height });
-    } else {
-      shell.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      rect = { x: r.x, y: r.y, width: r.width, height: r.height };
     }
+    const key = JSON.stringify(rect);
+    if (key === sentBounds) return;
+    sentBounds = key;
+    shell.setBounds(rect);
   }
+  let boundsQueued = false;
+  new MutationObserver(() => {
+    if (boundsQueued) return;
+    boundsQueued = true;
+    requestAnimationFrame(() => { boundsQueued = false; sendBounds(); });
+  }).observe(body, { subtree: true, attributes: true, attributeFilter: ["hidden", "class"] });
 
   function paintRail() {
     const open = body.classList.contains("panel-open");

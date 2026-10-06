@@ -13,7 +13,7 @@ A companion browser extension for the local **SponsorJobs** app. It does two thi
    - **Screening answers**, "authorized to work in the US?" and "need visa sponsorship?", from answers you save **once** in the extension popup (great for F-1/OPT students).
    - **EEO / demographic questions**, only if you tick the box, and only ever the neutral
      **"Decline to self-identify"** option. It never guesses a gender/race/veteran value.
-   - It also **flags the résumé upload** (browsers block extensions from setting file
+   - It also **flags the resume upload** (browsers block extensions from setting file
      inputs, so you attach your tailored PDF yourself).
    - **Long-answer questions**, for free-text boxes ("Why do you want this role?",
      "Describe a challenge…") and a cover-letter box, a **Draft long answers** button
@@ -48,7 +48,7 @@ the extension simply shows nothing (or a "Start SponsorJobs" hint).
    the extension icon to check any employer by name.
 6. Open an application form (e.g. a Greenhouse/Lever/Ashby "Apply" page), the
    **Assisted apply** panel appears bottom-right. Click **Fill this application**,
-   review what it filled (highlighted green), attach your résumé, and submit yourself.
+   review what it filled (highlighted green), attach your resume, and submit yourself.
 
 (When published, it installs from the Chrome Web Store in one click.)
 
@@ -64,5 +64,5 @@ Per the project rules, this extension is strictly the GREEN lane:
 ## Roadmap
 - **E-Verify (STEM-OPT)** live per-employer lookup against the USCIS tool.
 - Assisted apply: broaden field coverage (custom screening questions, EEO) and
-  résumé-file guidance per ATS.
+  resume-file guidance per ATS.
 - Pass the job's description straight into the CV tailoring flow ("Tailor my CV").

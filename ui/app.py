@@ -2728,7 +2728,7 @@ def cv_pdf():
 @app.get("/api/cv.docx")
 @_guard
 def cv_docx():
-    """Download the tailored résumé as an ATS-friendly Word (.docx). Parsers read a
+    """Download the tailored resume as an ATS-friendly Word (.docx). Parsers read a
     .docx's XML text ordering more reliably than a PDF, and older Taleo/iCIMS prefer Word.
     Built on the fly from the SAME tailored profile the PDF was rendered from (persisted on
     the record as `render_profile`), so the two match. Falls back to the saved profile for
@@ -2755,7 +2755,7 @@ def cv_docx():
 @app.get("/api/cv.parse_preview")
 @_guard
 def cv_parse_preview():
-    """A 'how a résumé parser sees your CV' plaintext readback of the tailored profile, so
+    """A 'how a resume parser sees your CV' plaintext readback of the tailored profile, so
     the person can sanity-check nothing important got dropped or scrambled for an ATS."""
     from tailoring.docx_export import profile_to_plaintext
     rid = request.args.get("rid", "")
@@ -3690,7 +3690,7 @@ def profile_sections_save():
 @app.post("/api/profile/from_cv")
 @_guard
 def profile_from_cv():
-    """Profile-first: build the whole PROFILE from an uploaded résumé, no JD needed.
+    """Profile-first: build the whole PROFILE from an uploaded resume, no JD needed.
     Parse one artifact, prefill everything. Uses the real model (needs the key)."""
     from datetime import datetime
 
@@ -3700,7 +3700,7 @@ def profile_from_cv():
 
     f = request.files.get("file")
     if f is None or not f.filename:
-        return jsonify({"error": "Choose a résumé file (Word, PDF, PowerPoint, or an image)."}), 400
+        return jsonify({"error": "Choose a resume file (Word, PDF, PowerPoint, or an image)."}), 400
     name = secure_filename(f.filename) or "resume"
     if Path(name).suffix.lower() not in SUPPORTED_EXTS:
         return jsonify({"error": f"Unsupported file type '{Path(name).suffix.lower()}'. "
@@ -3714,7 +3714,7 @@ def profile_from_cv():
     llm = _make_llm()       # real model; raises a clear error if the key/connectivity is missing
     profile = _coerce_profile(llm.extract_profile(text))
     if not (profile.get("identity") or profile.get("experience")):
-        return jsonify({"error": "Couldn't find a profile in that file, try another résumé."}), 400
+        return jsonify({"error": "Couldn't find a profile in that file, try another resume."}), 400
     # Projects conventionally carry a "Personal Project" location (matches the rest of the
     # pipeline) so a one-click autonomous build isn't stopped by a missing project location.
     for pr in profile.get("projects") or []:
@@ -3767,7 +3767,7 @@ def _coerce_profile(profile) -> dict:
 
 
 def _merge_profiles(base: dict, new: dict) -> dict:
-    """Fold a freshly-parsed résumé into an existing profile WITHOUT losing anything: add
+    """Fold a freshly-parsed resume into an existing profile WITHOUT losing anything: add
     new entries, fill identity gaps (a fresh résumé's non-empty contact wins), union skills,
     and keep existing summary/interests when present."""
     out = dict(base)
@@ -7185,7 +7185,7 @@ def autoapply_run():
     snap = _memory().load("default") or {}
     base_profile = snap.get("profile") or {}
     if not base_profile.get("experience"):
-        return jsonify({"error": "Add your profile first (drop your résumé), then SponsorJobs can "
+        return jsonify({"error": "Add your profile first (drop your resume), then SponsorJobs can "
                                  "build these for you."}), 400
 
     # What KINDS of roles to tailor today (all optional; empty = the freshest roles).

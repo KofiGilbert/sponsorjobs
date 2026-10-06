@@ -87,7 +87,13 @@ def contact_band(pdf_path, identity: dict):
     """(bottom, top) in PDF points of the contact line on page 1, and the page height.
     Returns (None, height) when the person has no contact details at all."""
     import pypdfium2 as pdfium
-    doc = pdfium.PdfDocument(str(pdf_path))
+
+    from tailoring.preview import PDFIUM_LOCK          # PDFium is not thread-safe
+    with PDFIUM_LOCK:
+        return _contact_band(pdfium.PdfDocument(str(pdf_path)), identity)
+
+
+def _contact_band(doc, identity: dict):
     try:
         page = doc[0]
         _w, h = page.get_size()
@@ -122,14 +128,18 @@ def render_preview(pdf_path, png_path, identity: dict, redact: bool = True,
         return {"path": "", "redacted": False, "band": None}
     png_path.parent.mkdir(parents=True, exist_ok=True)
     scale = dpi / 72.0
-    doc = pdfium.PdfDocument(str(pdf_path))
-    try:
-        img = doc[0].render(scale=scale).to_pil().convert("RGB")
-    finally:
-        doc.close()
+    from tailoring.preview import PDFIUM_LOCK          # PDFium is not thread-safe
+    with PDFIUM_LOCK:
+        doc = pdfium.PdfDocument(str(pdf_path))
+        try:
+            img = doc[0].render(scale=scale).to_pil().convert("RGB")
+        finally:
+            doc.close()
+        band = h = None
+        if redact:
+            band, h = contact_band(pdf_path, identity)
     band_px = None
     if redact:
-        band, h = contact_band(pdf_path, identity)
         if band is not None:
             from PIL import ImageDraw
             bottom, top = band

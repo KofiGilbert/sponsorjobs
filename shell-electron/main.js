@@ -11,7 +11,7 @@
  *    the app window is never carried away -- and the pane is CDP-debuggable, which is
  *    the assisted-apply takeover hook (agent fills, the person watches and clicks).
  */
-const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, net, nativeTheme } = require("electron");
+const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, net, nativeTheme, shell } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -141,7 +141,8 @@ function ensurePane() {
   const wc = pane.webContents;
   // Popups inside the pane stay inside the pane.
   wc.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/i.test(url)) wc.loadURL(url);
+    if (opensInOwnBrowser(url)) shell.openExternal(url);
+    else if (/^https?:/i.test(url)) wc.loadURL(url);
     return { action: "deny" };
   });
   for (const ev of ["did-navigate", "did-navigate-in-page", "page-title-updated", "did-finish-load"]) {
@@ -164,8 +165,27 @@ function ensurePane() {
   return pane;
 }
 
+// Account and API-key pages open in the person's OWN browser, never the pane. Google refuses
+// sign-in (passkeys included) inside embedded browsers, and RFC 8252 says native apps must not
+// host sign-in in one: in 0.1.0 the Anthropic console opened in the pane and its Google sign-in
+// hung on "Verifying it's you". Their own browser is also where they're already signed in.
+const OWN_BROWSER_HOSTS = [
+  "console.anthropic.com", "platform.claude.com", "claude.ai",
+  "platform.openai.com", "auth.openai.com",
+  "platform.tavus.io",
+  "accounts.google.com", "appleid.apple.com", "login.microsoftonline.com", "login.live.com",
+];
+
+function opensInOwnBrowser(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return OWN_BROWSER_HOSTS.some((h) => host === h || host.endsWith("." + h));
+  } catch (e) { return false; }
+}
+
 function openInPane(url) {
   if (!/^https?:/i.test(url)) return;
+  if (opensInOwnBrowser(url)) { shell.openExternal(url); return; }
   ensurePane();
   paneOpen = true;
   pane.webContents.loadURL(url);
@@ -583,6 +603,7 @@ ipcMain.on("pane:back", () => pane && pane.webContents.navigationHistory.goBack(
 ipcMain.on("pane:forward", () => pane && pane.webContents.navigationHistory.goForward());
 ipcMain.on("pane:reload", () => pane && pane.webContents.reload());
 ipcMain.on("pane:navigate", (_e, url) => {
+  if (opensInOwnBrowser(url)) { shell.openExternal(url); return; }
   if (pane && /^https?:/i.test(url)) pane.webContents.loadURL(url);
 });
 ipcMain.handle("pane:get-state", () => paneState());

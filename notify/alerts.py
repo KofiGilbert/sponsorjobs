@@ -250,8 +250,8 @@ def alert_text(alert: dict, can_apply: bool) -> str:
             f"{fit} for your profile ({', '.join(extras)}).")
     if can_apply:
         return (head + " This site accepts applications from SponsorJobs. "
-                "Want me to tailor your résumé and apply for you?")
-    return head + " Want me to tailor your résumé and queue it? I'll prepare it; you click submit."
+                "Want me to tailor your resume and apply for you?")
+    return head + " Want me to tailor your resume and queue it? I'll prepare it; you click submit."
 
 
 def alert_buttons(alert: dict, can_apply: bool) -> list:

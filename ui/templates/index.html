@@ -82,7 +82,7 @@
       <!-- ============ HOME (prompt-first, Devin-style) ============
            One hero element: the prompt. Typing fades everything else; Enter starts a
            tailoring session with the text as the opening message (the old JD gate,
-           collapsed into the landing). Recent résumés live in Saved CVs, not here. -->
+           collapsed into the landing). Recent resumes live in Saved CVs, not here. -->
       <section class="view view-dashboard is-active" id="view-dashboard">
         <header class="page-head home-head">
           <div></div>
@@ -196,7 +196,7 @@
             </div>
           </details>
           <button class="jf-toggle-btn" id="jfEntry" type="button" aria-pressed="false" title="Junior, new-grad, and internship roles. Most international students are new grads.">Entry-level</button>
-          <button class="jf-toggle-btn" id="jfSponsored" type="button" aria-pressed="false" title="Only roles whose posting itself states it offers visa sponsorship, the strongest, most current signal for international students.">States sponsorship</button>
+          <button class="jf-toggle-btn" id="jfSponsored" type="button" aria-pressed="false" title="Only jobs whose ad itself says the company offers visa sponsorship.">Sponsorship in ad</button>
           <button class="jf-toggle-btn" id="jfSaved" type="button" aria-pressed="false" title="Only the roles you've bookmarked. Saved roles stay on this machine.">★ Saved</button>
         </div>
         <div class="active-filters" id="activeFilters" hidden></div>
@@ -389,19 +389,19 @@
         <header class="page-head">
           <div>
             <h1 class="page-title">What SponsorJobs knows about you</h1>
-            <p class="page-sub">Drop your résumé once and I learn it all, then quietly reuse it on every résumé, letterhead, and cover letter. Nothing to fill in.</p>
+            <p class="page-sub">Drop your resume once and I learn it all, then quietly reuse it on every resume, letterhead, and cover letter. Nothing to fill in.</p>
           </div>
         </header>
 
         <div class="prof-wrap">
           <div class="prof-import" id="profImport">
             <div class="prof-import-txt">
-              <div class="prof-import-h">Start with your résumé</div>
+              <div class="prof-import-h">Start with your resume</div>
               <div class="prof-import-p">We read it once and fill your whole profile. Faster than typing it out.</div>
             </div>
             <label class="prof-import-drop" id="profDrop">
               <input type="file" id="profCvFile" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp" hidden />
-              <span class="btn btn-primary" id="profUploadBtn">Upload résumé</span>
+              <span class="btn btn-primary" id="profUploadBtn">Upload resume</span>
               <span class="prof-import-hint">PDF, Word, or an image</span>
             </label>
           </div>
@@ -437,7 +437,7 @@
           </div>
 
           <div class="prof-empty" id="profEmpty" hidden>
-            No profile yet. <b>Upload your résumé</b> to fill it in automatically, or click <b>New Resume</b> to build one as you tailor.
+            No profile yet. <b>Upload your resume</b> to fill it in automatically, or click <b>New Resume</b> to build one as you tailor.
           </div>
 
           <div class="prof-sections" id="profSections"><!-- CV sections injected (read-only) --></div>
@@ -1225,8 +1225,8 @@
 
       <div class="wiz-panel" data-panel="welcome">
         <div class="wiz-kick">Welcome to SponsorJobs</div>
-        <h2 class="wiz-h">A perfect one-page résumé for every job, in a couple of clicks.</h2>
-        <p class="wiz-p">Two quick things and you're set: connect your AI, then drop in your current résumé. Your data is stored only on this computer. To write text, only what's needed goes to your AI provider on your own key, and SponsorJobs keeps none of it.</p>
+        <h2 class="wiz-h">A perfect one-page resume for every job, in a couple of clicks.</h2>
+        <p class="wiz-p">Two quick things and you're set: connect your AI, then drop in your current resume. Your data is stored only on this computer. To write text, only what's needed goes to your AI provider on your own key, and SponsorJobs keeps none of it.</p>
         <div class="wiz-foot">
           <button class="btn btn-ghost" data-wiz="skip" type="button">Skip for now</button>
           <button class="btn btn-primary" data-wiz="next" type="button">Get started →</button>
@@ -1236,7 +1236,7 @@
       <div class="wiz-panel" data-panel="ai" hidden>
         <div class="wiz-kick">Step 1 of 2 · Connect your AI</div>
         <h2 class="wiz-h">Add your Anthropic key</h2>
-        <p class="wiz-p">SponsorJobs runs on your own AI key, about a few cents per résumé, paid to Anthropic directly. Your key stays on this machine; we never see it.</p>
+        <p class="wiz-p">SponsorJobs runs on your own AI key, about a few cents per resume, paid to Anthropic directly. Your key stays on this machine; we never see it.</p>
         <ol class="ai-steps">
           <li>Open <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> and sign in.</li>
           <li>Add <b>$5 of credit</b> under Billing <span class="ai-note">,  the key won't work without it.</span></li>
@@ -1251,12 +1251,12 @@
       </div>
 
       <div class="wiz-panel" data-panel="resume" hidden>
-        <div class="wiz-kick">Step 2 of 2 · Your résumé</div>
-        <h2 class="wiz-h">Drop in your current résumé</h2>
+        <div class="wiz-kick">Step 2 of 2 · Your resume</div>
+        <h2 class="wiz-h">Drop in your current resume</h2>
         <p class="wiz-p">We'll read it once and fill your whole profile, name, experience, skills. After that, every job is one click.</p>
         <label class="wiz-drop" id="wizDrop">
           <input type="file" id="wizCvFile" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp" hidden />
-          <span class="btn btn-primary">Upload résumé</span>
+          <span class="btn btn-primary">Upload resume</span>
           <span class="wiz-drop-hint">PDF, Word, or an image</span>
         </label>
         <div class="ai-msg" id="wizCvMsg" hidden></div>
@@ -1282,7 +1282,7 @@
     <div class="ai-card">
       <span class="jd-kicker">Connect your AI</span>
       <h2 class="jd-title" id="aiTitle">Add your Claude key</h2>
-      <p class="jd-sub" id="aiSub">SponsorJobs runs on your own AI key, about a few cents per résumé, paid to your provider directly. Your key stays on this machine; we never see it.</p>
+      <p class="jd-sub" id="aiSub">SponsorJobs runs on your own AI key, about a few cents per resume, paid to your provider directly. Your key stays on this machine; we never see it.</p>
 
       <div id="aiSetup">
         <!-- Pick your provider. Claude is the recommended default (the prompts are tuned for

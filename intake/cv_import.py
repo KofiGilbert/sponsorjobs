@@ -113,28 +113,30 @@ def _ocr_pdf(path: Path) -> str:
         import pypdfium2 as pdfium
     except Exception:
         return ""
+    from tailoring.preview import PDFIUM_LOCK          # PDFium is not thread-safe
     out = []
-    try:
-        pdf = pdfium.PdfDocument(str(path))
-    except Exception:
-        return ""
-    try:
-        # Cap the OCR work: a résumé is a page or two, so a huge/many-page scan (or a hostile
-        # upload) can't tie the machine up rasterizing+OCR-ing hundreds of pages.
-        for i in range(min(len(pdf), _MAX_OCR_PAGES)):
-            try:
-                page = pdf[i]
-                pil = page.render(scale=2.5).to_pil().convert("RGB")
-                text = _ocr_ndarray(np.asarray(pil))
-                if text:
-                    out.append(text)
-            except Exception:
-                continue
-    finally:
+    with PDFIUM_LOCK:
         try:
-            pdf.close()
+            pdf = pdfium.PdfDocument(str(path))
         except Exception:
-            pass
+            return ""
+        try:
+            # Cap the OCR work: a résumé is a page or two, so a huge/many-page scan (or a hostile
+            # upload) can't tie the machine up rasterizing+OCR-ing hundreds of pages.
+            for i in range(min(len(pdf), _MAX_OCR_PAGES)):
+                try:
+                    page = pdf[i]
+                    pil = page.render(scale=2.5).to_pil().convert("RGB")
+                    text = _ocr_ndarray(np.asarray(pil))
+                    if text:
+                        out.append(text)
+                except Exception:
+                    continue
+        finally:
+            try:
+                pdf.close()
+            except Exception:
+                pass
     return "\n".join(out)
 
 

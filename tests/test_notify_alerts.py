@@ -266,7 +266,7 @@ def test_message_template_assisted():
          "location": "New York", "score": 82, "sponsor": "H-1B sponsor"}
     assert alert_text(a, False) == (
         "JP Morgan is hiring a Business Analyst in New York. Good fit for your profile "
-        "(82% match, H-1B sponsor). Want me to tailor your résumé and queue it? "
+        "(82% match, H-1B sponsor). Want me to tailor your resume and queue it? "
         "I'll prepare it; you click submit.")
     labels = [b["label"] for row in alert_buttons(a, False) for b in row]
     assert labels == ["Tailor and queue", "Skip", "Fewer like this"]
@@ -279,7 +279,7 @@ def test_message_template_auto():
          "sponsor": ""}
     assert alert_text(a, True) == (
         "Acme is hiring an Engineer. Strong fit for your profile (90% match). This site accepts "
-        "applications from SponsorJobs. Want me to tailor your résumé and apply for you?")
+        "applications from SponsorJobs. Want me to tailor your resume and apply for you?")
     assert alert_buttons(a, True)[0][0] == {"id": "job:apply:s1", "label": "Apply for me"}
 
 

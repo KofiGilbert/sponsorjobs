@@ -43,7 +43,7 @@ class NotifyHub:
                 act = data.split(":")[1] if data.count(":") >= 2 else ""
                 if act in ("queue", "apply"):
                     channel.ack(ev, "On it")
-                    channel.send("On it. Tailoring your résumé now; I'll message you when it's ready.")
+                    channel.send("On it. Tailoring your resume now; I'll message you when it's ready.")
                 reply = self.engine.handle_button(data, self.job_actions)
                 if act not in ("queue", "apply"):
                     channel.ack(ev, reply)
