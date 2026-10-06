@@ -3,11 +3,9 @@
 //   2. point the download buttons at the latest GitHub release, with the button for the
 //      visitor's own OS as the single primary action.
 
-// TODO: replace with the real feed host once the broker has a domain. This is the ONE
-// place the host lives; site/_headers connect-src must list the same host.
+// The ONE place the feed host lives; site/_headers connect-src must list the same host.
 const FEED_BASE = "https://feed.sponsorjobs.ai";
 
-// TODO: replace with the real repository once it is public under its launch name.
 const REPO_URL = "https://github.com/KofiGilbert/sponsorjobs";
 
 const LINKS = {
