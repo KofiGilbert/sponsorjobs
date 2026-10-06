@@ -65,6 +65,11 @@ jobs:
           JOBS_MAX_PER_COMPANY: ${{ vars.JOBS_MAX_PER_COMPANY || 500 }}
           TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
           FEED_CRAWL_MINUTES: ${{ vars.FEED_CRAWL_MINUTES || 70 }}
+          # Descriptions read per giant Workday / SmartRecruiters board PER RUN. The code default
+          # (2000) let 18 boards eat a whole 20-minute run; 200 lets a run reach many boards, and
+          # descriptions already stored are never re-read, so big boards still fill in over runs.
+          WORKDAY_MAX_DETAIL_FEED: ${{ vars.WORKDAY_MAX_DETAIL_FEED || 200 }}
+          SMARTRECRUITERS_MAX_DETAIL_FEED: ${{ vars.SMARTRECRUITERS_MAX_DETAIL_FEED || 200 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
             --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"
