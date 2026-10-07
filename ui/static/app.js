@@ -67,6 +67,9 @@
     if (o.link) { link.href = o.link; link.textContent = o.linkLabel || "Fix it"; }
     btn.hidden = !o.btn;
     if (o.btn) btn.textContent = o.btn;
+    // Retrying cannot fix a used-up allowance or a missing key; the button would only fail again.
+    const retry = $("#downRetry");
+    if (retry) retry.hidden = ["upgrade_required", "no_key", "no_credit", "no_account"].includes(reason);
     box.hidden = false;
   }
   function hideOutage() { const b = $("#downModal"); if (b) b.hidden = true; }
@@ -2021,7 +2024,7 @@
       wk.remove();
       applyState(st);
       $("#composerInput").focus();
-    } catch (e) { wk.remove(); bubble("agent", `<span style="color:var(--flag)">${esc(e.message)}</span>`); }
+    } catch (e) { wk.remove(); if (!e.reason || !OUTAGE[e.reason]) bubble("agent", `<span style="color:var(--flag)">${esc(e.message)}</span>`); }
   }
 
   document.querySelectorAll("[data-nav-to]").forEach(b =>
@@ -2254,7 +2257,9 @@
   }
   async function withWorking(fn, label) {
     const w = working(label);
-    try { await fn(); } catch (e) { bubble("agent", `<span style="color:var(--flag)">${esc(e.message)}</span>`); }
+    // A failure the outage screen already explains (no key, limit reached, offline) is not
+    // repeated as a chat bubble: the person read the same sentence twice (2026-10-07).
+    try { await fn(); } catch (e) { if (!e.reason || !OUTAGE[e.reason]) bubble("agent", `<span style="color:var(--flag)">${esc(e.message)}</span>`); }
     finally { w.remove(); }
   }
 
