@@ -2369,11 +2369,25 @@
       return `<div class="ps-row ps-lvl-${esc(c.level)}"><span class="ps-ic">${icon}</span>`
         + `<div class="ps-body"><div class="ps-label">${esc(c.label)}</div>${items}</div></div>`;
     }).join("");
+    // One line by default (tailor-ux: the preview is the point, the review is a note on it). The
+    // rows open on click, or on their own when there is something that must be read: a claim
+    // the profile cannot back. The person's choice to open or close them sticks for the session.
+    const mustShow = r.verdict === "check";
+    const open = mustShow || REVIEW_OPEN;
     el.hidden = false;
+    el.classList.toggle("is-open", open);
     el.innerHTML =
-      `<div class="ps-head ps-${esc(v[1])}"><span class="ps-verdict">${esc(v[0])}</span>`
-      + `<span class="ps-headline">${esc(r.headline || "")}</span></div>${rows}`;
+      `<button class="ps-head ps-${esc(v[1])}" type="button" aria-expanded="${open}">`
+      + `<span class="ps-verdict">${esc(v[0])}</span>`
+      + `<span class="ps-headline">${esc(r.headline || "")}</span>`
+      + `<span class="ps-toggle">${open ? "Hide details" : "Details"}</span></button>`
+      + `<div class="ps-rows" ${open ? "" : "hidden"}>${rows}</div>`;
+    el.querySelector(".ps-head").addEventListener("click", () => {
+      REVIEW_OPEN = !el.classList.contains("is-open");
+      renderReview(r);
+    });
   }
+  let REVIEW_OPEN = false;
 
   function renderCovDetail(cov) {
     const present = (cov.present || []).slice(0, 24);

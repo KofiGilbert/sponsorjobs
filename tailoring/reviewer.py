@@ -11,7 +11,8 @@ from __future__ import annotations
 from tailoring.keywords import profile_text, term_present
 
 
-def review_resume(profile: dict, coverage: dict, status: str = "clean") -> dict:
+def review_resume(profile: dict, coverage: dict, status: str = "clean",
+                  fill: float | None = None) -> dict:
     """Return an honest pre-send review of the tailored resume.
 
     ``coverage`` is the session's coverage dict: ``present`` (terms shown on the resume),
@@ -52,12 +53,16 @@ def review_resume(profile: dict, coverage: dict, status: str = "clean") -> dict:
             "items": missing_unsupported[:12],
         })
     page_ok = status == "clean"
+    # Say how full the page is in numbers. "Looks sparse" shipped over a page that was 55%
+    # empty and read as a shrug; a percentage is a fact the person can act on.
+    pct = f"{round(fill * 100)}%" if isinstance(fill, (int, float)) and fill > 0 else None
     checks.append({
         "id": "length",
         "level": "pass" if page_ok else "warn",
-        "label": ("Fits one clean page" if page_ok else
+        "label": ("Fills one clean page" if page_ok else
                   "Runs long, trim it to one page" if status == "overflow" else
-                  "Looks sparse, there is room to add more"),
+                  (f"Page is {pct} full, add real material to fill it" if pct
+                   else "Page is not full, add real material to fill it")),
         "items": [],
     })
 
@@ -68,7 +73,8 @@ def review_resume(profile: dict, coverage: dict, status: str = "clean") -> dict:
         headline = "One thing to fix first: a claim your profile does not back."
     elif not page_ok:
         verdict = "review"
-        headline = "Reads honest. One layout tweak is worth a look."
+        headline = ("Honest, but the page is not full yet." if status == "underfull"
+                    else "Honest, but it runs past one page.")
     else:
         verdict = "ready"
         headline = "Honest and tight. Ready to send."

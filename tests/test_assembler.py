@@ -228,3 +228,34 @@ def test_experience_still_renders_org():
         {"org": "Stanbic Bank Ghana", "title": "Senior Product Manager", "dates": "2018 - 2024",
          "bullets": ["Led enterprise product delivery."]}]})
     assert "Stanbic Bank Ghana" in tex
+
+
+@requires_latex
+def test_a_thin_profile_is_not_trimmed_into_a_half_page(template_source, fake_llm, workdir):
+    """Kofi's first real run (2026-10-07): 5 roles and 9 bullets came out at about half a page
+    because role selection had cut a role and bullets BEFORE anyone looked at the page. When
+    the page is short and selection dropped material, the builder must bring the person's own
+    material back rather than ship the hole."""
+    from tailoring.assembler import _count_material, assemble_cv
+    roles = []
+    for i in range(5):
+        roles.append({"org": f"Company {i}", "title": f"Analyst {i}", "location": "Accra, GH",
+                      "start": f"Jan 20{10 + i}", "end": f"Dec 20{10 + i}",
+                      "bullets": [f"Built reporting pipelines in SQL for team {i}, cutting the monthly "
+                                  f"close from ten days to four and saving {i + 1}00 analyst hours a year."]
+                                 + ([f"Led a cross-functional project with {i + 2} teams that shipped a "
+                                     "customer dashboard adopted by 40 managers within a quarter.",
+                                     "Mentored two junior analysts, both promoted within the year."]
+                                    if i in (1, 3) else [])})
+    profile = {"identity": {"name": "Test Person", "email": "t@example.com", "phone": "555-0100",
+                            "location": "Chicago, IL"},
+               "education": [{"school": "DePaul University", "degree": "MBA, Business Analytics",
+                              "start": "Sep 2024", "end": "Dec 2025", "location": "Chicago, IL"}],
+               "experience": roles, "skills": {"Data": ["SQL", "Tableau", "Python"]}, "projects": []}
+    assert _count_material(profile) == (5, 9)
+    res = assemble_cv(template_source, profile, "Business Analyst. SQL, Tableau, dashboards.",
+                      fake_llm, workdir, jobname="thin", tailor=False)
+    assert res.ok
+    # Everything the person gave is on the page: no role and no bullet silently dropped.
+    assert _count_material(res.profile_used) == (5, 9)
+    assert res.fill_ratio is not None

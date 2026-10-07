@@ -839,6 +839,47 @@ class AssembleResult:
         )
 
 
+def _count_material(profile: dict) -> tuple[int, int]:
+    """(roles, bullets) across the experience section, nested or flat."""
+    roles = bullets = 0
+    for entry in profile.get("experience") or []:
+        nested = entry.get("roles") if isinstance(entry.get("roles"), list) else [entry]
+        for role in nested:
+            roles += 1
+            bullets += len(role.get("bullets") or [])
+    return roles, bullets
+
+
+def _dropped_material(full: dict, selected: dict) -> bool:
+    """Did role selection leave out any of the person's roles or bullets?"""
+    return _count_material(full) != _count_material(selected)
+
+
+def _fit_to_page(preamble, used: dict, sections, workdir: Path, jobname: str,
+                 max_shrink: int) -> tuple[int, "CompileResult | None"]:
+    """Render, compile and shrink ``used`` in place until the page is clean (one page, no
+    overfull line, not flush to the bottom edge). Returns (attempts, last compile result)."""
+    attempts = 0
+    result: CompileResult | None = None
+    for attempts in range(1, max_shrink + 2):
+        tex = render_cv(preamble, used, sections, probe=True)
+        result = compile_tex(tex, workdir, jobname=jobname)
+        # A fill past MAX_FILL is a real overflow even at "1 page": with no bottom
+        # margin the content is flush to (or off) the paper edge, so keep shrinking.
+        over_bottom = bool(result.fill_ratio and result.fill_ratio > MAX_FILL)
+        clean = (result.ok and result.pages == 1
+                 and result.overfull_count == 0 and not over_bottom)
+        if clean:
+            break
+        # Keep shrinking while it's over one page; a lone overfull hbox on an
+        # otherwise one-page CV is acceptable to ship.
+        if result.ok and result.pages == 1 and attempts > 1 and not over_bottom:
+            break
+        if not _shrink_once(used):
+            break
+    return attempts, result
+
+
 def assemble_cv(
     template_source: str,
     profile: dict,
@@ -859,37 +900,38 @@ def assemble_cv(
     """
     workdir = Path(workdir)
     preamble = extract_preamble(template_source)
-    profile = normalize_profile(profile)  # tolerate loose LLM-drafted shapes
-    source_material = profile                # every figure the person actually supplied
+    full_profile = normalize_profile(profile)  # tolerate loose LLM-drafted shapes
+    source_material = full_profile           # every figure the person actually supplied
     # Pick the roles this JD actually cares about BEFORE tailoring. A full career on one
     # page is not a resume, it is an index: every role gets squeezed to a single line and
     # the strongest evidence ($60M exports, a 250-driver fleet) is the first thing cut.
     # Selecting first means the roles that survive get room to argue.
-    profile = select_roles_for_jd(profile, jd_text)
+    profile = select_roles_for_jd(full_profile, jd_text)
     import copy as _copy
     selected_source = _copy.deepcopy(profile)
 
     # Escaping happens once, at render time (`_esc`); the LLM returns plain prose.
     used = _tailor_bullets(profile, jd_text, llm) if tailor else profile
 
-    attempts = 0
-    result: CompileResult | None = None
-    for attempts in range(1, max_shrink + 2):
-        tex = render_cv(preamble, used, sections, probe=True)
-        result = compile_tex(tex, workdir, jobname=jobname)
-        # A fill past MAX_FILL is a real overflow even at "1 page": with no bottom
-        # margin the content is flush to (or off) the paper edge — keep shrinking.
-        over_bottom = bool(result.fill_ratio and result.fill_ratio > MAX_FILL)
-        clean = (result.ok and result.pages == 1
-                 and result.overfull_count == 0 and not over_bottom)
-        if clean:
-            break
-        # Keep shrinking while it's over one page; a lone overfull hbox on an
-        # otherwise one-page CV is acceptable to ship.
-        if result.ok and result.pages == 1 and attempts > 1 and not over_bottom:
-            break
-        if not _shrink_once(used):
-            break
+    attempts, result = _fit_to_page(preamble, used, sections, workdir, jobname, max_shrink)
+
+    # THE GROW PASS. Selection trims a career to 4 roles x 3 bullets so a long one is not
+    # squeezed into an index. For a THIN profile that trim is backwards: Kofi's own CV
+    # (5 roles, 9 bullets) rendered at about half a page with a role and bullets cut while
+    # the bottom half sat empty (2026-10-07). When the page comes out short and selection
+    # dropped material, rebuild with everything the person gave and keep whichever version
+    # fills the page better without overflowing. Only their own material comes back;
+    # nothing is padded.
+    if (result and result.ok and result.pages == 1 and result.fill_ratio is not None
+            and result.fill_ratio < TARGET_FILL and _dropped_material(full_profile, profile)):
+        grown = _tailor_bullets(full_profile, jd_text, llm) if tailor else full_profile
+        g_attempts, g_result = _fit_to_page(preamble, grown, sections, workdir,
+                                            jobname + "-full", max_shrink)
+        if (g_result and g_result.ok and g_result.pages == 1
+                and (g_result.fill_ratio or 0) > result.fill_ratio
+                and (g_result.fill_ratio or 0) <= MAX_FILL):
+            used, result, attempts = grown, g_result, attempts + g_attempts
+            selected_source = _copy.deepcopy(full_profile)
 
     # Ship without the probe: it has no layout effect, so the measurement above still
     # describes this render exactly (see _FILL_PROBE).

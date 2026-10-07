@@ -550,8 +550,14 @@ button { font-family: inherit; cursor: pointer; }
 
 /* Honest pre-send review: a verdict header + a short checklist. The fabrication guard (level
    "flag") is the loud row; passes are quiet green, opportunities/gaps are neutral guidance. */
-.presend { padding: 12px 24px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
-.ps-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 9px; }
+.presend { padding: 0 24px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+/* The whole header is the toggle: one quiet line over the preview, rows only on request. */
+.ps-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 0; margin: 0;
+  background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.ps-head:hover .ps-toggle { color: var(--ink); }
+.ps-headline { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-toggle { flex: none; font-size: 12px; color: var(--muted); }
+.ps-rows { padding: 2px 0 12px; }
 .ps-verdict { font-size: 13px; font-weight: 700; padding: 2px 10px; border-radius: var(--r-pill); }
 .ps-head.good .ps-verdict { color: var(--good); background: var(--good-soft); }
 .ps-head.mid .ps-verdict { color: var(--flag); background: var(--flag-soft); }

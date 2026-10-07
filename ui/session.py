@@ -1998,7 +1998,14 @@ class WebIntake:
         self.stage = "review"
         self._persist()   # the built profile is now remembered for next time
         msgs = list(lead or [])
-        msgs.append("Here's your draft, it's a real, one-page resume.")
+        # Never call a short page "a real, one-page resume" (that line sat over a page that was
+        # half empty, 2026-10-07). Say what the page actually is and what happens next.
+        fill = getattr(self.assembled, "fill_ratio", None) if self.assembled is not None else None
+        if self.assembled is not None and self.assembled.underfull and fill:
+            msgs.append(f"Here's a first draft. It fills about {round(fill * 100)}% of the page, "
+                        "so I'll ask you for a few more real things to fill it properly.")
+        else:
+            msgs.append("Here's your draft, a real, one-page resume.")
         if self.title_flags():
             msgs.append("I aligned a job <b>title</b> to the role, it's highlighted; click it to "
                         "confirm or revert.")
@@ -2821,7 +2828,8 @@ class WebIntake:
         person's own profile (no tailor-introduced claim they cannot defend), plus easy wins,
         honest gaps, and one-page fit. Deterministic, so it never changes run-to-run."""
         from tailoring.reviewer import review_resume
-        return review_resume(self.profile, self.coverage_dict(), self.assembled.status)
+        return review_resume(self.profile, self.coverage_dict(), self.assembled.status,
+                             fill=getattr(self.assembled, "fill_ratio", None))
 
     # ------------------------------------------------------------------ accept + memory
     # ------------------------------------------------------------------ drafting
