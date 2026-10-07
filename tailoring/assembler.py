@@ -968,6 +968,14 @@ def assemble_cv(
             if best_fill >= TARGET_FILL:
                 break
 
+    # The grow passes compile under side jobnames (-full, -lN). Whatever won must also exist
+    # under the REAL jobname, because that is the file the app serves (/api/cv.pdf?job=...);
+    # without this the chat reported the grown page's fill while the viewer showed the first,
+    # small compile (seen 2026-10-07).
+    if result and result.pdf_path and Path(result.pdf_path).stem != jobname:
+        result = compile_tex(render_cv(preamble, used, sections, probe=True, layout=layout),
+                             workdir, jobname=jobname)
+
     # Ship without the probe: it has no layout effect, so the measurement above still
     # describes this render exactly (see _FILL_PROBE).
     tex = render_cv(preamble, used, sections, layout=layout)
