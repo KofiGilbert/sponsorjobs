@@ -2398,15 +2398,26 @@ class WebIntake:
         skills = self.profile.get("skills") or {}
         if not skills:
             return
+        import re
         seen: set[str] = set()
         cleaned: dict[str, str] = {}
         for label, value in skills.items():
             kept = []
-            for t in str(value).split(","):
-                t = t.strip()
-                if t and t.lower() not in seen:
-                    seen.add(t.lower())
-                    kept.append(t)
+            # Split on commas OUTSIDE parentheses, so "JavaScript (Node.js, Express)" stays one
+            # term instead of leaving "JavaScript (Node.js" and "Express)" fragments on the page
+            # (seen on Kofi's CV, 2026-10-07). A term that is only a bare parenthetical remnant
+            # or a dangling "(" is dropped.
+            for t in re.split(r",(?![^()]*\))", str(value)):
+                t = t.strip().strip(",")
+                if t.count("(") != t.count(")"):
+                    t = t.split("(")[0].strip()
+                if not t:
+                    continue
+                key = re.sub(r"\s*\(.*\)$", "", t).lower()   # "Python (3.x)" and "Python" are one skill
+                if key in seen:
+                    continue
+                seen.add(key)
+                kept.append(t)
             if kept:
                 cleaned[label] = ", ".join(kept)
         self.profile["skills"] = cleaned

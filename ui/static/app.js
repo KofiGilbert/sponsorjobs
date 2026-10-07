@@ -2129,9 +2129,15 @@
     const one = s => { const m = (s || "").match(/([A-Za-z]{3,9})\.?\s*((?:19|20)\d\d)/);
       if (m) return { mon: m[1], yr: m[2] }; const y = (s || "").match(/(?:19|20)\d\d/);
       return { mon: "", yr: y ? y[0] : "" }; };
-    const parts = String(str || "").split(/\s*[-, ]\s*/);
-    const s = one(parts[0]); let e = { mon: "", yr: "" }, present = false;
-    if (parts[1]) { if (/present|current|now|ongoing/i.test(parts[1])) present = true; else e = one(parts[1]); }
+    // Split on the RANGE separator only (a dash, an en dash, "to"), never on spaces: splitting
+    // on spaces tore "Sept 2015" into "Sept" and "2015", so every date dropdown in the editor
+    // showed empty over a correctly dated page (2026-10-07). Month names are matched to the
+    // picker's own spellings (Sep/Sept, March/Mar) so a parsed date actually selects an option.
+    const parts = String(str || "").split(/\s*(?:[-\u2013\u2014]|\bto\b)\s*/);
+    const canon = m => { const k = (m || "").slice(0, 3).toLowerCase();
+      const hit = DP_MONTHS.find(x => x.slice(0, 3).toLowerCase() === k); return hit || ""; };
+    const s = one(parts[0]); s.mon = canon(s.mon); let e = { mon: "", yr: "" }, present = false;
+    if (parts[1]) { if (/present|current|now|ongoing/i.test(parts[1])) present = true; else { e = one(parts[1]); e.mon = canon(e.mon); } }
     return { sm: s.mon, sy: s.yr, em: e.mon, ey: e.yr, present };
   }
   function datePicker(dateStr, dref, single, flagged) {

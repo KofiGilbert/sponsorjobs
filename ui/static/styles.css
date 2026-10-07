@@ -474,7 +474,10 @@ button { font-family: inherit; cursor: pointer; }
 }
 .cv-rule { height: 0; border: none; border-top: 1.4px solid var(--paper-rule); margin: 3px 0 7px; }
 .cv-block { margin-bottom: 8px; }
-.cv-row { display: flex; justify-content: space-between; gap: 12px; }
+.cv-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+/* The role title gets the room; the date picker keeps to one line on the right. */
+.cv-row .cv-role { flex: 1 1 auto; min-width: 0; }
+.cv-row .cv-dates { flex: 0 0 auto; }
 .cv-org { font-variant: small-caps; font-weight: 700; letter-spacing: 0.02em; }
 .cv-loc { font-weight: 700; }
 .cv-role { font-weight: 700; } .cv-dates { font-weight: 700; }
@@ -482,8 +485,9 @@ button { font-family: inherit; cursor: pointer; }
 /* month/year date picker (edit view) */
 .cv-datepick { display: inline-flex; align-items: center; gap: 2px; font-weight: 400; white-space: nowrap; }
 .cv-datepick select {
-  font: inherit; font-size: 0.82em; padding: 1px 2px; border: 1px solid var(--line, #cfd3dc);
-  border-radius: 5px; background: var(--surface, #fff); color: inherit; cursor: pointer;
+  font: inherit; font-size: 0.82em; font-weight: 600; padding: 1px 2px;
+  border: 1px solid transparent; border-bottom-color: var(--line, #cfd3dc); border-radius: 0;
+  background: transparent; color: inherit; cursor: pointer;
 }
 .cv-datepick select:hover { border-color: var(--accent, #6b5cff); }
 .cv-datepick .dp-sep { margin: 0 3px; opacity: 0.6; }
@@ -494,14 +498,15 @@ button { font-family: inherit; cursor: pointer; }
 .cv-ul { margin: 3px 0 0; padding-left: 16px; }
 .cv-ul li { margin-bottom: 2.5px; }
 .cv-inline b { font-weight: 700; }
+/* A suggested job title is marked with a quiet dotted underline, not a filled pill: the pill
+   wrapped with the title and read as a brown blob over the page (2026-10-07). */
 .cv-flag {
-  cursor: pointer; border-radius: 4px; padding: 0 3px; margin: 0 -2px;
-  background: var(--flag-soft); color: var(--flag);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--flag) 40%, transparent);
-  transition: background var(--dur) var(--ease);
+  cursor: pointer; color: inherit;
+  text-decoration: underline dotted var(--flag); text-decoration-thickness: 1.5px; text-underline-offset: 3px;
+  transition: color var(--dur) var(--ease);
 }
-.cv-flag::after { content: "✎"; font-size: 9px; margin-left: 3px; vertical-align: 1px; opacity: 0.8; }
-.cv-flag:hover { background: color-mix(in srgb, var(--flag) 22%, transparent); }
+.cv-flag::after { content: "✎"; font-size: 9px; margin-left: 3px; vertical-align: 1px; opacity: 0.7; color: var(--flag); }
+.cv-flag:hover { color: var(--flag); }
 .fill-pop { animation: fillpop 620ms var(--ease); }
 
 .accept-bar {
@@ -584,9 +589,11 @@ button { font-family: inherit; cursor: pointer; }
 .pdf-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: none; background: var(--bg); }
 .pdf-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   text-align: center; padding: 0 14%; color: var(--faint); font-size: 13.5px; line-height: 1.6; }
-.edit-panel.paper-wrap { overflow: auto; }
-.edit-note { margin: 0 0 10px; padding: 8px 12px; background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: var(--r-sm); font-size: 12px; color: var(--muted); }
+/* Edit view: the note is a one-line strip ABOVE the page and the page takes the pane's width.
+   As a flex row the note sat beside the paper and squeezed it to two thirds (2026-10-07). */
+.edit-panel.paper-wrap { overflow: auto; flex-direction: column; align-items: center; gap: 10px; padding: 18px 24px 40px; }
+.edit-panel .paper { max-width: 760px; }
+.edit-note { margin: 0; padding: 0; background: none; border: 0; font-size: 12px; color: var(--muted); width: 100%; max-width: 760px; }
 .seg-btn { cursor: pointer; border: 1px solid var(--border); background: var(--surface-2); }
 .seg-btn.is-active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
 

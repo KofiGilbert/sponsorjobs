@@ -147,7 +147,7 @@ def _header(profile: dict) -> str:
         contact_bits.append(f"\\href{{mailto:{_safe_url(e)}}}{{{_esc(e)}}}")
     # "Website" carries a personal venture/portfolio site (e.g. a founder's own
     # product) for people who have one instead of (or besides) a blog.
-    for label, key in (("In", "linkedin"), ("GitHub", "github"),
+    for label, key in (("LinkedIn", "linkedin"), ("GitHub", "github"),
                        ("Website", "website"), ("Blog", "blog")):
         if ident.get(key):
             contact_bits.append(f"\\href{{{_link_url(ident[key])}}}{{{label}}}")
