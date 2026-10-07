@@ -125,14 +125,16 @@ def build_broker(db_path: str | None = None, provider=None):
     app.config["BROKER_REAL_PROVIDERS"] = is_real
     app.config["BROKER_BILLING"] = billing is not None
     app.config["BROKER_GOOGLE"] = google is not None
-    # Central job feed (the shared "kitchen"): serves public jobs + runs the freshness robot,
-    # riding this same service so there's no second bill. No-ops unless JOBS_AUTOUPDATE=1.
-    try:
-        from backend.feed import register_feed
-        register_feed(app)
-    except Exception:                                # noqa: BLE001 - the broker must still boot
-        import traceback
-        traceback.print_exc()
+    # The retired central job feed ("the kitchen"). The app reads the static feed now
+    # (docs/feed.md), and loading the kitchen's 340k-employer sponsor index is what pushed this
+    # service off the $7 512MB box, so it only loads when explicitly asked for (BROKER_SERVE_FEED=1).
+    if os.environ.get("BROKER_SERVE_FEED") == "1":
+        try:
+            from backend.feed import register_feed
+            register_feed(app)
+        except Exception:                            # noqa: BLE001 - the broker must still boot
+            import traceback
+            traceback.print_exc()
     return app
 
 

@@ -13,11 +13,9 @@ services:
   - type: web
     name: tailor-broker
     runtime: python
-    plan: standard           # 2GB RAM (~$25/mo): the 340k-employer sponsor index is ~293MB
-                             # resident, which OOM'd the 512MB Starter box. Persistent disk + no
-                             # cold-start spin-down are still included. (See the memory analysis:
-                             # kept the in-memory index for fast per-job badge tagging rather than
-                             # trading it for slower on-demand SQL lookups.)
+    plan: starter            # 512MB, $7/mo. The 2GB Standard box was only needed while this
+                             # service also served the job feed (its ~293MB sponsor index); the feed
+                             # is static now (docs/feed.md) and loads here only if BROKER_SERVE_FEED=1.
     region: oregon           # choose the region closest to your users
     branch: main
     buildCommand: pip install -r requirements-broker.txt
