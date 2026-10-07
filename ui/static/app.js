@@ -77,6 +77,9 @@
     const data = await r.json().catch(() => ({}));
     if (!r.ok || data.error) {
       if (data.reason === "locked") showLock();      // App Lock engaged mid-session
+      // No key yet: this is the moment it is needed, so ask for it right here (just in time),
+      // rather than at first launch or behind a "you have no key" screen.
+      else if (data.reason === "no_key" && window.__openAiKeyBox) window.__openAiKeyBox();
       else if (data.reason) showOutage(data.reason);
       const err = new Error(data.error || ("HTTP " + r.status));
       err.reason = data.reason || "";
@@ -4411,21 +4414,19 @@
   // Provider picker: Claude (recommended default) or OpenAI. Only the transport differs;
   // the whole app is provider-agnostic behind /api/apikey + AI_PROVIDER.
   const AI_PROVIDERS = {
+    // The key page opens in the person's own browser (shell routes these hosts there), where
+    // they are already signed in; sign-in cannot work inside the app's built-in browser.
     anthropic: {
-      label: "Claude", place: "sk-ant-…", title: "Add your Claude key",
-      steps: [
-        'Open <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> and sign in.',
-        'Add <b>$5 of credit</b> under Billing <span class="ai-note">, the key won\'t work without it.</span>',
-        'Create a key and <b>copy it</b> (it\'s shown only once).',
-      ],
+      label: "Claude", place: "Paste your key (sk-ant-…)", prefix: "sk-ant-",
+      title: "Connect Claude to write for you",
+      keyUrl: "https://platform.claude.com/settings/keys",
+      note: "New to Anthropic? Add $5 of credit under Billing first, or the key won't work.",
     },
     openai: {
-      label: "OpenAI", place: "sk-…", title: "Add your OpenAI key",
-      steps: [
-        'Open <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com</a> and sign in.',
-        'Add <b>billing</b> under Settings <span class="ai-note">, the key won\'t work without credit.</span>',
-        'Create a key and <b>copy it</b> (it\'s shown only once).',
-      ],
+      label: "OpenAI", place: "Paste your key (sk-…)", prefix: "sk-",
+      title: "Connect OpenAI to write for you",
+      keyUrl: "https://platform.openai.com/api-keys",
+      note: "Add billing under Settings first, or the key won't work.",
     },
   };
   let AI_PROVIDER_SEL = "anthropic";
@@ -4433,7 +4434,9 @@
     AI_PROVIDER_SEL = (p === "openai") ? "openai" : "anthropic";
     const info = AI_PROVIDERS[AI_PROVIDER_SEL];
     if ($("#aiTitle")) $("#aiTitle").textContent = info.title;
-    if ($("#aiSteps")) $("#aiSteps").innerHTML = info.steps.map(s => `<li>${s}</li>`).join("");
+    if ($("#aiSteps")) $("#aiSteps").innerHTML =
+      `<a class="btn btn-ghost" href="${info.keyUrl}" target="_blank" rel="noopener">Get a key &#8599;</a>`
+      + `<p class="ai-note-line">${esc(info.note)}</p>`;
     if ($("#aiKeyInput")) $("#aiKeyInput").placeholder = info.place;
     document.querySelectorAll("#aiProvider .ai-prov-b").forEach(b =>
       b.classList.toggle("is-on", b.dataset.provider === AI_PROVIDER_SEL));
@@ -5169,11 +5172,16 @@
     aiFlash(`Checking your key with ${AI_PROVIDERS[AI_PROVIDER_SEL].label}…`, true);
     try {
       const r = await api("/api/apikey", { key, provider: AI_PROVIDER_SEL });
-      if (r.ok) { await loadApiKeyStatus(); openAiModal(false); }
+      if (r.ok) { await loadApiKeyStatus(); closeAiModal(); toast("Connected. Try that again and it will work."); }
     } catch (e) { aiFlash(e.message || "Couldn't save the key.", false); }
-    finally { btn.disabled = false; btn.textContent = "Verify & save"; }
+    finally { btn.disabled = false; btn.textContent = "Connect"; }
   });
   $("#aiKeyInput")?.addEventListener("keydown", e => { if (e.key === "Enter") $("#aiSave").click(); });
+  $("#aiKeyInput")?.addEventListener("paste", () => setTimeout(() => {
+    const v = $("#aiKeyInput").value.trim();
+    if (v.startsWith(AI_PROVIDERS[AI_PROVIDER_SEL].prefix) && !$("#aiSave").disabled) $("#aiSave").click();
+  }, 0));
+  window.__openAiKeyBox = () => { hideOutage(); openAiModal(true); };
 
   /* ---------------------------------------------------------------- auto-apply (Pro) */
   // Say how many of YOUR roles this can actually submit. The page advertised a "daily
@@ -5271,60 +5279,22 @@
     finally { btn.disabled = false; btn.textContent = "Tailor & queue →"; }
   });
 
-  /* ---------------------------------------------------------------- first-run wizard */
-  const ONBOARDED = "tailor_onboarded_v1";
-  const wizDone = { ai: false, resume: false };
-
-  function wizShow(panel) {
-    document.querySelectorAll(".wiz-panel").forEach(p => p.hidden = p.dataset.panel !== panel);
-    const order = ["welcome", "ai", "resume", "done"];
-    const idx = order.indexOf(panel);
-    document.querySelectorAll(".wiz-dot").forEach((d, i) => d.classList.toggle("on", i < idx));
-    if (panel === "ai") setTimeout(() => $("#wizKey")?.focus(), 50);
-  }
-  function wizNext(from) {
-    const steps = ["ai", "resume"];
-    const start = from === "welcome" ? 0 : steps.indexOf(from) + 1;
-    for (let i = start; i < steps.length; i++) if (!wizDone[steps[i]]) { wizShow(steps[i]); return; }
-    // done
-    const bits = [
-      wizDone.ai ? "AI connected" : "AI not connected yet, add it any time from the sidebar",
-      wizDone.resume ? "profile filled from your resume" : "no profile yet, you can build one as you tailor",
-    ];
-    $("#wizDoneSummary").textContent = bits.join(" · ") + ".";
-    wizShow("done");
-  }
-  function closeWizard() { localStorage.setItem(ONBOARDED, "1"); $("#wizard").hidden = true; }
-  async function openWizard() {
-    const [ai, prof] = await Promise.all([loadApiKeyStatus(), api("/api/profile").catch(() => ({}))]);
-    wizDone.ai = !!ai.configured;
-    wizDone.resume = !!prof.has_profile;
-    if (wizDone.ai && wizDone.resume) { localStorage.setItem(ONBOARDED, "1"); return false; }
-    $("#wizard").hidden = false;
-    wizShow("welcome");
-    return true;
-  }
-  document.querySelectorAll("[data-wiz]").forEach(b => b.addEventListener("click", () => {
-    const a = b.dataset.wiz;
-    if (a === "skip") closeWizard();
-    else if (a === "next") wizNext("welcome");
-    else if (a === "skip-step") wizNext(b.closest(".wiz-panel").dataset.panel);
-    else if (a === "finish-new") { closeWizard(); loadDashboard(); showView("dashboard"); $("#newCvBtn").click(); }
-    else if (a === "finish-jobs") { closeWizard(); document.querySelector('.nav-item[data-nav="jobs"]')?.click(); }
-  }));
+  /* ---------------------------------------------------------------- first run
+     No welcome tour and no key gate (tailor-ux §6, 2026-10-06). The job board needs nothing, so a
+     new install opens straight onto it with one dismissible banner offering to add a resume. The
+     AI key is asked for only when an AI feature is first used (api() -> __openAiKeyBox). */
+  const BANNER_OFF = "sj_first_banner_off";
+  const wizDone = { resume: false };
   function wizMsg(el, text, cls) { el.hidden = false; el.className = "ai-msg " + cls; el.textContent = text; }
-  $("#wizKeySave")?.addEventListener("click", async () => {
-    const key = $("#wizKey").value.trim(), msg = $("#wizKeyMsg"), btn = $("#wizKeySave");
-    if (!key) { wizMsg(msg, "Paste your key first.", "err"); return; }
-    btn.disabled = true; btn.textContent = "Verifying…";
-    wizMsg(msg, `Checking your key with ${AI_PROVIDERS[AI_PROVIDER_SEL].label}…`, "working");
-    try {
-      const r = await api("/api/apikey", { key, provider: AI_PROVIDER_SEL });
-      if (r.ok) { wizDone.ai = true; await loadApiKeyStatus(); wizNext("ai"); }
-    } catch (e) { wizMsg(msg, e.message || "Couldn't save the key.", "err"); }
-    finally { btn.disabled = false; btn.textContent = "Verify & continue"; }
-  });
-  $("#wizKey")?.addEventListener("keydown", e => { if (e.key === "Enter") $("#wizKeySave").click(); });
+  function openResumeBox() { $("#wizCvMsg").hidden = true; $("#wizard").hidden = false; }
+  function closeResumeBox() { $("#wizard").hidden = true; }
+  function hideFirstBanner(forever) {
+    $("#firstBanner").hidden = true;
+    if (forever) try { localStorage.setItem(BANNER_OFF, "1"); } catch { /* private window */ }
+  }
+  $("#firstBannerAdd")?.addEventListener("click", openResumeBox);
+  $("#firstBannerX")?.addEventListener("click", () => hideFirstBanner(true));
+  document.querySelectorAll("[data-wiz=close]").forEach(b => b.addEventListener("click", closeResumeBox));
   $("#wizCvFile")?.addEventListener("change", async e => {
     const file = e.target.files[0]; if (!file) return;
     const msg = $("#wizCvMsg");
@@ -5338,7 +5308,8 @@
       wizMsg(msg, `Got it${(r.summary || {}).name ? ", " + r.summary.name : ""}, your profile is filled.`, "ok");
       await loadProfile();
       invalidateJobDetail();   // match now reflects the freshly-imported profile
-      setTimeout(() => wizNext("resume"), 800);
+      hideFirstBanner(true);
+      setTimeout(closeResumeBox, 900);
     } catch (err) { wizMsg(msg, "Couldn't read that file, " + err.message, "err"); }
     finally { e.target.value = ""; }
   });
@@ -5348,9 +5319,14 @@
     renderPreview({});
     loadDashboard();
     api("/api/profile").then(paintAccount).catch(() => {});   // sidebar identity, from turn one
-    if (!localStorage.getItem(ONBOARDED) && await openWizard()) return;   // wizard drives first run
-    const s = await loadApiKeyStatus();
-    if (!s.configured) openAiModal(false);
+    loadApiKeyStatus();                                       // paints the sidebar chip, asks nothing
+    const prof = await api("/api/profile").catch(() => ({}));
+    let off = false;
+    try { off = !!localStorage.getItem(BANNER_OFF) || !!localStorage.getItem("tailor_onboarded_v1"); } catch { /* */ }
+    if (!prof.has_profile) {
+      // A new install lands on the live jobs: the thing that works with no setup at all.
+      if (!off) { document.querySelector('.nav-item[data-nav="jobs"]')?.click(); $("#firstBanner").hidden = false; }
+    }
   }
   // App Lock gate: if a passcode is set and we're locked, show the lock screen and boot only
   // after a correct passcode. If there's no lock (the default), boot straight away.
@@ -5544,6 +5520,17 @@
     back.addEventListener("click", () => shell.goBack());
     fwd.addEventListener("click", () => shell.goForward());
     document.getElementById("bbReload").addEventListener("click", () => shell.reload());
+    shell.onUpdateAvailable?.((info) => {
+      const a = document.getElementById("updateNote");
+      if (!a || !info || !info.url) return;
+      a.href = info.url;
+      a.textContent = `Version ${info.version} is out. Download it`;
+      a.hidden = false;
+      a.onclick = (e) => { if (shell.openReleasePage) { e.preventDefault(); shell.openReleasePage(info.url); } };
+    });
+    const out = document.getElementById("bbExternal");
+    if (shell.openExternal) out.addEventListener("click", () => shell.openExternal());
+    else out.hidden = true;                          // a 0.1.0 shell has no hand-off
     urlBox.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
       let u = urlBox.value.trim();

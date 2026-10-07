@@ -729,8 +729,9 @@ def _make_llm():
     if not own_key:
         raise Unavailable(
             "no_key",
-            "SponsorJobs' managed AI is not reachable right now. Restart the app, or add your own "
-            "Anthropic API key in Settings to run on your own key.")
+            # The managed AI is not live yet, so a new user simply has no key: say that plainly
+            # (the UI opens the key box on this reason), not that a service is down.
+            "Connect your AI key to write. It stays on this computer.")
     return _make_byo_llm("anthropic")
 
 
@@ -742,8 +743,7 @@ def _make_byo_llm(provider: str):
     if not key:
         raise Unavailable(
             "no_key",
-            f"SponsorJobs needs your {_PROVIDER_LABEL[provider]} API key to run. Add it in "
-            "Settings (it stays on this machine, git-ignored), then reload.")
+            f"Connect your {_PROVIDER_LABEL[provider]} key to write. It stays on this computer.")
     _require_connectivity()
     if provider == "openai":
         from llm.openai_client import OpenAILLM

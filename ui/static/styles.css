@@ -1376,6 +1376,7 @@ mark.jd-gap { background: var(--flag-soft); color: var(--flag); font-weight: 600
   background: var(--bg); pointer-events: none;
 }
 .privacy-line .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex: none; }
+.privacy-line .update-note { margin-left: 10px; color: var(--ink); font-weight: 600; text-decoration: underline; }
 /* The builder/package screens own their bottom edge (composer, actions) — no line there. */
 .view-builder.is-active ~ .privacy-line,
 .view-package.is-active ~ .privacy-line { display: none; }
@@ -1396,6 +1397,18 @@ mark.jd-gap { background: var(--flag-soft); color: var(--flag); font-weight: 600
 .ai-steps li { margin-bottom: 4px; }
 .ai-steps a { color: var(--accent); font-weight: 600; }
 .ai-note { color: var(--flag); }
+/* Key box (2026-10-06): one "Get a key" button and one note replace the numbered steps. */
+.ai-getkey { margin: 14px 0 14px; }
+.ai-note-line { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
+.ai-foot { margin: 14px 0 0; font-size: 12px; color: var(--faint, var(--muted)); }
+/* First run: one quiet line on the Jobs page, not a tour. */
+.first-banner { max-width: 1320px; margin: 0 auto 10px; display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px 10px 16px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); font-size: 13.5px; color: var(--ink-2); }
+.first-banner > span { flex: 1; }
+.first-banner-x { background: none; border: 0; color: var(--muted); font-size: 18px; line-height: 1;
+  padding: 2px 6px; border-radius: 6px; }
+.first-banner-x:hover { color: var(--ink); background: var(--surface-2, transparent); }
 .ai-input { width: 100%; margin-bottom: 12px; font-family: ui-monospace, "Consolas", monospace; }
 .ai-msg { font-size: 13px; padding: 9px 12px; border-radius: var(--r); margin-bottom: 14px; }
 .ai-msg.err { color: var(--flag); background: var(--flag-soft); }
@@ -1530,6 +1543,7 @@ mark.jd-gap { background: var(--flag-soft); color: var(--flag); font-weight: 600
 }
 .bb-btn:hover { background: #2a2a2a; }
 .bb-btn:disabled { opacity: .35; cursor: default; }
+.bb-btn.bb-out { width: auto; padding: 0 10px; font-size: 12.5px; white-space: nowrap; }
 .bb-url {
   flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 10px;
   border: 1px solid #2e2e2e; border-radius: 6px;

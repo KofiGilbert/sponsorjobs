@@ -11,6 +11,12 @@ contextBridge.exposeInMainWorld("tailorShell", {
   goBack: () => ipcRenderer.send("pane:back"),
   goForward: () => ipcRenderer.send("pane:forward"),
   reload: () => ipcRenderer.send("pane:reload"),
+  // Hand the page in the pane to the person's own browser (Chrome, Safari...), for any site that
+  // misbehaves in an embedded browser. Older shells lack this; the UI hides the button then.
+  openExternal: () => ipcRenderer.send("pane:external"),
+  // A newer installer is on the releases page: {version, url}. See checkForUpdate in main.js.
+  onUpdateAvailable: (cb) => ipcRenderer.on("update:available", (_e, info) => cb(info)),
+  openReleasePage: (url) => ipcRenderer.send("update:open", url),
   setBounds: (rect) => ipcRenderer.send("pane:set-bounds", rect),
   getState: () => ipcRenderer.invoke("pane:get-state"),
   onState: (cb) => ipcRenderer.on("pane:state", (_e, state) => cb(state)),

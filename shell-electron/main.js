@@ -602,6 +602,16 @@ ipcMain.on("pane:close", () => closePane());
 ipcMain.on("pane:back", () => pane && pane.webContents.navigationHistory.goBack());
 ipcMain.on("pane:forward", () => pane && pane.webContents.navigationHistory.goForward());
 ipcMain.on("pane:reload", () => pane && pane.webContents.reload());
+// The download page opens in the person's own browser. Only our releases page is accepted here.
+ipcMain.on("update:open", (_e, url) => {
+  if (typeof url === "string" && url.startsWith("https://github.com/KofiGilbert/sponsorjobs/releases/")) {
+    shell.openExternal(url);
+  }
+});
+ipcMain.on("pane:external", () => {
+  const url = pane && pane.webContents.getURL();
+  if (url && /^https?:/i.test(url)) shell.openExternal(url);
+});
 ipcMain.on("pane:navigate", (_e, url) => {
   if (opensInOwnBrowser(url)) { shell.openExternal(url); return; }
   if (pane && /^https?:/i.test(url)) pane.webContents.loadURL(url);
@@ -671,6 +681,31 @@ async function ensureBroker() {
   }
 }
 
+// Tell the person when a newer version is out. The app is not code-signed yet, and macOS only
+// lets a signed app replace itself, so this is a notice with a download link, not a silent
+// auto-update (switch to electron-updater once the builds are signed). One anonymous request to
+// GitHub's public releases API per launch; nothing about the person is sent.
+const RELEASES_API = "https://api.github.com/repos/KofiGilbert/sponsorjobs/releases/latest";
+
+function newerVersion(latest, current) {
+  const parse = (v) => String(v).replace(/^v/, "").split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
+  const a = parse(latest), b = parse(current);
+  for (let i = 0; i < 3; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  return false;
+}
+
+async function checkForUpdate() {
+  if (!app.isPackaged) return;
+  try {
+    const res = await net.fetch(RELEASES_API, { headers: { Accept: "application/vnd.github+json" } });
+    if (!res.ok) return;
+    const rel = await res.json();
+    if (rel.draft || rel.prerelease || !newerVersion(rel.tag_name, app.getVersion())) return;
+    const info = { version: String(rel.tag_name).replace(/^v/, ""), url: rel.html_url };
+    if (win && !win.isDestroyed()) win.webContents.send("update:available", info);
+  } catch (e) { /* offline or rate-limited: try again next launch */ }
+}
+
 app.whenReady().then(async () => {
   // Dark window chrome regardless of launcher or OS: opt Electron into Windows' immersive
   // dark title bar (fixes the white frame on native-Windows launches). Harmless no-op under
@@ -687,6 +722,7 @@ app.whenReady().then(async () => {
   }
   ensureBroker();         // best-effort, in the background; do not block the window on it
   await createWindow();
+  setTimeout(checkForUpdate, 5000);   // after the window is up; never delays launch
 });
 
 app.on("window-all-closed", () => app.quit());

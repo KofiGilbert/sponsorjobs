@@ -200,6 +200,11 @@
           <button class="jf-toggle-btn" id="jfSaved" type="button" aria-pressed="false" title="Only the roles you've bookmarked. Saved roles stay on this machine.">★ Saved</button>
         </div>
         <div class="active-filters" id="activeFilters" hidden></div>
+        <div class="first-banner" id="firstBanner" hidden>
+          <span>Add your resume to tailor it to any of these jobs in one click.</span>
+          <button class="btn btn-primary btn-sm" id="firstBannerAdd" type="button">Add resume</button>
+          <button class="first-banner-x" id="firstBannerX" type="button" aria-label="Dismiss">&times;</button>
+        </div>
         <p class="feed-note" id="jobsNote"></p>
 
         <div class="feed" id="feed">
@@ -758,6 +763,7 @@
 
       <div class="privacy-line" title="Everything runs on this machine">
         <span class="dot"></span> Local. Your data stays on this machine.
+        <a class="update-note" id="updateNote" hidden target="_blank" rel="noopener"></a>
       </div>
     </main>
   </div>
@@ -1218,60 +1224,19 @@
     <button class="title-pop-b" data-dec="custom" type="button">Type another…</button>
   </div>
 
-  <!-- First-run setup wizard -->
-  <div class="wiz" id="wizard" hidden>
+  <!-- Add your resume (opened from the Jobs banner; no first-run tour, see tailor-ux §6) -->
+  <div class="wiz" id="wizard" hidden role="dialog" aria-modal="true" aria-labelledby="wizH">
     <div class="wiz-card">
-      <div class="wiz-dots" id="wizDots"><span class="wiz-dot"></span><span class="wiz-dot"></span><span class="wiz-dot"></span></div>
-
-      <div class="wiz-panel" data-panel="welcome">
-        <div class="wiz-kick">Welcome to SponsorJobs</div>
-        <h2 class="wiz-h">A perfect one-page resume for every job, in a couple of clicks.</h2>
-        <p class="wiz-p">Two quick things and you're set: connect your AI, then drop in your current resume. Your data is stored only on this computer. To write text, only what's needed goes to your AI provider on your own key, and SponsorJobs keeps none of it.</p>
-        <div class="wiz-foot">
-          <button class="btn btn-ghost" data-wiz="skip" type="button">Skip for now</button>
-          <button class="btn btn-primary" data-wiz="next" type="button">Get started →</button>
-        </div>
-      </div>
-
-      <div class="wiz-panel" data-panel="ai" hidden>
-        <div class="wiz-kick">Step 1 of 2 · Connect your AI</div>
-        <h2 class="wiz-h">Add your Anthropic key</h2>
-        <p class="wiz-p">SponsorJobs runs on your own AI key, about a few cents per resume, paid to Anthropic directly. Your key stays on this machine; we never see it.</p>
-        <ol class="ai-steps">
-          <li>Open <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> and sign in.</li>
-          <li>Add <b>$5 of credit</b> under Billing <span class="ai-note">,  the key won't work without it.</span></li>
-          <li>Create a key and <b>copy it</b> (it's shown only once).</li>
-        </ol>
-        <input class="fld ai-input" id="wizKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
-        <div class="ai-msg" id="wizKeyMsg" hidden></div>
-        <div class="wiz-foot">
-          <button class="btn btn-ghost" data-wiz="skip-step" type="button">I'll do this later</button>
-          <button class="btn btn-primary" id="wizKeySave" type="button">Verify &amp; continue</button>
-        </div>
-      </div>
-
-      <div class="wiz-panel" data-panel="resume" hidden>
-        <div class="wiz-kick">Step 2 of 2 · Your resume</div>
-        <h2 class="wiz-h">Drop in your current resume</h2>
-        <p class="wiz-p">We'll read it once and fill your whole profile, name, experience, skills. After that, every job is one click.</p>
+      <div class="wiz-panel" data-panel="resume">
+        <h2 class="wiz-h" id="wizH">Add your resume</h2>
+        <p class="wiz-p">PDF, Word, or an image. It stays on this computer.</p>
         <label class="wiz-drop" id="wizDrop">
           <input type="file" id="wizCvFile" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp" hidden />
           <span class="btn btn-primary">Upload resume</span>
-          <span class="wiz-drop-hint">PDF, Word, or an image</span>
         </label>
         <div class="ai-msg" id="wizCvMsg" hidden></div>
         <div class="wiz-foot">
-          <button class="btn btn-ghost" data-wiz="skip-step" type="button">I'll build it as I go</button>
-        </div>
-      </div>
-
-      <div class="wiz-panel" data-panel="done" hidden>
-        <div class="wiz-kick">You're all set</div>
-        <h2 class="wiz-h">Ready to tailor.</h2>
-        <p class="wiz-p" id="wizDoneSummary"></p>
-        <div class="wiz-foot">
-          <button class="btn btn-ghost" data-wiz="finish-jobs" type="button">Browse jobs</button>
-          <button class="btn btn-primary" data-wiz="finish-new" type="button">Build my first Resume →</button>
+          <button class="btn btn-ghost" data-wiz="close" type="button">Not now</button>
         </div>
       </div>
     </div>
@@ -1280,9 +1245,8 @@
   <!-- Connect your AI (Anthropic API key) -->
   <div class="ai-modal" id="aiModal" hidden>
     <div class="ai-card">
-      <span class="jd-kicker">Connect your AI</span>
-      <h2 class="jd-title" id="aiTitle">Add your Claude key</h2>
-      <p class="jd-sub" id="aiSub">SponsorJobs runs on your own AI key, about a few cents per resume, paid to your provider directly. Your key stays on this machine; we never see it.</p>
+      <h2 class="jd-title" id="aiTitle">Connect Claude to write for you</h2>
+      <p class="jd-sub" id="aiSub">Uses your own key. A few cents per resume, paid to the provider.</p>
 
       <div id="aiSetup">
         <!-- Pick your provider. Claude is the recommended default (the prompts are tuned for
@@ -1291,13 +1255,14 @@
           <button class="ai-prov-b is-on" data-provider="anthropic" type="button">Claude <span class="ai-prov-tag">recommended</span></button>
           <button class="ai-prov-b" data-provider="openai" type="button">OpenAI</button>
         </div>
-        <ol class="ai-steps" id="aiSteps"><!-- provider-specific steps injected --></ol>
+        <div class="ai-getkey" id="aiSteps"><!-- provider-specific link + note injected --></div>
         <input class="fld ai-input" id="aiKeyInput" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
         <div class="ai-msg" id="aiMsg" hidden></div>
         <div class="jd-actions">
-          <button class="btn btn-ghost" id="aiLater" type="button">Maybe later</button>
-          <button class="btn btn-primary" id="aiSave" type="button">Verify &amp; save</button>
+          <button class="btn btn-ghost" id="aiLater" type="button">Not now</button>
+          <button class="btn btn-primary" id="aiSave" type="button">Connect</button>
         </div>
+        <p class="ai-foot">Your key and your data stay on this computer.</p>
       </div>
 
       <div id="aiConnected" hidden>
@@ -1423,6 +1388,8 @@
         <button class="bb-btn" id="bbReload" title="Reload" aria-label="Reload">&#8635;</button>
         <input class="bb-url" id="bbUrl" type="text" spellcheck="false"
                aria-label="Address" placeholder="Enter a URL and press Enter" />
+        <button class="bb-btn bb-out" id="bbExternal" title="Open this page in your own browser"
+                aria-label="Open in your browser">Open in browser &#8599;</button>
       </div>
       <div class="browser-slot" id="browserSlot"></div>
       <div class="pdf-placeholder" id="bbNoShell" hidden>The in-app browser needs the desktop app (shell-electron). Links open in your system browser instead.</div>
