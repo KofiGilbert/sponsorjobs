@@ -5667,17 +5667,23 @@ def _account_token() -> str | None:
     if tok:
         return tok
     import requests
-    try:
-        from llm.broker_client import BROKER_USER_AGENT
-        r = requests.post(f"{BROKER_URL}/account/register", timeout=10,
-                          headers={"User-Agent": BROKER_USER_AGENT})
-        if r.status_code == 200:
-            tok = (r.json() or {}).get("token")
-            if tok:
-                _save_cred("TAILOR_ACCOUNT_TOKEN", tok)
-                return tok
-    except requests.RequestException:
-        pass
+    from llm.broker_client import BROKER_USER_AGENT
+    # Two tries: this is the first call a fresh install ever makes, and one slow response
+    # (a cold edge, a flaky network) must not turn into "could not set up your account".
+    for attempt, timeout in enumerate((10, 20)):
+        try:
+            r = requests.post(f"{BROKER_URL}/account/register", timeout=timeout,
+                              headers={"User-Agent": BROKER_USER_AGENT})
+            if r.status_code == 200:
+                tok = (r.json() or {}).get("token")
+                if tok:
+                    _save_cred("TAILOR_ACCOUNT_TOKEN", tok)
+                    return tok
+            if r.status_code == 429:
+                break                                  # the network's daily limit: retrying won't help
+        except requests.RequestException:
+            if attempt == 1:
+                break
     return None
 
 

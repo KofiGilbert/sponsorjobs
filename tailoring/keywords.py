@@ -344,7 +344,9 @@ def profile_text(profile: dict) -> str:
     """Flatten the person's own material into one searchable text blob. Only the known
     profile sections count (PROFILE_SECTIONS); a model's side notes are not evidence."""
     parts: list[str] = []
-    if isinstance(profile, dict):
+    # Callers also pass ONE entry (an employer, a project) as the grounding for a reword; such a
+    # dict has no section keys and must flatten whole. Only a dict that IS a profile is filtered.
+    if isinstance(profile, dict) and any(k in PROFILE_SECTIONS for k in profile):
         profile = {k: v for k, v in profile.items() if k in PROFILE_SECTIONS}
 
     def walk(v):

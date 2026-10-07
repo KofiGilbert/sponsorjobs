@@ -2215,15 +2215,30 @@ class WebIntake:
         bullets and expand each into a full, page-width sentence, using only the
         person's own material (no invented facts). Then snap every bullet to a clean
         line count so none renders as an awkward one-and-a-half lines."""
+        from tailoring.filler import is_padded
+
+        def _looks_like_notes(bullets):
+            # Typed notes are short fragments ("Built SQL reporting pipelines") or one long
+            # comma-list. A bullet the person already wrote as a full sentence (an uploaded
+            # CV) is finished writing; expanding it is how 120-character bullets became
+            # 250-character AI prose (2026-10-07).
+            if len(bullets) == 1 and bullets[0].count(",") >= 2 and len(bullets[0]) > 90:
+                return True
+            short = [b for b in bullets if len(b) < 70 or not b.rstrip().endswith((".", "!", "%", ")"))]
+            return len(short) * 2 > len(bullets)
+
         def _rebuild(bullets, title, expand, entry):
             bullets = [str(b).strip() for b in (bullets or []) if str(b).strip()]
             if not bullets:
                 return bullets
-            if expand:
+            if expand and _looks_like_notes(bullets):
                 try:
                     grown = self.llm.expand_bullets(str(title or ""), bullets, self.jd)
                     grown = [str(b).strip() for b in (grown or []) if str(b).strip()]
-                    if grown:
+                    # The expansion must say more because the notes said more, never because
+                    # it reached for filler. One padded bullet discards the whole expansion.
+                    joined = " ".join(bullets)
+                    if grown and not any(is_padded(joined, g) for g in grown):
                         bullets = grown
                 except Exception:
                     pass

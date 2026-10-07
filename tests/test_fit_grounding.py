@@ -136,7 +136,9 @@ def test_vocabulary_is_sorted_once_longest_first():
     low = text.lower()
     naive = []
     for s in sorted(kw._SKILL_DISPLAY, key=len, reverse=True):
-        if re.search(r"(?<![a-z0-9])" + re.escape(s) + r"(?![a-z0-9+#.])", low):
+        # Same lookahead as keywords._SKILL_PATTERNS: a skill followed by sentence punctuation
+        # still counts ("SQL reporting." matches Reporting); only a longer token is excluded.
+        if re.search(r"(?<![a-z0-9])" + re.escape(s) + r"(?![a-z0-9+#]|\.[a-z])", low):
             if kw._SKILL_DISPLAY[s] not in naive:
                 naive.append(kw._SKILL_DISPLAY[s])
     assert kw.vocab_skills(text) == naive

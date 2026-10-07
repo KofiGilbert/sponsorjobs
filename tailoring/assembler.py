@@ -541,7 +541,21 @@ def normalize_profile(profile: dict) -> dict:
 _FILL_PROBE = r"\AtEndDocument{\par\typeout{TAILORFILL=\the\pagetotal:\the\textheight}}"
 
 
-def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False) -> str:
+# Layout steps for a page that is still short once every piece of the person's material is on
+# it. A template set at 10pt with 0.7cm margins is sized for a 15-year career; a human laying
+# out a 9-bullet resume would simply use 11pt and normal margins, not pad the sentences. Each
+# step is a bounded, standard resume layout (letter paper), applied in the BODY so the template
+# preamble stays verbatim (CLAUDE.md sec 8). Step 0 is the template as designed.
+LAYOUT_STEPS: tuple[str, ...] = (
+    "",
+    r"\fontsize{10.5}{12.6}\selectfont",
+    r"\fontsize{11}{13.2}\selectfont\newgeometry{left=1.3cm,right=1.3cm,top=1.1cm,bottom=1.1cm}",
+    r"\fontsize{11.5}{13.8}\selectfont\newgeometry{left=1.8cm,right=1.8cm,top=1.5cm,bottom=1.5cm}",
+)
+
+
+def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False,
+              layout: str = "") -> str:
     """Render a full CV `.tex` from ``profile`` using the template's preamble.
 
     ``sections`` is the selected template's ordered section list (from its manifest); each
@@ -560,7 +574,8 @@ def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False) 
         if renderer:
             body.append(renderer(profile))
     head = f"{preamble}\n{_FILL_PROBE}" if probe else preamble
-    return f"{head}\n{''.join(body)}\n{DOC_END}\n"
+    lead = f"{layout}\n" if layout else ""
+    return f"{head}\n{lead}{''.join(body)}\n{DOC_END}\n"
 
 
 # --------------------------------------------------------------------------- #
@@ -934,9 +949,28 @@ def assemble_cv(
             used, result, attempts = grown, g_result, attempts + g_attempts
             selected_source = _copy.deepcopy(full_profile)
 
+    # LAYOUT GROW. All of the person's material is on the page and it is still short: pick the
+    # largest standard layout step that keeps one clean page, measured, not guessed. This is
+    # what a person does with a thin resume (11pt, normal margins); padding sentences is not.
+    layout = ""
+    if (result and result.ok and result.pages == 1 and result.fill_ratio is not None
+            and result.fill_ratio < TARGET_FILL):
+        best_fill = result.fill_ratio
+        for step in LAYOUT_STEPS[1:]:
+            tex = render_cv(preamble, used, sections, probe=True, layout=step)
+            r = compile_tex(tex, workdir, jobname=f"{jobname}-l{LAYOUT_STEPS.index(step)}")
+            if not (r.ok and r.pages == 1 and r.overfull_count == 0
+                    and r.fill_ratio is not None and r.fill_ratio <= MAX_FILL):
+                break                                     # this step overflows; keep the last good one
+            if r.fill_ratio <= best_fill:
+                break                                     # no gain: stop
+            layout, result, best_fill = step, r, r.fill_ratio
+            if best_fill >= TARGET_FILL:
+                break
+
     # Ship without the probe: it has no layout effect, so the measurement above still
     # describes this render exactly (see _FILL_PROBE).
-    tex = render_cv(preamble, used, sections)
+    tex = render_cv(preamble, used, sections, layout=layout)
     cv_text = _rendered_cv_text(used, sections)
     # One model read of the ad gives the skill list the report is measured against; the curated
     # vocabulary stands in when there is no model (llm is None in a few offline callers).
