@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.wrangler/
+# Local secrets for `wrangler dev` (ANTHROPIC_API_KEY=...). Never committed.
+.dev.vars
