@@ -1,5 +1,6 @@
-// The SponsorJobs broker Worker. No account_id here on purpose: the owner's `wrangler login`
-// supplies it at deploy time, so nothing account-specific is committed.
+// The SponsorJobs broker Worker, deployed to the BlackOrigin Cloudflare account (which also holds
+// the sponsorjobs.ai zone) at https://api.sponsorjobs.ai. Account and database ids are not
+// secrets; the key is (see below).
 //
 // Secrets (set once with `npx wrangler secret put <NAME>`, never written in this file):
 //   ANTHROPIC_API_KEY   the company Anthropic key; without it /health reports
@@ -8,6 +9,9 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sponsorjobs-broker",
   "main": "src/index.ts",
+  "account_id": "61cbc2bf5c4514a08662576605bad356",
+  // The official desktop edition calls this address (shell-electron/main.js).
+  "routes": [{ "pattern": "api.sponsorjobs.ai", "custom_domain": true }],
   // 2026-08-22 is the newest date the test runtime (pinned by @cloudflare/vitest-pool-workers)
   // supports; keeping production on the same date means the tests exercise the same runtime
   // behaviour that ships. Nothing here needs a newer flag.
@@ -18,8 +22,7 @@
     {
       "binding": "DB",
       "database_name": "sponsorjobs-broker",
-      // Paste the id printed by `npx wrangler d1 create sponsorjobs-broker` here before the
-      // first deploy (see README). Local dev and tests do not need it.
+      "database_id": "e1bb6376-c3c6-489d-aa32-a10eed4fdb96",
       "migrations_dir": "migrations"
     }
   ],
