@@ -2251,6 +2251,7 @@ class WebIntake:
         ``entry`` is the bullets' own employer / project / activity dict. A resize may
         reword, but never claim a skill that entry doesn't show (issue #279)."""
         from tailoring.textwidth import line_fraction, text_width_pt, BULLET_WIDTH_PT
+        from tailoring.filler import is_padded
         from tailoring.keywords import introduced_skills, profile_text
         # ONE anti-fabrication rule, shared with the assembler's reword gate
         # (assembler._iter_bullet_slots_with_grounding): the grounding is everything the
@@ -2262,9 +2263,12 @@ class WebIntake:
             grounding = profile_text(entry) + "\n" + grounding
 
         def score(frac):
-            # How cleanly the last line lands (higher = better; >=0.58 is "good").
+            # How cleanly the last line lands (higher = better; >=0.58 is "good"). A one-line
+            # bullet that is at least about half a line is a normal ragged line, not a defect:
+            # rewriting those to "fill the line" is what produced the padded sentences. Only a
+            # genuinely stubby fragment is reworked, and the filler guard still vets the result.
             if frac < 0.85:
-                return frac * 0.5                      # stubby single line
+                return 1.0 if frac >= 0.45 else frac * 0.5
             part = frac - int(frac)
             if part <= 0.015:
                 return 1.0                             # ends right at a line boundary
@@ -2304,10 +2308,11 @@ class WebIntake:
                     cand = ""
                 if not cand:
                     break
-                if introduced_skills(b, cand, grounding, self.jd):
-                    # Fabricated a skill: discard it. best/target are unchanged, so an
-                    # identical call would only get the identical rejection; allow ONE
-                    # altered retry (a tighter target), then keep best.
+                if introduced_skills(b, cand, grounding, self.jd) or is_padded(b, cand):
+                    # Fabricated a skill, or reached the target with hollow phrases: discard
+                    # it. best/target are unchanged, so an identical call would only get the
+                    # identical rejection; allow ONE altered retry (a tighter target), then
+                    # keep best. A short true bullet beats a long padded one.
                     rejected += 1
                     if rejected >= 2:
                         break

@@ -616,9 +616,10 @@ def _reword_smuggled_unsupported(original: str, new: str, jd_text: str,
     banking role) where it never happened (issue #279). We never surgically strip a word
     (that mangles grammar); the caller discards the whole reword and keeps the real bullet,
     so the CV stays honest and the gap surfaces in the coverage report instead."""
+    from .filler import is_padded
     from .keywords import introduced_skills
 
-    return bool(introduced_skills(original, new, grounding, jd_text))
+    return bool(introduced_skills(original, new, grounding, jd_text)) or is_padded(original, new)
 
 
 def _tailor_bullets(profile: dict, jd_text: str, llm: LLMBackend) -> dict:
