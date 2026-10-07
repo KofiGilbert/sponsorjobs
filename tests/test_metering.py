@@ -46,8 +46,8 @@ def test_the_three_tiers_as_decided():
     shape = {k: (p.days, p.interviews, p.packages, p.llm_model, p.price_label) for k, p in PLANS.items()}
     assert shape == {
         "free":   (0, 0, 3, "claude-haiku-4-5", ""),
-        "pass30": (30, 3, 60, "claude-sonnet-4-6", "$29"),
-        "pass90": (90, 9, 150, "claude-sonnet-4-6", "$69"),
+        "pass30": (30, 3, 60, "claude-sonnet-5-5", "$29"),
+        "pass90": (90, 9, 150, "claude-sonnet-5-5", "$69"),
     }
     assert PLANS["pass30"].avatar_seconds_included == 2700 and PLANS["pass90"].avatar_seconds_included == 8100
 
@@ -69,7 +69,7 @@ def test_a_pass_gives_its_allowances_and_the_better_model():
     st = m.status("u", P)
     assert st["tier"] == "pass30" and st["pass_until"] == T0 + 30 * DAY_SECONDS
     assert st["interviews_left"] == 3 and st["packages_left"] == 60
-    assert m.llm_model_for("u") == "claude-sonnet-4-6"
+    assert m.llm_model_for("u") == "claude-sonnet-5-5"
     m2 = _meter()
     m2.grant_pass("v", "pass90")
     assert m2.status("v", P)["interviews_left"] == 9 and m2.status("v", P)["packages_left"] == 150

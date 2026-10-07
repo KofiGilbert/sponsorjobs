@@ -40,7 +40,7 @@ DAY_SECONDS = 86_400
 FREE_MODEL_ENV = "TAILOR_FREE_MODEL"
 PASS_MODEL_ENV = "TAILOR_PASS_MODEL"
 FREE_MODEL = "claude-haiku-4-5"
-PASS_MODEL = "claude-sonnet-4-6"
+PASS_MODEL = "claude-sonnet-5-5"   # newer AND cheaper than 4.6 ($2/$10 vs $3/$15 per MTok)
 
 
 @dataclass(frozen=True)

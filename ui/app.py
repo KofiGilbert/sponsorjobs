@@ -783,16 +783,31 @@ def _count_package(llm):
     raise BrokerUnavailable(msg, "upgrade_required")
 
 
+_BROKER_UP: dict = {}            # base url -> (checked_at, up): one probe a minute, not one per call
+
+
 def _broker_reachable() -> bool:
-    """Cheap loopback check that the managed broker is up, so a saved-key BYO fallback is possible
-    when it is not. Any error (refused, timeout, non-200) means 'not available'."""
+    """Is the managed broker up, so a saved-key BYO fallback is only used when it is not? Any
+    error (refused, timeout, non-200) means 'not available'. The answer is remembered for a minute:
+    in the official edition the broker is on the internet, and probing it before EVERY AI call added
+    up to two seconds to each. The official edition also requires the broker to report a real
+    model, never a test double serving placeholder text."""
+    import json as _json
     import urllib.request
     base = os.environ.get("TAILOR_BROKER_URL", "http://127.0.0.1:57001").rstrip("/")
+    hit = _BROKER_UP.get(base)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    up = False
     try:
-        with urllib.request.urlopen(base + "/health", timeout=2) as r:   # nosec - loopback broker
-            return getattr(r, "status", 200) == 200
+        with urllib.request.urlopen(base + "/health", timeout=2) as r:   # nosec - our own broker
+            up = getattr(r, "status", 200) == 200
+            if up and os.environ.get("TAILOR_EDITION") == "official":
+                up = bool((_json.loads(r.read() or b"{}") or {}).get("real_providers"))
     except Exception:   # noqa: BLE001 - unreachable / any error => treat as not available
-        return False
+        up = False
+    _BROKER_UP[base] = (time.time(), up)
+    return up
 
 
 # Local-only, git-ignored credential store. Overridable for tests/isolation.
@@ -964,7 +979,7 @@ def _validate_anthropic_key(key: str) -> tuple[bool, str]:
         return False, "The 'anthropic' package isn't installed on this machine."
     try:
         anthropic.Anthropic(api_key=key).messages.create(
-            model=os.environ.get("RESUME_AGENT_MODEL", "claude-sonnet-4-6"),
+            model=os.environ.get("RESUME_AGENT_MODEL", "claude-sonnet-5-5"),
             max_tokens=1, messages=[{"role": "user", "content": "hi"}])
         return True, ""
     except Exception as exc:  # map auth / billing / rate-limit / connectivity to a clear message
@@ -3311,8 +3326,14 @@ def apikey_status():
     provider = _ai_provider()
     key = _cred(_PROVIDER_KEY[provider])
     masked = (key[:7] + "…" + key[-4:]) if len(key) > 14 else ("set" if key else "")
+    # Editions (decided 2026-10-07): the official installer runs on SponsorJobs' own AI, so a
+    # person never has to see a key; the open-source build from GitHub is bring-your-own. The
+    # official UI hides the key ONLY while the managed AI is actually reachable, so an outage
+    # still leaves the own-key path open instead of a dead end.
+    edition = "official" if os.environ.get("TAILOR_EDITION") == "official" else "community"
     return jsonify({"configured": bool(key), "masked": masked, "provider": provider,
-                    "provider_label": _PROVIDER_LABEL[provider]})
+                    "provider_label": _PROVIDER_LABEL[provider], "edition": edition,
+                    "managed": edition == "official" and _broker_reachable()})
 
 
 @app.get("/api/whereami")

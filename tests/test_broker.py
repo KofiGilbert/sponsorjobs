@@ -75,7 +75,7 @@ def test_llm_complete_meters_tokens_picks_the_plan_model_and_free_cap_blocks(cli
     client.post("/billing/plan", json={"plan": "pass30"}, headers=H)
     body = client.post("/llm/complete",
                        json={"prompt": "tailor my resume for a data role"}, headers=H).get_json()
-    assert body["model"] == "claude-sonnet-4-6" and "fake:" in body["text"]
+    assert body["model"] == "claude-sonnet-5-5" and "fake:" in body["text"]
     assert body["tokens"]["used"] > 0
 
 
@@ -87,7 +87,7 @@ def test_me_usage_reports_tier_pass_and_balances(client):
     body = client.get("/me/usage", headers=H).get_json()
     assert body["plan"] == body["tier"] == "pass90" and body["pass_until"]
     assert body["avatar_seconds_left"] == 8100 and body["interviews_left"] == 9
-    assert body["packages_left"] == 150 and body["llm_model"] == "claude-sonnet-4-6"
+    assert body["packages_left"] == 150 and body["llm_model"] == "claude-sonnet-5-5"
 
 
 def test_package_route_counts_runs_and_stops_at_the_free_three(client):
@@ -101,7 +101,7 @@ def test_package_route_counts_runs_and_stops_at_the_free_three(client):
     client.post("/billing/plan", json={"plan": "pass30"}, headers=H)
     r = client.post("/llm/package", headers=H)
     assert r.status_code == 200 and r.get_json()["packages_left"] == 59
-    assert r.get_json()["model"] == "claude-sonnet-4-6"
+    assert r.get_json()["model"] == "claude-sonnet-5-5"
     assert client.post("/llm/package").status_code == 401
 
 
@@ -163,3 +163,36 @@ def test_provider_failure_fails_clean_not_500_and_leaks_nothing():
     for path, body in [("/avatar/session/start", {}), ("/llm/complete", {"prompt": "hi"})]:
         r = c.post(path, json=body, headers=H)
         assert r.status_code == 502 and "sk-ant" not in r.get_data(as_text=True)
+
+
+# -- free-tier abuse limits ------------------------------------------------------------------ #
+# The official app gives every install an anonymous free account with no sign-in, so the broker
+# itself must stop a script from minting accounts or draining the company AI budget.
+
+def test_new_free_accounts_are_limited_per_network_per_day(monkeypatch):
+    import backend.broker as B
+    from backend.accounts import InMemoryAccountStore
+    monkeypatch.setattr(B, "REGISTER_PER_IP_PER_DAY", 2)
+    app = create_app(meter=Meter(InMemoryStore()), provider=FakeProvider(),
+                     period_fn=lambda: "2026-07", accounts=InMemoryAccountStore())
+    c = app.test_client()
+    assert c.post("/account/register").status_code == 200
+    assert c.post("/account/register").status_code == 200
+    r = c.post("/account/register")
+    assert r.status_code == 429 and r.get_json()["reason"] == "register_limit"
+
+
+def test_the_whole_free_tier_shares_a_daily_budget_and_passes_are_untouched(monkeypatch):
+    import time
+
+    import backend.broker as B
+    monkeypatch.setattr(B, "FREE_POOL_DAILY_TOKENS", 1)       # spent after the first free call
+    meter = Meter(InMemoryStore())
+    app = create_app(meter=meter, provider=FakeProvider(), period_fn=lambda: "2026-07")
+    c = app.test_client()
+    free_a, free_b, paid = ({"X-Tailor-User": u} for u in ("fa", "fb", "paid"))
+    assert c.post("/llm/complete", json={"prompt": "hi"}, headers=free_a).status_code == 200
+    r = c.post("/llm/complete", json={"prompt": "hi"}, headers=free_b)   # a DIFFERENT free user
+    assert r.status_code == 503 and r.get_json()["reason"] == "free_busy"
+    meter.store.set_pass("paid", "pass30", int(time.time()) + 86_400, 900, 10)
+    assert c.post("/llm/complete", json={"prompt": "hi"}, headers=paid).status_code == 200

@@ -85,6 +85,13 @@ async function ensureServer() {
     // Pull the jobs board from the static feed (fresh, high-volume) unless the user pointed us
     // elsewhere. This is what turns "82 stale local roles" into the full central feed.
     JOBS_FEED_URL: process.env.JOBS_FEED_URL || FEED_URL };
+  if (app.isPackaged) {
+    // The official installer is the "SponsorJobs" edition: AI runs on the company service, so
+    // nobody needs a key (docs/editions in memory: decided 2026-10-07). Running from source is
+    // the open-source Community edition, bring-your-own-key.
+    env.TAILOR_EDITION = env.TAILOR_EDITION || "official";
+    env.TAILOR_BROKER_URL = env.TAILOR_BROKER_URL || "https://api.sponsorjobs.ai";
+  }
   delete env.RESUME_AGENT_DEV;                        // real model only (CLAUDE.md 13)
   delete env.RESUME_AGENT_FAKE_LLM;
   if (app.isPackaged) {

@@ -4411,6 +4411,7 @@
 
   /* ---------------------------------------------------------------- Connect your AI (API key) */
   let AI_CONFIGURED = false;
+  let MANAGED_AI = false;            // official edition, company AI reachable: never ask for a key
   // Provider picker: Claude (recommended default) or OpenAI. Only the transport differs;
   // the whole app is provider-agnostic behind /api/apikey + AI_PROVIDER.
   const AI_PROVIDERS = {
@@ -4453,6 +4454,15 @@
       const lbl = $("#aiChipLabel"); if (lbl) lbl.textContent = AI_CONFIGURED ? "AI connected" : "Connect AI";
       const mk = $("#aiMasked"); if (mk) mk.textContent = s.masked || "";
       const sl = $("#setKeyLabel"); if (sl) sl.textContent = `${s.provider_label || "Anthropic"} API key`;
+      // Official edition with the managed AI up: no key talk anywhere. The key stays reachable
+      // under Settings as an optional advanced choice.
+      MANAGED_AI = !!s.managed;
+      const gk = $("#menuGetKey"); if (gk) gk.hidden = MANAGED_AI;
+      if (MANAGED_AI) {
+        if (sl) sl.textContent = "Advanced: your own AI key";
+        const st = $("#setKeyState");
+        if (st && !s.configured) st.textContent = "Optional. SponsorJobs' AI is included.";
+      }
       return s;
     } catch { return { configured: false }; }
   }
@@ -4787,7 +4797,8 @@
     if (st) {
       st.textContent = s.configured
         ? `Connected, ${s.masked}`
-        : "Not connected. SponsorJobs needs your key to write anything.";
+        : (s.managed ? "Optional. SponsorJobs' AI is included."
+                     : "Not connected. SponsorJobs needs your key to write anything.");
     }
     try {
       const cfg = await api("/api/submit/settings");
@@ -5181,7 +5192,10 @@
     const v = $("#aiKeyInput").value.trim();
     if (v.startsWith(AI_PROVIDERS[AI_PROVIDER_SEL].prefix) && !$("#aiSave").disabled) $("#aiSave").click();
   }, 0));
-  window.__openAiKeyBox = () => { hideOutage(); openAiModal(true); };
+  window.__openAiKeyBox = () => {
+    if (MANAGED_AI) { toast("SponsorJobs' AI is busy for a moment. Please try again."); return; }
+    hideOutage(); openAiModal(true);
+  };
 
   /* ---------------------------------------------------------------- auto-apply (Pro) */
   // Say how many of YOUR roles this can actually submit. The page advertised a "daily

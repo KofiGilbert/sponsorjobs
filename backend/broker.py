@@ -36,6 +36,31 @@ def _default_identify(req) -> str | None:
     return req.headers.get("X-Tailor-User") or None
 
 
+def _day() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+# Free-tier abuse limits (the official app gives every new install an anonymous free account with
+# no sign-in, so these are what keep a script from running up the company AI bill):
+#  * new anonymous accounts per client IP per day, and
+#  * total tokens the WHOLE free tier may spend per day; past it, free requests get a polite
+#    "busy, try later or get a pass" and paid users are untouched.
+REGISTER_PER_IP_PER_DAY = int(os.environ.get("REGISTER_PER_IP_PER_DAY", "5"))
+FREE_POOL_DAILY_TOKENS = int(os.environ.get("FREE_POOL_DAILY_TOKENS", "5000000"))
+FREE_POOL_USER = "__free_pool__"    # the pool's tokens live in the meter under this pseudo-user
+
+
+def _client_ip(req) -> str:
+    """The caller's IP. Behind Render's proxy the first X-Forwarded-For hop is the client; locally
+    (no RENDER env) the header is not trusted, since anyone could set it."""
+    if os.environ.get("RENDER"):
+        fwd = (req.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        if fwd:
+            return fwd
+    return req.remote_addr or "unknown"
+
+
 def create_app(meter=None, provider=None, period_fn=_default_period, identify=_default_identify,
                billing=None, accounts=None, google=None, app_url="http://127.0.0.1:57000",
                telegram=None, dev_billing=None):
@@ -60,6 +85,11 @@ def create_app(meter=None, provider=None, period_fn=_default_period, identify=_d
 
     def _body() -> dict:
         return request.get_json(silent=True) or {}
+
+    registrations: dict[tuple[str, str], int] = {}     # (ip, day) -> anonymous accounts issued
+
+    def _free(user: str) -> bool:
+        return not meter.plan_for(user).is_pass
 
     @app.route("/avatar/session/start", methods=["POST"])
     def avatar_start():
@@ -114,6 +144,10 @@ def create_app(meter=None, provider=None, period_fn=_default_period, identify=_d
             meter.require_llm(user, period, est_tokens=max(1, est_chars // 4))
         except QuotaExceeded as exc:
             return jsonify(error=str(exc), reason=exc.reason, tier=meter.tier_for(user)), 402
+        free = _free(user)
+        if free and meter.store.get_llm_tokens(FREE_POOL_USER, _day()) >= FREE_POOL_DAILY_TOKENS:
+            return jsonify(error="the free AI is very busy today; try again tomorrow, or get a pass",
+                           reason="free_busy", tier=meter.tier_for(user)), 503
         model = meter.llm_model_for(user)
         try:
             max_tokens = int(body.get("max_tokens") or 0) or None
@@ -127,7 +161,10 @@ def create_app(meter=None, provider=None, period_fn=_default_period, identify=_d
             # five-minute fix and an afternoon.
             app.logger.exception("llm/complete failed for model %s: %s", model, exc)
             return jsonify(error="the AI service is unavailable"), 502
-        used = meter.record_llm(user, period, out["input_tokens"] + out["output_tokens"])
+        spent = out["input_tokens"] + out["output_tokens"]
+        used = meter.record_llm(user, period, spent)
+        if free:
+            meter.store.add_llm_tokens(FREE_POOL_USER, _day(), spent)
         return jsonify(text=out["text"], model=model, tokens=used)
 
     @app.route("/llm/package", methods=["POST"])
@@ -266,6 +303,15 @@ def create_app(meter=None, provider=None, period_fn=_default_period, identify=_d
         Haiku packages a month, no live interviews), so registration can't run up much AI cost."""
         if accounts is None:
             return jsonify(error="accounts are not enabled"), 503
+        key = (_client_ip(request), _day())
+        if registrations.get(key, 0) >= REGISTER_PER_IP_PER_DAY:
+            return jsonify(error="too many new accounts from this network today; try again tomorrow",
+                           reason="register_limit"), 429
+        registrations[key] = registrations.get(key, 0) + 1
+        if len(registrations) > 50_000:                     # forget earlier days; bounded memory
+            today = _day()
+            for k in [k for k in registrations if k[1] != today]:
+                registrations.pop(k, None)
         account_id, token = accounts.register()
         return jsonify(account_id=account_id, token=token)
 

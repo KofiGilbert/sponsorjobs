@@ -25,7 +25,7 @@ from pathlib import Path
 # Cost-efficient default for tailoring: Sonnet 4.6 is high quality at ~40% less than Opus
 # ($3/$15 vs $5/$25 per Mtok). Overridable via RESUME_AGENT_MODEL (bump to claude-opus-4-8
 # for a premium tier, or drop to claude-haiku-4-5 for bulk/simple tasks at ~5x less).
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-sonnet-5-5"
 
 # Models that accept `output_config.effort`. Written as the families that DO support it
 # so an unrecognised future model degrades to "send no effort" -- a working request --

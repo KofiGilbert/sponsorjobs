@@ -93,8 +93,8 @@ freemium converts about 2%; auto-renewing trials are the top complaint about res
 | Tier | Price | Length | Live interviews (Round 2, 900 s each) | Tailored packages | Model |
 |---|---|---|---|---|---|
 | `free` (default, no card) | $0 | calendar month | 0 | 3 a month (unlimited on own key) | `claude-haiku-4-5` |
-| `pass30` Job Hunt Pass | $29 once | 30 days | 3 (2,700 s) | 60 | `claude-sonnet-4-6` |
-| `pass90` Season Pass | $69 once | 90 days | 9 (8,100 s) | 150 | `claude-sonnet-4-6` |
+| `pass30` Job Hunt Pass | $29 once | 30 days | 3 (2,700 s) | 60 | `claude-sonnet-5-5` |
+| `pass90` Season Pass | $69 once | 90 days | 9 (8,100 s) | 150 | `claude-sonnet-5-5` |
 | Extra interviews (packs) | 1 for $9, 3 for $24, 5 for $35 | never expire | 1 / 3 / 5 | 0 | |
 
 Rules as implemented (`backend/metering.py`, `backend/billing.py`):

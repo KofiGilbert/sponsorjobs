@@ -34,7 +34,7 @@ in Stripe; nothing is a subscription and nothing auto-renews.
 (A price whose var is unset is simply not offered in the app; billing turns on with the secret
 key and at least one pass price. `STRIPE_PRICE_STUDENT` / `STRIPE_PRICE_PRO` are retired and no
 longer read. Optional model overrides: `TAILOR_FREE_MODEL`, default `claude-haiku-4-5`, and
-`TAILOR_PASS_MODEL`, default `claude-sonnet-4-6`.)
+`TAILOR_PASS_MODEL`, default `claude-sonnet-5-5`.)
 
 Optional, the official SponsorJobs Telegram bot (docs/notify.md): `TELEGRAM_BOT_TOKEN` (from
 @BotFather), `TELEGRAM_BOT_USERNAME` (e.g. `SponsorJobsBot`), `TELEGRAM_WEBHOOK_SECRET` (any random
