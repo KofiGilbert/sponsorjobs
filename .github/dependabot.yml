@@ -1,6 +1,6 @@
 # Keeps the desktop app's browser engine current. Electron ships a new major every 8 weeks and
 # supports only the latest three, so an app left alone falls out of security support in about six
-# months (0.1.0 shipped on Electron 33, two years out of date). Dependabot opens a pull request
+# months (0.1.0 shipped on Electron 33; 0.1.1 moved to 44). Dependabot opens a pull request
 # for each new Electron release; the tests workflow runs on it, and a maintainer merges it and
 # tags a release so installed copies are told to update (checkForUpdate in shell-electron/main.js).
 version: 2

@@ -12,8 +12,8 @@
     "dist:mac:dir": "electron-builder --mac --dir"
   },
   "devDependencies": {
-    "electron": "^40.10.6",
-    "electron-builder": "^25.1.8",
+    "electron": "^44.6.0",
+    "electron-builder": "^26.15.3",
     "playwright": "^1.62.1"
   },
   "build": {
