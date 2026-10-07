@@ -56,7 +56,7 @@ const health: Handler = ({ env }) =>
 const accountRegister: Handler = async ({ req, env, nowMs }) => {
   // On Cloudflare the edge sets CF-Connecting-IP itself, so a client cannot spoof it.
   const ip = req.headers.get("CF-Connecting-IP") || "unknown";
-  const limit = intVar(env.REGISTER_PER_IP_PER_DAY, 5);
+  const limit = intVar(env.REGISTER_PER_IP_PER_DAY, 50);   // a campus shares one IP; 5 locked out a dorm
   if (!(await allowRegistration(env.DB, ip, dayOf(nowMs), limit))) {
     return json({ error: "too many new accounts from this network today; try again tomorrow",
                   reason: "register_limit" }, 429);

@@ -48,9 +48,9 @@ describe("accounts", () => {
     expect((await reg(freshIp())).status).toBe(200);
   });
 
-  it("the default limit is 5 a day", async () => {
+  it("the default limit is 50 a day (a campus shares one address)", async () => {
     const ip = freshIp();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 50; i++) {
       expect((await call("/account/register", { method: "POST", headers: { "CF-Connecting-IP": ip } })).status).toBe(200);
     }
     expect((await call("/account/register", { method: "POST", headers: { "CF-Connecting-IP": ip } })).status).toBe(429);

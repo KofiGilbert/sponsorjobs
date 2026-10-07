@@ -16,6 +16,10 @@
       h: "You're offline",
       p: "SponsorJobs writes with the real model, so it needs a connection. Reconnect and try again.",
     },
+    no_account: {
+      h: "Couldn't set up your free account",
+      p: "Too many new sign-ups came from this network today, or the service is busy. Try again in a while. Your own AI key under Settings, Advanced always works.",
+    },
     no_key: {
       h: "Connect your AI key",
       p: "SponsorJobs runs on your own Anthropic key. Add it once and it stays on this machine.",

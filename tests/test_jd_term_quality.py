@@ -98,3 +98,14 @@ def test_skill_matcher_accepts_sentence_punctuation_after_a_skill():
     from tailoring.keywords import skill_terms
     assert {"Python", "Tableau", "Node.js", "C++"} <= set(
         skill_terms("Strong Python. Tableau. Node.js and C++."))
+
+
+def test_model_side_notes_in_a_profile_are_not_evidence():
+    """A real import (2026-10-07) came back with a "notes_for_candidate" field saying "CBAP
+    certification: Not currently held", and the review then told the person they already had
+    CBAP. Only the person's own sections count as evidence."""
+    from tailoring.keywords import profile_text, term_present
+    prof = {"identity": {"name": "A"}, "skills": {"Data": ["SQL"]},
+            "notes_for_candidate": {"gaps_vs_jd": ["CBAP certification: Not currently held"]}}
+    t = profile_text(prof)
+    assert term_present("SQL", t) and not term_present("CBAP", t)

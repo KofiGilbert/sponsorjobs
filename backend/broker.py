@@ -43,10 +43,11 @@ def _day() -> str:
 
 # Free-tier abuse limits (the official app gives every new install an anonymous free account with
 # no sign-in, so these are what keep a script from running up the company AI bill):
-#  * new anonymous accounts per client IP per day, and
+#  * new anonymous accounts per client IP per day (50: a university's students share ONE public
+#    address, so 5 locked out a whole campus on day one, found 2026-10-07), and
 #  * total tokens the WHOLE free tier may spend per day; past it, free requests get a polite
 #    "busy, try later or get a pass" and paid users are untouched.
-REGISTER_PER_IP_PER_DAY = int(os.environ.get("REGISTER_PER_IP_PER_DAY", "5"))
+REGISTER_PER_IP_PER_DAY = int(os.environ.get("REGISTER_PER_IP_PER_DAY", "50"))
 FREE_POOL_DAILY_TOKENS = int(os.environ.get("FREE_POOL_DAILY_TOKENS", "5000000"))
 FREE_POOL_USER = "__free_pool__"    # the pool's tokens live in the meter under this pseudo-user
 

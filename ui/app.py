@@ -725,7 +725,17 @@ def _make_llm():
     prefer_own = os.environ.get("TAILOR_OWN_KEY") == "1" and bool(own_key)
     if not prefer_own and _broker_reachable():
         from llm.broker_client import BrokerLLM
-        return BrokerLLM(model=os.environ.get("RESUME_AGENT_MODEL"), auth_token=_account_token())
+        tok = _account_token()
+        if not tok and os.environ.get("TAILOR_EDITION") == "official":
+            # The hosted broker accepts accounts only, never the dev header. Without a token
+            # every call would 401 and the CV import would quietly fall back to a dumb parse
+            # (seen 2026-10-07 when the sign-up limit was hit). Say what happened instead.
+            raise Unavailable(
+                "no_account",
+                "SponsorJobs could not set up your free account just now (too many new "
+                "sign-ups from this network today, or the service is busy). Try again in a "
+                "while, or add your own AI key under Settings, Advanced.")
+        return BrokerLLM(model=os.environ.get("RESUME_AGENT_MODEL"), auth_token=tok)
     if not own_key:
         raise Unavailable(
             "no_key",
@@ -3768,7 +3778,10 @@ def _coerce_profile(profile) -> dict:
     the flatten/merge/build path. Anything unsalvageable is dropped, not raised on."""
     if not isinstance(profile, dict):
         return {}
-    out = dict(profile)
+    from tailoring.keywords import PROFILE_SECTIONS
+    # Keep the person's sections only. A model that adds advice fields ("notes_for_candidate")
+    # would otherwise have them saved, rendered into the evidence text, and counted as skills.
+    out = {k: v for k, v in profile.items() if k in PROFILE_SECTIONS}
     ident = profile.get("identity")
     out["identity"] = ident if isinstance(ident, dict) else {}
     exp = []
@@ -7294,10 +7307,14 @@ def main() -> None:
     start_auto_updater()   # keep the job feed fresh on its own (only if RESUME_AGENT_AUTOUPDATE=1)
     start_notify_loop()    # Telegram: taps, job-match alerts, the away digest (every 30 s)
     server_only = "--server-only" in sys.argv or os.environ.get("TAILOR_SERVER_ONLY") == "1"
-    url = "http://127.0.0.1:57000"
+    # TAILOR_PORT lets a test engine run beside the installed app (which owns 57000). Without
+    # it, a second engine fails to start and its caller's requests land on the installed app's
+    # engine instead (that happened once, mid-test, 2026-10-07).
+    port = int(os.environ.get("TAILOR_PORT") or 57000)
+    url = f"http://127.0.0.1:{port}"
     if server_only:
         print(f"SponsorJobs: serving at {url} (server only)")
-        app.run(host="127.0.0.1", port=57000, debug=False)
+        app.run(host="127.0.0.1", port=port, debug=False)
         return
 
     from ui.shell import open_app_window
@@ -7305,7 +7322,7 @@ def main() -> None:
     # Serve on a daemon thread so closing the window ends the process rather than orphaning
     # a server on the port, which is what would strand the next launch.
     threading.Thread(
-        target=lambda: app.run(host="127.0.0.1", port=57000, debug=False,
+        target=lambda: app.run(host="127.0.0.1", port=port, debug=False,
                                use_reloader=False),
         daemon=True).start()
     # Wait for the port rather than sleeping a guessed interval: the first request must not

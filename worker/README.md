@@ -18,7 +18,7 @@ implementation; it does not replace or change anything in `backend/`.
 | Route | What it does |
 | --- | --- |
 | `GET /health` | `{ok, real_providers}`; `real_providers` is true when `ANTHROPIC_API_KEY` is set |
-| `POST /account/register` | new anonymous account; 5 per network per day (`429 register_limit`) |
+| `POST /account/register` | new anonymous account; 50 per network per day (`429 register_limit`) |
 | `GET /account/me` | `{account_id, email: null}` |
 | `POST /llm/complete` | one metered completion (`402 token_cap`, `503 free_busy`, `502` on upstream failure) |
 | `POST /llm/package` | counts one tailoring run (`402 package_limit`) |

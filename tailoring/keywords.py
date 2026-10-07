@@ -330,9 +330,22 @@ def _skill_terms_cached(jd_text: str) -> tuple[str, ...]:
     return tuple(out)
 
 
+# The sections a profile is made of. Everything else a model returns alongside them (one import
+# came back with "notes_for_candidate": {"gaps_vs_jd": ["CBAP certification: Not currently held"]})
+# is commentary, not the person's material: it must never be rendered, and never count as
+# evidence that they have a skill. Shared by the import coercion and the evidence text below.
+PROFILE_SECTIONS: frozenset = frozenset({
+    "identity", "summary", "education", "experience", "projects", "skills",
+    "extracurricular", "interests", "certifications", "languages", "links", "bold_metrics",
+})
+
+
 def profile_text(profile: dict) -> str:
-    """Flatten a profile dict into one searchable text blob."""
+    """Flatten the person's own material into one searchable text blob. Only the known
+    profile sections count (PROFILE_SECTIONS); a model's side notes are not evidence."""
     parts: list[str] = []
+    if isinstance(profile, dict):
+        profile = {k: v for k, v in profile.items() if k in PROFILE_SECTIONS}
 
     def walk(v):
         if isinstance(v, str):

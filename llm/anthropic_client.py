@@ -19,6 +19,7 @@ tests use :class:`FakeLLM` and never touch this path.
 from __future__ import annotations
 
 import json
+import re
 import os
 from pathlib import Path
 
@@ -240,7 +241,12 @@ class AnthropicLLM:
             return fallback
         seen: set[str] = set()
         skills: list[str] = []
+        flat: list[str] = []
         for it in items:
+            # "Tableau or Power BI" is two skills; checked as one phrase it matched neither,
+            # and the report listed it as missing from a profile that had both.
+            flat.extend(re.split(r"\s+(?:or|and|/)\s+|\s*/\s*", str(it)))
+        for it in flat:
             t = str(it).strip().strip(".,;:")
             if not (1 <= len(t.split()) <= 4) or len(t) > 40:
                 continue

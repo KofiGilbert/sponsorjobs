@@ -30,7 +30,7 @@
   // Defaults matching backend/broker.py and backend/metering.py. Override per deployment here or
   // in the dashboard; they are plain settings, not secrets.
   "vars": {
-    "REGISTER_PER_IP_PER_DAY": "5",
+    "REGISTER_PER_IP_PER_DAY": "50",
     "FREE_POOL_DAILY_TOKENS": "5000000",
     "TAILOR_FREE_MODEL": "",
     "TAILOR_PASS_MODEL": "",
