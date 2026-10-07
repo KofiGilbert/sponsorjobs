@@ -800,7 +800,9 @@ def _broker_reachable() -> bool:
         return hit[1]
     up = False
     try:
-        with urllib.request.urlopen(base + "/health", timeout=2) as r:   # nosec - our own broker
+        from llm.broker_client import BROKER_USER_AGENT
+        req = urllib.request.Request(base + "/health", headers={"User-Agent": BROKER_USER_AGENT})
+        with urllib.request.urlopen(req, timeout=2) as r:   # nosec - our own broker
             up = getattr(r, "status", 200) == 200
             if up and os.environ.get("TAILOR_EDITION") == "official":
                 up = bool((_json.loads(r.read() or b"{}") or {}).get("real_providers"))
@@ -5650,7 +5652,9 @@ def _account_token() -> str | None:
         return tok
     import requests
     try:
-        r = requests.post(f"{BROKER_URL}/account/register", timeout=10)
+        from llm.broker_client import BROKER_USER_AGENT
+        r = requests.post(f"{BROKER_URL}/account/register", timeout=10,
+                          headers={"User-Agent": BROKER_USER_AGENT})
         if r.status_code == 200:
             tok = (r.json() or {}).get("token")
             if tok:
@@ -5663,8 +5667,10 @@ def _account_token() -> str | None:
 
 def _broker_headers() -> dict:
     """Auth for a broker call: the account's bearer token when we have one, else the dev header."""
+    from llm.broker_client import BROKER_USER_AGENT
     tok = _account_token()
-    return {"Authorization": f"Bearer {tok}"} if tok else {"X-Tailor-User": _BROKER_USER}
+    auth = {"Authorization": f"Bearer {tok}"} if tok else {"X-Tailor-User": _BROKER_USER}
+    return {**auth, "User-Agent": BROKER_USER_AGENT}
 
 
 def _token_is_stale() -> bool:

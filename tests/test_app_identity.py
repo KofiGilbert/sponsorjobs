@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 
 import pytest
+from llm.broker_client import BROKER_USER_AGENT  # Cloudflare 403s Python's default agent
 
 
 @pytest.fixture
@@ -23,7 +24,7 @@ def A(tmp_path, monkeypatch):
 
 def test_broker_headers_uses_a_stored_bearer_token(A, monkeypatch):
     monkeypatch.setattr(A, "_cred", lambda name: "tok_stored" if name == "TAILOR_ACCOUNT_TOKEN" else None)
-    assert A._broker_headers() == {"Authorization": "Bearer tok_stored"}
+    assert A._broker_headers() == {"Authorization": "Bearer tok_stored", "User-Agent": BROKER_USER_AGENT}
 
 
 def test_account_token_registers_once_and_saves_it(A, monkeypatch):
@@ -49,7 +50,7 @@ def test_falls_back_to_the_dev_header_when_the_broker_is_unreachable(A, monkeypa
         raise requests.RequestException("broker down")
 
     monkeypatch.setattr(requests, "post", boom)
-    assert A._broker_headers() == {"X-Tailor-User": "local"}             # dev/offline still works
+    assert A._broker_headers() == {"X-Tailor-User": "local", "User-Agent": BROKER_USER_AGENT}             # dev/offline still works
 
 
 def _client(A):

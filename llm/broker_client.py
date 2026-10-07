@@ -23,6 +23,11 @@ import urllib.request
 
 from llm.anthropic_client import DEFAULT_MODEL, AnthropicLLM
 
+# Say who is calling. The hosted broker sits behind Cloudflare, whose bot protection refuses
+# Python's default "Python-urllib" agent with a 403 (found 2026-10-07 on the first live deploy);
+# an honest product name gets through, and it is what the requests should say anyway.
+BROKER_USER_AGENT = "SponsorJobs/0.1 (+https://github.com/KofiGilbert/sponsorjobs)"
+
 
 class BrokerUnavailable(RuntimeError):
     """The managed broker could not be reached, or refused the call (service down, or quota hit).
@@ -77,7 +82,7 @@ class BrokerLLM(AnthropicLLM):
     # -- transport -------------------------------------------------------------------------- #
     def _post(self, payload: dict) -> str:
         data = json.dumps(payload).encode()
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "User-Agent": BROKER_USER_AGENT}
         if self.auth_token:
             headers["Authorization"] = f"Bearer {self.auth_token}"   # the app's own account
         else:
