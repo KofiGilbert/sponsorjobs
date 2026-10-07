@@ -45,6 +45,13 @@ class LLMBackend(Protocol):
         Must actually reduce length while preserving meaning as far as possible.
         """
 
+    def extract_jd_skills(self, jd_text: str) -> list[str]:
+        """The hard skills, tools, methods and certifications a job ad asks for, in the ad's own
+        wording, most important first. Only things a resume can show (SQL, Tableau, Agile, CPA);
+        never role words, soft skills, company names or sentence words. This list is what the
+        coverage report and the match score are built on, so junk here becomes junk on screen:
+        the 0.1.0 heuristic counted "These", "Architects" and "Responsible" as skills."""
+
     def expand_bullets(
         self, role_title: str, bullets: list[str], jd_text: str
     ) -> list[str]:
@@ -281,6 +288,10 @@ class FakeLLM:
     # -- self-heal ------------------------------------------------------- #
     def shorten_bullet(self, text: str, max_len_chars: int) -> str:
         return _trim_to_len(text, max_len_chars)
+
+    def extract_jd_skills(self, jd_text: str) -> list[str]:
+        from tailoring.keywords import skill_terms
+        return skill_terms(jd_text)
 
     # -- chat edits of a finished CV (notify/cvreview.py) ------------------ #
     def plan_cv_edit(self, instruction: str, outline: str) -> dict:

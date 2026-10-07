@@ -2002,7 +2002,7 @@ class WebIntake:
         if self.title_flags():
             msgs.append("I aligned a job <b>title</b> to the role, it's highlighted; click it to "
                         "confirm or revert.")
-        msgs.append("Edit any bullet right on the page, then <b>Accept &amp; Save</b>.")
+        msgs.append("Edit any bullet right on the page, then <b>Accept & Save</b>.")
         if date_flags:
             note = self._date_flag_note(date_flags)
             msgs.append(note)
@@ -2083,7 +2083,7 @@ class WebIntake:
             if self.title_flags():
                 msgs.append("I aligned a job <b>title</b> to the role, it's highlighted; "
                             "click it to confirm or revert.")
-            msgs.append("Edit any bullet right on the page, then <b>Accept &amp; Save</b>.")
+            msgs.append("Edit any bullet right on the page, then <b>Accept & Save</b>.")
             if date_flags:
                 note = self._date_flag_note(date_flags)
                 msgs.append(note)

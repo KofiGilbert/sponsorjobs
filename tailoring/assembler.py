@@ -895,7 +895,13 @@ def assemble_cv(
     # describes this render exactly (see _FILL_PROBE).
     tex = render_cv(preamble, used, sections)
     cv_text = _rendered_cv_text(used, sections)
-    coverage = build_coverage_report(jd_text, cv_text, used)
+    # One model read of the ad gives the skill list the report is measured against; the curated
+    # vocabulary stands in when there is no model (llm is None in a few offline callers).
+    try:
+        jd_skills = llm.extract_jd_skills(jd_text) if (llm is not None and jd_text) else None
+    except Exception:                                    # noqa: BLE001 - the report must not fail the build
+        jd_skills = None
+    coverage = build_coverage_report(jd_text, cv_text, used, terms=jd_skills)
     one_page = bool(result and result.ok and result.pages == 1)
     # Fill is only meaningful on a one-page compile (\pagetotal reports the LAST page).
     fill = result.fill_ratio if (result and one_page) else None

@@ -194,7 +194,10 @@ _SKILL_DISPLAY = {s.lower(): s for s in (_COMPUTING + _KNOWLEDGE)}
 # vocab_skills run several times per bullet during a tailoring run, and re-sorting and
 # re-compiling 170+ patterns on every call was a measurable cost on the request thread.
 _SKILL_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = tuple(
-    (s, re.compile(r"(?<![a-z0-9])" + re.escape(s) + r"(?![a-z0-9+#.])"))
+    # A skill still counts when sentence punctuation follows it ("Tableau." / "SQL,"): the
+    # lookahead only guards against a LONGER token (Node.js vs Node, C++ vs C), so a "." is
+    # excluded only when a letter follows it.
+    (s, re.compile(r"(?<![a-z0-9])" + re.escape(s) + r"(?![a-z0-9+#]|\.[a-z])"))
     for s in sorted(_SKILL_DISPLAY, key=len, reverse=True))
 _COMPUTING_SET = {s.lower() for s in _COMPUTING}
 
@@ -399,10 +402,13 @@ class CoverageReport:
 
 
 def build_coverage_report(
-    jd_text: str, cv_text: str, profile: dict
+    jd_text: str, cv_text: str, profile: dict, terms: list[str] | None = None
 ) -> CoverageReport:
-    """Compare JD terms against the tailored CV and the source profile."""
-    terms = extract_jd_terms(jd_text)
+    """Compare JD skill terms against the tailored CV and the source profile. ``terms`` is the
+    skill list to measure (the model-read list from llm.extract_jd_skills, or the curated
+    skill_terms); the old capitalized-word walk is not used here any more, since it reported
+    sentence words ("These", "Responsible") as skills the person lacks."""
+    terms = list(terms) if terms is not None else skill_terms(jd_text)
     prof = profile_text(profile)
     report = CoverageReport()
     for t in terms:

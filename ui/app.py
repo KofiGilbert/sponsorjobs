@@ -3429,8 +3429,8 @@ _MATCH_NOTE = "A profile-vs-JD keyword coverage estimate, not a real ATS or empl
 @_guard
 @_extension_only
 def match_score():
-    from tailoring.keywords import (extract_jd_terms, profile_text, skill_terms,
-                                    split_required_optional, term_present)
+    from tailoring.keywords import (profile_text, skill_terms, split_required_optional,
+                                    term_present)
     jd = str((request.json or {}).get("jd") or "").strip()
     profile = (_memory().load("default") or {}).get("profile") or {}
     has_profile = bool(profile.get("experience") or (profile.get("identity") or {}).get("name"))
@@ -3442,7 +3442,10 @@ def match_score():
         return jsonify({"has_profile": True, "score": None, "matched": [], "missing": [],
                         "skills": [], "skills_covered": 0, "skills_total": 0, "note": _MATCH_NOTE})
     prof = profile_text(profile)
-    terms = extract_jd_terms(jd)
+    # Skills only (curated vocabulary + acronyms): the broad term walk scored sentence words and
+    # company names, which made the percentage meaningless. Deterministic here; the extension's
+    # popup must not spend AI on every job page.
+    terms = skill_terms(jd)
     matched = [t for t in terms if term_present(t, prof)]
     matched_set = set(matched)
     missing = [t for t in terms if t not in matched_set]

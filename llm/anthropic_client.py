@@ -214,6 +214,42 @@ class AnthropicLLM:
         out = self._complete(system, text, max_tokens=300)
         return out or text
 
+    def extract_jd_skills(self, jd_text: str) -> list[str]:
+        """Model-read skill list for the coverage report; falls back to the curated vocabulary
+        when the model is unavailable or answers badly, so the report never goes blank."""
+        import json as _json
+
+        from tailoring.keywords import skill_terms
+        system = (
+            "Read this job ad and list ONLY the concrete, checkable things it asks a candidate "
+            "to have, in the ad's own wording: hard skills, tools, software, programming "
+            "languages, methods and frameworks, certifications and licences, degrees or fields "
+            "of study when named as requirements.\n"
+            "Do NOT list: job titles or role words (analyst, architect, manager), soft skills "
+            "(communication, leadership), duties or verbs (manages, mentors, engages), company "
+            "or product names, locations, benefits, or generic words.\n"
+            "Order by importance to the ad (required before nice-to-have). At most 25 items. "
+            "Each item 1 to 4 words. Return ONLY a JSON array of strings, nothing else."
+        )
+        fallback = skill_terms(jd_text)
+        try:
+            out = self._complete(system, jd_text[:12000], max_tokens=600)
+            start, end = out.find("["), out.rfind("]")
+            items = _json.loads(out[start:end + 1]) if start != -1 and end > start else []
+        except Exception:                                 # noqa: BLE001 - model or parse trouble
+            return fallback
+        seen: set[str] = set()
+        skills: list[str] = []
+        for it in items:
+            t = str(it).strip().strip(".,;:")
+            if not (1 <= len(t.split()) <= 4) or len(t) > 40:
+                continue
+            if t.lower() in seen:
+                continue
+            seen.add(t.lower())
+            skills.append(t)
+        return skills[:25] or fallback
+
     def expand_bullets(
         self, role_title: str, bullets: list[str], jd_text: str
     ) -> list[str]:

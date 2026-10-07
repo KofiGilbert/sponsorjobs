@@ -73,3 +73,28 @@ def test_suggester_unchanged_for_a_true_new_grad(monkeypatch):
     # No seniority boost: the graduate posting keeps its graduate-flavored pick.
     assert out["name"] not in ("experienced", "summary") or out["reason"] == "" \
         or "years of experience" not in out["reason"]
+
+
+def test_coverage_never_reports_sentence_words_as_missing_skills():
+    """Kofi's first real run (2026-10-07) listed "These", "Architects", "Analysts", "QA",
+    "Studio", "Description", "Engages", "Actively", "Mentors", "Manages" and "Responsible" as
+    skills (QA, an acronym, is arguably one and may stay) as
+    skills the job wants and his profile lacks. The coverage report is measured against SKILL
+    terms (curated vocabulary or the model-read list), never against a capitalized-word walk."""
+    from tailoring.keywords import build_coverage_report
+    jd = ("Senior Business Analyst. These Analysts work with Architects, QA and Studio teams. "
+          "Description: Engages stakeholders. Actively Mentors juniors. Manages Responsible "
+          "delivery. Requirements: SQL, Tableau, Agile. Nice to have: Python.")
+    rep = build_coverage_report(jd, cv_text="SQL and Agile delivery", profile={"skills": ["SQL"]})
+    everything = {t.lower() for t in rep.present + rep.missing_supported + rep.missing_unsupported}
+    for junk in ("these", "architects", "analysts", "studio", "description", "engages",
+                 "actively", "mentors", "manages", "responsible"):
+        assert junk not in everything, f"sentence word reported as a skill: {junk!r}"
+    assert {"sql", "agile"} <= {t.lower() for t in rep.present}
+    assert {"tableau", "python"} <= {t.lower() for t in rep.missing_unsupported}
+
+
+def test_skill_matcher_accepts_sentence_punctuation_after_a_skill():
+    from tailoring.keywords import skill_terms
+    assert {"Python", "Tableau", "Node.js", "C++"} <= set(
+        skill_terms("Strong Python. Tableau. Node.js and C++."))

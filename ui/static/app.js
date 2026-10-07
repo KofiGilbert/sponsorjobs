@@ -2271,7 +2271,14 @@
   // tags show up as literal text in the chat. So we escape first, then re-allow ONLY a bare
   // <b>/</b>. A bare <b> carries no attributes, so it cannot execute; anything else (an
   // <img onerror=…>, or even <b onmouseover=…>) fails this exact match and stays escaped.
-  const chatText = (s) => esc(s)
+  // Model-written text sometimes carries em or en dashes; the copy rule (tailor-ux) bans them in
+  // anything the person reads, so they become a comma or a plain hyphen here, at the one place
+  // every agent message passes through.
+  const unDash = (s) => String(s == null ? "" : s)
+    .replace(/\s*\u2014\s*/g, ", ")                 // em dash joins clauses: a comma reads right
+    .replace(/(\d)\s*\u2013\s*(\d)/g, "$1-$2")     // en dash in a range: 2015-2016
+    .replace(/\s*\u2013\s*/g, ", ");
+  const chatText = (s) => esc(unDash(s))
     .replace(/&lt;b&gt;/g, "<b>")
     .replace(/&lt;\/b&gt;/g, "</b>")
     .replace(/\n/g, "<br>");
