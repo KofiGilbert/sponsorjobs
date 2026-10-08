@@ -626,18 +626,25 @@
       el.innerHTML = jobs.map(j => {
         const f = freshness(j);
         const visas = (j.visa || []).map(v => v.code || v.label).filter(Boolean);
+        // Two rows, like a job card people already know: the logo in a framed tile top-aligned
+        // with the company name (not floating mid-card), then a facts row with the sponsorship
+        // chips on the right. Modelled on Migrate Mate's card at Kofi's request (2026-10-08).
+        const facts = [j.salary && String(j.salary).trim(), j.remote && String(j.remote).replace(/^\w/, c => c.toUpperCase()),
+                       j.employment_type || j.job_type].filter(Boolean);
         return `<button class="feed-row today-card" data-sid="${esc(j.source_id)}" type="button">
-          ${companyAvatar(j)}
-          <div class="fr-main">
-            <div class="fr-top">
+          <div class="tc-head">
+            ${companyAvatar(j)}
+            <div class="fr-main">
               <div class="fr-co-name">${esc(j.company)}</div>
-              ${f.label ? `<span class="fr-fresh ${f.cls}">${f.cls ? "● " : ""}${esc(f.label)}</span>` : ""}
+              <div class="fr-role">${esc(j.title)}</div>
+              <div class="tc-loc">${esc(j.location || "Location not listed")}</div>
             </div>
-            <div class="fr-role">${esc(j.title)}</div>
-            <div class="fr-meta">${esc(j.location || "Location not listed")}</div>
-            ${visas.length ? `<div class="fr-visas">${visas.map(v => `<span class="fr-visa" title="Employer's past USCIS/DOL filings: a signal they've sponsored before, not a guarantee for this role.">${esc(v)}</span>`).join("")}</div>` : ""}
+            ${f.label ? `<span class="fr-fresh ${f.cls}">${esc(f.label)}</span>` : ""}
           </div>
-          <span class="today-go">Tailor →</span>
+          <div class="tc-foot">
+            <div class="tc-facts">${facts.map(x => `<span>${esc(x)}</span>`).join('<span class="tc-sep"></span>')}</div>
+            <div class="tc-chips">${visas.map(v => `<span class="tc-chip" title="Employer's past USCIS/DOL filings: a signal they've sponsored before, not a guarantee for this role.">${esc(v)}</span>`).join("")}<span class="today-go">Tailor →</span></div>
+          </div>
         </button>`;
       }).join("");
       el.querySelectorAll("[data-sid]").forEach(b =>
