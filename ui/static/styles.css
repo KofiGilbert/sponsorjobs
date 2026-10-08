@@ -2719,3 +2719,8 @@ body.cv-dragging * { cursor: grabbing !important; }
 .cv-name .cv-ed { display: inline; }
 .cv-row .cv-ed.cv-loc, .cv-row .cv-ed.cv-dates { flex: 0 0 auto; }
 .cv-row .cv-ed.cv-org, .cv-row .cv-ed.cv-role, .cv-row .cv-ed.cv-degree { flex: 1 1 auto; min-width: 0; }
+/* Resumes page, nothing saved yet: a framed empty state with the one next action. */
+.cvs-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+  padding: 44px 24px; border: 1px dashed var(--border-strong); border-radius: var(--r-lg); background: var(--surface); }
+.cvs-empty-t { font-size: 15px; font-weight: 650; color: var(--ink); }
+.cvs-empty-p { font-size: 13px; color: var(--muted); max-width: 44ch; margin-bottom: 8px; }

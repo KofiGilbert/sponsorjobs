@@ -283,7 +283,14 @@
     const root = $("#cvManager");
     const more = $("#cvsMoreCvs");
     if (!CV_RECS.length) {
-      root.innerHTML = `<div class="empty">No resumes yet. Pick a template above to build your first one.</div>`;
+      // A framed empty state with the one action, not a sentence floating in a void: on a fresh
+      // install this half of the page was blank and read as broken (Kofi, 2026-10-08).
+      root.innerHTML = `<div class="cvs-empty">
+        <div class="cvs-empty-t">Your resumes will appear here</div>
+        <div class="cvs-empty-p">Each one you build and save is kept on this computer, grouped by job.</div>
+        <button class="btn btn-primary" id="cvsEmptyNew" type="button">Build your first resume</button>
+      </div>`;
+      root.querySelector("#cvsEmptyNew")?.addEventListener("click", () => $("#newCvBtn")?.click());
       if (more) more.hidden = true;
       return;
     }
