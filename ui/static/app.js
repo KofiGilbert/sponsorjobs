@@ -1097,17 +1097,18 @@
   const badgeName = (code) => BADGE_NAME[code] || code;
   function visaBadges(j) {
     const v = j.visa || [];
-    // Badges are the three government programmes only (H-1B, PERM, E-Verify, plus the
-    // nationality visas). The ad's own "visa sponsorship available" line is a yes/no flag from
-    // the aggregator that names NO visa type, so it is not a badge; it ranks the job higher and
-    // is stated as a sentence in the detail (adStatement). Kofi asked what visa "Sponsors visas"
-    // meant (2026-10-08); the honest answer was "the data does not say", so it left the chip row.
+    // The ad's own "visa sponsorship available" line is a yes/no flag from the aggregator that
+    // names no visa. For a US new hire it nearly always means H-1B, and that is the signal the
+    // student needs at a glance (Kofi, 2026-10-08), so the chip SAYS H-1B, and the "Ad:" prefix
+    // and "likely" keep it visibly different from the filing-backed H-1B chip beside it: one is
+    // the employer's words today, the other is the government record.
+    const stated = j.sponsorship_stated === true
+      ? `<span class="vbadge vb-stated" title="The job ad says visa sponsorship is available. For a US new hire that usually means H-1B, but the ad does not name the visa; confirm with the recruiter. The chips beside this one are the employer's government filing record.">Ad: H-1B likely</span>`
+      : "";
     if (!v.length) {
-      return j.sponsorship_stated === true
-        ? `<span class="vbadge vb-stated" title="The job ad says visa sponsorship is available, but names no visa. We hold no government filing record for this employer yet.">Ad: sponsorship offered</span>`
-        : `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa. They still might, it's worth asking.">No sponsorship record</span>`;
+      return stated || `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa. They still might, it's worth asking.">No sponsorship record</span>`;
     }
-    return v.map(x =>
+    return stated + v.map(x =>
       `<span class="vbadge vb-spon vb-${esc(x.code)}" title="${esc(visaTitle(x))}">${esc(badgeName(x.code))}</span>`
     ).join("");
   }
@@ -1284,7 +1285,7 @@
     if (JF_DATE) chips.push({ k: "date", label: DATE_LABELS[JF_DATE] });
     if (JF_REMOTE) chips.push({ k: "remote", label: REMOTE_LABELS[JF_REMOTE] || JF_REMOTE });
     if (JF_LEVEL === "entry") chips.push({ k: "level", label: "Entry-level" });
-    if (JF_SPONSORED) chips.push({ k: "sponsored", label: "Ad mentions sponsorship" });
+    if (JF_SPONSORED) chips.push({ k: "sponsored", label: "Ad says it sponsors" });
     [...VISA_SET].forEach(v => chips.push({ k: "visa:" + v, label: VISA_LABELS[v] || v }));
     if (JF_PAY) chips.push({ k: "pay", label: "$" + Math.round(JF_PAY / 1000) + "k+ pay" });
     if (JF_LOC) chips.push({ k: "loc", label: `"${JF_LOC}"` });
