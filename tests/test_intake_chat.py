@@ -267,3 +267,31 @@ def test_extractor_echo_cannot_wipe_unmanaged_state(template_source, fake_llm, w
     assert s.essentials["skills_input"] == ["team leadership", "dispatch operations"]
     assert s.essentials["interests"] == "Competitive soccer."
     assert s.essentials["extracurricular"][0]["title"] == "Team Captain"
+
+
+@requires_latex
+def test_whole_page_is_editable_and_the_one_page_rule_holds(template_source, fake_llm, workdir):
+    """Kofi (2026-10-08): "the whole page should be completely editable but restrict the user
+    to the one page resume rule, only when it will overflow to 2 pages"."""
+    s, _mem, _recs = _session(template_source, fake_llm, workdir)
+    s.start(); s.submit(COMPLETE); s.submit(EXTRAS)
+    assert s.assembled.compile.pages == 1
+    # Any text: the name, a school, a company, a skills line.
+    st = s.edit_field("id-name", "Maya R. Rodriguez")
+    assert st["edit_ok"] is True and s.profile["identity"]["name"] == "Maya R. Rodriguez"
+    st = s.edit_field("edu-0-school", "Universidad de Chile")
+    assert st["edit_ok"] and s.profile["education"][0]["school"] == "Universidad de Chile"
+    skills_before = dict(s.profile["skills"])
+    first_label = next(iter(skills_before))
+    st = s.edit_field("skill-0", f"{first_label}: SQL, Python, Tableau")
+    assert st["edit_ok"] and s.profile["skills"][first_label] == "SQL, Python, Tableau"
+    assert s.assembled.compile.pages == 1
+    # An edit that would overflow is refused, and the page is exactly as it was.
+    before = s.profile["identity"]["name"]
+    long_school = "Universidad de Chile, " * 400
+    st = s.edit_field("edu-0-school", long_school)
+    assert st["edit_ok"] is False and "second page" in st["edit_error"]
+    assert s.profile["education"][0]["school"] == "Universidad de Chile"   # untouched
+    assert s.profile["identity"]["name"] == before and s.assembled.compile.pages == 1
+    # An unknown address is refused politely, never a crash.
+    assert s.edit_field("nope-3", "x")["edit_ok"] is False

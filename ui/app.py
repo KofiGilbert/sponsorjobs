@@ -2660,6 +2660,13 @@ def bullet():
     return jsonify(_session().edit_bullet(body.get("ref", ""), body.get("text", "")))
 
 
+@app.post("/api/session/field")
+@_guard
+def edit_field():
+    body = request.json or {}
+    return jsonify(_session().edit_field(body.get("ref", ""), body.get("text", "")))
+
+
 @app.post("/api/session/date")
 @_guard
 def edit_date():

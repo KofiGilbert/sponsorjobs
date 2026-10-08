@@ -466,7 +466,7 @@ button { font-family: inherit; cursor: pointer; }
 }
 .cv-head { text-align: center; margin-bottom: 14px; }
 .cv-name { font-size: 25px; font-weight: 700; letter-spacing: 0.01em; }
-.cv-name[data-empty], .cv-contact[data-empty], .slot[data-empty] { color: var(--paper-muted); opacity: 0.5; }
+.cv-name[data-empty], .cv-contact[data-empty], .slot[data-empty] { color: var(--paper-muted); }
 .cv-contact { font-size: 11.5px; color: var(--paper-muted); margin-top: 4px; }
 .cv-sec { margin-top: 13px; animation: rise var(--dur) var(--ease) both; }
 .cv-sec-h {
@@ -555,7 +555,7 @@ button { font-family: inherit; cursor: pointer; }
 
 /* Honest pre-send review: a verdict header + a short checklist. The fabrication guard (level
    "flag") is the loud row; passes are quiet green, opportunities/gaps are neutral guidance. */
-.presend { padding: 0 24px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.presend { padding: 10px 24px; border-bottom: 1px solid var(--border); background: var(--flag-soft); }
 /* The whole header is the toggle: one quiet line over the preview, rows only on request. */
 .ps-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 0; margin: 0;
   background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
@@ -2703,3 +2703,14 @@ body.cv-dragging * { cursor: grabbing !important; }
 .nt-to { font-size: 12.5px; color: var(--muted); }
 .nt-disc { margin-top: 14px; }
 @media (max-width: 560px) { .nt-link { flex-direction: column; align-items: flex-start; } }
+
+/* Whole-page editing (2026-10-08): every text is a slot. Quiet by default, a faint outline on
+   hover, a clear one while typing, and a muted placeholder when the slot is empty. */
+.cv-ed { border-radius: 3px; padding: 0 2px; margin: 0 -2px; outline: 1px solid transparent; transition: outline-color var(--dur) var(--ease); min-width: 1ch; }
+.cv-ed:hover { outline-color: color-mix(in srgb, var(--paper-ink) 25%, transparent); }
+.cv-ed:focus { outline: 1.5px solid var(--accent, #6b5cff); background: color-mix(in srgb, var(--accent, #6b5cff) 6%, transparent); }
+.cv-ed-empty:not(:focus)::before { content: attr(data-ph); color: var(--paper-muted); opacity: 0.6; }
+.cv-sep { color: var(--paper-muted); }
+.cv-name .cv-ed { display: inline; }
+.cv-row .cv-ed.cv-loc, .cv-row .cv-ed.cv-dates { flex: 0 0 auto; }
+.cv-row .cv-ed.cv-org, .cv-row .cv-ed.cv-role, .cv-row .cv-ed.cv-degree { flex: 1 1 auto; min-width: 0; }

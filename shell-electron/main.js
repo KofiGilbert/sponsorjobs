@@ -619,10 +619,9 @@ ipcMain.on("pane:external", () => {
   const url = pane && pane.webContents.getURL();
   if (url && /^https?:/i.test(url)) shell.openExternal(url);
 });
-ipcMain.on("pane:navigate", (_e, url) => {
-  if (opensInOwnBrowser(url)) { shell.openExternal(url); return; }
-  if (pane && /^https?:/i.test(url)) pane.webContents.loadURL(url);
-});
+// Typing an address creates the pane if needed. It used to require an existing pane, so the
+// first address typed into a freshly opened Browser tab was silently dropped (2026-10-08).
+ipcMain.on("pane:navigate", (_e, url) => openInPane(url));
 ipcMain.handle("pane:get-state", () => paneState());
 
 // Dev only: start the managed-AI broker (avatar + bundled LLM) so the live interview works on

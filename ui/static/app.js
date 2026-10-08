@@ -2072,28 +2072,53 @@
   });
 
   /* ---------------------------------------------------------------- CV preview render */
-  function renderPreview(p) {
+  // An editable text slot on the page: click, type, and it saves on blur (see the focusout
+  // handler). Everything on the page is one of these except bullets and dates, which have
+  // their own controls. The whole page is editable (Kofi, 2026-10-08); the server refuses an
+  // edit only when it would push the resume onto a second page.
+  function ed(ref, text, cls, placeholder) {
+    const empty = !text;
+    return `<span class="${cls || ""} cv-ed${empty ? " cv-ed-empty" : ""}" contenteditable="true" spellcheck="false"`
+      + ` data-field="${ref}" data-ph="${esc(placeholder || "")}">${esc(text || "")}</span>`;
+  }
+  function renderPreview(p, templateSections) {
     p = p || {};
+    // null = the template's section list is unknown (an empty builder); then every section the
+    // profile has is shown. With a list, only those sections appear, in the page's own order.
+    const shows = (name) => !templateSections || templateSections.includes(name);
     const id = p.identity || {};
     const name = $(".cv-name");
-    name.textContent = id.name || "Your Name";
+    name.innerHTML = ed("id-name", id.name, "", "Your name");
     name.toggleAttribute("data-empty", !id.name);
-    const contact = [id.address || id.city, id.phone, id.email, id.linkedin && "LinkedIn", id.github && "GitHub", id.blog && "Blog"]
-      .filter(Boolean).join("  ·  ");
     const cc = $(".cv-contact");
-    cc.textContent = contact || "city · email · links";
-    cc.toggleAttribute("data-empty", !contact);
+    cc.innerHTML = [
+      ed("id-address", id.address || id.city, "", "City, ST"),
+      ed("id-phone", id.phone, "", "phone"),
+      ed("id-email", id.email, "", "email"),
+      ed("id-linkedin", id.linkedin, "", "LinkedIn URL"),
+      ed("id-github", id.github, "", "GitHub URL"),
+    ].join('<span class="cv-sep"> · </span>');
+    cc.toggleAttribute("data-empty", false);
 
     const nproj = (p.projects || []).length;
     const body = $("#cvBody");
     body.innerHTML = "";
-    if ((p.education || []).length) body.appendChild(section("Education", eduHTML(p)));
-    if (Object.keys(p.skills || {}).length) body.appendChild(section("Skills", skillsHTML(p)));
-    if (nproj) body.appendChild(section("Projects", projHTML(p)));
-    if ((p.experience || []).length) body.appendChild(section("Experience", expHTML(p, nproj)));
-    if ((p.extracurricular || []).length) body.appendChild(section("Extracurricular", extraHTML(p)));
-    if (p.interests) body.appendChild(section("Additional Information",
-      `<div class="cv-inline"><b>Interests:</b> ${esc(p.interests)}</div>`));
+    const parts = {
+      summary: () => section("Summary", `<div class="cv-inline">${ed("summary", p.summary, "", "A line on your professional focus")}</div>`),
+      education: () => (p.education || []).length ? section("Education", eduHTML(p)) : null,
+      skills: () => Object.keys(p.skills || {}).length ? section("Skills", skillsHTML(p)) : null,
+      projects: () => nproj ? section("Projects", projHTML(p)) : null,
+      experience: () => (p.experience || []).length ? section("Experience", expHTML(p, nproj)) : null,
+      extracurricular: () => (p.extracurricular || []).length ? section("Extracurricular", extraHTML(p)) : null,
+      interests: () => p.interests ? section("Additional Information", `<div class="cv-inline"><b>Interests:</b> ${ed("interests", p.interests)}</div>`) : null,
+    };
+    const order = templateSections || ["summary", "education", "skills", "projects", "experience", "extracurricular", "interests"];
+    for (const name of order) {
+      if (!parts[name] || !shows(name)) continue;
+      if (name === "summary" && !templateSections && !p.summary) continue;
+      const node = parts[name]();
+      if (node) body.appendChild(node);
+    }
     wireFlags();
   }
   function section(title, inner) {
@@ -2103,13 +2128,14 @@
   }
   function eduHTML(p) {
     return (p.education || []).map((e, i) => `<div class="cv-block">
-      <div class="cv-row"><span class="cv-org">${esc(e.school)}</span><span class="cv-loc">${esc(e.location)}</span></div>
-      <div class="cv-row"><span class="cv-degree">${esc(e.degree)}</span><span class="cv-dates">${datePicker(e.date, `edu-${i}`, true, e.dates_placeholder)}</span></div>
-      ${e.courses ? `<ul class="cv-ul"><li>Courses: ${esc(e.courses)}</li></ul>` : ""}</div>`).join("");
+      <div class="cv-row">${ed(`edu-${i}-school`, e.school, "cv-org", "School")}${ed(`edu-${i}-location`, e.location, "cv-loc", "City, ST")}</div>
+      <div class="cv-row">${ed(`edu-${i}-degree`, e.degree, "cv-degree", "Degree")}<span class="cv-dates">${datePicker(e.date, `edu-${i}`, true, e.dates_placeholder)}</span></div>
+      ${e.courses ? `<ul class="cv-ul"><li>Courses: ${ed(`edu-${i}-courses`, e.courses)}</li></ul>` : ""}</div>`).join("");
   }
   function skillsHTML(p) {
-    return Object.entries(p.skills || {}).map(([k, v]) =>
-      `<div class="cv-inline"><b>${esc(k)}:</b> ${esc(v)}</div>`).join("");
+    // The whole line is one slot ("Label: items"), so the label can be renamed too.
+    return Object.entries(p.skills || {}).map(([k, v], i) =>
+      `<div class="cv-inline"><span class="cv-ed" contenteditable="true" spellcheck="false" data-field="skill-${i}"><b>${esc(k)}:</b> ${esc(v)}</span></div>`).join("");
   }
   function bulletList(bullets, refPrefix) {
     const b = (bullets || []).map((t, bi) =>
@@ -2165,37 +2191,61 @@
   }
   function projHTML(p) {
     return (p.projects || []).map((x, gi) => `<div class="cv-block${x.suggested ? " cv-suggested" : ""}">
-      <div class="cv-row"><span class="cv-org">${esc(x.org)}${x.suggested ? ' <span class="cv-sugg-badge">Suggested · replace before finalizing</span>' : ""}</span><span class="cv-loc">${esc(x.location || "")}</span></div>
-      <div class="cv-row"><span class="cv-role">${esc(x.title)}</span><span class="cv-dates">${datePicker(x.dates, `proj-${gi}`, false, x.dates_placeholder)}</span></div>
+      <div class="cv-row"><span class="cv-org">${ed(`ent-${gi}-org`, x.org, "", "Project")}${x.suggested ? ' <span class="cv-sugg-badge">Suggested · replace before finalizing</span>' : ""}</span>${ed(`ent-${gi}-location`, x.location, "cv-loc", "")}</div>
+      <div class="cv-row">${ed(`ent-${gi}-r0-title`, x.title, "cv-role", "Your role")}<span class="cv-dates">${datePicker(x.dates, `proj-${gi}`, false, x.dates_placeholder)}</span></div>
       ${bulletList(x.bullets, `g${gi}-r0`)}</div>`).join("");
   }
   function expHTML(p, nproj) {
     return (p.experience || []).map((x, ei) => {
       const roles = (x.roles || [x]).map((r, ri) => {
         const title = r.title_suggested
-          ? `<span class="cv-flag" data-role="${ei}-${ri}" data-sugg="${esc(r.title)}" data-orig="${esc(r.title_original || "")}">${esc(r.title)}</span>`
-          : esc(r.title);
-        return `<div class="cv-row"><span class="cv-role">${title}</span><span class="cv-dates">${datePicker(r.dates, `exp-${ei}-${ri}`, false, r.dates_placeholder)}</span></div>
+          ? `<span class="cv-role"><span class="cv-flag" data-role="${ei}-${ri}" data-sugg="${esc(r.title)}" data-orig="${esc(r.title_original || "")}">${esc(r.title)}</span></span>`
+          : ed(`ent-${nproj + ei}-r${ri}-title`, r.title, "cv-role", "Job title");
+        return `<div class="cv-row">${title}<span class="cv-dates">${datePicker(r.dates, `exp-${ei}-${ri}`, false, r.dates_placeholder)}</span></div>
                 ${bulletList(r.bullets, `g${nproj + ei}-r${ri}`)}`;
       }).join("");
-      return `<div class="cv-block"><div class="cv-row"><span class="cv-org">${esc(x.org)}</span><span class="cv-loc">${esc(x.location)}</span></div>${roles}</div>`;
+      return `<div class="cv-block"><div class="cv-row">${ed(`ent-${nproj + ei}-org`, x.org, "cv-org", "Company")}${ed(`ent-${nproj + ei}-location`, x.location, "cv-loc", "City, ST")}</div>${roles}</div>`;
     }).join("");
   }
   function extraHTML(p) {
     return (p.extracurricular || []).map((x, xi) => `<div class="cv-block">
-      <div class="cv-row"><span class="cv-role">${esc(x.title)}</span><span class="cv-dates">${datePicker(x.date, `extra-${xi}`, false, x.dates_placeholder)}</span></div>
+      <div class="cv-row">${ed(`extra-${xi}-title`, x.title, "cv-role", "Activity")}<span class="cv-dates">${datePicker(x.date, `extra-${xi}`, false, x.dates_placeholder)}</span></div>
       ${bulletList(x.bullets, `x${xi}`)}</div>`).join("");
   }
 
   /* -------- bullet editing: persist on blur, then re-render the real PDF so the
      preview stays the source of truth (edit panel is left as-is to avoid disruption) */
-  $("#cvBody").addEventListener("focusout", async (e) => {
-    const li = e.target.closest("li[data-ref]");
-    if (!li) return;
+  // Save on blur. Any text on the page. If the server refused the edit (it would make a second
+  // page), the text snaps back to what it was and the person is told why, once.
+  async function saveEdit(el, url, ref) {
+    const text = el.textContent;
+    if (text === el.dataset.last) return;
     try {
-      const st = await api("/api/session/bullet", { ref: li.dataset.ref, text: li.textContent });
+      const st = await api(url, { ref, text });
+      if (st && st.edit_ok === false) {
+        el.textContent = el.dataset.last || "";
+        toast(st.edit_error || "That change was not kept.");
+        return;
+      }
+      el.dataset.last = text;
+      el.classList.toggle("cv-ed-empty", !text.trim());
       if (st && st.pdf) { $("#pdfFrame").src = st.pdf + "&preview=1#toolbar=0&navpanes=0&view=FitH"; $("#downloadBtn").href = st.pdf; }
     } catch (err) { /* non-fatal for the preview */ }
+  }
+  const paperEl = document.getElementById("paper");
+  paperEl.addEventListener("focusin", (e) => {
+    const el = e.target.closest("li[data-ref], .cv-ed");
+    if (el && el.dataset.last === undefined) el.dataset.last = el.textContent;
+  });
+  paperEl.addEventListener("focusout", (e) => {
+    const li = e.target.closest("li[data-ref]");
+    if (li) return saveEdit(li, "/api/session/bullet", li.dataset.ref);
+    const f = e.target.closest(".cv-ed[data-field]");
+    if (f) return saveEdit(f, "/api/session/field", f.dataset.field);
+  });
+  // Enter finishes an edit (these are single fields, not paragraphs).
+  paperEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.closest(".cv-ed, li[data-ref]")) { e.preventDefault(); e.target.blur(); }
   });
 
   /* -------- date picker: save on change, re-render the real PDF, clear the red flag -- */
@@ -2328,7 +2378,7 @@
     else document.getElementById("autobuildAction")?.remove();
     if (st.role) $("#builderRole").textContent = st.role + (st.company ? " · " + st.company : "");
     if (st.step) setStep(st.step);
-    if (st.preview) renderPreview(st.preview);
+    if (st.preview) renderPreview(st.preview, st.template_sections || null);
 
     if (st.coverage) {
       $("#coverage").hidden = false;
@@ -2369,40 +2419,20 @@
   // Honest pre-send check. The headline is the fabrication guard: any skill on the resume the
   // profile cannot back is called out first (it is the claim that costs an interview). Opportunities
   // and honest gaps ride along as guidance, and the one-page fit is noted.
-  const REVIEW_VERDICT = { ready: ["Ready to send", "good"], review: ["Worth a look", "mid"],
-    check: ["Check before sending", "low"] };
+  // The pre-send review panel is gone (Kofi, 2026-10-08: "remove it"). The ONE check that
+  // protects the person stays, as a single warning line shown only when it fires: a skill on
+  // the page that their own profile cannot back, which is the claim that unravels in an
+  // interview. Everything else (gaps, fit, verdicts) is the preview's job to show, not a panel's.
   function renderReview(r) {
     const el = $("#presendReview");
     if (!el) return;
-    if (!r || !r.checks) { el.hidden = true; el.innerHTML = ""; return; }
-    const v = REVIEW_VERDICT[r.verdict] || ["Pre-send check", "mid"];
-    const rows = (r.checks || []).map(c => {
-      const items = (c.items || []).length
-        ? `<div class="ps-items">${c.items.map(t => `<span class="ps-term ps-${esc(c.level)}">${esc(t)}</span>`).join("")}</div>`
-        : "";
-      const icon = c.level === "flag" ? "!" : c.level === "warn" ? "~" : c.level === "pass" ? "✓" : "i";
-      return `<div class="ps-row ps-lvl-${esc(c.level)}"><span class="ps-ic">${icon}</span>`
-        + `<div class="ps-body"><div class="ps-label">${esc(c.label)}</div>${items}</div></div>`;
-    }).join("");
-    // One line by default (tailor-ux: the preview is the point, the review is a note on it). The
-    // rows open on click, or on their own when there is something that must be read: a claim
-    // the profile cannot back. The person's choice to open or close them sticks for the session.
-    const mustShow = r.verdict === "check";
-    const open = mustShow || REVIEW_OPEN;
+    const honesty = (r && r.checks || []).find(c => c.id === "honesty" && c.level === "flag");
+    if (!honesty) { el.hidden = true; el.innerHTML = ""; return; }
     el.hidden = false;
-    el.classList.toggle("is-open", open);
-    el.innerHTML =
-      `<button class="ps-head ps-${esc(v[1])}" type="button" aria-expanded="${open}">`
-      + `<span class="ps-verdict">${esc(v[0])}</span>`
-      + `<span class="ps-headline">${esc(r.headline || "")}</span>`
-      + `<span class="ps-toggle">${open ? "Hide details" : "Details"}</span></button>`
-      + `<div class="ps-rows" ${open ? "" : "hidden"}>${rows}</div>`;
-    el.querySelector(".ps-head").addEventListener("click", () => {
-      REVIEW_OPEN = !el.classList.contains("is-open");
-      renderReview(r);
-    });
+    el.innerHTML = `<div class="ps-row ps-lvl-flag"><span class="ps-ic">!</span>`
+      + `<div class="ps-body"><div class="ps-label">${esc(honesty.label)}</div>`
+      + `<div class="ps-items">${(honesty.items || []).map(t => `<span class="ps-term ps-flag">${esc(t)}</span>`).join("")}</div></div></div>`;
   }
-  let REVIEW_OPEN = false;
 
   function renderCovDetail(cov) {
     const present = (cov.present || []).slice(0, 24);

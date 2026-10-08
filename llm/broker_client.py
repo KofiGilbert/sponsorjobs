@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -89,16 +90,29 @@ class BrokerLLM(AnthropicLLM):
             headers["X-Tailor-User"] = self.user                     # dev/offline fallback
         req = urllib.request.Request(
             f"{self.broker_url}/llm/complete", data=data, method="POST", headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:   # nosec - loopback broker
-                out = json.loads(resp.read().decode() or "{}")
-        except urllib.error.HTTPError as exc:
-            message, reason = self._error(exc)
-            raise BrokerUnavailable(message, reason) from exc
-        except urllib.error.URLError as exc:
+        # One retry on a dropped or stalled connection. A slow home connection stalls a long
+        # answer (the whole-profile draft) now and then, and without this the person lost a
+        # build that had otherwise succeeded (2026-10-08). A 4xx/5xx answer is not retried
+        # here: the broker already retries the model, and a quota answer must not be re-sent.
+        last_exc = None
+        out = None
+        for attempt in range(2):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:   # nosec - our broker
+                    out = json.loads(resp.read().decode() or "{}")
+                break
+            except urllib.error.HTTPError as exc:
+                message, reason = self._error(exc)
+                raise BrokerUnavailable(message, reason) from exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                last_exc = exc
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+        if out is None:
             raise BrokerUnavailable(
-                "Tailor's AI service is briefly unavailable. Please try again in a moment.",
-                "service_down") from exc
+                "SponsorJobs' AI took too long to answer. Check your connection and try again.",
+                "service_down") from last_exc
         text = (out.get("text") or "").strip()
         # Last line of defence against shipping a test double as product. FakeProvider
         # answers with "[fake:<model>] tailored from: ..." -- text that compiles into a

@@ -1539,6 +1539,9 @@ class WebIntake:
                                   or self.template_name or ""),
             "messages": messages or [],
             "preview": self.preview(),
+            # The edit view shows exactly the sections this template prints, no more: a summary
+            # the page never renders must not be offered for editing (seen 2026-10-08).
+            "template_sections": list(self.sections or []),
             "step": "review" if self.stage in ("review", "done") else "details",
             "returning": self.returning,
             # A returning user with a real saved profile can build in ONE click,
@@ -2778,14 +2781,110 @@ class WebIntake:
         return self._state()
 
     def edit_bullet(self, ref: str, text: str):
+        import copy as _copy
         slots = self._bullet_slots()
         if ref in slots:
             bl, i = slots[ref]
-            bl[i] = text.strip()
+            before = _copy.deepcopy(self.profile)
+            bl[i] = str(text or "").strip()[: self._FIELD_LIMIT]
             self.dirty = True
             self._assemble()   # recompile so the PDF preview (the source of truth) updates
+            a = self.assembled
+            if (a is None or not a.ok or (a.compile and a.compile.pages and a.compile.pages > 1)
+                    or a.attempts > 1):   # the builder had to cut text to fit: not what was typed
+                self.profile = before
+                self._assemble()
+                st = self._state(); st["edit_ok"] = False
+                st["edit_error"] = "That change would push the resume onto a second page, so it was not kept. Shorten it, or trim something else first."
+                return st
             self._persist()
-        return self._state()
+        st = self._state(); st["edit_ok"] = True
+        return st
+
+    # -- whole-page editing ------------------------------------------------------------- #
+    # Every text on the edit page has a field address ("field path"), so the person can change
+    # anything, not only bullets (Kofi, 2026-10-08). The one rule is the one page: an edit that
+    # pushes the resume past one page is refused and the page stays as it was, with a plain
+    # message. Edits never touch anything but the person's own profile text.
+    _FIELD_LIMIT = 5000      # a sanity bound only; the one-page check is the real limit
+
+    def _field_slots(self):
+        """Address -> (container dict, key). Covers identity, education, skills, summary,
+        interests, and the org/title/location lines of every entry. Bullets keep their own
+        addresses (edit_bullet) and dates their picker (edit_date)."""
+        p = self.profile
+        slots = {}
+        ident = p.setdefault("identity", {}) if isinstance(p.get("identity"), dict) else {}
+        for k in ("name", "address", "city", "phone", "email", "linkedin", "github", "blog", "website"):
+            slots[f"id-{k}"] = (ident, k)
+        # Only sections this template renders are editable; a field that never reaches the page
+        # would accept text the person cannot see.
+        shown = set(self.sections or ()) if self.sections else {"summary", "interests"}
+        for k in ("summary", "interests"):
+            if k in shown or not self.sections:
+                slots[k] = (p, k)
+        for i, e in enumerate(p.get("education") or []):
+            if isinstance(e, dict):
+                for k in ("school", "degree", "location", "courses"):
+                    slots[f"edu-{i}-{k}"] = (e, k)
+        skills = p.get("skills")
+        if isinstance(skills, dict):
+            for i, k in enumerate(list(skills.keys())):
+                slots[f"skill-{i}"] = (skills, k)
+        for gi, e in enumerate((p.get("projects") or []) + (p.get("experience") or [])):
+            if not isinstance(e, dict):
+                continue
+            for k in ("org", "location"):
+                slots[f"ent-{gi}-{k}"] = (e, k)
+            for ri, r in enumerate(e.get("roles") or [e]):
+                if isinstance(r, dict):
+                    slots[f"ent-{gi}-r{ri}-title"] = (r, "title")
+        for xi, it in enumerate(p.get("extracurricular") or []):
+            if isinstance(it, dict):
+                slots[f"extra-{xi}-title"] = (it, "title")
+        return slots
+
+    def edit_field(self, ref: str, text: str):
+        """Set one field, rebuild, and keep the change only if the page still fits. Returns the
+        state plus ``edit_ok`` and, when refused, ``edit_error``."""
+        import copy as _copy
+        slots = self._field_slots()
+        text = str(text or "").strip()[: self._FIELD_LIMIT]
+        if ref not in slots:
+            st = self._state(); st["edit_ok"] = False; st["edit_error"] = "That part of the page cannot be edited."
+            return st
+        container, key = slots[ref]
+        before = _copy.deepcopy(self.profile)
+        if ref.startswith("skill-"):
+            # A skills line is "Label: items". Editing the label renames the group.
+            label, _, items = text.partition(":")
+            if items.strip():
+                new_skills = {}
+                for k, v in container.items():
+                    new_skills[label.strip() if k == key else k] = items.strip() if k == key else v
+                self.profile["skills"] = new_skills
+            else:
+                container[key] = text
+        elif ref == "id-name" and not text:
+            st = self._state(); st["edit_ok"] = False; st["edit_error"] = "The name cannot be empty."
+            return st
+        else:
+            container[key] = text
+            if ref == "ent-" or ref.endswith("-title"):
+                container.pop("title_suggested", None)      # the person's own title wins
+        self.dirty = True
+        self._assemble()
+        a = self.assembled
+        if (a is None or not a.ok or (a.compile and a.compile.pages and a.compile.pages > 1)
+                    or a.attempts > 1):   # the builder had to cut text to fit: not what was typed
+            self.profile = before
+            self._assemble()
+            st = self._state(); st["edit_ok"] = False
+            st["edit_error"] = "That change would push the resume onto a second page, so it was not kept. Shorten it, or trim something else first."
+            return st
+        self._persist()
+        st = self._state(); st["edit_ok"] = True
+        return st
 
     def _bullet_slots(self):
         slots = {}
