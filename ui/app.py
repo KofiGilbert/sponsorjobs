@@ -3072,10 +3072,13 @@ def jobs_list():
         jobs = _sponsors().tag_jobs(w.list_jobs(order="recent", limit=15000))
         from sourcing.adstance import UNKNOWN, ad_stance
         texts = w.get_jd_texts([j["source_id"] for j in jobs])
+        from sourcing.jobtags import job_tags
         for j in jobs:
-            st = ad_stance(texts.get(j["source_id"]) or "")
+            jd = texts.get(j["source_id"]) or ""
+            st = ad_stance(jd)
             if st["stance"] != UNKNOWN:
                 j["ad_stance"], j["ad_sentence"] = st["stance"], st["sentence"]
+            j["tags"] = job_tags(j.get("title") or "", jd)
         jobs = [j for j in jobs
                 if j.get("us") and not employer_is_clearance_heavy(j.get("company", ""))
                 and is_jd_checked(j) and is_sponsor_relevant(j)]

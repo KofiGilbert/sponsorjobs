@@ -1197,11 +1197,19 @@
     [/\b(security|infosec|cyber)\b/i, "Security"],
     [/\b(hr|people|recruit|talent)\b/i, "People & HR"],
   ];
-  function roleTags(j) {
-    const t = j.title || "";
-    const hits = [];
-    for (const [re, label] of ROLE_CATS) { if (re.test(t)) hits.push(label); if (hits.length >= 2) break; }
-    return hits.map(c => `<span class="fr-tag">${esc(c)}</span>`).join("");
+  // The feed carries ranked function tags read from the whole ad (sourcing/jobtags.py). Two show
+  // on the card and the rest fold into a "+N" that lists them on hover, like Migrate Mate; the
+  // title-only buckets below are the fallback for rows built before tags existed.
+  function roleTags(j, max) {
+    let tags = Array.isArray(j.tags) ? j.tags.filter(Boolean) : [];
+    if (!tags.length) {
+      const t = j.title || "";
+      for (const [re, label] of ROLE_CATS) { if (re.test(t)) tags.push(label); if (tags.length >= 2) break; }
+    }
+    const show = max || 2;
+    const head = tags.slice(0, show).map(c => `<span class="fr-tag">${esc(c)}</span>`).join("");
+    const rest = tags.slice(show);
+    return head + (rest.length ? `<span class="fr-tag fr-tag-more" title="${esc(rest.join(", "))}">+${rest.length}</span>` : "");
   }
 
   // Employment type from the title (Internship / Contract / Part-time), defaulting to Full-time
@@ -1437,7 +1445,7 @@
     if (!det || !j) return;
     const f = freshness(j);
     const wm = workMode(j);
-    const tags = roleTags(j);
+    const tags = roleTags(j, 9);   // the detail shows them all
     det.innerHTML = `
       <div class="fd-head">
         <div class="fd-headrow">

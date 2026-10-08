@@ -36,7 +36,7 @@ JD_SHARDS = 256
 # card renderer in ui/static/app.js). jd_text is deliberately absent: it lives in the shards.
 SLIM_KEYS = ("source_id", "source", "company", "title", "location", "remote", "url", "posted_at",
              "first_seen", "salary", "sponsorship_stated", "us", "entry_level", "visa",
-             "nationality_visas", "sponsor", "ad_stance", "ad_sentence")
+             "nationality_visas", "sponsor", "ad_stance", "ad_sentence", "tags")
 
 # Rows from a company's OWN board (Greenhouse, Lever, ...). When the same opening also arrives
 # through an aggregator, the board row wins: canonical URL, full JD, the employer's own wording.
@@ -112,6 +112,7 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
     # aggregator's yes/no flag was wrong for most flagged ads, and a third of ads that mention
     # sponsorship say they will NOT sponsor, which the student needs to see (2026-10-08).
     from sourcing.adstance import UNKNOWN, ad_stance
+    from sourcing.jobtags import job_tags
     slim = []
     for r in rows:
         row = slim_row(r)
@@ -119,6 +120,9 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
         st = ad_stance(jd) if jd else {"stance": UNKNOWN, "sentence": ""}
         if st["stance"] != UNKNOWN:
             row["ad_stance"], row["ad_sentence"] = st["stance"], st["sentence"]
+        # Function tags from title + description (sourcing/jobtags.py), so the card can show
+        # several specific areas the way Migrate Mate does, instead of one title-only bucket.
+        row["tags"] = job_tags(r.get("title") or "", jd)
         slim.append(row)
     sources = {r.get("source") for r in slim}
     header = {"feed_version": FEED_VERSION, "generated_at": generated_at, "count": len(slim),
