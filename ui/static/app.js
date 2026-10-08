@@ -625,7 +625,7 @@
       // ran "Axon·Scottsdale" together with no spacing (Kofi, 2026-10-08).
       el.innerHTML = jobs.map(j => {
         const f = freshness(j);
-        const visas = (j.visa || []).map(v => v.code || v.label).filter(Boolean);
+        const visas = (j.visa || []).map(v => badgeName(v.code || v.label)).filter(Boolean);
         // The Migrate Mate card, measured against theirs side by side (Kofi, 2026-10-08):
         // a 64px white framed logo tile top-left; company, title, location beside it; a row of
         // category tags; then a facts row (salary | work mode | type) with the sponsorship chips
@@ -1088,20 +1088,29 @@
   // and honest: coloured badges when the employer has a public sponsorship record, else a neutral
   // "No sponsorship record" (we advertise US roles to international students and label each one's
   // sponsorship status rather than hiding the ones we can't vouch for).
+  // What a badge CODE is called on screen. The codes are identifiers (filters, tests, the
+  // extension); the names are the official programmes students already know from job
+  // screeners: H-1B, PERM (the green-card labor certification), E-Verify (the STEM-OPT
+  // requirement). "GREEN-CARD" and "STEM-OPT" as badge text read as made-up (Kofi, 2026-10-08).
+  const BADGE_NAME = { "H-1B": "H-1B", "GREEN-CARD": "PERM", "STEM-OPT": "E-Verify",
+    "CAP-EXEMPT": "Cap-exempt", "E-3": "E-3", "H-1B1": "H-1B1", "TN": "TN" };
+  const badgeName = (code) => BADGE_NAME[code] || code;
   function visaBadges(j) {
     const v = j.visa || [];
     // The POSTING itself states it sponsors (freehire enrichment) -- the strongest, most current
     // signal: the employer's declaration on THIS role. Shown first, distinct from the DOL-history
     // codes. When the posting states it but we hold no filing history, this replaces the neutral
     // "No sponsorship record" (the role is explicitly sponsor-friendly).
+    // The ad itself says it sponsors: the strongest signal for THIS role, so it leads, named
+    // for what it means ("Sponsors visas"), with the source in the hover text.
     const stated = j.sponsorship_stated === true
-      ? `<span class="vbadge vb-stated" title="The job ad itself says the company offers visa sponsorship. The strongest, most current signal.">Sponsorship in ad</span>`
+      ? `<span class="vbadge vb-stated" title="This job ad says the employer offers visa sponsorship for the role. The employer's own words, today; the badges beside it are the government record.">Sponsors visas</span>`
       : "";
     if (!v.length) {
       return stated || `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa. They still might, it's worth asking.">No sponsorship record</span>`;
     }
     return stated + v.map(x =>
-      `<span class="vbadge vb-spon vb-${esc(x.code)}" title="${esc(visaTitle(x))}">${esc(x.code)}</span>`
+      `<span class="vbadge vb-spon vb-${esc(x.code)}" title="${esc(visaTitle(x))}">${esc(badgeName(x.code))}</span>`
     ).join("");
   }
 
@@ -1263,8 +1272,8 @@
   // tens of thousands without shipping them all to the client.
 
   // Human labels for the active-filter chips + the sponsorship checkbox list.
-  const VISA_LABELS = { SPONSORED: "Sponsors a visa", "H-1B": "H-1B", "GREEN-CARD": "Green card",
-    "STEM-OPT": "STEM-OPT", "E-3": "E-3", "H-1B1": "H-1B1", "TN": "TN" };
+  const VISA_LABELS = { SPONSORED: "Sponsors a visa", "H-1B": "H-1B", "GREEN-CARD": "PERM (green card)",
+    "STEM-OPT": "E-Verify (STEM-OPT)", "E-3": "E-3", "H-1B1": "H-1B1", "TN": "TN" };
   const DATE_LABELS = { 1: "Past 24 hours", 7: "Past week", 30: "Past month" };
   const REMOTE_LABELS = { remote: "Remote", hybrid: "Hybrid", onsite: "On-site" };
 
@@ -1277,7 +1286,7 @@
     if (JF_DATE) chips.push({ k: "date", label: DATE_LABELS[JF_DATE] });
     if (JF_REMOTE) chips.push({ k: "remote", label: REMOTE_LABELS[JF_REMOTE] || JF_REMOTE });
     if (JF_LEVEL === "entry") chips.push({ k: "level", label: "Entry-level" });
-    if (JF_SPONSORED) chips.push({ k: "sponsored", label: "Sponsorship in ad" });
+    if (JF_SPONSORED) chips.push({ k: "sponsored", label: "Sponsors visas" });
     [...VISA_SET].forEach(v => chips.push({ k: "visa:" + v, label: VISA_LABELS[v] || v }));
     if (JF_PAY) chips.push({ k: "pay", label: "$" + Math.round(JF_PAY / 1000) + "k+ pay" });
     if (JF_LOC) chips.push({ k: "loc", label: `"${JF_LOC}"` });
