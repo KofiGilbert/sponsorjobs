@@ -1097,16 +1097,19 @@
   const badgeName = (code) => BADGE_NAME[code] || code;
   function visaBadges(j) {
     const v = j.visa || [];
-    // The ad's own "visa sponsorship available" line is a yes/no flag from the aggregator that
-    // names no visa. For a US new hire it nearly always means H-1B, and that is the signal the
-    // student needs at a glance (Kofi, 2026-10-08), so the chip SAYS H-1B, and the "Ad:" prefix
-    // and "likely" keep it visibly different from the filing-backed H-1B chip beside it: one is
-    // the employer's words today, the other is the government record.
-    const stated = j.sponsorship_stated === true
-      ? `<span class="vbadge vb-stated" title="The job ad says visa sponsorship is available. For a US new hire that usually means H-1B, but the ad does not name the visa; confirm with the recruiter. The chips beside this one are the employer's government filing record.">Ad: H-1B likely</span>`
-      : "";
+    // What the AD says, read from its own text (sourcing/adstance.py), quoted on hover so the
+    // student sees the proof. Surveyed on 1,500 live ads (2026-10-08): ads that sponsor say
+    // "Visa sponsorship is available" and almost never name the visa, so the chip uses the
+    // ad's words; and a third of ads that mention sponsorship say they will NOT, which is the
+    // most useful fact on the page for an international student, so it gets the louder chip.
+    const quote = j.ad_sentence ? ` The ad says: \u201c${esc(j.ad_sentence)}\u201d` : "";
+    const stated = j.ad_stance === "offered"
+      ? `<span class="vbadge vb-stated" title="This job ad says visa sponsorship is available for the role (for a US new hire that usually means H-1B, but the ad does not name the visa).${quote}">Sponsorship available</span>`
+      : j.ad_stance === "not_offered"
+        ? `<span class="vbadge vb-no" title="This job ad says it will not sponsor a visa for the role.${quote}">No sponsorship</span>`
+        : "";
     if (!v.length) {
-      return stated || `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa. They still might, it's worth asking.">No sponsorship record</span>`;
+      return stated || `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa, and the ad does not say. They still might, it's worth asking.">No sponsorship record</span>`;
     }
     return stated + v.map(x =>
       `<span class="vbadge vb-spon vb-${esc(x.code)}" title="${esc(visaTitle(x))}">${esc(badgeName(x.code))}</span>`
@@ -1285,7 +1288,7 @@
     if (JF_DATE) chips.push({ k: "date", label: DATE_LABELS[JF_DATE] });
     if (JF_REMOTE) chips.push({ k: "remote", label: REMOTE_LABELS[JF_REMOTE] || JF_REMOTE });
     if (JF_LEVEL === "entry") chips.push({ k: "level", label: "Entry-level" });
-    if (JF_SPONSORED) chips.push({ k: "sponsored", label: "Ad says it sponsors" });
+    if (JF_SPONSORED) chips.push({ k: "sponsored", label: "Ad offers sponsorship" });
     [...VISA_SET].forEach(v => chips.push({ k: "visa:" + v, label: VISA_LABELS[v] || v }));
     if (JF_PAY) chips.push({ k: "pay", label: "$" + Math.round(JF_PAY / 1000) + "k+ pay" });
     if (JF_LOC) chips.push({ k: "loc", label: `"${JF_LOC}"` });
@@ -1446,7 +1449,8 @@
           ${j.entry_level ? `<span class="fr-fact fr-fact-entry">Entry-level</span>` : ""}
         </div>
         <div class="fd-payins" id="fdPayInsight" hidden></div>
-        ${j.sponsorship_stated === true ? `<div class="fd-adnote">The job ad says visa sponsorship is available. It does not say which visa; for a new hire in the US that usually means H-1B. The badges below are the employer's government record.</div>` : ""}
+        ${j.ad_stance === "offered" ? `<div class="fd-adnote">The ad says: \u201c${esc(j.ad_sentence || "visa sponsorship is available")}\u201d For a US new hire that usually means H-1B; the ad does not name the visa. The badges below are the employer's government record.</div>` : ""}
+        ${j.ad_stance === "not_offered" ? `<div class="fd-adnote fd-adnote-no">The ad says: \u201c${esc(j.ad_sentence || "no visa sponsorship")}\u201d This role is not open to someone who needs a visa.</div>` : ""}
         <div class="fd-meta">${f.label ? `<span class="fr-fresh ${f.cls}">${f.cls ? "● " : ""}${esc(f.label)}</span>` : ""}${visaBadges(j)}</div>
         ${(j.nationality_visas || []).length ? `<div class="fd-natvisa">${natVisaBadges(j)}</div>` : ""}
       </div>

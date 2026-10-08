@@ -3070,6 +3070,12 @@ def jobs_list():
         # (Workday) whose description was never fetched has not had the citizenship / clearance /
         # no-sponsorship check run on it, so it is not in the accessible set until it has.
         jobs = _sponsors().tag_jobs(w.list_jobs(order="recent", limit=15000))
+        from sourcing.adstance import UNKNOWN, ad_stance
+        texts = w.get_jd_texts([j["source_id"] for j in jobs])
+        for j in jobs:
+            st = ad_stance(texts.get(j["source_id"]) or "")
+            if st["stance"] != UNKNOWN:
+                j["ad_stance"], j["ad_sentence"] = st["stance"], st["sentence"]
         jobs = [j for j in jobs
                 if j.get("us") and not employer_is_clearance_heavy(j.get("company", ""))
                 and is_jd_checked(j) and is_sponsor_relevant(j)]

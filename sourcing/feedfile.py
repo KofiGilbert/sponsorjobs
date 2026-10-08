@@ -36,7 +36,7 @@ JD_SHARDS = 256
 # card renderer in ui/static/app.js). jd_text is deliberately absent: it lives in the shards.
 SLIM_KEYS = ("source_id", "source", "company", "title", "location", "remote", "url", "posted_at",
              "first_seen", "salary", "sponsorship_stated", "us", "entry_level", "visa",
-             "nationality_visas", "sponsor")
+             "nationality_visas", "sponsor", "ad_stance", "ad_sentence")
 
 # Rows from a company's OWN board (Greenhouse, Lever, ...). When the same opening also arrives
 # through an aggregator, the board row wins: canonical URL, full JD, the employer's own wording.
@@ -108,7 +108,18 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
     out = Path(out_dir)
     (out / JD_DIR).mkdir(parents=True, exist_ok=True)
     generated_at = generated_at or utc_now_iso()
-    slim = [slim_row(r) for r in rows]
+    # What each ad SAYS about sponsorship, read from its own text (sourcing/adstance.py): the
+    # aggregator's yes/no flag was wrong for most flagged ads, and a third of ads that mention
+    # sponsorship say they will NOT sponsor, which the student needs to see (2026-10-08).
+    from sourcing.adstance import UNKNOWN, ad_stance
+    slim = []
+    for r in rows:
+        row = slim_row(r)
+        jd = (jd_by_id or {}).get(r.get("source_id")) or r.get("jd_text") or ""
+        st = ad_stance(jd) if jd else {"stance": UNKNOWN, "sentence": ""}
+        if st["stance"] != UNKNOWN:
+            row["ad_stance"], row["ad_sentence"] = st["stance"], st["sentence"]
+        slim.append(row)
     sources = {r.get("source") for r in slim}
     header = {"feed_version": FEED_VERSION, "generated_at": generated_at, "count": len(slim),
               "attribution": {k: v for k, v in ATTRIBUTION.items() if k in sources},

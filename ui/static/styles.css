@@ -2745,3 +2745,8 @@ body.cv-dragging * { cursor: grabbing !important; }
 .cvs-empty-p { font-size: 13px; color: var(--muted); max-width: 44ch; margin-bottom: 8px; }
 /* The ad's own sponsorship line, as a sentence with its caveat, under the facts in the detail. */
 .fd-adnote { margin-top: 10px; padding: 9px 12px; border-left: 2px solid var(--good); font-size: 12.5px; color: var(--ink-2); background: var(--surface-2); border-radius: 0 var(--r-xs) var(--r-xs) 0; }
+/* The ad says NO: the loudest chip on the card, because it is the one that saves the student
+   an application. Same shape as the others; the colour is the one flag the system allows. */
+.vbadge.vb-no, .tc-chips .vbadge.vb-no { color: var(--flag); font-weight: 700;
+  background: color-mix(in srgb, var(--flag) 14%, transparent); border-color: color-mix(in srgb, var(--flag) 40%, transparent); }
+.fd-adnote-no { border-left-color: var(--flag); }

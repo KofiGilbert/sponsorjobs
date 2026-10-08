@@ -158,7 +158,10 @@ def apply_facets(jobs: list[dict], *, q: str = "", loc: str = "", days=0, remote
             codes = _visa_codes(j)
             if not any((j.get("visa") or []) if v == "SPONSORED" else (v in codes) for v in visa):
                 return False
-        if sponsored and j.get("sponsorship_stated") is not True:
+        # "Ad offers sponsorship": what the ad SAYS (sourcing/adstance.py), with the aggregator's
+        # flag as a fallback for rows built before the ad reader existed.
+        if sponsored and j.get("ad_stance") != "offered" and not (
+                j.get("ad_stance") is None and j.get("sponsorship_stated") is True):
             return False
         if cutoff is not None:
             dt = _parse_posted(j.get("posted_at") or "")

@@ -105,6 +105,15 @@ def feed_jobs(level: str | None = None) -> list[dict]:
         # and the endpoint isn't tagging tens of thousands of rows on every hit.
         jobs = _sponsors(spon_db).tag_jobs(
             w.list_jobs(order="recent", since_days=FEED_FRESH_DAYS, limit=FEED_LIMIT))
+        # What each ad says about sponsorship, read from its own text (sourcing/adstance.py).
+        # Done here, before the relevance filter, so an ad that says it will NOT sponsor is kept
+        # off the board, and the stance travels with the row into the public feed.
+        from sourcing.adstance import UNKNOWN, ad_stance
+        texts = w.get_jd_texts([j["source_id"] for j in jobs])
+        for j in jobs:
+            st = ad_stance(texts.get(j["source_id"]) or "")
+            if st["stance"] != UNKNOWN:
+                j["ad_stance"], j["ad_sentence"] = st["stance"], st["sentence"]
     finally:
         w.close()
     # A list-only row (Workday) whose description was never fetched has not had the

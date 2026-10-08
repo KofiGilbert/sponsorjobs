@@ -166,8 +166,10 @@ def is_sponsor_relevant(job: dict) -> bool:
     """Does this row belong on SponsorJobs at all? Board rows: yes. Aggregator rows: only with
     a sponsor badge (`visa`, set by SponsorDB.tag_jobs for US roles) or a posting that states
     sponsorship (`sponsorship_stated` is True)."""
+    if job.get("ad_stance") == "not_offered":
+        return False                      # the ad itself rules the role out for a visa holder
     if (job.get("source") or "") not in AGGREGATOR_SOURCES:
         return True
     if job.get("visa"):
         return True
-    return job.get("sponsorship_stated") is True
+    return job.get("sponsorship_stated") is True or job.get("ad_stance") == "offered"
