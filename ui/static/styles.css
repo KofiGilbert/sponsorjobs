@@ -2750,3 +2750,4 @@ body.cv-dragging * { cursor: grabbing !important; }
 .vbadge.vb-no, .tc-chips .vbadge.vb-no { color: var(--flag); font-weight: 700;
   background: color-mix(in srgb, var(--flag) 14%, transparent); border-color: color-mix(in srgb, var(--flag) 40%, transparent); }
 .fd-adnote-no { border-left-color: var(--flag); }
+.tc-chips .vbadge.vb-more { color: var(--muted); background: var(--surface-2); cursor: help; }

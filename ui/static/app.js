@@ -645,7 +645,7 @@
           ${tags ? `<div class="tc-tags">${tags}</div>` : ""}
           <div class="tc-foot">
             <div class="tc-facts">${facts.map((x, i) => `<span class="${i === 0 ? "tc-pay" : ""}">${esc(x)}</span>`).join('<span class="tc-sep"></span>')}</div>
-            <div class="tc-chips">${visaBadges(j)}</div>
+            <div class="tc-chips">${visaBadges(j, { primary: true })}</div>
           </div>
         </button>`;
       }).join("");
@@ -1088,15 +1088,18 @@
   // and honest: coloured badges when the employer has a public sponsorship record, else a neutral
   // "No sponsorship record" (we advertise US roles to international students and label each one's
   // sponsorship status rather than hiding the ones we can't vouch for).
-  // What a badge CODE is called on screen. The codes are identifiers (filters, tests, the
-  // extension); the names are the official programmes students already know from job
-  // screeners: H-1B, PERM (the green-card labor certification), E-Verify (the STEM-OPT
-  // requirement). "GREEN-CARD" and "STEM-OPT" as badge text read as made-up (Kofi, 2026-10-08).
-  const BADGE_NAME = { "H-1B": "H-1B", "GREEN-CARD": "PERM", "STEM-OPT": "E-Verify",
+  // What a badge CODE is called on screen: the VISA, the way students search for it and the
+  // way the best US board (Migrate Mate) labels it: Green Card, STEM OPT, H-1B. The government
+  // record (PERM filings, E-Verify enrollment) is the SOURCE, named in the hover, not the label
+  // (decided with Kofi, 2026-10-08, after reading Migrate Mate's cards).
+  const BADGE_NAME = { "H-1B": "H-1B", "GREEN-CARD": "Green Card", "STEM-OPT": "STEM OPT",
     "CAP-EXEMPT": "Cap-exempt", "E-3": "E-3", "H-1B1": "H-1B1", "TN": "TN" };
   const badgeName = (code) => BADGE_NAME[code] || code;
-  function visaBadges(j) {
+  function visaBadges(j, opts) {
     const v = j.visa || [];
+    // Card mode (Migrate Mate's convention): the ad's stance, then ONE visa chip and "+N" for
+    // the rest, so the card stays clean; the detail shows every chip.
+    const compact = !!(opts && opts.primary);
     // What the AD says, read from its own text (sourcing/adstance.py), quoted on hover so the
     // student sees the proof. Surveyed on 1,500 live ads (2026-10-08): ads that sponsor say
     // "Visa sponsorship is available" and almost never name the visa, so the chip uses the
@@ -1111,9 +1114,13 @@
     if (!v.length) {
       return stated || `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa, and the ad does not say. They still might, it's worth asking.">No sponsorship record</span>`;
     }
-    return stated + v.map(x =>
-      `<span class="vbadge vb-spon vb-${esc(x.code)}" title="${esc(visaTitle(x))}">${esc(badgeName(x.code))}</span>`
-    ).join("");
+    const chips = v.map(x =>
+      `<span class="vbadge vb-spon vb-${esc(x.code)}" title="${esc(visaTitle(x))}">${esc(badgeName(x.code))}</span>`);
+    if (compact && chips.length > 1) {
+      const rest = v.slice(1).map(x => badgeName(x.code)).join(", ");
+      return stated + chips[0] + `<span class="vbadge vb-more" title="${esc(rest)}">+${chips.length - 1}</span>`;
+    }
+    return stated + chips.join("");
   }
 
   // Nationality-based visas an H-1B sponsor can usually also support (E-3/H-1B1/TN). Shown
@@ -1274,8 +1281,8 @@
   // tens of thousands without shipping them all to the client.
 
   // Human labels for the active-filter chips + the sponsorship checkbox list.
-  const VISA_LABELS = { SPONSORED: "Sponsors a visa", "H-1B": "H-1B", "GREEN-CARD": "PERM (green card)",
-    "STEM-OPT": "E-Verify (STEM-OPT)", "E-3": "E-3", "H-1B1": "H-1B1", "TN": "TN" };
+  const VISA_LABELS = { SPONSORED: "Sponsors a visa", "H-1B": "H-1B", "GREEN-CARD": "Green Card",
+    "STEM-OPT": "STEM OPT", "E-3": "E-3", "H-1B1": "H-1B1", "TN": "TN" };
   const DATE_LABELS = { 1: "Past 24 hours", 7: "Past week", 30: "Past month" };
   const REMOTE_LABELS = { remote: "Remote", hybrid: "Hybrid", onsite: "On-site" };
 
