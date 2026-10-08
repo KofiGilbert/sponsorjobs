@@ -1097,19 +1097,17 @@
   const badgeName = (code) => BADGE_NAME[code] || code;
   function visaBadges(j) {
     const v = j.visa || [];
-    // The POSTING itself states it sponsors (freehire enrichment) -- the strongest, most current
-    // signal: the employer's declaration on THIS role. Shown first, distinct from the DOL-history
-    // codes. When the posting states it but we hold no filing history, this replaces the neutral
-    // "No sponsorship record" (the role is explicitly sponsor-friendly).
-    // The ad itself says it sponsors: the strongest signal for THIS role, so it leads, named
-    // for what it means ("Sponsors visas"), with the source in the hover text.
-    const stated = j.sponsorship_stated === true
-      ? `<span class="vbadge vb-stated" title="This job ad says the employer offers visa sponsorship for the role. The employer's own words, today; the badges beside it are the government record.">Sponsors visas</span>`
-      : "";
+    // Badges are the three government programmes only (H-1B, PERM, E-Verify, plus the
+    // nationality visas). The ad's own "visa sponsorship available" line is a yes/no flag from
+    // the aggregator that names NO visa type, so it is not a badge; it ranks the job higher and
+    // is stated as a sentence in the detail (adStatement). Kofi asked what visa "Sponsors visas"
+    // meant (2026-10-08); the honest answer was "the data does not say", so it left the chip row.
     if (!v.length) {
-      return stated || `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa. They still might, it's worth asking.">No sponsorship record</span>`;
+      return j.sponsorship_stated === true
+        ? `<span class="vbadge vb-stated" title="The job ad says visa sponsorship is available, but names no visa. We hold no government filing record for this employer yet.">Ad: sponsorship offered</span>`
+        : `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa. They still might, it's worth asking.">No sponsorship record</span>`;
     }
-    return stated + v.map(x =>
+    return v.map(x =>
       `<span class="vbadge vb-spon vb-${esc(x.code)}" title="${esc(visaTitle(x))}">${esc(badgeName(x.code))}</span>`
     ).join("");
   }
@@ -1286,7 +1284,7 @@
     if (JF_DATE) chips.push({ k: "date", label: DATE_LABELS[JF_DATE] });
     if (JF_REMOTE) chips.push({ k: "remote", label: REMOTE_LABELS[JF_REMOTE] || JF_REMOTE });
     if (JF_LEVEL === "entry") chips.push({ k: "level", label: "Entry-level" });
-    if (JF_SPONSORED) chips.push({ k: "sponsored", label: "Sponsors visas" });
+    if (JF_SPONSORED) chips.push({ k: "sponsored", label: "Ad mentions sponsorship" });
     [...VISA_SET].forEach(v => chips.push({ k: "visa:" + v, label: VISA_LABELS[v] || v }));
     if (JF_PAY) chips.push({ k: "pay", label: "$" + Math.round(JF_PAY / 1000) + "k+ pay" });
     if (JF_LOC) chips.push({ k: "loc", label: `"${JF_LOC}"` });
@@ -1447,6 +1445,7 @@
           ${j.entry_level ? `<span class="fr-fact fr-fact-entry">Entry-level</span>` : ""}
         </div>
         <div class="fd-payins" id="fdPayInsight" hidden></div>
+        ${j.sponsorship_stated === true ? `<div class="fd-adnote">The job ad says visa sponsorship is available. It does not say which visa; for a new hire in the US that usually means H-1B. The badges below are the employer's government record.</div>` : ""}
         <div class="fd-meta">${f.label ? `<span class="fr-fresh ${f.cls}">${f.cls ? "● " : ""}${esc(f.label)}</span>` : ""}${visaBadges(j)}</div>
         ${(j.nationality_visas || []).length ? `<div class="fd-natvisa">${natVisaBadges(j)}</div>` : ""}
       </div>

@@ -2743,3 +2743,5 @@ body.cv-dragging * { cursor: grabbing !important; }
   padding: 44px 24px; border: 1px dashed var(--border-strong); border-radius: var(--r-lg); background: var(--surface); }
 .cvs-empty-t { font-size: 15px; font-weight: 650; color: var(--ink); }
 .cvs-empty-p { font-size: 13px; color: var(--muted); max-width: 44ch; margin-bottom: 8px; }
+/* The ad's own sponsorship line, as a sentence with its caveat, under the facts in the detail. */
+.fd-adnote { margin-top: 10px; padding: 9px 12px; border-left: 2px solid var(--good); font-size: 12.5px; color: var(--ink-2); background: var(--surface-2); border-radius: 0 var(--r-xs) var(--r-xs) 0; }
