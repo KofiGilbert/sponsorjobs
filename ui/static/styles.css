@@ -951,11 +951,16 @@ button { font-family: inherit; cursor: pointer; }
 /* A link reads as a link through weight, not colour — the accent is spent elsewhere. */
 .link-btn { background: none; border: 0; color: var(--muted); font-size: 13px; font-weight: 500; cursor: pointer; padding: 2px 4px; border-radius: var(--r-xs); }
 .link-btn:hover { color: var(--ink); background: none; }
-.today-list { display: flex; flex-direction: column; gap: 1px; }
-.today-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; cursor: pointer;
-  background: none; border: 0; border-radius: var(--r-sm); padding: 11px 12px; transition: background var(--dur) var(--ease); }
-.today-row:hover { background: var(--surface); transform: none; }
-.today-go { margin-left: auto; font-size: 12.5px; font-weight: 500; color: var(--faint); flex: none; }
+/* Home's fresh roles are Jobs cards (.feed-row): one card per job, air between, hover lift.
+   Each item is its own contained card, which is what separates list items without stripes or
+   rules (card-list guidance: group by container and spacing, not by colour). */
+.today-list { display: flex; flex-direction: column; gap: 8px; }
+.today-list .feed-row { min-height: 0; align-items: center; }
+.today-list .feed-row + .feed-row { margin-top: 0; }
+.today-list .feed-row:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.today-card .fr-visas { margin-top: 6px; }
+.today-go { margin-left: auto; align-self: center; font-size: 12.5px; font-weight: 500; color: var(--faint); flex: none; }
+.today-list .feed-row:hover .today-go { color: var(--ink); }
 
 /* ============ JOBS — no-refresh master-detail feed ============ */
 .feed-note { max-width: 1320px; margin: 0 auto 10px; font-size: 12.5px; color: var(--muted); }

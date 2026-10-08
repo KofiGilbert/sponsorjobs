@@ -613,12 +613,23 @@
       const r = await api("/api/jobs");
       const jobs = rankForReachability(r.jobs || []).slice(0, 4);
       if (!jobs.length) { el.innerHTML = `<div class="empty small">No roles yet, open <b>Jobs</b> to add sources.</div>`; return; }
+      // The same card language as the Jobs tab (logo, framed card, company then role, badges), so
+      // a job reads the same everywhere in the app. The old strip drew a bare first letter and
+      // ran "Axon·Scottsdale" together with no spacing (Kofi, 2026-10-08).
       el.innerHTML = jobs.map(j => {
         const f = freshness(j);
-        return `<button class="today-row" data-sid="${esc(j.source_id)}" type="button">
-          <div class="fr-ic">${esc((j.company || "?").slice(0, 1))}</div>
-          <div class="fr-main"><div class="fr-role">${esc(j.title)}</div>
-          <div class="fr-co">${esc(j.company)}<span>·</span>${esc(j.location || "Not listed")}${f.label ? '<span>·</span><span class="fr-fresh ' + f.cls + '">' + esc(f.label) + "</span>" : ""}${(j.visa || []).length ? '<span>·</span><span class="fr-visa" title="Employer&#39;s past USCIS/DOL filings: a signal they&#39;ve sponsored before, not a guarantee for this role.">' + esc((j.visa || []).map(v => v.code || v.label).filter(Boolean).join(", ")) + "</span>" : ""}</div></div>
+        const visas = (j.visa || []).map(v => v.code || v.label).filter(Boolean);
+        return `<button class="feed-row today-card" data-sid="${esc(j.source_id)}" type="button">
+          ${companyAvatar(j)}
+          <div class="fr-main">
+            <div class="fr-top">
+              <div class="fr-co-name">${esc(j.company)}</div>
+              ${f.label ? `<span class="fr-fresh ${f.cls}">${f.cls ? "● " : ""}${esc(f.label)}</span>` : ""}
+            </div>
+            <div class="fr-role">${esc(j.title)}</div>
+            <div class="fr-meta">${esc(j.location || "Location not listed")}</div>
+            ${visas.length ? `<div class="fr-visas">${visas.map(v => `<span class="fr-visa" title="Employer's past USCIS/DOL filings: a signal they've sponsored before, not a guarantee for this role.">${esc(v)}</span>`).join("")}</div>` : ""}
+          </div>
           <span class="today-go">Tailor →</span>
         </button>`;
       }).join("");
