@@ -35,7 +35,11 @@ TAILOR_BROKER_URL=https://api.sponsorjobs.ai JOBS_FEED_URL=https://feed.sponsorj
 nohup "$PY" -m ui.app > "$DATA/engine.log" 2>&1 &
 for i in $(seq 1 60); do curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/" && break; sleep 1; done
 if [ "$PORT" = "57000" ] && [ -d "$APP" ]; then
-  open "$APP"; echo "SponsorJobs is opening on the newest code."
+  # `open` right after a quit can be swallowed while macOS tears the old instance down, so wait
+  # until no app process is left, then launch the binary directly (detached).
+  for i in $(seq 1 20); do pgrep -f "SponsorJobs.app/Contents/MacOS/SponsorJobs" >/dev/null || break; sleep 0.5; done
+  nohup "$APP/Contents/MacOS/SponsorJobs" >/dev/null 2>&1 &
+  echo "SponsorJobs is opening on the newest code."
 else
   open "http://127.0.0.1:$PORT"; echo "Test copy running at http://127.0.0.1:$PORT"
 fi
