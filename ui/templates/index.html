@@ -121,22 +121,24 @@
         <header class="page-head">
           <div>
             <h1 class="page-title" data-i18n="cvs.title">Resumes</h1>
-            <p class="page-sub" data-i18n="cvs.sub">Start from a template, or open a resume you've built.</p>
           </div>
         </header>
         <section class="cvs-block">
           <div class="cvs-sec-head">
-            <h2 class="section-label" style="margin:0" data-i18n="cvs.fromTemplate">Start from a template</h2>
-            <button class="link-btn" id="cvsMoreTpl" type="button" data-i18n="cvs.moreTemplates">More templates &rarr;</button>
+            <h2 class="cvs-h2" data-i18n="cvs.fromTemplate">Templates</h2>
+            <button class="link-btn" id="cvsMoreTpl" type="button" data-i18n="cvs.moreTemplates">More templates</button>
           </div>
           <div class="cvs-tpl-strip" id="cvsTplStrip"><!-- template cards injected --></div>
         </section>
         <section class="cvs-block">
-          <div class="cvs-sec-head">
-            <h2 class="section-label" style="margin:0" data-i18n="cvs.yourCvs">Your Resumes</h2>
-            <input class="fld cvs-search" id="cvsSearch" type="search" placeholder="Search your Resumes" data-i18n-ph="cvs.search" aria-label="Search your Resumes" />
+          <div class="cvs-sec-head cvs-tabs-row">
+            <div class="cvs-tabs" role="tablist">
+              <button class="cvs-tab is-active" type="button" role="tab" aria-selected="true">Recents</button>
+            </div>
+            <input class="fld cvs-search" id="cvsSearch" type="search" placeholder="Search" data-i18n-ph="cvs.search" aria-label="Search your resumes" />
             <button class="btn btn-ghost btn-sm" id="newFolderBtn" type="button">New folder</button>
           </div>
+          <div class="cvs-table-head"><span>Name</span><span class="cvs-th-right">Last opened by you</span></div>
           <div id="cvManager"><!-- CV list injected --></div>
           <button class="link-btn cvs-more-cvs" id="cvsMoreCvs" type="button" hidden>More Resumes &rarr;</button>
         </section>

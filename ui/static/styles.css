@@ -2019,19 +2019,26 @@ body.cv-dragging * { cursor: grabbing !important; }
 
 /* ---------------- merged CVs tab: template strip + your CVs ---------------- */
 .cvs-block { max-width: 1040px; margin: 0 auto 28px; }
+.cvs-h2 { margin: 0; font-size: 17px; font-weight: 650; color: var(--ink); }
+/* Lower half, Word's "Recents" table: a tab row, then a column header, then rows. */
+.cvs-tabs { display: flex; gap: 4px; }
+.cvs-tab { padding: 6px 14px; border: 0; border-radius: var(--r-pill); background: none; font: inherit; font-size: 14px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.cvs-tab.is-active { background: var(--surface-2); color: var(--ink); }
+.cvs-table-head { display: flex; justify-content: space-between; padding: 6px 12px; margin-top: 8px; border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; color: var(--muted); }
+.cvs-th-right { flex: none; }
 .cvs-block > .section-label { margin: 0 0 12px; }
 .cvs-your-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 14px; flex-wrap: wrap; }
 .cvs-your-hint { font-size: 12px; color: var(--faint); }
 /* Responsive grid: uniform cards that add/remove columns as the window resizes, instead
    of flex-grow that made card size snap between big and small on every resize. */
 .cvs-tpl-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
-.cvs-tpl {
-  width: auto; padding: 0; text-align: left; cursor: pointer;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-  overflow: hidden; transition: border-color .12s ease, box-shadow .12s ease;
-}
-.cvs-tpl:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
-.cvs-tpl-prev { position: relative; aspect-ratio: 8.5 / 11; background: var(--paper); border-bottom: 1px solid var(--border); }
+/* Word's template card: the page itself is the card (thin border, rounded), with the name as a
+   centred caption under it, not inside a boxed footer. */
+.cvs-tpl { width: auto; padding: 0; text-align: center; cursor: pointer; background: none; border: 0; }
+.cvs-tpl-prev { position: relative; aspect-ratio: 8.5 / 11; background: var(--paper); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden; box-shadow: var(--shadow-sm); transition: border-color .12s ease, box-shadow .12s ease; }
+.cvs-tpl:hover .cvs-tpl-prev { border-color: var(--border-strong); box-shadow: var(--shadow-md); }
 /* Signal that a click PREVIEWS (it no longer jumps straight into the JD flow). */
 .cvs-tpl-prev::after {
   content: "Preview"; position: absolute; inset: 0; display: grid; place-items: center;
@@ -2079,7 +2086,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 .tpl-modal-pos { flex: none; font-size: 11.5px; color: var(--faint); letter-spacing: .03em; font-variant-numeric: tabular-nums; }
 .cvs-tpl-frame { width: 100%; height: 100%; border: 0; display: block; pointer-events: none; }
 .cvs-tpl-name {
-  padding: 7px 9px 8px; font-size: 12px; font-weight: 600; color: var(--ink);
+  padding: 9px 4px 0; font-size: 13px; font-weight: 500; color: var(--ink); text-align: center;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -2739,10 +2746,8 @@ body.cv-dragging * { cursor: grabbing !important; }
 .cv-row .cv-ed.cv-loc, .cv-row .cv-ed.cv-dates { flex: 0 0 auto; }
 .cv-row .cv-ed.cv-org, .cv-row .cv-ed.cv-role, .cv-row .cv-ed.cv-degree { flex: 1 1 auto; min-width: 0; }
 /* Resumes page, nothing saved yet: a framed empty state with the one next action. */
-.cvs-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
-  padding: 44px 24px; border: 1px dashed var(--border-strong); border-radius: var(--r-lg); background: var(--surface); }
-.cvs-empty-t { font-size: 15px; font-weight: 650; color: var(--ink); }
-.cvs-empty-p { font-size: 13px; color: var(--muted); max-width: 44ch; margin-bottom: 8px; }
+.cvs-empty { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 36px 12px; }
+.cvs-empty-t { font-size: 13.5px; color: var(--muted); }
 /* The ad's own sponsorship line, as a sentence with its caveat, under the facts in the detail. */
 .fd-adnote { margin-top: 10px; padding: 9px 12px; border-left: 2px solid var(--good); font-size: 12.5px; color: var(--ink-2); background: var(--surface-2); border-radius: 0 var(--r-xs) var(--r-xs) 0; }
 /* The ad says NO: the loudest chip on the card, because it is the one that saves the student
