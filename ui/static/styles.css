@@ -1177,10 +1177,19 @@ button { font-family: inherit; cursor: pointer; }
 /* The JD's own key terms, marked in place the way froghire/LinkedIn do it. Two tones carry two
    different facts: a quiet green for terms the profile ALREADY backs (reassurance), and the
    emphasis tone for the GAPS, the terms that decide whether the role is worth an application. */
-mark.jd-have { background: var(--good-soft); color: var(--good); font-weight: 600;
-  border-radius: 3px; padding: 0 3px; }
-mark.jd-gap { background: var(--flag-soft); color: var(--flag); font-weight: 600;
-  border-radius: 3px; padding: 0 3px; }
+/* Inline skill marks on the job description, the way the job-screener extensions do it:
+   a coloured underline, green for a skill your resume already has, red for one the ad asks
+   for that your resume lacks. Underlines keep the text readable; no block highlights. */
+mark.jd-have, mark.jd-gap { background: none; color: inherit; font-weight: 500; padding: 0;
+  text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+mark.jd-have { text-decoration-color: var(--good); }
+mark.jd-gap { text-decoration-color: var(--flag); }
+.jd-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 0 0 12px;
+  font-size: 12px; color: var(--muted); }
+.jd-legend .jd-key { display: inline-flex; align-items: center; gap: 6px; }
+.jd-legend .jd-swatch { width: 18px; height: 0; border-bottom: 2px solid; display: inline-block; }
+.jd-legend .jd-swatch.have { border-color: var(--good); }
+.jd-legend .jd-swatch.gap { border-color: var(--flag); }
 
 .fr-fresh { font-size: 11px; font-weight: 600; color: var(--muted); }
 /* Why this role is in the list: the employer files this visa. It's the strongest fact on
@@ -2850,3 +2859,18 @@ body.cv-dragging * { cursor: grabbing !important; }
    starts where the group headings start (it sat indented, Kofi, 2026-10-09). */
 .view-templates .page-head { max-width: 1320px; margin-bottom: 10px; }
 .view-templates .tpl-back { margin-left: -8px; margin-bottom: 0; }
+
+/* The job title stays put while the description scrolls under it (LinkedIn does the same).
+   A zero-height sticky anchor at the top of the pane carries a compact bar that is shown only
+   once the full header has scrolled out of view, so nothing is duplicated at rest. */
+.feed-detail { position: relative; }
+.fd-stick { position: sticky; top: -22px; height: 0; z-index: 6; }
+.fd-stick-in { display: none; position: absolute; left: -24px; right: -24px; top: 0;
+  align-items: center; gap: 12px; padding: 10px 24px; background: var(--surface);
+  border-bottom: 1px solid var(--border); border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.fd-stick.is-on .fd-stick-in { display: flex; }
+.fd-stick-in .fr-logo { width: 32px; height: 32px; flex: none; }
+.fd-stick-main { min-width: 0; flex: 1; }
+.fd-stick-t { font-size: 14.5px; font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fd-stick-c { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fd-stick-in .btn { flex: none; }

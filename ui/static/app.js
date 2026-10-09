@@ -1437,6 +1437,16 @@
     selectJob(stillThere ? SELECTED_SID : jobs[0].source_id);
   }
 
+  function wireDetailStick(det) {
+    if (det.dataset.stickWired) return;
+    det.dataset.stickWired = "1";
+    det.addEventListener("scroll", () => {
+      const head = det.querySelector(".fd-head"), bar = det.querySelector("#fdStick");
+      if (!head || !bar) return;
+      bar.classList.toggle("is-on", det.scrollTop > head.offsetTop + head.offsetHeight - 8);
+    }, { passive: true });
+  }
+
   function selectJob(sid) {
     SELECTED_SID = sid;
     const j = LAST_JOBS.find(x => x.source_id === sid);
@@ -1444,10 +1454,20 @@
     if (list) list.querySelectorAll(".feed-row").forEach(r => r.classList.toggle("is-active", r.dataset.sid === sid));
     const det = $("#feedDetail");
     if (!det || !j) return;
+    wireDetailStick(det);
+    det.scrollTop = 0;
     const f = freshness(j);
     const wm = workMode(j);
     const tags = roleTags(j, 9);   // the detail shows them all
     det.innerHTML = `
+      <div class="fd-stick" id="fdStick"><div class="fd-stick-in">
+        ${companyAvatar(j)}
+        <div class="fd-stick-main">
+          <div class="fd-stick-t">${esc(j.title)}</div>
+          <div class="fd-stick-c">${esc(j.company)} <span>·</span> ${esc(usLocation(j.location))}</div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-fd-tailor="${esc(j.source_id)}" type="button">Tailor &amp; apply →</button>
+      </div></div>
       <div class="fd-head">
         <div class="fd-headrow">
           ${companyAvatar(j)}
@@ -1479,7 +1499,7 @@
       </div>
       <div class="fd-jd" id="fdJd"><span class="muted">Loading the full description…</span></div>
       <div class="fd-company" id="fdCompany"></div>`;
-    det.querySelector("[data-fd-tailor]")?.addEventListener("click", e => tailorJob(e.currentTarget.dataset.fdTailor));
+    det.querySelectorAll("[data-fd-tailor]").forEach(b => b.addEventListener("click", e => tailorJob(e.currentTarget.dataset.fdTailor)));
     det.querySelector("[data-fd-save]")?.addEventListener("click", e => toggleSave(e.currentTarget, j));
     det.querySelector("[data-fd-dismiss]")?.addEventListener("click", async e => {
       const s = e.currentTarget.dataset.fdDismiss;
@@ -1610,7 +1630,7 @@
   function renderMatch(m, job) {
     const el = $("#fdMatch");
     if (!el) return;
-    if (!m) { el.innerHTML = `<div class="fd-match-none">Drop your resume in the chat and I'll instantly show how you match this role, and every other one.</div>`; return; }
+    if (!m) { el.innerHTML = `<div class="fd-match-none">Add your resume, or complete your profile in the chat, and this shows how you match this role and every other one: skills you have and skills the ad asks for.</div>`; return; }
     if (!m.total) { el.innerHTML = `<div class="fd-match-none">No specific skills called out in this posting, tailoring will still align your resume to it.</div>`; return; }
     const pct = Math.round((m.ratio || 0) * 100);
     const v = VERDICT[m.verdict];
@@ -1785,7 +1805,11 @@
       return;
     }
     const present = (match || {}).present || [], missing = (match || {}).missing || [];
-    el.innerHTML = jdSections(jd).map(s => {
+    const legend = (present.length || missing.length)
+      ? `<div class="jd-legend"><span class="jd-key"><span class="jd-swatch have"></span>On your resume</span>`
+        + `<span class="jd-key"><span class="jd-swatch gap"></span>Asked for, not on your resume</span></div>`
+      : "";
+    el.innerHTML = legend + jdSections(jd).map(s => {
       const body = jdBody(s.body, present, missing);
       return `<section class="jd-sec">
         ${s.head ? `<h4 class="jd-sec-h">${markTerms(esc(s.head), present, missing)}</h4>` : ""}

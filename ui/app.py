@@ -3324,8 +3324,8 @@ def _job_match(jd: str, title: str = "") -> dict | None:
         "total": len(terms),
         "covered": len(supported),
         "ratio": round(overall, 3),
-        "present": supported[:14],
-        "missing": missing[:14],
+        "present": supported[:80],      # every term: these drive the inline JD underlines
+        "missing": missing[:80],
         "required_missing": required_missing[:10],
         "optional_missing": optional_missing[:10],
         "required_total": req_total,
