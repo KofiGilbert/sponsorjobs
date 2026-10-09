@@ -35,6 +35,15 @@ let paneBounds = null;     // last bounds reported by the renderer's slot elemen
 let pyChild = null;        // the Python engine, when this shell spawned it
 let brokerChild = null;    // the managed-AI broker (dev only; hosted in production)
 
+// Tiny per-machine preferences file for the shell (window state). Not user data.
+const PREFS_PATH = () => path.join(app.getPath("userData"), "shell-prefs.json");
+function readPrefs() {
+  try { return JSON.parse(fs.readFileSync(PREFS_PATH(), "utf8")) || {}; } catch (e) { return {}; }
+}
+function writePrefs(p) {
+  try { fs.writeFileSync(PREFS_PATH(), JSON.stringify(p)); } catch (e) { /* best effort */ }
+}
+
 function ping(url) {
   return new Promise((resolve) => {
     const req = http.get(url, (res) => { res.resume(); resolve(res.statusCode === 200); });
@@ -207,9 +216,16 @@ function closePane() {
 }
 
 async function createWindow() {
+  // Open in macOS native full screen, like Word: the window fills the display and the menu bar
+  // hides until the pointer reaches the top edge (Kofi, 2026-10-09). Native full screen (not a
+  // kiosk) so the green button, Mission Control and Cmd+Ctrl+F all behave as on any Mac app, and
+  // the person can leave it. Remembered per machine: leaving full screen once sticks.
+  const prefs = readPrefs();
+  const startFullscreen = prefs.fullscreen !== false;
   win = new BrowserWindow({
     width: 1560,
     height: 980,
+    fullscreen: startFullscreen,
     backgroundColor: "#111111",
     title: "SponsorJobs",
     webPreferences: {
@@ -219,6 +235,8 @@ async function createWindow() {
     },
   });
   win.setMenuBarVisibility(false);
+  win.on("leave-full-screen", () => writePrefs({ ...readPrefs(), fullscreen: false }));
+  win.on("enter-full-screen", () => writePrefs({ ...readPrefs(), fullscreen: true }));
 
   // Camera + mic are needed in two places: Round 1 (the recorded screen) captures on the app's
   // OWN local origin (127.0.0.1), and Round 2 (the live avatar) runs on Tavus over Daily. Grant
