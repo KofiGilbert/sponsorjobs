@@ -284,11 +284,12 @@
     if (!CV_RECS.length) {
       // A framed empty state with the one action, not a sentence floating in a void: on a fresh
       // install this half of the page was blank and read as broken (Kofi, 2026-10-08).
+      // Word's start screen keeps this quiet: a line of grey text under the table header and
+      // nothing to click; the templates above are the way to start (Kofi, 2026-10-09).
       root.innerHTML = `<div class="cvs-empty">
-        <div class="cvs-empty-t">No resumes yet</div>
-        <button class="btn btn-primary btn-sm" id="cvsEmptyNew" type="button">Build your first</button>
+        <div class="cvs-empty-t">No recent resumes</div>
+        <div class="cvs-empty-s">Resumes you build will show up here.</div>
       </div>`;
-      root.querySelector("#cvsEmptyNew")?.addEventListener("click", () => $("#newCvBtn")?.click());
       if (more) more.hidden = true;
       return;
     }
@@ -2615,8 +2616,17 @@
     let d = { templates: [], default: "shetty" };
     try { d = await api("/api/templates"); } catch { /* keep empty */ }
     CV_TEMPLATES = d.templates || [];
-    // Same card as the "Start from a template" strip, for one consistent look.
-    $("#tplGrid").innerHTML = CV_TEMPLATES.map(cvsTplCard).join("")
+    // Word's "More templates" page: a muted heading per group, then a wide grid of cards.
+    // Grouped by WHO the template is for (its manifest category), in manifest order.
+    const groups = new Map();
+    CV_TEMPLATES.forEach(t => {
+      const k = t.category || "General";
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(t);
+    });
+    $("#tplGrid").innerHTML = [...groups].map(([cat, list]) =>
+      `<section class="tpl-group"><h2 class="tpl-group-h">${esc(cat)}</h2>
+        <div class="tpl-grid">${list.map(cvsTplCard).join("")}</div></section>`).join("")
       || `<div class="empty">No templates found.</div>`;
     document.querySelectorAll("#tplGrid [data-use]").forEach(el =>
       el.addEventListener("click", () => openTplPreview(el.dataset.use)));

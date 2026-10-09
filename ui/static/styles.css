@@ -2831,10 +2831,18 @@ body.cv-dragging * { cursor: grabbing !important; }
 .cv-row-name { font-size: 15px; font-weight: 500; color: var(--ink); }
 .cv-row-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
 .cv-row-date { font-size: 14px; color: var(--ink-2); margin-right: 8px; }
-.cvs-empty { padding: 44px 12px; background: var(--row-a); }
+.cvs-empty { flex-direction: column; gap: 4px; padding: 56px 12px; background: none; }
+.cvs-empty-t { font-size: 15px; color: var(--ink-2); }
+.cvs-empty-s { font-size: 13px; color: var(--muted); }
 .cvs-more-cvs { margin-top: 14px; }
 
 /* Inside the desktop shell there is no title bar: the traffic lights float over the top of
    the rail (Word does the same), so leave them room, and let that strip drag the window. */
 .in-shell .sidebar, .app.is-rail.in-shell .sidebar, .in-shell .app.is-rail .sidebar { position: relative; padding-top: 48px; }
 .in-shell .sidebar::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 44px; -webkit-app-region: drag; }
+
+/* "More templates": Word's template page. One quiet heading per audience, then a wide grid. */
+.view-templates .page-head { margin-bottom: 6px; }
+.tpl-group { max-width: 1320px; margin: 0 auto 36px; }
+.tpl-group-h { margin: 0 0 18px; font-size: 20px; font-weight: 600; color: var(--ink-2); }
+.tpl-group .tpl-grid { max-width: none; margin: 0; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 30px 24px; }
