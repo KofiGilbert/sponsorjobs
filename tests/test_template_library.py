@@ -54,8 +54,8 @@ def test_templates_are_listed_in_manifest_order_grouped_by_audience():
         if c != last:
             assert c not in seen, f"category {c} split by another"
             seen.append(c); last = c
-    assert seen == ["Students and new grads", "Experienced professionals", "Business and finance",
-                    "Research and academia", "Healthcare and education"]
+    assert seen == ["Students and New Grads", "Experienced Professionals", "Business and Finance",
+                    "Research and Academia", "Healthcare and Education"]
 
 
 def test_the_jd_reader_picks_the_specialised_template(monkeypatch, tmp_path):

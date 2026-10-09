@@ -2846,3 +2846,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 .tpl-group { max-width: 1320px; margin: 0 auto 36px; }
 .tpl-group-h { margin: 0 0 18px; font-size: 20px; font-weight: 600; color: var(--ink-2); }
 .tpl-group .tpl-grid { max-width: none; margin: 0; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 30px 24px; }
+/* The More-templates page runs the same 1320px column as its groups, so the back button
+   starts where the group headings start (it sat indented, Kofi, 2026-10-09). */
+.view-templates .page-head { max-width: 1320px; margin-bottom: 10px; }
+.view-templates .tpl-back { margin-left: -8px; margin-bottom: 0; }

@@ -108,9 +108,19 @@ def _label(key: str, default: str) -> str:
     return str(v).strip() if v and str(v).strip() else default
 
 
+# Flush-fill. When a layout step is active the page is set \flushbottom and every section
+# heading is preceded by stretchable glue, so whatever height the natural text leaves over is
+# shared evenly between the sections and the last line lands on the bottom margin. This is
+# what a person does with a thin resume: a little more air between sections, never padding
+# sentences. Second-order stretch (fill) so the end-of-document filler gets none of it. Off
+# for the raw template (its geometry has no bottom margin to flush to).
+_STRETCH: _cv.ContextVar[bool] = _cv.ContextVar("cv_stretch", default=False)
+
+
 def _heading(title: str) -> str:
+    glue = "\\vspace{0pt plus 1fill}" if _STRETCH.get() else ""
     return (
-        f"\n\\noindent \\textbf{{\\textsc{{\\large {title}}}}}\n\n"
+        f"\n{glue}\\noindent \\textbf{{\\textsc{{\\large {title}}}}}\n\n"
         f"\\noindent \\rule[3pt]{{\\textwidth}}{{1pt}}\n"
     )
 
@@ -574,9 +584,25 @@ _FILL_PROBE = r"\AtEndDocument{\par\typeout{TAILORFILL=\the\pagetotal:\the\texth
 # preamble stays verbatim (CLAUDE.md sec 8). Step 0 is the template as designed.
 LAYOUT_STEPS: tuple[str, ...] = (
     "",
-    r"\fontsize{10.5}{12.6}\selectfont",
+    # Same type as the raw template, plus a bottom margin to flush to: a page that is already
+    # 91 to 94 percent full gets its last few lines of empty paper shared between sections.
+    r"\newgeometry{left=0.7cm,right=0.7cm,top=0.7cm,bottom=0.7cm}",
+    r"\fontsize{10.5}{12.6}\selectfont\newgeometry{left=0.7cm,right=0.7cm,top=0.7cm,bottom=0.7cm}",
     r"\fontsize{11}{13.2}\selectfont\newgeometry{left=1.3cm,right=1.3cm,top=1.1cm,bottom=1.1cm}",
     r"\fontsize{11.5}{13.8}\selectfont\newgeometry{left=1.8cm,right=1.8cm,top=1.5cm,bottom=1.5cm}",
+    # From here the type stays at 12pt (the largest a US resume uses) and the page fills the
+    # way a person would fill a thin resume by hand: one-inch margins, a little more leading,
+    # more air between sections and between bullets. Every step is a normal-looking resume.
+    r"\fontsize{12}{14.4}\selectfont\newgeometry{left=2.0cm,right=2.0cm,top=1.6cm,bottom=1.6cm}"
+    r"\renewcommand{\vs}{\vspace{0.4cm}}",
+    r"\fontsize{12}{15}\selectfont\newgeometry{left=2.3cm,right=2.3cm,top=1.9cm,bottom=1.9cm}"
+    r"\renewcommand{\vs}{\vspace{0.5cm}}\setlist{itemsep=2pt,topsep=1pt}",
+    r"\fontsize{12}{15.6}\selectfont\newgeometry{left=2.54cm,right=2.54cm,top=2.2cm,bottom=2.2cm}"
+    r"\renewcommand{\vs}{\vspace{0.6cm}}\setlist{itemsep=3pt,topsep=2pt}",
+    r"\fontsize{12}{16.2}\selectfont\newgeometry{left=2.54cm,right=2.54cm,top=2.54cm,bottom=2.54cm}"
+    r"\renewcommand{\vs}{\vspace{0.75cm}}\setlist{itemsep=4pt,topsep=3pt}\setlength{\parskip}{3pt}",
+    r"\fontsize{12}{17}\selectfont\newgeometry{left=2.54cm,right=2.54cm,top=2.54cm,bottom=2.54cm}"
+    r"\renewcommand{\vs}{\vspace{0.9cm}}\setlist{itemsep=6pt,topsep=4pt}\setlength{\parskip}{5pt}",
 )
 
 
@@ -596,6 +622,7 @@ def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False,
     order = list(sections) if sections else list(_DEFAULT_SECTION_ORDER)
     body = [_header(profile)]
     token = _HEADINGS.set(dict(headings or {}))
+    stoken = _STRETCH.set(bool(layout))
     try:
         for name in order:
             renderer = _SECTION_RENDERERS.get(name)
@@ -603,8 +630,9 @@ def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False,
                 body.append(renderer(profile))
     finally:
         _HEADINGS.reset(token)
+        _STRETCH.reset(stoken)
     head = f"{preamble}\n{_FILL_PROBE}" if probe else preamble
-    lead = f"{layout}\n" if layout else ""
+    lead = f"{layout}\\flushbottom\n" if layout else ""
     return f"{head}\n{lead}{''.join(body)}\n{DOC_END}\n"
 
 
@@ -841,6 +869,11 @@ TARGET_FILL = 0.90
 # fill > MAX_FILL is therefore an overflow the healer must shrink, not ship;
 # 0.97 of \textheight leaves ~0.8cm of real clearance above the edge.
 MAX_FILL = 0.97
+# The layout ladder runs whenever the natural page is short of THIS, a stricter bar than
+# TARGET_FILL: a page at 91 percent is not "underfull" enough to ask the person for more
+# material, but it still shows a band of empty paper, and a larger layout step (which also
+# flushes the text to the bottom margin) removes it at no cost to the content.
+LAYOUT_FILL = 0.95
 
 
 @dataclass
@@ -986,7 +1019,7 @@ def assemble_cv(
     # what a person does with a thin resume (11pt, normal margins); padding sentences is not.
     layout = ""
     if (result and result.ok and result.pages == 1 and result.fill_ratio is not None
-            and result.fill_ratio < TARGET_FILL):
+            and result.fill_ratio < LAYOUT_FILL):
         best_fill = result.fill_ratio
         for step in LAYOUT_STEPS[1:]:
             tex = render_cv(preamble, used, sections, probe=True, layout=step, headings=headings)
@@ -995,9 +1028,9 @@ def assemble_cv(
                     and r.fill_ratio is not None and r.fill_ratio <= MAX_FILL):
                 break                                     # this step overflows; keep the last good one
             if r.fill_ratio <= best_fill:
-                break                                     # no gain: stop
+                continue                                  # no gain (a size the font lacks): skip it
             layout, result, best_fill = step, r, r.fill_ratio
-            if best_fill >= TARGET_FILL:
+            if best_fill >= LAYOUT_FILL:
                 break
 
     # The grow passes compile under side jobnames (-full, -lN). Whatever won must also exist

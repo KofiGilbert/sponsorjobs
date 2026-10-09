@@ -168,7 +168,7 @@ def _suggest_template(jd_text: str) -> dict:
             continue
         hits = [s for s in (m.get("suits") or []) if s.lower() in low]
         score = len(hits)
-        if seniority >= 5 and (m.get("category") or "") == "Experienced professionals":
+        if seniority >= 5 and (m.get("category") or "") == "Experienced Professionals":
             score += 2
         if score > best_score:
             best, best_score, best_hits = m, score, hits
@@ -178,7 +178,7 @@ def _suggest_template(jd_text: str) -> dict:
     if not best or not best_score:
         return {"name": _DEFAULT_TEMPLATE, "reason": "", "matched": []}
     reason = best.get("best_for") or ""
-    if seniority >= 5 and (best.get("category") or "") == "Experienced professionals":
+    if seniority >= 5 and (best.get("category") or "") == "Experienced Professionals":
         reason = (reason + f" Your profile shows ~{seniority} years of experience, "
                            "which should lead.").strip()
     return {"name": best.get("name") or _DEFAULT_TEMPLATE,

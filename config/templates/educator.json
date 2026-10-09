@@ -1,7 +1,7 @@
 {
   "name": "educator",
   "display_name": "Educator",
-  "category": "Healthcare and education",
+  "category": "Healthcare and Education",
   "best_for": "Certification and Licensure first, then Education, Student Teaching and Field Experience, Related Experience, and Skills and Languages. The format teacher-preparation programs recommend for K-12, ESL and new instructors.",
   "suits": [
     "teacher",
@@ -79,7 +79,8 @@
         "title": "Student Teacher, Grade 9 Algebra, Anytown High School",
         "date": "Jan 20XX - May 20XX",
         "bullets": [
-          "Planned and taught five sections of 28 students, designing a differentiated unit on linear functions that lifted the unit assessment average by 11 points."
+          "Planned and taught five sections of 28 students, designing a differentiated unit on linear functions that lifted the unit assessment average by 11 points.",
+          "Built formative check-ins into every lesson and used the data to regroup students weekly; two sections moved from below to above the department average."
         ]
       },
       {
@@ -100,7 +101,8 @@
             "dates": "Sep 20XX - Present",
             "bullets": [
               "Tutor 15 high-school students weekly in algebra and geometry; 12 raised their course grade by a letter.",
-              "Wrote the center's practice-problem bank now used by three tutors."
+              "Wrote the center's practice-problem bank now used by three tutors.",
+              "Ran a six-week summer bridge course for incoming ninth graders, 22 of 24 completing the full program."
             ]
           }
         ]
