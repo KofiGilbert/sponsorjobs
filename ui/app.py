@@ -3256,7 +3256,7 @@ def job_detail():
         job["salary"] = salary_from_text(jd)
     from sourcing.filters import salary_insight
     return jsonify({"job": job, "jd": jd, "match": _job_match(jd, job.get("title", "")),
-                    "jd_preview": preview,
+                    "terms": _jd_terms(jd), "jd_preview": preview,
                     "pay_insight": salary_insight(job, _local_benchmarks())})
 
 
@@ -3283,6 +3283,25 @@ def _jd_seniority(title: str, jd: str) -> dict | None:
         extra = f" (asks for ~{max_years}+ years)" if max_years >= 6 else ""
         return {"level": "senior", "note": f"Senior-level role{extra}."}
     return None
+
+
+def _jd_terms(jd: str) -> list[str]:
+    """The skills this ad asks for, profile or no profile: the description is underlined from
+    the first launch so it reads as a skills list, not a wall of text. Deterministic, no model.
+    Once a profile exists the same terms split into have / lack (see _job_match)."""
+    if not jd:
+        return []
+    import re as _re
+    from tailoring.keywords import vocab_skills
+    out = []
+    for t in vocab_skills(jd):
+        # The curated vocabulary only (no capitalised-word heuristic, which underlined NASDAQ,
+        # I-9 and U.S). A one- or two-letter skill (R, Go, C) must stand as its own token in
+        # the ad; "Go-to-market" and "R&D" are not the languages.
+        if len(t) <= 2 and not _re.search(r"(?<![\w&/+#-])" + _re.escape(t) + r"(?![\w&/+#-])", jd):
+            continue
+        out.append(t)
+    return out[:80]
 
 
 def _job_match(jd: str, title: str = "") -> dict | None:
@@ -7115,6 +7134,7 @@ def _feed_detail_response(job: dict):
     if not (job.get("salary") or "").strip():
         job["salary"] = salary_from_text(jd)
     return jsonify({"job": job, "jd": jd, "match": _job_match(jd, job.get("title", "")),
+                    "terms": _jd_terms(jd),
                     "pay_insight": salary_insight(job, _static_feed().benchmarks()),
                     "jd_preview": False})
 

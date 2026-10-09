@@ -1555,7 +1555,7 @@
     }
     if (SELECTED_SID !== sid) return;   // the person clicked another role while we fetched
     renderMatch(data.match, data.job);
-    renderJd(data.jd, data.match);
+    renderJd(data.jd, data.match, data.terms);
     // Some sources (Adzuna) only license a short PREVIEW of the posting, so the JD ends abruptly.
     // Be honest about it and point to the full text rather than showing a broken mid-word cutoff.
     if (data.jd_preview) {
@@ -1732,10 +1732,11 @@
   // froghire/LinkedIn do it: terms the profile already backs get a quiet "you have this" green,
   // and gaps, the terms that decide whether this role is worth applying to, get the emphasis.
   // Longer terms are marked first so "data science" wins over a bare "data".
-  function markTerms(html, present, missing) {
+  function markTerms(html, present, missing, neutral) {
     const marks = [
       ...(missing || []).map(t => [t, "jd-gap"]),
       ...(present || []).map(t => [t, "jd-have"]),
+      ...(neutral || []).map(t => [t, "jd-key"]),
     ].filter(([t]) => String(t).trim().length >= 2)
      .sort((a, b) => String(b[0]).length - String(a[0]).length);
     marks.forEach(([term, cls]) => {
@@ -1753,19 +1754,19 @@
   // Render one JD paragraph. A "Label: value" line (Location:, Remote Type:, Job Family Group:,
   // Application Deadline:, ...) gets its LABEL bolded, the way LinkedIn does, so the scannable
   // facts stand out; everything else is plain prose. Key terms are still marked inside the value.
-  function renderJdLine(text, present, missing) {
+  function renderJdLine(text, present, missing, neutral) {
     const m = text.match(/^([A-Z][A-Za-z0-9 &/()\-.]{1,30}):(\s*)(.*)$/);
     if (m && m[1].trim().split(/\s+/).length <= 5) {
-      const val = m[3] ? " " + markTerms(esc(m[3]), present, missing) : "";
+      const val = m[3] ? " " + markTerms(esc(m[3]), present, missing, neutral) : "";
       return `<b class="jd-lbl">${esc(m[1])}:</b>${val}`;
     }
-    return markTerms(esc(text), present, missing);
+    return markTerms(esc(text), present, missing, neutral);
   }
 
   // Turn a section's lines into HTML: runs of bullet lines become a real <ul>, everything else is
   // a paragraph. A marker sitting alone on its line (some stored feeds split "•" from its text)
   // is folded into the line beneath it so it still reads as one bullet.
-  function jdBody(lines, present, missing) {
+  function jdBody(lines, present, missing, neutral) {
     const rows = [];
     for (let i = 0; i < lines.length; i++) {
       let ln = lines[i];
@@ -1783,20 +1784,20 @@
     const flush = () => {
       if (!bullets.length) return;
       out.push(`<ul class="jd-list">${bullets.map(b =>
-        `<li>${markTerms(esc(b), present, missing)}</li>`).join("")}</ul>`);
+        `<li>${markTerms(esc(b), present, missing, neutral)}</li>`).join("")}</ul>`);
       bullets = [];
     };
     rows.forEach(ln => {
       if (isBullet(ln)) { bullets.push(stripBullet(ln)); return; }
       if (!ln.trim()) return;                 // blank lines are spacing, not a break in a bullet run
       flush();
-      out.push(`<p>${renderJdLine(ln.trim(), present, missing)}</p>`);
+      out.push(`<p>${renderJdLine(ln.trim(), present, missing, neutral)}</p>`);
     });
     flush();
     return out.join("");
   }
 
-  function renderJd(jd, match) {
+  function renderJd(jd, match, terms) {
     const el = $("#fdJd");
     if (!el) return;
     jd = (jd || "").trim();
@@ -1805,14 +1806,21 @@
       return;
     }
     const present = (match || {}).present || [], missing = (match || {}).missing || [];
+    // No profile yet: every skill the ad asks for is still underlined (neutral), so the JD
+    // reads as a skills list from the first launch; with a profile the underlines turn
+    // green / red. Nobody is forced to upload a resume to get a readable description.
+    const neutral = (present.length || missing.length) ? [] : (terms || []);
     const legend = (present.length || missing.length)
       ? `<div class="jd-legend"><span class="jd-key"><span class="jd-swatch have"></span>On your resume</span>`
         + `<span class="jd-key"><span class="jd-swatch gap"></span>Asked for, not on your resume</span></div>`
-      : "";
+      : neutral.length
+        ? `<div class="jd-legend"><span class="jd-key"><span class="jd-swatch key"></span>Skills this ad asks for</span>`
+          + `<span class="jd-legend-hint">Add your resume or complete your profile and these turn green (you have it) or red (you don't).</span></div>`
+        : "";
     el.innerHTML = legend + jdSections(jd).map(s => {
-      const body = jdBody(s.body, present, missing);
+      const body = jdBody(s.body, present, missing, neutral);
       return `<section class="jd-sec">
-        ${s.head ? `<h4 class="jd-sec-h">${markTerms(esc(s.head), present, missing)}</h4>` : ""}
+        ${s.head ? `<h4 class="jd-sec-h">${markTerms(esc(s.head), present, missing, neutral)}</h4>` : ""}
         ${body ? `<div class="jd-sec-b">${body}</div>` : ""}
       </section>`;
     }).join("");

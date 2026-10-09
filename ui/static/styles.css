@@ -1180,8 +1180,11 @@ button { font-family: inherit; cursor: pointer; }
 /* Inline skill marks on the job description, the way the job-screener extensions do it:
    a coloured underline, green for a skill your resume already has, red for one the ad asks
    for that your resume lacks. Underlines keep the text readable; no block highlights. */
-mark.jd-have, mark.jd-gap { background: none; color: inherit; font-weight: 500; padding: 0;
+mark.jd-have, mark.jd-gap, mark.jd-key { background: none; color: inherit; font-weight: 500; padding: 0;
   text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+mark.jd-key { text-decoration-color: var(--ink-2); font-weight: 600; }
+.jd-legend .jd-swatch.key { border-color: var(--ink-2); }
+.jd-legend-hint { flex-basis: 100%; color: var(--faint); }
 mark.jd-have { text-decoration-color: var(--good); }
 mark.jd-gap { text-decoration-color: var(--flag); }
 .jd-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 0 0 12px;
