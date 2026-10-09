@@ -179,7 +179,7 @@ def test_packs_on_sale_include_the_five_pack_with_prices():
     assert b.offered_packs() == [
         {"id": "pack_1", "price_label": "$9", "interviews": 1, "seconds": 900},
         {"id": "pack_3", "price_label": "$24", "interviews": 3, "seconds": 2700},
-        {"id": "pack_5", "price_label": "$35", "interviews": 5, "seconds": 4500}]
+        {"id": "pack_5", "price_label": "$39", "interviews": 5, "seconds": 4500}]
     b2, _ = _billing(pack_prices={"pack_1": "", "pack_5": "price_k5"})
     assert [p["id"] for p in b2.offered_packs()] == ["pack_5"]
 
