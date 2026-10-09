@@ -2417,23 +2417,25 @@ def _template_preview_pdf(name):
     import hashlib
     import json as _json
 
-    from intake.template_manifest import load_manifest, sections
+    from intake.template_manifest import headings, load_manifest, sections
     from tailoring.assembler import assemble_cv
     tex, tname = _load_template(name)
     profile = _placeholder_profile()
-    secs = sections(load_manifest(tname))
+    man = load_manifest(tname)
+    secs = sections(man)
+    heads = headings(man)
     # The key covers the BUILDER too (its source file), not only the template and the sample
     # data: an improved page-fitting pass otherwise never reached the gallery, and three
     # previews kept showing half-empty pages rendered before it (Kofi, 2026-10-08).
     from tailoring import assembler as _asm
     builder = Path(_asm.__file__).read_bytes()
     key = hashlib.sha1((tex + _json.dumps(profile, sort_keys=True)
-                        + repr(secs)).encode("utf-8") + builder).hexdigest()[:10]
+                        + repr(secs) + repr(sorted(heads.items()))).encode("utf-8") + builder).hexdigest()[:10]
     out_pdf = WORKDIR / f"preview-{tname}-{key}.pdf"
     if not out_pdf.exists():
         WORKDIR.mkdir(parents=True, exist_ok=True)
         assemble_cv(tex, profile, "", None, WORKDIR,
-                    jobname=out_pdf.stem, tailor=False, sections=secs)
+                    jobname=out_pdf.stem, tailor=False, sections=secs, headings=heads)
     return out_pdf if out_pdf.exists() else None
 
 

@@ -94,6 +94,20 @@ def _link_url(url: str) -> str:
     return _safe_url(url)
 
 
+# Per-template section headings. A template's manifest may rename a section ("experience"
+# -> "Research Experience", "skills" -> "Technical Skills", "extracurricular" -> "Leadership")
+# because the SAME single-column body serves every field and the heading is what tells a
+# nursing recruiter and a PhD committee they are looking at their kind of resume. Set for
+# the duration of one render_cv call; renderers read it through _label().
+import contextvars as _cv
+_HEADINGS: _cv.ContextVar[dict] = _cv.ContextVar("cv_headings", default={})
+
+
+def _label(key: str, default: str) -> str:
+    v = (_HEADINGS.get() or {}).get(key)
+    return str(v).strip() if v and str(v).strip() else default
+
+
 def _heading(title: str) -> str:
     return (
         f"\n\\noindent \\textbf{{\\textsc{{\\large {title}}}}}\n\n"
@@ -164,7 +178,7 @@ def _education(profile: dict) -> str:
     blocks = profile.get("education", [])
     if not blocks:
         return ""
-    out = [_heading("Education")]
+    out = [_heading(_label("education", "Education"))]
     for b in blocks:
         # School stays BOLD small caps (the scannable anchor); the PROGRAM is REGULAR
         # weight so several degrees don't stack into an overwhelming wall of bold. The
@@ -190,7 +204,7 @@ def _skills(profile: dict) -> str:
     # word-play allows, and microtype (preamble) absorbs a small residual via glyph
     # protrusion/expansion. Whatever is left simply stays ragged -- forced
     # \makebox[s] inter-word stretching reads as unnatural, so we don't do it.
-    out = [_heading("Skills"), "\n"]
+    out = [_heading(_label("skills", "Skills")), "\n"]
     for label, value in lines.items():
         body = f"\\textbf{{{_esc(label)}:}} {_esc(value)}"
         out.append(f"\\noindent {body}\n\n")
@@ -248,7 +262,7 @@ def _projects(profile: dict) -> str:
     entries = profile.get("projects", [])
     if not entries:
         return ""
-    return (_heading("Projects")
+    return (_heading(_label("projects", "Projects"))
             + _entry_blocks(entries, allow_link=True,
                             bold=bool(profile.get("bold_metrics")))
             + "\\vs\n")
@@ -258,7 +272,7 @@ def _experience(profile: dict) -> str:
     entries = profile.get("experience", [])
     if not entries:
         return ""
-    return (_heading("Experience")
+    return (_heading(_label("experience", "Experience"))
             + _entry_blocks(entries, bold=bool(profile.get("bold_metrics")))
             + "\\vs\n")
 
@@ -267,7 +281,7 @@ def _extracurricular(profile: dict) -> str:
     items = profile.get("extracurricular", [])
     if not items:
         return ""
-    out = [_heading("Extracurricular"), "\n"]
+    out = [_heading(_label("extracurricular", "Extracurricular")), "\n"]
     for it in items:
         date = _esc(it.get("date", ""))
         if it.get("dates_placeholder") and date:
@@ -286,9 +300,20 @@ def _additional(profile: dict) -> str:
     if not interests:
         return ""
     return (
-        _heading("Additional Information")
-        + f"\n\\noindent \\textbf{{Interests:}} {_esc(interests)}\n"
+        _heading(_label("additional", "Additional Information"))
+        + f"\n\\noindent \\textbf{{{_label('interests', 'Interests')}:}} {_esc(interests)}\n"
     )
+
+
+def _certifications(profile: dict) -> str:
+    certs = profile.get("certifications") or []
+    if isinstance(certs, str):
+        certs = [c.strip() for c in re.split(r"[;\n]|,\s(?=[A-Z])", certs) if c.strip()]
+    certs = [str(c).strip() for c in certs if str(c).strip()]
+    if not certs:
+        return ""
+    return (_heading(_label("certifications", "Licenses \\& Certifications")) + "\n"
+            + _bullets(certs) + "\\vs\n")
 
 
 def _summary(profile: dict) -> str:
@@ -297,7 +322,7 @@ def _summary(profile: dict) -> str:
     if not text:
         return ""
     body = _esc_bold(text, bool(profile.get("bold_metrics")))
-    return _heading("Summary") + f"\n\\noindent {body}\n\\vs\n"
+    return _heading(_label("summary", "Summary")) + f"\n\\noindent {body}\n\\vs\n"
 
 
 # Maps a manifest section name -> its renderer. A template's `sections` list (from its
@@ -310,6 +335,7 @@ _SECTION_RENDERERS = {
     "experience": _experience,
     "extracurricular": _extracurricular,
     "interests": _additional,
+    "certifications": _certifications,
 }
 _DEFAULT_SECTION_ORDER = ("education", "skills", "projects", "experience",
                           "extracurricular", "interests")
@@ -555,7 +581,7 @@ LAYOUT_STEPS: tuple[str, ...] = (
 
 
 def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False,
-              layout: str = "") -> str:
+              layout: str = "", headings: dict | None = None) -> str:
     """Render a full CV `.tex` from ``profile`` using the template's preamble.
 
     ``sections`` is the selected template's ordered section list (from its manifest); each
@@ -569,10 +595,14 @@ def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False,
     profile = normalize_profile(profile)
     order = list(sections) if sections else list(_DEFAULT_SECTION_ORDER)
     body = [_header(profile)]
-    for name in order:
-        renderer = _SECTION_RENDERERS.get(name)
-        if renderer:
-            body.append(renderer(profile))
+    token = _HEADINGS.set(dict(headings or {}))
+    try:
+        for name in order:
+            renderer = _SECTION_RENDERERS.get(name)
+            if renderer:
+                body.append(renderer(profile))
+    finally:
+        _HEADINGS.reset(token)
     head = f"{preamble}\n{_FILL_PROBE}" if probe else preamble
     lead = f"{layout}\n" if layout else ""
     return f"{head}\n{lead}{''.join(body)}\n{DOC_END}\n"
@@ -872,13 +902,13 @@ def _dropped_material(full: dict, selected: dict) -> bool:
 
 
 def _fit_to_page(preamble, used: dict, sections, workdir: Path, jobname: str,
-                 max_shrink: int) -> tuple[int, "CompileResult | None"]:
+                 max_shrink: int, headings=None) -> tuple[int, "CompileResult | None"]:
     """Render, compile and shrink ``used`` in place until the page is clean (one page, no
     overfull line, not flush to the bottom edge). Returns (attempts, last compile result)."""
     attempts = 0
     result: CompileResult | None = None
     for attempts in range(1, max_shrink + 2):
-        tex = render_cv(preamble, used, sections, probe=True)
+        tex = render_cv(preamble, used, sections, probe=True, headings=headings)
         result = compile_tex(tex, workdir, jobname=jobname)
         # A fill past MAX_FILL is a real overflow even at "1 page": with no bottom
         # margin the content is flush to (or off) the paper edge, so keep shrinking.
@@ -906,6 +936,7 @@ def assemble_cv(
     jobname: str = "cv",
     tailor: bool = True,
     sections=None,
+    headings: dict | None = None,
 ) -> AssembleResult:
     """Assemble a one-page CV from ``profile`` in the template's shape.
 
@@ -929,7 +960,8 @@ def assemble_cv(
     # Escaping happens once, at render time (`_esc`); the LLM returns plain prose.
     used = _tailor_bullets(profile, jd_text, llm) if tailor else profile
 
-    attempts, result = _fit_to_page(preamble, used, sections, workdir, jobname, max_shrink)
+    attempts, result = _fit_to_page(preamble, used, sections, workdir, jobname, max_shrink,
+                                    headings=headings)
 
     # THE GROW PASS. Selection trims a career to 4 roles x 3 bullets so a long one is not
     # squeezed into an index. For a THIN profile that trim is backwards: Kofi's own CV
@@ -942,7 +974,7 @@ def assemble_cv(
             and result.fill_ratio < TARGET_FILL and _dropped_material(full_profile, profile)):
         grown = _tailor_bullets(full_profile, jd_text, llm) if tailor else full_profile
         g_attempts, g_result = _fit_to_page(preamble, grown, sections, workdir,
-                                            jobname + "-full", max_shrink)
+                                            jobname + "-full", max_shrink, headings=headings)
         if (g_result and g_result.ok and g_result.pages == 1
                 and (g_result.fill_ratio or 0) > result.fill_ratio
                 and (g_result.fill_ratio or 0) <= MAX_FILL):
@@ -957,7 +989,7 @@ def assemble_cv(
             and result.fill_ratio < TARGET_FILL):
         best_fill = result.fill_ratio
         for step in LAYOUT_STEPS[1:]:
-            tex = render_cv(preamble, used, sections, probe=True, layout=step)
+            tex = render_cv(preamble, used, sections, probe=True, layout=step, headings=headings)
             r = compile_tex(tex, workdir, jobname=f"{jobname}-l{LAYOUT_STEPS.index(step)}")
             if not (r.ok and r.pages == 1 and r.overfull_count == 0
                     and r.fill_ratio is not None and r.fill_ratio <= MAX_FILL):
@@ -973,12 +1005,12 @@ def assemble_cv(
     # without this the chat reported the grown page's fill while the viewer showed the first,
     # small compile (seen 2026-10-07).
     if result and result.pdf_path and Path(result.pdf_path).stem != jobname:
-        result = compile_tex(render_cv(preamble, used, sections, probe=True, layout=layout),
+        result = compile_tex(render_cv(preamble, used, sections, probe=True, layout=layout, headings=headings),
                              workdir, jobname=jobname)
 
     # Ship without the probe: it has no layout effect, so the measurement above still
     # describes this render exactly (see _FILL_PROBE).
-    tex = render_cv(preamble, used, sections, layout=layout)
+    tex = render_cv(preamble, used, sections, layout=layout, headings=headings)
     cv_text = _rendered_cv_text(used, sections)
     # One model read of the ad gives the skill list the report is measured against; the curated
     # vocabulary stands in when there is no model (llm is None in a few offline callers).

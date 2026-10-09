@@ -73,3 +73,11 @@ def identity_fields(manifest: dict) -> list[str]:
     template actually has (e.g. the summary template has no blog slot, so it never asks)."""
     fields = manifest.get("identity_fields")
     return list(fields) if isinstance(fields, list) and fields else list(_DEFAULT_IDENTITY)
+
+
+def headings(manifest: dict) -> dict:
+    """Section headings this template renames (section key -> heading text). The body is the
+    same single column for every field; the heading is what makes it read as a research,
+    nursing, or consulting resume. Missing keys keep the renderer's default."""
+    h = manifest.get("headings")
+    return {str(k): str(v) for k, v in h.items() if str(v).strip()} if isinstance(h, dict) else {}

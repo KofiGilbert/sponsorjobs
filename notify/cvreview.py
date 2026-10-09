@@ -155,13 +155,17 @@ class CVReview:
             page = select_roles_for_jd(normalize_profile(data.get("render_profile") or {}), jd)
             base = {}
         sections = data.get("sections")
-        if not sections:
-            from intake.template_manifest import load_manifest
-            from intake.template_manifest import sections as _sections
-            sections = _sections(load_manifest(data.get("template") or None))
+        heads = data.get("headings")
+        from intake.template_manifest import headings as _headings
+        from intake.template_manifest import load_manifest
+        from intake.template_manifest import sections as _sections
+        if not sections or not isinstance(heads, dict):
+            man = load_manifest(data.get("template") or None)
+            sections = sections or _sections(man)
+            heads = heads if isinstance(heads, dict) else _headings(man)
         return {"rid": int(rid), "role": str(rec.get("jd_label") or rec.get("role") or ""),
                 "company": str(rec.get("company") or ""), "jd": jd, "data": data,
-                "doc": {"profile": page, "sections": list(sections)}, "base": base,
+                "doc": {"profile": page, "sections": list(sections), "headings": dict(heads)}, "base": base,
                 "template": str(data.get("template") or "")}
 
     def pdf_path(self, rid) -> Path:
@@ -560,7 +564,8 @@ class CVReview:
                 return (2, -pos)
             return (0 if e["op"] == "add_bullet" else 1, 0)
         struct_report = []
-        base_doc = {"profile": json.loads(json.dumps(ctx["base"] or {})), "sections": []}
+        base_doc = {"profile": json.loads(json.dumps(ctx["base"] or {})), "sections": [],
+                    "headings": dict(ctx["doc"].get("headings") or {})}
         for e in sorted(struct, key=rank):
             struct_report.append(cvdoc.describe_struct(e, cand))
             cand = cvdoc.apply_struct_edit(cand, e)
@@ -642,7 +647,7 @@ class CVReview:
         if isinstance(cached, int):
             return cached
         from tailoring.assembler import render_cv
-        res = self.compile_fn(render_cv(preamble, ctx["doc"]["profile"], ctx["doc"]["sections"],
+        res = self.compile_fn(render_cv(preamble, ctx["doc"]["profile"], ctx["doc"]["sections"], headings=ctx["doc"].get("headings"),
                                         probe=True), self.workdir, jobname=f"tgbase-{ctx['rid']}")
         n = int(getattr(res, "overfull_count", 0) or 0)
         self._merge(ctx["rid"], {"tg_baseline_overfull": n})
@@ -657,7 +662,7 @@ class CVReview:
         baseline = None
         reason = "That change would push your CV past one page, so I left it as it was. Try a shorter wording."
         for attempt in range(HEAL_TRIES + 1):
-            res = self.compile_fn(render_cv(preamble, cand["profile"], cand["sections"], probe=True),
+            res = self.compile_fn(render_cv(preamble, cand["profile"], cand["sections"], probe=True, headings=cand.get("headings")),
                                   self.workdir, jobname=f"tgedit-{ctx['rid']}")
             if not getattr(res, "ok", False):
                 if getattr(res, "pages", None) is None:

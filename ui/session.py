@@ -625,7 +625,7 @@ class WebIntake:
         # The selected template's interview config, slot schema + question bank the
         # LLM draws on to converse naturally (one template today; future picker passes
         # the name). Product config, kept out of the user's MemPalace memory.
-        from intake.template_manifest import (identity_fields, load_manifest,
+        from intake.template_manifest import (headings, identity_fields, load_manifest,
                                                required_sections, sections)
         self.manifest = load_manifest(template_name)
         self.template_name = template_name
@@ -635,6 +635,7 @@ class WebIntake:
         # before we can build to this template's standard (e.g. extracurricular+interests
         # for shetty; nothing extra for the summary-first template).
         self.sections = sections(self.manifest)
+        self.headings = headings(self.manifest)
         self.required_fill = required_sections(self.manifest)
         self.llm = llm
         self.memory = memory
@@ -2078,7 +2079,8 @@ class WebIntake:
             # 'do not mention X' never renders; the durable self.profile stays whole (restored below)
             self.assembled = assemble_cv(
                 self.template, self._render_profile(), self.jd, self.llm, self.workdir,
-                jobname=self.jobname, tailor=True, sections=self.sections)
+                jobname=self.jobname, tailor=True, sections=self.sections,
+                headings=self.headings)
             self.profile = self._whole_profile_after_render(self.assembled.profile_used)
             self._pdf_v += 1
             self.dirty = False
@@ -2751,7 +2753,7 @@ class WebIntake:
         # profile afterward. With no active constraints both are no-ops (behavior unchanged).
         self.assembled = assemble_cv(
             self.template, self._render_profile(), self.jd, self.llm, self.workdir,
-            jobname=self.jobname, tailor=False, sections=self.sections,
+            jobname=self.jobname, tailor=False, sections=self.sections, headings=self.headings,
         )
         self.profile = self._whole_profile_after_render(self.assembled.profile_used)
         self._pdf_v += 1
@@ -3039,6 +3041,7 @@ class WebIntake:
             "base_profile": getattr(self.assembled, "source_profile", None) or {},
             "template": self.template_name or "",
             "sections": list(self.sections or []),
+            "headings": dict(self.headings or {}),
         }
         # Records are named for the JOB APPLIED TO, never the CV's first role title:
         # four Amazon builds once all read "Founder (Side Project)" and the person
