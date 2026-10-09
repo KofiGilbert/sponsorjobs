@@ -128,9 +128,7 @@
     }
     localStorage.setItem(RAIL_KEY, on ? "1" : "0");
   }
-  setRail(localStorage.getItem(RAIL_KEY) === "1");   // stays how you left it
-  $("#railToggle")?.addEventListener("click",
-    () => setRail(!appEl.classList.contains("is-rail")));
+  setRail(true);   // the rail is the only sidebar now (2026-10-09); no toggle, no expanded state
 
   /* ---------------------------------------------------------------- views */
   function showView(name) {
@@ -2997,14 +2995,32 @@
      account to sign into (BYO key, local-only), this is just "who this CV is for". */
   function paintAccount(p) {
     const name = (((p || {}).identity || {}).name || "").trim();
-    const nameEl = $("#acctName"), avaEl = $("#acctAva");
+    const nameEl = $("#acctName");
     if (nameEl) nameEl.textContent = name || "Your profile";
-    if (avaEl) {
-      avaEl.textContent = name
-        ? name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join("")
-        : "·";
-    }
+    const mn = $("#acctMenuName"); if (mn) mn.textContent = name || "Your profile";
+    loadPhoto();
   }
+  // The profile picture lives in the data folder and never leaves the machine. A missing photo
+  // shows the silhouette placeholder; a cache-busting query makes a new upload show at once.
+  function loadPhoto() {
+    const img = $("#acctPhoto"); if (!img) return;
+    const probe = new Image();
+    probe.onload = () => { img.src = probe.src; img.hidden = false; };
+    probe.onerror = () => { img.hidden = true; img.removeAttribute("src"); };
+    probe.src = "/api/profile/photo?v=" + Date.now();
+  }
+  $("#menuPhoto")?.addEventListener("click", () => { closeAcctMenu(); $("#acctPhotoFile")?.click(); });
+  $("#acctPhotoFile")?.addEventListener("change", async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const res = await fetch("/api/profile/photo", { method: "POST", body: fd });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok || r.error) throw new Error(r.error || ("HTTP " + res.status));
+      loadPhoto(); toast("Photo updated.");
+    } catch (err) { toast(err.message || "Couldn't save that photo."); }
+    finally { e.target.value = ""; }
+  });
 
   async function loadProfile() {
     let p;

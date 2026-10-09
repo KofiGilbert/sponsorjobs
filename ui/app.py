@@ -3351,6 +3351,52 @@ def jobs_upskill():
     return jsonify({"plan": plan})
 
 
+# ---- Profile photo: one image in the data dir, shown at the bottom of the sidebar. Local only.
+_PHOTO = _DATA / "profile_photo"
+_PHOTO_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
+
+
+def _photo_path():
+    for ext in _PHOTO_TYPES.values():
+        p = _PHOTO.with_suffix(ext)
+        if p.exists():
+            return p
+    return None
+
+
+@app.get("/api/profile/photo")
+@_guard
+def profile_photo():
+    p = _photo_path()
+    if not p:
+        return ("", 404)
+    return _nostore(send_file(p, max_age=0))
+
+
+@app.post("/api/profile/photo")
+@_guard
+def profile_photo_set():
+    f = request.files.get("file")
+    if f is None or f.mimetype not in _PHOTO_TYPES:
+        return jsonify({"error": "Choose a PNG, JPEG, WebP or GIF image."}), 400
+    data = f.read(6 * 1024 * 1024 + 1)
+    if len(data) > 6 * 1024 * 1024:
+        return jsonify({"error": "That image is over 6 MB. Pick a smaller one."}), 400
+    for ext in _PHOTO_TYPES.values():
+        _PHOTO.with_suffix(ext).unlink(missing_ok=True)
+    _DATA.mkdir(parents=True, exist_ok=True)
+    _PHOTO.with_suffix(_PHOTO_TYPES[f.mimetype]).write_bytes(data)
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/profile/photo")
+@_guard
+def profile_photo_clear():
+    for ext in _PHOTO_TYPES.values():
+        _PHOTO.with_suffix(ext).unlink(missing_ok=True)
+    return jsonify({"ok": True})
+
+
 @app.get("/api/apikey")
 @_guard
 def apikey_status():
