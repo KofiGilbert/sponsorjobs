@@ -102,28 +102,31 @@
       </section>
 
       <!-- ============ SAVED CVS (folders, rename, drag to reorder) ============ -->
+      <!-- Laid out like Word's start screen (Kofi, 2026-10-09): no page title; a Templates row
+           with a blue "More templates" link; a borderless Search at the top right; then a
+           Recents tab over a Name / Last-opened table whose rows alternate dark and light grey. -->
       <section class="view view-cvs" id="view-cvs">
-        <header class="page-head">
-          <div>
-            <h1 class="page-title" data-i18n="cvs.title">Resumes</h1>
-          </div>
-        </header>
-        <section class="cvs-block">
+        <div class="cvs-topbar">
+          <label class="cvs-search-w">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <input class="cvs-search" id="cvsSearch" type="search" placeholder="Search" data-i18n-ph="cvs.search" aria-label="Search your resumes" />
+          </label>
+        </div>
+        <section class="cvs-block cvs-templates">
           <div class="cvs-sec-head">
-            <h2 class="cvs-h2" data-i18n="cvs.fromTemplate">Templates</h2>
-            <button class="link-btn" id="cvsMoreTpl" type="button" data-i18n="cvs.moreTemplates">More templates</button>
+            <h2 class="cvs-h2"><svg class="cvs-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="cvs.fromTemplate">Templates</span></h2>
+            <button class="cvs-link" id="cvsMoreTpl" type="button" data-i18n="cvs.moreTemplates">More templates</button>
           </div>
           <div class="cvs-tpl-strip" id="cvsTplStrip"><!-- template cards injected --></div>
         </section>
-        <section class="cvs-block">
-          <div class="cvs-sec-head cvs-tabs-row">
+        <section class="cvs-block cvs-recent">
+          <div class="cvs-tabs-row">
             <div class="cvs-tabs" role="tablist">
               <button class="cvs-tab is-active" type="button" role="tab" aria-selected="true">Recents</button>
             </div>
-            <input class="fld cvs-search" id="cvsSearch" type="search" placeholder="Search" data-i18n-ph="cvs.search" aria-label="Search your resumes" />
-            <button class="btn btn-ghost btn-sm" id="newFolderBtn" type="button">New folder</button>
+            <button class="cvs-link cvs-newfolder" id="newFolderBtn" type="button">New folder</button>
           </div>
-          <div class="cvs-table-head"><span>Name</span><span class="cvs-th-right">Last opened by you</span></div>
+          <div class="cvs-table-head"><span>Name</span><span class="cvs-th-right">Last opened by you <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
           <div id="cvManager"><!-- CV list injected --></div>
           <button class="link-btn cvs-more-cvs" id="cvsMoreCvs" type="button" hidden>More Resumes &rarr;</button>
         </section>

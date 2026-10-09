@@ -128,6 +128,7 @@
     }
     localStorage.setItem(RAIL_KEY, on ? "1" : "0");
   }
+  if (window.tailorShell) document.documentElement.classList.add("in-shell");
   setRail(true);   // the rail is the only sidebar now (2026-10-09); no toggle, no expanded state
 
   /* ---------------------------------------------------------------- views */

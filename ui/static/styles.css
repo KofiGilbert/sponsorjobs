@@ -28,6 +28,9 @@
   --bg: #131316;
   --surface: #17171b;
   --surface-2: #1c1c21;
+  --row-a: #232328;       /* Word-style list: the darker stripe */
+  --row-b: #19191d;       /* ...and the lighter one, alternating */
+  --link: #6ea8fe;        /* Word's blue link, used only where we copy Word */
   --sidebar: #0f0f11;
   --ink: #e7e7ea;        /* bright: headings + the line you must read */
   --ink-2: #b4b4bb;
@@ -85,6 +88,9 @@
   --bg: #f7f7f8;
   --surface: #ffffff;
   --surface-2: #f1f1f3;
+  --row-a: #e8e8ec;
+  --row-b: #f5f5f7;
+  --link: #1b5fd1;
   --sidebar: #f2f2f4;
   --ink: #18181b;
   --ink-2: #3f3f46;
@@ -1832,7 +1838,7 @@ body.panel-open .app {
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* ---------------- Saved CVs manager: folders, rename, drag ---------------- */
-.cvf { margin-bottom: 10px; }
+.cvf { margin-bottom: 0; }
 .cvf-head {
   display: flex; align-items: center; gap: 8px;
   padding: 10px 6px 8px; border-bottom: 1px solid var(--border);
@@ -2001,7 +2007,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* Alignment: cap the whole manager at the same 1040 band as the title, and let
    headings + grid fill it (the old .cv-grid centered itself, leaving headings
    stranded at full-width-left on wide monitors). */
-#cvManager { max-width: 1040px; margin: 0 auto; }
+#cvManager { max-width: none; margin: 0; }
 .cvf .cv-grid { max-width: none; margin: 0 0 4px; }
 
 /* Thumbnails: zoom into the top of the page so the NAME/header reads as a real
@@ -2784,3 +2790,51 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* In the rail, long labels use their short form ("Interview prep" -> "Interview"). */
 .app.is-rail .nav-label[data-rail] { font-size: 0; }
 .app.is-rail .nav-label[data-rail]::after { content: attr(data-rail); font-size: 11.5px; }
+
+
+/* ============================================================================
+   Resumes page, laid out like Word's start screen (Kofi, 2026-10-09).
+   ========================================================================== */
+.view-cvs { padding-top: 10px; }
+.cvs-block { max-width: 1320px; }
+.cvs-topbar { max-width: 1320px; margin: 0 auto 6px; display: flex; justify-content: flex-end; }
+.cvs-search-w { display: flex; align-items: center; gap: 8px; color: var(--muted); padding: 4px 6px; border-radius: var(--r-sm); }
+.cvs-search-w svg { width: 18px; height: 18px; flex: none; }
+.cvs-search-w:focus-within { color: var(--ink); background: var(--surface-2); }
+.cvs-search { width: 150px; max-width: none; height: 28px; border: 0; background: none; padding: 0; font: inherit; font-size: 15px; color: var(--ink); }
+.cvs-search:focus { outline: none; border: 0; box-shadow: none; }
+.cvs-search::placeholder { color: var(--muted); }
+.cvs-sec-head { align-items: center; margin-bottom: 16px; }
+.cvs-h2 { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 600; color: var(--ink-2); }
+.cvs-chev { width: 16px; height: 16px; color: var(--muted); }
+.cvs-link { background: none; border: 0; padding: 2px 4px; font: inherit; font-size: 15px; font-weight: 500; color: var(--link); cursor: pointer; border-radius: var(--r-xs); }
+.cvs-link:hover { text-decoration: underline; }
+.cvs-templates { padding-bottom: 22px; border-bottom: 1px solid var(--border); }
+.cvs-tpl-strip { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 24px 20px; }
+.cvs-tpl-name { font-size: 14px; color: var(--ink-2); }
+.cvs-tabs-row { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 12px; }
+.cvs-tab { padding: 8px 18px; border-radius: 8px; font-size: 17px; font-weight: 600; color: var(--ink-2); }
+.cvs-tab.is-active { background: var(--row-a); color: var(--ink); }
+.cvs-newfolder { font-size: 14px; color: var(--muted); }
+.cvs-newfolder:hover { color: var(--ink); text-decoration: none; }
+.cvs-table-head { margin-top: 0; padding: 10px 16px 10px 72px; border-bottom: 0; background: var(--row-b); font-size: 13.5px; font-weight: 600; color: var(--ink-2); }
+.cvs-th-right { display: inline-flex; align-items: center; gap: 6px; }
+.cvs-th-right svg { width: 14px; height: 14px; color: var(--muted); }
+/* The rows: dark grey, light grey, dark grey... each one a full-width band, like Word. */
+.cvf .cv-grid { gap: 0; }
+.cv-card.cv-row { padding: 12px 16px; border: 0; border-radius: 0; gap: 16px; min-height: 64px; }
+.cvf .cv-grid > .cv-row:nth-child(odd) { background: var(--row-a); }
+.cvf .cv-grid > .cv-row:nth-child(even) { background: var(--row-b); }
+.cv-card.cv-row:hover, .cv-card.cv-row:focus-visible { background: var(--surface-2); }
+.cv-row-ic { width: 40px; height: 40px; color: var(--ink-2); display: grid; place-items: center; }
+.cv-row-ic svg { width: 30px; height: 30px; }
+.cv-row-name { font-size: 15px; font-weight: 500; color: var(--ink); }
+.cv-row-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.cv-row-date { font-size: 14px; color: var(--ink-2); margin-right: 8px; }
+.cvs-empty { padding: 44px 12px; background: var(--row-a); }
+.cvs-more-cvs { margin-top: 14px; }
+
+/* Inside the desktop shell there is no title bar: the traffic lights float over the top of
+   the rail (Word does the same), so leave them room, and let that strip drag the window. */
+.in-shell .sidebar, .app.is-rail.in-shell .sidebar, .in-shell .app.is-rail .sidebar { position: relative; padding-top: 48px; }
+.in-shell .sidebar::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 44px; -webkit-app-region: drag; }

@@ -226,6 +226,12 @@ async function createWindow() {
     width: 1560,
     height: 980,
     fullscreen: startFullscreen,
+    // No grey title bar, like Word: the traffic lights float over the top of the rail and the
+    // page runs to the window's edge. In native full screen they hide altogether. The rail's
+    // top strip is marked draggable in CSS (`-webkit-app-region: drag`) so the window can
+    // still be moved when it is not full screen.
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 14, y: 16 },
     backgroundColor: "#111111",
     title: "SponsorJobs",
     webPreferences: {
