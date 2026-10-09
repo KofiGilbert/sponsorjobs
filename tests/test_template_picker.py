@@ -91,8 +91,8 @@ def _fill_tools():
 @requires_latex
 def test_previews_are_full_page_not_half(tmp_path, monkeypatch):
     """The user's hard rule: a CV must FILL the page. A preview whose content stops
-    halfway is a half-page CV — regression guard. Measures how far down the page 1 the
-    rendered content reaches; must be a nearly-full page for BOTH templates."""
+    halfway is a half-page CV, regression guard. Measures how far down page 1 the rendered
+    content reaches; must be a nearly-full page for EVERY template."""
     import subprocess
 
     import numpy as np
@@ -103,10 +103,17 @@ def test_previews_are_full_page_not_half(tmp_path, monkeypatch):
         import pytest
         pytest.skip("no pdftocairo/PIL/numpy to measure page fill")
     monkeypatch.setattr(app, "WORKDIR", tmp_path / "cv")
-    for name in ("shetty", "summary"):
+    # Every template in the library, not a sample of two (the half-empty pages Kofi found on
+    # 2026-10-09 were in templates this test did not look at).
+    names = [t["name"] for t in app._templates()]
+    assert len(names) >= 16
+    short = {}
+    for name in names:
         r = app.app.test_client().get(f"/api/templates/{name}/preview.pdf")
         assert r.status_code == 200
-        pdf = next((tmp_path / "cv").glob(f"preview-{name}-*.pdf"))
+        # The exact file the app serves. A glob also matched the layout trials the fit loop
+        # compiles under side names (-l3, -full), and measured one of those instead.
+        pdf = app._template_preview_pdf(name)
         png = tmp_path / f"{name}.png"
         subprocess.run([pdftocairo, "-png", "-singlefile", "-r", "150", "-f", "1", "-l", "1",
                         str(pdf), str(png.with_suffix(""))],
@@ -114,4 +121,6 @@ def test_previews_are_full_page_not_half(tmp_path, monkeypatch):
         im = np.asarray(Image.open(png).convert("L"))
         dark = np.where((im < 200).any(axis=1))[0]
         reaches = (dark.max() / im.shape[0]) if len(dark) else 0.0
-        assert reaches >= 0.88, f"{name} preview only fills {reaches:.2f} of the page (half page)"
+        if reaches < 0.88:
+            short[name] = round(reaches, 2)
+    assert not short, f"previews that stop short of the page bottom: {short}"
