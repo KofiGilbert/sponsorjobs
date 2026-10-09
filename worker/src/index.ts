@@ -13,10 +13,14 @@ import { allowRegistration, emailOf, identify, register } from "./accounts";
 import { complete } from "./anthropic";
 import { type Env, intVar } from "./env";
 import {
-  dayOf, isPass, modelFor, packagesLeft, passActive, periodOf, planFor, QuotaExceeded, requireLlm,
-  status, tierFor,
+  avatarSecondsLeft, dayOf, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft, passActive, periodOf,
+  planFor, QuotaExceeded, requireLlm, status, tierFor,
 } from "./metering";
-import { loadState, recordLlm, takeFreePackage, takePassPackage } from "./store";
+import {
+  avatarSessionOwner, consumeAvatar, loadState, markAvatarEnded, recordAvatarSession, recordLlm,
+  takeFreePackage, takePassPackage,
+} from "./store";
+import { createConversation, endConversation, transcript } from "./tavus";
 
 const json = (data: unknown, status = 200): Response =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
@@ -159,6 +163,76 @@ const llmPackage: Handler = async ({ req, env, now, nowMs }) => {
                 tier: tierFor(state, now) });
 };
 
+// ---- live interviews on the company Tavus key (ported from backend/broker.py) ---------------- //
+
+const avatarOff = () => json({ error: "live interviews are not configured" }, 503);
+
+/** Mint one private interview room. Only an interview that can FINISH starts: the pass remainder
+ * plus purchased credits must cover a full 15 minutes, so nobody is cut off midway. Tavus is also
+ * told to end the call at 15 minutes, a hard stop that does not depend on the app's heartbeats. */
+const avatarStart: Handler = async ({ req, env, now, nowMs }) => {
+  if (!env.TAVUS_API_KEY) return avatarOff();
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  const { state } = await loadState(env.DB, user, periodOf(nowMs), dayOf(nowMs));
+  const left = avatarSecondsLeft(state, now);
+  if (left < INTERVIEW_SECONDS) {
+    const active = passActive(state, now);
+    return json({
+      error: active ? "this pass's live interviews are used up; buy extra interviews or use your own Tavus key"
+                    : "live interviews come with a Job Hunt Pass or a Season Pass; or use your own Tavus key",
+      reason: active ? "no_interviews" : "pass_required", remaining: left,
+    }, 402);
+  }
+  const ctx = (await body(req)).context;
+  const c = ctx && typeof ctx === "object" ? (ctx as Record<string, unknown>) : {};
+  try {
+    const conv = await createConversation(env.TAVUS_API_KEY, {
+      faceId: env.TAVUS_FACE_ID, palId: env.TAVUS_PAL_ID,
+      context: String(c.prompt ?? "").slice(0, 20_000), greeting: String(c.greeting ?? "").slice(0, 600),
+      name: `SponsorJobs mock interview (${user})`, maxCallSeconds: INTERVIEW_SECONDS,
+    });
+    if (!conv.conversationId || !conv.url) throw new Error("tavus returned no room");
+    await recordAvatarSession(env.DB, conv.conversationId, user, now);
+    return json({ remaining: left, session_url: conv.url, token: conv.token,
+                  provider_session_id: conv.conversationId });
+  } catch (err) {
+    console.error("avatar start failed:", err instanceof Error ? err.message : err);
+    return json({ error: "the interview service is unavailable" }, 502);
+  }
+};
+
+/** The app pings with the seconds elapsed since its last ping; the balance is drawn down and the
+ * app is told to stop the moment it reaches zero (no overage). */
+const avatarHeartbeat: Handler = async ({ req, env, now }) => {
+  if (!env.TAVUS_API_KEY) return avatarOff();
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  let seconds: number;
+  try { seconds = Math.max(0, pyInt((await body(req)).seconds)); } catch { return json({ error: "bad seconds" }, 400); }
+  const remaining = await consumeAvatar(env.DB, user, Math.min(seconds, INTERVIEW_SECONDS), now);
+  return json({ remaining, stop: remaining <= 0 });
+};
+
+/** End the conversation and hand its transcript back to the app that started it, for scoring on
+ * the person's machine. Nothing is kept here. The transcript can lag the end by a few seconds, so
+ * an empty list means "ask again shortly", not "no interview". */
+const avatarEnd: Handler = async ({ req, env, now }) => {
+  if (!env.TAVUS_API_KEY) return avatarOff();
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  const id = String((await body(req)).conversation_id ?? "").trim();
+  if (!id || (await avatarSessionOwner(env.DB, id)) !== user) return json({ error: "not found" }, 404);
+  try { await endConversation(env.TAVUS_API_KEY, id); } catch { /* already over: still read it */ }
+  await markAvatarEnded(env.DB, id, now);
+  try {
+    return json({ transcript: await transcript(env.TAVUS_API_KEY, id) });
+  } catch (err) {
+    console.error("avatar transcript failed:", err instanceof Error ? err.message : err);
+    return json({ transcript: [] });
+  }
+};
+
 // ---- phase 2: answered as the Python broker answers when the feature is not configured -------- //
 
 const off = (error: string, status = 503): Handler => () => json({ error }, status);
@@ -199,7 +273,9 @@ const ROUTES: Route[] = [
   ["POST", /^\/billing\/(plan|credits)$/, off("not available", 403)],
   ["POST", /^\/account\/(signup|login|claim)$/, off("email accounts are not configured")],
   ["GET", /^\/account\/google\/(start|callback)$/, off("google sign-in is not configured")],
-  ["POST", /^\/avatar\/(session\/start|heartbeat)$/, off("live interviews are not configured")],
+  ["POST", /^\/avatar\/session\/start$/, avatarStart],
+  ["POST", /^\/avatar\/heartbeat$/, avatarHeartbeat],
+  ["POST", /^\/avatar\/session\/end$/, avatarEnd],
   ["GET", /^\/notify\/telegram\/(status|inbox)$/, off("telegram_not_configured")],
   ["POST", /^\/notify\/telegram\/(link|unlink|send|send_media|edit)$/, off("telegram_not_configured")],
   ["POST", /^\/telegram\/webhook$/, off("telegram_not_configured")],

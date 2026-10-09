@@ -65,7 +65,7 @@
   "tavus.save": "Save",
   "tavus.revoke": "Remove key",
   "tavus.cancel": "Cancel",
-  "tavus.hint": "Get a free key at platform.tavus.io: 25 minutes a month, no card. The key stays on this computer.",
+  "tavus.hint": "Create a key at platform.tavus.io (it has a free tier). The key stays on this computer.",
   "prep.needRole": "Type the role you're interviewing for.",
   "prep.needJd": "Paste the job description so we can build the interview.",
   "prep.pickRole": "Pick a role.",
@@ -178,7 +178,7 @@
   "r1.coachNote": "Built from your real profile. Use it as a model, then say it in your own words.",
   "r1.refreshStronger": "Refresh stronger version",
   "r2.title": "Round 2, live interview",
-  "r2.step1": "Create a free account at platform.tavus.io. The free tier gives 25 minutes a month, no card.",
+  "r2.step1": "Create an account at platform.tavus.io. It has a free tier; check its minutes and call length there.",
   "r2.step2": "Create an API key there and copy it.",
   "r2.step3": "Paste it in Settings, under Live interviewer (Tavus).",
   "r2.gateH": "Round 2 needs a live interviewer",
@@ -293,5 +293,8 @@
   "upg.thanks": "Thank you. Your pass is active as soon as the payment clears.",
   "upg.canceled": "Checkout canceled. Nothing was charged.",
   "r2.passOffer": "Or get a pass: live interviews on our interviewer, paid once, no auto-renew.",
-  "r2.seePasses": "See passes"
+  "r2.seePasses": "See passes",
+  "r2.passH": "Live interviews come with a pass",
+  "r2.passD": "Fifteen minutes with a live interviewer who asks, listens and follows up, then a scored report. A Job Hunt Pass includes 3 live interviews, a Season Pass 9. Paid once, no auto-renew.",
+  "r2.haveKey": "Already have a Tavus key? Add it in Settings."
 }

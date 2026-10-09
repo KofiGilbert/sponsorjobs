@@ -10,6 +10,11 @@ export interface Env {
   // "1" lets an X-Tailor-User header stand in for a bearer token. Local dev only: in production
   // anyone could type any user id into that header and spend someone else's plan.
   DEV_HEADER_AUTH?: string;
+  // Live interviews on the company Tavus account. The key is a secret (`wrangler secret put
+  // TAVUS_API_KEY`); without it the avatar routes answer "not configured", as before.
+  TAVUS_API_KEY?: string;
+  TAVUS_FACE_ID?: string;   // the interviewer's face; defaults to the stock one the app uses
+  TAVUS_PAL_ID?: string;    // optional: a PAL created once on the company account
 }
 
 /** A numeric var with a fallback, so a missing or mistyped value never turns into NaN limits. */

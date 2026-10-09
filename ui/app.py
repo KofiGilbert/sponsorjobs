@@ -6124,7 +6124,10 @@ def interviews_cvi_start():
     role = prep.get("role", "")
     source = status["source"]
     if source == "plan":
-        st, data = _broker_post("/avatar/session/start", {"context": {"prompt": briefing}})
+        # The company account has no PAL of ours, so the interviewer's standing instructions ride
+        # in the context with the briefing, and the opening line goes as the custom greeting.
+        st, data = _broker_post("/avatar/session/start", {"context": {
+            "prompt": f"{_PAL_SYSTEM_PROMPT}\n\n{briefing}", "greeting": _PAL_GREETING}})
         if st == 402 and status.get("key_set"):
             source = "own_key"               # the plan ran out between status and start: own key
         elif st == 0:
@@ -6288,6 +6291,17 @@ def interviews_cvi_end():
             except Exception:
                 turns = []
             if turns:
+                break
+            if attempt < 2 and _TRANSCRIPT_WAIT_S:
+                time.sleep(_TRANSCRIPT_WAIT_S)
+    if iv.get("source") == "plan" and cid:
+        # Plan path: the company key lives on the broker, which ends the conversation and hands
+        # the transcript straight back (it keeps nothing). It can lag the end by a few seconds.
+        for attempt in range(3):
+            st, data = _broker_post("/avatar/session/end", {"conversation_id": cid})
+            turns = [t for t in ((data or {}).get("transcript") or []) if isinstance(t, dict)] \
+                if st == 200 else []
+            if turns or st not in (200,):
                 break
             if attempt < 2 and _TRANSCRIPT_WAIT_S:
                 time.sleep(_TRANSCRIPT_WAIT_S)

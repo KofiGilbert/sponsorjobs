@@ -85,3 +85,39 @@ export async function setPass(db: D1Database, user: string, name: string, until:
 export async function addLlmTokens(db: D1Database, user: string, period: string, tokens: number): Promise<void> {
   await recordLlm(db, user, period, tokens, null);
 }
+
+/** Deduct up to `seconds` of live-interview time, the active pass first, then purchased credits,
+ * never below zero, and return the seconds LEFT afterwards. One statement: in an UPDATE every SET
+ * expression reads the row's OLD values, so the pass share and the credit share come from the same
+ * snapshot, atomically, even if two heartbeats land on different isolates at once. */
+export async function consumeAvatar(db: D1Database, user: string, seconds: number,
+                                    now: number): Promise<number> {
+  const take = Math.max(0, Math.floor(seconds));
+  const fromPass = "(CASE WHEN pass_until > ?2 THEN MIN(?1, MAX(pass_seconds, 0)) ELSE 0 END)";
+  const row = await db.prepare(
+    `UPDATE users SET
+       pass_seconds = pass_seconds - ${fromPass},
+       credit_seconds = credit_seconds - MIN(?1 - ${fromPass}, MAX(credit_seconds, 0))
+     WHERE user = ?3
+     RETURNING pass_seconds, credit_seconds, pass_until`,
+  ).bind(take, now, user).first<{ pass_seconds: number; credit_seconds: number; pass_until: number }>();
+  if (!row) return 0;                                  // no account row: no balance at all
+  return (row.pass_until > now ? Math.max(0, row.pass_seconds) : 0) + Math.max(0, row.credit_seconds);
+}
+
+/** Remember which account started a conversation, so only that account can end it and read it. */
+export async function recordAvatarSession(db: D1Database, id: string, user: string, now: number) {
+  await db.prepare("INSERT OR REPLACE INTO avatar_sessions(conversation_id, user, started) VALUES(?, ?, ?)")
+    .bind(id, user, now).run();
+}
+
+export async function avatarSessionOwner(db: D1Database, id: string): Promise<string | null> {
+  const r = await db.prepare("SELECT user FROM avatar_sessions WHERE conversation_id = ?").bind(id)
+    .first<{ user: string }>();
+  return r?.user ?? null;
+}
+
+export async function markAvatarEnded(db: D1Database, id: string, now: number) {
+  await db.prepare("UPDATE avatar_sessions SET ended = ? WHERE conversation_id = ? AND ended = 0")
+    .bind(now, id).run();
+}

@@ -4347,8 +4347,22 @@
         <p class="r2-gate-d" id="r2BuyMsg" hidden></p>
       </div></div>`;
     }
+    // Official edition: live interviews come with a pass, on our interviewer. No key homework up
+    // front; a person who already has a Tavus key can still add it in Settings (a quiet link).
+    if (MANAGED_AI) {
+      return `<div class="${mode === "inline" ? "scr-unlock r2-gate-inline" : "scr-intro r2-gate"}">
+      <div class="r2-gate-main">
+        <h3 class="r2-gate-h">${esc(T("r2.passH", "Live interviews come with a pass"))}</h3>
+        <p class="r2-gate-d">${esc(T("r2.passD", "Fifteen minutes with a live interviewer who asks, listens and follows up, then a scored report. A Job Hunt Pass includes 3 live interviews, a Season Pass 9. Paid once, no auto-renew."))}</p>
+        <div class="scr-welcome-acts">
+          <button class="btn btn-primary btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>
+          <button class="btn btn-ghost btn-sm" id="r2Finish" type="button">${esc(T("r2.finishHere", "Finish here"))}</button>
+        </div>
+        <p class="r2-gate-d r2-gate-own"><button class="link-btn" id="r2OpenSettings" type="button">${esc(T("r2.haveKey", "Already have a Tavus key? Add it in Settings."))}</button></p>
+      </div></div>`;
+    }
     const steps = `<ol class="r2-steps">
-        <li>${esc(T("r2.step1", "Create a free account at platform.tavus.io. The free tier gives 25 minutes a month, no card."))}</li>
+        <li>${esc(T("r2.step1", "Create an account at platform.tavus.io. It has a free tier; check its minutes and call length there."))}</li>
         <li>${esc(T("r2.step2", "Create an API key there and copy it."))}</li>
         <li>${esc(T("r2.step3", "Paste it in Settings, under Live interviewer (Tavus)."))}</li>
       </ol>`;

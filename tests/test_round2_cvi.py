@@ -318,6 +318,40 @@ def test_cvi_end_on_the_plan_path_scores_a_client_transcript_list(client, monkey
     assert rep["answers"] == [] and "too little" in rep["why"].lower()
 
 
+def test_cvi_end_on_the_plan_path_gets_the_transcript_from_the_broker(client, monkeypatch):
+    """A paid interview runs on the company key, which only the broker holds: the broker ends the
+    conversation and hands the transcript back, so a pass holder gets a scored report without
+    pasting anything (2026-10-09)."""
+    A, c = client
+    prep = _prep(c)
+    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass30", "avatar_seconds_left": 2700}))
+    calls = []
+
+    def post(path, body):
+        calls.append((path, body))
+        if path == "/avatar/session/start":
+            return 200, {"session_url": "https://tavus/join?t=x", "provider_session_id": "c9"}
+        if path == "/avatar/session/end":
+            # the transcript lags the end: empty on the first ask, there on the second
+            n = sum(1 for p, _ in calls if p == "/avatar/session/end")
+            return 200, {"transcript": [] if n == 1 else [
+                {"role": "interviewer", "content": "Why do you want this role?"},
+                {"role": "candidate", "content": _GOOD},
+                {"role": "interviewer", "content": "Tell me about a time you took ownership."},
+                {"role": "candidate", "content": _GOOD}]}
+        return 404, None
+    monkeypatch.setattr(A, "_broker_post", post)
+    iid = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).get_json()["interview_id"]
+    start_body = calls[0][1]["context"]
+    assert A._PAL_SYSTEM_PROMPT[:40] in start_body["prompt"] and "Data Analyst" in start_body["prompt"]
+    assert start_body["greeting"] == A._PAL_GREETING
+    r = c.post("/api/interviews/cvi/end", json={"interview_id": iid})
+    assert r.status_code == 200, r.get_json()
+    assert [p for p, _ in calls].count("/avatar/session/end") == 2
+    assert calls[-1][1] == {"conversation_id": "c9"}
+    assert len(r.get_json()["report"]["answers"]) == 2
+
+
 def test_dialogue_pairing_and_competency_tagging_are_pure():
     import ui.app as A
     plan = [{"q": "Tell me about a time you delivered a result relevant to Data Analyst.", "competency": "Ownership"}]
