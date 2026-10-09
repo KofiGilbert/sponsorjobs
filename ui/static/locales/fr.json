@@ -291,5 +291,10 @@
   "upg.thanks": "Merci. Votre pass est actif dès que le paiement est validé.",
   "upg.canceled": "Paiement annulé. Rien n'a été facturé.",
   "r2.passOffer": "Ou prenez un pass : des entretiens en direct avec notre recruteur, un seul paiement, sans renouvellement automatique.",
-  "r2.seePasses": "Voir les pass"
+  "r2.seePasses": "Voir les pass",
+  "r2.step1": "Crée un compte sur platform.tavus.io. Il existe une offre gratuite ; vérifie-y les minutes et la durée des appels.",
+  "tavus.hint": "Crée une clé sur platform.tavus.io (il existe une offre gratuite). La clé reste sur cet ordinateur.",
+  "r2.passH": "Les entretiens en direct sont inclus dans un pass",
+  "r2.passD": "Quinze minutes avec un recruteur en direct qui pose des questions, écoute et relance, puis un rapport noté. Le Job Hunt Pass inclut 3 entretiens en direct, le Season Pass 9. Paiement unique, sans renouvellement automatique.",
+  "r2.haveKey": "Tu as déjà une clé Tavus ? Ajoute-la dans les Réglages."
 }

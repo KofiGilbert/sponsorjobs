@@ -291,5 +291,10 @@
   "upg.thanks": "Obrigado. Seu passe fica ativo assim que o pagamento for confirmado.",
   "upg.canceled": "Pagamento cancelado. Nada foi cobrado.",
   "r2.passOffer": "Ou obtenha um passe: entrevistas ao vivo com nosso entrevistador, pagamento único, sem renovação automática.",
-  "r2.seePasses": "Ver passes"
+  "r2.seePasses": "Ver passes",
+  "r2.step1": "Crie uma conta em platform.tavus.io. Há um plano gratuito; confira lá os minutos e a duração das chamadas.",
+  "tavus.hint": "Crie uma chave em platform.tavus.io (há um plano gratuito). A chave fica neste computador.",
+  "r2.passH": "Entrevistas ao vivo vêm com um passe",
+  "r2.passD": "Quinze minutos com um entrevistador ao vivo que pergunta, escuta e aprofunda, e depois um relatório com nota. O Job Hunt Pass inclui 3 entrevistas ao vivo e o Season Pass 9. Pagamento único, sem renovação automática.",
+  "r2.haveKey": "Já tem uma chave da Tavus? Adicione-a nas Configurações."
 }
