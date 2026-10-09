@@ -38,7 +38,8 @@ if [ "$PORT" = "57000" ] && [ -d "$APP" ]; then
   # `open` right after a quit can be swallowed while macOS tears the old instance down, so wait
   # until no app process is left, then launch the binary directly (detached).
   for i in $(seq 1 20); do pgrep -f "SponsorJobs.app/Contents/MacOS/SponsorJobs" >/dev/null || break; sleep 0.5; done
-  nohup "$APP/Contents/MacOS/SponsorJobs" >/dev/null 2>&1 &
+  sleep 2
+  open -a "SponsorJobs" || echo "Could not open the app; open SponsorJobs from Applications."
   echo "SponsorJobs is opening on the newest code."
 else
   open "http://127.0.0.1:$PORT"; echo "Test copy running at http://127.0.0.1:$PORT"
