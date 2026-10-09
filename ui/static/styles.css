@@ -2757,3 +2757,12 @@ body.cv-dragging * { cursor: grabbing !important; }
 .fd-adnote-no { border-left-color: var(--flag); }
 .tc-chips .vbadge.vb-more { color: var(--muted); background: var(--surface-2); cursor: help; }
 .fr-tag.fr-tag-more, .tc-tags .fr-tag.fr-tag-more { color: var(--muted); cursor: help; }
+/* With the side pane open the main column can drop under ~520px. The card then stacks its
+   facts row under the chips instead of squeezing the title to one word per line. */
+@media (max-width: 1100px) {
+  .today-list .feed-row { padding: 14px 16px; }
+  .tc-head .fr-logo { width: 48px; height: 48px; }
+  .tc-title { font-size: 15px; }
+  .tc-foot { flex-wrap: wrap; }
+  .tc-head .fr-fresh, .tc-fresh { font-size: 12px; }
+}
