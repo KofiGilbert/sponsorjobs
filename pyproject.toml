@@ -38,7 +38,8 @@ billing = ["stripe>=15.0"]
 # app runs the engine on Flask's dev server locally. Install with .[llm,billing,serve].
 serve = ["gunicorn>=21.0"]
 dev = ["pytest>=8.0", "reportlab>=4.0",   # reportlab: generate sample PDFs in tests only
-       "curl_cffi>=0.7"]                   # scripts/build_perm_bundle.py only (browser-TLS download of the public DOL file); never shipped
+       "curl_cffi>=0.7",                   # scripts/build_perm_bundle.py only (browser-TLS download of the public DOL file); never shipped
+       "pillow>=10.0", "numpy>=1.26"]      # measure that every template preview fills its page (tests only)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
