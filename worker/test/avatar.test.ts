@@ -57,7 +57,7 @@ describe("live interviews", () => {
     expect(sent[0]!.url).toBe("https://tavusapi.com/v2/conversations");
     expect(sent[0]!.headers["x-api-key"]).toBe("tvs-test-not-real");
     expect(sent[0]!.body.require_auth).toBe(true);
-    expect(sent[0]!.body.properties.max_call_duration).toBe(INTERVIEW_SECONDS);
+    expect(sent[0]!.body.properties.max_call_duration).toBe(960);           // safety net one minute past 15:00
     expect(sent[0]!.body.conversational_context).toBe("Interview for Data Analyst");
     expect(sent[0]!.body.custom_greeting).toBe("Hi there");
     expect(sent[0]!.body.face_id).toBeTruthy();
@@ -69,10 +69,10 @@ describe("live interviews", () => {
     await givePass(id);
     const beat = (seconds: number) => call("/avatar/heartbeat", { token, body: { seconds }, env: TAVUS });
     let r = await beat(60);
-    expect(r.data).toEqual({ remaining: 3 * INTERVIEW_SECONDS - 60, stop: false });
+    expect(r.data).toEqual({ remaining: 3 * INTERVIEW_SECONDS - 60, stop: false, charged: 60 });
     await env.DB.prepare("UPDATE users SET pass_seconds = 30 WHERE user = ?").bind(id).run();
     r = await beat(45);
-    expect(r.data).toEqual({ remaining: 0, stop: true });
+    expect(r.data).toEqual({ remaining: 0, stop: true, charged: 45 });
     const row = await env.DB.prepare("SELECT pass_seconds, credit_seconds FROM users WHERE user = ?").bind(id).first();
     expect(row).toEqual({ pass_seconds: 0, credit_seconds: 0 });
     expect((await beat(-5)).data.remaining).toBe(0);
@@ -109,6 +109,23 @@ describe("live interviews", () => {
     expect(r.data.transcript.map((t: any) => [t.role, t.content])).toEqual([
       ["interviewer", "Tell me about yourself."], ["candidate", "I build dashboards."]]);
     expect(sent.some(s => s.url.endsWith("/conversations/c_123/end"))).toBe(true);
+  });
+
+  it("one interview never charges more than 15 minutes, however long the wrap-up runs", async () => {
+    stubTavus(room);
+    const { id, token } = await newAccount();
+    await givePass(id);
+    await call("/avatar/session/start", { token, body: {}, env: TAVUS });
+    const beat = (seconds: number) =>
+      call("/avatar/heartbeat", { token, body: { seconds, conversation_id: "c_123" }, env: TAVUS });
+    for (let i = 0; i < 29; i++) await beat(30);                     // 14:30 of interview
+    let r = await beat(30);                                          // 15:00
+    expect(r.data).toMatchObject({ remaining: 2 * INTERVIEW_SECONDS, charged: 30, stop: false });
+    r = await beat(30);                                              // 15:30: the wrap-up is free
+    expect(r.data).toMatchObject({ remaining: 2 * INTERVIEW_SECONDS, charged: 0, stop: false });
+    const other = await newAccount();
+    expect((await call("/avatar/heartbeat",
+      { token: other.token, body: { seconds: 30, conversation_id: "c_123" }, env: TAVUS })).status).toBe(404);
   });
 
   it("a Tavus failure is a clean 502 that says nothing about the key", async () => {

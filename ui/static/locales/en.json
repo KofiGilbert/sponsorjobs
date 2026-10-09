@@ -296,5 +296,8 @@
   "r2.seePasses": "See passes",
   "r2.passH": "Live interviews come with a pass",
   "r2.passD": "Fifteen minutes with a live interviewer who asks, listens and follows up, then a scored report. A Job Hunt Pass includes 3 live interviews, a Season Pass 9. Paid once, no auto-renew.",
-  "r2.haveKey": "Already have a Tavus key? Add it in Settings."
+  "r2.haveKey": "Already have a Tavus key? Add it in Settings.",
+  "r2.keepsTime": "Your interviewer keeps the time, like a real one",
+  "r2.wrappingUp": "Wrapping up",
+  "r2.cantJoin": "Couldn't join the interview room. Check your connection and try again."
 }

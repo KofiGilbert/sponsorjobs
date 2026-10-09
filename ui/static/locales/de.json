@@ -296,5 +296,8 @@
   "tavus.hint": "Erstelle einen Schlüssel auf platform.tavus.io (es gibt einen kostenlosen Tarif). Der Schlüssel bleibt auf diesem Computer.",
   "r2.passH": "Live-Interviews gibt es mit einem Pass",
   "r2.passD": "Fünfzehn Minuten mit einem Live-Interviewer, der fragt, zuhört und nachhakt, danach ein bewerteter Bericht. Ein Job Hunt Pass enthält 3 Live-Interviews, ein Season Pass 9. Einmal bezahlt, keine automatische Verlängerung.",
-  "r2.haveKey": "Du hast schon einen Tavus-Schlüssel? Füge ihn in den Einstellungen hinzu."
+  "r2.haveKey": "Du hast schon einen Tavus-Schlüssel? Füge ihn in den Einstellungen hinzu.",
+  "r2.keepsTime": "Dein Interviewer achtet auf die Zeit, wie ein echter",
+  "r2.wrappingUp": "Abschluss",
+  "r2.cantJoin": "Der Interviewraum konnte nicht betreten werden. Prüfe deine Verbindung und versuche es erneut."
 }

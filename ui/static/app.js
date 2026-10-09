@@ -4462,40 +4462,77 @@
     R2 = data;
     renderCviStage(data);
   }
+  // ---- The live call, in our own page, with a timekeeper (Kofi, 2026-10-09) -------------------
+  // A real interviewer with a day of candidates keeps time: they let an answer run its course,
+  // then thank the person and move on, and they close on time. The AI interviewer cannot see a
+  // clock, so this page is its watch. The call runs in Daily's frame inside our page (not Tavus's
+  // own page in the side pane), which lets us hear who is speaking and pass TIME NOTES to the
+  // interviewer over the call's data channel (Tavus Interactions Protocol). Nobody is cut off
+  // mid-sentence by a timer: at the answer budget the interviewer moves on at the next pause, and
+  // only if no pause comes does it step in politely, the way a person would.
+  let CVI_CALL = null, CVI_TK = null;
+  function cviSend(eventType, props) {
+    if (!CVI_CALL || !R2) return;
+    try {
+      CVI_CALL.sendAppMessage({ message_type: "conversation", event_type: eventType,
+                                conversation_id: R2.conversation_id, properties: props || {} }, "*");
+    } catch (e) { /* the call may be closing */ }
+  }
+  const cviNote = (text) => cviSend("conversation.append_llm_context", { context: `TIME NOTE: ${text}` });
+  const cviSay = (text) => cviSend("conversation.respond", { text: `TIME NOTE: ${text}` });
+
+  // The timekeeper itself lives in timekeeper.js (pure, tested with a simulated clock).
+  const startTimekeeper = (t) => window.SJTimekeeper.create(t, {
+    note: cviNote, say: cviSay, end: () => endCvi(), now: () => Date.now(),
+    later: (fn, ms) => setTimeout(fn, ms) });
+
   function renderCviStage(s) {
-    const total = Math.max(1, Number(s.max_minutes || 15)) * 60;
+    const t = s.timing || { total: 900, answer_nudge: 150, answer_step_in: 195, pause_wait: 15,
+                            last_question: 780, candidate_questions: 840, close_wait: 20, hard_end: 945 };
     stopLiveStream();   // Tavus runs its own camera/mic; free the green-room preview stream
     $("#liveStage").innerHTML =
       `<div class="zoom-cvi">
         <div class="zoom-topbar">
           <span class="zoom-title">${esc(T("r2.title", "Round 2, live interview"))}</span>
           <span class="zoom-live"><i></i> LIVE</span>
-          <span class="zoom-meta">${esc(T("r2.onScreen", "Your interviewer is on screen"))}</span>
+          <span class="zoom-meta">${esc(T("r2.keepsTime", "Your interviewer keeps the time, like a real one"))}</span>
         </div>
-        <p class="zoom-cvi-note">${esc(T("r2.speak", "Speak naturally. They will ask and follow up just like a real interview."))}</p>
+        <div class="cvi-frame" id="cviFrame"></div>
         <div class="zoom-controls zoom-cvi-controls">
-          <span class="zoom-mins">${esc(T("r2.timeLeft", "Time left"))}: <b id="cviMins">${fmtClock(total)}</b></span>
+          <span class="zoom-mins" id="cviClockWrap">${esc(T("r2.timeLeft", "Time left"))}: <b id="cviMins">${fmtClock(t.total)}</b></span>
           <button class="zoom-ctrl zoom-leave" id="cviEnd" type="button">${esc(T("r2.end", "End interview"))}</button>
         </div>
       </div>`;
     $("#cviEnd")?.addEventListener("click", () => endCvi());
-    if (window.tailorShell) {
-      window.tailorShell.openBrowser(s.join_url);          // the interviewer opens in the app's video pane
-      // Give the interviewer a large stage: widen the panel for the call, restore it on end. A big
-      // value is clamped by the panel's own max-width, so this just means "as wide as the layout allows".
-      CVI_PREV_W = getComputedStyle(document.documentElement).getPropertyValue("--panel-w").trim();
-      document.documentElement.style.setProperty("--panel-w", "9999px");
-      window.dispatchEvent(new Event("resize"));          // the panel clamps and re-measures its slot
+    const box = $("#cviFrame");
+    if (window.Daily && box) {
+      CVI_CALL = window.Daily.createFrame(box, {
+        showLeaveButton: false, showFullscreenButton: true,
+        iframeStyle: { width: "100%", height: "100%", border: "0", borderRadius: "10px" },
+      });
+      CVI_TK = startTimekeeper(t);
+      CVI_CALL.on("app-message", (e) => { if (CVI_TK) CVI_TK.onEvent(e && e.data); });
+      CVI_CALL.on("left-meeting", () => { if (R2) endCvi(); });
+      CVI_CALL.join({ url: s.join_url }).catch(() => {
+        toast(T("r2.cantJoin", "Couldn't join the interview room. Check your connection and try again."));
+      });
+    } else if (window.tailorShell) {
+      window.tailorShell.openBrowser(s.join_url);          // fallback: the old side-pane call, no timekeeper
     } else {
-      window.open(s.join_url, "_blank");                   // browser dev: open in a new tab
-      toast(T("r2.openedTab", "Your live interview opened in a new tab."));
+      window.open(s.join_url, "_blank");
     }
-    let left = total; CVI_UNBILLED = 0;
+    CVI_UNBILLED = 0;
+    const t0 = Date.now();
     CVI_CLOCK = setInterval(() => {
-      left--;
-      const el = $("#cviMins"); if (el) el.textContent = fmtClock(Math.max(0, left));
-      if (left <= 0) { endCvi(); return; }
-      // On the plan, report time used every 30 s so the broker meters it; it says when to stop.
+      const now = CVI_TK ? CVI_TK.tick() : (Date.now() - t0) / 1000;
+      const left = Math.max(0, Math.round(t.total - now));
+      const wrap = $("#cviClockWrap");
+      if (wrap) wrap.innerHTML = left > 0
+        ? `${esc(T("r2.timeLeft", "Time left"))}: <b id="cviMins">${fmtClock(left)}</b>`
+        : `<b>${esc(T("r2.wrappingUp", "Wrapping up"))}</b>`;
+      if (!CVI_TK && now >= t.hard_end) { endCvi(); return; }
+      // On the plan, report time used every 30 s so the broker meters it (capped at 15 minutes
+      // per interview there, so the wrap-up is never charged).
       if (s.source === "plan" && ++CVI_UNBILLED >= 30) {
         const secs = CVI_UNBILLED; CVI_UNBILLED = 0;
         fetch("/api/interviews/cvi/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -4506,8 +4543,10 @@
   }
   function teardownCvi() {                                 // idempotent: safe to call from any exit path
     if (CVI_CLOCK) { clearInterval(CVI_CLOCK); CVI_CLOCK = null; }
+    CVI_TK = null;
+    if (CVI_CALL) { const c = CVI_CALL; CVI_CALL = null; c.leave().catch(() => {}).finally(() => { try { c.destroy(); } catch (e) {} }); }
     if (window.tailorShell) window.tailorShell.closeBrowser();
-    if (CVI_PREV_W) {                                      // restore the panel width the call widened
+    if (CVI_PREV_W) {                                      // restore the panel width an old-style call widened
       document.documentElement.style.setProperty("--panel-w", CVI_PREV_W);
       CVI_PREV_W = "";
       window.dispatchEvent(new Event("resize"));

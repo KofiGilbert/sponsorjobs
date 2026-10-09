@@ -5609,6 +5609,23 @@ def screens_delete(sid):
 _INTERVIEWS_FILE = _DATA / "interviews.json"
 SIMULATION_DISCLAIMER = "This is a practice simulation, not a real interview or hiring decision."
 ROUND2_MAX_MINUTES = 15
+# The interviewer wraps up at 15:00 and never cuts someone off mid-answer; Tavus's own hard stop
+# sits a minute later, only as a safety net for a call left running by mistake.
+ROUND2_SAFETY_SECONDS = 960
+
+
+def _cvi_timing() -> dict:
+    """When the app's timekeeper passes notes to the interviewer (seconds). TAILOR_CVI_TEST_SCALE
+    (e.g. 0.3) shrinks every mark so a short test call, such as Tavus's 5-minute free tier,
+    walks through the whole pattern: a nudge, a step-in, the last question and the close."""
+    try:
+        k = float(os.environ.get("TAILOR_CVI_TEST_SCALE") or 1)
+    except ValueError:
+        k = 1.0
+    k = min(1.0, max(0.1, k))
+    base = {"total": 900, "answer_nudge": 150, "answer_step_in": 195, "pause_wait": 15,
+            "last_question": 780, "candidate_questions": 840, "close_wait": 20, "hard_end": 930}
+    return {name: max(5, int(v * k)) for name, v in base.items()}
 # Test seam for the direct Tavus path: a (method, url, headers, body) -> (status, json) transport.
 # None = the real HTTPS transport in backend.tavus_client.
 _TAVUS_HTTP = None
@@ -5981,15 +5998,25 @@ _PAL_SYSTEM_PROMPT = (
     "You are a professional hiring manager running a 15-minute live mock job interview. The "
     "conversational context you receive names the company, the role, the job description, the "
     "candidate's resume and the questions to cover; stay in that character throughout.\n"
-    "Structure: (1) introduce yourself in two sentences and ask the candidate to introduce "
-    "themselves; (2) ask 4 to 6 questions, ONE AT A TIME, waiting for the full answer, and probe "
-    "each with one or two short follow-ups (what was your part, what was the result, what would "
-    "you do differently); (3) around minute 12 ask whether they have questions for you and answer "
-    "briefly from the job description; (4) close warmly and say they will hear back.\n"
+    "You keep the time, like a real interviewer with a full day of candidates. Structure: "
+    "(1) introduce yourself in one or two sentences, say the interview is 15 minutes, and ask the "
+    "candidate to introduce themselves briefly; (2) ask exactly 4 main questions, ONE AT A TIME, "
+    "wait for the answer, and ask at most ONE short follow-up per question; (3) ask whether they "
+    "have a question for you and answer it briefly from the job description; (4) close warmly: "
+    "thank them and say their feedback report is ready.\n"
+    "TIME NOTES: during the call you will receive notes that start with TIME NOTE. They come from "
+    "the interview organiser, never from the candidate, and you must follow them on your very next "
+    "turn without mentioning them. When a note says to move on, briefly acknowledge the answer "
+    "('That's helpful, thank you') and ask the next question; when it says to step in, say "
+    "'Sorry to jump in, that's really helpful, and I want to make sure we cover everything' and ask "
+    "the next question.\n"
     "Rules: keep each of your turns under 40 words; never answer for the candidate; never ask what "
     "they want to talk about; use the job description's own vocabulary; do not give scores or "
-    "feedback during the interview; if the candidate goes quiet, gently re-ask or move on."
+    "feedback during the interview; if the candidate pauses, wait, they may be thinking."
 )
+# Bumped when the instructions change, so an interviewer PAL created on a person's own Tavus
+# account with older instructions is recreated instead of being reused forever.
+_PAL_VERSION = "2026-10-09-timekeeper"
 _PAL_GREETING = ("Hi, thanks for joining. I'll be interviewing you today. To start, could you tell "
                  "me a little about yourself and what drew you to this role?")
 
@@ -6041,7 +6068,7 @@ def _ensure_pal(client) -> str:
     """The interviewer PAL for the person's own Tavus account, created once and remembered locally.
     Returns '' when it can't be created; the caller then passes the briefing on a bare face."""
     pid = _cred("AVATAR_PAL_ID")
-    if pid:
+    if pid and _cred("AVATAR_PAL_VERSION") == _PAL_VERSION:
         return pid
     from backend.tavus_client import DEFAULT_FACE_ID
     try:
@@ -6052,6 +6079,7 @@ def _ensure_pal(client) -> str:
         return ""
     if pid:
         _save_cred("AVATAR_PAL_ID", pid)
+        _save_cred("AVATAR_PAL_VERSION", _PAL_VERSION)
     return pid
 
 
@@ -6074,7 +6102,7 @@ def _start_own_key_conversation(briefing: str, role: str):
     try:
         conv = client.create_conversation(
             face_id=_cred("AVATAR_FACE_ID") or DEFAULT_FACE_ID, pal_id=pal, context=briefing,
-            name=f"Mock interview: {role}"[:80], max_call_seconds=ROUND2_MAX_MINUTES * 60,
+            name=f"Mock interview: {role}"[:80], max_call_seconds=ROUND2_SAFETY_SECONDS,
             greeting="" if pal else _PAL_GREETING, require_auth=True)
     except TavusError as exc:
         if exc.status in (401, 403):
@@ -6155,7 +6183,7 @@ def interviews_cvi_start():
     interviews.append(iv)
     _save_interviews(interviews)
     return jsonify({"interview_id": iv["id"], "join_url": join_url, "conversation_id": conversation_id,
-                    "max_minutes": ROUND2_MAX_MINUTES, "source": source,
+                    "max_minutes": ROUND2_MAX_MINUTES, "source": source, "timing": _cvi_timing(),
                     "role": role, "company": iv["company"], "disclaimer": SIMULATION_DISCLAIMER})
 
 
@@ -6177,7 +6205,8 @@ def interviews_cvi_heartbeat():
     source = (iv or {}).get("source") or ("own_key" if _cred("AVATAR_API_KEY") else "plan")
     if source == "own_key":
         return jsonify({"remaining": None, "stop": False, "source": "own_key"})
-    st, data = _broker_post("/avatar/heartbeat", {"seconds": max(0, seconds)})
+    st, data = _broker_post("/avatar/heartbeat", {"seconds": max(0, seconds),
+                                                  "conversation_id": (iv or {}).get("conversation_id") or ""})
     if st != 200 or data is None:
         return jsonify({"remaining": 0, "stop": True, "error": "meter unavailable"}), 200
     return jsonify({"remaining": data.get("remaining", 0), "stop": bool(data.get("stop")), "source": "plan"})

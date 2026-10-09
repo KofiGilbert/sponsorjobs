@@ -238,6 +238,9 @@ async function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // The live interview's timekeeper runs on a one-second timer in this page; a throttled
+      // background window would deliver its notes to the interviewer late.
+      backgroundThrottling: false,
     },
   });
   win.setMenuBarVisibility(false);

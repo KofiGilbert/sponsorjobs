@@ -6,6 +6,9 @@
 // The rules themselves are the Python ones, unchanged.
 
 export const INTERVIEW_SECONDS = 900;
+// The interviewer wraps up at 15:00 and never cuts a person off mid-answer, so Tavus's own hard
+// stop sits one minute later as a safety net against a call left running by mistake.
+export const CALL_SAFETY_SECONDS = 960;
 export const DAY_SECONDS = 86_400;
 
 export const FREE_MODEL = "claude-haiku-4-5";
