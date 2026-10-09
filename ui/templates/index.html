@@ -1391,6 +1391,10 @@
 
   <script src="{{ url_for('static', filename='i18n.js') }}"></script>
   <script src="{{ url_for('static', filename='qr.js') }}"></script>
+  <!-- Daily's official call library (BSD-2-Clause, bundled so the app needs no CDN): the live
+       interview runs in our own page so the timekeeper can pass notes to the interviewer. -->
+  <script src="{{ url_for('static', filename='vendor/daily-0.92.2.js') }}"></script>
+  <script src="{{ url_for('static', filename='timekeeper.js') }}"></script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

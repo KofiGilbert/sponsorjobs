@@ -97,7 +97,10 @@ def _own(tg, chat="99", store=None):
 
 
 def _row(sid, title="Business Analyst", company="JP Morgan", days_ago=0, visa=True, **kw):
-    seen = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
+    # Relative to the tests' fixed NOON, not the real clock: built from datetime.now() the
+    # "10 days old" job drifted to within the 3-day window of NOON once the calendar passed it
+    # (failed on 2026-10-09).
+    seen = (NOON.astimezone(timezone.utc) - timedelta(days=days_ago)).isoformat()
     r = {"source_id": sid, "title": title, "company": company, "location": "New York, NY",
          "url": f"https://boards.greenhouse.io/x/{sid}", "first_seen": seen, "us": True,
          "visa": [{"code": "H-1B", "label": "H-1B sponsor"}] if visa else []}

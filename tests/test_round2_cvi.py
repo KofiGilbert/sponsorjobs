@@ -202,7 +202,7 @@ def test_cvi_start_with_own_key_calls_tavus_directly_with_a_briefing(client):
     assert "one at a time" in pal["system_prompt"].lower() and pal["default_face_id"]
     conv = fake.calls[1]["body"]
     assert conv["pal_id"] == "pal_1" and conv["require_auth"] is True
-    assert conv["properties"]["max_call_duration"] == 900
+    assert conv["properties"]["max_call_duration"] == 960
     ctx = conv["conversational_context"]
     assert "Data Analyst" in ctx and "Acme" in ctx and "Tableau" in ctx         # role, company, JD
     assert "QUESTIONS TO COVER" in ctx and "4 to 6 questions" in ctx           # structure + plan
@@ -515,3 +515,20 @@ def test_heartbeat_meters_a_plan_interview_even_with_an_own_key_saved(client, mo
     iid = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).get_json()["interview_id"]
     r = c.post("/api/interviews/cvi/heartbeat", json={"seconds": 30, "interview_id": iid}).get_json()
     assert r == {"remaining": 5370, "stop": False, "source": "plan"} and sent[-1] == "/avatar/heartbeat"
+
+
+def test_the_interviewer_keeps_time_and_the_marks_scale_for_a_short_test(client, monkeypatch):
+    """The interviewer keeps time like a real one (2026-10-09): four main questions, one follow-up
+    each, TIME NOTES from the app obeyed on the next turn. The app's marks come with the start
+    response, and TAILOR_CVI_TEST_SCALE shrinks them so a 5-minute free Tavus call can walk the
+    whole pattern."""
+    A, _c = client
+    p = A._PAL_SYSTEM_PROMPT
+    assert "exactly 4 main questions" in p and "TIME NOTE" in p and "Sorry to jump in" in p
+    t = A._cvi_timing()
+    assert t["total"] == 900 and t["answer_nudge"] < t["answer_step_in"] < t["total"] < t["hard_end"] < A.ROUND2_SAFETY_SECONDS
+    monkeypatch.setenv("TAILOR_CVI_TEST_SCALE", "0.3")
+    s = A._cvi_timing()
+    assert s["total"] == 270 and s["hard_end"] <= 290 and s["answer_nudge"] == 45
+    monkeypatch.setenv("TAILOR_CVI_TEST_SCALE", "nonsense")
+    assert A._cvi_timing()["total"] == 900

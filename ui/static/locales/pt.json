@@ -296,5 +296,8 @@
   "tavus.hint": "Crie uma chave em platform.tavus.io (há um plano gratuito). A chave fica neste computador.",
   "r2.passH": "Entrevistas ao vivo vêm com um passe",
   "r2.passD": "Quinze minutos com um entrevistador ao vivo que pergunta, escuta e aprofunda, e depois um relatório com nota. O Job Hunt Pass inclui 3 entrevistas ao vivo e o Season Pass 9. Pagamento único, sem renovação automática.",
-  "r2.haveKey": "Já tem uma chave da Tavus? Adicione-a nas Configurações."
+  "r2.haveKey": "Já tem uma chave da Tavus? Adicione-a nas Configurações.",
+  "r2.keepsTime": "Seu entrevistador controla o tempo, como um de verdade",
+  "r2.wrappingUp": "Encerrando",
+  "r2.cantJoin": "Não foi possível entrar na sala da entrevista. Verifique sua conexão e tente de novo."
 }

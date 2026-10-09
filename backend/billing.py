@@ -4,7 +4,7 @@ Pricing (decided by the owner 2026-10-02): NOTHING auto-renews and no subscripti
 
   * Job Hunt Pass (``pass30``): $29, one payment, 30 days, 3 live interviews, 60 packages.
   * Season Pass   (``pass90``): $69, one payment, 90 days, 9 live interviews, 150 packages.
-  * Extra live interviews (packs): 1 for $9, 3 for $24, 5 for $35. Sold ONLY while a pass is
+  * Extra live interviews (packs): 1 for $9, 3 for $24, 5 for $39. Sold ONLY while a pass is
     active; prepaid seconds that never expire.
 
 Everything is a one-time Stripe Checkout Session (``mode="payment"``). The webhook grants what was
@@ -28,7 +28,7 @@ from backend.metering import INTERVIEW_SECONDS, PASSES, PLANS
 
 # Extra-interview packs: id -> (whole interviews, display price).
 PACKS = {"pack_1": 1, "pack_3": 3, "pack_5": 5}
-PACK_PRICE_LABEL = {"pack_1": "$9", "pack_3": "$24", "pack_5": "$35"}
+PACK_PRICE_LABEL = {"pack_1": "$9", "pack_3": "$24", "pack_5": "$39"}
 PACK_PRICE_ENV = {"pack_1": "STRIPE_PRICE_PACK_1", "pack_3": "STRIPE_PRICE_PACK_3",
                   "pack_5": "STRIPE_PRICE_PACK_5"}
 PASS_PRICE_ENV = {"pass30": "STRIPE_PRICE_PASS30", "pass90": "STRIPE_PRICE_PASS90"}

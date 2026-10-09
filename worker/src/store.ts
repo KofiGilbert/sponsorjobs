@@ -121,3 +121,21 @@ export async function markAvatarEnded(db: D1Database, id: string, now: number) {
   await db.prepare("UPDATE avatar_sessions SET ended = ? WHERE conversation_id = ? AND ended = 0")
     .bind(now, id).run();
 }
+
+/** Reserve up to `seconds` of charge against one interview, never past `cap` in total, and return
+ * how many seconds may actually be charged. Only the account that started the interview counts. */
+export async function chargeableSeconds(db: D1Database, id: string, user: string, seconds: number,
+                                        cap: number): Promise<number> {
+  const row = await db.prepare(
+    `UPDATE avatar_sessions SET used = MIN(?1, used + ?2)
+     WHERE conversation_id = ?3 AND user = ?4
+     RETURNING used`,
+  ).bind(cap, Math.max(0, Math.floor(seconds)), id, user).first<{ used: number }>();
+  return row ? row.used : -1;
+}
+
+export async function sessionUsed(db: D1Database, id: string, user: string): Promise<number> {
+  const r = await db.prepare("SELECT used FROM avatar_sessions WHERE conversation_id = ? AND user = ?")
+    .bind(id, user).first<{ used: number }>();
+  return r ? r.used : -1;
+}

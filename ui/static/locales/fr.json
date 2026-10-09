@@ -296,5 +296,8 @@
   "tavus.hint": "Crée une clé sur platform.tavus.io (il existe une offre gratuite). La clé reste sur cet ordinateur.",
   "r2.passH": "Les entretiens en direct sont inclus dans un pass",
   "r2.passD": "Quinze minutes avec un recruteur en direct qui pose des questions, écoute et relance, puis un rapport noté. Le Job Hunt Pass inclut 3 entretiens en direct, le Season Pass 9. Paiement unique, sans renouvellement automatique.",
-  "r2.haveKey": "Tu as déjà une clé Tavus ? Ajoute-la dans les Réglages."
+  "r2.haveKey": "Tu as déjà une clé Tavus ? Ajoute-la dans les Réglages.",
+  "r2.keepsTime": "Ton recruteur gère le temps, comme un vrai",
+  "r2.wrappingUp": "Conclusion",
+  "r2.cantJoin": "Impossible de rejoindre la salle d'entretien. Vérifie ta connexion et réessaie."
 }

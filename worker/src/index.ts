@@ -13,11 +13,11 @@ import { allowRegistration, emailOf, identify, register } from "./accounts";
 import { complete } from "./anthropic";
 import { type Env, intVar } from "./env";
 import {
-  avatarSecondsLeft, dayOf, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft, passActive, periodOf,
+  avatarSecondsLeft, CALL_SAFETY_SECONDS, dayOf, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft, passActive, periodOf,
   planFor, QuotaExceeded, requireLlm, status, tierFor,
 } from "./metering";
 import {
-  avatarSessionOwner, consumeAvatar, loadState, markAvatarEnded, recordAvatarSession, recordLlm,
+  avatarSessionOwner, chargeableSeconds, consumeAvatar, sessionUsed, loadState, markAvatarEnded, recordAvatarSession, recordLlm,
   takeFreePackage, takePassPackage,
 } from "./store";
 import { createConversation, endConversation, transcript } from "./tavus";
@@ -190,7 +190,7 @@ const avatarStart: Handler = async ({ req, env, now, nowMs }) => {
     const conv = await createConversation(env.TAVUS_API_KEY, {
       faceId: env.TAVUS_FACE_ID, palId: env.TAVUS_PAL_ID,
       context: String(c.prompt ?? "").slice(0, 20_000), greeting: String(c.greeting ?? "").slice(0, 600),
-      name: `SponsorJobs mock interview (${user})`, maxCallSeconds: INTERVIEW_SECONDS,
+      name: `SponsorJobs mock interview (${user})`, maxCallSeconds: CALL_SAFETY_SECONDS,
     });
     if (!conv.conversationId || !conv.url) throw new Error("tavus returned no room");
     await recordAvatarSession(env.DB, conv.conversationId, user, now);
@@ -208,10 +208,21 @@ const avatarHeartbeat: Handler = async ({ req, env, now }) => {
   if (!env.TAVUS_API_KEY) return avatarOff();
   const user = await identify(req, env);
   if (!user) return noUser();
+  const b = await body(req);
   let seconds: number;
-  try { seconds = Math.max(0, pyInt((await body(req)).seconds)); } catch { return json({ error: "bad seconds" }, 400); }
-  const remaining = await consumeAvatar(env.DB, user, Math.min(seconds, INTERVIEW_SECONDS), now);
-  return json({ remaining, stop: remaining <= 0 });
+  try { seconds = Math.max(0, pyInt(b.seconds)); } catch { return json({ error: "bad seconds" }, 400); }
+  seconds = Math.min(seconds, INTERVIEW_SECONDS);
+  // With the interview named, charge it at most 15 minutes in total: the polite wrap-up after
+  // 15:00 is on us, and the person is never told to stop mid-answer because of it.
+  const id = String(b.conversation_id ?? "").trim();
+  if (id) {
+    const before = await sessionUsed(env.DB, id, user);
+    if (before < 0) return json({ error: "not found" }, 404);
+    const after = await chargeableSeconds(env.DB, id, user, seconds, INTERVIEW_SECONDS);
+    seconds = Math.max(0, after - before);
+  }
+  const remaining = await consumeAvatar(env.DB, user, seconds, now);
+  return json({ remaining, stop: remaining <= 0 && !id, charged: seconds });
 };
 
 /** End the conversation and hand its transcript back to the app that started it, for scoring on

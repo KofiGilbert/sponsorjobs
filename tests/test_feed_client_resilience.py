@@ -330,7 +330,8 @@ def test_detail_keeps_the_empty_jd_shape_when_nobody_has_the_text(client, monkey
     r = client.app.test_client().get("/api/jobs/detail?source_id=greenhouse:acme:1")
     assert r.status_code == 200
     d = r.get_json()
-    assert set(d) == {"job", "jd", "match", "pay_insight", "jd_preview"}
+    assert set(d) == {"job", "jd", "match", "terms", "pay_insight", "jd_preview"}
+    assert d["terms"] == []                     # no description, so no skills to underline
     assert d["jd"] == "" and d["jd_preview"] is False and d["job"]["source_id"] == "greenhouse:acme:1"
 
 
