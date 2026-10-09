@@ -191,7 +191,9 @@
     const strip = $("#cvsTplStrip");
     if (!strip) return;
     CV_TEMPLATES = list || [];
-    strip.innerHTML = CV_TEMPLATES.map(cvsTplCard).join("");
+    // The strip shows the featured few (Word shows about seven); "More templates" has all.
+    const featured = CV_TEMPLATES.filter(t => t.featured);
+    strip.innerHTML = (featured.length ? featured : CV_TEMPLATES).map(cvsTplCard).join("");
     // Click PREVIEWS the template (look before you commit); "Use this template" in the
     // preview is the separate, explicit step that starts the JD flow.
     strip.querySelectorAll("[data-use]").forEach(b =>

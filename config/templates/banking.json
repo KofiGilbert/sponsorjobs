@@ -1,7 +1,7 @@
 {
   "name": "banking",
   "display_name": "Banking",
-  "category": "Banking and finance",
+  "category": "Business and finance",
   "best_for": "Education first, deal values in every bullet, and Skills & Interests at the bottom. The one page bulge brackets and boutiques expect.",
   "suits": [
     "investment banking",
@@ -48,5 +48,7 @@
         "What would someone find out about you over a coffee that is not on the CV?"
       ]
     }
-  }
+  },
+  "order": 100,
+  "featured": true
 }

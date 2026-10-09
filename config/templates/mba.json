@@ -1,0 +1,62 @@
+{
+  "name": "mba",
+  "display_name": "MBA",
+  "category": "Business and finance",
+  "best_for": "Education first with the school section, then Experience, Leadership, and one Additional Information line for languages and interests. The one-page format Wharton, Sloan and Stanford GSB require.",
+  "suits": [
+    "mba",
+    "business school",
+    "associate program",
+    "leadership development program",
+    "rotational program",
+    "brand manager",
+    "product marketing",
+    "corporate development",
+    "general management",
+    "chief of staff"
+  ],
+  "tex": "config/resume_shetty.tex",
+  "identity_fields": [
+    "name",
+    "address",
+    "phone",
+    "email",
+    "linkedin"
+  ],
+  "sections": [
+    "education",
+    "experience",
+    "extracurricular",
+    "interests"
+  ],
+  "required_sections": [
+    "extracurricular",
+    "interests"
+  ],
+  "headings": {
+    "extracurricular": "Leadership \\& Activities",
+    "interests": "Languages \\& Interests"
+  },
+  "order": 120,
+  "featured": false,
+  "interview_style": "Talk like a sharp, warm friend who's genuinely into their story, never a corporate form. VOICE: keep replies to 1-3 short sentences and ask ONE thing at a time; acknowledge what they just shared by NAMING it specifically ('a SPAN risk model at CME, that's strong'), not with empty filler; use their first name once you know it. When you ask for something, add a half-line on WHY it helps. BANNED openers that read as a robot/script: 'Perfect , ', 'Got it', 'Great!', 'Awesome', 'absolutely', 'no worries', 'for sure', 'to be honest', 'as I mentioned', a bare 'I understand', vary your phrasing, never reuse an opener two turns running. Go BROAD first (invite a story), then narrow to the specifics the CV needs. For accomplishments, gently draw out Situation-Task-Action-Result so bullets end up concrete and, where they exist, quantified. Never interrogate or re-ask something already answered. Invent nothing, use only what they actually tell you. PUNCTUATION: never use an em dash or an en dash. Not one, anywhere. They read as machine-written and the person has asked for them gone three times. Use a comma, a full stop, or a new sentence instead. DOMAIN: this is an MBA resume, so every bullet is Situation, Action, Result with a dollar or percentage change, no 'responsible for'. Leadership is evidence here, so ask what they ran, how many people, and what changed. Languages go on the Additional Information line with a proficiency level.",
+  "elicit": {
+    "extracurricular": {
+      "label": "Leadership & Activities",
+      "goal": "Things they led or organised outside a paid job: clubs, teams, case competitions, student chapters, volunteering. Needs scale and outcome, not membership.",
+      "leads": [
+        "What have you actually run or organised? A club, a team, a project, an event. Recruiters read this as evidence of leadership, so specifics help.",
+        "Where were you the person who made it happen rather than the one who showed up?",
+        "Anything you started that is still going?"
+      ]
+    },
+    "interests": {
+      "label": "Languages & Interests",
+      "goal": "Languages other than English with a proficiency level (Fluent, Professional, Conversational), plus one or two genuine interests, for the Additional Information line. Never list English.",
+      "leads": [
+        "Which languages do you speak besides English, and how well? Fluent, professional, or conversational is the wording US recruiters expect.",
+        "And one or two real interests for the bottom line? Interviewers often open with these."
+      ]
+    }
+  }
+}

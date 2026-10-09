@@ -1,7 +1,7 @@
 {
   "name": "consulting",
   "display_name": "Consulting",
-  "category": "Consulting and strategy",
+  "category": "Business and finance",
   "best_for": "Education first, quantified impact on every engagement, and Leadership carrying real weight. What MBB and the Big Four screen for.",
   "suits": [
     "consulting",
@@ -62,5 +62,7 @@
         "Anything you have kept up for years, a sport, a craft, a subject?"
       ]
     }
-  }
+  },
+  "order": 110,
+  "featured": true
 }

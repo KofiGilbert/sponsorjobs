@@ -1,0 +1,130 @@
+{
+  "name": "educator",
+  "display_name": "Educator",
+  "category": "Healthcare and education",
+  "best_for": "Certification and Licensure first, then Education, Student Teaching and Field Experience, Related Experience, and Skills and Languages. The format teacher-preparation programs recommend for K-12, ESL and new instructors.",
+  "suits": [
+    "teacher",
+    "teaching",
+    "educator",
+    "instructor",
+    "esl",
+    "tesol",
+    "tefl",
+    "celta",
+    "k-12",
+    "elementary",
+    "secondary",
+    "classroom",
+    "lesson plan",
+    "curriculum",
+    "tutor",
+    "paraprofessional",
+    "special education",
+    "iep"
+  ],
+  "tex": "config/resume_shetty.tex",
+  "identity_fields": [
+    "name",
+    "address",
+    "phone",
+    "email",
+    "linkedin"
+  ],
+  "sections": [
+    "certifications",
+    "education",
+    "extracurricular",
+    "experience",
+    "skills"
+  ],
+  "required_sections": [
+    "certifications",
+    "extracurricular"
+  ],
+  "headings": {
+    "certifications": "Certification \\& Licensure",
+    "extracurricular": "Student Teaching \\& Field Experience",
+    "experience": "Related Experience",
+    "skills": "Skills \\& Languages"
+  },
+  "order": 160,
+  "featured": false,
+  "interview_style": "Talk like a sharp, warm friend who's genuinely into their story, never a corporate form. VOICE: keep replies to 1-3 short sentences and ask ONE thing at a time; acknowledge what they just shared by NAMING it specifically ('a SPAN risk model at CME, that's strong'), not with empty filler; use their first name once you know it. When you ask for something, add a half-line on WHY it helps. BANNED openers that read as a robot/script: 'Perfect , ', 'Got it', 'Great!', 'Awesome', 'absolutely', 'no worries', 'for sure', 'to be honest', 'as I mentioned', a bare 'I understand', vary your phrasing, never reuse an opener two turns running. Go BROAD first (invite a story), then narrow to the specifics the CV needs. For accomplishments, gently draw out Situation-Task-Action-Result so bullets end up concrete and, where they exist, quantified. Never interrogate or re-ask something already answered. Invent nothing, use only what they actually tell you. PUNCTUATION: never use an em dash or an en dash. Not one, anywhere. They read as machine-written and the person has asked for them gone three times. Use a comma, a full stop, or a new sentence instead. DOMAIN: this is a teaching resume, so certification with state, subject and grade band leads, phrased exactly. Draw out grade levels, class sizes, units designed, differentiation, assessment results and the education vocabulary the posting uses (IEP, RTI, ELL).",
+  "elicit": {
+    "certifications": {
+      "label": "Certification & Licensure",
+      "goal": "Teaching certificate with state, subject and grade band, expected date if pending; TESOL, TEFL or CELTA with issuer and date; credential evaluation status for degrees earned abroad.",
+      "leads": [
+        "Which teaching certification do you hold or expect, with the state, subject and grade levels? 'Expected' with a date is fine.",
+        "Any TESOL, TEFL or CELTA, and from whom?"
+      ]
+    },
+    "extracurricular": {
+      "label": "Student Teaching & Field Experience",
+      "goal": "Each placement: school, grade and subject, dates, cooperating teacher context, and two concrete accomplishments (units designed, differentiated instruction, assessment results).",
+      "leads": [
+        "Tell me about your student teaching: school, grade, subject, and what you planned and taught yourself.",
+        "Any field placements, tutoring or classroom aide roles before that?"
+      ]
+    }
+  },
+  "preview": {
+    "certifications": [
+      "State Teaching Certificate, Secondary Mathematics (Grades 7-12), expected 20XX",
+      "TESOL Certificate, 120 hours, 20XX"
+    ],
+    "extracurricular": [
+      {
+        "title": "Student Teacher, Grade 9 Algebra, Anytown High School",
+        "date": "Jan 20XX - May 20XX",
+        "bullets": [
+          "Planned and taught five sections of 28 students, designing a differentiated unit on linear functions that lifted the unit assessment average by 11 points."
+        ]
+      },
+      {
+        "title": "Field Experience, Grade 7 Mathematics, Anytown Middle School",
+        "date": "Fall 20XX",
+        "bullets": [
+          "Co-taught small groups of English language learners and built visual scaffolds the cooperating teacher kept in use."
+        ]
+      }
+    ],
+    "experience": [
+      {
+        "org": "Anytown Community Center",
+        "location": "Anytown, ST",
+        "roles": [
+          {
+            "title": "Mathematics Tutor",
+            "dates": "Sep 20XX - Present",
+            "bullets": [
+              "Tutor 15 high-school students weekly in algebra and geometry; 12 raised their course grade by a letter.",
+              "Wrote the center's practice-problem bank now used by three tutors."
+            ]
+          }
+        ]
+      }
+    ],
+    "skills": {
+      "Instruction": "Differentiated instruction, formative assessment, classroom management, IEP accommodations",
+      "Technology": "Google Classroom, Desmos, Canvas, SMART Board",
+      "Languages": "Spanish (fluent), Portuguese (conversational)"
+    },
+    "education": [
+      {
+        "school": "State University",
+        "degree": "Master of Arts in Teaching, Secondary Mathematics",
+        "date": "May 20XX",
+        "location": "Anytown, ST",
+        "courses": "Curriculum Design, Adolescent Development, Assessment, Teaching English Language Learners"
+      },
+      {
+        "school": "State College",
+        "degree": "Bachelor of Science in Mathematics",
+        "date": "May 20XX",
+        "location": "Anytown, ST"
+      }
+    ]
+  }
+}

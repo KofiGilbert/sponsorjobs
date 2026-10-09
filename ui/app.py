@@ -90,7 +90,13 @@ def _templates() -> list[dict]:
                     "best_for": m.get("best_for") or "",
                     "sections": m.get("sections") or [],
                     "required_sections": m.get("required_sections", None),
+                    # The Resumes page strip shows the FEATURED few (the fields that get most
+                    # US sponsorship: software, data, engineering, then finance); "More
+                    # templates" shows all of them grouped by category, in manifest order.
+                    "featured": bool(m.get("featured")),
+                    "order": int(m.get("order") or 999),
                     "preview_url": f"/api/templates/{name}/preview.pdf"})
+    out.sort(key=lambda t: (t["order"], t["name"]))
     return out
 
 
@@ -247,6 +253,8 @@ def _placeholder_profile() -> dict:
              "bullets": ["Run weekly workshops teaching programming fundamentals to students from underserved backgrounds."]},
         ],
         "interests": "Chess, distance running, open-source software, photography, jazz",
+        "certifications": ["AWS Certified Solutions Architect, Associate, 20XX",
+                           "Project Management Professional (PMP), 20XX"],
     }
 
 
@@ -2422,6 +2430,15 @@ def _template_preview_pdf(name):
     tex, tname = _load_template(name)
     profile = _placeholder_profile()
     man = load_manifest(tname)
+    # A template may override parts of the sample (a nursing preview shows clinical
+    # rotations and licenses, not a coding mentor). Still John Doe, still generic.
+    if isinstance(man.get("preview"), dict):
+        profile.update(man["preview"])
+    # The header shows only the contact slots this template has (a nursing resume has no
+    # GitHub or blog line), exactly as a real build of it would.
+    from intake.template_manifest import identity_fields
+    keep = set(identity_fields(man))
+    profile["identity"] = {k: v for k, v in profile["identity"].items() if k in keep}
     secs = sections(man)
     heads = headings(man)
     # The key covers the BUILDER too (its source file), not only the template and the sample

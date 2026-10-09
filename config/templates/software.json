@@ -1,0 +1,77 @@
+{
+  "name": "software",
+  "display_name": "Software Engineer",
+  "category": "Students and new grads",
+  "best_for": "Education, then Technical Skills, Projects and Experience, with GitHub in the header. The shape CMU and the most-used engineering resume (Jake's) converge on for software roles.",
+  "suits": [
+    "software engineer",
+    "software developer",
+    "swe",
+    "backend",
+    "back-end",
+    "frontend",
+    "front-end",
+    "full stack",
+    "full-stack",
+    "web developer",
+    "mobile developer",
+    "ios developer",
+    "android developer",
+    "new grad software",
+    "coding",
+    "github",
+    "computer science"
+  ],
+  "tex": "config/resume_shetty.tex",
+  "identity_fields": [
+    "name",
+    "address",
+    "phone",
+    "email",
+    "linkedin",
+    "github"
+  ],
+  "sections": [
+    "education",
+    "skills",
+    "projects",
+    "experience",
+    "extracurricular"
+  ],
+  "required_sections": [
+    "projects"
+  ],
+  "headings": {
+    "skills": "Technical Skills",
+    "extracurricular": "Activities \\& Honors"
+  },
+  "order": 20,
+  "featured": true,
+  "interview_style": "Talk like a sharp, warm friend who's genuinely into their story, never a corporate form. VOICE: keep replies to 1-3 short sentences and ask ONE thing at a time; acknowledge what they just shared by NAMING it specifically ('a SPAN risk model at CME, that's strong'), not with empty filler; use their first name once you know it. When you ask for something, add a half-line on WHY it helps. BANNED openers that read as a robot/script: 'Perfect , ', 'Got it', 'Great!', 'Awesome', 'absolutely', 'no worries', 'for sure', 'to be honest', 'as I mentioned', a bare 'I understand', vary your phrasing, never reuse an opener two turns running. Go BROAD first (invite a story), then narrow to the specifics the CV needs. For accomplishments, gently draw out Situation-Task-Action-Result so bullets end up concrete and, where they exist, quantified. Never interrogate or re-ask something already answered. Invent nothing, use only what they actually tell you. PUNCTUATION: never use an em dash or an en dash. Not one, anywhere. They read as machine-written and the person has asked for them gone three times. Use a comma, a full stop, or a new sentence instead. DOMAIN: this is a software engineering resume, so draw out the STACK and the SCALE. For every project and role ask what it was built with and a number: users, requests, latency, data size, test coverage. Bullets follow Action + Context + Result.",
+  "elicit": {
+    "projects": {
+      "label": "Projects",
+      "goal": "Two or three real technical projects: what it does, the stack, and a measurable result or scale. Link if public. This section carries a new grad's resume.",
+      "leads": [
+        "Tell me about a project you built that you are proud of. What does it do, what did you build it with, and did anyone use it?",
+        "Any coursework, hackathon, or side project with a number attached: users, speed, accuracy, data size?",
+        "Is any of it on GitHub? A link belongs on the page."
+      ]
+    },
+    "extracurricular": {
+      "label": "Activities & Honors",
+      "goal": "Hackathons, awards, scholarships, clubs, open-source. Short, dated, optional.",
+      "leads": [
+        "Any hackathons, awards, scholarships or clubs worth a line?"
+      ]
+    }
+  },
+  "preview": {
+    "skills": {
+      "Languages": "Python, Go, TypeScript, Java, SQL, Bash",
+      "Frameworks": "React, Node.js, FastAPI, Spring Boot, gRPC",
+      "Tools": "Git, Docker, Kubernetes, Terraform, AWS, GitHub Actions",
+      "Concepts": "Distributed systems, REST API design, CI/CD, testing, observability"
+    }
+  }
+}

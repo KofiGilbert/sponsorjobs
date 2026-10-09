@@ -27,7 +27,7 @@ TAGS: tuple[tuple[str, str], ...] = (
     ("Project & Program Management", r"project manag|program manag|programme manag|\bpmp\b|project plan|project deliver|portfolio manag|scrum master|agile delivery"),
     ("Cloud & Infrastructure", r"\baws\b|azure|\bgcp\b|google cloud|kubernetes|docker|terraform|devops|site reliability|\bsre\b|cloud infrastructure|cloud platform|cloud engineer"),
     ("Cybersecurity", r"cyber|infosec|information security|security engineer|threat|vulnerabilit|\bsoc\b|penetration|incident response|\biam\b"),
-    ("QA & Testing", r"quality assurance|\bqa\b|test automation|software test|test plan|test case|selenium|cypress"),
+    ("QA & Testing", r"quality assurance|\bqa\b|test automation|software test|test plan|test case|test framework"),
     ("UX & Design", r"\bux\b|\bui\b|user experience|user research|usability|figma|interaction design|visual design|product design|graphic design"),
     ("Systems & Architecture", r"systems engineer|system architect|solutions architect|enterprise architect|systems integration|technical architect|system design"),
     ("Database Administration", r"\bdba\b|database admin|sql server|oracle db|postgres|mysql|database management"),

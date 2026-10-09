@@ -1,0 +1,90 @@
+{
+  "name": "engineering",
+  "display_name": "Engineering Co-op",
+  "category": "Students and new grads",
+  "best_for": "Education with GPA and coursework, Technical Skills, Engineering Projects, then Experience and co-ops, with a line for EIT or FE status. The order Georgia Tech and Purdue teach mechanical, electrical, civil and chemical students.",
+  "suits": [
+    "mechanical engineer",
+    "electrical engineer",
+    "civil engineer",
+    "chemical engineer",
+    "manufacturing engineer",
+    "design engineer",
+    "process engineer",
+    "structural engineer",
+    "co-op",
+    "coop",
+    "eit",
+    "fe exam",
+    "solidworks",
+    "autocad",
+    "cad",
+    "matlab",
+    "plc"
+  ],
+  "tex": "config/resume_shetty.tex",
+  "identity_fields": [
+    "name",
+    "address",
+    "phone",
+    "email",
+    "linkedin"
+  ],
+  "sections": [
+    "education",
+    "skills",
+    "projects",
+    "experience",
+    "certifications",
+    "extracurricular"
+  ],
+  "required_sections": [
+    "projects"
+  ],
+  "headings": {
+    "skills": "Technical Skills",
+    "projects": "Engineering Projects",
+    "experience": "Experience \\& Co-ops",
+    "certifications": "Certifications",
+    "extracurricular": "Involvement \\& Honors"
+  },
+  "order": 40,
+  "featured": true,
+  "interview_style": "Talk like a sharp, warm friend who's genuinely into their story, never a corporate form. VOICE: keep replies to 1-3 short sentences and ask ONE thing at a time; acknowledge what they just shared by NAMING it specifically ('a SPAN risk model at CME, that's strong'), not with empty filler; use their first name once you know it. When you ask for something, add a half-line on WHY it helps. BANNED openers that read as a robot/script: 'Perfect , ', 'Got it', 'Great!', 'Awesome', 'absolutely', 'no worries', 'for sure', 'to be honest', 'as I mentioned', a bare 'I understand', vary your phrasing, never reuse an opener two turns running. Go BROAD first (invite a story), then narrow to the specifics the CV needs. For accomplishments, gently draw out Situation-Task-Action-Result so bullets end up concrete and, where they exist, quantified. Never interrogate or re-ask something already answered. Invent nothing, use only what they actually tell you. PUNCTUATION: never use an em dash or an en dash. Not one, anywhere. They read as machine-written and the person has asked for them gone three times. Use a comma, a full stop, or a new sentence instead. DOMAIN: this is an engineering resume, so draw out the TOOLS (CAD package, analysis software, lab equipment, PLC) and the MEASURED result (tolerance, load, efficiency, cost, cycle time). Ask about FE or EIT status with the state.",
+  "elicit": {
+    "projects": {
+      "label": "Engineering Projects",
+      "goal": "Two or three design, lab, capstone or competition projects: the problem, the tools (CAD, FEA, PLC, lab methods), and a measured result. Essential before a first co-op.",
+      "leads": [
+        "Tell me about a design or capstone project: what problem, what did you build or analyse, what tools, and how did it perform?",
+        "Any competition teams, lab builds or coursework with a real result?"
+      ]
+    },
+    "certifications": {
+      "label": "Certifications",
+      "goal": "EIT or FE status with the state, safety or software certifications, each with date or status (passed, scheduled). Honest status only.",
+      "leads": [
+        "Have you passed or scheduled the FE exam? EIT with the state is worth a line, and 'exam passed, certification pending' is fine if that is the status."
+      ]
+    },
+    "extracurricular": {
+      "label": "Involvement & Honors",
+      "goal": "Student chapters (ASME, IEEE, ASCE), competition teams, awards. Dated, short.",
+      "leads": [
+        "Any student chapters, competition teams or honors worth a line?"
+      ]
+    }
+  },
+  "preview": {
+    "skills": {
+      "Design & Analysis": "SolidWorks, AutoCAD, ANSYS, MATLAB, Simulink, GD\\&T",
+      "Fabrication & Lab": "CNC machining, 3D printing, oscilloscopes, PLC programming, DAQ",
+      "Programming": "Python, C, LabVIEW",
+      "Standards": "ASME Y14.5, ISO 9001, Lean Six Sigma Green Belt"
+    },
+    "certifications": [
+      "Engineer in Training (EIT), State Board of Engineers, 20XX",
+      "Lean Six Sigma Green Belt, 20XX"
+    ]
+  }
+}

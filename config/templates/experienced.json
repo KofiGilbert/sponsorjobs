@@ -1,6 +1,6 @@
 {
   "name": "experienced",
-  "display_name": "Professional",
+  "display_name": "Experienced Professional",
   "category": "Experienced professionals",
   "best_for": "A tight professional summary up top, then straight into the work. Best when years of real experience are the argument and the degree is supporting evidence.",
   "suits": [
@@ -45,5 +45,7 @@
         "What's the through-line across your roles that you'd want up top?"
       ]
     }
-  }
+  },
+  "order": 50,
+  "featured": true
 }

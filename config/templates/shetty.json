@@ -57,5 +57,7 @@
         "Any interests you'd want someone to spot on the page and go 'oh, nice'?"
       ]
     }
-  }
+  },
+  "order": 10,
+  "featured": true
 }
