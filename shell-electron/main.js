@@ -172,9 +172,13 @@ function ensurePane() {
     if (!url || !url.startsWith(SERVER)) return;
     const co = /[?&]checkout=(success|cancel)\b/.exec(url);
     if (co) { e.preventDefault(); closePane(); send("checkout:return", co[1]); return; }
-    const acc = /[?&]account=([^&#]+)/.exec(url);   // Google sign-in returns the bearer token
+    // Google sign-in returns the bearer token: #token=... on the app's callback page (current
+    // broker), or ?account=... (older broker).
+    const acc = /[#&]token=([^&#]+)/.exec(url) || /[?&]account=([^&#]+)/.exec(url);
     if (acc) { e.preventDefault(); closePane(); send("signin:return", { token: decodeURIComponent(acc[1]) }); return; }
-    if (/[?&]signin=error\b/.test(url)) { e.preventDefault(); closePane(); send("signin:return", { error: true }); }
+    const gerr = /[#&]error=([a-z_]+)/.exec(url);   // #error=cancelled | #error=signin_failed
+    if (gerr) { e.preventDefault(); closePane(); send("signin:return", { error: gerr[1] }); return; }
+    if (/[?&]signin=error\b/.test(url)) { e.preventDefault(); closePane(); send("signin:return", { error: "signin_failed" }); }
   };
   wc.on("will-navigate", onReturn);
   wc.on("will-redirect", onReturn);

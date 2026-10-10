@@ -2229,6 +2229,54 @@ body.cv-dragging * { cursor: grabbing !important; }
 .lockscreen-btn { width: 100%; justify-content: center; height: 38px; }
 .lockscreen-err { margin-top: 12px; font-size: 12.5px; color: var(--danger, #d9534f); min-height: 1em; }
 
+/* ============ Sign in ============
+   Its own full screen, like claude.ai's: logo, one heading, Google, a divider, email, then a
+   6-box code. Calm and centred on the page background; one primary action per step. Sits above
+   the plans panel (92) and below App Lock (200). */
+.signin { position: fixed; inset: 0; z-index: 150; display: grid; place-items: center;
+  background: var(--bg); padding: 24px 16px; overflow-y: auto; }
+.signin-x { position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; display: grid;
+  place-items: center; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); }
+.signin-x:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.signin-x svg { width: 16px; height: 16px; }
+.signin-card { width: 100%; max-width: 360px; text-align: center; }
+.signin-logo { width: 40px; height: 40px; display: block; margin: 0 auto 20px; }
+.signin-h { font-size: 22px; font-weight: 600; letter-spacing: -0.015em; color: var(--ink); }
+.signin-why, .signin-sub { margin-top: 8px; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+.signin-sub b { color: var(--ink); font-weight: 600; word-break: break-all; }
+.signin-why { color: var(--ink-2); }
+.signin-google { margin-top: 26px; width: 100%; height: 42px; display: flex; align-items: center;
+  justify-content: center; gap: 10px; border: 1px solid var(--border-strong); border-radius: var(--r);
+  background: var(--surface); color: var(--ink); font-size: 14px; font-weight: 500;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.signin-google:hover { background: var(--surface-2); border-color: var(--faint); }
+.signin-google:disabled { opacity: 0.6; cursor: default; }
+.signin-google svg { width: 18px; height: 18px; flex: none; }
+.signin-or { display: flex; align-items: center; gap: 12px; margin: 18px 0; font-size: 12px; color: var(--faint); }
+.signin-or::before, .signin-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.signin form { display: flex; flex-direction: column; gap: 10px; }
+.signin-input { height: 42px; font-size: 14px; padding: 0 12px; border-radius: var(--r); text-align: left; }
+.signin-btn { width: 100%; height: 42px; justify-content: center; border-radius: var(--r); font-size: 14px; }
+.signin-err { margin-top: 12px; font-size: 12.5px; line-height: 1.45; color: var(--danger, #d9534f); }
+.signin-status { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
+.signin-fine { margin-top: 16px; font-size: 12px; color: var(--faint); }
+.signin-otp { display: flex; justify-content: center; gap: 8px; margin-top: 24px; }
+.signin-digit { width: 46px; height: 54px; text-align: center; font: 600 22px/1 var(--sans); color: var(--ink);
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r);
+  caret-color: var(--ink); padding: 0; }
+.signin-digit:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+.signin-otp.is-bad .signin-digit { border-color: var(--danger, #d9534f); }
+.signin-otp.is-busy .signin-digit { opacity: 0.55; }
+.signin-links { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 22px; }
+.signin-link { border: 0; background: none; padding: 4px 6px; font-size: 13px; color: var(--ink-2);
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
+.signin-link:hover:not(:disabled) { color: var(--ink); text-decoration-color: var(--ink-2); }
+.signin-link:disabled { color: var(--faint); text-decoration: none; cursor: default; }
+.signin-spin { width: 22px; height: 22px; margin: 24px auto 0; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--ink-2); animation: signin-spin 0.9s linear infinite; }
+@keyframes signin-spin { to { transform: rotate(360deg); } }
+@media (max-width: 400px) { .signin-digit { width: 40px; height: 48px; font-size: 19px; } .signin-otp { gap: 6px; } }
+
 /* App-lock settings form */
 .lock-form { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 6px; max-width: 320px; }
 .lock-form-foot { display: flex; gap: 8px; align-items: center; margin-top: 2px; }

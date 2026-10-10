@@ -3036,14 +3036,26 @@
     return parts.join("");
   }
 
-  /* The sidebar-foot identity: initials + name, from the person's own profile. There is no
-     account to sign into (BYO key, local-only), this is just "who this CV is for". */
+  /* The sidebar-foot identity. Signed in, the foot shows the account's email and the menu head
+     shows the profile name over that email; signed out, the profile name (or "Your profile") and
+     "Stored on this computer", with "Sign in" in the menu. `var` on purpose: paintAccount can run
+     before the account block below has set these. */
+  var ACCT_EMAIL = null, ACCT_PLAN = null, ACCT_PROFILE_NAME = "";
   function paintAccount(p) {
-    const name = (((p || {}).identity || {}).name || "").trim();
-    const nameEl = $("#acctName");
-    if (nameEl) nameEl.textContent = name || "Your profile";
-    const mn = $("#acctMenuName"); if (mn) mn.textContent = name || "Your profile";
+    ACCT_PROFILE_NAME = (((p || {}).identity || {}).name || "").trim();
+    paintIdentity();
     loadPhoto();
+  }
+  function paintIdentity() {
+    const t = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+    const generic = t("acct.profileName", "Your profile");
+    const nameEl = $("#acctName");
+    if (nameEl) { nameEl.textContent = ACCT_EMAIL || ACCT_PROFILE_NAME || generic; nameEl.title = ACCT_EMAIL || ""; }
+    const mn = $("#acctMenuName"); if (mn) mn.textContent = ACCT_PROFILE_NAME || (ACCT_EMAIL ? t("acct.signedInAs", "Signed in") : generic);
+    const sub = $("#acctMenuSub"); if (sub) sub.textContent = ACCT_EMAIL || t("acct.profileSub", "Stored on this computer");
+    const si = $("#menuSignin"), so = $("#menuSignout");
+    if (si) si.hidden = !!ACCT_EMAIL;
+    if (so) so.hidden = !ACCT_EMAIL;
   }
   // The profile picture lives in the data folder and never leaves the machine. A missing photo
   // shows the silhouette placeholder; a cache-busting query makes a new upload show at once.
@@ -4392,6 +4404,7 @@
   async function buyInterviews(pack, btn) {
     const msg = $("#r2BuyMsg");
     const say = (t) => { if (msg) { msg.textContent = t; msg.hidden = false; } };
+    if (!ACCT_EMAIL) { openSignin({ kind: "pack", id: pack }); return; }   // sign in first, then Stripe
     if (btn) btn.disabled = true;
     try {
       const d = await api("/api/interview/round2/buy", { pack });
@@ -4408,6 +4421,7 @@
         });
       }
     } catch (err) {
+      if (err.reason === "sign_in_required") { if (btn) btn.disabled = false; openSignin({ kind: "pack", id: pack }); return; }
       if (err.data && err.data.offer === "passes") openUpgrade();   // no active pass: show the passes
       say(err.message || T("r2.cantBuy", "Couldn't start checkout."));
     }
@@ -4847,12 +4861,16 @@
     }
   }
   async function buyPack(pack, btn) {
+    if (!ACCT_EMAIL) { closeUpgrade(); openSignin({ kind: "pack", id: pack }); return; }   // sign in first
     if (btn) btn.disabled = true;
     try {
       const d = await api("/api/interview/round2/buy", { pack });
       if (window.tailorShell) window.tailorShell.openBrowser(d.url);
       else window.location.href = d.url;
-    } catch (e) { if (!e.reason) toast(e.message || T("r2.cantBuy", "Couldn't start checkout.")); }
+    } catch (e) {
+      if (e.reason === "sign_in_required") { closeUpgrade(); openSignin({ kind: "pack", id: pack }); }
+      else if (!e.reason) toast(e.message || T("r2.cantBuy", "Couldn't start checkout."));
+    }
     if (btn) btn.disabled = false;
   }
   function openUpgrade() {
@@ -4877,48 +4895,47 @@
     clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove("show"), 2600);
   }
 
-  // Checkout, try-first: if this install's account has no email yet, collect one (create account
-  // or log in) before Stripe, so a paid plan follows the person to a new device. Then get a
-  // Checkout Session URL from our server (which brokers Stripe) and go there.
-  let subscribing = false, pendingTier = null, accountMode = "signup";   // pendingTier = the pass id
-  const upgAccount = $("#upgAccount");
+  // Buying, the production way (claude.ai, ChatGPT, Notion, Linear): signing in is its OWN screen,
+  // never a form inside the plans panel. "Get the pass" signed in -> straight to Stripe Checkout,
+  // where the broker prefills the email. Signed out -> the plans panel closes, the sign-in screen
+  // opens with "Sign in to get your Job Hunt Pass", and a successful sign-in carries on to Stripe
+  // for that same pass. A 401 sign_in_required from checkout routes to the same screen.
+  let subscribing = false;
+  let pendingBuy = null;                          // {kind: "pass"|"pack", id} waiting on a sign-in
+  const PENDING_KEY = "sj-pending-buy";           // survives the web build's same-tab Google trip
+  function rememberBuy(b) {
+    pendingBuy = b;
+    try { b ? sessionStorage.setItem(PENDING_KEY, JSON.stringify(b)) : sessionStorage.removeItem(PENDING_KEY); } catch {}
+  }
+  try { pendingBuy = JSON.parse(sessionStorage.getItem(PENDING_KEY) || "null"); } catch { pendingBuy = null; }
 
+  function openCheckoutUrl(url) {
+    // Desktop: the side pane, so the app stays put and the shell reports the result when it
+    // closes. Web build: the same tab; Stripe returns to ?checkout=.
+    if (window.tailorShell) window.tailorShell.openBrowser(url);
+    else window.location.href = url;
+  }
   async function doCheckout(passId) {
     try {
       const r = await api("/api/billing/checkout", { pass: passId });
-      if (r && r.url) {                                          // -> Stripe Checkout
-        // In the desktop app it opens in the side pane, like a pack purchase, so the app stays
-        // put and the shell reports the result when the pane closes.
-        if (window.tailorShell) window.tailorShell.openBrowser(r.url);
-        else window.location.href = r.url;
-        return;
-      }
-      toast("Couldn't start checkout. Please try again.");
+      if (r && r.url) { openCheckoutUrl(r.url); return; }
+      toast(T("upg.cantStart", "Couldn't start checkout. Please try again."));
     } catch (e) {
-      if (!e.reason) toast(e.message || "Couldn't start checkout.");   // api() already screened tagged reasons
+      if (e.reason === "sign_in_required") { closeUpgrade(); openSignin({ kind: "pass", id: passId }); return; }
+      if (!e.reason) toast(e.message || T("upg.cantStart", "Couldn't start checkout. Please try again."));
     }
   }
-
-  function setAccountMode(mode) {
-    accountMode = mode;
-    const signup = mode === "signup";
-    $("#upgAccountH").textContent = signup ? T("upg.createAcct", "Create your account to get your pass") : T("upg.loginAcct", "Log in to continue");
-    $("#upgAccountGo").textContent = signup ? "Create account & continue" : "Log in & continue";
-    $("#upgAccountToggle").textContent = signup ? "Already have an account? Log in" : "Need an account? Create one";
-    const m = $("#upgAccountMsg"); if (m) { m.hidden = true; m.textContent = ""; }
-  }
-
-  async function subscribe(tier, btn) {
+  async function subscribe(passId, btn) {
     if (subscribing) return;
+    if (!ACCT_EMAIL) {                            // signed out: sign in first, then Stripe
+      closeUpgrade();
+      openSignin({ kind: "pass", id: passId });
+      return;
+    }
     subscribing = true;
-    if (upgAccount) upgAccount.hidden = true;                   // reset the step each attempt
     if (btn) { btn.disabled = true; btn.textContent = T("upg.starting", "Starting..."); }
-    try {
-      // Straight to Stripe (Kofi, 2026-10-10). A sign-up wall between "Get the pass" and paying is
-      // the classic place buyers leave, and it asked for a password we did not need: Stripe's own
-      // page already takes the buyer's email, and the pass lands on this install's account.
-      await doCheckout(tier);
-    } finally {
+    try { await doCheckout(passId); }
+    finally {
       subscribing = false;
       if (btn) { btn.disabled = false; btn.textContent = T("upg.get", "Get the pass"); }
     }
@@ -4926,71 +4943,230 @@
   document.querySelectorAll(".upg-plan .upg-cta[data-pass]").forEach((b) =>
     b.addEventListener("click", () => subscribe(b.dataset.pass, b)));
 
-  $("#upgAccountToggle")?.addEventListener("click", () =>
-    setAccountMode(accountMode === "signup" ? "login" : "signup"));
-
-  upgAccount?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const email = ($("#upgEmail")?.value || "").trim(), password = $("#upgPassword")?.value || "";
-    const msg = $("#upgAccountMsg"), go = $("#upgAccountGo");
-    const showMsg = (t) => { if (msg) { msg.textContent = t; msg.hidden = false; } };
-    if (!email || password.length < 8) { showMsg("Enter an email and a password of at least 8 characters."); return; }
-    go.disabled = true; go.textContent = "Working...";
-    try {
-      if (accountMode === "signup") {
-        try {
-          await api("/api/account/claim", { email, password });
-          if (pendingTier) await doCheckout(pendingTier);
-        } catch (e2) {
-          if (/already exists/i.test(e2.message || "")) { setAccountMode("login"); showMsg("That email already has an account. Log in to continue."); }
-          else showMsg(e2.message || "Couldn't create your account.");
-        }
-      } else {
-        try {
-          await api("/api/account/login", { email, password });
-          if (pendingTier) await doCheckout(pendingTier); else { toast("Logged in."); closeUpgrade(); }
-        } catch (e2) {
-          showMsg(e2.message || "Couldn't log in.");
-        }
-      }
-    } finally {
-      go.disabled = false;
-      go.textContent = accountMode === "signup" ? "Create account & continue" : "Log in & continue";
-    }
-  });
-
-  // Continue with Google: open the broker's OAuth start; the shell (or the web redirect) hands back
-  // a token, which we adopt as this install's account, then carry on to checkout.
-  async function adoptToken(token) {
-    try {
-      await api("/api/account/adopt", { token });
-      if (pendingTier) await doCheckout(pendingTier);
-      else { closeUpgrade(); toast("Signed in."); await loadPlanBadge(); }
-    } catch (e) { toast(e.message || "Sign-in failed."); }
+  // ---- The sign-in screen ----
+  const signinEl = $("#signinScreen");
+  const SI_STEPS = ["signinStart", "signinCode", "signinGoogleWait"];
+  let siEmail = "", siResendAt = 0, siTimer = null, siPoll = null, siBusy = false;
+  function siStep(id) {
+    SI_STEPS.forEach(s => { const el = $("#" + s); if (el) el.hidden = s !== id; });
+    if (id !== "signinGoogleWait") stopGooglePoll();
   }
-  $("#upgGoogle")?.addEventListener("click", async () => {
+  function siErr(id, msg) { const el = $("#" + id); if (!el) return; el.textContent = msg || ""; el.hidden = !msg; }
+  function buyLine(b) {
+    if (!b) return "";
+    if (b.kind === "pack") return T("signin.whyPack", "Sign in to buy extra live interviews");
+    const name = PASS_NAMES[b.id] ? PASS_NAMES[b.id]() : T("upg.pass30Name", "Job Hunt Pass");
+    return T("signin.whyPass", "Sign in to get your {pass}").replace("{pass}", name);
+  }
+  function openSignin(buy) {
+    closeAcctMenu();
+    rememberBuy(buy || null);
+    const why = $("#signinWhy");
+    if (why) { why.textContent = buyLine(buy); why.hidden = !buy; }
+    siErr("signinErr", ""); siErr("signinCodeErr", "");
+    siStep("signinStart");
+    if (signinEl) signinEl.hidden = false;
+    setTimeout(() => $("#signinEmail")?.focus(), 30);
+  }
+  function closeSignin() {
+    if (signinEl) signinEl.hidden = true;
+    stopGooglePoll(); clearInterval(siTimer);
+    rememberBuy(null);
+  }
+  $("#signinClose")?.addEventListener("click", closeSignin);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && signinEl && !signinEl.hidden) closeSignin(); });
+  $("#menuSignin")?.addEventListener("click", () => openSignin(null));
+
+  // Step 1: email -> a 6-digit code.
+  async function sendCode() {
+    const r = await fetch("/api/account/email/start", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                        body: JSON.stringify({ email: siEmail }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw new Error(d.error || T("signin.sendFailed", "Couldn't send the code. Try again."));
+    siResendAt = Date.now() + 30000;
+    tickResend();
+  }
+  function tickResend() {
+    const b = $("#signinResend"); if (!b) return;
+    clearInterval(siTimer);
+    const paint = () => {
+      const left = Math.ceil((siResendAt - Date.now()) / 1000);
+      if (left > 0) { b.disabled = true; b.textContent = T("signin.resendIn", "Resend code in {s} s").replace("{s}", String(left)); }
+      else { b.disabled = false; b.textContent = T("signin.resend", "Resend code"); clearInterval(siTimer); }
+    };
+    paint(); siTimer = setInterval(paint, 1000);
+  }
+  $("#signinEmailForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = ($("#signinEmail")?.value || "").trim();
+    siErr("signinErr", "");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { siErr("signinErr", T("signin.badEmail", "Enter a valid email address.")); return; }
+    const go = $("#signinEmailGo");
+    go.disabled = true; go.textContent = T("signin.sending", "Sending code...");
+    siEmail = email;
     try {
-      const r = await api("/api/account/google/url");
-      if (!r || !r.url) { toast("Google sign-in isn't set up yet."); return; }
-      if (window.tailorShell) window.tailorShell.openBrowser(r.url);   // -> Google, in the pane
-      else window.location.href = r.url;                               // web build: navigate there
-    } catch (e) { if (!e.reason) toast(e.message || "Couldn't start Google sign-in."); }
+      await sendCode();
+      $("#signinSentTo").textContent = email;
+      clearDigits(); siErr("signinCodeErr", ""); $("#signinCodeStatus").hidden = true;
+      siStep("signinCode");
+      digits()[0]?.focus();
+    } catch (err) { siErr("signinErr", err.message); }
+    finally { go.disabled = false; go.textContent = T("signin.continue", "Continue with email"); }
   });
+  $("#signinResend")?.addEventListener("click", async () => {
+    siErr("signinCodeErr", "");
+    try { await sendCode(); const s = $("#signinCodeStatus"); s.textContent = T("signin.resent", "New code sent."); s.hidden = false; clearDigits(); digits()[0]?.focus(); }
+    catch (err) { siErr("signinCodeErr", err.message); }
+  });
+  $("#signinBack")?.addEventListener("click", () => { clearInterval(siTimer); siStep("signinStart"); $("#signinEmail")?.focus(); });
+
+  // Step 2: the 6 boxes. Typing advances, Backspace goes back, a paste fills them all, and the
+  // sixth digit submits on its own.
+  const digits = () => Array.from(document.querySelectorAll("#signinOtp .signin-digit"));
+  function clearDigits() { digits().forEach(d => { d.value = ""; }); $("#signinOtp")?.classList.remove("is-bad"); }
+  function fillFrom(i, text) {
+    const ds = digits(), chars = String(text).replace(/\D/g, "").split("");
+    for (let k = 0; k < chars.length && i + k < ds.length; k++) ds[i + k].value = chars[k];
+    const next = Math.min(i + chars.length, ds.length - 1);
+    ds[next].focus();
+    maybeVerify();
+  }
+  digits().forEach((d, i) => {
+    d.addEventListener("input", () => {
+      $("#signinOtp")?.classList.remove("is-bad"); siErr("signinCodeErr", "");
+      const v = d.value.replace(/\D/g, "");
+      if (v.length > 1) { d.value = ""; fillFrom(i, v); return; }   // autofill / fast typing
+      d.value = v;
+      if (v && i < 5) digits()[i + 1].focus();
+      maybeVerify();
+    });
+    d.addEventListener("keydown", (e) => {
+      if (e.key === "Backspace" && !d.value && i > 0) { const p = digits()[i - 1]; p.value = ""; p.focus(); e.preventDefault(); }
+      else if (e.key === "ArrowLeft" && i > 0) { digits()[i - 1].focus(); e.preventDefault(); }
+      else if (e.key === "ArrowRight" && i < 5) { digits()[i + 1].focus(); e.preventDefault(); }
+    });
+    d.addEventListener("paste", (e) => {
+      const t = (e.clipboardData || window.clipboardData)?.getData("text") || "";
+      if (!/\d/.test(t)) return;
+      e.preventDefault(); fillFrom(i, t);
+    });
+    d.addEventListener("focus", () => d.select());
+  });
+  async function maybeVerify() {
+    const code = digits().map(d => d.value).join("");
+    if (code.length !== 6 || siBusy) return;
+    siBusy = true;
+    const otp = $("#signinOtp"), st = $("#signinCodeStatus");
+    otp?.classList.add("is-busy"); digits().forEach(d => d.disabled = true);
+    st.textContent = T("signin.verifying", "Checking the code..."); st.hidden = false;
+    try {
+      const r = await fetch("/api/account/email/verify", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                          body: JSON.stringify({ email: siEmail, code }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) {
+        st.hidden = true;
+        otp?.classList.add("is-bad");
+        siErr("signinCodeErr", d.error_code === "expired" ? T("signin.expired", "That code has expired. Send a new one.")
+                              : d.error_code === "bad_code" ? T("signin.badCode", "That code isn't right. Check the email and try again.")
+                              : (d.error || T("signin.failed", "Couldn't sign you in. Try again.")));
+        digits().forEach(x => x.disabled = false);
+        clearDigits(); otp?.classList.add("is-bad"); digits()[0]?.focus();
+        return;
+      }
+      await signedIn();
+    } catch (err) {
+      st.hidden = true; siErr("signinCodeErr", T("signin.failed", "Couldn't sign you in. Try again."));
+      digits().forEach(x => x.disabled = false);
+    } finally {
+      siBusy = false; otp?.classList.remove("is-busy"); digits().forEach(x => x.disabled = false);
+    }
+  }
+
+  // Signed in (by code or Google): refresh who we are, then carry on with what they came for.
+  async function signedIn() {
+    const buy = pendingBuy;
+    if (signinEl) signinEl.hidden = true;
+    stopGooglePoll(); clearInterval(siTimer);
+    rememberBuy(null);
+    await loadAccount();
+    if (buy && buy.kind === "pass") { toast(T("signin.toStripe", "Signed in. Opening checkout...")); await doCheckout(buy.id); }
+    else if (buy && buy.kind === "pack") { toast(T("signin.toStripe", "Signed in. Opening checkout...")); await buyPack(buy.id); }
+    else toast(T("signin.done", "Signed in as {email}").replace("{email}", ACCT_EMAIL || ""));
+  }
+  async function adoptToken(token) {
+    try { await api("/api/account/adopt", { token }); await signedIn(); }
+    catch (e) { openSignin(pendingBuy); siErr("signinErr", e.message || T("signin.googleFailed", "Google sign-in didn't finish. Please try again.")); }
+  }
+
+  // Continue with Google. Desktop: the person's OWN browser (Google refuses sign-in inside
+  // embedded browsers; RFC 8252), which lands on this engine's callback page and adopts the token;
+  // this screen notices by polling the account. Web build: the same tab, back to ?signin=ok.
+  function stopGooglePoll() { clearInterval(siPoll); siPoll = null; }
+  $("#signinGoogle")?.addEventListener("click", async () => {
+    siErr("signinErr", "");
+    // Google opens in the person's own browser, which cannot carry this device's token, so a new
+    // Google email would start a NEW account. A pass bought on this device before it had an email
+    // would then be left behind: steer that case to the email code, which keeps it.
+    if (!ACCT_EMAIL && ACCT_PLAN && PASS_NAMES[ACCT_PLAN]) {
+      siErr("signinErr", T("signin.keepPass", "This device has a pass that isn't linked to an email yet. Sign in with your email so the pass stays with you."));
+      $("#signinEmail")?.focus();
+      return;
+    }
+    try {
+      if (window.tailorShell) {
+        await api("/api/account/google/open", {});
+        siStep("signinGoogleWait");
+        stopGooglePoll();
+        const started = Date.now();
+        siPoll = setInterval(async () => {
+          if (Date.now() - started > 10 * 60 * 1000) { stopGooglePoll(); return; }
+          try {
+            const s = await fetch("/api/account/status").then(r => r.json());
+            if (s && s.email) { stopGooglePoll(); await signedIn(); }
+          } catch { /* keep waiting */ }
+        }, 2000);
+      } else {
+        const r = await api("/api/account/google/url?via=tab");
+        window.location.href = r.url;
+      }
+    } catch (e) { siErr("signinErr", e.message || T("signin.googleFailed", "Google sign-in didn't finish. Please try again.")); }
+  });
+  $("#signinGoogleBack")?.addEventListener("click", () => siStep("signinStart"));
+  // An older path: Google finished inside the side pane and the shell hands us the token.
+  // The broker returns #error=cancelled (the person backed out at Google) or #error=signin_failed.
+  function googleErrorText(why) {
+    return why === "cancelled" ? T("signin.googleCancelled", "Google sign-in was cancelled. Nothing changed.")
+                               : T("signin.googleFailed", "Google sign-in didn't finish. Please try again.");
+  }
   window.tailorShell?.onSigninReturn?.((data) => {
     if (data && data.token) adoptToken(data.token);
-    else toast("Google sign-in didn't complete. Please try again.");
+    else { openSignin(pendingBuy); siErr("signinErr", googleErrorText(data && data.error)); }
   });
 
-  // The tier shown on the profile foot (Free by default; the pass name while one is active).
-  // Refresh it on load and after checkout.
-  async function loadPlanBadge() {
-    const el = $("#acctPlan"); if (!el) return;
+  // Sign out: this device forgets the email account and goes back to a fresh free account.
+  $("#menuSignout")?.addEventListener("click", async () => {
+    closeAcctMenu();
+    try { await api("/api/account/signout", {}); toast(T("signin.signedOut", "Signed out.")); }
+    catch (e) { if (!e.reason) toast(e.message || T("signin.signoutFailed", "Couldn't sign out. Try again.")); }
+    await loadAccount();
+  });
+
+  // Who is signed in, and on which plan: the account foot shows the email (or the pass name
+  // under it), the menu shows Sign in or the email + Sign out. Refreshed on load, after sign-in
+  // and after checkout.
+  async function loadAccount() {
     try {
       const s = await api("/api/account/status");
-      if (s && s.plan) el.textContent = PASS_NAMES[s.plan] ? PASS_NAMES[s.plan]() : T("upg.freeName", "Free");
-    } catch (e) { /* leave the current label */ }
+      ACCT_EMAIL = (s && s.email) || null;
+      ACCT_PLAN = (s && s.plan) || null;
+      const el = $("#acctPlan");
+      if (el && s && s.plan) el.textContent = PASS_NAMES[s.plan] ? PASS_NAMES[s.plan]() : T("upg.freeName", "Free");
+    } catch (e) { /* leave the current labels */ }
+    paintIdentity();
   }
-  loadPlanBadge();
+  const loadPlanBadge = loadAccount;
+  document.addEventListener("i18n:changed", paintIdentity);
+  loadAccount();
 
   // Returning from Stripe Checkout. Close the plans panel and confirm in THIS window (not inside
   // the pane). Two ways in: the desktop shell hands us the result after closing the pane, and the
@@ -5019,17 +5195,17 @@
     history.replaceState(null, "", location.pathname + (q ? "?" + q : ""));   // don't repeat on refresh
   })();
 
-  // Web fallback for Google sign-in (the desktop shell uses onSigninReturn instead): the broker
-  // redirects to our app URL with ?account=<token> (or ?signin=error).
+  // Web build: the Google callback page adopted the token and sent this tab back with
+  // ?signin=ok (or ?signin=error). Carry on with what the person came for.
   (function handleSigninReturn() {
     const p = new URLSearchParams(location.search);
-    const token = p.get("account"), err = p.get("signin");
-    if (token) adoptToken(token);
-    else if (err === "error") toast("Google sign-in didn't complete. Please try again.");
-    else return;
-    p.delete("account"); p.delete("signin");
+    const v = p.get("signin");
+    if (!v) return;
+    p.delete("signin");
     const q = p.toString();
     history.replaceState(null, "", location.pathname + (q ? "?" + q : ""));
+    if (v === "ok") signedIn();
+    else { openSignin(pendingBuy); siErr("signinErr", googleErrorText(v)); }
   })();
 
   const setModal = $("#setModal");

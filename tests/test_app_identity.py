@@ -63,23 +63,27 @@ def test_status_reports_the_email_from_the_broker(A, monkeypatch):
     assert _client(A).get("/api/account/status").get_json()["email"] == "u@b.com"
 
 
-def test_claim_proxy_maps_a_taken_email_to_409(A, monkeypatch):
-    monkeypatch.setattr(A, "_broker_post",
-                        lambda p, b: (409, {"error": "an account with that email already exists; log in instead"}))
-    r = _client(A).post("/api/account/claim", json={"email": "u@b.com", "password": "longenough1"})
-    assert r.status_code == 409 and "log in" in r.get_json()["error"]
+def test_password_routes_are_gone(A):
+    """No passwords anywhere: sign-in is email code or Google only."""
+    c = _client(A)
+    for path in ("/api/account/claim", "/api/account/login"):
+        assert c.post(path, json={"email": "u@b.com", "password": "longenough1"}).status_code in (404, 405)
 
 
-def test_login_proxy_saves_the_returned_token(A, monkeypatch):
-    saved = {}
-    monkeypatch.setattr(A, "_broker_post", lambda p, b: (200, {"token": "tok_login"}))
-    monkeypatch.setattr(A, "_save_cred", lambda k, v: saved.__setitem__(k, v))
-    r = _client(A).post("/api/account/login", json={"email": "u@b.com", "password": "longenough1"})
-    assert r.status_code == 200 and saved["TAILOR_ACCOUNT_TOKEN"] == "tok_login"
+def test_google_url_points_the_broker_back_at_the_app_callback(A):
+    from urllib.parse import parse_qs, urlparse
+    url = _client(A).get("/api/account/google/url?via=tab").get_json()["url"]
+    u = urlparse(url)
+    assert u.path.endswith("/account/google/start")
+    redirect = parse_qs(u.query)["redirect"][0]
+    assert redirect.endswith("/account/google/done?via=tab")
 
 
-def test_google_url_returns_the_broker_start_url(A):
-    assert _client(A).get("/api/account/google/url").get_json()["url"].endswith("/account/google/start")
+def test_google_done_page_reads_the_token_from_the_fragment(A):
+    r = _client(A).get("/account/google/done?via=browser")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "location.hash" in body and "/api/account/adopt" in body
 
 
 def test_adopt_saves_a_token_that_the_broker_verifies(A, monkeypatch):
