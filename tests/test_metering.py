@@ -41,7 +41,7 @@ def _meter(clock=None):
 
 # -- tiers and allowances -----------------------------------------------------------------------
 def test_the_three_tiers_as_decided():
-    assert INTERVIEW_SECONDS == 900
+    assert INTERVIEW_SECONDS == 1200                                 # 20 minutes (2026-10-10)
     assert set(PLANS) == {"free", "pass30", "pass90"}               # no subscription tiers remain
     shape = {k: (p.days, p.interviews, p.packages, p.llm_model, p.price_label) for k, p in PLANS.items()}
     assert shape == {
@@ -49,7 +49,7 @@ def test_the_three_tiers_as_decided():
         "pass30": (30, 3, 60, "claude-sonnet-5-5", "$29"),
         "pass90": (90, 9, 150, "claude-sonnet-5-5", "$69"),
     }
-    assert PLANS["pass30"].avatar_seconds_included == 2700 and PLANS["pass90"].avatar_seconds_included == 8100
+    assert PLANS["pass30"].avatar_seconds_included == 3 * INTERVIEW_SECONDS and PLANS["pass90"].avatar_seconds_included == 9 * INTERVIEW_SECONDS
 
 
 def test_new_user_is_free_with_no_live_interviews_and_the_cheap_model():
@@ -122,7 +122,7 @@ def test_stacking_extends_the_end_date_and_adds_allowances():
     m = _meter()
     m.grant_pass("u", "pass30")
     m.start_package("u", P)                                          # 59 left
-    m.consume_avatar("u", P, 900)                                    # 2 interviews left
+    m.consume_avatar("u", P, INTERVIEW_SECONDS)                      # 2 interviews left
     m.clock_obj.advance(days=10)
     m.grant_pass("u", "pass90")
     st = m.status("u", P)
@@ -138,8 +138,8 @@ def test_stacking_extends_the_end_date_and_adds_allowances():
 def test_pass_interviews_run_out_then_need_extras():
     m = _meter()
     m.grant_pass("u", "pass30")
-    r = m.consume_avatar("u", P, 2700)
-    assert r == {"consumed": 2700, "capped": False, "remaining": 0}
+    r = m.consume_avatar("u", P, 3 * INTERVIEW_SECONDS)
+    assert r == {"consumed": 3 * INTERVIEW_SECONDS, "capped": False, "remaining": 0}
     with pytest.raises(QuotaExceeded) as e:
         m.require_avatar("u", P)
     assert e.value.reason == "no_interviews"
@@ -148,18 +148,18 @@ def test_pass_interviews_run_out_then_need_extras():
 def test_consume_never_goes_negative_and_reports_capped():
     m = _meter()
     m.grant_pass("u", "pass30")
-    r = m.consume_avatar("u", P, 3000)
-    assert r["consumed"] == 2700 and r["capped"] is True and r["remaining"] == 0
+    r = m.consume_avatar("u", P, 3 * INTERVIEW_SECONDS + 300)
+    assert r["consumed"] == 3 * INTERVIEW_SECONDS and r["capped"] is True and r["remaining"] == 0
     assert m.consume_avatar("u", P, 60) == {"consumed": 0, "capped": True, "remaining": 0}
 
 
 def test_never_starts_an_interview_that_cannot_finish():
     m = _meter()
     m.grant_pass("u", "pass30")
-    m.consume_avatar("u", P, 2700 - 600)                             # 10 minutes left
+    m.consume_avatar("u", P, 3 * INTERVIEW_SECONDS - 600)                # 10 minutes left
     assert m.can_start_avatar("u", P) is False
-    m.add_credits("u", 299)
-    assert m.can_start_avatar("u", P) is False                       # 899 s, one second short
+    m.add_credits("u", INTERVIEW_SECONDS - 601)
+    assert m.can_start_avatar("u", P) is False                       # one second short
     m.add_credits("u", 1)
     assert m.can_start_avatar("u", P) is True
     m.require_avatar("u", P)
@@ -169,18 +169,18 @@ def test_consume_takes_the_pass_first_then_purchased_extras():
     m = _meter()
     m.grant_pass("u", "pass30")
     m.add_credits("u", 900)
-    r = m.consume_avatar("u", P, 2800)
-    assert r == {"consumed": 2800, "capped": False, "remaining": 800}
+    r = m.consume_avatar("u", P, 3 * INTERVIEW_SECONDS + 100)
+    assert r == {"consumed": 3 * INTERVIEW_SECONDS + 100, "capped": False, "remaining": 800}
     assert m.store.get_credit_seconds("u") == 800                    # 100 s came from the extras
 
 
 def test_extras_never_expire_and_survive_the_pass():
     m = _meter()
     m.grant_pass("u", "pass30")
-    m.add_credits("u", 900)
+    m.add_credits("u", INTERVIEW_SECONDS)
     m.clock_obj.advance(days=40)
     assert m.tier_for("u") == "free"
-    assert m.avatar_seconds_left("u", P) == 900 and m.can_start_avatar("u", P) is True
+    assert m.avatar_seconds_left("u", P) == INTERVIEW_SECONDS and m.can_start_avatar("u", P) is True
 
 
 def test_packs_can_only_be_bought_during_a_pass():

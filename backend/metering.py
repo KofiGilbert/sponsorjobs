@@ -33,7 +33,7 @@ from dataclasses import dataclass
 
 # Round 2 of interview prep is ONE live Tavus interview of 15 minutes; interview allowances are
 # counted in whole interviews of this length.
-INTERVIEW_SECONDS = 900
+INTERVIEW_SECONDS = 1200   # one live interview: 20 minutes (2026-10-10)
 DAY_SECONDS = 86_400
 
 # The model each tier is served on. Overridable per deployment without a code change.

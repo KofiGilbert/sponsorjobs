@@ -16,6 +16,8 @@ TK = Path("ui/static/timekeeper.js").resolve()
 TIMING = {"total": 900, "answer_nudge": 150, "answer_step_in": 195, "pause_wait": 15,
           "last_question": 780, "candidate_questions": 840, "close_wait": 20, "hard_end": 930,
           "think_grace": 10, "answer_grace": 45}
+# (These marks are the 15-minute set; the timekeeper only ever reads them from the app, so the
+#  logic is the same at 20 minutes. The app's own 20-minute marks are tested in test_round2_cvi.)
 
 HARNESS = r"""
 require(process.argv[2]);
@@ -124,3 +126,11 @@ def test_an_answer_that_has_begun_is_heard_out_but_not_forever():
     log = run(turn(5, 10, "pal") + turn(12, 700, "user") + turn(830, 836, "pal")
               + [[845, "started_speaking", "user"]])           # starts at 845 and never pauses
     assert [s for s, k, x in log if "one question for you" in x] == [890]   # 45 s into the answer
+
+
+def test_a_note_never_makes_the_interviewer_cut_itself_off():
+    """Kofi's second test call: the close arrived while the interviewer was answering his question,
+    and it stopped mid-word ("That") to start again. A request waits until it finishes speaking."""
+    log = run(turn(5, 10, "pal") + turn(12, 700, "user") + turn(830, 836, "pal") + turn(838, 880, "user")
+              + turn(895, 912, "pal"))                         # still speaking at 900
+    assert [s for s, k, x in log if "Close the interview" in x] == [912]

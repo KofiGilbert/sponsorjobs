@@ -43,7 +43,7 @@ describe("live interviews", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("a pass holder gets a private room capped at 15 minutes, with the briefing and the key server-side", async () => {
+  it("a pass holder gets a private room capped at 20 minutes, with the briefing and the key server-side", async () => {
     const sent = stubTavus(room);
     const { id, token } = await newAccount();
     await givePass(id);
@@ -57,7 +57,7 @@ describe("live interviews", () => {
     expect(sent[0]!.url).toBe("https://tavusapi.com/v2/conversations");
     expect(sent[0]!.headers["x-api-key"]).toBe("tvs-test-not-real");
     expect(sent[0]!.body.require_auth).toBe(true);
-    expect(sent[0]!.body.properties.max_call_duration).toBe(960);           // safety net one minute past 15:00
+    expect(sent[0]!.body.properties.max_call_duration).toBe(1260);          // safety net one minute past 20:00
     expect(sent[0]!.body.conversational_context).toBe("Interview for Data Analyst");
     expect(sent[0]!.body.custom_greeting).toBe("Hi there");
     expect(sent[0]!.body.face_id).toBeTruthy();
@@ -111,17 +111,18 @@ describe("live interviews", () => {
     expect(sent.some(s => s.url.endsWith("/conversations/c_123/end"))).toBe(true);
   });
 
-  it("one interview never charges more than 15 minutes, however long the wrap-up runs", async () => {
+  it("one interview never charges more than 20 minutes, however long the wrap-up runs", async () => {
     stubTavus(room);
     const { id, token } = await newAccount();
     await givePass(id);
     await call("/avatar/session/start", { token, body: {}, env: TAVUS });
     const beat = (seconds: number) =>
       call("/avatar/heartbeat", { token, body: { seconds, conversation_id: "c_123" }, env: TAVUS });
-    for (let i = 0; i < 29; i++) await beat(30);                     // 14:30 of interview
-    let r = await beat(30);                                          // 15:00
+    const beats = INTERVIEW_SECONDS / 30;
+    for (let i = 0; i < beats - 1; i++) await beat(30);              // up to 30 s before the end
+    let r = await beat(30);                                          // the full interview
     expect(r.data).toMatchObject({ remaining: 2 * INTERVIEW_SECONDS, charged: 30, stop: false });
-    r = await beat(30);                                              // 15:30: the wrap-up is free
+    r = await beat(30);                                              // 30 s past it: the wrap-up is free
     expect(r.data).toMatchObject({ remaining: 2 * INTERVIEW_SECONDS, charged: 0, stop: false });
     const other = await newAccount();
     expect((await call("/avatar/heartbeat",

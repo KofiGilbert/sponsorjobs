@@ -5,6 +5,7 @@ injected and the DB is a tmp file.
 
 from __future__ import annotations
 
+from backend.metering import INTERVIEW_SECONDS
 from backend.providers import FakeProvider
 from backend.server import _cred, build_broker
 
@@ -19,7 +20,7 @@ def test_build_broker_returns_a_working_app_over_sqlite(tmp_path):
     # a real end-to-end slice through the assembled app: upgrade, start avatar, meter, /me
     c.post("/billing/plan", json={"plan": "pass30"}, headers=H)
     assert c.post("/avatar/session/start", json={}, headers=H).status_code == 200
-    assert c.post("/avatar/heartbeat", json={"seconds": 2700}, headers=H).get_json()["stop"] is True
+    assert c.post("/avatar/heartbeat", json={"seconds": 3 * INTERVIEW_SECONDS}, headers=H).get_json()["stop"] is True
     body = c.get("/me/usage", headers=H).get_json()
     assert body["plan"] == "pass30" and body["avatar_seconds_left"] == 0
 
@@ -34,12 +35,12 @@ def test_dev_plan_seeds_the_local_user_so_the_avatar_works_on_launch(tmp_path, m
     app = build_broker(db_path=str(tmp_path / "b.db"), provider=FakeProvider())
     app.config.update(TESTING=True)
     body = app.test_client().get("/me/usage", headers={"X-Tailor-User": "local"}).get_json()
-    assert body["plan"] == "pass30" and body["avatar_seconds_left"] == 2700   # minutes ready, no setup
+    assert body["plan"] == "pass30" and body["avatar_seconds_left"] == 3 * INTERVIEW_SECONDS   # minutes ready, no setup
     # a restart does not stack another dev pass on top
     app2 = build_broker(db_path=str(tmp_path / "b.db"), provider=FakeProvider())
     app2.config.update(TESTING=True)
     body2 = app2.test_client().get("/me/usage", headers={"X-Tailor-User": "local"}).get_json()
-    assert body2["avatar_seconds_left"] == 2700 and body2["pass_until"] == body["pass_until"]
+    assert body2["avatar_seconds_left"] == 3 * INTERVIEW_SECONDS and body2["pass_until"] == body["pass_until"]
 
 
 def test_billing_needs_a_pass_price_and_reads_the_pass_and_pack_envs(monkeypatch):

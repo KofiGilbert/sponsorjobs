@@ -44,9 +44,9 @@ def test_pass_holder_starts_a_session_meters_down_and_hard_stops(client):
     r = client.post("/avatar/session/start", json={"context": {"role": "SWE"}}, headers=H)
     body = r.get_json()
     assert r.status_code == 200
-    assert body["session_url"].startswith("https://fake.local/") and body["remaining"] == 2700
+    assert body["session_url"].startswith("https://fake.local/") and body["remaining"] == 3600
 
-    assert client.post("/avatar/heartbeat", json={"seconds": 2640}, headers=H).get_json() \
+    assert client.post("/avatar/heartbeat", json={"seconds": 3540}, headers=H).get_json() \
         == {"remaining": 60, "stop": False}
     # asks for 2 more minutes but only 1 is left: consume what's there, then hard stop
     assert client.post("/avatar/heartbeat", json={"seconds": 120}, headers=H).get_json() \
@@ -57,13 +57,13 @@ def test_pass_holder_starts_a_session_meters_down_and_hard_stops(client):
 
 def test_credits_top_up_reopens_the_avatar(client):
     client.post("/billing/plan", json={"plan": "pass30"}, headers=H)
-    client.post("/avatar/heartbeat", json={"seconds": 2700}, headers=H)     # exhaust the pass
+    client.post("/avatar/heartbeat", json={"seconds": 3600}, headers=H)     # exhaust the pass
     assert client.post("/avatar/session/start", json={}, headers=H).status_code == 402
     client.post("/billing/credits", json={"seconds": 300}, headers=H)       # 5 min: not a full interview
     assert client.post("/avatar/session/start", json={}, headers=H).status_code == 402
-    client.post("/billing/credits", json={"seconds": 600}, headers=H)       # now 900 s = one interview
+    client.post("/billing/credits", json={"seconds": 900}, headers=H)       # now 1200 s = one interview
     r = client.post("/avatar/session/start", json={}, headers=H)
-    assert r.status_code == 200 and r.get_json()["remaining"] == 900
+    assert r.status_code == 200 and r.get_json()["remaining"] == 1200
 
 
 def test_llm_complete_meters_tokens_picks_the_plan_model_and_free_cap_blocks(client):
@@ -86,7 +86,7 @@ def test_me_usage_reports_tier_pass_and_balances(client):
     client.post("/billing/plan", json={"plan": "pass90"}, headers=H)
     body = client.get("/me/usage", headers=H).get_json()
     assert body["plan"] == body["tier"] == "pass90" and body["pass_until"]
-    assert body["avatar_seconds_left"] == 8100 and body["interviews_left"] == 9
+    assert body["avatar_seconds_left"] == 10800 and body["interviews_left"] == 9
     assert body["packages_left"] == 150 and body["llm_model"] == "claude-sonnet-5-5"
 
 
@@ -114,7 +114,7 @@ def test_heartbeat_rejects_bad_seconds_and_clamps_negative(client):
     client.post("/billing/plan", json={"plan": "pass30"}, headers=H)
     assert client.post("/avatar/heartbeat", json={"seconds": "abc"}, headers=H).status_code == 400
     r = client.post("/avatar/heartbeat", json={"seconds": -50}, headers=H)   # clamped to 0, not a 500
-    assert r.status_code == 200 and r.get_json()["remaining"] == 2700
+    assert r.status_code == 200 and r.get_json()["remaining"] == 3600
 
 
 def test_free_tier_llm_cap_blocks_an_oversized_single_prompt(client):

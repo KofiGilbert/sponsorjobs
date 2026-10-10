@@ -4212,7 +4212,7 @@
     }
     const st = await round2Status();
     if (st && st.available) {
-      box.innerHTML = `<div class="scr-unlock"><b>${esc(T("r1.unlocked", "Round 2 unlocked."))}</b> ${esc(T("r1.unlockedD", "A live interview with the Tavus interviewer, 15 minutes."))}
+      box.innerHTML = `<div class="scr-unlock"><b>${esc(T("r1.unlocked", "Round 2 unlocked."))}</b> ${esc(T("r1.unlockedD", "A live interview with the Tavus interviewer, 20 minutes."))}
         <button class="btn btn-primary btn-sm" id="scrToLive" type="button">${esc(T("r2.start", "Start Round 2"))}</button></div>`;
       $("#scrToLive")?.addEventListener("click", () => startRound2(SCR_PREP.id, SCREEN.id, false));
     } else {
@@ -4307,7 +4307,7 @@
   $("#scrQuit")?.addEventListener("click", quitScreen);
 
   // ---------------------------------------------------------------- Round 2: live interview (Tavus)
-  // One 15-minute conversation with the Tavus interviewer, in the app's own video pane. It runs on
+  // One 20-minute conversation with the Tavus interviewer, in the app's own video pane. It runs on
   // the paid plan first (company key, held by the broker), then the person's own Tavus key.
   let R2 = null, LIVE_STREAM = null, R2_CTX = null, CVI_CLOCK = null, CVI_PREV_W = "", CVI_UNBILLED = 0;
   async function round2Status() {
@@ -4353,7 +4353,7 @@
       return `<div class="${mode === "inline" ? "scr-unlock r2-gate-inline" : "scr-intro r2-gate"}">
       <div class="r2-gate-main">
         <h3 class="r2-gate-h">${esc(T("r2.passH", "Live interviews come with a pass"))}</h3>
-        <p class="r2-gate-d">${esc(T("r2.passD", "Fifteen minutes with a live interviewer who asks, listens and follows up, then a scored report. A Job Hunt Pass includes 3 live interviews, a Season Pass 9. Paid once, no auto-renew."))}</p>
+        <p class="r2-gate-d">${esc(T("r2.passD", "Twenty minutes with a live interviewer who asks, listens and follows up, then a scored report. A Job Hunt Pass includes 3 live interviews, a Season Pass 9. Paid once, no auto-renew."))}</p>
         <div class="scr-welcome-acts">
           <button class="btn btn-primary btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>
           <button class="btn btn-ghost btn-sm" id="r2Finish" type="button">${esc(T("r2.finishHere", "Finish here"))}</button>
@@ -4428,7 +4428,7 @@
         <div class="zoom-gr-side">
           <div class="zoom-gr-eyebrow">${esc(T("r2.aboutToJoin", "You are about to join"))}</div>
           <h2 class="zoom-gr-h">${esc(T("r2.title", "Round 2, live interview"))}</h2>
-          <p class="zoom-gr-sub">${esc(T("r2.greenSub", "15 minutes with a live interviewer. They ask, you answer, and they follow up like a real interview."))}</p>
+          <p class="zoom-gr-sub">${esc(T("r2.greenSub", "20 minutes with a live interviewer. They ask, you answer, and they follow up like a real interview."))}</p>
           ${R2_CTX && R2_CTX.skip_screen ? `<p class="scr-warm" style="display:inline-block">${esc(T("r2.skippedR1", "Straight to Round 2, no Round 1 first."))}</p>` : ""}
           <p class="zoom-gr-note">${esc(T("r2.note", "Your camera and mic stay on this computer."))}${mins != null ? " " + esc(r2InterviewsLeft(mins)) : ""}</p>
           <div class="zoom-gr-acts">
@@ -4487,8 +4487,9 @@
     later: (fn, ms) => setTimeout(fn, ms) });
 
   function renderCviStage(s) {
-    const t = s.timing || { total: 900, answer_nudge: 150, answer_step_in: 195, pause_wait: 15,
-                            last_question: 780, candidate_questions: 840, close_wait: 20, hard_end: 945 };
+    const t = s.timing || { total: 1200, answer_nudge: 180, answer_step_in: 240, pause_wait: 15,
+                            last_question: 930, candidate_questions: 1110, close_wait: 20, hard_end: 1230,
+                            think_grace: 10, answer_grace: 60, minutes: 20 };
     stopLiveStream();   // Tavus runs its own camera/mic; free the green-room preview stream
     $("#liveStage").innerHTML =
       `<div class="zoom-cvi">
@@ -4531,7 +4532,7 @@
         ? `${esc(T("r2.timeLeft", "Time left"))}: <b id="cviMins">${fmtClock(left)}</b>`
         : `<b>${esc(T("r2.wrappingUp", "Wrapping up"))}</b>`;
       if (!CVI_TK && now >= t.hard_end) { endCvi(); return; }
-      // On the plan, report time used every 30 s so the broker meters it (capped at 15 minutes
+      // On the plan, report time used every 30 s so the broker meters it (capped at 20 minutes
       // per interview there, so the wrap-up is never charged).
       if (s.source === "plan" && ++CVI_UNBILLED >= 30) {
         const secs = CVI_UNBILLED; CVI_UNBILLED = 0;
@@ -4594,7 +4595,7 @@
   $("#liveQuit")?.addEventListener("click", quitLive);
 
   // ---- Settings: Live interviewer (Tavus). Key in, key out, and the status Round 2 reads.
-  // Whole 15-minute interviews from the plan's minutes.
+  // Whole 20-minute interviews from the plan's minutes.
   function r2InterviewsLeft(mins) {
     const n = Math.floor(Number(mins) / 15);
     return n === 1 ? T("r2.oneLeft", "1 interview left.") : T("r2.nLeft", "{n} interviews left.").replace("{n}", String(n));
@@ -4605,7 +4606,7 @@
     if (!pill) return;
     const ok = !!(st && st.available);
     const keySet = !!(st && st.key_set);
-    const n = st && st.minutes_left != null ? Math.floor(Number(st.minutes_left) / 15) : 0;
+    const n = st && st.minutes_left != null ? Math.floor(Number(st.minutes_left) / 20) : 0;
     connPill(pill, ok, T("tavus.ready", "Ready"),
       st && st.reason === "no_minutes" ? T("tavus.usedUp", "Used up") : T("tavus.noKey", "No key"));
     if (state) state.textContent = st && st.source === "plan"
