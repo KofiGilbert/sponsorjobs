@@ -30,6 +30,17 @@ export interface Env {
   // Where Stripe sends the person back after paying (+ "/?checkout=success|cancel"). Defaults to
   // the desktop app's local address, as in backend/server.py.
   TAILOR_APP_URL?: string;
+  // Passwordless sign-in (src/signin.ts). E-mail codes are sent through Resend when its key is set
+  // (a secret), or through Cloudflare Email Service when an EMAIL send_email binding exists; with
+  // neither, /account/email/* answers "email sign-in is not configured".
+  RESEND_API_KEY?: string;
+  EMAIL?: import("./mailer").SendEmailBinding;
+  EMAIL_FROM?: string;              // default "SponsorJobs <no-reply@sponsorjobs.ai>"
+  // "Continue with Google": both secrets, or /account/google/* answers "not configured".
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  // Optional: the callback registered with Google. Defaults to <this host>/account/google/callback.
+  GOOGLE_REDIRECT_URI?: string;
 }
 
 /** A numeric var with a fallback, so a missing or mistyped value never turns into NaN limits. */

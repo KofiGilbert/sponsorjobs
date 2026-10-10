@@ -19,7 +19,11 @@ implementation; it does not replace or change anything in `backend/`.
 | --- | --- |
 | `GET /health` | `{ok, real_providers}`; `real_providers` is true when `ANTHROPIC_API_KEY` is set |
 | `POST /account/register` | new anonymous account; 50 per network per day (`429 register_limit`) |
-| `GET /account/me` | `{account_id, email: null}` |
+| `GET /account/me` | `{account_id, email}` (`email` is null until the person signs in) |
+| `POST /account/email/start` | `{email}`: e-mails a 6-digit code valid 10 minutes (5 per address and 5 per network per hour, `429 rate_limited`) |
+| `POST /account/email/verify` | `{email, code}` (+ the device token, if any): `{token, account_id, email}`; `400 bad_code` / `400 expired` |
+| `GET /account/google/start?redirect=<app callback>` | 302 to Google (PKCE + one-time state); the redirect must be `http://127.0.0.1:*` or `http://localhost:*` |
+| `GET /account/google/callback` | 302 to the app callback with `#token=...` (or `#error=cancelled` / `#error=signin_failed`) |
 | `POST /llm/complete` | one metered completion (`402 token_cap`, `503 free_busy`, `502` on upstream failure) |
 | `POST /llm/package` | counts one tailoring run (`402 package_limit`) |
 | `GET /me/usage` | plan, pass end date, interviews, packages, model |
@@ -31,9 +35,13 @@ Billing is off until the Stripe secrets are set (`STRIPE_SECRET_KEY` and at leas
 see `docs/stripe-setup.md`). While off, the billing routes answer exactly as the Python broker does
 with billing off: nothing on sale, and checkout/webhook say `503 billing is not configured`.
 
-Other phase-2 routes (email and Google sign-in, Telegram)
-answer `503 ... not configured`, which is what the Python broker says when those are switched off,
-so the app degrades the same way. They are not built yet.
+Sign-in is passwordless (e-mail code or Google; `src/signin.ts`). Both end in one rule: if the
+e-mail already has an account, the device logs in to it; otherwise the e-mail is attached to the
+caller's device account (keeping its pass and usage), or a new account is made. Buying a pass or a
+pack needs a signed-in account (`401 sign_in_required` otherwise), and the e-mail is prefilled on
+Stripe Checkout. Each sign-in method stays `503 ... not configured` until its secrets are set
+(`docs/sign-in-setup.md`). The Python broker's password routes (`/account/signup|login|claim`) and
+Telegram answer `503 ... not configured`.
 
 ## Run it locally
 

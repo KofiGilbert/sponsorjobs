@@ -1,5 +1,6 @@
-// Anonymous accounts and bearer-token identity, ported from backend/accounts.py (phase 1: the
-// anonymous device account only; email and Google sign-in come in phase 2).
+// Accounts and bearer-token identity, ported from backend/accounts.py: the anonymous device
+// account, plus the passwordless "sign in with an e-mail" rule (signInWithEmail) shared by the
+// e-mail code and Google routes in signin.ts.
 //
 // Same token scheme as Python, so a token minted by either broker resolves in the other after a
 // data move: 32 random bytes as url-safe base64 (secrets.token_urlsafe(32)), stored only as the
@@ -22,7 +23,7 @@ function randomBytes(n: number): Uint8Array {
 }
 
 /** Python's secrets.token_urlsafe: base64url without padding. */
-function tokenUrlsafe(nbytes: number): string {
+export function tokenUrlsafe(nbytes: number): string {
   let bin = "";
   for (const b of randomBytes(nbytes)) bin += String.fromCharCode(b);
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -89,4 +90,60 @@ export async function allowRegistration(db: D1Database, ip: string, day: string,
       .bind(await sha256Hex(ip), day, limit),
   ]);
   return counted!.results.length > 0;
+}
+
+/** A new bearer token for an existing account (the raw value is returned once, never stored). */
+export async function issueToken(db: D1Database, accountId: string): Promise<string> {
+  const token = tokenUrlsafe(32);
+  await db.prepare("INSERT INTO tokens(token_hash, account_id) VALUES(?, ?)")
+    .bind(await sha256Hex(token), accountId).run();
+  return token;
+}
+
+export async function accountByEmail(db: D1Database, email: string): Promise<string | null> {
+  const row = await db.prepare("SELECT account_id FROM accounts WHERE email = ?")
+    .bind(email).first<{ account_id: string }>();
+  return row?.account_id ?? null;
+}
+
+/** The one rule both sign-in methods use, once the e-mail is PROVEN (a correct code, or Google's
+ * verified e-mail):
+ *  1. the e-mail already belongs to an account -> log in to it (a fresh token; the device switches
+ *     to that account; the caller's anonymous account is left as it was);
+ *  2. otherwise, the caller's own account has no e-mail yet -> attach the e-mail to it, so its
+ *     pass, credits and usage stay (account id unchanged; a fresh token is returned, the old one
+ *     keeps working);
+ *  3. otherwise (no caller, or the caller is already signed in as another e-mail) -> a new account
+ *     with this e-mail. An existing e-mail is never silently replaced.
+ * The UNIQUE e-mail column settles races: whoever loses a parallel claim falls back to rule 1. */
+export async function signInWithEmail(db: D1Database, email: string, callerId: string | null):
+    Promise<{ account_id: string; token: string }> {
+  const existing = await accountByEmail(db, email);
+  if (existing) return { account_id: existing, token: await issueToken(db, existing) };
+  if (callerId) {
+    try {
+      const r = await db.prepare("UPDATE accounts SET email = ? WHERE account_id = ? AND email IS NULL")
+        .bind(email, callerId).run();
+      if ((r.meta.changes ?? 0) > 0) return { account_id: callerId, token: await issueToken(db, callerId) };
+    } catch {
+      return loginExisting(db, email);                 // someone else claimed the e-mail just now
+    }
+  }
+  const account_id = newAccountId();
+  const token = tokenUrlsafe(32);
+  try {
+    await db.batch([
+      db.prepare("INSERT INTO accounts(account_id, email) VALUES(?, ?)").bind(account_id, email),
+      db.prepare("INSERT INTO tokens(token_hash, account_id) VALUES(?, ?)").bind(await sha256Hex(token), account_id),
+    ]);
+  } catch {
+    return loginExisting(db, email);
+  }
+  return { account_id, token };
+}
+
+async function loginExisting(db: D1Database, email: string) {
+  const id = await accountByEmail(db, email);
+  if (!id) throw new Error("e-mail claim failed without an owner");
+  return { account_id: id, token: await issueToken(db, id) };
 }

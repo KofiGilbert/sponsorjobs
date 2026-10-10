@@ -3,9 +3,10 @@
 // A parallel implementation of backend/broker.py for the routes the app needs to run on the
 // bundled AI: anonymous accounts, metered completions, packages and usage. The Python broker
 // stays the reference (dev + tests); where this file differs it says why. Phase-2 routes the app
-// may call (sign-in, Telegram) answer like the Python broker does when that feature is not
-// configured, so the app degrades the same way. Live interviews (Tavus) and Stripe billing are
-// ported, and each stays "not configured" until its secrets are set.
+// may call (password sign-in, Telegram) answer like the Python broker does when that feature is not
+// configured, so the app degrades the same way. Live interviews (Tavus), Stripe billing and
+// passwordless sign-in (e-mail code, Google; src/signin.ts) are built, and each stays
+// "not configured" until its secrets are set.
 //
 // Privacy, as in the Python broker: nothing here stores prompts, resumes or replies. D1 holds
 // only account ids, token hashes and usage counts.
@@ -25,6 +26,7 @@ import {
   addCreditOnce, avatarSessionOwner, chargeableSeconds, consumeAvatar, grantPassOnce, sessionUsed, loadState, markAvatarEnded,
   recordAvatarSession, recordLlm, takeFreePackage, takePassPackage,
 } from "./store";
+import { emailStart, emailVerify, googleCallback, googleStart } from "./signin";
 import { createConversation, endConversation, transcript } from "./tavus";
 
 const json = (data: unknown, status = 200): Response =>
@@ -292,6 +294,12 @@ const billingPacks: Handler = async ({ req, env }) => {
   return json({ packs: b ? offeredPacks(b) : [] });
 };
 
+/** Buying needs a signed-in account (an e-mail), so the purchase can be restored on any device and
+ * Stripe can prefill the checkout. The e-mail, or the 401 to answer instead. */
+async function buyerEmail(env: Env, user: string): Promise<string | Response> {
+  return (await emailOf(env.DB, user)) ?? json({ error: "sign in first", reason: "sign_in_required" }, 401);
+}
+
 const checkoutFailed = (what: string, err: unknown) => {
   // Stripe/network failure: fail clean and never leak the detail to the client (logged here).
   console.error(`${what} checkout failed:`, err instanceof Error ? err.message : err);
@@ -309,9 +317,11 @@ const billingPassCheckout = withBilling(async ({ req, env }, b) => {
   const user = await identify(req, env);
   if (!user) return noUser();
   if (!billingFor(env, user)) return billingOff();       // test mode, not a named tester
+  const email = await buyerEmail(env, user);
+  if (email instanceof Response) return email;
   const passId = productId(req);
   try {
-    return json({ url: await passCheckoutUrl(b, user, passId) });
+    return json({ url: await passCheckoutUrl(b, user, passId, email) });
   } catch (err) {
     if (err instanceof UnknownProduct) return json({ error: err.message }, 400);
     return checkoutFailed("pass", err);
@@ -322,6 +332,8 @@ const billingPackCheckout = withBilling(async ({ req, env, now, nowMs }, b) => {
   const user = await identify(req, env);
   if (!user) return noUser();
   if (!billingFor(env, user)) return billingOff();       // test mode, not a named tester
+  const email = await buyerEmail(env, user);
+  if (email instanceof Response) return email;
   const pack = productId(req);
   try {
     packPrice(b, pack);
@@ -333,7 +345,7 @@ const billingPackCheckout = withBilling(async ({ req, env, now, nowMs }, b) => {
     return json({ error: "extra interviews are sold only while a pass is active", reason: "pass_required" }, 402);
   }
   try {
-    return json({ url: await packCheckoutUrl(b, user, pack) });
+    return json({ url: await packCheckoutUrl(b, user, pack, email) });
   } catch (err) {
     return checkoutFailed("pack", err);
   }
@@ -378,8 +390,12 @@ const ROUTES: Route[] = [
   ["POST", /^\/billing\/webhook$/, billingWebhook],
   // The free-pass dev stubs are off whenever the broker is hosted, as in Python.
   ["POST", /^\/billing\/(plan|credits)$/, off("not available", 403)],
+  // Passwords are gone: the Python broker's password routes stay "not configured" here.
   ["POST", /^\/account\/(signup|login|claim)$/, off("email accounts are not configured")],
-  ["GET", /^\/account\/google\/(start|callback)$/, off("google sign-in is not configured")],
+  ["POST", /^\/account\/email\/start$/, ({ req, env, now }) => emailStart(req, env, now)],
+  ["POST", /^\/account\/email\/verify$/, ({ req, env, now }) => emailVerify(req, env, now)],
+  ["GET", /^\/account\/google\/start$/, ({ req, env, now }) => googleStart(req, env, now)],
+  ["GET", /^\/account\/google\/callback$/, ({ req, env, now }) => googleCallback(req, env, now)],
   ["POST", /^\/avatar\/session\/start$/, avatarStart],
   ["POST", /^\/avatar\/heartbeat$/, avatarHeartbeat],
   ["POST", /^\/avatar\/session\/end$/, avatarEnd],
