@@ -777,12 +777,12 @@
     </div>
   </div>
 
-  <!-- Account menu: the small popover the sidebar-foot identity opens. Deliberately
-       short, only what this app genuinely has (no sign-in, no billing, no logout). -->
+  <!-- Account menu: the small popover the sidebar-foot identity opens. Deliberately short.
+       Signed out it offers "Sign in"; signed in its head shows the email and it offers "Sign out". -->
   <div class="acct-menu" id="acctMenu" role="menu" hidden>
     <div class="acct-menu-head">
       <div class="acct-menu-name" id="acctMenuName" data-i18n="acct.profileName">Your profile</div>
-      <div class="acct-menu-sub" data-i18n="acct.profileSub">Stored on this computer</div>
+      <div class="acct-menu-sub" id="acctMenuSub">Stored on this computer</div>
     </div>
     <button class="acct-menu-item" id="menuSettings" role="menuitem" type="button">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M13.2 9.6a1 1 0 0 0 .2 1.1l.1.1a1.2 1.2 0 1 1-1.7 1.7l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9v.1a1.2 1.2 0 0 1-2.4 0v-.1a1 1 0 0 0-.7-.9 1 1 0 0 0-1.1.2l-.1.1a1.2 1.2 0 1 1-1.7-1.7l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6h-.1a1.2 1.2 0 0 1 0-2.4h.1a1 1 0 0 0 .9-.7 1 1 0 0 0-.2-1.1l-.1-.1a1.2 1.2 0 1 1 1.7-1.7l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .6-.9v-.1a1.2 1.2 0 0 1 2.4 0v.1a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1.2 1.2 0 1 1 1.7 1.7l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.6h.1a1.2 1.2 0 0 1 0 2.4h-.1a1 1 0 0 0-.9.6z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>
@@ -814,7 +814,15 @@
       <span data-i18n="acct.getKey">Get an API key</span>
     </button>
     <div class="acct-menu-sep"></div>
-    <!-- "Lock" not "Log out": this app has no account to sign out of. Locking drops the key
+    <button class="acct-menu-item" id="menuSignin" role="menuitem" type="button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 3H12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H9.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M3 8h6.5M7 5.5L9.5 8 7 10.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span data-i18n="acct.signin">Sign in</span>
+    </button>
+    <button class="acct-menu-item" id="menuSignout" role="menuitem" type="button" hidden>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h2.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M6.5 8H13M10.5 5.5L13 8l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span data-i18n="acct.signout">Sign out</span>
+    </button>
+    <!-- "Lock" is separate from "Sign out": it is the local passcode gate for a shared machine. Locking drops the key
          from memory and re-gates the app. If no passcode is set yet, it opens Settings to set one. -->
     <button class="acct-menu-item" id="menuLock" role="menuitem" type="button">
       <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 7V5.4a2.5 2.5 0 0 1 5 0V7" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
@@ -836,6 +844,68 @@
         <button class="btn btn-primary lockscreen-btn" id="lockUnlock" type="submit">Unlock</button>
       </form>
       <p class="lockscreen-err" id="lockErr" hidden></p>
+    </div>
+  </div>
+
+  <!-- Sign in: its OWN full screen, never mixed into the plans panel (the claude.ai / Notion /
+       Linear pattern). Email + a 6-digit code, or Google. No passwords anywhere. Opened from the
+       account menu, or from "Get the pass" when signed out (then it continues to Stripe). -->
+  <div class="signin" id="signinScreen" role="dialog" aria-modal="true" aria-labelledby="signinH" hidden>
+    <button class="signin-x" id="signinClose" type="button" data-i18n-aria="signin.close" aria-label="Close">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+    </button>
+    <div class="signin-card">
+      <svg class="signin-logo" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <rect width="20" height="20" rx="4.5" fill="var(--surface-2)" stroke="var(--border-strong)" stroke-width=".5"/>
+        <rect x="3" y="2" width="11" height="16" rx="2" fill="var(--ink)" opacity="0.14"/>
+        <path d="M6 6.2h6M6 9.4h6M6 12.6h3.5" stroke="var(--ink)" stroke-width="1.4" stroke-linecap="round"/>
+        <path d="M13.5 12.5l3.4 3.4M15.2 10.8l2.9 2.9a1 1 0 0 1-1.4 1.4l-2.9-2.9z" stroke="var(--ink)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <!-- Step 1: choose how -->
+      <div class="signin-step" id="signinStart">
+        <h1 class="signin-h" id="signinH" data-i18n="signin.title">Sign in to SponsorJobs</h1>
+        <p class="signin-why" id="signinWhy" hidden></p>
+        <button class="signin-google" id="signinGoogle" type="button">
+          <svg viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.05l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
+          <span data-i18n="signin.google">Continue with Google</span>
+        </button>
+        <div class="signin-or"><span data-i18n="signin.or">or</span></div>
+        <form id="signinEmailForm" novalidate>
+          <input class="fld signin-input" id="signinEmail" type="email" autocomplete="email" inputmode="email"
+                 data-i18n-ph="signin.emailPh" placeholder="Enter your email" data-i18n-aria="signin.emailPh" aria-label="Enter your email" />
+          <button class="btn btn-primary signin-btn" id="signinEmailGo" type="submit" data-i18n="signin.continue">Continue with email</button>
+        </form>
+        <p class="signin-err" id="signinErr" role="alert" hidden></p>
+        <p class="signin-fine" data-i18n="signin.fine">We'll email you a 6-digit code. No password needed.</p>
+      </div>
+      <!-- Step 2: the code -->
+      <div class="signin-step" id="signinCode" hidden>
+        <h1 class="signin-h" data-i18n="signin.checkTitle">Check your email</h1>
+        <p class="signin-sub"><span data-i18n="signin.sentTo">We sent a 6-digit code to</span> <b id="signinSentTo"></b></p>
+        <div class="signin-otp" id="signinOtp" role="group" data-i18n-aria="signin.codeAria" aria-label="6-digit code">
+          <input class="signin-digit" inputmode="numeric" autocomplete="one-time-code" maxlength="6" aria-label="1">
+          <input class="signin-digit" inputmode="numeric" maxlength="6" aria-label="2">
+          <input class="signin-digit" inputmode="numeric" maxlength="6" aria-label="3">
+          <input class="signin-digit" inputmode="numeric" maxlength="6" aria-label="4">
+          <input class="signin-digit" inputmode="numeric" maxlength="6" aria-label="5">
+          <input class="signin-digit" inputmode="numeric" maxlength="6" aria-label="6">
+        </div>
+        <p class="signin-err" id="signinCodeErr" role="alert" hidden></p>
+        <p class="signin-status" id="signinCodeStatus" hidden></p>
+        <div class="signin-links">
+          <button class="signin-link" id="signinResend" type="button" disabled></button>
+          <button class="signin-link" id="signinBack" type="button" data-i18n="signin.different">Use a different email</button>
+        </div>
+      </div>
+      <!-- Google runs in the person's own browser (Google refuses embedded sign-in) -->
+      <div class="signin-step" id="signinGoogleWait" hidden>
+        <h1 class="signin-h" data-i18n="signin.googleTitle">Continue in your browser</h1>
+        <p class="signin-sub" data-i18n="signin.googleSub">Finish signing in with Google in the browser tab that just opened. This screen moves on by itself.</p>
+        <div class="signin-spin" aria-hidden="true"></div>
+        <div class="signin-links">
+          <button class="signin-link" id="signinGoogleBack" type="button" data-i18n="signin.otherWay">Sign in another way</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -890,18 +960,6 @@
       </div>
       <p class="upg-free" data-i18n="upg.free">Free keeps the job board, visa badges, the recorded interview and 3 tailored packages a month.</p>
       <div class="upg-usage">
-        <!-- Create-account step at checkout (try-first): revealed when the install's account has no
-             email yet, so a paid plan follows the person to a new device. -->
-        <form class="upg-account" id="upgAccount" style="display:grid; gap:8px; margin-bottom:14px;" hidden>
-          <div class="upg-account-h" id="upgAccountH">Create your account to get your pass</div>
-          <button class="btn btn-ghost" id="upgGoogle" type="button" style="justify-content:center;">Continue with Google</button>
-          <div class="upg-account-or" style="text-align:center; opacity:.55; font-size:.82em; margin:2px 0;">or with email</div>
-          <input class="fld" id="upgEmail" type="email" placeholder="Email" autocomplete="email" required />
-          <input class="fld" id="upgPassword" type="password" placeholder="Password (8+ characters)" autocomplete="new-password" minlength="8" required />
-          <p class="upg-account-msg" id="upgAccountMsg" hidden></p>
-          <button class="btn btn-primary" id="upgAccountGo" type="submit">Create account &amp; continue</button>
-          <button class="btn btn-ghost btn-sm" id="upgAccountToggle" type="button">Already have an account? Log in</button>
-        </form>
         <p class="upg-usage-p" id="upgMsg" data-i18n="upg.msg">Your pass starts when the payment goes through. It ends on its own, there is nothing to cancel.</p>
         <div class="upg-usage-acts">
           <!-- Power users can still run on their own API key instead of the managed plan. -->

@@ -5751,6 +5751,8 @@ def interview_round2_buy():
         return jsonify({"error": "Billing isn't switched on yet."}), 503
     if st == 400:
         return jsonify({"error": "That pack isn't on sale."}), 400
+    if st == 401 and (data or {}).get("reason") == "sign_in_required":
+        return jsonify({"error": "Sign in to buy extra interviews.", "reason": "sign_in_required"}), 401
     if st == 402:
         return jsonify({"error": "Extra interviews are sold while a pass is active. Get a pass "
                                  "first.", "offer": "passes"}), 402
@@ -5891,8 +5893,8 @@ def _broker_get(path: str):
 @app.get("/api/account/status")
 @_guard
 def account_status():
-    """This install's account: whether it has an email yet (so the UI knows to show the
-    create-account step at checkout) and its tier with what is left (so the profile badge and the
+    """This install's account: its email when signed in (the account menu and foot show it, and
+    "Get the pass" goes straight to Stripe only when there is one) and its tier with what is left (so the profile badge and the
     Upgrade panel show the pass, its end date, interviews and packages). Anonymous ->
     {email: null}."""
     st, data = _broker_get("/account/me")
@@ -5908,8 +5910,80 @@ def account_status():
 @app.get("/api/account/google/url")
 @_guard
 def account_google_url():
-    """Where the browser should go to start 'Continue with Google' (the broker's OAuth start)."""
-    return jsonify({"url": f"{BROKER_URL}/account/google/start"})
+    """Where to send the person for 'Continue with Google': the broker's OAuth start, told to come
+    back to this app's own callback page (/account/google/done), which reads the token from the
+    URL fragment and adopts it. ?via=browser (the desktop app: the flow runs in the person's own
+    browser, since Google refuses sign-in inside embedded browsers) or ?via=tab (the web build:
+    same tab, and the callback page returns to the app)."""
+    from urllib.parse import quote
+    via = "tab" if request.args.get("via") == "tab" else "browser"
+    callback = f"{request.host_url.rstrip('/')}/account/google/done?via={via}"
+    return jsonify({"url": f"{BROKER_URL}/account/google/start?redirect={quote(callback, safe='')}"})
+
+
+@app.post("/api/account/google/open")
+@_guard
+def account_google_open():
+    """Desktop app: open the Google sign-in in the person's OWN default browser (RFC 8252: native
+    apps must not host sign-in in an embedded view). The callback page lands back on this engine,
+    adopts the token, and the app sees the email on its next status check."""
+    import webbrowser
+    from urllib.parse import quote
+    callback = f"{request.host_url.rstrip('/')}/account/google/done?via=browser"
+    url = f"{BROKER_URL}/account/google/start?redirect={quote(callback, safe='')}"
+    try:
+        webbrowser.open(url)
+    except Exception:
+        return jsonify({"error": "Couldn't open your browser.", "url": url}), 500
+    return jsonify({"ok": True, "url": url})
+
+
+_GOOGLE_DONE_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>SponsorJobs</title>
+<style>
+:root{color-scheme:light dark;--bg:#131316;--ink:#e7e7ea;--muted:#82828c}
+@media (prefers-color-scheme: light){:root{--bg:#f7f7f8;--ink:#18181b;--muted:#71717a}}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);
+font:14px/1.5 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;text-align:center}
+h1{font-size:19px;font-weight:600;margin:0}
+p{margin:6px 0 0;color:var(--muted)}
+</style></head><body><main>
+<h1 id="h">Signing you in...</h1><p id="p"></p></main>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search), h = new URLSearchParams(location.hash.slice(1));
+  var via = q.get("via") === "tab" ? "tab" : "browser";
+  var token = h.get("token") || q.get("account") || "";
+  var err = h.get("error") === "cancelled" ? "cancelled" : "error";
+  history.replaceState(null, "", location.pathname + "?via=" + via);   // keep the token out of history
+  function done(ok, msg) {
+    if (via === "tab") { location.replace("/?signin=" + (ok ? "ok" : err)); return; }
+    document.getElementById("h").textContent = ok ? "You're signed in"
+      : (err === "cancelled" ? "Sign-in cancelled" : "Sign-in didn't finish");
+    document.getElementById("p").textContent = msg;
+  }
+  if (!token) {
+    done(false, err === "cancelled" ? "Nothing changed. Go back to SponsorJobs to try again."
+                                    : "Google couldn't sign you in. Go back to SponsorJobs and try again.");
+    return;
+  }
+  fetch("/api/account/adopt", {method: "POST", headers: {"Content-Type": "application/json"},
+                               body: JSON.stringify({token: token})})
+    .then(function (r) { return r.json().then(function (d) { return {ok: r.ok && !d.error, d: d}; }); })
+    .then(function (x) { done(x.ok, x.ok ? "You can close this tab and go back to SponsorJobs."
+                                         : (x.d.error || "Go back to SponsorJobs and try again.")); })
+    .catch(function () { done(false, "Go back to SponsorJobs and try again."); });
+})();
+</script></body></html>"""
+
+
+@app.get("/account/google/done")
+def account_google_done():
+    """The Google sign-in callback page. The broker redirects here with #token=... in the URL
+    FRAGMENT (never sent to any server, so it stays out of logs); the page posts it to
+    /api/account/adopt on this same engine."""
+    return _GOOGLE_DONE_PAGE, 200, {"Content-Type": "text/html; charset=utf-8",
+                                    "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 
 
 @app.post("/api/account/adopt")
@@ -5932,36 +6006,75 @@ def account_adopt():
     return jsonify({"ok": True})
 
 
-@app.post("/api/account/claim")
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+
+@app.post("/api/account/email/start")
 @_guard
-def account_claim():
-    """Attach an email + password to this install's anonymous account (try-first signup at checkout)."""
-    b = request.json or {}
-    st, data = _broker_post("/account/claim",
-                            {"email": b.get("email", ""), "password": b.get("password", "")})
-    if st == 0:
-        return jsonify({"error": "The account service isn't reachable. Try again in a moment."}), 503
+def account_email_start():
+    """Email sign-in, step 1: {email} -> the broker emails a 6-digit code. No passwords anywhere.
+    Errors carry an `error_code` the sign-in screen shows inline: rate_limited, bad_email, off."""
+    email = str((request.json or {}).get("email", "")).strip()
+    if not _EMAIL_RE.fullmatch(email) or len(email) > 254:
+        return jsonify({"error": "Enter a valid email address.", "error_code": "bad_email"}), 400
+    st, data = _broker_post("/account/email/start", {"email": email})
     if st == 200:
-        return jsonify({"ok": True, "email": (data or {}).get("email")})
-    return jsonify({"error": (data or {}).get("error") or "Couldn't create your account."}), \
-        (st if st in (400, 409) else 502)
-
-
-@app.post("/api/account/login")
-@_guard
-def account_login():
-    """Log in on this device: swap the app's stored token for the logged-in account's, so an
-    existing pass is restored here."""
-    b = request.json or {}
-    st, data = _broker_post("/account/login",
-                            {"email": b.get("email", ""), "password": b.get("password", "")})
+        return jsonify({"sent": True, "email": email})
     if st == 0:
-        return jsonify({"error": "The account service isn't reachable. Try again in a moment."}), 503
+        return jsonify({"error": "The account service isn't reachable. Try again in a moment.",
+                        "error_code": "unreachable"}), 503
+    if st == 429:
+        return jsonify({"error": "Too many codes asked for. Wait a few minutes and try again.",
+                        "error_code": "rate_limited"}), 429
+    if st == 400:
+        return jsonify({"error": "Enter a valid email address.", "error_code": "bad_email"}), 400
+    if st == 503:
+        return jsonify({"error": "Email sign-in isn't available yet.", "error_code": "off"}), 503
+    return jsonify({"error": "Couldn't send the code. Try again in a moment.", "error_code": "failed"}), 502
+
+
+@app.post("/api/account/email/verify")
+@_guard
+def account_email_verify():
+    """Email sign-in, step 2: {email, code} -> the broker checks the code (with this device's
+    bearer token, so an anonymous account can be merged into the email account) and returns the
+    email account's token, which this install adopts as its device token."""
+    b = request.json or {}
+    email = str(b.get("email", "")).strip()
+    code = re.sub(r"\D", "", str(b.get("code", "")))
+    if not email or len(code) != 6:
+        return jsonify({"error": "Enter the 6-digit code from the email.", "error_code": "bad_code"}), 400
+    st, data = _broker_post("/account/email/verify", {"email": email, "code": code})
+    if st == 0:
+        return jsonify({"error": "The account service isn't reachable. Try again in a moment.",
+                        "error_code": "unreachable"}), 503
     if st == 200 and data and data.get("token"):
         _save_cred("TAILOR_ACCOUNT_TOKEN", data["token"])   # this device is now that account
-        return jsonify({"ok": True})
-    return jsonify({"error": (data or {}).get("error") or "Couldn't log in."}), \
-        (st if st in (400, 401) else 502)
+        return jsonify({"ok": True, "email": data.get("email") or email,
+                        "account_id": data.get("account_id")})
+    reason = (data or {}).get("reason")
+    if st == 503:
+        return jsonify({"error": "Email sign-in isn't available yet.", "error_code": "off"}), 503
+    if st == 400 and reason == "expired":
+        return jsonify({"error": "That code has expired. Send a new one.", "error_code": "expired"}), 400
+    if st == 400:
+        return jsonify({"error": "That code isn't right. Check the email and try again.",
+                        "error_code": "bad_code"}), 400
+    if st == 429:
+        return jsonify({"error": "Too many tries. Wait a few minutes and try again.",
+                        "error_code": "rate_limited"}), 429
+    return jsonify({"error": "Couldn't sign you in. Try again.", "error_code": "failed"}), 502
+
+
+@app.post("/api/account/signout")
+@_guard
+def account_signout():
+    """Sign out on this device: forget the email account's token and start a fresh anonymous one
+    (the free tier), exactly like a new install. The pass stays on the email account and comes
+    back on the next sign-in."""
+    _revoke_cred("TAILOR_ACCOUNT_TOKEN")
+    _account_token()          # registers a fresh anonymous account; None if offline (retried later)
+    return jsonify({"ok": True, "email": None})
 
 
 _PASS_IDS = ("pass30", "pass90")
@@ -5997,6 +6110,8 @@ def billing_checkout():
         return jsonify({"error": "Billing isn't switched on yet."}), 503
     if st == 400:
         return jsonify({"error": "That pass isn't on sale."}), 400
+    if st == 401 and (data or {}).get("reason") == "sign_in_required":
+        return jsonify({"error": "Sign in to get your pass.", "reason": "sign_in_required"}), 401
     if st != 200 or not data or not data.get("url"):
         return jsonify({"error": (data or {}).get("error") or "Couldn't start checkout."}), 502
     _PACKS_CACHE.update(at=0.0, packs=None)
