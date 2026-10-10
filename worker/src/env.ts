@@ -20,6 +20,7 @@ export interface Env {
   // /billing/* route answers exactly as when billing is off ("billing is not configured").
   STRIPE_SECRET_KEY?: string;       // live key (sk_live_...); wins over the test key
   STRIPE_TEST_SECRET_KEY?: string;  // sandbox key (sk_test_...), used only when no live key is set
+  STRIPE_TEST_ACCOUNTS?: string;   // test mode only: account ids allowed to see billing (comma-separated)
   STRIPE_WEBHOOK_SECRET?: string;   // whsec_...: proves a /billing/webhook call came from Stripe
   STRIPE_PRICE_PASS30?: string;     // price_... ids; an unset one is simply not offered
   STRIPE_PRICE_PASS90?: string;
