@@ -45,6 +45,24 @@ export function billingFrom(env: Env): Billing | null {
            successUrl: `${app}/?checkout=success`, cancelUrl: `${app}/?checkout=cancel` };
 }
 
+// ---- test mode: only for named testers --------------------------------------------------------- //
+//
+// A Stripe TEST key alone (no live key) puts billing in test mode, where Stripe's published test
+// card (4242 4242 4242 4242) "pays". Open to everyone, anyone could get a real pass, and real
+// live interviews on our Tavus credit, with a fake card. So in test mode billing is visible only
+// to the accounts listed in STRIPE_TEST_ACCOUNTS (comma-separated account ids); everyone else
+// sees "billing is not configured", exactly as before. The live key never has this limit.
+
+export const testModeOnly = (env: Env): boolean =>
+  !env.STRIPE_SECRET_KEY && Boolean(env.STRIPE_TEST_SECRET_KEY);
+
+export function billingFor(env: Env, user: string | null): Billing | null {
+  const b = billingFrom(env);
+  if (!b || !testModeOnly(env)) return b;
+  const testers = String(env.STRIPE_TEST_ACCOUNTS ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  return user && testers.includes(user) ? b : null;
+}
+
 // ---- what is on sale ------------------------------------------------------------------------ //
 
 export function passOffer(id: string) {

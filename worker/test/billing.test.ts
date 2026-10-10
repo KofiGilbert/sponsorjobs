@@ -254,3 +254,30 @@ describe("webhook", () => {
     expect((await usage(token)).tier).toBe("free");
   });
 });
+
+describe("test mode is for named testers only", () => {
+  // A Stripe test key alone means Stripe's public test card "pays": open to all, anyone could get a
+  // real pass (and real live interviews on our Tavus credit) for nothing.
+  const TEST: Partial<Env> = { ...STRIPE, STRIPE_SECRET_KEY: "", STRIPE_TEST_SECRET_KEY: "sk_test_not_real" };
+
+  it("hides billing from everyone who is not listed", async () => {
+    stubStripe();
+    const { token } = await newAccount();
+    const offers = await call("/billing/offers", { token, env: TEST });
+    expect(offers.data.passes).toEqual([]);
+    const r = await call("/billing/passes/pass30/checkout", { token, body: {}, env: TEST });
+    expect(r.status).toBe(503);
+    expect(r.data.error).toBe("billing is not configured");
+  });
+
+  it("shows it to a listed tester, and a live key is never limited", async () => {
+    stubStripe();
+    const tester = await newAccount();
+    const other = await newAccount();
+    const withTester = { ...TEST, STRIPE_TEST_ACCOUNTS: ` ${tester.id} , acct_else` };
+    expect((await call("/billing/offers", { token: tester.token, env: withTester })).data.passes.length).toBeGreaterThan(0);
+    expect((await call("/billing/passes/pass30/checkout", { token: tester.token, body: {}, env: withTester })).status).toBe(200);
+    expect((await call("/billing/passes/pass30/checkout", { token: other.token, body: {}, env: withTester })).status).toBe(503);
+    expect((await call("/billing/passes/pass30/checkout", { token: other.token, body: {}, env: STRIPE })).status).toBe(200);
+  });
+});

@@ -13,7 +13,7 @@
 import { allowRegistration, emailOf, identify, register } from "./accounts";
 import { complete } from "./anthropic";
 import {
-  type Billing, billingFrom, grantFor, offeredPacks, offeredPasses, packCheckoutUrl, packPrice, passCheckoutUrl,
+  type Billing, billingFor, billingFrom, grantFor, offeredPacks, offeredPasses, packCheckoutUrl, packPrice, passCheckoutUrl,
   UnknownProduct, verifySignature,
 } from "./billing";
 import { type Env, intVar } from "./env";
@@ -272,8 +272,8 @@ const withBilling = (h: (c: Ctx, b: Billing) => Promise<Response>): Handler => (
  * null and packs are empty. With billing off nothing is on sale, but current is still filled, so
  * the app's Upgrade panel shows the current tier. */
 const billingOffers: Handler = async ({ req, env, now, nowMs }) => {
-  const b = billingFrom(env);
   const user = await identify(req, env);
+  const b = billingFor(env, user);
   let current = null;
   let packs: ReturnType<typeof offeredPacks> = [];
   if (user) {
@@ -287,8 +287,8 @@ const billingOffers: Handler = async ({ req, env, now, nowMs }) => {
 };
 
 /** The extra-interview packs on sale (never expire). Buying one still needs an active pass. */
-const billingPacks: Handler = ({ env }) => {
-  const b = billingFrom(env);
+const billingPacks: Handler = async ({ req, env }) => {
+  const b = billingFor(env, await identify(req, env));
   return json({ packs: b ? offeredPacks(b) : [] });
 };
 
@@ -308,6 +308,7 @@ function productId(req: Request): string {
 const billingPassCheckout = withBilling(async ({ req, env }, b) => {
   const user = await identify(req, env);
   if (!user) return noUser();
+  if (!billingFor(env, user)) return billingOff();       // test mode, not a named tester
   const passId = productId(req);
   try {
     return json({ url: await passCheckoutUrl(b, user, passId) });
@@ -320,6 +321,7 @@ const billingPassCheckout = withBilling(async ({ req, env }, b) => {
 const billingPackCheckout = withBilling(async ({ req, env, now, nowMs }, b) => {
   const user = await identify(req, env);
   if (!user) return noUser();
+  if (!billingFor(env, user)) return billingOff();       // test mode, not a named tester
   const pack = productId(req);
   try {
     packPrice(b, pack);

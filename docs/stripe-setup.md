@@ -1,3 +1,9 @@
+> **Fastest way (2026-10-10):** after step 1, run one command and skip steps 2 to 4:
+> `python3 scripts/stripe_setup.py --testers <your account id>` with a test key, or
+> `python3 scripts/stripe_setup.py` with a live key. It asks for the key (hidden), creates the
+> products and the webhook, and stores everything on the Worker. A test key only ever shows
+> billing to the listed testers.
+
 # Turning on payments (Stripe)
 
 The broker at `https://api.sponsorjobs.ai` already knows how to sell the two passes and the extra
