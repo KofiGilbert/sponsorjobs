@@ -17,7 +17,7 @@
     // answer to begin; once it begins, it is heard out for up to answer_grace (45 s).
     const thinkGrace = t.think_grace || 10;
     const answerGrace = t.answer_grace || 45;
-    const tk = { t0: io.now(), userTalking: false, awaitingAnswer: false, answerStart: 0, nudged: false, steppedIn: false,
+    const tk = { t0: io.now(), userTalking: false, palTalking: false, afterPal: null, awaitingAnswer: false, answerStart: 0, nudged: false, steppedIn: false,
                  waitingPause: null, lastQ: false, candQ: false, closing: false, closeSentAt: 0,
                  ended: false };
     const elapsed = () => (io.now() - tk.t0) / 1000;
@@ -30,6 +30,9 @@
     // questions?" turn). The close is never patient that way: it only waits for a pause in speech.
     const atNextPause = (fn, wait, patient) => {
       const thinking = patient && tk.awaitingAnswer;
+      // The interviewer is mid-sentence: a note now makes it cut itself off and restart ("That"
+      // then the close, 2026-10-10). Wait for it to finish; its stopped_speaking runs this.
+      if (tk.palTalking) { tk.afterPal = fn; return; }
       if (!tk.userTalking && !thinking) { tk.waitingPause = null; fn(); return; }
       const until = io.now() + (tk.userTalking ? wait : thinkGrace) * 1000;
       tk.waitingPause = { fn, thinking: !tk.userTalking,
@@ -55,9 +58,12 @@
         runPending();
       } else if (type === "conversation.started_speaking" && isPal(role)) {
         // The interviewer took a turn: the candidate's next words start a new answer.
+        tk.palTalking = true;
         tk.answerStart = 0; tk.nudged = false; tk.steppedIn = false;
         tk.awaitingAnswer = !tk.closeSentAt;
       } else if (type === "conversation.stopped_speaking" && isPal(role)) {
+        tk.palTalking = false;
+        if (tk.afterPal) { const f = tk.afterPal; tk.afterPal = null; f(); }
         // After the goodbye: leave a short moment, then end the call.
         if (tk.closeSentAt && io.now() > tk.closeSentAt) io.later(finish, 3000);
       }

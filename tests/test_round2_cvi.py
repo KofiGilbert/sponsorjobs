@@ -147,10 +147,10 @@ def test_buy_without_a_pass_maps_to_402_with_the_passes_offer(client, monkeypatc
 
 def test_the_plan_wins_over_the_own_key_until_it_is_used_up(client, monkeypatch):
     A, c = client
-    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass90", "avatar_seconds_left": 900}))
+    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass90", "avatar_seconds_left": 1200}))
     c.post("/api/avatar/settings", json={"key": "tvs-own-key"})
     st = c.get("/api/interview/round2/status").get_json()
-    assert st["source"] == "plan" and st["key_set"] is True and st["minutes_left"] == 15
+    assert st["source"] == "plan" and st["key_set"] is True and st["minutes_left"] == 20
     # plan exhausted: the person's own key takes over
     monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass90", "avatar_seconds_left": 0}))
     st = c.get("/api/interview/round2/status").get_json()
@@ -194,7 +194,7 @@ def test_cvi_start_with_own_key_calls_tavus_directly_with_a_briefing(client):
     body = r.get_json()
     assert r.status_code == 200, body
     assert body["join_url"] == "https://tavus.daily.co/c1?t=tok" and body["conversation_id"] == "c1"
-    assert body["max_minutes"] == 15 and body["source"] == "own_key" and body["interview_id"]
+    assert body["max_minutes"] == 20 and body["source"] == "own_key" and body["interview_id"]
     # 1) the interviewer PAL is created once with the person's key, 2) the conversation is minted on it
     assert [x["url"].rsplit("/v2/", 1)[1] for x in fake.calls] == ["pals", "conversations"]
     assert all(x["headers"] == {"x-api-key": "tvs-own-key"} for x in fake.calls)
@@ -202,7 +202,7 @@ def test_cvi_start_with_own_key_calls_tavus_directly_with_a_briefing(client):
     assert "one at a time" in pal["system_prompt"].lower() and pal["default_face_id"]
     conv = fake.calls[1]["body"]
     assert conv["pal_id"] == "pal_1" and conv["require_auth"] is True
-    assert conv["properties"]["max_call_duration"] == 960
+    assert conv["properties"]["max_call_duration"] == 1260
     ctx = conv["conversational_context"]
     assert "Data Analyst" in ctx and "Acme" in ctx and "Tableau" in ctx         # role, company, JD
     assert "QUESTIONS TO COVER" in ctx and "4 to 6 questions" in ctx           # structure + plan
@@ -308,7 +308,7 @@ def test_cvi_end_falls_back_to_a_supplied_transcript_and_needs_one(client):
 def test_cvi_end_on_the_plan_path_scores_a_client_transcript_list(client, monkeypatch):
     A, c = client
     prep = _prep(c)
-    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass90", "avatar_seconds_left": 900}))
+    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass90", "avatar_seconds_left": 1200}))
     monkeypatch.setattr(A, "_broker_post", lambda path, body: (200, {"session_url": "u", "provider_session_id": "c7"}))
     iid = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).get_json()["interview_id"]
     r = c.post("/api/interviews/cvi/end", json={"interview_id": iid, "transcript": [
@@ -439,9 +439,9 @@ def test_status_offers_packs_when_the_plan_is_used_up_and_caches_them(client, mo
 
 def test_paid_plan_with_credits_covering_an_interview_is_available(client, monkeypatch):
     A, c = client
-    monkeypatch.setattr(A, "_broker_get", _fake_broker({"plan": "pass30", "avatar_seconds_left": 900}))
+    monkeypatch.setattr(A, "_broker_get", _fake_broker({"plan": "pass30", "avatar_seconds_left": 1200}))
     st = c.get("/api/interview/round2/status").get_json()
-    assert st["available"] is True and st["source"] == "plan" and st["minutes_left"] == 15
+    assert st["available"] is True and st["source"] == "plan" and st["minutes_left"] == 20
 
 
 def test_buy_proxies_to_the_broker_checkout(client, monkeypatch):
@@ -526,12 +526,15 @@ def test_the_interviewer_keeps_time_and_the_marks_scale_for_a_short_test(client,
     p = A._PAL_SYSTEM_PROMPT
     assert "exactly 4 main questions" in p and "TIME NOTE" in p and "Sorry to jump in" in p
     t = A._cvi_timing()
-    assert t["total"] == 900 and t["answer_nudge"] < t["answer_step_in"] < t["total"] < t["hard_end"] < A.ROUND2_SAFETY_SECONDS
-    monkeypatch.setenv("TAILOR_CVI_TEST_SCALE", "0.3")
+    assert t["total"] == 1200 and t["minutes"] == 20 and t["answer_nudge"] < t["answer_step_in"] < t["total"] < t["hard_end"] < A.ROUND2_SAFETY_SECONDS
+    # 0.22 fits a 20-minute interview into Tavus's 5-minute free calls (264 s), but the human
+    # waits do not shrink: a person still gets 10 s to think and 8 s to finish a sentence.
+    monkeypatch.setenv("TAILOR_CVI_TEST_SCALE", "0.22")
     s = A._cvi_timing()
-    assert s["total"] == 270 and s["hard_end"] <= 290 and s["answer_nudge"] == 45
+    assert s["total"] == 264 and s["hard_end"] < 300 and s["answer_nudge"] == 39
+    assert s["think_grace"] == 10 and s["pause_wait"] >= 8 and s["close_wait"] >= 10
     monkeypatch.setenv("TAILOR_CVI_TEST_SCALE", "nonsense")
-    assert A._cvi_timing()["total"] == 900
+    assert A._cvi_timing()["total"] == 1200
 
 
 def test_time_notes_never_reach_the_scored_transcript(client, monkeypatch):
@@ -555,3 +558,25 @@ def test_time_notes_never_reach_the_scored_transcript(client, monkeypatch):
     rep = c.post("/api/interviews/cvi/end", json={"interview_id": iid}).get_json()["report"]
     assert not any("TIME NOTE" in t["content"].upper() for t in rep["transcript"])
     assert len(rep["answers"]) == 1
+
+
+def test_a_reprompt_is_the_same_question_and_the_candidate_s_question_is_not_scored(client):
+    """Kofi's second test call (2026-10-10): a false start, then "Take your time...", then the real
+    answer were scored as two answers; and "How much am I getting paid?" after "Do you have a
+    question for me?" is the candidate's question, never an answer."""
+    A, _c = client
+    long = "We rebuilt the inventory pipeline with ETL jobs and cut stale stock reporting time by half."
+    turns = [
+        {"role": "interviewer", "content": "Tell me about a time you led a complex analytics project."},
+        {"role": "candidate", "content": "U.S. companies have, you know. More data centers, more advanced."},
+        {"role": "interviewer", "content": "Take your time, Kofi. I am looking for a specific example."},
+        {"role": "candidate", "content": long},
+        {"role": "interviewer", "content": "No problem. I was just asking how you measured success."},
+        {"role": "candidate", "content": "Sorry, come again. " + long},
+        {"role": "interviewer", "content": "We are about out of time. Do you have one question for me?"},
+        {"role": "candidate", "content": "How much am I getting paid for this role and what are the benefits like?"},
+    ]
+    items = A._pair_dialogue(turns, [])
+    assert len(items) == 1
+    assert "complex analytics project" in items[0]["q"]
+    assert "More data centers" in items[0]["transcript"] and long in items[0]["transcript"]

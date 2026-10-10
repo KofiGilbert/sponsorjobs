@@ -75,10 +75,10 @@ def _paid(sid="cs_1", user="u1", mode="payment", payment_status="paid", **meta):
 
 
 def _pass_event(sid="cs_pass_1", user="u1", pass_id="pass30", **kw):
-    return _paid(sid, user, kind="pass", **{"pass": pass_id}, days=30, seconds=2700, packages=150, **kw)
+    return _paid(sid, user, kind="pass", **{"pass": pass_id}, days=30, seconds=3600, packages=150, **kw)
 
 
-def _pack_event(sid="cs_pack_1", user="u1", pack="pack_1", seconds=900, **kw):
+def _pack_event(sid="cs_pack_1", user="u1", pack="pack_1", seconds=1200, **kw):
     return _paid(sid, user, kind="credit_pack", pack=pack, seconds=seconds, **kw)
 
 
@@ -91,7 +91,7 @@ def test_pass_checkout_is_a_one_time_payment_with_pass_metadata():
     assert p["mode"] == "payment"                                      # never a subscription
     assert p["line_items"] == [{"price": "price_p90", "quantity": 1}]
     assert p["client_reference_id"] == "u1"
-    assert p["metadata"] == {"kind": "pass", "pass": "pass90", "days": 90, "seconds": 8100,
+    assert p["metadata"] == {"kind": "pass", "pass": "pass90", "days": 90, "seconds": 10800,
                              "packages": 150}
     assert "subscription_data" not in p and "payment_method_collection" not in p
     assert p["success_url"] == "http://app/ok" and p["cancel_url"] == "http://app/no"
@@ -177,9 +177,9 @@ def test_packs_on_sale_include_the_five_pack_with_prices():
     assert PACKS == {"pack_1": 1, "pack_3": 3, "pack_5": 5}
     b, _ = _billing()
     assert b.offered_packs() == [
-        {"id": "pack_1", "price_label": "$9", "interviews": 1, "seconds": 900},
-        {"id": "pack_3", "price_label": "$24", "interviews": 3, "seconds": 2700},
-        {"id": "pack_5", "price_label": "$39", "interviews": 5, "seconds": 4500}]
+        {"id": "pack_1", "price_label": "$9", "interviews": 1, "seconds": 1200},
+        {"id": "pack_3", "price_label": "$24", "interviews": 3, "seconds": 3600},
+        {"id": "pack_5", "price_label": "$39", "interviews": 5, "seconds": 6000}]
     b2, _ = _billing(pack_prices={"pack_1": "", "pack_5": "price_k5"})
     assert [p["id"] for p in b2.offered_packs()] == ["pack_5"]
 
@@ -193,7 +193,7 @@ def test_packs_require_an_active_pass():
     meter.grant_pass("u1", "pass30")
     assert b.pack_checkout_url("u1", "pack_5") == "https://checkout.stripe.test/s/cs_123"
     assert fake.created["mode"] == "payment"
-    assert fake.created["metadata"] == {"kind": "credit_pack", "pack": "pack_5", "seconds": 4500}
+    assert fake.created["metadata"] == {"kind": "credit_pack", "pack": "pack_5", "seconds": 6000}
     with pytest.raises(ValueError):
         b.pack_checkout_url("u1", "pack_99")
 
@@ -202,9 +202,9 @@ def test_paid_pack_adds_credit_seconds_exactly_once():
     b, meter = _billing()
     b.apply_event(_pack_event())
     b.apply_event(_pack_event())
-    assert meter.store.get_credit_seconds("u1") == 900
-    b.apply_event(_pack_event(sid="cs_pack_2", pack="pack_5", seconds=4500))
-    assert meter.store.get_credit_seconds("u1") == 5400
+    assert meter.store.get_credit_seconds("u1") == 1200
+    b.apply_event(_pack_event(sid="cs_pack_2", pack="pack_5", seconds=6000))
+    assert meter.store.get_credit_seconds("u1") == 7200
     assert meter.tier_for("u1") == "free"                               # a pack never changes the tier
 
 
@@ -306,13 +306,13 @@ def test_webhook_rejects_a_bad_signature_and_does_not_act():
 def test_webhook_grants_a_paid_pack_and_reopens_the_avatar():
     app, meter = _app(FakeStripe(event=_pack_event()))
     meter.grant_pass("u1", "pass30")
-    meter.consume_avatar("u1", "2026-07", 2700)                         # the pass's interviews used
+    meter.consume_avatar("u1", "2026-07", 3600)                         # the pass's interviews used
     c = app.test_client()
     r = c.post("/avatar/session/start", json={}, headers=H)
     assert r.status_code == 402 and r.get_json()["reason"] == "no_interviews"
     for _ in range(2):
         assert c.post("/billing/webhook", data=b"{}", headers={"Stripe-Signature": "s"}).status_code == 200
-    assert meter.avatar_seconds_left("u1", "2026-07") == 900
+    assert meter.avatar_seconds_left("u1", "2026-07") == 1200
     assert c.post("/avatar/session/start", json={}, headers=H).status_code == 200
 
 

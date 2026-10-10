@@ -5608,10 +5608,10 @@ def screens_delete(sid):
 # stored by us. ----
 _INTERVIEWS_FILE = _DATA / "interviews.json"
 SIMULATION_DISCLAIMER = "This is a practice simulation, not a real interview or hiring decision."
-ROUND2_MAX_MINUTES = 15
+ROUND2_MAX_MINUTES = 20
 # The interviewer wraps up at 15:00 and never cuts someone off mid-answer; Tavus's own hard stop
 # sits a minute later, only as a safety net for a call left running by mistake.
-ROUND2_SAFETY_SECONDS = 960
+ROUND2_SAFETY_SECONDS = 1260
 
 
 def _cvi_timing() -> dict:
@@ -5623,10 +5623,21 @@ def _cvi_timing() -> dict:
     except ValueError:
         k = 1.0
     k = min(1.0, max(0.1, k))
-    base = {"total": 900, "answer_nudge": 150, "answer_step_in": 195, "pause_wait": 15,
-            "last_question": 780, "candidate_questions": 840, "close_wait": 20, "hard_end": 930,
-            "think_grace": 10, "answer_grace": 45}
-    return {name: max(5, int(v * k)) for name, v in base.items()}
+    # 20 minutes (Kofi, 2026-10-10; Mercor, micro1 and Alex run about 20): intro, 4 main questions
+    # of about 4 minutes, the candidate's question, a close. The last main question is asked by
+    # 15:30 so it has time to be answered properly.
+    base = {"total": 1200, "answer_nudge": 180, "answer_step_in": 240, "pause_wait": 15,
+            "last_question": 930, "candidate_questions": 1110, "close_wait": 20, "hard_end": 1230,
+            "think_grace": 10, "answer_grace": 60}
+    out = {name: max(5, int(v * k)) for name, v in base.items()}
+    # The human waits never shrink with the test scale: a person needs the same few seconds to
+    # think or finish a sentence however short the test call (at 0.3 the 10 s thinking time
+    # became 3 s and an answer was skipped, 2026-10-10).
+    for name in ("pause_wait", "close_wait", "think_grace", "answer_grace"):
+        out[name] = base[name] if k >= 1 else max(out[name], {"pause_wait": 8, "close_wait": 10,
+                                                              "think_grace": 10, "answer_grace": 30}[name])
+    out["minutes"] = max(1, round(out["total"] / 60))
+    return out
 # Test seam for the direct Tavus path: a (method, url, headers, body) -> (status, json) transport.
 # None = the real HTTPS transport in backend.tavus_client.
 _TAVUS_HTTP = None
@@ -5651,7 +5662,7 @@ def _save_interviews(interviews: list) -> None:
 
 # Round 2 is ONE 15-minute interview; a plan source is only offered when it can cover all of it
 # (mirrors backend.metering.INTERVIEW_SECONDS, so an interview never starts that cannot finish).
-ROUND2_INTERVIEW_SECONDS = 900
+ROUND2_INTERVIEW_SECONDS = 1200
 _PACKS_TTL_S = 300                       # the broker's pack list changes rarely; cache it briefly
 _PACKS_CACHE: dict = {"at": 0.0, "packs": None}
 
@@ -5996,11 +6007,12 @@ def billing_checkout():
 # as AVATAR_PAL_ID). Everything specific to an interview (company, role, JD, résumé, questions)
 # arrives per conversation as `conversational_context`, so one PAL serves every mock.
 _PAL_SYSTEM_PROMPT = (
-    "You are a professional hiring manager running a 15-minute live mock job interview. The "
+    "You are a professional hiring manager running a live mock job interview; the context gives its "
+    "length in minutes, and you say that length, never another. The "
     "conversational context you receive names the company, the role, the job description, the "
     "candidate's resume and the questions to cover; stay in that character throughout.\n"
     "You keep the time, like a real interviewer with a full day of candidates. Structure: "
-    "(1) introduce yourself in one or two sentences, say the interview is 15 minutes, and ask the "
+    "(1) introduce yourself in one or two sentences, say how many minutes the interview lasts, and ask the "
     "candidate to introduce themselves briefly; (2) ask exactly 4 main questions, ONE AT A TIME, "
     "wait for the answer, and ask at most ONE short follow-up per question; (3) ask whether they "
     "have a question for you and answer it briefly from the job description; (4) close warmly: "
@@ -6013,7 +6025,10 @@ _PAL_SYSTEM_PROMPT = (
     "the next question.\n"
     "Rules: keep each of your turns under 40 words; never answer for the candidate; never ask what "
     "they want to talk about; use the job description's own vocabulary; do not give scores or "
-    "feedback during the interview. If the candidate is silent for a few seconds after a question, "
+    "feedback during the interview. Never thank, praise or comment on an answer the candidate did "
+    "not give: if they have not answered, ask whether they would like a moment or to move on. "
+    "Let the candidate finish; never start speaking while they are mid-sentence. "
+    "If the candidate is silent for a few seconds after a question, "
     "say 'Take your time' once; if the silence goes on, rephrase the question in one short sentence."
 )
 # Bumped when the instructions change, so an interviewer PAL created on a person's own Tavus
@@ -6038,14 +6053,15 @@ def _round2_plan(prep: dict) -> list[dict]:
 
 def _round2_briefing(prep: dict, profile: dict) -> str:
     """The per-interview briefing (Tavus `conversational_context`): interviewer persona for this
-    company/role, the 15-minute structure, the JD and the person's résumé/profile, and the
+    company/role, the interview's length and structure, the JD and the person's résumé/profile, and the
     questions to cover. Sent to Tavus to steer the interviewer; not stored by us."""
     role = (prep.get("role") or "the role").strip()
     company = (prep.get("company") or "").strip()
     jd = str(prep.get("jd") or "").strip()
     who = f"the {role} role" + (f" at {company}" if company else "")
     lines = [
-        f"You are the hiring manager for {who}, interviewing this candidate in a 15-minute practice "
+        f"You are the hiring manager for {who}, interviewing this candidate in a "
+        f"{_cvi_timing()['minutes']}-minute practice "
         "interview. Introduce yourself as the hiring manager for this team.",
         "Ask one question at a time, listen to the whole answer, probe with short follow-ups, and "
         "keep to: intro, 4 to 6 questions, the candidate's questions, close.",
@@ -6231,6 +6247,12 @@ def _closest_competency(question: str, plan: list) -> str:
     return best if best_score >= 0.15 else "General"
 
 
+_REPROMPT = re.compile(r"^\s*(take your time|no problem|no worries|sorry|let me (rephrase|repeat|put it)|"
+                       r"(i was|i'm|i am) (just )?asking|to (clarify|rephrase)|in other words|"
+                       r"could you walk me through a specific)", re.I)
+_ASKS_FOR_THEIR_QUESTION = re.compile(r"(any|one|a) questions? for me|questions? (do|would) you have for me", re.I)
+
+
 def _pair_dialogue(turns: list, plan: list, min_words: int = 8) -> list[dict]:
     """Turn a dialogue into scorable {q, transcript, competency} items: each interviewer turn (or run
     of turns) is a question, the candidate turns that follow are its answer. Answers shorter than
@@ -6242,6 +6264,12 @@ def _pair_dialogue(turns: list, plan: list, min_words: int = 8) -> list[dict]:
         if not content:
             continue
         if t.get("role") == "interviewer":
+            # "Take your time", "No problem, I was asking...", "Let me rephrase": the SAME question
+            # again, not a new one. The answer is everything said to it, so a false start ("U.S.
+            # companies have, you know...") is not scored on its own (Kofi's test, 2026-10-10).
+            if cur is not None and cur["transcript"] and _REPROMPT.match(content):
+                cur["transcript"] += " "
+                continue
             if cur is not None and cur["transcript"]:
                 items.append(cur)
                 cur = None
@@ -6259,6 +6287,8 @@ def _pair_dialogue(turns: list, plan: list, min_words: int = 8) -> list[dict]:
     for it in items:
         if len(it["transcript"].split()) < min_words:
             continue
+        if _ASKS_FOR_THEIR_QUESTION.search(it["q"]):
+            continue                     # "Do you have a question for me?": theirs, not an answer
         it["competency"] = _closest_competency(it["q"], plan)
         it["per_answer_feedback"], it["delivery_metrics"] = None, None
         out.append(it)

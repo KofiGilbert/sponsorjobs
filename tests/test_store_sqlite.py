@@ -8,6 +8,7 @@ the "broker restarted" case: plan, usage, and purchased credits must still be th
 from __future__ import annotations
 
 from backend.metering import DEFAULT_PLAN, Meter, QuotaExceeded
+from backend.metering import INTERVIEW_SECONDS
 from backend.store_sqlite import SqliteUsageStore
 
 P = "2026-07"
@@ -55,16 +56,16 @@ def test_meter_runs_on_top_of_the_persistent_store(tmp_path):
     """The whole point: the Meter behaves identically whether the store is in-memory or SQLite."""
     m = Meter(_db(tmp_path))
     m.set_plan("u", "pass30")
-    assert m.avatar_seconds_left("u", P) == 2700
-    r = m.consume_avatar("u", P, 3000)                # only 2700 on the pass -> capped, hard stop
-    assert r["consumed"] == 2700 and r["capped"] is True and r["remaining"] == 0
+    assert m.avatar_seconds_left("u", P) == 3 * INTERVIEW_SECONDS
+    r = m.consume_avatar("u", P, 3 * INTERVIEW_SECONDS + 300)   # more than the pass holds -> capped
+    assert r["consumed"] == 3 * INTERVIEW_SECONDS and r["capped"] is True and r["remaining"] == 0
     try:
         m.require_avatar("u", P)
         raise AssertionError("expected QuotaExceeded")
     except QuotaExceeded:
         pass
-    m.add_credits("u", 900)                            # a one-interview pack reopens it
-    assert m.can_start_avatar("u", P) is True and m.avatar_seconds_left("u", P) == 900
+    m.add_credits("u", INTERVIEW_SECONDS)              # a one-interview pack reopens it
+    assert m.can_start_avatar("u", P) is True and m.avatar_seconds_left("u", P) == INTERVIEW_SECONDS
 
 
 def test_processed_keys_are_recorded_once_and_survive_a_restart(tmp_path):

@@ -93,7 +93,7 @@ describe("/me/usage", () => {
     expect(b.plan).toBe("pass90");
     expect(b.tier).toBe("pass90");
     expect(b.pass_until).toBeGreaterThan(Date.now() / 1000);
-    expect(b.avatar_seconds_left).toBe(8100);
+    expect(b.avatar_seconds_left).toBe(10800);
     expect(b.interviews_left).toBe(9);
     expect(b.packages_left).toBe(150);
     expect(b.llm_model).toBe("claude-sonnet-5-5");

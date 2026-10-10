@@ -22,7 +22,7 @@ const onPass = (name: "pass30" | "pass90", at = T0): AccountState => ({
 
 describe("plans", () => {
   it("the three tiers as decided", () => {
-    expect(INTERVIEW_SECONDS).toBe(900);
+    expect(INTERVIEW_SECONDS).toBe(1200);
     expect(Object.keys(PLANS).sort()).toEqual(["free", "pass30", "pass90"]);
     const shape = Object.fromEntries(Object.entries(PLANS).map(([k, p]) =>
       [k, [p.days, Math.floor(p.avatarSecondsIncluded / INTERVIEW_SECONDS), p.packages, p.llmModel, p.priceLabel, p.llmTokenCap]]));
@@ -42,7 +42,7 @@ describe("plans", () => {
   it("a pass gives its allowances and the better model", () => {
     const st = status(onPass("pass30"), T0, NO_ENV);
     expect(st).toEqual({ tier: "pass30", pass_until: T0 + 30 * DAY_SECONDS, interviews_left: 3,
-                         packages_left: 60, avatar_seconds_left: 2700, llm_model: "claude-sonnet-5-5" });
+                         packages_left: 60, avatar_seconds_left: 3600, llm_model: "claude-sonnet-5-5" });
     expect(status(onPass("pass90"), T0, NO_ENV).interviews_left).toBe(9);
   });
 
