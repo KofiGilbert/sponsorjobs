@@ -11,7 +11,11 @@
 // tests/timekeeper.test.mjs drives it with a simulated clock.
 (function (root) {
   function create(t, io) {
-    const tk = { t0: io.now(), userTalking: false, answerStart: 0, nudged: false, steppedIn: false,
+    // awaitingAnswer: the interviewer has just spoken (usually a question) and the candidate has
+    // not started answering. Silence then means thinking, not "finished": a wrap-up request
+    // waits for the answer (up to answer_grace seconds), so no answer is skipped by the clock.
+    const grace = t.answer_grace || 45;
+    const tk = { t0: io.now(), userTalking: false, awaitingAnswer: false, answerStart: 0, nudged: false, steppedIn: false,
                  waitingPause: null, lastQ: false, candQ: false, closing: false, closeSentAt: 0,
                  ended: false };
     const elapsed = () => (io.now() - tk.t0) / 1000;
@@ -20,9 +24,12 @@
     // Ask at the candidate's next pause, or after `wait` seconds if no pause comes. A newer request
     // replaces an older one still waiting (closing outranks "any questions?") and keeps the
     // earlier deadline, so nothing waits longer than asked.
-    const atNextPause = (fn, wait) => {
-      if (!tk.userTalking) { tk.waitingPause = null; fn(); return; }
-      const until = io.now() + wait * 1000;
+    // `patient`: also wait for an answer the candidate is still thinking about (the "any
+    // questions?" turn). The close is never patient that way: it only waits for a pause in speech.
+    const atNextPause = (fn, wait, patient) => {
+      const thinking = patient && tk.awaitingAnswer;
+      if (!tk.userTalking && !thinking) { tk.waitingPause = null; fn(); return; }
+      const until = io.now() + (tk.userTalking ? wait : Math.max(wait, grace)) * 1000;
       tk.waitingPause = { fn, until: tk.waitingPause ? Math.min(tk.waitingPause.until, until) : until };
     };
     const runPending = () => { const p = tk.waitingPause; tk.waitingPause = null; if (p) p.fn(); };
@@ -32,6 +39,10 @@
       const type = ev && ev.event_type, role = ev && ev.properties && ev.properties.role;
       if (type === "conversation.started_speaking" && role === "user") {
         tk.userTalking = true;
+        tk.awaitingAnswer = false;
+        // They began answering: a waiting wrap-up now runs at their first pause, and at the latest
+        // answer_grace seconds into the answer.
+        if (tk.waitingPause) tk.waitingPause.until = Math.min(tk.waitingPause.until, io.now() + grace * 1000);
         if (!tk.answerStart) tk.answerStart = io.now();
       } else if (type === "conversation.stopped_speaking" && role === "user") {
         tk.userTalking = false;
@@ -39,6 +50,7 @@
       } else if (type === "conversation.started_speaking" && isPal(role)) {
         // The interviewer took a turn: the candidate's next words start a new answer.
         tk.answerStart = 0; tk.nudged = false; tk.steppedIn = false;
+        tk.awaitingAnswer = !tk.closeSentAt;
       } else if (type === "conversation.stopped_speaking" && isPal(role)) {
         // After the goodbye: leave a short moment, then end the call.
         if (tk.closeSentAt && io.now() > tk.closeSentAt) io.later(finish, 3000);
@@ -62,7 +74,7 @@
       }
       if (!tk.candQ && now >= t.candidate_questions) {
         tk.candQ = true;
-        atNextPause(() => io.say("Time is nearly up. Thank them for the answer and ask whether they have one question for you."), t.pause_wait);
+        atNextPause(() => io.say("Time is nearly up. Thank them for the answer and ask whether they have one question for you."), t.pause_wait, true);
       }
       if (!tk.closing && now >= t.total) {
         tk.closing = true;

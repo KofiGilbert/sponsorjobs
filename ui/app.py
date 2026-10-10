@@ -5624,7 +5624,8 @@ def _cvi_timing() -> dict:
         k = 1.0
     k = min(1.0, max(0.1, k))
     base = {"total": 900, "answer_nudge": 150, "answer_step_in": 195, "pause_wait": 15,
-            "last_question": 780, "candidate_questions": 840, "close_wait": 20, "hard_end": 930}
+            "last_question": 780, "candidate_questions": 840, "close_wait": 20, "hard_end": 930,
+            "answer_grace": 45}
     return {name: max(5, int(v * k)) for name, v in base.items()}
 # Test seam for the direct Tavus path: a (method, url, headers, body) -> (status, json) transport.
 # None = the real HTTPS transport in backend.tavus_client.
@@ -6343,6 +6344,10 @@ def interviews_cvi_end():
                      for t in supplied if isinstance(t, dict) and str(t.get("content") or "").strip()]
         else:
             turns = parse_transcript_text(str(supplied))
+    # The timekeeper's notes reach the interviewer as if the candidate had spoken them (Tavus's
+    # conversation.respond), so they come back in the transcript under the candidate's name.
+    # They are the organiser's words, never the person's: drop them before anything is scored.
+    turns = [t for t in turns if not str(t.get("content") or "").lstrip().upper().startswith("TIME NOTE")]
     if not turns:
         return jsonify({"error": "no_transcript",
                         "message": "No transcript came back from the interview. Paste what was said "

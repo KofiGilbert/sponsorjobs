@@ -14,7 +14,8 @@ import pytest
 pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="needs node")
 TK = Path("ui/static/timekeeper.js").resolve()
 TIMING = {"total": 900, "answer_nudge": 150, "answer_step_in": 195, "pause_wait": 15,
-          "last_question": 780, "candidate_questions": 840, "close_wait": 20, "hard_end": 930}
+          "last_question": 780, "candidate_questions": 840, "close_wait": 20, "hard_end": 930,
+          "answer_grace": 45}
 
 HARNESS = r"""
 require(process.argv[2]);
@@ -94,3 +95,24 @@ def test_the_backstop_never_cuts_a_goodbye_that_has_just_been_asked_for():
     end = [s for s, k, _ in log if k == "end"]
     assert close == [920]                       # 900 s + 20 s waiting for a pause
     assert end == [940]                         # at least 20 s after the close request
+
+
+def test_a_question_the_candidate_is_still_thinking_about_is_not_skipped():
+    """Kofi's test call, 2026-10-10: the interviewer asked question 3, he paused to think, and the
+    "time is nearly up" note went out into the silence, so his answer was skipped. Silence right
+    after a question is thinking: the wrap-up waits for the answer and goes at its pause."""
+    script = (turn(5, 10, "pal") + turn(12, 700, "user")
+              + turn(830, 836, "pal")                                  # a question just before 840
+              + turn(850, 880, "user"))                                # 14 s thinking, then answers
+    log = run(script)
+    ask = [s for s, k, x in log if "one question for you" in x]
+    assert ask == [880]                         # after the answer, not into the thinking pause
+
+
+def test_a_candidate_who_never_answers_does_not_stall_the_ending():
+    log = run(turn(5, 10, "pal") + turn(12, 700, "user") + turn(830, 836, "pal"))
+    ask = [s for s, k, x in log if "one question for you" in x]
+    close = [s for s, k, x in log if "Close the interview" in x]
+    assert ask == [885]                         # 840 + 45 s of grace for an answer that never came
+    assert close == [900]                       # nobody is speaking at 15:00: close right away
+    assert [s for s, k, _ in log if k == "end"] == [930]   # the backstop at 15:30 (no goodbye was heard)
