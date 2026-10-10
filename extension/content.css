@@ -190,3 +190,9 @@
 .tailor-fb-chip.on { color: #067647; background: #ecfdf3; border-color: #abefc6; }
 .tailor-fb-slider { display: inline-flex; align-items: center; gap: 6px; color: #475467; }
 .tailor-fb-slider input { accent-color: #4f46e5; }
+
+/* The ad's own stance on sponsorship, first in the row. A "no" is red and dims the employer's
+   history badges after it, which describe other roles, not this one. */
+.tailor-badge.tb-ad-no  { color: #b42318; background: #fef3f2; border-color: #fecdca; font-weight: 700; }
+.tailor-badge.tb-ad-yes { color: #067647; background: #ecfdf3; border-color: #75e0a7; font-weight: 700; }
+.tailor-badges.tailor-role-no .tailor-badge:not(.tb-stance):not(.tb-tailor) { opacity: 0.55; }

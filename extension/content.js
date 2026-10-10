@@ -304,6 +304,45 @@
     }
   }
 
+  // ---- What THIS ad says about sponsorship (the role's own words outrank the employer's record) --
+  // The badges above are the employer's public history. The ad can still say "This position is not
+  // eligible for visa sponsorship" (U.S. Bank, 2026-10-10), and that sentence decides the role. Read
+  // the whole description with the app's own reader (adstance_core.js) and put the answer FIRST in
+  // the row, with the sentence on hover. Idempotent, so it catches a description that loads late.
+  function readFullJD() {
+    const sels = ['[class*="jobs-description"]', '[class*="job-details"] [class*="description"]',
+                  '[class*="posting-description"]', '[data-testid="jobDescriptionText"]',
+                  '#jobDescriptionText', '[class*="job-description"]', 'article', 'main', '#content'];
+    for (const s of sels) {
+      const el = document.querySelector(s);
+      const t = el && el.innerText;
+      if (t && t.replace(/\s+/g, " ").trim().length > 200) return t.slice(0, 40000);
+    }
+    return "";
+  }
+  let lastStanceKey = "";
+  function mountStance() {
+    const row = document.querySelector(".tailor-badges");
+    const A = window.TailorAdStance;
+    if (!row || !A) return;
+    const jd = readFullJD();
+    const r = jd ? A.adStance(jd) : { stance: A.UNKNOWN, sentence: "" };
+    const key = r.stance + "|" + r.sentence;
+    if (key === lastStanceKey && row.querySelector(".tb-stance")) return;
+    lastStanceKey = key;
+    row.querySelectorAll(".tb-stance").forEach(e => e.remove());
+    row.classList.toggle("tailor-role-no", r.stance === A.NOT_OFFERED);
+    if (r.stance === A.UNKNOWN) return;          // the ad says nothing: the employer badges stand alone
+    const chip = document.createElement("span");
+    const no = r.stance === A.NOT_OFFERED;
+    chip.className = `tailor-badge tb-stance ${no ? "tb-ad-no" : "tb-ad-yes"}`;
+    chip.textContent = no ? "No sponsorship for this role" : "Ad offers sponsorship";
+    chip.title = `The ad says: \u201c${r.sentence}\u201d` + (no
+      ? " The badges after this are the employer's history on other roles, not this one."
+      : " The ad does not name the visa; for a US new hire that usually means H-1B.");
+    row.insertAdjacentElement("afterbegin", chip);
+  }
+
   // ============================ P6: match score + skills + in-list + filters ============
   const P = () => window.TailorParity;   // pure decision logic (parity_core.js), loaded first
   const send = (msg) => new Promise((res) => {
@@ -552,12 +591,14 @@
           chrome.runtime.sendMessage({ type: "lookup", company, location }, (data) => {
             if (chrome.runtime.lastError) return;   // worker asleep; next mutation retries
             render(anchor, data || { ok: false });
+            lastStanceKey = ""; mountStance();
             // Match pill + skills first, then hang the referral action off that row.
             enhancePosting().finally(() => mountReferral(company));
           });
         } catch (_) { /* extension context invalidated on reload */ }
       }
     }
+    mountStance();                                   // the ad's own stance, as soon as its text is on the page
     scanList().catch(() => {});                      // P6: in-list badges + filter bar
   }
 
