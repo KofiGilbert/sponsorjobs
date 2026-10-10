@@ -20,8 +20,12 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      # The résumé templates need these LaTeX packages; tests that compile a real PDF
-      # (the one-page and no-overfull checks) are skipped without them.
+      # The resume templates need these LaTeX packages; tests that compile a real PDF (the
+      # one-page and no-overfull checks) need them. poppler-utils gives pdftocairo, which (with
+      # Pillow and numpy from the dev extras) lets the full-page test measure how far down the
+      # page every template preview reaches. Installed fresh each run: caching the packages
+      # (tried 2026-10-10) restored the files but not the pdflatex program, and 66 resume tests
+      # quietly skipped.
       - name: Install LaTeX
         run: |
           sudo apt-get update
@@ -29,12 +33,16 @@ jobs:
             texlive-latex-base texlive-latex-recommended texlive-latex-extra \
             texlive-fonts-recommended texlive-fonts-extra cm-super \
             poppler-utils
-      # poppler-utils gives pdftocairo, which (with Pillow and numpy from the dev extras) lets the
-      # full-page test measure how far down the page every template preview reaches. Without it
-      # that test skips, and a half-empty template would go unnoticed.
+
+      # Fail loudly, never skip quietly: without these the resume tests skip and the run still
+      # looks green.
+      - name: Check the PDF tools are really there
+        run: pdflatex --version | head -1 && pdftocairo -v 2>&1 | head -1
 
       - name: Install SponsorJobs
         run: pip install -e ".[dev,llm]"
 
+      # Four at a time (pytest-xdist): about 11 minutes became about 2. --dist loadfile keeps each
+      # test file on one worker, because several files write a fixed-name helper script.
       - name: Run tests
-        run: python -m pytest -q
+        run: python -m pytest -q -n auto --dist loadfile
