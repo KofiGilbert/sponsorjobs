@@ -74,6 +74,13 @@ jobs:
           python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
             --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"
 
+      # The browser extension's own sponsor lookup (works with no app installed): a sharded
+      # index of the bundled H-1B / PERM / E-Verify data, written to <feed>/sponsors/. Built
+      # every run (about 15 seconds) because a Pages deploy replaces the whole site; its
+      # version is a content hash, so extensions only re-download when the data changed.
+      - name: Build the extension's sponsor index
+        run: python scripts/build_sponsor_index.py --out "$FEED_OUT_DIR"
+
       - name: Upload to R2
         if: ${{ vars.FEED_HOST == 'r2' }}
         env:
