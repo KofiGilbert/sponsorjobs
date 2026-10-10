@@ -8,7 +8,7 @@
 //
 // Stripe is called with plain fetch and form-encoded bodies (no SDK). The secret key lives only in
 // the Worker's secrets. Nothing about a resume or history is ever sent to Stripe: only the account
-// id and the product.
+// id, the buyer's sign-in e-mail (prefilled on the checkout page) and the product.
 
 import type { Env } from "./env";
 import { interviewsIn, PACK_PRICE_LABEL, PACKS, packSeconds, PASSES, PLANS } from "./metering";
@@ -96,7 +96,8 @@ function form(params: Record<string, unknown>, prefix = "", out = new URLSearchP
 
 /** Create a one-time Checkout Session and return its URL. Throws on any Stripe/network failure;
  * the route turns that into a plain 502 without the detail. */
-async function session(b: Billing, user: string, price: string, metadata: Record<string, unknown>): Promise<string> {
+async function session(b: Billing, user: string, price: string, metadata: Record<string, unknown>,
+                       email: string): Promise<string> {
   const res = await fetch(`${STRIPE_API}/checkout/sessions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${b.key}`, "Content-Type": "application/x-www-form-urlencoded" },
@@ -104,7 +105,8 @@ async function session(b: Billing, user: string, price: string, metadata: Record
       mode: "payment",                       // one-time: nothing renews, nothing to cancel
       line_items: [{ price, quantity: 1 }],
       client_reference_id: user,
-      metadata,
+      customer_email: email,                 // prefilled (and the receipt goes there)
+      metadata: { ...metadata, email },
       success_url: b.successUrl,
       cancel_url: b.cancelUrl,
     }),
@@ -118,12 +120,12 @@ async function session(b: Billing, user: string, price: string, metadata: Record
 /** An unknown or unpriced pass/pack id: a 400, as Python's ValueError. */
 export class UnknownProduct extends Error {}
 
-export async function passCheckoutUrl(b: Billing, user: string, passId: string): Promise<string> {
+export async function passCheckoutUrl(b: Billing, user: string, passId: string, email: string): Promise<string> {
   const price = b.passPrices[passId];
   if (!price) throw new UnknownProduct(`unknown pass: ${passId}`);
   const p = PLANS[passId]!;
   return session(b, user, price, { kind: "pass", pass: passId, days: p.days,
-                                   seconds: p.avatarSecondsIncluded, packages: p.packages });
+                                   seconds: p.avatarSecondsIncluded, packages: p.packages }, email);
 }
 
 /** The pack's price, or UnknownProduct. Checked BEFORE the active-pass rule, in the Python order
@@ -134,8 +136,8 @@ export function packPrice(b: Billing, pack: string): string {
   return price;
 }
 
-export async function packCheckoutUrl(b: Billing, user: string, pack: string): Promise<string> {
-  return session(b, user, packPrice(b, pack), { kind: "credit_pack", pack, seconds: packSeconds(pack) });
+export async function packCheckoutUrl(b: Billing, user: string, pack: string, email: string): Promise<string> {
+  return session(b, user, packPrice(b, pack), { kind: "credit_pack", pack, seconds: packSeconds(pack) }, email);
 }
 
 // ---- webhook signature (Stripe-Signature: t=<unix>,v1=<hex hmac>[,v1=...]) ------------------- //

@@ -77,3 +77,13 @@ export function stubAnthropic(...replies: Array<{ status?: number; body: unknown
 export const okReply = (text = "tailored text", input_tokens = 30, output_tokens = 12) => ({
   body: { content: [{ type: "text", text: ` ${text} ` }], usage: { input_tokens, output_tokens } },
 });
+
+let emailSeq = 0;
+/** A signed-in account: registered as the app does, then given an e-mail (as a completed e-mail or
+ * Google sign-in would). Buying needs one. */
+export async function signedInAccount(email?: string): Promise<{ id: string; token: string; email: string }> {
+  const a = await newAccount();
+  const e = email ?? `buyer${++emailSeq}-${a.id}@example.com`;
+  await env.DB.prepare("UPDATE accounts SET email = ? WHERE account_id = ?").bind(e, a.id).run();
+  return { ...a, email: e };
+}

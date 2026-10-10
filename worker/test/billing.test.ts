@@ -6,7 +6,7 @@ import { signPayload, STRIPE_API } from "../src/billing";
 import type { Env } from "../src/env";
 import { DAY_SECONDS, INTERVIEW_SECONDS, PACKS, PLANS } from "../src/metering";
 import { setPass } from "../src/store";
-import { call, env, givePass, newAccount } from "./helpers";
+import { call, env, givePass, newAccount, signedInAccount } from "./helpers";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -58,7 +58,7 @@ const usage = async (token: string) => (await call("/me/usage", { token })).data
 
 describe("unconfigured billing answers exactly as before", () => {
   it("no secret key: offers/packs list nothing, checkout and webhook are 503 not configured", async () => {
-    const { token } = await newAccount();
+    const { token } = await signedInAccount();
     const noKey = { ...STRIPE, STRIPE_SECRET_KEY: "" };
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     expect((await call("/billing/offers", { token, env: noKey })).data).toEqual({
@@ -83,7 +83,7 @@ describe("unconfigured billing answers exactly as before", () => {
 
 describe("offers", () => {
   it("lists the priced passes; packs only for a caller with an active pass", async () => {
-    const { id, token } = await newAccount();
+    const { id, token } = await signedInAccount();
     const pass30 = { id: "pass30", price_label: "$29", days: 30, interviews: 3, packages: 60, auto_renew: false };
     const pass90 = { id: "pass90", price_label: "$69", days: 90, interviews: 9, packages: 150, auto_renew: false };
     const free = await call("/billing/offers", { token, env: STRIPE });
@@ -111,7 +111,7 @@ describe("offers", () => {
 
 describe("checkout", () => {
   it("a pass checkout sends the pass's price, the account and the metadata, and returns the url", async () => {
-    const { id, token } = await newAccount();
+    const { id, token, email } = await signedInAccount();
     const sent = stubStripe();
     const r = await call("/billing/passes/pass90/checkout", { method: "POST", token, env: STRIPE });
     expect(r.status).toBe(200);
@@ -124,18 +124,20 @@ describe("checkout", () => {
       "line_items[0][price]": "price_pass90",
       "line_items[0][quantity]": "1",
       client_reference_id: id,
+      customer_email: email,
       "metadata[kind]": "pass",
       "metadata[pass]": "pass90",
       "metadata[days]": "90",
       "metadata[seconds]": String(9 * INTERVIEW_SECONDS),
       "metadata[packages]": "150",
+      "metadata[email]": email,
       success_url: "http://127.0.0.1:57000/?checkout=success",
       cancel_url: "http://127.0.0.1:57000/?checkout=cancel",
     });
   });
 
   it("needs a user; an unknown pass is a 400; a Stripe failure is a clean 502", async () => {
-    const { token } = await newAccount();
+    const { token } = await signedInAccount();
     stubStripe({ status: 500, body: { error: { message: "secret detail" } } });
     expect((await call("/billing/passes/pass30/checkout", { method: "POST", env: STRIPE })).status).toBe(401);
     const unknown = await call("/billing/passes/gold/checkout", { method: "POST", token, env: STRIPE });
@@ -147,7 +149,7 @@ describe("checkout", () => {
   });
 
   it("packs are refused without an active pass (402 pass_required) and Stripe is never called", async () => {
-    const { id, token } = await newAccount();
+    const { id, token } = await signedInAccount();
     const sent = stubStripe();
     const r = await call("/billing/packs/pack_3/checkout", { method: "POST", token, env: STRIPE });
     expect(r.status).toBe(402);
@@ -160,7 +162,7 @@ describe("checkout", () => {
   });
 
   it("with an active pass a pack checkout sends the pack's price and seconds", async () => {
-    const { id, token } = await newAccount();
+    const { id, token } = await signedInAccount();
     await givePass(id);
     const sent = stubStripe();
     const r = await call("/billing/packs/pack_5/checkout", { method: "POST", token,
@@ -174,9 +176,31 @@ describe("checkout", () => {
   });
 });
 
+describe("checkout needs a signed-in account", () => {
+  it("an anonymous account gets 401 sign_in_required for a pass AND a pack, and Stripe is never called", async () => {
+    const { id, token } = await newAccount();
+    await givePass(id);                                    // even with an active pass (packs)
+    const sent = stubStripe();
+    for (const path of ["/billing/passes/pass30/checkout", "/billing/packs/pack_1/checkout"]) {
+      const r = await call(path, { method: "POST", token, env: STRIPE });
+      expect(r.status, path).toBe(401);
+      expect(r.data, path).toEqual({ error: "sign in first", reason: "sign_in_required" });
+    }
+    expect(sent).toHaveLength(0);
+  });
+
+  it("a pack checkout prefills the buyer's e-mail too", async () => {
+    const { id, token, email } = await signedInAccount();
+    await givePass(id);
+    const sent = stubStripe();
+    expect((await call("/billing/packs/pack_1/checkout", { method: "POST", token, env: STRIPE })).status).toBe(200);
+    expect(sent[0]!.form).toMatchObject({ customer_email: email, "metadata[email]": email, client_reference_id: id });
+  });
+});
+
 describe("webhook", () => {
   it("rejects a bad, missing, wrong-secret or stale signature with 400 and grants nothing", async () => {
-    const { id, token } = await newAccount();
+    const { id, token } = await signedInAccount();
     const ev = completed(id, { kind: "pass", pass: "pass30" });
     const good = await signPayload(JSON.stringify(ev), WHSEC, now());
     const tampered = good.replace(/v1=(.)/, (_m, c) => `v1=${c === "0" ? "1" : "0"}`);
@@ -193,7 +217,7 @@ describe("webhook", () => {
   });
 
   it("a paid pass is granted once even when Stripe delivers the event twice", async () => {
-    const { id, token } = await newAccount();
+    const { id, token } = await signedInAccount();
     const ev = completed(id, { kind: "pass", pass: "pass30" });
     const first = await deliver(ev);
     expect(first.status).toBe(200);
@@ -210,14 +234,14 @@ describe("webhook", () => {
   });
 
   it("parallel deliveries of one event still grant once", async () => {
-    const { id, token } = await newAccount();
+    const { id, token } = await signedInAccount();
     const ev = completed(id, { kind: "pass", pass: "pass90" });
     await Promise.all([deliver(ev), deliver(ev), deliver(ev)]);
     expect((await usage(token)).interviews_left).toBe(9);
   });
 
   it("a second pass bought while one is active stacks days and allowances", async () => {
-    const { id, token } = await newAccount();
+    const { id, token } = await signedInAccount();
     await deliver(completed(id, { kind: "pass", pass: "pass30" }));
     const before = await usage(token);
     await deliver(completed(id, { kind: "pass", pass: "pass90" }));
@@ -229,7 +253,7 @@ describe("webhook", () => {
   });
 
   it("a pack purchase adds never-expiring credit seconds, once", async () => {
-    const { id, token } = await newAccount();
+    const { id, token } = await signedInAccount();
     await givePass(id);
     const ev = completed(id, { kind: "credit_pack", pack: "pack_3", seconds: 1 });   // pack id wins over seconds
     await deliver(ev);
@@ -240,7 +264,7 @@ describe("webhook", () => {
   });
 
   it("unpaid, non-payment, unknown or unrelated events change nothing but are acknowledged", async () => {
-    const { id, token } = await newAccount();
+    const { id, token } = await signedInAccount();
     for (const ev of [
       completed(id, { kind: "pass", pass: "pass30" }, { payment_status: "unpaid" }),
       completed(id, { kind: "pass", pass: "pass30" }, { mode: "subscription" }),
@@ -262,7 +286,7 @@ describe("test mode is for named testers only", () => {
 
   it("hides billing from everyone who is not listed", async () => {
     stubStripe();
-    const { token } = await newAccount();
+    const { token } = await signedInAccount();
     const offers = await call("/billing/offers", { token, env: TEST });
     expect(offers.data.passes).toEqual([]);
     const r = await call("/billing/passes/pass30/checkout", { token, body: {}, env: TEST });
@@ -272,8 +296,8 @@ describe("test mode is for named testers only", () => {
 
   it("shows it to a listed tester, and a live key is never limited", async () => {
     stubStripe();
-    const tester = await newAccount();
-    const other = await newAccount();
+    const tester = await signedInAccount();
+    const other = await signedInAccount();
     const withTester = { ...TEST, STRIPE_TEST_ACCOUNTS: ` ${tester.id} , acct_else` };
     expect((await call("/billing/offers", { token: tester.token, env: withTester })).data.passes.length).toBeGreaterThan(0);
     expect((await call("/billing/passes/pass30/checkout", { token: tester.token, body: {}, env: withTester })).status).toBe(200);

@@ -9,6 +9,11 @@
 //   STRIPE_PRICE_PACK_1, STRIPE_PRICE_PACK_3, STRIPE_PRICE_PACK_5
 //                       Stripe billing (docs/stripe-setup.md); without the key and a pass price
 //                       every /billing/* route answers "billing is not configured".
+//   RESEND_API_KEY      e-mail sign-in codes (docs/sign-in-setup.md); without it
+//                       /account/email/* answers "email sign-in is not configured".
+//   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+//                       "Continue with Google"; without both /account/google/* answers
+//                       "google sign-in is not configured".
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sponsorjobs-broker",
