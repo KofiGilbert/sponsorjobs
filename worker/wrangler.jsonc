@@ -5,6 +5,10 @@
 // Secrets (set once with `npx wrangler secret put <NAME>`, never written in this file):
 //   ANTHROPIC_API_KEY   the company Anthropic key; without it /health reports
 //                       real_providers:false and /llm/complete answers 503.
+//   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_PASS30, STRIPE_PRICE_PASS90,
+//   STRIPE_PRICE_PACK_1, STRIPE_PRICE_PACK_3, STRIPE_PRICE_PACK_5
+//                       Stripe billing (docs/stripe-setup.md); without the key and a pass price
+//                       every /billing/* route answers "billing is not configured".
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sponsorjobs-broker",

@@ -34,6 +34,20 @@ export const PLANS: Record<string, Plan> = {
 };
 export const DEFAULT_PLAN = "free";
 
+/** The pass names, in offer order (backend/metering.py PASSES). */
+export const PASSES: readonly string[] = Object.values(PLANS).filter((p) => p.days > 0).map((p) => p.name);
+
+/** Whole live interviews a plan includes. Plans and packs are both counted in INTERVIEW_SECONDS,
+ * so changing that one constant changes every allowance and every pack consistently. */
+export const interviewsIn = (p: Plan): number => Math.floor(p.avatarSecondsIncluded / INTERVIEW_SECONDS);
+
+/** Extra live-interview packs (backend/billing.py PACKS): id -> whole interviews. Sold only while a
+ * pass is active; prepaid seconds that never expire. The labels are display copy only: the real
+ * price is the Stripe price id configured for each pack. */
+export const PACKS: Record<string, number> = { pack_1: 1, pack_3: 3, pack_5: 5 };
+export const PACK_PRICE_LABEL: Record<string, string> = { pack_1: "$9", pack_3: "$24", pack_5: "$39" };
+export const packSeconds = (pack: string): number => (PACKS[pack] ?? 0) * INTERVIEW_SECONDS;
+
 export const isPass = (p: Plan): boolean => p.days > 0;
 
 export class QuotaExceeded extends Error {
