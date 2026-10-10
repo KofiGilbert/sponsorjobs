@@ -23,9 +23,15 @@ implementation; it does not replace or change anything in `backend/`.
 | `POST /llm/complete` | one metered completion (`402 token_cap`, `503 free_busy`, `502` on upstream failure) |
 | `POST /llm/package` | counts one tailoring run (`402 package_limit`) |
 | `GET /me/usage` | plan, pass end date, interviews, packages, model |
-| `GET /billing/offers`, `GET /billing/packs` | answer as the Python broker does with billing off (nothing on sale) |
+| `GET /billing/offers`, `GET /billing/packs` | passes and packs on sale (packs only while a pass is active) and where the caller stands |
+| `POST /billing/passes/<id>/checkout`, `POST /billing/packs/<id>/checkout` | a one-time Stripe Checkout Session, `{url}` (`402 pass_required` for a pack without a pass) |
+| `POST /billing/webhook` | Stripe's `checkout.session.completed`: grants the pass or pack once per session (signature-checked) |
 
-Phase-2 routes (Stripe checkout and webhook, email and Google sign-in, live interviews, Telegram)
+Billing is off until the Stripe secrets are set (`STRIPE_SECRET_KEY` and at least one pass price;
+see `docs/stripe-setup.md`). While off, the billing routes answer exactly as the Python broker does
+with billing off: nothing on sale, and checkout/webhook say `503 billing is not configured`.
+
+Other phase-2 routes (email and Google sign-in, Telegram)
 answer `503 ... not configured`, which is what the Python broker says when those are switched off,
 so the app degrades the same way. They are not built yet.
 

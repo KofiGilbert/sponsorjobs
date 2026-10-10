@@ -15,6 +15,20 @@ export interface Env {
   TAVUS_API_KEY?: string;
   TAVUS_FACE_ID?: string;   // the interviewer's face; defaults to the stock one the app uses
   TAVUS_PAL_ID?: string;    // optional: a PAL created once on the company account
+  // Stripe billing (passes and extra-interview packs), the same names backend/server.py reads.
+  // All set with `wrangler secret put`. Without a secret key AND at least one pass price, every
+  // /billing/* route answers exactly as when billing is off ("billing is not configured").
+  STRIPE_SECRET_KEY?: string;       // live key (sk_live_...); wins over the test key
+  STRIPE_TEST_SECRET_KEY?: string;  // sandbox key (sk_test_...), used only when no live key is set
+  STRIPE_WEBHOOK_SECRET?: string;   // whsec_...: proves a /billing/webhook call came from Stripe
+  STRIPE_PRICE_PASS30?: string;     // price_... ids; an unset one is simply not offered
+  STRIPE_PRICE_PASS90?: string;
+  STRIPE_PRICE_PACK_1?: string;
+  STRIPE_PRICE_PACK_3?: string;
+  STRIPE_PRICE_PACK_5?: string;
+  // Where Stripe sends the person back after paying (+ "/?checkout=success|cancel"). Defaults to
+  // the desktop app's local address, as in backend/server.py.
+  TAILOR_APP_URL?: string;
 }
 
 /** A numeric var with a fallback, so a missing or mistyped value never turns into NaN limits. */

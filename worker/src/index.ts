@@ -3,22 +3,27 @@
 // A parallel implementation of backend/broker.py for the routes the app needs to run on the
 // bundled AI: anonymous accounts, metered completions, packages and usage. The Python broker
 // stays the reference (dev + tests); where this file differs it says why. Phase-2 routes the app
-// may call (billing checkout, sign-in, live interviews, Telegram) answer like the Python broker
-// does when that feature is not configured, so the app degrades the same way.
+// may call (sign-in, Telegram) answer like the Python broker does when that feature is not
+// configured, so the app degrades the same way. Live interviews (Tavus) and Stripe billing are
+// ported, and each stays "not configured" until its secrets are set.
 //
 // Privacy, as in the Python broker: nothing here stores prompts, resumes or replies. D1 holds
 // only account ids, token hashes and usage counts.
 
 import { allowRegistration, emailOf, identify, register } from "./accounts";
 import { complete } from "./anthropic";
+import {
+  type Billing, billingFrom, grantFor, offeredPacks, offeredPasses, packCheckoutUrl, packPrice, passCheckoutUrl,
+  UnknownProduct, verifySignature,
+} from "./billing";
 import { type Env, intVar } from "./env";
 import {
   avatarSecondsLeft, CALL_SAFETY_SECONDS, dayOf, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft, passActive, periodOf,
   planFor, QuotaExceeded, requireLlm, status, tierFor,
 } from "./metering";
 import {
-  avatarSessionOwner, chargeableSeconds, consumeAvatar, sessionUsed, loadState, markAvatarEnded, recordAvatarSession, recordLlm,
-  takeFreePackage, takePassPackage,
+  addCreditOnce, avatarSessionOwner, chargeableSeconds, consumeAvatar, grantPassOnce, sessionUsed, loadState, markAvatarEnded,
+  recordAvatarSession, recordLlm, takeFreePackage, takePassPackage,
 } from "./store";
 import { createConversation, endConversation, transcript } from "./tavus";
 
@@ -247,21 +252,110 @@ const avatarEnd: Handler = async ({ req, env, now }) => {
 // ---- phase 2: answered as the Python broker answers when the feature is not configured -------- //
 
 const off = (error: string, status = 503): Handler => () => json({ error }, status);
-const billingOff = off("billing is not configured");
 
-/** /billing/offers with billing off: nothing on sale, but where the caller stands (Python does
- * the same), so the app's Upgrade panel still shows the current tier. */
+// ---- Stripe billing (ported from backend/broker.py; logic in billing.ts) ---------------------- //
+//
+// Billing is ON only with a Stripe secret key and at least one pass price (backend/server.py
+// build_billing). Until then every route answers exactly as before: offers/packs list nothing on
+// sale and checkout/webhook say 503 "billing is not configured".
+
+const billingOff = () => json({ error: "billing is not configured" }, 503);
+
+/** Wrap a handler that needs billing configured; otherwise the "not configured" 503. */
+const withBilling = (h: (c: Ctx, b: Billing) => Promise<Response>): Handler => (c) => {
+  const b = billingFrom(c.env);
+  return b ? h(c, b) : billingOff();
+};
+
+/** What is on sale and where the caller stands: {passes, packs, current}. Packs are listed only
+ * while the caller has an active pass (they are not sold otherwise). Without a user, current is
+ * null and packs are empty. With billing off nothing is on sale, but current is still filled, so
+ * the app's Upgrade panel shows the current tier. */
 const billingOffers: Handler = async ({ req, env, now, nowMs }) => {
+  const b = billingFrom(env);
   const user = await identify(req, env);
   let current = null;
+  let packs: ReturnType<typeof offeredPacks> = [];
   if (user) {
     const { state } = await loadState(env.DB, user, periodOf(nowMs), dayOf(nowMs));
     const st = status(state, now, env);
     current = { tier: st.tier, pass_until: st.pass_until, interviews_left: st.interviews_left,
                 packages_left: st.packages_left };
+    if (b && passActive(state, now)) packs = offeredPacks(b);
   }
-  return json({ passes: [], packs: [], current });
+  return json({ passes: b ? offeredPasses(b) : [], packs, current });
 };
+
+/** The extra-interview packs on sale (never expire). Buying one still needs an active pass. */
+const billingPacks: Handler = ({ env }) => {
+  const b = billingFrom(env);
+  return json({ packs: b ? offeredPacks(b) : [] });
+};
+
+const checkoutFailed = (what: string, err: unknown) => {
+  // Stripe/network failure: fail clean and never leak the detail to the client (logged here).
+  console.error(`${what} checkout failed:`, err instanceof Error ? err.message : err);
+  return json({ error: "could not start checkout" }, 502);
+};
+
+/** The product id in /billing/{passes|packs}/<id>/checkout (a malformed escape is left raw; it
+ * then simply matches no product and answers 400). */
+function productId(req: Request): string {
+  const seg = new URL(req.url).pathname.split("/")[3] ?? "";
+  try { return decodeURIComponent(seg); } catch { return seg; }
+}
+
+const billingPassCheckout = withBilling(async ({ req, env }, b) => {
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  const passId = productId(req);
+  try {
+    return json({ url: await passCheckoutUrl(b, user, passId) });
+  } catch (err) {
+    if (err instanceof UnknownProduct) return json({ error: err.message }, 400);
+    return checkoutFailed("pass", err);
+  }
+});
+
+const billingPackCheckout = withBilling(async ({ req, env, now, nowMs }, b) => {
+  const user = await identify(req, env);
+  if (!user) return noUser();
+  const pack = productId(req);
+  try {
+    packPrice(b, pack);
+  } catch (err) {
+    return json({ error: (err as Error).message }, 400);
+  }
+  const { state } = await loadState(env.DB, user, periodOf(nowMs), dayOf(nowMs));
+  if (!passActive(state, now)) {
+    return json({ error: "extra interviews are sold only while a pass is active", reason: "pass_required" }, 402);
+  }
+  try {
+    return json({ url: await packCheckoutUrl(b, user, pack) });
+  } catch (err) {
+    return checkoutFailed("pack", err);
+  }
+});
+
+/** Stripe calls this when a pass or pack payment completes. Authenticated by the Stripe-Signature
+ * header over the RAW body (not a user token), so it is verified before anything is read. */
+const billingWebhook = withBilling(async ({ req, env, now }, b) => {
+  const raw = await req.text();
+  let event: unknown;
+  try {
+    if (!(await verifySignature(raw, req.headers.get("Stripe-Signature") ?? "", b.webhookSecret, now))) {
+      throw new Error("bad signature");
+    }
+    event = JSON.parse(raw || "{}");
+  } catch {
+    return json({ error: "invalid signature" }, 400);   // spoofed, tampered, stale or unparseable
+  }
+  const g = grantFor(event);
+  if (g?.kind === "pass") await grantPassOnce(env.DB, g.key, g.user, g.pass, now);
+  // Paid is paid: a pack is granted even if the pass happened to end between checkout and payment.
+  else if (g?.kind === "credit") await addCreditOnce(env.DB, g.key, g.user, g.seconds, now);
+  return json({ received: true });
+});
 
 // ---- routing ---------------------------------------------------------------------------------- //
 
@@ -276,10 +370,10 @@ const ROUTES: Route[] = [
   ["GET", /^\/me\/usage$/, meUsage],
 
   ["GET", /^\/billing\/offers$/, billingOffers],
-  ["GET", /^\/billing\/packs$/, () => json({ packs: [] })],
-  ["POST", /^\/billing\/passes\/[^/]+\/checkout$/, billingOff],
-  ["POST", /^\/billing\/packs\/[^/]+\/checkout$/, billingOff],
-  ["POST", /^\/billing\/webhook$/, billingOff],
+  ["GET", /^\/billing\/packs$/, billingPacks],
+  ["POST", /^\/billing\/passes\/[^/]+\/checkout$/, billingPassCheckout],
+  ["POST", /^\/billing\/packs\/[^/]+\/checkout$/, billingPackCheckout],
+  ["POST", /^\/billing\/webhook$/, billingWebhook],
   // The free-pass dev stubs are off whenever the broker is hosted, as in Python.
   ["POST", /^\/billing\/(plan|credits)$/, off("not available", 403)],
   ["POST", /^\/account\/(signup|login|claim)$/, off("email accounts are not configured")],
