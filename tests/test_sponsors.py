@@ -422,3 +422,30 @@ def test_a_curated_brand_may_still_lend_downward():
     assert r is not None
     assert r.h1b_approvals == baseline + 100, \
         "the bare-brand record was not aggregated into the multi-token query"
+
+
+def test_dotted_initials_match_the_spelled_out_filings():
+    """A posting says "U.S. Bank"; the filings say "US Bank National Association" (1,839) and
+    "U.S. Bank National Association" (2). Both spellings are one employer (2026-10-10)."""
+    from sourcing.sponsors import normalize_employer_variants
+    assert normalize_employer("U.S. Bank") == normalize_employer("US Bank") == "us bank"
+    assert normalize_employer("J.P. Morgan") == "jp morgan"
+    assert normalize_employer_variants("U.S. Bank") == ["us bank", "u s bank"]
+    db = SponsorDB(":memory:")
+    db.ingest_h1b_rows([_row("US BANK NATIONAL ASSOCIATION", 1839, 0),
+                        _row("U.S. BANK NATIONAL ASSOCIATION", 2, 0)])
+    r = db.lookup("U.S. Bank")
+    assert r and r.h1b_approvals == 1841
+
+
+def test_a_database_built_before_the_change_still_matches_both_spellings():
+    """Databases already on people's machines hold the old form ("u s bank ..."). Until they are
+    rebuilt, a lookup tries both forms and adds them up."""
+    db = SponsorDB(":memory:")
+    for norm, name, n in (("us bank national association", "Us Bank National Association", 1839),
+                          ("u s bank national association", "U.S. Bank National Association", 2)):
+        db._conn.execute("INSERT INTO sponsor_employer (norm_name, display_name, h1b_approvals, "
+                         "h1b_last_fy) VALUES (?, ?, ?, 2023)", (norm, name, n))
+    db._invalidate_index()
+    r = db.lookup("U.S. Bank")
+    assert r and r.h1b_approvals == 1841 and r.display_name == "Us Bank National Association"

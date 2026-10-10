@@ -196,3 +196,9 @@
 .tailor-badge.tb-ad-no  { color: #b42318; background: #fef3f2; border-color: #fecdca; font-weight: 700; }
 .tailor-badge.tb-ad-yes { color: #067647; background: #ecfdf3; border-color: #75e0a7; font-weight: 700; }
 .tailor-badges.tailor-role-no .tailor-badge:not(.tb-stance):not(.tb-tailor) { opacity: 0.55; }
+
+/* Our blocks always take a full line of their own, whatever layout the host page uses. */
+.tailor-badges, .tailor-sponsor-profile, .tailor-match-wrap {
+  display: flex; flex-wrap: wrap; width: 100%; flex: 0 0 100%; box-sizing: border-box; max-width: 100%;
+}
+.tailor-sponsor-profile { display: block; }

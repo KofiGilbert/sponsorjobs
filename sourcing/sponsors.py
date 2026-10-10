@@ -116,6 +116,7 @@ _ALIASES = {
     "alphabet": "google",
     "aws": "amazon web services",
     "uber": "uber technologies",
+    "walgreens": "walgreen",          # the brand files H-1Bs as "Walgreen Co" (55 approvals), not "Walgreens"
 }
 
 # Well-known brands whose BARE single-token name should still aggregate their many filing
@@ -134,18 +135,55 @@ _BRAND_PREFIXES = {
 _MISS = object()   # cache sentinel: a real None result (no sponsor) is distinct from "not cached"
 
 
-def normalize_employer(name: str) -> str:
-    """Lowercase, drop punctuation, and strip trailing legal-suffix tokens so the
-    same company matches across its many filing entities and a job posting."""
+def _join_initials(toks: list[str]) -> list[str]:
+    """Join a run of single letters into one word: "u s bank" -> "us bank", "j p morgan" ->
+    "jp morgan". Punctuation removal splits "U.S. Bank" into lone letters, while the filings
+    also spell it "US Bank": U.S. Bank's 1,839 approvals sat under "us bank ..." and a posting
+    saying "U.S. Bank" matched a 2-petition entity instead (2026-10-10)."""
+    out: list[str] = []
+    run = ""
+    for t in toks:
+        if len(t) == 1 and t.isalpha():
+            run += t
+            continue
+        if run:
+            out.append(run)
+            run = ""
+        out.append(t)
+    if run:
+        out.append(run)
+    return out
+
+
+def _normalize(name: str, join_initials: bool) -> str:
     s = (name or "").lower()
     s = s.replace("&", " and ")
     s = re.sub(r"[^a-z0-9 ]+", " ", s)
     toks = [t for t in s.split() if t]
+    if join_initials:
+        toks = _join_initials(toks)
     while toks and toks[-1] in _SUFFIX:
         toks.pop()
     if toks and toks[0] == "the":
         toks = toks[1:]
     return " ".join(toks)
+
+
+def normalize_employer(name: str) -> str:
+    """Lowercase, drop punctuation, join initials ("U.S." -> "us"), and strip trailing
+    legal-suffix tokens so the same company matches across its many filing entities and a
+    job posting."""
+    return _normalize(name, True)
+
+
+def normalize_employer_variants(name: str) -> list[str]:
+    """The current normal form, plus the pre-2026-10-10 one (initials left apart) so a sponsor
+    database built before this change still matches until it is rebuilt."""
+    out = [normalize_employer(name)]
+    legacy = _normalize(name, False)
+    if legacy and legacy not in out:
+        out.append(legacy)
+    return [n for n in out if n]
 
 
 def _is_cap_exempt(naics: str, name: str) -> bool:
@@ -239,6 +277,23 @@ class SponsorRecord:
                        "employer letter (no LCA), so a willing sponsor can usually support it. "
                        "The role must be on the TN profession list. Not a guarantee.")},
         ]
+
+def _merge_records(matches: list["SponsorRecord"]) -> "SponsorRecord":
+    """One employer from its several filing entities: counts add up, the biggest entity lends its
+    display name, NAICS and state. Tie-break on perm then name so the pick is DETERMINISTIC."""
+    top = max(matches, key=lambda r: (r.h1b_approvals, r.perm_certs, r.display_name or ""))
+    firsts = [r.h1b_first_fy for r in matches if r.h1b_first_fy]
+    return SponsorRecord(
+        display_name=top.display_name,
+        h1b_approvals=sum(r.h1b_approvals for r in matches),
+        h1b_last_fy=max(r.h1b_last_fy for r in matches),
+        naics=top.naics, state=top.state,
+        cap_exempt=any(r.cap_exempt for r in matches),
+        e_verify=any(r.e_verify for r in matches),
+        h1b_first_fy=min(firsts) if firsts else 0,
+        perm_certs=sum(r.perm_certs for r in matches),
+    )
+
 
 
 class SponsorDB:
@@ -579,13 +634,28 @@ class SponsorDB:
         normalized name plus whole-word prefixes in either direction ('Amazon' ↔ all
         'Amazon *' subsidiaries), guarded so short/generic single tokens only match
         exactly — never a risky partial. Approvals are summed across matches."""
-        norm = normalize_employer(company)
-        if not norm:
+        variants = [_ALIASES.get(n, n) for n in normalize_employer_variants(company)]
+        if not variants:
             return None
-        norm = _ALIASES.get(norm, norm)   # bare brand -> its filing entity
+        norm = variants[0]
         cached = self._lookup_cache.get(norm, _MISS)
         if cached is not _MISS:            # many jobs share a company; cache the SQL result
             return cached
+        if len(variants) > 1:
+            # "U.S. Bank": look under both spellings and add up what they find, since filings
+            # use both ("US Bank" 1,839 approvals, "U.S. Bank" 2).
+            found = [r for r in (self._lookup_one(v) for v in variants) if r]
+            result = found[0] if len(found) == 1 else (_merge_records(found) if found else None)
+            if len(self._lookup_cache) < 100_000:
+                self._lookup_cache[norm] = result
+            return result
+        result = self._lookup_one(norm)
+        if len(self._lookup_cache) < 100_000:
+            self._lookup_cache[norm] = result
+        return result
+
+    def _lookup_one(self, norm: str) -> SponsorRecord | None:
+        """One normalized spelling: the conservative candidate fetch and match below."""
         # Whole-word prefix expansion ("X" <-> "X Something") is where false positives
         # creep in -- a single generic token grabbing an unrelated employer that merely
         # starts with it. Allow it ONLY for a distinctive MULTI-token query ("University
@@ -616,10 +686,7 @@ class SponsorDB:
                 r["display_name"], r["h1b_approvals"], r["h1b_last_fy"], r["naics"], r["state"],
                 bool(r["cap_exempt"]), bool(r["e_verify"]), r["h1b_first_fy"], r["perm_certs"])
             for r in rows}
-        result = self._match(norm, allow_prefix, index)
-        if len(self._lookup_cache) < 100_000:         # bounded; cleared on ingest (see _invalidate_index)
-            self._lookup_cache[norm] = result
-        return result
+        return self._match(norm, allow_prefix, index)
 
     def _match(self, norm: str, allow_prefix: bool,
                index: dict[str, SponsorRecord]) -> SponsorRecord | None:
@@ -650,21 +717,7 @@ class SponsorDB:
             return None
         if len(matches) == 1:
             return matches[0]
-        # Biggest filing entity lends its display name / NAICS / state. Tie-break on perm then
-        # name so the pick is DETERMINISTIC — the old in-memory build left ties to DB row order,
-        # so identical inputs could show different "matched" names run to run; this is stable.
-        top = max(matches, key=lambda r: (r.h1b_approvals, r.perm_certs, r.display_name or ""))
-        firsts = [r.h1b_first_fy for r in matches if r.h1b_first_fy]
-        return SponsorRecord(
-            display_name=top.display_name,
-            h1b_approvals=sum(r.h1b_approvals for r in matches),
-            h1b_last_fy=max(r.h1b_last_fy for r in matches),
-            naics=top.naics, state=top.state,
-            cap_exempt=any(r.cap_exempt for r in matches),
-            e_verify=any(r.e_verify for r in matches),
-            h1b_first_fy=min(firsts) if firsts else 0,
-            perm_certs=sum(r.perm_certs for r in matches),
-        )
+        return _merge_records(matches)
 
     def tag_jobs(self, jobs: list[dict]) -> list[dict]:
         """Attach `visa` (badge list) and `sponsor` (summary) to each job in place.

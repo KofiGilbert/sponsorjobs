@@ -150,6 +150,19 @@
     return "";
   }
 
+  // The host page's own text in `node`, without anything we injected. Our badges and the
+  // sponsorship box sit right beside the company name; counted as page text they pushed the
+  // card past the 400-character "this is still one job" limit before the climb reached
+  // "Chicago, IL", and the badge said "location unclear" on a job that plainly says Chicago
+  // (2026-10-10). The extension was tripping over its own words.
+  function pageText(node) {
+    let text = node.textContent || "";
+    node.querySelectorAll && node.querySelectorAll(
+      ".tailor-badges, .tailor-sponsor-profile, .tailor-match-wrap, .tailor-referral, [class^='tailor-'], [class*=' tailor-']"
+    ).forEach(e => { const t = e.textContent; if (t) text = text.split(t).join(" "); });
+    return text;
+  }
+
   function locationInAncestors(startEl) {
     if (!startEl) return "";
     // The element we started from is the title, and textContent has no separators, so the
@@ -160,7 +173,7 @@
     // contains a location is this job's card, not the whole results list of other cities.
     let node = startEl;
     for (let i = 0; i < 6 && node; i++) {
-      let text = node.textContent || "";
+      let text = pageText(node);
       // STOP once we have climbed out of this job's card. A card's meta line is short; a
       // thousand characters means we are reading the whole results list, and then the first
       // "City, ST" we find belongs to SOMEBODY ELSE'S job. Caught in testing: a role with no
@@ -288,6 +301,23 @@
     return `<div class="tailor-sponsor-profile"><div class="tailor-sp-hd">Sponsorship profile${data.matched_name ? " · " + esc(data.matched_name) : ""}</div>${rows.join("")}<div class="tailor-sp-foot">Historical public USCIS/DOL data, not a promise this role sponsors.</div></div>`;
   }
 
+  // Where our block goes: AFTER the row the anchor sits in, never inside it. LinkedIn sets the
+  // company name in a side-by-side (flex row) line; inserted next to it, our badges fought the name
+  // for width and squeezed "U.S. Bank" into a column of single letters (2026-10-10). Climb out of
+  // any row-like or display:contents container until the parent stacks its children vertically.
+  function blockSlot(anchor) {
+    let el = anchor;
+    for (let i = 0; i < 10 && el.parentElement && el.parentElement !== document.body; i++) {
+      const cs = getComputedStyle(el.parentElement);
+      const rowish = cs.display === "contents" || cs.display.startsWith("inline") ||
+        ((cs.display === "flex" || cs.display === "inline-flex") && !cs.flexDirection.startsWith("column")) ||
+        (cs.display === "grid" && cs.gridTemplateColumns.split(" ").length > 1);
+      if (!rowish) return el;
+      el = el.parentElement;
+    }
+    return el;
+  }
+
   function render(anchor, data) {
     document.querySelectorAll(".tailor-badges, .tailor-sponsor-profile").forEach(e => e.remove());
     const html = badgesHTML(data);
@@ -295,7 +325,7 @@
     const wrap = document.createElement("div");
     wrap.className = "tailor-badges";
     wrap.innerHTML = html;
-    anchor.insertAdjacentElement("afterend", wrap);
+    blockSlot(anchor).insertAdjacentElement("afterend", wrap);
     const prof = sponsorProfileHTML(data);          // posting-level detail; cards keep the compact badge
     if (prof) {
       const holder = document.createElement("div");
