@@ -532,3 +532,26 @@ def test_the_interviewer_keeps_time_and_the_marks_scale_for_a_short_test(client,
     assert s["total"] == 270 and s["hard_end"] <= 290 and s["answer_nudge"] == 45
     monkeypatch.setenv("TAILOR_CVI_TEST_SCALE", "nonsense")
     assert A._cvi_timing()["total"] == 900
+
+
+def test_time_notes_never_reach_the_scored_transcript(client, monkeypatch):
+    """The timekeeper's notes come back in Tavus's transcript under the candidate's name (they are
+    sent as if spoken). They must never be scored as the person's answers (2026-10-10)."""
+    A, c = client
+    prep = _prep(c)
+    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass30", "avatar_seconds_left": 2700}))
+
+    def post(path, body):
+        if path == "/avatar/session/start":
+            return 200, {"session_url": "u", "provider_session_id": "c11"}
+        return 200, {"transcript": [
+            {"role": "interviewer", "content": "Why do you want this role?"},
+            {"role": "candidate", "content": _GOOD},
+            {"role": "candidate", "content": "TIME NOTE: Time is nearly up. Ask whether they have one question."},
+            {"role": "interviewer", "content": "Do you have a question for me?"},
+            {"role": "candidate", "content": "time note: The time is up. Close the interview now."}]}
+    monkeypatch.setattr(A, "_broker_post", post)
+    iid = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).get_json()["interview_id"]
+    rep = c.post("/api/interviews/cvi/end", json={"interview_id": iid}).get_json()["report"]
+    assert not any("TIME NOTE" in t["content"].upper() for t in rep["transcript"])
+    assert len(rep["answers"]) == 1
