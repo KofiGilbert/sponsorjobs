@@ -10,6 +10,8 @@ the manifest never points at data that isn't there yet. Headers per object:
   jobs.json.gz   Content-Type application/json, Content-Encoding gzip, Cache-Control max-age=600
   jd/*.json.gz   same, Cache-Control max-age=86400
   manifest.json  Content-Type application/json, Cache-Control no-cache
+  sponsors/*.json.gz      the extension's sponsor index (scripts/build_sponsor_index.py), when
+                          built: like the JD shards; sponsors/manifest.json after them, no-cache
 boto3 is imported lazily (it is a CI-only dependency; the desktop app never needs it), and the
 client is injectable so the upload plan is unit-tested with a fake.
 """
@@ -27,6 +29,8 @@ if str(ROOT) not in sys.path:
 
 from sourcing.feedfile import JD_DIR, JOBS_FILE, MANIFEST_FILE  # noqa: E402
 
+SPONSOR_DIR = "sponsors"            # scripts/build_sponsor_index.py writes <out>/sponsors/
+
 CACHE_LIST = "public, max-age=600"
 CACHE_SHARD = "public, max-age=86400"
 CACHE_MANIFEST = "no-cache"
@@ -41,17 +45,26 @@ def object_headers(rel_path: str) -> dict:
         return {"ContentType": "application/json", "ContentEncoding": "gzip", "CacheControl": CACHE_LIST}
     if rel.startswith(JD_DIR + "/") and rel.endswith(".json.gz"):
         return {"ContentType": "application/json", "ContentEncoding": "gzip", "CacheControl": CACHE_SHARD}
+    if rel == f"{SPONSOR_DIR}/manifest.json":
+        return {"ContentType": "application/json", "CacheControl": CACHE_MANIFEST}
+    if rel.startswith(SPONSOR_DIR + "/") and rel.endswith(".json.gz"):
+        return {"ContentType": "application/json", "ContentEncoding": "gzip", "CacheControl": CACHE_SHARD}
     raise ValueError(f"not a feed file: {rel_path}")
 
 
 def plan(out_dir) -> list[tuple[Path, str]]:
-    """(local_path, relative key) in upload order: shards, list, manifest."""
+    """(local_path, relative key) in upload order: shards, the sponsor index (its shards, then its
+    manifest) when it was built, list, manifest."""
     out = Path(out_dir)
     for name in (JOBS_FILE, MANIFEST_FILE):
         if not (out / name).exists():
             raise FileNotFoundError(f"{out / name} missing: run scripts/build_feed.py first")
     shards = sorted((out / JD_DIR).glob("*.json.gz"))
-    return ([(p, f"{JD_DIR}/{p.name}") for p in shards]
+    sponsors = []
+    if (out / SPONSOR_DIR / "manifest.json").exists():
+        sponsors = ([(p, f"{SPONSOR_DIR}/{p.name}") for p in sorted((out / SPONSOR_DIR).glob("*.json.gz"))]
+                    + [(out / SPONSOR_DIR / "manifest.json", f"{SPONSOR_DIR}/manifest.json")])
+    return ([(p, f"{JD_DIR}/{p.name}") for p in shards] + sponsors
             + [(out / JOBS_FILE, JOBS_FILE), (out / MANIFEST_FILE, MANIFEST_FILE)])
 
 
