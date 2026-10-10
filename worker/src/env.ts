@@ -41,6 +41,12 @@ export interface Env {
   GOOGLE_CLIENT_SECRET?: string;
   // Optional: the callback registered with Google. Defaults to <this host>/account/google/callback.
   GOOGLE_REDIRECT_URI?: string;
+  // The founder's admin dashboard (src/admin.ts, docs/admin-dashboard.md). Plain vars. Without both
+  // ACCESS_* values every request to the admin host answers 403.
+  ACCESS_TEAM_DOMAIN?: string;      // the Cloudflare Zero Trust team, e.g. "sponsorjobs" (.cloudflareaccess.com)
+  ACCESS_AUD?: string;              // the Access application's Audience (AUD) tag
+  ADMIN_EMAILS?: string;            // optional extra lock: comma-separated e-mails allowed in
+  ADMIN_HOST?: string;              // default "admin.sponsorjobs.ai"
 }
 
 /** A numeric var with a fallback, so a missing or mistyped value never turns into NaN limits. */
