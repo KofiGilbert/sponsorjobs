@@ -353,7 +353,7 @@
   let lastStanceKey = "";
   function mountStance() {
     const row = document.querySelector(".tailor-badges");
-    const A = window.TailorAdStance;
+    const A = globalThis.TailorAdStance;
     if (!row || !A) return;
     const jd = readFullJD();
     const r = jd ? A.adStance(jd) : { stance: A.UNKNOWN, sentence: "" };
