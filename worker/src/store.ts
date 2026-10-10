@@ -4,7 +4,7 @@
 // read-then-write in JavaScript: two requests from the same account can run on different
 // isolates at the same moment, and a read-modify-write would lose one of the updates.
 
-import { AccountState, DEFAULT_PLAN, EMPTY_STATE, PLANS } from "./metering";
+import { AccountState, DAY_SECONDS, DEFAULT_PLAN, EMPTY_STATE, PASSES, PLANS } from "./metering";
 
 export const FREE_POOL_USER = "__free_pool__"; // the free tier's shared daily budget lives here
 
@@ -69,8 +69,8 @@ export async function takeFreePackage(db: D1Database, user: string, period: stri
   return row ? row.packages : null;
 }
 
-/** Store a pass on an account (the same contract as UsageStore.set_pass). Phase 1 has no way to
- * buy one yet; tests and an operator use this directly. */
+/** Store a pass on an account (the same contract as UsageStore.set_pass). A purchase goes through
+ * grantPassOnce; tests and an operator use this directly. */
 export async function setPass(db: D1Database, user: string, name: string, until: number,
                               seconds: number, packages: number): Promise<void> {
   await db.prepare(
@@ -138,4 +138,55 @@ export async function sessionUsed(db: D1Database, id: string, user: string): Pro
   const r = await db.prepare("SELECT used FROM avatar_sessions WHERE conversation_id = ? AND user = ?")
     .bind(id, user).first<{ used: number }>();
   return r ? r.used : -1;
+}
+
+// ---- Stripe purchases (backend/billing.py Billing._apply_payment + Meter.grant_pass) ----------- //
+//
+// Each grant is ONE D1 batch (a transaction): the grant is guarded by "this key is not in
+// processed_events yet" and the key is recorded in the same batch. Stripe redelivering an event,
+// or two deliveries landing on different isolates at once, therefore grants exactly once.
+
+const notProcessed = "NOT EXISTS (SELECT 1 FROM processed_events WHERE key = ?1)";
+const markProcessed = (db: D1Database, key: string, now: number) =>
+  db.prepare("INSERT OR IGNORE INTO processed_events(key, at) VALUES(?, ?)").bind(key, now);
+
+/** Start or extend a pass, once per `key`; returns false when the key was already applied.
+ * Same rules as Meter.grant_pass: while a pass is active the end date moves out by the new pass's
+ * days and its allowances are ADDED (stacking; the longer pass's name is kept as the label);
+ * otherwise a fresh period starts now (leftovers of an expired pass are not revived). */
+export async function grantPassOnce(db: D1Database, key: string, user: string, passName: string,
+                                    now: number): Promise<boolean> {
+  const plan = PLANS[passName];
+  if (!plan || plan.days <= 0) throw new Error(`unknown pass: ${passName}`);
+  const passList = PASSES.map((n) => `'${n}'`).join(", ");      // our own constants, not input
+  const curDays = `(CASE users.plan ${PASSES.map((n) => `WHEN '${n}' THEN ${PLANS[n]!.days}`).join(" ")} ELSE 0 END)`;
+  const active = `(users.plan IN (${passList}) AND users.pass_until > ?4)`;
+  const [grant] = await db.batch([
+    db.prepare(
+      `INSERT INTO users(user, plan, pass_until, pass_seconds, pass_packages)
+       SELECT ?2, ?3, ?4 + ?5, ?6, ?7 WHERE ${notProcessed}
+       ON CONFLICT(user) DO UPDATE SET
+         plan = CASE WHEN ${active} AND ${curDays} >= ?8 THEN users.plan ELSE excluded.plan END,
+         pass_until = CASE WHEN ${active} THEN users.pass_until + ?5 ELSE excluded.pass_until END,
+         pass_seconds = CASE WHEN ${active} THEN MAX(0, users.pass_seconds + ?6) ELSE ?6 END,
+         pass_packages = CASE WHEN ${active} THEN MAX(0, users.pass_packages + ?7) ELSE ?7 END`,
+    ).bind(key, user, passName, now, plan.days * DAY_SECONDS, plan.avatarSecondsIncluded,
+           plan.packages, plan.days),
+    markProcessed(db, key, now),
+  ]);
+  return (grant!.meta.changes ?? 0) > 0;
+}
+
+/** Add purchased interview seconds (a pack), once per `key`; they never expire. Returns false when
+ * the key was already applied. */
+export async function addCreditOnce(db: D1Database, key: string, user: string, seconds: number,
+                                    now: number): Promise<boolean> {
+  const [grant] = await db.batch([
+    db.prepare(
+      `INSERT INTO users(user, credit_seconds) SELECT ?2, MAX(0, ?3) WHERE ${notProcessed}
+       ON CONFLICT(user) DO UPDATE SET credit_seconds = MAX(0, users.credit_seconds + ?3)`,
+    ).bind(key, user, Math.trunc(seconds)),
+    markProcessed(db, key, now),
+  ]);
+  return (grant!.meta.changes ?? 0) > 0;
 }
