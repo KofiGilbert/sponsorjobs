@@ -280,7 +280,7 @@
   "upg.pass90Packages": "150 maßgeschneiderte Pakete",
   "upg.betterModel": "Anpassung mit unserem besten KI Modell",
   "upg.packsH": "Mehr Live Interviews nötig? Sie verfallen nie.",
-  "upg.free": "Kostenlos bleiben die Jobbörse, die Visa Abzeichen, das aufgezeichnete Interview und 3 maßgeschneiderte Pakete pro Monat. Unbegrenzt mit deinem eigenen KI Schlüssel.",
+  "upg.free": "Kostenlos bleiben die Jobbörse, die Visa Abzeichen, das aufgezeichnete Interview und 3 maßgeschneiderte Pakete pro Monat.",
   "upg.msg": "Dein Pass startet, sobald die Zahlung durch ist. Er endet von selbst, du musst nichts kündigen.",
   "upg.ownKey": "Eigenen KI Schlüssel nutzen",
   "upg.current": "{pass} bis {date}: noch {i} Live Interviews und {p} maßgeschneiderte Pakete. Ein weiterer Kauf kommt hinzu.",
@@ -296,8 +296,9 @@
   "tavus.hint": "Erstelle einen Schlüssel auf platform.tavus.io (es gibt einen kostenlosen Tarif). Der Schlüssel bleibt auf diesem Computer.",
   "r2.passH": "Live-Interviews gibt es mit einem Pass",
   "r2.passD": "Zwanzig Minuten mit einem Live-Interviewer, der fragt, zuhört und nachhakt, danach ein bewerteter Bericht. Ein Job Hunt Pass enthält 3 Live-Interviews, ein Season Pass 9. Einmal bezahlt, keine automatische Verlängerung.",
-  "r2.haveKey": "Du hast schon einen Tavus-Schlüssel? Füge ihn in den Einstellungen hinzu.",
   "r2.keepsTime": "Dein Interviewer achtet auf die Zeit, wie ein echter",
   "r2.wrappingUp": "Abschluss",
-  "r2.cantJoin": "Der Interviewraum konnte nicht betreten werden. Prüfe deine Verbindung und versuche es erneut."
+  "r2.cantJoin": "Der Interviewraum konnte nicht betreten werden. Prüfe deine Verbindung und versuche es erneut.",
+  "r2.usedUpDPaid": "Kauf mehr, sie verfallen nie.",
+  "r2.usedUpNoBuyPaid": "Hol dir einen weiteren Pass für mehr Live-Interviews."
 }

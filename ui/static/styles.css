@@ -2881,3 +2881,6 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* The live interview runs in Daily's frame inside our own page (so the timekeeper can talk to
    the interviewer). A 16:9 stage that fills the column. */
 .cvi-frame { width: 100%; aspect-ratio: 16 / 9; max-height: 70vh; background: #0d0f12; }
+
+/* Official app: own-key options belong to the open-source edition and never show here. */
+.is-managed .byok-only { display: none !important; }

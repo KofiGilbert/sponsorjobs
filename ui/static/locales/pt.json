@@ -280,7 +280,7 @@
   "upg.pass90Packages": "150 pacotes personalizados",
   "upg.betterModel": "Personalização com nosso melhor modelo de IA",
   "upg.packsH": "Precisa de mais entrevistas ao vivo? Elas nunca expiram.",
-  "upg.free": "O plano gratuito mantém o quadro de vagas, os selos de visto, a entrevista gravada e 3 pacotes personalizados por mês. Ilimitado com sua própria chave de IA.",
+  "upg.free": "O plano gratuito mantém o quadro de vagas, os selos de visto, a entrevista gravada e 3 pacotes personalizados por mês.",
   "upg.msg": "Seu passe começa quando o pagamento é confirmado. Ele termina sozinho, não há nada para cancelar.",
   "upg.ownKey": "Usar sua própria chave de IA",
   "upg.current": "{pass} até {date}: restam {i} entrevistas ao vivo e {p} pacotes personalizados. Comprar outro soma ao que resta.",
@@ -296,8 +296,9 @@
   "tavus.hint": "Crie uma chave em platform.tavus.io (há um plano gratuito). A chave fica neste computador.",
   "r2.passH": "Entrevistas ao vivo vêm com um passe",
   "r2.passD": "Vinte minutos com um entrevistador ao vivo que pergunta, escuta e aprofunda, e depois um relatório com nota. O Job Hunt Pass inclui 3 entrevistas ao vivo e o Season Pass 9. Pagamento único, sem renovação automática.",
-  "r2.haveKey": "Já tem uma chave da Tavus? Adicione-a nas Configurações.",
   "r2.keepsTime": "Seu entrevistador controla o tempo, como um de verdade",
   "r2.wrappingUp": "Encerrando",
-  "r2.cantJoin": "Não foi possível entrar na sala da entrevista. Verifique sua conexão e tente de novo."
+  "r2.cantJoin": "Não foi possível entrar na sala da entrevista. Verifique sua conexão e tente de novo.",
+  "r2.usedUpDPaid": "Compre mais, elas nunca expiram.",
+  "r2.usedUpNoBuyPaid": "Pegue outro passe para mais entrevistas ao vivo."
 }

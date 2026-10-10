@@ -809,7 +809,7 @@
     </button>
     <!-- Opens the connect-AI picker (Claude or OpenAI), not a hardcoded Anthropic link, so
          the choice of provider is respected and the "get your key" step links to the right console. -->
-    <button class="acct-menu-item" id="menuGetKey" role="menuitem" type="button">
+    <button class="acct-menu-item byok-only" id="menuGetKey" role="menuitem" type="button">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M7.9 8.1L13 3m-2 0h2v2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <span data-i18n="acct.getKey">Get an API key</span>
     </button>
@@ -888,7 +888,7 @@
         <p class="upg-usage-p" data-i18n="upg.packsH">Need more live interviews? They never expire.</p>
         <div class="upg-usage-acts" id="upgPackBtns"></div>
       </div>
-      <p class="upg-free" data-i18n="upg.free">Free keeps the job board, visa badges, the recorded interview and 3 tailored packages a month. Unlimited with your own AI key.</p>
+      <p class="upg-free" data-i18n="upg.free">Free keeps the job board, visa badges, the recorded interview and 3 tailored packages a month.</p>
       <div class="upg-usage">
         <!-- Create-account step at checkout (try-first): revealed when the install's account has no
              email yet, so a paid plan follows the person to a new device. -->
@@ -905,7 +905,7 @@
         <p class="upg-usage-p" id="upgMsg" data-i18n="upg.msg">Your pass starts when the payment goes through. It ends on its own, there is nothing to cancel.</p>
         <div class="upg-usage-acts">
           <!-- Power users can still run on their own API key instead of the managed plan. -->
-          <button class="btn btn-ghost btn-sm" id="upgOwnKey" type="button" data-i18n="upg.ownKey">Use your own AI key</button>
+          <button class="btn btn-ghost btn-sm byok-only" id="upgOwnKey" type="button" data-i18n="upg.ownKey">Use your own AI key</button>
         </div>
       </div>
     </div>
@@ -925,7 +925,7 @@
       <nav class="set-rail" aria-label="Settings sections">
         <div class="set-rail-h" data-i18n="settings.title">Settings</div>
         <button class="set-tab is-on" data-set="general" type="button" data-i18n="settings.appearance">Appearance</button>
-        <button class="set-tab" data-set="ai" type="button" data-i18n="settings.aiKey">AI key</button>
+        <button class="set-tab byok-only" data-set="ai" type="button" data-i18n="settings.aiKey">AI key</button>
         <button class="set-tab" data-set="lock" type="button" data-i18n="settings.appLock">App lock</button>
         <button class="set-tab" data-set="connections" type="button" data-i18n="settings.connections">Connections</button>
         <button class="set-tab" data-set="notify" type="button" data-i18n="notify.title">Notifications</button>
@@ -952,7 +952,7 @@
           </div>
         </section>
 
-        <section class="set-pane" data-pane="ai">
+        <section class="set-pane byok-only" data-pane="ai">
           <h2 class="set-h">AI key</h2>
           <div class="set-row">
             <div class="set-row-t">
