@@ -1,11 +1,12 @@
 # SponsorJobs: Visa Sponsor Badges + Assisted Apply (browser extension)
 
-A companion browser extension for the local **SponsorJobs** app. It does two things:
+A browser extension for SponsorJobs. The sponsor badges work on their own, with no app
+installed; the assisted-apply features use the local **SponsorJobs** app. It does two things:
 
 1. **Sponsor badges.** As you browse job postings on **LinkedIn, Indeed, Greenhouse,
    Lever, or Ashby**, it reads the employer name already on the page and shows small
    badges, **H-1B**, **green card (PERM)**, **cap-exempt**, **STEM-OPT**, sourced from
-   official USCIS/DOL data via your local app.
+   official USCIS/DOL data. No app needed: see "Sponsor data without the app" below.
 2. **Assisted apply.** On a job **application form** (Greenhouse, Lever, Ashby, Workday,
    Workable, SmartRecruiters, iCIMS), a small panel offers to **pre-fill**:
    - **Contact fields**, name, email, phone, address (split into street/city/state/zip),
@@ -29,18 +30,26 @@ It is **read-only for browsing** and **fill-only for applications**. It never sc
 scrapes in bulk, logs in, or submits anything (see the compliance note below).
 
 ## How it fits together
-- **The SponsorJobs app** (on your computer) is the brain: your profile, the sponsor data,
-  the CV tailoring engine.
-- **This extension** (in your browser) is the hands: it shows the badges on the job
-  boards you already use (via `http://127.0.0.1:57000/api/sponsors/lookup`), and pulls
-  your saved contact profile for form-fill (via `.../api/profile/autofill`).
+- **This extension** (in your browser) shows the badges on the job boards you already use,
+  from its own copy of the public sponsor data (below).
+- **The SponsorJobs app** (on your computer) adds the rest: your profile, the CV tailoring
+  engine, the match score, and form-fill (via `http://127.0.0.1:57000/api/profile/autofill`).
+  Without it those spots show a "get the free app" link instead.
 
-The extension talks only to `127.0.0.1` (your own machine). If the app isn't running,
-the extension simply shows nothing (or a "Start SponsorJobs" hint).
+### Sponsor data without the app
+The feed publishes the H-1B / PERM / E-Verify data as a static index next to the job feed
+(`scripts/build_sponsor_index.py` -> `https://feed.sponsorjobs.ai/feed/sponsors/`): one gzipped
+shard per first letter of the employer name (about 7.7 MB in all) plus a `manifest.json`. The
+extension downloads only the shards it needs, caches them in IndexedDB, re-checks the manifest
+at most once a day, and matches names itself with `sponsor_core.js`, a port of the app's
+matcher (`sourcing/sponsors.py`) that `tests/test_extension_sponsor_core.py` holds to the app's
+exact answers. **No company name ever leaves your browser**: the feed host sees only which
+letter-shards were downloaded. If the index can't be downloaded (first use while offline), the
+extension asks the local app instead, as before.
 
 ## Install (developer / unpacked)
-1. Start the SponsorJobs app (`python -m ui.app`) and, on the dashboard, let the visa data
-   load (H-1B + green-card load automatically).
+1. (Optional, for form-fill, match score and tailoring) start the SponsorJobs app
+   (`python -m ui.app`). The badges work without it.
 2. Open `chrome://extensions` (or `edge://extensions`).
 3. Turn on **Developer mode** (top-right).
 4. Click **Load unpacked** and select this `extension/` folder.

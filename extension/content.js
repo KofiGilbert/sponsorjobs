@@ -5,6 +5,8 @@
 
 (function () {
   const HOST = location.hostname;
+  const APP_URL = "http://127.0.0.1:57000/";                                 // the local app
+  const INSTALL_URL = "https://github.com/KofiGilbert/sponsorjobs#install";  // the free app
 
   const clean = (s) => (s || "").replace(/\s+/g, " ").trim().replace(/\s*·.*$/, "");
   const esc = (s) => String(s).replace(/[&<>"]/g, c =>
@@ -284,7 +286,7 @@
   function badgesHTML(data) {
     if (!data || data.ok === false) {
       if (data && data.error === "cant_reach_app")
-        return `<span class="tailor-badge tb-off" title="Open the SponsorJobs app on your computer to see sponsor badges">Start SponsorJobs for visa badges</span>`;
+        return `<span class="tailor-badge tb-off" title="The sponsor data couldn't be downloaded. Check your connection, or open the SponsorJobs app, which has its own copy.">Visa data offline</span>`;
       return "";
     }
     if (!data.matched)
@@ -296,8 +298,12 @@
     const unread = data.role_in_us == null;
     const chips = employerCodes(data).map(c => chipHTML(c,
       unread ? "We could not read this role's location; this is the employer's US record." : "")).join("");
-    return chips +
-      `<a class="tailor-badge tb-tailor" href="http://127.0.0.1:57000/" target="_blank" rel="noopener" title="Tailor your CV to this job in the SponsorJobs app">Tailor my CV ↗</a>`;
+    // The badges come from the extension's own index now; tailoring still needs the app. With
+    // no app answering, the link offers the free install instead of a dead localhost page.
+    const tailor = data.app === false
+      ? `<a class="tailor-badge tb-tailor" href="${INSTALL_URL}" target="_blank" rel="noopener" title="Install the free SponsorJobs app to tailor your CV to this job">Tailor my CV ↗</a>`
+      : `<a class="tailor-badge tb-tailor" href="${APP_URL}" target="_blank" rel="noopener" title="Tailor your CV to this job in the SponsorJobs app">Tailor my CV ↗</a>`;
+    return chips + tailor;
   }
 
   // The rich sponsorship PROFILE for the open posting: H-1B volume + how recent, green-card (PERM)
@@ -443,6 +449,8 @@
 
   function matchPillHTML(m) {
     if (!m) return "";
+    if (m.needApp)
+      return `<a class="tailor-badge tb-off" href="${INSTALL_URL}" target="_blank" rel="noopener" title="The match score and skills check run in the free SponsorJobs app on your computer">${esc(m.text)}</a>`;
     if (m.needProfile)
       return `<a class="tailor-badge tb-off" href="http://127.0.0.1:57000/" target="_blank" rel="noopener" title="Open SponsorJobs and build your CV once, then your match shows here">${esc(m.text)}</a>`;
     return `<span class="tailor-match-pill tm-${esc(m.cls)}" title="${esc(m.note)} (${esc(m.skills)})">${esc(m.text)}</span>`;
@@ -550,7 +558,7 @@
     const codes = data && data.matched && data.role_in_us !== false ? employerCodes(data) : [];
     if (codes.length) parts.push(...codes.map(c => chipHTML(c)));
     else if (b.text && b.kind !== "off") parts.push(`<span class="tailor-badge tb-none">${esc(b.text)}</span>`);
-    if (m && !m.needProfile) parts.push(`<span class="tailor-match-pill tm-${esc(m.cls)}" title="${esc(m.note)}">${esc(m.text)}</span>`);
+    if (m && !m.needProfile && !m.needApp) parts.push(`<span class="tailor-match-pill tm-${esc(m.cls)}" title="${esc(m.note)}">${esc(m.text)}</span>`);
     if (!parts.length) return;
     card.querySelectorAll(".tailor-card-badges").forEach(e => e.remove());
     const wrap = document.createElement("div");
@@ -623,11 +631,14 @@
     } else if (d && d.ok !== false) {
       rows.push(`<div class="tailor-cp-row">No H-1B or green-card record for this employer.</div>`);
     } else if (d && d.error === "cant_reach_app") {
-      rows.push(`<div class="tailor-cp-row">Open the SponsorJobs app to see sponsor records.</div>`);
+      rows.push(`<div class="tailor-cp-row">Couldn't load the sponsor data. Check your connection, or open the SponsorJobs app.</div>`);
     }
     if (!rows.length) rows.push(`<div class="tailor-cp-row">Open a job to see its sponsorship facts.</div>`);
+    const open = d && d.app === false
+      ? `<a class="tailor-cp-open" href="${INSTALL_URL}" target="_blank" rel="noopener">Get the free SponsorJobs app ↗</a>`
+      : `<a class="tailor-cp-open" href="${APP_URL}" target="_blank" rel="noopener">Open SponsorJobs ↗</a>`;
     return `<div class="tailor-cp-hd"><img src="${chrome.runtime.getURL("icons/icon48.png")}" alt=""> SponsorJobs</div>${rows.join("")}
-      <a class="tailor-cp-open" href="http://127.0.0.1:57000/" target="_blank" rel="noopener">Open SponsorJobs ↗</a>`;
+      ${open}`;
   }
   function paintCorner() {
     if (!document.body || !chrome.runtime || !chrome.runtime.getURL) return;

@@ -13,7 +13,7 @@
   function sponsorBadge(data) {
     if (!data || data.ok === false) {
       if (data && data.error === "cant_reach_app")
-        return { kind: "off", codes: [], text: "Start SponsorJobs for visa badges" };
+        return { kind: "off", codes: [], text: "Visa data offline" };   // no index and no app
       return { kind: "error", codes: [], text: "" };
     }
     if (!data.matched) return { kind: "none", codes: [], text: "No sponsor record" };
@@ -27,7 +27,11 @@
 
   // A coverage response -> the match pill. No profile -> a clear "add your profile" prompt, never a
   // fabricated number. No score (e.g. empty JD) -> nothing.
+  // No app installed (or not running): the match score lives in the app, so offer it rather than
+  // show nothing or an error. The visa badges no longer need the app (sponsor_core.js).
   function matchBadge(cov) {
+    if (cov && cov.ok === false && cov.error === "cant_reach_app")
+      return { needApp: true, text: "Get the free app for your match score" };
     if (!cov || cov.ok === false) return null;
     if (cov.has_profile === false) return { needProfile: true, text: "Add your profile to see match" };
     if (cov.score == null) return null;

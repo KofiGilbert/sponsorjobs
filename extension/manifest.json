@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "SponsorJobs: Visa Sponsor Badges",
-  "version": "0.2.2",
-  "description": "See H-1B / green-card / STEM-OPT sponsor badges on job postings, and pre-fill application forms from your saved profile, powered by your local SponsorJobs app. You review and submit; nothing is auto-submitted.",
+  "version": "0.3.0",
+  "description": "See H-1B / green-card / STEM-OPT sponsor badges on job postings, no account or app needed. With the SponsorJobs app, also pre-fill application forms from your saved profile. Nothing is auto-submitted.",
   "permissions": [
     "storage"
   ],
   "host_permissions": [
     "http://127.0.0.1:57000/*",
-    "http://localhost:57000/*"
+    "http://localhost:57000/*",
+    "https://feed.sponsorjobs.ai/*"
   ],
   "background": {
     "service_worker": "background.js"

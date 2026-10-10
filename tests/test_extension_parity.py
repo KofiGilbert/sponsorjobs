@@ -33,6 +33,8 @@ const out = {
     low:  P.matchBadge({ has_profile: true, score: 20 }),
     need: P.matchBadge({ has_profile: false }),
     noscore: P.matchBadge({ has_profile: true, score: null }),
+    noapp: P.matchBadge({ ok: false, error: 'cant_reach_app' }),
+    apperr: P.matchBadge({ ok: false, error: 'http_500' }),
   },
   highlight: P.highlightTerms({ skills: [
     { term: 'SQL', required: true, covered: true },
@@ -76,6 +78,8 @@ def test_match_pill_never_fabricates_without_a_profile():
     assert m["low"]["cls"] == "low"
     assert m["need"]["needProfile"] is True                   # no profile -> prompt, not a number
     assert m["noscore"] is None
+    assert m["noapp"]["needApp"] is True and "pct" not in m["noapp"]   # no app -> install prompt
+    assert m["apperr"] is None                                # a real error stays quiet
 
 
 def test_highlight_splits_required_optional_covered_missing():
