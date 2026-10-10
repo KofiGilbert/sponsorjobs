@@ -4881,7 +4881,13 @@
   async function doCheckout(passId) {
     try {
       const r = await api("/api/billing/checkout", { pass: passId });
-      if (r && r.url) { window.location.href = r.url; return; }   // -> Stripe Checkout
+      if (r && r.url) {                                          // -> Stripe Checkout
+        // In the desktop app it opens in the side pane, like a pack purchase, so the app stays
+        // put and the shell reports the result when the pane closes.
+        if (window.tailorShell) window.tailorShell.openBrowser(r.url);
+        else window.location.href = r.url;
+        return;
+      }
       toast("Couldn't start checkout. Please try again.");
     } catch (e) {
       if (!e.reason) toast(e.message || "Couldn't start checkout.");   // api() already screened tagged reasons
@@ -4903,10 +4909,10 @@
     if (upgAccount) upgAccount.hidden = true;                   // reset the step each attempt
     if (btn) { btn.disabled = true; btn.textContent = T("upg.starting", "Starting..."); }
     try {
-      const s = await api("/api/account/status").catch(() => ({}));
-      if (s && s.email) { await doCheckout(tier); return; }      // already has an account -> straight to Stripe
-      pendingTier = tier;                                        // no account yet -> reveal the create-account step
-      if (upgAccount) { setAccountMode("signup"); upgAccount.hidden = false; $("#upgEmail")?.focus(); }
+      // Straight to Stripe (Kofi, 2026-10-10). A sign-up wall between "Get the pass" and paying is
+      // the classic place buyers leave, and it asked for a password we did not need: Stripe's own
+      // page already takes the buyer's email, and the pass lands on this install's account.
+      await doCheckout(tier);
     } finally {
       subscribing = false;
       if (btn) { btn.disabled = false; btn.textContent = T("upg.get", "Get the pass"); }
