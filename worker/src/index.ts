@@ -12,6 +12,7 @@
 // only account ids, token hashes and usage counts.
 
 import { allowRegistration, emailOf, identify, register } from "./accounts";
+import { handleAdmin, isAdminHost } from "./admin";
 import { complete } from "./anthropic";
 import {
   type Billing, billingFor, billingFrom, grantFor, offeredPacks, offeredPasses, packCheckoutUrl, packPrice, passCheckoutUrl,
@@ -159,7 +160,7 @@ const llmPackage: Handler = async ({ req, env, now, nowMs }) => {
   const period = periodOf(nowMs);
   const { state } = await loadState(env.DB, user, period, dayOf(nowMs));
   const active = passActive(state, now);
-  const taken = active ? await takePassPackage(env.DB, user, now) : await takeFreePackage(env.DB, user, period);
+  const taken = active ? await takePassPackage(env.DB, user, now, period) : await takeFreePackage(env.DB, user, period);
   if (taken === null) {
     const error = active ? "this pass's tailored packages are used up"
                          : "the free plan's 3 tailored packages this month are used up";
@@ -408,6 +409,17 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const path = new URL(req.url).pathname;
     const nowMs = Date.now();
+    // The admin host serves ONLY the read-only dashboard, and only behind a verified Cloudflare
+    // Access token (src/access.ts); the broker's routes are not reachable there, and the dashboard
+    // is not reachable on any other host.
+    if (isAdminHost(req, env)) {
+      try {
+        return await handleAdmin(req, env, nowMs);
+      } catch (err) {
+        console.error(`admin ${path} failed:`, err instanceof Error ? err.stack ?? err.message : err);
+        return new Response("Internal error", { status: 500, headers: { "content-type": "text/plain" } });
+      }
+    }
     const matches = ROUTES.filter(([, pattern]) => pattern.test(path));
     if (matches.length === 0) return json({ error: "not found" }, 404);
     const method = req.method === "HEAD" ? "GET" : req.method;

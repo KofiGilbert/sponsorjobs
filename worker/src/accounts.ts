@@ -29,6 +29,9 @@ export function tokenUrlsafe(nbytes: number): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/** Unix seconds, for the created_at / email_at columns the admin dashboard reads. */
+const nowSeconds = (): number => Math.floor(Date.now() / 1000);
+
 export function newAccountId(): string {
   return "acct_" + hex(randomBytes(8).buffer as ArrayBuffer);
 }
@@ -39,7 +42,7 @@ export async function register(db: D1Database): Promise<{ account_id: string; to
   const account_id = newAccountId();
   const token = tokenUrlsafe(32);
   await db.batch([
-    db.prepare("INSERT INTO accounts(account_id) VALUES(?)").bind(account_id),
+    db.prepare("INSERT INTO accounts(account_id, created_at) VALUES(?, ?)").bind(account_id, nowSeconds()),
     db.prepare("INSERT INTO tokens(token_hash, account_id) VALUES(?, ?)").bind(await sha256Hex(token), account_id),
   ]);
   return { account_id, token };
@@ -122,8 +125,8 @@ export async function signInWithEmail(db: D1Database, email: string, callerId: s
   if (existing) return { account_id: existing, token: await issueToken(db, existing) };
   if (callerId) {
     try {
-      const r = await db.prepare("UPDATE accounts SET email = ? WHERE account_id = ? AND email IS NULL")
-        .bind(email, callerId).run();
+      const r = await db.prepare("UPDATE accounts SET email = ?, email_at = ? WHERE account_id = ? AND email IS NULL")
+        .bind(email, nowSeconds(), callerId).run();
       if ((r.meta.changes ?? 0) > 0) return { account_id: callerId, token: await issueToken(db, callerId) };
     } catch {
       return loginExisting(db, email);                 // someone else claimed the e-mail just now
@@ -133,7 +136,8 @@ export async function signInWithEmail(db: D1Database, email: string, callerId: s
   const token = tokenUrlsafe(32);
   try {
     await db.batch([
-      db.prepare("INSERT INTO accounts(account_id, email) VALUES(?, ?)").bind(account_id, email),
+      db.prepare("INSERT INTO accounts(account_id, email, created_at, email_at) VALUES(?, ?, ?, ?)")
+        .bind(account_id, email, nowSeconds(), nowSeconds()),
       db.prepare("INSERT INTO tokens(token_hash, account_id) VALUES(?, ?)").bind(await sha256Hex(token), account_id),
     ]);
   } catch {

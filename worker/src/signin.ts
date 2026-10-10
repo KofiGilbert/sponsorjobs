@@ -108,6 +108,14 @@ export async function emailStart(req: Request, env: Env, now: number): Promise<R
     console.error(`sign-in code e-mail failed (${mailer.name}):`, err instanceof Error ? err.message : err);
     return json({ error: "could not send the code; try again in a moment" }, 502);
   }
+  // One more e-mail today, for the admin dashboard's Resend quota line. A counting hiccup must
+  // never fail a sign-in whose code has already gone out.
+  try {
+    await env.DB.prepare("INSERT INTO email_sends(day, n) VALUES(?, 1) ON CONFLICT(day) DO UPDATE SET n = n + 1")
+      .bind(new Date(now * 1000).toISOString().slice(0, 10)).run();
+  } catch (err) {
+    console.error("email_sends count failed:", err instanceof Error ? err.message : err);
+  }
   return json({ sent: true });
 }
 

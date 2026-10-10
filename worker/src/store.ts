@@ -49,12 +49,21 @@ export async function recordLlm(db: D1Database, user: string, period: string, to
 /** Take one package from the active pass's balance. The WHERE clause is the allowance check, so
  * the check and the decrement are one atomic step. Returns the balance left, or null when none
  * was left (or the pass ended in the meantime). */
-export async function takePassPackage(db: D1Database, user: string, now: number): Promise<number | null> {
+export async function takePassPackage(db: D1Database, user: string, now: number,
+                                      period?: string): Promise<number | null> {
   const row = await db.prepare(
     "UPDATE users SET pass_packages = pass_packages - 1 " +
     "WHERE user = ? AND pass_packages > 0 AND pass_until > ? RETURNING pass_packages")
     .bind(user, now).first<{ pass_packages: number }>();
-  return row ? row.pass_packages : null;
+  if (!row) return null;
+  // Reporting only (the admin dashboard's "packages this month"); never part of the allowance.
+  if (period) {
+    await db.prepare(
+      "INSERT INTO usage(user, period, pass_packages) VALUES(?, ?, 1) " +
+      "ON CONFLICT(user, period) DO UPDATE SET pass_packages = pass_packages + 1")
+      .bind(user, period).run();
+  }
+  return row.pass_packages;
 }
 
 /** Count one free package this month, unless the free allowance is already used up (the

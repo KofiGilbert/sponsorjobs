@@ -19,8 +19,14 @@
   "name": "sponsorjobs-broker",
   "main": "src/index.ts",
   "account_id": "61cbc2bf5c4514a08662576605bad356",
-  // The official desktop edition calls this address (shell-electron/main.js).
-  "routes": [{ "pattern": "api.sponsorjobs.ai", "custom_domain": true }],
+  // The official desktop edition calls api.sponsorjobs.ai (shell-electron/main.js).
+  // admin.sponsorjobs.ai is the founder's read-only dashboard (src/admin.ts). It must sit behind a
+  // Cloudflare Access application (docs/admin-dashboard.md); without ACCESS_TEAM_DOMAIN and
+  // ACCESS_AUD below it answers 403 to everyone.
+  "routes": [
+    { "pattern": "api.sponsorjobs.ai", "custom_domain": true },
+    { "pattern": "admin.sponsorjobs.ai", "custom_domain": true }
+  ],
   // 2026-08-22 is the newest date the test runtime (pinned by @cloudflare/vitest-pool-workers)
   // supports; keeping production on the same date means the tests exercise the same runtime
   // behaviour that ships. Nothing here needs a newer flag.
@@ -44,6 +50,12 @@
     "TAILOR_FREE_MODEL": "",
     "TAILOR_PASS_MODEL": "",
     // "1" accepts the X-Tailor-User dev header in place of a token. Never in production.
-    "DEV_HEADER_AUTH": "0"
+    "DEV_HEADER_AUTH": "0",
+    // Admin dashboard (docs/admin-dashboard.md). Not secrets: the Zero Trust team name (e.g.
+    // "sponsorjobs") and the Access application's AUD tag. Empty = the dashboard stays closed (403).
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": "",
+    // Optional extra lock, comma-separated: only these e-mails get in, even if Access lets more through.
+    "ADMIN_EMAILS": ""
   }
 }
