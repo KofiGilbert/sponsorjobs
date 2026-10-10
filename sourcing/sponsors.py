@@ -638,7 +638,11 @@ class SponsorDB:
         if not variants:
             return None
         norm = variants[0]
-        cached = self._lookup_cache.get(norm, _MISS)
+        # Keyed on EVERY spelling tried, not just the first: "U.S. Bank" (us bank + u s bank,
+        # merged) and "US Bank" (us bank alone) share variants[0], and keying on it alone made
+        # the answer depend on which one was looked up first in the process.
+        key = "|".join(variants)
+        cached = self._lookup_cache.get(key, _MISS)
         if cached is not _MISS:            # many jobs share a company; cache the SQL result
             return cached
         if len(variants) > 1:
@@ -647,11 +651,11 @@ class SponsorDB:
             found = [r for r in (self._lookup_one(v) for v in variants) if r]
             result = found[0] if len(found) == 1 else (_merge_records(found) if found else None)
             if len(self._lookup_cache) < 100_000:
-                self._lookup_cache[norm] = result
+                self._lookup_cache[key] = result
             return result
         result = self._lookup_one(norm)
         if len(self._lookup_cache) < 100_000:
-            self._lookup_cache[norm] = result
+            self._lookup_cache[key] = result
         return result
 
     def _lookup_one(self, norm: str) -> SponsorRecord | None:
