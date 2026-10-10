@@ -158,7 +158,7 @@
   function pageText(node) {
     let text = node.textContent || "";
     node.querySelectorAll && node.querySelectorAll(
-      ".tailor-badges, .tailor-sponsor-profile, .tailor-match-wrap, .tailor-referral, [class^='tailor-'], [class*=' tailor-']"
+      ".tailor-badges, .tailor-sponsor-profile, .tailor-match-wrap, .tailor-corner, [class^='tailor-'], [class*=' tailor-']"
     ).forEach(e => { const t = e.textContent; if (t) text = text.split(t).join(" "); });
     return text;
   }
@@ -253,6 +253,34 @@
     return {};
   }
 
+  // The names a person reads on a chip. The app shows the same three (H-1B, Green Card, STEM OPT);
+  // here E-Verify is named outright, as the job screeners students compare us with do, with the
+  // STEM-OPT meaning in the tooltip.
+  const CHIP = { "H-1B": "H-1B", "GREEN-CARD": "Green Card", "STEM-OPT": "E-Verify", "CAP-EXEMPT": "Cap-exempt" };
+  const CHIP_TIP = {
+    "H-1B": "This employer has had H-1B petitions approved (public USCIS data).",
+    "GREEN-CARD": "This employer has sponsored green cards (certified PERM cases, public DOL data).",
+    "STEM-OPT": "Enrolled in E-Verify, so a STEM OPT extension is possible here.",
+    "CAP-EXEMPT": "Likely cap-exempt: H-1B without the lottery.",
+  };
+  // The employer's record as chip codes. `visa` is only filled when the role is known to be in
+  // the US; when the location could not be read, the record still exists, so read it from the
+  // profile and say so in the tooltip rather than hiding it behind a grey "location unclear" chip.
+  function employerCodes(data) {
+    if (data.visa && data.visa.length) return data.visa.map(v => v.code);
+    const p = data.profile || {};
+    const codes = [];
+    if (p.h1b_approvals > 0) codes.push("H-1B");
+    if (p.perm_certs > 0) codes.push("GREEN-CARD");
+    if (p.e_verify) codes.push("STEM-OPT");
+    if (p.cap_exempt) codes.push("CAP-EXEMPT");
+    return codes;
+  }
+  function chipHTML(code, extraTip) {
+    const tip = (CHIP_TIP[code] || code) + (extraTip ? " " + extraTip : "");
+    return `<span class="tailor-badge tb-${esc(code)}" title="${esc(tip)}">${esc(CHIP[code] || code)}</span>`;
+  }
+
   function badgesHTML(data) {
     if (!data || data.ok === false) {
       if (data && data.error === "cant_reach_app")
@@ -261,23 +289,13 @@
     }
     if (!data.matched)
       return `<span class="tailor-badge tb-none" title="No H-1B or green-card (PERM) sponsorship history found for this employer in USCIS/DOL data">No sponsor record</span>`;
-    // The employer sponsors, and we KNOW this role is elsewhere: the visa says nothing about
-    // it. Only ever said when role_in_us is exactly false. It used to fire on `!role_in_us`,
-    // which is also true when we simply could not READ a location, and it put "Sponsors in
-    // the US, not this role" on a job in Dallas, Texas. That is worse than silence: it talks
-    // someone out of a job they could actually be sponsored for, which is the opposite of
-    // this product's whole point. Never claim what we only failed to read.
+    // The employer sponsors and we KNOW this role is elsewhere: the visas say nothing about it.
+    // Only when role_in_us is exactly false; never on a location we merely failed to read.
     if (data.sponsor_employer && data.role_in_us === false)
       return `<span class="tailor-badge tb-none" title="This employer sponsors US visas, but this role is not in the US, so H-1B and PERM do not apply to it">Sponsors in the US, not this role</span>`;
-    // We couldn't read where the role is, so we cannot say whether the visas apply to it.
-    // Report the employer fact, which IS known, and say plainly what isn't.
-    if (data.sponsor_employer && data.role_in_us == null)
-      return `<span class="tailor-badge tb-none" title="This employer has sponsored US visas before. We couldn't read this role's location, so we can't tell you whether they apply to this one.">Sponsors US visas, location unclear</span>`;
-    // Prefer the badge's honest `basis` (from sourcing/sponsors.py) as the tooltip, so
-    // hovering a badge on LinkedIn/Indeed explains it's a historical signal from public
-    // USCIS/DOL data, not a guarantee this role sponsors. Falls back to label+detail.
-    const chips = (data.visa || []).map(v =>
-      `<span class="tailor-badge tb-${esc(v.code)}" title="${esc(v.basis || (v.label + (v.detail ? " · " + v.detail : "")))}">${esc(v.code)}</span>`).join("");
+    const unread = data.role_in_us == null;
+    const chips = employerCodes(data).map(c => chipHTML(c,
+      unread ? "We could not read this role's location; this is the employer's US record." : "")).join("");
     return chips +
       `<a class="tailor-badge tb-tailor" href="http://127.0.0.1:57000/" target="_blank" rel="noopener" title="Tailor your CV to this job in the SponsorJobs app">Tailor my CV ↗</a>`;
   }
@@ -301,10 +319,26 @@
     return `<div class="tailor-sponsor-profile"><div class="tailor-sp-hd">Sponsorship profile${data.matched_name ? " · " + esc(data.matched_name) : ""}</div>${rows.join("")}<div class="tailor-sp-foot">Historical public USCIS/DOL data, not a promise this role sponsors.</div></div>`;
   }
 
-  // Where our block goes: AFTER the row the anchor sits in, never inside it. LinkedIn sets the
-  // company name in a side-by-side (flex row) line; inserted next to it, our badges fought the name
-  // for width and squeezed "U.S. Bank" into a column of single letters (2026-10-10). Climb out of
-  // any row-like or display:contents container until the parent stacks its children vertically.
+  // Where our block goes. On LinkedIn's job pane the header is a column of stacked rows:
+  // [logo + company + title + location] [On-site · Full-time] [Apply · Save]. Our block becomes
+  // one more row in that column, right after the first one, so it sits under the title and
+  // cannot squeeze anything. Found from the Apply button up, not from class names (LinkedIn's
+  // are obfuscated and change). Elsewhere: after the nearest block-level ancestor of the anchor.
+  function linkedinHeader() {
+    const apply = [...document.querySelectorAll("button, a")]
+      .find(b => /^(easy )?apply(\s*on company website)?$/i.test((b.innerText || "").trim()));
+    if (!apply) return null;
+    for (let e = apply.parentElement, i = 0; e && i < 12; e = e.parentElement, i++) {
+      const co = e.querySelector('a[href*="/company/"]');
+      if (!co || !e.innerText || e.innerText.length > 1500) continue;
+      const cs = getComputedStyle(e);
+      if (cs.display === "flex" && cs.flexDirection.startsWith("column") && e.children.length >= 2) {
+        const first = [...e.children].find(k => k.contains(co));
+        if (first) return { column: e, after: first };
+      }
+    }
+    return null;
+  }
   function blockSlot(anchor) {
     let el = anchor;
     for (let i = 0; i < 10 && el.parentElement && el.parentElement !== document.body; i++) {
@@ -317,6 +351,11 @@
     }
     return el;
   }
+  function placeBlocks(anchor, blocks) {
+    const li = HOST.includes("linkedin.com") ? linkedinHeader() : null;
+    let at = li ? li.after : blockSlot(anchor);
+    for (const b of blocks) { at.insertAdjacentElement("afterend", b); at = b; }
+  }
 
   function render(anchor, data) {
     document.querySelectorAll(".tailor-badges, .tailor-sponsor-profile").forEach(e => e.remove());
@@ -325,13 +364,16 @@
     const wrap = document.createElement("div");
     wrap.className = "tailor-badges";
     wrap.innerHTML = html;
-    blockSlot(anchor).insertAdjacentElement("afterend", wrap);
+    const blocks = [wrap];
     const prof = sponsorProfileHTML(data);          // posting-level detail; cards keep the compact badge
     if (prof) {
       const holder = document.createElement("div");
       holder.innerHTML = prof;
-      wrap.insertAdjacentElement("afterend", holder.firstElementChild);
+      blocks.push(holder.firstElementChild);
     }
+    placeBlocks(anchor, blocks);
+    LAST = { data, company: (data && data.matched_name) || "", stance: LAST.stance };
+    paintCorner();
   }
 
   // ---- What THIS ad says about sponsorship (the role's own words outrank the employer's record) --
@@ -362,7 +404,12 @@
     lastStanceKey = key;
     row.querySelectorAll(".tb-stance").forEach(e => e.remove());
     row.classList.toggle("tailor-role-no", r.stance === A.NOT_OFFERED);
+    LAST.stance = r;
+    paintCorner();
     if (r.stance === A.UNKNOWN) return;          // the ad says nothing: the employer badges stand alone
+    // The role's own answer is the one that matters: a grey employer-level chip ("No sponsor
+    // record", "location unclear") next to it only muddles it. Visa badges stay, dimmed.
+    if (r.stance === A.NOT_OFFERED) row.querySelectorAll(".tb-none").forEach(e => e.remove());
     const chip = document.createElement("span");
     const no = r.stance === A.NOT_OFFERED;
     chip.className = `tailor-badge tb-stance ${no ? "tb-ad-no" : "tb-ad-yes"}`;
@@ -431,94 +478,18 @@
     row.insertAdjacentElement("afterend", wrap);
   }
 
-  // ---- Referral: draft an outreach message from the profile + point to the right people --
-  // Privacy-preserving by design: we draft the message locally from the person's own
-  // profile and hand them a LinkedIn people-search link. THEY choose who to contact and
-  // send it themselves. We never scrape contacts and never auto-send (CLAUDE.md privacy).
-  function jobTitle() {
-    const sels = HOST.includes("linkedin.com")
-      ? ['.job-details-jobs-unified-top-card__job-title', '.jobs-unified-top-card__job-title', 'h1']
-      : HOST.includes("indeed.com")
-        ? ['[data-testid="jobsearch-JobInfoHeader-title"]', 'h1.jobsearch-JobInfoHeader-title', 'h1']
-        : ['h1', 'h2'];
-    for (const s of sels) {
-      const el = document.querySelector(s);
-      const t = el && el.textContent.replace(/\s+/g, " ").trim();
-      if (t) return t.slice(0, 140);
-    }
-    return "";
-  }
-
-  function peopleSearchURL(company) {
-    return "https://www.linkedin.com/search/results/people/?keywords="
-      + encodeURIComponent(company) + "&origin=GLOBAL_SEARCH_HEADER";
-  }
-
-  function refNoteHTML(text, warn) {
-    return `<div class="tailor-ref-note ${warn ? "warn" : ""}">${esc(text)}</div>`;
-  }
-
-  function mountReferral(company) {
-    if (!company) return;
-    const existing = document.querySelector(".tailor-referral");
-    if (existing && existing.dataset.company === company) return;   // keep a drafted message
-    if (existing) existing.remove();
-    const row = document.querySelector(".tailor-match-wrap") || document.querySelector(".tailor-badges");
-    if (!row) return;
-    const wrap = document.createElement("div");
-    wrap.className = "tailor-referral";
-    wrap.dataset.company = company;
-    wrap.innerHTML =
-      `<button class="tailor-ref-btn" type="button">Ask for a referral</button>` +
-      `<div class="tailor-ref-body" hidden></div>`;
-    row.insertAdjacentElement("afterend", wrap);
-    const btn = wrap.querySelector(".tailor-ref-btn");
-    const body = wrap.querySelector(".tailor-ref-body");
-    btn.addEventListener("click", () => draftReferral(btn, body, company));
-  }
-
-  async function draftReferral(btn, body, company) {
-    btn.disabled = true;
-    body.hidden = false;
-    body.innerHTML = refNoteHTML("Drafting a short message from your profile…", false);
-    const r = await send({ type: "referral", role: jobTitle(), company, jd: readJD() });
-    btn.disabled = false;
-    if (!r || r.ok === false) {
-      body.innerHTML = refNoteHTML(
-        r && r.error === "cant_reach_app"
-          ? "Open the SponsorJobs app on your computer, then try again."
-          : "Couldn't draft this right now. Open SponsorJobs to check your plan or connection.", true);
-      return;
-    }
-    if (!r.loaded || !r.message) {
-      body.innerHTML = refNoteHTML(
-        "Build your profile in SponsorJobs once, then referral messages draft from it.", true);
-      return;
-    }
-    const people = peopleSearchURL(company);
-    body.innerHTML =
-      `<textarea class="tailor-ref-text" rows="8" spellcheck="false">${esc(r.message)}</textarea>` +
-      `<div class="tailor-ref-actions">` +
-        `<button class="tailor-ref-copy" type="button">Copy</button>` +
-        `<a class="tailor-ref-find" href="${esc(people)}" target="_blank" rel="noopener">Find people at ${esc(company)} ↗</a>` +
-      `</div>` +
-      `<div class="tailor-ref-foot">You review, choose who to contact, and send it yourself. Nothing is auto-sent.</div>`;
-    const copy = body.querySelector(".tailor-ref-copy");
-    const ta = body.querySelector(".tailor-ref-text");
-    copy.addEventListener("click", async () => {
-      try { await navigator.clipboard.writeText(ta.value); }
-      catch { ta.select(); try { document.execCommand("copy"); } catch (_) {} }
-      copy.textContent = "Copied ✓";
-      setTimeout(() => { copy.textContent = "Copy"; }, 1500);
-    });
-  }
-
   // ---- In-list: badge each card in a results list (LinkedIn / Indeed) --------------------
   const isList = () => /linkedin\.com|indeed\.com|ziprecruiter\.com/.test(HOST);
   function cardEls() {
     let sel;
-    if (HOST.includes("linkedin"))
+    if (HOST.includes("linkedin")) {
+      // The 2026 results list: one lazy column whose children are the cards (plus a few promos
+      // with no company line, which cardInfo rejects). Older markup kept as a fallback.
+      const col = document.querySelector('[componentkey="SearchResultsMainContent"], [data-testid="lazy-column"]');
+      const fresh = col ? [...col.children].filter(c => c.innerText && c.innerText.trim()) : [];
+      if (fresh.length) return fresh;
       sel = 'li[data-occludable-job-id], div.job-card-container, li.jobs-search-results__list-item, [data-job-id]';
+    }
     else if (HOST.includes("ziprecruiter"))
       // Verified live (2026-08-03): each result is <article id="job-card--...">, company is an
       // /co/ link, title an <h2>. ZipRecruiter's classes are hashed Tailwind, so we anchor on
@@ -528,7 +499,28 @@
       sel = 'div.job_seen_beacon, td.resultContent, div.cardOutline, [data-jk]';   // indeed
     return [...document.querySelectorAll(sel)];
   }
+  // LinkedIn's current card has no company link and no stable class: a logo beside a column of
+  // lines, [title] [company] [location] [meta]. Read the lines by position, the way a person does.
+  function linkedinCardInfo(card) {
+    let col = null;
+    for (const d of card.querySelectorAll("div")) {
+      if (d.children.length >= 3 && getComputedStyle(d).flexDirection === "column"
+          && (d.innerText || "").trim() && d.innerText.length < 600) { col = d; break; }
+    }
+    if (!col) return null;
+    const lines = [...col.children].filter(k => !k.classList.contains("tailor-card-badges"))
+      .map(k => clean(k.innerText || "")).filter(Boolean);
+    if (lines.length < 2) return null;
+    const company = lines[1].replace(/\s*\(Verified job\)\s*/i, "");
+    const location = (lines[2] || "").replace(/·.*$/, "").trim();
+    if (!company || company.length > 80 || /^\d+ (school|connections?)/i.test(company)) return null;
+    return { company, location, jd: "", anchor: col, slot: col };
+  }
   function cardInfo(card) {
+    if (HOST.includes("linkedin")) {
+      const li = linkedinCardInfo(card);
+      if (li) return li;
+    }
     // a[href*="/co/"] is ZipRecruiter's company link; /company/ is LinkedIn's. querySelector
     // with a list returns the first match in DOM order, so an unrelated board ignores the ones
     // that don't apply.
@@ -555,21 +547,24 @@
     // Remember the card's signals for the filter bar.
     card._tailor = { codes: b.codes || [], role_in_us: data && data.role_in_us, matchPct: pct };
     const parts = [];
-    if (b.kind === "visa") parts.push(...b.codes.map(c => `<span class="tailor-badge tb-${esc(c)}">${esc(c)}</span>`));
-    else if (b.text) parts.push(`<span class="tailor-badge tb-none">${esc(b.text)}</span>`);
+    const codes = data && data.matched && data.role_in_us !== false ? employerCodes(data) : [];
+    if (codes.length) parts.push(...codes.map(c => chipHTML(c)));
+    else if (b.text && b.kind !== "off") parts.push(`<span class="tailor-badge tb-none">${esc(b.text)}</span>`);
     if (m && !m.needProfile) parts.push(`<span class="tailor-match-pill tm-${esc(m.cls)}" title="${esc(m.note)}">${esc(m.text)}</span>`);
     if (!parts.length) return;
-    card.querySelectorAll(":scope > .tailor-card-badges").forEach(e => e.remove());
+    card.querySelectorAll(".tailor-card-badges").forEach(e => e.remove());
     const wrap = document.createElement("div");
     wrap.className = "tailor-badges tailor-card-badges";
     wrap.innerHTML = parts.join("");
-    (info.anchor.closest("li, div, td, article") || card).appendChild(wrap);
+    (info.slot || info.anchor.closest("li, div, td, article") || card).appendChild(wrap);
   }
   async function scanList() {
     if (!isList()) return;
-    const cards = cardEls().filter(c => !c.dataset.tailorScanned).slice(0, 40);
+    // A card is re-read when its text changes (LinkedIn recycles card elements as you scroll).
+    const key = (c) => (c.innerText || "").replace(/\s+/g, " ").slice(0, 60);
+    const cards = cardEls().filter(c => c.dataset.tailorScanned !== key(c)).slice(0, 40);
     for (const card of cards) {
-      card.dataset.tailorScanned = "1";
+      card.dataset.tailorScanned = key(card);
       const info = cardInfo(card);
       if (info.company) { try { await badgeCard(card, info); } catch {} }
     }
@@ -607,8 +602,57 @@
     range.addEventListener("input", () => { FILTER.minMatch = +range.value; val.textContent = range.value + "%"; applyFilter(); });
   }
 
+  // ---- Our mark in the corner. A fixed button that never touches the page's layout; clicking
+  // it opens a small panel with this job's sponsorship facts and a link to the app. ----
+  let LAST = { data: null, stance: null, company: "" };
+  function cornerPanelHTML() {
+    const d = LAST.data, st = LAST.stance, A = globalThis.TailorAdStance;
+    const rows = [];
+    if (st && A && st.stance !== A.UNKNOWN) {
+      const no = st.stance === A.NOT_OFFERED;
+      rows.push(`<div class="tailor-cp-row ${no ? "cp-no" : "cp-yes"}"><b>${no ? "No sponsorship for this role" : "Ad offers sponsorship"}</b><div class="tailor-cp-q">\u201c${esc(st.sentence)}\u201d</div></div>`);
+    }
+    if (d && d.matched) {
+      const p = d.profile || {};
+      const facts = [];
+      if (p.h1b_approvals > 0) facts.push(`<b>H-1B</b> ${Number(p.h1b_approvals).toLocaleString()} approved${p.fy_range ? ", " + esc(p.fy_range) : ""}`);
+      if (p.perm_certs > 0) facts.push(`<b>Green card</b> ${Number(p.perm_certs).toLocaleString()} PERM cases`);
+      if (p.e_verify) facts.push(`<b>E-Verify</b> enrolled (STEM OPT possible)`);
+      if (p.cap_exempt) facts.push(`<b>Cap-exempt</b> likely`);
+      rows.push(`<div class="tailor-cp-row"><div class="tailor-cp-co">${esc(d.matched_name || LAST.company)}</div>${facts.map(f => `<div>${f}</div>`).join("")}<div class="tailor-cp-foot">Public USCIS/DOL records, not a promise this role sponsors.</div></div>`);
+    } else if (d && d.ok !== false) {
+      rows.push(`<div class="tailor-cp-row">No H-1B or green-card record for this employer.</div>`);
+    } else if (d && d.error === "cant_reach_app") {
+      rows.push(`<div class="tailor-cp-row">Open the SponsorJobs app to see sponsor records.</div>`);
+    }
+    if (!rows.length) rows.push(`<div class="tailor-cp-row">Open a job to see its sponsorship facts.</div>`);
+    return `<div class="tailor-cp-hd"><img src="${chrome.runtime.getURL("icons/icon48.png")}" alt=""> SponsorJobs</div>${rows.join("")}
+      <a class="tailor-cp-open" href="http://127.0.0.1:57000/" target="_blank" rel="noopener">Open SponsorJobs ↗</a>`;
+  }
+  function paintCorner() {
+    if (!document.body || !chrome.runtime || !chrome.runtime.getURL) return;
+    let c = document.querySelector(".tailor-corner");
+    if (!c) {
+      c = document.createElement("div");
+      c.className = "tailor-corner";
+      c.innerHTML = `<button class="tailor-corner-btn" type="button" title="SponsorJobs: visa sponsorship facts for this job"><img src="${chrome.runtime.getURL("icons/icon48.png")}" alt="SponsorJobs"></button><div class="tailor-corner-panel" hidden></div>`;
+      document.body.appendChild(c);
+      c.querySelector(".tailor-corner-btn").addEventListener("click", () => {
+        const p = c.querySelector(".tailor-corner-panel");
+        p.hidden = !p.hidden;
+        if (!p.hidden) p.innerHTML = cornerPanelHTML();
+      });
+    }
+    const p = c.querySelector(".tailor-corner-panel");
+    if (p && !p.hidden) p.innerHTML = cornerPanelHTML();
+    const A = globalThis.TailorAdStance;
+    c.classList.toggle("is-no", !!(LAST.stance && A && LAST.stance.stance === A.NOT_OFFERED));
+    c.classList.toggle("is-yes", !!(LAST.stance && A && LAST.stance.stance === A.OFFERED));
+  }
+
   let last = null;
   function run() {
+    paintCorner();
     const { company, anchor, location: ldLoc } = pickTarget();
     if (company && anchor) {
       // Prefer the location from structured data (same source as the company, same
@@ -623,7 +667,7 @@
             render(anchor, data || { ok: false });
             lastStanceKey = ""; mountStance();
             // Match pill + skills first, then hang the referral action off that row.
-            enhancePosting().finally(() => mountReferral(company));
+            enhancePosting();
           });
         } catch (_) { /* extension context invalidated on reload */ }
       }

@@ -59,39 +59,6 @@
 }
 
 /* --- Referral: draft-a-message action + panel (on the open posting) --- */
-.tailor-referral {
-  margin: 4px 0 8px !important;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  max-width: 460px;
-}
-.tailor-ref-btn {
-  border: 1px solid #c7c9f2; background: #f4f0ff; color: #4f46e5;
-  font-weight: 700; font-size: 12px; padding: 5px 12px; border-radius: 999px;
-  cursor: pointer; font-family: inherit;
-}
-.tailor-ref-btn:hover { background: #ebe6ff; }
-.tailor-ref-btn:disabled { opacity: 0.6; cursor: default; }
-.tailor-ref-body {
-  margin-top: 7px; border: 1px solid #e4e7ec; border-radius: 10px;
-  background: #fcfcfd; padding: 9px 11px; color: #344054;
-}
-.tailor-ref-text {
-  width: 100%; box-sizing: border-box; resize: vertical; min-height: 132px;
-  border: 1px solid #e4e7ec; border-radius: 8px; padding: 8px 10px;
-  font: 12.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  color: #1d2939; background: #fff;
-}
-.tailor-ref-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
-.tailor-ref-copy {
-  border: none; background: #4f46e5; color: #fff; font-weight: 700; font-size: 12.5px;
-  padding: 7px 14px; border-radius: 8px; cursor: pointer; font-family: inherit;
-}
-.tailor-ref-copy:hover { background: #4338ca; }
-.tailor-ref-find { color: #4f46e5; font-weight: 700; font-size: 12.5px; text-decoration: none; }
-.tailor-ref-find:hover { text-decoration: underline; }
-.tailor-ref-foot { font-size: 10.5px; color: #98a2b3; margin-top: 7px; }
-.tailor-ref-note { font-size: 12.5px; color: #475467; }
-.tailor-ref-note.warn { color: #b54708; }
 
 /* --- Assisted-apply panel (floating, bottom-right of an application form) --- */
 .tailor-af-panel {
@@ -198,7 +165,30 @@
 .tailor-badges.tailor-role-no .tailor-badge:not(.tb-stance):not(.tb-tailor) { opacity: 0.55; }
 
 /* Our blocks always take a full line of their own, whatever layout the host page uses. */
+/* flex: none, never a 100% flex-basis: inside a COLUMN container a 100% basis means 100% of the
+   height, which is what blew a 383px hole into LinkedIn's job header (2026-10-10). */
 .tailor-badges, .tailor-sponsor-profile, .tailor-match-wrap {
-  display: flex; flex-wrap: wrap; width: 100%; flex: 0 0 100%; box-sizing: border-box; max-width: 100%;
+  display: flex; flex-wrap: wrap; width: 100%; flex: none; align-self: stretch; box-sizing: border-box; max-width: 100%; height: auto;
 }
 .tailor-sponsor-profile { display: block; }
+
+/* In-list card badges: a quiet row under the card's lines, like the job screeners students use. */
+.tailor-card-badges { margin: 6px 0 0 !important; gap: 4px; }
+.tailor-card-badges .tailor-badge { font-size: 11px; padding: 1px 6px; }
+
+/* Our mark in the corner (fixed, outside the page's layout) and its panel. */
+.tailor-corner { position: fixed; left: 14px; bottom: 18px; z-index: 2147483000; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.tailor-corner-btn { width: 44px; height: 44px; border-radius: 50%; border: 2px solid #e4e7ec; background: #fff; box-shadow: 0 4px 14px rgba(16,24,40,.18); cursor: pointer; display: grid; place-items: center; padding: 0; }
+.tailor-corner-btn img { width: 26px; height: 26px; display: block; }
+.tailor-corner.is-no .tailor-corner-btn { border-color: #f04438; }
+.tailor-corner.is-yes .tailor-corner-btn { border-color: #12b76a; }
+.tailor-corner-panel { position: absolute; left: 0; bottom: 54px; width: 300px; background: #fff; color: #101828; border: 1px solid #e4e7ec; border-radius: 12px; box-shadow: 0 10px 30px rgba(16,24,40,.22); padding: 12px 14px; font-size: 13px; line-height: 1.45; }
+.tailor-cp-hd { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+.tailor-cp-hd img { width: 20px; height: 20px; }
+.tailor-cp-row { padding: 8px 0; border-top: 1px solid #f2f4f7; }
+.tailor-cp-row.cp-no > b { color: #b42318; }
+.tailor-cp-row.cp-yes > b { color: #067647; }
+.tailor-cp-q { color: #475467; font-size: 12px; margin-top: 3px; }
+.tailor-cp-co { font-weight: 700; margin-bottom: 2px; }
+.tailor-cp-foot { color: #98a2b3; font-size: 11px; margin-top: 4px; }
+.tailor-cp-open { display: inline-block; margin-top: 8px; color: #fff; background: #101828; border-radius: 8px; padding: 6px 10px; font-weight: 600; text-decoration: none; font-size: 12.5px; }
