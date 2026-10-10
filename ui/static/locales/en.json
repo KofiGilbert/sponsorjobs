@@ -282,7 +282,7 @@
   "upg.pass90Packages": "150 tailored packages",
   "upg.betterModel": "Tailoring on our best AI model",
   "upg.packsH": "Need more live interviews? They never expire.",
-  "upg.free": "Free keeps the job board, visa badges, the recorded interview and 3 tailored packages a month. Unlimited with your own AI key.",
+  "upg.free": "Free keeps the job board, visa badges, the recorded interview and 3 tailored packages a month.",
   "upg.msg": "Your pass starts when the payment goes through. It ends on its own, there is nothing to cancel.",
   "upg.ownKey": "Use your own AI key",
   "upg.current": "{pass} until {date}: {i} live interviews and {p} tailored packages left. Buying another adds to it.",
@@ -296,8 +296,9 @@
   "r2.seePasses": "See passes",
   "r2.passH": "Live interviews come with a pass",
   "r2.passD": "Twenty minutes with a live interviewer who asks, listens and follows up, then a scored report. A Job Hunt Pass includes 3 live interviews, a Season Pass 9. Paid once, no auto-renew.",
-  "r2.haveKey": "Already have a Tavus key? Add it in Settings.",
   "r2.keepsTime": "Your interviewer keeps the time, like a real one",
   "r2.wrappingUp": "Wrapping up",
-  "r2.cantJoin": "Couldn't join the interview room. Check your connection and try again."
+  "r2.cantJoin": "Couldn't join the interview room. Check your connection and try again.",
+  "r2.usedUpDPaid": "Buy more, they never expire.",
+  "r2.usedUpNoBuyPaid": "Add another pass for more live interviews."
 }

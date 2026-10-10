@@ -18,7 +18,7 @@
     },
     no_account: {
       h: "Couldn't set up your free account",
-      p: "Too many new sign-ups came from this network today, or the service is busy. Try again in a while. Your own AI key under Settings, Advanced always works.",
+      p: "Too many new sign-ups came from this network today, or the service is busy. Try again in a while.",
     },
     no_key: {
       h: "Connect your AI key",
@@ -44,7 +44,7 @@
     // is a pass or their own key, so the button opens the passes panel, not the add-a-key modal.
     upgrade_required: {
       h: "You've used your tailored packages",
-      p: "Free includes 3 tailored packages a month. A Job Hunt Pass or a Season Pass gives you many more, paid once with no auto-renew. Or add your own AI key for unlimited tailoring.",
+      p: "Free includes 3 tailored packages a month. A Job Hunt Pass or a Season Pass gives you many more, paid once with no auto-renew.",
       btn: "See passes",
     },
     service_down: {
@@ -4338,10 +4338,12 @@
       return `<div class="${mode === "inline" ? "scr-unlock r2-gate-inline" : "scr-intro r2-gate"}">
       <div class="r2-gate-main">
         <h3 class="r2-gate-h">${esc(T("r2.usedUpH", "You've used your pass's live interviews."))}</h3>
-        <p class="r2-gate-d">${esc(packs.length ? T("r2.usedUpD", "Buy more, they never expire. Or use your own Tavus key.") : T("r2.usedUpNoBuy", "Add another pass, or use your own Tavus key."))}</p>
+        <p class="r2-gate-d">${esc(MANAGED_AI
+          ? (packs.length ? T("r2.usedUpDPaid", "Buy more, they never expire.") : T("r2.usedUpNoBuyPaid", "Add another pass for more live interviews."))
+          : (packs.length ? T("r2.usedUpD", "Buy more, they never expire. Or use your own Tavus key.") : T("r2.usedUpNoBuy", "Add another pass, or use your own Tavus key.")))}</p>
         <div class="scr-welcome-acts">
           ${packs.map((p, i) => `<button class="btn ${i === 0 ? "btn-primary" : "btn-ghost"} btn-sm r2-buy" data-pack="${esc(p.id)}" type="button">${esc(r2PackLabel(p))}</button>`).join("")}
-          <button class="btn btn-ghost btn-sm" id="r2OpenSettings" type="button">${esc(T("r2.useOwnKey", "Use my own Tavus key"))}</button>
+          ${MANAGED_AI ? (packs.length ? "" : `<button class="btn btn-primary btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>`) : `<button class="btn btn-ghost btn-sm" id="r2OpenSettings" type="button">${esc(T("r2.useOwnKey", "Use my own Tavus key"))}</button>`}
           <button class="btn btn-ghost btn-sm" id="r2Finish" type="button">${esc(T("r2.finishHere", "Finish here"))}</button>
         </div>
         <p class="r2-gate-d" id="r2BuyMsg" hidden></p>
@@ -4358,7 +4360,6 @@
           <button class="btn btn-primary btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>
           <button class="btn btn-ghost btn-sm" id="r2Finish" type="button">${esc(T("r2.finishHere", "Finish here"))}</button>
         </div>
-        <p class="r2-gate-d r2-gate-own"><button class="link-btn" id="r2OpenSettings" type="button">${esc(T("r2.haveKey", "Already have a Tavus key? Add it in Settings."))}</button></p>
       </div></div>`;
     }
     const steps = `<ol class="r2-steps">
@@ -4692,6 +4693,10 @@
       // Official edition with the managed AI up: no key talk anywhere. The key stays reachable
       // under Settings as an optional advanced choice.
       MANAGED_AI = !!s.managed;
+      // The official app sells SponsorJobs' AI and interviewer; bringing your own key is what the
+      // open-source edition is for (Kofi, 2026-10-10). So in the official app every own-key option
+      // (Settings tab, menu item, Upgrade button, interview gate) is hidden, not just played down.
+      document.documentElement.classList.toggle("is-managed", MANAGED_AI);
       const gk = $("#menuGetKey"); if (gk) gk.hidden = MANAGED_AI;
       if (MANAGED_AI) {
         if (sl) sl.textContent = "Advanced: your own AI key";
