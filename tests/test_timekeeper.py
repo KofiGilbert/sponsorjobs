@@ -15,7 +15,7 @@ pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="needs node")
 TK = Path("ui/static/timekeeper.js").resolve()
 TIMING = {"total": 900, "answer_nudge": 150, "answer_step_in": 195, "pause_wait": 15,
           "last_question": 780, "candidate_questions": 840, "close_wait": 20, "hard_end": 930,
-          "answer_grace": 45}
+          "think_grace": 10, "answer_grace": 45}
 
 HARNESS = r"""
 require(process.argv[2]);
@@ -99,20 +99,28 @@ def test_the_backstop_never_cuts_a_goodbye_that_has_just_been_asked_for():
 
 def test_a_question_the_candidate_is_still_thinking_about_is_not_skipped():
     """Kofi's test call, 2026-10-10: the interviewer asked question 3, he paused to think, and the
-    "time is nearly up" note went out into the silence, so his answer was skipped. Silence right
-    after a question is thinking: the wrap-up waits for the answer and goes at its pause."""
+    "time is nearly up" note went out into the silence, so his answer was skipped. A few seconds
+    of silence after a question is thinking: the wrap-up waits for the answer and goes at its
+    pause."""
     script = (turn(5, 10, "pal") + turn(12, 700, "user")
               + turn(830, 836, "pal")                                  # a question just before 840
-              + turn(850, 880, "user"))                                # 14 s thinking, then answers
+              + turn(842, 880, "user"))                                # 6 s thinking, then answers
     log = run(script)
-    ask = [s for s, k, x in log if "one question for you" in x]
-    assert ask == [880]                         # after the answer, not into the thinking pause
+    assert [s for s, k, x in log if "one question for you" in x] == [880]   # after the answer
 
 
-def test_a_candidate_who_never_answers_does_not_stall_the_ending():
+def test_no_interviewer_waits_long_in_silence():
+    """Who waits 45 seconds for an answer? (Kofi, 2026-10-10). Ten seconds of silence after a
+    question, then the interview moves on."""
     log = run(turn(5, 10, "pal") + turn(12, 700, "user") + turn(830, 836, "pal"))
     ask = [s for s, k, x in log if "one question for you" in x]
     close = [s for s, k, x in log if "Close the interview" in x]
-    assert ask == [885]                         # 840 + 45 s of grace for an answer that never came
+    assert ask == [850]                         # 840 + 10 s of silence
     assert close == [900]                       # nobody is speaking at 15:00: close right away
     assert [s for s, k, _ in log if k == "end"] == [930]   # the backstop at 15:30 (no goodbye was heard)
+
+
+def test_an_answer_that_has_begun_is_heard_out_but_not_forever():
+    log = run(turn(5, 10, "pal") + turn(12, 700, "user") + turn(830, 836, "pal")
+              + [[845, "started_speaking", "user"]])           # starts at 845 and never pauses
+    assert [s for s, k, x in log if "one question for you" in x] == [890]   # 45 s into the answer

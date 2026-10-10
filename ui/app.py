@@ -5625,7 +5625,7 @@ def _cvi_timing() -> dict:
     k = min(1.0, max(0.1, k))
     base = {"total": 900, "answer_nudge": 150, "answer_step_in": 195, "pause_wait": 15,
             "last_question": 780, "candidate_questions": 840, "close_wait": 20, "hard_end": 930,
-            "answer_grace": 45}
+            "think_grace": 10, "answer_grace": 45}
     return {name: max(5, int(v * k)) for name, v in base.items()}
 # Test seam for the direct Tavus path: a (method, url, headers, body) -> (status, json) transport.
 # None = the real HTTPS transport in backend.tavus_client.
@@ -6013,7 +6013,8 @@ _PAL_SYSTEM_PROMPT = (
     "the next question.\n"
     "Rules: keep each of your turns under 40 words; never answer for the candidate; never ask what "
     "they want to talk about; use the job description's own vocabulary; do not give scores or "
-    "feedback during the interview; if the candidate pauses, wait, they may be thinking."
+    "feedback during the interview. If the candidate is silent for a few seconds after a question, "
+    "say 'Take your time' once; if the silence goes on, rephrase the question in one short sentence."
 )
 # Bumped when the instructions change, so an interviewer PAL created on a person's own Tavus
 # account with older instructions is recreated instead of being reused forever.

@@ -12,9 +12,11 @@
 (function (root) {
   function create(t, io) {
     // awaitingAnswer: the interviewer has just spoken (usually a question) and the candidate has
-    // not started answering. Silence then means thinking, not "finished": a wrap-up request
-    // waits for the answer (up to answer_grace seconds), so no answer is skipped by the clock.
-    const grace = t.answer_grace || 45;
+    // not started answering. A few seconds of silence then is thinking, not "finished", so the
+    // "any questions?" turn waits up to think_grace (10 s, what a person would allow) for the
+    // answer to begin; once it begins, it is heard out for up to answer_grace (45 s).
+    const thinkGrace = t.think_grace || 10;
+    const answerGrace = t.answer_grace || 45;
     const tk = { t0: io.now(), userTalking: false, awaitingAnswer: false, answerStart: 0, nudged: false, steppedIn: false,
                  waitingPause: null, lastQ: false, candQ: false, closing: false, closeSentAt: 0,
                  ended: false };
@@ -29,8 +31,9 @@
     const atNextPause = (fn, wait, patient) => {
       const thinking = patient && tk.awaitingAnswer;
       if (!tk.userTalking && !thinking) { tk.waitingPause = null; fn(); return; }
-      const until = io.now() + (tk.userTalking ? wait : Math.max(wait, grace)) * 1000;
-      tk.waitingPause = { fn, until: tk.waitingPause ? Math.min(tk.waitingPause.until, until) : until };
+      const until = io.now() + (tk.userTalking ? wait : thinkGrace) * 1000;
+      tk.waitingPause = { fn, thinking: !tk.userTalking,
+                          until: tk.waitingPause ? Math.min(tk.waitingPause.until, until) : until };
     };
     const runPending = () => { const p = tk.waitingPause; tk.waitingPause = null; if (p) p.fn(); };
     const isPal = (r) => r === "pal" || r === "replica";
@@ -40,9 +43,12 @@
       if (type === "conversation.started_speaking" && role === "user") {
         tk.userTalking = true;
         tk.awaitingAnswer = false;
-        // They began answering: a waiting wrap-up now runs at their first pause, and at the latest
-        // answer_grace seconds into the answer.
-        if (tk.waitingPause) tk.waitingPause.until = Math.min(tk.waitingPause.until, io.now() + grace * 1000);
+        // They began answering a question we were waiting on: hear the answer out, then run the
+        // request at their pause, or answer_grace seconds in at the latest.
+        if (tk.waitingPause && tk.waitingPause.thinking) {
+          tk.waitingPause.thinking = false;
+          tk.waitingPause.until = io.now() + answerGrace * 1000;
+        }
         if (!tk.answerStart) tk.answerStart = io.now();
       } else if (type === "conversation.stopped_speaking" && role === "user") {
         tk.userTalking = false;
