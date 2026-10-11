@@ -1,0 +1,12 @@
+// The public website, sponsorjobs.ai, served as static files by a Cloudflare Worker (free plan).
+// Separate from the broker (worker/) so a site change never touches accounts or payments.
+{
+  "name": "sponsorjobs-site",
+  "compatibility_date": "2026-10-01",
+  "account_id": "61cbc2bf5c4514a08662576605bad356",
+  "assets": { "directory": "../site", "html_handling": "auto-trailing-slash", "not_found_handling": "404-page" },
+  "routes": [
+    { "pattern": "sponsorjobs.ai", "custom_domain": true },
+    { "pattern": "www.sponsorjobs.ai", "custom_domain": true }
+  ]
+}
