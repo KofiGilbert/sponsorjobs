@@ -336,5 +336,16 @@
   "signin.signoutFailed": "Abmelden fehlgeschlagen. Versuche es erneut.",
   "signin.googleCancelled": "Die Google-Anmeldung wurde abgebrochen. Nichts wurde geändert.",
   "signin.keepPass": "Auf diesem Gerät gibt es einen Pass, der noch mit keiner E-Mail verknüpft ist. Melde dich mit deiner E-Mail an, damit der Pass bei dir bleibt.",
-  "upg.thanksActive": "Zahlung erhalten. Dein Pass ist aktiv, und Stripe hat dir die Quittung gemailt."
+  "upg.thanksActive": "Zahlung erhalten. Dein Pass ist aktiv, und Stripe hat dir die Quittung gemailt.",
+  "acct.planUntil": "{plan} bis {date}",
+  "acct.planLeft": "{i} Live-Interviews und {p} maßgeschneiderte Pakete übrig",
+  "acct.freeLeft": "{p} maßgeschneiderte Pakete diesen Monat übrig",
+  "acct.yourPass": "Dein Pass",
+  "upg.freePlan": "Kostenloser Plan",
+  "upg.addDays": "30 weitere Tage hinzufügen",
+  "upg.welcomeH": "Du hast den {plan}",
+  "upg.welcomeSub": "Aktiv bis {date}. Er endet von selbst, du musst nichts kündigen.",
+  "upg.welcome1": "{i} Live-Interviews mit einem Echtzeit-Interviewer",
+  "upg.welcome2": "{p} maßgeschneiderte Pakete mit unserem besten KI-Modell",
+  "upg.welcome3": "Alles aus dem kostenlosen Plan, wie bisher"
 }

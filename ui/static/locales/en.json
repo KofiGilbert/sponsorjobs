@@ -336,5 +336,16 @@
   "signin.signoutFailed": "Couldn't sign out. Try again.",
   "signin.googleCancelled": "Google sign-in was cancelled. Nothing changed.",
   "signin.keepPass": "This device has a pass that isn't linked to an email yet. Sign in with your email so the pass stays with you.",
-  "upg.thanksActive": "Payment received. Your pass is active, and Stripe has emailed your receipt."
+  "upg.thanksActive": "Payment received. Your pass is active, and Stripe has emailed your receipt.",
+  "acct.planUntil": "{plan} until {date}",
+  "acct.planLeft": "{i} live interviews and {p} tailored packages left",
+  "acct.freeLeft": "{p} tailored packages left this month",
+  "acct.yourPass": "Your pass",
+  "upg.freePlan": "Free plan",
+  "upg.addDays": "Add 30 more days",
+  "upg.welcomeH": "You're on the {plan}",
+  "upg.welcomeSub": "Active until {date}. It ends on its own, there is nothing to cancel.",
+  "upg.welcome1": "{i} live interviews with a real-time interviewer",
+  "upg.welcome2": "{p} tailored packages on our best AI model",
+  "upg.welcome3": "Everything in Free, as before"
 }

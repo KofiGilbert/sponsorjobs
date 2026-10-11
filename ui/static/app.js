@@ -4877,6 +4877,7 @@
     closeAcctMenu();
     if (upgModal) upgModal.hidden = false;
     loadOffers();
+    paintPlan();
   }
   function closeUpgrade() { if (upgModal) upgModal.hidden = true; }
   $("#menuUpgrade")?.addEventListener("click", openUpgrade);
@@ -5181,16 +5182,63 @@
   // Who is signed in, and on which plan: the account foot shows the email (or the pass name
   // under it), the menu shows Sign in or the email + Sign out. Refreshed on load, after sign-in
   // and after checkout.
+  // Where the plan shows (Kofi, 2026-10-11; the claude.ai / ChatGPT pattern): a mark on the
+  // avatar, the plan and what is left in the account menu, the menu item becomes "Your pass",
+  // and the plans panel marks the current one.
+  let ACCT_STATUS = null;
+  function paintPlan() {
+    const s = ACCT_STATUS || {};
+    const onPass = !!(s.plan && PASS_NAMES[s.plan] && s.pass_until);
+    const name = onPass ? PASS_NAMES[s.plan]() : T("upg.freeName", "Free");
+    const until = onPass ? fmtDate(s.pass_until) : "";
+    const el = $("#acctPlan"); if (el) el.textContent = name;
+    const dot = $("#acctPassDot"); if (dot) dot.hidden = !onPass;
+    const btn = $("#acctBtn"); if (btn) btn.title = onPass ? `${name} until ${until}` : T("upg.freePlan", "Free plan");
+    const box = $("#acctMenuPlan");
+    if (box) {
+      box.hidden = false;
+      box.classList.toggle("is-pass", onPass);
+      $("#acctMenuPlanName").textContent = onPass
+        ? T("acct.planUntil", "{plan} until {date}").replace("{plan}", name).replace("{date}", until)
+        : T("upg.freePlan", "Free plan");
+      $("#acctMenuPlanLeft").textContent = onPass
+        ? T("acct.planLeft", "{i} live interviews and {p} tailored packages left").replace("{i}", String(s.interviews_left ?? 0)).replace("{p}", String(s.packages_left ?? 0))
+        : T("acct.freeLeft", "{p} tailored packages left this month").replace("{p}", String(s.packages_left ?? 0));
+    }
+    const lbl = $("#menuUpgradeLbl"); if (lbl) lbl.textContent = onPass ? T("acct.yourPass", "Your pass") : T("acct.passes", "Get a pass");
+    document.querySelectorAll(".upg-plan").forEach(card => {
+      const b = card.querySelector(".upg-cta[data-pass]"); if (!b) return;
+      const current = onPass && b.dataset.pass === s.plan;
+      card.classList.toggle("is-current-plan", current);
+      b.textContent = current ? T("upg.addDays", "Add 30 more days").replace("30", s.plan === "pass90" ? "90" : "30") : T("upg.get", "Get the pass");
+    });
+  }
   async function loadAccount() {
     try {
       const s = await api("/api/account/status");
+      ACCT_STATUS = s || null;
       ACCT_EMAIL = (s && s.email) || null;
       ACCT_PLAN = (s && s.plan) || null;
-      const el = $("#acctPlan");
-      if (el && s && s.plan) el.textContent = PASS_NAMES[s.plan] ? PASS_NAMES[s.plan]() : T("upg.freeName", "Free");
     } catch (e) { /* leave the current labels */ }
     paintIdentity();
+    paintPlan();
   }
+  function showWelcomePass() {
+    const s = ACCT_STATUS || {};
+    if (!(s.plan && PASS_NAMES[s.plan])) return;
+    const m = $("#welcomePass"); if (!m) return;
+    $("#welcomePassBadge").textContent = PASS_NAMES[s.plan]();
+    $("#welcomePassH").textContent = T("upg.welcomeH", "You're on the {plan}").replace("{plan}", PASS_NAMES[s.plan]());
+    $("#welcomePassSub").textContent = T("upg.welcomeSub", "Active until {date}. It ends on its own, there is nothing to cancel.").replace("{date}", fmtDate(s.pass_until));
+    $("#welcomePassList").innerHTML = [
+      T("upg.welcome1", "{i} live interviews with a real-time interviewer").replace("{i}", String(s.interviews_left ?? 0)),
+      T("upg.welcome2", "{p} tailored packages on our best AI model").replace("{p}", String(s.packages_left ?? 0)),
+      T("upg.welcome3", "Everything in Free, as before"),
+    ].map(x => `<li>${esc(x)}</li>`).join("");
+    m.hidden = false;
+  }
+  $("#welcomePassGo")?.addEventListener("click", () => { $("#welcomePass").hidden = true; });
+  window.tailorShell?.onReturned?.(() => loadAccount());
   const loadPlanBadge = loadAccount;
   document.addEventListener("i18n:changed", paintIdentity);
   loadAccount();
@@ -5204,8 +5252,8 @@
     checkoutHandled = true;
     closeUpgrade();
     if (status === "success") {
-      toast(T("upg.thanksActive", "Payment received. Your pass is active, and Stripe has emailed your receipt."));
       try { await loadPlanBadge(); } catch (e) { /* best effort */ }
+      showWelcomePass();
     } else if (status === "cancel") {
       toast(T("upg.canceled", "Checkout canceled. Nothing was charged."));
     }
