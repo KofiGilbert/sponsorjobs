@@ -32,11 +32,14 @@ from flask import jsonify, request
 # feed must not recompute over tens of thousands of rows per request (that 502'd the endpoint).
 # So the public feed is RECENT-sorted, dated rows older than the window are dropped, and the
 # whole thing is capped and cached. All env-overridable.
-FEED_FRESH_DAYS = int(os.environ.get("JOBS_FRESH_DAYS", "45"))    # drop dated rows older than this
+FEED_FRESH_DAYS = int(os.environ.get("JOBS_FRESH_DAYS", "45"))    # drop dated rows older than this...
+FEED_SEEN_DAYS = int(os.environ.get("JOBS_SEEN_DAYS", "7"))       # ...unless the board still listed them this recently
 # How many rows the cached full list HOLDS (for server-side filtering + pagination). The response
 # only ever sends ONE page, so this can be large without bloating any single payload -- it just
 # sets how deep the browsable board goes and the max "N jobs" total we can report.
 FEED_LIMIT = int(os.environ.get("JOBS_FEED_LIMIT", "50000"))
+FUNNEL: dict = {}
+FUNNEL_SAMPLES: dict = {}
 FEED_TTL = int(os.environ.get("JOBS_FEED_TTL", "120"))            # seconds a built feed is reused
 FEED_PER_PAGE = int(os.environ.get("JOBS_PER_PAGE", "30"))        # default page size
 # On-demand search: when a keyword search finds fewer than SEARCH_MIN in the pre-built board,
@@ -99,12 +102,25 @@ def feed_jobs(level: str | None = None) -> list[dict]:
                                   is_sponsor_relevant)
     from sourcing.watchlist import Watchlist
     jobs_db, spon_db = _paths()
+    FUNNEL.clear()
+    FUNNEL_SAMPLES.clear()
     w = Watchlist(jobs_db)
     try:
         # RECENT-sorted, fresh-only, and bounded -- so page 1 is never a 5-month-old posting
         # and the endpoint isn't tagging tens of thousands of rows on every hit.
         jobs = _sponsors(spon_db).tag_jobs(
-            w.list_jobs(order="recent", since_days=FEED_FRESH_DAYS, limit=FEED_LIMIT))
+            w.list_jobs(order="recent", since_days=FEED_FRESH_DAYS, seen_days=FEED_SEEN_DAYS, limit=FEED_LIMIT))
+        try:   # diagnostics only: how old are the rows the freshness window drops, and are they still live?
+            FUNNEL_SAMPLES["too_old"] = [dict(r) for r in w._conn.execute(
+                "SELECT company, title, location, posted_at, last_seen FROM sourced_job WHERE posted_at IS NOT NULL "
+                "AND posted_at != '' AND substr(posted_at,1,10) < date('now', ?) ORDER BY RANDOM() LIMIT 400",
+                (f"-{FEED_FRESH_DAYS} days",)).fetchall()]
+            FUNNEL["too_old_still_seen_7d"] = w._conn.execute(
+                "SELECT COUNT(*) FROM sourced_job WHERE posted_at IS NOT NULL AND posted_at != '' AND "
+                "substr(posted_at,1,10) < date('now', ?) AND last_seen >= datetime('now','-7 days')",
+                (f"-{FEED_FRESH_DAYS} days",)).fetchone()[0]
+        except Exception as exc:
+            FUNNEL["too_old_diag_error"] = str(exc)[:80]
         # What each ad says about sponsorship, read from its own text (sourcing/adstance.py).
         # Done here, before the relevance filter, so an ad that says it will NOT sponsor is kept
         # off the board, and the stance travels with the row into the public feed.
@@ -118,9 +134,21 @@ def feed_jobs(level: str | None = None) -> list[dict]:
         w.close()
     # A list-only row (Workday) whose description was never fetched has not had the
     # citizenship / clearance / no-sponsorship check run on it: never published as accessible.
-    jobs = [j for j in jobs
-            if j.get("us") and not employer_is_clearance_heavy(j.get("company", ""))
-            and is_jd_checked(j) and is_sponsor_relevant(j)]
+    # How many rows each rule removes, logged by the feed build (why ~23k matches become ~8k).
+    FUNNEL["fresh_recent"] = len(jobs)
+    FUNNEL["not_us"] = sum(1 for j in jobs if not j.get("us"))
+    import random as _random
+    _nu = [j for j in jobs if not j.get("us")]
+    FUNNEL_SAMPLES["not_us"] = _random.Random(7).sample(_nu, min(400, len(_nu)))
+    us = [j for j in jobs if j.get("us")]
+    FUNNEL["clearance_employer"] = sum(1 for j in us if employer_is_clearance_heavy(j.get("company", "")))
+    us = [j for j in us if not employer_is_clearance_heavy(j.get("company", ""))]
+    FUNNEL["jd_unchecked"] = sum(1 for j in us if not is_jd_checked(j))
+    chk = [j for j in us if is_jd_checked(j)]
+    FUNNEL["ad_says_no"] = sum(1 for j in chk if j.get("ad_stance") == "not_offered")
+    FUNNEL["aggregator_no_signal"] = sum(1 for j in chk if j.get("ad_stance") != "not_offered" and not is_sponsor_relevant(j))
+    jobs = [j for j in chk if is_sponsor_relevant(j)]
+    FUNNEL["kept"] = len(jobs)
     for j in jobs:
         j["entry_level"] = is_entry_level(j.get("title", ""))
     if (level or "").lower() == "entry":

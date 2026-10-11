@@ -10,6 +10,10 @@ on:
   schedule:
     - cron: "23 */3 * * *"
   workflow_dispatch:
+    inputs:
+      crawl_minutes:
+        description: "Crawl time cap in minutes (blank = the usual 70)"
+        required: false
 
 permissions:
   contents: read
@@ -64,7 +68,7 @@ jobs:
           FEED_INCLUDE_AGGREGATORS: ${{ vars.FEED_INCLUDE_AGGREGATORS }}
           JOBS_MAX_PER_COMPANY: ${{ vars.JOBS_MAX_PER_COMPANY || 500 }}
           TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
-          FEED_CRAWL_MINUTES: ${{ vars.FEED_CRAWL_MINUTES || 70 }}
+          FEED_CRAWL_MINUTES: ${{ inputs.crawl_minutes || vars.FEED_CRAWL_MINUTES || 70 }}
           # Descriptions read per giant Workday / SmartRecruiters board PER RUN. The code default
           # (2000) let 18 boards eat a whole 20-minute run; 200 lets a run reach many boards, and
           # descriptions already stored are never re-read, so big boards still fill in over runs.
