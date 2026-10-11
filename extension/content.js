@@ -273,8 +273,8 @@
   const CHIP_TIP = {
     "H-1B": "This employer has had H-1B petitions approved (public USCIS data).",
     "GREEN-CARD": "This employer has sponsored green cards (certified PERM cases, public DOL data).",
-    "STEM-OPT": "Enrolled in E-Verify, so a STEM OPT extension is possible here.",
-    "CAP-EXEMPT": "Likely cap-exempt: H-1B without the lottery.",
+    "STEM-OPT": "Enrolled in E-Verify: STEM OPT extension possible here",
+    "CAP-EXEMPT": "Likely cap-exempt: H-1B without the lottery (university, nonprofit research, or hospital employer)",
   };
   // The employer's record as chip codes. `visa` is only filled when the role is known to be in
   // the US; when the location could not be read, the record still exists, so read it from the
@@ -329,9 +329,9 @@
     if (p.perm_certs > 0)
       rows.push(`<div class="tailor-sp-row"><span class="tailor-sp-k">Green card</span> ${Number(p.perm_certs).toLocaleString()} certified PERM cases</div>`);
     if (p.e_verify)
-      rows.push(`<div class="tailor-sp-row"><span class="tailor-sp-k">E-Verify</span> enrolled (STEM-OPT capable)</div>`);
+      rows.push(`<div class="tailor-sp-row"><span class="tailor-sp-k">E-Verify</span> enrolled (STEM OPT extension possible here)</div>`);
     if (p.cap_exempt)
-      rows.push(`<div class="tailor-sp-row"><span class="tailor-sp-k">Cap-exempt</span> likely (no H-1B lottery)</div>`);
+      rows.push(`<div class="tailor-sp-row"><span class="tailor-sp-k">Cap-exempt</span> likely: H-1B without the lottery (university, nonprofit research, or hospital)</div>`);
     if (!rows.length) return "";
     return `<div class="tailor-sponsor-profile"><div class="tailor-sp-hd">Sponsorship profile${data.matched_name ? " · " + esc(data.matched_name) : ""}</div>${rows.join("")}<div class="tailor-sp-foot">Historical public USCIS/DOL data, not a promise this role sponsors.</div></div>`;
   }
@@ -680,8 +680,8 @@
       const facts = [];
       if (p.h1b_approvals > 0) facts.push(`<b>H-1B</b> ${Number(p.h1b_approvals).toLocaleString()} approved${p.fy_range ? ", " + esc(p.fy_range) : ""}`);
       if (p.perm_certs > 0) facts.push(`<b>Green card</b> ${Number(p.perm_certs).toLocaleString()} PERM cases`);
-      if (p.e_verify) facts.push(`<b>E-Verify</b> enrolled (STEM OPT possible)`);
-      if (p.cap_exempt) facts.push(`<b>Cap-exempt</b> likely`);
+      if (p.e_verify) facts.push(`<b>E-Verify</b> enrolled (STEM OPT extension possible here)`);
+      if (p.cap_exempt) facts.push(`<b>Cap-exempt</b> likely: H-1B without the lottery`);
       rows.push(`<div class="tailor-cp-row"><div class="tailor-cp-co">${esc(d.matched_name || LAST.company)}</div>${facts.map(f => `<div>${f}</div>`).join("")}<div class="tailor-cp-foot">Public USCIS/DOL records, not a promise this role sponsors.</div></div>`);
     } else if (d && d.ok !== false) {
       rows.push(`<div class="tailor-cp-row">No H-1B or green-card record for this employer.</div>`);
