@@ -38,6 +38,7 @@ FEED_FRESH_DAYS = int(os.environ.get("JOBS_FRESH_DAYS", "45"))    # drop dated r
 # sets how deep the browsable board goes and the max "N jobs" total we can report.
 FEED_LIMIT = int(os.environ.get("JOBS_FEED_LIMIT", "50000"))
 FUNNEL: dict = {}
+FUNNEL_SAMPLES: dict = {}
 FEED_TTL = int(os.environ.get("JOBS_FEED_TTL", "120"))            # seconds a built feed is reused
 FEED_PER_PAGE = int(os.environ.get("JOBS_PER_PAGE", "30"))        # default page size
 # On-demand search: when a keyword search finds fewer than SEARCH_MIN in the pre-built board,
@@ -106,6 +107,17 @@ def feed_jobs(level: str | None = None) -> list[dict]:
         # and the endpoint isn't tagging tens of thousands of rows on every hit.
         jobs = _sponsors(spon_db).tag_jobs(
             w.list_jobs(order="recent", since_days=FEED_FRESH_DAYS, limit=FEED_LIMIT))
+        try:   # diagnostics only: how old are the rows the freshness window drops, and are they still live?
+            FUNNEL_SAMPLES["too_old"] = [dict(r) for r in w._conn.execute(
+                "SELECT company, title, location, posted_at, last_seen FROM sourced_job WHERE posted_at IS NOT NULL "
+                "AND posted_at != '' AND substr(posted_at,1,10) < date('now', ?) ORDER BY RANDOM() LIMIT 400",
+                (f"-{FEED_FRESH_DAYS} days",)).fetchall()]
+            FUNNEL["too_old_still_seen_7d"] = w._conn.execute(
+                "SELECT COUNT(*) FROM sourced_job WHERE posted_at IS NOT NULL AND posted_at != '' AND "
+                "substr(posted_at,1,10) < date('now', ?) AND last_seen >= datetime('now','-7 days')",
+                (f"-{FEED_FRESH_DAYS} days",)).fetchone()[0]
+        except Exception as exc:
+            FUNNEL["too_old_diag_error"] = str(exc)[:80]
         # What each ad says about sponsorship, read from its own text (sourcing/adstance.py).
         # Done here, before the relevance filter, so an ad that says it will NOT sponsor is kept
         # off the board, and the stance travels with the row into the public feed.
@@ -123,6 +135,10 @@ def feed_jobs(level: str | None = None) -> list[dict]:
     FUNNEL.clear()
     FUNNEL["fresh_recent"] = len(jobs)
     FUNNEL["not_us"] = sum(1 for j in jobs if not j.get("us"))
+    FUNNEL_SAMPLES.clear()
+    import random as _random
+    _nu = [j for j in jobs if not j.get("us")]
+    FUNNEL_SAMPLES["not_us"] = _random.Random(7).sample(_nu, min(400, len(_nu)))
     us = [j for j in jobs if j.get("us")]
     FUNNEL["clearance_employer"] = sum(1 for j in us if employer_is_clearance_heavy(j.get("company", "")))
     us = [j for j in us if not employer_is_clearance_heavy(j.get("company", ""))]

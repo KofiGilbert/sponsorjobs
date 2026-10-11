@@ -140,6 +140,12 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
     finally:
         w.close()
     log(f"[build_feed] funnel: in_db={total} {feed.FUNNEL} duplicates_removed={len(fj) - len(dedupe_rows(fj))} written={len(rows)}")
+    # What the dropped rows look like, so a filter is loosened on evidence, not a hunch.
+    from collections import Counter
+    for name, sample in (feed.FUNNEL_SAMPLES or {}).items():
+        locs = Counter((r.get("location") or "<empty>")[:60] for r in sample)
+        log(f"[build_feed] dropped:{name} n={len(sample)} top_locations={locs.most_common(40)}")
+        log(f"[build_feed] dropped:{name} sample={[(r.get('company'), r.get('title'), r.get('location'), r.get('posted_at')) for r in sample[:25]]}")
     w = Watchlist(jobs_db)
     try:
         jd_by_id = w.get_jd_texts([r["source_id"] for r in rows])
