@@ -101,6 +101,8 @@ def feed_jobs(level: str | None = None) -> list[dict]:
                                   is_sponsor_relevant)
     from sourcing.watchlist import Watchlist
     jobs_db, spon_db = _paths()
+    FUNNEL.clear()
+    FUNNEL_SAMPLES.clear()
     w = Watchlist(jobs_db)
     try:
         # RECENT-sorted, fresh-only, and bounded -- so page 1 is never a 5-month-old posting
@@ -132,10 +134,8 @@ def feed_jobs(level: str | None = None) -> list[dict]:
     # A list-only row (Workday) whose description was never fetched has not had the
     # citizenship / clearance / no-sponsorship check run on it: never published as accessible.
     # How many rows each rule removes, logged by the feed build (why ~23k matches become ~8k).
-    FUNNEL.clear()
     FUNNEL["fresh_recent"] = len(jobs)
     FUNNEL["not_us"] = sum(1 for j in jobs if not j.get("us"))
-    FUNNEL_SAMPLES.clear()
     import random as _random
     _nu = [j for j in jobs if not j.get("us")]
     FUNNEL_SAMPLES["not_us"] = _random.Random(7).sample(_nu, min(400, len(_nu)))
