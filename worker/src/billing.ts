@@ -107,10 +107,6 @@ async function session(b: Billing, user: string, price: string, metadata: Record
       client_reference_id: user,
       customer_email: email,                 // prefilled (and the receipt goes there)
       metadata: { ...metadata, email },
-      // An invoice + receipt email with both PDFs after payment, like Anthropic's (Kofi,
-      // 2026-10-11). Stripe's post-payment invoices: 0.4% of the total, at most $2 per invoice
-      // (about $0.12 on a $29 pass). Needs "Successful payments" on in Stripe's Customer emails.
-      invoice_creation: { enabled: true, invoice_data: { description: "SponsorJobs", footer: "One payment, no auto-renew. Questions: kofig@blackorigin.org" } },
       success_url: b.successUrl,
       cancel_url: b.cancelUrl,
     }),

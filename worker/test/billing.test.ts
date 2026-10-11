@@ -131,9 +131,6 @@ describe("checkout", () => {
       "metadata[seconds]": String(9 * INTERVIEW_SECONDS),
       "metadata[packages]": "150",
       "metadata[email]": email,
-      "invoice_creation[enabled]": "true",
-      "invoice_creation[invoice_data][description]": "SponsorJobs",
-      "invoice_creation[invoice_data][footer]": "One payment, no auto-renew. Questions: kofig@blackorigin.org",
       success_url: "http://127.0.0.1:57000/?checkout=success",
       cancel_url: "http://127.0.0.1:57000/?checkout=cancel",
     });
@@ -310,7 +307,7 @@ describe("test mode is for named testers only", () => {
 });
 
 describe("receipts", () => {
-  it("every checkout asks Stripe for an invoice + receipt email", async () => {
+  it("checkout uses Stripe's free receipt, not paid post-payment invoices", async () => {
     const sent: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       sent.push(String((init as RequestInit)?.body ?? ""));
@@ -320,7 +317,7 @@ describe("receipts", () => {
     await env.DB.prepare("UPDATE accounts SET email = 'a@b.co' WHERE account_id = ?").bind(id).run();
     expect((await call("/billing/passes/pass30/checkout", { token, body: {}, env: STRIPE })).status).toBe(200);
     const body = new URLSearchParams(sent[0]);
-    expect(body.get("invoice_creation[enabled]")).toBe("true");
-    expect(body.get("customer_email")).toBe("a@b.co");
+    expect(body.get("invoice_creation[enabled]")).toBeNull();   // 0.4% a purchase; off until Kofi says yes
+    expect(body.get("customer_email")).toBe("a@b.co");          // the free receipt goes here
   });
 });
