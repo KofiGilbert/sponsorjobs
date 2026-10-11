@@ -1,0 +1,47 @@
+{
+  "version": "2026-10",
+  "fiscal_years": [
+    2025
+  ],
+  "cells": 12911,
+  "employers": 4491,
+  "flag_rows": 3002,
+  "min_count": 2,
+  "sources": [
+    "LCA_Disclosure_Data_FY2025_Q4.xlsx"
+  ],
+  "built_at": "2026-10-11T21:00:09+00:00",
+  "columns": [
+    "norm_name",
+    "fy",
+    "title",
+    "family",
+    "city",
+    "state",
+    "soc_code",
+    "n",
+    "wage_min",
+    "wage_median",
+    "wage_max",
+    "lvl1",
+    "lvl2",
+    "lvl3",
+    "lvl4",
+    "pw1",
+    "pw2",
+    "pw3",
+    "pw4"
+  ],
+  "flag_columns": [
+    "norm_name",
+    "display_name",
+    "h1b_dependent",
+    "willful_violator",
+    "fy"
+  ],
+  "bytes": {
+    "wages": 384778,
+    "flags": 34130
+  },
+  "source_page": "https://www.dol.gov/agencies/eta/foreign-labor/performance"
+}
