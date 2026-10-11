@@ -820,7 +820,14 @@ def workday_jobs(board_id, company="", fetch=fetch_json, **kw):
     return workday_board_jobs(board_id, company, fetch=fetch, **kw)
 
 
+def amazon_jobs(board_id="USA", company="", fetch=fetch_json, **kw):
+    """Amazon's own public search JSON (sourcing/amazonjobs.py); board_id is a country code."""
+    from .amazonjobs import amazon_jobs as _amazon
+    return _amazon(board_id, company, fetch=fetch, **kw)
+
+
 ADAPTERS = {
+    "amazonjobs": amazon_jobs,
     "greenhouse": greenhouse_jobs,
     "lever": lever_jobs,
     "ashby": ashby_jobs,

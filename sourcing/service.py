@@ -215,6 +215,26 @@ def seed_if_empty(store: Watchlist) -> None:
     store.set_criteria(SEED_CRITERIA)
 
 
+def sync_seed(store: Watchlist) -> int:
+    """Upsert every committed seed row into an EXISTING watchlist (seed_if_empty only fills an
+    empty one), so a board added to seed/watchlist_seed.csv reaches the central feed on its next
+    build instead of never. Returns the rows applied."""
+    n = 0
+    if not SEED_WATCHLIST.exists():
+        return 0
+    try:
+        with open(SEED_WATCHLIST, encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                try:
+                    store.add_company(row["company"], row["ats"], row["board_id"])
+                    n += 1
+                except (KeyError, ValueError):
+                    continue
+    except OSError:
+        return n
+    return n
+
+
 def matches_criteria(job: dict, criteria: dict) -> bool:
     titles = [t.lower() for t in criteria.get("titles", []) if t.strip()]
     locs = [l.lower() for l in criteria.get("locations", []) if l.strip()]
@@ -308,7 +328,9 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
     # Run one search per title term (bounded) so we never pull the whole firehose, and
     # skip entirely when the person wants onsite-only or has set no title criteria.
     remote_pref = (criteria.get("remote") or "any").lower()
-    titles = [t for t in criteria.get("titles", []) if t.strip()][:4]
+    # The central feed crawls boards with NO title filter (every field a sponsor hires in) but
+    # the keyword aggregators need search terms, so it names them separately.
+    titles = [t for t in (criteria.get("aggregator_terms") or criteria.get("titles", [])) if t.strip()][:4]
     if remote_pref != "onsite" and titles:
         for agg in (criteria.get("aggregators") or DEFAULT_AGGREGATORS):
             fn = AGGREGATORS.get(agg)
