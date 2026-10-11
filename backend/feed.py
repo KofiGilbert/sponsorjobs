@@ -32,7 +32,8 @@ from flask import jsonify, request
 # feed must not recompute over tens of thousands of rows per request (that 502'd the endpoint).
 # So the public feed is RECENT-sorted, dated rows older than the window are dropped, and the
 # whole thing is capped and cached. All env-overridable.
-FEED_FRESH_DAYS = int(os.environ.get("JOBS_FRESH_DAYS", "45"))    # drop dated rows older than this
+FEED_FRESH_DAYS = int(os.environ.get("JOBS_FRESH_DAYS", "45"))    # drop dated rows older than this...
+FEED_SEEN_DAYS = int(os.environ.get("JOBS_SEEN_DAYS", "7"))       # ...unless the board still listed them this recently
 # How many rows the cached full list HOLDS (for server-side filtering + pagination). The response
 # only ever sends ONE page, so this can be large without bloating any single payload -- it just
 # sets how deep the browsable board goes and the max "N jobs" total we can report.
@@ -108,7 +109,7 @@ def feed_jobs(level: str | None = None) -> list[dict]:
         # RECENT-sorted, fresh-only, and bounded -- so page 1 is never a 5-month-old posting
         # and the endpoint isn't tagging tens of thousands of rows on every hit.
         jobs = _sponsors(spon_db).tag_jobs(
-            w.list_jobs(order="recent", since_days=FEED_FRESH_DAYS, limit=FEED_LIMIT))
+            w.list_jobs(order="recent", since_days=FEED_FRESH_DAYS, seen_days=FEED_SEEN_DAYS, limit=FEED_LIMIT))
         try:   # diagnostics only: how old are the rows the freshness window drops, and are they still live?
             FUNNEL_SAMPLES["too_old"] = [dict(r) for r in w._conn.execute(
                 "SELECT company, title, location, posted_at, last_seen FROM sourced_job WHERE posted_at IS NOT NULL "

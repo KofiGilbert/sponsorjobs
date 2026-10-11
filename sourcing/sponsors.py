@@ -51,6 +51,63 @@ _US_WORDS = re.compile(
     r"washington,? d\.?c\.?|silicon valley|bay area)\b", re.I)
 _US_STATE_TAIL = re.compile(r",\s*(" + "|".join(_US_STATES) + r")\b(?!\w)")
 
+# Spelled-out states and well-known US cities. A feed sample (2026-10-11) dropped "McLean,
+# Virginia", "Kalamazoo, Michigan", "Reston, Virginia", "Clearwater", "Pasadena" and "Washington"
+# as not-US because only two-letter codes and 19 cities were known. Cities that are also famous
+# abroad (London, Paris, Cambridge, Birmingham, Manchester, Dublin, Vancouver, Richmond, Sydney)
+# are left out on purpose: alone, those mean the foreign one far more often on a global board.
+_US_STATE_NAMES = [
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware",
+    "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa", "kansas", "kentucky",
+    "louisiana", "maine", "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+    "missouri", "montana", "nebraska", "nevada", "new hampshire", "new jersey", "new mexico",
+    "north carolina", "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island",
+    "south carolina", "south dakota", "tennessee", "texas", "utah", "vermont", "virginia",
+    "washington", "west virginia", "wisconsin", "wyoming", "district of columbia", "puerto rico",
+]
+_US_CITIES = r"""san antonio|jacksonville|fort worth|columbus|charlotte|indianapolis|nashville|
+oklahoma city|las vegas|louisville|baltimore|milwaukee|albuquerque|tucson|fresno|sacramento|
+kansas city|mesa|omaha|raleigh|colorado springs|long beach|virginia beach|oakland|minneapolis|tulsa|
+tampa|arlington|new orleans|wichita|cleveland|bakersfield|aurora|anaheim|honolulu|santa ana|
+riverside|corpus christi|lexington|henderson|stockton|saint paul|st\. paul|cincinnati|st\. louis|
+saint louis|pittsburgh|greensboro|lincoln|anchorage|plano|orlando|irvine|newark|durham|
+chula vista|toledo|fort wayne|st\. petersburg|laredo|jersey city|chandler|madison|lubbock|
+scottsdale|reno|buffalo|gilbert|glendale|north las vegas|winston-salem|chesapeake|norfolk|fremont|
+garland|irving|hialeah|boise|spokane|baton rouge|tacoma|san bernardino|modesto|fontana|des moines|
+moreno valley|santa clarita|fayetteville|huntsville|yonkers|worcester|salt lake city|grand rapids|
+amarillo|augusta|tallahassee|overland park|knoxville|providence|chattanooga|mobile|fort lauderdale|
+tempe|shreveport|ann arbor|boulder|palo alto|mountain view|sunnyvale|santa clara|redmond|bellevue|
+menlo park|cupertino|san mateo|redwood city|south san francisco|mclean|reston|tysons|herndon|
+bethesda|rockville|stamford|hartford|new haven|princeton|somerville|waltham|pasadena|clearwater|
+kalamazoo|peoria|rochester|syracuse|albany|hoboken|white plains|cary|chapel hill|research triangle|
+dearborn|auburn hills|frisco|round rock|the woodlands|sugar land|bentonville|draper|lehi|provo|
+el segundo|torrance|burbank|santa monica|culver city|san ramon|pleasanton|santa barbara|
+san luis obispo|eugene|olympia|billings|fargo|sioux falls|cedar rapids|davenport|duluth|green bay|
+dayton|akron|evansville|south bend|bloomington|champaign|urbana|naperville|schaumburg|oak brook|
+northbrook|evanston|warwick|nashua|bangor|wilmington|dover|annapolis|charleston|greenville|savannah|
+alpharetta|marietta|montgomery|little rock|memphis|murfreesboro|bowling green|morgantown|
+charlottesville|roanoke|blacksburg|newport news|hampton""".replace("\n", "")
+_US_NAMES = re.compile(r"\b(" + "|".join(_US_STATE_NAMES) + "|" + _US_CITIES + r")\b", re.I)
+_FOREIGN = re.compile(
+    r"\b(uk|u\.k\.|united kingdom|england|scotland|wales|ireland|canada|ontario|quebec|qu\u00e9bec|"
+    r"british columbia|alberta|manitoba|saskatchewan|nova scotia|mexico|m\u00e9xico|brazil|brasil|"
+    r"argentina|chile|colombia|peru|costa rica|guatemala|panama|india|pakistan|bangladesh|sri lanka|"
+    r"nepal|china|japan|korea|taiwan|hong kong|singapore|malaysia|indonesia|philippines|vietnam|"
+    r"thailand|australia|new zealand|germany|deutschland|france|spain|espa\u00f1a|portugal|italy|italia|"
+    r"netherlands|belgium|switzerland|austria|sweden|norway|denmark|finland|poland|polska|czech|"
+    r"czechia|slovakia|hungary|romania|bulgaria|greece|turkey|t\u00fcrkiye|israel|uae|dubai|qatar|"
+    r"saudi|egypt|nigeria|kenya|south africa|ghana|morocco|russia|ukraine|serbia|croatia|lithuania|"
+    r"latvia|estonia|luxembourg|iceland|"
+    r"london|paris|berlin|munich|m\u00fcnchen|hamburg|frankfurt|amsterdam|madrid|barcelona|lisbon|"
+    r"rome|roma|milan|milano|zurich|z\u00fcrich|geneva|vienna|wien|prague|praha|warsaw|warszawa|krakow|"
+    r"krak\u00f3w|wroclaw|budapest|bucharest|sofia|athens, greece|dublin|edinburgh|glasgow|manchester, uk|"
+    r"toronto|vancouver|montreal|montr\u00e9al|ottawa|calgary|edmonton|waterloo, on|mississauga|"
+    r"bangalore|bengaluru|hyderabad|pune|chennai|mumbai|delhi|gurgaon|gurugram|noida|kolkata|"
+    r"ahmedabad|indore|kochi|tokyo|osaka|seoul|beijing|shanghai|shenzhen|taipei|sydney|melbourne|"
+    r"brisbane|auckland|tel aviv|cairo|tbilisi|lagos|nairobi|johannesburg|cape town|s\u00e3o paulo|sao paulo|"
+    r"rio de janeiro|buenos aires|santiago|bogot\u00e1|bogota|lima|guadalajara|monterrey|"
+    r"mexico city|ciudad de m\u00e9xico|san jos\u00e9, costa rica)\b", re.I)
+
 # NAICS 2-digit sector -> plain-English industry, so the sponsor record's raw code can name the
 # company's field in the "About" strip. Sectors that share a range (Manufacturing 31-33, Retail
 # 44-45, Transport 48-49) map every prefix to one label. Unknown/blank -> "" (strip omits it).
@@ -88,7 +145,13 @@ def looks_us(location: str) -> bool:
     text = (location or "").strip()
     if not text:
         return False
-    return bool(_US_WORDS.search(text) or _US_STATE_TAIL.search(text))
+    if _US_WORDS.search(text) or _US_STATE_TAIL.search(text):
+        return True
+    # Spelled-out states and well-known US cities count, unless the string also names a
+    # foreign country, province or city: "Cambridge, UK" and "London, Ontario" stay abroad.
+    if _FOREIGN.search(text):
+        return False
+    return bool(_US_NAMES.search(text))
 
 
 # Legal-suffix tokens stripped when normalizing an employer name so "Amazon Com

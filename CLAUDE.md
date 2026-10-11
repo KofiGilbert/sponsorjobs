@@ -135,7 +135,13 @@ goes through, and recruiters reply by email. Rules:
 **GREEN — automate freely.** Public ATS job feeds (Greenhouse, Lever, Ashby,
 Workable, SmartRecruiters, Recruitee) expose public JSON with no login, no key,
 no proxy. Aggregator/remote APIs (Adzuna, Remotive, etc.) with free dev keys.
-This is the sourcing backbone. Some ATSs (e.g. Greenhouse) also expose a
+This is the sourcing backbone. **Also GREEN (decided 2026-10-11): an employer's
+own career site, where the site permits it** — read its robots.txt and obey it,
+prefer its job sitemap and the schema.org JobPosting data embedded in each page,
+identify honestly, rate-limit per host, and stop at any block or challenge. This
+is how Google for Jobs, Indeed and the sponsorship job boards source most of
+their listings; restricting ourselves to the six ATS feeds alone kept the biggest
+H-1B sponsors (Amazon, Apple, JPMorgan, IBM, Oracle...) off the board. Some ATSs (e.g. Greenhouse) also expose a
 documented application-submission endpoint — the cleanest path for automated
 submission (secret tokens must never be exposed client-side). Automated submission
 is NOT limited to official APIs, though: it is sanctioned on any site or company

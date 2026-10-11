@@ -207,7 +207,7 @@ class Watchlist:
         return cur.rowcount
 
     def list_jobs(self, include_dismissed: bool = False, order: str = "default",
-                  limit: int | None = None, since_days: int | None = None,
+                  limit: int | None = None, since_days: int | None = None, seen_days: int | None = None,
                   saved_only: bool = False) -> list[dict]:
         """List sourced jobs.
 
@@ -232,9 +232,18 @@ class Watchlist:
         if saved_only:
             conds.append("saved=1")
         if since_days:
-            conds.append("(posted_at IS NULL OR posted_at = '' "
-                         "OR substr(posted_at, 1, 10) >= date('now', ?))")
-            params.append(f"-{int(since_days)} days")
+            # Fresh by posting date, OR still listed on its board: a role posted 60 days ago that
+            # the crawler re-saw this week is open, whatever its date says (Kofi, 2026-10-11:
+            # the 45-day rule alone hid 9,488 of 26,279 rows). `seen_days` is that window.
+            if seen_days:
+                conds.append("(posted_at IS NULL OR posted_at = '' "
+                             "OR substr(posted_at, 1, 10) >= date('now', ?) "
+                             "OR last_seen >= datetime('now', ?))")
+                params += [f"-{int(since_days)} days", f"-{int(seen_days)} days"]
+            else:
+                conds.append("(posted_at IS NULL OR posted_at = '' "
+                             "OR substr(posted_at, 1, 10) >= date('now', ?))")
+                params.append(f"-{int(since_days)} days")
         if conds:
             q += " WHERE " + " AND ".join(conds)
         if order == "recent":
