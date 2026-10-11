@@ -130,7 +130,16 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
     finally:
         w.close()
 
-    rows = dedupe_rows(feed.feed_jobs())[:feed.FEED_LIMIT]    # tagged, US-only, fresh, recent-sorted
+    fj = feed.feed_jobs()
+    rows = dedupe_rows(fj)[:feed.FEED_LIMIT]    # tagged, US-only, fresh, recent-sorted
+    w = Watchlist(jobs_db)
+    try:
+        total = w._conn.execute("SELECT COUNT(*) FROM sourced_job").fetchone()[0]
+    except Exception:
+        total = -1
+    finally:
+        w.close()
+    log(f"[build_feed] funnel: in_db={total} {feed.FUNNEL} duplicates_removed={len(fj) - len(dedupe_rows(fj))} written={len(rows)}")
     w = Watchlist(jobs_db)
     try:
         jd_by_id = w.get_jd_texts([r["source_id"] for r in rows])

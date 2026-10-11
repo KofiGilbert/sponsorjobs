@@ -37,6 +37,7 @@ FEED_FRESH_DAYS = int(os.environ.get("JOBS_FRESH_DAYS", "45"))    # drop dated r
 # only ever sends ONE page, so this can be large without bloating any single payload -- it just
 # sets how deep the browsable board goes and the max "N jobs" total we can report.
 FEED_LIMIT = int(os.environ.get("JOBS_FEED_LIMIT", "50000"))
+FUNNEL: dict = {}
 FEED_TTL = int(os.environ.get("JOBS_FEED_TTL", "120"))            # seconds a built feed is reused
 FEED_PER_PAGE = int(os.environ.get("JOBS_PER_PAGE", "30"))        # default page size
 # On-demand search: when a keyword search finds fewer than SEARCH_MIN in the pre-built board,
@@ -118,9 +119,19 @@ def feed_jobs(level: str | None = None) -> list[dict]:
         w.close()
     # A list-only row (Workday) whose description was never fetched has not had the
     # citizenship / clearance / no-sponsorship check run on it: never published as accessible.
-    jobs = [j for j in jobs
-            if j.get("us") and not employer_is_clearance_heavy(j.get("company", ""))
-            and is_jd_checked(j) and is_sponsor_relevant(j)]
+    # How many rows each rule removes, logged by the feed build (why ~23k matches become ~8k).
+    FUNNEL.clear()
+    FUNNEL["fresh_recent"] = len(jobs)
+    FUNNEL["not_us"] = sum(1 for j in jobs if not j.get("us"))
+    us = [j for j in jobs if j.get("us")]
+    FUNNEL["clearance_employer"] = sum(1 for j in us if employer_is_clearance_heavy(j.get("company", "")))
+    us = [j for j in us if not employer_is_clearance_heavy(j.get("company", ""))]
+    FUNNEL["jd_unchecked"] = sum(1 for j in us if not is_jd_checked(j))
+    chk = [j for j in us if is_jd_checked(j)]
+    FUNNEL["ad_says_no"] = sum(1 for j in chk if j.get("ad_stance") == "not_offered")
+    FUNNEL["aggregator_no_signal"] = sum(1 for j in chk if j.get("ad_stance") != "not_offered" and not is_sponsor_relevant(j))
+    jobs = [j for j in chk if is_sponsor_relevant(j)]
+    FUNNEL["kept"] = len(jobs)
     for j in jobs:
         j["entry_level"] = is_entry_level(j.get("title", ""))
     if (level or "").lower() == "entry":
