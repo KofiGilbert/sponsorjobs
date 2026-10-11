@@ -53,8 +53,8 @@
     "DEV_HEADER_AUTH": "0",
     // Admin dashboard (docs/admin-dashboard.md). Not secrets: the Zero Trust team name (e.g.
     // "sponsorjobs") and the Access application's AUD tag. Empty = the dashboard stays closed (403).
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": "",
+    "ACCESS_TEAM_DOMAIN": "sponsorjobs",
+    "ACCESS_AUD": "de6e7ffefd4c65fc94bbf637a366a6374bb0c865bbca1264d735bfed03fce867",
     // Optional extra lock, comma-separated: only these e-mails get in, even if Access lets more through.
     "ADMIN_EMAILS": ""
   }
