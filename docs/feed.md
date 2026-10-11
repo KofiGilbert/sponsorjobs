@@ -198,6 +198,50 @@ a barred role is dismissed with a clear message instead of shown. SmartRecruiter
 10 requests a second on its Posting API; the crawl spaces one board's detail reads 0.2 s apart and
 backs off on a 429 / 5xx before one retry.
 
+### Career sites (`sourcing/careersite.py`)
+
+Most of the biggest H-1B sponsors (Amazon, Apple, JPMorgan, IBM, Oracle, Capital One...) hire
+through their OWN career site, not through one of the ATS feeds above, so an ATS-only crawl never
+saw them. Since 2026-10-11 (CLAUDE.md §6) an employer's own career site is GREEN where the site
+permits it, and the lane reads it the way Google for Jobs does:
+
+1. `robots.txt` first, and obeyed with our own user agent (`SponsorJobsBot/1.0 (+https://sponsorjobs.ai; ...)`):
+   a disallowed path is never requested, a `Crawl-delay` raises the gap between requests, and the
+   lane follows only the job sitemap(s) `robots.txt` (or the site table) names.
+2. The site's job sitemap: the list of job-page URLs with `lastmod`, read newest first.
+3. Each job page's schema.org `JobPosting` JSON-LD, the block every such site embeds for search
+   engines: title, description, hiring organization, location, `datePosted`, `validThrough`. A page
+   without one is not a job and is skipped; a posting whose `validThrough` has passed is closed.
+
+Politeness is not optional: one request at a time per host with at least a 1 s gap, hard timeouts,
+honest identification, `CAREERSITE_MAX_DETAIL` job pages per site per run (default 400; pages already
+stored are stamped "still listed" from the sitemap without a request), and a hard STOP for the host
+this run on a 401 / 403 / 429, three server errors in a row, or a bot-challenge page. There is no
+retry loop, no second identity and no proxy: a host that answers like that has said no for now, and
+the next run asks again politely. The lane runs beside the board pass in the feed build in its own
+threads and SQLite connections (`CAREERSITE_WORKERS` hosts at once, default 4, each still one request
+at a time), under its own wall-clock cap (`CAREERSITE_MINUTES`, default 60). `CAREERSITE_LANE=0`
+switches it off.
+
+The site table (`SITES` in `sourcing/careersite.py`) is the allowlist: only a host in it is ever
+fetched, and a site is added only after a maintainer has read its `robots.txt` by hand and confirmed
+the sitemap and the JSON-LD. Submission on these sites stays ASSISTED (`submit/allowlist.py`).
+
+Verified 2026-10-11 and in the table: Microsoft (2,296 jobs) and Qualcomm (2,068), both Eightfold
+(the sitemap and every job URL carry `?domain=`, and the robots file is "Disallow: / then Allow:
+/careers", which only a longest-match robots reader gets right); Capital One (1,820, `jobs_sitemap.xml`;
+many of its ads state no sponsorship and are excluded by the ad-stance rule); Cisco (about 1,500
+across three sitemap files). Checked and left OUT: JPMorgan and Oracle (client-rendered Oracle
+Recruiting Cloud, dead sitemaps, a WAF on robots.txt), IBM and Deloitte (Avature answers crawlers an
+empty body), Infosys and Tesla (Akamai 403 on robots.txt itself), Meta (its robots.txt header forbids
+automated collection without written permission), Apple and Google (no sitemap, no JobPosting block,
+and Google disallows paging its results). **Amazon**, the largest sponsor, has no sitemap or JSON-LD
+either, but the public keyless JSON its own search page reads is open to crawlers (robots.txt
+disallows only `/internal`): `sourcing/amazonjobs.py` reads it as the `amazonjobs` adapter (board id
+= country code, `AMAZON_MAX_JOBS` newest rows per run, default 1,000, full text in every row; the newest 500 are stored per run, and a row stays while it is re-seen).
+Walmart (15,900 job URLs, clean robots, job data in Next.js page JSON rather than JSON-LD) is the
+next worthwhile site once a `__NEXT_DATA__` reader exists.
+
 ## Set-up, step by step
 
 ### 1. Create the bucket (Cloudflare dashboard)

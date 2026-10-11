@@ -132,6 +132,10 @@ class Watchlist:
             "locations": [l.strip() for l in criteria.get("locations", []) if l.strip()],
             "remote": criteria.get("remote", "any") or "any",
         }
+        # The central feed's keyword-aggregator terms when the board pass has no title filter.
+        terms = [t.strip() for t in criteria.get("aggregator_terms") or [] if str(t).strip()]
+        if terms:
+            clean["aggregator_terms"] = terms
         self._conn.execute(
             "INSERT INTO criteria(id, data) VALUES(1, ?) "
             "ON CONFLICT(id) DO UPDATE SET data=excluded.data",
@@ -194,6 +198,30 @@ class Watchlist:
                 )
         self._conn.commit()
         return new, len(jobs)
+
+    def source_ids_by_url(self, source: str, urls) -> dict[str, str]:
+        """{url: source_id} for the rows of `source` whose url is in `urls` (chunked IN query)."""
+        urls = [u for u in urls if u]
+        out: dict[str, str] = {}
+        for i in range(0, len(urls), 500):
+            chunk = urls[i:i + 500]
+            q = f"SELECT url, source_id FROM sourced_job WHERE source=? AND url IN ({','.join('?' * len(chunk))})"
+            out.update((r[0], r[1]) for r in self._conn.execute(q, (source, *chunk)).fetchall())
+        return out
+
+    def touch_seen(self, source_ids) -> int:
+        """Stamp last_seen on rows a crawl saw listed again without re-reading them (a career
+        site's sitemap still names the page), so the still-listed rule and the stale prune
+        treat them as live. Returns how many rows were stamped."""
+        ids = list(source_ids)
+        n = 0
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            n += self._conn.execute(
+                f"UPDATE sourced_job SET last_seen=CURRENT_TIMESTAMP WHERE source_id IN ({','.join('?' * len(chunk))})",
+                chunk).rowcount
+        self._conn.commit()
+        return n
 
     def prune_stale(self, days: int = 21) -> int:
         """Delete jobs not seen by a refresh in `days` days: a role that has vanished from

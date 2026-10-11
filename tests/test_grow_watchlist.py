@@ -525,7 +525,8 @@ def test_committed_seed_is_sorted_deduped_and_valid():
     assert keys == sorted(keys)
     assert len({(r["ats"], r["board_id"]) for r in rows}) == len(rows)
     assert all(growth.valid_board_id_for(r["ats"], r["board_id"]) for r in rows)
-    assert {r["ats"] for r in rows} <= set(growth.DISCOVER_ATS) | {"recruitee"}
+    # Discovery finds the ATS boards; "recruitee" and "amazonjobs" rows are curated by hand.
+    assert {r["ats"] for r in rows} <= set(growth.DISCOVER_ATS) | {"recruitee", "amazonjobs"}
 
 
 # -- the in-app weekly pass --------------------------------------------------- #

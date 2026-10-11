@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -79,6 +80,23 @@ def aggregators_for_feed(env=None, log=print) -> list[str]:
     return [*PUBLIC_OK_AGGREGATORS, *keyed]
 
 
+class _CareerSiteLane:
+    """Runs sourcing.careersite.crawl_sites in a background thread for the feed build."""
+
+    def __init__(self, db_path, log):
+        from sourcing.careersite import crawl_sites
+        self.summaries: list[dict] = []
+        self._thread = threading.Thread(
+            target=lambda: self.summaries.extend(crawl_sites(db_path, log=log)),
+            name="careersite-lane", daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def join(self):
+        self._thread.join()
+
+
 def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = "",
           limit: int | None = None, log=print, crawler=None,
           crawl_minutes: float | None = None) -> dict:
@@ -93,7 +111,7 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
     import backend.feed as feed
     from sourcing.feedfile import dedupe_rows, write_feed
     from sourcing.scheduler import PRUNE_DAYS
-    from sourcing.service import feed_detail_budgets, refresh_watchlist, seed_if_empty
+    from sourcing.service import feed_detail_budgets, refresh_watchlist, seed_if_empty, sync_seed
     from sourcing.watchlist import Watchlist
 
     if limit:
@@ -103,14 +121,30 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
     w = Watchlist(jobs_db)
     try:
         seed_if_empty(w)
+        sync_seed(w)                                     # boards added to the seed since the DB was made
         criteria = w.get_criteria()
         criteria["aggregators"] = aggregators_for_feed(log=log)
+        # The seeded title list (engineer, developer, AI...) is a ONE-PERSON search filter. The
+        # public board serves accountants, nurses, consultants, analysts and researchers too (the
+        # template library has a resume for each), so the board pass keeps every title and the
+        # sponsor-relevance / accessibility rules do the filtering. The keyword aggregators still
+        # need terms. FEED_TITLE_FILTER=1 restores the old narrowing.
+        if os.environ.get("FEED_TITLE_FILTER", "0") != "1":
+            if criteria.get("titles"):
+                criteria["aggregator_terms"] = list(criteria["titles"])
+            criteria["titles"] = []
         w.set_criteria(criteria)
         if crawl:
             # The build has time to spare, so every list-only (Workday, SmartRecruiters) row it
             # keeps gets its description fetched and checked (WORKDAY_MAX_DETAIL_FEED /
             # SMARTRECRUITERS_MAX_DETAIL_FEED, default 2000 per board); rows past that budget are
             # left for the next build, never published unchecked.
+            # The career-site lane (sourcing/careersite.py) runs beside the board pass in its own
+            # threads and connections: different hosts, so neither slows the other's politeness.
+            lane = None
+            if crawler is None and fetch is None and os.environ.get("CAREERSITE_LANE", "1") != "0":
+                lane = _CareerSiteLane(jobs_db, log)
+                lane.start()
             if crawler is not None:
                 summary = crawler(w)
             else:
@@ -122,6 +156,13 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
                 log(f"[build_feed] boards {summary.get('boards_crawled')}/{len(boards)} from #{start}"
                     + (" (stopped at the time cap; the next run continues)"
                        if summary.get("stopped_early") else ""))
+            if lane is not None:
+                lane.join()
+                log(f"[build_feed] careersite: sites={len(lane.summaries)} "
+                    f"kept={sum(x['kept'] for x in lane.summaries)} "
+                    f"known={sum(x['known'] for x in lane.summaries)} "
+                    f"fetched={sum(x['fetched'] for x in lane.summaries)} "
+                    f"blocked={[x['host'] for x in lane.summaries if x['blocked']]}")
             pruned = w.prune_stale(PRUNE_DAYS)
             log(f"[build_feed] crawl: fetched={summary.get('fetched')} matched={summary.get('matched')} "
                 f"new={summary.get('new')} duplicates={summary.get('duplicates')} pruned={pruned} "

@@ -133,6 +133,45 @@ def test_build_feed_from_a_fake_crawl(tmp_path, monkeypatch):
     assert "Build sync." in sh["greenhouse:dropbox:11"]
 
 
+def test_the_public_build_keeps_every_title_but_still_searches_aggregators(tmp_path, monkeypatch):
+    """The seeded title list is a one-person search filter; the public board is for every field
+    a sponsor hires in. FEED_TITLE_FILTER=1 restores the narrowing."""
+    import backend.feed as feed
+    import sourcing.service as service
+    from scripts import build_feed
+    from sourcing.sponsors import SponsorDB
+    from sourcing.watchlist import Watchlist
+    monkeypatch.setattr(service, "SEED_WATCHLIST", tmp_path / "nope.csv")
+    monkeypatch.setattr(feed, "_sponsors", lambda path: SponsorDB(str(tmp_path / "s.db")))
+    monkeypatch.setenv("FREEHIRE_SPONSOR_ROWS", "0")
+    monkeypatch.delenv("FEED_TITLE_FILTER", raising=False)
+    gh = {"id": 12, "title": "Staff Accountant", "location": {"name": "Austin, TX"},
+          "absolute_url": "https://boards.greenhouse.io/dropbox/jobs/12",
+          "content": "<p>Close the books.</p>", "first_published": _TODAY}
+    searched: list[str] = []
+
+    def fake_fetch(url, timeout=20):
+        if "greenhouse.io" in url:
+            return {"jobs": [gh]}
+        if "remotive.com" in url:
+            searched.append(url)
+        return {} if "lever.co" not in url else []
+
+    build_feed.build(tmp_path / "out", tmp_path / "data", fetch=fake_fetch, log=lambda *a: None)
+    head = loads_maybe_gz((tmp_path / "out" / "jobs.json.gz").read_bytes())
+    assert "greenhouse:dropbox:12" in [j["source_id"] for j in head["jobs"]]
+    assert searched, "the keyword aggregators still run with their own terms"
+    w = Watchlist(feed._paths()[0])
+    crit = w.get_criteria()
+    w.close()
+    assert crit["titles"] == [] and crit["aggregator_terms"] == service.SEED_CRITERIA["titles"]
+
+    monkeypatch.setenv("FEED_TITLE_FILTER", "1")
+    build_feed.build(tmp_path / "out2", tmp_path / "data2", fetch=fake_fetch, log=lambda *a: None)
+    head = loads_maybe_gz((tmp_path / "out2" / "jobs.json.gz").read_bytes())
+    assert "greenhouse:dropbox:12" not in [j["source_id"] for j in head["jobs"]]
+
+
 def test_a_capped_crawl_resumes_where_the_last_run_stopped(tmp_path):
     # The first real run (2026-10-06) went past the workflow's 2-hour limit and was killed, which
     # saves nothing. Capped runs must instead walk the whole board list across runs.

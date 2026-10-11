@@ -74,6 +74,13 @@ jobs:
           # descriptions already stored are never re-read, so big boards still fill in over runs.
           WORKDAY_MAX_DETAIL_FEED: ${{ vars.WORKDAY_MAX_DETAIL_FEED || 200 }}
           SMARTRECRUITERS_MAX_DETAIL_FEED: ${{ vars.SMARTRECRUITERS_MAX_DETAIL_FEED || 200 }}
+          # The career-site lane (sourcing/careersite.py) runs beside the board pass: its own
+          # wall-clock cap, job pages read per site per run, and hosts crawled at once (each host
+          # still sees one request at a time). CAREERSITE_LANE=0 switches it off.
+          CAREERSITE_LANE: ${{ vars.CAREERSITE_LANE || 1 }}
+          CAREERSITE_MINUTES: ${{ vars.CAREERSITE_MINUTES || 60 }}
+          CAREERSITE_MAX_DETAIL: ${{ vars.CAREERSITE_MAX_DETAIL || 400 }}
+          CAREERSITE_WORKERS: ${{ vars.CAREERSITE_WORKERS || 4 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
             --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"
