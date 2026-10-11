@@ -336,5 +336,16 @@
   "signin.signoutFailed": "No se pudo cerrar sesión. Inténtalo de nuevo.",
   "signin.googleCancelled": "Se canceló el inicio de sesión con Google. No cambió nada.",
   "signin.keepPass": "Este dispositivo tiene un pase que aún no está vinculado a un correo. Inicia sesión con tu correo para conservarlo.",
-  "upg.thanksActive": "Pago recibido. Tu pase está activo y Stripe te envió el recibo por correo."
+  "upg.thanksActive": "Pago recibido. Tu pase está activo y Stripe te envió el recibo por correo.",
+  "acct.planUntil": "{plan} hasta el {date}",
+  "acct.planLeft": "Te quedan {i} entrevistas en vivo y {p} paquetes adaptados",
+  "acct.freeLeft": "Te quedan {p} paquetes adaptados este mes",
+  "acct.yourPass": "Tu pase",
+  "upg.freePlan": "Plan gratuito",
+  "upg.addDays": "Añadir 30 días más",
+  "upg.welcomeH": "Tienes el {plan}",
+  "upg.welcomeSub": "Activo hasta el {date}. Termina solo, no hay nada que cancelar.",
+  "upg.welcome1": "{i} entrevistas en vivo con un entrevistador en tiempo real",
+  "upg.welcome2": "{p} paquetes adaptados con nuestro mejor modelo de IA",
+  "upg.welcome3": "Todo lo del plan gratuito, como antes"
 }

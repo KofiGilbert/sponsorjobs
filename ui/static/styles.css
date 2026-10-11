@@ -2932,3 +2932,32 @@ body.cv-dragging * { cursor: grabbing !important; }
 
 /* Official app: own-key options belong to the open-source edition and never show here. */
 .is-managed .byok-only { display: none !important; }
+
+/* The plan, visible (2026-10-11). A small mark on the avatar while a pass is active. */
+.acct-ava { position: relative; }
+.acct-pass-dot { position: absolute; right: -2px; bottom: -2px; z-index: 2; width: 14px; height: 14px; border-radius: 50%;
+  background: #12b76a; border: 2px solid var(--sidebar, var(--bg)); }
+.acct-menu-plan { margin-top: 10px; padding: 9px 10px; border-radius: 10px; background: var(--surface-2); }
+.acct-menu-plan.is-pass { background: color-mix(in srgb, #12b76a 14%, var(--surface-2)); }
+.acct-menu-plan-name { font-size: 12.5px; font-weight: 650; color: var(--ink); }
+.acct-menu-plan-left { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.upg-plan.is-current-plan { box-shadow: 0 0 0 2px #12b76a inset; }
+.upg-plan.is-current-plan .upg-plan-hd::after { content: "Current plan"; display: inline-block; margin-top: 8px; font-size: 11px; font-weight: 700;
+  color: #067647; background: #ecfdf3; border: 1px solid #abefc6; border-radius: 999px; padding: 1px 8px; }
+/* Welcome after purchase */
+.welcome-pass { width: min(440px, calc(100vw - 32px)); background: var(--surface); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 16px; padding: 28px 28px 22px; text-align: center; box-shadow: var(--shadow-lg, 0 20px 50px rgba(0,0,0,.35)); }
+.welcome-pass-badge { display: inline-block; font-size: 12px; font-weight: 700; color: #067647; background: #ecfdf3; border: 1px solid #abefc6;
+  border-radius: 999px; padding: 2px 10px; }
+.welcome-pass-h { font-size: 22px; margin: 14px 0 6px; }
+.welcome-pass-sub { color: var(--muted); font-size: 13.5px; margin: 0 0 14px; }
+.welcome-pass-list { text-align: left; margin: 0 auto 14px; padding-left: 20px; max-width: 320px; font-size: 13.5px; line-height: 1.8; }
+.welcome-pass-foot { color: var(--faint); font-size: 12px; margin: 0 0 16px; }
+.welcome-pass-go { width: 100%; justify-content: center; }
+/* The pass dot sits on the avatar's edge: the avatar clips its photo by rounding the photo
+   itself, so the dot is not cut off. */
+.acct-ava { overflow: visible !important; }
+.acct-photo { border-radius: 50%; }
+.acct-pass-dot { width: 16px; height: 16px; right: -3px; bottom: -3px; }
+.upg-plan { position: relative; }
+.upg-plan.is-current-plan .upg-plan-hd::after { position: absolute; top: 16px; right: 16px; margin-top: 0; }

@@ -743,6 +743,26 @@ async function checkForUpdate() {
   } catch (e) { /* offline or rate-limited: try again next launch */ }
 }
 
+// sponsorjobs:// links bring the app to the front (Kofi, 2026-10-11). The browser pages that
+// finish a sign-in or a payment end with a link to sponsorjobs://..., the way Zoom, Slack and
+// VS Code hand you back to their apps: the browser asks once "Open SponsorJobs?" (with an
+// "always allow" box), then the app comes forward by itself. A browser tab we did not open by
+// script cannot be closed by the page, so the tab stays behind, saying you can close it.
+app.setAsDefaultProtocolClient("sponsorjobs");
+function bringToFront() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  app.focus({ steal: true });
+  win.focus();
+  win.webContents.send("app:returned");
+}
+app.on("open-url", (e) => { e.preventDefault(); bringToFront(); });   // macOS
+app.on("second-instance", (_e, argv) => {                            // Windows / Linux
+  if ((argv || []).some(a => String(a).startsWith("sponsorjobs://"))) bringToFront();
+  else bringToFront();
+});
+
 app.whenReady().then(async () => {
   // Dark window chrome regardless of launcher or OS: opt Electron into Windows' immersive
   // dark title bar (fixes the white frame on native-Windows launches). Harmless no-op under

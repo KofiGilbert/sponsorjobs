@@ -5958,6 +5958,7 @@ p{margin:6px 0 0;color:var(--muted)}
   history.replaceState(null, "", location.pathname + "?via=" + via);   // keep the token out of history
   function done(ok, msg) {
     if (via === "tab") { location.replace("/?signin=" + (ok ? "ok" : err)); return; }
+    if (ok) setTimeout(function () { location.href = "sponsorjobs://signed-in"; }, 400);   // back to the app
     document.getElementById("h").textContent = ok ? "You're signed in"
       : (err === "cancelled" ? "Sign-in cancelled" : "Sign-in didn't finish");
     document.getElementById("p").textContent = msg;

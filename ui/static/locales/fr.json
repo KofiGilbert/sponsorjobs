@@ -336,5 +336,16 @@
   "signin.signoutFailed": "Déconnexion impossible. Réessaie.",
   "signin.googleCancelled": "La connexion Google a été annulée. Rien n'a changé.",
   "signin.keepPass": "Cet appareil a un pass qui n'est lié à aucun e-mail. Connecte-toi avec ton e-mail pour le garder.",
-  "upg.thanksActive": "Paiement reçu. Ton pass est actif et Stripe t'a envoyé le reçu par e-mail."
+  "upg.thanksActive": "Paiement reçu. Ton pass est actif et Stripe t'a envoyé le reçu par e-mail.",
+  "acct.planUntil": "{plan} jusqu'au {date}",
+  "acct.planLeft": "Il te reste {i} entretiens en direct et {p} dossiers personnalisés",
+  "acct.freeLeft": "Il te reste {p} dossiers personnalisés ce mois-ci",
+  "acct.yourPass": "Ton pass",
+  "upg.freePlan": "Offre gratuite",
+  "upg.addDays": "Ajouter 30 jours",
+  "upg.welcomeH": "Tu as le {plan}",
+  "upg.welcomeSub": "Actif jusqu'au {date}. Il se termine tout seul, rien à résilier.",
+  "upg.welcome1": "{i} entretiens en direct avec un recruteur en temps réel",
+  "upg.welcome2": "{p} dossiers personnalisés avec notre meilleur modèle d'IA",
+  "upg.welcome3": "Tout ce qu'inclut l'offre gratuite, comme avant"
 }

@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // Stripe checkout finished in the pane and returned to our app; the shell closed the pane and
   // hands us the result ('success'|'cancel') so the main window can confirm cleanly.
   onCheckoutReturn: (cb) => ipcRenderer.on("checkout:return", (_e, status) => cb(status)),
+  onReturned: (cb) => ipcRenderer.on("app:returned", () => cb()),
   // 'Continue with Google' finished in the pane; the shell closed it and hands us {token} (or
   // {error:true}) so the main window can adopt the account and carry on.
   onSigninReturn: (cb) => ipcRenderer.on("signin:return", (_e, data) => cb(data)),
