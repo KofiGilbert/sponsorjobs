@@ -335,5 +335,6 @@
   "signin.signedOut": "Abgemeldet.",
   "signin.signoutFailed": "Abmelden fehlgeschlagen. Versuche es erneut.",
   "signin.googleCancelled": "Die Google-Anmeldung wurde abgebrochen. Nichts wurde geändert.",
-  "signin.keepPass": "Auf diesem Gerät gibt es einen Pass, der noch mit keiner E-Mail verknüpft ist. Melde dich mit deiner E-Mail an, damit der Pass bei dir bleibt."
+  "signin.keepPass": "Auf diesem Gerät gibt es einen Pass, der noch mit keiner E-Mail verknüpft ist. Melde dich mit deiner E-Mail an, damit der Pass bei dir bleibt.",
+  "upg.thanksActive": "Zahlung erhalten. Dein Pass ist aktiv, und Stripe hat dir die Quittung gemailt."
 }

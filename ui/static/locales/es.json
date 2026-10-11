@@ -335,5 +335,6 @@
   "signin.signedOut": "Sesión cerrada.",
   "signin.signoutFailed": "No se pudo cerrar sesión. Inténtalo de nuevo.",
   "signin.googleCancelled": "Se canceló el inicio de sesión con Google. No cambió nada.",
-  "signin.keepPass": "Este dispositivo tiene un pase que aún no está vinculado a un correo. Inicia sesión con tu correo para conservarlo."
+  "signin.keepPass": "Este dispositivo tiene un pase que aún no está vinculado a un correo. Inicia sesión con tu correo para conservarlo.",
+  "upg.thanksActive": "Pago recibido. Tu pase está activo y Stripe te envió el recibo por correo."
 }

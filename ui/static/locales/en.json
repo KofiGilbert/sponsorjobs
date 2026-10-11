@@ -335,5 +335,6 @@
   "signin.signedOut": "Signed out.",
   "signin.signoutFailed": "Couldn't sign out. Try again.",
   "signin.googleCancelled": "Google sign-in was cancelled. Nothing changed.",
-  "signin.keepPass": "This device has a pass that isn't linked to an email yet. Sign in with your email so the pass stays with you."
+  "signin.keepPass": "This device has a pass that isn't linked to an email yet. Sign in with your email so the pass stays with you.",
+  "upg.thanksActive": "Payment received. Your pass is active, and Stripe has emailed your receipt."
 }

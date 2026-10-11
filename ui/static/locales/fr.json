@@ -335,5 +335,6 @@
   "signin.signedOut": "Déconnecté.",
   "signin.signoutFailed": "Déconnexion impossible. Réessaie.",
   "signin.googleCancelled": "La connexion Google a été annulée. Rien n'a changé.",
-  "signin.keepPass": "Cet appareil a un pass qui n'est lié à aucun e-mail. Connecte-toi avec ton e-mail pour le garder."
+  "signin.keepPass": "Cet appareil a un pass qui n'est lié à aucun e-mail. Connecte-toi avec ton e-mail pour le garder.",
+  "upg.thanksActive": "Paiement reçu. Ton pass est actif et Stripe t'a envoyé le reçu par e-mail."
 }

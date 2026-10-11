@@ -305,3 +305,19 @@ describe("test mode is for named testers only", () => {
     expect((await call("/billing/passes/pass30/checkout", { token: other.token, body: {}, env: STRIPE })).status).toBe(200);
   });
 });
+
+describe("receipts", () => {
+  it("checkout uses Stripe's free receipt, not paid post-payment invoices", async () => {
+    const sent: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      sent.push(String((init as RequestInit)?.body ?? ""));
+      return new Response(JSON.stringify({ id: "cs_1", url: "https://checkout.stripe.com/c/pay/cs_1" }));
+    });
+    const { id, token } = await newAccount();
+    await env.DB.prepare("UPDATE accounts SET email = 'a@b.co' WHERE account_id = ?").bind(id).run();
+    expect((await call("/billing/passes/pass30/checkout", { token, body: {}, env: STRIPE })).status).toBe(200);
+    const body = new URLSearchParams(sent[0]);
+    expect(body.get("invoice_creation[enabled]")).toBeNull();   // 0.4% a purchase; off until Kofi says yes
+    expect(body.get("customer_email")).toBe("a@b.co");          // the free receipt goes here
+  });
+});
