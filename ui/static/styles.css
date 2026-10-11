@@ -2961,3 +2961,8 @@ body.cv-dragging * { cursor: grabbing !important; }
 .acct-pass-dot { width: 16px; height: 16px; right: -3px; bottom: -3px; }
 .upg-plan { position: relative; }
 .upg-plan.is-current-plan .upg-plan-hd::after { position: absolute; top: 16px; right: 16px; margin-top: 0; }
+/* With a photo, nothing sits over it: hide the grey silhouette placeholder and lift the photo
+   above the avatar's grey background (Kofi, 2026-10-11: the photo looked washed out). */
+.acct-photo:not([hidden]) + .acct-ph { display: none; }
+.acct-photo { z-index: 1; }
+.acct-ava:has(.acct-photo:not([hidden])) { background: none; }
