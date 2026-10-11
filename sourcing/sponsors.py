@@ -341,6 +341,111 @@ class SponsorRecord:
                        "The role must be on the TN profession list. Not a guarantee.")},
         ]
 
+def _matching_candidates(norm: str, allow_prefix: bool, cands) -> list[str]:
+    """Which candidate names (exact + whole-word parents + children) a query matches."""
+    out: list[str] = []
+    for cand in cands:
+        if cand == norm:
+            out.append(cand)
+            continue
+        if not allow_prefix:
+            continue
+        # Query is the parent: "amazon" -> "amazon web services". Safe, because
+        # allow_prefix already required the query to be multi-token or a curated brand.
+        if cand.startswith(norm + " "):
+            out.append(cand)
+            continue
+        # Candidate is the parent: "first united bank" ends up here against a DB entry
+        # whose norm is just "first". The old code accepted ANY such candidate, and the
+        # guard above only ever examined the QUERY's shape — so "First Co" (norm:
+        # "first", 3 approvals) lent its H-1B badge to First United Bank, and 59,151
+        # single-token employers in the real data ("american", "global", "premier"...)
+        # could each do the same to any name starting with their word. A candidate may
+        # only lend downward if IT is distinctive too: multi-token, or a curated brand.
+        if norm.startswith(cand + " ") and ((" " in cand) or (cand in _BRAND_PREFIXES)):
+            out.append(cand)
+    return out
+
+
+def _fiscal_year(value) -> int:
+    """US federal fiscal year of a date value ('2025-03-04', '03/04/2025', a datetime); 0 if
+    unreadable."""
+    if value in (None, ""):
+        return 0
+    if isinstance(value, _dt.datetime):
+        value = value.date()
+    if isinstance(value, _dt.date):
+        return value.year + (1 if value.month >= 10 else 0)
+    s = str(value).strip()[:10]
+    try:
+        d = _dt.date.fromisoformat(s)
+    except ValueError:
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", s)
+        if not m:
+            return 0
+        try:
+            d = _dt.date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
+        except ValueError:
+            return 0
+    return d.year + (1 if d.month >= 10 else 0)
+
+
+H1B_YEAR_COLS = ["norm_name", "fy", "initial_approvals", "initial_denials",
+                 "continuing_approvals", "continuing_denials"]
+
+
+def _combine_wage_cells(cells, scope: str, title: str, family: str, city: str,
+                        state: str) -> dict:
+    """One answer from several wage cells (years, cities, titles): counts add, the range is
+    the outer range, the median is the weighted median of cell medians (an approximation,
+    said so in `median_note`), levels add, and the prevailing wage per level is the
+    count-weighted mean of the cells' medians."""
+    n = sum(int(c["n"]) for c in cells)
+    ordered = sorted(cells, key=lambda c: int(c["wage_median"]))
+    half, acc, med = n / 2, 0, int(ordered[-1]["wage_median"])
+    for c in ordered:
+        acc += int(c["n"])
+        if acc >= half:
+            med = int(c["wage_median"])
+            break
+    lv = {l: sum(int(c[f"lvl{l}"]) for c in cells) for l in (1, 2, 3, 4)}
+    pw = {}
+    for l in (1, 2, 3, 4):
+        w = [(int(c[f"pw{l}"]), int(c[f"lvl{l}"]) or 1) for c in cells if int(c[f"pw{l}"])]
+        pw[l] = int(round(sum(v * k for v, k in w) / sum(k for _, k in w))) if w else 0
+    levelled = sum(lv.values())
+    top = max(lv, key=lambda l: (lv[l], l)) if levelled else 0
+    fys = sorted({int(c["fy"]) for c in cells})
+    titles = sorted({c["title"] for c in cells}, key=lambda t: -sum(int(c["n"]) for c in cells if c["title"] == t))
+    cities = sorted({(c["city"], c["state"]) for c in cells})
+    scope_note = {
+        "title_city": "", "title_state": f"Across their {state} worksites.",
+        "title": "Across all their worksites.",
+        "family_city": f"Across their {(family or title).title()} titles at this worksite.",
+        "family_state": f"Across their {(family or title).title()} titles in {state}.",
+        "family": f"Across their {(family or title).title()} titles at every worksite.",
+        "employer": "Across every title and worksite they filed for.",
+    }.get(scope, "")
+    return {
+        "scope": scope, "scope_note": scope_note, "n": n,
+        "wage_min": min(int(c["wage_min"]) for c in cells),
+        "wage_median": med, "wage_max": max(int(c["wage_max"]) for c in cells),
+        "median_note": "" if len(cells) == 1 else "median is the weighted median of the matching cells",
+        "levels": lv, "levelled": levelled, "top_level": top,
+        "top_level_share": round(lv[top] / levelled, 3) if top else 0,
+        "pw1": pw[1], "pw2": pw[2], "pw3": pw[3], "pw4": pw[4],
+        "fiscal_years": fys, "cells": len(cells),
+        "title_label": (title.strip() if scope.startswith("title") and title else
+                        (family or title).title() if scope.startswith("family") else "all titles"),
+        "titles": titles[:5],
+        "city": city.title() if scope.endswith("_city") and city else "",
+        "state": state if scope.endswith(("_city", "_state")) and state else "",
+        "worksites": len(cities),
+        "soc_code": next((c["soc_code"] for c in ordered[::-1] if c["soc_code"]), ""),
+        "source": "DOL LCA disclosure data (certified H-1B filings)",
+    }
+
+
 def _merge_records(matches: list["SponsorRecord"]) -> "SponsorRecord":
     """One employer from its several filing entities: counts add up, the biggest entity lends its
     display name, NAICS and state. Tie-break on perm then name so the pick is DETERMINISTIC."""
@@ -381,6 +486,37 @@ class SponsorDB:
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(sponsor_employer)")}
         if "perm_certs" not in cols:
             self._conn.execute("ALTER TABLE sponsor_employer ADD COLUMN perm_certs INTEGER DEFAULT 0")
+        # Per-employer depth (2026-10), all additive so an older database keeps working:
+        # the two DOL LCA attestation flags on the employer row, and three side tables for
+        # the year-by-year history and the wage aggregate. The totals columns above stay the
+        # badge's source of truth; these only add detail behind it.
+        for col in ("h1b_dependent", "willful_violator"):
+            if col not in cols:
+                self._conn.execute(f"ALTER TABLE sponsor_employer ADD COLUMN {col} INTEGER DEFAULT 0")
+        # USCIS H-1B Employer Data Hub, one row per employer and fiscal year: initial and
+        # continuing approvals AND denials (the seed carries only the approval total).
+        self._conn.execute("""CREATE TABLE IF NOT EXISTS sponsor_h1b_year (
+            norm_name TEXT NOT NULL, fy INTEGER NOT NULL,
+            initial_approvals INTEGER DEFAULT 0, initial_denials INTEGER DEFAULT 0,
+            continuing_approvals INTEGER DEFAULT 0, continuing_denials INTEGER DEFAULT 0,
+            PRIMARY KEY(norm_name, fy))""")
+        # DOL PERM: certified cases per employer and fiscal year of the decision.
+        self._conn.execute("""CREATE TABLE IF NOT EXISTS sponsor_perm_year (
+            norm_name TEXT NOT NULL, fy INTEGER NOT NULL, certs INTEGER DEFAULT 0,
+            PRIMARY KEY(norm_name, fy))""")
+        # DOL LCA wage cells: employer x fiscal year x normalized title x worksite city/state
+        # (sourcing/lca.py builds them; pw1..pw4 are the median prevailing wage per level).
+        self._conn.execute("""CREATE TABLE IF NOT EXISTS sponsor_lca_wage (
+            norm_name TEXT NOT NULL, fy INTEGER NOT NULL, title TEXT NOT NULL,
+            family TEXT DEFAULT '', city TEXT NOT NULL, state TEXT NOT NULL,
+            soc_code TEXT DEFAULT '', n INTEGER DEFAULT 0,
+            wage_min INTEGER DEFAULT 0, wage_median INTEGER DEFAULT 0, wage_max INTEGER DEFAULT 0,
+            lvl1 INTEGER DEFAULT 0, lvl2 INTEGER DEFAULT 0, lvl3 INTEGER DEFAULT 0,
+            lvl4 INTEGER DEFAULT 0, pw1 INTEGER DEFAULT 0, pw2 INTEGER DEFAULT 0,
+            pw3 INTEGER DEFAULT 0, pw4 INTEGER DEFAULT 0,
+            PRIMARY KEY(norm_name, fy, title, city, state))""")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS sponsor_lca_wage_family "
+                           "ON sponsor_lca_wage(norm_name, family)")
         self._conn.commit()
         # lookup() no longer holds all 717k employers in RAM (that ~290MB build was a multi-second
         # CPU spike on boot that starved the 1-CPU broker's health check -> Render restart loop).
@@ -412,11 +548,14 @@ class SponsorDB:
         "Initial Approval", ...) and the Tableau dashboard's crosstab export ("Employer
         (Petitioner) Name", "Initial Approvals", ...), see `canonical_h1b_rows`."""
         agg: dict[str, dict] = {}
+        years: dict[tuple, list[int]] = {}
         for r in canonical_h1b_rows(rows):
             raw = (r.get("Employer") or "").strip()
             if not raw:
                 continue
-            approvals = _int(r.get("Initial Approval")) + _int(r.get("Continuing Approval"))
+            ia, ca = _int(r.get("Initial Approval")), _int(r.get("Continuing Approval"))
+            idn, cdn = _int(r.get("Initial Denial")), _int(r.get("Continuing Denial"))
+            approvals = ia + ca
             fy = _int(r.get("Fiscal Year"))
             naics, state = str(r.get("NAICS") or ""), str(r.get("State") or "")
             for variant in re.split(r"\s+dba\s+", raw, flags=re.I):
@@ -431,6 +570,19 @@ class SponsorDB:
                 a["fy_min"] = fy if not a["fy_min"] else min(a["fy_min"], fy)
                 if _is_cap_exempt(naics, variant):
                     a["cap"] = True
+                if fy:
+                    y = years.setdefault((norm, fy), [0, 0, 0, 0])
+                    y[0] += ia; y[1] += idn; y[2] += ca; y[3] += cdn
+        # The per-year detail (approvals AND denials) is SET per employer and year, so
+        # re-adding a year never doubles it, unlike the additive total above.
+        self._conn.executemany(
+            "INSERT INTO sponsor_h1b_year(norm_name, fy, initial_approvals, initial_denials, "
+            "continuing_approvals, continuing_denials) VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(norm_name, fy) DO UPDATE SET "
+            "initial_approvals=excluded.initial_approvals, initial_denials=excluded.initial_denials, "
+            "continuing_approvals=excluded.continuing_approvals, "
+            "continuing_denials=excluded.continuing_denials",
+            [(n, fy, *v) for (n, fy), v in years.items()])
         for norm, a in agg.items():
             self._conn.execute(
                 "INSERT INTO sponsor_employer(norm_name, display_name, h1b_approvals, "
@@ -469,18 +621,273 @@ class SponsorDB:
         cases per employer -> perm_certs. Column names vary by year, so we resolve the
         employer/status columns by header match."""
         agg: dict[str, dict] = {}
+        years: dict[tuple, int] = {}
         for r in rows:
-            emp = _pick(r, ("EMPLOYER_NAME", "EMPLOYER_LEGAL_BUSINESS_NAME", "Employer"))
+            emp = _pick(r, ("EMPLOYER_NAME", "EMPLOYER_LEGAL_BUSINESS_NAME", "EMP_BUSINESS_NAME",
+                            "Employer"))
             status = _pick(r, ("CASE_STATUS", "STATUS")).strip().lower()
             if not emp or "certif" not in status:   # keep Certified / Certified-Expired
                 continue
+            fy = _fiscal_year(_pick(r, ("DECISION_DATE", "CASE_RECEIVED_DATE", "RECEIVED_DATE")))
             for variant in re.split(r"\s+dba\s+", emp, flags=re.I):
                 norm = normalize_employer(variant)
                 if not norm:
                     continue
                 a = agg.setdefault(norm, {"display": variant.strip().title(), "val": 0})
                 a["val"] += 1
+                if fy:
+                    years[(norm, fy)] = years.get((norm, fy), 0) + 1
+        self._set_perm_years(years)
         return self._upsert_flag(agg, "perm_certs", addvalue=True)
+
+    def _set_perm_years(self, years: dict) -> None:
+        """Per-year PERM counts take the larger value per (employer, fiscal year): a file
+        imported twice, or a cumulative quarter on top of an earlier one, never doubles."""
+        if years:
+            self._conn.executemany(
+                "INSERT INTO sponsor_perm_year(norm_name, fy, certs) VALUES(?,?,?) "
+                "ON CONFLICT(norm_name, fy) DO UPDATE SET certs=MAX(certs, excluded.certs)",
+                [(n, fy, c) for (n, fy), c in years.items()])
+
+    def ingest_perm_year_counts(self, rows) -> int:
+        """The bundled per-year green-card list (EMPLOYER_NAME, FY, PERM_CERTS) from
+        scripts/build_perm_bundle.py. Does not touch the perm_certs total."""
+        years: dict[tuple, int] = {}
+        for r in rows:
+            emp = _pick(r, ("EMPLOYER_NAME", "Employer"))
+            fy, n = _int(_pick(r, ("FY", "FISCAL_YEAR"))), _int(_pick(r, ("PERM_CERTS", "CERTS")))
+            if not emp or not fy or n <= 0:
+                continue
+            for variant in re.split(r"\s+dba\s+", emp, flags=re.I):
+                norm = normalize_employer(variant)
+                if norm:
+                    years[(norm, fy)] = years.get((norm, fy), 0) + n
+        self._set_perm_years(years)
+        self._ensure_employer_rows({n for n, _ in years})
+        self._conn.commit()
+        return len(years)
+
+    # -- per-employer depth: year rows, LCA wages, flags ------------------- #
+    def ingest_h1b_year_rows(self, rows) -> int:
+        """Per-year H-1B rows already keyed by normalized name (the committed history bundle
+        seed/h1b_history.csv.gz, or a snapshot): norm_name, fy, initial_approvals,
+        initial_denials, continuing_approvals, continuing_denials. SET per (employer, year)."""
+        batch = []
+        for r in rows:
+            norm, fy = str(r.get("norm_name") or "").strip(), _int(r.get("fy"))
+            if not norm or not fy:
+                continue
+            batch.append((norm, fy, _int(r.get("initial_approvals")), _int(r.get("initial_denials")),
+                          _int(r.get("continuing_approvals")), _int(r.get("continuing_denials"))))
+        if batch:
+            self._conn.executemany(
+                "INSERT INTO sponsor_h1b_year(norm_name, fy, initial_approvals, initial_denials, "
+                "continuing_approvals, continuing_denials) VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(norm_name, fy) DO UPDATE SET "
+                "initial_approvals=excluded.initial_approvals, "
+                "initial_denials=excluded.initial_denials, "
+                "continuing_approvals=excluded.continuing_approvals, "
+                "continuing_denials=excluded.continuing_denials", batch)
+            self._ensure_employer_rows({b[0] for b in batch})
+            self._conn.commit()
+        return len(batch)
+
+    def _ensure_employer_rows(self, norms) -> None:
+        """A year row needs an employer row for lookup() / history() to find it. Adds a bare
+        row (name only, no counts, so no badge) for any name the employer table lacks."""
+        self._conn.executemany(
+            "INSERT OR IGNORE INTO sponsor_employer(norm_name, display_name) VALUES(?,?)",
+            [(n, n.title()) for n in norms])
+
+    def h1b_year_rows(self, min_fy: int = 0):
+        """Every per-year H-1B row (dicts in H1B_YEAR_COLS order), name then year, for the
+        history bundle writer."""
+        cur = self._conn.execute(
+            f"SELECT {','.join(H1B_YEAR_COLS)} FROM sponsor_h1b_year WHERE fy >= ? "
+            "ORDER BY norm_name, fy", (int(min_fy),))
+        for r in cur:
+            yield dict(zip(H1B_YEAR_COLS, r))
+
+    def h1b_year_fiscal_years(self) -> list[int]:
+        return [r[0] for r in self._conn.execute(
+            "SELECT DISTINCT fy FROM sponsor_h1b_year ORDER BY fy")]
+
+    def perm_year_fiscal_years(self) -> list[int]:
+        return [r[0] for r in self._conn.execute(
+            "SELECT DISTINCT fy FROM sponsor_perm_year ORDER BY fy")]
+
+    def ingest_lca_wage_rows(self, rows) -> int:
+        """Wage cells from sourcing/lca.py (bundle rows or LCAAggregate.cells()). Each cell is
+        REPLACED by key, so re-importing a quarter or a newer cumulative file is idempotent."""
+        from sourcing.lca import WAGE_COLS, WAGE_INT_COLS
+        batch = []
+        for r in rows:
+            vals = {c: (_int(r.get(c)) if c in WAGE_INT_COLS else str(r.get(c) or ""))
+                    for c in WAGE_COLS}
+            if not vals["norm_name"] or not vals["fy"] or not vals["title"] or vals["n"] <= 0:
+                continue
+            batch.append(tuple(vals[c] for c in WAGE_COLS))
+        if batch:
+            from sourcing.lca import WAGE_COLS as cols
+            self._conn.executemany(
+                f"INSERT OR REPLACE INTO sponsor_lca_wage({','.join(cols)}) "
+                f"VALUES({','.join('?' * len(cols))})", batch)
+            self._conn.commit()
+        return len(batch)
+
+    def ingest_lca_flag_rows(self, rows) -> int:
+        """Employer attestation flags from the LCA files (norm_name or EMPLOYER_NAME,
+        h1b_dependent, willful_violator). A flag is never lowered; an employer not yet in the
+        table is added with its display name so the flag can be looked up."""
+        batch = []
+        for r in rows:
+            norm = str(r.get("norm_name") or "").strip() or normalize_employer(
+                _pick(r, ("EMPLOYER_NAME", "Employer")))
+            if not norm:
+                continue
+            dep = 1 if str(r.get("h1b_dependent") or "").strip().lower() in ("1", "y", "yes", "true") else 0
+            wv = 1 if str(r.get("willful_violator") or "").strip().lower() in ("1", "y", "yes", "true") else 0
+            batch.append((norm, str(r.get("display_name") or "").strip() or norm.title(), dep, wv))
+        if batch:
+            self._conn.executemany(
+                "INSERT INTO sponsor_employer(norm_name, display_name, h1b_dependent, willful_violator) "
+                "VALUES(?,?,?,?) ON CONFLICT(norm_name) DO UPDATE SET "
+                "h1b_dependent=MAX(h1b_dependent, excluded.h1b_dependent), "
+                "willful_violator=MAX(willful_violator, excluded.willful_violator)", batch)
+            self._conn.commit()
+            self._invalidate_index()
+        return len(batch)
+
+    def lca_stats(self) -> dict:
+        row = self._conn.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT norm_name), MIN(fy), MAX(fy) FROM sponsor_lca_wage"
+        ).fetchone()
+        return {"cells": row[0] or 0, "employers": row[1] or 0,
+                "fiscal_years": list(range(row[2], row[3] + 1)) if row[2] and row[3] else []}
+
+    def matched_norms(self, company: str) -> list[str]:
+        """The normalized filing-entity names `lookup(company)` aggregates (the same
+        conservative match), so the side tables can be read for the same employer."""
+        variants = [_ALIASES.get(n, n) for n in normalize_employer_variants(company)]
+        out: list[str] = []
+        for v in variants:
+            for n in self._matched_one(v):
+                if n not in out:
+                    out.append(n)
+        return out
+
+    def history(self, company: str, years: int = 10) -> dict | None:
+        """Year-by-year record for an employer: H-1B approvals and denials per fiscal year
+        (USCIS Data Hub), PERM certifications per fiscal year (DOL), and the three flags.
+        None when the company is not in the store. The newest `years` fiscal years are kept."""
+        norms = self.matched_norms(company)
+        if not norms:
+            return None
+        rec = self.lookup(company)
+        marks = ",".join("?" * len(norms))
+        by_fy: dict[int, dict] = {}
+        for r in self._conn.execute(
+                f"SELECT fy, SUM(initial_approvals), SUM(initial_denials), "
+                f"SUM(continuing_approvals), SUM(continuing_denials) FROM sponsor_h1b_year "
+                f"WHERE norm_name IN ({marks}) GROUP BY fy", norms):
+            y = by_fy.setdefault(int(r[0]), {"fy": int(r[0]), "initial_approvals": 0, "initial_denials": 0,
+                                              "continuing_approvals": 0, "continuing_denials": 0,
+                                              "approvals": 0, "denials": 0, "perm": 0})
+            y["initial_approvals"], y["initial_denials"] = int(r[1] or 0), int(r[2] or 0)
+            y["continuing_approvals"], y["continuing_denials"] = int(r[3] or 0), int(r[4] or 0)
+            y["approvals"] = y["initial_approvals"] + y["continuing_approvals"]
+            y["denials"] = y["initial_denials"] + y["continuing_denials"]
+        for r in self._conn.execute(
+                f"SELECT fy, SUM(certs) FROM sponsor_perm_year WHERE norm_name IN ({marks}) "
+                "GROUP BY fy", norms):
+            y = by_fy.setdefault(int(r[0]), {"fy": int(r[0]), "initial_approvals": 0, "initial_denials": 0,
+                                              "continuing_approvals": 0, "continuing_denials": 0,
+                                              "approvals": 0, "denials": 0, "perm": 0})
+            y["perm"] = int(r[1] or 0)
+        flags_row = self._conn.execute(
+            f"SELECT MAX(h1b_dependent), MAX(willful_violator), MAX(cap_exempt) "
+            f"FROM sponsor_employer WHERE norm_name IN ({marks})", norms).fetchone()
+        rows = [by_fy[k] for k in sorted(by_fy)][-max(1, int(years)):]
+        last5 = [y for y in rows if y["fy"] > (rows[-1]["fy"] - 5)] if rows else []
+        appr5 = sum(y["approvals"] for y in last5)
+        den5 = sum(y["denials"] for y in last5)
+        rate = round(den5 / (appr5 + den5), 3) if (appr5 + den5) else None
+        return {
+            "matched_name": rec.display_name if rec else company,
+            "years": rows,
+            "h1b_total": rec.h1b_approvals if rec else sum(y["approvals"] for y in rows),
+            "perm_total": rec.perm_certs if rec else sum(y["perm"] for y in rows),
+            "approvals_5y": appr5, "denials_5y": den5, "denial_rate_5y": rate,
+            "fy_span": (f"FY{rows[0]['fy']}" if len(rows) == 1 else
+                        f"FY{rows[0]['fy']} to {rows[-1]['fy']}") if rows else "",
+            "flags": {"h1b_dependent": bool(flags_row[0]), "willful_violator": bool(flags_row[1]),
+                      "cap_exempt": bool(flags_row[2]) or bool(rec and rec.cap_exempt)},
+            "has_years": bool(rows),
+            "sources": {"h1b": "USCIS H-1B Employer Data Hub", "perm": "DOL PERM disclosure data",
+                        "flags": "DOL LCA disclosure data (H-1B dependent, willful violator); "
+                                 "cap-exempt is a name and industry heuristic"},
+        }
+
+    def wages(self, company: str, title: str = "", city: str = "", state: str = "") -> dict | None:
+        """This employer's LCA wage picture for a job, narrowing from the exact title in the
+        exact city, to the title anywhere in the state, the title anywhere, the title FAMILY
+        (seniority words stripped) in the city, the family anywhere, and finally the employer
+        as a whole. The result says which scope answered (`scope`), the filing count, min /
+        median / max annual wage, the level split with the most common level, the median
+        prevailing wage per level, and the fiscal years covered. None when there is nothing."""
+        from sourcing.lca import normalize_title, title_family
+        norms = self.matched_norms(company)
+        if not norms:
+            return None
+        marks = ",".join("?" * len(norms))
+        t = normalize_title(title)
+        fam = title_family(title) if title else ""
+        c, s = (city or "").strip().upper(), (state or "").strip().upper()[:2]
+        attempts = []
+        if t:
+            if c and s:
+                attempts.append(("title_city", "title=? AND city=? AND state=?", (t, c, s)))
+            if s:
+                attempts.append(("title_state", "title=? AND state=?", (t, s)))
+            attempts.append(("title", "title=?", (t,)))
+        if fam and fam != t:
+            if c and s:
+                attempts.append(("family_city", "family=? AND city=? AND state=?", (fam, c, s)))
+            if s:
+                attempts.append(("family_state", "family=? AND state=?", (fam, s)))
+            attempts.append(("family", "family=?", (fam,)))
+        elif fam:
+            if c and s:
+                attempts.append(("family_city", "family=? AND city=? AND state=?", (fam, c, s)))
+            attempts.append(("family", "family=?", (fam,)))
+        attempts.append(("employer", "1=1", ()))
+        for scope, where, params in attempts:
+            cells = self._conn.execute(
+                f"SELECT * FROM sponsor_lca_wage WHERE norm_name IN ({marks}) AND {where}",
+                (*norms, *params)).fetchall()
+            if cells:
+                return _combine_wage_cells(cells, scope, title, fam, c, s)
+        return None
+
+    def _matched_one(self, norm: str) -> list[str]:
+        """The candidate rows one normalized spelling matches (see _lookup_one)."""
+        if not norm:
+            return []
+        allow_prefix = (" " in norm) or (norm in _BRAND_PREFIXES)
+        if allow_prefix:
+            parts = norm.split(" ")
+            wanted = [norm] + [" ".join(parts[:i]) for i in range(1, len(parts))]
+            marks = ",".join("?" * len(wanted))
+            with self._index_lock:
+                rows = self._conn.execute(
+                    f"SELECT norm_name FROM sponsor_employer WHERE norm_name IN ({marks}) "
+                    "OR (norm_name >= ? AND norm_name < ?)",
+                    (*wanted, norm + " ", norm + " ￿")).fetchall()
+        else:
+            with self._index_lock:
+                rows = self._conn.execute(
+                    "SELECT norm_name FROM sponsor_employer WHERE norm_name = ?", (norm,)).fetchall()
+        return _matching_candidates(norm, allow_prefix, [r[0] for r in rows])
 
     def ingest_perm_counts(self, rows) -> int:
         """Ingest the compact BUNDLED green-card list (EMPLOYER_NAME, PERM_CERTS) that
@@ -759,27 +1166,7 @@ class SponsorDB:
                index: dict[str, SponsorRecord]) -> SponsorRecord | None:
         """Conservative aggregation over a SMALL candidate set (exact + parents + children).
         Unchanged from the original bucket loop, just fed SQL-fetched candidates."""
-        matches: list[SponsorRecord] = []
-        for cand in index:
-            if cand == norm:
-                matches.append(index[cand])
-                continue
-            if not allow_prefix:
-                continue
-            # Query is the parent: "amazon" -> "amazon web services". Safe, because
-            # allow_prefix already required the query to be multi-token or a curated brand.
-            if cand.startswith(norm + " "):
-                matches.append(index[cand])
-                continue
-            # Candidate is the parent: "first united bank" ends up here against a DB entry
-            # whose norm is just "first". The old code accepted ANY such candidate, and the
-            # guard above only ever examined the QUERY's shape — so "First Co" (norm:
-            # "first", 3 approvals) lent its H-1B badge to First United Bank, and 59,151
-            # single-token employers in the real data ("american", "global", "premier"...)
-            # could each do the same to any name starting with their word. A candidate may
-            # only lend downward if IT is distinctive too: multi-token, or a curated brand.
-            if norm.startswith(cand + " ") and ((" " in cand) or (cand in _BRAND_PREFIXES)):
-                matches.append(index[cand])
+        matches = [index[c] for c in _matching_candidates(norm, allow_prefix, list(index))]
         if not matches:
             return None
         if len(matches) == 1:

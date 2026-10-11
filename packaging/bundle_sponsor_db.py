@@ -51,7 +51,9 @@ EVERIFY = ROOT / "config" / "everify_employers.csv.gz"
 # means someone changed the schema or pointed this at the wrong file: refuse either way.
 # sponsor_meta is a handful of ingest timestamps, and shipping it is a feature: the buyer's
 # app then reports the snapshot's real age ("updated ...") instead of pretending it is fresh.
-ALLOWED_TABLES = {"sponsor_employer", "sponsor_meta"}
+ALLOWED_TABLES = {"sponsor_employer", "sponsor_meta",
+                  # per-employer depth (2026-10): year rows, PERM by year, LCA wage cells
+                  "sponsor_h1b_year", "sponsor_perm_year", "sponsor_lca_wage"}
 # A real ingest is hundreds of thousands of employers; a nearly-empty file means the dev
 # DB was reset and shipping it would recreate the exact bug this exists to fix.
 MIN_EMPLOYERS = 50_000
