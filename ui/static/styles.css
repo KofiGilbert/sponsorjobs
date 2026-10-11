@@ -1244,6 +1244,62 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .fd-company-track { font-size: 12.5px; line-height: 1.55; color: var(--ink-2); margin: 8px 0 0; }
 .fd-company-track b { color: var(--ink); font-weight: 650; }
 
+/* Per-employer depth inside the About strip: flag chips, the year-by-year bars, the LCA wage
+   line and the offer check. Same quiet palette: one good hue for approvals, the flag hue for
+   denials, everything else ink and muted. Numbers tabular so columns of years line up. */
+.fd-depth:empty { display: none; }
+.fd-flags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.fd-flag { font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; padding: 1.5px 8px; border-radius: var(--r-pill);
+  color: var(--ink-2); border: 1px solid var(--border-strong); background: transparent; cursor: help; }
+.fd-flag-warn { color: var(--flag); border-color: color-mix(in srgb, var(--flag) 40%, transparent); background: var(--flag-soft); }
+.fd-flag-bad { color: var(--flag); border-color: color-mix(in srgb, var(--flag) 70%, transparent); background: var(--flag-soft); font-weight: 700; }
+.fd-hist { margin-top: 12px; }
+.fd-hist-h { font-size: 12px; font-weight: 650; color: var(--ink); }
+.fd-hist-sub { font-weight: 500; color: var(--muted); margin-left: 4px; }
+.fd-bars { display: flex; align-items: flex-end; gap: 6px; height: 78px; margin-top: 8px; padding-bottom: 0; }
+.fd-bar { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: stretch; height: 100%; cursor: help; }
+.fd-bar-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; border-bottom: 1px solid var(--border-strong); }
+.fd-bar-app { display: block; background: var(--good); border-radius: 3px 3px 0 0; min-height: 2px; }
+.fd-bar-den { display: block; background: var(--flag); border-radius: 3px 3px 0 0; min-height: 1px; }
+.fd-bar:hover .fd-bar-app { filter: brightness(1.15); }
+.fd-bar-lbl { font-size: 10px; color: var(--muted); text-align: center; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.fd-bar-perm { font-size: 9.5px; color: var(--faint); text-align: center; min-height: 11px; font-variant-numeric: tabular-nums; }
+.fd-hist-foot { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 6px; font-size: 11px; color: var(--muted); }
+.fd-key { display: inline-flex; align-items: center; gap: 4px; }
+.fd-key i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.fd-key-app { background: var(--good); }
+.fd-key-den { background: var(--flag); }
+.fd-hist-5y { margin-left: auto; color: var(--ink-2); }
+.fd-hist-5y b { color: var(--ink); font-weight: 650; }
+.fd-wages { margin-top: 12px; font-size: 12.5px; line-height: 1.55; color: var(--ink-2); }
+.fd-wages b { color: var(--ink); font-weight: 650; }
+.fd-wages-src { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.fd-offer { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.fd-offer summary { cursor: pointer; font-size: 12.5px; font-weight: 650; color: var(--ink); list-style: none; }
+.fd-offer summary::-webkit-details-marker { display: none; }
+.fd-offer summary::before { content: "▸"; display: inline-block; width: 12px; color: var(--muted); font-size: 11px; }
+.fd-offer[open] summary::before { content: "▾"; }
+.fd-offer-sub { font-weight: 500; color: var(--muted); font-size: 12px; margin-left: 4px; }
+.fd-offer-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.fd-offer-form .fld { flex: 1 1 150px; min-width: 0; padding: 6px 9px; font-size: 12.5px; }
+.fd-offer-form .fd-offer-short { flex: 0 1 120px; }
+.fd-offer-form .fd-offer-tiny { flex: 0 0 52px; text-transform: uppercase; }
+.fd-offer-out { margin-top: 10px; font-size: 12.5px; line-height: 1.55; color: var(--ink-2); }
+.fd-offer-out:empty { display: none; }
+.fd-offer-head b, .fd-offer-level b { color: var(--ink); font-weight: 650; }
+.fd-offer-level { margin-top: 7px; }
+.fd-offer-pill { font-size: 11px; font-weight: 700; padding: 1.5px 8px; border-radius: var(--r-pill); color: var(--good); background: var(--good-soft); }
+.fd-offer-odds { margin-left: 6px; }
+.fd-offer-basis { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.fd-offer-bylevel { display: flex; gap: 6px; margin-top: 7px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fd-offer-bylevel span { padding: 1px 7px; border: 1px solid var(--border); border-radius: var(--r-pill); }
+.fd-offer-bylevel span.is-on { color: var(--ink); border-color: var(--border-strong); font-weight: 650; }
+.fd-offer-pts-h { margin-top: 9px; font-size: 11.5px; font-weight: 650; color: var(--ink); }
+.fd-offer-pts { margin: 4px 0 0; padding-left: 18px; }
+.fd-offer-pts li { margin: 3px 0; }
+.fd-offer-note { margin-top: 8px; font-size: 11px; color: var(--faint); }
+.fd-offer-err { color: var(--flag); }
+
 .fd-match { margin: 0 0 16px; }
 .fd-match-none { font-size: 12.5px; color: var(--muted); background: var(--surface-2); border: 1px dashed var(--border-strong); border-radius: var(--r); padding: 10px 14px; }
 .fd-match-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 7px; }

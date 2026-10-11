@@ -1611,7 +1611,144 @@
     el.innerHTML = `
       <div class="fd-company-h">About ${esc(name)}</div>
       ${facts.length ? `<div class="fd-company-meta">${facts.join(" · ")}</div>` : ""}
-      <p class="fd-company-track">${line}</p>`;
+      <p class="fd-company-track">${line}</p>
+      <div class="fd-depth" id="fdDepth"></div>`;
+    loadEmployerDepth(job, name);
+  }
+
+  // The per-employer depth behind the badge (the H1BGrader / Ellis layer, from the same public
+  // data, all local): H-1B approvals AND denials by fiscal year with PERM alongside, the three
+  // flags, what this employer paid for this title at this worksite (DOL LCA filings), and an
+  // offer check that puts a salary against those filings and the weighted lottery. Fetched after
+  // the strip renders so a slow lookup never holds the job detail; stale answers are dropped.
+  const empT = (k, f) => (window.I18N ? I18N.empT(k, f) : f);
+  const empMoney = (x) => "$" + Math.round(Number(x || 0)).toLocaleString();
+  const empK = (x) => "$" + Math.round(Number(x || 0) / 1000) + "k";
+  const ROMAN = { 1: "I", 2: "II", 3: "III", 4: "IV" };
+  async function loadEmployerDepth(job, name) {
+    const sid = (job || {}).source_id;
+    const company = (job || {}).company || name;
+    if (!company) return;
+    const enc = encodeURIComponent(company);
+    const q = "?title=" + encodeURIComponent((job || {}).title || "") + "&location=" + encodeURIComponent((job || {}).location || "");
+    let hist = null, wages = null;
+    try {
+      [hist, wages] = await Promise.all([
+        api("/api/sponsors/" + enc + "/history"),
+        api("/api/sponsors/" + enc + "/wages" + q),
+      ]);
+    } catch { return; }
+    if (SELECTED_SID !== sid) return;
+    const el = $("#fdDepth");
+    if (!el) return;
+    el.innerHTML = renderFlags(hist) + renderHistory(hist) + renderWages(wages, job) + renderOfferBox(job, wages);
+    wireOfferCheck(el, job);
+  }
+
+  function renderFlags(h) {
+    const f = (h || {}).flags || {};
+    const chips = [];
+    if (f.h1b_dependent) chips.push(`<span class="fd-flag fd-flag-warn" title="${esc(empT("emp.depTip", "The employer attested on its DOL LCA filings that it is H-1B dependent: H-1B workers are 15% or more of its US workforce. It then owes extra recruitment and non-displacement attestations for some hires. A fact from the filings, not a judgement."))}">${esc(empT("emp.dependent", "H-1B dependent"))}</span>`);
+    if (f.willful_violator) chips.push(`<span class="fd-flag fd-flag-bad" title="${esc(empT("emp.wvTip", "The employer attested on its DOL LCA filings that it was previously found to be a willful violator of H-1B wage or working-condition rules. From the filings themselves."))}">${esc(empT("emp.violator", "Willful violator"))}</span>`);
+    if (f.cap_exempt) chips.push(`<span class="fd-flag" title="${esc(empT("emp.capTip", "Guessed from the employer's name and industry (higher education, research, teaching hospitals skip the H-1B lottery). A heuristic, not verified."))}">${esc(empT("emp.capExempt", "Cap-exempt (likely)"))}</span>`);
+    return chips.length ? `<div class="fd-flags">${chips.join("")}</div>` : "";
+  }
+
+  // Year-by-year bars, plain CSS (no chart library): one column per fiscal year, approvals in
+  // the good hue with denials stacked on top in the flag hue, PERM as a small text line below.
+  // Each column carries the exact numbers in its title; the footer gives the 5-year read.
+  function renderHistory(h) {
+    const years = ((h || {}).years || []).filter(y => y.approvals || y.denials || y.perm);
+    if (!years.length) return "";
+    const peak = Math.max(1, ...years.map(y => y.approvals + y.denials));
+    const cols = years.map(y => {
+      const total = y.approvals + y.denials;
+      const hA = Math.round(100 * y.approvals / peak), hD = Math.max(total ? 1 : 0, Math.round(100 * y.denials / peak));
+      const tip = `FY${y.fy}: ${y.approvals.toLocaleString()} approved (${y.initial_approvals.toLocaleString()} new, ${y.continuing_approvals.toLocaleString()} continuing), ${y.denials.toLocaleString()} denied` + (y.perm ? `, ${y.perm.toLocaleString()} PERM certified` : "");
+      return `<div class="fd-bar" title="${esc(tip)}">
+        <div class="fd-bar-col">${y.denials ? `<span class="fd-bar-den" style="height:${hD}%"></span>` : ""}${y.approvals ? `<span class="fd-bar-app" style="height:${hA}%"></span>` : ""}</div>
+        <div class="fd-bar-lbl">${String(y.fy).slice(2)}</div>
+        ${y.perm ? `<div class="fd-bar-perm">${y.perm.toLocaleString()}</div>` : `<div class="fd-bar-perm"></div>`}
+      </div>`;
+    }).join("");
+    const rate = h.denial_rate_5y == null ? "" : `, ${(h.denial_rate_5y * 100).toFixed(h.denial_rate_5y < 0.1 ? 1 : 0)}% ${empT("emp.denied", "denied")}`;
+    const anyPerm = years.some(y => y.perm);
+    return `<div class="fd-hist">
+      <div class="fd-hist-h">${esc(empT("emp.history", "H-1B petitions by fiscal year"))} <span class="fd-hist-sub">${esc(h.fy_span || "")}</span></div>
+      <div class="fd-bars">${cols}</div>
+      <div class="fd-hist-foot">
+        <span class="fd-key"><i class="fd-key-app"></i>${esc(empT("emp.approved", "approved"))}</span>
+        <span class="fd-key"><i class="fd-key-den"></i>${esc(empT("emp.denied", "denied"))}</span>
+        ${anyPerm ? `<span class="fd-key">${esc(empT("emp.permRow", "number under a year: PERM green-card certifications"))}</span>` : ""}
+        <span class="fd-hist-5y">${esc(empT("emp.last5", "Last 5 years"))}: <b>${(h.approvals_5y || 0).toLocaleString()}</b> ${esc(empT("emp.approved", "approved"))}${rate}</span>
+      </div>
+    </div>`;
+  }
+
+  function renderWages(res, job) {
+    const w = (res || {}).wages;
+    if (!w) return "";
+    const where = w.city ? `${w.city}, ${w.state}` : (w.state ? w.state : "");
+    const lvl = w.top_level ? `, ${empT("emp.mostly", "mostly Level")} ${ROMAN[w.top_level]}` : "";
+    const fys = (w.fiscal_years || []);
+    const span = fys.length ? (fys.length === 1 ? `FY${fys[0]}` : `FY${fys[0]} to ${fys[fys.length - 1]}`) : "";
+    return `<div class="fd-wages">
+      <span class="fd-wages-line">${esc(empT("emp.paid", "This employer paid"))} <b>${empK(w.wage_min)} to ${empK(w.wage_max)}</b> (${esc(empT("emp.median", "median"))} <b>${empK(w.wage_median)}</b>) ${esc(empT("emp.for", "for"))} ${esc(w.title_label)}${where ? " in " + esc(where) : ""}, ${w.n.toLocaleString()} ${esc(empT("emp.filings", "filings"))}${lvl}.</span>
+      <span class="fd-wages-src">${esc(w.scope_note || "")} ${esc(empT("emp.lcaSrc", "DOL LCA filings"))}${span ? ", " + esc(span) : ""}.</span>
+    </div>`;
+  }
+
+  function renderOfferBox(job, wages) {
+    const j = job || {};
+    return `<details class="fd-offer">
+      <summary>${esc(empT("emp.offerCheck", "Offer check"))} <span class="fd-offer-sub">${esc(empT("emp.offerSub", "put a salary against these filings and the H-1B lottery"))}</span></summary>
+      <form class="fd-offer-form" data-offer-form>
+        <input class="fld" name="offer" inputmode="numeric" placeholder="${esc(empT("emp.offerPh", "Offer salary, e.g. 125000"))}" required />
+        <input class="fld" name="title" value="${esc(j.title || "")}" placeholder="${esc(empT("emp.titlePh", "Job title"))}" />
+        <input class="fld fd-offer-short" name="city" value="${esc(((wages || {}).city) || "")}" placeholder="${esc(empT("emp.cityPh", "City"))}" />
+        <input class="fld fd-offer-tiny" name="state" value="${esc(((wages || {}).state) || "")}" placeholder="${esc(empT("emp.statePh", "ST"))}" maxlength="2" />
+        <button class="btn btn-ghost btn-sm" type="submit">${esc(empT("emp.offerBtn", "Check my offer"))}</button>
+      </form>
+      <div class="fd-offer-out" data-offer-out></div>
+    </details>`;
+  }
+
+  function wireOfferCheck(root, job) {
+    const form = root.querySelector("[data-offer-form]");
+    const out = root.querySelector("[data-offer-out]");
+    if (!form || !out) return;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const body = { company: (job || {}).company || "", offer: fd.get("offer"), title: fd.get("title"),
+        city: fd.get("city"), state: fd.get("state"), location: (job || {}).location || "" };
+      out.innerHTML = `<span class="muted">${esc(empT("emp.checking", "Checking against public filings…"))}</span>`;
+      let r;
+      try { r = await api("/api/sponsors/offer-check", body); }
+      catch (err) { out.innerHTML = `<span class="fd-offer-err">${esc((err && err.message) || empT("emp.offerErr", "Couldn't check that offer."))}</span>`; return; }
+      out.innerHTML = renderOfferResult(r);
+    });
+  }
+
+  function renderOfferResult(r) {
+    if (!r) return "";
+    if (r.error) return `<span class="fd-offer-err">${esc(r.error)}</span>`;
+    const w = r.wages;
+    const pos = { below_range: empT("emp.belowRange", "below every filing on record"), below_median: empT("emp.belowMedian", "below the median"),
+      above_median: empT("emp.aboveMedian", "above the median"), above_range: empT("emp.aboveRange", "above every filing on record") }[r.position] || "";
+    const head = w
+      ? `<div class="fd-offer-head"><b>${empMoney(r.offer)}</b> ${empT("emp.is", "is")} ${esc(pos)} (${empK(w.wage_min)} to ${empK(w.wage_max)}, ${esc(empT("emp.median", "median"))} ${empK(w.wage_median)}, ${w.n.toLocaleString()} ${esc(empT("emp.filings", "filings"))}).</div>`
+      : `<div class="fd-offer-head"><b>${empMoney(r.offer)}</b>: ${esc(empT("emp.noWages", "no LCA wage filings matched this employer and title."))}</div>`;
+    const lvl = r.likely_level
+      ? `<div class="fd-offer-level"><span class="fd-offer-pill">${esc(empT("emp.likelyLevel", "Likely Level"))} ${ROMAN[r.likely_level]}</span>${r.odds ? ` <span class="fd-offer-odds">${esc(empT("emp.odds", "about"))} <b>${r.odds.percent}%</b> ${esc(empT("emp.oddsTail", "lottery odds at this level"))} (${r.odds.entries} ${esc(empT("emp.entries", "entries"))})</span>` : ""}<div class="fd-offer-basis">${esc(r.level_basis || "")}</div></div>`
+      : (r.level_basis ? `<div class="fd-offer-basis">${esc(r.level_basis)}</div>` : "");
+    const by = r.odds && r.odds.by_level
+      ? `<div class="fd-offer-bylevel">${[1, 2, 3, 4].map(l => `<span class="${l === r.likely_level ? "is-on" : ""}">${ROMAN[l]} ${Math.round(r.odds.by_level[l] * 100)}%</span>`).join("")}</div>` : "";
+    const pts = (r.talking_points || []).map(p => `<li>${esc(p)}</li>`).join("");
+    return `${head}${lvl}${by}
+      <div class="fd-offer-pts-h">${esc(empT("emp.talk", "Three things to say"))}</div>
+      <ul class="fd-offer-pts">${pts}</ul>
+      <div class="fd-offer-note">${esc(r.note || "")}</div>`;
   }
 
   // "a, b and c" -- keeps the sponsorship sentence reading naturally for 1, 2 or 3 facts.
