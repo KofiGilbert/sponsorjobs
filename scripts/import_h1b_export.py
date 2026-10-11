@@ -82,7 +82,7 @@ def describe_mapping(headers) -> tuple[dict, list[str]]:
 
 def import_exports(files, db_path=DEFAULT_DB, seed_path=DEFAULT_SEED, out_dir=DEFAULT_OUT,
                    version: str | None = None, fy_override: int | None = None,
-                   force: bool = False, log=print, history_path=DEFAULT_HISTORY) -> dict:
+                   force: bool = False, log=print, history_path=None) -> dict:
     db_path, seed_path, out_dir = Path(db_path), Path(seed_path), Path(out_dir)
     version = version or _dt.date.today().strftime("%Y-%m")
     db = SponsorDB(db_path)
@@ -152,6 +152,8 @@ def import_exports(files, db_path=DEFAULT_DB, seed_path=DEFAULT_SEED, out_dir=DE
     # The export's per-year rows (approvals AND denials) now sit in the store's
     # sponsor_h1b_year table; refresh the committed history bundle so new installs and the
     # extension index carry the new year too (scripts/build_h1b_history_bundle.py).
+    # Only when asked (the CLI asks by default; a library caller or a test must opt in, so
+    # a test run never overwrites the committed bundle, which happened once).
     if history_path:
         from scripts.build_h1b_history_bundle import write_history
         hdb = SponsorDB(db_path)
@@ -177,9 +179,11 @@ def main(argv=None) -> int:
     ap.add_argument("--db", default=str(DEFAULT_DB))
     ap.add_argument("--seed", default=str(DEFAULT_SEED))
     ap.add_argument("--out", default=str(DEFAULT_OUT))
+    ap.add_argument("--history", default=str(DEFAULT_HISTORY),
+                    help="the per-year history bundle to rewrite ('' to skip)")
     a = ap.parse_args(argv)
     import_exports(a.files, a.db, a.seed, a.out, version=a.version, fy_override=a.fy,
-                   force=a.force)
+                   force=a.force, history_path=a.history)
     return 0
 
 
