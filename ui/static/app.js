@@ -1106,12 +1106,16 @@
     // "Visa sponsorship is available" and almost never name the visa, so the chip uses the
     // ad's words; and a third of ads that mention sponsorship say they will NOT, which is the
     // most useful fact on the page for an international student, so it gets the louder chip.
+    // Four stances: offered, not_offered, restricted (the ad requires US citizenship, a green
+    // card, or a security clearance: closed to a visa holder whatever the badges say), unknown.
     const quote = j.ad_sentence ? ` The ad says: \u201c${esc(j.ad_sentence)}\u201d` : "";
     const stated = j.ad_stance === "offered"
       ? `<span class="vbadge vb-stated" title="This job ad says visa sponsorship is available for the role (for a US new hire that usually means H-1B, but the ad does not name the visa).${quote}">Sponsorship available</span>`
       : j.ad_stance === "not_offered"
         ? `<span class="vbadge vb-no" title="This job ad says it will not sponsor a visa for the role.${quote}">No sponsorship</span>`
-        : "";
+        : j.ad_stance === "restricted"
+          ? `<span class="vbadge vb-no vb-restricted" title="This job ad requires US citizenship, permanent residency, or a security clearance, so it is closed to a visa holder.${quote}">Citizenship or clearance required</span>`
+          : "";
     if (!v.length) {
       return stated || `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa, and the ad does not say. They still might, it's worth asking.">No sponsorship record</span>`;
     }
@@ -1487,6 +1491,7 @@
         <div class="fd-payins" id="fdPayInsight" hidden></div>
         ${j.ad_stance === "offered" ? `<div class="fd-adnote">The ad says: \u201c${esc(j.ad_sentence || "visa sponsorship is available")}\u201d For a US new hire that usually means H-1B; the ad does not name the visa. The badges below are the employer's government record.</div>` : ""}
         ${j.ad_stance === "not_offered" ? `<div class="fd-adnote fd-adnote-no">The ad says: \u201c${esc(j.ad_sentence || "no visa sponsorship")}\u201d This role is not open to someone who needs a visa.</div>` : ""}
+        ${j.ad_stance === "restricted" ? `<div class="fd-adnote fd-adnote-no">The ad says: \u201c${esc(j.ad_sentence || "US citizenship or a security clearance is required")}\u201d This role requires US citizenship, permanent residency, or a security clearance, so it is closed to a visa holder whatever the employer's record says.</div>` : ""}
         <div class="fd-meta">${f.label ? `<span class="fr-fresh ${f.cls}">${f.cls ? "● " : ""}${esc(f.label)}</span>` : ""}${visaBadges(j)}</div>
         ${(j.nationality_visas || []).length ? `<div class="fd-natvisa">${natVisaBadges(j)}</div>` : ""}
       </div>

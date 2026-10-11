@@ -408,22 +408,31 @@
     const key = r.stance + "|" + r.sentence;
     if (key === lastStanceKey && row.querySelector(".tb-stance")) return;
     lastStanceKey = key;
-    row.querySelectorAll(".tb-stance").forEach(e => e.remove());
-    row.classList.toggle("tailor-role-no", r.stance === A.NOT_OFFERED);
+    row.querySelectorAll(".tb-stance, .tailor-ad-quote").forEach(e => e.remove());
+    // "restricted" (US citizenship / green card / clearance required) closes the role exactly
+    // like a "no": the employer's history badges after it describe other roles, so they dim.
+    const closed = r.stance === A.NOT_OFFERED || r.stance === A.RESTRICTED;
+    row.classList.toggle("tailor-role-no", closed);
     LAST.stance = r;
     paintCorner();
-    if (r.stance === A.UNKNOWN) return;          // the ad says nothing: the employer badges stand alone
+    const c = A.stanceChip(r);                    // label, class, tooltip, shortened quote
+    if (!c) return;                               // the ad says nothing: the employer badges stand alone
     // The role's own answer is the one that matters: a grey employer-level chip ("No sponsor
     // record", "location unclear") next to it only muddles it. Visa badges stay, dimmed.
-    if (r.stance === A.NOT_OFFERED) row.querySelectorAll(".tb-none").forEach(e => e.remove());
+    if (closed) row.querySelectorAll(".tb-none").forEach(e => e.remove());
     const chip = document.createElement("span");
-    const no = r.stance === A.NOT_OFFERED;
-    chip.className = `tailor-badge tb-stance ${no ? "tb-ad-no" : "tb-ad-yes"}`;
-    chip.textContent = no ? "No sponsorship for this role" : "Ad offers sponsorship";
-    chip.title = `The ad says: \u201c${r.sentence}\u201d` + (no
-      ? " The badges after this are the employer's history on other roles, not this one."
-      : " The ad does not name the visa; for a US new hire that usually means H-1B.");
+    chip.className = `tailor-badge tb-stance ${c.cls}`;
+    chip.textContent = c.label;
+    chip.title = c.title;
     row.insertAdjacentElement("afterbegin", chip);
+    // The ad's own sentence in the open, as a small grey line under the chips, so the proof is
+    // on the page and not only on hover (what the job screeners students compare us with do).
+    if (c.quote) {
+      const q = document.createElement("div");
+      q.className = "tailor-ad-quote";
+      q.textContent = `The ad says: \u201c${c.quote}\u201d`;
+      row.appendChild(q);
+    }
   }
 
   // ============================ P6: match score + skills + in-list + filters ============
@@ -616,9 +625,10 @@
   function cornerPanelHTML() {
     const d = LAST.data, st = LAST.stance, A = globalThis.TailorAdStance;
     const rows = [];
-    if (st && A && st.stance !== A.UNKNOWN) {
-      const no = st.stance === A.NOT_OFFERED;
-      rows.push(`<div class="tailor-cp-row ${no ? "cp-no" : "cp-yes"}"><b>${no ? "No sponsorship for this role" : "Ad offers sponsorship"}</b><div class="tailor-cp-q">\u201c${esc(st.sentence)}\u201d</div></div>`);
+    const sc = st && A && A.stanceChip(st);
+    if (sc) {
+      const yes = sc.stance === A.OFFERED;
+      rows.push(`<div class="tailor-cp-row ${yes ? "cp-yes" : "cp-no"}"><b>${esc(sc.label)}</b><div class="tailor-cp-q">\u201c${esc(st.sentence)}\u201d</div></div>`);
     }
     if (d && d.matched) {
       const p = d.profile || {};
@@ -656,9 +666,9 @@
     }
     const p = c.querySelector(".tailor-corner-panel");
     if (p && !p.hidden) p.innerHTML = cornerPanelHTML();
-    const A = globalThis.TailorAdStance;
-    c.classList.toggle("is-no", !!(LAST.stance && A && LAST.stance.stance === A.NOT_OFFERED));
-    c.classList.toggle("is-yes", !!(LAST.stance && A && LAST.stance.stance === A.OFFERED));
+    const A = globalThis.TailorAdStance, st = LAST.stance && A ? LAST.stance.stance : null;
+    c.classList.toggle("is-no", st === A.NOT_OFFERED || st === A.RESTRICTED);
+    c.classList.toggle("is-yes", st === A.OFFERED);
   }
 
   let last = null;
