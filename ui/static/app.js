@@ -4865,7 +4865,7 @@
     if (btn) btn.disabled = true;
     try {
       const d = await api("/api/interview/round2/buy", { pack });
-      if (window.tailorShell) window.tailorShell.openBrowser(d.url);
+      if (window.tailorShell) { window.tailorShell.openBrowser(d.url); watchCheckout(); }
       else window.location.href = d.url;
     } catch (e) {
       if (e.reason === "sign_in_required") { closeUpgrade(); openSignin({ kind: "pack", id: pack }); }
@@ -4909,6 +4909,33 @@
   }
   try { pendingBuy = JSON.parse(sessionStorage.getItem(PENDING_KEY) || "null"); } catch { pendingBuy = null; }
 
+  // Close the Stripe pane by itself once the payment lands (Kofi, 2026-10-11). The newer shell
+  // also notices Stripe's return address, but installed copies may predate that, so the page
+  // watches the account instead: when the pass end date or the interview balance grows, the
+  // purchase went through. Gives up quietly after 15 minutes.
+  let CHECKOUT_WATCH = null;
+  async function accountSnapshot() {
+    try {
+      const o = await api("/api/billing/offers");
+      const c = (o && o.current) || {};
+      return { until: Number(c.pass_until || 0), left: Number(c.interviews_left || 0) };
+    } catch { return null; }
+  }
+  async function watchCheckout() {
+    if (CHECKOUT_WATCH) clearInterval(CHECKOUT_WATCH);
+    const before = await accountSnapshot();
+    if (!before) return;
+    const t0 = Date.now();
+    CHECKOUT_WATCH = setInterval(async () => {
+      if (Date.now() - t0 > 15 * 60 * 1000) { clearInterval(CHECKOUT_WATCH); CHECKOUT_WATCH = null; return; }
+      const now = await accountSnapshot();
+      if (!now || (now.until <= before.until && now.left <= before.left)) return;
+      clearInterval(CHECKOUT_WATCH); CHECKOUT_WATCH = null;
+      if (window.tailorShell && window.tailorShell.closeBrowser) window.tailorShell.closeBrowser();
+      handleCheckoutResult("success");
+    }, 3000);
+  }
+
   function openCheckoutUrl(url) {
     // Desktop: the side pane, so the app stays put and the shell reports the result when it
     // closes. Web build: the same tab; Stripe returns to ?checkout=.
@@ -4918,7 +4945,7 @@
   async function doCheckout(passId) {
     try {
       const r = await api("/api/billing/checkout", { pass: passId });
-      if (r && r.url) { openCheckoutUrl(r.url); return; }
+      if (r && r.url) { openCheckoutUrl(r.url); watchCheckout(); return; }
       toast(T("upg.cantStart", "Couldn't start checkout. Please try again."));
     } catch (e) {
       if (e.reason === "sign_in_required") { closeUpgrade(); openSignin({ kind: "pass", id: passId }); return; }
@@ -5177,7 +5204,7 @@
     checkoutHandled = true;
     closeUpgrade();
     if (status === "success") {
-      toast(T("upg.thanks", "Thank you. Your pass is active as soon as the payment clears."));
+      toast(T("upg.thanksActive", "Payment received. Your pass is active, and Stripe has emailed your receipt."));
       try { await loadPlanBadge(); } catch (e) { /* best effort */ }
     } else if (status === "cancel") {
       toast(T("upg.canceled", "Checkout canceled. Nothing was charged."));
