@@ -3077,6 +3077,48 @@ def jobs_refresh():
         w.close()
 
 
+def _local_board_rows(w) -> list[dict]:
+    """The LOCAL board: every stored role, sponsor-tagged, ad-stance + role-tagged, and reduced to
+    the accessible set (US, not clearance-heavy, JD-checked, sponsor-relevant) with entry_level
+    filled. Unfiltered and unpaginated: the feed route and the saved-search digest both start here."""
+    from sourcing.adstance import UNKNOWN, ad_stance
+    from sourcing.jobtags import job_tags
+    from sourcing.quality import (employer_is_clearance_heavy, is_entry_level, is_jd_checked,
+                                  is_sponsor_relevant)
+    jobs = _sponsors().tag_jobs(w.list_jobs(order="recent", limit=15000))
+    texts = w.get_jd_texts([j["source_id"] for j in jobs])
+    for j in jobs:
+        jd = texts.get(j["source_id"]) or ""
+        st = ad_stance(jd)
+        if st["stance"] != UNKNOWN:
+            j["ad_stance"], j["ad_sentence"] = st["stance"], st["sentence"]
+        j["tags"] = job_tags(j.get("title") or "", jd)
+    jobs = [j for j in jobs
+            if j.get("us") and not employer_is_clearance_heavy(j.get("company", ""))
+            and is_jd_checked(j) and is_sponsor_relevant(j)]
+    for j in jobs:
+        j["entry_level"] = is_entry_level(j.get("title", ""))
+    return jobs
+
+
+def _board_rows() -> list[dict]:
+    """The whole board as the person sees it, unfiltered: the static feed's cached list when a
+    feed is configured and holds rows, else the local store. What the saved-search digest counts
+    new arrivals from. Never raises: a broken feed just means the local rows."""
+    if _feed_base_url():
+        try:
+            jobs, _header = _static_feed().jobs()
+            if jobs:
+                return jobs
+        except Exception:                            # noqa: BLE001 - fall back to the local rows
+            pass
+    w = _watchlist()
+    try:
+        return _local_board_rows(w)
+    finally:
+        w.close()
+
+
 def _newest_arrival(jobs) -> str | None:
     """When the newest job on the board first ARRIVED (its first_seen), or None. This is what the
     board's freshness label shows. refreshed_at only says when the list was last rebuilt, and that
@@ -3136,8 +3178,7 @@ def jobs_list():
     w = _watchlist()
     try:
         from sourcing.filters import apply_facets, paginate
-        from sourcing.quality import (employer_is_clearance_heavy, is_entry_level, is_jd_checked,
-                                      is_sponsor_relevant)
+        from sourcing.quality import employer_is_clearance_heavy, is_entry_level
         # One-time-per-process: fill pay from the JD for rows a feed left blank, so the min-pay
         # filter + top-paid sort work over the whole board immediately (not only after a refresh).
         global _SALARY_BACKFILLED
@@ -3151,21 +3192,7 @@ def jobs_list():
         # RECENT-sorted so the freshest postings lead; US-only + accessible. A list-only row
         # (Workday) whose description was never fetched has not had the citizenship / clearance /
         # no-sponsorship check run on it, so it is not in the accessible set until it has.
-        jobs = _sponsors().tag_jobs(w.list_jobs(order="recent", limit=15000))
-        from sourcing.adstance import UNKNOWN, ad_stance
-        texts = w.get_jd_texts([j["source_id"] for j in jobs])
-        from sourcing.jobtags import job_tags
-        for j in jobs:
-            jd = texts.get(j["source_id"]) or ""
-            st = ad_stance(jd)
-            if st["stance"] != UNKNOWN:
-                j["ad_stance"], j["ad_sentence"] = st["stance"], st["sentence"]
-            j["tags"] = job_tags(j.get("title") or "", jd)
-        jobs = [j for j in jobs
-                if j.get("us") and not employer_is_clearance_heavy(j.get("company", ""))
-                and is_jd_checked(j) and is_sponsor_relevant(j)]
-        for j in jobs:
-            j["entry_level"] = is_entry_level(j.get("title", ""))
+        jobs = _local_board_rows(w)
         # Same facets + pagination the static-feed path uses.
         a = request.args
         facets = _facets(a)
@@ -7381,6 +7408,172 @@ def jobs_save():
         return jsonify({"ok": True, "saved": saved})
     finally:
         w.close()
+
+
+# ---------------------------------------------------------------- saved search strategies
+# A named set of Jobs-page filters, kept in the local db. Three jobs: apply it in one click, open
+# the same search on the other boards (plain URLs the browser opens; nothing is driven or read
+# there, see CLAUDE.md section 7), and the digest: what arrived on OUR feed since the person last
+# looked at this strategy. Pure logic lives in sourcing/strategies.py; these routes only glue it
+# to the store and the board.
+def _strategies():
+    from sourcing.strategies import StrategyStore
+    return StrategyStore(DB_PATH)
+
+
+def _strategy_with_counts(store, strategies: list[dict], rows: list[dict] | None = None) -> list[dict]:
+    """Attach new_count + newest_at (the digest's headline numbers) to each strategy row."""
+    from sourcing.strategies import new_since
+    if rows is None:
+        rows = _board_rows()
+    out = []
+    for st in strategies:
+        fresh = new_since(rows, st)
+        st = dict(st)
+        st["new_count"] = len(fresh)
+        st["newest_at"] = str(fresh[0].get("first_seen")) if fresh else None
+        out.append(st)
+    return out
+
+
+@app.get("/api/strategies")
+@_guard
+def strategies_list():
+    """Every saved strategy (default first, then by name), each with its digest count unless
+    counts=0 (a cheap list for the editor)."""
+    store = _strategies()
+    try:
+        items = store.list()
+        if request.args.get("counts", "1") != "0" and items:
+            items = _strategy_with_counts(store, items)
+        return jsonify({"strategies": items})
+    finally:
+        store.close()
+
+
+@app.post("/api/strategies")
+@_guard
+def strategies_create():
+    body = request.json or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "a strategy needs a name"}), 400
+    store = _strategies()
+    try:
+        st = store.create(name, body.get("filters") or {}, bool(body.get("is_default")))
+        return jsonify({"ok": True, "strategy": st})
+    finally:
+        store.close()
+
+
+@app.get("/api/strategies/<int:sid>")
+@_guard
+def strategies_get(sid: int):
+    store = _strategies()
+    try:
+        st = store.get(sid)
+        if st is None:
+            return jsonify({"error": "no such strategy"}), 404
+        return jsonify({"strategy": st})
+    finally:
+        store.close()
+
+
+@app.route("/api/strategies/<int:sid>", methods=["POST", "PUT", "PATCH"])
+@_guard
+def strategies_update(sid: int):
+    """Rename, replace the filters, or flip default. Only the keys sent are changed."""
+    body = request.json or {}
+    store = _strategies()
+    try:
+        st = store.update(sid, name=body.get("name"),
+                          filters=body.get("filters") if "filters" in body else None,
+                          is_default=(bool(body["is_default"]) if "is_default" in body else None))
+        if st is None:
+            return jsonify({"error": "no such strategy"}), 404
+        return jsonify({"ok": True, "strategy": st})
+    finally:
+        store.close()
+
+
+@app.route("/api/strategies/<int:sid>", methods=["DELETE"])
+@_guard
+def strategies_delete(sid: int):
+    store = _strategies()
+    try:
+        if not store.delete(sid):
+            return jsonify({"error": "no such strategy"}), 404
+        return jsonify({"ok": True})
+    finally:
+        store.close()
+
+
+@app.post("/api/strategies/<int:sid>/default")
+@_guard
+def strategies_default(sid: int):
+    store = _strategies()
+    try:
+        st = store.set_default(sid)
+        if st is None:
+            return jsonify({"error": "no such strategy"}), 404
+        return jsonify({"ok": True, "strategy": st})
+    finally:
+        store.close()
+
+
+@app.get("/api/strategies/<int:sid>/new")
+@_guard
+def strategies_new(sid: int):
+    """The digest: roles on our feed first seen after this strategy's last_seen that match its
+    filters (newest first, first 30 rows + the full count). Reading it does NOT mark the strategy
+    seen; POST /seen does, once the person has actually looked."""
+    from sourcing.strategies import digest
+    store = _strategies()
+    try:
+        st = store.get(sid)
+        if st is None:
+            return jsonify({"error": "no such strategy"}), 404
+        d = digest(_board_rows(), st, limit=30)
+        saved = _saved_ids()
+        d["jobs"] = [dict(j, saved=(j.get("source_id") in saved)) for j in d["jobs"]]
+        return jsonify(d)
+    finally:
+        store.close()
+
+
+@app.post("/api/strategies/<int:sid>/seen")
+@_guard
+def strategies_seen(sid: int):
+    """The person has looked at this strategy's results: new arrivals are counted from now on."""
+    store = _strategies()
+    try:
+        st = store.mark_seen(sid)
+        if st is None:
+            return jsonify({"error": "no such strategy"}), 404
+        return jsonify({"ok": True, "strategy": st})
+    finally:
+        store.close()
+
+
+@app.get("/api/strategies/<int:sid>/open-urls")
+@_guard
+def strategies_open_urls(sid: int):
+    """The same search as plain URLs on LinkedIn, Indeed, Glassdoor, Handshake and Google Jobs.
+    The browser opens them in tabs; this app never loads, clicks or reads those pages."""
+    from sourcing.strategies import strategy_open_urls
+    store = _strategies()
+    try:
+        st = store.get(sid)
+        if st is None:
+            return jsonify({"error": "no such strategy"}), 404
+        return jsonify({"strategy_id": sid, "urls": strategy_open_urls(st)})
+    finally:
+        store.close()
+
+
+# TODO(email digest): a daily email of each strategy's new arrivals would hook in here, reusing
+# _strategy_with_counts over the board rows. Not built: v1 is local-first with no mail sender of
+# our own (the inbox module reads the person's own mailbox; it never sends bulk mail).
 
 
 def _feed_detail_response(job: dict):
