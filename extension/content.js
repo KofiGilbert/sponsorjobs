@@ -1,10 +1,18 @@
-// Runs on a job posting you're viewing (LinkedIn / Indeed / Greenhouse / Lever / Ashby).
-// It reads the COMPANY NAME already on the page, asks your local SponsorJobs app whether that
-// employer sponsors visas, and shows small badges. It only READS the page you opened:
-// no auto-scrolling, no auto-apply, no submitting. Just you, browsing, with extra info.
+// Runs on a job posting you're viewing (LinkedIn, Indeed, Glassdoor, Handshake, Dice, Google
+// Jobs, ZipRecruiter, and the ATS pages). It reads the COMPANY NAME already on the page, asks
+// the sponsor index (or your local SponsorJobs app) whether that employer sponsors visas, and
+// shows small badges. It only READS the page you opened: no auto-scrolling, no auto-apply, no
+// submitting. Just you, browsing, with extra info.
+//
+// Everything board-specific (which elements are the cards, where the company is, where our chip
+// row goes, where the JD text is) lives in boards_core.js, one adapter per board; this file is
+// the same for every board.
 
 (function () {
   const HOST = location.hostname;
+  const B = globalThis.TailorBoards;
+  const BOARD = B ? B.detect(location) : null;    // this page's adapter, or null on an ATS page
+  if (B) B.setEnv({ getComputedStyle: (el) => getComputedStyle(el) });
   const APP_URL = "http://127.0.0.1:57000/";                                 // the local app
   const INSTALL_URL = "https://github.com/KofiGilbert/sponsorjobs#install";  // the free app
   // Our mark (icons/icon.svg), inlined. It used to be loaded with chrome.runtime.getURL, which
@@ -79,21 +87,10 @@
   // for that job, and an invitation to spend an application on an impossibility. When we
   // cannot read a location the app withholds the badge rather than guess.
   function pickLocation() {
-    let sels = [];
-    if (HOST.includes("linkedin.com")) {
-      sels = [".job-details-jobs-unified-top-card__primary-description-container .tvm__text",
-              ".job-details-jobs-unified-top-card__bullet",
-              ".jobs-unified-top-card__bullet",
-              ".topcard__flavor--bullet"];
-    } else if (HOST.includes("indeed.com")) {
-      sels = ['[data-testid="inlineHeader-companyLocation"]',
-              '[data-testid="job-location"]',
-              '.jobsearch-JobInfoHeader-subtitle div:last-child'];
-    } else {
-      // ATS boards vary too much for a reliable selector; the app's own feed already has
-      // the location for these, and a wrong guess here costs more than a missing badge.
-      sels = ['[class*="location"]', '[data-ui="job-location"]'];
-    }
+    // The board's own hooks; on an ATS page a couple of generic ones. ATS boards vary too much
+    // for a reliable selector; the app's own feed already has the location for these, and a
+    // wrong guess here costs more than a missing badge.
+    const sels = (BOARD && BOARD.locationSelectors) || ['[class*="location"]', '[data-ui="job-location"]'];
     for (const s of sels) {
       const el = document.querySelector(s);
       const text = el && clean(el.textContent);
@@ -102,38 +99,28 @@
     return "";
   }
 
-  // Return {company, anchor}, the employer name and the element to place badges after.
-  // The employer from LinkedIn's own URL SHAPE, not its CSS.
+  // Return {el, name, location}: the OPEN job's employer, read the board's own way.
   //
-  // On /jobs/search-results/ (where people actually browse) there is no structured data,
-  // and the class names we relied on had changed, so the extension found nothing and did
-  // nothing. A URL is a far more stable contract than a class name: LinkedIn cannot stop
-  // linking a company to /company/<slug> without breaking their own product, whereas
-  // ".job-details-jobs-unified-top-card__company-name" changes on a whim.
-  //
-  // We take the company link CLOSEST to the job title, because the page is full of other
-  // /company/ links (the "people you can reach out to" cards, the hiring team, ads). The
-  // one that shares the most DOM ancestry with the <h1> is the one this job belongs to.
-  function linkedinCompany() {
-    const links = [...document.querySelectorAll('a[href*="/company/"]')]
-      .filter(a => clean(a.textContent));
-    if (!links.length) return null;
-    const h1 = document.querySelector("h1");
-    if (!h1) return { el: links[0], name: clean(links[0].textContent) };
-    // Depth of shared ancestry with the title: higher means "part of the same card".
-    const ancestors = (n) => { const out = []; for (; n; n = n.parentElement) out.push(n); return out; };
-    const titleLine = ancestors(h1);
-    let best = null, bestScore = -1;
-    for (const a of links) {
-      const chain = ancestors(a);
-      const shared = chain.findIndex(n => titleLine.includes(n));
-      // Closer to the title (smaller hop count) wins; unrelated links score -1.
-      const score = shared === -1 ? -1 : 1000 - shared;
-      if (score > bestScore) { best = a; bestScore = score; }
-    }
-    if (!best || bestScore <= 0) return null;
-    return { el: best, name: clean(best.textContent),
-             location: linkedinLocationNear(best) };
+  // The board adapter's posting() reads its pane's hooks (Indeed's inlineHeader-companyName,
+  // Dice's job-detail-header-card). Where a board has no such hook, or it is missing, the
+  // employer comes from the board's own URL SHAPE, not its CSS: on LinkedIn's
+  // /jobs/search-results/ (where people actually browse) there is no structured data, and the
+  // class names we relied on had changed, so the extension found nothing and did nothing. A
+  // URL is a far more stable contract than a class name: LinkedIn cannot stop linking a company
+  // to /company/<slug> without breaking their own product, whereas
+  // ".job-details-jobs-unified-top-card__company-name" changes on a whim. The company link
+  // CLOSEST to the job title wins (boards_core.companyNearTitle), because the page is full of
+  // other employer links: the "people you can reach out to" cards, the hiring team, ads.
+  function postingCompany() {
+    if (!BOARD) return null;
+    let p = null;
+    try { p = BOARD.posting && BOARD.posting(document); } catch { p = null; }
+    if (p && p.company && p.anchor)
+      return { el: p.anchor, name: clean(p.company), location: p.location || locationNear(p.anchor) };
+    if (!BOARD.companyHref) return null;
+    const best = B.companyNearTitle(document, BOARD.companyHref);
+    if (!best) return null;
+    return { el: best, name: clean(best.textContent), location: locationNear(best) };
   }
 
   // The role's location, from the same card as the employer.
@@ -145,7 +132,7 @@
   // LinkedIn writes it as plain text near the title ("Dallas, TX · Reposted 2 weeks ago"),
   // so we look for a "City, ST" shape in the job card rather than for a class name, which is
   // the thing that keeps changing.
-  function linkedinLocationNear(companyEl) {
+  function locationNear(companyEl) {
     // Search up from the TITLE first, then from the company link.
     //
     // The first attempt only climbed from the company link, and on the real page the
@@ -201,50 +188,19 @@
     return "";
   }
 
-  function locationInText(text) {
-    if (!text) return "";
-    const US_STATE = /\b(A[LKZR]|C[AOT]|D[CE]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|P[A]|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\b/;
-    // A city is at most a few capitalised words ("Dallas", "New York", "San Francisco"), so
-    // bound it. An unbounded [A-Za-z ]+ before the comma swallows the sentence in front of
-    // it: on this very card it produced "Bank Portfolio Manager Dallas, TX". That happened
-    // to still read as US, which is exactly why it's worth fixing now, while it's visible.
-    const CITY = "[A-Z][a-zA-Z.'-]+(?:[ -][A-Z][a-zA-Z.'-]+){0,2}";
-    const m = text.match(new RegExp("(" + CITY + ",\\s*" + US_STATE.source + ")"))
-      || text.match(/\b(Remote\s*[-,]?\s*(?:US|USA|United States))\b/i)
-      // "London, England" / "Toronto, Ontario": read it so we can say NOT-US with confidence
-      // rather than shrug, but only when it is as clearly shaped as the US case.
-      || text.match(new RegExp("(" + CITY + ",\\s*[A-Z][a-zA-Z]{3,20})\\b"));
-    if (!m) return "";
-    const hit = clean(m[1]);
-    // "Remote - US" has no city to trim, and trimming it produced "- US".
-    if (!hit.includes(",")) return hit;
-    // The card's text runs together ("...Portfolio Manager Dallas, TX"), so a capitalised
-    // job title can be swallowed into the city. Keep the last two words before the comma:
-    // enough for "New York" and "San Francisco", short enough to drop most of a title.
-    const [head, ...tail] = hit.split(",");
-    const city = head.trim().split(/\s+/).slice(-2).join(" ");
-    return clean([city, ...tail].join(","));
-  }
+  // A "City, ST" shape in a run of text (shared with the card readers in boards_core.js). A city
+  // is at most a few capitalised words, so it is bounded: an unbounded match swallowed the
+  // sentence in front of it ("Bank Portfolio Manager Dallas, TX"); "Remote - US" has no city to
+  // trim; "London, England" is read too, so we can say NOT-US with confidence rather than shrug.
+  const locationInText = (text) => (B ? B.locationInText(text) : "");
 
   function pickTarget() {
-    let sels = [];
-    if (HOST.includes("linkedin.com")) {
-      // Try the URL shape FIRST on LinkedIn: it is the only thing here that has not moved.
-      const li = linkedinCompany();
-      // Pass the location through. Dropping it here is what produced the lie: an empty
-      // location read as "not in the US" and badged a Dallas job as out of reach.
-      if (li) return { company: li.name, anchor: li.el, location: li.location || "" };
-      sels = [".job-details-jobs-unified-top-card__company-name a",
-              ".job-details-jobs-unified-top-card__company-name",
-              ".jobs-unified-top-card__company-name a",
-              ".jobs-unified-top-card__company-name",
-              ".topcard__org-name-link"];
-    } else if (HOST.includes("indeed.com")) {
-      sels = ['[data-testid="inlineHeader-companyName"] a',
-              '[data-testid="inlineHeader-companyName"]',
-              '.jobsearch-CompanyInfoContainer a',
-              '[data-company-name="true"]'];
-    }
+    const sels = (BOARD && BOARD.companySelectors) || [];
+    // The board's own reader FIRST: the pane's hooks, or the employer link nearest the title.
+    // Pass the location through. Dropping it here is what produced the lie: an empty location
+    // read as "not in the US" and badged a Dallas job as out of reach.
+    const near = postingCompany();
+    if (near) return { company: near.name, anchor: near.el, location: near.location || "" };
     // 1. The page's own structured data. Survives a redesign; the class names below don't.
     const ld = companyFromJsonLd();
     if (ld && ld.company) {
@@ -336,26 +292,10 @@
     return `<div class="tailor-sponsor-profile"><div class="tailor-sp-hd">Sponsorship profile${data.matched_name ? " · " + esc(data.matched_name) : ""}</div>${rows.join("")}<div class="tailor-sp-foot">Historical public USCIS/DOL data, not a promise this role sponsors.</div></div>`;
   }
 
-  // Where our block goes. On LinkedIn's job pane the header is a column of stacked rows:
-  // [logo + company + title + location] [On-site · Full-time] [Apply · Save]. Our block becomes
-  // one more row in that column, right after the first one, so it sits under the title and
-  // cannot squeeze anything. Found from the Apply button up, not from class names (LinkedIn's
-  // are obfuscated and change). Elsewhere: after the nearest block-level ancestor of the anchor.
-  function linkedinHeader() {
-    const apply = [...document.querySelectorAll("button, a")]
-      .find(b => /^(easy )?apply(\s*on company website)?$/i.test((b.innerText || "").trim()));
-    if (!apply) return null;
-    for (let e = apply.parentElement, i = 0; e && i < 12; e = e.parentElement, i++) {
-      const co = e.querySelector('a[href*="/company/"]');
-      if (!co || !e.innerText || e.innerText.length > 1500) continue;
-      const cs = getComputedStyle(e);
-      if (cs.display === "flex" && cs.flexDirection.startsWith("column") && e.children.length >= 2) {
-        const first = [...e.children].find(k => k.contains(co));
-        if (first) return { column: e, after: first };
-      }
-    }
-    return null;
-  }
+  // Where our block goes: the row the board adapter's header() names (on LinkedIn's job pane,
+  // the first row of the stacked header column, found from the Apply button up; on Dice, the
+  // header card's company row), so it sits under the title and cannot squeeze anything.
+  // Elsewhere: after the nearest block-level ancestor of the anchor.
   function blockSlot(anchor) {
     let el = anchor;
     for (let i = 0; i < 10 && el.parentElement && el.parentElement !== document.body; i++) {
@@ -369,8 +309,9 @@
     return el;
   }
   function placeBlocks(anchor, blocks) {
-    const li = HOST.includes("linkedin.com") ? linkedinHeader() : null;
-    let at = li ? li.after : blockSlot(anchor);
+    let head = null;
+    try { head = BOARD && BOARD.header ? BOARD.header(document) : null; } catch { head = null; }
+    let at = (head && head.parentElement) ? head : blockSlot(anchor);
     for (const b of blocks) { at.insertAdjacentElement("afterend", b); at = b; }
   }
 
@@ -398,10 +339,13 @@
   // eligible for visa sponsorship" (U.S. Bank, 2026-10-10), and that sentence decides the role. Read
   // the whole description with the app's own reader (adstance_core.js) and put the answer FIRST in
   // the row, with the sentence on hover. Idempotent, so it catches a description that loads late.
+  const JD_SELS = ['[class*="jobs-description"]', '[class*="job-details"] [class*="description"]',
+                   '[class*="posting-description"]', '[data-testid="jobDescriptionText"]',
+                   '#jobDescriptionText', '[class*="job-description"]', 'article', 'main', '#content'];
   function readFullJD() {
-    const sels = ['[class*="jobs-description"]', '[class*="job-details"] [class*="description"]',
-                  '[class*="posting-description"]', '[data-testid="jobDescriptionText"]',
-                  '#jobDescriptionText', '[class*="job-description"]', 'article', 'main', '#content'];
+    // The board's own description block first; the generic ATS selectors otherwise.
+    try { const t = BOARD && BOARD.description ? BOARD.description(document) : ""; if (t) return t; } catch {}
+    const sels = JD_SELS;
     for (const s of sels) {
       const el = document.querySelector(s);
       const t = el && el.innerText;
@@ -456,9 +400,9 @@
   // The JD text on the OPEN posting, for the profile-vs-JD match. Read from the description block;
   // bounded, and only when it's a real description (not a nav blurb).
   function readJD() {
-    const sels = ['[class*="jobs-description"]', '[class*="job-details"] [class*="description"]',
-                  '[class*="posting-description"]', '[data-testid="jobDescriptionText"]',
-                  '#jobDescriptionText', '[class*="job-description"]', 'article', 'main', '#content'];
+    const full = readFullJD();
+    if (full) return full.replace(/\s+/g, " ").trim().slice(0, 6000);
+    const sels = JD_SELS;
     for (const s of sels) {
       const el = document.querySelector(s);
       const t = el && el.textContent.replace(/\s+/g, " ").trim();
@@ -506,49 +450,16 @@
     row.insertAdjacentElement("afterend", wrap);
   }
 
-  // ---- In-list: badge each card in a results list (LinkedIn / Indeed) --------------------
-  const isList = () => /linkedin\.com|indeed\.com|ziprecruiter\.com/.test(HOST);
+  // ---- In-list: badge each card in a results list (every board adapter has cards) ----------
+  const isList = () => !!BOARD;
   function cardEls() {
-    let sel;
-    if (HOST.includes("linkedin")) {
-      // The 2026 results list: one lazy column whose children are the cards (plus a few promos
-      // with no company line, which cardInfo rejects). Older markup kept as a fallback.
-      const col = document.querySelector('[componentkey="SearchResultsMainContent"], [data-testid="lazy-column"]');
-      const fresh = col ? [...col.children].filter(c => c.innerText && c.innerText.trim()) : [];
-      if (fresh.length) return fresh;
-      sel = 'li[data-occludable-job-id], div.job-card-container, li.jobs-search-results__list-item, [data-job-id]';
-    }
-    else if (HOST.includes("ziprecruiter"))
-      // Verified live (2026-08-03): each result is <article id="job-card--...">, company is an
-      // /co/ link, title an <h2>. ZipRecruiter's classes are hashed Tailwind, so we anchor on
-      // the stable <article id> + href shapes, not class names.
-      sel = 'article[id^="job-card"]';
-    else
-      sel = 'div.job_seen_beacon, td.resultContent, div.cardOutline, [data-jk]';   // indeed
-    return [...document.querySelectorAll(sel)];
-  }
-  // LinkedIn's current card has no company link and no stable class: a logo beside a column of
-  // lines, [title] [company] [location] [meta]. Read the lines by position, the way a person does.
-  function linkedinCardInfo(card) {
-    let col = null;
-    for (const d of card.querySelectorAll("div")) {
-      if (d.children.length >= 3 && getComputedStyle(d).flexDirection === "column"
-          && (d.innerText || "").trim() && d.innerText.length < 600) { col = d; break; }
-    }
-    if (!col) return null;
-    const lines = [...col.children].filter(k => !k.classList.contains("tailor-card-badges"))
-      .map(k => clean(k.innerText || "")).filter(Boolean);
-    if (lines.length < 2) return null;
-    const company = lines[1].replace(/\s*\(Verified job\)\s*/i, "");
-    const location = (lines[2] || "").replace(/·.*$/, "").trim();
-    if (!company || company.length > 80 || /^\d+ (school|connections?)/i.test(company)) return null;
-    return { company, location, jd: "", anchor: col, slot: col };
+    if (!BOARD) return [];
+    try { return BOARD.cards(document) || []; } catch { return []; }
   }
   function cardInfo(card) {
-    if (HOST.includes("linkedin")) {
-      const li = linkedinCardInfo(card);
-      if (li) return li;
-    }
+    // The board's own reader (LinkedIn by line position, Dice by data-testid, ...); the generic
+    // hooks below only when it cannot read the card, e.g. an older LinkedIn card with a link.
+    try { const bi = BOARD && BOARD.cardInfo(card); if (bi && bi.company) return bi; } catch {}
     // a[href*="/co/"] is ZipRecruiter's company link; /company/ is LinkedIn's. querySelector
     // with a list returns the first match in DOM order, so an unrelated board ignores the ones
     // that don't apply.
@@ -765,6 +676,8 @@
 
   let t = null;
   const debounced = () => { clearTimeout(t); t = setTimeout(run, 500); };
+  // Re-read on mutation only: a React board (Handshake, Dice, Google) renders late and as the
+  // person scrolls, and that is the one and only trigger. Nothing is ever asked of the page.
   new MutationObserver(debounced).observe(document.body, { childList: true, subtree: true });
   if (isList()) loadSponsoredOnly();                // the saved "Sponsored only" choice
   run();

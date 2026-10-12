@@ -53,11 +53,14 @@
         "https://*.glassdoor.com/*",
         "https://*.joinhandshake.com/*",
         "https://*.ziprecruiter.com/*",
+        "https://www.dice.com/*",
+        "https://www.google.com/search*",
         "https://www.idealist.org/*"
       ],
       "js": [
         "parity_core.js",
         "adstance_core.js",
+        "boards_core.js",
         "content.js",
         "autofill_core.js",
         "autofill.js"
