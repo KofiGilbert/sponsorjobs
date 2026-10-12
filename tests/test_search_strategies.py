@@ -17,8 +17,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from sourcing.strategies import (StrategyStore, board_search_urls, digest, new_since,
-                                 normalize_filters, parse_ts, strategy_open_urls)
+from sourcing.strategies import StrategyStore, digest, new_since, normalize_filters, parse_ts
+from ui.boardlinks import board_search_urls, strategy_open_urls
 
 T0 = datetime(2026, 10, 11, 9, 0, 0)        # the person last looked
 T_OLD = "2026-10-10 18:00:00"               # arrived before T0

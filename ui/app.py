@@ -7997,7 +7997,7 @@ def strategies_seen(sid: int):
 def strategies_open_urls(sid: int):
     """The same search as plain URLs on LinkedIn, Indeed, Glassdoor, Handshake and Google Jobs.
     The browser opens them in tabs; this app never loads, clicks or reads those pages."""
-    from sourcing.strategies import strategy_open_urls
+    from ui.boardlinks import strategy_open_urls
     store = _strategies()
     try:
         st = store.get(sid)
