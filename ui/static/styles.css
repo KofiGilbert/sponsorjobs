@@ -3072,3 +3072,64 @@ body.cv-dragging * { cursor: grabbing !important; }
   .trk-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .trk-board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+/* ---- Interview report card (both rounds) + the prep checklist on the start screens.
+   Quiet framed blocks on the report; type and spacing do the hierarchy, colour is rationed to
+   the STAR badges and the coverage rating. ---- */
+.rc { margin: 16px 0; padding: 18px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
+.rc-h { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); margin-bottom: 12px; }
+.rc-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.rc-tile { padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md, 8px); }
+.rc-tile-v { font-size: 24px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.rc-tile-l { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
+.rc-pace { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 4px; }
+.rc-pace.slow, .rc-pace.fast { color: #b54708; }
+.rc-table-wrap { overflow-x: auto; }
+.rc-table { width: 100%; border-collapse: collapse; font-size: 12.5px; color: var(--ink-2); }
+.rc-table th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.rc-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.rc-table tr:last-child td { border-bottom: 0; }
+.rc-q { color: var(--ink); font-weight: 550; line-height: 1.45; min-width: 220px; }
+.rc-n { color: var(--faint); font-weight: 600; }
+.rc-ev { font-size: 11.5px; font-weight: 400; color: var(--muted); margin-top: 3px; }
+.rc-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rc-num sup { color: var(--faint); }
+.rc-cov { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.rc-cov.c3 { color: #067647; background: #ecfdf3; border-color: #abefc6; }
+.rc-cov.c2 { color: var(--ink); border-color: var(--border-strong, var(--border)); }
+.rc-cov.c1, .rc-cov.c0 { color: #b42318; background: #fef3f2; border-color: #fecdca; }
+.rc-star { display: inline-flex; gap: 3px; }
+.rc-star-b { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 5px; font-size: 10.5px; font-weight: 700; font-style: normal; border: 1px solid var(--border); color: var(--faint); background: var(--surface-2); }
+.rc-star-b.on { color: #05603a; background: #ecfdf3; border-color: #abefc6; }
+.rc-star-b.off { color: #b42318; background: #fef3f2; border-color: #fecdca; text-decoration: line-through; }
+.rc-note { font-size: 11.5px; color: var(--faint); margin: 8px 0 0; }
+.rc-sec { margin-top: 16px; }
+.rc-list { margin: 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); line-height: 1.6; }
+.rc-weak-list { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.rc-weak-item { padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md, 8px); }
+.rc-weak-q { font-size: 12.5px; font-weight: 600; color: var(--ink); line-height: 1.45; }
+.rc-weak-drill { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; }
+.rc-weak-acts { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.rc-trend { font-size: 13px; color: var(--ink-2); margin: 2px 0 8px; }
+.rc-hist-bars { display: flex; align-items: flex-end; gap: 4px; height: 48px; margin-bottom: 8px; }
+.rc-hist-bar { display: inline-block; width: 14px; border-radius: 3px 3px 0 0; background: var(--border-strong, var(--border)); }
+.rc-hist-bar.ok { background: var(--muted); }
+.rc-hist-bar.is-cur { background: var(--ink); }
+.rc-hist-list { margin: 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--ink-2); }
+.rc-hist-list li { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.rc-hist-list li:last-child { border-bottom: 0; }
+.rc-hist-list li.is-cur .rc-hist-what { color: var(--ink); font-weight: 600; }
+.rc-hist-score { flex: 0 0 34px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.rc-hist-what { flex: 1; }
+.rc-hist-when { color: var(--faint); font-variant-numeric: tabular-nums; }
+.rc-turn { font-weight: 600; color: var(--muted); }
+.rc-turn.me { color: var(--ink); }
+/* The prep checklist on the start screen (Round 1 landing, Round 2 green room). */
+.rc-goals { margin: 22px 0 14px; padding: 16px 18px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md, 8px); text-align: left; }
+.rc-goals-r2 { margin: 14px 0 0; background: var(--surface); }
+.rc-goals-h { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.rc-goals-loading { font-size: 12.5px; color: var(--faint); margin: 0; }
+.rc-goals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.rc-goals-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); line-height: 1.55; }
+.rc-goals-list li { margin: 2px 0; }
+.rc-drill-list { margin: 14px 0 10px; max-width: 62ch; }
