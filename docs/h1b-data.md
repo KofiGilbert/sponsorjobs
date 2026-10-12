@@ -304,8 +304,10 @@ the USCIS registration page each cap season.
 **Offer check** (Jobs > open a role > About > "Offer check"): type the offer, confirm the
 title, city and state (pre-filled from the job), and the panel says where the offer sits in
 this employer's filings for that title and place, the likely prevailing-wage level (the
-highest level whose median prevailing wage in those filings the offer meets), the odds at
-that level with all four levels beside it, and three negotiation points: the median and
+highest level whose median prevailing wage in those filings the offer meets; when the offer
+is under every level the employer files, "At most Level II" with the odds at that ceiling
+instead of silence), the odds at that level with all four levels beside it, and three
+negotiation points: the median and
 range, the wage that would reach the next level and what it does to the lottery entries,
 and the level the employer usually files at. `POST /api/sponsors/offer-check` with
 `{company, title, city, state | location, offer}` ("125k" works) returns the same. Every
