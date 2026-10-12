@@ -2471,6 +2471,7 @@
     if (st.coverage) {
       $("#coverage").hidden = false;
       setCoverage(st.coverage.ratio);
+      if (Array.isArray(st.keyword_actions)) KW_ACTIONS = st.keyword_actions;
       renderCovDetail(st.coverage);
     }
     if (st.review) renderReview(st.review);
@@ -2522,14 +2523,118 @@
       + `<div class="ps-items">${(honesty.items || []).map(t => `<span class="ps-term ps-flag">${esc(t)}</span>`).join("")}</div></div></div>`;
   }
 
+  /* "Add this keyword" (the Rezi / Huntr action, on our engine). Every missing term gets an
+     Add; the server asks the model whether the person's own profile supports it and drafts a
+     rewrite of ONE bullet (or one new line when the page has room). The card shows the
+     evidence and the before/after with Accept / Ignore; Accept splices it surgically,
+     recompiles, and refreshes the PDF and the report. An added term moves to "In resume"
+     with an undo link. The term list is server truth (st.keyword_actions). */
+  let KW_ACTIONS = [];
+  let KW_PENDING = null;
+  const kwT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+
   function renderCovDetail(cov) {
     const present = (cov.present || []).slice(0, 24);
+    const have = (cov.missing_supported || []).slice(0, 20);
     const missing = (cov.missing || []).slice(0, 20);
-    $("#covDetail").innerHTML =
-      `<span class="cd-lbl">In Resume</span>` + (present.map(t => `<span class="term hit">${esc(t)}</span>`).join("") || `<span class="term miss"></span>`) +
-      `<span class="cd-lbl">Missing</span>` + (missing.map(t => `<span class="term miss">${esc(t)}</span>`).join("") || `<span class="term hit">none</span>`);
+    const applied = new Set(KW_ACTIONS.map(a => String(a.term || "").toLowerCase()));
+    const hit = t => `<span class="term hit">${esc(t)}`
+      + (applied.has(String(t).toLowerCase())
+        ? ` <a href="#" class="kw-undo" data-term="${esc(t)}">${esc(kwT("kw.undo", "undo"))}</a>` : "")
+      + `</span>`;
+    const miss = t => `<span class="term miss">${esc(t)}<button type="button" class="kw-add" data-term="${esc(t)}">${esc(kwT("kw.add", "Add"))}</button></span>`;
+    let html = `<span class="cd-lbl">${esc(kwT("kw.inResume", "In resume"))}</span>`
+      + (present.map(hit).join("") || `<span class="term miss"></span>`);
+    if (have.length) html += `<span class="cd-lbl">${esc(kwT("kw.youHave", "You have, not shown"))}</span>` + have.map(miss).join("");
+    html += `<span class="cd-lbl">${esc(kwT("kw.missing", "Missing"))}</span>`
+      + (missing.map(miss).join("") || `<span class="term hit">${esc(kwT("kw.none", "none"))}</span>`);
+    $("#covDetail").innerHTML = html;
   }
   $("#covInfo").addEventListener("click", () => { $("#covDetail").hidden = !$("#covDetail").hidden; });
+
+  function kwCard(html) {
+    const card = $("#kwCard");
+    if (!card) return;
+    card.innerHTML = html;
+    card.hidden = !html;
+    if (html) { $("#covDetail").hidden = false; }
+  }
+  const kwIgnoreBtn = () => `<div class="kw-actions"><button class="btn btn-ghost btn-sm" type="button" id="kwIgnore">${esc(kwT("kw.ignore", "Ignore"))}</button></div>`;
+
+  async function kwPreview(term, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = kwT("kw.working", "Working"); }
+    let p;
+    try { p = await api("/api/cv/live/keyword/preview", { term }); }
+    catch (err) {
+      kwCard(`<div class="kw-term">${esc(term)}</div><p class="kw-note">${esc(err.message || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      p = null;
+    }
+    if (btn) { btn.disabled = false; btn.textContent = kwT("kw.add", "Add"); }
+    if (!p) return;
+    KW_PENDING = p;
+    if (!p.supported) {
+      kwCard(`<div class="kw-term">${esc(term)}</div>`
+        + `<p class="kw-note">${esc(kwT("kw.unsupported", "Not supported by your profile"))}. ${esc(kwT("kw.unsupportedHint", "Add it to a role or project in your profile, then try again."))}</p>`
+        + kwIgnoreBtn());
+      return;
+    }
+    if (!p.ok) {
+      kwCard(`<div class="kw-term">${esc(term)}</div><p class="kw-note">${esc(p.reason || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      return;
+    }
+    const ev = p.evidence || {};
+    const beforeBlock = p.kind === "new"
+      ? `<div><div class="kw-lbl">${esc(kwT("kw.newBullet", "New bullet under {label}").replace("{label}", p.label || ""))}</div></div>`
+      : `<div><div class="kw-lbl">${esc(kwT("kw.before", "Before"))}</div><div class="kw-line">${esc(p.before)}</div></div>`;
+    kwCard(`<div class="kw-term">${esc(term)}</div>`
+      + `<div class="kw-ev">${esc(kwT("kw.evidence", "From your profile"))}: <b>${esc(ev.label || p.label || "")}</b> &ldquo;${esc(ev.quote || "")}&rdquo;</div>`
+      + beforeBlock
+      + `<div><div class="kw-lbl">${esc(kwT("kw.after", "After"))}</div><div class="kw-line after">${esc(p.draft)}</div></div>`
+      + `<div class="kw-actions"><button class="btn btn-sm" type="button" id="kwAccept">${esc(kwT("kw.accept", "Accept"))}</button>`
+      + `<button class="btn btn-ghost btn-sm" type="button" id="kwIgnore">${esc(kwT("kw.ignore", "Ignore"))}</button></div>`);
+  }
+
+  async function kwApply() {
+    const p = KW_PENDING;
+    if (!p || !p.ok) return;
+    const btn = $("#kwAccept");
+    if (btn) { btn.disabled = true; btn.textContent = kwT("kw.working", "Working"); }
+    let st;
+    try { st = await api("/api/cv/live/keyword/apply", { term: p.term, draft: p.draft }); }
+    catch (err) {
+      kwCard(`<div class="kw-term">${esc(p.term)}</div><p class="kw-note">${esc(err.message || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      return;
+    }
+    if (!st.ok) {
+      kwCard(`<div class="kw-term">${esc(p.term)}</div><p class="kw-note">${esc(st.reason || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      return;
+    }
+    KW_PENDING = null;
+    kwCard("");
+    applyState(st);           // new PDF, new coverage, the term now under "In resume" with undo
+  }
+
+  async function kwUndo(term) {
+    let st;
+    try { st = await api("/api/cv/live/keyword/undo", { term }); }
+    catch (err) {
+      kwCard(`<div class="kw-term">${esc(term)}</div><p class="kw-note">${esc(err.message || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      return;
+    }
+    kwCard("");
+    applyState(st);
+  }
+
+  $("#covDetail").addEventListener("click", (e) => {
+    const add = e.target.closest(".kw-add");
+    const undo = e.target.closest(".kw-undo");
+    if (add) { e.preventDefault(); kwPreview(add.dataset.term, add); }
+    else if (undo) { e.preventDefault(); kwUndo(undo.dataset.term); }
+  });
+  $("#kwCard")?.addEventListener("click", (e) => {
+    if (e.target.closest("#kwAccept")) kwApply();
+    else if (e.target.closest("#kwIgnore")) { KW_PENDING = null; kwCard(""); }
+  });
 
   /* The preview is ALWAYS the real compiled PDF (zero drift). "Edit bullets" opens a
      secondary editor; each edit re-renders the PDF, so what you download is what the

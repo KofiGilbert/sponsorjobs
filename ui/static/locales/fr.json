@@ -347,5 +347,21 @@
   "upg.welcomeSub": "Actif jusqu'au {date}. Il se termine tout seul, rien à résilier.",
   "upg.welcome1": "{i} entretiens en direct avec un recruteur en temps réel",
   "upg.welcome2": "{p} dossiers personnalisés avec notre meilleur modèle d'IA",
-  "upg.welcome3": "Tout ce qu'inclut l'offre gratuite, comme avant"
+  "upg.welcome3": "Tout ce qu'inclut l'offre gratuite, comme avant",
+  "kw.add": "Ajouter",
+  "kw.undo": "annuler",
+  "kw.inResume": "Dans le CV",
+  "kw.youHave": "Vous l'avez, non affiché",
+  "kw.missing": "Manquant",
+  "kw.none": "aucun",
+  "kw.evidence": "Dans votre profil",
+  "kw.before": "Avant",
+  "kw.after": "Après",
+  "kw.newBullet": "Nouvelle puce sous {label}",
+  "kw.accept": "Accepter",
+  "kw.ignore": "Ignorer",
+  "kw.unsupported": "Votre profil ne le justifie pas",
+  "kw.unsupportedHint": "Ajoutez-le à un poste ou un projet de votre profil, puis réessayez.",
+  "kw.working": "Un instant",
+  "kw.failed": "Impossible d'ajouter ce mot-clé."
 }

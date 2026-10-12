@@ -347,5 +347,21 @@
   "upg.welcomeSub": "Ativo até {date}. Termina sozinho, não há nada para cancelar.",
   "upg.welcome1": "{i} entrevistas ao vivo com um entrevistador em tempo real",
   "upg.welcome2": "{p} pacotes personalizados com nosso melhor modelo de IA",
-  "upg.welcome3": "Tudo do plano gratuito, como antes"
+  "upg.welcome3": "Tudo do plano gratuito, como antes",
+  "kw.add": "Adicionar",
+  "kw.undo": "desfazer",
+  "kw.inResume": "No currículo",
+  "kw.youHave": "Você tem, não aparece",
+  "kw.missing": "Faltando",
+  "kw.none": "nenhum",
+  "kw.evidence": "Do seu perfil",
+  "kw.before": "Antes",
+  "kw.after": "Depois",
+  "kw.newBullet": "Novo item em {label}",
+  "kw.accept": "Aceitar",
+  "kw.ignore": "Ignorar",
+  "kw.unsupported": "Seu perfil não comprova isso",
+  "kw.unsupportedHint": "Adicione isso a um cargo ou projeto no seu perfil e tente de novo.",
+  "kw.working": "Um momento",
+  "kw.failed": "Não foi possível adicionar esta palavra-chave."
 }
