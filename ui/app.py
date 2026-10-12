@@ -2704,6 +2704,69 @@ def accept():
     return jsonify(_session().accept())
 
 
+# ------------------------------------------------------------------ "Add this keyword"
+# One missing JD term from the coverage report -> one honest, reviewable edit of one bullet
+# (tailoring/keyword_action.py). The resume id is the live builder ("live"), the session's
+# jobname, or the record id of the resume this session last saved; a resume that is not open
+# in the builder has no page to edit surgically, so it answers 404.
+def _keyword_session(cv_id: str):
+    s = _SESSION.get("s")
+    if s is None:
+        return None
+    cv_id = str(cv_id or "").strip()
+    if cv_id in ("live", "current", getattr(s, "jobname", "")):
+        return s
+    if cv_id.isdigit() and str(getattr(s, "_last_record_id", "") or "") == cv_id:
+        return s
+    return None
+
+
+def _keyword_term():
+    return " ".join(str((request.json or {}).get("term") or "").split())
+
+
+@app.post("/api/cv/<cv_id>/keyword/preview")
+@_guard
+def keyword_preview(cv_id):
+    """Body {term}. Does the person's profile support this JD term, and if so what is the
+    one-bullet change? -> {supported, ok, evidence, draft, target_bullet, before, after, ...}"""
+    s = _keyword_session(cv_id)
+    if s is None:
+        return jsonify({"error": "Open this resume in the builder first."}), 404
+    term = _keyword_term()
+    if not term:
+        return jsonify({"error": "No keyword given."}), 400
+    return jsonify(s.keyword_preview(term))
+
+
+@app.post("/api/cv/<cv_id>/keyword/apply")
+@_guard
+def keyword_apply(cv_id):
+    """Body {term, draft}. Splices the draft surgically, recompiles, and returns the session
+    state with the new coverage report, the page check and a unified diff of the .tex."""
+    s = _keyword_session(cv_id)
+    if s is None:
+        return jsonify({"error": "Open this resume in the builder first."}), 404
+    term = _keyword_term()
+    if not term:
+        return jsonify({"error": "No keyword given."}), 400
+    draft = str((request.json or {}).get("draft") or "")
+    return jsonify(s.keyword_apply(term, draft))
+
+
+@app.post("/api/cv/<cv_id>/keyword/undo")
+@_guard
+def keyword_undo(cv_id):
+    """Body {term}. Puts the previous bullet text back and recompiles."""
+    s = _keyword_session(cv_id)
+    if s is None:
+        return jsonify({"error": "Open this resume in the builder first."}), 404
+    term = _keyword_term()
+    if not term:
+        return jsonify({"error": "No keyword given."}), 400
+    return jsonify(s.keyword_undo(term))
+
+
 # ------------------------------------------------------------------ drafting (§5)
 @app.post("/api/session/cover_letter")
 @_guard

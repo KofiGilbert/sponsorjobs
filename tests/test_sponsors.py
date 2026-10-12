@@ -96,6 +96,33 @@ def test_cap_exempt_from_naics_and_name():
     assert db.lookup("Google").cap_exempt is False
 
 
+def test_the_posting_s_name_can_mark_a_record_cap_exempt_at_lookup():
+    """The ingest-time flag misses an employer whose record never passed through the H-1B name
+    rule, and plain "Hospital" was never in it. The chip reads the name on the POSTING too."""
+    from sourcing.sponsors import looks_cap_exempt
+    for name in ("Mercy General Hospital", "Boston Children's Hospital", "Stanford School of Medicine",
+                 "University of Michigan", "Williams College", "Argonne National Laboratory",
+                 "Scripps Research Institute", "Cedars-Sinai Medical Center", "Johns Hopkins Hospital, Inc."):
+        assert looks_cap_exempt(name) is True, name
+    for name in ("Google", "Hospitality Partners LLC", "Collegiate Prep Tutors Co",   # whole words only
+                 "Universal Studios", "Labcorp", "Medical Devices Inc", ""):
+        assert looks_cap_exempt(name) is False, name
+    db = SponsorDB(":memory:")
+    db.ingest_h1b_rows([_row("MERCY GENERAL HOSPITAL", 2, 0, naics="62", state="CA"),
+                        _row("STANFORD HEALTH CARE", 30, 10, naics="62", state="CA")])
+    assert db.lookup("Mercy General Hospital").cap_exempt is True          # bare "hospital": name read
+    # A posting that names the employer more fully than its filings: the record matches by prefix
+    # and the posting's own words supply the flag. The cached record is left as it was.
+    assert db.lookup("Stanford Health Care").cap_exempt is False
+    assert db.lookup("Stanford Health Care Hospital").cap_exempt is True
+    assert db.lookup("Stanford Health Care").cap_exempt is False
+    assert any(b["code"] == "CAP-EXEMPT" for b in db.lookup("Stanford Health Care Hospital").badges())
+    tagged = db.tag_jobs([{"company": "Mercy General Hospital", "location": "Sacramento, CA"}])
+    assert tagged[0]["sponsor"]["cap_exempt"] is True
+    assert "CAP-EXEMPT" in [b["code"] for b in tagged[0]["visa"]]
+    assert db.lookup("Nowhere Hospital") is None                           # a name alone is no record
+
+
 def test_cap_exempt_recall_covers_labs_hospitals_and_med_schools():
     """Cap-exempt (no H-1B lottery) also covers national labs, children's hospitals, cancer
     centers, and med schools, while staying conservative on ordinary companies."""

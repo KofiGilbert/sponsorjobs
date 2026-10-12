@@ -56,12 +56,26 @@
     };
   }
 
-  // Client-side list filtering. `card` = { codes:[H-1B,...], role_in_us, matchPct:number|null }.
-  // `filter` = { chips:[H-1B,...], minMatch:number }. Honest gating: sponsorship chips exclude a
-  // role we KNOW is abroad; the match slider only filters cards we actually have a score for.
+  // Does the employer have ANY sponsorship record (H-1B approvals, certified PERM cases, or
+  // E-Verify enrollment)? true / false from a lookup answer; null when there is no answer yet
+  // (worker asleep, data offline), which the "Sponsored only" toggle treats as "keep visible".
+  function hasSponsorRecord(data) {
+    if (!data || data.ok === false) return null;
+    if (!data.matched) return false;
+    const p = data.profile;
+    if (p) return !!(p.h1b_approvals > 0 || p.perm_certs > 0 || p.e_verify);
+    return (data.visa || []).length > 0 || !!data.sponsor_employer;   // an older app without `profile`
+  }
+
+  // Client-side list filtering. `card` = { codes:[H-1B,...], role_in_us, matchPct:number|null,
+  // record:true|false|null }. `filter` = { chips:[H-1B,...], minMatch:number, sponsoredOnly:bool }.
+  // Honest gating: sponsorship chips exclude a role we KNOW is abroad; the match slider only
+  // filters cards we actually have a score for; "Sponsored only" hides a card only once its
+  // lookup has answered "no record" (record === false), never one still waiting.
   function cardPasses(card, filter) {
     card = card || {};
     filter = filter || {};
+    if (filter.sponsoredOnly && card.record === false) return false;
     const chips = filter.chips || [];
     if (chips.length) {
       if (card.role_in_us === false) return false;          // clearly not US -> visa chips exclude
@@ -73,7 +87,19 @@
     return true;
   }
 
-  const api = { sponsorBadge, matchBadge, highlightTerms, cardPasses };
+  // The "Hiding N of M" count for a results list. `cards` = each card's signals (null while its
+  // lookup is still out). A pending card is never counted as hidden.
+  function listSummary(cards, filter) {
+    const out = { total: 0, hidden: 0, pending: 0 };
+    for (const c of cards || []) {
+      out.total++;
+      if (!c) { out.pending++; continue; }
+      if (!cardPasses(c, filter)) out.hidden++;
+    }
+    return out;
+  }
+
+  const api = { sponsorBadge, matchBadge, highlightTerms, cardPasses, hasSponsorRecord, listSummary };
   if (typeof window !== "undefined") window.TailorParity = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })();

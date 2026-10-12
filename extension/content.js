@@ -7,6 +7,17 @@
   const HOST = location.hostname;
   const APP_URL = "http://127.0.0.1:57000/";                                 // the local app
   const INSTALL_URL = "https://github.com/KofiGilbert/sponsorjobs#install";  // the free app
+  // Our mark (icons/icon.svg), inlined. It used to be loaded with chrome.runtime.getURL, which
+  // needs the file listed under web_accessible_resources, and a page can probe that list to
+  // fingerprint which extensions a visitor runs. Inlined, nothing is exposed and nothing is
+  // fetched from the extension by the page.
+  const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none">' +
+    '<rect width="20" height="20" rx="4.5" fill="#131316"/>' +
+    '<rect x="3" y="2" width="11" height="16" rx="2" fill="#e7e7ea" opacity="0.18"/>' +
+    '<path d="M6 6.2h6M6 9.4h6M6 12.6h3.5" stroke="#e7e7ea" stroke-width="1.4" stroke-linecap="round"/>' +
+    '<path d="M13.5 12.5l3.4 3.4M15.2 10.8l2.9 2.9a1 1 0 0 1-1.4 1.4l-2.9-2.9z" stroke="#e7e7ea" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '</svg>';
+  const LOGO = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(LOGO_SVG);
 
   const clean = (s) => (s || "").replace(/\s+/g, " ").trim().replace(/\s*·.*$/, "");
   const esc = (s) => String(s).replace(/[&<>"]/g, c =>
@@ -262,8 +273,8 @@
   const CHIP_TIP = {
     "H-1B": "This employer has had H-1B petitions approved (public USCIS data).",
     "GREEN-CARD": "This employer has sponsored green cards (certified PERM cases, public DOL data).",
-    "STEM-OPT": "Enrolled in E-Verify, so a STEM OPT extension is possible here.",
-    "CAP-EXEMPT": "Likely cap-exempt: H-1B without the lottery.",
+    "STEM-OPT": "Enrolled in E-Verify: STEM OPT extension possible here",
+    "CAP-EXEMPT": "Likely cap-exempt: H-1B without the lottery (university, nonprofit research, or hospital employer)",
   };
   // The employer's record as chip codes. `visa` is only filled when the role is known to be in
   // the US; when the location could not be read, the record still exists, so read it from the
@@ -318,9 +329,9 @@
     if (p.perm_certs > 0)
       rows.push(`<div class="tailor-sp-row"><span class="tailor-sp-k">Green card</span> ${Number(p.perm_certs).toLocaleString()} certified PERM cases</div>`);
     if (p.e_verify)
-      rows.push(`<div class="tailor-sp-row"><span class="tailor-sp-k">E-Verify</span> enrolled (STEM-OPT capable)</div>`);
+      rows.push(`<div class="tailor-sp-row"><span class="tailor-sp-k">E-Verify</span> enrolled (STEM OPT extension possible here)</div>`);
     if (p.cap_exempt)
-      rows.push(`<div class="tailor-sp-row"><span class="tailor-sp-k">Cap-exempt</span> likely (no H-1B lottery)</div>`);
+      rows.push(`<div class="tailor-sp-row"><span class="tailor-sp-k">Cap-exempt</span> likely: H-1B without the lottery (university, nonprofit research, or hospital)</div>`);
     if (!rows.length) return "";
     return `<div class="tailor-sponsor-profile"><div class="tailor-sp-hd">Sponsorship profile${data.matched_name ? " · " + esc(data.matched_name) : ""}</div>${rows.join("")}<div class="tailor-sp-foot">Historical public USCIS/DOL data, not a promise this role sponsors.</div></div>`;
   }
@@ -408,22 +419,31 @@
     const key = r.stance + "|" + r.sentence;
     if (key === lastStanceKey && row.querySelector(".tb-stance")) return;
     lastStanceKey = key;
-    row.querySelectorAll(".tb-stance").forEach(e => e.remove());
-    row.classList.toggle("tailor-role-no", r.stance === A.NOT_OFFERED);
+    row.querySelectorAll(".tb-stance, .tailor-ad-quote").forEach(e => e.remove());
+    // "restricted" (US citizenship / green card / clearance required) closes the role exactly
+    // like a "no": the employer's history badges after it describe other roles, so they dim.
+    const closed = r.stance === A.NOT_OFFERED || r.stance === A.RESTRICTED;
+    row.classList.toggle("tailor-role-no", closed);
     LAST.stance = r;
     paintCorner();
-    if (r.stance === A.UNKNOWN) return;          // the ad says nothing: the employer badges stand alone
+    const c = A.stanceChip(r);                    // label, class, tooltip, shortened quote
+    if (!c) return;                               // the ad says nothing: the employer badges stand alone
     // The role's own answer is the one that matters: a grey employer-level chip ("No sponsor
     // record", "location unclear") next to it only muddles it. Visa badges stay, dimmed.
-    if (r.stance === A.NOT_OFFERED) row.querySelectorAll(".tb-none").forEach(e => e.remove());
+    if (closed) row.querySelectorAll(".tb-none").forEach(e => e.remove());
     const chip = document.createElement("span");
-    const no = r.stance === A.NOT_OFFERED;
-    chip.className = `tailor-badge tb-stance ${no ? "tb-ad-no" : "tb-ad-yes"}`;
-    chip.textContent = no ? "No sponsorship for this role" : "Ad offers sponsorship";
-    chip.title = `The ad says: \u201c${r.sentence}\u201d` + (no
-      ? " The badges after this are the employer's history on other roles, not this one."
-      : " The ad does not name the visa; for a US new hire that usually means H-1B.");
+    chip.className = `tailor-badge tb-stance ${c.cls}`;
+    chip.textContent = c.label;
+    chip.title = c.title;
     row.insertAdjacentElement("afterbegin", chip);
+    // The ad's own sentence in the open, as a small grey line under the chips, so the proof is
+    // on the page and not only on hover (what the job screeners students compare us with do).
+    if (c.quote) {
+      const q = document.createElement("div");
+      q.className = "tailor-ad-quote";
+      q.textContent = `The ad says: \u201c${c.quote}\u201d`;
+      row.appendChild(q);
+    }
   }
 
   // ============================ P6: match score + skills + in-list + filters ============
@@ -552,8 +572,10 @@
       m = cov && P().matchBadge(cov);
       if (m && typeof m.pct === "number") pct = m.pct;
     }
-    // Remember the card's signals for the filter bar.
-    card._tailor = { codes: b.codes || [], role_in_us: data && data.role_in_us, matchPct: pct };
+    // Remember the card's signals for the filter bar and the "Sponsored only" toggle. `record`
+    // is null until the lookup has actually answered, and a null is never hidden.
+    card._tailor = { codes: b.codes || [], role_in_us: data && data.role_in_us, matchPct: pct,
+                     record: P().hasSponsorRecord(data) };
     const parts = [];
     const codes = data && data.matched && data.role_in_us !== false ? employerCodes(data) : [];
     if (codes.length) parts.push(...codes.map(c => chipHTML(c)));
@@ -573,21 +595,53 @@
     const cards = cardEls().filter(c => c.dataset.tailorScanned !== key(c)).slice(0, 40);
     for (const card of cards) {
       card.dataset.tailorScanned = key(card);
+      // A recycled element now shows a DIFFERENT job: forget the old job's signals and show the
+      // card until this one's lookup answers, so the toggle never hides a job on stale data.
+      card._tailor = null;
+      card.style.display = "";
       const info = cardInfo(card);
       if (info.company) { try { await badgeCard(card, info); } catch {} }
+      // Applied as each card's lookup lands, not after the whole scan: a card still waiting
+      // must never hold up the ones already answered.
+      applyFilter();
     }
     if (cardEls().length) ensureFilterBar();
+    // Re-applied on every pass (not only on a toggle): LinkedIn re-renders cards as you scroll
+    // and a freshly rendered card must obey the toggle too. Styling only: display:none on our
+    // side, nothing clicked, nothing scrolled, nothing asked of the site.
+    applyFilter();
   }
 
   // ---- Filter bar: sponsorship chips + match-rate slider (client-side, honest gating) ----
-  const FILTER = { chips: [], minMatch: 0 };
+  // Plus "Sponsored only" (the corner panel): hide cards whose employer has NO sponsorship
+  // record (no H-1B, no green card, no E-Verify). Cards whose lookup has not answered stay
+  // visible. The choice persists in chrome.storage.local.
+  const FILTER = { chips: [], minMatch: 0, sponsoredOnly: false, summary: null };
+  const SPONSORED_ONLY_KEY = "sj_sponsored_only";
   function applyFilter() {
     if (!P()) return;
-    for (const card of cardEls()) {
+    const cards = cardEls();
+    for (const card of cards) {
       const c = card._tailor;
       if (!c) continue;                                   // not scored yet, never hide it
       card.style.display = P().cardPasses(c, FILTER) ? "" : "none";
     }
+    FILTER.summary = cards.length ? P().listSummary(cards.map(c => c._tailor), FILTER) : null;
+    paintCorner();                                         // the "Hiding N of M" count
+  }
+  function setSponsoredOnly(on) {
+    FILTER.sponsoredOnly = !!on;
+    try { chrome.storage.local.set({ [SPONSORED_ONLY_KEY]: FILTER.sponsoredOnly }); } catch {}
+    applyFilter();
+  }
+  function loadSponsoredOnly() {
+    try {
+      chrome.storage.local.get(SPONSORED_ONLY_KEY, (r) => {
+        if (chrome.runtime.lastError || !r) return;
+        FILTER.sponsoredOnly = !!r[SPONSORED_ONLY_KEY];
+        applyFilter();
+      });
+    } catch {}
   }
   function ensureFilterBar() {
     if (document.querySelector(".tailor-filterbar")) return;
@@ -616,17 +670,18 @@
   function cornerPanelHTML() {
     const d = LAST.data, st = LAST.stance, A = globalThis.TailorAdStance;
     const rows = [];
-    if (st && A && st.stance !== A.UNKNOWN) {
-      const no = st.stance === A.NOT_OFFERED;
-      rows.push(`<div class="tailor-cp-row ${no ? "cp-no" : "cp-yes"}"><b>${no ? "No sponsorship for this role" : "Ad offers sponsorship"}</b><div class="tailor-cp-q">\u201c${esc(st.sentence)}\u201d</div></div>`);
+    const sc = st && A && A.stanceChip(st);
+    if (sc) {
+      const yes = sc.stance === A.OFFERED;
+      rows.push(`<div class="tailor-cp-row ${yes ? "cp-yes" : "cp-no"}"><b>${esc(sc.label)}</b><div class="tailor-cp-q">\u201c${esc(st.sentence)}\u201d</div></div>`);
     }
     if (d && d.matched) {
       const p = d.profile || {};
       const facts = [];
       if (p.h1b_approvals > 0) facts.push(`<b>H-1B</b> ${Number(p.h1b_approvals).toLocaleString()} approved${p.fy_range ? ", " + esc(p.fy_range) : ""}`);
       if (p.perm_certs > 0) facts.push(`<b>Green card</b> ${Number(p.perm_certs).toLocaleString()} PERM cases`);
-      if (p.e_verify) facts.push(`<b>E-Verify</b> enrolled (STEM OPT possible)`);
-      if (p.cap_exempt) facts.push(`<b>Cap-exempt</b> likely`);
+      if (p.e_verify) facts.push(`<b>E-Verify</b> enrolled (STEM OPT extension possible here)`);
+      if (p.cap_exempt) facts.push(`<b>Cap-exempt</b> likely: H-1B without the lottery`);
       rows.push(`<div class="tailor-cp-row"><div class="tailor-cp-co">${esc(d.matched_name || LAST.company)}</div>${facts.map(f => `<div>${f}</div>`).join("")}<div class="tailor-cp-foot">Public USCIS/DOL records, not a promise this role sponsors.</div></div>`);
     } else if (d && d.ok !== false) {
       rows.push(`<div class="tailor-cp-row">No H-1B or green-card record for this employer.</div>`);
@@ -634,31 +689,52 @@
       rows.push(`<div class="tailor-cp-row">Couldn't load the sponsor data. Check your connection, or open the SponsorJobs app.</div>`);
     }
     if (!rows.length) rows.push(`<div class="tailor-cp-row">Open a job to see its sponsorship facts.</div>`);
+    // On a results list: the "Sponsored only" toggle and what it is hiding right now.
+    if (isList()) {
+      const s = FILTER.summary;
+      const count = FILTER.sponsoredOnly && s ? `Hiding ${s.hidden} of ${s.total}` : "";
+      rows.push(`<label class="tailor-cp-row tailor-cp-toggle" title="Hide results whose employer has no sponsorship record (no H-1B, no green card, no E-Verify). Results still being looked up stay visible.">` +
+        `<input type="checkbox" class="tailor-cp-sponsored"${FILTER.sponsoredOnly ? " checked" : ""}> Sponsored only` +
+        `<span class="tailor-cp-count">${esc(count)}</span></label>`);
+    }
     const open = d && d.app === false
       ? `<a class="tailor-cp-open" href="${INSTALL_URL}" target="_blank" rel="noopener">Get the free SponsorJobs app ↗</a>`
       : `<a class="tailor-cp-open" href="${APP_URL}" target="_blank" rel="noopener">Open SponsorJobs ↗</a>`;
-    return `<div class="tailor-cp-hd"><img src="${chrome.runtime.getURL("icons/icon48.png")}" alt=""> SponsorJobs</div>${rows.join("")}
+    return `<div class="tailor-cp-hd"><img src="${LOGO}" alt=""> SponsorJobs</div>${rows.join("")}
       ${open}`;
   }
   function paintCorner() {
-    if (!document.body || !chrome.runtime || !chrome.runtime.getURL) return;
+    if (!document.body || !chrome.runtime || !chrome.runtime.id) return;   // extension context gone
     let c = document.querySelector(".tailor-corner");
     if (!c) {
       c = document.createElement("div");
       c.className = "tailor-corner";
-      c.innerHTML = `<button class="tailor-corner-btn" type="button" title="SponsorJobs: visa sponsorship facts for this job"><img src="${chrome.runtime.getURL("icons/icon48.png")}" alt="SponsorJobs"></button><div class="tailor-corner-panel" hidden></div>`;
+      c.innerHTML = `<button class="tailor-corner-btn" type="button" title="SponsorJobs: visa sponsorship facts for this job"><img src="${LOGO}" alt="SponsorJobs"></button><span class="tailor-corner-note" hidden></span><div class="tailor-corner-panel" hidden></div>`;
       document.body.appendChild(c);
       c.querySelector(".tailor-corner-btn").addEventListener("click", () => {
         const p = c.querySelector(".tailor-corner-panel");
         p.hidden = !p.hidden;
         if (!p.hidden) p.innerHTML = cornerPanelHTML();
       });
+      // The panel is re-rendered from HTML on every paint, so the toggle is handled here, once,
+      // by delegation, rather than wired to an element that is about to be replaced.
+      c.querySelector(".tailor-corner-panel").addEventListener("change", (e) => {
+        const t = e && e.target;
+        if (t && t.classList && t.classList.contains("tailor-cp-sponsored")) setSponsoredOnly(t.checked);
+      });
     }
     const p = c.querySelector(".tailor-corner-panel");
     if (p && !p.hidden) p.innerHTML = cornerPanelHTML();
-    const A = globalThis.TailorAdStance;
-    c.classList.toggle("is-no", !!(LAST.stance && A && LAST.stance.stance === A.NOT_OFFERED));
-    c.classList.toggle("is-yes", !!(LAST.stance && A && LAST.stance.stance === A.OFFERED));
+    // A small count beside the mark while the toggle is on, so a shorter list is never a mystery.
+    const note = c.querySelector(".tailor-corner-note"), s = FILTER.summary;
+    if (note) {
+      const show = FILTER.sponsoredOnly && isList() && !!s;
+      note.hidden = !show;
+      note.textContent = show ? `Sponsored only: hiding ${s.hidden} of ${s.total}` : "";
+    }
+    const A = globalThis.TailorAdStance, st = LAST.stance && A ? LAST.stance.stance : null;
+    c.classList.toggle("is-no", st === A.NOT_OFFERED || st === A.RESTRICTED);
+    c.classList.toggle("is-yes", st === A.OFFERED);
   }
 
   let last = null;
@@ -690,5 +766,6 @@
   let t = null;
   const debounced = () => { clearTimeout(t); t = setTimeout(run, 500); };
   new MutationObserver(debounced).observe(document.body, { childList: true, subtree: true });
+  if (isList()) loadSponsoredOnly();                // the saved "Sponsored only" choice
   run();
 })();
