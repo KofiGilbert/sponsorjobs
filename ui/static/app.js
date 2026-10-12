@@ -6392,7 +6392,11 @@
     stratDeactivate();
     await stratLoad();
   });
-  $("#stratClear")?.addEventListener("click", () => { stratDeactivate(); clearFilter("all"); const sb = $("#jfSearch"); if (sb) sb.value = ""; JF_SEARCH = ""; loadPage(1); });
+  $("#stratClear")?.addEventListener("click", () => {
+    stratDeactivate();
+    JF_SEARCH = ""; const sb = $("#jfSearch"); if (sb) sb.value = "";
+    clearFilter("all");            // resets every other facet and reloads page 1
+  });
   $("#stratNewDismiss")?.addEventListener("click", async () => {
     if (STRAT_ACTIVE) { try { await apiMethod(`/api/strategies/${STRAT_ACTIVE}/seen`, "POST", {}); } catch { /* best effort */ } }
     paintStratNew({ count: 0, jobs: [] });
