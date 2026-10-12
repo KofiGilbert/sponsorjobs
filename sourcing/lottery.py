@@ -15,12 +15,13 @@ The numbers.
   * FY2026 (the last fully published season, random lottery): 343,981 eligible registrations,
     120,141 selected (USCIS, "H-1B Electronic Registration Process" page, historical table).
     https://www.uscis.gov/working-in-the-united-states/temporary-workers/h-1b-specialty-occupations/h-1b-electronic-registration-process
-  * FY2027 (first weighted season): USCIS reported 211,600 properly submitted registrations
-    (down 38.5% from FY2026) and that 17.7% of selected registrations were Level I. USCIS has
-    not published the FY2027 selection count as of October 2026, so the FY2026 selection
+  * FY2027 (first weighted season): USCIS announced on 2026-03-31 that the selection was
+    complete and reported 211,600 properly submitted registrations (down 38.5% from
+    FY2026's 343,981). As of 2026-10-11 USCIS has NOT published the FY2027 selection count
+    or the selections per wage level (checked again on that date), so the FY2026 selection
     count stands in for it by default; pass `selections=` to override once it is published.
-    (Reported from USCIS's May 2026 release by Fragomen, "USCIS Completes FY 2027 H-1B Cap
-    Selection Process"; the cap was reached with no second selection in July 2026.)
+    The cap was reached with no second selection. Sources: the USCIS registration page
+    above and the FY2027 cap-season announcements it links to.
   * Mix of registrations by level: the registration form only started collecting the level
     in FY2027 and USCIS has not released the split, so the default is the proxy DHS used in
     the rule's own regulatory impact analysis, cap-subject petitions FY2020 to FY2024:
@@ -42,10 +43,9 @@ from __future__ import annotations
 WEIGHTS = {1: 1, 2: 2, 3: 3, 4: 4}
 # DHS regulatory impact analysis proxy (cap-subject petitions FY2020 to FY2024).
 DEFAULT_MIX = {1: 0.28, 2: 0.55, 3: 0.12, 4: 0.05}
-FY2027_REGISTRATIONS = 211_600          # USCIS, May 2026 (properly submitted)
+FY2027_REGISTRATIONS = 211_600          # USCIS, 2026-03-31 (properly submitted)
 FY2026_REGISTRATIONS = 343_981          # USCIS registration page (eligible)
 FY2026_SELECTIONS = 120_141             # USCIS registration page
-FY2027_LEVEL1_SHARE_OF_SELECTED = 0.177  # USCIS, May 2026
 DEFAULT_REGISTRATIONS = FY2027_REGISTRATIONS
 DEFAULT_SELECTIONS = FY2026_SELECTIONS   # FY2027's count not published as of 2026-10
 

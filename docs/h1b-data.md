@@ -283,13 +283,14 @@ set, upload them next to the H-1B snapshot.
 docstring: DHS's weighted-selection final rule (Federal Register 2025-23853, published
 2025-12-29, effective 2026-02-27; Level IV registrations enter 4 times, III 3, II 2, I 1),
 USCIS's published counts (FY2026: 343,981 eligible registrations, 120,141 selected; FY2027:
-211,600 properly submitted registrations, 17.7% of selections at Level I, selection count
-not yet published), and DHS's own level mix from the rule's impact analysis (28 / 55 / 12 /
-5 percent). `lottery_odds(level, registrations=None, selections=None)` solves for the
-per-entry draw probability at which expected selections match the selection count and
-returns each level's probability; with the defaults it reproduces USCIS's 17.7% Level I
-share of selections (the model gives 18.3%). Override `selections=` when USCIS publishes
-the FY2027 number.
+211,600 properly submitted registrations, selection complete 2026-03-31, selection count and
+per-level split not published as of 2026-10-11), and DHS's own level mix from the rule's
+impact analysis (28 / 55 / 12 / 5 percent). `lottery_odds(level, registrations=None,
+selections=None)` solves for the per-entry draw probability at which expected selections
+match the selection count and returns each level's probability (with the defaults: Level I
+about 37%, II 60%, III 75%, IV 84%, and Level I about 18% of selections against 28% of
+registrations). Override `selections=` when USCIS publishes the FY2027 number, and re-check
+the USCIS registration page each cap season.
 
 **Offer check** (Jobs > open a role > About > "Offer check"): type the offer, confirm the
 title, city and state (pre-filled from the job), and the panel says where the offer sits in
