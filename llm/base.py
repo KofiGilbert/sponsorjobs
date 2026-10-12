@@ -52,6 +52,20 @@ class LLMBackend(Protocol):
         coverage report and the match score are built on, so junk here becomes junk on screen:
         the 0.1.0 heuristic counted "These", "Architects" and "Responsible" as skills."""
 
+    def keyword_action(self, term: str, jd_text: str, profile: dict, entries: list[dict],
+                       allow_new: bool) -> dict:
+        """"Add this keyword": does the person's PROFILE genuinely support ``term``, and if
+        so, how would one bullet on the page carry it (tailoring/keyword_action.py)?
+
+        ``entries`` are the roles/projects on the page, each with its ``label``, its
+        ``context`` (everything that entry says) and its ``bullets`` as ``{id, text}``.
+        Return a dict: ``{"supported": bool, "reason": str, "evidence": {"label", "quote",
+        "section"}, "kind": "rewrite" | "new", "target": bullet id, "draft": str}``. The
+        quote must be a VERBATIM piece of the person's material (it is checked), the target
+        must belong to the entry holding that evidence, a rewrite stays within about ten
+        percent of the bullet's length, and "new" is allowed only when ``allow_new``. No
+        support means ``{"supported": False, "reason": ...}`` and nothing else."""
+
     def expand_bullets(
         self, role_title: str, bullets: list[str], jd_text: str
     ) -> list[str]:
@@ -292,6 +306,39 @@ class FakeLLM:
     def extract_jd_skills(self, jd_text: str) -> list[str]:
         from tailoring.keywords import skill_terms
         return skill_terms(jd_text)
+
+    # -- "Add this keyword" (tailoring/keyword_action.py) ------------------ #
+    def keyword_action(self, term: str, jd_text: str, profile: dict, entries: list[dict],
+                       allow_new: bool) -> dict:
+        """Deterministic: the term is supported when one of the entries on the page says
+        it (whole token). The evidence is that entry's first line containing the term;
+        the draft works the term into the entry's first bullet that lacks it, by leading
+        with it, the same shape as ``reword_bullet``. With every bullet of that entry
+        already carrying the term, a new one-line bullet is proposed when allowed."""
+        from tailoring.keywords import term_present
+        for e in entries or []:
+            ctx = str(e.get("context") or "")
+            if not term_present(term, ctx):
+                continue
+            quote = next((ln.strip() for ln in ctx.splitlines() if term_present(term, ln)), "")
+            if len(quote) > 200:
+                quote = next((s.strip() for s in re.split(r"(?<=[.!?])\s+", quote)
+                              if term_present(term, s)), quote[:200])
+            evidence = {"label": e.get("label", ""), "quote": quote,
+                        "section": e.get("section", "")}
+            bullets = e.get("bullets") or []
+            for b in bullets:
+                if not term_present(term, str(b.get("text") or "")):
+                    return {"supported": True, "evidence": evidence, "kind": "rewrite",
+                            "target": b.get("id"), "draft": f"{term}: {b.get('text')}"}
+            if allow_new and bullets:
+                return {"supported": True, "evidence": evidence, "kind": "new",
+                        "target": bullets[-1].get("id"),
+                        "draft": f"Applied {term} in day-to-day work at {e.get('label', '')}."}
+            return {"supported": True, "evidence": evidence, "kind": "rewrite",
+                    "target": (bullets[0].get("id") if bullets else ""), "draft": ""}
+        return {"supported": False,
+                "reason": f"Your profile does not show {term} in any role or project."}
 
     # -- chat edits of a finished CV (notify/cvreview.py) ------------------ #
     def plan_cv_edit(self, instruction: str, outline: str) -> dict:

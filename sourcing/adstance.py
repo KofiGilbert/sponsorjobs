@@ -14,8 +14,16 @@ this module:
 * The aggregator's yes/no `sponsorship_stated` flag was wrong for most flagged ads (69% had no
   sponsorship sentence at all), so the ad is read here, by us.
 
-The result is one of three stances plus the exact sentence it came from, so the UI can show the
+The result is one of four stances plus the exact sentence it came from, so the UI can show the
 source on hover. Deterministic and offline: it runs over thousands of ads in the feed build.
+
+The fourth stance, RESTRICTED (2026-10-11), is an ad that requires US citizenship, a green card /
+permanent residency, or a security clearance. Such a role is closed to a visa holder whatever the
+employer's sponsorship record says, and it gets its own chip ("Citizenship or clearance required")
+rather than being lumped in with "no sponsorship". The phrasing rules are the ones
+sourcing/quality.py already uses to keep such roles off the board (its _EXCLUDE_RE is built from
+RESTRICTED_SRC below plus the no-sponsorship phrasings), so the feed, the app and the extension
+never disagree about the same ad.
 """
 from __future__ import annotations
 
@@ -23,10 +31,36 @@ import re
 
 OFFERED = "offered"        # the ad says sponsorship is available / the role is eligible
 NOT_OFFERED = "not_offered"  # the ad says it will not sponsor / requires authorization without it
+RESTRICTED = "restricted"  # the ad requires US citizenship / a green card / a security clearance
 UNKNOWN = "unknown"        # the ad says nothing usable
 
-# Sentences are split on terminal punctuation and newlines (bullets).
-_SENT = re.compile(r"[^.\n!?•]+")
+# How much of the deciding sentence a chip shows (its tooltip and the grey line under the chips).
+QUOTE_CHARS = 140
+
+# Sentences are split on terminal punctuation and newlines (bullets). A full stop after a lone
+# letter is an abbreviation ("U.S. citizenship", "e.g."), not a sentence end: splitting there
+# turned "U.S. citizenship is required" into "U", "S", "citizenship is required", and the
+# citizenship rule never saw the "US".
+_SENT = re.compile(r"(?:(?<![A-Za-z])[A-Za-z]\.|[^.\n!?•])+")
+# Ways an ad closes the role to anyone who is not a US citizen / permanent resident / cleared.
+# Shared VERBATIM with sourcing/quality.py (its _EXCLUDE_RE is this plus the no-sponsorship
+# phrasings), so the board's filter and the chips read every ad the same way. Every branch needs
+# an explicit bar: "we sponsor green cards" and "H-1B and green-card support offered" are
+# positive sentences and must never match.
+RESTRICTED_SRC = (
+    r"u\.?s\.?\s*citizens?(hip)?\s*(is\s*)?(required|only|mandatory)"
+    r"|must\s+be\s+(a\s+|an\s+)?(u\.?s\.?\s*)?(citizen|green\s*card\s*holder|(lawful\s+)?permanent\s+resident)"
+    r"|sole\s+u\.?s\.?\s*citizen"
+    r"|(citizens?|citizenship)\s*(,|/|\s+or\s+|\s+and\s+)\s*(a\s+)?"
+    r"(green\s*card(\s*holders?)?|(lawful\s+)?permanent\s+residen(ts?|cy))"
+    r"|(green\s*card(\s*holders?)?|(lawful\s+)?permanent\s+residen(ts?|cy))\s*(is\s+|are\s+)?"
+    r"(required|only|mandatory)"
+    r"|must\s+(hold|have|possess)\s+(a\s+|an\s+)?(valid\s+|current\s+)?"
+    r"(green\s*card|(lawful\s+)?permanent\s+residen(t|cy))"
+    r"|security\s+clearance|active\s+clearance|obtain\s+(a\s+)?(security\s+)?clearance"
+    r"|ts/sci|top\s+secret|secret\s+clearance|dod\s+secret|polygraph|\bq\s+clearance\b"
+)
+RESTRICTED_RE = re.compile("(" + RESTRICTED_SRC + ")", re.I)
 # A sentence is about immigration sponsorship when it carries the word and some context; this
 # keeps out "Arcesium sponsored marketing initiatives" and "sponsor a hackathon".
 _ABOUT = re.compile(r"\bsponsor\w*|\bh-?1b\b", re.I)
@@ -72,20 +106,38 @@ def _sentences(text: str):
 
 
 def ad_stance(text: str) -> dict:
-    """{"stance": OFFERED|NOT_OFFERED|UNKNOWN, "sentence": str}.
+    """{"stance": RESTRICTED|NOT_OFFERED|OFFERED|UNKNOWN, "sentence": str}.
 
-    A NO anywhere outranks a YES anywhere: "We do sponsor visas, but not for this role" is a no
+    A bar anywhere outranks a YES anywhere: "We do sponsor visas, but not for this role" is a no
     for this role, and an ad that both welcomes applicants and then says "without requiring
-    sponsorship" is a no. The sentence returned is the one that decided it.
+    sponsorship" is a no. A citizenship / green-card / clearance requirement outranks a plain
+    "no sponsorship": it is the more specific fact, and the role is closed either way. The
+    sentence returned is the first one that decided the winning stance.
     """
-    yes_sent = None
+    no_sent = yes_sent = None
     for s in _sentences(text):
-        if not (_ABOUT.search(s) and _CTX.search(s)):
+        if RESTRICTED_RE.search(s):
+            return {"stance": RESTRICTED, "sentence": s[:300]}
+        if no_sent is not None or not (_ABOUT.search(s) and _CTX.search(s)):
             continue
         if any(p.search(s) for p in _NO):
-            return {"stance": NOT_OFFERED, "sentence": s[:300]}
-        if yes_sent is None and any(p.search(s) for p in _YES):
+            no_sent = s[:300]
+        elif yes_sent is None and any(p.search(s) for p in _YES):
             yes_sent = s[:300]
+    if no_sent:
+        return {"stance": NOT_OFFERED, "sentence": no_sent}
     if yes_sent:
         return {"stance": OFFERED, "sentence": yes_sent}
     return {"stance": UNKNOWN, "sentence": ""}
+
+
+def short_sentence(sentence: str, limit: int = QUOTE_CHARS) -> str:
+    """The deciding sentence cut to about `limit` characters at a word boundary, for a chip's
+    tooltip and the grey line under the chips. Ported in extension/adstance_core.js."""
+    s = " ".join((sentence or "").split())
+    if len(s) <= limit:
+        return s
+    cut = s[:limit + 1]
+    sp = cut.rfind(" ")
+    cut = cut[:sp] if sp > limit // 2 else s[:limit]
+    return cut.rstrip(" ,;:") + "..."

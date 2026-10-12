@@ -2708,6 +2708,69 @@ def accept():
     return jsonify(_session().accept())
 
 
+# ------------------------------------------------------------------ "Add this keyword"
+# One missing JD term from the coverage report -> one honest, reviewable edit of one bullet
+# (tailoring/keyword_action.py). The resume id is the live builder ("live"), the session's
+# jobname, or the record id of the resume this session last saved; a resume that is not open
+# in the builder has no page to edit surgically, so it answers 404.
+def _keyword_session(cv_id: str):
+    s = _SESSION.get("s")
+    if s is None:
+        return None
+    cv_id = str(cv_id or "").strip()
+    if cv_id in ("live", "current", getattr(s, "jobname", "")):
+        return s
+    if cv_id.isdigit() and str(getattr(s, "_last_record_id", "") or "") == cv_id:
+        return s
+    return None
+
+
+def _keyword_term():
+    return " ".join(str((request.json or {}).get("term") or "").split())
+
+
+@app.post("/api/cv/<cv_id>/keyword/preview")
+@_guard
+def keyword_preview(cv_id):
+    """Body {term}. Does the person's profile support this JD term, and if so what is the
+    one-bullet change? -> {supported, ok, evidence, draft, target_bullet, before, after, ...}"""
+    s = _keyword_session(cv_id)
+    if s is None:
+        return jsonify({"error": "Open this resume in the builder first."}), 404
+    term = _keyword_term()
+    if not term:
+        return jsonify({"error": "No keyword given."}), 400
+    return jsonify(s.keyword_preview(term))
+
+
+@app.post("/api/cv/<cv_id>/keyword/apply")
+@_guard
+def keyword_apply(cv_id):
+    """Body {term, draft}. Splices the draft surgically, recompiles, and returns the session
+    state with the new coverage report, the page check and a unified diff of the .tex."""
+    s = _keyword_session(cv_id)
+    if s is None:
+        return jsonify({"error": "Open this resume in the builder first."}), 404
+    term = _keyword_term()
+    if not term:
+        return jsonify({"error": "No keyword given."}), 400
+    draft = str((request.json or {}).get("draft") or "")
+    return jsonify(s.keyword_apply(term, draft))
+
+
+@app.post("/api/cv/<cv_id>/keyword/undo")
+@_guard
+def keyword_undo(cv_id):
+    """Body {term}. Puts the previous bullet text back and recompiles."""
+    s = _keyword_session(cv_id)
+    if s is None:
+        return jsonify({"error": "Open this resume in the builder first."}), 404
+    term = _keyword_term()
+    if not term:
+        return jsonify({"error": "No keyword given."}), 400
+    return jsonify(s.keyword_undo(term))
+
+
 # ------------------------------------------------------------------ drafting (§5)
 @app.post("/api/session/cover_letter")
 @_guard
@@ -3758,6 +3821,9 @@ def profile_view():
         "summary": str(profile.get("summary") or essentials.get("summary") or ""),
         "skills_input": essentials.get("skills_input") or [],
         "declined": essentials.get("declined") or [],
+        # Application answers the fill engine reuses on every form (work authorization,
+        # sponsorship, EEO decline); edited on this screen, saved with /api/profile/answers.
+        "answers": _profile_answers(),
     })
 
 
@@ -4002,6 +4068,8 @@ def profile_identity_save():
 
 _PREFS_PATH = _DATA / "app_prefs.json"
 _YN = {"", "Yes", "No"}
+# Sponsorship has three honest answers: Yes (now), No, Future (not now, e.g. on OPT, but later).
+_SPONSOR = {"", "Yes", "No", "Future"}
 
 
 def _load_prefs() -> dict:
@@ -4020,9 +4088,13 @@ def _save_prefs(prefs: dict) -> dict:
     def _txt(v, n):
         return str(v or "").strip()[:n]
 
+    # work_auth_us is the profile screen's name for the same answer the extension popup calls
+    # work_authorized; both spellings are accepted and both are stored, so neither carrier breaks.
+    work_auth = prefs.get("work_auth_us") or prefs.get("work_authorized")
     clean = {
-        "work_authorized": prefs.get("work_authorized") if prefs.get("work_authorized") in _YN else "",
-        "needs_sponsorship": prefs.get("needs_sponsorship") if prefs.get("needs_sponsorship") in _YN else "",
+        "work_authorized": work_auth if work_auth in _YN else "",
+        "work_auth_us": work_auth if work_auth in _YN else "",
+        "needs_sponsorship": prefs.get("needs_sponsorship") if prefs.get("needs_sponsorship") in _SPONSOR else "",
         # More answers the person gives on nearly every form, saved once and reused so the
         # autofill fills the whole thing and they just review + submit (Path A). Yes/No and
         # short free-text only; length-capped so a stray paste can't bloat the store.
@@ -4037,6 +4109,181 @@ def _save_prefs(prefs: dict) -> dict:
     _DATA.mkdir(parents=True, exist_ok=True)
     _PREFS_PATH.write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
+
+
+def _merge_prefs(patch: dict) -> dict:
+    """Update only the answers in ``patch``, keeping every other saved answer."""
+    cur = _load_prefs()
+    cur.update({k: v for k, v in (patch or {}).items() if k in _PREF_KEYS})
+    if "work_auth_us" in (patch or {}):          # the profile screen's spelling wins when given
+        cur["work_authorized"] = patch["work_auth_us"]
+    return _save_prefs(cur)
+
+
+_PREF_KEYS = ("work_authorized", "work_auth_us", "needs_sponsorship", "willing_to_relocate",
+              "over_18", "years_experience", "desired_salary", "earliest_start", "hear_about_us",
+              "eeo_decline")
+
+
+def _profile_answers(prefs: dict | None = None) -> dict:
+    """The three first-class application answers the profile screen shows."""
+    p = prefs if prefs is not None else _load_prefs()
+    wa = p.get("work_auth_us") or p.get("work_authorized") or ""
+    return {"work_auth_us": wa if wa in _YN else "",
+            "needs_sponsorship": p.get("needs_sponsorship") if p.get("needs_sponsorship") in _SPONSOR else "",
+            "eeo_decline": bool(p.get("eeo_decline"))}
+
+
+_RECIPES_PATH = ROOT / "autoapply" / "recipes.json"
+_RECIPES_CACHE: dict = {}
+
+
+def _recipes() -> dict:
+    """The fill-recipe table (autoapply/recipes.json): one DATA entry per application system
+    (URL patterns, selectors per profile field, continue/submit buttons to HIGHLIGHT, success
+    markers). Read once per file change. Never personal data, never a click."""
+    try:
+        mtime = _RECIPES_PATH.stat().st_mtime
+    except OSError:
+        return {"version": 0, "systems": []}
+    if _RECIPES_CACHE.get("mtime") != mtime:
+        try:
+            _RECIPES_CACHE["data"] = _json_prefs.loads(_RECIPES_PATH.read_text(encoding="utf-8"))
+            _RECIPES_CACHE["mtime"] = mtime
+        except (OSError, ValueError):
+            return {"version": 0, "systems": []}
+    return _RECIPES_CACHE.get("data") or {"version": 0, "systems": []}
+
+
+@app.get("/api/autofill/recipes")
+@_guard
+def autofill_recipes():
+    """The fill-recipe table for the fill engine (extension + desktop shell). Public data about
+    public forms, so no extension lock; no-store so an edited table is picked up at once."""
+    return _nostore(jsonify(_recipes()))
+
+
+_LEARN_IDENTITY = {"name": "name", "email": "email", "phone": "phone", "address": "address",
+                   "linkedin": "linkedin", "github": "github", "website": "blog"}
+
+
+def _learn_from_corrections(body: dict) -> dict:
+    """'Learn from corrections': the person changed a value the engine filled, and said yes to
+    saving it. Contact fields land in the saved identity (both bags, like /api/profile/identity),
+    screening answers in the reusable prefs. Only known keys, only non-empty values, length-capped."""
+    fields = body.get("fields") or {}
+    screening = body.get("screening") or {}
+    patch: dict = {}
+    first = str(fields.get("first_name") or "").strip()
+    last = str(fields.get("last_name") or "").strip()
+    if first or last:
+        cur = str(_saved_identity().get("name") or "").strip()
+        cf, cl = _split_name(cur)
+        patch["name"] = " ".join(x for x in (first or cf, last or cl) if x).strip()
+    for src, dst in _LEARN_IDENTITY.items():
+        v = str(fields.get(src) or "").strip()[:200]
+        if v:
+            patch[dst] = v
+    if "street" in fields or "city" in fields or "state" in fields or "zip" in fields:
+        cur_addr = _parse_address(str(_saved_identity().get("address") or ""))
+        parts = {k: str(fields.get(k) or cur_addr.get(k) or "").strip() for k in ("street", "city", "state", "zip")}
+        tail = " ".join(x for x in (parts["state"], parts["zip"]) if x)
+        addr = ", ".join(x for x in (parts["street"], parts["city"], tail) if x)
+        if addr:
+            patch["address"] = addr[:200]
+    saved_identity = {}
+    if patch:
+        mem = _memory()
+        try:
+            saved = mem.load("default") or {}
+            profile = saved.get("profile") or {}
+            essentials = saved.get("essentials") or {"identity": {}, "education": [], "experience": []}
+            profile.setdefault("identity", {}).update(patch)
+            essentials.setdefault("identity", {}).update(patch)
+            mem.save("default", profile, essentials, saved.get("history") or [])
+            saved_identity = dict(essentials.get("identity") or {})
+        finally:
+            mem.close()
+        sess = _SESSION.get("s")
+        if sess is not None:
+            try:
+                sess.essentials.setdefault("identity", {}).update(patch)
+                if isinstance(getattr(sess, "profile", None), dict):
+                    sess.profile.setdefault("identity", {}).update(patch)
+            except Exception:
+                pass
+    pref_patch = {k: v for k, v in screening.items()
+                  if k in ("work_auth_us", "work_authorized", "needs_sponsorship",
+                           "willing_to_relocate", "over_18")}
+    if "eeo_decline" in body:
+        pref_patch["eeo_decline"] = bool(body.get("eeo_decline"))
+    prefs = _merge_prefs(pref_patch) if pref_patch else _load_prefs()
+    return {"ok": True, "learned": sorted(list(patch) + list(pref_patch)),
+            "identity": {k: str(saved_identity.get(k) or "") for k in IDENTITY_KEYS} if patch else None,
+            "answers": _profile_answers(prefs)}
+
+
+def _url_key(url: str) -> str:
+    """host + path, lowercased, without query/fragment: enough to say two URLs are one job page."""
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(str(url or "").strip())
+    except ValueError:
+        return ""
+    host = (u.hostname or "").lower()
+    host = host[4:] if host.startswith("www.") else host
+    return (host + u.path.rstrip("/")).lower() if host else ""
+
+
+def _mark_applied_from_page(body: dict) -> dict:
+    """The fill engine saw the site's 'application received' marker AFTER THE PERSON submitted.
+    Find the application record this page belongs to (by record id, else by the job URL the
+    package was built from) and move it to 'applied' through the tracker, which also arms the
+    follow-up nudge. No record for this page -> nothing is marked, and we say so."""
+    from submit.tracker import stage_patch
+    rid = body.get("record_id")
+    keys = {k for k in (_url_key(body.get("url")), _url_key(body.get("page_url"))) if k}
+    recs = _records()
+    try:
+        rec = None
+        if rid not in (None, ""):
+            try:
+                rec = recs.get(int(rid))
+            except (TypeError, ValueError):
+                rec = None
+        if rec is None and keys:
+            for r in recs.list(limit=200):
+                d = _record_data(r)
+                cand = {_url_key((d.get("source_job") or {}).get("url")), _url_key(d.get("apply_url"))}
+                if cand & keys:
+                    rec = r
+                    break
+        if rec is None:
+            return {"ok": True, "matched": False, "record_id": None}
+        data = recs.merge_data(rec["id"], stage_patch(_record_data(rec), "applied", _now_iso()))
+    finally:
+        recs.close()
+    return {"ok": True, "matched": True, "record_id": rec["id"], "stage": data.get("stage"),
+            "applied_at": data.get("applied_at"), "follow_up_due": data.get("follow_up_due")}
+
+
+@app.post("/api/profile/autofill")
+@_guard
+@_extension_only
+def profile_autofill_learn():
+    """Learn from corrections: body {fields:{first_name,last_name,email,phone,street,city,state,
+    zip,linkedin,github,website}, screening:{work_auth_us,needs_sponsorship,...}, eeo_decline}.
+    Saves what the person corrected on a form into the profile so the next fill is right."""
+    return _nostore(jsonify(_learn_from_corrections(request.json or {})))
+
+
+@app.post("/api/autofill/applied")
+@_guard
+@_extension_only
+def autofill_applied():
+    """The engine detected the application-received page: mark that job applied.
+    Body {url, page_url?, record_id?, title?, system?}."""
+    return _nostore(jsonify(_mark_applied_from_page(request.json or {})))
 
 
 @app.get("/api/profile/autofill")
@@ -4069,6 +4316,15 @@ def profile_autofill():
     screening = {k: prefs[k] for k in ("work_authorized", "needs_sponsorship",
                                        "willing_to_relocate", "over_18")
                  if prefs.get(k) in ("Yes", "No")}
+    # The first-class profile answers: work_auth_us (Yes/No) alongside its older spelling, and
+    # needs_sponsorship with its third honest value, Future (the engine answers a "now or in the
+    # future" question Yes for it and leaves a present-tense one to the person).
+    answers_now = _profile_answers(prefs)
+    if answers_now["work_auth_us"]:
+        screening["work_auth_us"] = answers_now["work_auth_us"]
+        screening.setdefault("work_authorized", answers_now["work_auth_us"])
+    if answers_now["needs_sponsorship"]:
+        screening["needs_sponsorship"] = answers_now["needs_sponsorship"]
     # Short free-text answers the extension can type into a matching field (years of
     # experience, desired salary, earliest start, how they heard) so the form is filled,
     # not just contact info.
@@ -4097,6 +4353,9 @@ def profile_autofill():
         "eeo": {"decline": bool(prefs.get("eeo_decline"))},
         "resumes": resumes,
         "app_url": "http://127.0.0.1:57000/",
+        # The per-system fill recipes ride along so the extension (whose background worker only
+        # knows this route) always fills from the freshest table; also at /api/autofill/recipes.
+        "recipes": _recipes(),
     }))
 
 
@@ -4114,8 +4373,47 @@ def profile_prefs_get():
 @_extension_only
 def profile_prefs_set():
     """Save the reusable application answers. Values are validated to Yes/No/blank so a
-    form is never filled with a free-text guess for a screening question."""
-    return _nostore(jsonify({"ok": True, "prefs": _save_prefs(request.json or {})}))
+    form is never filled with a free-text guess for a screening question.
+
+    Also the extension's EVENT channel: its background worker (owned with the manifest, and
+    not changed here) only knows this route, so a body of the form {event: {type: ...}} is
+    routed to the matching endpoint instead of being saved as answers:
+      {type: "learn", fields, screening, eeo_decline} -> POST /api/profile/autofill
+      {type: "applied", url, page_url, record_id}     -> POST /api/autofill/applied"""
+    body = request.json or {}
+    ev = body.get("event")
+    if isinstance(ev, dict):
+        kind = str(ev.get("type") or "")
+        if kind == "learn":
+            return _nostore(jsonify(_learn_from_corrections(ev)))
+        if kind == "applied":
+            return _nostore(jsonify(_mark_applied_from_page(ev)))
+        return jsonify({"ok": False, "error": f"Unknown event {kind!r}."}), 400
+    return _nostore(jsonify({"ok": True, "prefs": _save_prefs(body)}))
+
+
+@app.post("/api/profile/answers")
+@_guard
+def profile_answers_save():
+    """The profile screen's first-class application answers: work_auth_us (Yes/No),
+    needs_sponsorship (Yes/No/Future) and eeo_decline (bool). Same store as the extension
+    popup's answers, so both surfaces show one truth."""
+    b = request.json or {}
+    patch: dict = {}
+    if "work_auth_us" in b:
+        v = str(b.get("work_auth_us") or "")
+        if v not in _YN:
+            return jsonify({"error": "work_auth_us must be Yes, No, or blank"}), 400
+        patch["work_auth_us"] = v
+    if "needs_sponsorship" in b:
+        v = str(b.get("needs_sponsorship") or "")
+        if v not in _SPONSOR:
+            return jsonify({"error": "needs_sponsorship must be Yes, No, Future, or blank"}), 400
+        patch["needs_sponsorship"] = v
+    if "eeo_decline" in b:
+        patch["eeo_decline"] = bool(b.get("eeo_decline"))
+    prefs = _merge_prefs(patch) if patch else _load_prefs()
+    return jsonify({"ok": True, "answers": _profile_answers(prefs)})
 
 
 @app.post("/api/profile/draft")

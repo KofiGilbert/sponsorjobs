@@ -883,7 +883,56 @@
       ? "Filled " + bits.join(", ") + "." + (r.resume_upload ? " Attach your resume PDF yourself." : "")
         + " Review everything, the submit click is yours."
       : "Nothing to fill on this step. Continue to the next page of the application and fill again.");
+    note.textContent += assistExtras(r);
+    offerLearn(note);
   });
+
+  // What the fill recipe adds to a report: which system it recognised, the multi-page hint,
+  // and that the submit button is outlined (it is never clicked by SponsorJobs).
+  function assistExtras(r) {
+    if (!r) return "";
+    let s = "";
+    if (r.system_name) s += " Recognised " + r.system_name + (r.via_recipe ? " (" + r.via_recipe + " via its recipe)" : "") + ".";
+    if (r.next_page) s += " " + (r.continue_hint || "Continue to the next page, then press Fill again.");
+    if (r.submit_highlighted) s += " The submit button is outlined in orange for you.";
+    if (r.handoff) s += " This careers site hands the application to its own ATS: press Apply there, then fill again.";
+    return s;
+  }
+
+  // Learn from corrections: after a fill, a one-click way to save what the person changed on
+  // the form into their profile (only the fields SponsorJobs itself filled are watched).
+  function offerLearn(note) {
+    if (!window.tailorShell || !window.tailorShell.assistLearn || !note) return;
+    const old = note.parentElement && note.parentElement.querySelector(".assist-learn");
+    if (old) old.remove();
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn btn-ghost btn-sm assist-learn";
+    b.textContent = "Save what I changed to my profile";
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      const r = await window.tailorShell.assistLearn();
+      b.disabled = false;
+      if (!r || r.ok === false) { note.textContent = "Couldn't save your corrections."; return; }
+      note.textContent = r.learned && r.learned.length
+        ? "Saved to your profile: " + r.learned.join(", ") + "."
+        : "No corrections to save yet. Change a field SponsorJobs filled, then try again.";
+      if (r.learned && r.learned.length) loadProfile().catch(() => {});
+    });
+    note.insertAdjacentElement("afterend", b);
+  }
+
+  // The engine saw the site's "application received" page after the person submitted.
+  if (window.tailorShell && window.tailorShell.onApplied) {
+    window.tailorShell.onApplied((info) => {
+      const note = $("#pkgAssistNote");
+      if (note) {
+        note.textContent = info && info.matched
+          ? "The site confirmed your application. Marked as applied."
+          : "The site confirmed your application. No saved package matched this page, so mark it applied yourself if you built one.";
+      }
+      if (info && info.matched && typeof loadReview === "function") loadReview().catch(() => {});
+    });
+  }
 
   $("#pkgAssistBtn")?.addEventListener("click", async () => {
     if (!window.tailorShell) return;
@@ -905,7 +954,7 @@
     if (r.filled) bits.push(r.filled + " contact field" + (r.filled === 1 ? "" : "s"));
     if (r.screening) bits.push(r.screening + " screening answer" + (r.screening === 1 ? "" : "s"));
     if (r.eeo) bits.push("EEO set to decline");
-    note.textContent = (bits.length
+    note.textContent = assistExtras(r) + (bits.length
         ? "Filled " + bits.join(", ") + "." + (r.resume_upload ? " Attach your resume PDF yourself." : "")
           + " Review everything, the submit click is yours."
         : "Nothing to fill here. If the site wants a sign-in first (Amazon does), log in "
@@ -1106,12 +1155,16 @@
     // "Visa sponsorship is available" and almost never name the visa, so the chip uses the
     // ad's words; and a third of ads that mention sponsorship say they will NOT, which is the
     // most useful fact on the page for an international student, so it gets the louder chip.
+    // Four stances: offered, not_offered, restricted (the ad requires US citizenship, a green
+    // card, or a security clearance: closed to a visa holder whatever the badges say), unknown.
     const quote = j.ad_sentence ? ` The ad says: \u201c${esc(j.ad_sentence)}\u201d` : "";
     const stated = j.ad_stance === "offered"
       ? `<span class="vbadge vb-stated" title="This job ad says visa sponsorship is available for the role (for a US new hire that usually means H-1B, but the ad does not name the visa).${quote}">Sponsorship available</span>`
       : j.ad_stance === "not_offered"
         ? `<span class="vbadge vb-no" title="This job ad says it will not sponsor a visa for the role.${quote}">No sponsorship</span>`
-        : "";
+        : j.ad_stance === "restricted"
+          ? `<span class="vbadge vb-no vb-restricted" title="This job ad requires US citizenship, permanent residency, or a security clearance, so it is closed to a visa holder.${quote}">Citizenship or clearance required</span>`
+          : "";
     if (!v.length) {
       return stated || `<span class="vbadge vb-none" title="We have no public government record that this employer has sponsored a work visa, and the ad does not say. They still might, it's worth asking.">No sponsorship record</span>`;
     }
@@ -1487,6 +1540,7 @@
         <div class="fd-payins" id="fdPayInsight" hidden></div>
         ${j.ad_stance === "offered" ? `<div class="fd-adnote">The ad says: \u201c${esc(j.ad_sentence || "visa sponsorship is available")}\u201d For a US new hire that usually means H-1B; the ad does not name the visa. The badges below are the employer's government record.</div>` : ""}
         ${j.ad_stance === "not_offered" ? `<div class="fd-adnote fd-adnote-no">The ad says: \u201c${esc(j.ad_sentence || "no visa sponsorship")}\u201d This role is not open to someone who needs a visa.</div>` : ""}
+        ${j.ad_stance === "restricted" ? `<div class="fd-adnote fd-adnote-no">The ad says: \u201c${esc(j.ad_sentence || "US citizenship or a security clearance is required")}\u201d This role requires US citizenship, permanent residency, or a security clearance, so it is closed to a visa holder whatever the employer's record says.</div>` : ""}
         <div class="fd-meta">${f.label ? `<span class="fr-fresh ${f.cls}">${f.cls ? "● " : ""}${esc(f.label)}</span>` : ""}${visaBadges(j)}</div>
         ${(j.nationality_visas || []).length ? `<div class="fd-natvisa">${natVisaBadges(j)}</div>` : ""}
       </div>
@@ -2471,6 +2525,7 @@
     if (st.coverage) {
       $("#coverage").hidden = false;
       setCoverage(st.coverage.ratio);
+      if (Array.isArray(st.keyword_actions)) KW_ACTIONS = st.keyword_actions;
       renderCovDetail(st.coverage);
     }
     if (st.review) renderReview(st.review);
@@ -2522,14 +2577,118 @@
       + `<div class="ps-items">${(honesty.items || []).map(t => `<span class="ps-term ps-flag">${esc(t)}</span>`).join("")}</div></div></div>`;
   }
 
+  /* "Add this keyword" (the Rezi / Huntr action, on our engine). Every missing term gets an
+     Add; the server asks the model whether the person's own profile supports it and drafts a
+     rewrite of ONE bullet (or one new line when the page has room). The card shows the
+     evidence and the before/after with Accept / Ignore; Accept splices it surgically,
+     recompiles, and refreshes the PDF and the report. An added term moves to "In resume"
+     with an undo link. The term list is server truth (st.keyword_actions). */
+  let KW_ACTIONS = [];
+  let KW_PENDING = null;
+  const kwT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+
   function renderCovDetail(cov) {
     const present = (cov.present || []).slice(0, 24);
+    const have = (cov.missing_supported || []).slice(0, 20);
     const missing = (cov.missing || []).slice(0, 20);
-    $("#covDetail").innerHTML =
-      `<span class="cd-lbl">In Resume</span>` + (present.map(t => `<span class="term hit">${esc(t)}</span>`).join("") || `<span class="term miss"></span>`) +
-      `<span class="cd-lbl">Missing</span>` + (missing.map(t => `<span class="term miss">${esc(t)}</span>`).join("") || `<span class="term hit">none</span>`);
+    const applied = new Set(KW_ACTIONS.map(a => String(a.term || "").toLowerCase()));
+    const hit = t => `<span class="term hit">${esc(t)}`
+      + (applied.has(String(t).toLowerCase())
+        ? ` <a href="#" class="kw-undo" data-term="${esc(t)}">${esc(kwT("kw.undo", "undo"))}</a>` : "")
+      + `</span>`;
+    const miss = t => `<span class="term miss">${esc(t)}<button type="button" class="kw-add" data-term="${esc(t)}">${esc(kwT("kw.add", "Add"))}</button></span>`;
+    let html = `<span class="cd-lbl">${esc(kwT("kw.inResume", "In resume"))}</span>`
+      + (present.map(hit).join("") || `<span class="term miss"></span>`);
+    if (have.length) html += `<span class="cd-lbl">${esc(kwT("kw.youHave", "You have, not shown"))}</span>` + have.map(miss).join("");
+    html += `<span class="cd-lbl">${esc(kwT("kw.missing", "Missing"))}</span>`
+      + (missing.map(miss).join("") || `<span class="term hit">${esc(kwT("kw.none", "none"))}</span>`);
+    $("#covDetail").innerHTML = html;
   }
   $("#covInfo").addEventListener("click", () => { $("#covDetail").hidden = !$("#covDetail").hidden; });
+
+  function kwCard(html) {
+    const card = $("#kwCard");
+    if (!card) return;
+    card.innerHTML = html;
+    card.hidden = !html;
+    if (html) { $("#covDetail").hidden = false; }
+  }
+  const kwIgnoreBtn = () => `<div class="kw-actions"><button class="btn btn-ghost btn-sm" type="button" id="kwIgnore">${esc(kwT("kw.ignore", "Ignore"))}</button></div>`;
+
+  async function kwPreview(term, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = kwT("kw.working", "Working"); }
+    let p;
+    try { p = await api("/api/cv/live/keyword/preview", { term }); }
+    catch (err) {
+      kwCard(`<div class="kw-term">${esc(term)}</div><p class="kw-note">${esc(err.message || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      p = null;
+    }
+    if (btn) { btn.disabled = false; btn.textContent = kwT("kw.add", "Add"); }
+    if (!p) return;
+    KW_PENDING = p;
+    if (!p.supported) {
+      kwCard(`<div class="kw-term">${esc(term)}</div>`
+        + `<p class="kw-note">${esc(kwT("kw.unsupported", "Not supported by your profile"))}. ${esc(kwT("kw.unsupportedHint", "Add it to a role or project in your profile, then try again."))}</p>`
+        + kwIgnoreBtn());
+      return;
+    }
+    if (!p.ok) {
+      kwCard(`<div class="kw-term">${esc(term)}</div><p class="kw-note">${esc(p.reason || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      return;
+    }
+    const ev = p.evidence || {};
+    const beforeBlock = p.kind === "new"
+      ? `<div><div class="kw-lbl">${esc(kwT("kw.newBullet", "New bullet under {label}").replace("{label}", p.label || ""))}</div></div>`
+      : `<div><div class="kw-lbl">${esc(kwT("kw.before", "Before"))}</div><div class="kw-line">${esc(p.before)}</div></div>`;
+    kwCard(`<div class="kw-term">${esc(term)}</div>`
+      + `<div class="kw-ev">${esc(kwT("kw.evidence", "From your profile"))}: <b>${esc(ev.label || p.label || "")}</b> &ldquo;${esc(ev.quote || "")}&rdquo;</div>`
+      + beforeBlock
+      + `<div><div class="kw-lbl">${esc(kwT("kw.after", "After"))}</div><div class="kw-line after">${esc(p.draft)}</div></div>`
+      + `<div class="kw-actions"><button class="btn btn-sm" type="button" id="kwAccept">${esc(kwT("kw.accept", "Accept"))}</button>`
+      + `<button class="btn btn-ghost btn-sm" type="button" id="kwIgnore">${esc(kwT("kw.ignore", "Ignore"))}</button></div>`);
+  }
+
+  async function kwApply() {
+    const p = KW_PENDING;
+    if (!p || !p.ok) return;
+    const btn = $("#kwAccept");
+    if (btn) { btn.disabled = true; btn.textContent = kwT("kw.working", "Working"); }
+    let st;
+    try { st = await api("/api/cv/live/keyword/apply", { term: p.term, draft: p.draft }); }
+    catch (err) {
+      kwCard(`<div class="kw-term">${esc(p.term)}</div><p class="kw-note">${esc(err.message || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      return;
+    }
+    if (!st.ok) {
+      kwCard(`<div class="kw-term">${esc(p.term)}</div><p class="kw-note">${esc(st.reason || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      return;
+    }
+    KW_PENDING = null;
+    kwCard("");
+    applyState(st);           // new PDF, new coverage, the term now under "In resume" with undo
+  }
+
+  async function kwUndo(term) {
+    let st;
+    try { st = await api("/api/cv/live/keyword/undo", { term }); }
+    catch (err) {
+      kwCard(`<div class="kw-term">${esc(term)}</div><p class="kw-note">${esc(err.message || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      return;
+    }
+    kwCard("");
+    applyState(st);
+  }
+
+  $("#covDetail").addEventListener("click", (e) => {
+    const add = e.target.closest(".kw-add");
+    const undo = e.target.closest(".kw-undo");
+    if (add) { e.preventDefault(); kwPreview(add.dataset.term, add); }
+    else if (undo) { e.preventDefault(); kwUndo(undo.dataset.term); }
+  });
+  $("#kwCard")?.addEventListener("click", (e) => {
+    if (e.target.closest("#kwAccept")) kwApply();
+    else if (e.target.closest("#kwIgnore")) { KW_PENDING = null; kwCard(""); }
+  });
 
   /* The preview is ALWAYS the real compiled PDF (zero drift). "Edit bullets" opens a
      secondary editor; each edit re-renders the PDF, so what you download is what the
@@ -3096,7 +3255,36 @@
     $("#profEmpty").hidden = !!p.has_profile;
     $("#profSecNote").hidden = true;
     $("#idSaved").textContent = "";
+    paintAnswers(p.answers || {});
   }
+
+  /* ---- application answers (work authorization, sponsorship, EEO decline): the three
+     answers nearly every form asks, saved once here and filled into every application for
+     the person to review. One store with the extension popup, via /api/profile/answers. */
+  function paintAnswers(a) {
+    const wa = $("#ansWorkAuth"), sp = $("#ansSponsorship"), eeo = $("#ansEeoDecline");
+    if (!wa || !sp || !eeo) return;
+    wa.value = a.work_auth_us || "";
+    sp.value = a.needs_sponsorship || "";
+    eeo.checked = !!a.eeo_decline;
+  }
+
+  $("#ansSave")?.addEventListener("click", async () => {
+    const note = $("#ansSaved");
+    const body = {
+      work_auth_us: $("#ansWorkAuth").value,
+      needs_sponsorship: $("#ansSponsorship").value,
+      eeo_decline: $("#ansEeoDecline").checked,
+    };
+    try {
+      const r = await api("/api/profile/answers", body);
+      paintAnswers(r.answers || body);
+      note.textContent = I18N.t("profile.answers.saved", "Saved. Filled into every application form for you to review.");
+    } catch {
+      note.textContent = I18N.t("profile.answers.failed", "Couldn't save.");
+    }
+    setTimeout(() => { note.textContent = ""; }, 4000);
+  });
 
   $("#idEdit").addEventListener("click", () => { setIdentityMode(true); $("#idEdit").hidden = true; });
   $("#idCancel").addEventListener("click", () => {
