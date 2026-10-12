@@ -2985,7 +2985,6 @@ body.cv-dragging * { cursor: grabbing !important; }
 .acct-photo { z-index: 1; }
 .acct-ava:has(.acct-photo:not([hidden])) { background: none; }
 
-<<<<<<< HEAD
 /* ================================================================ Saved searches (strategies)
    A second, quieter row under the filter bar: pills for each saved search (with a "new since
    you last looked" count), the actions for the active one, and the "New today" list. */
@@ -3034,7 +3033,6 @@ body.cv-dragging * { cursor: grabbing !important; }
 .nav-badge[hidden] { display: none; }
 .app.is-rail .nav-badge { position: absolute; top: 6px; right: 8px; margin: 0; }
 .app.is-rail .nav-item { position: relative; }
-=======
 /* ---- Interview report card (both rounds) + the prep checklist on the start screens.
    Quiet framed blocks on the report; type and spacing do the hierarchy, colour is rationed to
    the STAR badges and the coverage rating. ---- */
@@ -3095,4 +3093,3 @@ body.cv-dragging * { cursor: grabbing !important; }
 .rc-goals-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); line-height: 1.55; }
 .rc-goals-list li { margin: 2px 0; }
 .rc-drill-list { margin: 14px 0 10px; max-width: 62ch; }
->>>>>>> origin/main
