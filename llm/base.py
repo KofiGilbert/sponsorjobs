@@ -166,6 +166,23 @@ class LLMBackend(Protocol):
         reply body as plain text (no preamble, no markdown). The person reviews and sends.
         """
 
+    def classify_application_mail(self, subject: str, body: str, sender: str, company: str) -> dict:
+        """What ONE message from an employer the person is tracking is, when the rules in
+        inbox/detect could not tell: {"kind": one of inbox.detect.KINDS, "phrase": the deciding
+        wording quoted from the message, "reason": one short line}. "other" when unsure.
+        Never invents a kind the text does not support.
+        """
+
+    def draft_stage_email(self, kind: str, job: dict, profile: dict, contact: dict,
+                          stage: str) -> dict:
+        """One short email for a tracked job (inbox/drafts.DRAFT_TYPES): follow-up after
+        applying, thank-you after an interview, reply to an interview invite with
+        availability, a referral request to a named contact, a negotiation reply to an
+        offer, or a polite decline. {"subject", "body"}, plain text, grounded ONLY in the
+        profile, the job and the contact; no invented dates, numbers, names or facts. The
+        person edits and sends it themselves.
+        """
+
 
 # --------------------------------------------------------------------------- #
 # Deterministic fake used by the acceptance tests.
@@ -930,6 +947,69 @@ class FakeLLM:
               f"to share more or set up a time to talk, I'm generally flexible on scheduling.")
         p3 = "Please let me know what works best on your end, and thank you again for your time."
         return f"{greet}\n\n{p1} {p2}\n\n{p3}\n\nBest regards,\n{name}"
+
+    # -- inbox: stage triage + per-stage drafts (deterministic stand-ins) --- #
+    # Soft cues the rules in inbox/detect do not know, so the model pass is testable: a
+    # message that only says "meet the team" reads as an interview invite, "not the right
+    # fit" as a rejection. Anything else stays "other" (the fake never guesses).
+    _FAKE_MAIL_CUES = (
+        ("interview_invite", re.compile(r"meet the team|come in and meet|chat with the team", re.I)),
+        ("rejection", re.compile(r"not the right fit|gone with another candidate", re.I)),
+        ("offer", re.compile(r"compensation package|start date", re.I)),
+    )
+
+    def classify_application_mail(self, subject: str, body: str, sender: str, company: str) -> dict:
+        text = f"{subject}\n{body}"
+        for kind, pat in self._FAKE_MAIL_CUES:
+            m = pat.search(text)
+            if m:
+                return {"kind": kind, "phrase": m.group(0),
+                        "reason": f'Reads as {kind.replace("_", " ")}: "{m.group(0)}"'}
+        return {"kind": "other", "phrase": "", "reason": ""}
+
+    def draft_stage_email(self, kind: str, job: dict, profile: dict, contact: dict,
+                          stage: str) -> dict:
+        ident = (profile or {}).get("identity", {}) or {}
+        name = ident.get("name") or "The Applicant"
+        company = (job or {}).get("company") or "your company"
+        title = (job or {}).get("title") or "the role"
+        who = (contact or {}).get("name") or ""
+        greet = f"Hi {who.split()[0]}," if who else "Hello,"
+        skills = _profile_skill_phrases(profile)[:2]
+        skill_bit = " and ".join(skills) if skills else "the areas this role focuses on"
+        if kind == "follow_up":
+            subject = f"Following up on my application for {title}"
+            p = (f"I applied for the {title} role at {company} recently and wanted to check in. "
+                 f"I remain very interested, and my background in {skill_bit} fits what the role asks for. "
+                 f"I would be glad to share anything else that helps.")
+        elif kind == "thank_you":
+            subject = f"Thank you for the conversation about {title}"
+            p = (f"Thank you for taking the time to speak with me about the {title} role at {company}. "
+                 f"I enjoyed the conversation and came away more interested. My experience with {skill_bit} "
+                 f"maps closely to what we discussed, and I look forward to the next step.")
+        elif kind == "interview_reply":
+            subject = f"Re: Interview for {title}"
+            p = (f"Thank you for the invitation to interview for the {title} role at {company}. "
+                 f"I would be glad to. I am flexible on timing over the next two weeks, so please share "
+                 f"a few slots that suit you and I will confirm one.")
+        elif kind == "referral":
+            subject = f"Referral for the {title} role at {company}"
+            p = (f"I hope you are well. I am applying for the {title} role at {company} and it looks like a "
+                 f"strong match for my background in {skill_bit}. If you feel comfortable, would you be "
+                 f"willing to refer me? I am happy to send my resume and the posting.")
+        elif kind == "negotiation":
+            subject = f"Re: Offer for {title}"
+            p = (f"Thank you for the offer for the {title} role at {company}. I am excited about it. "
+                 f"Before I accept, I would like to discuss the compensation. Given my experience with "
+                 f"{skill_bit}, is there room to revisit the base salary? I am keen to find a number that "
+                 f"works for both of us.")
+        else:   # decline
+            subject = f"Re: {title} at {company}"
+            p = (f"Thank you for considering me for the {title} role at {company}. After careful thought "
+                 f"I have decided not to move forward at this time. I appreciate the time you spent and "
+                 f"hope our paths cross again.")
+        body = f"{greet}\n\n{p}\n\nBest regards,\n{name}"
+        return {"subject": subject, "body": body}
 
     # -- Project builder: deterministic stand-ins for the defend-your-work gate --
     def generate_project_test(self, project: dict) -> dict:

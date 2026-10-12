@@ -99,3 +99,81 @@ def sender_name(msg: dict) -> str:
     if m:
         return m.group(1).strip()
     return frm
+
+
+# ---------------------------------------------------------------------- stage triage
+#
+# A finer reading of ONE application-related message, for the Tracker's "From your inbox"
+# strip: what kind of mail it is, the stage it argues for, and the phrase that decided it.
+# Deterministic rules only; nothing here moves a card, the person clicks (CLAUDE.md §5).
+
+KINDS = ("interview_invite", "rejection", "offer", "assessment", "application_received",
+         "recruiter_outreach", "other")
+
+# The stage each kind proposes. Recruiter outreach proposes nothing: a cold "are you open to
+# roles?" is not a stage change, it is a reply to draft.
+STAGE_FOR = {
+    "interview_invite": "interviewing",
+    "assessment": "interviewing",
+    "rejection": "rejected",
+    "offer": "offer",
+    "application_received": "applied",
+    "recruiter_outreach": "",
+    "other": "",
+}
+
+# Order matters: the first rule that fires wins. A rejection beats an "interview" mention
+# ("unfortunately, after your interview we decided..."), an offer beats an interview recap.
+_OFFER_RE = re.compile(
+    r"offer letter|offer of employment|job offer|pleased to (offer|extend)|extend (you )?an offer"
+    r"|formal offer|we('d| would) like to offer you|offer you the (position|role)|letter of offer", re.I)
+_ASSESSMENT_RE = re.compile(
+    r"hackerrank|codility|codesignal|leetcode|take-?home (assignment|test|project|challenge|exercise)"
+    r"|coding (challenge|assessment|test|exercise)|technical assessment|online assessment"
+    r"|skills? (assessment|test)|assessment (link|invitation)|complete (the|this|your) assessment", re.I)
+_INTERVIEW_RE = re.compile(
+    r"interview (invitation|invite|with|for the|request)|invite you to (an |a )?(interview|call|chat|conversation)"
+    r"|schedule (a|your|an) (call|time|interview|chat|conversation)|calendly\.com|calendar invite"
+    r"|calendar invitation|book a time|pick a time|phone screen|technical screen|next steps?"
+    r"|move forward with (your|an) (application|interview)|\binterview\b", re.I)
+_RECEIVED_RE = re.compile(
+    r"application (has been |was )?(received|submitted)|thank you for applying|thanks for applying"
+    r"|we('ve| have) received your application|received your application|application confirmation"
+    r"|successfully (submitted|applied)|your application to .{1,80} (has been|was) received", re.I)
+
+
+def _first_phrase(text: str, pattern: re.Pattern) -> str:
+    m = pattern.search(text)
+    return (m.group(0) if m else "").strip()
+
+
+def triage(msg: dict) -> dict:
+    """{"kind", "stage", "phrase", "reason"} for one message.
+
+    ``phrase`` is the exact wording the rule matched and ``reason`` is the one-line
+    explanation shown next to the suggestion ("Subject says \"next steps\""). ``kind`` is
+    "other" when no rule fires; a caller may then ask a model, but only for mail from an
+    employer the person is already tracking."""
+    subject = str(msg.get("subject") or "")
+    body = str(msg.get("body") or "")
+    text = f"{subject}\n{body}"
+    for kind, pattern in (("rejection", _REJECTED_RE), ("offer", _OFFER_RE),
+                          ("assessment", _ASSESSMENT_RE), ("interview_invite", _INTERVIEW_RE)):
+        phrase = _first_phrase(text, pattern)
+        if phrase:
+            return _verdict(kind, phrase, subject)
+    if classify(msg) != "verification":
+        phrase = _first_phrase(text, _RECEIVED_RE)
+        if phrase:
+            return _verdict("application_received", phrase, subject)
+    if classify(msg) == "recruiter":
+        phrase = _first_phrase(text, _RECRUITER_STRONG_RE) or "recruiter wording"
+        return _verdict("recruiter_outreach", phrase, subject)
+    return {"kind": "other", "stage": "", "phrase": "", "reason": ""}
+
+
+def _verdict(kind: str, phrase: str, subject: str) -> dict:
+    where = "Subject" if phrase.lower() in subject.lower() else "Message"
+    short = " ".join(phrase.split())[:80]
+    return {"kind": kind, "stage": STAGE_FOR.get(kind, ""), "phrase": short,
+            "reason": f'{where} says "{short}"'}

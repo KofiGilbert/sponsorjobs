@@ -374,6 +374,37 @@ def company_key(name: str) -> str:
     return " ".join(s.split())
 
 
+def _employer_keys(name: str) -> list[str]:
+    """The forms a company name can take in a From address, subject or body: the board's
+    short key and the sponsor database's normal form (sourcing/sponsors.normalize_employer),
+    de-duplicated, shortest last so the fullest spelling is tried first."""
+    keys = [company_key(name)]
+    try:
+        from sourcing.sponsors import normalize_employer_variants
+        keys.extend(normalize_employer_variants(name))
+    except Exception:   # the sponsor module is optional for the board
+        pass
+    out = []
+    for k in keys:
+        k = (k or "").strip()
+        if len(k) >= 3 and k not in out:
+            out.append(k)
+    return sorted(out, key=len, reverse=True)
+
+
+def match_job(text: str, jobs: list[dict]) -> dict | None:
+    """The first board job whose company name appears in ``text`` (a From address, a subject,
+    a snippet; dots, dashes and underscores count as spaces so jobs@acme-robotics.com matches
+    "Acme Robotics"). None when no tracked employer is named."""
+    low = (text or "").lower()
+    squashed = low.replace(".", " ").replace("-", " ").replace("_", " ")
+    for j in jobs:
+        for key in _employer_keys(j.get("company") or ""):
+            if key in squashed or key.replace(" ", "") in squashed.replace(" ", ""):
+                return j
+    return None
+
+
 def suggest_stage(entry: dict, jobs: list[dict]) -> dict | None:
     """A SUGGESTED stage move for one recruiter reply the inbox surfaced, or None.
 
@@ -384,17 +415,20 @@ def suggest_stage(entry: dict, jobs: list[dict]) -> dict | None:
     suggested stage, or one that is closed."""
     status = entry.get("status") or ""
     target = "rejected" if status == "rejected" else "interviewing"
-    text = " ".join(str(entry.get(k) or "") for k in ("from", "sender", "subject", "snippet")).lower()
-    squashed = text.replace(".", " ").replace("-", " ").replace("_", " ")
-    for j in jobs:
-        key = company_key(j.get("company") or "")
-        if len(key) < 3:
-            continue
-        if key not in squashed and key.replace(" ", "") not in squashed.replace(" ", ""):
-            continue
-        stage = j.get("stage") or ""
-        if stage in ("rejected", "archived") or RANK.get(stage, -1) >= RANK[target]:
-            continue
-        return {"source_id": j["source_id"], "company": j.get("company") or "",
-                "title": j.get("title") or "", "from_stage": stage, "stage": target}
-    return None
+    text = " ".join(str(entry.get(k) or "") for k in ("from", "sender", "subject", "snippet"))
+    j = match_job(text, jobs)
+    if j is None or not stage_move_makes_sense(j.get("stage") or "", target):
+        return None
+    return {"source_id": j["source_id"], "company": j.get("company") or "",
+            "title": j.get("title") or "", "from_stage": j.get("stage") or "", "stage": target}
+
+
+def stage_move_makes_sense(current: str, target: str) -> bool:
+    """Would suggesting ``target`` for a job at ``current`` tell the person anything new?
+    Not for a closed job (rejected / archived), not when it is already at or past the
+    target. Rejected is the exception: a rejection after an interview is still news."""
+    if current in ("rejected", "archived") or target not in RANK:
+        return False
+    if target == "rejected":
+        return True
+    return RANK.get(current, -1) < RANK[target]
