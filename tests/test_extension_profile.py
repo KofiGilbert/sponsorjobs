@@ -115,13 +115,16 @@ def test_own_profile_is_detected_and_extracted(tmp_path):
 def test_experience_entries_including_grouped_roles(tmp_path):
     x = _run(tmp_path, "own_profile.html", "/in/ada-lovelace/")["extracted"]
     exp = x["experience"]
-    assert [e["title"] for e in exp] == ["Data Engineer", "Analytics Engineer", "Data Analyst"]
+    assert [e["title"] for e in exp] == ["Data Engineer", "Analytics Engineer", "Data Analyst", "Data Intern"]
     assert exp[0]["company"] == "Acme Analytics"          # " · Full-time" stripped
     assert exp[0]["dates"].startswith("Mar 2022 - Present")
     assert exp[0]["has_description"] is True and "40%" in exp[0]["description"]
     assert exp[1]["company"] == "Globex" and exp[2]["company"] == "Globex"
     assert exp[1]["dates"].startswith("Jan 2020") and exp[1]["has_description"] is False
     assert x["current_title"] == "Data Engineer" and x["current_company"] == "Acme Analytics"
+    # A single role whose description and skill chips sit in a nested list is ONE entry.
+    assert exp[3]["company"] == "Initrode" and exp[3]["dates"].startswith("Jun 2018")
+    assert exp[3]["description"].startswith("Wrote SQL reports")
 
 
 @needs_node

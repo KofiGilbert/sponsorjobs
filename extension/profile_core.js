@@ -149,7 +149,9 @@
     const sec = section(doc, ["experience"], /^experience$/i);
     const out = [];
     for (const li of items(sec)) {
-      const subs = subItems(li);
+      // A nested list is a grouped employer ONLY when its items are dated roles. A single
+      // role's description and skill chips are also nested <li>s, and they carry no dates.
+      const subs = subItems(li).filter((s) => lines(s).some((l) => DATE.test(l) && l.length < 80));
       if (subs.length) {
         // One employer, several roles: the parent's first line is the company.
         const head = lines(li);
