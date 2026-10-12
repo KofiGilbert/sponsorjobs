@@ -11,7 +11,7 @@
  *    the app window is never carried away -- and the pane is CDP-debuggable, which is
  *    the assisted-apply takeover hook (agent fills, the person watches and clicks).
  */
-const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, net, nativeTheme, shell } = require("electron");
+const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, net, nativeTheme, shell, Notification } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -653,6 +653,29 @@ ipcMain.on("pane:external", () => {
 // Typing an address creates the pane if needed. It used to require an existing pane, so the
 // first address typed into a freshly opened Browser tab was silently dropped (2026-10-08).
 ipcMain.on("pane:navigate", (_e, url) => openInPane(url));
+
+// ---- Saved searches: open the same search on the other boards, in the person's own browser.
+// One tab per URL, http(s) only, capped so a bad payload cannot spray windows. These are plain
+// search pages the person reads themselves; the shell never loads them in the pane, never
+// clicks, never reads them (CLAUDE.md section 7: LinkedIn and Handshake are browse-by-hand).
+ipcMain.on("links:external", (_e, urls) => {
+  const list = Array.isArray(urls) ? urls : [];
+  for (const u of list.slice(0, 10)) {
+    if (typeof u === "string" && /^https?:\/\//i.test(u)) shell.openExternal(u);
+  }
+});
+
+// ---- Local desktop notification (saved-search digest). Click = bring the app forward.
+ipcMain.on("notify:show", (_e, msg) => {
+  try {
+    if (!Notification.isSupported()) return;
+    const title = String((msg && msg.title) || "SponsorJobs").slice(0, 120);
+    const body = String((msg && msg.body) || "").slice(0, 400);
+    const n = new Notification({ title, body, silent: false });
+    n.on("click", () => { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } });
+    n.show();
+  } catch (e) { /* a notification is best-effort; the badge in the app still shows the count */ }
+});
 ipcMain.handle("pane:get-state", () => paneState());
 
 // Dev only: start the managed-AI broker (avatar + bundled LLM) so the live interview works on
