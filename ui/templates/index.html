@@ -29,6 +29,11 @@
           <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 7V5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 5v2M3 12h18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
           <span class="nav-label" data-i18n="nav.jobs">Jobs</span>
         </button>
+        <button class="nav-item" data-nav="tracker" title="Tracker">
+          <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="9.5" y="4" width="5" height="11" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="16" y="4" width="5" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <span class="nav-label" data-i18n="nav.tracker">Tracker</span>
+          <span class="nav-due-dot" id="trackerNavDot" hidden title="A follow-up is due"></span>
+        </button>
         <button class="nav-item" data-nav="projects" title="Projects">
           <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a1.5 1.5 0 0 1 1.5-1.5h4.3L11 8h8.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
           <span class="nav-label" data-i18n="nav.projects">Projects</span>
@@ -520,6 +525,35 @@
         <div class="rvw-msg" id="rvwMsg" hidden></div>
         <div class="rvw-list" id="rvwList"><!-- items injected --></div>
         <div class="empty" id="rvwEmpty" hidden>Nothing waiting for review. Tailor a resume to a job and it lands here to approve.</div>
+      </section>
+
+      <!-- ============ TRACKER (the job board) ============
+           One stage per job you saved, tailored or applied to: Saved, Applied, Interviewing,
+           Offer, Rejected, Archived. Same rows as the Jobs page (sourcing/board.py), local only.
+           Drag a card between columns, or use the table. A card opens a side panel with notes
+           (saved on blur), contacts, a follow-up date, the timeline, and the files. -->
+      <section class="view view-tracker" id="view-tracker">
+        <header class="page-head">
+          <div>
+            <h1 class="page-title" data-i18n="tracker.title">Tracker</h1>
+            <p class="page-sub" data-i18n="tracker.sub">Every job you saved, tailored or applied to. Drag a card to move it along.</p>
+          </div>
+          <div class="trk-head-actions">
+            <div class="trk-seg" role="group" aria-label="View">
+              <button class="trk-seg-btn is-on" id="trkViewBoard" type="button" data-i18n="tracker.board">Board</button>
+              <button class="trk-seg-btn" id="trkViewTable" type="button" data-i18n="tracker.table">Table</button>
+            </div>
+            <a class="btn btn-ghost btn-sm" id="trkExport" href="/api/tracker/export.csv" download title="A CSV of every job you applied to, with dates, for a work-search log" data-i18n="tracker.export">Export for unemployment claims</a>
+          </div>
+        </header>
+
+        <div class="trk-metrics" id="trkMetrics"><!-- funnel tiles injected --></div>
+        <div class="trk-board" id="trkBoard"><!-- columns injected --></div>
+        <div class="trk-table-wrap" id="trkTable" hidden><!-- table injected --></div>
+        <div class="empty" id="trkEmpty" hidden data-i18n="tracker.empty">Nothing tracked yet. Save a job or tailor a resume and it lands here.</div>
+
+        <div class="trk-scrim" id="trkScrim" hidden></div>
+        <aside class="trk-panel" id="trkPanel" hidden aria-label="Job details"><!-- injected --></aside>
       </section>
 
       <!-- ============ AUTO-APPLY (Pro) ============ -->
