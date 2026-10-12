@@ -267,6 +267,27 @@ def test_each_card_is_badged_and_sponsored_only_hides_the_no_record_card(board):
     assert out["store"] is False
 
 
+@pytest.mark.parametrize("board", [b for b in BOARDS if b != "linkedin"])
+def test_a_board_that_is_not_enabled_yet_is_not_read_at_all(board):
+    """Each board beyond LinkedIn is an optional host permission. Until the background confirms
+    the grant, content.js asks for nothing (no lookup, no badge, no toggle) and the corner mark
+    only says where to enable it. It remembers the board so the popup offers it first."""
+    out = _run(board, "on", grant="no")
+    assert out["sentTypes"] == ["board_grant", "board_pending"]
+    assert out["cardBadges"] == 0 and out["stance"] is None and out["lookup"] is None
+    assert all(c["display"] == "" for c in out["cards"])             # nothing hidden either
+    assert out["opened"]["checked"] is None                           # no toggle offered
+    name = {"indeed": "Indeed", "glassdoor": "Glassdoor", "handshake": "Handshake", "dice": "Dice",
+            "google": "Google Jobs", "ziprecruiter": "ZipRecruiter"}[board]
+    assert out["note"] == f"Enable on {name} from the SponsorJobs icon"
+    assert f"Enable on {name}" in out["panelText"]
+
+
+def test_linkedin_needs_no_grant():
+    out = _run("linkedin", "off", grant="no")
+    assert "board_grant" not in out["sentTypes"] and out["lookup"]["company"] == "Acme Sponsor"
+
+
 def test_google_jobs_is_read_only_in_the_jobs_panel_never_on_a_plain_search():
     r = subprocess.run(["node", "-e",
         "const B=require(process.argv[1]);const d=(s)=>{const b=B.detect({hostname:'www.google.com',pathname:'/search',search:s});return b&&b.id};"

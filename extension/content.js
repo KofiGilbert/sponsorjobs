@@ -599,9 +599,11 @@
     } else if (d && d.error === "cant_reach_app") {
       rows.push(`<div class="tailor-cp-row">Couldn't load the sponsor data. Check your connection, or open the SponsorJobs app.</div>`);
     }
-    if (!rows.length) rows.push(`<div class="tailor-cp-row">Open a job to see its sponsorship facts.</div>`);
+    if (GRANTED === false)
+      rows.length = 0, rows.push(`<div class="tailor-cp-row">SponsorJobs is not enabled on ${esc(BOARD.name)} yet. Click the SponsorJobs icon in the toolbar and press <b>Enable on ${esc(BOARD.name)}</b>; nothing on this page is read until then.</div>`);
+    else if (!rows.length) rows.push(`<div class="tailor-cp-row">Open a job to see its sponsorship facts.</div>`);
     // On a results list: the "Sponsored only" toggle and what it is hiding right now.
-    if (isList()) {
+    if (isList() && GRANTED) {
       const s = FILTER.summary;
       const count = FILTER.sponsoredOnly && s ? `Hiding ${s.hidden} of ${s.total}` : "";
       rows.push(`<label class="tailor-cp-row tailor-cp-toggle" title="Hide results whose employer has no sponsorship record (no H-1B, no green card, no E-Verify). Results still being looked up stay visible.">` +
@@ -640,16 +642,36 @@
     const note = c.querySelector(".tailor-corner-note"), s = FILTER.summary;
     if (note) {
       const show = FILTER.sponsoredOnly && isList() && !!s;
-      note.hidden = !show;
-      note.textContent = show ? `Sponsored only: hiding ${s.hidden} of ${s.total}` : "";
+      note.hidden = !show && GRANTED !== false;
+      note.textContent = GRANTED === false ? `Enable on ${BOARD.name} from the SponsorJobs icon`
+        : show ? `Sponsored only: hiding ${s.hidden} of ${s.total}` : "";
     }
     const A = globalThis.TailorAdStance, st = LAST.stance && A ? LAST.stance.stance : null;
     c.classList.toggle("is-no", st === A.NOT_OFFERED || st === A.RESTRICTED);
     c.classList.toggle("is-yes", st === A.OFFERED);
   }
 
+  // ---- Per-board grant. The boards beyond LinkedIn are optional_host_permissions: the person
+  // enables each one from the popup ("Enable on Indeed"). Until the background says this board
+  // is granted, nothing on the page is read; the corner mark only says where to enable it.
+  // GRANTED is true outright on LinkedIn and on the ATS pages (not optional), null while asking.
+  let GRANTED = !(BOARD && BOARD.optional) ? true : null;
+  async function checkGrant() {
+    const r = await send({ type: "board_grant", board: BOARD.id });
+    GRANTED = !!(r && r.ok && r.granted);
+    if (GRANTED) { run(); return; }
+    send({ type: "board_pending", board: BOARD.id });   // so the popup offers THIS board first
+    paintCorner();
+  }
+  try {
+    if (chrome.runtime.onMessage) chrome.runtime.onMessage.addListener((m) => {
+      if (m && m.type === "board_granted" && BOARD && (!m.board || m.board === BOARD.id)) { GRANTED = true; run(); }
+    });
+  } catch {}
+
   let last = null;
   function run() {
+    if (!GRANTED) { paintCorner(); return; }
     paintCorner();
     const { company, anchor, location: ldLoc } = pickTarget();
     if (company && anchor) {
@@ -680,5 +702,5 @@
   // person scrolls, and that is the one and only trigger. Nothing is ever asked of the page.
   new MutationObserver(debounced).observe(document.body, { childList: true, subtree: true });
   if (isList()) loadSponsoredOnly();                // the saved "Sponsored only" choice
-  run();
+  if (GRANTED === null) checkGrant(); else run();
 })();

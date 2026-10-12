@@ -11,6 +11,14 @@
     "http://localhost:57000/*",
     "https://feed.sponsorjobs.ai/*"
   ],
+  "optional_host_permissions": [
+    "https://*.indeed.com/*",
+    "https://*.glassdoor.com/*",
+    "https://*.joinhandshake.com/*",
+    "https://www.dice.com/*",
+    "https://www.google.com/search*",
+    "https://*.ziprecruiter.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
