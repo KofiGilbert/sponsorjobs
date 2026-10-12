@@ -3,10 +3,12 @@
 A browser extension for SponsorJobs. The sponsor badges work on their own, with no app
 installed; the assisted-apply features use the local **SponsorJobs** app. It does two things:
 
-1. **Sponsor badges.** As you browse job postings on **LinkedIn, Indeed, Greenhouse,
-   Lever, or Ashby**, it reads the employer name already on the page and shows small
+1. **Sponsor badges.** As you browse job postings on **LinkedIn, Indeed, Glassdoor,
+   Handshake, Dice, Google Jobs, ZipRecruiter**, or an ATS page (**Greenhouse, Lever,
+   Ashby**, ...), it reads the employer name already on the page and shows small
    badges, **H-1B**, **green card (PERM)**, **cap-exempt**, **E-Verify**, sourced from
    official USCIS/DOL data. No app needed: see "Sponsor data without the app" below.
+   Result lists get a compact badge per card; the open job gets the full row.
    - **What the ad itself says**, read from its own text with the same reader the app uses
      (`adstance_core.js`, a port of `sourcing/adstance.py`): a green **Ad offers sponsorship**
      chip, a red **No sponsorship for this role** chip, or a red **Citizenship or clearance
@@ -17,11 +19,31 @@ installed; the assisted-apply features use the local **SponsorJobs** app. It doe
      here. Cap-exempt: likely H-1B without the lottery (a university, nonprofit research, or
      hospital employer, from the public record and the employer's name). All of it is the
      employer's history, never a promise about this role.
-   - **Sponsored only** (LinkedIn and Indeed result lists): click our mark in the bottom-left
+   - **Sponsored only** (every board's result list): click our mark in the bottom-left
      corner and tick **Sponsored only** to hide results whose employer has no sponsorship
      record (no H-1B, no green card, no E-Verify). It shows "Hiding N of M", keeps results
      still being looked up visible, remembers your choice, and is pure styling on our side
      of the page: nothing is clicked, scrolled, or asked of the site.
+   - **One adapter per board** (`boards_core.js`). Each board is a small object: which
+     elements are the result cards, how to read a card's company / title / location, where the
+     chip row is mounted on the open job, and where the JD text is for the ad-stance reader.
+     LinkedIn is one adapter among seven; `content.js` is the same for all of them. Each
+     adapter records its `evidence`: Dice was read from live, server-rendered markup
+     (2026-10-11); Indeed, Glassdoor and ZipRecruiter answer `curl` with a bot wall, Google
+     with an "enable JavaScript" shell, and Handshake with its login page, so those use each
+     board's documented hooks (`data-testid` / `data-test` / `data-hook`, employer-link URL
+     shapes, CSS-module prefixes) with several fallbacks per field, and are re-read whenever the
+     page changes. Nothing is ever clicked or scrolled to make a page render more.
+   - **Enabled per board.** LinkedIn is in the manifest outright. The other boards are
+     listed under `optional_host_permissions`, and the popup has an **Enable on Indeed** (etc.)
+     button per board; until the browser confirms the grant, the content script on that board
+     reads nothing and the corner mark only points at the popup. One Chrome caveat, stated
+     plainly: a host that is also in `content_scripts.matches` (which these are, since
+     injecting on demand would need the `scripting` permission we deliberately do not take)
+     is counted at install time, so on a fresh install Chrome reports every board as already
+     granted and the prompt only appears when you have restricted the extension's site access
+     yourself (chrome://extensions, "Site access"). The per-board switch is still the honest
+     place to turn a board off and on.
 2. **Assisted apply.** On a job **application form** (Greenhouse, Lever, Ashby, Workday,
    Workable, SmartRecruiters, iCIMS), a small panel offers to **pre-fill**:
    - **Contact fields**, name, email, phone, address (split into street/city/state/zip),
@@ -68,8 +90,10 @@ extension asks the local app instead, as before.
 2. Open `chrome://extensions` (or `edge://extensions`).
 3. Turn on **Developer mode** (top-right).
 4. Click **Load unpacked** and select this `extension/` folder.
-5. Open a job on LinkedIn/Indeed, the badges appear under the company name. Or click
-   the extension icon to check any employer by name.
+5. Open a job on LinkedIn, Indeed, Glassdoor, Handshake, Dice, Google Jobs (the Jobs tab of
+   a Google search) or ZipRecruiter: the badges appear under the title, and each result card
+   in the list gets a compact one. Click the extension icon to check any employer by name, or
+   to enable a board under **Job boards** if its row says "Enable on ...".
 6. Open an application form (e.g. a Greenhouse/Lever/Ashby "Apply" page), the
    **Assisted apply** panel appears bottom-right. Click **Fill this application**,
    review what it filled (highlighted green), attach your resume, and submit yourself.
@@ -82,7 +106,10 @@ Per the project rules, this extension is strictly the GREEN lane:
 - It **cannot be fingerprinted by the sites it runs on**: the manifest lists no
   `web_accessible_resources` (a page can probe those to detect an extension; our logo is an
   inline SVG instead) and asks for one permission, `storage`, plus host permissions for the
-  feed and the local app only.
+  feed and the local app only; the job boards beyond LinkedIn are optional host permissions,
+  granted one at a time from the popup.
+- On the login-gated boards (Handshake) it reads only what **you** have on screen, in your own
+  session; it never logs in, clicks, or scrolls for you.
 - Assisted apply **only fills a form you opened, and only empty fields**, it never
   clicks submit, never uploads a file on its own, and never touches what you typed.
   You review everything and submit yourself.

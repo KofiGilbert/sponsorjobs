@@ -29,11 +29,13 @@ pytestmark = pytest.mark.skipif(not shutil.which("node"), reason="needs node")
 
 CONTENT = Path("extension/content.js")
 
-# The harness: run content.js the way Chrome does, with just enough DOM for pickTarget().
+# The harness: run content.js the way Chrome does (boards_core.js loaded first, as the manifest
+# orders it), with just enough DOM for pickTarget().
 HARNESS = r"""
 // argv[0] is node, argv[1] is this harness; our arguments start at 2.
 const fs = require('fs');
 const src = fs.readFileSync(process.argv[2], 'utf8');
+require(require('path').resolve(require('path').dirname(process.argv[2]), 'boards_core.js'));   // the board adapters
 const jsonld = process.argv[3] === 'null' ? null : JSON.parse(process.argv[3]);
 const scripts = jsonld ? [{ textContent: JSON.stringify(jsonld) }] : [];
 const h1 = { tagName: 'H1', textContent: 'A role', insertAdjacentElement() {} };
@@ -121,6 +123,7 @@ def test_the_css_selectors_are_a_fallback_not_the_only_path():
 LINKEDIN_SEARCH = r"""
 const fs = require('fs');
 const src = fs.readFileSync(process.argv[2], 'utf8');
+require(require('path').resolve(require('path').dirname(process.argv[2]), 'boards_core.js'));   // the board adapters
 function el(tag, attrs={}, kids=[]) {
   const n = { tagName: tag.toUpperCase(), children: kids, attrs, parentElement: null,
               textContent: attrs.text || kids.map(k => k.textContent || '').join(''),
@@ -206,6 +209,7 @@ def test_it_reads_the_location_so_it_cannot_lie_about_a_us_job():
 LINKEDIN_CARD = r"""
 const fs = require('fs');
 const src = fs.readFileSync(process.argv[2], 'utf8');
+require(require('path').resolve(require('path').dirname(process.argv[2]), 'boards_core.js'));   // the board adapters
 const META = process.argv[3];
 function el(t, a = {}, k = []) {
   const n = { tagName: t.toUpperCase(), children: k, attrs: a, parentElement: null,

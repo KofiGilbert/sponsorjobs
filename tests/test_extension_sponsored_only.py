@@ -10,7 +10,8 @@ sponsorship record (no H-1B, no green card, no E-Verify) and shows "Hiding N of 
   scrolled, or asked of the site (CLAUDE.md s7).
 
 The decision logic is pure (extension/parity_core.js) and tested in node directly; the DOM
-wiring in content.js is run against a small fake LinkedIn results column, the way
+wiring in content.js (with the LinkedIn adapter from boards_core.js) is run against a small fake
+LinkedIn results column, the way
 tests/test_extension_content.py runs it against a fake posting.
 """
 
@@ -99,6 +100,7 @@ const [extDir, initialToggle] = process.argv.slice(2);
 globalThis.window = globalThis;
 require(path.join(extDir, 'parity_core.js'));
 require(path.join(extDir, 'adstance_core.js'));
+require(path.join(extDir, 'boards_core.js'));
 
 const VOID = new Set(['img', 'input', 'br']);
 class El {

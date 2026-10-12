@@ -1686,6 +1686,7 @@ def record_status(rid):
         data = recs.merge_data(rid, patch)
     finally:
         recs.close()
+    _board_follow_record(rec, "applied" if status == "applied" else "saved")
     return jsonify({"ok": True, "status": data.get("status"), "applied_at": data.get("applied_at"),
                     "stage": data.get("stage"), "follow_up_due": data.get("follow_up_due")})
 
@@ -1707,6 +1708,7 @@ def record_stage(rid):
         data = recs.merge_data(rid, stage_patch(_record_data(rec), stage, _now_iso()))
     finally:
         recs.close()
+    _board_follow_record(rec, stage)
     return jsonify({"ok": True, "stage": data.get("stage"), "status": data.get("status"),
                     "applied_at": data.get("applied_at"), "follow_up_due": data.get("follow_up_due")})
 
@@ -1800,7 +1802,7 @@ import json as _json_prefs  # noqa: E402
 _PREFS_FILE = _DATA / "review_prefs.json"
 _RATE_FILE = _DATA / "submit_rate.json"
 _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
-                  "inbox_auto_verify": False, "folders": []}
+                  "inbox_auto_verify": False, "folders": [], "tracker_weekly_goal": 10}
 
 
 def _prefs() -> dict:
@@ -1823,6 +1825,8 @@ def _set_prefs(patch: dict) -> dict:
     if "folders" in patch:
         cur["folders"] = [str(f).strip()[:60] for f in (patch["folders"] or [])
                           if str(f).strip()][:50]
+    if "tracker_weekly_goal" in patch:       # the Tracker page's applications-per-week target
+        cur["tracker_weekly_goal"] = max(0, min(500, int(patch["tracker_weekly_goal"])))
     _PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
     _PREFS_FILE.write_text(_json_prefs.dumps(cur), encoding="utf-8")
     return cur
@@ -7231,6 +7235,8 @@ def inbox_scan():
         for v in result.get("verifications", []):
             if v.get("link"):
                 v["auto"] = complete_verification(v["link"])
+    # A recruiter reply SUGGESTS a tracker move (Interviewing, or Rejected); the person clicks.
+    _board_suggestions(result.get("recruiters") or [])
     return _nostore(jsonify({"ok": True, **result}))
 
 
@@ -8239,6 +8245,397 @@ def autoapply_run():
                     "matched": len(picked),
                     "focus": {"titles": titles, "locations": locations,
                               "sponsor_only": sponsor_only}})
+
+
+# ============================================================================ tracker board
+# The job tracker (Huntr / Teal style, local-first): one stage per job the person saved,
+# tailored, or applied to, on the SAME sourced_job rows the Jobs page uses (sourcing/board.py).
+# The review queue's per-record stage (submit/tracker.py) and the board are kept in step:
+# a record that is applied / interviewing pulls its job forward; a board move patches its
+# records so the apply to-do and the Saved CVs follow-ups agree with the board.
+
+def _board_key(rec: dict) -> tuple[str, dict | None]:
+    """The board row a tailored record belongs to: its sourced job, or a board-only row keyed
+    ``tailored:<id>`` for a resume built from a pasted JD (never shown on the Jobs feed)."""
+    from sourcing.board import TAILORED_SOURCE
+    data = _record_data(rec)
+    sj = data.get("source_job") or {}
+    sid = str(sj.get("source_id") or "").strip()
+    role = (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0].strip()
+    if sid:
+        snap = {"source_id": sid, "source": sj.get("source") or "", "company": rec.get("company") or "",
+                "title": role, "url": sj.get("url") or "", "posted_at": (rec.get("created_at") or "")[:10]}
+        return sid, snap
+    sid = f"{TAILORED_SOURCE}:{rec['id']}"
+    return sid, {"source_id": sid, "source": TAILORED_SOURCE, "company": rec.get("company") or "",
+                 "title": role, "url": sj.get("url") or "", "posted_at": (rec.get("created_at") or "")[:10]}
+
+
+def _board_reconcile(w) -> dict[str, list[dict]]:
+    """Pull every tailored record onto the board and return {source_id: [records]}.
+
+    A record not on the board yet lands in its own stage (Saved when just tailored, Applied once
+    the assisted-apply engine, the auto lane, or the person marked it applied). A record that is
+    further along than its job (applied while the board still says Saved) moves the job forward
+    and logs why. The board is never moved backwards from here: once the person drags a card, the
+    board is the source of truth and the move patches the records instead."""
+    from sourcing.board import RANK, STAGES
+    from submit.tracker import effective_stage
+    recs = _records()
+    try:
+        rows = recs.list(limit=10000)
+    finally:
+        recs.close()
+    by_job: dict[str, list[dict]] = {}
+    for r in rows:
+        sid, snap = _board_key(r)
+        data = _record_data(r)
+        rstage = effective_stage(data)
+        if rstage not in STAGES:
+            rstage = "saved"
+        applied_at = data.get("applied_at") or None
+        cur = w.stage_of(sid)
+        note = "Application submitted" if rstage == "applied" else "Tailored a resume"
+        if cur is None:
+            existing = w.get_job(sid)
+            w.track_job(sid, rstage, note=note, now=(r.get("created_at") or None) if rstage == "saved" else None,
+                        job=None if existing else snap, applied_at=applied_at)
+        elif cur not in ("rejected", "archived") and RANK[rstage] > RANK[cur]:
+            w.move_stage(sid, rstage, note=note, applied_at=applied_at)
+        by_job.setdefault(sid, []).append(r)
+    return by_job
+
+
+def _board_follow_record(rec: dict, stage: str) -> None:
+    """A stage set on one tailored record from the review queue (its stage picker, or Mark as
+    applied) moves that record's board job too, in EITHER direction: the person chose, so the
+    board follows. Best-effort: the record is already saved, and the board catches up on its
+    next read anyway."""
+    try:
+        from sourcing.board import STAGES
+        if stage not in STAGES:
+            return
+        sid, snap = _board_key(rec)
+        w = _watchlist()
+        try:
+            if w.stage_of(sid) is None:
+                w.track_job(sid, stage, note="From the review queue",
+                            job=None if w.get_job(sid) else snap)
+            else:
+                w.move_stage(sid, stage, note="From the review queue")
+        finally:
+            w.close()
+    except Exception:
+        pass
+
+
+def _board_patch_records(records: list[dict], stage: str) -> None:
+    """Keep the review queue's own funnel in step with a board move (Archived has no record
+    stage, so those records are left alone)."""
+    from submit.tracker import STAGES as REC_STAGES
+    from submit.tracker import stage_patch
+    if stage not in REC_STAGES or not records:
+        return
+    recs = _records()
+    try:
+        for r in records:
+            data = _record_data(r)
+            if data.get("stage") == stage or (stage == "applied" and data.get("status") == "applied"):
+                continue
+            recs.merge_data(r["id"], stage_patch(data, stage, _now_iso()))
+    finally:
+        recs.close()
+
+
+def _board_card(j: dict, records: list[dict], today) -> dict:
+    """One card: the job, its sponsorship badges, the latest tailored resume, and the dates."""
+    from sourcing.board import date_of
+    latest = max(records, key=lambda r: r["id"]) if records else None
+    rec = None
+    if latest:
+        data = _record_data(latest)
+        job = f"cv-{latest['id']}"
+        rec = {"id": latest["id"], "role": latest.get("role") or "",
+               "pdf": f"/api/cv.pdf?job={job}" if (WORKDIR / f"{job}.pdf").exists() else None,
+               "cover_letter": (f"/api/record/{latest['id']}/cover_letter.pdf"
+                                if (data.get("cover_letter") or "").strip() else None),
+               "count": len(records)}
+    fu = date_of(j.get("follow_up_at"))
+    return {
+        "source_id": j["source_id"], "company": j.get("company") or "", "title": j.get("title") or "",
+        "location": j.get("location") or "", "url": j.get("url") or "", "source": j.get("source") or "",
+        "stage": j.get("stage"), "stage_at": (j.get("stage_at") or "")[:10],
+        "applied_at": (j.get("applied_at") or "")[:10] or None,
+        "follow_up_at": j.get("follow_up_at") or None,
+        "follow_up_due": bool(fu and fu <= today and j.get("stage") in ("applied", "interviewing")),
+        "visa": j.get("visa") or [], "sponsorship_stated": j.get("sponsorship_stated"),
+        "has_notes": bool((j.get("notes") or "").strip()),
+        "record": rec,
+    }
+
+
+def _board_goal() -> int:
+    return int(_prefs().get("tracker_weekly_goal") or 0)
+
+
+@app.get("/api/tracker/board")
+@_guard
+def tracker_board():
+    """The whole board: every stage with its cards, plus how many follow-ups are due today.
+    ?stage=applied narrows to one column."""
+    from datetime import date
+
+    from sourcing.board import STAGES
+    only = (request.args.get("stage") or "").strip()
+    if only and only not in STAGES:
+        return jsonify({"error": f"stage must be one of {', '.join(STAGES)}"}), 400
+    today = date.today()
+    w = _watchlist()
+    try:
+        by_job = _board_reconcile(w)
+        jobs = _sponsors().tag_jobs(w.board_jobs(only or None))
+        due = len(w.due_followups(today))
+    finally:
+        w.close()
+    columns = {s: [] for s in ([only] if only else STAGES)}
+    for j in jobs:
+        columns[j["stage"]].append(_board_card(j, by_job.get(j["source_id"], []), today))
+    return _nostore(jsonify({"stages": list(STAGES), "columns": columns, "due_count": due,
+                             "goal": _board_goal(), "total": len(jobs)}))
+
+
+@app.post("/api/tracker/move")
+@_guard
+def tracker_move():
+    """Move one job to a stage (a drag on the board, or the stage picker). Body: {source_id,
+    stage, note?, job?}. ``job`` is a snapshot so a role straight from the feed can be put on
+    the board even before it is in the local DB (same contract as /api/jobs/save)."""
+    from datetime import date
+
+    from sourcing.board import STAGES
+    body = request.json or {}
+    sid = str(body.get("source_id") or "").strip()
+    stage = str(body.get("stage") or "").strip()
+    if not sid:
+        return jsonify({"error": "missing source_id"}), 400
+    if stage not in STAGES:
+        return jsonify({"error": f"stage must be one of {', '.join(STAGES)}"}), 400
+    w = _watchlist()
+    try:
+        by_job = _board_reconcile(w)
+        if w.get_job(sid) is None:
+            snap = body.get("job") if isinstance(body.get("job"), dict) else None
+            if not snap or snap.get("source_id") != sid:
+                return jsonify({"error": "That job is not in your local list; send its snapshot."}), 404
+            w.track_job(sid, stage, note=str(body.get("note") or ""), job=snap)
+        row = w.move_stage(sid, stage, note=str(body.get("note") or ""))
+        _board_patch_records(by_job.get(sid, []), stage)
+        job = _sponsors().tag_jobs([row])[0]
+        due = len(w.due_followups(date.today()))
+    finally:
+        w.close()
+    return jsonify({"ok": True, "job": _board_card(job, by_job.get(sid, []), date.today()),
+                    "due_count": due})
+
+
+@app.get("/api/tracker/job")
+@_guard
+def tracker_job():
+    """The side panel for one card: notes, contacts, follow-up, the timeline, and every tailored
+    resume built for it. ?source_id=..."""
+    from datetime import date
+    sid = (request.args.get("source_id") or "").strip()
+    w = _watchlist()
+    try:
+        by_job = _board_reconcile(w)
+        row = w.board_job(sid)
+        if row is None or not row.get("stage"):
+            return jsonify({"error": "That job is not on your board."}), 404
+        job = _sponsors().tag_jobs([row])[0]
+        contacts = w.contacts(sid)
+        activity = w.activity(sid)
+    finally:
+        w.close()
+    recs = []
+    for r in sorted(by_job.get(sid, []), key=lambda r: -r["id"]):
+        data = _record_data(r)
+        jobname = f"cv-{r['id']}"
+        recs.append({"id": r["id"], "role": r.get("role") or "", "when": (r.get("created_at") or "")[:10],
+                     "pdf": f"/api/cv.pdf?job={jobname}" if (WORKDIR / f"{jobname}.pdf").exists() else None,
+                     "cover_letter": (f"/api/record/{r['id']}/cover_letter.pdf"
+                                      if (data.get("cover_letter") or "").strip() else None)})
+    card = _board_card(job, by_job.get(sid, []), date.today())
+    return _nostore(jsonify({**card, "notes": job.get("notes") or "", "contacts": contacts,
+                             "activity": activity, "records": recs, "salary": job.get("salary") or ""}))
+
+
+@app.post("/api/tracker/note")
+@_guard
+def tracker_note():
+    """Free-text notes for one job, saved whole on every blur. Body: {source_id, notes}."""
+    body = request.json or {}
+    sid = str(body.get("source_id") or "").strip()
+    w = _watchlist()
+    try:
+        if not w.stage_of(sid):
+            return jsonify({"error": "That job is not on your board."}), 404
+        w.set_notes(sid, str(body.get("notes") or ""))
+        notes = (w.board_job(sid) or {}).get("notes") or ""
+    finally:
+        w.close()
+    return jsonify({"ok": True, "source_id": sid, "notes": notes})
+
+
+@app.post("/api/tracker/followup")
+@_guard
+def tracker_followup():
+    """Set or clear the follow-up date. Body: {source_id, date} (date "" clears it)."""
+    from datetime import date
+    body = request.json or {}
+    sid = str(body.get("source_id") or "").strip()
+    w = _watchlist()
+    try:
+        if not w.stage_of(sid):
+            return jsonify({"error": "That job is not on your board."}), 404
+        try:
+            stored = w.set_follow_up(sid, str(body.get("date") or "").strip() or None)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        due = len(w.due_followups(date.today()))
+    finally:
+        w.close()
+    return jsonify({"ok": True, "source_id": sid, "follow_up_at": stored, "due_count": due})
+
+
+@app.post("/api/tracker/contact")
+@_guard
+def tracker_contact_add():
+    """Add a contact to a job. Body: {source_id, name, role?, email?, linkedin?}. Stored locally."""
+    body = request.json or {}
+    sid = str(body.get("source_id") or "").strip()
+    w = _watchlist()
+    try:
+        if not w.stage_of(sid):
+            return jsonify({"error": "That job is not on your board."}), 404
+        try:
+            cid = w.add_contact(sid, str(body.get("name") or ""), str(body.get("role") or ""),
+                                str(body.get("email") or ""), str(body.get("linkedin") or ""))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        contacts = w.contacts(sid)
+    finally:
+        w.close()
+    return jsonify({"ok": True, "id": cid, "contacts": contacts})
+
+
+@app.post("/api/tracker/contact/remove")
+@_guard
+def tracker_contact_remove():
+    """Body: {source_id, id}."""
+    body = request.json or {}
+    sid = str(body.get("source_id") or "").strip()
+    w = _watchlist()
+    try:
+        try:
+            cid = int(body.get("id"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "missing contact id"}), 400
+        if not any(c["id"] == cid for c in w.contacts(sid)):
+            return jsonify({"error": "No such contact on that job."}), 404
+        w.remove_contact(cid)
+        contacts = w.contacts(sid)
+    finally:
+        w.close()
+    return jsonify({"ok": True, "contacts": contacts})
+
+
+@app.get("/api/tracker/activity")
+@_guard
+def tracker_activity():
+    """The stage timeline for one job (?source_id=), newest first."""
+    sid = (request.args.get("source_id") or "").strip()
+    w = _watchlist()
+    try:
+        if w.get_job(sid) is None:
+            return jsonify({"error": "That job is not in your local list."}), 404
+        rows = w.activity(sid)
+    finally:
+        w.close()
+    return _nostore(jsonify({"source_id": sid, "activity": rows}))
+
+
+@app.get("/api/tracker/metrics")
+@_guard
+def tracker_metrics():
+    """The funnel at the top of the Tracker page: this week and total, applied to interview to
+    offer with conversion, median days to a first interview, 12 weekly bars, the weekly goal,
+    and how many follow-ups are due today (the sidebar dot)."""
+    from datetime import date
+
+    from sourcing.board import funnel_metrics
+    today = date.today()
+    w = _watchlist()
+    try:
+        _board_reconcile(w)
+        m = funnel_metrics(w.funnel_rows(), today, _board_goal())
+        due = w.due_followups(today)
+    finally:
+        w.close()
+    m["due_count"] = len(due)
+    m["due"] = [{"source_id": d["source_id"], "company": d.get("company") or "",
+                 "title": d.get("title") or "", "follow_up_at": d.get("follow_up_at")} for d in due]
+    return _nostore(jsonify(m))
+
+
+@app.post("/api/tracker/goal")
+@_guard
+def tracker_goal():
+    """The weekly applications target. Body: {target} (0 turns the goal off)."""
+    body = request.json or {}
+    try:
+        target = int(body.get("target"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "target must be a whole number"}), 400
+    _set_prefs({"tracker_weekly_goal": target})
+    return jsonify({"ok": True, "target": _board_goal()})
+
+
+@app.get("/api/tracker/export.csv")
+@_guard
+def tracker_export():
+    """Every job applied to, with dates, as a CSV for an unemployment-insurance work-search
+    log (date, employer, position, contact method, link, result)."""
+    from datetime import date
+
+    from flask import Response
+
+    from sourcing.board import export_csv
+    w = _watchlist()
+    try:
+        _board_reconcile(w)
+        body = export_csv(w.board_jobs())
+    finally:
+        w.close()
+    resp = Response(body, mimetype="text/csv")
+    resp.headers["Content-Disposition"] = f'attachment; filename="applications-{date.today().isoformat()}.csv"'
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _board_suggestions(recruiters: list[dict]) -> None:
+    """Attach a SUGGESTED stage move to each recruiter reply the inbox surfaced (board job
+    matched by company). In place; never moves anything, the person clicks."""
+    from sourcing.board import suggest_stage
+    if not recruiters:
+        return
+    w = _watchlist()
+    try:
+        _board_reconcile(w)
+        jobs = w.board_jobs()
+    finally:
+        w.close()
+    for entry in recruiters:
+        entry["suggest"] = suggest_stage(entry, jobs)
 
 
 def main() -> None:
