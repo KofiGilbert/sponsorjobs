@@ -109,6 +109,9 @@ NAMES = [
     "Acme Widgets", "ProCogia", "0965688 B.C. Ltd.", "3M", "3M Company", "Google", "Alphabet",
     "Google LLC", "Uber", "Uber Eats", "", "   ", "Inc.", "U.S.", "The", "&", "Ünïcödé GmbH",
     "Société Générale", "Nobody Here Corp",
+    # The posting's own name can mark a record cap-exempt (looks_cap_exempt / looksCapExempt).
+    "Google Hospital", "Amazon Medical Center", "Home Depot University", "Walgreens Hospitality",
+    "Acme Widgets College", "Universal Acme Widgets", "Uber Technologies Research Institute",
 ]
 LOCATIONS = ["", "New York, NY", "London, UK", "Remote - US", "Dallas, TX", "Austin, tx",
              "São Paulo, Brazil", "Washington, D.C.", "U.S.", "Toronto, ON", "Bangalore"]

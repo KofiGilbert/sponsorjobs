@@ -6,9 +6,17 @@
 // PERM history while the ad itself said "This position is not eligible for visa sponsorship". The
 // employer's record and the role's stance are different facts; a student needs both, and the
 // role's own words decide. A NO anywhere outranks a YES anywhere. E-Verify is not sponsorship.
+//
+// RESTRICTED (2026-10-11): the ad requires US citizenship, a green card / permanent residency, or
+// a security clearance. Closed to a visa holder whatever the employer's record says, so it gets
+// its own red chip with the ad's sentence. RESTRICTED is sourcing/adstance.py RESTRICTED_SRC,
+// which sourcing/quality.py also uses to keep such roles off the board.
 (function (root) {
-  const OFFERED = "offered", NOT_OFFERED = "not_offered", UNKNOWN = "unknown";
-  const SENT = /[^.\n!?•]+/g;
+  const OFFERED = "offered", NOT_OFFERED = "not_offered", RESTRICTED = "restricted", UNKNOWN = "unknown";
+  const QUOTE_CHARS = 140;
+  // A full stop after a lone letter is an abbreviation ("U.S. citizenship"), not a sentence end.
+  const SENT = /(?:(?<![A-Za-z])[A-Za-z]\.|[^.\n!?•])+/g;
+  const RESTRICTED_RE = /(u\.?s\.?\s*citizens?(hip)?\s*(is\s*)?(required|only|mandatory)|must\s+be\s+(a\s+|an\s+)?(u\.?s\.?\s*)?(citizen|green\s*card\s*holder|(lawful\s+)?permanent\s+resident)|sole\s+u\.?s\.?\s*citizen|(citizens?|citizenship)\s*(,|\/|\s+or\s+|\s+and\s+)\s*(a\s+)?(green\s*card(\s*holders?)?|(lawful\s+)?permanent\s+residen(ts?|cy))|(green\s*card(\s*holders?)?|(lawful\s+)?permanent\s+residen(ts?|cy))\s*(is\s+|are\s+)?(required|only|mandatory)|must\s+(hold|have|possess)\s+(a\s+|an\s+)?(valid\s+|current\s+)?(green\s*card|(lawful\s+)?permanent\s+residen(t|cy))|security\s+clearance|active\s+clearance|obtain\s+(a\s+)?(security\s+)?clearance|ts\/sci|top\s+secret|secret\s+clearance|dod\s+secret|polygraph|\bq\s+clearance\b)/i;
   const ABOUT = /\bsponsor\w*|\bh-?1b\b/i;
   const CTX = /visa|immigra|work authori[sz]|h-?1b|\bopt\b|\bcpt\b|green card|employment eligib|right to work|lawful|employer of record|work permit|legally authori[sz]/i;
   const NO = [
@@ -38,17 +46,49 @@
     }
   }
 
+  // A bar anywhere outranks a yes anywhere; a citizenship / clearance bar outranks a plain no.
   function adStance(text) {
-    let yes = null;
+    let no = null, yes = null;
     for (const s of sentences(text)) {
-      if (!(ABOUT.test(s) && CTX.test(s))) continue;
-      if (NO.some(p => p.test(s))) return { stance: NOT_OFFERED, sentence: s.slice(0, 300) };
-      if (yes === null && YES.some(p => p.test(s))) yes = s.slice(0, 300);
+      if (RESTRICTED_RE.test(s)) return { stance: RESTRICTED, sentence: s.slice(0, 300) };
+      if (no !== null || !(ABOUT.test(s) && CTX.test(s))) continue;
+      if (NO.some(p => p.test(s))) no = s.slice(0, 300);
+      else if (yes === null && YES.some(p => p.test(s))) yes = s.slice(0, 300);
     }
+    if (no) return { stance: NOT_OFFERED, sentence: no };
     return yes ? { stance: OFFERED, sentence: yes } : { stance: UNKNOWN, sentence: "" };
   }
 
-  const api = { adStance, OFFERED, NOT_OFFERED, UNKNOWN };
+  // The deciding sentence cut to about `limit` characters at a word boundary, for a chip's
+  // tooltip and the grey line under the chips (sourcing/adstance.py short_sentence).
+  function shortSentence(sentence, limit) {
+    limit = limit || QUOTE_CHARS;
+    const s = String(sentence || "").split(/\s+/).filter(Boolean).join(" ");
+    if (s.length <= limit) return s;
+    let cut = s.slice(0, limit + 1);
+    const sp = cut.lastIndexOf(" ");
+    cut = sp > Math.floor(limit / 2) ? cut.slice(0, sp) : s.slice(0, limit);
+    return cut.replace(/[ ,;:]+$/, "") + "...";
+  }
+
+  // The chip for a stance: its label, the red/green class, and the tooltip's explanation.
+  const CHIP = {
+    [RESTRICTED]: { label: "Citizenship or clearance required", cls: "tb-ad-no tb-ad-restricted",
+      note: "This role requires US citizenship, permanent residency, or a security clearance, so it is closed to a visa holder whatever the employer's record says." },
+    [NOT_OFFERED]: { label: "No sponsorship for this role", cls: "tb-ad-no",
+      note: "The badges after this are the employer's history on other roles, not this one." },
+    [OFFERED]: { label: "Ad offers sponsorship", cls: "tb-ad-yes",
+      note: "The ad does not name the visa; for a US new hire that usually means H-1B." },
+  };
+  function stanceChip(r) {
+    const c = r && CHIP[r.stance];
+    if (!c) return null;
+    const quote = shortSentence(r.sentence);
+    return { stance: r.stance, label: c.label, cls: c.cls, quote,
+             title: (quote ? "The ad says: “" + quote + "” " : "") + c.note };
+  }
+
+  const api = { adStance, shortSentence, stanceChip, OFFERED, NOT_OFFERED, RESTRICTED, UNKNOWN, QUOTE_CHARS };
   root.TailorAdStance = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
