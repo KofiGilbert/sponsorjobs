@@ -3256,7 +3256,80 @@
     $("#profSecNote").hidden = true;
     $("#idSaved").textContent = "";
     paintAnswers(p.answers || {});
+    loadLinkedinReview();
   }
+
+  /* ---- LinkedIn review: the extension reads the person's OWN profile page while they have
+     it open (read-only, never clicks or edits) and the app scores it. This paints the stored
+     review: score ring, 14 sections with a reason and a fix, the drafted headline / About with
+     Copy. "Re-score" re-runs the score on the stored page and writes the two drafts (one model
+     call). The person applies every change on LinkedIn by hand. */
+  const LI_RING_C = 2 * Math.PI * 52;
+  function paintLinkedinReview(d) {
+    const has = !!(d && d.has_review);
+    $("#liEmpty").hidden = has;
+    $("#liBody").hidden = !has;
+    $("#liRescore").hidden = !has;
+    if (!has) return;
+    const score = Math.max(0, Math.min(100, Number(d.score) || 0));
+    $("#liScore").textContent = String(score);
+    $("#liRingFg").style.strokeDashoffset = String(LI_RING_C * (1 - score / 100));
+    const who = $("#liWho");
+    who.innerHTML = d.url
+      ? `<a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.name || d.url)}</a>`
+      : esc(d.name || "");
+    const role = (d.review && d.review.target_role) || "";
+    $("#liTarget").textContent = role
+      ? I18N.t("li.target", "Scored for: {role}").replace("{role}", role) : "";
+    $("#liAt").textContent = d.at
+      ? I18N.t("li.scored", "Scored {when}").replace("{when}", new Date(d.at * 1000).toLocaleString()) : "";
+    const rows = ((d.review && d.review.sections) || []).map(sec => {
+      const sc = Math.max(0, Math.min(100, Number(sec.score) || 0));
+      return `<div class="li-row">`
+        + `<div class="li-row-l">${esc(sec.label)}<span class="li-row-w">${esc(String(sec.weight))} ${esc(I18N.t("li.weight", "pts"))}</span></div>`
+        + `<div class="li-bar"><i style="width:${sc}%"></i></div>`
+        + `<div class="li-row-s">${sc}/100</div>`
+        + `<div class="li-row-why">${esc(sec.reason)} <b>${esc(I18N.t("li.fix", "Fix:"))}</b> ${esc(sec.fix)}</div>`
+        + `</div>`;
+    });
+    $("#liSections").innerHTML = rows.join("");
+    const dr = d.drafts || null;
+    $("#liDrafts").hidden = !dr;
+    if (dr) {
+      $("#liHeadline").textContent = dr.headline || "";
+      $("#liAbout").textContent = dr.about || "";
+      const flags = (dr.flags || []).map(f => `${f.field}: ${(f.figures || []).join(", ")}`).join("; ");
+      $("#liFlags").hidden = !flags;
+      $("#liFlags").textContent = flags
+        ? I18N.t("li.flags", "Check these figures before you paste, they are not in your saved profile: {list}").replace("{list}", flags) : "";
+    }
+    const note = $("#liNote");
+    const msg = d.draft_error || (!dr ? I18N.t("li.noDrafts", "Press Re-score to draft a headline and About from your saved profile.") : "");
+    note.hidden = !msg;
+    note.textContent = msg;
+  }
+  async function loadLinkedinReview() {
+    let d = null;
+    try { d = await api("/api/profile/linkedin-review"); } catch { d = null; }
+    paintLinkedinReview(d);
+  }
+  $("#liRescore").addEventListener("click", async () => {
+    const btn = $("#liRescore");
+    btn.disabled = true;
+    const was = btn.textContent;
+    btn.textContent = I18N.t("li.rescoring", "Scoring...");
+    try { paintLinkedinReview(await api("/api/profile/linkedin-review", {})); }
+    catch (e) { const n = $("#liNote"); n.hidden = false; n.textContent = e.message || String(e); }
+    btn.disabled = false;
+    btn.textContent = was;
+  });
+  document.querySelectorAll(".li-copy").forEach(b => b.addEventListener("click", async () => {
+    const txt = $("#" + b.dataset.copy).textContent;
+    const was = b.textContent;
+    try { await navigator.clipboard.writeText(txt); b.textContent = I18N.t("li.copied", "Copied"); }
+    catch { b.textContent = I18N.t("li.copyFailed", "Select and copy"); }
+    setTimeout(() => { b.textContent = was; }, 1800);
+  }));
 
   /* ---- application answers (work authorization, sponsorship, EEO decline): the three
      answers nearly every form asks, saved once here and filled into every application for

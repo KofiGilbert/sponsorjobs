@@ -425,5 +425,20 @@
   "goals.facts": "Ce que l'annonce dit d'eux",
   "goals.loading": "Préparation de votre liste...",
   "goals.failed": "Impossible de préparer la liste pour le moment.",
-  "goals.noFacts": "L'annonce ne dit rien de l'entreprise. Consultez leur site avant d'y aller."
+  "goals.noFacts": "L'annonce ne dit rien de l'entreprise. Consultez leur site avant d'y aller.",
+  "li.title": "Bilan LinkedIn",
+  "li.rescore": "Réévaluer",
+  "li.rescoring": "Évaluation...",
+  "li.empty": "Ouvrez votre propre profil LinkedIn dans Chrome avec l'extension SponsorJobs installée et votre score apparaîtra ici.",
+  "li.headline": "Titre proposé",
+  "li.about": "Infos proposées",
+  "li.copy": "Copier",
+  "li.copied": "Copié",
+  "li.copyFailed": "Sélectionnez et copiez",
+  "li.target": "Évalué pour : {role}",
+  "li.scored": "Évalué {when}",
+  "li.weight": "pts",
+  "li.fix": "Correction :",
+  "li.noDrafts": "Cliquez sur Réévaluer pour rédiger un titre et une section Infos à partir de votre profil enregistré.",
+  "li.flags": "Vérifiez ces chiffres avant de coller, ils ne figurent pas dans votre profil enregistré : {list}"
 }

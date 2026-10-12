@@ -3045,3 +3045,33 @@ body.cv-dragging * { cursor: grabbing !important; }
 .rc-goals-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); line-height: 1.55; }
 .rc-goals-list li { margin: 2px 0; }
 .rc-drill-list { margin: 14px 0 10px; max-width: 62ch; }
+
+/* ---- LinkedIn review card (Profile page). One ring, a quiet list, two drafts. Colour is
+   rationed: the ring is ink on border, the score is a number, nothing glows. */
+.li-body { display: flex; flex-direction: column; gap: 22px; }
+.li-top { display: flex; align-items: center; gap: 22px; }
+.li-ring { position: relative; width: 92px; height: 92px; flex: 0 0 auto; }
+.li-ring svg { width: 92px; height: 92px; transform: rotate(-90deg); }
+.li-ring circle { fill: none; stroke-width: 7; }
+.li-ring-bg { stroke: var(--border); }
+.li-ring-fg { stroke: var(--ink); stroke-linecap: round; stroke-dasharray: 326.7; stroke-dashoffset: 326.7; transition: stroke-dashoffset .6s ease; }
+.li-ring-n { position: absolute; inset: 0; display: grid; place-items: center; font-size: 24px; font-weight: 650; color: var(--ink); }
+.li-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.li-who { font-size: 15px; font-weight: 600; color: var(--ink); }
+.li-who a { color: inherit; text-decoration: none; }
+.li-who a:hover { text-decoration: underline; }
+.li-target { font-size: 13px; color: var(--ink-2); }
+.li-sections { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.li-row { display: grid; grid-template-columns: 200px 1fr 64px; gap: 6px 16px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--border); }
+.li-row-l { font-size: 13px; color: var(--ink); }
+.li-row-w { font-size: 11px; color: var(--faint); margin-left: 6px; }
+.li-bar { height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.li-bar > i { display: block; height: 100%; background: var(--ink); opacity: .85; }
+.li-row-s { font-size: 12.5px; color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums; }
+.li-row-why { grid-column: 1 / -1; font-size: 12.5px; color: var(--faint); line-height: 1.45; }
+.li-row-why b { color: var(--ink-2); font-weight: 500; }
+.li-drafts { display: flex; flex-direction: column; gap: 16px; }
+.li-draft-h { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin-bottom: 8px; }
+.li-draft-t { font-size: 13.5px; line-height: 1.55; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md, 10px); padding: 12px 14px; }
+.li-pre { white-space: pre-wrap; }
+@media (max-width: 720px) { .li-row { grid-template-columns: 1fr 56px; } .li-bar { display: none; } }

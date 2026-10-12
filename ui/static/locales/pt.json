@@ -425,5 +425,20 @@
   "goals.facts": "O que a vaga diz sobre eles",
   "goals.loading": "Montando sua lista de preparação...",
   "goals.failed": "Não foi possível montar a lista agora.",
-  "goals.noFacts": "A vaga não diz nada sobre a empresa. Veja o site deles antes de ir."
+  "goals.noFacts": "A vaga não diz nada sobre a empresa. Veja o site deles antes de ir.",
+  "li.title": "Revisão do LinkedIn",
+  "li.rescore": "Pontuar de novo",
+  "li.rescoring": "Pontuando...",
+  "li.empty": "Abra o seu próprio perfil do LinkedIn no Chrome com a extensão SponsorJobs instalada e a sua pontuação aparece aqui.",
+  "li.headline": "Título sugerido",
+  "li.about": "Sobre sugerido",
+  "li.copy": "Copiar",
+  "li.copied": "Copiado",
+  "li.copyFailed": "Selecione e copie",
+  "li.target": "Pontuado para: {role}",
+  "li.scored": "Pontuado {when}",
+  "li.weight": "pts",
+  "li.fix": "Correção:",
+  "li.noDrafts": "Clique em Pontuar de novo para redigir um título e um Sobre a partir do seu perfil salvo.",
+  "li.flags": "Confira estes números antes de colar, eles não estão no seu perfil salvo: {list}"
 }

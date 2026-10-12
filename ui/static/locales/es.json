@@ -425,5 +425,20 @@
   "goals.facts": "Lo que la oferta dice de ellos",
   "goals.loading": "Preparando tu lista de preparación...",
   "goals.failed": "No se pudo preparar la lista ahora.",
-  "goals.noFacts": "La oferta no dice nada de la empresa. Mira su web antes de ir."
+  "goals.noFacts": "La oferta no dice nada de la empresa. Mira su web antes de ir.",
+  "li.title": "Revisión de LinkedIn",
+  "li.rescore": "Volver a puntuar",
+  "li.rescoring": "Puntuando...",
+  "li.empty": "Abre tu propio perfil de LinkedIn en Chrome con la extensión SponsorJobs instalada y tu puntuación aparecerá aquí.",
+  "li.headline": "Titular propuesto",
+  "li.about": "Acerca de propuesto",
+  "li.copy": "Copiar",
+  "li.copied": "Copiado",
+  "li.copyFailed": "Selecciona y copia",
+  "li.target": "Puntuado para: {role}",
+  "li.scored": "Puntuado {when}",
+  "li.weight": "pts",
+  "li.fix": "Solución:",
+  "li.noDrafts": "Pulsa Volver a puntuar para redactar un titular y un Acerca de a partir de tu perfil guardado.",
+  "li.flags": "Revisa estas cifras antes de pegar, no están en tu perfil guardado: {list}"
 }

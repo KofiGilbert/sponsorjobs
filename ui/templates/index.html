@@ -461,6 +461,45 @@
             </div>
           </div>
 
+          <!-- LinkedIn review: a read-only score of the person's OWN profile page, sent here by
+               the browser extension while they have it open (it reads, never clicks or edits).
+               The fixes and the drafted headline / About live here; they paste into LinkedIn
+               by hand. -->
+          <div class="prof-card" id="liCard">
+            <div class="prof-card-h"><span data-i18n="li.title">LinkedIn review</span>
+              <button class="btn btn-ghost btn-sm" id="liRescore" type="button" data-i18n="li.rescore" hidden>Re-score</button>
+            </div>
+            <p class="prof-note" id="liEmpty" data-i18n="li.empty">Open your own LinkedIn profile in Chrome with the SponsorJobs extension installed, and your score lands here.</p>
+            <div class="li-body" id="liBody" hidden>
+              <div class="li-top">
+                <div class="li-ring" aria-hidden="true">
+                  <svg viewBox="0 0 120 120"><circle class="li-ring-bg" cx="60" cy="60" r="52"/><circle class="li-ring-fg" id="liRingFg" cx="60" cy="60" r="52"/></svg>
+                  <div class="li-ring-n" id="liScore">0</div>
+                </div>
+                <div class="li-meta">
+                  <div class="li-who" id="liWho"></div>
+                  <div class="li-target" id="liTarget"></div>
+                  <div class="prof-note" id="liAt"></div>
+                </div>
+              </div>
+              <div class="li-sections" id="liSections"></div>
+              <div class="li-drafts" id="liDrafts" hidden>
+                <div class="li-draft">
+                  <div class="li-draft-h"><span data-i18n="li.headline">Drafted headline</span>
+                    <button class="btn btn-ghost btn-sm li-copy" type="button" data-copy="liHeadline" data-i18n="li.copy">Copy</button></div>
+                  <div class="li-draft-t" id="liHeadline"></div>
+                </div>
+                <div class="li-draft">
+                  <div class="li-draft-h"><span data-i18n="li.about">Drafted About</span>
+                    <button class="btn btn-ghost btn-sm li-copy" type="button" data-copy="liAbout" data-i18n="li.copy">Copy</button></div>
+                  <div class="li-draft-t li-pre" id="liAbout"></div>
+                </div>
+                <p class="prof-note" id="liFlags" hidden></p>
+              </div>
+              <p class="prof-note" id="liNote" hidden></p>
+            </div>
+          </div>
+
           <div class="prof-empty" id="profEmpty" hidden>
             No profile yet. <b>Upload your resume</b> to fill it in automatically, or click <b>New Resume</b> to build one as you tailor.
           </div>
