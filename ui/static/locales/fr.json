@@ -363,5 +363,18 @@
   "kw.unsupported": "Votre profil ne le justifie pas",
   "kw.unsupportedHint": "Ajoutez-le à un poste ou un projet de votre profil, puis réessayez.",
   "kw.working": "Un instant",
-  "kw.failed": "Impossible d'ajouter ce mot-clé."
+  "kw.failed": "Impossible d'ajouter ce mot-clé.",
+  "profile.answers.title": "Réponses de candidature",
+  "profile.answers.sub": "Enregistrées une fois et remplies dans chaque formulaire de candidature pour que vous les vérifiiez. Répondez honnêtement, le formulaire est le vôtre.",
+  "profile.answers.workAuth": "Autorisé à travailler aux États-Unis ?",
+  "profile.answers.sponsorship": "Aurez-vous besoin d'un parrainage de visa ?",
+  "profile.answers.notSet": "Non défini",
+  "profile.answers.yes": "Oui",
+  "profile.answers.no": "Non",
+  "profile.answers.sponsorNow": "Oui, maintenant",
+  "profile.answers.sponsorFuture": "Pas maintenant, mais à l'avenir",
+  "profile.answers.eeo": "Aux questions EEO et démographiques, choisir \"Je préfère ne pas répondre\"",
+  "profile.answers.save": "Enregistrer les réponses",
+  "profile.answers.saved": "Enregistré. Rempli dans chaque formulaire de candidature pour que vous le vérifiiez.",
+  "profile.answers.failed": "Enregistrement impossible."
 }

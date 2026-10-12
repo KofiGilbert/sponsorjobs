@@ -363,5 +363,18 @@
   "kw.unsupported": "Not supported by your profile",
   "kw.unsupportedHint": "Add it to a role or project in your profile, then try again.",
   "kw.working": "Working",
-  "kw.failed": "Could not add this keyword."
+  "kw.failed": "Could not add this keyword.",
+  "profile.answers.title": "Application answers",
+  "profile.answers.sub": "Saved once and filled into every application form for you to review. Answer honestly, the form is yours.",
+  "profile.answers.workAuth": "Authorized to work in the US?",
+  "profile.answers.sponsorship": "Will you need visa sponsorship?",
+  "profile.answers.notSet": "Not set",
+  "profile.answers.yes": "Yes",
+  "profile.answers.no": "No",
+  "profile.answers.sponsorNow": "Yes, now",
+  "profile.answers.sponsorFuture": "Not now, but in the future",
+  "profile.answers.eeo": "On EEO and demographic questions, pick \"Decline to self-identify\"",
+  "profile.answers.save": "Save answers",
+  "profile.answers.saved": "Saved. Filled into every application form for you to review.",
+  "profile.answers.failed": "Couldn't save."
 }

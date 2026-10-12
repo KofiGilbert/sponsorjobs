@@ -1,0 +1,1162 @@
+{
+  "version": 1,
+  "updated": "2026-10-11",
+  "about": "Fill recipes for assisted apply (CLAUDE.md section 7). Each system is DATA: URL patterns, ordered CSS selectors per profile key, the continue/next buttons (shown as a hint, never clicked), the submit buttons (HIGHLIGHTED for the person, never clicked), the application-received markers, and notes. Served at GET /api/autofill/recipes and embedded in extension/autofill_core.js as the offline fallback copy (scripts/embed_recipes.py keeps them in sync). Verified by fetching each system's live public page with curl on the date in each entry's 'verified' block; where a system renders its form only with JavaScript the raw HTML is recorded as seen and selectors come from the vendor's own shipped bundle or documented attributes, never guessed.",
+  "profile_keys": [
+    "first_name",
+    "last_name",
+    "name",
+    "email",
+    "phone",
+    "address",
+    "street",
+    "city",
+    "state",
+    "zip",
+    "country",
+    "location",
+    "linkedin",
+    "github",
+    "website",
+    "resume"
+  ],
+  "question_patterns": {
+    "work_auth_us": {
+      "label_re": "authoriz(ed|ation) to work|legally (able|authorized|permitted|eligible) to work|eligible to work|right to work|work authoriz|lawfully (able|authorized)",
+      "answer_from": "work_auth_us",
+      "answers": [
+        "Yes",
+        "No"
+      ]
+    },
+    "needs_sponsorship": {
+      "label_re": "sponsor|require.*visa|visa.*(status|sponsor|support)|employment visa|immigration (support|sponsor)",
+      "future_re": "now or in the future|in the future|will you (ever|at any time)|future",
+      "answer_from": "needs_sponsorship",
+      "answers": [
+        "Yes",
+        "No",
+        "Future"
+      ]
+    },
+    "eeo_decline": {
+      "label_re": "gender|\\brace\\b|ethnic|veteran|disab|sexual orientation|pronoun",
+      "option_re": "decline|prefer not|not to (answer|identify|disclose|say)|don'?t (wish|want)|do not (wish|want)|i do not",
+      "answer_from": "eeo_decline"
+    }
+  },
+  "systems": [
+    {
+      "id": "greenhouse",
+      "name": "Greenhouse",
+      "url_patterns": [
+        "https://job-boards.greenhouse.io/*",
+        "https://boards.greenhouse.io/*",
+        "https://job-boards.eu.greenhouse.io/*",
+        "https://boards.eu.greenhouse.io/*"
+      ],
+      "js_rendered": false,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML",
+        "urls": [
+          "https://job-boards.greenhouse.io/anthropic/jobs/5183044008",
+          "https://boards.greenhouse.io/embed/job_app?for=anthropic&token=5183044008"
+        ]
+      },
+      "form": "form#application-form",
+      "fields": {
+        "first_name": [
+          "#first_name",
+          "input[autocomplete='given-name']"
+        ],
+        "last_name": [
+          "#last_name",
+          "input[autocomplete='family-name']"
+        ],
+        "email": [
+          "#email",
+          "input[autocomplete='email']"
+        ],
+        "phone": [
+          "#phone",
+          "input[type='tel']"
+        ],
+        "country": [
+          "#country"
+        ],
+        "location": [
+          "#candidate-location",
+          "#job_application_location",
+          "#auto_complete_input"
+        ],
+        "linkedin": [
+          "input[aria-label*='LinkedIn' i]"
+        ],
+        "website": [
+          "input[aria-label*='Website' i]",
+          "input[aria-label*='Portfolio' i]"
+        ],
+        "resume": [
+          "#resume",
+          "input[type='file'][accept*='.pdf']"
+        ]
+      },
+      "continue_buttons": [],
+      "submit_buttons": [
+        "form#application-form button[type='submit']",
+        "#submit_app",
+        "input[type='submit'][value*='Submit' i]"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you for applying"
+        },
+        {
+          "selector": "#application_confirmation"
+        },
+        {
+          "text": "Your application has been submitted"
+        }
+      ],
+      "multipage": false,
+      "notes": "boards.greenhouse.io now redirects to job-boards.greenhouse.io; both serve the same server-rendered form (#application-form with #first_name, #last_name, #email, #phone, #country react-select combobox, #resume file input, custom questions as #question_<id>). Submit is 'Submit application' (button[type=submit]). Custom and EEO questions are react-select comboboxes keyed by question id, so they fall through to the label matcher. Captcha-free on the pages read; some boards add reCAPTCHA at submit, which is the person's to solve. Re-read 2026-10-11: #first_name, #last_name, #email, #phone (type=tel), #resume (file), #country (react-select input) and the single button[type=submit] are present; this board has no LinkedIn/website input, where a board asks for them they are custom questions (#question_<id>) the label matcher reads from their <label for>."
+    },
+    {
+      "id": "lever",
+      "name": "Lever",
+      "url_patterns": [
+        "https://jobs.lever.co/*",
+        "https://jobs.eu.lever.co/*"
+      ],
+      "js_rendered": false,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML",
+        "urls": [
+          "https://jobs.lever.co/abovelending/0adfabd0-e18b-495e-add5-52a2521043dd/apply"
+        ]
+      },
+      "form": "form#application-form",
+      "fields": {
+        "name": [
+          "input[name='name']",
+          "input[data-qa='name-input']"
+        ],
+        "email": [
+          "input[name='email']",
+          "input[data-qa='email-input']"
+        ],
+        "phone": [
+          "input[name='phone']",
+          "input[data-qa='phone-input']"
+        ],
+        "location": [
+          "#location-input",
+          "input[name='location']",
+          "input[data-qa='location-input']"
+        ],
+        "linkedin": [
+          "input[name='urls[LinkedIn]']"
+        ],
+        "github": [
+          "input[name='urls[GitHub]']"
+        ],
+        "website": [
+          "input[name='urls[Website]']",
+          "input[name='urls[Portfolio]']"
+        ],
+        "resume": [
+          "#resume-upload-input",
+          "input[data-qa='input-resume']",
+          "input[name='resume']"
+        ]
+      },
+      "continue_buttons": [],
+      "submit_buttons": [
+        "#btn-submit",
+        "button[data-qa='btn-submit']"
+      ],
+      "success_markers": [
+        {
+          "url_re": "/thanks(\\?|$)"
+        },
+        {
+          "text": "Application submitted"
+        },
+        {
+          "text": "Thank you for your interest"
+        }
+      ],
+      "multipage": false,
+      "notes": "Server-rendered single form (form#application-form). Fields carry data-qa hooks (name-input, email-input, phone-input, location-input, org-input, input-resume, btn-submit). Current company is input[name='org']. Custom questions are cards[<uuid>][field<n>] radios/selects, answered by the label matcher. hCaptcha is on the form (#hcaptchaSubmitBtn, hcaptchaResponse): the submit click is always the person's. After submit Lever navigates to .../thanks."
+    },
+    {
+      "id": "ashby",
+      "name": "Ashby",
+      "url_patterns": [
+        "https://jobs.ashbyhq.com/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML (JS shell only: <div id='root'>, Vite bundle); field paths from Ashby's Posting API application-form schema (_systemfield_*)",
+        "urls": [
+          "https://jobs.ashbyhq.com/assured-health/f373ebcc-def6-47e3-94cc-882e48bf7d2c/application"
+        ]
+      },
+      "form": "form",
+      "fields": {
+        "name": [
+          "#_systemfield_name",
+          "input[name='_systemfield_name']"
+        ],
+        "email": [
+          "#_systemfield_email",
+          "input[name='_systemfield_email']"
+        ],
+        "phone": [
+          "#_systemfield_phone",
+          "input[name='_systemfield_phone']"
+        ],
+        "location": [
+          "#_systemfield_location",
+          "input[name='_systemfield_location']"
+        ],
+        "linkedin": [
+          "input[name*='linkedin' i]",
+          "input[id*='linkedin' i]"
+        ],
+        "resume": [
+          "#_systemfield_resume",
+          "input[name='_systemfield_resume']",
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [],
+      "submit_buttons": [
+        "button[type='submit']"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you for applying"
+        },
+        {
+          "text": "Application submitted"
+        },
+        {
+          "text": "Your application has been received"
+        }
+      ],
+      "multipage": false,
+      "notes": "The raw HTML is an empty React root; the application form renders from the Posting API's application-form definition, whose system fields are keyed _systemfield_name, _systemfield_email, _systemfield_phone, _systemfield_location, _systemfield_resume. The DOM attribute placement (id/name) is not visible to curl, so every field also falls through to the label matcher. The 'Submit application' button is the only type=submit button on the page."
+    },
+    {
+      "id": "workable",
+      "name": "Workable",
+      "url_patterns": [
+        "https://apply.workable.com/*",
+        "https://*.workable.com/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML (JS shell, rspack bundle) + the live candidate bundle's form configuration (ids firstname, lastname, email, phone, headline, summary, resume, cover_letter, address, photo) and data-ui hooks",
+        "urls": [
+          "https://apply.workable.com/tiger-analytics/j/39D0D71D6D/apply",
+          "https://dcvxs6ggqztsa.cloudfront.net/candidate/releases/careers.9bfb2ee0b8c70361.js"
+        ]
+      },
+      "form": "form",
+      "fields": {
+        "first_name": [
+          "input[name='firstname']",
+          "#firstname",
+          "[data-ui='firstname'] input"
+        ],
+        "last_name": [
+          "input[name='lastname']",
+          "#lastname",
+          "[data-ui='lastname'] input"
+        ],
+        "email": [
+          "input[name='email']",
+          "#email",
+          "[data-ui='email'] input"
+        ],
+        "phone": [
+          "input[name='phone']",
+          "#phone",
+          "[data-ui='phone'] input"
+        ],
+        "address": [
+          "input[name='address']",
+          "#address",
+          "[data-ui='address'] input"
+        ],
+        "resume": [
+          "[data-ui='resume'] input[type='file']",
+          "input[name='resume']",
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [],
+      "submit_buttons": [
+        "button[data-ui='submit-application']",
+        "button[data-ui='submit-eeoc']",
+        "button[type='submit']"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you"
+        },
+        {
+          "text": "application has been submitted"
+        },
+        {
+          "selector": "[data-ui='eeoc-form']"
+        }
+      ],
+      "multipage": false,
+      "notes": "The page is a JS shell (window.careers config, rspack bundle; recaptcha and turnstile toggles in config). The bundle's form definition names the standard fields firstname, lastname, email, phone, headline, summary, resume, cover_letter, address, photo; the EEOC survey after submission is [data-ui='eeoc-form'] with submit-eeoc / skip-eeoc buttons, so its appearance also marks the application as received. The exact submit button data-ui was not visible in the raw bundle; type=submit is the fallback."
+    },
+    {
+      "id": "smartrecruiters",
+      "name": "SmartRecruiters",
+      "url_patterns": [
+        "https://jobs.smartrecruiters.com/*",
+        "https://careers.smartrecruiters.com/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML of the job page (server-rendered; apply link a.js-oneclick to /oneclick-ui/company/<co>/publication/<uuid>); the oneclick-ui apply page returned 403 to curl",
+        "urls": [
+          "https://jobs.smartrecruiters.com/abbvie/3743990016045386"
+        ]
+      },
+      "form": "form",
+      "fields": {
+        "first_name": [
+          "input[name='firstName']",
+          "#first-name",
+          "input[autocomplete='given-name']"
+        ],
+        "last_name": [
+          "input[name='lastName']",
+          "#last-name",
+          "input[autocomplete='family-name']"
+        ],
+        "email": [
+          "input[name='email']",
+          "#email",
+          "input[type='email']"
+        ],
+        "phone": [
+          "input[name='phoneNumber']",
+          "#phone-number",
+          "input[type='tel']"
+        ],
+        "resume": [
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        "button[type='button'].next",
+        "button[aria-label='Next' i]"
+      ],
+      "submit_buttons": [
+        "button[type='submit']"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you for applying"
+        },
+        {
+          "text": "application was submitted"
+        },
+        {
+          "text": "Your application has been received"
+        }
+      ],
+      "multipage": true,
+      "notes": "The job page is server-rendered; Apply (a.js-oneclick, #st-apply) opens the oneclick-ui application, a JS app the curl fetch could not read (403). Field selectors beyond the autocomplete/type attributes are therefore fallbacks that defer to the label matcher. The apply flow is multi-step (contact, resume, questions, review)."
+    },
+    {
+      "id": "recruitee",
+      "name": "Recruitee",
+      "url_patterns": [
+        "https://*.recruitee.com/o/*",
+        "https://jobs.*/o/*/c/new",
+        "https://*/o/*/c/new"
+      ],
+      "js_rendered": false,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML (server-rendered form#offer-application-form)",
+        "urls": [
+          "https://jobs.channable.com/o/talent-acquisition-partner/c/new"
+        ]
+      },
+      "form": "form#offer-application-form",
+      "fields": {
+        "name": [
+          "input[name='candidate.name']",
+          "input[autocomplete='name']"
+        ],
+        "email": [
+          "input[name='candidate.email']",
+          "input[autocomplete='email']"
+        ],
+        "phone": [
+          "input[name='candidate.phone']",
+          "input[autocomplete='tel']"
+        ],
+        "resume": [
+          "input[name='candidate.cv']",
+          "input[type='file'][data-cy='fileInputField']"
+        ]
+      },
+      "continue_buttons": [
+        "button[data-cy='apply-button']"
+      ],
+      "submit_buttons": [
+        "button[data-testid='submit-application-form-button']",
+        "form#offer-application-form button[type='submit']"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you"
+        },
+        {
+          "text": "application has been sent"
+        },
+        {
+          "text": "We have received your application"
+        }
+      ],
+      "multipage": false,
+      "notes": "Hosted on the company's own careers domain (jobs.<company>.com/o/<slug>/c/new) as well as <company>.recruitee.com. Server-rendered: candidate.name, candidate.email, candidate.phone, candidate.cv (file), candidate.coverLetterFile, custom questions as candidate.openQuestionAnswers.<id>.content (text/radio), consent checkbox candidate.agreements.0.consent. Submit is 'Send' (data-testid=submit-application-form-button). The job page's Apply button (data-cy=apply-button) switches to the application tab, it does not submit."
+    },
+    {
+      "id": "workday",
+      "name": "Workday",
+      "url_patterns": [
+        "https://*.myworkdayjobs.com/*",
+        "https://*.myworkdaysite.com/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML (JS shell only: <div id='root'>); selectors are Workday's data-automation-id attributes, the stable hooks Workday ships on every candidate-home form",
+        "urls": [
+          "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite"
+        ]
+      },
+      "form": "form",
+      "fields": {
+        "first_name": [
+          "[data-automation-id='legalNameSection_firstName']"
+        ],
+        "last_name": [
+          "[data-automation-id='legalNameSection_lastName']"
+        ],
+        "email": [
+          "[data-automation-id='email']"
+        ],
+        "phone": [
+          "[data-automation-id='phone-number']"
+        ],
+        "street": [
+          "[data-automation-id='addressSection_addressLine1']"
+        ],
+        "city": [
+          "[data-automation-id='addressSection_city']"
+        ],
+        "state": [
+          "[data-automation-id='addressSection_countryRegion']"
+        ],
+        "zip": [
+          "[data-automation-id='addressSection_postalCode']"
+        ],
+        "country": [
+          "[data-automation-id='countryDropdown']",
+          "[data-automation-id='addressSection_country']"
+        ],
+        "linkedin": [
+          "[data-automation-id='linkedinQuestion'] input",
+          "input[data-automation-id*='linkedin' i]"
+        ],
+        "resume": [
+          "[data-automation-id='file-upload-input-ref']",
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        "[data-automation-id='bottom-navigation-next-button']",
+        "button[data-automation-id='pageFooterNextButton']"
+      ],
+      "submit_buttons": [
+        "[data-automation-id='bottom-navigation-next-button'][aria-label*='Submit' i]",
+        "button[data-automation-id='pageFooterNextButton'][aria-label*='Submit' i]"
+      ],
+      "success_markers": [
+        {
+          "text": "Congratulations"
+        },
+        {
+          "text": "You have successfully submitted"
+        },
+        {
+          "text": "application has been submitted"
+        },
+        {
+          "text": "Thank you for applying"
+        }
+      ],
+      "multipage": true,
+      "notes": "Workday renders everything client-side behind a candidate account; the application is a multi-page wizard (My Information, My Experience, Application Questions, Voluntary Disclosures, Self Identify, Review). The last page's Next button reads 'Submit', so submit_buttons match the same navigation button only when its label says Submit. Phone device type and country code are data-automation-id='phone-device-type' / 'country-phone-code' dropdowns the person picks. Sign-in and account creation are the person's (an auth wall aborts the fill)."
+    },
+    {
+      "id": "icims",
+      "name": "iCIMS",
+      "url_patterns": [
+        "https://*.icims.com/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML of the job page and the apply/login step inside the iCIMS content iframe (in_iframe=1)",
+        "urls": [
+          "https://careers-lw.icims.com/jobs/6713/financial-programmer/job?in_iframe=1",
+          "https://fdcnmcareers-ulta.icims.com/jobs/login?in_iframe=1"
+        ]
+      },
+      "frame": "iframe#icims_content_iframe",
+      "form": "form",
+      "fields": {
+        "email": [
+          "form#enterEmailForm #email",
+          "#email",
+          "input[type='email']"
+        ],
+        "phone": [
+          "#phoneNumber",
+          "input[name='phoneNumber']"
+        ],
+        "first_name": [
+          "#firstname",
+          "input[name='firstname']",
+          "input[autocomplete='given-name']"
+        ],
+        "last_name": [
+          "#lastname",
+          "input[name='lastname']",
+          "input[autocomplete='family-name']"
+        ],
+        "resume": [
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        "#enterEmailSubmitButton",
+        "input.iCIMS_PrimaryButton[type='submit'][value='Next']",
+        "a.iCIMS_ApplyOnlineButton"
+      ],
+      "submit_buttons": [
+        "input[type='submit'][value*='Submit' i]",
+        "button[type='submit'][class*='Submit' i]"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you for applying"
+        },
+        {
+          "text": "application has been received"
+        },
+        {
+          "text": "successfully submitted"
+        }
+      ],
+      "multipage": true,
+      "notes": "The career portal lives inside iframe#icims_content_iframe on the employer's page; the fill engine runs in the frame's own document. Apply starts with an email step (form#enterEmailForm: #email, #countryCode, #phoneNumber, submit #enterEmailSubmitButton 'Next') followed by a login or account-creation wall that is the person's. The later profile pages were not reachable without an account, so their fields fall through to the label matcher."
+    },
+    {
+      "id": "bamboohr",
+      "name": "BambooHR",
+      "url_patterns": [
+        "https://*.bamboohr.com/careers/*",
+        "https://*.bamboohr.com/jobs/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML (JS shell: <div id='poRoot'>, staticfe.bamboohr.com bundles; the application form chunk is lazy-loaded and not in the raw bundle)",
+        "urls": [
+          "https://fleetio.bamboohr.com/careers",
+          "https://staticfe.bamboohr.com/fe-main/prod/js/po.5d4a075d.dist.js"
+        ]
+      },
+      "form": "form",
+      "fields": {
+        "first_name": [
+          "input[name='firstName']",
+          "#firstName",
+          "input[autocomplete='given-name']"
+        ],
+        "last_name": [
+          "input[name='lastName']",
+          "#lastName",
+          "input[autocomplete='family-name']"
+        ],
+        "email": [
+          "input[name='email']",
+          "#email",
+          "input[type='email']"
+        ],
+        "phone": [
+          "input[name='phone']",
+          "#phone",
+          "input[type='tel']"
+        ],
+        "resume": [
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [],
+      "submit_buttons": [
+        "button[type='submit']"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you"
+        },
+        {
+          "text": "application has been submitted"
+        },
+        {
+          "text": "We have received your application"
+        }
+      ],
+      "multipage": false,
+      "notes": "Careers pages are a React app (#poRoot) on <company>.bamboohr.com/careers/<id>; the application form itself is a lazy chunk the curl fetch could not read, so the field selectors are attribute fallbacks that defer to the label matcher."
+    },
+    {
+      "id": "jobvite",
+      "name": "Jobvite",
+      "url_patterns": [
+        "https://jobs.jobvite.com/*",
+        "https://*.jobvite.com/*"
+      ],
+      "js_rendered": false,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML of Jobvite's own careers site (jv-page markup, no open posting) and of customer slugs, which redirect to jobvite.com/support/job-seeker-support/?invalid=1 when the slug is not a live site; no apply form was reachable, so the fields are attribute fallbacks",
+        "urls": [
+          "https://jobs.jobvite.com/careers/jobvite",
+          "https://jobs.jobvite.com/jobvite/jobs"
+        ]
+      },
+      "form": "form",
+      "fields": {
+        "first_name": [
+          "input[autocomplete='given-name']",
+          "input[name*='first' i]"
+        ],
+        "last_name": [
+          "input[autocomplete='family-name']",
+          "input[name*='last' i]"
+        ],
+        "email": [
+          "input[type='email']",
+          "input[name*='email' i]"
+        ],
+        "phone": [
+          "input[type='tel']",
+          "input[name*='phone' i]"
+        ],
+        "resume": [
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        "button.jv-button-primary[type='button']"
+      ],
+      "submit_buttons": [
+        "button[type='submit']",
+        "input[type='submit']"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you"
+        },
+        {
+          "text": "application has been submitted"
+        },
+        {
+          "text": "received your application"
+        }
+      ],
+      "multipage": true,
+      "notes": "Career sites are jobs.jobvite.com/<company>/job/<id> with the application at .../apply (jv-* markup). Only the site shell could be read live (no open posting), so the fields are attribute fallbacks that defer to the label matcher."
+    },
+    {
+      "id": "taleo",
+      "name": "Oracle Taleo",
+      "url_patterns": [
+        "https://*.taleo.net/careersection/*",
+        "https://*.tbe.taleo.net/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "not readable: hilton.taleo.net/careersection/ answered 'Career Section Unavailable' and chp.tbe.taleo.net answered 'Come Back Soon' (HTTP 500); other *.taleo.net hosts did not resolve or redirected to the employer's new career site. The host families are real, no form was reachable, so no selector here is verified",
+        "urls": [
+          "https://hilton.taleo.net/careersection/hilton_external/jobsearch.ftl",
+          "https://chp.tbe.taleo.net/chp03/ats/careers/v2/searchResults?org=TEALIUM&cws=37"
+        ]
+      },
+      "form": "form",
+      "fields": {
+        "first_name": [
+          "input[autocomplete='given-name']",
+          "input[name*='firstName' i]",
+          "input[id*='firstName' i]"
+        ],
+        "last_name": [
+          "input[autocomplete='family-name']",
+          "input[name*='lastName' i]",
+          "input[id*='lastName' i]"
+        ],
+        "email": [
+          "input[type='email']",
+          "input[name*='email' i]",
+          "input[id*='email' i]"
+        ],
+        "phone": [
+          "input[type='tel']",
+          "input[name*='phone' i]"
+        ],
+        "resume": [
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        "input[type='submit'][value*='Continue' i]",
+        "button[type='submit'][title*='Continue' i]",
+        "a[id*='next' i]"
+      ],
+      "submit_buttons": [
+        "input[type='submit'][value*='Submit' i]",
+        "button[type='submit'][title*='Submit' i]"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you"
+        },
+        {
+          "text": "submission has been received"
+        },
+        {
+          "text": "application has been submitted"
+        }
+      ],
+      "multipage": true,
+      "notes": "No live Taleo career section could be fetched for this version, so there are no verified selectors: the entry carries URL patterns, generic attribute fallbacks and the multi-step wizard hint, and every field defers to the label matcher. Taleo career sections sit behind a candidate sign-in (the person's)."
+    },
+    {
+      "id": "successfactors",
+      "name": "SAP SuccessFactors",
+      "url_patterns": [
+        "https://*.successfactors.com/*",
+        "https://*.successfactors.eu/*",
+        "https://*/talentcommunity/apply/*",
+        "https://*/job/*/apply/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML of a SuccessFactors career site (rmk markup): job page with a.dialogApplyBtn[href*='/talentcommunity/apply/']; the apply URL redirected to the site home (sign-in required)",
+        "urls": [
+          "https://jobs.adidas-group.com/job/Barcelona-Sales-Associate-Catalunya/1395009233/",
+          "https://jobs.adidas-group.com/talentcommunity/apply/1395009233/?locale=en_US"
+        ]
+      },
+      "form": "form",
+      "fields": {
+        "first_name": [
+          "input[autocomplete='given-name']",
+          "input[name*='firstName' i]",
+          "input[id*='firstName' i]"
+        ],
+        "last_name": [
+          "input[autocomplete='family-name']",
+          "input[name*='lastName' i]",
+          "input[id*='lastName' i]"
+        ],
+        "email": [
+          "input[type='email']",
+          "input[name*='email' i]"
+        ],
+        "phone": [
+          "input[type='tel']",
+          "input[name*='phone' i]"
+        ],
+        "resume": [
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        "a.dialogApplyBtn",
+        "button[type='submit'][title*='Next' i]",
+        "input[type='submit'][value*='Next' i]"
+      ],
+      "submit_buttons": [
+        "button[title*='Apply' i][type='submit']",
+        "input[type='submit'][value*='Apply' i]",
+        "button[type='submit'][title*='Submit' i]"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you"
+        },
+        {
+          "text": "application has been submitted"
+        },
+        {
+          "text": "successfully applied"
+        }
+      ],
+      "multipage": true,
+      "notes": "Career sites run on the employer's own domain (jobs.<company>.com) with the SuccessFactors Recruiting Marketing markup; the application (talentcommunity/apply) sits behind the candidate profile sign-in, which the person completes. Beyond the apply link, no form fields were readable, so the fields defer to the label matcher."
+    },
+    {
+      "id": "oracle_recruiting",
+      "name": "Oracle Cloud Recruiting",
+      "url_patterns": [
+        "https://*.oraclecloud.com/hcmUI/CandidateExperience/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML (Knockout JS shell) + the live oj-hcm-ce bundle's apply-flow templates (section-personal-information, section-thank-you, apply-flow-pagination buttons)",
+        "urls": [
+          "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_45001/job/337010",
+          "https://static.oracle.com/cdn/fa/oj-hcm-ce/2607.26.262300322/js/main-minimal.js"
+        ]
+      },
+      "form": "form",
+      "fields": {
+        "email": [
+          "input[type='email']",
+          "input[autocomplete='email']"
+        ],
+        "phone": [
+          "input[type='tel']"
+        ],
+        "first_name": [
+          "input[autocomplete='given-name']"
+        ],
+        "last_name": [
+          "input[autocomplete='family-name']"
+        ],
+        "resume": [
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        ".apply-flow-pagination__button:not(.apply-flow-pagination__submit-button)",
+        "button[class*='apply-flow-pagination__button']"
+      ],
+      "submit_buttons": [
+        ".apply-flow-pagination__submit-button",
+        "button.submit-button[class*='apply-flow']"
+      ],
+      "success_markers": [
+        {
+          "selector": ".apply-flow-post-summary-thank-you"
+        },
+        {
+          "selector": "[class*='section-thank-you']"
+        },
+        {
+          "text": "Thank you for applying"
+        },
+        {
+          "text": "application has been submitted"
+        }
+      ],
+      "multipage": true,
+      "notes": "The apply flow starts with an email (then a verification code the person types), then the personal-information, experience, more-about-you and confirm sections, each a page of the wizard (apply-flow-pagination buttons). Field inputs are rendered from the employer's configuration with no stable ids, so they defer to the label matcher; the pagination and thank-you class names come from the live bundle's templates."
+    },
+    {
+      "id": "eightfold",
+      "name": "Eightfold",
+      "url_patterns": [
+        "https://*.eightfold.ai/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML (pcsx shell) + the live pcsxPwa bundle (#apply-form-container, data-test-id stepper hooks)",
+        "urls": [
+          "https://micron.eightfold.ai/careers",
+          "https://micron.eightfold.ai/gen/js/pcsxPwa.fa5d073d8912644a.js"
+        ]
+      },
+      "form": "#apply-form-container form",
+      "fields": {
+        "first_name": [
+          "#apply-form-container input[autocomplete='given-name']",
+          "#apply-form-container input[name*='first' i]"
+        ],
+        "last_name": [
+          "#apply-form-container input[autocomplete='family-name']",
+          "#apply-form-container input[name*='last' i]"
+        ],
+        "email": [
+          "#apply-form-container input[type='email']",
+          "#apply-form-container input[name*='email' i]"
+        ],
+        "phone": [
+          "#apply-form-container input[type='tel']",
+          "#apply-form-container input[name*='phone' i]"
+        ],
+        "resume": [
+          "#apply-form-container input[type='file']",
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        "#apply-form-container button[type='button'][class*='next' i]",
+        "[data-test-id^='step-'] button[type='button']"
+      ],
+      "submit_buttons": [
+        "#apply-form-container button[type='submit']"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you for applying"
+        },
+        {
+          "text": "application has been submitted"
+        },
+        {
+          "text": "successfully submitted"
+        }
+      ],
+      "multipage": true,
+      "notes": "Career sites are <company>.eightfold.ai/careers; the Smart Apply drawer renders inside #apply-form-container as a stepper (data-test-id='step-<n>'). Its inputs carry no stable ids in the shipped bundle, so the fields are attribute fallbacks scoped to the drawer that defer to the label matcher."
+    },
+    {
+      "id": "phenom",
+      "name": "Phenom (careers.<company>.com)",
+      "url_patterns": [
+        "https://careers.*/*",
+        "https://jobs.*/*",
+        "https://*.phenompeople.com/*"
+      ],
+      "detect_markers": [
+        "script[src*='phenompeople']",
+        "script[src*='phenom']",
+        "[data-ph-at-id]",
+        "#phApp"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML of two Phenom career sites (phenompeople / phenomtrack markers); Phenom hands the application to the employer's ATS",
+        "urls": [
+          "https://www.pepsicojobs.com/main/jobs",
+          "https://jobs.cvshealth.com/us/en/home"
+        ]
+      },
+      "handoff": true,
+      "form": "form",
+      "fields": {
+        "first_name": [
+          "input[autocomplete='given-name']",
+          "input[name*='first' i]"
+        ],
+        "last_name": [
+          "input[autocomplete='family-name']",
+          "input[name*='last' i]"
+        ],
+        "email": [
+          "input[type='email']",
+          "input[name*='email' i]"
+        ],
+        "phone": [
+          "input[type='tel']",
+          "input[name*='phone' i]"
+        ],
+        "resume": [
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        "a[data-ph-at-id='apply-link']",
+        "a.btn[href*='apply' i]",
+        "button[data-ph-at-id*='apply' i]"
+      ],
+      "submit_buttons": [
+        "button[type='submit']"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you for applying"
+        },
+        {
+          "text": "application has been submitted"
+        }
+      ],
+      "multipage": true,
+      "notes": "Phenom is the career-site layer on the employer's own domain (careers.<company>.com, jobs.<company>.com); it is recognised by its DOM markers rather than the host. 'Apply' hands off to the employer's ATS (Workday, SuccessFactors, iCIMS...), where that system's recipe takes over, so this entry mainly shows the apply hand-off hint and defers any on-site form to the label matcher."
+    },
+    {
+      "id": "avature",
+      "name": "Avature",
+      "url_patterns": [
+        "https://*.avature.net/*",
+        "https://*/careers/Register*",
+        "https://*/careers/Login*",
+        "https://*/careers/JobDetail/*",
+        "https://*/careers/ApplicationMethods*"
+      ],
+      "detect_markers": [
+        "meta[name='avature.portal.id']",
+        "input.WizardFieldInput",
+        "form.tpt_wizard"
+      ],
+      "js_rendered": false,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML (server-rendered wizard form.tpt_wizard on a custom-domain Avature portal)",
+        "urls": [
+          "https://jobs.lenovo.com/en_US/careers/JobDetail/82554",
+          "https://jobs.lenovo.com/en_US/careers/Register?jobId=82554"
+        ]
+      },
+      "form": "form.tpt_wizard",
+      "fields": {
+        "first_name": [
+          "form.tpt_wizard input[autocomplete='given-name']"
+        ],
+        "last_name": [
+          "form.tpt_wizard input[autocomplete='family-name']"
+        ],
+        "phone": [
+          "form.tpt_wizard input[type='tel'][autocomplete='tel']"
+        ],
+        "email": [
+          "form.tpt_wizard input.EmailField",
+          "form.tpt_wizard input[autocomplete='email']"
+        ],
+        "street": [
+          "form.tpt_wizard input.StreetField",
+          "form.tpt_wizard input[autocomplete='street-address']"
+        ],
+        "city": [
+          "form.tpt_wizard input.CityField",
+          "form.tpt_wizard input[autocomplete='address-level2']"
+        ],
+        "state": [
+          "form.tpt_wizard select[autocomplete='address-level1']"
+        ],
+        "zip": [
+          "form.tpt_wizard input.PostalCodeField",
+          "form.tpt_wizard input[autocomplete='postal-code']"
+        ],
+        "country": [
+          "form.tpt_wizard select.countryFieldSelect"
+        ],
+        "resume": [
+          "form.tpt_wizard input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        "button.nextButton",
+        "button[name='next']"
+      ],
+      "submit_buttons": [
+        "button[name='submit']",
+        "button.WizardButtonPrimary[type='submit'][name='finish']"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you"
+        },
+        {
+          "text": "application has been submitted"
+        },
+        {
+          "text": "successfully submitted"
+        }
+      ],
+      "multipage": true,
+      "notes": "Avature portals run on the employer's domain (jobs.<company>.com/en_US/careers/...) and are recognised by their meta avature.portal.* tags and the WizardField markup. Inputs have numeric ids (e.g. #353) that differ per portal, so the stable hooks are the autocomplete attributes and the field classes (TextField, EmailField, PostalCodeField, StreetField, CityField, countryFieldSelect). The wizard's Continue is button.nextButton[name=next]."
+    },
+    {
+      "id": "adp",
+      "name": "ADP (Workforce Now / myjobs)",
+      "url_patterns": [
+        "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/*",
+        "https://myjobs.adp.com/*",
+        "https://*.adp.com/*"
+      ],
+      "js_rendered": true,
+      "verified": {
+        "date": "2026-10-11",
+        "method": "curl raw HTML (JS shells only: #recruitment_root on Workforce Now, <cx-root> on myjobs.adp.com)",
+        "urls": [
+          "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html",
+          "https://myjobs.adp.com/"
+        ]
+      },
+      "form": "form",
+      "fields": {
+        "first_name": [
+          "input[autocomplete='given-name']",
+          "input[name*='first' i]",
+          "input[id*='first' i]"
+        ],
+        "last_name": [
+          "input[autocomplete='family-name']",
+          "input[name*='last' i]",
+          "input[id*='last' i]"
+        ],
+        "email": [
+          "input[type='email']",
+          "input[name*='email' i]"
+        ],
+        "phone": [
+          "input[type='tel']",
+          "input[name*='phone' i]"
+        ],
+        "resume": [
+          "input[type='file']"
+        ]
+      },
+      "continue_buttons": [
+        "button[type='button'][class*='next' i]",
+        "button[aria-label='Next' i]"
+      ],
+      "submit_buttons": [
+        "button[type='submit']"
+      ],
+      "success_markers": [
+        {
+          "text": "Thank you"
+        },
+        {
+          "text": "application has been submitted"
+        },
+        {
+          "text": "successfully submitted"
+        }
+      ],
+      "multipage": true,
+      "notes": "Both ADP candidate experiences are JS applications whose forms were not readable by curl, so the fields are attribute fallbacks that defer to the label matcher. Workforce Now career centres need a cid parameter per employer."
+    }
+  ]
+}
