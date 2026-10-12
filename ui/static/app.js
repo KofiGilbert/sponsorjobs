@@ -3393,6 +3393,7 @@
         parts.push(`<div class="inbox-row inbox-reply">
           <div class="inbox-meta"><b>${esc(m.sender || m.from)}</b> · ${esc(m.subject || "")}</div>
           <div class="prof-dim">${esc(m.snippet || "")}</div>
+          ${trkSuggestHtml(m, i)}
           <textarea class="fld pe-bullets" data-reply="${i}" rows="5">${esc(m.reply || "")}</textarea>
           <div class="pkg-cl-foot">
             <button class="btn btn-ghost btn-sm" data-copy-reply="${i}" type="button">Copy</button>
@@ -3403,6 +3404,7 @@
     }
     if (!parts.length) parts.push(`<p class="prof-dim">Nothing application-related in the last scan (${r.scanned} messages checked, ${r.other} unrelated left untouched).</p>`);
     $("#inboxResults").innerHTML = parts.join("");
+    trkBindSuggestions();
 
     document.querySelectorAll("[data-verify]").forEach(b => b.addEventListener("click", async () => {
       b.disabled = true; b.textContent = "Verifying…";
@@ -3556,6 +3558,354 @@
     } catch (e) { rvwFlash("Couldn’t send to Telegram, " + e.message); }
   });
 
+  /* ---------------------------------------------------------------- Tracker (the job board)
+     Huntr / Teal style, local-first: one stage per job you saved, tailored or applied to, on the
+     SAME rows the Jobs page uses (sourcing/board.py, /api/tracker/*). Kanban with plain HTML5
+     drag and drop, a table view, and a side panel per card (notes saved on blur, contacts, a
+     follow-up date, the timeline, links to the tailored resume and cover letter). The funnel at
+     the top is computed server-side so the numbers match the claims export. */
+  const TRK_STAGES = ["saved", "applied", "interviewing", "offer", "rejected", "archived"];
+  const TRK_STAGE_EN = { saved: "Saved", applied: "Applied", interviewing: "Interviewing",
+    offer: "Offer", rejected: "Rejected", archived: "Archived" };
+  const trkT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  const trkStageName = (s) => trkT("tracker.stage." + s, TRK_STAGE_EN[s] || s);
+  const TRK_VIEW_KEY = "tailor-tracker-view";
+  let TRK_CARDS = [], TRK_METRICS = null, TRK_VIEW = "board", TRK_OPEN = null;
+  try { TRK_VIEW = localStorage.getItem(TRK_VIEW_KEY) === "table" ? "table" : "board"; } catch { TRK_VIEW = "board"; }
+
+  // "2026-10-05" -> "Oct 5". Built as a LOCAL date on purpose: new Date("2026-10-05") is UTC
+  // midnight, which renders as the day before anywhere west of Greenwich.
+  function trkDay(iso) {
+    if (!iso) return "";
+    const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+    if (!y || !m || !d) return String(iso).slice(0, 10);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  async function loadTracker() {
+    const [board, metrics] = await Promise.all([
+      api("/api/tracker/board").catch(() => null),
+      api("/api/tracker/metrics").catch(() => null),
+    ]);
+    if (board) TRK_CARDS = TRK_STAGES.flatMap(s => board.columns[s] || []);
+    TRK_METRICS = metrics;
+    renderTrackerMetrics();
+    renderTracker();
+    trkSetDot(metrics ? metrics.due_count : (board ? board.due_count : 0));
+  }
+
+  async function trkReloadCards() {
+    try {
+      const board = await api("/api/tracker/board");
+      TRK_CARDS = TRK_STAGES.flatMap(s => board.columns[s] || []);
+      trkSetDot(board.due_count);
+      renderTracker();
+    } catch { /* keep what is on screen */ }
+  }
+
+  // The dot on the sidebar entry: a follow-up is due today or earlier.
+  function trkSetDot(n) {
+    const dot = $("#trackerNavDot");
+    if (dot) dot.hidden = !(n > 0);
+  }
+  async function refreshTrackerDot() {
+    try { const m = await api("/api/tracker/metrics"); trkSetDot(m.due_count); } catch { /* offline: no dot */ }
+  }
+
+  function trkSetView(v) {
+    TRK_VIEW = v;
+    try { localStorage.setItem(TRK_VIEW_KEY, v); } catch { /* private window */ }
+    $("#trkViewBoard")?.classList.toggle("is-on", v === "board");
+    $("#trkViewTable")?.classList.toggle("is-on", v === "table");
+    renderTracker();
+  }
+
+  function renderTracker() {
+    const board = $("#trkBoard"), table = $("#trkTable"), empty = $("#trkEmpty");
+    if (!board || !table) return;
+    const none = !TRK_CARDS.length;
+    if (empty) empty.hidden = !none;
+    board.hidden = none || TRK_VIEW !== "board";
+    table.hidden = none || TRK_VIEW !== "table";
+    if (none) return;
+    if (TRK_VIEW === "board") renderTrackerBoard(); else renderTrackerTable();
+  }
+
+  // Sponsorship chips, quiet when there is nothing to say (a card has no room for "no record").
+  function trkChips(c) {
+    if ((c.visa || []).length) return visaBadges(c, { primary: true });
+    if (c.sponsorship_stated) return `<span class="vbadge vb-stated">${esc(trkT("tracker.sponsorStated", "Sponsorship available"))}</span>`;
+    return "";
+  }
+
+  function trkCardHtml(c) {
+    const rec = c.record;
+    const meta = [];
+    if (c.applied_at) meta.push(`<span>${esc(trkT("tracker.appliedOn", "Applied"))} ${esc(trkDay(c.applied_at))}</span>`);
+    if (c.follow_up_at) meta.push(`<span class="${c.follow_up_due ? "trk-due" : ""}">${esc(trkT("tracker.followUpShort", "Follow up"))} ${esc(trkDay(c.follow_up_at))}</span>`);
+    if (rec && rec.pdf) meta.push(`<a href="${esc(rec.pdf)}" target="_blank" rel="noopener">${esc(trkT("tracker.resume", "Resume"))}${rec.count > 1 ? ` (${rec.count})` : ""}</a>`);
+    if (c.has_notes) meta.push(`<span>${esc(trkT("tracker.hasNotes", "Notes"))}</span>`);
+    const chips = trkChips(c);
+    return `<div class="trk-card" draggable="true" data-sid="${esc(c.source_id)}" role="button" tabindex="0">
+      <div class="trk-card-co">${esc(c.company)}</div>
+      <div class="trk-card-t">${esc(c.title)}</div>
+      ${chips ? `<div class="trk-card-chips">${chips}</div>` : ""}
+      ${meta.length ? `<div class="trk-card-meta">${meta.join("")}</div>` : ""}
+    </div>`;
+  }
+
+  function renderTrackerBoard() {
+    const host = $("#trkBoard");
+    host.innerHTML = TRK_STAGES.map(s => {
+      const cards = TRK_CARDS.filter(c => c.stage === s);
+      return `<div class="trk-col" data-stage="${s}">
+        <div class="trk-col-h"><span>${esc(trkStageName(s))}</span><span class="trk-col-n">${cards.length}</span></div>
+        <div class="trk-col-cards">${cards.map(trkCardHtml).join("")}</div>
+      </div>`;
+    }).join("");
+    host.querySelectorAll(".trk-card").forEach(card => {
+      card.addEventListener("click", (e) => { if (e.target.closest("a")) return; openTrackerPanel(card.dataset.sid); });
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openTrackerPanel(card.dataset.sid); }
+      });
+      card.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", card.dataset.sid);
+        e.dataTransfer.effectAllowed = "move";
+        card.classList.add("is-dragging");
+      });
+      card.addEventListener("dragend", () => card.classList.remove("is-dragging"));
+    });
+    host.querySelectorAll(".trk-col").forEach(col => {
+      col.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; col.classList.add("is-over"); });
+      col.addEventListener("dragleave", (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove("is-over"); });
+      col.addEventListener("drop", (e) => {
+        e.preventDefault(); col.classList.remove("is-over");
+        const sid = e.dataTransfer.getData("text/plain");
+        if (sid) trkMove(sid, col.dataset.stage);
+      });
+    });
+  }
+
+  function trkStageSelect(c, attr) {
+    return `<select class="fld trk-stage-sel" ${attr} aria-label="Stage">${TRK_STAGES.map(s =>
+      `<option value="${s}"${s === c.stage ? " selected" : ""}>${esc(trkStageName(s))}</option>`).join("")}</select>`;
+  }
+
+  function renderTrackerTable() {
+    const host = $("#trkTable");
+    const order = (c) => TRK_STAGES.indexOf(c.stage);
+    const rows = [...TRK_CARDS].sort((a, b) => order(a) - order(b) || String(b.stage_at).localeCompare(String(a.stage_at)));
+    host.innerHTML = `<table class="trk-table"><thead><tr>
+        <th>${esc(trkT("tracker.company", "Company"))}</th><th>${esc(trkT("tracker.role", "Role"))}</th><th>${esc(trkT("tracker.stageCol", "Stage"))}</th>
+        <th>${esc(trkT("tracker.appliedOn", "Applied"))}</th><th>${esc(trkT("tracker.followUp", "Follow-up"))}</th><th>${esc(trkT("tracker.resume", "Resume"))}</th>
+      </tr></thead><tbody>${rows.map(c => `<tr data-sid="${esc(c.source_id)}">
+        <td>${esc(c.company)}</td><td>${esc(c.title)}</td><td>${trkStageSelect(c, `data-stage-for="${esc(c.source_id)}"`)}</td>
+        <td>${esc(trkDay(c.applied_at))}</td>
+        <td class="${c.follow_up_due ? "trk-due" : ""}">${esc(trkDay(c.follow_up_at))}</td>
+        <td>${c.record && c.record.pdf ? `<a href="${esc(c.record.pdf)}" target="_blank" rel="noopener">${esc(trkT("tracker.open", "Open"))}</a>` : ""}</td>
+      </tr>`).join("")}</tbody></table>`;
+    host.querySelectorAll("tbody tr").forEach(tr => tr.addEventListener("click", (e) => {
+      if (e.target.closest("select, a")) return;
+      openTrackerPanel(tr.dataset.sid);
+    }));
+    host.querySelectorAll("[data-stage-for]").forEach(s => s.addEventListener("change", () => trkMove(s.dataset.stageFor, s.value)));
+  }
+
+  function renderTrackerMetrics() {
+    const host = $("#trkMetrics");
+    if (!host) return;
+    const m = TRK_METRICS;
+    if (!m) { host.innerHTML = ""; return; }
+    const goal = m.goal || { target: 0, done: 0, pct: 0 };
+    const weeks = m.weeks || [];
+    const peak = Math.max(1, ...weeks.map(w => w.count));
+    const bars = weeks.map((w, i) => `<div class="trk-bar${i === weeks.length - 1 ? " is-now" : ""}" title="${esc(trkT("tracker.weekOf", "Week of"))} ${esc(trkDay(w.week))}: ${w.count}"><div class="trk-bar-fill" style="height:${Math.round(w.count / peak * 100)}%"></div></div>`).join("");
+    const median = m.median_days_to_interview == null ? trkT("tracker.none", "n/a") : m.median_days_to_interview;
+    host.innerHTML = `
+      <div class="trk-tile">
+        <div class="trk-tile-l">${esc(trkT("tracker.thisWeek", "This week"))}</div>
+        <div class="trk-tile-n">${m.applied_week}</div>
+        <div class="trk-goal">
+          <div class="trk-goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${goal.target ? goal.pct : 0}"><div class="trk-goal-fill" style="width:${goal.target ? goal.pct : 0}%"></div></div>
+          <label class="trk-goal-lbl">${esc(trkT("tracker.goal", "Weekly goal"))} <input class="fld trk-goal-in" id="trkGoal" type="number" min="0" max="500" value="${goal.target}"></label>
+        </div>
+      </div>
+      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.applied", "Applied"))}</div><div class="trk-tile-n">${m.applied_total}</div><div class="trk-tile-s">${esc(trkT("tracker.total", "total"))}</div></div>
+      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.interviews", "Interviews"))}</div><div class="trk-tile-n">${m.interviews}</div><div class="trk-tile-s">${m.pct_interview}% ${esc(trkT("tracker.ofApplied", "of applied"))}</div></div>
+      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.offers", "Offers"))}</div><div class="trk-tile-n">${m.offers}</div><div class="trk-tile-s">${m.pct_offer}% ${esc(trkT("tracker.ofInterviews", "of interviews"))}</div></div>
+      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.daysToInterview", "Days to first interview"))}</div><div class="trk-tile-n">${esc(String(median))}</div><div class="trk-tile-s">${esc(trkT("tracker.median", "median"))}</div></div>
+      <div class="trk-tile trk-tile-chart">
+        <div class="trk-tile-l">${esc(trkT("tracker.perWeek", "Applications per week, last 12 weeks"))}</div>
+        <div class="trk-bars">${bars}</div>
+        <div class="trk-bars-axis"><span>${esc(trkDay(weeks[0] && weeks[0].week))}</span><span>${esc(trkDay(weeks.length && weeks[weeks.length - 1].week))}</span></div>
+      </div>`;
+    $("#trkGoal")?.addEventListener("change", async (e) => {
+      const target = Math.max(0, parseInt(e.target.value, 10) || 0);
+      try {
+        await api("/api/tracker/goal", { target });
+        TRK_METRICS = await api("/api/tracker/metrics");
+        renderTrackerMetrics();
+      } catch { toast(trkT("tracker.saveFail", "Couldn't save that, try again.")); }
+    });
+  }
+
+  async function trkMove(sid, stage, note) {
+    const card = TRK_CARDS.find(c => c.source_id === sid);
+    if (!card || card.stage === stage) return;
+    const prev = card.stage;
+    card.stage = stage;             // optimistic: the card lands where it was dropped
+    renderTracker();
+    try {
+      const out = await api("/api/tracker/move", { source_id: sid, stage, note: note || "" });
+      Object.assign(card, out.job);
+      trkSetDot(out.due_count);
+      TRK_METRICS = await api("/api/tracker/metrics").catch(() => TRK_METRICS);
+      renderTrackerMetrics();
+      renderTracker();
+      if (TRK_OPEN === sid) openTrackerPanel(sid);
+    } catch {
+      card.stage = prev;
+      renderTracker();
+      toast(trkT("tracker.moveFail", "Couldn't move that job, try again."));
+    }
+  }
+
+  function closeTrackerPanel() {
+    TRK_OPEN = null;
+    const panel = $("#trkPanel"), scrim = $("#trkScrim");
+    if (panel) { panel.hidden = true; panel.innerHTML = ""; }
+    if (scrim) scrim.hidden = true;
+  }
+
+  async function openTrackerPanel(sid) {
+    let j;
+    try { j = await api("/api/tracker/job?source_id=" + encodeURIComponent(sid)); }
+    catch { toast(trkT("tracker.loadFail", "Couldn't open that job.")); return; }
+    TRK_OPEN = sid;
+    const panel = $("#trkPanel"), scrim = $("#trkScrim");
+    if (!panel) return;
+    const contacts = (j.contacts || []).map(c => `<div class="trk-contact">
+        <div class="trk-contact-who"><b>${esc(c.name)}</b>${c.role ? ` <span class="prof-dim">${esc(c.role)}</span>` : ""}
+          <div class="trk-contact-links">${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ""}${c.linkedin ? `<a href="${esc(c.linkedin)}" target="_blank" rel="noopener">LinkedIn</a>` : ""}</div>
+        </div>
+        <button class="btn btn-danger-ghost btn-sm" data-rm-contact="${c.id}" type="button" aria-label="Remove contact">&times;</button>
+      </div>`).join("") || `<p class="prof-dim">${esc(trkT("tracker.noContacts", "No contacts yet."))}</p>`;
+    const files = (j.records || []).map(r => `<div class="trk-file">
+        <span>${esc(r.role || trkT("tracker.resume", "Resume"))} <span class="prof-dim">${esc(trkDay(r.when))}</span></span>
+        <span class="trk-file-links">${r.pdf ? `<a href="${esc(r.pdf)}" target="_blank" rel="noopener">${esc(trkT("tracker.resume", "Resume"))}</a>` : ""}${r.cover_letter ? `<a href="${esc(r.cover_letter)}" target="_blank" rel="noopener">${esc(trkT("tracker.coverLetter", "Cover letter"))}</a>` : ""}</span>
+      </div>`).join("") || `<p class="prof-dim">${esc(trkT("tracker.noFiles", "No tailored resume for this job yet."))}</p>`;
+    const timeline = (j.activity || []).map(a => `<div class="trk-tl-row">
+        <span class="trk-tl-dot" aria-hidden="true"></span>
+        <span class="trk-tl-what">${a.to_stage ? esc(trkStageName(a.to_stage)) : esc(trkT("tracker.removed", "Taken off the board"))}${a.note ? ` <span class="prof-dim">${esc(a.note)}</span>` : ""}</span>
+        <span class="trk-tl-when">${esc(trkDay(a.at))}</span>
+      </div>`).join("");
+    const chips = trkChips(j);
+    panel.innerHTML = `
+      <div class="trk-p-head">
+        <div class="trk-p-head-main">
+          <div class="trk-card-co">${esc(j.company)}${j.location ? ` · ${esc(j.location)}` : ""}</div>
+          <h2 class="trk-p-title">${esc(j.title)}</h2>
+          ${chips ? `<div class="trk-card-chips">${chips}</div>` : ""}
+        </div>
+        <button class="btn btn-ghost btn-sm" id="trkPanelClose" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="trk-p-row">
+        ${trkStageSelect(j, 'id="trkPanelStage"')}
+        ${j.url ? `<a class="btn btn-ghost btn-sm" href="${esc(j.url)}" target="_blank" rel="noopener">${esc(trkT("tracker.posting", "Job posting"))}</a>` : ""}
+      </div>
+      <div class="trk-p-sec">
+        <div class="trk-p-h">${esc(trkT("tracker.followUp", "Follow-up"))}</div>
+        <div class="trk-p-row"><input class="fld" id="trkPanelFu" type="date" value="${esc(j.follow_up_at || "")}"><span class="prof-dim ${j.follow_up_due ? "trk-due" : ""}">${j.follow_up_due ? esc(trkT("tracker.dueNow", "Due now")) : ""}</span></div>
+      </div>
+      <div class="trk-p-sec">
+        <div class="trk-p-h">${esc(trkT("tracker.notes", "Notes"))}</div>
+        <textarea class="fld trk-notes" id="trkPanelNotes" rows="4" placeholder="${esc(trkT("tracker.notesPh", "Anything worth remembering about this one."))}">${esc(j.notes || "")}</textarea>
+        <span class="prof-dim" id="trkPanelNotesState"></span>
+      </div>
+      <div class="trk-p-sec">
+        <div class="trk-p-h">${esc(trkT("tracker.contacts", "Contacts"))}</div>
+        <div id="trkPanelContacts">${contacts}</div>
+        <form class="trk-contact-form" id="trkContactForm">
+          <input class="fld" name="name" placeholder="${esc(trkT("tracker.cName", "Name"))}" required autocomplete="off">
+          <input class="fld" name="role" placeholder="${esc(trkT("tracker.cRole", "Role"))}" autocomplete="off">
+          <input class="fld" name="email" type="email" placeholder="${esc(trkT("tracker.cEmail", "Email"))}" autocomplete="off">
+          <input class="fld" name="linkedin" type="url" placeholder="${esc(trkT("tracker.cLinkedin", "LinkedIn URL"))}" autocomplete="off">
+          <button class="btn btn-ghost btn-sm trk-contact-add" type="submit">${esc(trkT("tracker.addContact", "Add contact"))}</button>
+        </form>
+      </div>
+      <div class="trk-p-sec">
+        <div class="trk-p-h">${esc(trkT("tracker.files", "Files"))}</div>
+        ${files}
+      </div>
+      <div class="trk-p-sec">
+        <div class="trk-p-h">${esc(trkT("tracker.timeline", "Timeline"))}</div>
+        <div class="trk-tl">${timeline}</div>
+      </div>`;
+    panel.hidden = false;
+    if (scrim) scrim.hidden = false;
+    $("#trkPanelClose").addEventListener("click", closeTrackerPanel);
+    $("#trkPanelStage").addEventListener("change", (e) => trkMove(sid, e.target.value));
+    $("#trkPanelFu").addEventListener("change", async (e) => {
+      try {
+        const out = await api("/api/tracker/followup", { source_id: sid, date: e.target.value });
+        trkSetDot(out.due_count);
+        trkReloadCards();
+      } catch { toast(trkT("tracker.saveFail", "Couldn't save that, try again.")); }
+    });
+    const notes = $("#trkPanelNotes"), state = $("#trkPanelNotesState");
+    let lastNotes = notes.value;
+    notes.addEventListener("blur", async () => {
+      if (notes.value === lastNotes) return;
+      try {
+        await api("/api/tracker/note", { source_id: sid, notes: notes.value });
+        lastNotes = notes.value;
+        const card = TRK_CARDS.find(c => c.source_id === sid);
+        if (card) card.has_notes = !!notes.value.trim();
+        state.textContent = trkT("tracker.saved", "Saved");
+        setTimeout(() => { state.textContent = ""; }, 1500);
+      } catch { state.textContent = trkT("tracker.saveFail", "Couldn't save that, try again."); }
+    });
+    $("#trkContactForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = { source_id: sid, name: fd.get("name"), role: fd.get("role"), email: fd.get("email"), linkedin: fd.get("linkedin") };
+      try { await api("/api/tracker/contact", body); openTrackerPanel(sid); }
+      catch { toast(trkT("tracker.saveFail", "Couldn't save that, try again.")); }
+    });
+    panel.querySelectorAll("[data-rm-contact]").forEach(b => b.addEventListener("click", async () => {
+      try { await api("/api/tracker/contact/remove", { source_id: sid, id: Number(b.dataset.rmContact) }); openTrackerPanel(sid); }
+      catch { toast(trkT("tracker.saveFail", "Couldn't save that, try again.")); }
+    }));
+  }
+
+  // A recruiter reply from the inbox SUGGESTS a move (Interviewing, or Rejected); the person
+  // clicks, the board moves. Rendered inside the Review page's inbox card.
+  function trkSuggestHtml(m, i) {
+    const s = m.suggest;
+    if (!s) return "";
+    return `<div class="trk-suggest"><span class="prof-dim">${esc(s.company)} · ${esc(s.title)}</span>
+      <button class="btn btn-ghost btn-sm" type="button" data-trk-suggest="${i}" data-sid="${esc(s.source_id)}" data-stage="${esc(s.stage)}">${esc(trkT("tracker.suggest", "Move to {stage}").replace("{stage}", trkStageName(s.stage)))}</button></div>`;
+  }
+  function trkBindSuggestions() {
+    document.querySelectorAll("[data-trk-suggest]").forEach(b => b.addEventListener("click", async () => {
+      b.disabled = true;
+      try {
+        const out = await api("/api/tracker/move", { source_id: b.dataset.sid, stage: b.dataset.stage,
+          note: trkT("tracker.fromReply", "From a recruiter reply") });
+        b.textContent = trkT("tracker.moved", "Moved");
+        trkSetDot(out.due_count);
+      } catch { b.disabled = false; toast(trkT("tracker.moveFail", "Couldn't move that job, try again.")); }
+    }));
+  }
+
+  $("#trkViewBoard")?.addEventListener("click", () => trkSetView("board"));
+  $("#trkViewTable")?.addEventListener("click", () => trkSetView("table"));
+  $("#trkViewBoard")?.classList.toggle("is-on", TRK_VIEW === "board");
+  $("#trkViewTable")?.classList.toggle("is-on", TRK_VIEW === "table");
+  $("#trkScrim")?.addEventListener("click", closeTrackerPanel);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && TRK_OPEN) closeTrackerPanel(); });
+  refreshTrackerDot();
+
   /* nav */
   document.querySelectorAll(".nav-item").forEach(n => n.addEventListener("click", () => {
     teardownCvi();   // leaving via the sidebar ends any in-progress live interview (no leaked meter or pane)
@@ -3565,6 +3915,7 @@
     else if (n.dataset.nav === "cvs") { loadCvs(); showView("cvs"); }
     else if (n.dataset.nav === "templates") { loadTemplates(); showView("templates"); }
     else if (n.dataset.nav === "jobs") { loadJobsFeed(); showView("jobs"); }
+    else if (n.dataset.nav === "tracker") { loadTracker(); showView("tracker"); }
     else if (n.dataset.nav === "review") { loadReview(); showView("review"); }
     else if (n.dataset.nav === "autoapply") { loadAutoApply(); showView("autoapply"); }
     else if (n.dataset.nav === "projects") { loadProjects(); showView("projects"); }
