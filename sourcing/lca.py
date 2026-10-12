@@ -86,10 +86,15 @@ LCA_URL = "https://www.dol.gov/sites/dolgov/files/ETA/oflc/pdfs/LCA_Disclosure_D
 LCA_PAGE = "https://www.dol.gov/agencies/eta/foreign-labor/performance"
 
 
+LCA_MEDIA_URL = "https://www.dol.gov/media/LCA_Disclosure_Data_FY{fy}_Q{q}.xlsx"
+
+
 def lca_release_url(fy: int, quarter: int) -> str:
-    """The quarterly workbook's URL for FY2024 and FY2025 releases. (FY2026 moved to
-    /media/LCA_Disclosure_Data_FY2026_Q3.xlsx; check the performance page for a new year.)"""
-    return LCA_URL.format(fy=int(fy), q=int(quarter))
+    """The workbook's URL: FY2024 and FY2025 quarters live under .../ETA/oflc/pdfs/; from
+    FY2026 DOL publishes one cumulative file per quarter under /media/ (FY2026 Q3 checked
+    2026-10-11). Check the performance page when a new year's name does not resolve."""
+    fy, q = int(fy), int(quarter)
+    return (LCA_MEDIA_URL if fy >= 2026 else LCA_URL).format(fy=fy, q=q)
 
 
 # ---------------------------------------------------------------- titles

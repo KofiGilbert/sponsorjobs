@@ -556,3 +556,8 @@ def test_a_history_only_employer_has_a_history_but_no_sponsor_record_and_no_inde
                               "h1b_dependent": 1, "willful_violator": 0}])
     assert db.lookup("Ghost Labs") is not None and db.lookup("Ghost Labs").h1b_approvals == 0
     assert "ghost labs" in _bsi().collect(db)["g"]
+
+
+def test_release_urls_follow_dols_two_layouts():
+    assert lca.lca_release_url(2025, 4).endswith("/ETA/oflc/pdfs/LCA_Disclosure_Data_FY2025_Q4.xlsx")
+    assert lca.lca_release_url(2026, 3) == "https://www.dol.gov/media/LCA_Disclosure_Data_FY2026_Q3.xlsx"

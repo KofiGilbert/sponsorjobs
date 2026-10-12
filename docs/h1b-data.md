@@ -259,18 +259,27 @@ filings are dropped. Flags are per employer: any "Yes" wins.
 (`{version, fiscal_years, cells, employers, flag_rows, min_count, sources, bytes, ...}`),
 committed (the `.gitignore` keeps `dist-data/` out except this folder) and loaded on first
 run like the PERM bundle; also fetchable from `{TAILOR_DATA_URL}/lca/` once per version.
-Built from the one real file on 2026-10-11: **12,911 cells for 4,491 employers, 3,002
-flagged employers (2,999 H-1B dependent, 21 willful violators), 385 KB wages + 34 KB
-flags gzipped**, for ONE quarter. A full fiscal year is about four times that and the
-default of three fiscal years lands around **4 to 6 MB**, well inside the "tens of MB" cap.
+Built on 2026-10-11 from the nine real files above (FY2024 Q1 to Q4, FY2025 Q1 to Q4 and the
+cumulative FY2026 Q3, 1,595,085 sheet rows, 1,519,548 certified H-1B filings with a wage):
+**181,709 cells for 30,903 employers over FY2024 to FY2026, 5,814 flagged employers (5,791
+H-1B dependent, 278 willful violators), 4.78 MB wages + 67 KB flags gzipped**, inside the
+"tens of MB" cap. The whole run took about ten minutes on a laptop (36 seconds per 100k
+rows, memory flat at about 650 MB for the in-memory aggregate). Each fiscal year's quarters
+MUST be imported in the same run: a cell is replaced by key, so importing FY2025 Q4 alone
+after Q1 to Q3 would overwrite the year's cells with the quarter's.
 
 Maintainer routine (download the quarters you want from the performance page first, or
 let the script fetch them):
 
 ```
-python scripts/import_lca_disclosure.py ~/Downloads/LCA_Disclosure_Data_FY2025_Q*.xlsx --version 2026-10
-python scripts/import_lca_disclosure.py --download FY2025_Q4 FY2025_Q3 --download-dir /tmp/lca
+python scripts/import_lca_disclosure.py ~/Downloads/LCA_Disclosure_Data_FY202[456]_Q*.xlsx --version 2026-10
+python scripts/import_lca_disclosure.py --download FY2024_Q1 FY2024_Q2 FY2024_Q3 FY2024_Q4 \
+    FY2025_Q1 FY2025_Q2 FY2025_Q3 FY2025_Q4 FY2026_Q3 --download-dir /tmp/lca --version 2026-10
 ```
+
+(`--download` builds the FY2024 and FY2025 URLs under `.../ETA/oflc/pdfs/`; the FY2026
+cumulative file lives at `https://www.dol.gov/media/LCA_Disclosure_Data_FY2026_Q3.xlsx`, see
+`lca_release_url`.) The downloads are about 1 GB in all and are never committed.
 
 It streams each file, writes the cells and flags into `data/sponsors.db` (cells replaced
 by key, flags never lowered), and rewrites `dist-data/lca/` from the store keeping the

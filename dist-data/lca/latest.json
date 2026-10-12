@@ -1,16 +1,26 @@
 {
   "version": "2026-10",
   "fiscal_years": [
-    2025
+    2024,
+    2025,
+    2026
   ],
-  "cells": 12911,
-  "employers": 4491,
-  "flag_rows": 3002,
+  "cells": 181709,
+  "employers": 30903,
+  "flag_rows": 5814,
   "min_count": 2,
   "sources": [
-    "LCA_Disclosure_Data_FY2025_Q4.xlsx"
+    "LCA_Disclosure_Data_FY2024_Q1.xlsx",
+    "LCA_Disclosure_Data_FY2024_Q2.xlsx",
+    "LCA_Disclosure_Data_FY2024_Q3.xlsx",
+    "LCA_Disclosure_Data_FY2024_Q4.xlsx",
+    "LCA_Disclosure_Data_FY2025_Q1.xlsx",
+    "LCA_Disclosure_Data_FY2025_Q2.xlsx",
+    "LCA_Disclosure_Data_FY2025_Q3.xlsx",
+    "LCA_Disclosure_Data_FY2025_Q4.xlsx",
+    "LCA_Disclosure_Data_FY2026_Q3.xlsx"
   ],
-  "built_at": "2026-10-11T21:00:09+00:00",
+  "built_at": "2026-10-12T02:07:44+00:00",
   "columns": [
     "norm_name",
     "fy",
@@ -40,8 +50,8 @@
     "fy"
   ],
   "bytes": {
-    "wages": 384778,
-    "flags": 34130
+    "wages": 4781864,
+    "flags": 67452
   },
   "source_page": "https://www.dol.gov/agencies/eta/foreign-labor/performance"
 }
