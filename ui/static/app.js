@@ -3871,11 +3871,13 @@
   // this computer; there is no facial analysis, ever.
   const R1_QUESTIONS = 5;
   let SCREEN = null, SCR_PREP = null, SCR_EXTRA = false;
+  let SCR_DRILL = null, SCR_REC_T0 = 0, SCR_SECS = {};   // report card: re-drill questions + measured take lengths
   let SCR_STREAM = null, SCR_REC = null, SCR_CHUNKS = [], SCR_TIMER = null, SCR_PREPT = null, SCR_COUNT = null;
   let SCR_PRACTICE = null, SCR_UPLOADS = {}, SCR_TR = {}, SCR_RETAKES = {}, SCR_PHASE = "idle", SCR_CUR = null;
   const fmtClock = (x) => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, "0")}`;
-  function startScreen(prep) {
+  function startScreen(prep, opts) {
     SCR_PREP = prep; SCREEN = null; SCR_EXTRA = false; SCR_UPLOADS = {}; SCR_TR = {}; SCR_RETAKES = {}; SCR_PRACTICE = null;
+    SCR_DRILL = (opts && Array.isArray(opts.drill) && opts.drill.length) ? opts.drill : null; SCR_SECS = {};
     $("#prepList").hidden = true; $("#prepScreen").hidden = false;
     renderR1Landing();
   }
@@ -3896,15 +3898,19 @@
       <div class="scr-intro"><div class="scr-welcome">
         <div class="r1-eyebrow">${esc(T("r1.eyebrow", "Round 1, recorded interview"))}</div>
         <h2 class="scr-welcome-h">${r1Title(p)}</h2>
-        <p class="scr-welcome-sub">${esc(T("r1.landingFacts", "5 questions, about 20 minutes."))} ${esc((k => k ? k.charAt(0).toUpperCase() + k.slice(1) : "")(r1Kinds(p)))}.</p>
+        <p class="scr-welcome-sub">${SCR_DRILL
+          ? esc(T("rc.drillFacts", "Re-drill: {n} questions from your report card.").replace("{n}", String(SCR_DRILL.length)))
+          : esc(T("r1.landingFacts", "5 questions, about 20 minutes.")) + " " + esc((k => k ? k.charAt(0).toUpperCase() + k.slice(1) : "")(r1Kinds(p))) + "."}</p>
         <div class="scr-welcome-acts">
           <button class="btn btn-primary" id="scrBegin" type="button">${esc(T("r1.getStarted", "Get started"))}</button>
           <button class="btn btn-ghost" id="scrBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
         </div>
+        ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : `<div class="rc-goals" id="prepGoals" hidden></div>`}
         <p class="scr-disclaimer">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>
       </div></div>`;
     $("#scrBegin")?.addEventListener("click", renderR1Notice);
     $("#scrBail")?.addEventListener("click", quitScreen);
+    if (!SCR_DRILL) loadPrepGoals(p && p.id, $("#prepGoals"));   // report card: the prep checklist
   }
   // Screen 2: the notice. Where recordings go, how to delete them, no facial analysis, and the
   // extra-time option (doubles the clocks), which replaced the old Realistic/Relaxed switch.
@@ -3932,7 +3938,7 @@
       const btn = $("#scrNoticeGo"), msg = $("#scrNoticeMsg");
       if (SCREEN && SCREEN.config && !!SCREEN.config.extra_time === SCR_EXTRA && SCREEN.i == null) { goDevices(); return; }   // back from the device check: same screen
       btn.disabled = true;
-      try { SCREEN = await api("/api/screens", { prep_id: SCR_PREP.id, extra_time: SCR_EXTRA, questions: R1_QUESTIONS }); }
+      try { SCREEN = await api("/api/screens", { prep_id: SCR_PREP.id, extra_time: SCR_EXTRA, questions: R1_QUESTIONS, ...(SCR_DRILL ? { drill: SCR_DRILL } : {}) }); }
       catch (err) { btn.disabled = false; if (msg) { msg.textContent = err.message || T("r1.cantStart", "Couldn't start the interview."); msg.hidden = false; } return; }
       SCR_PRACTICE = SCREEN.practice || null;
       goDevices();
@@ -4068,6 +4074,7 @@
     SCR_REC.ondataavailable = (e) => { if (e.data && e.data.size) SCR_CHUNKS.push(e.data); };
     SCR_REC.onstop = onR1Stopped;
     SCR_REC.start();
+    SCR_REC_T0 = Date.now();                                 // report card: the take's real length
     SCR_PHASE = "recording";
     const st = $("#r1Status"); if (st) { st.classList.add("is-rec"); st.innerHTML = `<i class="r1-status-dot"></i>${esc(T("r1.recording", "Recording"))}`; }
     const help = $("#r1Help"); if (help) help.textContent = T("r1.answerHelp", "Answer in your own words. Stop when you're done, or the clock will stop for you.");
@@ -4111,7 +4118,8 @@
     // A real question: upload this take now (the server keeps the latest), transcribe behind the
     // scenes, and offer the one retake or the next question. There is no back button.
     const idx = cur.idx, n = (SCREEN.questions || []).length, last = idx >= n - 1;
-    uploadTake(idx, blob);
+    SCR_SECS[idx] = SCR_REC_T0 ? Math.round((Date.now() - SCR_REC_T0) / 100) / 10 : null; SCR_REC_T0 = 0;
+    uploadTake(idx, blob, SCR_SECS[idx]);
     const left = retakesLeft(idx);
     const help = $("#r1Help"); if (help) help.textContent = T("r1.saved", "Saved on this computer.");
     $("#r1Acts").innerHTML = `
@@ -4120,8 +4128,9 @@
     $("#r1Retake")?.addEventListener("click", () => { SCR_RETAKES[idx] = Math.max(0, left - 1); renderR1Question({}); });
     $("#r1Next")?.addEventListener("click", () => { if (last) renderR1Done(); else { SCREEN.i = idx + 1; renderR1Question({}); } });
   }
-  function uploadTake(idx, blob) {
+  function uploadTake(idx, blob, secs) {
     const fd = new FormData(); fd.append("file", blob, `answer_${idx}.webm`);
+    if (secs) fd.append("seconds", String(secs));             // report card: words per minute
     const up = fetch(`/api/screens/${SCREEN.id}/answers/${idx}`, { method: "POST", body: fd }).then(async (r) => {
       if (r.status === 409) { SCR_RETAKES[idx] = 0; throw new Error(T("r1.noRetakes", "No retakes left on this question; your earlier take stands.")); }
       if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || T("r1.uploadFailed", "Couldn't save the recording.")); }
@@ -4158,7 +4167,7 @@
       const tas = [...document.querySelectorAll(".r1-ta")];
       if (tas.some(t => !t.value.trim())) { toast(T("r1.typeAll", "Add the words for every answer first.")); return; }
       $("#r1Score").disabled = true;
-      try { for (const t of tas) await api(`/api/screens/${SCREEN.id}/answers/${t.dataset.i}/transcript`, { text: t.value.trim() }); }
+      try { for (const t of tas) await api(`/api/screens/${SCREEN.id}/answers/${t.dataset.i}/transcript`, { transcript: t.value.trim(), seconds: SCR_SECS[t.dataset.i] || null }); }
       catch (err) { toast(err.message || T("r1.cantSave", "Couldn't save.")); $("#r1Score").disabled = false; return; }
       scoreR1();
     });
@@ -4184,6 +4193,7 @@
         ${(r.improvements || []).length ? `<div class="mock-col"><div class="prep-fb-h">${esc(T("r1.doNext", "Do this next"))}</div><ul>${r.improvements.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
         ${(r.competencies || []).length ? `<div class="scr-comps"><div class="prep-fb-h">${esc(T("r1.byCompetency", "By competency"))}</div>
           ${r.competencies.map(cb => `<div class="scr-comp-row"><span class="scr-comp-name">${esc(cb.name)}</span><span class="scr-comp-bar"><i class="scr-comp-fill ${cb.score < 60 ? "low" : cb.score < 75 ? "mid" : "high"}" style="width:${Math.max(4, Math.min(100, Number(cb.score) || 0))}%"></i></span><span class="scr-comp-val">${cb.score}</span></div>`).join("")}</div>` : ""}
+        ${reportCardHtml(r.report_card)}
         <div class="scr-per">${answers.map((a, k) => {
           const i = a.i ?? k, fb = a.feedback || (a.per_answer_feedback || {}).feedback || "", sc = a.score ?? (a.per_answer_feedback || {}).score;
           const qtext = a.text || a.q || a.question || ((SCREEN.questions || [])[i] || {}).text || "";
@@ -4203,6 +4213,8 @@
       </div>`;
     $("#scrStage").querySelectorAll(".scr-coach-btn").forEach(btn =>
       btn.addEventListener("click", () => coachScreenAnswer(SCREEN.id, btn.dataset.coach, btn)));
+    wireReportCard(r.report_card, { prepId: SCR_PREP && SCR_PREP.id, currentId: SCREEN && SCREEN.id,
+      leave: () => { stopPrepClock(); stopAnswerClock(); stopScrStream(); SCR_PHASE = "idle"; } });
     $("#scrReport")?.addEventListener("click", () => { window.location = `/api/screens/${SCREEN.id}/report.docx`; });
     $("#scrDone")?.addEventListener("click", quitScreen);
     $("#scrDelete")?.addEventListener("click", async () => {
@@ -4451,9 +4463,11 @@
             <button class="btn btn-ghost" id="liveBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
           </div>
         </div>
-      </div>`;
+      </div>
+      <div class="rc-goals rc-goals-r2" id="prepGoalsR2" hidden></div>`;
     $("#liveBegin")?.addEventListener("click", beginLive);
     $("#liveBail")?.addEventListener("click", quitLive);
+    loadPrepGoals(R2_CTX && R2_CTX.prep_id, $("#prepGoalsR2"));   // report card: the prep checklist
     (async () => {
       try {
         LIVE_STREAM = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -4580,10 +4594,10 @@
     R2 = null;
     if (!id) { quitLive(); return; }
     $("#liveStage").innerHTML = `<div class="scr-intro"><div class="scr-welcome"><h2 class="scr-ready-h">${esc(T("r2.ended", "Interview ended"))}</h2><p class="scr-ready-sub">${esc(T("r2.scoring", "Scoring your interview..."))}</p></div></div>`;
-    try { const d = await api("/api/interviews/cvi/end", { interview_id: id }); renderR2Report((d && d.report) || {}); }
+    try { const d = await api("/api/interviews/cvi/end", { interview_id: id }); renderR2Report((d && d.report) || {}, id); }
     catch (err) { toast(err.message || T("r2.cantScore", "Couldn't score the interview.")); quitLive(); }
   }
-  function renderR2Report(rep) {
+  function renderR2Report(rep, interviewId) {
     const passed = !!rep.passed, cls = passed ? "ok" : "no";
     const mins = rep.duration_s ? fmtClock(Math.round(rep.duration_s)) : "";
     if (GUIDED) showGuidedProgress(3);                       // both rounds done
@@ -4594,13 +4608,22 @@
         ${rep.why ? `<p class="mock-ready-sum">${esc(rep.why)}</p>` : ""}
         ${(rep.improvements || []).length ? `<div class="mock-col"><div class="prep-fb-h">${esc(T("r1.doNext", "Do this next"))}</div><ul>${rep.improvements.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
         ${(rep.competencies || []).length ? `<div class="scr-comps"><div class="prep-fb-h">${esc(T("r1.byCompetency", "By competency"))}</div>${rep.competencies.map(cb => `<div class="scr-comp-row"><span class="scr-comp-name">${esc(cb.name)}</span><span class="scr-comp-bar"><i class="scr-comp-fill ${cb.score < 60 ? "low" : cb.score < 75 ? "mid" : "high"}" style="width:${Math.max(4, Math.min(100, Number(cb.score) || 0))}%"></i></span><span class="scr-comp-val">${cb.score}</span></div>`).join("")}</div>` : ""}
-        ${rep.transcript ? `<details class="scr-tr"><summary>${esc(T("r2.transcript", "Transcript"))}</summary><p class="scr-tr-body">${highlightDisfluencies(rep.transcript)}</p></details>` : ""}
+        ${reportCardHtml(rep.report_card)}
+        ${rep.transcript ? `<details class="scr-tr"><summary>${esc(T("r2.transcript", "Transcript"))}</summary><p class="scr-tr-body">${r2TranscriptHtml(rep.transcript)}</p></details>` : ""}
         <p class="scr-disclaimer">${esc(rep.disclaimer || T("r1.reportDisclaimer", "Practice feedback, not a hiring decision."))}</p>
         <div class="mock-next">
           <button class="btn btn-primary btn-sm" id="liveDone" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>
         </div>
       </div>`;
     $("#liveDone")?.addEventListener("click", quitLive);
+    wireReportCard(rep.report_card, { prepId: R2_CTX && R2_CTX.prep_id, currentId: interviewId,
+      leave: () => { teardownCvi(); R2 = null; stopLiveStream(); $("#prepLive").hidden = true; } });
+  }
+  // The live transcript is a list of turns; show it as a dialogue, fillers highlighted.
+  function r2TranscriptHtml(tr) {
+    if (typeof tr === "string") return highlightDisfluencies(tr);
+    if (!Array.isArray(tr)) return "";
+    return tr.map(t => `<span class="rc-turn ${t.role === "interviewer" ? "iv" : "me"}">${esc(t.role === "interviewer" ? T("rc.interviewer", "Interviewer") : T("rc.you", "You"))}:</span> ${t.role === "interviewer" ? esc(t.content || "") : highlightDisfluencies(t.content || "")}`).join("<br>");
   }
   function stopLiveStream() { if (LIVE_STREAM) { LIVE_STREAM.getTracks().forEach(t => t.stop()); LIVE_STREAM = null; } }
   function quitLive() {
@@ -4608,6 +4631,138 @@
     R2 = null; stopLiveStream(); $("#prepLive").hidden = true; $("#prepList").hidden = false; loadPreps();
   }
   $("#liveQuit")?.addEventListener("click", quitLive);
+
+  // ---------------------------------------------------------------- Report card (both rounds)
+  // The structured card the engine stores next to the overall score (interview/report.py):
+  // delivery summary, a per-question table with STAR badges, strengths, the three weakest
+  // moments with a one-line drill each and a Re-drill button that runs a Round 1 recorded
+  // session with just those questions, and the past cards for this job with the score trend.
+  // The prep checklist (goals) shows on the start screen of both rounds. Practice only.
+  function rcPaceWord(p) {
+    return p === "slow" ? T("rc.paceSlow", "slow") : p === "fast" ? T("rc.paceFast", "fast")
+      : p === "normal" ? T("rc.paceNormal", "normal") : T("rc.paceUnknown", "no pace yet");
+  }
+  function rcStarBadges(row) {
+    const parts = [["situation", "S", T("rc.situation", "Situation")], ["task", "T", T("rc.task", "Task")],
+                   ["action", "A", T("rc.action", "Action")], ["result", "R", T("rc.result", "Result")]];
+    return `<span class="rc-star">${parts.map(([k, l, name]) => {
+      const v = row.star ? row.star[k] : null;
+      const cls = v === true ? "on" : v === false ? "off" : "na";
+      return `<i class="rc-star-b ${cls}" title="${esc(name)}">${l}</i>`; }).join("")}</span>`;
+  }
+  function rcCoverage(c) {
+    if (c == null) return `<span class="rc-cov na">${esc(T("rc.notRated", "not rated"))}</span>`;
+    return `<span class="rc-cov c${c}">${esc(T("rc.coverageOf", "{n} of 3").replace("{n}", String(c)))}</span>`;
+  }
+  function reportCardHtml(card) {
+    if (!card || !Array.isArray(card.answers) || !card.answers.length) return "";
+    const d = card.delivery || {};
+    const rows = card.answers.map((r, k) => `
+      <tr>
+        <td class="rc-q"><span class="rc-n">${k + 1}.</span> ${esc(r.q || "")}${r.evidence ? `<div class="rc-ev">${esc(r.evidence)}</div>` : ""}</td>
+        <td>${rcCoverage(r.coverage)}</td>
+        <td>${rcStarBadges(r)}</td>
+        <td class="rc-num">${Math.round(Number(r.seconds) || 0)}${r.seconds_estimated ? "<sup>*</sup>" : ""}</td>
+        <td class="rc-num">${Math.round(Number(r.wpm) || 0)}</td>
+        <td class="rc-num">${Number(r.fillers) || 0}</td>
+      </tr>`).join("");
+    const weak = (card.weakest || []).map((w, k) => `
+      <li class="rc-weak-item">
+        <div class="rc-weak-q">${k + 1}. ${esc(w.q || "")}</div>
+        <div class="rc-weak-drill">${esc(w.drill || "")}</div>
+      </li>`).join("");
+    const nWeak = (card.weakest || []).length;
+    return `
+      <div class="rc">
+        <div class="rc-h">${esc(T("rc.title", "Report card"))}</div>
+        <div class="rc-tiles">
+          <div class="rc-tile"><div class="rc-tile-v">${Math.round(Number(d.avg_wpm) || 0)} <span class="rc-pace ${esc(d.pace || "unknown")}">${esc(rcPaceWord(d.pace))}</span></div>
+            <div class="rc-tile-l">${esc(T("rc.avgPace", "Average pace"))}, ${esc(T("rc.wpmUnit", "words a minute"))}. ${esc(T("rc.guideline", "Guideline: 140 to 160."))}</div></div>
+          <div class="rc-tile"><div class="rc-tile-v">${Number(d.fillers_per_minute) || 0}</div>
+            <div class="rc-tile-l">${esc(T("rc.fillersPerMin", "Fillers a minute"))}</div></div>
+          <div class="rc-tile"><div class="rc-tile-v">${Number(d.answers) || 0}</div>
+            <div class="rc-tile-l">${esc(T("rc.answered", "Answers"))}, ${Math.round(Number(d.total_seconds) || 0)}s</div></div>
+        </div>
+        <div class="rc-table-wrap"><table class="rc-table">
+          <thead><tr><th>${esc(T("rc.colQuestion", "Question"))}</th><th>${esc(T("rc.colCoverage", "Coverage"))}</th><th>${esc(T("rc.colStar", "STAR"))}</th><th>${esc(T("rc.colSeconds", "Seconds"))}</th><th>${esc(T("rc.colWpm", "WPM"))}</th><th>${esc(T("rc.colFillers", "Fillers"))}</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+        ${d.any_estimated ? `<p class="rc-note">* ${esc(T("rc.estimated", "Estimated from the words, not timed."))}</p>` : ""}
+        ${(card.strengths || []).length ? `<div class="rc-sec"><div class="prep-fb-h">${esc(T("rc.strengths", "Strengths"))}</div><ul class="rc-list">${card.strengths.map(s => `<li>${esc(s)}</li>`).join("")}</ul></div>` : ""}
+        ${nWeak ? `<div class="rc-sec rc-weak">
+          <div class="prep-fb-h">${esc(nWeak === 1 ? T("rc.practiceAgainOne", "Practice this one again") : T("rc.practiceAgain", "Practice these again"))}</div>
+          <ol class="rc-weak-list">${weak}</ol>
+          <div class="rc-weak-acts">
+            <button class="btn btn-primary btn-sm" id="rcRedrill" type="button">${esc(nWeak === 1 ? T("rc.redrillOne", "Re-drill this question") : T("rc.redrill", "Re-drill these questions"))}</button>
+            <span class="prep-step1-msg" id="rcRedrillMsg" hidden></span>
+          </div></div>` : ""}
+        <div class="rc-sec rc-hist" id="rcHistory" hidden></div>
+      </div>`;
+  }
+  async function prepById(id) {
+    let p = (PREPS || []).find(x => x.id === id);
+    if (p) return p;
+    try { const d = await api("/api/preps"); PREPS = d.preps || []; } catch { PREPS = PREPS || []; }
+    return (PREPS || []).find(x => x.id === id) || { id };
+  }
+  // Wire the card's Re-drill and load the job's history. `ctx`: {prepId, currentId, leave} where
+  // leave() closes the current round's surface before the drill opens the Round 1 one.
+  function wireReportCard(card, ctx) {
+    if (!card || !ctx || !ctx.prepId) return;
+    $("#rcRedrill")?.addEventListener("click", async () => {
+      const btn = $("#rcRedrill"), msg = $("#rcRedrillMsg");
+      const drill = (card.weakest || []).map(w => ({ q: w.q, competency: w.competency || "" })).filter(w => w.q);
+      if (!drill.length) return;
+      btn.disabled = true; if (msg) { msg.textContent = T("rc.redrillStarting", "Setting up the drill..."); msg.hidden = false; }
+      const prep = await prepById(ctx.prepId);
+      if (!prep || !prep.id) { btn.disabled = false; if (msg) msg.textContent = T("rc.redrillFailed", "Couldn't start the drill."); return; }
+      GUIDED = false; hideGuidedProgress();     // a drill is a side step, not the full mock
+      if (typeof ctx.leave === "function") ctx.leave();
+      startScreen(prep, { drill });
+    });
+    renderCardHistory(ctx.prepId, ctx.currentId);
+  }
+  async function renderCardHistory(prepId, currentId) {
+    const box = $("#rcHistory"); if (!box) return;
+    let h;
+    try { h = await api(`/api/interview/history?prep_id=${encodeURIComponent(prepId)}`); } catch { return; }
+    const cards = (h && h.cards) || [];
+    if (!cards.length) return;
+    const tr = h.trend || {};
+    const trend = tr.count <= 1 ? T("rc.trendOne", "Your first report card for this job.")
+      : tr.direction === "up" ? T("rc.trendUp", "Up {d} since your first attempt. Best so far: {b}.").replace("{d}", String(Math.abs(tr.delta))).replace("{b}", String(tr.best))
+      : tr.direction === "down" ? T("rc.trendDown", "Down {d} since your first attempt. Best so far: {b}.").replace("{d}", String(Math.abs(tr.delta))).replace("{b}", String(tr.best))
+      : T("rc.trendFlat", "Holding steady. Best so far: {b}.").replace("{b}", String(tr.best));
+    const max = Math.max(100, ...cards.map(c => Number(c.score) || 0));
+    box.innerHTML = `
+      <div class="prep-fb-h">${esc(T("rc.history", "Past report cards for this job"))}</div>
+      <div class="rc-trend">${esc(trend)}</div>
+      <div class="rc-hist-bars">${cards.map(c => `<span class="rc-hist-bar ${c.id === currentId ? "is-cur" : ""} ${c.passed ? "ok" : ""}" style="height:${Math.max(6, Math.round((Number(c.score) || 0) / max * 48))}px" title="${esc(String(c.score))}"></span>`).join("")}</div>
+      <ul class="rc-hist-list">${cards.slice().reverse().map(c => `
+        <li class="${c.id === currentId ? "is-cur" : ""}">
+          <span class="rc-hist-score">${c.score}</span>
+          <span class="rc-hist-what">${esc(c.round === 2 ? T("rc.histRound2", "Round 2") : T("rc.histRound1", "Round 1"))}${c.drill ? `, ${esc(T("rc.histDrill", "drill"))}` : ""}${c.id === currentId ? ` (${esc(T("rc.histThis", "this one"))})` : ""}</span>
+          <span class="rc-hist-when">${esc(fmtDate(c.created))}</span>
+        </li>`).join("")}</ul>`;
+    box.hidden = false;
+  }
+  // The prep checklist on the start screen: likely questions, what to mention, company facts.
+  async function loadPrepGoals(prepId, box) {
+    if (!box || !prepId) return;
+    box.hidden = false;
+    box.innerHTML = `<div class="rc-goals-h">${esc(T("goals.title", "Before you start"))}</div><p class="rc-goals-loading">${esc(T("goals.loading", "Building your prep checklist..."))}</p>`;
+    let g;
+    try { g = (await api(`/api/preps/${encodeURIComponent(prepId)}/goals`)).goals; }
+    catch { box.innerHTML = `<div class="rc-goals-h">${esc(T("goals.title", "Before you start"))}</div><p class="rc-goals-loading">${esc(T("goals.failed", "Couldn't build the checklist right now."))}</p>`; return; }
+    if (!g) { box.hidden = true; return; }
+    const col = (h, items, empty) => `<div class="rc-goals-col"><div class="prep-fb-h">${esc(h)}</div>${(items || []).length ? `<ol class="rc-goals-list">${items.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : `<p class="rc-note">${esc(empty)}</p>`}</div>`;
+    box.innerHTML = `<div class="rc-goals-h">${esc(T("goals.title", "Before you start"))}</div>
+      <div class="rc-goals-grid">
+        ${col(T("goals.questions", "Likely questions"), g.questions, "")}
+        ${col(T("goals.mentions", "Make sure to mention"), g.mentions, "")}
+        ${col(T("goals.facts", "What the posting says about them"), g.company_facts, T("goals.noFacts", "The posting says nothing about the company. Check their site before you go."))}
+      </div>`;
+  }
 
   // ---- Settings: Live interviewer (Tavus). Key in, key out, and the status Round 2 reads.
   // Whole 20-minute interviews from the plan's minutes.
