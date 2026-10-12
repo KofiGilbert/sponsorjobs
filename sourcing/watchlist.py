@@ -12,6 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from .board import TAILORED_SOURCE, BoardMixin, migrate_board
 from .quality import is_list_only
 
 DEFAULT_CRITERIA = {"titles": [], "locations": [], "remote": "any"}
@@ -31,7 +32,7 @@ def _spon_bool(v) -> bool | None:
 
 
 @dataclass
-class Watchlist:
+class Watchlist(BoardMixin):
     db_path: str | Path
 
     def __post_init__(self) -> None:
@@ -89,6 +90,9 @@ class Watchlist:
         # until their next refresh re-ingests the flag.
         if "sponsorship_stated" not in cols:
             c.execute("ALTER TABLE sourced_job ADD COLUMN sponsorship_stated INTEGER")
+        # The tracker board (added later): stage / stage_at / applied_at / follow_up_at / notes on
+        # this table, plus the activity + contact side tables. See sourcing/board.py.
+        migrate_board(c)
         c.commit()
 
     # -- watchlist companies -------------------------------------------- #
@@ -228,8 +232,11 @@ class Watchlist:
         its board is filled or closed, so keeping it would feed people dead links. Uses
         last_seen (stamped on every refresh that re-sees a job). Conservative window so a
         single missed refresh never drops a live role. Returns how many were pruned."""
+        # A bookmarked or tracked row is the person's own record (Saved list, tracker board), not
+        # a feed entry that can age out, so it is never pruned.
         cur = self._conn.execute(
-            "DELETE FROM sourced_job WHERE last_seen < datetime('now', ?)",
+            "DELETE FROM sourced_job WHERE last_seen < datetime('now', ?) "
+            "AND saved=0 AND (stage IS NULL OR stage='')",
             (f"-{int(days)} days",))
         self._conn.commit()
         return cur.rowcount
@@ -254,7 +261,8 @@ class Watchlist:
                 "posted_at, salary, first_seen, is_new, dismissed, saved, sponsorship_stated, "
                 "(jd_text IS NOT NULL AND jd_text <> '') AS has_jd")
         q = f"SELECT {cols} FROM sourced_job"
-        conds, params = [], []
+        conds, params = [], [TAILORED_SOURCE]
+        conds.append("source<>?")           # board-only rows (resume tailored from a pasted JD)
         if not include_dismissed:
             conds.append("dismissed=0")
         if saved_only:
@@ -370,6 +378,13 @@ class Watchlist:
         self._conn.execute("UPDATE sourced_job SET saved=? WHERE source_id=?",
                            (1 if saved else 0, source_id))
         self._conn.commit()
+        # The tracker board follows the bookmark: saving puts the job in its Saved column (if it
+        # is not on the board already); un-saving a job that is still only Saved takes it off.
+        # A job past Saved (applied, interviewing...) stays on the board whatever the bookmark.
+        if saved:
+            self.track_job(source_id, "saved", note="Saved from the Jobs page")
+        elif self.stage_of(source_id) == "saved":
+            self.untrack(source_id, note="Removed from saved jobs")
 
     def saved_ids(self) -> set[str]:
         """The set of currently-bookmarked source_ids, for overlaying `saved` onto a feed whose
