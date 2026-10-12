@@ -462,5 +462,7 @@
   "emp.odds": "about",
   "emp.oddsTail": "lottery odds at this level",
   "emp.entries": "entries",
-  "emp.talk": "Three things to say"
+  "emp.talk": "Three things to say",
+  "emp.atMostLevel": "At most Level",
+  "emp.atMost": "at most about"
 }

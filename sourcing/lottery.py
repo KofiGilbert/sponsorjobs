@@ -134,6 +134,7 @@ def offer_check(offer: int, wages: dict | None, title: str = "", city: str = "",
     no I/O. `offer` is an annual salary in dollars."""
     offer = int(offer or 0)
     out = {"offer": offer, "has_data": bool(wages), "position": "", "likely_level": 0,
+           "level_ceiling": 0, "odds_is_ceiling": False,
            "level_basis": "", "odds": None, "talking_points": [], "note": ODDS_NOTE}
     if offer <= 0:
         out["error"] = "Enter the annual salary in dollars."
@@ -170,8 +171,23 @@ def offer_check(offer: int, wages: dict | None, title: str = "", city: str = "",
                               f"{_money(pw[lvl])}; your offer meets it.")
         out["odds"] = lottery_odds(lvl, registrations, selections)
     else:
-        out["level_basis"] = ("The filings do not show a prevailing wage at a level your offer "
-                              "reaches, so the level is unknown.")
+        known = [l for l in (1, 2, 3, 4) if pw.get(l)]
+        if known and known[0] > 1:
+            # The employer files this title at Level III (say) and up, and the offer is under
+            # that wage: the exact level is unknown, but it is BELOW the lowest level filed,
+            # so give the odds at that ceiling (the best case) rather than nothing.
+            roman = {1: "I", 2: "II", 3: "III", 4: "IV"}
+            cap = known[0] - 1
+            out["level_ceiling"] = cap
+            out["odds"] = lottery_odds(cap, registrations, selections)
+            out["odds_is_ceiling"] = True
+            out["level_basis"] = (f"This employer's filings for {label}{where} start at Level "
+                                  f"{roman[known[0]]} (median prevailing wage {_money(pw[known[0]])}); "
+                                  f"your offer is below it, so the role would be filed at Level "
+                                  f"{roman[cap]} at most.")
+        else:
+            out["level_basis"] = ("The filings do not show a prevailing wage at a level your offer "
+                                  "reaches, so the level is unknown.")
     pts = []
     delta = (offer - med) / med if med else 0
     if pos in ("below_range", "below_median"):
@@ -184,14 +200,17 @@ def offer_check(offer: int, wages: dict | None, title: str = "", city: str = "",
                    f"The top of their filed range is {_money(hi)}. {scope_note}".strip())
     nxt = next((l for l in (2, 3, 4) if l > lvl and pw.get(l)), 0)
     if nxt:
-        odds_now = lottery_odds(lvl, registrations, selections)["percent"] if lvl else None
+        odds_now = lottery_odds(lvl, registrations, selections)["percent"] if lvl else (
+            out["odds"]["percent"] if out["odds_is_ceiling"] else None)
         odds_next = lottery_odds(nxt, registrations, selections)["percent"]
         gap = pw[nxt] - offer
         roman = {1: "I", 2: "II", 3: "III", 4: "IV"}
         pts.append(f"A wage of {_money(pw[nxt])} would reach this employer's Level {roman[nxt]} "
                    f"prevailing wage ({_money(gap)} more), which gives the registration "
                    f"{WEIGHTS[nxt]} lottery entries"
-                   + (f" (about {odds_next}% odds against {odds_now}% now)." if odds_now is not None
+                   + (f" (about {odds_next}% odds against at most {odds_now}% now)."
+                      if odds_now is not None and out["odds_is_ceiling"]
+                      else f" (about {odds_next}% odds against {odds_now}% now)." if odds_now is not None
                       else f" (about {odds_next}% odds)."))
     else:
         pts.append("Your offer already meets the highest prevailing-wage level in this "

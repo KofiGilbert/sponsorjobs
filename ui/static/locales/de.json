@@ -462,5 +462,7 @@
   "emp.odds": "etwa",
   "emp.oddsTail": "Lotteriechance auf dieser Stufe",
   "emp.entries": "Einträge",
-  "emp.talk": "Drei Punkte zum Ansprechen"
+  "emp.talk": "Drei Punkte zum Ansprechen",
+  "emp.atMostLevel": "Höchstens Stufe",
+  "emp.atMost": "höchstens etwa"
 }

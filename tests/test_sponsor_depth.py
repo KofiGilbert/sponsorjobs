@@ -323,7 +323,9 @@ def test_offer_check_states_position_level_odds_and_three_points():
     assert r["position"] == "above_range" and r["likely_level"] == 3
     assert "highest prevailing-wage level" in r["talking_points"][1]
     r = offer_check(100000, w, "Principal Software Engineer", "Austin", "TX")
-    assert r["position"] == "below_range" and r["likely_level"] == 0 and r["odds"] is None
+    # Below every filed level (Level II is the lowest known): a Level I ceiling, not silence.
+    assert r["position"] == "below_range" and r["likely_level"] == 0
+    assert r["level_ceiling"] == 1 and r["odds_is_ceiling"] is True and r["odds"]["level"] == 1
     r = offer_check(100000, None, "Engineer")
     assert not r["has_data"] and len(r["talking_points"]) == 3
     assert offer_check(0, w)["error"]
@@ -561,3 +563,21 @@ def test_a_history_only_employer_has_a_history_but_no_sponsor_record_and_no_inde
 def test_release_urls_follow_dols_two_layouts():
     assert lca.lca_release_url(2025, 4).endswith("/ETA/oflc/pdfs/LCA_Disclosure_Data_FY2025_Q4.xlsx")
     assert lca.lca_release_url(2026, 3) == "https://www.dol.gov/media/LCA_Disclosure_Data_FY2026_Q3.xlsx"
+
+
+def test_offer_below_every_filed_level_gets_a_ceiling_not_silence():
+    """Big employers file many titles at Level III and up only. An offer under that wage has
+    an unknown exact level, but it is below the lowest level filed, so the check says "at
+    most Level II" with the odds at that ceiling and points at the Level III wage."""
+    wages = {"wage_min": 160000, "wage_median": 180000, "wage_max": 240000, "n": 19,
+             "title_label": "Senior Software Engineer", "scope_note": "", "top_level": 3,
+             "top_level_share": 0.8, "pw1": 0, "pw2": 0, "pw3": 158000, "pw4": 190000}
+    r = offer_check(150000, wages, title="Senior Software Engineer", city="Redmond", state="WA")
+    assert r["likely_level"] == 0 and r["level_ceiling"] == 2 and r["odds_is_ceiling"] is True
+    assert r["odds"]["level"] == 2 and r["odds"]["percent"] == lottery_odds(2)["percent"]
+    assert "start at Level III" in r["level_basis"] and "Level II at most" in r["level_basis"]
+    assert any("$158,000" in p and "at most" in p for p in r["talking_points"])
+    assert len(r["talking_points"]) == 3
+    # Only Level I is unknown-below: that is plain Level I, not a ceiling.
+    r = offer_check(50000, dict(wages, pw1=90000, pw3=0, pw4=0))
+    assert r["likely_level"] == 1 and r["level_ceiling"] == 0 and r["odds_is_ceiling"] is False

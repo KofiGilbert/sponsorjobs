@@ -1795,9 +1795,12 @@
       : `<div class="fd-offer-head"><b>${empMoney(r.offer)}</b>: ${esc(empT("emp.noWages", "no LCA wage filings matched this employer and title."))}</div>`;
     const lvl = r.likely_level
       ? `<div class="fd-offer-level"><span class="fd-offer-pill">${esc(empT("emp.likelyLevel", "Likely Level"))} ${ROMAN[r.likely_level]}</span>${r.odds ? ` <span class="fd-offer-odds">${esc(empT("emp.odds", "about"))} <b>${r.odds.percent}%</b> ${esc(empT("emp.oddsTail", "lottery odds at this level"))} (${r.odds.entries} ${esc(empT("emp.entries", "entries"))})</span>` : ""}<div class="fd-offer-basis">${esc(r.level_basis || "")}</div></div>`
-      : (r.level_basis ? `<div class="fd-offer-basis">${esc(r.level_basis)}</div>` : "");
+      : r.level_ceiling && r.odds
+        ? `<div class="fd-offer-level"><span class="fd-offer-pill">${esc(empT("emp.atMostLevel", "At most Level"))} ${ROMAN[r.level_ceiling]}</span> <span class="fd-offer-odds">${esc(empT("emp.atMost", "at most about"))} <b>${r.odds.percent}%</b> ${esc(empT("emp.oddsTail", "lottery odds at this level"))} (${r.odds.entries} ${esc(empT("emp.entries", "entries"))})</span><div class="fd-offer-basis">${esc(r.level_basis || "")}</div></div>`
+        : (r.level_basis ? `<div class="fd-offer-basis">${esc(r.level_basis)}</div>` : "");
+    const onLevel = r.likely_level || r.level_ceiling;
     const by = r.odds && r.odds.by_level
-      ? `<div class="fd-offer-bylevel">${[1, 2, 3, 4].map(l => `<span class="${l === r.likely_level ? "is-on" : ""}">${ROMAN[l]} ${Math.round(r.odds.by_level[l] * 100)}%</span>`).join("")}</div>` : "";
+      ? `<div class="fd-offer-bylevel">${[1, 2, 3, 4].map(l => `<span class="${l === onLevel ? "is-on" : ""}">${ROMAN[l]} ${Math.round(r.odds.by_level[l] * 100)}%</span>`).join("")}</div>` : "";
     const pts = (r.talking_points || []).map(p => `<li>${esc(p)}</li>`).join("");
     return `${head}${lvl}${by}
       <div class="fd-offer-pts-h">${esc(empT("emp.talk", "Three things to say"))}</div>

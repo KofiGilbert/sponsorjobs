@@ -462,5 +462,7 @@
   "emp.odds": "cerca de",
   "emp.oddsTail": "de chance na loteria neste nível",
   "emp.entries": "entradas",
-  "emp.talk": "Três coisas para dizer"
+  "emp.talk": "Três coisas para dizer",
+  "emp.atMostLevel": "No máximo Nível",
+  "emp.atMost": "no máximo cerca de"
 }
