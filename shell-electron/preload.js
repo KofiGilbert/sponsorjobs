@@ -32,6 +32,11 @@ contextBridge.exposeInMainWorld("tailorShell", {
   assistFill: (url) => ipcRenderer.invoke("assist:fill", url),
   // Fill the page currently open in the pane (after you signed in / navigated there).
   assistFillCurrent: () => ipcRenderer.invoke("assist:fill-current"),
+  // Learn from corrections: save the values the person changed after a fill to the profile.
+  assistLearn: () => ipcRenderer.invoke("assist:learn"),
+  // The fill engine saw the site's "application received" page after the person submitted;
+  // the shell already told the app to mark the job applied, this is the UI's cue.
+  onApplied: (cb) => ipcRenderer.on("assist:applied", (_e, info) => cb(info)),
   // Apply: fill, attach the résumé and submit in one go. The person's click on Apply is
   // the authorisation, so they never have to read a form back. Stops at a captcha or
   // login wall instead of trying to pass it, and never runs on LinkedIn.
