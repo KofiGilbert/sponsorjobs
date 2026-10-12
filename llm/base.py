@@ -1312,3 +1312,65 @@ class FakeLLM:
                 projects.append({"org": name, "title": "", "location": "Personal Project",
                                  "dates": "", "bullets": bullets[:2], "suggested": False})
         return e
+
+    # -- Interview report card: deterministic stand-ins for the STAR / coverage rubric and the
+    #    per-job prep goals (the real backend asks the model with a strict JSON rubric) --
+    def check_star_coverage(self, question: str, transcript: str) -> dict:
+        text = str(transcript or "").strip()
+        low = text.lower()
+        words = len(text.split())
+        has_context = bool(re.search(r"\b(at|when|while|during|in my|on my|last|previous)\b", low))
+        has_task = bool(re.search(r"\b(responsible|task|asked|needed|had to|my job|goal|owned)\b", low)) or words >= 40
+        has_action = bool(_ACTION_RE.search(text))
+        has_result = bool(re.search(r"\d|%|result|outcome|saved|cut|increased|reduced|improved", low))
+        if words < 15:
+            coverage = 0
+        elif words < 40:
+            coverage = 1
+        elif has_result and has_action:
+            coverage = 3
+        else:
+            coverage = 2
+        first = re.split(r"(?<=[.!?])\s+", text)[0] if text else ""
+        evidence = (f"Opens with: \"{first[:80]}\"" if first else "Nothing was said.")
+        return {"star": {"situation": has_context and words >= 15, "task": has_task,
+                         "action": has_action, "result": has_result},
+                "coverage": coverage, "evidence": evidence}
+
+    def interview_goals(self, profile: dict, role: str, company: str = "", jd: str = "",
+                        cv: str = "") -> dict:
+        r = (role or "the role").strip()
+        co = (company or "the company").strip()
+        terms = [w for w in re.findall(r"[A-Za-z][A-Za-z+#.]{2,}", jd or "")
+                 if w[0].isupper() and w.lower() not in ("the", "and", "you", "our", "with", "for")]
+        seen, keys = set(), []
+        for t in terms:
+            if t.lower() not in seen:
+                seen.add(t.lower())
+                keys.append(t)
+        k1 = keys[0] if keys else "the core skill"
+        k2 = keys[1] if len(keys) > 1 else "the team"
+        questions = [
+            f"Why {co}, and why this {r} role now?",
+            f"Tell me about a time you used {k1} to deliver a result.",
+            f"How have you worked with {k2} before?",
+            "Walk me through a hard problem you solved and what you would do differently.",
+            f"What would your first 90 days as a {r} look like here?",
+        ]
+        skills = _profile_skill_phrases(profile or {})[:2]
+        first_role = _profile_first_role(profile or {})
+        mentions = [
+            f"Your {skills[0]} work, with a number attached." if skills else "One result with a number attached.",
+            f"How your {first_role or 'most recent role'} maps to {k1}.",
+            f"Why {co} specifically, in one sentence.",
+        ]
+        facts = []
+        for line in re.split(r"[.\n]", jd or ""):
+            s = line.strip()
+            if len(s) > 20 and re.search(r"\b(we|our|team|mission|customers|founded|based)\b", s.lower()):
+                facts.append(s[:140])
+            if len(facts) >= 3:
+                break
+        if not facts:
+            facts = [f"The posting says little about {co}; check their site before you go."]
+        return {"questions": questions, "mentions": mentions, "company_facts": facts}
