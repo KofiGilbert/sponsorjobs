@@ -135,5 +135,8 @@ def test_autofill_surfaces_saved_screening(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "_load_prefs", lambda: {
         "work_authorized": "Yes", "needs_sponsorship": "Yes", "eeo_decline": True})
     body = app.app.test_client().get("/api/profile/autofill", headers=EXT).get_json()
-    assert body["screening"] == {"work_authorized": "Yes", "needs_sponsorship": "Yes"}
+    # work_auth_us is the profile screen's name for work_authorized; both ride along so the
+    # fill engine's older and newer carriers agree.
+    assert body["screening"] == {"work_authorized": "Yes", "work_auth_us": "Yes",
+                                 "needs_sponsorship": "Yes"}
     assert body["eeo"] == {"decline": True}

@@ -337,12 +337,85 @@ function autofillCore() {
 
 function fetchAutofillPayload() {
   // Same trust position as the extension's background worker: local shell code
-  // talking to the local engine, so it sends the guarded-route header.
+  // talking to the local engine, so it sends the guarded-route header. The payload
+  // carries the fill-recipe table too (also served at /api/autofill/recipes).
   return net.fetch(SERVER + "/api/profile/autofill",
                    { headers: { "X-Tailor-Extension": "1" } })
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);
 }
+
+function postApp(path, body) {
+  return net.fetch(SERVER + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" },
+    body: JSON.stringify(body || {}),
+  }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+}
+
+// After a fill, watch the pane for the site's "application received" marker. The PERSON
+// submits in their own time; when the recipe's success marker appears (or the generic wording
+// does), the app marks the matching package applied and the UI is told. One watch at a time,
+// re-armed by every fill, dropped after 30 minutes or when the pane closes.
+let _successWatch = null;
+function armSuccessWatch(wc, startUrl, recordId) {
+  disarmSuccessWatch();
+  const started = Date.now();
+  let done = false;
+  const check = async () => {
+    if (done || !pane || pane.webContents !== wc || wc.isDestroyed()) return;
+    if (Date.now() - started > 30 * 60 * 1000) { disarmSuccessWatch(); return; }
+    let hit = false;
+    try {
+      const has = await wc.executeJavaScript("!!window.TailorAutofill", true);
+      if (!has) await wc.executeJavaScript(autofillCore(), true);
+      hit = await wc.executeJavaScript("window.TailorAutofill.detectSuccess()", true);
+    } catch (e) { hit = false; }
+    if (!hit) return;
+    done = true;
+    disarmSuccessWatch();
+    const pageUrl = wc.getURL() || "";
+    const res = await postApp("/api/autofill/applied",
+                              { url: startUrl, page_url: pageUrl, record_id: recordId || null });
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("assist:applied", Object.assign({ url: startUrl, page_url: pageUrl }, res || { ok: false }));
+    }
+  };
+  const timer = setInterval(check, 2500);
+  const onNav = () => setTimeout(check, 1500);
+  for (const ev of ["did-navigate", "did-navigate-in-page", "did-finish-load"]) wc.on(ev, onNav);
+  _successWatch = { wc, timer, onNav };
+}
+function disarmSuccessWatch() {
+  if (!_successWatch) return;
+  clearInterval(_successWatch.timer);
+  try {
+    for (const ev of ["did-navigate", "did-navigate-in-page", "did-finish-load"]) {
+      _successWatch.wc.removeListener(ev, _successWatch.onNav);
+    }
+  } catch (e) { /* pane gone */ }
+  _successWatch = null;
+}
+
+// Learn from corrections: the engine remembers what it filled; whatever the person changed
+// since is offered back to the profile (only on their click in the app).
+ipcMain.handle("assist:learn", async () => {
+  if (!pane) return { ok: false, reason: "no-page" };
+  const wc = pane.webContents;
+  let corrections = {};
+  try {
+    corrections = await wc.executeJavaScript(
+      "window.TailorAutofill ? window.TailorAutofill.takeCorrections() : {}", true);
+  } catch (e) { return { ok: false, reason: "inject-failed" }; }
+  if (!corrections || !Object.keys(corrections).length) return { ok: true, learned: [] };
+  const fields = {}, screening = {};
+  for (const [k, v] of Object.entries(corrections)) {
+    if (k === "work_auth_us" || k === "work_authorized" || k === "needs_sponsorship") screening[k] = v;
+    else fields[k] = v;
+  }
+  const res = await postApp("/api/profile/autofill", { fields, screening });
+  return res || { ok: false, reason: "app-unreachable" };
+});
 
 function waitPaneLoad(timeoutMs = 25000) {
   const wc = pane.webContents;
@@ -378,11 +451,17 @@ ipcMain.handle("assist:fill", async (_e, url) => {
     await wc.executeJavaScript(autofillCore(), true);
     const report = await wc.executeJavaScript(
       `window.TailorAutofill.fill(${JSON.stringify(payload)})`, true);
+    if (report && report.ok) { await armCorrections(wc); armSuccessWatch(wc, url, null); }
     return report && typeof report === "object" ? report : { ok: false, reason: "no-report" };
   } catch (err) {
     return { ok: false, reason: "inject-failed" };
   }
 });
+
+async function armCorrections(wc) {
+  try { await wc.executeJavaScript("window.TailorAutofill.watchCorrections(null)", true); }
+  catch (e) { /* the page may have navigated; the next fill re-arms it */ }
+}
 
 // Attach a local file to the page's first file input. executeJavaScript cannot do this --
 // scripts may not set a file input's files -- so it goes through CDP, the same mechanism a
@@ -535,6 +614,7 @@ ipcMain.handle("assist:fill-current", async () => {
     await wc.executeJavaScript(autofillCore(), true);
     const report = await wc.executeJavaScript(
       `window.TailorAutofill.fill(${JSON.stringify(payload)})`, true);
+    if (report && report.ok) { await armCorrections(wc); armSuccessWatch(wc, url, null); }
     return report && typeof report === "object" ? report : { ok: false, reason: "no-report" };
   } catch (err) {
     return { ok: false, reason: "inject-failed" };
@@ -586,9 +666,27 @@ async function runAutoApplyOnPane(recordId) {
     await wc.insertCSS(FILLED_CSS);
     await wc.executeJavaScript(autofillCore(), true);
     const blocker = await wc.executeJavaScript("window.TailorAutofill.pageBlocker()", true);
-    if (blocker) return { ok: false, reason: "blocked", blocker };          // never fight a captcha/auth wall
-    const fields = await wc.executeJavaScript("window.TailorAutofill.extractForm()", true);
-    if (!fields || !fields.length) return { ok: false, reason: "no-fields" };
+    if (blocker === "auth") return { ok: false, reason: "blocked", blocker };  // never fight an auth wall
+    // Order of play: 1. the site's fill recipe, 2. the label patterns (both inside fill()),
+    // 3. the model plan for whatever is STILL empty. Deterministic first, the model last, and
+    // the model only ever sees field structure, never the person's data.
+    const payload = await fetchAutofillPayload();
+    let pre = null;
+    if (payload && payload.loaded !== false) {
+      try {
+        pre = await wc.executeJavaScript(`window.TailorAutofill.fill(${JSON.stringify(payload)})`, true);
+      } catch (e) { pre = null; }
+    }
+    const preFilled = (pre && pre.ok && pre.filled) || 0;
+    const fields = await wc.executeJavaScript("window.TailorAutofill.extractForm({ onlyEmpty: true })", true);
+    if (!fields || !fields.length) {
+      await armCorrections(wc); armSuccessWatch(wc, url, recordId);
+      if (preFilled) return { ok: true, filled: preFilled, uploaded: 0, pending_upload: 0, skipped: 0,
+                              system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
+                              continue_hint: pre.continue_hint, submit_highlighted: pre.submit_highlighted,
+                              captcha: !!pre.captcha };
+      return { ok: false, reason: "no-fields" };
+    }
 
     let plan = null;
     try {
@@ -610,9 +708,13 @@ async function runAutoApplyOnPane(recordId) {
     if (report && (report.uploads || []).length && resumePath) {
       uploaded = await cdpUploadFiles(wc, report.uploads, resumePath);
     }
-    return { ok: true, filled: (report && report.filled) || 0, uploaded,
+    await armCorrections(wc); armSuccessWatch(wc, url, recordId);
+    return { ok: true, filled: ((report && report.filled) || 0) + preFilled, uploaded,
              pending_upload: Math.max(0, ((report && (report.uploads || []).length) || 0) - uploaded),
-             skipped: (report && report.skipped) || 0 };
+             skipped: (report && report.skipped) || 0,
+             system: pre ? pre.system : "", system_name: pre ? pre.system_name : "",
+             next_page: !!(pre && pre.next_page), continue_hint: (pre && pre.continue_hint) || "",
+             submit_highlighted: !!(pre && pre.submit_highlighted), captcha: !!(pre && pre.captcha) };
   } catch (err) {
     return { ok: false, reason: "inject-failed" };
   }
@@ -636,7 +738,7 @@ ipcMain.handle("autoapply:fill-current", async (_e, recordId) => runAutoApplyOnP
 
 ipcMain.on("pane:set-bounds", (_e, rect) => { paneBounds = rect; layoutPane(); });
 ipcMain.on("pane:open", (_e, url) => openInPane(url));
-ipcMain.on("pane:close", () => closePane());
+ipcMain.on("pane:close", () => { disarmSuccessWatch(); closePane(); });
 ipcMain.on("pane:back", () => pane && pane.webContents.navigationHistory.goBack());
 ipcMain.on("pane:forward", () => pane && pane.webContents.navigationHistory.goForward());
 ipcMain.on("pane:reload", () => pane && pane.webContents.reload());

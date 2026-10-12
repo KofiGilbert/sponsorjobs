@@ -3844,6 +3844,9 @@ def profile_view():
         "summary": str(profile.get("summary") or essentials.get("summary") or ""),
         "skills_input": essentials.get("skills_input") or [],
         "declined": essentials.get("declined") or [],
+        # Application answers the fill engine reuses on every form (work authorization,
+        # sponsorship, EEO decline); edited on this screen, saved with /api/profile/answers.
+        "answers": _profile_answers(),
     })
 
 
@@ -4088,6 +4091,8 @@ def profile_identity_save():
 
 _PREFS_PATH = _DATA / "app_prefs.json"
 _YN = {"", "Yes", "No"}
+# Sponsorship has three honest answers: Yes (now), No, Future (not now, e.g. on OPT, but later).
+_SPONSOR = {"", "Yes", "No", "Future"}
 
 
 def _load_prefs() -> dict:
@@ -4106,9 +4111,13 @@ def _save_prefs(prefs: dict) -> dict:
     def _txt(v, n):
         return str(v or "").strip()[:n]
 
+    # work_auth_us is the profile screen's name for the same answer the extension popup calls
+    # work_authorized; both spellings are accepted and both are stored, so neither carrier breaks.
+    work_auth = prefs.get("work_auth_us") or prefs.get("work_authorized")
     clean = {
-        "work_authorized": prefs.get("work_authorized") if prefs.get("work_authorized") in _YN else "",
-        "needs_sponsorship": prefs.get("needs_sponsorship") if prefs.get("needs_sponsorship") in _YN else "",
+        "work_authorized": work_auth if work_auth in _YN else "",
+        "work_auth_us": work_auth if work_auth in _YN else "",
+        "needs_sponsorship": prefs.get("needs_sponsorship") if prefs.get("needs_sponsorship") in _SPONSOR else "",
         # More answers the person gives on nearly every form, saved once and reused so the
         # autofill fills the whole thing and they just review + submit (Path A). Yes/No and
         # short free-text only; length-capped so a stray paste can't bloat the store.
@@ -4123,6 +4132,181 @@ def _save_prefs(prefs: dict) -> dict:
     _DATA.mkdir(parents=True, exist_ok=True)
     _PREFS_PATH.write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
+
+
+def _merge_prefs(patch: dict) -> dict:
+    """Update only the answers in ``patch``, keeping every other saved answer."""
+    cur = _load_prefs()
+    cur.update({k: v for k, v in (patch or {}).items() if k in _PREF_KEYS})
+    if "work_auth_us" in (patch or {}):          # the profile screen's spelling wins when given
+        cur["work_authorized"] = patch["work_auth_us"]
+    return _save_prefs(cur)
+
+
+_PREF_KEYS = ("work_authorized", "work_auth_us", "needs_sponsorship", "willing_to_relocate",
+              "over_18", "years_experience", "desired_salary", "earliest_start", "hear_about_us",
+              "eeo_decline")
+
+
+def _profile_answers(prefs: dict | None = None) -> dict:
+    """The three first-class application answers the profile screen shows."""
+    p = prefs if prefs is not None else _load_prefs()
+    wa = p.get("work_auth_us") or p.get("work_authorized") or ""
+    return {"work_auth_us": wa if wa in _YN else "",
+            "needs_sponsorship": p.get("needs_sponsorship") if p.get("needs_sponsorship") in _SPONSOR else "",
+            "eeo_decline": bool(p.get("eeo_decline"))}
+
+
+_RECIPES_PATH = ROOT / "autoapply" / "recipes.json"
+_RECIPES_CACHE: dict = {}
+
+
+def _recipes() -> dict:
+    """The fill-recipe table (autoapply/recipes.json): one DATA entry per application system
+    (URL patterns, selectors per profile field, continue/submit buttons to HIGHLIGHT, success
+    markers). Read once per file change. Never personal data, never a click."""
+    try:
+        mtime = _RECIPES_PATH.stat().st_mtime
+    except OSError:
+        return {"version": 0, "systems": []}
+    if _RECIPES_CACHE.get("mtime") != mtime:
+        try:
+            _RECIPES_CACHE["data"] = _json_prefs.loads(_RECIPES_PATH.read_text(encoding="utf-8"))
+            _RECIPES_CACHE["mtime"] = mtime
+        except (OSError, ValueError):
+            return {"version": 0, "systems": []}
+    return _RECIPES_CACHE.get("data") or {"version": 0, "systems": []}
+
+
+@app.get("/api/autofill/recipes")
+@_guard
+def autofill_recipes():
+    """The fill-recipe table for the fill engine (extension + desktop shell). Public data about
+    public forms, so no extension lock; no-store so an edited table is picked up at once."""
+    return _nostore(jsonify(_recipes()))
+
+
+_LEARN_IDENTITY = {"name": "name", "email": "email", "phone": "phone", "address": "address",
+                   "linkedin": "linkedin", "github": "github", "website": "blog"}
+
+
+def _learn_from_corrections(body: dict) -> dict:
+    """'Learn from corrections': the person changed a value the engine filled, and said yes to
+    saving it. Contact fields land in the saved identity (both bags, like /api/profile/identity),
+    screening answers in the reusable prefs. Only known keys, only non-empty values, length-capped."""
+    fields = body.get("fields") or {}
+    screening = body.get("screening") or {}
+    patch: dict = {}
+    first = str(fields.get("first_name") or "").strip()
+    last = str(fields.get("last_name") or "").strip()
+    if first or last:
+        cur = str(_saved_identity().get("name") or "").strip()
+        cf, cl = _split_name(cur)
+        patch["name"] = " ".join(x for x in (first or cf, last or cl) if x).strip()
+    for src, dst in _LEARN_IDENTITY.items():
+        v = str(fields.get(src) or "").strip()[:200]
+        if v:
+            patch[dst] = v
+    if "street" in fields or "city" in fields or "state" in fields or "zip" in fields:
+        cur_addr = _parse_address(str(_saved_identity().get("address") or ""))
+        parts = {k: str(fields.get(k) or cur_addr.get(k) or "").strip() for k in ("street", "city", "state", "zip")}
+        tail = " ".join(x for x in (parts["state"], parts["zip"]) if x)
+        addr = ", ".join(x for x in (parts["street"], parts["city"], tail) if x)
+        if addr:
+            patch["address"] = addr[:200]
+    saved_identity = {}
+    if patch:
+        mem = _memory()
+        try:
+            saved = mem.load("default") or {}
+            profile = saved.get("profile") or {}
+            essentials = saved.get("essentials") or {"identity": {}, "education": [], "experience": []}
+            profile.setdefault("identity", {}).update(patch)
+            essentials.setdefault("identity", {}).update(patch)
+            mem.save("default", profile, essentials, saved.get("history") or [])
+            saved_identity = dict(essentials.get("identity") or {})
+        finally:
+            mem.close()
+        sess = _SESSION.get("s")
+        if sess is not None:
+            try:
+                sess.essentials.setdefault("identity", {}).update(patch)
+                if isinstance(getattr(sess, "profile", None), dict):
+                    sess.profile.setdefault("identity", {}).update(patch)
+            except Exception:
+                pass
+    pref_patch = {k: v for k, v in screening.items()
+                  if k in ("work_auth_us", "work_authorized", "needs_sponsorship",
+                           "willing_to_relocate", "over_18")}
+    if "eeo_decline" in body:
+        pref_patch["eeo_decline"] = bool(body.get("eeo_decline"))
+    prefs = _merge_prefs(pref_patch) if pref_patch else _load_prefs()
+    return {"ok": True, "learned": sorted(list(patch) + list(pref_patch)),
+            "identity": {k: str(saved_identity.get(k) or "") for k in IDENTITY_KEYS} if patch else None,
+            "answers": _profile_answers(prefs)}
+
+
+def _url_key(url: str) -> str:
+    """host + path, lowercased, without query/fragment: enough to say two URLs are one job page."""
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(str(url or "").strip())
+    except ValueError:
+        return ""
+    host = (u.hostname or "").lower()
+    host = host[4:] if host.startswith("www.") else host
+    return (host + u.path.rstrip("/")).lower() if host else ""
+
+
+def _mark_applied_from_page(body: dict) -> dict:
+    """The fill engine saw the site's 'application received' marker AFTER THE PERSON submitted.
+    Find the application record this page belongs to (by record id, else by the job URL the
+    package was built from) and move it to 'applied' through the tracker, which also arms the
+    follow-up nudge. No record for this page -> nothing is marked, and we say so."""
+    from submit.tracker import stage_patch
+    rid = body.get("record_id")
+    keys = {k for k in (_url_key(body.get("url")), _url_key(body.get("page_url"))) if k}
+    recs = _records()
+    try:
+        rec = None
+        if rid not in (None, ""):
+            try:
+                rec = recs.get(int(rid))
+            except (TypeError, ValueError):
+                rec = None
+        if rec is None and keys:
+            for r in recs.list(limit=200):
+                d = _record_data(r)
+                cand = {_url_key((d.get("source_job") or {}).get("url")), _url_key(d.get("apply_url"))}
+                if cand & keys:
+                    rec = r
+                    break
+        if rec is None:
+            return {"ok": True, "matched": False, "record_id": None}
+        data = recs.merge_data(rec["id"], stage_patch(_record_data(rec), "applied", _now_iso()))
+    finally:
+        recs.close()
+    return {"ok": True, "matched": True, "record_id": rec["id"], "stage": data.get("stage"),
+            "applied_at": data.get("applied_at"), "follow_up_due": data.get("follow_up_due")}
+
+
+@app.post("/api/profile/autofill")
+@_guard
+@_extension_only
+def profile_autofill_learn():
+    """Learn from corrections: body {fields:{first_name,last_name,email,phone,street,city,state,
+    zip,linkedin,github,website}, screening:{work_auth_us,needs_sponsorship,...}, eeo_decline}.
+    Saves what the person corrected on a form into the profile so the next fill is right."""
+    return _nostore(jsonify(_learn_from_corrections(request.json or {})))
+
+
+@app.post("/api/autofill/applied")
+@_guard
+@_extension_only
+def autofill_applied():
+    """The engine detected the application-received page: mark that job applied.
+    Body {url, page_url?, record_id?, title?, system?}."""
+    return _nostore(jsonify(_mark_applied_from_page(request.json or {})))
 
 
 @app.get("/api/profile/autofill")
@@ -4155,6 +4339,15 @@ def profile_autofill():
     screening = {k: prefs[k] for k in ("work_authorized", "needs_sponsorship",
                                        "willing_to_relocate", "over_18")
                  if prefs.get(k) in ("Yes", "No")}
+    # The first-class profile answers: work_auth_us (Yes/No) alongside its older spelling, and
+    # needs_sponsorship with its third honest value, Future (the engine answers a "now or in the
+    # future" question Yes for it and leaves a present-tense one to the person).
+    answers_now = _profile_answers(prefs)
+    if answers_now["work_auth_us"]:
+        screening["work_auth_us"] = answers_now["work_auth_us"]
+        screening.setdefault("work_authorized", answers_now["work_auth_us"])
+    if answers_now["needs_sponsorship"]:
+        screening["needs_sponsorship"] = answers_now["needs_sponsorship"]
     # Short free-text answers the extension can type into a matching field (years of
     # experience, desired salary, earliest start, how they heard) so the form is filled,
     # not just contact info.
@@ -4183,6 +4376,9 @@ def profile_autofill():
         "eeo": {"decline": bool(prefs.get("eeo_decline"))},
         "resumes": resumes,
         "app_url": "http://127.0.0.1:57000/",
+        # The per-system fill recipes ride along so the extension (whose background worker only
+        # knows this route) always fills from the freshest table; also at /api/autofill/recipes.
+        "recipes": _recipes(),
     }))
 
 
@@ -4200,8 +4396,47 @@ def profile_prefs_get():
 @_extension_only
 def profile_prefs_set():
     """Save the reusable application answers. Values are validated to Yes/No/blank so a
-    form is never filled with a free-text guess for a screening question."""
-    return _nostore(jsonify({"ok": True, "prefs": _save_prefs(request.json or {})}))
+    form is never filled with a free-text guess for a screening question.
+
+    Also the extension's EVENT channel: its background worker (owned with the manifest, and
+    not changed here) only knows this route, so a body of the form {event: {type: ...}} is
+    routed to the matching endpoint instead of being saved as answers:
+      {type: "learn", fields, screening, eeo_decline} -> POST /api/profile/autofill
+      {type: "applied", url, page_url, record_id}     -> POST /api/autofill/applied"""
+    body = request.json or {}
+    ev = body.get("event")
+    if isinstance(ev, dict):
+        kind = str(ev.get("type") or "")
+        if kind == "learn":
+            return _nostore(jsonify(_learn_from_corrections(ev)))
+        if kind == "applied":
+            return _nostore(jsonify(_mark_applied_from_page(ev)))
+        return jsonify({"ok": False, "error": f"Unknown event {kind!r}."}), 400
+    return _nostore(jsonify({"ok": True, "prefs": _save_prefs(body)}))
+
+
+@app.post("/api/profile/answers")
+@_guard
+def profile_answers_save():
+    """The profile screen's first-class application answers: work_auth_us (Yes/No),
+    needs_sponsorship (Yes/No/Future) and eeo_decline (bool). Same store as the extension
+    popup's answers, so both surfaces show one truth."""
+    b = request.json or {}
+    patch: dict = {}
+    if "work_auth_us" in b:
+        v = str(b.get("work_auth_us") or "")
+        if v not in _YN:
+            return jsonify({"error": "work_auth_us must be Yes, No, or blank"}), 400
+        patch["work_auth_us"] = v
+    if "needs_sponsorship" in b:
+        v = str(b.get("needs_sponsorship") or "")
+        if v not in _SPONSOR:
+            return jsonify({"error": "needs_sponsorship must be Yes, No, Future, or blank"}), 400
+        patch["needs_sponsorship"] = v
+    if "eeo_decline" in b:
+        patch["eeo_decline"] = bool(b.get("eeo_decline"))
+    prefs = _merge_prefs(patch) if patch else _load_prefs()
+    return jsonify({"ok": True, "answers": _profile_answers(prefs)})
 
 
 @app.post("/api/profile/draft")
@@ -4881,7 +5116,8 @@ def preps_create():
                                                   difficulty=difficulty)
     questions = qs.get("questions") or []
     p = {"id": uuid.uuid4().hex[:12], "role": role, "company": company, "jd": jd,
-         "focus": focus, "difficulty": difficulty, "questions": questions, "record_id": rid}
+         "focus": focus, "difficulty": difficulty, "questions": questions, "record_id": rid,
+         "cv": cv[:20000]}
     preps = _load_preps()
     preps.append(p)
     _save_preps(preps)
@@ -5177,6 +5413,132 @@ def reviews_delete(rid):
     return jsonify({"ok": True})
 
 
+# ---- Interview goals per job: the prep checklist shown on the interview start screen (the 5 most
+# likely questions, the 3 things to make sure to mention, the company facts the JD reveals). Built
+# from the JD and the tailored CV ONCE per job and cached locally; both rounds show the same one. ----
+_GOALS_FILE = _DATA / "interview_goals.json"
+
+
+def _load_goals() -> dict:
+    try:
+        d = json.loads(_GOALS_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_goals(goals: dict) -> None:
+    _GOALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _GOALS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(goals, indent=2), encoding="utf-8")
+    tmp.replace(_GOALS_FILE)
+
+
+def _job_key(prep: dict) -> str:
+    """What makes two preps 'the same job': the saved application when there is one, else the
+    role and company typed in. The goals cache and the report-card history both key on this."""
+    rid = prep.get("record_id")
+    if rid not in (None, ""):
+        return f"record:{rid}"
+    role = str(prep.get("role") or "").strip().lower()
+    company = str(prep.get("company") or "").strip().lower()
+    return f"job:{role}|{company}" if role else f"prep:{prep.get('id')}"
+
+
+def _record_cv_text(rid) -> str:
+    """The tailored CV behind a saved application, as plain text (what the interviewer holds)."""
+    if rid in (None, ""):
+        return ""
+    rec = _get_record(rid)
+    if not rec:
+        return ""
+    data = _record_data(rec)
+    prof = data.get("page_profile") or data.get("profile") or {}
+    try:
+        from tailoring.keywords import profile_text
+        return profile_text(prof) if prof else ""
+    except Exception:
+        return ""
+
+
+def _goals_for(prep: dict, refresh: bool = False) -> dict:
+    key = _job_key(prep)
+    goals = _load_goals()
+    hit = goals.get(key)
+    if isinstance(hit, dict) and hit.get("questions") and not refresh:
+        return {**hit, "cached": True}
+    profile = (_memory().load("default") or {}).get("profile") or {}
+    cv = _record_cv_text(prep.get("record_id")) or str(prep.get("cv") or "")
+    out = _make_llm().interview_goals(profile, prep.get("role", ""), prep.get("company", ""),
+                                      prep.get("jd", ""), cv=cv)
+    entry = {"questions": [str(x) for x in (out.get("questions") or [])][:5],
+             "mentions": [str(x) for x in (out.get("mentions") or [])][:3],
+             "company_facts": [str(x) for x in (out.get("company_facts") or [])][:5],
+             "role": prep.get("role", ""), "company": prep.get("company", ""),
+             "generated": int(time.time()), "job_key": key}
+    goals[key] = entry
+    _save_goals(goals)
+    return {**entry, "cached": False}
+
+
+@app.get("/api/preps/<pid>/goals")
+@_guard
+def preps_goals(pid):
+    """The prep checklist for this prep's job. Generated on the first call and cached per job
+    (`?refresh=1` rebuilds it). Shown on the start screen of both rounds."""
+    prep = next((p for p in _load_preps() if p.get("id") == pid), None)
+    if not prep:
+        return jsonify({"error": "Prep not found."}), 404
+    return jsonify({"goals": _goals_for(prep, refresh=request.args.get("refresh") == "1")})
+
+
+def _history_for(prep: dict, screens: list, interviews: list, preps: list) -> dict:
+    """Every scored attempt for the SAME job as this prep (Round 1 screens, re-drills and Round 2
+    live interviews), oldest first, with the overall-score trend. Pure, so it is testable."""
+    from interview.report import score_trend
+    key = _job_key(prep)
+    by_id = {p.get("id"): p for p in preps}
+    same = {p.get("id") for p in preps if _job_key(p) == key}
+    cards = []
+    seq = 0                       # file order breaks ties inside one second (screens, then live)
+    for s in screens:
+        res = s.get("result")
+        if s.get("prep_id") in same and isinstance(res, dict) and res.get("score") is not None:
+            seq += 1
+            cards.append({"id": s.get("id"), "kind": "screen", "round": 1, "_seq": seq,
+                          "created": int(s.get("created") or 0), "score": int(res.get("score") or 0),
+                          "passed": bool(res.get("passed")), "drill": bool(s.get("drill")),
+                          "has_card": isinstance(res.get("report_card"), dict),
+                          "questions": len([a for a in (s.get("answers") or []) if a.get("transcript")])})
+    for iv in interviews:
+        rep = iv.get("report")
+        if iv.get("prep_id") in same and isinstance(rep, dict) and rep.get("score") is not None:
+            seq += 1
+            cards.append({"id": iv.get("id"), "kind": "interview", "round": 2, "_seq": seq,
+                          "created": int(iv.get("ended") or iv.get("started") or 0),
+                          "score": int(rep.get("score") or 0), "passed": bool(rep.get("passed")),
+                          "drill": False, "has_card": isinstance(rep.get("report_card"), dict),
+                          "questions": len(rep.get("answers") or [])})
+    cards.sort(key=lambda c: (c["created"], c["_seq"]))
+    for c in cards:
+        c.pop("_seq", None)
+    p0 = by_id.get(prep.get("id")) or prep
+    return {"job_key": key, "role": p0.get("role", ""), "company": p0.get("company", ""),
+            "cards": cards, "trend": score_trend([c["score"] for c in cards])}
+
+
+@app.get("/api/interview/history")
+@_guard
+def interview_history():
+    """Past report cards for one job (`?prep_id=`), both rounds, with the overall-score trend."""
+    pid = str(request.args.get("prep_id") or "").strip()
+    preps = _load_preps()
+    prep = next((p for p in preps if p.get("id") == pid), None)
+    if not prep:
+        return jsonify({"error": "Prep not found."}), 404
+    return jsonify(_history_for(prep, _load_screens(), _load_interviews(), preps))
+
+
 # ---- Round 1: a HireVue-style ONE-WAY recorded video screen on top of a prep (decision of
 # 2026-10-02). No interviewer: N questions (3 to 5, default 5), 30s to prepare, 120s to answer,
 # one retake per question, auto-submit at time-out (client), unlimited unscored practice prompts
@@ -5272,6 +5634,28 @@ _PRACTICE_POOL = (
 )
 
 
+def _drill_questions(raw) -> list[dict]:
+    """The questions a re-drill hands over, normalised to the screen's shape: 1 to 5 items with a
+    non-empty q; competency and kind kept when given ('drill' otherwise). [] when unusable."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        if isinstance(item, str):
+            item = {"q": item}
+        if not isinstance(item, dict):
+            continue
+        q = str(item.get("q") or item.get("text") or "").strip()
+        if not q:
+            continue
+        out.append({"q": q[:600], "kind": _norm_kind(item.get("kind")) or "drill",
+                    "competency": str(item.get("competency") or "").strip()[:60] or "General",
+                    "why": "Practice this one again."})
+        if len(out) >= _SCREEN_MAX_Q:
+            break
+    return out
+
+
 def _practice_question(role: str = "", seen: int | None = None) -> dict:
     """One unscored practice prompt. Random each time (or the `seen`-th one when given, so a client
     can page through them); never persisted anywhere."""
@@ -5301,6 +5685,15 @@ def _stt_available() -> bool:
         return available()
     except Exception:
         return False
+
+
+def _measured_seconds(v) -> float | None:
+    """A measured answer length from the client, or None when it sent nothing usable."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(f, 1) if 0 < f < 3600 else None
 
 
 def _screen_config(s: dict) -> dict:
@@ -5347,7 +5740,7 @@ def _screen_public(s: dict, include_video: bool = False) -> dict:
             "company": s.get("company", ""), "config": cfg, "questions": questions,
             "answers": ans, "result": result, "passed": bool(s.get("passed")),
             "created": int(s.get("created") or 0), "stt_available": _stt_available(),
-            "disclaimer": ROUND1_DISCLAIMER}
+            "drill": bool(s.get("drill")), "disclaimer": ROUND1_DISCLAIMER}
 
 
 @app.get("/api/screens")
@@ -5369,30 +5762,38 @@ def screens_create():
     prep = next((p for p in _load_preps() if p.get("id") == prep_id), None)
     if not prep:
         return jsonify({"error": "Prep not found. Start a prep first."}), 404
-    try:
-        n = int(b.get("questions") or _SCREEN_DEFAULT_Q)
-    except (TypeError, ValueError):
-        n = _SCREEN_DEFAULT_Q
-    if not (_SCREEN_MIN_Q <= n <= _SCREEN_MAX_Q):
-        return jsonify({"error": f"Pick between {_SCREEN_MIN_Q} and {_SCREEN_MAX_Q} questions."}), 400
+    # Re-drill (from a report card): the SAME recorded flow, with just the questions handed over
+    # (1 to 5), no generation. The screen is flagged so the history shows it as a drill.
+    drill = _drill_questions(b.get("drill"))
+    if b.get("drill") is not None and not drill:
+        return jsonify({"error": "Pick 1 to 5 questions to drill."}), 400
     extra = bool(b.get("extra_time"))
-    kinds = _screen_mix(n)
-    profile = (_memory().load("default") or {}).get("profile") or {}
-    llm = _make_llm()           # no model -> fails loudly here (CLAUDE.md §13), never a silent fallback
-    try:
-        gen = llm.generate_screen_questions(profile, prep.get("role", ""), prep.get("company", ""),
-                                            prep.get("jd", ""), kinds=kinds)
-        generated = gen.get("questions") or []
-    except Exception:
-        generated = []          # a bad model reply: the fit falls back to the prep's questions / defaults
-    qs = _fit_screen_questions(generated, kinds, prep)
+    if drill:
+        qs = drill
+    else:
+        try:
+            n = int(b.get("questions") or _SCREEN_DEFAULT_Q)
+        except (TypeError, ValueError):
+            n = _SCREEN_DEFAULT_Q
+        if not (_SCREEN_MIN_Q <= n <= _SCREEN_MAX_Q):
+            return jsonify({"error": f"Pick between {_SCREEN_MIN_Q} and {_SCREEN_MAX_Q} questions."}), 400
+        kinds = _screen_mix(n)
+        profile = (_memory().load("default") or {}).get("profile") or {}
+        llm = _make_llm()       # no model -> fails loudly here (CLAUDE.md §13), never a silent fallback
+        try:
+            gen = llm.generate_screen_questions(profile, prep.get("role", ""), prep.get("company", ""),
+                                                prep.get("jd", ""), kinds=kinds)
+            generated = gen.get("questions") or []
+        except Exception:
+            generated = []      # a bad model reply: the fit falls back to the prep's questions / defaults
+        qs = _fit_screen_questions(generated, kinds, prep)
     answers = [{"q": q["q"], "kind": q["kind"], "competency": q["competency"], "why": q["why"],
                 "video_path": "", "transcript": "", "per_answer_feedback": None,
                 "delivery_metrics": None, "takes": 0} for q in qs]
     mult = 2 if extra else 1
     s = {"id": uuid.uuid4().hex[:12], "prep_id": prep_id, "role": prep.get("role", ""),
          "company": prep.get("company", ""), "answers": answers, "result": None, "passed": False,
-         "created": int(time.time()), "extra_time": extra,
+         "created": int(time.time()), "extra_time": extra, "drill": bool(drill),
          "prep_s": _SCREEN_PREP_S * mult, "answer_s": _SCREEN_ANSWER_S * mult,
          "retakes": _SCREEN_RETAKES}
     screens = _load_screens()
@@ -5463,6 +5864,9 @@ def screens_upload_answer(sid, idx):
     f.save(str(dest))
     ans["video_path"] = str(dest)
     ans["takes"] = int(ans.get("takes") or 0) + 1
+    # The report card's words-per-minute wants the real length of the take: the UI measures it
+    # on the recorder and sends it along (an older UI sends nothing, and the card estimates).
+    ans["seconds"] = _measured_seconds(request.form.get("seconds"))
     # A retake replaces the earlier take: its transcript and feedback no longer apply.
     ans["transcript"], ans["per_answer_feedback"], ans["delivery_metrics"] = "", None, None
     _save_screens(screens)
@@ -5489,7 +5893,7 @@ def screens_transcribe(sid, idx):
         return jsonify({"error": "No recording to transcribe."}), 400
     text = transcribe(path)
     ans["transcript"] = text
-    ans["delivery_metrics"] = delivery_metrics(text)
+    ans["delivery_metrics"] = delivery_metrics(text, ans.get("seconds"))
     _save_screens(screens)
     return jsonify({"available": True, "transcript": text, "delivery_metrics": ans["delivery_metrics"]})
 
@@ -5503,10 +5907,13 @@ def screens_set_transcript(sid, idx):
     if not s or not (0 <= idx < len(s.get("answers") or [])):
         return jsonify({"error": "Screen or question not found."}), 404
     from interview.transcribe import delivery_metrics
-    text = str((request.json or {}).get("transcript") or "").strip()
+    body = request.json or {}
+    text = str(body.get("transcript") or "").strip()
     ans = s["answers"][idx]
     ans["transcript"] = text
-    ans["delivery_metrics"] = delivery_metrics(text)
+    if body.get("seconds") is not None:              # the UI may still know how long the take ran
+        ans["seconds"] = _measured_seconds(body.get("seconds"))
+    ans["delivery_metrics"] = delivery_metrics(text, ans.get("seconds"))
     _save_screens(screens)
     return jsonify({"ok": True, "delivery_metrics": ans["delivery_metrics"]})
 
@@ -5591,18 +5998,23 @@ def _interview_readiness_overview(screens: list, interviews: list | None = None)
     }
 
 
-def _score_answer_set(role: str, company: str, answers: list, profile: dict) -> dict:
+def _score_answer_set(role: str, company: str, answers: list, profile: dict,
+                      round_no: int = 1) -> dict:
     """Shared scoring for a Round-1 recorded screen AND the Round-2 live dialogue: per-answer
     feedback (mutated onto each answered item) plus an aggregate PRACTICE result. Only answers
     that have a transcript are scored; the result is flagged is_practice (never a hiring outcome).
-    Content, STAR structure, specificity, JD-term use, fillers and pace; never facial analysis."""
+    Content, STAR structure, specificity, JD-term use, fillers and pace; never facial analysis.
+    The structured report card (interview/report.py) rides along ADDITIVELY as
+    ``result["report_card"]``: the overall score above is untouched, older stored results simply
+    have no card."""
+    from interview.report import build_report_card
     from interview.transcribe import delivery_metrics
     llm = _make_llm()
     scored = []
     for a in answers:
         if not str(a.get("transcript") or "").strip():
             continue
-        d = a.get("delivery_metrics") or delivery_metrics(a.get("transcript", ""))
+        d = a.get("delivery_metrics") or delivery_metrics(a.get("transcript", ""), a.get("seconds"))
         fb = llm.score_interview_answer(profile, a.get("q", ""), a.get("transcript", ""), d)
         a["per_answer_feedback"] = fb
         a["delivery_metrics"] = d
@@ -5611,6 +6023,11 @@ def _score_answer_set(role: str, company: str, answers: list, profile: dict) -> 
     result = llm.score_interview_screen(role, company, scored)
     result["is_practice"] = True          # honesty: a practice assessment, not a hiring outcome
     result["competencies"] = _competency_breakdown(answers)   # where they're strong vs weak
+    try:
+        result["report_card"] = build_report_card(answers, llm, overall_score=result.get("score"),
+                                                  round_no=round_no)
+    except Exception:
+        result["report_card"] = None      # the card never takes the score down with it
     return result
 
 
@@ -6465,10 +6882,9 @@ def _pair_dialogue(turns: list, plan: list, min_words: int = 8) -> list[dict]:
     `min_words` (yes / thank you / goodbye) are not scored. Pure."""
     items: list[dict] = []
     cur: dict | None = None
-    for t in turns or []:
+    turns = [t for t in (turns or []) if str(t.get("content") or "").strip()]
+    for k, t in enumerate(turns):
         content = str(t.get("content") or "").strip()
-        if not content:
-            continue
         if t.get("role") == "interviewer":
             # "Take your time", "No problem, I was asking...", "Let me rephrase": the SAME question
             # again, not a new one. The answer is everything said to it, so a false start ("U.S.
@@ -6480,13 +6896,18 @@ def _pair_dialogue(turns: list, plan: list, min_words: int = 8) -> list[dict]:
                 items.append(cur)
                 cur = None
             if cur is None:
-                cur = {"q": content, "transcript": ""}
+                cur = {"q": content, "transcript": "", "seconds": None}
             else:
                 cur["q"] = (cur["q"] + " " + content).strip()
         else:
             if cur is None:
-                cur = {"q": "Tell me about yourself.", "transcript": ""}
+                cur = {"q": "Tell me about yourself.", "transcript": "", "seconds": None}
             cur["transcript"] = (cur["transcript"] + " " + content).strip()
+            # The report card's pace wants how long the person spoke: the turn's own duration when
+            # the transcript carries timestamps, else the gap to the next turn; else unknown.
+            secs = _turn_seconds(t, turns[k + 1] if k + 1 < len(turns) else None)
+            if secs is not None:
+                cur["seconds"] = round((cur["seconds"] or 0) + secs, 1)
     if cur is not None and cur["transcript"]:
         items.append(cur)
     out = []
@@ -6501,13 +6922,29 @@ def _pair_dialogue(turns: list, plan: list, min_words: int = 8) -> list[dict]:
     return out
 
 
+def _turn_seconds(t: dict, nxt: dict | None) -> float | None:
+    """How long one transcript turn ran: its `duration`, else the gap to the next turn's start.
+    None when the transcript has no timestamps (a pasted transcript). Pure."""
+    try:
+        if t.get("duration") is not None:
+            d = float(t.get("duration"))
+            return d if d > 0 else None
+        if t.get("seconds_from_start") is not None and nxt and nxt.get("seconds_from_start") is not None:
+            d = float(nxt["seconds_from_start"]) - float(t["seconds_from_start"])
+            return d if d > 0 else None
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
 def _score_live_dialogue(iv: dict, turns: list, profile: dict, duration_s: int) -> dict:
     """Score the live interview's transcript with the same per-answer + aggregate scorers as Round 1,
     adapted for a dialogue (questions paired with the answers that followed). Content, STAR,
     specificity, JD terms, fillers, pace; never the video."""
     answers = _pair_dialogue(turns, iv.get("plan") or [])
     if answers:
-        result = _score_answer_set(iv.get("role", ""), iv.get("company", ""), answers, profile)
+        result = _score_answer_set(iv.get("role", ""), iv.get("company", ""), answers, profile,
+                                   round_no=2)
     else:
         result = {"score": 0, "passed": False, "threshold": 70, "is_practice": True,
                   "why": "There was too little said to score. Answer each question in a few full "
