@@ -124,6 +124,57 @@ async function savePrefs() {
 
 $("savePrefs").addEventListener("click", savePrefs);
 
+// --- Job boards: one grant per board (optional_host_permissions) -------------------------
+// LinkedIn is in the manifest outright; Indeed, Glassdoor, Handshake, Dice, Google Jobs and
+// ZipRecruiter are each enabled here, on their own, with the browser's own permission prompt.
+// chrome.permissions.request needs a user gesture, so the click handler calls it directly; the
+// content script on that board is then told to start reading, and the "pending" marker (the
+// board the person opened without a grant, remembered by the background) is cleared.
+async function tellActiveTab(msg) {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    for (const t of tabs) chrome.tabs.sendMessage(t.id, msg, () => void chrome.runtime.lastError);
+  } catch {}
+}
+async function enableBoard(b, btn) {
+  btn.disabled = true;
+  let ok = false;
+  try { ok = await chrome.permissions.request({ origins: b.origins }); } catch { ok = false; }
+  if (ok) {
+    await ask({ type: "board_clear_pending" });
+    await tellActiveTab({ type: "board_granted", board: b.id });
+  }
+  btn.disabled = false;
+  loadBoards();
+}
+async function loadBoards() {
+  const r = await ask({ type: "boards_status" });
+  const box = $("boardsList");
+  if (!r || r.ok === false || !Array.isArray(r.boards)) { box.innerHTML = ""; return; }
+  box.innerHTML = "";
+  // The board the person is on right now, without a grant, goes first.
+  const boards = [...r.boards].sort((a, b) => (b.id === r.pending) - (a.id === r.pending));
+  for (const b of boards) {
+    const row = document.createElement("div");
+    row.className = "board" + (b.id === r.pending && !b.granted ? " here" : "");
+    const name = document.createElement("span");
+    name.textContent = b.name + (b.id === r.pending && !b.granted ? " (open now)" : "");
+    row.appendChild(name);
+    if (!b.optional || b.granted) {
+      const on = document.createElement("span");
+      on.className = "on"; on.textContent = b.optional ? "On" : "Always on";
+      row.appendChild(on);
+    } else {
+      const btn = document.createElement("button");
+      btn.type = "button"; btn.textContent = `Enable on ${b.name}`;
+      btn.addEventListener("click", () => enableBoard(b, btn));
+      row.appendChild(btn);
+    }
+    box.appendChild(row);
+  }
+}
+
 refreshStatus();
 loadPrefs();
 loadTracking();
+loadBoards();

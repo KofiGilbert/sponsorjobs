@@ -18,6 +18,7 @@
 //    and the page shows an install prompt instead.
 
 importScripts("sponsor_core.js");
+importScripts("boards_core.js");   // the board table, for the per-board grants
 
 const APP = "http://127.0.0.1:57000";
 const EXT_HEADER = { "X-Tailor-Extension": "1" };   // required by the app's guarded routes
@@ -216,8 +217,47 @@ async function matchScore(jd) {
   return data;
 }
 
+// ================================ per-board grants ===========================================
+// The boards beyond LinkedIn are listed under optional_host_permissions, so each is granted on
+// its own from the popup ("Enable on Indeed"). The content script cannot ask chrome.permissions
+// itself, so it asks here; until the answer is "granted" it reads nothing on that board. The
+// board the person is on without a grant is remembered so the popup can offer that one first.
+const PENDING_KEY = "sj_board_pending";
+async function boardGranted(id) {
+  const b = TailorBoards.byId(id);
+  if (!b) return { ok: false, error: "unknown_board" };
+  if (!b.optional) return { ok: true, granted: true };
+  try {
+    const granted = await chrome.permissions.contains({ origins: b.origins });
+    return { ok: true, granted: !!granted };
+  } catch { return { ok: true, granted: false }; }
+}
+async function boardsStatus() {
+  const boards = [];
+  for (const b of TailorBoards.BOARDS) {
+    const g = await boardGranted(b.id);
+    boards.push({ id: b.id, name: b.name, optional: !!b.optional, origins: b.origins, granted: !!g.granted });
+  }
+  let pending = null;
+  try { pending = (await chrome.storage.local.get(PENDING_KEY))[PENDING_KEY] || null; } catch {}
+  return { ok: true, boards, pending };
+}
+async function boardPending(id) {
+  if (!TailorBoards.byId(id)) return { ok: false };
+  try { await chrome.storage.local.set({ [PENDING_KEY]: id }); } catch {}
+  return { ok: true };
+}
+async function boardClearPending() {
+  try { await chrome.storage.local.remove(PENDING_KEY); } catch {}
+  return { ok: true };
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || !msg.type) return;
+  if (msg.type === "board_grant")   { boardGranted(msg.board).then(sendResponse); return true; }
+  if (msg.type === "boards_status") { boardsStatus().then(sendResponse); return true; }
+  if (msg.type === "board_pending") { boardPending(msg.board).then(sendResponse); return true; }
+  if (msg.type === "board_clear_pending") { boardClearPending().then(sendResponse); return true; }
   if (msg.type === "lookup")   { lookup(msg.company, msg.location).then(sendResponse); return true; }
   if (msg.type === "match")    { matchScore(msg.jd).then(sendResponse); return true; }
   if (msg.type === "tracking") { call("/api/tracking/summary").then(sendResponse); return true; }

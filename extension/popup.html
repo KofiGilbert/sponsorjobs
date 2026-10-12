@@ -40,6 +40,11 @@
     .track-cell { flex: 1; text-align: center; background: #f9fafb; border: 1px solid #eaecf0; border-radius: 10px; padding: 8px 4px; }
     .track-cell b { display: block; font-size: 18px; color: #101828; font-variant-numeric: tabular-nums; }
     .track-cell span { font-size: 10.5px; color: #667085; }
+    .board { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; font-size: 12px; color: #344054; }
+    .board.here { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 6px 8px; margin-left: -8px; margin-right: -8px; }
+    .board .on { font-size: 11px; font-weight: 600; color: #067647; }
+    .board button { padding: 5px 10px; font-size: 12px; }
+    .board .note { font-size: 10.5px; color: #667085; }
   </style>
 </head>
 <body>
@@ -57,6 +62,12 @@
     <div id="result"></div>
     <div class="muted" id="appHint" style="margin-top:8px;font-size:11px" hidden>Badges work without the app. For a tailored resume, match
       scores and form filling, <a href="https://github.com/KofiGilbert/sponsorjobs#install" target="_blank" rel="noopener">get the free SponsorJobs app</a>.</div>
+  </div>
+
+  <div class="section" id="boardsSection">
+    <h2>Job boards</h2>
+    <div class="hint">LinkedIn is always on. Each other board is enabled on its own, so the extension only runs where you ask it to.</div>
+    <div id="boardsList"></div>
   </div>
 
   <div class="section" id="trackSection" hidden>
