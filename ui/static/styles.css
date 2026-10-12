@@ -3033,6 +3033,94 @@ body.cv-dragging * { cursor: grabbing !important; }
 .nav-badge[hidden] { display: none; }
 .app.is-rail .nav-badge { position: absolute; top: 6px; right: 8px; margin: 0; }
 .app.is-rail .nav-item { position: relative; }
+/* ================================================================ Tracker (the job board)
+   Same column as the Jobs board (1320px). Dark, almost no colour: the only colour is the
+   due-follow-up dot (--flag) and the goal bar (--good). */
+.view-tracker .page-head { max-width: 1320px; }
+.trk-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.trk-seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--r-pill); padding: 2px; }
+.trk-seg-btn { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; font-weight: 500;
+  padding: 4px 12px; border-radius: var(--r-pill); cursor: pointer; }
+.trk-seg-btn.is-on { background: var(--surface-2); color: var(--ink); }
+.nav-item[data-nav="tracker"] { position: relative; }
+.nav-due-dot { position: absolute; top: 7px; left: 25px; width: 7px; height: 7px; border-radius: 50%; background: var(--flag);
+  box-shadow: 0 0 0 2px var(--sidebar); }
+/* funnel tiles */
+.trk-metrics { max-width: 1320px; margin: 0 auto 16px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.trk-tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 14px 16px; min-width: 0; }
+.trk-tile-l { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+.trk-tile-n { font-size: 26px; font-weight: 660; letter-spacing: -0.02em; margin-top: 6px; color: var(--ink); line-height: 1.1; }
+.trk-tile-s { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.trk-tile-chart { grid-column: 1 / -1; }
+.trk-bars { display: flex; align-items: flex-end; gap: 6px; height: 64px; margin-top: 10px; }
+.trk-bar { flex: 1; height: 100%; display: flex; align-items: flex-end; background: color-mix(in srgb, var(--ink) 3%, transparent); border-radius: 3px; }
+.trk-bar-fill { width: 100%; min-height: 2px; background: var(--ink-2); border-radius: 3px; }
+.trk-bar.is-now .trk-bar-fill { background: var(--accent); }
+.trk-bars-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); margin-top: 6px; }
+.trk-goal { margin-top: 8px; }
+.trk-goal-bar { height: 5px; background: color-mix(in srgb, var(--ink) 8%, transparent); border-radius: 3px; overflow: hidden; }
+.trk-goal-fill { height: 100%; background: var(--good); border-radius: 3px; transition: width var(--dur) var(--ease); }
+.trk-goal-lbl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.trk-goal-in { width: 58px; padding: 2px 6px; font-size: 12px; }
+/* board */
+.trk-board { max-width: 1320px; margin: 0 auto; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.trk-col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 10px; min-height: 180px; min-width: 0;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.trk-col.is-over { border-color: var(--accent); background: var(--surface-2); }
+.trk-col-h { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--faint); margin: 0 2px 10px; }
+.trk-col-n { font-weight: 500; color: var(--muted); }
+.trk-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 10px 11px; cursor: grab; user-select: none; }
+.trk-card + .trk-card { margin-top: 8px; }
+.trk-card:hover, .trk-card:focus-visible { border-color: var(--border-strong); outline: none; }
+.trk-card.is-dragging { opacity: 0.4; }
+.trk-card-co { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trk-card-t { font-size: 13.5px; font-weight: 600; color: var(--ink); margin-top: 2px; line-height: 1.3; }
+.trk-card-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.trk-card-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11.5px; color: var(--muted); margin-top: 7px; }
+.trk-card-meta a { color: var(--ink-2); text-decoration: none; }
+.trk-card-meta a:hover { text-decoration: underline; }
+.trk-due { color: var(--flag); font-weight: 600; }
+.trk-due::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--flag); margin-right: 5px; vertical-align: 1px; }
+/* table */
+.trk-table-wrap { max-width: 1320px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); overflow: auto; }
+.trk-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.trk-table th, .trk-table td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.trk-table th { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+.trk-table tbody tr { cursor: pointer; }
+.trk-table tbody tr:hover { background: var(--surface-2); }
+.trk-table tr:last-child td { border-bottom: 0; }
+.trk-table a { color: var(--ink-2); }
+.trk-stage-sel { font-size: 12.5px; padding: 4px 8px; }
+/* side panel */
+.trk-scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 40; }
+.trk-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--surface); border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-md); z-index: 41; overflow-y: auto; padding: 22px 24px 32px; }
+.trk-p-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.trk-p-head-main { min-width: 0; }
+.trk-p-title { font-size: 18px; font-weight: 650; letter-spacing: -0.01em; margin: 2px 0 0; line-height: 1.25; }
+.trk-p-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.trk-p-sec { margin-top: 22px; }
+.trk-p-h { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); margin-bottom: 8px; }
+.trk-notes { width: 100%; min-height: 90px; resize: vertical; display: block; }
+.trk-contact { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.trk-contact-who { min-width: 0; }
+.trk-contact-links { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; margin-top: 2px; }
+.trk-contact-links a { color: var(--ink-2); }
+.trk-contact-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+.trk-contact-add { grid-column: 1 / -1; justify-self: start; }
+.trk-file { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: 13px; border-bottom: 1px solid var(--border); }
+.trk-file-links { display: flex; gap: 10px; }
+.trk-file-links a { color: var(--ink-2); }
+.trk-tl-row { display: grid; grid-template-columns: 10px 1fr auto; align-items: baseline; gap: 8px; padding: 5px 0; font-size: 12.5px; }
+.trk-tl-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); align-self: center; }
+.trk-tl-when { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.trk-suggest { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 2px; font-size: 12.5px; }
+@media (max-width: 1100px) {
+  .trk-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .trk-board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 /* ---- Interview report card (both rounds) + the prep checklist on the start screens.
    Quiet framed blocks on the report; type and spacing do the hierarchy, colour is rationed to
    the STAR badges and the coverage rating. ---- */
