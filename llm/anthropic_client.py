@@ -215,6 +215,58 @@ class AnthropicLLM:
         out = self._complete(system, text, max_tokens=300)
         return out or text
 
+    def keyword_action(self, term: str, jd_text: str, profile: dict, entries: list[dict],
+                       allow_new: bool) -> dict:
+        """One missing JD term: is it genuinely in the person's material, and if so, one
+        honest edit that puts it on the page (tailoring/keyword_action.py validates all of
+        this again deterministically, so the model's answer is a proposal, never the law)."""
+        system = (
+            "You help a person put ONE job-ad keyword on their resume, honestly.\n"
+            "You are given the keyword, the job ad, the person's own profile, and the roles "
+            "or projects on their one-page resume with their bullets (each bullet has an id).\n"
+            "First decide: does the person's OWN material genuinely show this keyword, in the "
+            "SAME role or project as a bullet you would change? Evidence must be a VERBATIM "
+            "quote from their profile (it is checked word for word). A keyword that is only in "
+            "a skills list, or only in a different role, is NOT support for a bullet.\n"
+            "If it is supported, draft ONE of:\n"
+            "- \"rewrite\": reword the single most relevant existing bullet of that entry so it "
+            "carries the keyword naturally, in the job ad's own wording. Keep the SAME length, "
+            "within about ten percent of the original, and keep every real fact. This is "
+            "re-emphasis, not expansion.\n"
+            + ("- \"new\": a new one-line bullet (at most 160 characters) under that entry, "
+               "ONLY when no existing bullet of the entry can carry it. Set target to the id "
+               "of the last bullet of that entry.\n" if allow_new else
+               "The page has no room for a new line, so you may only rewrite.\n")
+            + "Hard rules: never add a number, percentage, amount, date, team size, employer or "
+            "product the profile does not state. Never add any other skill or tool the entry "
+            "does not show. No filler phrases (demonstrating, leveraging, robust, seamless). "
+            "No em dashes or en dashes anywhere. Plain prose, no markup.\n"
+            "Return ONLY JSON: {\"supported\": true|false, \"reason\": \"one plain line\", "
+            "\"evidence\": {\"label\": \"role or project\", \"quote\": \"verbatim text\", "
+            "\"section\": \"experience|projects|extracurricular\"}, "
+            "\"kind\": \"rewrite\"|\"new\", \"target\": \"bullet id\", \"draft\": \"the bullet\"}. "
+            "When not supported, return {\"supported\": false, \"reason\": \"...\"} only."
+        )
+        shown = []
+        for e in entries or []:
+            lines = [f"ENTRY: {e.get('label', '')} ({e.get('section', '')})",
+                     f"  context: {str(e.get('context') or '')[:1200]}"]
+            for b in e.get("bullets") or []:
+                lines.append(f"  [{b.get('id')}] {b.get('text')}")
+            shown.append("\n".join(lines))
+        compact = {k: profile.get(k) for k in ("summary", "experience", "projects", "skills",
+                                                "extracurricular", "certifications")
+                   if profile.get(k)}
+        user = (f"KEYWORD: {term}\n\n"
+                f"JOB AD (context):\n{(jd_text or '')[:2500]}\n\n"
+                f"THE PERSON'S PROFILE:\n{json.dumps(compact, ensure_ascii=False)[:9000]}\n\n"
+                f"BULLETS ON THE PAGE:\n" + "\n\n".join(shown))
+        raw = self._complete(system, user, max_tokens=700, effort="medium")
+        data = self._parse_json_object(raw) or {}
+        if not isinstance(data, dict):
+            return {"supported": False, "reason": "The model gave no usable answer."}
+        return data
+
     def extract_jd_skills(self, jd_text: str) -> list[str]:
         """Model-read skill list for the coverage report; falls back to the curated vocabulary
         when the model is unavailable or answers badly, so the report never goes blank."""
@@ -1600,6 +1652,70 @@ class AnthropicLLM:
             out.append({k: strip_ai_dashes(str(q.get(k, "")).strip())
                         for k in ("q", "kind", "competency", "why")})
         return {"questions": out}
+
+    def check_star_coverage(self, question: str, transcript: str) -> dict:
+        """The report card's per-answer rubric: did the answer carry each STAR part, how fully did
+        it answer the question asked (0 to 3), and one sentence of evidence. Strict JSON, judged
+        from the transcript alone. PRACTICE feedback, never a hiring decision."""
+        system = (
+            "You grade ONE practice interview answer against a strict rubric. Judge only what was "
+            "actually said.\n"
+            "- star: for each of situation, task, action, result: true if that part is clearly "
+            "present in the answer, else false.\n"
+            "- coverage: an integer 0 to 3 for how fully the answer addresses the QUESTION ASKED: "
+            "0 = did not answer it, 1 = touched it, 2 = answered most of it, 3 = answered it fully "
+            "and specifically.\n"
+            "- evidence: ONE short sentence quoting or pointing at the part of the answer that "
+            "decided the coverage rating.\n"
+            "Return ONLY JSON: {\"star\":{\"situation\":bool,\"task\":bool,\"action\":bool,"
+            "\"result\":bool},\"coverage\":int,\"evidence\":\"...\"}."
+        )
+        user = (f"QUESTION:\n{(question or '')[:600]}\n\n"
+                f"ANSWER (transcript):\n{(transcript or '')[:3000]}")
+        raw = self._complete(system, user, max_tokens=300, effort="low")
+        data = self._parse_json_object(raw) or {}
+        from tailoring.conform import strip_ai_dashes
+        star = data.get("star") if isinstance(data.get("star"), dict) else {}
+        try:
+            cov = max(0, min(3, int(round(float(data.get("coverage"))))))
+        except (TypeError, ValueError):
+            cov = None
+        return {"star": {k: bool(star.get(k)) for k in ("situation", "task", "action", "result")},
+                "coverage": cov,
+                "evidence": strip_ai_dashes(str(data.get("evidence", "")).strip())}
+
+    def interview_goals(self, profile: dict, role: str, company: str = "", jd: str = "",
+                        cv: str = "") -> dict:
+        """The prep checklist for one job, built once and cached: the 5 questions this JD most
+        likely leads to, the 3 things from the person's tailored CV to make sure they mention,
+        and the facts about the company the JD itself reveals (nothing invented)."""
+        system = (
+            "You prepare a candidate for an interview for a specific job. From the JOB DESCRIPTION "
+            "and the candidate's TAILORED CV / profile, produce:\n"
+            "- questions: the 5 questions this interviewer is MOST likely to ask, in the order they "
+            "would come up, each specific to what the JD emphasizes.\n"
+            "- mentions: the 3 things from the candidate's OWN material they must make sure to "
+            "mention, each tied to a JD requirement. Only material that is really in the CV / "
+            "profile; never invent.\n"
+            "- company_facts: up to 5 short facts about the company or team that the JD ITSELF "
+            "states (products, mission, team size, customers, stage, location). Only what the JD "
+            "says; if it says nothing, return an empty list.\n"
+            "Plain sentences, no dashes. Return ONLY JSON: {\"questions\":[...],\"mentions\":[...],"
+            "\"company_facts\":[...]}."
+        )
+        who = f"ROLE: {role}\n" + (f"COMPANY: {company}\n" if company else "")
+        user = (who + (f"\nJOB DESCRIPTION:\n{(jd or '')[:4000]}\n" if jd else "\n")
+                + (f"\nTAILORED CV (text):\n{(cv or '')[:4000]}\n" if cv else "")
+                + f"\nCANDIDATE PROFILE (JSON):\n{json.dumps(profile)[:4000]}")
+        raw = self._complete(system, user, max_tokens=900, effort="medium")
+        data = self._parse_json_object(raw) or {}
+        from tailoring.conform import strip_ai_dashes
+
+        def _list(key, n):
+            return [strip_ai_dashes(str(x).strip()) for x in (data.get(key) or [])
+                    if str(x).strip()][:n]
+        return {"questions": _list("questions", 5), "mentions": _list("mentions", 3),
+                "company_facts": _list("company_facts", 5)}
 
     @staticmethod
     def _parse_profile_json(raw: str, essentials: dict) -> dict:

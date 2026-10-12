@@ -5,8 +5,23 @@ installed; the assisted-apply features use the local **SponsorJobs** app. It doe
 
 1. **Sponsor badges.** As you browse job postings on **LinkedIn, Indeed, Greenhouse,
    Lever, or Ashby**, it reads the employer name already on the page and shows small
-   badges, **H-1B**, **green card (PERM)**, **cap-exempt**, **STEM-OPT**, sourced from
+   badges, **H-1B**, **green card (PERM)**, **cap-exempt**, **E-Verify**, sourced from
    official USCIS/DOL data. No app needed: see "Sponsor data without the app" below.
+   - **What the ad itself says**, read from its own text with the same reader the app uses
+     (`adstance_core.js`, a port of `sourcing/adstance.py`): a green **Ad offers sponsorship**
+     chip, a red **No sponsorship for this role** chip, or a red **Citizenship or clearance
+     required** chip when the ad requires US citizenship, a green card / permanent residency,
+     or a security clearance. Each red chip quotes the ad's own sentence, in its tooltip and
+     on a small grey line under the chips, so the proof is on the page.
+   - **Chip meanings.** E-Verify: enrolled in E-Verify, so a STEM OPT extension is possible
+     here. Cap-exempt: likely H-1B without the lottery (a university, nonprofit research, or
+     hospital employer, from the public record and the employer's name). All of it is the
+     employer's history, never a promise about this role.
+   - **Sponsored only** (LinkedIn and Indeed result lists): click our mark in the bottom-left
+     corner and tick **Sponsored only** to hide results whose employer has no sponsorship
+     record (no H-1B, no green card, no E-Verify). It shows "Hiding N of M", keeps results
+     still being looked up visible, remembers your choice, and is pure styling on our side
+     of the page: nothing is clicked, scrolled, or asked of the site.
 2. **Assisted apply.** On a job **application form** (Greenhouse, Lever, Ashby, Workday,
    Workable, SmartRecruiters, iCIMS), a small panel offers to **pre-fill**:
    - **Contact fields**, name, email, phone, address (split into street/city/state/zip),
@@ -64,6 +79,10 @@ extension asks the local app instead, as before.
 ## Compliance
 Per the project rules, this extension is strictly the GREEN lane:
 - It **reads only the job page you chose to open**, that's you browsing by hand.
+- It **cannot be fingerprinted by the sites it runs on**: the manifest lists no
+  `web_accessible_resources` (a page can probe those to detect an extension; our logo is an
+  inline SVG instead) and asks for one permission, `storage`, plus host permissions for the
+  feed and the local app only.
 - Assisted apply **only fills a form you opened, and only empty fields**, it never
   clicks submit, never uploads a file on its own, and never touches what you typed.
   You review everything and submit yourself.

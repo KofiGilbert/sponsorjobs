@@ -1,0 +1,55 @@
+<!-- Trimmed from https://jobs.lever.co/abovelending/0adfabd0-e18b-495e-add5-52a2521043dd/apply
+     (fetched 2026-10-11). Inputs, data-qa hooks, the application-label wording, one cards[...]
+     radio question (its wording is a representative screening question; the real card text is
+     rendered inline), the hCaptcha hook and the submit button are verbatim. -->
+<form id="application-form" enctype="multipart/form-data" method="POST">
+  <div class="application-question resume">
+    <div class="application-label">Resume/CV </div>
+    <input class="application-file-input invisible-resume-upload" data-qa="input-resume" id="resume-upload-input" name="resume" tabindex="-1" type="file">
+  </div>
+  <div class="application-question">
+    <div class="application-label">Full name</div>
+    <div class="application-field"><input type="text" data-qa="name-input" name="name" required></div>
+  </div>
+  <div class="application-question">
+    <div class="application-label">Email</div>
+    <div class="application-field"><input name="email" data-qa="email-input" type="email" required></div>
+  </div>
+  <div class="application-question">
+    <div class="application-label">Phone </div>
+    <div class="application-field"><input type="text" data-qa="phone-input" name="phone" required></div>
+  </div>
+  <div class="application-question" data-qa="structured-contact-location-question">
+    <div class="application-label">Current location </div>
+    <div class="application-field"><input class="location-input" data-qa="location-input" id="location-input" type="text" maxlength="100" name="location" required></div>
+  </div>
+  <div class="application-question">
+    <div class="application-label">Current company </div>
+    <div class="application-field"><input type="text" data-qa="org-input" name="org" required></div>
+  </div>
+  <div class="application-question">
+    <div class="application-label">LinkedIn URL</div>
+    <div class="application-field"><input type="text" name="urls[LinkedIn]"></div>
+  </div>
+  <div class="application-question">
+    <div class="application-label">Website URL</div>
+    <div class="application-field"><input type="text" name="urls[Website]"></div>
+  </div>
+  <div class="application-question custom-question">
+    <div class="application-label full-width multiple-choice">Will you now or in the future require sponsorship for employment visa status?</div>
+    <ul class="application-field">
+      <li><label><input type="radio" name="cards[b2f462e2-cf07-4a4d-ab65-6a7403d0af0b][field0]" value="Yes" required="required" /> Yes</label></li>
+      <li><label><input type="radio" name="cards[b2f462e2-cf07-4a4d-ab65-6a7403d0af0b][field0]" value="No" required="required" /> No</label></li>
+    </ul>
+  </div>
+  <div class="application-question custom-question">
+    <div class="application-label full-width multiple-choice">Are you legally authorized to work in the United States?</div>
+    <ul class="application-field">
+      <li><label><input type="radio" name="cards[a52002df-7a12-41bf-ba86-d7c9ef1fcc88][field0]" value="Yes" required="required" /> Yes</label></li>
+      <li><label><input type="radio" name="cards[a52002df-7a12-41bf-ba86-d7c9ef1fcc88][field0]" value="No" required="required" /> No</label></li>
+    </ul>
+  </div>
+  <div class="h-captcha"></div>
+  <button id="hcaptchaSubmitBtn" type="submit" class="hidden"></button>
+  <button id="btn-submit" type="button" class="postings-btn template-btn-submit hex-color" data-qa="btn-submit" href="#">Submit application</button>
+</form>

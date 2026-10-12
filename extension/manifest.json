@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SponsorJobs: Visa Sponsor Badges",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "See H-1B / green-card / STEM-OPT sponsor badges on job postings, no account or app needed. With the SponsorJobs app, also pre-fill application forms from your saved profile. Nothing is auto-submitted.",
   "permissions": [
     "storage"
@@ -72,16 +72,5 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "icons/icon48.png",
-        "icons/icon.svg"
-      ],
-      "matches": [
-        "<all_urls>"
-      ]
-    }
-  ]
+  }
 }

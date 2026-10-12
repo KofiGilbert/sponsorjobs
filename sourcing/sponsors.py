@@ -21,6 +21,7 @@ on a normalized exact name or a whole-word prefix with a length guard.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import datetime as _dt
 import gzip
 import io
@@ -251,6 +252,30 @@ def normalize_employer_variants(name: str) -> list[str]:
 
 def _is_cap_exempt(naics: str, name: str) -> bool:
     return str(naics or "").strip().startswith("61") or bool(_CAP_EXEMPT_RE.search(name or ""))
+
+
+# The same idea applied at LOOKUP time to the name on the POSTING, normalized. The flag above is
+# set once, at ingest, from the filing entity's NAICS and name, so it misses an employer whose
+# record came in through E-Verify or PERM only (no H-1B rows, so never derived), a seed built
+# before the word list grew, and a posting that names the employer more fully than its filings
+# do ("Stanford Health Care Hospital" against a "Stanford Health Care" record). Reading the
+# posting's name here closes those gaps for the chip. Runs on the normalized, ASCII-only form so
+# the extension's port (sponsor_core.js looksCapExempt) behaves identically, word boundaries
+# included; tests/test_extension_sponsor_core.py holds the two to the same answers.
+_CAP_EXEMPT_NAME_RE = re.compile(
+    r"\b(univ|university|universities|college|colleges|school of medicine|medical school|"
+    r"medical center|medical centre|hospital|hospitals|health system|research institute|"
+    r"institute of technology|polytechnic|national laboratory|national laboratories|national lab|"
+    r"cancer center|cancer centre|school district|board of regents|regents of|teaching hospital|"
+    r"seminary)\b")
+
+
+def looks_cap_exempt(company: str) -> bool:
+    """Does the employer's NAME read as a university, college, school of medicine, hospital,
+    medical center, research institute or national laboratory, the kinds of employer that
+    file H-1B petitions outside the lottery? A heuristic (the chip says "likely"), applied
+    to the normalized name so spelling and suffixes do not matter."""
+    return bool(_CAP_EXEMPT_NAME_RE.search(normalize_employer(company)))
 
 
 # The ONE canonical caveat, surfaced everywhere a badge is shown (job list, package
@@ -1109,6 +1134,16 @@ class SponsorDB:
             self._lookup_cache.clear()
 
     def lookup(self, company: str) -> SponsorRecord | None:
+        """The employer's record for a posting's company name (see _lookup_record), with
+        cap_exempt also set when the NAME on the posting reads as a university, hospital,
+        research institute or national lab (looks_cap_exempt). The record itself is cached;
+        the name read is per call and never written back."""
+        rec = self._lookup_record(company)
+        if rec and not rec.cap_exempt and looks_cap_exempt(company):
+            rec = dataclasses.replace(rec, cap_exempt=True)
+        return rec
+
+    def _lookup_record(self, company: str) -> SponsorRecord | None:
         """Conservative match that AGGREGATES a company's many filing entities. Exact
         normalized name plus whole-word prefixes in either direction ('Amazon' ↔ all
         'Amazon *' subsidiaries), guarded so short/generic single tokens only match

@@ -219,7 +219,7 @@
     return mergeRecords(matches);
   }
 
-  function lookup(company, getShard) {
+  function lookupRecord(company, getShard) {
     const variants = normalizeEmployerVariants(company).map((n) => ALIASES[n] || n);
     if (!variants.length) return null;
     if (variants.length > 1) {
@@ -227,6 +227,19 @@
       return found.length === 1 ? found[0] : (found.length ? mergeRecords(found) : null);
     }
     return lookupOne(variants[0], getShard);
+  }
+
+  // sourcing/sponsors.py looks_cap_exempt: the posting's employer NAME, normalized, read for the
+  // kinds of employer that file H-1B petitions outside the lottery. On the normalized ASCII
+  // form, so \b means the same here as in Python.
+  const CAP_EXEMPT_NAME = /\b(univ|university|universities|college|colleges|school of medicine|medical school|medical center|medical centre|hospital|hospitals|health system|research institute|institute of technology|polytechnic|national laboratory|national laboratories|national lab|cancer center|cancer centre|school district|board of regents|regents of|teaching hospital|seminary)\b/;
+  const looksCapExempt = (company) => CAP_EXEMPT_NAME.test(normalizeEmployer(company));
+
+  // SponsorDB.lookup: the record, with cap_exempt also set when the posting's name says so.
+  function lookup(company, getShard) {
+    const rec = lookupRecord(company, getShard);
+    if (rec && !rec.cap_exempt && looksCapExempt(company)) return { ...rec, cap_exempt: true };
+    return rec;
   }
 
   // ---- SponsorRecord / the endpoint's response ---------------------------------------------
@@ -295,7 +308,7 @@
 
   const api = {
     normalizeEmployer, normalizeEmployerVariants, looksUs, naicsIndustry, shardOf, shardsFor,
-    titleKey, prepareShard, lookup, badges, profile, lookupResponse,
+    titleKey, prepareShard, lookup, looksCapExempt, badges, profile, lookupResponse,
   };
   G.SponsorCore = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

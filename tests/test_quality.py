@@ -22,6 +22,10 @@ from sourcing.sponsors import SponsorRecord
     "We are unable to sponsor visas at this time.",
     "No visa sponsorship available for this role.",
     "US citizenship is required.",
+    # A green card / permanent residency bar is as closed as a citizenship one for F-1/OPT.
+    "Must be a US citizen or green card holder.",
+    "Candidates must be US citizens or permanent residents.",
+    "Permanent residency required.",
 ])
 def test_hard_bars_in_the_jd_are_excluded(jd):
     assert role_excludes_international("Some Startup", jd)
@@ -32,6 +36,7 @@ def test_hard_bars_in_the_jd_are_excluded(jd):
     "Visa sponsorship available. H-1B and green-card support offered.",
     "We welcome international applicants and provide sponsorship.",
     "Build distributed systems in Go. Remote-friendly.",
+    "We sponsor H-1B visas and green cards for our employees.",
 ])
 def test_positive_or_neutral_jds_are_kept(jd):
     # The whole point of §8: never hide a role that actually sponsors.
