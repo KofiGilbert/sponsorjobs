@@ -877,6 +877,8 @@ button { font-family: inherit; cursor: pointer; }
 .prof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
 .prof-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
 .prof-field.prof-wide { grid-column: 1 / -1; }
+.prof-field.prof-check > span { display: flex; align-items: flex-start; gap: 8px; color: var(--text); font-size: 13px; }
+.prof-field.prof-check input { margin-top: 3px; }
 .prof-card-foot { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .prof-saved { font-size: 12px; color: var(--good); }
 .prof-empty { max-width: 1040px; margin: 0 auto; color: var(--faint); background: none; border: 0; border-radius: 0; padding: 4px 0; font-size: 13.5px; }

@@ -347,5 +347,18 @@
   "upg.welcomeSub": "Active until {date}. It ends on its own, there is nothing to cancel.",
   "upg.welcome1": "{i} live interviews with a real-time interviewer",
   "upg.welcome2": "{p} tailored packages on our best AI model",
-  "upg.welcome3": "Everything in Free, as before"
+  "upg.welcome3": "Everything in Free, as before",
+  "profile.answers.title": "Application answers",
+  "profile.answers.sub": "Saved once and filled into every application form for you to review. Answer honestly, the form is yours.",
+  "profile.answers.workAuth": "Authorized to work in the US?",
+  "profile.answers.sponsorship": "Will you need visa sponsorship?",
+  "profile.answers.notSet": "Not set",
+  "profile.answers.yes": "Yes",
+  "profile.answers.no": "No",
+  "profile.answers.sponsorNow": "Yes, now",
+  "profile.answers.sponsorFuture": "Not now, but in the future",
+  "profile.answers.eeo": "On EEO and demographic questions, pick \"Decline to self-identify\"",
+  "profile.answers.save": "Save answers",
+  "profile.answers.saved": "Saved. Filled into every application form for you to review.",
+  "profile.answers.failed": "Couldn't save."
 }

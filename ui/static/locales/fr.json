@@ -347,5 +347,18 @@
   "upg.welcomeSub": "Actif jusqu'au {date}. Il se termine tout seul, rien à résilier.",
   "upg.welcome1": "{i} entretiens en direct avec un recruteur en temps réel",
   "upg.welcome2": "{p} dossiers personnalisés avec notre meilleur modèle d'IA",
-  "upg.welcome3": "Tout ce qu'inclut l'offre gratuite, comme avant"
+  "upg.welcome3": "Tout ce qu'inclut l'offre gratuite, comme avant",
+  "profile.answers.title": "Réponses de candidature",
+  "profile.answers.sub": "Enregistrées une fois et remplies dans chaque formulaire de candidature pour que vous les vérifiiez. Répondez honnêtement, le formulaire est le vôtre.",
+  "profile.answers.workAuth": "Autorisé à travailler aux États-Unis ?",
+  "profile.answers.sponsorship": "Aurez-vous besoin d'un parrainage de visa ?",
+  "profile.answers.notSet": "Non défini",
+  "profile.answers.yes": "Oui",
+  "profile.answers.no": "Non",
+  "profile.answers.sponsorNow": "Oui, maintenant",
+  "profile.answers.sponsorFuture": "Pas maintenant, mais à l'avenir",
+  "profile.answers.eeo": "Aux questions EEO et démographiques, choisir \"Je préfère ne pas répondre\"",
+  "profile.answers.save": "Enregistrer les réponses",
+  "profile.answers.saved": "Enregistré. Rempli dans chaque formulaire de candidature pour que vous le vérifiiez.",
+  "profile.answers.failed": "Enregistrement impossible."
 }

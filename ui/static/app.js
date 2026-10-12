@@ -883,7 +883,56 @@
       ? "Filled " + bits.join(", ") + "." + (r.resume_upload ? " Attach your resume PDF yourself." : "")
         + " Review everything, the submit click is yours."
       : "Nothing to fill on this step. Continue to the next page of the application and fill again.");
+    note.textContent += assistExtras(r);
+    offerLearn(note);
   });
+
+  // What the fill recipe adds to a report: which system it recognised, the multi-page hint,
+  // and that the submit button is outlined (it is never clicked by SponsorJobs).
+  function assistExtras(r) {
+    if (!r) return "";
+    let s = "";
+    if (r.system_name) s += " Recognised " + r.system_name + (r.via_recipe ? " (" + r.via_recipe + " via its recipe)" : "") + ".";
+    if (r.next_page) s += " " + (r.continue_hint || "Continue to the next page, then press Fill again.");
+    if (r.submit_highlighted) s += " The submit button is outlined in orange for you.";
+    if (r.handoff) s += " This careers site hands the application to its own ATS: press Apply there, then fill again.";
+    return s;
+  }
+
+  // Learn from corrections: after a fill, a one-click way to save what the person changed on
+  // the form into their profile (only the fields SponsorJobs itself filled are watched).
+  function offerLearn(note) {
+    if (!window.tailorShell || !window.tailorShell.assistLearn || !note) return;
+    const old = note.parentElement && note.parentElement.querySelector(".assist-learn");
+    if (old) old.remove();
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn btn-ghost btn-sm assist-learn";
+    b.textContent = "Save what I changed to my profile";
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      const r = await window.tailorShell.assistLearn();
+      b.disabled = false;
+      if (!r || r.ok === false) { note.textContent = "Couldn't save your corrections."; return; }
+      note.textContent = r.learned && r.learned.length
+        ? "Saved to your profile: " + r.learned.join(", ") + "."
+        : "No corrections to save yet. Change a field SponsorJobs filled, then try again.";
+      if (r.learned && r.learned.length) loadProfile().catch(() => {});
+    });
+    note.insertAdjacentElement("afterend", b);
+  }
+
+  // The engine saw the site's "application received" page after the person submitted.
+  if (window.tailorShell && window.tailorShell.onApplied) {
+    window.tailorShell.onApplied((info) => {
+      const note = $("#pkgAssistNote");
+      if (note) {
+        note.textContent = info && info.matched
+          ? "The site confirmed your application. Marked as applied."
+          : "The site confirmed your application. No saved package matched this page, so mark it applied yourself if you built one.";
+      }
+      if (info && info.matched && typeof loadReview === "function") loadReview().catch(() => {});
+    });
+  }
 
   $("#pkgAssistBtn")?.addEventListener("click", async () => {
     if (!window.tailorShell) return;
@@ -905,7 +954,7 @@
     if (r.filled) bits.push(r.filled + " contact field" + (r.filled === 1 ? "" : "s"));
     if (r.screening) bits.push(r.screening + " screening answer" + (r.screening === 1 ? "" : "s"));
     if (r.eeo) bits.push("EEO set to decline");
-    note.textContent = (bits.length
+    note.textContent = assistExtras(r) + (bits.length
         ? "Filled " + bits.join(", ") + "." + (r.resume_upload ? " Attach your resume PDF yourself." : "")
           + " Review everything, the submit click is yours."
         : "Nothing to fill here. If the site wants a sign-in first (Amazon does), log in "
@@ -3096,7 +3145,36 @@
     $("#profEmpty").hidden = !!p.has_profile;
     $("#profSecNote").hidden = true;
     $("#idSaved").textContent = "";
+    paintAnswers(p.answers || {});
   }
+
+  /* ---- application answers (work authorization, sponsorship, EEO decline): the three
+     answers nearly every form asks, saved once here and filled into every application for
+     the person to review. One store with the extension popup, via /api/profile/answers. */
+  function paintAnswers(a) {
+    const wa = $("#ansWorkAuth"), sp = $("#ansSponsorship"), eeo = $("#ansEeoDecline");
+    if (!wa || !sp || !eeo) return;
+    wa.value = a.work_auth_us || "";
+    sp.value = a.needs_sponsorship || "";
+    eeo.checked = !!a.eeo_decline;
+  }
+
+  $("#ansSave")?.addEventListener("click", async () => {
+    const note = $("#ansSaved");
+    const body = {
+      work_auth_us: $("#ansWorkAuth").value,
+      needs_sponsorship: $("#ansSponsorship").value,
+      eeo_decline: $("#ansEeoDecline").checked,
+    };
+    try {
+      const r = await api("/api/profile/answers", body);
+      paintAnswers(r.answers || body);
+      note.textContent = I18N.t("profile.answers.saved", "Saved. Filled into every application form for you to review.");
+    } catch {
+      note.textContent = I18N.t("profile.answers.failed", "Couldn't save.");
+    }
+    setTimeout(() => { note.textContent = ""; }, 4000);
+  });
 
   $("#idEdit").addEventListener("click", () => { setIdentityMode(true); $("#idEdit").hidden = true; });
   $("#idCancel").addEventListener("click", () => {

@@ -347,5 +347,18 @@
   "upg.welcomeSub": "Ativo até {date}. Termina sozinho, não há nada para cancelar.",
   "upg.welcome1": "{i} entrevistas ao vivo com um entrevistador em tempo real",
   "upg.welcome2": "{p} pacotes personalizados com nosso melhor modelo de IA",
-  "upg.welcome3": "Tudo do plano gratuito, como antes"
+  "upg.welcome3": "Tudo do plano gratuito, como antes",
+  "profile.answers.title": "Respostas para candidaturas",
+  "profile.answers.sub": "Salvas uma vez e preenchidas em todo formulário de candidatura para você revisar. Responda com sinceridade, o formulário é seu.",
+  "profile.answers.workAuth": "Autorizado a trabalhar nos EUA?",
+  "profile.answers.sponsorship": "Você vai precisar de patrocínio de visto?",
+  "profile.answers.notSet": "Não definido",
+  "profile.answers.yes": "Sim",
+  "profile.answers.no": "Não",
+  "profile.answers.sponsorNow": "Sim, agora",
+  "profile.answers.sponsorFuture": "Agora não, mas no futuro",
+  "profile.answers.eeo": "Nas perguntas de EEO e demográficas, escolher \"Prefiro não me identificar\"",
+  "profile.answers.save": "Salvar respostas",
+  "profile.answers.saved": "Salvo. Preenchido em todo formulário de candidatura para você revisar.",
+  "profile.answers.failed": "Não foi possível salvar."
 }
