@@ -35,6 +35,9 @@
     n.innerHTML = html;
   }
 
+  // HTML-escape a value before it lands in the panel's innerHTML.
+  const escq = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
   async function doFill() {
     const btn = panel.querySelector(".tailor-af-fill");
     btn.disabled = true;
@@ -58,21 +61,33 @@
         : "This page needs you to sign in first. Sign in, then click Autofill again and I'll take it from there.", "warn");
       btn.disabled = false; btn.textContent = "Autofill again"; return;
     }
-    const plan = TA.planFill(cachedFields);
+    // The recipe table rides along with the payload (freshest copy from the app); the engine
+    // falls back to its embedded copy without it. Order of play: this site's recipe, then the
+    // label patterns. Nothing here clicks: continue is a hint, submit is outlined for you.
+    if (r.recipes) TA.setRecipes(r.recipes);
+    const recipe = TA.recipeFor();
+    const plan = TA.planFill(cachedFields, { recipe });
     const nFields = TA.applyFill(plan);
     const nScreen = TA.fillScreening(r.screening);
     const nEeo = (r.eeo && r.eeo.decline) ? TA.fillEeo() : 0;
     const needResume = TA.hasResumeUpload();
     const filled = nFields + nScreen + nEeo;
     const total = plan.length + nScreen + nEeo + (needResume ? 1 : 0);   // Y in "filled X of Y"
+    const submitHinted = TA.highlightSubmit(recipe);
+    const nextPage = !!(recipe && recipe.multipage && TA.continueButton(recipe));
+    armWatchers(recipe);
 
     const parts = [];
     if (nFields) parts.push(`<b>${nFields}</b> contact field${nFields === 1 ? "" : "s"}`);
     if (nScreen) parts.push(`<b>${nScreen}</b> screening answer${nScreen === 1 ? "" : "s"}`);
     if (nEeo) parts.push(`EEO set to &ldquo;decline&rdquo;`);
+    let recipeNote = "";
+    if (recipe) recipeNote += ` Recognised <b>${escq(recipe.name)}</b>.`;
+    if (nextPage) recipeNote += " <b>Continue to the next page, then press Fill again.</b>";
+    if (submitHinted) recipeNote += " The submit button is outlined in orange, that click is yours.";
+    if (recipe && recipe.handoff) recipeNote += " This careers site hands the application to its own system: press Apply there, then fill again.";
     // Résumé/variant selector: which tailored CV to attach for THIS role. Contact fields are
     // shared across CVs, so this doesn't change the fill, it points the person at the right PDF.
-    const escq = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     let resumeNote = "";
     if (needResume) {
       resumeNote = ' Browsers don’t let extensions upload files, so <b>attach your résumé</b> yourself.';
@@ -85,14 +100,63 @@
       }
     }
     if (!parts.length) {
-      setNote("Nothing new to fill, these are already filled or this form asks things only you can answer." + resumeNote,
+      setNote("Nothing new to fill, these are already filled or this form asks things only you can answer." + resumeNote + recipeNote,
               "warn");
     } else {
       setNote(`Filled <b>${filled} of ${total}</b> fields I recognized: ` + parts.join(" · ") +
-              ". <b>Review everything</b>, then submit it yourself. SponsorJobs never submits for you." + resumeNote, "ok");
+              ". <b>Review everything</b>, then submit it yourself. SponsorJobs never submits for you." + resumeNote + recipeNote, "ok");
     }
     btn.disabled = false;
     btn.textContent = "Autofill again";
+  }
+
+  // The background worker (owned with the manifest) only knows the prefs route, so the two
+  // follow-ups ride on it as events the app routes: {type:"applied"} marks the job applied,
+  // {type:"learn"} saves a correction to the profile. See profile_prefs_set in ui/app.py.
+  const sendEvent = (event) => ask({ type: "prefs_set", prefs: { event } });
+
+  // After a fill: (1) watch for the site's "application received" page, which only ever appears
+  // after YOU submit, and tell the app so the job is marked applied; (2) watch the fields we
+  // filled, and when you change one, offer to save the new value to your profile.
+  let watchersArmed = false;
+  function armWatchers(recipe) {
+    TA.watchSuccess(async (info) => {
+      const res = await sendEvent({ type: "applied", url: location.href, page_url: location.href,
+                                    system: info && info.system });
+      if (panel) {
+        setNote(res && res.matched
+          ? "The site confirmed your application. SponsorJobs marked it as applied."
+          : "The site confirmed your application. No saved package matched this page, so mark it applied in SponsorJobs if you built one.", "ok");
+      }
+    }, { recipe });
+    if (watchersArmed) return;
+    watchersArmed = true;
+    TA.watchCorrections((c) => offerToLearn(c));
+  }
+
+  const LEARN_LABELS = { first_name: "first name", last_name: "last name", name: "name", email: "email",
+                         phone: "phone", address: "address", street: "street", city: "city", state: "state",
+                         zip: "zip", linkedin: "LinkedIn URL", github: "GitHub URL", website: "website",
+                         location: "location", country: "country" };
+  function offerToLearn(c) {
+    if (!panel || !c || !c.key || !LEARN_LABELS[c.key]) return;
+    const old = panel.querySelector(".tailor-af-learn");
+    if (old) old.remove();
+    const row = document.createElement("div");
+    row.className = "tailor-af-note tailor-af-learn";
+    row.innerHTML = `You changed your ${escq(LEARN_LABELS[c.key])} to <b>${escq(c.value)}</b>. ` +
+      `<button type="button" class="tailor-af-learn-yes">Save to my profile</button> ` +
+      `<button type="button" class="tailor-af-learn-no">Not now</button>`;
+    panel.appendChild(row);
+    row.querySelector(".tailor-af-learn-no").addEventListener("click", () => row.remove());
+    row.querySelector(".tailor-af-learn-yes").addEventListener("click", async () => {
+      const fields = {}; fields[c.key] = c.value;
+      const res = await sendEvent({ type: "learn", fields });
+      row.innerHTML = res && res.ok
+        ? `Saved. Your ${escq(LEARN_LABELS[c.key])} is now <b>${escq(c.value)}</b> in SponsorJobs.`
+        : "Couldn't save it, is the SponsorJobs app running?";
+      setTimeout(() => row.remove(), 5000);
+    });
   }
 
   async function doDraft() {

@@ -1653,6 +1653,70 @@ class AnthropicLLM:
                         for k in ("q", "kind", "competency", "why")})
         return {"questions": out}
 
+    def check_star_coverage(self, question: str, transcript: str) -> dict:
+        """The report card's per-answer rubric: did the answer carry each STAR part, how fully did
+        it answer the question asked (0 to 3), and one sentence of evidence. Strict JSON, judged
+        from the transcript alone. PRACTICE feedback, never a hiring decision."""
+        system = (
+            "You grade ONE practice interview answer against a strict rubric. Judge only what was "
+            "actually said.\n"
+            "- star: for each of situation, task, action, result: true if that part is clearly "
+            "present in the answer, else false.\n"
+            "- coverage: an integer 0 to 3 for how fully the answer addresses the QUESTION ASKED: "
+            "0 = did not answer it, 1 = touched it, 2 = answered most of it, 3 = answered it fully "
+            "and specifically.\n"
+            "- evidence: ONE short sentence quoting or pointing at the part of the answer that "
+            "decided the coverage rating.\n"
+            "Return ONLY JSON: {\"star\":{\"situation\":bool,\"task\":bool,\"action\":bool,"
+            "\"result\":bool},\"coverage\":int,\"evidence\":\"...\"}."
+        )
+        user = (f"QUESTION:\n{(question or '')[:600]}\n\n"
+                f"ANSWER (transcript):\n{(transcript or '')[:3000]}")
+        raw = self._complete(system, user, max_tokens=300, effort="low")
+        data = self._parse_json_object(raw) or {}
+        from tailoring.conform import strip_ai_dashes
+        star = data.get("star") if isinstance(data.get("star"), dict) else {}
+        try:
+            cov = max(0, min(3, int(round(float(data.get("coverage"))))))
+        except (TypeError, ValueError):
+            cov = None
+        return {"star": {k: bool(star.get(k)) for k in ("situation", "task", "action", "result")},
+                "coverage": cov,
+                "evidence": strip_ai_dashes(str(data.get("evidence", "")).strip())}
+
+    def interview_goals(self, profile: dict, role: str, company: str = "", jd: str = "",
+                        cv: str = "") -> dict:
+        """The prep checklist for one job, built once and cached: the 5 questions this JD most
+        likely leads to, the 3 things from the person's tailored CV to make sure they mention,
+        and the facts about the company the JD itself reveals (nothing invented)."""
+        system = (
+            "You prepare a candidate for an interview for a specific job. From the JOB DESCRIPTION "
+            "and the candidate's TAILORED CV / profile, produce:\n"
+            "- questions: the 5 questions this interviewer is MOST likely to ask, in the order they "
+            "would come up, each specific to what the JD emphasizes.\n"
+            "- mentions: the 3 things from the candidate's OWN material they must make sure to "
+            "mention, each tied to a JD requirement. Only material that is really in the CV / "
+            "profile; never invent.\n"
+            "- company_facts: up to 5 short facts about the company or team that the JD ITSELF "
+            "states (products, mission, team size, customers, stage, location). Only what the JD "
+            "says; if it says nothing, return an empty list.\n"
+            "Plain sentences, no dashes. Return ONLY JSON: {\"questions\":[...],\"mentions\":[...],"
+            "\"company_facts\":[...]}."
+        )
+        who = f"ROLE: {role}\n" + (f"COMPANY: {company}\n" if company else "")
+        user = (who + (f"\nJOB DESCRIPTION:\n{(jd or '')[:4000]}\n" if jd else "\n")
+                + (f"\nTAILORED CV (text):\n{(cv or '')[:4000]}\n" if cv else "")
+                + f"\nCANDIDATE PROFILE (JSON):\n{json.dumps(profile)[:4000]}")
+        raw = self._complete(system, user, max_tokens=900, effort="medium")
+        data = self._parse_json_object(raw) or {}
+        from tailoring.conform import strip_ai_dashes
+
+        def _list(key, n):
+            return [strip_ai_dashes(str(x).strip()) for x in (data.get(key) or [])
+                    if str(x).strip()][:n]
+        return {"questions": _list("questions", 5), "mentions": _list("mentions", 3),
+                "company_facts": _list("company_facts", 5)}
+
     @staticmethod
     def _parse_profile_json(raw: str, essentials: dict) -> dict:
         """Parse the model's JSON, tolerating code fences; fall back to essentials."""

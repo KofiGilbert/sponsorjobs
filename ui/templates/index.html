@@ -431,6 +431,36 @@
             </form>
           </div>
 
+          <!-- Application answers: the three answers nearly every form asks, saved once and
+               filled into every application for the person to review (CLAUDE.md section 7:
+               it pre-fills from THEIR answer, never guesses). Same store as the extension popup. -->
+          <div class="prof-card" id="answersCard">
+            <div class="prof-card-h"><span data-i18n="profile.answers.title">Application answers</span></div>
+            <p class="prof-note" data-i18n="profile.answers.sub">Saved once and filled into every application form for you to review. Answer honestly, the form is yours.</p>
+            <div class="prof-grid">
+              <label class="prof-field"><span data-i18n="profile.answers.workAuth">Authorized to work in the US?</span>
+                <select class="fld" id="ansWorkAuth">
+                  <option value="" data-i18n="profile.answers.notSet">Not set</option>
+                  <option value="Yes" data-i18n="profile.answers.yes">Yes</option>
+                  <option value="No" data-i18n="profile.answers.no">No</option>
+                </select></label>
+              <label class="prof-field"><span data-i18n="profile.answers.sponsorship">Will you need visa sponsorship?</span>
+                <select class="fld" id="ansSponsorship">
+                  <option value="" data-i18n="profile.answers.notSet">Not set</option>
+                  <option value="No" data-i18n="profile.answers.no">No</option>
+                  <option value="Yes" data-i18n="profile.answers.sponsorNow">Yes, now</option>
+                  <option value="Future" data-i18n="profile.answers.sponsorFuture">Not now, but in the future</option>
+                </select></label>
+              <label class="prof-field prof-wide prof-check"><span>
+                <input type="checkbox" id="ansEeoDecline" />
+                <span data-i18n="profile.answers.eeo">On EEO and demographic questions, pick "Decline to self-identify"</span></span></label>
+            </div>
+            <div class="prof-card-foot">
+              <button class="btn btn-primary btn-sm" id="ansSave" type="button" data-i18n="profile.answers.save">Save answers</button>
+              <span class="prof-saved" id="ansSaved"></span>
+            </div>
+          </div>
+
           <div class="prof-empty" id="profEmpty" hidden>
             No profile yet. <b>Upload your resume</b> to fill it in automatically, or click <b>New Resume</b> to build one as you tailor.
           </div>
