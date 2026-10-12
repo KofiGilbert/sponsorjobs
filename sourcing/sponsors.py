@@ -366,12 +366,6 @@ class SponsorRecord:
                        "The role must be on the TN profession list. Not a guarantee.")},
         ]
 
-# An employer row counts as a sponsor record only with some signal; the extension index
-# (scripts/build_sponsor_index.py) keeps exactly these rows, so the two answers agree.
-_HAS_SIGNAL = ("(h1b_approvals>0 OR perm_certs>0 OR e_verify>0 OR cap_exempt>0 "
-               "OR h1b_dependent>0 OR willful_violator>0)")
-
-
 def _matching_candidates(norm: str, allow_prefix: bool, cands) -> list[str]:
     """Which candidate names (exact + whole-word parents + children) a query matches."""
     out: list[str] = []
@@ -694,7 +688,6 @@ class SponsorDB:
                 if norm:
                     years[(norm, fy)] = years.get((norm, fy), 0) + n
         self._set_perm_years(years)
-        self._ensure_employer_rows({n for n, _ in years})
         self._conn.commit()
         return len(years)
 
@@ -719,16 +712,8 @@ class SponsorDB:
                 "initial_denials=excluded.initial_denials, "
                 "continuing_approvals=excluded.continuing_approvals, "
                 "continuing_denials=excluded.continuing_denials", batch)
-            self._ensure_employer_rows({b[0] for b in batch})
             self._conn.commit()
         return len(batch)
-
-    def _ensure_employer_rows(self, norms) -> None:
-        """A year row needs an employer row for lookup() / history() to find it. Adds a bare
-        row (name only, no counts, so no badge) for any name the employer table lacks."""
-        self._conn.executemany(
-            "INSERT OR IGNORE INTO sponsor_employer(norm_name, display_name) VALUES(?,?)",
-            [(n, n.title()) for n in norms])
 
     def h1b_year_rows(self, min_fy: int = 0):
         """Every per-year H-1B row (dicts in H1B_YEAR_COLS order), name then year, for the
@@ -904,7 +889,12 @@ class SponsorDB:
         return None
 
     def _matched_one(self, norm: str) -> list[str]:
-        """The candidate rows one normalized spelling matches (see _lookup_one)."""
+        """The candidate names one normalized spelling matches (see _lookup_one), read from
+        the totals table AND the two year-by-year tables: an employer whose approvals all
+        predate the totals seed has year rows and no employer row, and still has a history.
+        The year ingests deliberately add no employer row (a bare row would read as a matched sponsor
+        with no badge, and the extension index drops such rows). Both tables are keyed on
+        norm_name, so each clause is an index hit."""
         if not norm:
             return []
         allow_prefix = (" " in norm) or (norm in _BRAND_PREFIXES)
@@ -912,15 +902,16 @@ class SponsorDB:
             parts = norm.split(" ")
             wanted = [norm] + [" ".join(parts[:i]) for i in range(1, len(parts))]
             marks = ",".join("?" * len(wanted))
-            with self._index_lock:
-                rows = self._conn.execute(
-                    f"SELECT norm_name FROM sponsor_employer WHERE norm_name IN ({marks}) "
-                    "OR (norm_name >= ? AND norm_name < ?)",
-                    (*wanted, norm + " ", norm + " ￿")).fetchall()
+            where = f"norm_name IN ({marks}) OR (norm_name >= ? AND norm_name < ?)"
+            params = (*wanted, norm + " ", norm + " \uffff")
         else:
-            with self._index_lock:
-                rows = self._conn.execute(
-                    "SELECT norm_name FROM sponsor_employer WHERE norm_name = ?", (norm,)).fetchall()
+            where, params = "norm_name = ?", (norm,)
+        with self._index_lock:
+            rows = self._conn.execute(
+                f"SELECT norm_name FROM sponsor_employer WHERE {where} "
+                f"UNION SELECT norm_name FROM sponsor_h1b_year WHERE {where} "
+                f"UNION SELECT norm_name FROM sponsor_perm_year WHERE {where}",
+                (*params, *params, *params)).fetchall()
         return _matching_candidates(norm, allow_prefix, [r[0] for r in rows])
 
     def ingest_perm_counts(self, rows) -> int:
@@ -1186,24 +1177,19 @@ class SponsorDB:
         # for "new dynasty construction"), and its CHILDREN ("new dynasty construction ..."). When
         # prefixes aren't allowed (a lone generic token) only the exact name can match, so it is a
         # single point lookup. Behaviour-identical to the old in-memory bucket + filter.
-        # Bare rows (a name with no signal at all: the year-by-year history and the LCA flag
-        # ingests add one so history() can find an employer the totals lack) never match
-        # here, so lookup() and the extension index (scripts/build_sponsor_index.py, which
-        # drops them) agree. history() reads the side tables through _matched_one instead.
         if allow_prefix:
             parts = norm.split(" ")
             wanted = [norm] + [" ".join(parts[:i]) for i in range(1, len(parts))]   # exact + parents
             marks = ",".join("?" * len(wanted))
             with self._index_lock:                    # serialise the read cursor with ingests
                 rows = self._conn.execute(
-                    f"SELECT * FROM sponsor_employer WHERE (norm_name IN ({marks}) "
-                    f"OR (norm_name >= ? AND norm_name < ?)) AND {_HAS_SIGNAL}",
+                    f"SELECT * FROM sponsor_employer WHERE norm_name IN ({marks}) "
+                    "OR (norm_name >= ? AND norm_name < ?)",
                     (*wanted, norm + " ", norm + " \uffff")).fetchall()
         else:
             with self._index_lock:
                 rows = self._conn.execute(
-                    f"SELECT * FROM sponsor_employer WHERE norm_name = ? AND {_HAS_SIGNAL}",
-                    (norm,)).fetchall()
+                    "SELECT * FROM sponsor_employer WHERE norm_name = ?", (norm,)).fetchall()
         index: dict[str, SponsorRecord] = {
             r["norm_name"]: SponsorRecord(
                 r["display_name"], r["h1b_approvals"], r["h1b_last_fy"], r["naics"], r["state"],

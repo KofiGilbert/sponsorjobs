@@ -1650,7 +1650,13 @@
     const el = $("#fdCompany");
     if (!el) return;
     const s = (job || {}).sponsor;
-    if (!s) { el.innerHTML = ""; return; }
+    if (!s) {
+      // No totals record, but the year-by-year history (ten years) or the LCA wages may still
+      // know this employer; the depth loader adds the heading only when something comes back.
+      el.innerHTML = `<div class="fd-depth" id="fdDepth"></div>`;
+      if ((job || {}).company) loadEmployerDepth(job, job.company);
+      return;
+    }
     const name = s.matched_name || (job || {}).company || "this employer";
     const facts = [];
     if (s.industry) facts.push(esc(s.industry));
@@ -1695,7 +1701,12 @@
     if (SELECTED_SID !== sid) return;
     const el = $("#fdDepth");
     if (!el) return;
-    el.innerHTML = renderFlags(hist) + renderHistory(hist) + renderWages(wages, job) + renderOfferBox(job, wages);
+    const known = (hist && hist.matched) || (wages && wages.found);
+    const strip = el.closest("#fdCompany");
+    if (!known && strip && !strip.querySelector(".fd-company-h")) { el.innerHTML = ""; return; }
+    const head = (strip && !strip.querySelector(".fd-company-h"))
+      ? `<div class="fd-company-h">About ${esc((hist && hist.matched_name) || company)}</div>` : "";
+    el.innerHTML = head + renderFlags(hist) + renderHistory(hist) + renderWages(wages, job) + renderOfferBox(job, wages);
     wireOfferCheck(el, job);
   }
 

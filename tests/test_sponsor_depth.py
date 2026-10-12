@@ -541,23 +541,28 @@ def test_the_installer_bundler_layers_the_depth_bundles_into_the_staged_db(tmp_p
 
 
 def test_a_history_only_employer_has_a_history_but_no_sponsor_record_and_no_index_entry():
-    """The year-by-year bundle covers employers the totals seed lacks; the ingest adds a bare
-    row so history() can find them. That bare row is NOT a sponsor record: lookup() ignores it
-    (no badge, no "matched"), and the extension index drops it, so the app and the JS port
-    answer alike."""
+    """The year-by-year bundle covers employers the totals seed lacks (approvals that all
+    predate it). The year ingest adds NO employer row: a bare row would read as a matched
+    sponsor with no badge while the extension index drops it, and lookup() keeps its old
+    contract (a row with zero counts still matches, tests/test_sourcing_hardening.py). So:
+    no sponsor record, no badge, no index entry, but history() finds the years."""
     db = SponsorDB(":memory:")
     db.ingest_h1b_year_rows([{"norm_name": "ghost labs", "fy": 2023, "initial_approvals": 4,
                               "initial_denials": 1, "continuing_approvals": 0, "continuing_denials": 0}])
+    assert db._conn.execute("SELECT COUNT(*) FROM sponsor_employer").fetchone()[0] == 0
     assert db.lookup("Ghost Labs") is None
     assert db.tag_jobs([{"company": "Ghost Labs", "location": "Austin, TX"}])[0]["visa"] == []
     h = db.history("Ghost Labs")
     assert h and h["years"][0]["approvals"] == 4 and h["denial_rate_5y"] == 0.2
+    assert h["matched_name"] == "Ghost Labs" and h["flags"]["e_verify"] is False
     assert all(not rec for rec in _bsi().collect(db).values())
     # A flag from the LCA attestations is a signal (the index keeps those rows), so it matches.
     db.ingest_lca_flag_rows([{"norm_name": "ghost labs", "display_name": "Ghost Labs",
                               "h1b_dependent": 1, "willful_violator": 0}])
     assert db.lookup("Ghost Labs") is not None and db.lookup("Ghost Labs").h1b_approvals == 0
     assert "ghost labs" in _bsi().collect(db)["g"]
+    assert db.history("Ghost Labs")["flags"]["h1b_dependent"] is True
+
 
 
 def test_release_urls_follow_dols_two_layouts():
