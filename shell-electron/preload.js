@@ -47,4 +47,11 @@ contextBridge.exposeInMainWorld("tailorShell", {
   autoApplyRun: (url, recordId) => ipcRenderer.invoke("autoapply:run", url, recordId),
   // AI-fill whatever page is currently open in the pane, for one saved application.
   autoApplyFillCurrent: (recordId) => ipcRenderer.invoke("autoapply:fill-current", recordId),
+  // Saved searches: "Open on other boards" hands a list of plain search URLs (LinkedIn, Indeed,
+  // Glassdoor, Handshake, Google Jobs) to the person's OWN browser, one tab each. Nothing is
+  // loaded in the pane and nothing is clicked or read on those sites; the person browses by hand.
+  openLinksExternal: (urls) => ipcRenderer.send("links:external", urls),
+  // A local desktop notification (the saved-search daily digest: "N new sponsor jobs"). Clicking
+  // it brings the app window forward. No email, no network.
+  notify: (title, body) => ipcRenderer.send("notify:show", { title, body }),
 });

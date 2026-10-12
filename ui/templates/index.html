@@ -28,6 +28,7 @@
         <button class="nav-item" data-nav="jobs" title="Jobs">
           <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 7V5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 5v2M3 12h18" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
           <span class="nav-label" data-i18n="nav.jobs">Jobs</span>
+          <span class="nav-badge" id="navJobsBadge" hidden title="New sponsor jobs for your saved searches"></span>
         </button>
         <button class="nav-item" data-nav="tracker" title="Tracker">
           <svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="9.5" y="4" width="5" height="11" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="16" y="4" width="5" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
@@ -195,6 +196,38 @@
           <button class="jf-toggle-btn" id="jfSaved" type="button" aria-pressed="false" title="Only the roles you've bookmarked. Saved roles stay on this machine.">★ Saved</button>
         </div>
         <div class="active-filters" id="activeFilters" hidden></div>
+
+        <!-- ===== Saved searches (strategies). A named copy of the filter bar above: apply it
+             in one click, open the SAME search on the other boards (plain URLs your own browser
+             opens; nothing is driven or read there), and a "new since you last looked" count
+             from our own feed. All of it lives in the local db. ===== -->
+        <div class="strat-rail" id="stratRail">
+          <span class="strat-rail-label" data-i18n="strat.label">Saved searches</span>
+          <div class="strat-list" id="stratList"></div>
+          <button class="btn btn-ghost btn-sm strat-save-btn" id="stratSaveBtn" type="button" data-i18n="strat.save">Save this search</button>
+          <form class="strat-form" id="stratForm" hidden>
+            <input class="jf-input strat-name" id="stratName" type="text" maxlength="120" placeholder="Name this search" data-i18n-ph="strat.namePh" autocomplete="off" />
+            <button class="btn btn-primary btn-sm" id="stratFormOk" type="submit" data-i18n="strat.saveOk">Save</button>
+            <button class="btn btn-ghost btn-sm" id="stratFormCancel" type="button" data-i18n="strat.cancel">Cancel</button>
+          </form>
+        </div>
+        <div class="strat-actions" id="stratActions" hidden>
+          <span class="strat-active-name" id="stratActiveName"></span>
+          <button class="link-btn strat-act" id="stratOpenBoards" type="button" data-i18n="strat.openBoards">Open on other boards</button>
+          <button class="link-btn strat-act" id="stratUpdate" type="button" data-i18n="strat.update">Update with current filters</button>
+          <button class="link-btn strat-act" id="stratRename" type="button" data-i18n="strat.rename">Rename</button>
+          <button class="link-btn strat-act" id="stratDefault" type="button" data-i18n="strat.default">Set as default</button>
+          <button class="link-btn strat-act" id="stratDelete" type="button" data-i18n="strat.delete">Delete</button>
+          <button class="link-btn strat-act" id="stratClear" type="button" data-i18n="strat.clear">Clear</button>
+          <div class="strat-links" id="stratLinks" hidden></div>
+        </div>
+        <section class="strat-new" id="stratNew" hidden>
+          <div class="strat-new-head">
+            <h2 class="strat-new-title"><span data-i18n="strat.newToday">New today</span> <span class="strat-badge" id="stratNewCount">0</span></h2>
+            <button class="link-btn" id="stratNewDismiss" type="button" data-i18n="strat.markSeen">Mark all as seen</button>
+          </div>
+          <div class="strat-new-list" id="stratNewList"></div>
+        </section>
         <div class="first-banner" id="firstBanner" hidden>
           <span>Add your resume to tailor it to any of these jobs in one click.</span>
           <button class="btn btn-primary btn-sm" id="firstBannerAdd" type="button">Add resume</button>
