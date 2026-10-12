@@ -2083,6 +2083,7 @@
   // background (official ATS feeds only) so the list stays fresh with no Refresh button.
   async function loadJobsFeed() {
     loadVisaStatus();
+    await stratOnJobsOpen();      // saved searches: paint the rail, apply the default one once
     await loadPage(1);
     startFeedPoll();
   }
@@ -2094,6 +2095,7 @@
       const list = $("#feedList");
       const sc = list ? list.scrollTop : 0;
       loadPage(JOBS_PAGE).then(() => { const l = $("#feedList"); if (l) l.scrollTop = sc; });
+      stratPoll();                 // saved-search counts ride the same timer
     }, 120000);
   }
   function stopFeedPoll() { if (FEED_POLL) { clearInterval(FEED_POLL); FEED_POLL = null; } }
@@ -6543,6 +6545,265 @@
     LOCK_BOOTED = true;
     boot();
   })();
+  /* ================================================================ Saved searches (strategies)
+     A named copy of the filter bar: apply in one click, open the same search on the other boards
+     (plain URLs the person's own browser opens; we never drive or read LinkedIn, Handshake or
+     any other site), and a "new since you last looked" digest from OUR feed. Server side:
+     sourcing/strategies.py + /api/strategies. Kept in one block so it lifts out cleanly. */
+  const ST = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  const stFmt = (k, f, vars) => ST(k, f).replace(/\{(\w+)\}/g, (_, n) => (vars && n in vars) ? vars[n] : "{" + n + "}");
+  let STRATS = [];                 // the saved strategies, as the server lists them (default first)
+  let STRAT_ACTIVE = null;         // id of the strategy whose filters are on the board, or null
+  let STRAT_DEFAULT_APPLIED = false;   // the default is applied once per session, not on every visit
+  let STRAT_FORM_MODE = "new";     // "new" | "rename"
+  const STRAT_NOTIFIED_KEY = "sj-strat-notified";   // {id: newest_at} already announced
+
+  async function apiMethod(url, method, body) {
+    const r = await fetch(url, { method, headers: { "Content-Type": "application/json" },
+                                 body: body === undefined ? undefined : JSON.stringify(body) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data.error) throw new Error(data.error || ("HTTP " + r.status));
+    return data;
+  }
+
+  // The filter bar as a strategy's stored shape (the same facets /api/jobs takes).
+  function stratCurrentFilters() {
+    return { q: JF_SEARCH, loc: JF_LOC, days: JF_DATE, remote: JF_REMOTE, visa: [...VISA_SET],
+             level: JF_LEVEL, pay: JF_PAY, sponsored: JF_SPONSORED };
+  }
+  // Push a strategy's filters onto the bar (and the search box, which syncFilterControls skips).
+  function stratApplyFilters(f) {
+    f = f || {};
+    JF_SEARCH = f.q || ""; JF_LOC = f.loc || ""; JF_DATE = Number(f.days) || 0; JF_REMOTE = f.remote || "";
+    VISA_SET.clear(); (f.visa || []).forEach(v => VISA_SET.add(v));
+    JF_LEVEL = f.level || ""; JF_PAY = Number(f.pay) || 0; JF_SPONSORED = !!f.sponsored; JF_SAVED = false;
+    const sb = $("#jfSearch"); if (sb) sb.value = JF_SEARCH;
+    syncFilterControls();
+  }
+  function stratById(id) { return STRATS.find(s => s.id === id) || null; }
+
+  function paintStratRail() {
+    const list = $("#stratList");
+    if (!list) return;
+    if (!STRATS.length) {
+      list.innerHTML = `<span class="strat-empty">${esc(ST("strat.none", "No saved searches yet. Set your filters, then save them to get a daily count of new sponsor jobs."))}</span>`;
+    } else {
+      list.innerHTML = STRATS.map(s => {
+        const n = Number(s.new_count) || 0;
+        return `<button class="strat-pill${s.id === STRAT_ACTIVE ? " is-active" : ""}" data-strat="${s.id}" type="button" title="${esc(s.name)}">
+          ${s.is_default ? `<span class="strat-pill-star" title="${esc(ST("strat.isDefault", "Default"))}" aria-label="${esc(ST("strat.isDefault", "Default"))}">★</span>` : ""}
+          <span class="strat-pill-name">${esc(s.name)}</span>
+          <span class="strat-badge" ${n ? "" : "hidden"} title="${esc(ST("strat.newBadgeTitle", "new since you last looked"))}">${n}</span>
+        </button>`;
+      }).join("");
+      list.querySelectorAll("[data-strat]").forEach(b =>
+        b.addEventListener("click", () => stratActivate(Number(b.dataset.strat))));
+    }
+    const act = $("#stratActions");
+    const cur = stratById(STRAT_ACTIVE);
+    if (act) {
+      act.hidden = !cur;
+      if (cur) {
+        $("#stratActiveName").textContent = cur.name;
+        const d = $("#stratDefault"); if (d) d.hidden = !!cur.is_default;
+      }
+      const links = $("#stratLinks"); if (links && !cur) { links.hidden = true; links.innerHTML = ""; }
+    }
+    paintNavJobsBadge();
+  }
+
+  function paintNavJobsBadge() {
+    const b = $("#navJobsBadge");
+    if (!b) return;
+    const total = STRATS.reduce((a, s) => a + (Number(s.new_count) || 0), 0);
+    b.hidden = !total;
+    b.textContent = total > 99 ? "99+" : String(total);
+  }
+
+  async function stratLoad() {
+    try { STRATS = (await api("/api/strategies")).strategies || []; }
+    catch { STRATS = []; }
+    paintStratRail();
+    stratMaybeNotify();
+  }
+
+  // Jobs page opened: load the rail; the first time, a default strategy (if any) becomes the board.
+  async function stratOnJobsOpen() {
+    await stratLoad();
+    if (STRAT_DEFAULT_APPLIED) return;
+    STRAT_DEFAULT_APPLIED = true;
+    const def = STRATS.find(s => s.is_default);
+    if (def) await stratActivate(def.id, { noReload: true });
+  }
+
+  // Apply a strategy: its filters go on the bar, the board reloads, and its "new since you last
+  // looked" roles show in the New today section; the person has now looked, so the server's
+  // cutoff moves and the badge clears (the section itself stays until they move on).
+  async function stratActivate(id, opts) {
+    const st = stratById(id);
+    if (!st) return;
+    STRAT_ACTIVE = id;
+    stratApplyFilters(st.filters);
+    paintStratRail();
+    if (!(opts && opts.noReload)) loadPage(1);
+    let d = null;
+    try { d = await api(`/api/strategies/${id}/new`); } catch { d = null; }
+    paintStratNew(d);
+    if (d && d.count > 0) {
+      try { await apiMethod(`/api/strategies/${id}/seen`, "POST", {}); } catch { /* badge clears next poll */ }
+      st.new_count = 0; st.newest_at = null;
+      paintStratRail();
+    }
+  }
+
+  function stratDeactivate() {
+    STRAT_ACTIVE = null;
+    paintStratNew(null);
+    paintStratRail();
+  }
+
+  function paintStratNew(d) {
+    const sec = $("#stratNew"), list = $("#stratNewList"), cnt = $("#stratNewCount");
+    if (!sec || !list) return;
+    if (!d || !STRAT_ACTIVE) { sec.hidden = true; list.innerHTML = ""; return; }
+    sec.hidden = false;
+    cnt.textContent = String(d.count || 0);
+    const jobs = d.jobs || [];
+    if (!jobs.length) {
+      list.innerHTML = `<div class="strat-new-more">${esc(ST("strat.nothingNew", "Nothing new since you last looked."))}</div>`;
+      return;
+    }
+    list.innerHTML = jobs.map(j => `<button class="strat-new-row" data-new-sid="${esc(j.source_id)}" type="button">
+        <span class="strat-new-co">${esc(j.company)}</span>
+        <span class="strat-new-role">${esc(j.title)}</span>
+        <span class="strat-new-loc">${esc(usLocation(j.location))}</span>
+      </button>`).join("") + (d.count > jobs.length
+        ? `<div class="strat-new-more">${esc(stFmt("strat.more", "and {n} more in the list below", { n: d.count - jobs.length }))}</div>` : "");
+    list.querySelectorAll("[data-new-sid]").forEach(b => b.addEventListener("click", () => {
+      const sid = b.dataset.newSid;
+      const j = jobs.find(x => x.source_id === sid);
+      if (j && !LAST_JOBS.find(x => x.source_id === sid)) LAST_JOBS.unshift(j);   // the detail pane reads LAST_JOBS
+      selectJob(sid);
+    }));
+  }
+
+  // Save / rename form.
+  function stratOpenForm(mode) {
+    STRAT_FORM_MODE = mode;
+    const f = $("#stratForm"), n = $("#stratName");
+    if (!f || !n) return;
+    const cur = stratById(STRAT_ACTIVE);
+    n.value = mode === "rename" && cur ? cur.name : (JF_SEARCH ? JF_SEARCH + (JF_LOC ? " in " + JF_LOC : "") : "");
+    f.hidden = false;
+    $("#stratSaveBtn").hidden = true;
+    n.focus(); n.select();
+  }
+  function stratCloseForm() {
+    const f = $("#stratForm"); if (f) f.hidden = true;
+    const b = $("#stratSaveBtn"); if (b) b.hidden = false;
+  }
+  $("#stratSaveBtn")?.addEventListener("click", () => { stratOpenForm("new"); stratAskNotifyPermission(); });
+  $("#stratFormCancel")?.addEventListener("click", stratCloseForm);
+  $("#stratForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = ($("#stratName").value || "").trim();
+    if (!name) return;
+    try {
+      if (STRAT_FORM_MODE === "rename" && STRAT_ACTIVE) {
+        await apiMethod(`/api/strategies/${STRAT_ACTIVE}`, "POST", { name });
+      } else {
+        const r = await apiMethod("/api/strategies", "POST", { name, filters: stratCurrentFilters(), is_default: !STRATS.length });
+        STRAT_ACTIVE = r.strategy.id;
+      }
+      stratCloseForm();
+      await stratLoad();
+      if (STRAT_FORM_MODE !== "rename") paintStratNew({ count: 0, jobs: [] });
+    } catch (err) { toast(err.message); }
+  });
+  $("#stratUpdate")?.addEventListener("click", async (e) => {
+    if (!STRAT_ACTIVE) return;
+    try {
+      await apiMethod(`/api/strategies/${STRAT_ACTIVE}`, "POST", { filters: stratCurrentFilters() });
+      await stratLoad();
+      const b = e.currentTarget; const was = b.textContent;
+      b.textContent = ST("strat.updated", "Updated"); setTimeout(() => { b.textContent = was; }, 1500);
+    } catch (err) { toast(err.message); }
+  });
+  $("#stratRename")?.addEventListener("click", () => stratOpenForm("rename"));
+  $("#stratDefault")?.addEventListener("click", async () => {
+    if (!STRAT_ACTIVE) return;
+    try { await apiMethod(`/api/strategies/${STRAT_ACTIVE}/default`, "POST", {}); await stratLoad(); }
+    catch (err) { toast(err.message); }
+  });
+  $("#stratDelete")?.addEventListener("click", async () => {
+    if (!STRAT_ACTIVE) return;
+    if (!window.confirm(ST("strat.deleteConfirm", "Delete this saved search?"))) return;
+    try { await apiMethod(`/api/strategies/${STRAT_ACTIVE}`, "DELETE"); }
+    catch (err) { toast(err.message); return; }
+    stratDeactivate();
+    await stratLoad();
+  });
+  $("#stratClear")?.addEventListener("click", () => {
+    stratDeactivate();
+    JF_SEARCH = ""; const sb = $("#jfSearch"); if (sb) sb.value = "";
+    clearFilter("all");            // resets every other facet and reloads page 1
+  });
+  $("#stratNewDismiss")?.addEventListener("click", async () => {
+    if (STRAT_ACTIVE) { try { await apiMethod(`/api/strategies/${STRAT_ACTIVE}/seen`, "POST", {}); } catch { /* best effort */ } }
+    paintStratNew({ count: 0, jobs: [] });
+    await stratLoad();
+  });
+
+  // "Open on other boards": the server builds one plain search URL per board from the strategy's
+  // keywords and location; the SHELL hands them to the person's own browser (one tab each) or, in
+  // a plain browser, window.open does. Pop-up blockers may keep all but the first, so the same
+  // links are also listed to click one by one. Nothing is fetched or read from those sites.
+  $("#stratOpenBoards")?.addEventListener("click", async () => {
+    if (!STRAT_ACTIVE) return;
+    let urls = [];
+    try { urls = (await api(`/api/strategies/${STRAT_ACTIVE}/open-urls`)).urls || []; }
+    catch (err) { toast(err.message); return; }
+    const box = $("#stratLinks");
+    if (box) {
+      box.hidden = false;
+      box.innerHTML = `<span>${esc(ST("strat.openHint", "Each search opens in your own browser. If only one tab opened, your browser blocked the rest: click them here."))}</span>` +
+        urls.map(u => `<a href="${esc(u.url)}" target="_blank" rel="noopener noreferrer">${esc(u.label)}</a>` +
+          (u.note === "login" ? ` <span class="strat-link-note">(${esc(ST("strat.handshakeNote", "needs your Handshake login"))})</span>` : "")).join("");
+    }
+    const plain = urls.map(u => u.url);
+    if (window.tailorShell && window.tailorShell.openLinksExternal) window.tailorShell.openLinksExternal(plain);
+    else plain.forEach(u => window.open(u, "_blank", "noopener"));
+  });
+
+  // Digest notification: once per (strategy, newest arrival), so a count that has not changed
+  // is never announced twice. Desktop shell first; a plain browser uses the Notification API
+  // (permission asked when the person saves a search, a real gesture). No email (see the TODO
+  // in ui/app.py next to the strategies routes).
+  function stratReadNotified() { try { return JSON.parse(localStorage.getItem(STRAT_NOTIFIED_KEY) || "{}") || {}; } catch { return {}; } }
+  function stratAskNotifyPermission() {
+    if (window.tailorShell && window.tailorShell.notify) return;
+    try { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {}); } catch { /* not available */ }
+  }
+  function stratMaybeNotify() {
+    const seen = stratReadNotified();
+    const fresh = STRATS.filter(s => (Number(s.new_count) || 0) > 0 && s.newest_at && seen[String(s.id)] !== s.newest_at);
+    if (!fresh.length) return;
+    fresh.forEach(s => { seen[String(s.id)] = s.newest_at; });
+    try { localStorage.setItem(STRAT_NOTIFIED_KEY, JSON.stringify(seen)); } catch { /* fine */ }
+    const n = fresh.reduce((a, s) => a + (Number(s.new_count) || 0), 0);
+    const title = ST("strat.notifyTitle", "New sponsor jobs");
+    const body = fresh.length === 1
+      ? stFmt("strat.notifyOne", "{n} new for {name}", { n, name: fresh[0].name })
+      : stFmt("strat.notifyMany", "{n} new across {k} saved searches", { n, k: fresh.length });
+    if (window.tailorShell && window.tailorShell.notify) { window.tailorShell.notify(title, body); return; }
+    try { if ("Notification" in window && Notification.permission === "granted") new Notification(title, { body }); } catch { /* not available */ }
+  }
+  // Counts refresh with the board's own poll while Jobs is open, and on a slow timer from any
+  // page so the sidebar badge and the notification do not depend on the person sitting on Jobs.
+  function stratPoll() { stratLoad(); }
+  setTimeout(stratPoll, 4000);
+  setInterval(stratPoll, 600000);
+
 })();
 
 /* ---------------- the side panel v2: icon rail · drag divider · CV workspace ----

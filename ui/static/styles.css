@@ -2985,6 +2985,54 @@ body.cv-dragging * { cursor: grabbing !important; }
 .acct-photo { z-index: 1; }
 .acct-ava:has(.acct-photo:not([hidden])) { background: none; }
 
+/* ================================================================ Saved searches (strategies)
+   A second, quieter row under the filter bar: pills for each saved search (with a "new since
+   you last looked" count), the actions for the active one, and the "New today" list. */
+.strat-rail { max-width: 1320px; margin: 0 auto 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.strat-rail-label { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+.strat-list { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
+.strat-empty { font-size: 12.5px; color: var(--muted); }
+.strat-pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); font-size: 12.5px; font-weight: 500;
+  cursor: pointer; max-width: 260px; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
+.strat-pill:hover { color: var(--ink); border-color: var(--border-strong); }
+.strat-pill.is-active { background: var(--ink); color: var(--bg, #fff); border-color: var(--ink); }
+.strat-pill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strat-pill-star { font-size: 11px; opacity: 0.8; }
+.strat-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 1; background: var(--accent, #2f6fed); color: #fff; }
+.strat-badge[hidden] { display: none; }
+.strat-pill.is-active .strat-badge { background: var(--bg, #fff); color: var(--ink); }
+.strat-save-btn { height: 30px; }
+.strat-form { display: inline-flex; gap: 6px; align-items: center; }
+.strat-form[hidden] { display: none; }
+.strat-name { height: 30px; width: 220px; font-size: 13px; }
+.strat-actions { max-width: 1320px; margin: 0 auto 10px; display: flex; gap: 4px 10px; flex-wrap: wrap; align-items: center; font-size: 13px; }
+.strat-actions[hidden] { display: none; }
+.strat-active-name { font-weight: 600; color: var(--ink); margin-right: 4px; }
+.strat-links { flex-basis: 100%; display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: center; font-size: 12.5px; color: var(--muted); padding-top: 2px; }
+.strat-links[hidden] { display: none; }
+.strat-links a { color: var(--ink-2); text-decoration: underline; text-underline-offset: 2px; }
+.strat-links a:hover { color: var(--ink); }
+.strat-link-note { font-size: 11.5px; color: var(--muted); }
+.strat-new { max-width: 1320px; margin: 0 auto 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
+.strat-new[hidden] { display: none; }
+.strat-new-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.strat-new-title { margin: 0; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.strat-new-list { display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow-y: auto; }
+.strat-new-row { display: grid; grid-template-columns: minmax(120px, 220px) 1fr auto; gap: 10px; align-items: center; width: 100%;
+  padding: 6px 8px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--ink-2); font-size: 13px; text-align: left; cursor: pointer; }
+.strat-new-row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); color: var(--ink); }
+.strat-new-co { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strat-new-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strat-new-loc { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.strat-new-more { font-size: 12.5px; color: var(--muted); padding: 6px 8px; }
+/* The count on the Jobs entry in the app sidebar: the sum over every saved search. */
+.nav-badge { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 11px; font-weight: 700; line-height: 1; background: var(--accent, #2f6fed); color: #fff; }
+.nav-badge[hidden] { display: none; }
+.app.is-rail .nav-badge { position: absolute; top: 6px; right: 8px; margin: 0; }
+.app.is-rail .nav-item { position: relative; }
 /* ================================================================ Tracker (the job board)
    Same column as the Jobs board (1320px). Dark, almost no colour: the only colour is the
    due-follow-up dot (--flag) and the goal bar (--good). */
