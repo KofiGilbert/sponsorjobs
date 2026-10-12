@@ -665,6 +665,8 @@ class WebIntake:
         self.last_cover_letter = ""        # most recent drafted cover letter (bundled on accept)
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
         self.source_job = {}               # {url, source, source_id} when started from a sourced job
+        self.keyword_actions: list[dict] = []   # "Add this keyword" edits on this page, undo one by one
+        self._keyword_previews: dict = {}        # term -> the last validated preview, for apply
 
         saved = memory.load(profile_name)
         if saved:
@@ -1563,6 +1565,9 @@ class WebIntake:
             # Figures on the draft with no origin in the person's material: confirm or
             # strike before sending. Empty when every number traces back to them.
             s["fact_flags"] = list(getattr(self.assembled, "fact_flags", None) or [])
+            # Keywords added through the coverage report, so the panel can offer undo links.
+            s["keyword_actions"] = [{"term": a["term"], "kind": a["kind"], "label": a["label"]}
+                                    for a in self.keyword_actions]
             s["pdf"] = f"/api/cv.pdf?job={self.jobname}&v={self._pdf_v}"
             s["one_page"] = bool(self.assembled.ok and self.assembled.compile.pages == 1)
             # Flagged placeholder projects block finalization until resolved.
@@ -2962,6 +2967,137 @@ class WebIntake:
         from tailoring.reviewer import review_resume
         return review_resume(self.profile, self.coverage_dict(), self.assembled.status,
                              fill=getattr(self.assembled, "fill_ratio", None))
+
+    # ------------------------------------------------------------------ "Add this keyword"
+    # One missing JD term from the coverage report becomes one reviewable edit of one bullet
+    # (tailoring/keyword_action.py). The page is edited surgically and recompiled; the same
+    # change is mirrored into the profile so a later rebuild keeps it; each action can be
+    # undone on its own.
+    def _page_profile(self) -> dict:
+        return (getattr(self.assembled, "profile_used", None) or {}) if self.assembled else {}
+
+    def keyword_preview(self, term: str) -> dict:
+        from tailoring.keyword_action import preview_keyword_action
+        term = " ".join(str(term or "").split())
+        if self.assembled is None or not self.assembled.tex_source:
+            return {"term": term, "supported": False, "ok": False,
+                    "reason": "Build the resume first, then add keywords to it."}
+        pv = preview_keyword_action(term, self.assembled.tex_source, self._page_profile(), self.jd,
+                                    self.llm, fill_ratio=self.assembled.fill_ratio,
+                                    evidence_profile=self.profile)
+        if pv.ok:
+            self._keyword_previews[term.lower()] = pv
+        return pv.to_dict()
+
+    def keyword_apply(self, term: str, draft: str = "") -> dict:
+        from tailoring.keyword_action import (apply_keyword_action, check_draft_for,
+                                              render_interior)
+        from tailoring.latex_template import LatexTemplate
+        term = " ".join(str(term or "").split())
+        draft = " ".join(str(draft or "").split())
+        if self.assembled is None or not self.assembled.tex_source:
+            return self._keyword_result(term, False, "Build the resume first, then add keywords to it.")
+        pv = self._keyword_previews.get(term.lower())
+        if pv is None:
+            d = self.keyword_preview(term)
+            pv = self._keyword_previews.get(term.lower())
+            if pv is None:
+                return self._keyword_result(term, False, d.get("reason") or "Nothing to add.")
+        draft = draft or pv.after
+        if draft != pv.after:
+            problems = check_draft_for(pv, draft, self._page_profile(), self.jd, self.profile)
+            if problems:
+                return self._keyword_result(term, False, " ".join(problems))
+        bold = bool(self._page_profile().get("bold_metrics"))
+        tex_before = LatexTemplate(self.assembled.tex_source).get(pv.target_bullet).text
+        res = apply_keyword_action(self.assembled.tex_source, pv.kind, pv.target_bullet, draft,
+                                   pv.term, pv.before, self.workdir, self.llm, jobname=self.jobname,
+                                   bold_metrics=bold)
+        if not res.ok:
+            return self._keyword_result(term, False, res.reason, res)
+        self._mirror_keyword(pv, res.final_text)
+        self._refresh_assembled(res)
+        self.keyword_actions.append({
+            "term": pv.term, "kind": pv.kind, "ref": pv.ref, "label": pv.label,
+            "before": pv.before, "after": res.final_text, "anchor": pv.anchor,
+            "tex_before": tex_before, "tex_after": render_interior(res.final_text, bold),
+        })
+        self._keyword_previews.pop(term.lower(), None)
+        self._persist()
+        return self._keyword_result(term, True, "", res)
+
+    def keyword_undo(self, term: str) -> dict:
+        from tailoring.keyword_action import remove_added_bullet, restore_bullet
+        term = " ".join(str(term or "").split())
+        idx = next((i for i in range(len(self.keyword_actions) - 1, -1, -1)
+                    if self.keyword_actions[i]["term"].lower() == term.lower()), None)
+        if idx is None or self.assembled is None:
+            return self._keyword_result(term, False, f"Nothing to undo for {term}.")
+        act = self.keyword_actions[idx]
+        if act["kind"] == "new":
+            res = remove_added_bullet(self.assembled.tex_source, act["tex_after"], self.workdir,
+                                      jobname=self.jobname)
+        else:
+            res = restore_bullet(self.assembled.tex_source, act["tex_after"], act["tex_before"],
+                                 self.workdir, jobname=self.jobname)
+        self._unmirror_keyword(act)
+        del self.keyword_actions[idx]
+        if res.ok:
+            self._refresh_assembled(res)
+        else:
+            self._assemble()          # the page moved on; rebuild it from the restored profile
+        self._persist()
+        out = self._keyword_result(term, True, "", res if res.ok else None)
+        out["undone"] = True
+        return out
+
+    def _keyword_result(self, term: str, ok: bool, reason: str, res=None) -> dict:
+        st = self._state()
+        st.update({"ok": ok, "term": term, "reason": reason,
+                   "page_check": res.page_check() if res is not None else None,
+                   "diff": (res.diff if res is not None and ok else "")})
+        return st
+
+    def _keyword_slots(self, label: str, text: str) -> list[dict]:
+        """The matching bullet slot in BOTH the durable profile and the page profile."""
+        from tailoring.keyword_action import profile_slots, _norm
+        out = []
+        for prof in (self.profile, self._page_profile()):
+            for s in profile_slots(prof):
+                if _norm(s["label"]) == _norm(label) and _norm(s["text"]) == _norm(text):
+                    out.append(s)
+                    break
+        return out
+
+    def _mirror_keyword(self, pv, text: str) -> None:
+        if pv.kind == "new":
+            for s in self._keyword_slots(pv.label, pv.anchor):
+                s["bullets"].insert(s["index"] + 1, text)
+        else:
+            for s in self._keyword_slots(pv.label, pv.before):
+                s["bullets"][s["index"]] = text
+
+    def _unmirror_keyword(self, act: dict) -> None:
+        for s in self._keyword_slots(act["label"], act["after"]):
+            if act["kind"] == "new":
+                del s["bullets"][s["index"]]
+            else:
+                s["bullets"][s["index"]] = act["before"]
+
+    def _refresh_assembled(self, res) -> None:
+        """Make the session's build describe the page after a surgical change."""
+        from tailoring.assembler import TARGET_FILL, _rendered_cv_text
+        from tailoring.keywords import build_coverage_report
+        a = self.assembled
+        a.tex_source = res.tex_source
+        a.compile = res.compile
+        a.pdf_path = res.compile.pdf_path if res.compile else a.pdf_path
+        a.fill_ratio = res.fill_ratio
+        a.ok = True
+        a.status = "underfull" if (a.fill_ratio is not None and a.fill_ratio < TARGET_FILL) else "clean"
+        a.coverage = build_coverage_report(self.jd, _rendered_cv_text(a.profile_used, self.sections),
+                                           a.profile_used, terms=list(a.coverage.jd_terms))
+        self._pdf_v += 1
 
     # ------------------------------------------------------------------ accept + memory
     # ------------------------------------------------------------------ drafting

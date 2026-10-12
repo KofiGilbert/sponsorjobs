@@ -21,16 +21,16 @@ from __future__ import annotations
 
 import re
 
+from .adstance import RESTRICTED_SRC
 from .sponsors import normalize_employer
 
 # Unambiguous "you must be a US person" phrasing. Kept tight so a positive line like
 # "we are happy to sponsor visas" is never caught — every branch needs an explicit bar.
+# The citizenship / green-card / clearance branches live in sourcing/adstance.py
+# (RESTRICTED_SRC), where the ad reader turns the same sentences into the "restricted" chip
+# the app and the extension show; one source, so the board and the chips never disagree.
 _EXCLUDE_RE = re.compile(
-    r"(u\.?s\.?\s*citizens?(hip)?\s*(is\s*)?(required|only|mandatory)"
-    r"|must\s+be\s+(a\s+)?(u\.?s\.?\s*)?citizen"
-    r"|sole\s+u\.?s\.?\s*citizen"
-    r"|security\s+clearance|active\s+clearance|obtain\s+(a\s+)?(security\s+)?clearance"
-    r"|ts/sci|top\s+secret|secret\s+clearance|dod\s+secret|polygraph|\bq\s+clearance\b"
+    "(" + RESTRICTED_SRC +
     r"|no\s+(visa\s+)?sponsorship|not\s+(able|eligible)\s+to\s+sponsor"
     r"|unable\s+to\s+sponsor|do(es)?\s+not\s+(offer|provide|sponsor)\s+(visa\s+)?sponsor"
     r"|will\s+not\s+sponsor|without\s+(visa\s+)?sponsorship"
@@ -166,7 +166,7 @@ def is_sponsor_relevant(job: dict) -> bool:
     """Does this row belong on SponsorJobs at all? Board rows: yes. Aggregator rows: only with
     a sponsor badge (`visa`, set by SponsorDB.tag_jobs for US roles) or a posting that states
     sponsorship (`sponsorship_stated` is True)."""
-    if job.get("ad_stance") == "not_offered":
+    if job.get("ad_stance") in ("not_offered", "restricted"):
         return False                      # the ad itself rules the role out for a visa holder
     if (job.get("source") or "") not in AGGREGATOR_SOURCES:
         return True

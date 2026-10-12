@@ -1,5 +1,26 @@
 """What an ad says about sponsorship, on the real sentences found in the live feed (2026-10-08)."""
-from sourcing.adstance import NOT_OFFERED, OFFERED, UNKNOWN, ad_stance
+from sourcing.adstance import (NOT_OFFERED, OFFERED, RESTRICTED, UNKNOWN, ad_stance,
+                               short_sentence)
+
+# Ads that close the role to anyone without US citizenship, a green card, or a clearance. The
+# phrasing comes from sourcing/quality.py's board filter (and the green-card lines from live ads).
+RESTRICTED_ADS = [
+    "U.S. citizenship is required for this position.",
+    "Applicants must be a U.S. citizen or permanent resident.",
+    "Must be a US citizen or green card holder.",
+    "Candidates must be US citizens or permanent residents due to federal contract requirements.",
+    "Only US citizens and green card holders will be considered.",
+    "Permanent residency required.",
+    "Must hold a valid green card.",
+    "This position requires an active Secret clearance.",
+    "Ability to obtain a security clearance is required.",
+    "Requires TS/SCI with polygraph.",
+]
+# Green cards named POSITIVELY: sponsorship, not a bar. Must never read as restricted.
+GREEN_CARD_YES = [
+    "We sponsor H-1B visas and green cards for our employees.",
+    "Green card sponsorship is available after one year.",
+]
 
 NO = [
     "GM does not provide immigration-related sponsorship for this role.",
@@ -68,3 +89,59 @@ def test_an_ad_that_refuses_sponsorship_is_not_sponsor_relevant():
     assert is_sponsor_relevant(row) is False          # the aggregator flag was wrong; the ad rules
     assert is_sponsor_relevant({"source": "freehire", "ad_stance": "offered"}) is True
     assert is_sponsor_relevant({"source": "greenhouse", "ad_stance": "not_offered"}) is False
+    assert is_sponsor_relevant({"source": "greenhouse", "ad_stance": "restricted"}) is False
+
+
+# -- restricted: citizenship / green card / clearance ------------------------------------- #
+
+def test_every_citizenship_or_clearance_bar_reads_as_restricted_with_its_sentence():
+    for s in RESTRICTED_ADS:
+        r = ad_stance(s)
+        assert r["stance"] == RESTRICTED, s
+        assert r["sentence"] == s.rstrip("."), s          # the ad's own words, for the chip
+
+
+def test_us_abbreviation_does_not_split_the_sentence():
+    """"U.S. citizenship is required" used to split into "U", "S", "citizenship is required",
+    and the rule never saw the US. The quoted sentence must be the whole line."""
+    r = ad_stance("Benefits are great. U.S. citizenship is required for this role. Apply now.")
+    assert r == {"stance": RESTRICTED, "sentence": "U.S. citizenship is required for this role"}
+
+
+def test_a_green_card_offered_is_sponsorship_not_a_bar():
+    for s in GREEN_CARD_YES:
+        assert ad_stance(s)["stance"] != RESTRICTED, s
+    assert ad_stance(GREEN_CARD_YES[1])["stance"] == OFFERED
+    # And the board filter agrees: a positive green-card line never hides the role.
+    from sourcing.quality import role_excludes_international
+    for s in GREEN_CARD_YES:
+        assert not role_excludes_international("Some Startup", s), s
+
+
+def test_restricted_outranks_no_sponsorship_which_outranks_yes():
+    text = ("We do sponsor visas for many roles. This position is not eligible for visa "
+            "sponsorship. Must be a U.S. citizen with an active security clearance.")
+    r = ad_stance(text)
+    assert r["stance"] == RESTRICTED and "U.S. citizen" in r["sentence"]
+    r = ad_stance("We do sponsor visas for many roles. This position is not eligible for visa sponsorship.")
+    assert r["stance"] == NOT_OFFERED
+
+
+def test_the_board_filter_and_the_chip_read_the_same_sentences():
+    """One source of phrasing (RESTRICTED_SRC): whatever the extension flags as restricted, the
+    feed also keeps off the board, and vice versa for the citizenship / clearance branches."""
+    from sourcing.quality import role_excludes_international
+    for s in RESTRICTED_ADS:
+        assert role_excludes_international("Some Startup", s), s
+
+
+def test_short_sentence_cuts_at_a_word_and_leaves_short_ones_alone():
+    assert short_sentence("U.S. citizenship is required") == "U.S. citizenship is required"
+    long = ("Applicants must be legally authorized to work in the United States for any employer "
+            "without requiring current or future visa sponsorship, for example employment-based "
+            "visas such as H-1B or F-1 OPT")
+    cut = short_sentence(long)
+    assert cut.endswith("...") and len(cut) <= 144
+    body = cut[:-3]
+    assert long.startswith(body) and not body.endswith((" ", ","))
+    assert not long[len(body)].isalnum()                       # cut at a word boundary

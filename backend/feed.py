@@ -145,8 +145,9 @@ def feed_jobs(level: str | None = None) -> list[dict]:
     us = [j for j in us if not employer_is_clearance_heavy(j.get("company", ""))]
     FUNNEL["jd_unchecked"] = sum(1 for j in us if not is_jd_checked(j))
     chk = [j for j in us if is_jd_checked(j)]
-    FUNNEL["ad_says_no"] = sum(1 for j in chk if j.get("ad_stance") == "not_offered")
-    FUNNEL["aggregator_no_signal"] = sum(1 for j in chk if j.get("ad_stance") != "not_offered" and not is_sponsor_relevant(j))
+    _closed = ("not_offered", "restricted")          # the ad says no, or citizenship / clearance
+    FUNNEL["ad_says_no"] = sum(1 for j in chk if j.get("ad_stance") in _closed)
+    FUNNEL["aggregator_no_signal"] = sum(1 for j in chk if j.get("ad_stance") not in _closed and not is_sponsor_relevant(j))
     jobs = [j for j in chk if is_sponsor_relevant(j)]
     FUNNEL["kept"] = len(jobs)
     for j in jobs:
