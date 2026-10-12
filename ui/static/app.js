@@ -1621,7 +1621,7 @@
   // flags, what this employer paid for this title at this worksite (DOL LCA filings), and an
   // offer check that puts a salary against those filings and the weighted lottery. Fetched after
   // the strip renders so a slow lookup never holds the job detail; stale answers are dropped.
-  const empT = (k, f) => (window.I18N ? I18N.empT(k, f) : f);
+  const empT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
   const empMoney = (x) => "$" + Math.round(Number(x || 0)).toLocaleString();
   const empK = (x) => "$" + Math.round(Number(x || 0) / 1000) + "k";
   const ROMAN = { 1: "I", 2: "II", 3: "III", 4: "IV" };

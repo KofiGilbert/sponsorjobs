@@ -293,10 +293,11 @@ def test_lottery_odds_follow_the_weights_and_stay_below_one():
     R, S = 300_000, 100_000
     o = lottery_odds(1, R, S)
     assert sum(R * DEFAULT_MIX[l] * o["by_level"][l] for l in (1, 2, 3, 4)) == pytest.approx(S, rel=0.01)
-    # The model reproduces USCIS's reported FY2027 share of Level I selections (17.7%) closely.
+    # Weighting pushes Level I's share of selections well under its 28% share of registrations
+    # (USCIS has not published the real FY2027 per-level split; see the module docstring).
     o = lottery_odds(1)
     share1 = o["registrations"] * o["mix"][1] * o["by_level"][1] / o["selections"]
-    assert abs(share1 - 0.177) < 0.02
+    assert 0.12 < share1 < 0.24
     assert lottery_odds(9)["level"] == 4 and lottery_odds(0)["level"] == 1
     assert "not legal advice" in o["note"]
 
@@ -358,7 +359,7 @@ def test_history_endpoint(client):
     d = client.get("/api/sponsors/Acme%20Corp/history").get_json()
     assert d["matched"] and [y["fy"] for y in d["years"]] == [2022, 2023]
     assert d["years"][0]["denials"] == 3 and d["flags"] == {"h1b_dependent": False, "willful_violator": False,
-                                                            "cap_exempt": False}
+                                                            "cap_exempt": False, "e_verify": False}
     assert d["denial_rate_5y"] == pytest.approx(0.158, abs=0.001)
     d = client.get("/api/sponsors/Nowhere%20Corp/history").get_json()
     assert d["matched"] is False and d["years"] == []
@@ -477,3 +478,81 @@ def test_the_installer_bundler_accepts_the_depth_tables(tmp_path):
     p = tmp_path / "with_depth.db"
     d2 = SponsorDB(p); d2.ingest_h1b_rows(_h1b_rows()); d2.close()
     assert b.vet(p, min_employers=1) == ""
+
+
+def test_the_installer_bundler_layers_the_depth_bundles_into_the_staged_db(tmp_path):
+    """The staged sponsors.db must carry the three depth tables (an installed app has no
+    scripts to run), from the shipped history, PERM-by-year and LCA bundle files, and layering
+    them twice changes nothing."""
+    from sourcing.sponsors import SEED_COLS
+    path = Path(__file__).resolve().parents[1] / "packaging" / "bundle_sponsor_db.py"
+    spec = importlib.util.spec_from_file_location("bundle_sponsor_db_layer", path)
+    b = importlib.util.module_from_spec(spec); spec.loader.exec_module(b)
+    seed = tmp_path / "seed.csv.gz"
+    with gzip.open(seed, "wt", newline="", encoding="utf-8") as f:
+        w = csv.writer(f); w.writerow(SEED_COLS)
+        w.writerow(["acme", "Acme Corp", 30, 2023, 2022, "541511", "CA", 0, 0, 3])   # key is normalized
+    history = tmp_path / "h1b_history.csv.gz"
+    with gzip.open(history, "wt", newline="", encoding="utf-8") as f:
+        w = csv.writer(f); w.writerow(H1B_YEAR_COLS)
+        w.writerow(["acme", 2022, 11, 2, 6, 1]); w.writerow(["acme", 2023, 8, 0, 7, 3])
+    perm_years = tmp_path / "perm_by_year.csv.gz"
+    with gzip.open(perm_years, "wt", newline="", encoding="utf-8") as f:
+        w = csv.writer(f); w.writerow(["EMPLOYER_NAME", "FY", "PERM_CERTS"])
+        w.writerow(["ACME CORP", 2024, 2]); w.writerow(["ACME CORP", 2023, 1])
+    agg = lca.LCAAggregate()
+    for wage in (120000, 130000):
+        agg.add(_lca_row(wage_from=wage, dependent="Yes"))
+    lca.write_lca_bundle(tmp_path / "lca", agg.cells(), agg.flags(), "v-test", [2025])
+    logs = []
+    r = b.build(seed=seed, source=tmp_path / "nope.db", dest=tmp_path / "pk" / "sponsors.db",
+                min_employers=1, everify=tmp_path / "no-everify.csv.gz", log=logs.append,
+                history=history, perm_years=perm_years, lca_dir=tmp_path / "lca")
+    assert r["used"] == "seed" and r["h1b"] == 1
+    assert any("2 employer-years" in l and "2 PERM-by-year rows" in l and "1 LCA wage cells" in l
+               for l in logs), logs
+    db = SponsorDB(tmp_path / "pk" / "sponsors.db")
+    try:
+        h = db.history("Acme Corp")
+        assert [y["fy"] for y in h["years"]] == [2022, 2023, 2024]
+        assert h["years"][0]["approvals"] == 17 and h["years"][2]["perm"] == 2
+        assert h["flags"]["h1b_dependent"] is True
+        assert db.wages("Acme Corp", "Senior Software Engineer", "Austin", "TX")["n"] == 2
+        assert db.get_meta("lca_bundle_version") == "v-test"
+        # Idempotent: a second layering (the local-DB path does one) leaves the counts alone.
+        b._layer_depth(db, history=history, perm_years=perm_years, lca_dir=tmp_path / "lca")
+        assert db.history("Acme Corp")["years"][2]["perm"] == 2 and db.lca_stats()["cells"] == 1
+        assert b.vet(tmp_path / "pk" / "sponsors.db", min_employers=1) == ""
+    finally:
+        db.close()
+    # Pointed at nothing, the bundler still stages a plain database (CI without the bundles).
+    r2 = b.build(seed=seed, source=tmp_path / "nope.db", dest=tmp_path / "pk2" / "sponsors.db",
+                 min_employers=1, everify=tmp_path / "no-everify.csv.gz", log=logs.append,
+                 history=tmp_path / "none.gz", perm_years=tmp_path / "none2.gz",
+                 lca_dir=tmp_path / "no-lca")
+    assert r2["used"] == "seed"
+    db = SponsorDB(tmp_path / "pk2" / "sponsors.db")
+    try:
+        assert db.history("Acme Corp")["years"] == [] and db.lca_stats()["cells"] == 0
+    finally:
+        db.close()
+
+
+def test_a_history_only_employer_has_a_history_but_no_sponsor_record_and_no_index_entry():
+    """The year-by-year bundle covers employers the totals seed lacks; the ingest adds a bare
+    row so history() can find them. That bare row is NOT a sponsor record: lookup() ignores it
+    (no badge, no "matched"), and the extension index drops it, so the app and the JS port
+    answer alike."""
+    db = SponsorDB(":memory:")
+    db.ingest_h1b_year_rows([{"norm_name": "ghost labs", "fy": 2023, "initial_approvals": 4,
+                              "initial_denials": 1, "continuing_approvals": 0, "continuing_denials": 0}])
+    assert db.lookup("Ghost Labs") is None
+    assert db.tag_jobs([{"company": "Ghost Labs", "location": "Austin, TX"}])[0]["visa"] == []
+    h = db.history("Ghost Labs")
+    assert h and h["years"][0]["approvals"] == 4 and h["denial_rate_5y"] == 0.2
+    assert all(not rec for rec in _bsi().collect(db).values())
+    # A flag from the LCA attestations is a signal (the index keeps those rows), so it matches.
+    db.ingest_lca_flag_rows([{"norm_name": "ghost labs", "display_name": "Ghost Labs",
+                              "h1b_dependent": 1, "willful_violator": 0}])
+    assert db.lookup("Ghost Labs") is not None and db.lookup("Ghost Labs").h1b_approvals == 0
+    assert "ghost labs" in _bsi().collect(db)["g"]

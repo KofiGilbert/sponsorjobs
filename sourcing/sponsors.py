@@ -341,6 +341,12 @@ class SponsorRecord:
                        "The role must be on the TN profession list. Not a guarantee.")},
         ]
 
+# An employer row counts as a sponsor record only with some signal; the extension index
+# (scripts/build_sponsor_index.py) keeps exactly these rows, so the two answers agree.
+_HAS_SIGNAL = ("(h1b_approvals>0 OR perm_certs>0 OR e_verify>0 OR cap_exempt>0 "
+               "OR h1b_dependent>0 OR willful_violator>0)")
+
+
 def _matching_candidates(norm: str, allow_prefix: bool, cands) -> list[str]:
     """Which candidate names (exact + whole-word parents + children) a query matches."""
     out: list[str] = []
@@ -778,7 +784,8 @@ class SponsorDB:
 
     def history(self, company: str, years: int = 10) -> dict | None:
         """Year-by-year record for an employer: H-1B approvals and denials per fiscal year
-        (USCIS Data Hub), PERM certifications per fiscal year (DOL), and the three flags.
+        (USCIS Data Hub), PERM certifications per fiscal year (DOL), E-Verify enrollment and
+        the three flags (H-1B dependent, willful violator, cap-exempt).
         None when the company is not in the store. The newest `years` fiscal years are kept."""
         norms = self.matched_norms(company)
         if not norms:
@@ -805,7 +812,7 @@ class SponsorDB:
                                               "approvals": 0, "denials": 0, "perm": 0})
             y["perm"] = int(r[1] or 0)
         flags_row = self._conn.execute(
-            f"SELECT MAX(h1b_dependent), MAX(willful_violator), MAX(cap_exempt) "
+            f"SELECT MAX(h1b_dependent), MAX(willful_violator), MAX(cap_exempt), MAX(e_verify) "
             f"FROM sponsor_employer WHERE norm_name IN ({marks})", norms).fetchone()
         rows = [by_fy[k] for k in sorted(by_fy)][-max(1, int(years)):]
         last5 = [y for y in rows if y["fy"] > (rows[-1]["fy"] - 5)] if rows else []
@@ -821,11 +828,13 @@ class SponsorDB:
             "fy_span": (f"FY{rows[0]['fy']}" if len(rows) == 1 else
                         f"FY{rows[0]['fy']} to {rows[-1]['fy']}") if rows else "",
             "flags": {"h1b_dependent": bool(flags_row[0]), "willful_violator": bool(flags_row[1]),
-                      "cap_exempt": bool(flags_row[2]) or bool(rec and rec.cap_exempt)},
+                      "cap_exempt": bool(flags_row[2]) or bool(rec and rec.cap_exempt),
+                      "e_verify": bool(flags_row[3]) or bool(rec and rec.e_verify)},
             "has_years": bool(rows),
             "sources": {"h1b": "USCIS H-1B Employer Data Hub", "perm": "DOL PERM disclosure data",
                         "flags": "DOL LCA disclosure data (H-1B dependent, willful violator); "
-                                 "cap-exempt is a name and industry heuristic"},
+                                 "cap-exempt is a name and industry heuristic",
+                        "e_verify": "DHS E-Verify employer list"},
         }
 
     def wages(self, company: str, title: str = "", city: str = "", state: str = "") -> dict | None:
@@ -1142,19 +1151,24 @@ class SponsorDB:
         # for "new dynasty construction"), and its CHILDREN ("new dynasty construction ..."). When
         # prefixes aren't allowed (a lone generic token) only the exact name can match, so it is a
         # single point lookup. Behaviour-identical to the old in-memory bucket + filter.
+        # Bare rows (a name with no signal at all: the year-by-year history and the LCA flag
+        # ingests add one so history() can find an employer the totals lack) never match
+        # here, so lookup() and the extension index (scripts/build_sponsor_index.py, which
+        # drops them) agree. history() reads the side tables through _matched_one instead.
         if allow_prefix:
             parts = norm.split(" ")
             wanted = [norm] + [" ".join(parts[:i]) for i in range(1, len(parts))]   # exact + parents
             marks = ",".join("?" * len(wanted))
             with self._index_lock:                    # serialise the read cursor with ingests
                 rows = self._conn.execute(
-                    f"SELECT * FROM sponsor_employer WHERE norm_name IN ({marks}) "
-                    "OR (norm_name >= ? AND norm_name < ?)",
+                    f"SELECT * FROM sponsor_employer WHERE (norm_name IN ({marks}) "
+                    f"OR (norm_name >= ? AND norm_name < ?)) AND {_HAS_SIGNAL}",
                     (*wanted, norm + " ", norm + " \uffff")).fetchall()
         else:
             with self._index_lock:
                 rows = self._conn.execute(
-                    "SELECT * FROM sponsor_employer WHERE norm_name = ?", (norm,)).fetchall()
+                    f"SELECT * FROM sponsor_employer WHERE norm_name = ? AND {_HAS_SIGNAL}",
+                    (norm,)).fetchall()
         index: dict[str, SponsorRecord] = {
             r["norm_name"]: SponsorRecord(
                 r["display_name"], r["h1b_approvals"], r["h1b_last_fy"], r["naics"], r["state"],

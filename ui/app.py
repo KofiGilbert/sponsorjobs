@@ -3589,15 +3589,15 @@ _US_STATE_BY_NAME = {
 @_guard
 def sponsors_history(name):
     """Year-by-year record for one employer: H-1B approvals and denials per fiscal year
-    (USCIS Data Hub), certified PERM cases per fiscal year (DOL), and the three flags
-    (H-1B dependent and willful violator from the DOL LCA attestations; cap-exempt as the
-    name/industry heuristic). Employer-level public history, never a promise about a role."""
+    (USCIS Data Hub), certified PERM cases per fiscal year (DOL), E-Verify enrollment, and
+    the three flags (H-1B dependent and willful violator from the DOL LCA attestations;
+    cap-exempt as the name/industry heuristic). Employer-level public history, never a promise about a role."""
     company = (name or "").strip()
     h = _sponsors().history(company) if company else None
     if not h:
         return _nostore(jsonify({"company": company, "matched": False, "years": [],
                                  "flags": {"h1b_dependent": False, "willful_violator": False,
-                                           "cap_exempt": False}}))
+                                           "cap_exempt": False, "e_verify": False}}))
     return _nostore(jsonify({"company": company, "matched": True, **h}))
 
 
