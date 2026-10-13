@@ -1446,33 +1446,6 @@ class FakeLLM:
             "honesty": "",
         }
 
-    def suggest_star_stories(self, profile: dict) -> dict:
-        # Deterministic stand-in: turn the person's REAL experience bullets and projects into
-        # candidate STAR drafts (action seeded from the bullet; the other fields left as gaps to
-        # fill in), so the suggest flow is testable offline. Invents nothing -- it only echoes their
-        # own material for them to shape and save.
-        out: list[dict] = []
-
-        def add(title: str, action: str, comp: str) -> None:
-            action = str(action or "").strip()
-            if action:
-                out.append({"title": (title or "Experience")[:80], "situation": "", "task": "",
-                            "action": action[:400], "result": "",
-                            "competencies": [comp] if comp else []})
-
-        for e in (profile.get("experience") or []):
-            org = str(e.get("org") or "").strip()
-            for r in (e.get("roles") or [e]):
-                rt = str(r.get("title") or "").strip()
-                title = f"{rt} at {org}" if (rt and org) else (rt or org or "Experience")
-                for b in (r.get("bullets") or [])[:2]:
-                    add(title, b, "Impact")
-        for p in (profile.get("projects") or []):
-            title = str(p.get("title") or p.get("org") or "Project").strip()
-            for b in (p.get("bullets") or [])[:1]:
-                add(title, b, "Problem solving")
-        return {"stories": out[:6]}
-
     def plan_form_fill(self, fields: list[dict], available_keys: list[str], role: str = "",
                        company: str = "", jd: str = "") -> dict:
         # Deterministic stand-in for the autonomous form-filler: map each field to a placeholder KEY

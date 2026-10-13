@@ -5864,78 +5864,93 @@
   // Two rounds, two entry paths (approved 2026-10-02). Round 1 is a HireVue-style one-way recorded
   // interview, scored locally. Round 2 is one live interview with the Tavus interviewer. The person
   // can run the full mock (Round 1, then Round 2) or either round on its own.
+  // Entry (2026-10): the landing shows the choices first. Start on any opens that choice's setup
+  // page (role, JD, optional resume), pre-filled from the newest tailored resume or Tracker job.
   const T = (k, f) => I18N.t(k, f);
-  let PREPS = [], PREP_APP = null, GUIDED = false, PREP_STEP = 1;
+  let PREPS = [], PREP_APP = null, GUIDED = false, PREP_MODE = null, PREP_FILL = null;
+  const blankPrepApp = () => ({ role: "", jd: "", cv: "", cvName: "", recordId: null, company: "" });
   async function loadPreps() {
     if ($("#prepScreen")) $("#prepScreen").hidden = true;
     if ($("#prepLive")) $("#prepLive").hidden = true;
     if ($("#prepList")) $("#prepList").hidden = false;
-    if ($("#prepTilesMsg")) $("#prepTilesMsg").hidden = true;
     GUIDED = false; hideGuidedProgress();   // returning to the entry ends any guided flow
+    // The setup page re-fills from the latest job on entry, unless the person typed their own
+    // role or JD this session: what they typed stays until they change it.
+    if (!(PREP_APP && PREP_APP.typed)) PREP_APP = null;
+    showPrepChoices();
+    paintRound2Tile();         // the Live tile says when a live interviewer key is missing
     try { const d = await api("/api/preps"); PREPS = d.preps || []; } catch { PREPS = []; }
-    // Simple manual entry: a fresh role + JD + CV form on every visit. Each visit goes through
-    // step 1, so there's no "change the role" affordance on step 2, you just re-enter here.
-    PREP_APP = { open: true, role: "", jd: "", cv: "", cvName: "" };
-    showPrepStep(1);           // always land on step 1 (which role) when entering prep
-    renderPrepEntry();
-    renderStories();           // the STAR story bank stays on the landing
-    const sug = $("#storySuggestions"); if (sug) { sug.hidden = true; sug.innerHTML = ""; }
-    paintRound2Tile();         // the Round 2 tile says when a live interviewer key is missing
   }
-  // Two-step entry: step 1 picks the role (it shapes the whole mock), step 2 picks the path.
-  function showPrepStep(n) {
-    PREP_STEP = n;
-    if ($("#prepStep1")) $("#prepStep1").hidden = n !== 1;
-    if ($("#prepStep2")) $("#prepStep2").hidden = n !== 2;
+  // The page head: "Interview prep" on the landing (and during a round), the choice's own title
+  // with an "Interview prep" back link on its setup page.
+  const SETUP_TITLE = {
+    full: ["prep.setupFull", "Set up your full mock interview"],
+    rec: ["prep.setupRec", "Set up your recorded interview"],
+    live: ["prep.setupLive", "Set up your live interview"],
+  };
+  function paintPrepHead(mode) {
+    const setup = !!mode;
+    if ($("#prepBack")) $("#prepBack").hidden = !setup;
+    if ($("#prepTitle")) $("#prepTitle").hidden = setup;
+    if ($("#prepSub")) $("#prepSub").hidden = setup;
+    const st = $("#prepSetupTitle");
+    if (st) { st.hidden = !setup; st.textContent = setup ? T(SETUP_TITLE[mode][0], SETUP_TITLE[mode][1]) : ""; }
   }
-
-  // Step 1: a simple manual form. Type the role you're interviewing for, paste the job description,
-  // attach the CV you used, then Continue.
-  function renderPrepEntry() {
-    const ctx = $("#prepCtx"); if (!ctx) return;
-    if (!(PREP_APP && PREP_APP.open)) PREP_APP = { open: true, role: "", jd: "", cv: "", cvName: "" };
-    ctx.innerHTML = "";                 // no picker; the fields render below in #prepOpen
-    renderPrepOpen();
-    wirePrepContinue();
+  function showPrepChoices() {
+    PREP_MODE = null; paintPrepHead(null);
+    if ($("#prepChoices")) $("#prepChoices").hidden = false;
+    if ($("#prepSetup")) $("#prepSetup").hidden = true;
   }
-  // Step 1 "Continue": validate the role is chosen, then reveal the path choices (step 2).
-  function wirePrepContinue() {
-    const btn = $("#prepContinue"); if (!btn) return;
-    btn.onclick = () => {
-      const msg = $("#prepStep1Msg");
-      const showMsg = (t) => { if (msg) { msg.textContent = t; msg.hidden = false; } };
-      if (PREP_APP && PREP_APP.open) {
-        if (!(PREP_APP.role || "").trim()) { showMsg(T("prep.needRole", "Type the role you're interviewing for.")); $("#prepOpenRole")?.focus(); return; }
-        if (!(PREP_APP.jd || "").trim()) { showMsg(T("prep.needJd", "Paste the job description so we can build the interview.")); $("#prepOpenJd")?.focus(); return; }
-      } else if (!PREP_APP) { showMsg(T("prep.pickRole", "Pick a role.")); return; }
-      if (msg) msg.hidden = true;
-      showPrepStep(2); renderPrepStep2();
-    };
+  // The newest job the person touched (tailored resume or Tracker move), to pre-fill the setup.
+  async function prepPrefill() {
+    try { return await api("/api/preps/prefill"); } catch { return null; }
   }
-  // Step 2: confirm the chosen role, and enable the path choices.
-  function renderPrepStep2() {
-    const box = $("#prepChosen");
-    if (box) {
-      const label = prepRole(PREP_APP) || T("prep.yourRole", "Your role");
-      box.innerHTML = `<span class="prep-chosen-lab">${esc(T("prep.interviewingFor", "Interviewing for"))}</span>
-        <span class="prep-chosen-role">${esc(label)}</span>`;
+  async function openPrepSetup(mode) {
+    PREP_MODE = mode; paintPrepHead(mode);
+    if ($("#prepChoices")) $("#prepChoices").hidden = true;
+    if ($("#prepSetup")) $("#prepSetup").hidden = false;
+    const msg = $("#prepSetupMsg"); if (msg) msg.hidden = true;
+    setStartEnabled(true);
+    if (!PREP_APP) {                        // first setup since landing: start from the latest job
+      const app = PREP_APP = blankPrepApp();
+      renderPrepOpen();
+      const f = await prepPrefill();
+      // Fill even if they stepped back meanwhile (the next setup shows it), but never overwrite
+      // what the person typed while it loaded, nor a newer entry from a later visit.
+      if (!f || PREP_APP !== app || app.typed) return;
+      PREP_FILL = { role: f.role || "", jd: f.jd || "" };
+      Object.assign(app, { role: f.role || "", jd: f.jd || "", company: f.company || "",
+        recordId: f.record_id ?? null });
+      if (f.cv && !app.cv) { app.cv = f.cv; app.cvName = f.cv_name || ""; }
+      if (!PREP_MODE) return;               // back on the choices; the next setup shows it
     }
-    setTilesEnabled(true);
-    if ($("#prepTilesMsg")) $("#prepTilesMsg").hidden = true;
+    renderPrepOpen();
   }
-  // The intake inputs: role + JD + the CV you used.
+  $("#prepBack")?.addEventListener("click", showPrepChoices);
+  $("#prepFullMock")?.addEventListener("click", () => openPrepSetup("full"));
+  $("#tileRound1")?.addEventListener("click", () => openPrepSetup("rec"));
+  $("#tileRound2")?.addEventListener("click", () => openPrepSetup("live"));
+
+  // The setup fields: role + JD (required) + the resume you used (optional).
   function renderPrepOpen() {
     const box = $("#prepOpen"); if (!box) return;
-    if (!(PREP_APP && PREP_APP.open)) PREP_APP = { open: true, role: "", jd: "", cv: "", cvName: "" };
-    box.hidden = false;
-    box.innerHTML = `<input class="fld" id="prepOpenRole" type="text" autocomplete="off" value="${esc(PREP_APP.role || "")}" placeholder="${esc(T("prep.rolePh", "Role you're interviewing for, e.g. Data Analyst"))}">
-      <textarea class="fld" id="prepOpenJd" rows="4" placeholder="${esc(T("prep.jdPh", "Paste the job description"))}">${esc(PREP_APP.jd || "")}</textarea>
+    if (!PREP_APP) PREP_APP = blankPrepApp();
+    const cvLine = PREP_APP.cvName
+      ? `<span class="prep-open-cvname is-set" id="prepOpenCvName">${esc(PREP_APP.cvName)}</span>
+         <button class="btn btn-ghost btn-sm prep-open-rm" id="prepOpenCvRm" type="button">${esc(T("prep.removeCv", "Remove"))}</button>`
+      : `<span class="prep-open-cvname" id="prepOpenCvName">${esc(T("prep.cvHint", "PDF, DOCX, or an image. Optional, it sharpens the questions."))}</span>`;
+    box.innerHTML = `<label class="prep-open-lab" for="prepOpenRole">${esc(T("prep.lblRole", "Role"))}</label>
+      <input class="fld" id="prepOpenRole" type="text" autocomplete="off" value="${esc(PREP_APP.role || "")}" placeholder="${esc(T("prep.rolePh", "Role you're interviewing for, e.g. Data Analyst"))}">
+      <label class="prep-open-lab" for="prepOpenJd">${esc(T("prep.lblJd", "Job description"))}</label>
+      <textarea class="fld" id="prepOpenJd" rows="9" placeholder="${esc(T("prep.jdPh", "Paste the job description"))}">${esc(PREP_APP.jd || "")}</textarea>
+      <span class="prep-open-lab">${esc(T("prep.lblCv", "Resume"))}</span>
       <div class="prep-open-cv">
         <label class="btn btn-ghost btn-sm prep-open-attach"><input type="file" id="prepOpenCvFile" accept=".pdf,.docx,.doc,.txt,.png,.jpg,.jpeg" hidden> ${esc(T("prep.attachCv", "Attach the resume you used"))}</label>
-        <span class="prep-open-cvname" id="prepOpenCvName">${PREP_APP.cvName ? esc(PREP_APP.cvName) : esc(T("prep.cvHint", "PDF, DOCX, or an image. Optional, it sharpens the questions."))}</span>
+        ${cvLine}
       </div>`;
-    $("#prepOpenRole")?.addEventListener("input", (e) => { PREP_APP.role = e.target.value; });
-    $("#prepOpenJd")?.addEventListener("input", (e) => { PREP_APP.jd = e.target.value; });
+    $("#prepOpenRole")?.addEventListener("input", (e) => { PREP_APP.role = e.target.value; PREP_APP.typed = true; });
+    $("#prepOpenJd")?.addEventListener("input", (e) => { PREP_APP.jd = e.target.value; PREP_APP.typed = true; });
+    $("#prepOpenCvRm")?.addEventListener("click", () => { PREP_APP.cv = ""; PREP_APP.cvName = ""; renderPrepOpen(); });
     $("#prepOpenCvFile")?.addEventListener("change", async (e) => {
       const f = e.target.files && e.target.files[0]; if (!f) return;
       const nameEl = $("#prepOpenCvName"); if (nameEl) nameEl.textContent = T("prep.reading", "Reading") + " " + f.name + "...";
@@ -5943,16 +5958,14 @@
       try {
         const r = await fetch("/api/preps/attach-cv", { method: "POST", body: fd });
         const d = await r.json(); if (!r.ok) throw new Error(d.error || T("prep.cantRead", "Couldn't read that file."));
-        PREP_APP.cv = d.text || ""; PREP_APP.cvName = d.name || f.name;
-        if (nameEl) nameEl.textContent = PREP_APP.cvName + (PREP_APP.cv ? "" : " " + T("prep.noText", "(no readable text found)"));
+        PREP_APP.cv = d.text || ""; PREP_APP.cvName = (d.name || f.name) + (d.text ? "" : " " + T("prep.noText", "(no readable text found)"));
+        renderPrepOpen();
       } catch (err) { if (nameEl) nameEl.textContent = err.message || T("prep.cantRead", "Couldn't read that file."); }
     });
   }
-  function setTilesEnabled(on) {
-    ["#tileRound1", "#tileRound2", "#prepFullMock"].forEach(s => { const b = $(s); if (b) { b.disabled = !on; b.classList.toggle("is-disabled", !on); } });
-  }
-  // A quiet note on the Round 2 tile when no live interviewer is set up. The tile still works:
-  // it leads to the gate screen with the free-key steps.
+  function setStartEnabled(on) { const b = $("#prepStart"); if (b) b.disabled = !on; }
+  // A quiet note on the Live tile when no live interviewer is set up. The tile still works:
+  // after setup it leads to the gate screen with the free-key steps.
   async function paintRound2Tile() {
     const st = await round2Status();
     const el = $("#tileRound2Note"); if (!el) return;
@@ -5960,26 +5973,33 @@
     el.textContent = st && st.reason === "no_minutes"
       ? T("r2.tileNoMinutes", "Interviews used up") : T("r2.tileNoKey", "Needs a pass or a free Tavus key");
   }
-  // Path click: build a prep for the role, then start the chosen round.
-  async function startRoundFromTile(which) {
-    const msg = $("#prepTilesMsg");
-    const show = (t) => { if (msg) { msg.textContent = t; msg.hidden = false; } };
-    if (!PREP_APP) { show(T("prep.pickRole", "Pick a role.")); return; }
-    const role = (PREP_APP.role || "").trim();
-    if (!role) { show(T("prep.needRole", "Type the role you're interviewing for.")); $("#prepOpenRole")?.focus(); return; }
-    const body = { role, jd: (PREP_APP.jd || "").trim(), cv: PREP_APP.cv || "" };
-    setTilesEnabled(false); show(T("prep.preparing", "Preparing your questions..."));
+  // "Start interview": validate, build a prep for the role, then start the chosen interview. The
+  // full mock runs Round 1 first; a pass carries the same prep into Round 2.
+  async function startFromSetup() {
+    const msg = $("#prepSetupMsg");
+    const show = (t, err) => { if (msg) { msg.textContent = t; msg.classList.toggle("is-err", !!err); msg.hidden = false; } };
+    const role = (PREP_APP?.role || "").trim(), jd = (PREP_APP?.jd || "").trim();
+    if (!role) { show(T("prep.needRole", "Type the role you're interviewing for."), true); $("#prepOpenRole")?.focus(); return; }
+    if (!jd) { show(T("prep.needJd", "Paste the job description so we can build the interview."), true); $("#prepOpenJd")?.focus(); return; }
+    const body = { role, jd, cv: PREP_APP.cv || "" };
+    // Still the pre-filled job: link the saved application so its prep (and history) is reused.
+    if (PREP_APP.recordId != null && PREP_FILL && role === PREP_FILL.role.trim() && jd === PREP_FILL.jd.trim()) {
+      body.record_id = PREP_APP.recordId; body.company = PREP_APP.company || "";
+    }
+    const mode = PREP_MODE;
+    setStartEnabled(false); show(T("prep.preparing", "Preparing your questions..."));
     let prep = null;
     try { prep = (await api("/api/preps", body)).prep; }
-    catch (err) { show(err.message || T("prep.cantPrepare", "Couldn't prepare questions right now.")); }
-    setTilesEnabled(true);
-    if (!prep) return;
+    catch (err) { show(err.message || T("prep.cantPrepare", "Couldn't prepare questions right now."), true); }
+    setStartEnabled(true);
+    if (!prep || PREP_MODE !== mode) return;
     if (msg) msg.hidden = true;
-    if (GUIDED) showGuidedProgress(which);
-    if (which === 1) startScreen(prep); else startRound2(prep.id, null, true);
+    paintPrepHead(null);                     // the rounds run under the plain "Interview prep" head
+    GUIDED = mode === "full";
+    if (GUIDED) showGuidedProgress(1);
+    if (mode === "live") startRound2(prep.id, null, true); else startScreen(prep);
   }
-  $("#tileRound1")?.addEventListener("click", () => startRoundFromTile(1));
-  $("#tileRound2")?.addEventListener("click", () => startRoundFromTile(2));
+  $("#prepStart")?.addEventListener("click", startFromSetup);
   // Full mock: Round 1 first; a pass leads to Round 2. A 2-step tracker shows where you are.
   function showGuidedProgress(step) {
     const el = $("#prepProgress"); if (!el) return;
@@ -5991,98 +6011,6 @@
     });
   }
   function hideGuidedProgress() { const el = $("#prepProgress"); if (el) el.hidden = true; }
-  $("#prepFullMock")?.addEventListener("click", () => { GUIDED = true; startRoundFromTile(1); });
-  async function renderStories() {
-    const list = $("#storyList"); if (!list) return;
-    let stories = [];
-    try { stories = (await api("/api/stories")).stories || []; } catch { stories = []; }
-    list.innerHTML = stories.map(s => {
-      const tags = (s.competencies || []).map(cbn => `<span class="scr-comp">${esc(cbn)}</span>`).join("");
-      const star = [["S", s.situation], ["T", s.task], ["A", s.action], ["R", s.result]]
-        .filter(([, v]) => (v || "").trim())
-        .map(([k, v]) => `<div class="scr-star-row"><span class="scr-star-k">${k}</span>${esc(v)}</div>`).join("");
-      return `<details class="story-card" data-sid="${esc(s.id)}"><summary><b>${esc(s.title)}</b> ${tags}</summary>
-        <div class="story-body">${star || `<span class="scr-note">No STAR detail yet.</span>`}
-          <div class="scr-acts"><button class="btn btn-danger-ghost btn-sm story-del" type="button">Delete</button></div></div></details>`;
-    }).join("");
-    list.querySelectorAll(".story-del").forEach(btn => btn.addEventListener("click", async (e) => {
-      const sid = e.target.closest(".story-card")?.dataset.sid; if (!sid) return;
-      if (!confirm("Delete this story?")) return;
-      try { await fetch(`/api/stories/${sid}`, { method: "DELETE" }); } catch (_) {}
-      renderStories();
-    }));
-  }
-  $("#storyAddBtn")?.addEventListener("click", () => {
-    const f = $("#storyForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) $("#storyTitle")?.focus(); }
-  });
-
-  // Beat the blank page: draft candidate STAR stories from the person's REAL profile. They review,
-  // edit, and keep the ones they like; nothing is saved until they say so, and nothing is invented.
-  $("#storySuggestBtn")?.addEventListener("click", async () => {
-    const btn = $("#storySuggestBtn"), label = btn.textContent;
-    btn.disabled = true; btn.textContent = "Reading your experience…";
-    try {
-      const r = await api("/api/stories/suggest", {});
-      renderStorySuggestions(r.suggestions || [], r.note || "");
-    } catch (e) { toast(e.message || "Couldn't draft stories right now."); }
-    finally { btn.disabled = false; btn.textContent = label; }
-  });
-  function renderStorySuggestions(sug, note) {
-    const box = $("#storySuggestions"); if (!box) return;
-    box.hidden = false;
-    if (!sug.length) {
-      box.innerHTML = `<div class="empty">${esc(note || "No drafts yet. Add your experience to your profile, then try again.")}</div>`;
-      return;
-    }
-    box.innerHTML = `<div class="sb-suggest-lead">Drafts from your real experience. Edit and keep the ones you like:</div>`
-      + sug.map((s, i) => {
-        const tags = (s.competencies || []).map(c => `<span class="scr-comp">${esc(c)}</span>`).join("");
-        const star = [["S", s.situation], ["T", s.task], ["A", s.action], ["R", s.result]]
-          .filter(([, v]) => (v || "").trim())
-          .map(([k, v]) => `<div class="scr-star-row"><span class="scr-star-k">${k}</span>${esc(v)}</div>`).join("");
-        return `<div class="sb-sug-card" data-i="${i}">
-          <div class="sb-sug-hd"><b>${esc(s.title)}</b> ${tags}</div>
-          <div class="sb-sug-body">${star || `<span class="scr-note">A starting point, add the details before you save.</span>`}</div>
-          <div class="scr-acts"><button class="btn btn-primary btn-sm sb-sug-add" type="button">Add to bank</button>
-            <button class="btn btn-ghost btn-sm sb-sug-dismiss" type="button">Dismiss</button></div>
-        </div>`;
-      }).join("");
-    box.querySelectorAll(".sb-sug-add").forEach(b => b.addEventListener("click", async (e) => {
-      const card = e.target.closest(".sb-sug-card"); const s = sug[Number(card.dataset.i)];
-      try { await api("/api/stories", s); card.remove(); renderStories(); toast("Saved to your bank."); }
-      catch (err) { toast(err.message || "Couldn't save that story."); }
-    }));
-    box.querySelectorAll(".sb-sug-dismiss").forEach(b =>
-      b.addEventListener("click", (e) => e.target.closest(".sb-sug-card")?.remove()));
-  }
-  $("#storyCancel")?.addEventListener("click", () => { $("#storyForm").reset(); $("#storyForm").hidden = true; });
-  $("#storyStructure")?.addEventListener("click", async () => {
-    const text = $("#storyRough")?.value.trim();
-    if (!text) { toast("Paste a few rough sentences first."); return; }
-    const btn = $("#storyStructure"); btn.disabled = true; btn.textContent = "Structuring…";
-    try {
-      const star = (await api("/api/stories/structure", { text })).star || {};
-      if (star.situation) $("#storyS").value = star.situation;
-      if (star.task) $("#storyT").value = star.task;
-      if (star.action) $("#storyA").value = star.action;
-      if (star.result) $("#storyR").value = star.result;
-    } catch (err) { toast(err.message || "Couldn't structure that."); }
-    finally { btn.disabled = false; btn.textContent = "Structure into STAR"; }
-  });
-  $("#storyForm")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const msg = $("#storyMsg"), setMsg = (t) => { if (msg) { msg.textContent = t; msg.className = "proj-msg err"; msg.hidden = false; } };
-    const title = $("#storyTitle")?.value.trim() || "";
-    if (!title) return setMsg("Give the story a short title.");
-    const competencies = ($("#storyComp")?.value || "").split(",").map(x => x.trim()).filter(Boolean);
-    try {
-      await api("/api/stories", {
-        title, situation: $("#storyS")?.value.trim() || "", task: $("#storyT")?.value.trim() || "",
-        action: $("#storyA")?.value.trim() || "", result: $("#storyR")?.value.trim() || "", competencies,
-      });
-      $("#storyForm").reset(); $("#storyForm").hidden = true; renderStories();
-    } catch (err) { setMsg(err.message || "Couldn't save the story."); }
-  });
 
   // ---------------------------------------------------------------- Round 1: one-way recorded interview
   // Mirrors the candidate flow of a HireVue-style one-way video interview, screen by screen:

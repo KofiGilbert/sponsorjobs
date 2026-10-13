@@ -6236,49 +6236,6 @@ def _save_preps(preps: list) -> None:
     tmp.replace(_PREPS_FILE)
 
 
-_STORIES_FILE = _DATA / "stories.json"
-
-
-def _load_stories() -> list:
-    try:
-        return json.loads(_STORIES_FILE.read_text(encoding="utf-8")).get("stories", [])
-    except Exception:
-        return []
-
-
-def _save_stories(stories: list) -> None:
-    _STORIES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _STORIES_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"stories": stories}, indent=2), encoding="utf-8")
-    tmp.replace(_STORIES_FILE)
-
-
-def _story_public(s: dict) -> dict:
-    return {"id": s.get("id"), "title": s.get("title", ""), "situation": s.get("situation", ""),
-            "task": s.get("task", ""), "action": s.get("action", ""), "result": s.get("result", ""),
-            "competencies": s.get("competencies") or []}
-
-
-def _match_stories_to_question(question: str, competency: str, stories: list) -> list:
-    """Rank the person's saved STAR stories by fit for a question: a strong boost when the story is
-    tagged with the question's competency, plus keyword overlap between the question and the story
-    text. Deterministic, so the suggestion is testable. Top 3, real matches only."""
-    qwords = set(re.findall(r"[a-z]{4,}", (question or "").lower()))
-    comp = (competency or "").strip().lower()
-    ranked = []
-    for s in (stories or []):
-        score = 0.0
-        if comp and comp in [str(c).lower() for c in (s.get("competencies") or [])]:
-            score += 5                      # a competency match is the strongest signal
-        text = " ".join(str(s.get(k, "")) for k in ("title", "situation", "task", "action", "result"))
-        score += len(qwords & set(re.findall(r"[a-z]{4,}", text.lower())))
-        if score > 0:
-            ranked.append({"id": s.get("id"), "title": s.get("title", ""), "score": round(score, 1),
-                           "competencies": s.get("competencies") or []})
-    ranked.sort(key=lambda x: -x["score"])
-    return ranked[:3]
-
-
 def _prep_public(p: dict) -> dict:
     return {"id": p.get("id"), "role": p.get("role", ""), "company": p.get("company", ""),
             "focus": p.get("focus", ""), "difficulty": p.get("difficulty", "standard"),
@@ -6341,6 +6298,65 @@ def preps_create():
     return jsonify({"prep": _prep_public(p)})
 
 
+def _when(stamp) -> float:
+    """A sortable epoch for a stored timestamp: record rows are naive UTC ("2026-10-13 09:00:00"),
+    board stage stamps carry their offset. Unreadable or missing sorts oldest."""
+    from datetime import datetime, timezone
+    try:
+        d = datetime.fromisoformat(str(stamp or "").strip().replace(" ", "T", 1))
+    except ValueError:
+        return 0.0
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).timestamp()
+
+
+@app.get("/api/preps/prefill")
+@_guard
+def preps_prefill():
+    """What the interview setup page starts with, so most people just click Start: the role and
+    job description of the job they touched most recently, the newest tailored resume or the
+    newest job moved on the Tracker, whichever is later, plus that job's tailored resume as text
+    when one exists. Empty fields when there is nothing yet. Read-only."""
+    best = None                       # (when, payload)
+    recs = _records()
+    try:
+        rows = recs.list(limit=1)
+    finally:
+        recs.close()
+    if rows:
+        r = rows[0]
+        data = _record_data(r)
+        role = (r.get("jd_label") or r.get("role") or "").split(" · ")[0].strip()
+        best = (_when(r.get("created_at")), {"role": role, "company": r.get("company") or "",
+                "jd": str(data.get("jd_text") or data.get("jd") or "").strip(), "record_id": r["id"]})
+    w = _watchlist()
+    try:
+        by_job = _board_reconcile(w)
+        live = [j for j in w.board_jobs() if j.get("stage") not in ("rejected", "archived")]
+        if live:
+            j = live[0]
+            when = _when(j.get("stage_at"))
+            if best is None or when > best[0]:
+                full = w.get_job(j["source_id"]) or {}
+                mine = sorted(by_job.get(j["source_id"], []), key=lambda r: -r["id"])
+                rid = mine[0]["id"] if mine else None
+                jd = str(full.get("jd_text") or "").strip()
+                if not jd and mine:
+                    jd = str(_record_data(mine[0]).get("jd_text") or "").strip()
+                best = (when, {"role": (j.get("title") or "").strip(), "company": j.get("company") or "",
+                               "jd": jd, "record_id": rid})
+    finally:
+        w.close()
+    if best is None:
+        return _nostore(jsonify({"role": "", "company": "", "jd": "", "record_id": None,
+                                 "cv": "", "cv_name": ""}))
+    out = best[1]
+    cv = _record_cv_text(out["record_id"])[:20000] if out["record_id"] else ""
+    name = ""
+    if cv:
+        name = out["role"] + (f" at {out['company']}" if out["company"] else "")
+    return _nostore(jsonify({**out, "cv": cv, "cv_name": name}))
+
+
 @app.post("/api/preps/attach-cv")
 @_guard
 def preps_attach_cv():
@@ -6390,103 +6406,6 @@ def preps_delete(pid):
     return jsonify({"ok": True})
 
 
-@app.get("/api/stories")
-@_guard
-def stories_list():
-    """The person's STAR story bank: reusable stories built once from their real experience, then
-    mapped to whatever question comes up. Nothing here is generated; it is their own material."""
-    return jsonify({"stories": [_story_public(s) for s in _load_stories()]})
-
-
-@app.post("/api/stories")
-@_guard
-def stories_create():
-    """Save one STAR story (Situation, Task, Action, Result) tagged with the competencies it shows.
-    Grounded in the person's own experience; the app never invents a story."""
-    import uuid
-    b = request.json or {}
-    title = str(b.get("title") or "").strip()
-    if not title:
-        return jsonify({"error": "Give the story a short title."}), 400
-    comps = [str(x).strip() for x in (b.get("competencies") or []) if str(x).strip()][:6]
-    s = {"id": uuid.uuid4().hex[:12], "title": title,
-         "situation": str(b.get("situation") or "").strip(),
-         "task": str(b.get("task") or "").strip(),
-         "action": str(b.get("action") or "").strip(),
-         "result": str(b.get("result") or "").strip(),
-         "competencies": comps, "created": int(time.time())}
-    stories = _load_stories()
-    stories.append(s)
-    _save_stories(stories)
-    return jsonify({"story": _story_public(s)})
-
-
-@app.delete("/api/stories/<sid>")
-@_guard
-def stories_delete(sid):
-    _save_stories([s for s in _load_stories() if s.get("id") != sid])
-    return jsonify({"ok": True})
-
-
-@app.post("/api/stories/structure")
-@_guard
-def stories_structure():
-    """Turn a rough paragraph about a real experience into a STAR structure to seed a story bank
-    entry, so building the bank is low-friction. Grounded in what they wrote; invents nothing. Uses
-    the real model. Body: {text}."""
-    text = str((request.json or {}).get("text") or "").strip()
-    if not text:
-        return jsonify({"error": "Write a few sentences about the experience first."}), 400
-    profile = (_memory().load("default") or {}).get("profile") or {}
-    star = (_make_llm().coach_interview_answer(profile, "Tell me about this experience.", text)
-            or {}).get("star") or {}
-    return jsonify({"ok": True, "star": {k: str(star.get(k, "")).strip()
-                                         for k in ("situation", "task", "action", "result")}})
-
-
-@app.post("/api/stories/match")
-@_guard
-def stories_match():
-    """Suggest which saved STAR stories best fit a question, so the bank is deploy-ready instead of
-    just storage. Body: {question, competency}. Deterministic ranking, no model call."""
-    b = request.json or {}
-    matches = _match_stories_to_question(str(b.get("question") or ""),
-                                         str(b.get("competency") or ""), _load_stories())
-    return jsonify({"matches": matches})
-
-
-@app.post("/api/stories/suggest")
-@_guard
-def stories_suggest():
-    """Beat the blank page: mine the person's OWN profile for candidate STAR stories they can review,
-    edit, and save. Strictly grounded in their real experience/projects; the app invents nothing, and
-    they choose what to keep. Skips titles already in the bank so it only offers NEW stories."""
-    profile = (_memory().load("default") or {}).get("profile") or {}
-    if not (profile.get("experience") or profile.get("projects")):
-        return jsonify({"suggestions": [],
-                        "note": "Add your experience to your profile first, then I can draft stories from it."})
-    try:
-        out = _make_llm().suggest_star_stories(profile) or {}
-    except Exception:                                    # noqa: BLE001 - never dead-end the button
-        traceback.print_exc()
-        out = {}
-    have = {str(s.get("title", "")).strip().lower() for s in _load_stories()}
-    sug = []
-    for s in (out.get("stories") or []):
-        title = str(s.get("title") or "").strip()
-        if not title or title.lower() in have:
-            continue
-        sug.append({"title": title[:80],
-                    "situation": str(s.get("situation") or "").strip(),
-                    "task": str(s.get("task") or "").strip(),
-                    "action": str(s.get("action") or "").strip(),
-                    "result": str(s.get("result") or "").strip(),
-                    "competencies": [str(c).strip() for c in (s.get("competencies") or []) if str(c).strip()][:3]})
-        if len(sug) >= 6:
-            break
-    return jsonify({"suggestions": sug})
-
-
 @app.post("/api/preps/<pid>/coach")
 @_guard
 def preps_coach(pid):
@@ -6500,19 +6419,12 @@ def preps_coach(pid):
     if not answer:
         return jsonify({"error": "Write out your answer to get coaching."}), 400
     qs = p.get("questions") or []
-    competency = ""
     try:
-        q_obj = qs[int(b.get("index"))]
-        question, competency = q_obj.get("q", ""), q_obj.get("competency", "")
+        question = qs[int(b.get("index"))].get("q", "")
     except (TypeError, ValueError, IndexError):
         question = str(b.get("question") or "").strip()
     profile = (_memory().load("default") or {}).get("profile") or {}
     result = _make_llm().coach_interview_answer(profile, question, answer)
-    # Connect the STORY BANK to practice: surface the person's saved stories that fit THIS question,
-    # so they can deploy one they have already built instead of starting cold. Deterministic, no model.
-    stories = _match_stories_to_question(question, competency, _load_stories())
-    if stories:
-        result["stories"] = stories
     # The visa/sponsorship question is the one international students most need help with, so
     # attach a concrete, deterministic tip regardless of what the model returns.
     if re.search(r"sponsor|\bvisa\b|work authoriz", question, re.I):

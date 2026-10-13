@@ -1657,50 +1657,6 @@ class AnthropicLLM:
             "honesty": strip_ai_dashes(str(data.get("honesty", "")).strip()),
         }
 
-    def suggest_star_stories(self, profile: dict) -> dict:
-        """Mine the person's OWN profile for candidate STAR stories to seed their bank, so they start
-        from real drafts instead of a blank page. STRICTLY grounded: each story comes from a real
-        experience or project in the profile; never invents an employer, metric, or outcome. Leaves a
-        STAR field empty when the profile does not state it (an honest gap for them to fill). Returns
-        {"stories":[{title,situation,task,action,result,competencies}, ...]} for them to edit + save."""
-        if not (profile.get("experience") or profile.get("projects")):
-            return {"stories": []}
-        system = (
-            "You help a job seeker build an interview STORY BANK from their OWN experience. From the "
-            "profile, pick the 3-5 STRONGEST, most distinct accomplishments and shape each into a "
-            "STAR draft they can rehearse. STRICT RULES:\n"
-            "- Ground EVERY story only in what the profile states. NEVER invent an employer, project, "
-            "metric, date, or outcome. If a STAR field is not supported by the profile, leave it "
-            "\"\" (an honest gap for them to fill), do not fabricate one.\n"
-            "- Each story: a short title; situation/task/action/result drawn from ONE real experience "
-            "or project; and 1-3 competencies it demonstrates (e.g. Ownership, Problem solving, "
-            "Leadership, Communication).\n"
-            "- Prefer accomplishments with a real, quantified result already in the profile.\n"
-            "Return ONLY JSON: {\"stories\":[{\"title\":\"...\",\"situation\":\"...\",\"task\":\"...\","
-            "\"action\":\"...\",\"result\":\"...\",\"competencies\":[\"...\"]}, ...]}."
-        )
-        user = f"CANDIDATE PROFILE (JSON):\n{json.dumps(profile)[:8000]}"
-        raw = self._complete(system, user, max_tokens=1800, effort="medium")
-        data = self._parse_json_object(raw)
-        if not isinstance(data, dict):
-            return {"stories": []}
-        from tailoring.conform import strip_ai_dashes
-        out = []
-        for s in (data.get("stories") or [])[:6]:
-            if not isinstance(s, dict) or not str(s.get("title", "")).strip():
-                continue
-            comps = [strip_ai_dashes(str(c).strip()) for c in (s.get("competencies") or [])
-                     if str(c).strip()][:3]
-            out.append({
-                "title": strip_ai_dashes(str(s.get("title", "")).strip())[:80],
-                "situation": strip_ai_dashes(str(s.get("situation", "")).strip()),
-                "task": strip_ai_dashes(str(s.get("task", "")).strip()),
-                "action": strip_ai_dashes(str(s.get("action", "")).strip()),
-                "result": strip_ai_dashes(str(s.get("result", "")).strip()),
-                "competencies": comps,
-            })
-        return {"stories": out}
-
     # -- chat edits of a finished CV (notify/cvreview.py) ------------------ #
     def plan_cv_edit(self, instruction: str, outline: str) -> dict:
         """Turn one plain-language edit request into a structured plan over the CV's span ids.

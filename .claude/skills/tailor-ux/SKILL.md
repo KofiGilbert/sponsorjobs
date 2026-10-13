@@ -58,9 +58,9 @@ video interview, a live interview, an ATS form), **mirror that product's real UX
 using ours builds muscle memory for the real one. Study the real flow (web research / the
 product's own help center) before designing.
 
-**Interview prep has exactly two rounds and two entry paths (approved 2026-10-02).** After
-the prep form (role, JD, optional resume), the chooser offers "Full mock interview"
-(Recommended: Round 1, then Round 2) plus "Round 1 only" and "Round 2 only". The progress
+**Interview prep has exactly two rounds and two entry paths (approved 2026-10-02).** The
+landing offers "Full mock interview" (Recommended: Round 1, then Round 2) plus "Round 1 only" and
+"Round 2 only"; each opens its setup page (role, JD, optional resume) first (2026-10). The progress
 tracker reads "Round 1 / Round 2". There is no local voice-only fallback round and no text
 practice or typed mock; those were removed.
 
@@ -173,3 +173,10 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   comes back as a preview with Accept / Undo; nothing is saved before Accept. A fact (dates,
   titles, employer, education) always asks first: "This CV only / Also update my profile /
   Cancel". Accept never submits; the submit line follows the per-site policy.
+- 2026-10: Prep landing shows the choices first (Full mock card + Recorded / Live tiles, unchanged look; no
+  "Interviewing for" line). Start on any opens a setup page per choice ("Set up your full mock /
+  recorded / live interview") with an "Interview prep" back link above the title (the `.tpl-back`
+  pattern, never a close x): role + JD required, resume optional, one "Start interview". Fields are
+  pre-filled from the newest tailored resume or Tracker job (`GET /api/preps/prefill`, its tailored
+  resume attached when there is one), so most people just click Start. The STAR story bank was
+  removed (UI, routes, `suggest_star_stories`). Supersedes the 2026-08 two-step and plain-form entries.
