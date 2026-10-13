@@ -1,0 +1,45 @@
+{
+  "_about": "Career-site allowlist for sourcing/careersite.py. Only these hosts are ever fetched. Entries are added by scripts/discover_careersites.py --write after it verified robots.txt, the job sitemap and a JobPosting JSON-LD page, or by a maintainer after the same checks (docs/feed.md).",
+  "sites": {
+    "apply.careers.microsoft.com": {
+      "company": "Microsoft",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://apply.careers.microsoft.com/careers/sitemap.xml?domain=microsoft.com"
+      ],
+      "job_url": "^https://apply\\.careers\\.microsoft\\.com/careers/job/\\d+",
+      "verified": "2026-10-11",
+      "jobs_seen": 2296
+    },
+    "careers.qualcomm.com": {
+      "company": "Qualcomm",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://careers.qualcomm.com/careers/sitemap.xml?domain=qualcomm.com"
+      ],
+      "job_url": "^https://careers\\.qualcomm\\.com/careers/job/\\d+",
+      "verified": "2026-10-11",
+      "jobs_seen": 2068
+    },
+    "www.capitalonecareers.com": {
+      "company": "Capital One",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://www.capitalonecareers.com/jobs_sitemap.xml"
+      ],
+      "job_url": "^https://www\\.capitalonecareers\\.com/job/",
+      "verified": "2026-10-11",
+      "jobs_seen": 1820
+    },
+    "careers.cisco.com": {
+      "company": "Cisco",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.cisco.com/global/en/sitemap_index.xml"
+      ],
+      "job_url": "^https://careers\\.cisco\\.com/global/en/job/",
+      "verified": "2026-10-11",
+      "jobs_seen": 1500
+    }
+  }
+}

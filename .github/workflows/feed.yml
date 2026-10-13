@@ -81,6 +81,9 @@ jobs:
           CAREERSITE_MINUTES: ${{ vars.CAREERSITE_MINUTES || 60 }}
           CAREERSITE_MAX_DETAIL: ${{ vars.CAREERSITE_MAX_DETAIL || 400 }}
           CAREERSITE_WORKERS: ${{ vars.CAREERSITE_WORKERS || 4 }}
+          # Job pages read across ALL career sites per run (the site order rotates between runs
+          # from a cursor in the data dir, so the end of the table is reached too).
+          CAREERSITE_PAGE_BUDGET: ${{ vars.CAREERSITE_PAGE_BUDGET || 4000 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
             --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"

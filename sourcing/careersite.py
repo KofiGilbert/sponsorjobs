@@ -34,6 +34,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import date, datetime
+from pathlib import Path
 from urllib.parse import quote, urlsplit
 from xml.etree import ElementTree as ET
 
@@ -47,6 +48,7 @@ DEFAULT_MAX_URLS = 6000         # sitemap entries considered per site per run (n
 DEFAULT_MAX_DETAIL = 400        # job pages read per site per run (env CAREERSITE_MAX_DETAIL)
 DEFAULT_MINUTES = 60.0          # the lane's wall-clock cap in the feed build (CAREERSITE_MINUTES)
 DEFAULT_WORKERS = 4             # hosts crawled at once (one request at a time EACH)
+DEFAULT_PAGE_BUDGET = 4000      # job pages read across ALL sites per run (CAREERSITE_PAGE_BUDGET)
 MAX_CHILD_SITEMAPS = 40         # child sitemaps of an index read per site per run
 MAX_SERVER_ERRORS = 3           # consecutive 5xx before the host is left alone this run
 MAX_PAGE_ERRORS = 25            # unreadable job pages (404, timeout) before the site is left this run
@@ -55,37 +57,85 @@ MAX_PAGE_ERRORS = 25            # unreadable job pages (404, timeout) before the
 # host -> how to crawl it. `company` is the display name (JobPosting.hiringOrganization wins
 # when present); `sitemaps` overrides the robots.txt Sitemap lines when a site lists its jobs
 # somewhere specific; `job_url` must match a job-page URL (everything else in the sitemap is
-# skipped). Add a site ONLY after checking its robots.txt by hand (docs/feed.md, "Career sites").
-# Verified 2026-10-11 (robots.txt read, sitemap counted, one job page parsed, no challenge):
-#   Microsoft 2,296 jobs, Qualcomm 2,068 (both Eightfold: the sitemap and every job URL carry
-#   ?domain=), Capital One 1,820 (jobs_sitemap.xml), Cisco ~1,500 across three sitemap files.
+# skipped); `platform`, `verified` and `jobs_seen` record what the maintainer checked.
+# The table lives in config/careersites.json (written by scripts/discover_careersites.py after it
+# has verified each site: robots allows the sitemap and job pages, the sitemap lists job URLs, and
+# a job page carries JobPosting JSON-LD with a title). A site goes in ONLY that way or by hand
+# after the same checks (docs/feed.md, "Career sites"). The four below are the hand-verified
+# originals (2026-10-11) and the fallback if the data file is missing or unreadable.
 # Checked and left OUT: JPMorgan and Oracle (client-rendered Oracle Recruiting Cloud, dead
 # sitemaps, WAF), IBM and Deloitte (Avature answers an empty body to crawlers), Infosys and
 # Tesla (Akamai 403 on robots.txt itself), Meta (robots.txt header forbids automated collection
 # without written permission), Amazon and Apple and Google (no sitemap, no JobPosting block;
 # Amazon's public search JSON is a separate adapter). Intel is a Workday tenant (sourcing/workday.py).
-SITES: dict[str, dict] = {
+SITES_FILE = Path(__file__).resolve().parents[1] / "config" / "careersites.json"
+
+_BUILTIN_SITES: dict[str, dict] = {
     "apply.careers.microsoft.com": {
-        "company": "Microsoft",
+        "company": "Microsoft", "platform": "eightfold",
         "sitemaps": ["https://apply.careers.microsoft.com/careers/sitemap.xml?domain=microsoft.com"],
         "job_url": r"^https://apply\.careers\.microsoft\.com/careers/job/\d+",
     },
     "careers.qualcomm.com": {
-        "company": "Qualcomm",
+        "company": "Qualcomm", "platform": "eightfold",
         "sitemaps": ["https://careers.qualcomm.com/careers/sitemap.xml?domain=qualcomm.com"],
         "job_url": r"^https://careers\.qualcomm\.com/careers/job/\d+",
     },
     "www.capitalonecareers.com": {
-        "company": "Capital One",
+        "company": "Capital One", "platform": "radancy",
         "sitemaps": ["https://www.capitalonecareers.com/jobs_sitemap.xml"],
         "job_url": r"^https://www\.capitalonecareers\.com/job/",
     },
     "careers.cisco.com": {
-        "company": "Cisco",
+        "company": "Cisco", "platform": "phenom",
         "sitemaps": ["https://careers.cisco.com/global/en/sitemap_index.xml"],
         "job_url": r"^https://careers\.cisco\.com/global/en/job/",
     },
 }
+
+
+def site_entry_ok(host: str, cfg) -> bool:
+    """A table entry is usable only if it names a company and a job-URL pattern anchored to its
+    OWN host, and every sitemap it lists is on that host (the table is the allowlist)."""
+    if not isinstance(cfg, dict) or not host or host != host.lower() or "/" in host:
+        return False
+    if not cfg.get("company") or not isinstance(cfg.get("job_url"), str):
+        return False
+    if not cfg["job_url"].startswith("^https://" + re.escape(host) + "/"):
+        return False
+    try:
+        re.compile(cfg["job_url"])
+    except re.error:
+        return False
+    sitemaps = cfg.get("sitemaps") or []
+    return isinstance(sitemaps, list) and all(
+        isinstance(sm, str) and urlsplit(sm).scheme == "https" and urlsplit(sm).netloc.lower() == host
+        for sm in sitemaps)
+
+
+def load_sites(path=None, log=None) -> dict[str, dict]:
+    """The site table from config/careersites.json ({"sites": {host: cfg}}), malformed entries
+    dropped; the built-in four if the file is missing or unreadable."""
+    path = Path(path) if path else SITES_FILE
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        table = raw.get("sites") if isinstance(raw, dict) else None
+        if not isinstance(table, dict):
+            raise ValueError("no 'sites' object")
+    except (OSError, ValueError) as exc:
+        if log:
+            log(f"[careersite] {path}: {exc}; using the built-in sites")
+        return {h: dict(c) for h, c in _BUILTIN_SITES.items()}
+    out: dict[str, dict] = {}
+    for host, cfg in table.items():
+        if site_entry_ok(host, cfg):
+            out[host] = cfg
+        elif log:
+            log(f"[careersite] {path}: skipping malformed entry {host!r}")
+    return out
+
+
+SITES: dict[str, dict] = load_sites()
 
 
 class Blocked(Exception):
@@ -467,19 +517,41 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+class PageBudget:
+    """Job pages the whole lane may read this run, shared by every worker thread. Sitemaps and
+    robots.txt are not counted: a site reached after the budget is spent still has its stored
+    rows stamped "still listed" from its sitemap, it just reads no new pages."""
+
+    def __init__(self, pages: int | None):
+        self.left = pages
+        self._lock = threading.Lock()
+
+    def take(self) -> bool:
+        if self.left is None:
+            return True
+        with self._lock:
+            if self.left <= 0:
+                return False
+            self.left -= 1
+            return True
+
+
 def crawl_site(store, host_name: str, cfg: dict, *, text_fetch=fetch_page, sleep=time.sleep,
                clock=time.monotonic, deadline: float | None = None, max_detail: int | None = None,
-               max_urls: int = DEFAULT_MAX_URLS, log=None) -> dict:
+               max_urls: int = DEFAULT_MAX_URLS, budget: PageBudget | None = None, log=None) -> dict:
     """Crawl one site into `store` (a sourcing.watchlist.Watchlist): robots, sitemap(s), then
-    job pages newest first for URLs the store does not hold yet, until `max_detail` pages or
-    the `deadline` (by `clock`). URLs already stored are stamped seen (still listed) without a
-    request. Returns a summary dict; never raises for a blocked or broken host."""
+    job pages newest first for URLs the store does not hold yet, until `max_detail` pages, the
+    shared `budget` or the `deadline` (by `clock`). URLs already stored are stamped seen (still
+    listed) without a request. `stopped` in the summary says why new pages were left unread
+    ("max_detail" | "budget" | "deadline", "" = none left). Returns a summary dict; never raises
+    for a blocked or broken host."""
     from .quality import is_intl_student_accessible
     if max_detail is None:
         max_detail = _env_int("CAREERSITE_MAX_DETAIL", DEFAULT_MAX_DETAIL)
     host = Host(host_name, cfg, text_fetch=text_fetch, sleep=sleep, clock=clock)
     summary = {"host": host_name, "listed": 0, "known": 0, "fetched": 0, "kept": 0,
-               "no_posting": 0, "excluded": 0, "errors": 0, "requests": 0, "blocked": "", "error": ""}
+               "no_posting": 0, "excluded": 0, "errors": 0, "requests": 0, "blocked": "", "error": "",
+               "stopped": ""}
     try:
         host.load_robots()
         urls = job_urls(host, max_urls=max_urls, log=log)
@@ -492,7 +564,14 @@ def crawl_site(store, host_name: str, cfg: dict, *, text_fetch=fetch_page, sleep
         for url, lastmod in urls:
             if url in known:
                 continue
-            if summary["fetched"] >= max_detail or (deadline is not None and clock() >= deadline):
+            if summary["fetched"] >= max_detail:
+                summary["stopped"] = "max_detail"
+                break
+            if deadline is not None and clock() >= deadline:
+                summary["stopped"] = "deadline"
+                break
+            if budget is not None and not budget.take():
+                summary["stopped"] = "budget"
                 break
             summary["fetched"] += 1
             try:
@@ -531,23 +610,63 @@ def crawl_site(store, host_name: str, cfg: dict, *, text_fetch=fetch_page, sleep
         log(f"[careersite] {host_name}: listed={summary['listed']} known={summary['known']} "
             f"fetched={summary['fetched']} kept={summary['kept']} no_posting={summary['no_posting']} "
             f"excluded={summary['excluded']} errors={summary['errors']} requests={summary['requests']}"
+            + (f" stopped={summary['stopped']}" if summary["stopped"] else "")
             + (f" BLOCKED: {summary['blocked']}" if summary["blocked"] else "")
             + (f" error: {summary['error']}" if summary["error"] else ""))
     return summary
 
 
+def rotate_sites(sites: dict, cursor_path) -> tuple[list[tuple[str, dict]], int]:
+    """The sites in crawl order for this run, starting where the last run stopped (the cursor
+    file under the feed's data dir), and that start index. Hosts are sorted first so the order
+    is stable when the table grows."""
+    items = sorted(sites.items())
+    if not items:
+        return [], 0
+    start = 0
+    if cursor_path:
+        try:
+            start = int(json.loads(Path(cursor_path).read_text())["next"]) % len(items)
+        except (OSError, ValueError, KeyError, TypeError):
+            start = 0
+    return items[start:] + items[:start], start
+
+
+def next_cursor(order: list[str], start: int, summaries: list[dict]) -> int:
+    """Where the next run starts: the first site (in this run's order) that never started or
+    was cut short by the page budget or the deadline. If every site finished, move on by one so
+    the head of the list does not always go first."""
+    total = len(order)
+    if not total:
+        return 0
+    by_host = {s["host"]: s for s in summaries}
+    for i, host in enumerate(order):
+        s = by_host.get(host)
+        if s is None or s.get("stopped") in ("budget", "deadline"):
+            return (start + i) % total
+    return (start + 1) % total
+
+
 def crawl_sites(db_path, sites: dict | None = None, *, minutes: float | None = None,
-                workers: int | None = None, text_fetch=fetch_page, sleep=time.sleep,
-                clock=time.monotonic, log=None) -> list[dict]:
-    """Crawl every site in `sites` (default SITES) with `workers` threads, one host per thread
-    at a time (each host still sees one request at a time), stopping at `minutes`. Each thread
-    opens its own Watchlist connection (SQLite WAL). Returns the per-site summaries."""
+                workers: int | None = None, page_budget: int | None = None, cursor_path=None,
+                text_fetch=fetch_page, sleep=time.sleep, clock=time.monotonic, log=None) -> list[dict]:
+    """Crawl the sites in `sites` (default SITES) with `workers` threads, one host per thread at
+    a time (each host still sees one request at a time), stopping at `minutes`. Job pages read
+    across all sites are capped by `page_budget` (env CAREERSITE_PAGE_BUDGET; 0 = no cap). The
+    order rotates: it starts at the cursor in `cursor_path` and the cursor is saved for the next
+    run, so a capped run never starves the end of the table. Each thread opens its own Watchlist
+    connection (SQLite WAL). Returns the per-site summaries."""
     from .watchlist import Watchlist
     sites = SITES if sites is None else sites
     minutes = float(os.environ.get("CAREERSITE_MINUTES", DEFAULT_MINUTES)) if minutes is None else minutes
     workers = _env_int("CAREERSITE_WORKERS", DEFAULT_WORKERS) if workers is None else workers
+    if page_budget is None:
+        page_budget = _env_int("CAREERSITE_PAGE_BUDGET", DEFAULT_PAGE_BUDGET)
+    budget = PageBudget(page_budget if page_budget and page_budget > 0 else None)
     deadline = clock() + minutes * 60 if minutes else None
-    items = list(sites.items())
+    ordered, start = rotate_sites(sites, cursor_path)
+    order = [h for h, _ in ordered]
+    items = list(ordered)
     out: list[dict] = []
     lock = threading.Lock()
 
@@ -560,7 +679,7 @@ def crawl_sites(db_path, sites: dict | None = None, *, minutes: float | None = N
                         return
                     host_name, cfg = items.pop(0)
                 s = crawl_site(store, host_name, cfg, text_fetch=text_fetch, sleep=sleep, clock=clock,
-                               deadline=deadline, log=log)
+                               deadline=deadline, budget=budget, log=log)
                 with lock:
                     out.append(s)
         finally:
@@ -572,4 +691,14 @@ def crawl_sites(db_path, sites: dict | None = None, *, minutes: float | None = N
         t.start()
     for t in threads:
         t.join()
+    if cursor_path and order:
+        nxt = next_cursor(order, start, out)
+        try:
+            Path(cursor_path).write_text(json.dumps({"next": nxt}) + "\n")
+        except OSError as exc:
+            if log:
+                log(f"[careersite] could not save the cursor {cursor_path}: {exc}")
+        if log:
+            log(f"[careersite] sites {len(out)}/{len(order)} from #{start}; next run starts at #{nxt}"
+                + (f"; page budget left {budget.left}" if budget.left is not None else ""))
     return out
