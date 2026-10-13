@@ -29,20 +29,31 @@ from __future__ import annotations
 import os
 import re
 import time
+import zlib
 from datetime import date, timedelta
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
 from .ats import (_WORKDAY_BOARD_ID_RE, _job, fetch_json, fetch_with_backoff, html_to_text,
                   retry_after_seconds)
-from .discover import (PROBE_TIMEOUT, brand_slug, distinctive_tokens, joined_slugs,
-                       name_match_count)
+from .discover import (PROBE_TIMEOUT, confirms, distinctive_tokens, foreign_qualified, has_brand, name_match_count, prose_confirms, slug_guesses)
 
 WD_DOMAIN = "myworkdayjobs.com"
 # The Workday instances a tenant can live on: the ones whose wildcard DNS resolves (checked
 # 2026-09-30; wd2/wd4/wd6-8 do not exist). wd1/wd3/wd5 carry most US enterprises; wd12 is real
 # too (qualcomm.wd12). Each probe is one tiny robots.txt GET.
-WD_INSTANCES = (1, 3, 5, 10, 12, 103)
+# Ordered by how many watched tenants live on each (2026-10-12 seed: wd1 59, wd5 44, wd3 7,
+# wd12 6, wd103 2), so a hit is usually found on the first or second robots.txt.
+WD_INSTANCES = (1, 5, 3, 12, 103, 10)
+# Newer instances whose wildcard DNS also resolves and answer (checked 2026-10-12; wd104
+# resolves but times out, so it is left out). Rarer, so discovery
+# asks them only for an employer's most likely tenant slug (MAX_EXTRA_SLUGS), not every guess.
+WD_EXTRA_INSTANCES = (102, 105, 107, 108, 109, 115, 120, 501, 502, 503, 504)
+MAX_EXTRA_SLUGS = 1
+MAX_WD_SLUGS = 5                # tenant guesses per employer (each costs one robots.txt per instance)
+# Site names asked when a live tenant's robots.txt names no site and gives no redirect: the
+# ones the watched tenants use most. Never asked when robots.txt disallows them.
+COMMON_SITES = ("External", "Careers", "External_Careers", "careers", "jobs")
 PAGE = 20                       # Workday's maximum page size
 LIST_CEILING = 2000             # the list endpoint never pages past this
 DEFAULT_MAX_JOBS = 1000         # rows per board per refresh (env WORKDAY_MAX_JOBS)
@@ -328,6 +339,22 @@ _ROBOTS_RULE = re.compile(r"^\s*(allow|disallow)\s*:\s*/([^/\s*$]+)/?\s*$", re.I
 _NOT_SITES = {"refreshfacet", "talentcommunity", "wday", "login", "api", "robots.txt"}
 
 
+def robots_allows_all(text: str) -> bool:
+    """A robots.txt that is really a robots file (has a User-agent line) and disallows nothing
+    but Workday's own plumbing paths: asking a common site name there is permitted."""
+    lines = [ln.strip() for ln in str(text or "").splitlines()]
+    if not any(ln.lower().startswith("user-agent") for ln in lines):
+        return False
+    for ln in lines:
+        m = re.match(r"^disallow\s*:\s*(\S*)", ln, re.I)
+        if not m or not m.group(1):
+            continue
+        seg = m.group(1).strip("/").split("/")[0].lower()
+        if seg not in _NOT_SITES:
+            return False
+    return True
+
+
 def robots_sites(text: str) -> tuple[list[str], list[str]]:
     """Parse a tenant's robots.txt into (crawlable sites, disallowed sites). Sites come from
     Sitemap lines (…/{site}/siteMap.xml) and Allow lines (/{site}/), in that order, minus any
@@ -399,17 +426,20 @@ def site_words(site: str) -> str:
 
 
 def workday_slugs(display_name: str) -> list[tuple[str, str]]:
-    """Tenant slugs worth probing for an employer: the brand word and the joined forms, as
-    (slug, kind). A tenant slug is a hostname label, so only lowercase letters, digits and
-    hyphens qualify. Empty when the name has no distinctive brand word to verify against."""
-    if not distinctive_tokens(display_name):
-        return []
-    cands = [(brand_slug(display_name), "brand"), *[(j, "joined") for j in joined_slugs(display_name)]]
-    out: list[tuple[str, str]] = []
-    for slug, kind in cands:
-        if slug and re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}", slug) and slug not in [s for s, _ in out]:
-            out.append((slug, kind))
-    return out
+    """Tenant slugs worth probing for an employer, as (slug, kind), most likely first: the
+    same guesses as the other ATSs (discover.slug_guesses: leading word, curated
+    abbreviation, brand words joined, trimmed name, first two words, ...). A tenant slug is a
+    hostname label, so only lowercase letters, digits and hyphens qualify. Empty when the name
+    has no distinctive brand word or alias to verify against."""
+    return [(g.slug, g.kind) for g in workday_guesses(display_name)]
+
+
+def workday_guesses(display_name: str):
+    out = []
+    for g in slug_guesses(display_name):
+        if re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}", g.slug) and g.slug not in [x.slug for x in out]:
+            out.append(g)
+    return out[:MAX_WD_SLUGS]
 
 
 IDENTITY_POSTINGS = 3           # postings whose hiring organization is read before giving up
@@ -426,6 +456,29 @@ def identity_match_count(evidence: str, distinctive: list[str]) -> int:
     return max(by_token, by_squash)
 
 
+def site_confirms(site: str, orgs: list[str], jds: list[str], display_name: str, need: int) -> bool:
+    """Is this Workday site the sponsor's? When the postings name their hiring organization, ONE
+    of those organizations must confirm it (discover.confirms, with the squashed-spelling rule):
+    a subsidiary's posting ("Immunex") next to the parent's ("Amgen Inc") is fine, while a site
+    whose postings all name another employer is not, whatever the site is called (live
+    2026-10-12: fusion.wd5/Fusion is "Fusion Medical Staffing LLC", not Fusion Life Sciences;
+    google.wd501/GOCJobs is "GOC Services India", not Google LLC). Only when no posting names
+    anyone do the site's own name and then the postings' descriptions decide
+    (discover.prose_confirms: Cadence's postings carry no organization, but every JD says "At
+    Cadence, ...")."""
+    named = [o for o in orgs if o]
+    if any(confirms(o, display_name, need, squash=True) for o in named):
+        return True
+    if confirms(site_words(site), display_name, need, squash=True):
+        # The site is named for the sponsor; the postings may still name a regional entity
+        # ("NT Mgmt Services Ireland" on Northern Trust's "northerntrust" site), which is fine,
+        # but never an organization that brands itself as a different line of business.
+        return not any(foreign_qualified(o, display_name) for o in named)
+    if named:
+        return False
+    return prose_confirms("\n".join(j for j in jds if j), display_name, need)
+
+
 class WorkdayHit(NamedTuple):
     tenant: str
     host: str
@@ -438,6 +491,18 @@ class WorkdayHit(NamedTuple):
         return board_id_for(self.tenant, self.host, self.site)
 
 
+def _spread(instances: tuple, slug: str) -> tuple:
+    """The instances in a slug-dependent rotation. Every employer's probe asks every instance
+    for every slug, so when all threads walk them in the same order they convoy on one
+    instance's lane at a time (the workday-only run of 2026-10-12 managed 5 employers a minute);
+    a rotation keyed on the slug spreads them across the lanes. Deterministic, so a rerun asks
+    in the same order."""
+    if not instances:
+        return instances
+    k = zlib.crc32(slug.encode()) % len(instances)
+    return instances[k:] + instances[:k]
+
+
 def discovery_backoff(seconds: float) -> None:
     """The default back-off sleep for discovery's detail reads: Retry-After (or the exponential
     gap) honoured for real, capped at DISCOVERY_MAX_BACKOFF."""
@@ -446,7 +511,7 @@ def discovery_backoff(seconds: float) -> None:
 
 def discover_workday(display_name: str, fetch=fetch_json, reject=None, sleep=None,
                      instances=WD_INSTANCES, redirect=None, slugs=None,
-                     backoff=discovery_backoff) -> WorkdayHit | None:
+                     backoff=discovery_backoff, extra_instances=WD_EXTRA_INSTANCES) -> WorkdayHit | None:
     """Find an employer's Workday career site, identity-confirmed, with at least one live job.
 
     For each slug guess and instance: GET robots.txt (a missing tenant answers 422). A tenant
@@ -467,9 +532,77 @@ def discover_workday(display_name: str, fetch=fetch_json, reject=None, sleep=Non
     `backoff(seconds)` is the 429 / 5xx pause for the detail reads (a real, capped sleep by
     default; tests inject a recorder)."""
     dist = distinctive_tokens(display_name)
-    cands = workday_slugs(display_name) if slugs is None else [(s, "brand") for s in slugs]
-    if not dist or not cands:
+    if slugs is None:
+        cands = [(g.slug, g.need) for g in workday_guesses(display_name)]
+    else:
+        cands = [(s, min(2, len(dist)) if dist else 1) for s in slugs]
+    if not cands or not has_brand(display_name):
         return None
+    f = _bounded(fetch, PROBE_TIMEOUT)
+    quiet = sleep or (lambda: None)
+    for rank, (slug, need) in enumerate(cands):
+        insts = _spread(tuple(instances), slug) + (
+            _spread(tuple(extra_instances), slug) if rank < MAX_EXTRA_SLUGS else ())
+        for n in insts:
+            host = f"{slug}.wd{n}.{WD_DOMAIN}"
+            try:
+                robots = f(f"https://{host}/robots.txt", raw=True)
+            except Exception:                         # noqa: BLE001 - 422/404/timeout: no tenant here
+                quiet()
+                continue
+            quiet()
+            if not isinstance(robots, str):
+                continue
+            sites, blocked = robots_sites(robots)
+            if not sites and redirect:
+                try:
+                    sites = [s for s in [site_from_redirect(redirect(f"https://{host}/"))]
+                             if s and s not in blocked]
+                except Exception:                     # noqa: BLE001
+                    sites = []
+            if not sites and not blocked and robots_allows_all(robots):
+                sites = list(COMMON_SITES)            # robots names none but forbids none either
+            if not sites:
+                if blocked and reject:
+                    reject("workday", slug, f"{host} robots.txt disallows its career site(s) "
+                                            f"{blocked}; not crawled")
+                break                                 # the tenant lives here; other instances won't
+            sized: list[tuple[int, int, str, dict]] = []    # (-count, order, site, first posting)
+            for i, site in enumerate(prefer_sites(sites)):
+                try:
+                    data = f(cxs_base(slug, host, site) + "/jobs",
+                             data={**LIST_BODY, "limit": IDENTITY_POSTINGS}) or {}
+                except Exception:                     # noqa: BLE001
+                    quiet()
+                    continue
+                quiet()
+                postings = data.get("jobPostings") or []
+                count = max(int(data.get("total") or 0), len(postings))
+                if postings and count > 0:
+                    sized.append((-count, i, site, postings))
+            for neg, _, site, postings in sorted(sized):
+                orgs: list[str] = []
+                jds: list[str] = []
+                ok = False
+                for posting in postings[:IDENTITY_POSTINGS]:
+                    det = workday_detail(cxs_base(slug, host, site) + str(posting.get("externalPath") or ""),
+                                         f, sleep=backoff)
+                    quiet()
+                    if det.get("org") and det["org"] not in orgs:
+                        orgs.append(det["org"])
+                    jds.append(det.get("jd_text") or "")
+                    if site_confirms(site, orgs, jds, display_name, need):
+                        ok = True
+                        break
+                if not ok:
+                    if reject:
+                        evidence = f"{site_words(site)} {' / '.join(orgs)}".strip()
+                        reject("workday", slug, f"{host}/{site} identifies as {evidence!r}; needs "
+                                                f"{need} of {dist} to be {display_name!r}")
+                    continue
+                return WorkdayHit(slug, host, site, -neg, orgs[0] if orgs else "")
+            break                                     # tenant found on this host; sites exhausted
+    return None
     need_two = len(dist) >= 2
     f = _bounded(fetch, PROBE_TIMEOUT)
     quiet = sleep or (lambda: None)

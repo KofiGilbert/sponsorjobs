@@ -180,6 +180,76 @@ organization or site name confirms the sponsor's brand word and the list returns
 Applying on Workday is **ASSISTED** only: there is no applicant-usable submission API, so the
 allowlist (`submit/allowlist.py`) is unchanged and the person clicks submit.
 
+### Growing the watchlist (`scripts/grow_watchlist.py`, `sourcing/discover.py`)
+
+Every board on `seed/watchlist_seed.csv` is a proven H-1B sponsor with a live public feed. The list
+grows by probing the sponsors in `seed/sponsors_seed.csv.gz`, biggest recent H-1B filers first, on
+the GREEN-lane ATS APIs, and keeping a board only when its own name (or a Workday posting's hiring
+organization, or failing both its own job descriptions) confirms it is that employer and it lists
+at least one job:
+
+    python scripts/grow_watchlist.py --ipv4 --limit 4000 --max-minutes 180 --workers 16 \
+        --ats greenhouse,lever,ashby,smartrecruiters,workday
+
+It checkpoints every employer to `data/grow_watchlist.jsonl`, so a stopped run continues where it
+left off; `--ipv4` is for networks whose IPv6 is broken (each SmartRecruiters / Ashby call otherwise
+waits out two timeouts). Workable is left out of the big runs: its edge answers a whole day's
+`Retry-After` once an address has used its budget, and the list holds one Workable board.
+
+How a guess is made and checked (2026-10-12; the 2026-10-11 dry run accepted 2 of 185):
+
+* **Slugs**: the leading word, a curated abbreviation (`ALIASES`: IBM, HCL, PwC, AMD, TCS, EY,
+  Capital One, AT&T...), the brand words joined without filler (`thermofisher`), the name with its
+  trailing filler cut, the first two words joined (`goldmansachs`), the whole name joined, and a
+  brand word that is not first (`schwab`). Ashby and Lever show no employer name, so only joins that
+  cover every brand word are tried there.
+* **Identity**: descriptive words (design, companies, consultancy...) need not appear on the board
+  ("Cadence" confirms Cadence Design Systems), but a brand qualified as another employer is turned
+  down ("Cadence Bank", "Apple Bank", "Ford Foundation", "Hitachi Energy", "Lowes Foods"), and a
+  truncated multi-brand name still needs two brand words ("Archer" is not Archer Daniels Midland).
+  A Workday site whose postings name no organization is confirmed by at least two capitalized,
+  unqualified mentions in its own JDs; a posting that names a different legal employer is never
+  overridden that way (Google Operations Center's site is not Google LLC's board).
+* **Workday**: instances are tried most-used first (wd1, wd5, wd3, wd12, wd103, wd10), the newer
+  ones (wd102...wd504) only for the most likely slug; the site names come from `robots.txt`, and a
+  tenant whose robots.txt names none but forbids none is asked a few common site names. A site
+  robots.txt disallows is never read. Each Workday instance is its own pacing lane (one request per
+  0.25 s per instance across all threads); every lane honours `Retry-After` and backs off on 429/5xx.
+
+**Results of the 2026-10-12 runs** (top 4,036 sponsors by recent H-1B approvals, minus those already
+watched; about 3 hours of crawling in all, ~40 employers a minute with 16-24 threads, 0 to 3 HTTP 429s
+per run):
+
+| | before (old code) | after |
+|---|---|---|
+| same top 50 sponsors | 1 board found, 0 new | 6 found, 4 new (all Workday) |
+| 2026-10-11 dry run / 2026-10-12 full run | 2 of 185 (1.1%) | 317 of 3,872 probed (8.2%) |
+
+Every hit was re-checked against the final identity rules before it was written, which dropped 25
+wrong ones the first rules let through (Tower Research Capital for American Tower, Paper Education
+for International Paper, Fusion Medical Staffing, Lowell Group, boards named Space, Foundry, Branch,
+Nexus...), and four bare one-posting boards were turned down by hand (Allegro, Athene, Southwest x2,
+Raven). Confirmed hits by ATS: Workday 274, SmartRecruiters 25, Greenhouse 18, Lever and Ashby 0
+(only whole-name joins are trusted blind there). New boards on the list: **268** (Workday 237,
+SmartRecruiters 18, Greenhouse 13; the rest of the hits were boards already watched under another
+legal entity), taking the watchlist from 1,107 to **1,375** boards and Workday from 118 to 355
+tenants. 195 employers still owe a probe on one ATS (the checkpoint says which); the next run picks
+them up. The big sponsors without a public board stay out (Cognizant, TCS, Google, Microsoft, Apple,
+Wipro, Infosys, Deloitte, Meta...): they use their own career sites, which the career-site lane
+covers. Reaching ~3,000 boards needs the sponsors past rank 4,000, where the hit rate keeps falling
+(12% in the top 50, ~5% around rank 3,000).
+
+### How often each board is crawled
+
+The build crawls boards in watchlist order from a cursor saved under `--data`, stopping at
+`FEED_CRAWL_MINUTES` (140 by default since 2026-10-12) and resuming there next run. The cursor
+remembers the next board itself, so a seed sync that inserts boards does not shift it. The
+2026-10-12 run covered 376 boards in 70 minutes, so a 140-minute run covers roughly 750; at 8 runs a
+day that is about 6,000 board visits. The 1,375-board list is walked end to end in 2 runs (every
+board about 4 times a day), and even a 3,000-board list within 4 runs (about 12 hours, twice a day),
+so no priority ordering is needed yet; if the list outgrows ~6,000 boards, the high-volume boards
+should be visited every run and the long tail rotated.
+
 ### List-only boards are checked before they are kept (Workday, SmartRecruiters)
 
 Two of the ATSs deliver their job list WITHOUT the description: Workday's `cxs` list and

@@ -16,6 +16,7 @@ the output is always a clean commit.
                                      [--checkpoint data/grow_watchlist.jsonl]
                                      [--seed seed/watchlist_seed.csv] [--dry-run]
                                      [--ats workday,greenhouse]   # probe only these ATSs
+                                     [--ipv4]                     # if local IPv6 is broken
 """
 
 from __future__ import annotations
@@ -31,6 +32,16 @@ sys.path.insert(0, str(ROOT))
 
 from sourcing import growth  # noqa: E402
 from sourcing.discover import DISCOVER_ATS  # noqa: E402
+
+
+def _prefer_ipv4() -> None:
+    """Make every lookup in this process return IPv4 addresses only (--ipv4)."""
+    import socket
+    real = socket.getaddrinfo
+
+    def v4(host, port, family=0, *a, **kw):
+        return real(host, port, socket.AF_INET, *a, **kw)
+    socket.getaddrinfo = v4
 
 
 def main(argv=None) -> int:
@@ -49,6 +60,10 @@ def main(argv=None) -> int:
     ap.add_argument("--sponsors", default=str(growth.SPONSOR_SEED))
     ap.add_argument("--dry-run", action="store_true",
                     help="probe and checkpoint, but leave the seed file untouched")
+    ap.add_argument("--ipv4", action="store_true",
+                    help="resolve hosts to IPv4 only: on a network with broken IPv6 every request "
+                         "to a dual-stack API (SmartRecruiters, Ashby) first waits out two IPv6 "
+                         "timeouts, which made one employer take two minutes (seen 2026-10-12)")
     ap.add_argument("--ats", default=",".join(DISCOVER_ATS),
                     help="comma list of ATSs to probe (default: all of "
                          f"{', '.join(DISCOVER_ATS)}); e.g. --ats workday")
@@ -58,6 +73,8 @@ def main(argv=None) -> int:
     if unknown or not atss:
         ap.error(f"--ats must name ATSs among {', '.join(DISCOVER_ATS)}; got {args.ats!r}")
 
+    if args.ipv4:
+        _prefer_ipv4()
     t0 = time.monotonic()
     before = growth.read_watchlist_seed(args.seed)
     before_ats = growth.per_ats_counts(before)
@@ -131,6 +148,7 @@ def main(argv=None) -> int:
           f"request, {summary['throttled']} throttled on every host and left for the next run, "
           f"{summary['partial']} still owe a throttled ATS); "
           f"{summary['requests']} requests, {summary['rate_limited']} x 429, "
+          f"{summary.get('server_errors')} x 5xx, "
           f"{summary['cooldowns']} host cooldowns, {summary['deferred']} requests deferred "
           f"because a host's queue was too long")
     print(f"found {summary['hits']} live, identity-confirmed boards with >=1 job this run; "

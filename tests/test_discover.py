@@ -315,3 +315,159 @@ def test_discover_is_idempotent_and_dry_run_writes_nothing(tmp_path):
     first = discover_and_watch(sponsors, wl, fetch=fetch)
     again = discover_and_watch(sponsors, wl, fetch=fetch)
     assert first["added"] == 1 and again["added"] == 0 and again["hits"] == 1
+
+
+# -- widened slugs and brand-token identity (2026-10-12) ------------------------ #
+#
+# The 2026-10-11 dry run accepted 2 of 185 candidates: name guessing tried only the leading word
+# and the whole name run together, and the identity check demanded descriptive words a board
+# never shows ("Cadence Design Systems" vs a board that says "Cadence"). These pin the widened
+# guesses and the brand-token rule, and -- just as important -- the near misses it must still
+# turn down.
+
+from sourcing.discover import (alias_for, confirms, core_tokens, foreign_qualified,  # noqa: E402
+                               prose_confirms, slug_guesses)
+
+
+def test_slug_guesses_try_brand_alias_trimmed_and_partial_joins():
+    assert slug_candidates("Cadence Design Systems Inc")[:2] == ["cadence", "cadencedesign"]
+    # A brand word that isn't first ("schwab") and the first two words joined.
+    assert "schwab" in slug_candidates("Charles Schwab & Company Inc")
+    assert "charlesschwab" in slug_candidates("Charles Schwab & Company Inc")
+    assert "goldmansachs" in slug_candidates("Goldman Sachs Co Llc")
+    # Brand words joined without the filler: tried on the name lane, but only the whole name
+    # run together is trusted blind on Ashby/Lever.
+    g = {x.slug: x for x in slug_guesses("Thermo Fisher Scientific Inc")}
+    assert not g["thermofisher"].blind and g["thermofisherscientific"].blind
+    assert not g["thermo"].blind and g["thermo"].need == 2
+    # Live 2026-10-12: a trimmed join can be an ordinary word -- "healthcare" was a Lever
+    # board of someone else. It is never trusted without a name to check.
+    h = {x.slug: x for x in slug_guesses("Health Care Service Corporation")}
+    assert "healthcare" in h and not h["healthcare"].blind
+    assert discover_for_company("Health Care Service Corporation", atss=("lever",),
+                                fetch=_fetch(lever={"healthcare": _ASHBY_JOB})) is None
+    # Trailing filler and geography trimmed.
+    assert core_tokens("Nokia Of America Corporation") == ["nokia"]
+    assert core_tokens("Cognizant Technology Solutions Us Corp") == ["cognizant"]
+    assert len(slug_candidates("State Street Bank And Trust Company")) <= 7
+
+
+def test_known_abbreviations_give_a_slug_and_a_brand_form():
+    assert slug_candidates("Ibm Corporation") == ["ibm"]
+    assert alias_for("Ibm Corporation") == (["ibm"], ["ibm"])
+    assert "amd" in slug_candidates("Advanced Micro Devices Inc")
+    assert "tcs" in slug_candidates("Tata Consultancy Svcs Ltd")
+    assert alias_for("Ernst Young Us Llp")[0] == ["ey"]
+    assert alias_for("Acme Widgets Inc") == ([], [])
+    # The alias is still checked: a board must show the brand form.
+    fetch = _fetch(gh_jobs={"ibm": _JOB_US}, gh_names={"ibm": "IBM"})
+    assert discover_for_company("Ibm Corporation", atss=("greenhouse",), fetch=fetch)["board_id"] == "ibm"
+    wrong = _fetch(gh_jobs={"ibm": _JOB_US}, gh_names={"ibm": "Ibmx Consulting"})
+    assert discover_for_company("Ibm Corporation", atss=("greenhouse",), fetch=wrong) is None
+
+
+def test_descriptive_words_no_longer_block_a_board_named_for_the_brand():
+    # The live rejection: a board/site that says "Cadence" for "Cadence Design Systems".
+    assert distinctive_tokens("Cadence Design Systems Inc") == ["cadence"]
+    assert distinctive_tokens("Lowes Companies Inc") == ["lowes"]
+    assert distinctive_tokens("Tata Consultancy Svcs Ltd") == ["tata"]
+    fetch = _fetch(gh_jobs={"cadence": _JOB_US}, gh_names={"cadence": "Cadence"})
+    assert discover_for_company("Cadence Design Systems Inc", atss=("greenhouse",),
+                                fetch=fetch)["board_id"] == "cadence"
+    # Institution words are NOT descriptive filler: they tell same-brand employers apart.
+    assert distinctive_tokens("Cadence Bank") == ["cadence", "bank"]
+
+
+# Near misses: the brand word matches, but the board is a DIFFERENT employer that shares it.
+_NEAR_MISSES = [
+    # sponsor,                           slug,       the other employer's board name
+    ("Cadence Design Systems Inc",       "cadence",  "Cadence Bank"),
+    ("Apple Inc",                        "apple",    "Apple Bank for Savings"),
+    ("Ford Motor Company",               "ford",     "Ford Foundation"),
+    ("Oracle America Inc",               "oracle",   "Oracle Health Partners"),
+    ("Lowes Companies Inc",              "lowes",    "Lowes Foods"),
+]
+
+
+@pytest.mark.parametrize("sponsor,slug,board", _NEAR_MISSES)
+def test_a_brand_qualified_as_another_employer_is_rejected(sponsor, slug, board):
+    rejected = []
+    fetch = _fetch(gh_jobs={slug: _JOB_US}, gh_names={slug: board})
+    assert discover_for_company(sponsor, atss=("greenhouse",), fetch=fetch,
+                                reject=lambda a, s, why: rejected.append(s)) is None
+    assert slug in rejected
+
+
+def test_foreign_qualifier_rule():
+    assert foreign_qualified("Cadence Bank", "Cadence Design Systems Inc")
+    assert not foreign_qualified("Cadence", "Cadence Design Systems Inc")
+    assert not foreign_qualified("Cadence Design Systems, Inc.", "Cadence Design Systems Inc")
+    assert not foreign_qualified("020 Cisco Systems, Inc.", "Cisco Systems Inc")
+    assert not foreign_qualified("2100 NVIDIA USA", "Nvidia Corporation")
+    assert not foreign_qualified("Stripe Careers", "Stripe Inc")
+    assert foreign_qualified("Hitachi Energy USA Inc", "Hitachi Vantara Llc")
+    # Bank in the sponsor's own name is not foreign.
+    assert not foreign_qualified("Cadence Bank", "Cadence Bank")
+    assert confirms("Cadence", "Cadence Design Systems Inc")
+    assert not confirms("Cadence Bank", "Cadence Design Systems Inc")
+    # A multi-brand name still needs two of its brand words from a truncated slug.
+    assert not confirms("Archer", "Archer Daniels Midland Company", need=2)
+    assert confirms("ADM", "Archer Daniels Midland Company", need=2)        # curated alias
+
+
+def test_prose_confirms_needs_capitalized_clean_mentions():
+    jd = "At Cadence, we hire leaders. Cadence is an equal opportunity employer."
+    assert prose_confirms(jd, "Cadence Design Systems Inc")
+    assert not prose_confirms("Cadence Bank is hiring. Join Cadence Bank today.", "Cadence Design Systems Inc")
+    assert not prose_confirms("At Cadence, we hire.", "Cadence Design Systems Inc")    # one passing mention
+    # A lowercase word is not the brand: "visa sponsorship" never confirms Visa.
+    assert not prose_confirms("No visa sponsorship. We sponsor no visa.", "Visa Inc")
+    assert not prose_confirms("", "Visa Inc")
+
+
+def test_a_subsidiary_or_regional_wording_is_not_another_employer():
+    # Live 2026-10-12: Netflix's and FactSet's own Workday postings name these entities.
+    assert confirms("Netflix Animation Studios Australia Pty Ltd", "Netflix Inc")
+    assert confirms("10051 FactSet Brasil Consultoria Ltda", "Factset Research Systems Inc")
+    # ...while a line-of-business word the sponsor lacks still marks a different employer.
+    assert not confirms("Fusion Medical Staffing LLC", "Fusion Life Sciences Technologies")
+    assert not confirms("Convenience Holdings Pty Ltd", "7 Eleven Inc")
+
+
+def test_generic_industry_words_and_staffing_suffixes_stay_out_of_the_brand():
+    # Caught live 2026-10-12: "Cnh Industrial America" matched a Greenhouse board "industrial",
+    # and "Empower Professionals" (an IT staffing firm) matched Empower's (the retirement
+    # company's) Workday tenant once "professionals" was treated as filler.
+    assert "industrial" not in slug_candidates("Cnh Industrial America Llc")
+    assert "cnhindustrial" in slug_candidates("Cnh Industrial America Llc")
+    assert distinctive_tokens("Empower Professionals Inc") == ["empower", "professionals"]
+    assert not confirms("Empower Annuity Insurance Company of America", "Empower Professionals Inc", need=2)
+
+
+# Live 2026-10-12, from the long run: a board that names MORE than the sponsor's brand, or a
+# later word of a name whose first word is a brand of its own, is another company.
+_STRAY_MISSES = [
+    ("Cloud Space Llc",              "space",  "Space Programs"),
+    ("E Nexus Inc",                  "enexus", "CGS Nexus"),
+    ("Avani Systems Inc",            "avani",  "Avani Media"),
+    ("Keen Info Tek Inc",            "keen",   "Keen Advisor Questionnaire"),
+    ("Ceo Foundry Llc",              "foundry", "Foundry"),
+    ("The University Of Texas Medical Branch", "branch", "Branch"),
+]
+
+
+@pytest.mark.parametrize("sponsor,slug,board", _STRAY_MISSES)
+def test_a_board_that_names_more_than_the_brand_or_a_later_word_alone_is_rejected(sponsor, slug, board):
+    fetch = _fetch(gh_jobs={slug: _JOB_US}, gh_names={slug: board})
+    assert discover_for_company(sponsor, atss=("greenhouse",), fetch=fetch) is None
+
+
+def test_a_generic_word_plus_an_ordinary_noun_needs_both_words():
+    # Live 2026-10-12: Workday tenants "tower" (Tower Research Capital) and "paper" (Paper
+    # Education America) passed for American Tower and International Paper on the bare noun.
+    assert not confirms("540 Tower Research Capital (Hong Kong) Limited", "American Tower Corporation")
+    assert not confirms("Paper Education America Inc.", "International Paper")
+    assert confirms("American Tower", "American Tower Corporation")
+    assert confirms("International Paper Company", "International Paper")
+    assert confirms("United Airlines", "United Airlines Inc")
+    assert not prose_confirms("Tower continues to grow. At Tower, we trade.", "American Tower Corporation")

@@ -189,6 +189,40 @@ def test_a_capped_crawl_resumes_where_the_last_run_stopped(tmp_path):
     assert build_feed.rotate_boards(boards, tmp_path)[1] == 0              # unreadable: start over
 
 
+def test_the_cursor_follows_its_board_when_a_seed_sync_shifts_the_list(tmp_path):
+    # The watchlist is sorted by company. Growing it from ~1,100 to ~3,000 boards inserts names
+    # before the cursor; an index-only cursor would then skip a stretch of boards for a lap.
+    from scripts import build_feed
+    boards = [{"company": c, "ats": "greenhouse", "board_id": c.lower()} for c in "BDFHJ"]
+    order, start = build_feed.rotate_boards(boards, tmp_path)
+    build_feed.save_cursor(tmp_path, start, crawled=2, total=5, order=order)   # B, D done
+    grown = sorted(boards + [{"company": c, "ats": "lever", "board_id": c.lower()} for c in "ACE"],
+                   key=lambda b: b["company"])
+    order, start = build_feed.rotate_boards(grown, tmp_path)
+    assert order[0]["company"] == "F"                       # still F next, not shifted to D
+    build_feed.save_cursor(tmp_path, start, crawled=1, total=len(grown), order=order)
+    gone = [b for b in grown if b["company"] != "H"]       # the next board was removed
+    order, _ = build_feed.rotate_boards(gone, tmp_path)
+    assert order[0]["company"] == "J"                       # the first board after where it sorted
+
+
+def test_a_3000_board_watchlist_is_fully_crawled_within_a_day_of_runs(tmp_path):
+    # 8 runs a day (cron every 3 hours). The 2026-10-12 run covered 376 boards in 70 minutes;
+    # at 140 minutes a run covers ~750 even if the grown list is no faster per board, so every
+    # board is visited within 4 runs (half a day) and twice a day in all. The rotation must
+    # make that true: no board is skipped or visited twice before the lap ends.
+    from scripts import build_feed
+    boards = [{"company": f"Co{i:05d}", "ats": "greenhouse", "board_id": f"b{i}"} for i in range(3000)]
+    seen: list[str] = []
+    for _run in range(8):
+        order, start = build_feed.rotate_boards(boards, tmp_path)
+        crawled = order[:750]
+        seen += [b["board_id"] for b in crawled]
+        build_feed.save_cursor(tmp_path, start, crawled=len(crawled), total=len(boards), order=order)
+    assert set(seen[:3000]) == {b["board_id"] for b in boards}     # one full lap in 4 runs
+    assert len(set(seen)) == 3000 and len(seen) == 6000              # two laps a day, no gaps
+
+
 def test_aggregator_policy_refuses_adzuna_and_defaults_to_jsearch():
     from scripts import build_feed
     assert build_feed.aggregators_for_feed({}, log=lambda *a: None) == ["remotive", "remoteok", "freehire", "jsearch"]

@@ -34,6 +34,7 @@ An unconfirmed hit is reported but never watched, so a discovered board's visa b
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 from .ats import fetch_json, normalize_jobs, valid_board_id
@@ -83,6 +84,9 @@ _GENERIC = {
     # Llc", "Fedex Corporate Services Inc", "Target Enterprise Inc", "Pwc Advisory Services Llc")
     "operations", "corporate", "enterprise", "advisory", "worldwide", "ventures", "limited",
     "incorporated", "investments",
+    # Industry words that read as a brand when the real brand is a short acronym the tokenizer
+    # drops ("Cnh Industrial America" -> a Greenhouse board "industrial", caught 2026-10-12).
+    "industrial", "pharma", "medical", "dental", "physicians", "consultants", "branch",
 }
 
 # Corporate FILLER: words a legal name carries that say nothing about which company it is
@@ -107,7 +111,67 @@ _FILLER = {
     "pharma", "biologics", "biotherapeutics", "microsystems", "avionics", "aviation",
     "rail", "asset", "operating", "annuity", "administrative", "strategic", "advisors",
     "business", "rehabilitation", "service", "life",
+    # Weak descriptors (2026-10-12): words a legal name carries next to a brand that the
+    # employer's own board usually leaves out ("Cadence Design Systems" -> a board that just
+    # says "Cadence"; "Lowes Companies", "Comcast Cable", "Tata Consultancy Svcs"). They are
+    # dropped only when a real brand word survives, like the rest of this set. Institution
+    # words that DO tell same-brand employers apart (bank, hospital, clinic, university,
+    # school, foundation...) are deliberately NOT here -- see _INSTITUTION.
+    "design", "development", "companies", "consultancy", "consultants", "svcs", "intl",
+    "engineering", "engineers",
+    "electronics", "computer", "computing", "wireless", "cable", "motor", "motors",
+    "automation", "stores", "wholesale", "foods", "power", "games", "publishing", "aerospace",
+    "trading", "resources", "resource", "industry",
+    "devices", "micro", "platforms", "mobility", "telecom", "apps", "solution",
+    "informatics", "subsidiary", "shared", "employees", "intelligence", "innovation",
+    "innovations", "scientific", "sciences", "science", "pharmaceutical", "biomedical",
+    "construction", "transportation", "supply", "chain", "commercial", "express", "travel",
+    "related", "securities", "markets", "investment", "finance", "lab", "tech",
 }
+
+# Institution words: a brand word shared by two employers is told apart by these ("Cadence
+# Bank" vs Cadence the chip company, "Ford Foundation" vs Ford Motor, "Emerson College" vs
+# Emerson Electric). None of the new descriptors above is one of them; and whatever their
+# filler status, on a board's name they count as a DIFFERENT employer's qualifier unless the
+# sponsor's own name carries them ("Southwest" may stand for Southwest Airlines, but a board
+# "Oracle Health" or "Hitachi Energy" names a sibling, not the sponsor).
+_INSTITUTION = {
+    "bank", "bancorp", "hospital", "hospitals", "clinic", "medical", "university", "college",
+    "school", "schools", "foundation", "institute", "church", "county", "city", "district",
+    "credit", "union", "mutual", "insurance", "academy", "museum", "society", "association",
+    "center", "centre", "health", "healthcare", "dental", "pharmacy", "law", "realty",
+    "aviation", "airlines", "airways", "air", "energy", "capital", "partners",
+    "foods", "food", "grocery", "market", "staffing", "veterinary", "animal", "hotel", "hotels",
+    "restaurant", "restaurants", "nursing", "church", "ministries", "trust", "savings",
+    "federal", "motors", "power", "utilities", "electric", "oil", "gas", "petroleum",
+}
+
+# Words that may follow a brand on a board's own name without making it someone else:
+# legal forms, careers-site words, and the corporate filler above. A brand word followed by
+# anything else not in the sponsor's own name ("Cadence Bank", "Apple Bank", "Hitachi Energy",
+# "Ford Foundation") is a different employer that shares the brand.
+_LEGAL = {
+    "inc", "incorporated", "llc", "llp", "lp", "plc", "corp", "corporation", "co", "company",
+    "ltd", "limited", "gmbh", "ag", "sa", "nv", "bv", "pvt", "private", "pty", "the", "and",
+    "of", "us", "usa", "na", "careers", "career", "jobs", "job", "external", "site", "hiring",
+    "talent", "recruiting", "opportunities", "team", "teams", "official", "page", "board",
+    "en", "professional", "experienced", "early", "campus", "university_careers",
+}
+# Corporate words that say nothing about the line of business, so they may follow the brand on
+# a board's name ("Stripe Technologies", "DiDi Labs", "Virtu Financial"). Industry words are
+# deliberately left out: "Lowes Foods" is a grocer, not Lowe's; "Hitachi Energy" is not Hitachi
+# Vantara.
+_CORPORATE = {
+    "technologies", "technology", "tech", "systems", "solutions", "services", "service", "group",
+    "holdings", "holding", "labs", "lab", "laboratories", "software", "digital", "interactive",
+    "network", "networks", "global", "international", "worldwide", "enterprise", "enterprises",
+    "consulting", "operations", "ventures", "brands", "research", "information", "innovation",
+    "innovations", "professional", "professionals", "resources", "financial", "securities",
+    "markets", "investments", "payments", "cloud", "data", "analytics", "platforms", "mobile",
+    "online", "industries", "corporate", "management", "partners", "development", "design",
+    "engineering", "companies", "intl", "infotech", "consultancy", "svcs", "employees",
+}
+_SAFE_QUALIFIERS = (_LEGAL | _GENERIC | _CORPORATE) - _INSTITUTION
 
 # Common English words that companies also use as their whole brand ("Smart", "Pulse",
 # "Bloom", "Squad"). Caught live (2026-09-30): the SmartRecruiters board "smart" is a
@@ -159,6 +223,102 @@ def distinctive_tokens(display_name: str) -> list[str]:
     return strong or brand
 
 
+# Known abbreviations (2026-10-12). Many of the biggest sponsors file under a legal name with
+# no usable brand word ("Ibm Corporation", "Hcl America", "At&T Services", "Pwc Advisory
+# Services") or are known by a short form their boards use ("ADM", "AMD", "HPE", "TCS"). Keyed
+# by the leading words of the NORMALIZED sponsor name (sponsors.normalize_employer); each entry
+# gives the slugs worth trying and the brand forms a board's own name may show instead of the
+# legal name. Hand-maintained: an alias is a claim that this short form IS this employer, so
+# add one only when it is unambiguous. A board must still show the brand form to be accepted.
+ALIASES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "ibm": (("ibm",), ("ibm",)),
+    "hcl": (("hcltech", "hcl"), ("hcl", "hcltech")),
+    "lt technology services": (("ltts",), ("ltts", "l&t technology services")),
+    "larsen and toubro infotech": (("ltimindtree", "lti"), ("ltimindtree", "lti")),
+    "ltimindtree": (("ltimindtree",), ("ltimindtree",)),
+    "cgi": (("cgi",), ("cgi",)),
+    "capital one": (("capitalone",), ("capital one",)),
+    "ust global": (("ust", "ustglobal"), ("ust",)),
+    "ust": (("ust",), ("ust",)),
+    "morgan stanley": (("morganstanley", "ms"), ("morgan stanley",)),
+    "pwc": (("pwc",), ("pwc", "pricewaterhousecoopers")),
+    "pricewaterhousecoopers": (("pwc",), ("pwc", "pricewaterhousecoopers")),
+    "adp": (("adp",), ("adp",)),
+    "automatic data processing": (("adp",), ("adp",)),
+    "boston consulting group": (("bcg",), ("bcg", "boston consulting group")),
+    "sap": (("sap",), ("sap",)),
+    "zs associates": (("zs", "zsassociates"), ("zs associates", "zs")),
+    "at and t": (("att",), ("at&t", "at and t")),
+    "fca us": (("stellantis",), ("stellantis", "fca")),
+    "advanced micro devices": (("amd",), ("amd", "advanced micro devices")),
+    "hewlett packard enterprise": (("hpe", "hewlettpackardenterprise"),
+                                   ("hpe", "hewlett packard enterprise")),
+    "hp": (("hp",), ("hp",)),
+    "tata consultancy": (("tcs",), ("tcs", "tata consultancy")),
+    "ernst and young": (("ey",), ("ey", "ernst and young", "ernst young")),
+    "ernst young": (("ey",), ("ey", "ernst and young", "ernst young")),
+    "general electric": (("ge",), ("ge", "general electric")),
+    "archer daniels midland": (("adm",), ("adm", "archer daniels midland")),
+    "johns hopkins": (("jhu", "johnshopkins"), ("johns hopkins", "jhu")),
+    "american airlines": (("aa", "americanairlines"), ("american airlines",)),
+    "wal mart": (("walmart",), ("walmart", "wal mart")),
+    "t mobile": (("tmobile",), ("t mobile",)),
+    "ntt data": (("nttdata",), ("ntt data",)),
+    "bank of new york mellon": (("bnymellon", "bny"), ("bny", "bny mellon")),
+    "3m": (("3m",), ("3m",)),
+    "united parcel service": (("ups",), ("ups", "united parcel service")),
+    "kla": (("kla",), ("kla",)),
+    "nxp": (("nxp",), ("nxp",)),
+    "sas institute": (("sas",), ("sas",)),
+    "abb": (("abb",), ("abb",)),
+    "ubs": (("ubs",), ("ubs",)),
+    "emc": (("dell",), ("dell",)),
+    "dfs corporate services": (("discover",), ("discover financial", "discover")),
+    "massachusetts institute of technology": (("mit",), ("mit", "massachusetts institute of technology")),
+    "new york university": (("nyu",), ("nyu", "new york university")),
+    "univ of california san francisco": (("ucsf",), ("ucsf",)),
+    "university of california san francisco": (("ucsf",), ("ucsf",)),
+    "bnp paribas": (("bnpparibas",), ("bnp paribas",)),
+    "td bank": (("td",), ("td bank",)),
+    "eli lilly": (("lilly",), ("lilly", "eli lilly")),
+    "cnh industrial": (("cnhindustrial", "cnh"), ("cnh industrial", "cnh")),
+    "northern trust": (("ntrs", "northerntrust"), ("northern trust",)),
+}
+
+
+def alias_for(display_name: str) -> tuple[list[str], list[str]]:
+    """(slugs, brand forms) from ALIASES for this employer, or ([], []). The longest matching
+    key wins, so "ernst and young" is not shadowed by a shorter key."""
+    norm = normalize_employer(display_name)
+    best = ""
+    for key in ALIASES:
+        if (norm == key or norm.startswith(key + " ")) and len(key) > len(best):
+            best = key
+    if not best:
+        return [], []
+    slugs, brands = ALIASES[best]
+    return list(slugs), list(brands)
+
+
+def has_brand(display_name: str) -> bool:
+    """Is there anything a board's own name could confirm this employer by — a distinctive
+    brand word, or a curated alias? Without one, discovery doesn't even guess."""
+    return bool(distinctive_tokens(display_name) or alias_for(display_name)[1])
+
+
+_TRIM = _FILLER | _GENERIC | _LEGAL
+
+
+def core_tokens(display_name: str) -> list[str]:
+    """The name with its trailing filler, legal form and geography trimmed ("Cognizant
+    Technology Solutions Us" -> ["cognizant"], "Nokia Of America" -> ["nokia"]); the leading
+    words are kept as they are, so a brand made of ordinary words survives."""
+    toks = _tokens(display_name)
+    while len(toks) > 1 and toks[-1] in _TRIM:
+        toks = toks[:-1]
+    return toks
+
+
 def brand_slug(display_name: str) -> str | None:
     """The leading-token slug (a guess at the board name). Usable only on the NAME_LANE,
     where a hit is identity-verified — for a multi-word name this is a truncation and can't
@@ -182,16 +342,93 @@ def joined_slugs(display_name: str) -> list[str]:
     return out
 
 
-def slug_candidates(display_name: str) -> list[str]:
-    """Every slug worth probing for an employer, strongest first (leading brand token, then
-    long joined forms). De-duped and host-safe. Empty when the name has no distinctive brand
-    word to verify against. Which of these are actually TRUSTED depends on the ATS — see
-    discover_for_company."""
-    if not distinctive_tokens(display_name):
+MAX_SLUGS = 7                   # slug guesses per employer per ATS (each one is a request)
+
+
+class SlugGuess(tuple):
+    """(slug, kind, need): `kind` is "brand" (one word: a truncation or a lone brand word),
+    "joined" (several words run together), or "alias" (a curated short form); `need` is how
+    many of the sponsor's distinctive words a board's own name must show for it (a curated
+    alias brand form on the board satisfies any need). `blind` says whether the slug is
+    unambiguous enough to trust on an ATS that exposes no employer name (Ashby, Lever)."""
+    __slots__ = ()
+
+    def __new__(cls, slug: str, kind: str, need: int, blind: bool = False):
+        return super().__new__(cls, (slug, kind, need, blind))
+
+    slug = property(lambda self: self[0])
+    kind = property(lambda self: self[1])
+    need = property(lambda self: self[2])
+    blind = property(lambda self: self[3])
+
+
+def slug_guesses(display_name: str) -> list[SlugGuess]:
+    """Every slug worth probing for an employer, most likely first, each with the identity
+    bar a board at it must clear. Widened 2026-10-12 (the 2026-10-11 dry run accepted 2 of
+    185): beside the leading word and the whole name run together, it now tries the curated
+    abbreviation, the brand words joined without the filler ("thermofisher"), the name with
+    its trailing filler cut ("nokia" from "Nokia Of America"), the first two words joined
+    ("goldmansachs", "statestreet"), and a lone distinctive word that is not the first one
+    ("schwab" from "Charles Schwab"). Only the whole name run together is trusted blind on
+    Ashby/Lever: a shortened join can be an ordinary word (live 2026-10-12: "Health Care Service
+    Corporation" trimmed to "healthcare", a Lever board of some other company). Empty when
+    nothing could confirm a hit."""
+    dist = distinctive_tokens(display_name)
+    alias_slugs, alias_brands = alias_for(display_name)
+    if not dist and not alias_brands:
         return []
-    ordered = [brand_slug(display_name), *joined_slugs(display_name)]
+    toks = _tokens(display_name)
+    multi = min(2, len(dist)) if dist else 1
+
+    def need_for(words: list[str]) -> int:
+        if not dist:
+            return 1
+        return 1 if set(dist) <= set(words) else multi
+
+    out: list[SlugGuess] = []
     seen: set[str] = set()
-    return [s for s in ordered if s and not (s in seen or seen.add(s))]
+
+    def add(slug, kind, words, blind=False):
+        if not slug or slug in seen or len(slug) < 2 or not valid_board_id(slug):
+            return
+        seen.add(slug)
+        out.append(SlugGuess(slug, kind, need_for(words) if kind != "alias" else multi, blind))
+
+    lead = brand_slug(display_name)
+    if lead and dist:
+        add(lead, "brand", [lead])
+    for a in alias_slugs:
+        add(a, "alias", [])
+    if dist:
+        core = core_tokens(display_name)
+        if len(dist) >= 2:
+            j = "".join(dist)
+            add(j, "joined", dist)
+        if len(core) >= 2:
+            j = "".join(core)
+            add(j, "joined", core)
+        if len(toks) >= 3 and toks[1] not in _LEGAL:
+            add("".join(toks[:2]), "joined", toks[:2])
+        if len(toks) >= 2:
+            add("".join(toks), "joined", toks, blind=len("".join(toks)) >= 8)
+        # "schwab", "stanford": a brand word that isn't first, tried alone only when the first
+        # word is a first name or a generic word. (When the first word is a brand of its own, or
+        # too short to probe, a later word alone is a different company: "Cloud Space" is not a
+        # board named "Space Programs", "Ceo Foundry" not "Foundry".)
+        if toks and (toks[0] in _FIRST_NAMES or toks[0] in _GENERIC):
+            for t in dist:
+                if t != lead and len(t) >= 5 and t not in _FILLER and t not in _INSTITUTION:
+                    add(t, "brand", [t])
+        if len(toks) >= 2:
+            add("-".join(toks), "joined", toks, blind=len("-".join(toks)) >= 8)
+    return out[:MAX_SLUGS]
+
+
+def slug_candidates(display_name: str) -> list[str]:
+    """Every slug worth probing for an employer, in probe order (see slug_guesses). Empty
+    when the name has no brand word or alias to verify against. Which of these are actually
+    TRUSTED depends on the ATS — see discover_for_company."""
+    return [g.slug for g in slug_guesses(display_name)]
 
 
 # Most probes hit a slug that doesn't exist; a dead or slow host must not stall a crawl of
@@ -286,25 +523,169 @@ def name_matches(board_nm: str, distinctive: list[str], sponsor_name: str = "") 
     return name_match_count(board_nm, distinctive, sponsor_name) > 0
 
 
+def _squash(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
+def _alias_hit(evidence: str, brands) -> bool:
+    """Does the evidence show one of the curated brand forms? A one-word form must be a whole
+    word ("ibm", never inside "ibmx"); a longer phrase may also appear squashed ("Capital One"
+    in "CapitalOne_Careers")."""
+    toks = _tokens(evidence)
+    joined = " " + " ".join(toks) + " "
+    sq = _squash(evidence)
+    for b in brands:
+        bt = _tokens(b)
+        if not bt:
+            continue
+        if f" {' '.join(bt)} " in joined:
+            return True
+        if len(bt) > 1 and len("".join(bt)) >= 6 and "".join(bt) in sq:
+            return True
+    return False
+
+
+def foreign_qualified(evidence: str, sponsor_name: str, brand_words=None) -> bool:
+    """True when every mention of the sponsor's brand in a board's (short) name is qualified
+    by a word that names a DIFFERENT employer: "Cadence Bank" for Cadence Design Systems,
+    "Apple Bank" for Apple, "Hitachi Energy" for Hitachi Vantara, "Ford Foundation" for Ford
+    Motor. Only an institution / line-of-business word (bank, hospital, college, foods,
+    energy, staffing...) that the sponsor's own name lacks counts against it: a subsidiary's
+    or region's wording is tolerated ("Netflix Animation Studios", "FactSet Brasil
+    Consultoria" are Netflix's and FactSet's own postings). A board that never names the brand as a
+    word (a squashed spelling) has nothing to qualify, so this says False."""
+    brand = set(brand_words if brand_words is not None else distinctive_tokens(sponsor_name))
+    for b in alias_for(sponsor_name)[1]:
+        brand.update(_tokens(b)[:1])
+    own = set(_tokens(sponsor_name))
+    for b in alias_for(sponsor_name)[1]:
+        own.update(_tokens(b))
+    toks = _tokens(evidence)
+    mentions = [i for i, t in enumerate(toks) if t in brand]
+    if not mentions:
+        return False
+    for i in mentions:
+        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        if nxt in own or nxt in brand or nxt not in _INSTITUTION:
+            return False                         # one clean mention is enough
+    return True
+
+
+def stray_words(board_nm: str, sponsor_name: str) -> list[str]:
+    """Words on a board's own name that are neither the sponsor's, nor a legal form or
+    careers-site word, a place or generic word, nor corporate filler: "Space Programs" for
+    Cloud Space, "CGS Nexus" for E Nexus, "Avani Media" for Avani Systems, "Keen Advisor
+    Questionnaire" for Keen Info Tek. A board that names more than the sponsor's brand is
+    usually someone else that shares the word."""
+    own = set(_tokens(sponsor_name))
+    for b in alias_for(sponsor_name)[1]:
+        own.update(_tokens(b))
+    sq = _squash(sponsor_name)
+    return [t for t in _tokens(board_nm)
+            if t not in own and t not in _SAFE_QUALIFIERS and not t.isdigit() and len(t) > 2
+            and t not in sq]                     # "Value Labs" is "Valuelabs" spelled apart
+
+
+def confirms(evidence: str, sponsor_name: str, need: int = 1, *, squash: bool = False) -> bool:
+    """Does a board's own name (or a posting's hiring organization) confirm it is this
+    sponsor? It must show `need` of the sponsor's distinctive brand words (or one of its
+    curated alias forms), and the brand must not be qualified as someone else's
+    (foreign_qualified). `squash` also counts a long brand word spelled without its spaces
+    ("Black Rock" for BlackRock), the Workday site-name rule."""
+    dist = distinctive_tokens(sponsor_name)
+    count = name_match_count(evidence, dist, sponsor_name) if dist else 0
+    if squash and dist:
+        sq = _squash(evidence)
+        count = max(count, sum(1 for t in dist if len(t) >= 6 and t in sq))
+    alias = _alias_hit(evidence, alias_for(sponsor_name)[1])
+    if count < need and not alias:
+        return False
+    if not alias and not _generic_lead_shown(_tokens(evidence), sponsor_name):
+        return False
+    return not foreign_qualified(evidence, sponsor_name)
+
+
+def _generic_lead(sponsor_name: str) -> str:
+    """The sponsor's leading word when it is generic and the brand is the ordinary noun after
+    it ("American Tower", "International Paper", "United Airlines"): the two only name the
+    employer together. '' otherwise."""
+    toks = _tokens(sponsor_name)
+    dist = distinctive_tokens(sponsor_name)
+    if len(toks) >= 2 and toks[0] in _GENERIC and toks[0] not in ("the", "and") and len(dist) == 1:
+        return toks[0]
+    return ""
+
+
+def _generic_lead_shown(evidence_toks: list[str], sponsor_name: str) -> bool:
+    """Live 2026-10-12: "Tower Research Capital" passed for American Tower and "Paper Education
+    America" for International Paper on the bare noun. When the brand is a generic word plus an
+    ordinary noun, the evidence must show the generic word too (or the two run together)."""
+    lead = _generic_lead(sponsor_name)
+    if not lead:
+        return True
+    joined = "".join(evidence_toks)
+    nxt = distinctive_tokens(sponsor_name)[0]
+    return lead in evidence_toks or (lead + nxt) in joined
+
+
+_MENTION_NEXT = re.compile(r"[ \t]+([A-Z][A-Za-z&'-]*)")
+
+
+def prose_confirms(text: str, sponsor_name: str, need: int = 1, min_mentions: int = 2) -> bool:
+    """Does a job description's own prose say it is this sponsor's posting? For a Workday
+    tenant whose postings carry no hiring-organization name (Cadence's do not), the JD is the
+    only place the employer names itself ("At Cadence, we..."). Counts CAPITALIZED mentions of
+    the sponsor's brand words (a lowercase "visa" or "target" in a sentence is not the brand):
+    `need` distinct brand words (or an alias form) must appear, at least `min_mentions` of the
+    mentions must be clean, and clean ones must outnumber those qualified by a different
+    employer's word ("Cadence Bank is..."). Two clean mentions, not one, because a passing
+    reference to another company is usually a single one."""
+    if not text:
+        return False
+    dist = distinctive_tokens(sponsor_name)
+    _, brands = alias_for(sponsor_name)
+    words = list(dist) + [b for b in brands if len(_tokens(b)) == 1]
+    own = set(_tokens(sponsor_name))
+    for b in brands:
+        own.update(_tokens(b))
+    found: set[str] = set()
+    clean = foreign = 0
+    for w in words:
+        for m in re.finditer(rf"(?<![A-Za-z0-9]){re.escape(w)}(?![A-Za-z0-9])", text, re.I):
+            if not m.group(0)[:1].isupper():
+                continue
+            found.add(w)
+            nxt = _MENTION_NEXT.match(text, m.end())
+            nw = (nxt.group(1).lower() if nxt else "")
+            nw = normalize_employer(nw) if nw else ""
+            if nw and nw not in own and nw not in _SAFE_QUALIFIERS and nw not in words:
+                foreign += 1
+            else:
+                clean += 1
+    phrase = any(len(_tokens(b)) > 1 and re.search(r"(?<![A-Za-z])" + r"\W+".join(
+        re.escape(t) for t in _tokens(b)) + r"(?![A-Za-z])", text, re.I) for b in brands)
+    enough = len(found & set(dist)) >= need or phrase or bool(found - set(dist))
+    lead = _generic_lead(sponsor_name)
+    if lead and not phrase and not re.search(
+            rf"(?<![A-Za-z]){re.escape(lead)}\W+{re.escape(dist[0])}(?![A-Za-z])", text, re.I):
+        return False
+    return enough and clean >= min_mentions and clean > foreign
+
+
 def discover_for_company(display_name: str, atss=DISCOVER_ATS, fetch=fetch_json,
                          sleep=None, reject=None) -> dict | None:
     """Find the first live, IDENTITY-CONFIRMED public ATS board for one employer, or None.
-    On the name lane (Greenhouse/Workable) any guessed slug is allowed but the hit must
-    verify against the board's own name; off it (Ashby/Lever) only long joined multi-word
-    slugs are tried, and a hit is trusted as-is (a concatenated full name is unambiguous).
+    On the name lane (Greenhouse/Workable/SmartRecruiters) every guessed slug is allowed but
+    the hit must be confirmed by the board's own name (`confirms`, at the slug's own bar: a
+    truncated leading word of a multi-brand name needs two brand words, so "Archer" is not
+    Archer Daniels Midland); off it (Ashby/Lever) only the unambiguous long joined forms are
+    tried, and a hit is trusted as-is (a concatenated full name is near-unique).
     `reject(ats, slug, reason)`, when given, is called for every LIVE board that was turned
     down, so a crawl can report what it rejected and why (sourcing/growth.py)."""
-    dist = distinctive_tokens(display_name)
-    if not dist:
+    guesses = slug_guesses(display_name)
+    if not guesses:
         return None                          # no verifiable brand word -> don't guess
-    single = brand_slug(display_name)
-    joined = joined_slugs(display_name)
-    # A leading-token slug for a MULTI-brand-word name ("archer" from Archer Daniels
-    # Midland) is a truncation that collides with unrelated single-brand companies (Archer
-    # Aviation). So the board's own name must confirm at least TWO of the sponsor's brand
-    # words — one shared word isn't enough. A single-brand-word company ("Stripe") and the
-    # unambiguous joined forms only need the one match.
-    need_two = len(dist) >= 2
+    dist = distinctive_tokens(display_name)
     for ats in atss:
         if ats == "workday":
             from .workday import discover_workday       # lazy: workday.py builds on this module
@@ -314,25 +695,21 @@ def discover_for_company(display_name: str, atss=DISCOVER_ATS, fetch=fetch_json,
                 return {"company": display_name, "ats": "workday", "board_id": hit.board_id,
                         "jobs": hit.jobs}
             continue
-        if ats in NAME_LANE:
-            cands = [(single, "brand"), *[(j, "joined") for j in joined]]
-        else:
-            cands = [(j, "joined") for j in joined]   # no name to check — joined only
-        for slug, kind in dict.fromkeys((c, k) for c, k in cands if c):
-            n = probe(ats, slug, fetch=fetch)
+        cands = guesses if ats in NAME_LANE else [g for g in guesses if g.blind]
+        for g in cands:
+            n = probe(ats, g.slug, fetch=fetch)
             if sleep:
                 sleep()
             if n <= 0:
                 continue
             if ats in NAME_LANE:
-                need = 2 if (kind == "brand" and need_two) else 1
-                nm = board_name(ats, slug, fetch=fetch)
-                if name_match_count(nm, dist, display_name) < need:
+                nm = board_name(ats, g.slug, fetch=fetch)
+                if not confirms(nm, display_name, g.need) or stray_words(nm, display_name):
                     if reject:
-                        reject(ats, slug, f"board is named {nm or '(unnamed)'!r}; needs "
-                                          f"{need} of {dist} to be {display_name!r}")
+                        reject(ats, g.slug, f"board is named {nm or '(unnamed)'!r}; needs "
+                                            f"{g.need} of {dist} to be {display_name!r}")
                     continue                 # board is a different company, or too weak a match
-            return {"company": display_name, "ats": ats, "board_id": slug, "jobs": n}
+            return {"company": display_name, "ats": ats, "board_id": g.slug, "jobs": n}
     return None
 
 

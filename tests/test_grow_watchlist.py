@@ -491,7 +491,9 @@ def test_polite_fetch_defers_a_slow_lane_only_when_another_lane_of_the_probe_is_
     assert pf.deferred == 1 and pf.blocked_ats == {"workable"}
     pf("https://api.lever.co/v0/postings/x")
     assert pf.requests == 6
-    assert growth.lanes_for(("workable", "workday")) == {"apply.workable.com", "myworkdayjobs.com"}
+    assert growth.lanes_for(("workable", "workday")) == {
+        "apply.workable.com", "myworkdayjobs.com",
+        *(f"wd{n}.myworkdayjobs.com" for n in (*growth.WD_INSTANCES, *growth.WD_EXTRA_INSTANCES))}
 
 
 def test_polite_fetch_passes_other_http_errors_straight_through():
