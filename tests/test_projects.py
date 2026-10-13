@@ -141,7 +141,8 @@ class FakeGitHub:
 
 
 SEARCH_FIXTURE = {"items": [
-    {"full_name": "real/one", "html_url": "https://github.com/real/one", "stargazers_count": 1200, "description": "x"},
+    {"full_name": "real/one", "html_url": "https://github.com/real/one", "stargazers_count": 1200, "description": "x",
+     "language": "Python"},
     {"full_name": "real/forked", "html_url": "https://github.com/real/forked", "stargazers_count": 900, "fork": True},
     {"full_name": "real/old", "html_url": "https://github.com/real/old", "stargazers_count": 800, "archived": True},
     {"full_name": "real/spoof", "html_url": "https://evil.example/real/spoof", "stargazers_count": 700},
@@ -218,6 +219,15 @@ def test_search_examples_never_invents(monkeypatch):
     monkeypatch.setattr(G, "FETCH", FakeGitHub(search=SEARCH_FIXTURE))
     assert len(G.search_examples("x", limit=2)) == 2
     assert G.search_examples("") == []
+
+
+def test_search_examples_passes_the_language_through(monkeypatch):
+    # The gallery colours each example repo's dot by its GitHub language; a repo with none stays "".
+    import ui.github_publish as G
+    monkeypatch.setattr(G, "FETCH", FakeGitHub(search=SEARCH_FIXTURE))
+    one, two = G.search_examples("x", limit=2)
+    assert one["full_name"] == "real/one" and one["language"] == "Python"
+    assert two["full_name"] == "real/two" and two["language"] == ""
 
 
 def test_start_without_github_creates_the_draft_only(client, monkeypatch):

@@ -4442,7 +4442,7 @@
     const seq = ++IDEAS.seq;
     const grid = $("#projIdeasGrid");
     renderTargetChip(body.role != null ? body.role : IDEAS.role, true);
-    if (grid) grid.innerHTML = Array.from({ length: 4 }, (_, i) => `<div class="proj-idea is-skel" style="--i:${i}" aria-hidden="true"><i></i><i></i><i></i><i></i></div>`).join("");
+    if (grid) grid.innerHTML = Array.from({ length: 4 }, (_, i) => `<div class="proj-idea is-skel${i ? "" : " is-hero"}" style="--i:${i}" aria-hidden="true"><b></b><i></i><i></i><i></i><i></i></div>`).join("");
     grid?.setAttribute("aria-busy", "true");
     try {
       const d = await api("/api/projects/ideas", body);
@@ -4484,14 +4484,11 @@
     inp?.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); finish(""); } });
     inp?.addEventListener("blur", () => finish(""));
   }
-  // Bento: rank the ideas by how many of the job's missing skills each one covers, so the best
-  // fit leads as a wide hero with a fit ring, and the rest follow in a tidy grid with a fit meter.
+  // The ideas gallery (2026-10-13, the owner's pick: E's layout, B's cover art, A's colours).
+  // Layout (E): rank the ideas by how many of the job's missing skills each one covers, so the best
+  // fit leads as a wide hero with a fit ring, and the rest follow in a bento with a fit meter.
   // Ties fall back to the smaller build, then the title, so the order never shuffles.
   const IDEA_SIZE_ORDER = { "weekend": 0, "1 week": 1, "2 weeks": 2 };
-  const LANG_DOT = { "python": "#3572A5", "javascript": "#f1e05a", "typescript": "#3178c6", "jupyter notebook": "#DA5B0B",
-    "go": "#00ADD8", "java": "#b07219", "rust": "#dea584", "html": "#e34c26", "css": "#663399", "c++": "#f34b7d", "c": "#555555",
-    "c#": "#178600", "ruby": "#701516", "shell": "#89e051", "r": "#198CE7", "kotlin": "#A97BFF", "swift": "#F05138",
-    "vue": "#41b883", "scala": "#c22d40", "php": "#4F5D95", "dart": "#00B4AB", "svelte": "#ff3e00" };
   function rankIdeas(ideas) {
     const all = new Set();
     ideas.forEach(s => (s.gaps || []).forEach(g => all.add(g.toLowerCase())));
@@ -4517,65 +4514,147 @@
       : total ? PT("projects.coversGaps", "Covers {n} of your {total} gaps")
       : PT("projects.skillsToShow", "{k} skills to show"));
   }
+  // The ring and the meters draw in the card's own cover hues, so they read as part of its art.
   function fitRing(fit, total, n) {
     const num = total ? fit : n, den = total || 5, frac = Math.max(0, Math.min(1, num / den));
     const R = 42, C = 2 * Math.PI * R;
     return `<div class="proj-ring" role="img" aria-label="${esc(fitText(fit, total, n))}">
       <svg viewBox="0 0 100 100" aria-hidden="true">
-        <defs><linearGradient id="projRingGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--fit-a)"/><stop offset=".55" stop-color="var(--fit-b)"/><stop offset="1" stop-color="var(--fit-c)"/></linearGradient></defs>
+        <defs><linearGradient id="projRingGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color:var(--c1)"/><stop offset=".6" style="stop-color:var(--c2)"/><stop offset="1" style="stop-color:var(--c3)"/></linearGradient></defs>
         <circle class="proj-ring-track" cx="50" cy="50" r="${R}"/>
         <circle class="proj-ring-arc" cx="50" cy="50" r="${R}" stroke="url(#projRingGrad)" stroke-dasharray="${(C * frac).toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 50 50)"/>
       </svg>
-      <span class="proj-ring-n"><b>${num}</b><small>/${den}</small></span>
+      <span class="proj-ring-n"><span><b>${num}</b><small>/${den}</small></span></span>
     </div>`;
   }
   function fitMeter(fit, total, n) {
     const den = total || 5, num = total ? fit : Math.min(n, 5);
     const segs = Array.from({ length: den }, (_, k) => `<i class="${k < num ? "on" : ""}" style="--k:${k}"></i>`).join("");
-    return `<div class="proj-meter" style="--den:${den}" role="img" aria-label="${esc(fitText(fit, total, n))}"><span class="proj-meter-bar">${segs}</span><span class="proj-meter-t">${esc(fitText(fit, total, n))}</span></div>`;
+    return `<div class="proj-meter" style="--den:${den}" role="img" aria-label="${esc(fitText(fit, total, n))}"><span class="proj-meter-bar" aria-hidden="true">${segs}</span><span class="proj-meter-t">${esc(fitText(fit, total, n))}</span></div>`;
   }
+
+  // Cover art (B): each idea gets a category (a small deterministic keyword score over its title,
+  // pitch, skills and tech), and the category picks the hue family of a pure-CSS mesh gradient
+  // plus one large faint glyph. No images, no randomness: the same idea always looks the same.
+  const IDEA_CATS = {
+    data:   { k: ["data", "dashboard", "analytics", "pandas", "sql", "chart", "tracker", "insight", "etl", "warehouse", "spark", "tableau", "power bi", "excel", "dbt", "visuali", "statistic", "streamlit", "dataset"],
+              label: ["projects.catData", "Data and analytics"],
+              ico: `<path d="m4 16 4.6-4.8 3.6 3 7.3-7.7"/><path d="M15 6.5h4.5V11"/>` },
+    web:    { k: ["api", "rest", "web", "react", "node", "fastapi", "flask", "django", "frontend", "backend", "graphql", "typescript", "javascript", "next", "vue", "html", "css", "express", "full stack"],
+              label: ["projects.catWeb", "Web and APIs"],
+              ico: `<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.6 3.6 5.4 3.6 8.5S14.4 17.9 12 20.5M12 3.5C9.6 6.1 8.4 8.9 8.4 12s1.2 5.9 3.6 8.5"/>` },
+    devops: { k: ["docker", "kubernetes", "ci", "cd", "devops", "pipeline", "airflow", "terraform", "deploy", "monitor", "alert", "aws", "gcp", "azure", "cloud", "infra", "github actions", "observab", "linux", "nightly"],
+              label: ["projects.catDevops", "DevOps and CI"],
+              ico: `<path d="M7.2 8C4.9 8 3 9.8 3 12s1.9 4 4.2 4c3.4 0 6.2-8 9.6-8C19.1 8 21 9.8 21 12s-1.9 4-4.2 4c-3.4 0-6.2-8-9.6-8Z"/>` },
+    ml:     { k: ["machine learning", "ml", "model", "nlp", "spacy", "pytorch", "tensorflow", "llm", "ai", "classif", "predict", "neural", "embedding", "scikit", "sklearn", "vision", "recommend", "matcher", "keyword"],
+              label: ["projects.catMl", "Machine learning"],
+              ico: `<path d="M12 2.8 13.9 9l6.3 1.9-6.3 1.9L12 19.1l-1.9-6.3L3.8 10.9 10.1 9Z"/><path d="M19 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/>` },
+    mobile: { k: ["mobile", "ios", "android", "swift", "kotlin", "flutter", "react native", "expo", "app store", "swiftui", "jetpack"],
+              label: ["projects.catMobile", "Mobile"],
+              ico: `<rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 18.5h3"/>` },
+    tools:  { k: ["cli", "tool", "script", "automation", "bot", "scheduler", "command", "extension", "plugin", "parser", "library", "sdk", "rust", "go", "bash"],
+              label: ["projects.catTools", "Tools and CLI"],
+              ico: `<rect x="2.5" y="4" width="19" height="16" rx="2.6"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15h4.5"/>` },
+  };
+  function ideaCat(s) {
+    const hay = (f, w) => ({ text: ` ${String(f || "").toLowerCase()} `, w });
+    const fields = [hay(s.title, 3), hay(s.pitch, 1), hay((s.skills || []).join(" , "), 2), hay(s.tech, 2), hay(s.search, 1)];
+    let best = "tools", top = 0;
+    for (const [cat, def] of Object.entries(IDEA_CATS)) {
+      let score = 0;
+      for (const k of def.k) {
+        // Short keys (ml, ai, ci, go) must stand alone as words; longer ones may be a stem.
+        const re = k.length <= 3 ? new RegExp(`[^a-z]${k}[^a-z]`) : null;
+        for (const f of fields) if (re ? re.test(f.text) : f.text.includes(k)) score += f.w;
+      }
+      if (score > top) { top = score; best = cat; }
+    }
+    return best;
+  }
+  const catGlyph = (cat, cls) => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">${IDEA_CATS[cat].ico}</svg>`;
+
+  // Colour that means something (A): a dot in the real GitHub linguist colour beside each skill and
+  // example repo (frameworks take their language's colour, unknown skills a hollow ring, never a
+  // guessed colour), gold star pills, and one signature pink for the skills the job wants.
+  const LANG_COL = {
+    python: "#3572A5", typescript: "#3178C6", javascript: "#F1E05A", go: "#00ADD8", golang: "#00ADD8",
+    java: "#B07219", kotlin: "#A97BFF", swift: "#F05138", rust: "#DEA584", "c++": "#F34B7D", "c#": "#178600",
+    c: "#555555", ruby: "#701516", php: "#4F5D95", scala: "#C22D40", r: "#198CE7", dart: "#00B4AB",
+    sql: "#336790", plpgsql: "#336790", postgresql: "#336790", postgres: "#336790", sqlite: "#336790", mysql: "#336790",
+    shell: "#89E051", bash: "#89E051", dockerfile: "#5E8A99", docker: "#5E8A99",
+    html: "#E34C26", css: "#663399", scss: "#C6538C", vue: "#41B883", svelte: "#FF3E00", "jupyter notebook": "#DA5B0B",
+    git: "#F05032",
+  };
+  const LANG_OF = {
+    react: "javascript", "node.js": "javascript", node: "javascript", nodejs: "javascript", express: "javascript",
+    "next.js": "typescript", nextjs: "typescript", angular: "typescript",
+    flask: "python", fastapi: "python", django: "python", pandas: "python", numpy: "python", streamlit: "python",
+    spacy: "python", pytest: "python", airflow: "python", pytorch: "python", tensorflow: "python", "scikit-learn": "python",
+    spring: "java", "spring boot": "java", rails: "ruby", laravel: "php",
+  };
+  const langCol = n => { const k = String(n || "").trim().toLowerCase(); return LANG_COL[k] || LANG_COL[LANG_OF[k]] || ""; };
+  const langDot = c => `<span class="proj-dot"${c ? ` style="--dot:${c}"` : ""} aria-hidden="true"></span>`;
+  const ICO_STAR_F = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="currentColor"><path d="m8 1.4 2 4.1 4.5.65-3.25 3.17.77 4.48L8 11.68l-4.02 2.12.77-4.48L1.5 6.15 6 5.5z"/></svg>`;
+
   function ideaCard(s, i, opt = {}) {
     const { hero = false, span = 6, fit = 0, total = 0 } = opt;
     const gaps = new Set((s.gaps || []).map(g => g.toLowerCase()));
-    const chips = (s.skills || []).map(k => gaps.has(k.toLowerCase())
+    // The skills the job wants and the profile lacks lead the row: they are the reason to build it.
+    const sk = (s.skills || []).map((k, j) => ({ k, j, gap: gaps.has(k.toLowerCase()) })).sort((a, b) => b.gap - a.gap || a.j - b.j);
+    const chips = sk.map(({ k, gap }) => gap
       ? `<li class="proj-skill is-gap" title="${esc(PT("projects.gapHint", "The job asks for this. Your profile doesn't show it yet."))}">${PROJ_ICO.plus}${esc(k)}</li>`
-      : `<li class="proj-skill">${esc(k)}</li>`).join("");
+      : `<li class="proj-skill">${langDot(langCol(k))}${esc(k)}</li>`).join("");
     const ex = (s.examples || []).filter(e => /^https:\/\/github\.com\//.test(e.url || ""));
     const exHTML = ex.length ? `<div class="proj-idea-ex"><span class="proj-idea-ex-k">${esc(PT("projects.examples", "Examples"))}</span>
         ${ex.map(e => {
-          const lc = LANG_DOT[(e.language || "").toLowerCase()];
-          const dot = e.language ? `<span class="proj-ex-l" title="${esc(e.language)}"><i style="--dot:${lc || "var(--faint)"}"></i>${span >= 3 ? `<span class="proj-ex-lt">${esc(e.language)}</span>` : ""}</span>` : "";
-          return `<a class="proj-ex" href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(e.description || e.full_name)}"><span class="proj-ex-n">${esc(e.full_name)}</span>${dot}<span class="proj-ex-s">${ICO_STAR}${kStars(e.stars)}</span></a>`;
+          const [own, name] = String(e.full_name || "").split("/");
+          const lang = e.language ? `<span class="proj-ex-l" title="${esc(e.language)}">${langDot(langCol(e.language))}<span class="proj-ex-lt">${esc(e.language)}</span></span>` : `<span class="proj-ex-l">${langDot("")}</span>`;
+          return `<a class="proj-ex" href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(e.description || e.full_name)}"><span class="proj-ex-n"><span class="proj-ex-o">${esc(own || "")}/</span>${esc(name || "")}</span>${lang}<span class="proj-ex-s">${ICO_STAR_F}${kStars(e.stars)}</span></a>`;
         }).join("")}
       </div>` : "";
     const n = (s.skills || []).length;
+    const cat = ideaCat(s), [lk, lf] = IDEA_CATS[cat].label;
+    // A stable hash of the title moves the glows, so two cards in one category still differ.
+    let h = 2166136261; for (const ch of String(s.title || "")) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+    const art = `--mx:${20 + h % 50}%;--my:${(h >> 8) % 40}%;--nx:${55 + (h >> 16) % 40}%`;
+    const size = s.size ? `<span class="proj-idea-size">${esc(s.size)}</span>` : "";
+    const cover = `<div class="proj-idea-cover">
+        ${catGlyph(cat, "proj-idea-glyph")}
+        <span class="proj-idea-tags">${hero ? `<span class="proj-hero-tag">${ICO_STAR_F}${esc(total ? PT("projects.bestMatch", "Best match") : PT("projects.topPick", "Top pick"))}</span>` : ""}${size}</span>
+        <span class="proj-idea-cat">${catGlyph(cat, "")}${esc(PT(lk, lf))}</span>
+      </div>`;
     const ft = `<div class="proj-idea-ft">
         <span class="proj-idea-repo" title="${esc(PT("projects.repoName", "Repo name"))}">${ICO_REPO}${esc(s.repo || "")}</span>
         <button class="btn ${hero ? "btn-primary" : "btn-ghost"} btn-sm" data-start type="button">${esc(PT("projects.start", "Start this project"))}</button>
       </div>`;
     if (hero) {
-      return `<article class="proj-idea is-hero" data-i="${i}" style="--i:0">
-        <div class="proj-hero-main">
-          <span class="proj-hero-tag">${ICO_STAR}${esc(total ? PT("projects.bestMatch", "Best match") : PT("projects.topPick", "Top pick"))}<span class="proj-idea-size">${esc(s.size || "")}</span></span>
-          <h3 class="proj-idea-t">${esc(s.title)}</h3>
-          ${s.pitch ? `<p class="proj-idea-p">${esc(s.pitch)}</p>` : ""}
-          ${chips ? `<ul class="proj-skills">${chips}</ul>` : ""}
-          ${exHTML}
+      return `<article class="proj-idea is-hero" data-i="${i}" data-cat="${cat}" style="--i:0;${art}">
+        ${cover}
+        <div class="proj-idea-body">
+          <div class="proj-hero-main">
+            <h3 class="proj-idea-t">${esc(s.title)}</h3>
+            ${s.pitch ? `<p class="proj-idea-p">${esc(s.pitch)}</p>` : ""}
+            ${chips ? `<ul class="proj-skills">${chips}</ul>` : ""}
+            ${exHTML}
+          </div>
+          <aside class="proj-hero-fit">
+            ${fitRing(fit, total, n)}
+            <p class="proj-hero-fit-t">${esc(fitText(fit, total, n))}</p>
+          </aside>
+          ${ft}
         </div>
-        <aside class="proj-hero-fit">
-          ${fitRing(fit, total, n)}
-          <p class="proj-hero-fit-t">${esc(fitText(fit, total, n))}</p>
-        </aside>
-        ${ft}
       </article>`;
     }
-    return `<article class="proj-idea${span <= 2 ? " is-tight" : ""}" data-i="${i}" style="--i:${opt.order || 0};--span:${span}">
-      <div class="proj-idea-hd"><h3 class="proj-idea-t">${esc(s.title)}</h3><span class="proj-idea-size">${esc(s.size || "")}</span></div>
-      ${s.pitch ? `<p class="proj-idea-p">${esc(s.pitch)}</p>` : ""}
-      ${fitMeter(fit, total, n)}
-      ${chips ? `<ul class="proj-skills">${chips}</ul>` : ""}
-      ${exHTML}
-      ${ft}
+    return `<article class="proj-idea${span <= 2 ? " is-tight" : ""}" data-i="${i}" data-cat="${cat}" style="--i:${opt.order || 0};--span:${span};${art}">
+      ${cover}
+      <div class="proj-idea-body">
+        <h3 class="proj-idea-t">${esc(s.title)}</h3>
+        ${s.pitch ? `<p class="proj-idea-p">${esc(s.pitch)}</p>` : ""}
+        ${fitMeter(fit, total, n)}
+        ${chips ? `<ul class="proj-skills">${chips}</ul>` : ""}
+        ${exHTML}
+        ${ft}
+      </div>
     </article>`;
   }
   function renderIdeas() {

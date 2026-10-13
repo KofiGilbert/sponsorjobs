@@ -3350,163 +3350,267 @@ body.cv-dragging * { cursor: grabbing !important; }
 .proj-ideas-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .proj-ideas-empty, .proj-ideas-legend { grid-column: 1 / -1; margin: 2px 0 0; font-size: 12px; color: var(--faint); }
 .proj-ideas-legend { display: flex; align-items: center; gap: 6px; }
-.proj-ideas-legend svg { width: 11px; height: 11px; color: var(--ink-2); }
+.proj-ideas-legend svg { width: 11px; height: 11px; }
+
+/* Ideas gallery, combined (2026-10-13, the owner asked for MORE colour): E's bento layout with a
+   best-match hero and fit ring, B's category cover art on every card, A's meaningful colour inside.
+   Colour lives in the bands, the ring and meters (drawn in the card's own band hues), language dots,
+   gold star pills, and one signature pink for a skill the job wants. Text and surfaces stay neutral;
+   the hero's Start is the one bright button. */
+.proj-ideas { --gold: #E3B341; --gap: #F778BA; }
+:root[data-theme="light"] .proj-ideas { --gold: #A87708; --gap: #BF3989; }
+.proj-ideas-legend svg { color: var(--gap); }
+.proj-ideas-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
+.proj-ideas-grid > .proj-idea { grid-column: span var(--span, 3); }
+.proj-ideas-grid > .proj-idea.is-skel { grid-column: span 2; }
+.proj-ideas-grid > .proj-idea.is-hero { grid-column: 1 / -1; }
 
 .proj-idea {
-  display: flex; flex-direction: column; min-width: 0; padding: 20px 22px 16px;
+  --c1: #94a3b8; --c2: #6366f1; --c3: #5eead4; --hue: #a5b4fc;
+  position: relative; isolation: isolate; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 3.5%, transparent);
-  transition: border-color var(--dur) var(--ease);
+  transition: border-color var(--dur) var(--ease), transform 220ms var(--ease), box-shadow 220ms var(--ease);
   animation: proj-rise 320ms var(--ease) both; animation-delay: calc(var(--i, 0) * 40ms);
 }
-.proj-idea:hover, .proj-idea:focus-within { border-color: var(--border-strong); }
-.proj-idea-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.proj-idea-t { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.proj-idea-size { flex: none; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.proj-idea-p { margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.proj-idea[data-cat="data"]   { --c1: #38bdf8; --c2: #3b82f6; --c3: #2dd4bf; --hue: #7dd3fc; }
+.proj-idea[data-cat="web"]    { --c1: #a78bfa; --c2: #6366f1; --c3: #f0abfc; --hue: #c4b5fd; }
+.proj-idea[data-cat="devops"] { --c1: #34d399; --c2: #0d9488; --c3: #bef264; --hue: #6ee7b7; }
+.proj-idea[data-cat="ml"]     { --c1: #f472b6; --c2: #a855f7; --c3: #fb923c; --hue: #f9a8d4; }
+.proj-idea[data-cat="mobile"] { --c1: #fbbf24; --c2: #f97316; --c3: #fb7185; --hue: #fcd34d; }
+.proj-idea[data-cat="tools"]  { --c1: #94a3b8; --c2: #6366f1; --c3: #5eead4; --hue: #a5b4fc; }
+.proj-idea:not(.is-skel):hover, .proj-idea:not(.is-skel):focus-within {
+  border-color: color-mix(in srgb, var(--hue) 26%, var(--border));
+  transform: translateY(-2px);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 3.5%, transparent), 0 18px 40px -26px color-mix(in srgb, var(--c2) 60%, transparent);
+}
+
+/* The cover band: three soft glows in the category's hues, a fine dot texture, one large faint
+   glyph, the category label, and the size (plus Best match on the hero) as glass pills. */
+.proj-idea-cover {
+  position: relative; height: 76px; flex: none; overflow: hidden; isolation: isolate;
+  background:
+    linear-gradient(180deg, transparent 45%, rgba(8, 8, 12, 0.22)),
+    radial-gradient(110% 150% at var(--mx, 10%) 0%, color-mix(in srgb, var(--c1) 72%, transparent) 0%, transparent 60%),
+    radial-gradient(90% 170% at 100% 100%, color-mix(in srgb, var(--c2) 78%, transparent) 0%, transparent 62%),
+    radial-gradient(55% 120% at var(--nx, 62%) var(--my, 10%), color-mix(in srgb, var(--c3) 58%, transparent) 0%, transparent 62%),
+    linear-gradient(135deg, color-mix(in srgb, var(--c2) 42%, #0b0b10), color-mix(in srgb, var(--c1) 30%, #0b0b10));
+}
+.proj-idea-cover::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.22) 0.7px, transparent 1.1px);
+  background-size: 9px 9px;
+  -webkit-mask-image: linear-gradient(100deg, transparent 15%, #000 85%); mask-image: linear-gradient(100deg, transparent 15%, #000 85%);
+  opacity: 0.55;
+}
+.proj-idea-cover::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.26), transparent);
+}
+.proj-idea-glyph {
+  position: absolute; right: 18px; top: -18px; width: 108px; height: 108px; z-index: -1;
+  color: #fff; opacity: 0.2; stroke-width: 1.1; transform: rotate(-8deg);
+  transition: transform 420ms var(--ease), opacity 420ms var(--ease);
+}
+.proj-idea:hover .proj-idea-glyph { transform: rotate(-4deg) scale(1.04); opacity: 0.25; }
+.proj-idea-cat {
+  position: absolute; left: 18px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10.5px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap;
+  color: rgba(255, 255, 255, 0.92); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.25);
+}
+.proj-idea-cat svg { width: 13px; height: 13px; stroke-width: 1.7; }
+.proj-idea-tags { position: absolute; left: 16px; top: 12px; display: flex; gap: 6px; }
+.proj-idea-size, .proj-hero-tag {
+  display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px;
+  font-size: 11px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap;
+  background: rgba(10, 10, 14, 0.28); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: var(--r-pill);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.proj-hero-tag { background: rgba(10, 10, 14, 0.42); border-color: rgba(255, 255, 255, 0.26); }
+.proj-hero-tag svg { color: var(--gold); }
+
+/* The body stays neutral. */
+.proj-idea-body { display: flex; flex-direction: column; flex: 1; min-width: 0; padding: 16px 20px 14px; }
+.proj-idea-t { font-size: 15.5px; font-weight: 650; letter-spacing: -0.015em; color: var(--ink); margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-idea-p { margin: 5px 0 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+
+/* A segmented fit meter in the card's hues, so nobody counts chips. */
+.proj-meter { display: flex; align-items: center; gap: 10px; margin-top: 12px; min-width: 0; }
+.proj-meter-bar { display: grid; grid-template-columns: repeat(var(--den), 1fr); gap: 3px; width: calc(var(--den) * 13px); flex: none; }
+.proj-meter-bar i { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.proj-meter-bar i.on { background: color-mix(in oklab, var(--c1), var(--c2) calc(var(--k) / max(var(--den) - 1, 1) * 100%)); }
+.proj-meter-t { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* Skill chips: a language dot, GitHub style; the gap chips lead in the signature pink. */
 .proj-skills { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .proj-skill {
-  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 9px;
-  font-size: 11.5px; font-weight: 500; color: var(--muted);
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px 0 8px;
+  font-size: 11.5px; font-weight: 500; color: var(--ink-2);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
   border: 1px solid var(--border); border-radius: var(--r-pill);
 }
-/* The job wants it, the profile lacks it: brighter ink and a plus, no fill. */
-.proj-skill.is-gap { color: var(--ink); font-weight: 550; border-color: color-mix(in srgb, var(--ink) 22%, transparent); }
-.proj-skill svg { width: 10px; height: 10px; margin-left: -2px; }
-.proj-idea-ex { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; font-size: 12px; min-width: 0; }
-.proj-idea-ex-k { font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); margin-bottom: 1px; }
-.proj-ex { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; color: var(--muted); text-decoration: none; }
-.proj-ex:hover .proj-ex-n { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
-.proj-ex-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.proj-ex-s { display: inline-flex; align-items: center; gap: 3px; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; flex: none; }
+.proj-dot {
+  flex: none; width: 8px; height: 8px; border-radius: 50%;
+  --dotc: color-mix(in oklab, var(--dot) 82%, #fff);
+  background: var(--dotc, transparent);
+  box-shadow: inset 0 0 0 1px var(--dotc, color-mix(in srgb, var(--ink) 30%, transparent));
+}
+:root[data-theme="light"] .proj-dot { --dotc: var(--dot); }
+.proj-skill.is-gap {
+  gap: 3px; padding-left: 7px; font-weight: 600;
+  color: color-mix(in srgb, var(--gap) 82%, var(--ink));
+  background: color-mix(in srgb, var(--gap) 8%, transparent);
+  border-color: color-mix(in srgb, var(--gap) 30%, transparent);
+}
+.proj-skill svg { width: 10px; height: 10px; color: var(--gap); }
+
+/* Example repos: owner faint, name bright, a language dot, and a gold star pill. */
+.proj-idea-ex { margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; min-width: 0; }
+.proj-idea-ex-k { font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
+.proj-ex {
+  display: flex; align-items: center; gap: 9px; min-width: 0; margin: 0 -8px; padding: 4px 8px; border-radius: var(--r-sm);
+  color: var(--ink-2); text-decoration: none; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.proj-ex:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.proj-ex:hover .proj-ex-n { color: var(--ink); }
+.proj-ex-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-ex-o { color: var(--faint); }
+.proj-ex-l { display: inline-flex; align-items: center; gap: 6px; flex: none; font-size: 11.5px; color: var(--muted); }
+.proj-ex-lt { display: none; }
+.proj-ex-s {
+  display: inline-flex; align-items: center; gap: 4px; flex: none; height: 20px; padding: 0 7px; border-radius: var(--r-pill);
+  font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--gold) 90%, var(--ink));
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
+}
+.proj-ex-s svg { color: var(--gold); }
+
 .proj-idea-ft {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border);
+  margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border);
 }
-.proj-idea > :nth-last-child(2) { margin-bottom: 16px; }
+.proj-idea-body > :nth-last-child(2) { margin-bottom: 16px; }
 .proj-idea-repo {
   display: inline-flex; align-items: center; gap: 6px; min-width: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .proj-idea-repo svg { flex: none; }
-/* Loading: four quiet placeholders in the cards' shape. */
-.proj-idea.is-skel { gap: 10px; min-height: 196px; }
-.proj-idea.is-skel i { display: block; height: 10px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 6%, transparent); animation: proj-pulse 1.4s ease-in-out infinite; }
-.proj-idea.is-skel i:nth-child(1) { width: 46%; height: 13px; }
-.proj-idea.is-skel i:nth-child(2) { width: 82%; }
-.proj-idea.is-skel i:nth-child(3) { width: 64%; margin-top: 8px; height: 20px; border-radius: 11px; }
-.proj-idea.is-skel i:nth-child(4) { width: 38%; margin-top: auto; }
-@keyframes proj-pulse { 50% { opacity: 0.45; } }
-@media (max-width: 760px) {
-  .proj-ideas-grid { grid-template-columns: minmax(0, 1fr); }
-  .proj-ideas-hd { flex-wrap: wrap; }
-  .proj-target-src { display: none; }
-}
+.proj-idea [data-start] { flex: none; }
+.proj-idea:hover .btn-ghost[data-start] { border-color: color-mix(in srgb, var(--hue) 36%, var(--border-strong)); }
 
-/* Bento (owner asked for more colour on this page): the best-fit idea is a wide hero with a soft
-   gradient glow and a fit ring; the rest sit in a 6-column bento (pairs, then threes), each with a
-   small segmented fit meter. Colour lives in the glow, the rings and meters, gold stars, and
-   language dots; the smaller cards stay calm. */
-.proj-ideas {
-  --fit-a: #8b7bff; --fit-b: #3fd0c9; --fit-c: #ff8fc7; --gold: #f5c451;
-}
-:root[data-theme="light"] .proj-ideas { --fit-a: #6d5cf0; --fit-b: #12a59c; --fit-c: #e0559b; --gold: #d29a17; }
-.proj-ideas-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
-.proj-ideas-grid > .proj-idea { grid-column: span var(--span, 3); }
-.proj-ideas-grid > .proj-idea.is-skel { grid-column: span 3; }
-.proj-ideas-grid > .proj-idea.is-hero { grid-column: 1 / -1; }
+/* Three to a row: a little tighter, the title may wrap, the footer may stack. */
+.proj-idea.is-tight .proj-idea-body { padding: 14px 18px 12px; }
+.proj-idea.is-tight .proj-idea-t { white-space: normal; }
+.proj-idea.is-tight .proj-idea-ft { flex-wrap: wrap; row-gap: 10px; }
+.proj-idea.is-tight [data-start] { margin-left: auto; }
 
-/* Hero: content on the left, the fit ring on the right, footer across. */
+/* The hero: a taller band, the content and the fit ring side by side, a glow in the band's hue. */
 .proj-idea.is-hero {
-  position: relative; isolation: isolate; overflow: hidden;
-  display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px;
-  padding: 28px 30px 18px;
-  border-color: color-mix(in srgb, var(--fit-a) 34%, var(--border));
+  border-color: color-mix(in srgb, var(--c2) 30%, var(--border));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent), 0 24px 60px -34px color-mix(in srgb, var(--c2) 70%, transparent);
+}
+.proj-idea.is-hero:hover, .proj-idea.is-hero:focus-within { transform: none; border-color: color-mix(in srgb, var(--c2) 48%, var(--border)); }
+.proj-idea.is-hero .proj-idea-cover { height: 124px; }
+.proj-idea.is-hero .proj-idea-glyph { width: 168px; height: 168px; right: 248px; top: -26px; opacity: 0.18; }
+.proj-idea.is-hero .proj-idea-cat { left: 28px; bottom: 16px; font-size: 11px; }
+.proj-idea.is-hero .proj-idea-tags { left: 26px; top: 16px; }
+.proj-idea.is-hero .proj-idea-body {
+  display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; padding: 22px 28px 16px;
   background:
-    radial-gradient(520px 260px at 0% 0%, color-mix(in srgb, var(--fit-a) 20%, transparent), transparent 70%),
-    radial-gradient(420px 240px at 100% 10%, color-mix(in srgb, var(--fit-b) 15%, transparent), transparent 70%),
-    radial-gradient(380px 200px at 70% 120%, color-mix(in srgb, var(--fit-c) 13%, transparent), transparent 70%),
-    var(--surface);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent),
-    0 24px 60px -30px color-mix(in srgb, var(--fit-a) 55%, transparent);
+    radial-gradient(560px 220px at 12% 0%, color-mix(in srgb, var(--c1) 9%, transparent), transparent 70%),
+    radial-gradient(360px 240px at 100% 30%, color-mix(in srgb, var(--c2) 10%, transparent), transparent 70%);
 }
-.proj-idea.is-hero:hover, .proj-idea.is-hero:focus-within { border-color: color-mix(in srgb, var(--fit-a) 55%, var(--border)); }
 .proj-hero-main { min-width: 0; }
-.proj-hero-tag {
-  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border-radius: var(--r-pill);
-  font-size: 11.5px; font-weight: 650; letter-spacing: 0.02em; color: var(--ink);
-  background: linear-gradient(90deg, color-mix(in srgb, var(--fit-a) 26%, transparent), color-mix(in srgb, var(--fit-b) 18%, transparent));
-  border: 1px solid color-mix(in srgb, var(--fit-a) 40%, transparent);
-}
-.proj-hero-tag > svg { color: var(--gold); fill: var(--gold); }
-.proj-hero-tag .proj-idea-size { font-weight: 500; letter-spacing: 0; padding-left: 8px; margin-left: 2px; border-left: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); color: var(--muted); }
-.proj-idea.is-hero .proj-idea-t { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; margin-top: 14px; white-space: normal; }
-.proj-idea.is-hero .proj-idea-p { font-size: 14px; margin-top: 8px; max-width: 60ch; color: var(--ink-2); }
+.proj-idea.is-hero .proj-idea-t { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; white-space: normal; }
+.proj-idea.is-hero .proj-idea-p { font-size: 14px; margin-top: 6px; max-width: 60ch; color: var(--ink-2); }
 .proj-idea.is-hero .proj-skills { margin-top: 16px; }
-.proj-idea.is-hero .proj-skill { background: color-mix(in srgb, var(--surface) 70%, transparent); }
 .proj-idea.is-hero .proj-idea-ex { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 20px; }
-.proj-idea.is-hero .proj-idea-ex-k { grid-column: 1 / -1; }
+.proj-idea.is-hero .proj-idea-ex-k { grid-column: 1 / -1; margin-bottom: 0; }
 .proj-idea.is-hero .proj-ex {
-  display: grid; grid-template-columns: auto 1fr; grid-template-areas: "n n" "l s"; row-gap: 8px; column-gap: 10px;
-  padding: 11px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--ink) 9%, transparent);
-  background: color-mix(in srgb, var(--surface) 72%, transparent);
-  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+  display: grid; grid-template-columns: auto 1fr; grid-template-areas: "n n" "l s"; row-gap: 8px; column-gap: 10px; margin: 0;
+  padding: 11px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
 }
-.proj-idea.is-hero .proj-ex:hover { border-color: color-mix(in srgb, var(--fit-a) 45%, transparent); transform: translateY(-1px); }
-.proj-idea.is-hero .proj-ex-n { grid-area: n; color: var(--ink-2); font-weight: 550; margin: 0; }
-.proj-idea.is-hero .proj-ex-l { grid-area: l; margin: 0; }
+.proj-idea.is-hero .proj-ex:hover { border-color: color-mix(in srgb, var(--hue) 34%, transparent); background: color-mix(in srgb, var(--ink) 3%, var(--surface)); }
+.proj-idea.is-hero .proj-ex-n { grid-area: n; font-weight: 550; }
+.proj-idea.is-hero .proj-ex-l { grid-area: l; }
+.proj-idea.is-hero .proj-ex-lt { display: inline; }
 .proj-idea.is-hero .proj-ex-s { grid-area: s; justify-self: end; }
-.proj-idea.is-hero .proj-idea-ft { grid-column: 1 / -1; margin-top: 22px; border-top-color: color-mix(in srgb, var(--ink) 9%, transparent); }
-.proj-idea.is-hero > :nth-last-child(2) { margin-bottom: 0; }
-.proj-hero-fit { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; }
+.proj-idea.is-hero .proj-idea-ft { grid-column: 1 / -1; margin-top: 22px; margin-bottom: 0; }
+.proj-idea.is-hero .proj-hero-main, .proj-idea.is-hero .proj-hero-fit { margin-bottom: 0; }
+.proj-hero-fit { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; }
+.proj-hero-fit::before {
+  content: ""; position: absolute; z-index: -1; width: 180px; height: 180px; top: 50%; left: 50%; transform: translate(-50%, -58%); border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--c1) 16%, transparent), color-mix(in srgb, var(--c2) 6%, transparent) 55%, transparent 72%);
+}
 .proj-hero-fit-t { margin: 0; font-size: 13px; font-weight: 550; color: var(--ink-2); white-space: nowrap; }
-.proj-hero-fit { position: relative; }
-.proj-hero-fit::before { content: ""; position: absolute; z-index: -1; width: 190px; height: 190px; top: 50%; left: 50%; transform: translate(-50%, -58%); border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--fit-a) 22%, transparent), color-mix(in srgb, var(--fit-b) 8%, transparent) 55%, transparent 72%); }
-
-.proj-ring { position: relative; width: 132px; height: 132px; }
-.proj-ring svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 6px 18px color-mix(in srgb, var(--fit-a) 35%, transparent)); }
+.proj-ring { position: relative; width: 128px; height: 128px; }
+.proj-ring svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 6px 16px color-mix(in srgb, var(--c2) 30%, transparent)); }
 .proj-ring circle { fill: none; stroke-width: 8; }
-.proj-ring-track { stroke: color-mix(in srgb, var(--ink) 9%, transparent); }
+.proj-ring-track { stroke: color-mix(in srgb, var(--ink) 8%, transparent); }
 .proj-ring-arc { stroke-linecap: round; animation: proj-ring-in 900ms var(--ease) both 120ms; }
 @keyframes proj-ring-in { from { stroke-dasharray: 0 264; } }
-.proj-ring-n { position: absolute; inset: 0; display: flex; align-items: baseline; justify-content: center; padding-top: 44px; gap: 1px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.proj-ring-n { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink); font-variant-numeric: tabular-nums; }
+.proj-ring-n > span { display: inline-flex; align-items: baseline; gap: 1px; transform: translateX(4px); }
 .proj-ring-n b { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
 .proj-ring-n small { font-size: 15px; font-weight: 550; color: var(--faint); }
 
-/* Small cards: a segmented fit meter under the pitch, so nobody counts chips. */
-.proj-meter { display: flex; align-items: center; gap: 10px; margin-top: 14px; min-width: 0; }
-.proj-meter-bar { display: grid; grid-template-columns: repeat(var(--den), 1fr); gap: 3px; width: calc(var(--den) * 14px); flex: none; }
-.proj-meter-bar i { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 9%, transparent); }
-.proj-meter-bar i.on { background: color-mix(in oklab, var(--fit-a), var(--fit-b) calc(var(--k) / (var(--den) - 1) * 100%)); }
-.proj-meter-t { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.proj-idea.is-tight { padding: 18px 18px 14px; }
-.proj-idea.is-tight .proj-idea-hd { flex-direction: column; gap: 2px; }
-.proj-idea.is-tight .proj-idea-t { white-space: normal; }
-.proj-idea.is-tight .proj-idea-ft { flex-wrap: wrap; row-gap: 10px; }
+/* Light mode: the band keeps its colour on a pale base; glyph and pills adjust. */
+:root[data-theme="light"] .proj-idea-cover {
+  background:
+    linear-gradient(180deg, transparent 50%, rgba(8, 8, 12, 0.1)),
+    radial-gradient(110% 150% at var(--mx, 10%) 0%, color-mix(in srgb, var(--c1) 85%, transparent) 0%, transparent 62%),
+    radial-gradient(90% 170% at 100% 100%, var(--c2) 0%, transparent 64%),
+    radial-gradient(55% 120% at var(--nx, 62%) var(--my, 10%), color-mix(in srgb, var(--c3) 70%, transparent) 0%, transparent 62%),
+    linear-gradient(135deg, color-mix(in srgb, var(--c2) 70%, #fff), color-mix(in srgb, var(--c1) 60%, #fff));
+}
+:root[data-theme="light"] .proj-idea-cover::before { background-image: radial-gradient(rgba(255, 255, 255, 0.7) 0.7px, transparent 1.1px); }
+:root[data-theme="light"] .proj-idea-glyph { opacity: 0.4; }
+:root[data-theme="light"] .proj-idea-size, :root[data-theme="light"] .proj-hero-tag { background: rgba(255, 255, 255, 0.4); border-color: rgba(255, 255, 255, 0.65); color: #18181b; }
+:root[data-theme="light"] .proj-hero-tag svg { color: #a16207; }
+:root[data-theme="light"] .proj-idea-cat { color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 10px rgba(0, 0, 0, 0.18); }
+:root[data-theme="light"] .proj-idea.is-hero .proj-ex { background: color-mix(in srgb, var(--surface) 85%, transparent); }
 
-/* Colour accents that stay small: gold stars, language dots, the gap plus. */
-.proj-ex-s svg { color: var(--gold); fill: color-mix(in srgb, var(--gold) 80%, transparent); }
-.proj-ex-l { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 11.5px; color: var(--faint); margin-left: auto; }
-.proj-ex-l i { width: 8px; flex: none; height: 8px; border-radius: 50%; background: var(--dot); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot) 18%, transparent); }
-.proj-ex { gap: 10px; }
-.proj-ex-n { margin-right: auto; }
-.proj-ex-l + .proj-ex-s { margin-left: 0; }
-.proj-skill.is-gap { border-color: color-mix(in srgb, var(--fit-b) 45%, transparent); }
-.proj-skill.is-gap svg { color: var(--fit-b); }
-.proj-ideas-legend svg { color: var(--fit-b); }
+/* Loading: placeholders in the cards' shape, cover band included, the first one as the hero. */
+.proj-idea.is-skel { min-height: 250px; }
+.proj-idea.is-skel.is-hero { min-height: 300px; }
+.proj-idea.is-skel b { display: block; flex: none; height: 76px; margin-bottom: 18px; background: color-mix(in srgb, var(--ink) 5%, transparent); animation: proj-pulse 1.4s ease-in-out infinite; }
+.proj-idea.is-skel.is-hero b { height: 124px; }
+.proj-idea.is-skel i { display: block; height: 10px; margin: 0 20px 10px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 6%, transparent); animation: proj-pulse 1.4s ease-in-out infinite; }
+.proj-idea.is-skel i:nth-child(2) { width: 46%; height: 13px; }
+.proj-idea.is-skel i:nth-child(3) { width: 72%; }
+.proj-idea.is-skel i:nth-child(4) { width: 54%; margin-top: 8px; height: 20px; border-radius: 11px; }
+.proj-idea.is-skel i:nth-child(5) { width: 34%; margin-top: auto; margin-bottom: 18px; }
+@keyframes proj-pulse { 50% { opacity: 0.45; } }
+
+@media (max-width: 1240px) {
+  .proj-idea.is-hero .proj-idea-body { grid-template-columns: minmax(0, 1fr) 168px; column-gap: 24px; }
+  .proj-idea.is-hero .proj-ring { width: 112px; height: 112px; }
+  .proj-idea.is-hero .proj-ring-n b { font-size: 30px; }
+  .proj-idea.is-hero .proj-idea-glyph { right: 200px; }
+}
 @media (max-width: 960px) {
-  .proj-ideas-grid > .proj-idea { grid-column: span 3; }
-  .proj-ideas-grid > .proj-idea:last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
+  .proj-ideas-grid > .proj-idea:not(.is-hero) { grid-column: span 3; }
+  .proj-ideas-grid > .proj-idea:not(.is-hero):last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
+  .proj-idea.is-hero .proj-idea-glyph { right: 24px; }
 }
 @media (max-width: 760px) {
-  .proj-ideas-grid > .proj-idea, .proj-ideas-grid > .proj-idea:last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
-  .proj-idea.is-hero { grid-template-columns: minmax(0, 1fr); }
+  .proj-ideas-hd { flex-wrap: wrap; }
+  .proj-target-src { display: none; }
+  .proj-ideas-grid > .proj-idea, .proj-ideas-grid > .proj-idea:not(.is-hero):last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
+  .proj-idea.is-hero .proj-idea-body { grid-template-columns: minmax(0, 1fr); }
+  .proj-idea.is-hero .proj-idea-ex { grid-template-columns: minmax(0, 1fr); }
   .proj-hero-fit { flex-direction: row; justify-content: flex-start; margin-top: 18px; }
   .proj-ring { width: 84px; height: 84px; }
-  .proj-ring-n { padding-top: 26px; } .proj-ring-n b { font-size: 22px; }
+  .proj-ring-n b { font-size: 22px; }
 }
-@media (prefers-reduced-motion: reduce) { .proj-ring-arc { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .proj-ring-arc, .proj-idea.is-skel b, .proj-idea.is-skel i { animation: none; }
+  .proj-idea, .proj-idea-glyph { transition: border-color var(--dur) var(--ease); }
+  .proj-idea:not(.is-skel):hover, .proj-idea:not(.is-skel):focus-within { transform: none; }
+  .proj-idea:hover .proj-idea-glyph { transform: rotate(-8deg); }
+}
 
 /* A repo beside a project's title: the GitHub mark, plus a lock while it is private. */
 .proj-gh {

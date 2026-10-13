@@ -621,5 +621,11 @@
   "projects.privateRepo": "Privates Repo auf GitHub",
   "projects.publicRepo": "Repo auf GitHub",
   "projects.makePublic": "Öffentlich machen",
-  "projects.nowPublic": "Dein Repo ist jetzt öffentlich."
+  "projects.nowPublic": "Dein Repo ist jetzt öffentlich.",
+  "projects.catData": "Daten und Analyse",
+  "projects.catWeb": "Web und APIs",
+  "projects.catDevops": "DevOps und CI",
+  "projects.catMl": "Maschinelles Lernen",
+  "projects.catMobile": "Mobil",
+  "projects.catTools": "Tools und CLI"
 }
