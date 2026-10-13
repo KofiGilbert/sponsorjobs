@@ -4289,10 +4289,13 @@
   // ---------------------------------------------------------------- Projects (defend-your-work gate)
   // A project can't reach the CV until you pass a defense test proving you genuinely understand it.
   let PROJECTS = [], DEFEND_ID = null, DEFEND_QS = [], BUILD = null;
+  let QUIZ = null;   // Defend it: the open quiz (see startQuiz)
   async function loadProjects() {
     if ($("#projTest")) $("#projTest").hidden = true;
     if ($("#projBuild")) $("#projBuild").hidden = true;
     if ($("#projLearn")) $("#projLearn").hidden = true;
+    if ($("#projQuiz")) $("#projQuiz").hidden = true;
+    QUIZ = null;
     if ($("#projList")) $("#projList").hidden = false;
     try { const d = await api("/api/projects"); PROJECTS = d.projects || []; } catch { PROJECTS = []; }
     renderProjList();
@@ -4476,10 +4479,13 @@
         acts: btn("learn", n ? PT("projects.continueLearn", "Continue") : PT("projects.startLearn", "Start"), true) };
     }
     if (stage === "defend") {
-      const tried = p.defense && p.defense.tried;
+      const d = p.defense || {}, tried = d.tried;
+      // Answers kept in this browser mean a quiz in progress: Continue it.
+      const going = (() => { try { return !!localStorage.getItem(`sj.quiz.${p.id}`); } catch { return false; } })();
       return { pill: PT("projects.sDefend", "Defend it"), cls: "is-defend",
-        extra: tried ? `<div class="proj-card-note">${esc(PT("projects.lastScore", "Last try {s}. The bar is 70.").replace("{s}", p.defense.score))}</div>` : "",
-        acts: btn("learn", PT("projects.review", "Review"), false) + btn("defend-rec", PT("projects.startInterview", "Start interview"), true) };
+        extra: tried ? `<div class="proj-card-note">${esc(PT("projects.lastQuiz", "Last try {s} of {m}. Pass is {p}.").replace("{s}", d.score).replace("{m}", d.total).replace("{p}", d.pass_mark))}</div>` : "",
+        acts: btn("learn", PT("projects.review", "Review"), false)
+          + btn("quiz", going ? PT("projects.continueLearn", "Continue") : tried ? PT("projects.retake", "Retake") : PT("projects.startLearn", "Start"), true) };
     }
     // Verified
     const credit = p.repo_url && !p.repo_private ? "" : `<label class="proj-credit"><input type="checkbox" data-act="credit" ${p.ai_credit ? "checked" : ""}>
@@ -4544,7 +4550,8 @@
   async function startLearn(p) {
     if (!p) return;
     LEARN = { id: p.id, title: p.title, steps: [], learned: new Set(), i: 0, pick: null, fb: {} };
-    ["#projList", "#projForm", "#projIdeas", "#projTest", "#projBuild"].forEach(s => { if ($(s)) $(s).hidden = true; });
+    ["#projList", "#projForm", "#projIdeas", "#projTest", "#projBuild", "#projQuiz"].forEach(s => { if ($(s)) $(s).hidden = true; });
+    QUIZ = null;
     $("#projLearn").hidden = false;
     // A page of its own: "< Projects" above "Learn <title>", and no header buttons.
     const back = $("#projIdeasBack"); if (back) back.hidden = false;
@@ -4610,7 +4617,7 @@
     $("#learnPrev")?.addEventListener("click", () => { if (L.i > 0) { L.i -= 1; L.pick = null; renderLearn(); learnTop(); } });
     $("#learnNext")?.addEventListener("click", () => { L.i += 1; L.pick = null; renderLearn(); learnTop(); });
     $("#learnNextOpen")?.addEventListener("click", () => { const k = L.steps.findIndex((_, j) => !L.learned.has(j)); if (k >= 0) { L.i = k; L.pick = null; renderLearn(); } });
-    $("#learnDefend")?.addEventListener("click", () => { const p = PROJECTS.find(x => x.id === L.id) || { id: L.id, title: L.title }; $("#projLearn").hidden = true; LEARN = null; startProjectDefend(p); });
+    $("#learnDefend")?.addEventListener("click", () => { const p = PROJECTS.find(x => x.id === L.id) || { id: L.id, title: L.title }; $("#projLearn").hidden = true; LEARN = null; startQuiz(p); });
   }
   async function checkLearn() {
     const L = LEARN; if (!L) return;
@@ -4629,16 +4636,138 @@
     } catch (err) { toast(err.message || "Couldn't check that."); if (btn) btn.disabled = false; }
   }
 
-  // ---- Defend it: the recorded Round 1 interview, on THIS project. The questions are ready
-  // before it opens; the written test is the fallback when the camera or mic can't be used.
-  async function startProjectDefend(p) {
+  // ---- Defend it: a 20-question quiz on THIS project. The questions come in the attempt's own
+  // order with shuffled options and no answer key; answers are kept in this browser as they are
+  // picked, so leaving and coming back resumes. One question at a time, a review, then the result.
+  const QUIZ_KEY = (id) => `sj.quiz.${id}`;
+  function quizSaved(id) { try { return JSON.parse(localStorage.getItem(QUIZ_KEY(id)) || "null"); } catch { return null; } }
+  function quizSave() {
+    const Q = QUIZ; if (!Q || !Q.attempt) return;
+    try { localStorage.setItem(QUIZ_KEY(Q.id), JSON.stringify({ attempt: Q.attempt, answers: Q.answers, i: Q.i })); } catch { /* private window */ }
+  }
+  function quizForget(id) { try { localStorage.removeItem(QUIZ_KEY(id)); } catch { /* private window */ } }
+  async function startQuiz(p) {
     if (!p) return;
-    try { await api(`/api/projects/${p.id}/defend`, {}); }
-    catch (err) { toast(err.message || PT("projects.defendFailed", "Couldn't start the interview.")); loadProjects(); return; }
-    ["#projLearn", "#projTest", "#projBuild"].forEach(s => { if ($(s)) $(s).hidden = true; });
-    if ($("#projList")) $("#projList").hidden = false;
-    showView("prep");
-    startScreen({ id: null, project_id: p.id, role: p.title, company: "", questions: [] }, { project: p });
+    QUIZ = { id: p.id, title: p.title, attempt: null, qs: [], total: 0, pass: 0, answers: [], i: 0, view: "q", result: null };
+    ["#projList", "#projForm", "#projIdeas", "#projTest", "#projBuild", "#projLearn"].forEach(s => { if ($(s)) $(s).hidden = true; });
+    LEARN = null;
+    $("#projQuiz").hidden = false;
+    const back = $("#projIdeasBack"); if (back) back.hidden = false;
+    const pt = $("#projPageTitle"); if (pt) pt.textContent = PT("projects.defendTitle", "Defend {t}").replace("{t}", p.title);
+    const acts = $("#projHeadActs"); if (acts) acts.hidden = true;
+    $("#projQuizRail").innerHTML = "";
+    $("#projQuizCard").innerHTML = `<div class="empty">${esc(PT("projects.quizLoading", "Preparing your quiz…"))}</div>`;
+    learnTop();
+    try {
+      const d = await api(`/api/projects/${p.id}/quiz`, {});
+      if (!QUIZ || QUIZ.id !== p.id) return;
+      Object.assign(QUIZ, { attempt: d.attempt, qs: d.questions || [], total: d.total || 0, pass: d.pass_mark || 0 });
+      const saved = quizSaved(p.id);
+      QUIZ.answers = saved && saved.attempt === d.attempt && Array.isArray(saved.answers) ? saved.answers.slice(0, QUIZ.total) : [];
+      while (QUIZ.answers.length < QUIZ.total) QUIZ.answers.push(null);
+      QUIZ.i = saved && saved.attempt === d.attempt ? Math.min(Math.max(0, saved.i | 0), QUIZ.total - 1) : 0;
+      quizSave();
+      renderQuiz();
+    } catch (err) { $("#projQuizCard").innerHTML = `<div class="empty">${esc(err.message || PT("projects.quizFailed", "Couldn't open the quiz right now."))}</div>`; }
+  }
+  function leaveQuiz() { QUIZ = null; $("#projQuiz").hidden = true; $("#projList").hidden = false; loadProjects(); }
+  function quizRail(label, frac) {
+    $("#projQuizRail").hidden = false;
+    $("#projQuizRail").innerHTML = `<span class="quiz-rail-n">${esc(label)}</span>
+      <span class="quiz-rail-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(frac * 100)}" aria-label="${esc(label)}"><i style="width:${(frac * 100).toFixed(1)}%"></i></span>`;
+  }
+  function renderQuiz() {
+    const Q = QUIZ; if (!Q) return;
+    if (Q.view === "review") return renderQuizReview();
+    if (Q.view === "result") return renderQuizResult();
+    const q = Q.qs[Q.i]; if (!q) return;
+    const last = Q.i === Q.total - 1, pick = Q.answers[Q.i];
+    quizRail(PT("projects.quizN", "Question {n} of {m}").replace("{n}", Q.i + 1).replace("{m}", Q.total), (Q.i + 1) / Q.total);
+    const code = q.code ? `
+      <div class="learn-file"><span class="learn-path">${esc(q.path)}</span><span class="learn-lines">${esc(PT("projects.lines", "lines {a} to {b}").replace("{a}", q.start).replace("{b}", q.end))}</span></div>
+      <pre class="learn-code quiz-code" tabindex="0" aria-label="${esc(q.path)}"><code>${learnCode(q)}</code></pre>` : "";
+    $("#projQuizCard").innerHTML = `
+      <h3 class="learn-h quiz-q" id="quizQ">${esc(q.q)}</h3>
+      ${code}
+      <div class="learn-opts quiz-opts" role="radiogroup" aria-labelledby="quizQ">${q.options.map((o, k) => `<button type="button" role="radio" class="learn-opt ${pick === k ? "is-pick" : ""}" data-k="${k}" aria-checked="${pick === k}"><span class="quiz-key" aria-hidden="true">${"ABCD"[k]}</span>${esc(o)}</button>`).join("")}</div>
+      <div class="learn-foot">
+        <button class="btn btn-quiet btn-sm" id="quizPrev" type="button" ${Q.i === 0 ? "disabled" : ""}>${esc(PT("projects.prevStep", "Previous"))}</button>
+        <button class="btn btn-primary btn-sm" id="quizNext" type="button">${esc(last ? PT("projects.quizToReview", "Review answers") : PT("projects.quizNext", "Next"))}</button>
+      </div>`;
+    const card = $("#projQuizCard");
+    card.querySelectorAll(".learn-opt").forEach(b => b.addEventListener("click", () => quizPick(+b.dataset.k)));
+    $("#quizPrev")?.addEventListener("click", () => quizGo(Q.i - 1));
+    $("#quizNext")?.addEventListener("click", () => { if (last) { Q.view = "review"; renderQuiz(); learnTop(); } else quizGo(Q.i + 1); });
+  }
+  function quizPick(k) {
+    const Q = QUIZ; if (!Q || Q.view !== "q") return;
+    Q.answers[Q.i] = k; quizSave();
+    $("#projQuizCard").querySelectorAll(".learn-opt").forEach(o => { const on = +o.dataset.k === k; o.classList.toggle("is-pick", on); o.setAttribute("aria-checked", on); });
+  }
+  // A to D (or 1 to 4) picks an option on a question screen.
+  document.addEventListener("keydown", (e) => {
+    if (!QUIZ || QUIZ.view !== "q" || $("#projQuiz")?.hidden || e.metaKey || e.ctrlKey || e.altKey
+        || e.target.closest?.("input, textarea, select")) return;
+    const k = "abcd".indexOf(e.key.toLowerCase()) >= 0 ? "abcd".indexOf(e.key.toLowerCase()) : "1234".indexOf(e.key);
+    if (k >= 0 && k < (QUIZ.qs[QUIZ.i]?.options.length || 0)) { e.preventDefault(); quizPick(k); }
+  });
+  function quizGo(i) {
+    const Q = QUIZ; if (!Q || i < 0 || i >= Q.total) return;
+    Q.i = i; Q.view = "q"; quizSave(); renderQuiz(); learnTop();
+  }
+  function renderQuizReview() {
+    const Q = QUIZ;
+    const open = Q.answers.filter(a => a == null).length;
+    quizRail(PT("projects.quizAnswered", "{n} of {m} answered").replace("{n}", Q.total - open).replace("{m}", Q.total), (Q.total - open) / Q.total);
+    $("#projQuizCard").innerHTML = `
+      <h3 class="learn-h">${esc(PT("projects.quizReviewH", "Check your answers"))}</h3>
+      <ol class="quiz-list">${Q.qs.map((q, k) => { const a = Q.answers[k]; return `<li><button type="button" class="quiz-row" data-k="${k}">
+          <span class="quiz-row-n">${k + 1}</span>
+          <span class="quiz-row-t"><span class="quiz-row-q">${esc(q.q)}</span>
+            <span class="quiz-row-a ${a == null ? "is-open" : ""}">${esc(a == null ? PT("projects.notAnswered", "Not answered") : q.options[a])}</span></span></button></li>`; }).join("")}</ol>
+      <div class="learn-foot">
+        <button class="btn btn-quiet btn-sm" id="quizRevBack" type="button">${esc(PT("projects.prevStep", "Previous"))}</button>
+        <span class="quiz-foot-r">${open ? `<span class="quiz-open-n">${esc(PT("projects.quizUnanswered", "{n} not answered yet").replace("{n}", open))}</span>` : ""}
+          <button class="btn btn-primary btn-sm" id="quizSubmit" type="button" ${open ? "disabled" : ""}>${esc(PT("projects.quizSubmit", "Submit"))}</button></span>
+      </div>`;
+    $("#projQuizCard").querySelectorAll(".quiz-row").forEach(b => b.addEventListener("click", () => quizGo(+b.dataset.k)));
+    $("#quizRevBack")?.addEventListener("click", () => quizGo(Q.total - 1));
+    $("#quizSubmit")?.addEventListener("click", submitQuiz);
+  }
+  async function submitQuiz() {
+    const Q = QUIZ; if (!Q) return;
+    const btn = $("#quizSubmit"); if (btn) btn.disabled = true;
+    try {
+      const r = await api(`/api/projects/${Q.id}/quiz/submit`, { attempt: Q.attempt, answers: Q.answers });
+      quizForget(Q.id);
+      Q.result = r; Q.view = "result";
+      const pj = PROJECTS.find(x => x.id === Q.id); if (pj && r.project) Object.assign(pj, r.project);
+      renderQuiz(); learnTop();
+    } catch (err) { toast(err.message || PT("projects.quizFailed", "Couldn't open the quiz right now.")); if (btn) btn.disabled = false; }
+  }
+  function renderQuizResult() {
+    const Q = QUIZ, r = Q.result || {}, ok = !!r.passed;
+    $("#projQuizRail").hidden = true;   // the score below says it; a rail would say it twice
+    const wrong = (r.wrong || []).map(w => `<li class="quiz-miss">
+        <div class="quiz-miss-q"><span class="quiz-row-n">${w.n}</span>${esc(w.q)}</div>
+        <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.yourAnswer", "Your answer"))}</span><span class="is-no">${esc(w.yours || PT("projects.notAnswered", "Not answered"))}</span></div>
+        <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.correctAnswer", "Correct"))}</span><span class="is-ok">${esc(w.correct)}</span></div>
+        ${w.explain ? `<p class="quiz-miss-x">${esc(w.explain)}</p>` : ""}</li>`).join("");
+    $("#projQuizCard").innerHTML = `
+      <div class="quiz-score ${ok ? "is-pass" : ""}">
+        <div class="quiz-score-l"><span class="quiz-score-n">${esc(PT("projects.quizScore", "{s} of {m}").replace("{s}", r.score).replace("{m}", r.total))}</span>
+          <span class="quiz-score-t">${esc(ok ? PT("projects.quizPassed", "Passed. {t} is verified.").replace("{t}", Q.title)
+            : PT("projects.quizMissed", "You need {p} to pass. Go over the ones you missed, then retake it.").replace("{p}", r.pass_mark))}</span></div>
+        <button class="btn btn-primary btn-sm" id="quizMain" type="button">${esc(ok ? PT("projects.addResume", "Add to resume") : PT("projects.retake", "Retake"))}</button>
+      </div>
+      ${!ok && wrong ? `<ol class="quiz-misses">${wrong}</ol>` : ""}`;
+    $("#quizMain")?.addEventListener("click", async (e) => {
+      if (!ok) { const p = { id: Q.id, title: Q.title }; startQuiz(p); return; }
+      e.target.disabled = true;
+      try { const res = await fetch(`/api/projects/${Q.id}/tocv`, { method: "POST" }); toast(res.ok ? PT("projects.addedResume", "Added to your resume material.") : PT("projects.cantAdd", "Couldn't add it to your resume.")); }
+      catch { toast(PT("projects.cantAdd", "Couldn't add it to your resume.")); }
+      leaveQuiz();
+    });
   }
   function renderProjList() {
     const root = $("#projList"); if (!root) return;
@@ -4669,7 +4798,7 @@
     root.querySelectorAll(".proj-card").forEach(card => {
       const p = PROJECTS.find(x => x.id === card.dataset.id);
       card.querySelector('[data-act="defend"]')?.addEventListener("click", () => startDefend(p));
-      card.querySelector('[data-act="defend-rec"]')?.addEventListener("click", () => startProjectDefend(p));
+      card.querySelector('[data-act="quiz"]')?.addEventListener("click", () => startQuiz(p));
       card.querySelector('[data-act="learn"]')?.addEventListener("click", () => startLearn(p));
       card.querySelector('[data-act="rebuild"]')?.addEventListener("click", (e) => rebuildProject(p, e.target));
       card.querySelector('[data-act="credit"]')?.addEventListener("change", (e) => setAiCredit(p, e.target.checked));
@@ -5194,12 +5323,13 @@
     }
   }
   $("#projSuggestBtn")?.addEventListener("click", () => { const box = $("#projIdeas"); if (box && !box.hidden) closeIdeas(); else openIdeas(); });
-  $("#projIdeasBack")?.addEventListener("click", () => { if (LEARN) leaveLearn(); else closeIdeas(); });
+  $("#projIdeasBack")?.addEventListener("click", () => { if (QUIZ) leaveQuiz(); else if (LEARN) leaveLearn(); else closeIdeas(); });
   // Esc goes back too, unless a field inside the gallery (the Target chip, an inline ask) took it.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || e.defaultPrevented) return;
     if (LEARN && !$("#projLearn")?.hidden && $("#view-projects")?.classList.contains("is-active")
         && !e.target.closest?.("input, textarea")) { e.preventDefault(); leaveLearn(); return; }
+    if (QUIZ && !$("#projQuiz")?.hidden && $("#view-projects")?.classList.contains("is-active")) { e.preventDefault(); leaveQuiz(); return; }
     const box = $("#projIdeas");
     if (!box || box.hidden || !$("#view-projects")?.classList.contains("is-active")) return;
     if (document.querySelector(".modal:not([hidden]), dialog[open]")) return;
@@ -5363,7 +5493,6 @@
     if ($("#prepList")) $("#prepList").hidden = false;
     if ($("#prepTilesMsg")) $("#prepTilesMsg").hidden = true;
     GUIDED = false; hideGuidedProgress();   // returning to the entry ends any guided flow
-    if (SCR_PROJECT) { SCR_PROJECT = null; } prepHead(null);   // the ordinary Interview prep head
     try { const d = await api("/api/preps"); PREPS = d.preps || []; } catch { PREPS = []; }
     // Simple manual entry: a fresh role + JD + CV form on every visit. Each visit goes through
     // step 1, so there's no "change the role" affordance on step 2, you just re-enter here.
@@ -5583,14 +5712,11 @@
   // this computer; there is no facial analysis, ever.
   const R1_QUESTIONS = 5;
   let SCREEN = null, SCR_PREP = null, SCR_EXTRA = false;
-  let SCR_PROJECT = null;   // Defend it: the project this recorded interview is on (null for job prep)
   let SCR_DRILL = null, SCR_REC_T0 = 0, SCR_SECS = {};   // report card: re-drill questions + measured take lengths
   let SCR_STREAM = null, SCR_REC = null, SCR_CHUNKS = [], SCR_TIMER = null, SCR_PREPT = null, SCR_COUNT = null;
   let SCR_PRACTICE = null, SCR_UPLOADS = {}, SCR_TR = {}, SCR_RETAKES = {}, SCR_PHASE = "idle", SCR_CUR = null;
   const fmtClock = (x) => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, "0")}`;
   function startScreen(prep, opts) {
-    SCR_PROJECT = (opts && opts.project) || null;
-    prepHead(SCR_PROJECT);
     SCR_PREP = prep; SCREEN = null; SCR_EXTRA = false; SCR_UPLOADS = {}; SCR_TR = {}; SCR_RETAKES = {}; SCR_PRACTICE = null;
     SCR_DRILL = (opts && Array.isArray(opts.drill) && opts.drill.length) ? opts.drill : null; SCR_SECS = {};
     $("#prepList").hidden = true; $("#prepScreen").hidden = false;
@@ -5611,23 +5737,21 @@
     scrHead("", "");
     $("#scrStage").innerHTML = `
       <div class="scr-intro"><div class="scr-welcome">
-        <div class="r1-eyebrow">${esc(SCR_PROJECT ? T("projects.defendEyebrow", "Recorded interview") : T("r1.eyebrow", "Round 1, recorded interview"))}</div>
-        <h2 class="scr-welcome-h">${SCR_PROJECT ? esc(T("projects.defendH", "5 questions on how you built it")) : r1Title(p)}</h2>
-        <p class="scr-welcome-sub">${SCR_PROJECT
-          ? esc(T("projects.defendFacts", "About 15 minutes. Score 70, answering every question, to verify it."))
-          : SCR_DRILL
+        <div class="r1-eyebrow">${esc(T("r1.eyebrow", "Round 1, recorded interview"))}</div>
+        <h2 class="scr-welcome-h">${r1Title(p)}</h2>
+        <p class="scr-welcome-sub">${SCR_DRILL
           ? esc(T("rc.drillFacts", "Re-drill: {n} questions from your report card.").replace("{n}", String(SCR_DRILL.length)))
           : esc(T("r1.landingFacts", "5 questions, about 20 minutes.")) + " " + esc((k => k ? k.charAt(0).toUpperCase() + k.slice(1) : "")(r1Kinds(p))) + "."}</p>
         <div class="scr-welcome-acts">
           <button class="btn btn-primary" id="scrBegin" type="button">${esc(T("r1.getStarted", "Get started"))}</button>
-          ${SCR_PROJECT ? "" : `<button class="btn btn-ghost" id="scrBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>`}
+          <button class="btn btn-ghost" id="scrBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
         </div>
-        ${SCR_PROJECT ? "" : SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : `<div class="rc-goals" id="prepGoals" hidden></div>`}
+        ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : `<div class="rc-goals" id="prepGoals" hidden></div>`}
         <p class="scr-disclaimer">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>
       </div></div>`;
     $("#scrBegin")?.addEventListener("click", renderR1Notice);
     $("#scrBail")?.addEventListener("click", quitScreen);
-    if (!SCR_DRILL && !SCR_PROJECT) loadPrepGoals(p && p.id, $("#prepGoals"));   // report card: the prep checklist
+    if (!SCR_DRILL) loadPrepGoals(p && p.id, $("#prepGoals"));   // report card: the prep checklist
   }
   // Screen 2: the notice. Where recordings go, how to delete them, no facial analysis, and the
   // extra-time option (doubles the clocks), which replaced the old Realistic/Relaxed switch.
@@ -5655,8 +5779,7 @@
       const btn = $("#scrNoticeGo"), msg = $("#scrNoticeMsg");
       if (SCREEN && SCREEN.config && !!SCREEN.config.extra_time === SCR_EXTRA && SCREEN.i == null) { goDevices(); return; }   // back from the device check: same screen
       btn.disabled = true;
-      const body = SCR_PROJECT ? { project_id: SCR_PROJECT.id, extra_time: SCR_EXTRA }
-        : { prep_id: SCR_PREP.id, extra_time: SCR_EXTRA, questions: R1_QUESTIONS, ...(SCR_DRILL ? { drill: SCR_DRILL } : {}) };
+      const body = { prep_id: SCR_PREP.id, extra_time: SCR_EXTRA, questions: R1_QUESTIONS, ...(SCR_DRILL ? { drill: SCR_DRILL } : {}) };
       try { SCREEN = await api("/api/screens", body); }
       catch (err) { btn.disabled = false; if (msg) { msg.textContent = err.message || T("r1.cantStart", "Couldn't start the interview."); msg.hidden = false; } return; }
       SCR_PRACTICE = SCREEN.practice || null;
@@ -5666,46 +5789,12 @@
   // Screen 3: device check. Camera and mic turn on here; the person confirms they can see and
   // hear themselves. Tips in the real product's wording.
   async function goDevices() {
-    if (!navigator.mediaDevices?.getUserMedia) { if (projectDefendWritten()) return; toast(T("r1.noCamera", "This browser can't reach your camera. Try Chrome or Edge.")); renderR1Notice(); return; }
+    if (!navigator.mediaDevices?.getUserMedia) { toast(T("r1.noCamera", "This browser can't reach your camera. Try Chrome or Edge.")); renderR1Notice(); return; }
     if (!SCR_STREAM) {
       try { SCR_STREAM = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); }
-      catch { if (projectDefendWritten()) return; toast(T("r1.allowCamera", "Camera and mic access is needed. Please allow them and try again.")); renderR1Notice(); return; }
+      catch { toast(T("r1.allowCamera", "Camera and mic access is needed. Please allow them and try again.")); renderR1Notice(); return; }
     }
     renderR1Devices();
-  }
-  // The page head: Interview prep, or for Defend it "Defend <project>" under a back link to
-  // Projects (the person came from there), with no Quit in the interview bar.
-  function prepHead(project) {
-    const t = $("#prepTitle"), sub = $("#prepSub"), back = $("#prepProjBack"), quit = $("#scrQuit");
-    if (back) back.hidden = !project;
-    if (quit) quit.hidden = !!project;
-    hideProjLeave();
-    if (t) t.textContent = project ? T("projects.defendTitle", "Defend {t}").replace("{t}", project.title || "") : T("prep.title", "Interview prep");
-    if (sub) sub.textContent = project ? T("projects.defendSub", "Answer as you would in an interview. Pass to verify this project.")
-      : T("prep.sub", "Practice for a real interview, built from the job you applied to.");
-  }
-  function hideProjLeave() { const b = $("#prepProjLeave"); if (b) b.hidden = true; }
-  // Back to Projects. Mid-interview (a screen started, not yet scored) asks first, in the page:
-  // recorded answers are kept, exactly as Quit keeps them.
-  $("#prepProjBack")?.addEventListener("click", () => {
-    if (!(SCREEN && SCREEN.id && !SCREEN.result)) { quitScreen(); return; }
-    const box = $("#prepProjLeave"); if (!box) { quitScreen(); return; }
-    $("#prepProjLeaveT").textContent = T("projects.leaveQ", "Leave this interview? Answers you recorded are kept.");
-    $("#prepProjStay").textContent = T("projects.stay", "Stay");
-    $("#prepProjLeaveGo").textContent = T("projects.leave", "Leave");
-    box.hidden = false; $("#prepProjStay").focus();
-  });
-  $("#prepProjStay")?.addEventListener("click", () => { hideProjLeave(); $("#prepProjBack")?.focus(); });
-  $("#prepProjLeaveGo")?.addEventListener("click", () => { hideProjLeave(); quitScreen(); });
-  // Defend it without a camera or mic: the written defence on the same five questions, said out
-  // loud (a fallback must announce itself).
-  function projectDefendWritten() {
-    if (!SCR_PROJECT) return false;
-    const p = SCR_PROJECT;
-    toast(T("projects.writtenFallback", "No camera or mic here, so you'll defend it in writing instead."));
-    quitScreen();
-    startDefend(p);
-    return true;
   }
   function r1Connection() {
     const on = navigator.onLine !== false;
@@ -5960,7 +6049,7 @@
         <div id="r1Gate"></div>
         <div class="mock-next">
           <button class="btn btn-ghost btn-sm" id="scrReport" type="button">${esc(T("r1.docx", "Download report (.docx)"))}</button>
-          ${SCR_PROJECT ? "" : `<button class="btn btn-ghost btn-sm" id="scrDone" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>`}
+          <button class="btn btn-ghost btn-sm" id="scrDone" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>
           <button class="btn btn-danger-ghost btn-sm" id="scrDelete" type="button">${esc(T("r1.deleteRec", "Delete recordings"))}</button>
         </div>
       </div>`;
@@ -5975,27 +6064,7 @@
       try { await fetch(`/api/screens/${SCREEN.id}/delete`, { method: "POST" }); } catch {}
       toast(T("r1.deleted", "Deleted.")); quitScreen();
     });
-    if (SCR_PROJECT) renderProjectVerdict(r);
-    else if (GUIDED) renderR1Next(passed);
-  }
-  // Defend it's verdict, under the report: Verified (score 70 and every question answered), or
-  // one more go. The report card's re-drill is a job-prep tool, so it steps aside here.
-  function renderProjectVerdict(r) {
-    const box = $("#r1Gate"); if (!box) return;
-    $("#rcRedrill")?.closest(".rc-weak-acts")?.setAttribute("hidden", "");
-    const ok = !!r.project_passed, p = SCR_PROJECT;
-    box.innerHTML = `<div class="scr-unlock proj-verdict-box ${ok ? "ok" : ""}">
-      <b>${esc(ok ? T("projects.verifiedH", "Verified. Your project can go public and onto your resume.")
-                  : T("projects.notYetH", "Not verified yet. The bar is 70 on every question answered."))}</b>
-      <button class="btn btn-primary btn-sm" id="projVerdictGo" type="button">${esc(ok ? T("projects.addResume", "Add to resume") : T("projects.tryAgain", "Try again"))}</button></div>`;
-    $("#projVerdictGo")?.addEventListener("click", async () => {
-      if (ok) {   // the next real step; the back link above already goes to Projects
-        try { const res = await fetch(`/api/projects/${p.id}/tocv`, { method: "POST" }); toast(res.ok ? T("projects.addedResume", "Added to your resume material.") : T("projects.cantAdd", "Couldn't add it to your resume.")); }
-        catch { toast(T("projects.cantAdd", "Couldn't add it to your resume.")); }
-        quitScreen(); return;
-      }
-      stopScrStream(); startScreen({ id: null, project_id: p.id, role: p.title, company: "", questions: [] }, { project: p });
-    });
+    if (GUIDED) renderR1Next(passed);
   }
   // Full mock only: after Round 1, where next. A pass with a live interviewer available goes to
   // Round 2; a pass without one meets the gate; a miss offers another go.
@@ -6100,9 +6169,6 @@
     if (SCR_REC && SCR_REC.state === "recording") { SCR_REC.onstop = null; try { SCR_REC.stop(); } catch {} }
     SCR_PHASE = "idle"; stopScrStream();
     $("#prepScreen").hidden = true; $("#prepList").hidden = false;
-    if (SCR_PROJECT) {   // Defend it came from Projects: go back there
-      SCR_PROJECT = null; prepHead(null); showView("projects"); loadProjects(); return;
-    }
     loadPreps();
   }
   $("#scrQuit")?.addEventListener("click", quitScreen);

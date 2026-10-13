@@ -578,25 +578,24 @@ def test_ideas_gallery_is_a_page_with_a_back_link():
     assert 'class="btn btn-ghost btn-back tpl-back proj-back" id="projIdeasBack"' in html
     assert 'id="projIdeasClose"' not in html and 'id="projIdeasRefresh"' not in html
     css = (root / "ui" / "static" / "styles.css").read_text(encoding="utf-8")
-    assert ".view-projects .proj-back, .view-prep .proj-back { margin-left: -8px; margin-bottom: 0; }" in css
+    assert ".view-projects .proj-back { margin-left: -8px; margin-bottom: 0; }" in css
     src = (root / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     body = _js_function(src, "renderProjList")
     assert 'projects.ideasPageTitle' in body and "acts.hidden = true" in body
     assert 'e.key !== "Escape"' in src and "closeIdeas();" in src
 
 
-def test_no_repeated_titles_and_defend_it_says_where_you_came_from():
-    """The ideas page has no "Ideas for you" eyebrow under "Project ideas"; Defend it heads the
-    recorded interview with "Defend <title>" under a back link to Projects (no Quit), asks in the
-    page before leaving mid-interview, and the ordinary Interview prep head is restored."""
+def test_no_repeated_titles_and_defend_it_is_a_page_of_its_own():
+    """The ideas page has no "Ideas for you" eyebrow under "Project ideas". Defend it is a quiz page
+    in Projects, like Learn it: "< Projects" above "Defend <title>", the header's buttons hidden,
+    Esc and the back link leave it. Interview prep has no project mode left (no back link to
+    Projects, no leave bar)."""
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     html = (root / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
     assert 'id="projIdeasH"' not in html and "Ideas for you" not in html
-    assert 'class="btn btn-ghost btn-back tpl-back proj-back" id="prepProjBack"' in html
-    assert 'id="prepProjLeave"' in html
+    assert 'id="projQuiz"' in html and 'id="prepProjBack"' not in html and 'id="prepProjLeave"' not in html
     src = (root / "ui" / "static" / "app.js").read_text(encoding="utf-8")
-    head = _js_function(src, "prepHead")
-    assert "projects.defendTitle" in head and 'quit.hidden = !!project' in head
-    assert "window.confirm" not in head and "confirm(" not in _js_function(src, "hideProjLeave")
-    assert "prepHead(null)" in _js_function(src, "quitScreen") and "prepHead(null)" in _js_function(src, "loadPreps")
+    start = _js_function(src, "startQuiz")
+    assert "projects.defendTitle" in start and "#projIdeasBack" in start and "acts.hidden = true" in start
+    assert "leaveQuiz()" in src and "prepHead" not in src and "SCR_PROJECT" not in src

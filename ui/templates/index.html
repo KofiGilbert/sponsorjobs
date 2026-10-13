@@ -786,6 +786,14 @@
           <div class="learn-card" id="projLearnCard" aria-live="polite"></div>
         </div>
 
+        <!-- Defend it: a 20-question quiz on the project, one question at a time under a slim
+             progress rail, then a review, then the result. A page of its own like Learn it: the
+             page head shows "< Projects" and "Defend <title>". -->
+        <div class="proj-learn proj-quiz" id="projQuiz" hidden>
+          <div class="quiz-rail" id="projQuizRail"></div>
+          <div class="learn-card quiz-card" id="projQuizCard" aria-live="polite"></div>
+        </div>
+
         <!-- Guided build-and-teach loop: an ordered plan that teaches as you build, with a
              per-step coach. Shown when you click "Build guide". Leads into the defend gate. -->
         <div class="proj-build" id="projBuild" hidden>
@@ -808,23 +816,10 @@
       <section class="view view-prep" id="view-prep">
         <header class="page-head">
           <div>
-            <!-- Defend it (a project's recorded interview) only: back to Projects, like Templates. -->
-            <button class="btn btn-ghost btn-back tpl-back proj-back" id="prepProjBack" type="button" hidden>
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <span data-i18n="projects.title">Projects</span>
-            </button>
             <h1 class="page-title" id="prepTitle" data-i18n="prep.title">Interview prep</h1>
             <p class="page-sub" id="prepSub" data-i18n="prep.sub">Practice for a real interview, built from the job you applied to.</p>
           </div>
         </header>
-        <!-- Leaving Defend it mid-interview asks here, in the page. -->
-        <div class="scr-leave" id="prepProjLeave" role="alertdialog" aria-labelledby="prepProjLeaveT" hidden>
-          <span id="prepProjLeaveT"></span>
-          <span class="scr-leave-acts">
-            <button class="btn btn-quiet btn-sm" id="prepProjStay" type="button"></button>
-            <button class="btn btn-ghost btn-sm" id="prepProjLeaveGo" type="button"></button>
-          </span>
-        </div>
 
         <!-- Guided-flow progress: shown only during a Full mock (Round 1, then Round 2). -->
         <div class="prep-progress" id="prepProgress" hidden>
