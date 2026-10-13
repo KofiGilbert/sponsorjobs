@@ -55,7 +55,7 @@ def test_both_themes_define_the_code_tokens():
 
 
 def test_excerpts_are_rebuilt_from_text_not_injected():
-    body = APP[APP.index("function codeLines("):APP.index("function learnCode(")]
+    body = APP[APP.index("function codeLines("):APP.index("// <code-fold>")]
     assert "hl.highlight(src" in body and "esc(part)" in body and 'createElement("template")' in body
     assert "highlightElement" not in APP and "highlightAll" not in APP
 

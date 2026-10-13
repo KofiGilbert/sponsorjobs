@@ -597,5 +597,7 @@ def test_no_repeated_titles_and_defend_it_is_a_page_of_its_own():
     assert 'id="projQuiz"' in html and 'id="prepProjBack"' not in html and 'id="prepProjLeave"' not in html
     src = (root / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     start = _js_function(src, "startQuiz")
-    assert "projects.defendTitle" in start and "#projIdeasBack" in start and "acts.hidden = true" in start
+    page = _js_function(src, "projPage")                  # shared with Learn it
+    assert "projects.defendTitle" in start and "projPage(" in start
+    assert "#projIdeasBack" in page and "acts.hidden = true" in page
     assert "leaveQuiz()" in src and "prepHead" not in src and "SCR_PROJECT" not in src

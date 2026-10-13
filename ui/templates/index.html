@@ -704,6 +704,8 @@
             </button>
             <h1 class="page-title" id="projPageTitle" data-i18n="projects.title">Projects</h1>
           </div>
+          <!-- Learn it and Defend it put their progress here, right of the title row. -->
+          <div class="sx-prog" id="projProg" hidden></div>
           <div class="page-head-actions" id="projHeadActs">
             <button class="btn btn-ghost" id="projSuggestBtn" type="button">
               <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.8a4.2 4.2 0 0 0-2.5 7.6c.5.4.8.9.8 1.5v.3h3.4v-.3c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8Z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/><path d="M6.6 13.6h2.8M7 15h2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
@@ -778,20 +780,19 @@
           <div class="proj-result" id="projResult" hidden></div>
         </div>
 
-        <!-- Learn it: a walkthrough of the files the AI built, one step at a time: the real code
-             (read-only), what it does, why it was built that way, and one quick check. Like the ideas
-             gallery it is a page of its own: the page head shows "< Projects" and "Learn <title>". -->
+        <!-- Learn it: a walkthrough of the files the AI built, one step per view: the real code
+             (read-only) in a panel on the left, what it does, why it was built that way and one
+             quick check on the right. A page of its own: the page head shows "< Projects", "Learn
+             <title>" and the step progress. The page never scrolls; each pane scrolls on its own. -->
         <div class="proj-learn" id="projLearn" hidden>
-          <ol class="learn-rail" id="projLearnRail" aria-label="Steps"></ol>
-          <div class="learn-card" id="projLearnCard" aria-live="polite"></div>
+          <div class="sx-host" id="projLearnCard"></div>
         </div>
 
-        <!-- Defend it: a 20-question quiz on the project, one question at a time under a slim
-             progress rail, then a review, then the result. A page of its own like Learn it: the
-             page head shows "< Projects" and "Defend <title>". -->
+        <!-- Defend it: a 20-question quiz on the project, one question per view in the same split
+             (or one centred column when a question has no code), then a review grid, then the
+             result. The page head shows "< Projects", "Defend <title>" and the question progress. -->
         <div class="proj-learn proj-quiz" id="projQuiz" hidden>
-          <div class="quiz-rail" id="projQuizRail"></div>
-          <div class="learn-card quiz-card" id="projQuizCard" aria-live="polite"></div>
+          <div class="sx-host" id="projQuizCard"></div>
         </div>
 
         <!-- Guided build-and-teach loop: an ordered plan that teaches as you build, with a
