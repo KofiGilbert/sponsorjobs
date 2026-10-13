@@ -442,3 +442,21 @@ def test_generic_industry_words_and_staffing_suffixes_stay_out_of_the_brand():
     assert "cnhindustrial" in slug_candidates("Cnh Industrial America Llc")
     assert distinctive_tokens("Empower Professionals Inc") == ["empower", "professionals"]
     assert not confirms("Empower Annuity Insurance Company of America", "Empower Professionals Inc", need=2)
+
+
+# Live 2026-10-12, from the long run: a board that names MORE than the sponsor's brand, or a
+# later word of a name whose first word is a brand of its own, is another company.
+_STRAY_MISSES = [
+    ("Cloud Space Llc",              "space",  "Space Programs"),
+    ("E Nexus Inc",                  "enexus", "CGS Nexus"),
+    ("Avani Systems Inc",            "avani",  "Avani Media"),
+    ("Keen Info Tek Inc",            "keen",   "Keen Advisor Questionnaire"),
+    ("Ceo Foundry Llc",              "foundry", "Foundry"),
+    ("The University Of Texas Medical Branch", "branch", "Branch"),
+]
+
+
+@pytest.mark.parametrize("sponsor,slug,board", _STRAY_MISSES)
+def test_a_board_that_names_more_than_the_brand_or_a_later_word_alone_is_rejected(sponsor, slug, board):
+    fetch = _fetch(gh_jobs={slug: _JOB_US}, gh_names={slug: board})
+    assert discover_for_company(sponsor, atss=("greenhouse",), fetch=fetch) is None

@@ -148,6 +148,7 @@ def main(argv=None) -> int:
           f"request, {summary['throttled']} throttled on every host and left for the next run, "
           f"{summary['partial']} still owe a throttled ATS); "
           f"{summary['requests']} requests, {summary['rate_limited']} x 429, "
+          f"{summary.get('server_errors')} x 5xx, "
           f"{summary['cooldowns']} host cooldowns, {summary['deferred']} requests deferred "
           f"because a host's queue was too long")
     print(f"found {summary['hits']} live, identity-confirmed boards with >=1 job this run; "

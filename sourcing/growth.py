@@ -704,6 +704,7 @@ def grow(ranked, checkpoint: Checkpoint, fetch, *, known_boards=(), atss=DISCOVE
     summary["per_ats"] = dict(sorted(summary["per_ats"].items()))
     summary["requests"] = getattr(fetch, "requests", None)
     summary["rate_limited"] = getattr(fetch, "rate_limited", None)
+    summary["server_errors"] = getattr(fetch, "server_errors", None)
     summary["cooldowns"] = getattr(fetch, "cooldowns", None)
     summary["deferred"] = getattr(fetch, "deferred", None)
     return summary

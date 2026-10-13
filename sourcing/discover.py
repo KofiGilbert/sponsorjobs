@@ -86,7 +86,7 @@ _GENERIC = {
     "incorporated", "investments",
     # Industry words that read as a brand when the real brand is a short acronym the tokenizer
     # drops ("Cnh Industrial America" -> a Greenhouse board "industrial", caught 2026-10-12).
-    "industrial", "pharma", "medical", "dental", "physicians", "consultants",
+    "industrial", "pharma", "medical", "dental", "physicians", "consultants", "branch",
 }
 
 # Corporate FILLER: words a legal name carries that say nothing about which company it is
@@ -118,7 +118,7 @@ _FILLER = {
     # words that DO tell same-brand employers apart (bank, hospital, clinic, university,
     # school, foundation...) are deliberately NOT here -- see _INSTITUTION.
     "design", "development", "companies", "consultancy", "consultants", "svcs", "intl",
-    "infotech", "infosystems", "infosolutions", "info", "soft", "engineering", "engineers",
+    "engineering", "engineers",
     "electronics", "computer", "computing", "wireless", "cable", "motor", "motors",
     "automation", "stores", "wholesale", "foods", "power", "games", "publishing", "aerospace",
     "trading", "resources", "resource", "industry",
@@ -411,9 +411,14 @@ def slug_guesses(display_name: str) -> list[SlugGuess]:
             add("".join(toks[:2]), "joined", toks[:2])
         if len(toks) >= 2:
             add("".join(toks), "joined", toks, blind=len("".join(toks)) >= 8)
-        for t in dist:                   # "schwab", "stanford": a brand word that isn't first
-            if t != lead and len(t) >= 5 and t not in _FILLER and t not in _INSTITUTION:
-                add(t, "brand", [t])
+        # "schwab", "stanford": a brand word that isn't first, tried alone only when the first
+        # word is a first name or a generic word. (When the first word is a brand of its own, or
+        # too short to probe, a later word alone is a different company: "Cloud Space" is not a
+        # board named "Space Programs", "Ceo Foundry" not "Foundry".)
+        if toks and (toks[0] in _FIRST_NAMES or toks[0] in _GENERIC):
+            for t in dist:
+                if t != lead and len(t) >= 5 and t not in _FILLER and t not in _INSTITUTION:
+                    add(t, "brand", [t])
         if len(toks) >= 2:
             add("-".join(toks), "joined", toks, blind=len("-".join(toks)) >= 8)
     return out[:MAX_SLUGS]
@@ -566,6 +571,21 @@ def foreign_qualified(evidence: str, sponsor_name: str, brand_words=None) -> boo
     return True
 
 
+def stray_words(board_nm: str, sponsor_name: str) -> list[str]:
+    """Words on a board's own name that are neither the sponsor's, nor a legal form or
+    careers-site word, a place or generic word, nor corporate filler: "Space Programs" for
+    Cloud Space, "CGS Nexus" for E Nexus, "Avani Media" for Avani Systems, "Keen Advisor
+    Questionnaire" for Keen Info Tek. A board that names more than the sponsor's brand is
+    usually someone else that shares the word."""
+    own = set(_tokens(sponsor_name))
+    for b in alias_for(sponsor_name)[1]:
+        own.update(_tokens(b))
+    sq = _squash(sponsor_name)
+    return [t for t in _tokens(board_nm)
+            if t not in own and t not in _SAFE_QUALIFIERS and not t.isdigit() and len(t) > 2
+            and t not in sq]                     # "Value Labs" is "Valuelabs" spelled apart
+
+
 def confirms(evidence: str, sponsor_name: str, need: int = 1, *, squash: bool = False) -> bool:
     """Does a board's own name (or a posting's hiring organization) confirm it is this
     sponsor? It must show `need` of the sponsor's distinctive brand words (or one of its
@@ -654,7 +674,7 @@ def discover_for_company(display_name: str, atss=DISCOVER_ATS, fetch=fetch_json,
                 continue
             if ats in NAME_LANE:
                 nm = board_name(ats, g.slug, fetch=fetch)
-                if not confirms(nm, display_name, g.need):
+                if not confirms(nm, display_name, g.need) or stray_words(nm, display_name):
                     if reject:
                         reject(ats, g.slug, f"board is named {nm or '(unnamed)'!r}; needs "
                                             f"{g.need} of {dist} to be {display_name!r}")
