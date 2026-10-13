@@ -6811,6 +6811,95 @@ def _fit_screen_questions(generated: list, kinds: list[str], prep: dict) -> list
     return out
 
 
+# ---- Interview tie-in: a Verified project on the job's resume gets 1 or 2 interview questions.
+# Found by the project's title or repo URL among the projects on the tailored resume this prep was
+# built from (else the resume text attached to the prep, else the saved profile's projects). Its
+# stored facts (Learn it and the Defend it quiz, already on disk) ride as context in the EXISTING
+# question generation, so this costs no model call of its own.
+def _norm_url(u) -> str:
+    return re.sub(r"^https?://(www\.)?", "", str(u or "").strip().lower()).rstrip("/").removesuffix(".git")
+
+
+def _resume_project_entries(prep: dict) -> tuple[list[dict], str]:
+    """(project entries on the resume, the resume's free text) for a prep: the tailored resume's
+    projects when the prep came from a built resume, the attached resume text, or failing both
+    the saved profile's projects."""
+    entries, text = [], str(prep.get("cv") or "")
+    rec = _get_record(prep["record_id"]) if prep.get("record_id") not in (None, "") else None
+    if rec:
+        data = _record_data(rec)
+        for key in ("render_profile", "page_profile"):
+            prof = data.get(key) or {}
+            if isinstance(prof, dict) and prof.get("projects"):
+                entries = [e for e in prof["projects"] if isinstance(e, dict)]
+                break
+        if not entries:
+            text += "\n" + json.dumps(data)
+    elif not text.strip():
+        prof = (_memory().load("default") or {}).get("profile") or {}
+        entries = [e for e in prof.get("projects") or [] if isinstance(e, dict)]
+    return entries, text
+
+
+def _project_interview_questions(p: dict) -> list[str]:
+    """Up to two spoken interview questions on a project, from what is stored: the quiz's why,
+    trade-off, scale and extend questions first, else a plain walk-through question."""
+    t = p.get("title") or "your project"
+    qs = (p.get("quiz") or {}).get("questions") or []
+    pick = [q["q"] for topic in ("why", "tradeoffs", "scale", "extend")
+            for q in qs if q.get("topic") == topic][:2]
+    out = [f"On {t}, which you built: {q}" for q in pick]
+    return out or [f"Walk me through {t}: why you built it the way you did, and what you would change."]
+
+
+def _verified_project_facts(prep: dict) -> list[dict]:
+    """The Verified projects on this prep's resume (at most two), with their stored facts."""
+    verified = [p for p in _load_projects() if p.get("status") == "verified"]
+    if not verified:
+        return []
+    entries, text = _resume_project_entries(prep)
+    low = text.lower()
+    names = {str(e.get(k) or "").strip().lower() for e in entries for k in ("org", "title", "name")} - {""}
+    links = {_norm_url(e.get(k)) for e in entries for k in ("link", "url", "repo")} - {""}
+    out = []
+    for p in verified:
+        title, url = str(p.get("title") or "").strip(), _norm_url(p.get("repo_url"))
+        hit = (title.lower() in names or (url and url in links)
+               or (len(title) >= 4 and title.lower() in low) or (url and url in low))
+        if not hit:
+            continue
+        steps = (p.get("learn") or {}).get("steps") or []
+        facts = [f"{s.get('title', '')}: {s.get('why', '')}" for s in steps if s.get("why")][:3]
+        facts += [f"{q['q']} {q['options'][q['answer']]}." for q in (p.get("quiz") or {}).get("questions") or []
+                  if q.get("topic") in ("why", "tradeoffs", "scale")][:3]
+        out.append({"title": title, "tech": p.get("tech", ""), "summary": p.get("summary", ""),
+                    "repo_url": "" if p.get("repo_private") else (p.get("repo_url") or ""),
+                    "facts": facts, "questions": _project_interview_questions(p)})
+        if len(out) >= 2:
+            break
+    return out
+
+
+def _with_project_questions(qs: list[dict], facts: list[dict], generated: list | None = None) -> list[dict]:
+    """Make sure the screen asks about each Verified project on the resume (1, or 2 for two
+    projects on a 5-question screen): when the model's set does not name a project, its stored
+    question takes the last behavioural slot. Deterministic, no model call."""
+    if not facts:
+        return qs
+    want = facts[:2] if len(qs) >= 5 else facts[:1]
+    out = list(qs)
+    for pr in want:
+        t = pr["title"].lower()
+        if any(t and t in q["q"].lower() for q in out):
+            continue
+        slots = [i for i, q in enumerate(out) if q["kind"] == "behavioural" and q.get("competency") != "Project"]
+        if not slots:
+            break
+        out[slots[-1]] = {"q": pr["questions"][0], "kind": "behavioural", "competency": "Project",
+                          "why": f"Probes how well you know {pr['title']}, which you built."}
+    return out
+
+
 # Unscored practice prompts: the person warms up on as many as they like before the real set.
 # Generic by design (never a leak of the scored questions), never stored, never scored.
 _PRACTICE_POOL = (
@@ -6974,13 +7063,16 @@ def screens_create():
         kinds = _screen_mix(n)
         profile = (_memory().load("default") or {}).get("profile") or {}
         llm = _make_llm()       # no model -> fails loudly here (CLAUDE.md §13), never a silent fallback
+        # A Verified project on this job's resume rides in the SAME question call as context.
+        facts = _verified_project_facts(prep)
         try:
             gen = llm.generate_screen_questions(profile, prep.get("role", ""), prep.get("company", ""),
-                                                prep.get("jd", ""), kinds=kinds)
+                                                prep.get("jd", ""), kinds=kinds,
+                                                **({"projects": facts} if facts else {}))
             generated = gen.get("questions") or []
         except Exception:
             generated = []      # a bad model reply: the fit falls back to the prep's questions / defaults
-        qs = _fit_screen_questions(generated, kinds, prep)
+        qs = _with_project_questions(_fit_screen_questions(generated, kinds, prep), facts, generated)
     answers = [{"q": q["q"], "kind": q["kind"], "competency": q["competency"], "why": q["why"],
                 "video_path": "", "transcript": "", "per_answer_feedback": None,
                 "delivery_metrics": None, "takes": 0} for q in qs]
@@ -7857,9 +7949,11 @@ _PAL_GREETING = ("Hi, thanks for joining. I'll be interviewing you today. To sta
                  "me a little about yourself and what drew you to this role?")
 
 
-def _round2_plan(prep: dict) -> list[dict]:
+def _round2_plan(prep: dict, facts: list[dict] | None = None) -> list[dict]:
     """The 4 to 6 questions the interviewer should cover, with the competency each probes, drawn
-    from the prep (JD-grounded). Used in the briefing and to tag competencies in the report."""
+    from the prep (JD-grounded). A Verified project on the job's resume (``facts``) adds one
+    question per project (at most two), third in line so the interviewer reaches it. Used in the
+    briefing and to tag competencies in the report."""
     out = []
     for q in (prep.get("questions") or []):
         text = str(q.get("q") or "").strip()
@@ -7867,10 +7961,13 @@ def _round2_plan(prep: dict) -> list[dict]:
             out.append({"q": text, "competency": str(q.get("competency") or "").strip() or "General"})
         if len(out) >= 6:
             break
+    proj = [{"q": pr["questions"][0], "competency": "Project"} for pr in (facts or [])[:2] if pr.get("questions")]
+    if proj:
+        out = (out[:2] + proj + out[2:])[:6]
     return out
 
 
-def _round2_briefing(prep: dict, profile: dict) -> str:
+def _round2_briefing(prep: dict, profile: dict, facts: list[dict] | None = None) -> str:
     """The per-interview briefing (Tavus `conversational_context`): interviewer persona for this
     company/role, the interview's length and structure, the JD and the person's résumé/profile, and the
     questions to cover. Sent to Tavus to steer the interviewer; not stored by us."""
@@ -7885,10 +7982,14 @@ def _round2_briefing(prep: dict, profile: dict) -> str:
         "Ask one question at a time, listen to the whole answer, probe with short follow-ups, and "
         "keep to: intro, 4 to 6 questions, the candidate's questions, close.",
     ]
-    plan = _round2_plan(prep)
+    plan = _round2_plan(prep, facts)
     if plan:
         lines.append("QUESTIONS TO COVER (adapt the wording, ask in a natural order):")
         lines += [f"- {q['q']} (probes: {q['competency']})" for q in plan]
+    if facts:
+        from llm.base import project_facts_text
+        lines.append("Be sure to ask the Project question(s): the candidate built this and lists it on "
+                     "their resume.\n" + project_facts_text(facts))
     if jd:
         lines.append("JOB DESCRIPTION:\n" + jd[:2500])
     if profile:
@@ -7985,7 +8086,8 @@ def interviews_cvi_start():
     if not status["available"]:
         return jsonify({"error": "round2_unavailable", **status}), 402
     profile = (_memory().load("default") or {}).get("profile") or {}
-    briefing = _round2_briefing(prep, profile)
+    facts = _verified_project_facts(prep)
+    briefing = _round2_briefing(prep, profile, facts)
     role = prep.get("role", "")
     source = status["source"]
     if source == "plan":
@@ -8015,7 +8117,7 @@ def interviews_cvi_start():
           "skipped_screen": not screen_id, "role": role, "company": prep.get("company", ""),
           "source": source, "conversation_id": conversation_id,
           "started": int(time.time()), "max_minutes": ROUND2_MAX_MINUTES,
-          "plan": _round2_plan(prep), "report": None, "transcript": []}
+          "plan": _round2_plan(prep, facts), "report": None, "transcript": []}
     interviews = _load_interviews()
     interviews.append(iv)
     _save_interviews(interviews)

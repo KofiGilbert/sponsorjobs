@@ -1901,7 +1901,8 @@ class AnthropicLLM:
         }
 
     def generate_screen_questions(self, profile: dict, role: str, company: str = "",
-                                  jd: str = "", kinds: list[str] | None = None) -> dict:
+                                  jd: str = "", kinds: list[str] | None = None,
+                                  projects: list[dict] | None = None) -> dict:
         """Exactly N questions for a HireVue-style one-way recorded screen (Round 1), one per
         requested kind, in order: 'motivation' (why this company/role), 'behavioural' (STAR, from
         their real past), 'situational' (a realistic what-would-you-do for THIS job) or 'technical'
@@ -1926,9 +1927,17 @@ class AnthropicLLM:
             "Return ONLY JSON: {\"questions\": [{\"q\":\"...\",\"kind\":\"...\",\"competency\":\"...\","
             "\"why\":\"...\"}, ...]}."
         )
+        if projects:
+            from llm.base import project_facts_text
+            k = min(2, len(projects), max(1, n - 3))
+            system += ("\nThe candidate's resume for this job includes the verified project(s) under "
+                       f"PROJECTS THEY BUILT. Make exactly {k} of the behavioural or technical "
+                       "questions about them (one per project), grounded in the facts given: why it "
+                       "was built that way, a trade-off, or what breaks at scale. Name the project.")
         who = f"ROLE: {role}\n" + (f"COMPANY: {company}\n" if company else "")
         user = (who + (f"JOB DESCRIPTION:\n{jd[:3000]}\n\n" if jd else "\n")
-                + f"CANDIDATE PROFILE (JSON):\n{json.dumps(profile)[:6000]}")
+                + f"CANDIDATE PROFILE (JSON):\n{json.dumps(profile)[:6000]}"
+                + (f"\n\n{project_facts_text(projects)}" if projects else ""))
         raw = self._complete(system, user, max_tokens=1000, effort="medium")
         data = self._parse_json_object(raw) or {}
         from tailoring.conform import strip_ai_dashes

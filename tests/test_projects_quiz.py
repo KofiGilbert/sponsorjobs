@@ -5,7 +5,9 @@ Acceptance: the quiz is generated ONCE per build from the real files and the Lea
 the client; grading is local (no model call); 14 of 20 passes and marks the project Verified, 13
 fails and lists each wrong question with the right answer and a one-line explanation; a retake has
 the same questions in a new order with the options reshuffled; publish and Add to resume refuse
-until Verified; the recorded project-defence path is gone. Offline: FakeLLM returns a deterministic quiz.
+until Verified; the recorded project-defence path is gone. Interview tie-in: a prep for a job whose
+resume carries a Verified project passes that project's stored facts into the EXISTING question
+generation, with no model call of its own. Offline: FakeLLM returns a deterministic quiz.
 """
 
 import importlib
@@ -175,3 +177,90 @@ def test_the_recorded_project_defence_is_gone(client):
     assert not hasattr(A, "_project_screen_create") and not hasattr(A, "_project_defense_result")
     from llm.base import FakeLLM
     assert not hasattr(FakeLLM, "generate_project_interview")
+
+
+# ---- Interview tie-in ------------------------------------------------------------------------
+def _verified(A, c):
+    pid = _built(A, c)
+    assert _submit(A, c, pid, 20)["passed"]
+    return pid
+
+
+def _spy_llm(monkeypatch):
+    """Every FakeLLM method call by name, and the kwargs of the screen question call."""
+    from llm.base import FakeLLM
+    names, seen = [], {}
+    for name in [n for n in dir(FakeLLM) if not n.startswith("_") and callable(getattr(FakeLLM, n))]:
+        real = getattr(FakeLLM, name)
+
+        def wrap(self, *a, _n=name, _r=real, **k):
+            names.append(_n)
+            if _n == "generate_screen_questions":
+                seen.update(k)
+            return _r(self, *a, **k)
+        monkeypatch.setattr(FakeLLM, name, wrap)
+    return names, seen
+
+
+def test_screen_for_a_job_with_a_verified_project_asks_about_it_without_a_new_call(client, monkeypatch):
+    A, c = client
+    _verified(A, c)
+    # on the resume: Add to resume puts it among the saved profile's projects
+    pid = _store(A, next(p["id"] for p in A._load_projects()))["id"]
+    assert c.post(f"/api/projects/{pid}/tocv").status_code == 200
+    prep = c.post("/api/preps", json={"role": "Data Analyst", "jd": "Python, testing, data."}).get_json()["prep"]
+    names, seen = _spy_llm(monkeypatch)
+    s = c.post("/api/screens", json={"prep_id": prep["id"], "questions": 5}).get_json()
+    assert names == ["generate_screen_questions"]                    # no model call of its own
+    facts = seen["projects"]
+    assert [f["title"] for f in facts] == [IDEA["title"]]
+    quiz = _store(A, pid)["quiz"]["questions"]
+    assert any(q["q"] in " ".join(facts[0]["facts"]) for q in quiz)         # quiz content as context
+    assert any(st["why"] in " ".join(facts[0]["facts"]) for st in _store(A, pid)["learn"]["steps"])
+    texts = [q["text"] for q in s["questions"]]
+    assert len(texts) == 5 and sum(IDEA["title"] in t for t in texts) == 1
+    proj_q = next(q for q in s["questions"] if IDEA["title"] in q["text"])
+    assert proj_q["competency"] == "Project"
+
+
+def test_screen_without_a_verified_project_on_the_resume_is_unchanged(client, monkeypatch):
+    A, c = client
+    _verified(A, c)                                                  # verified, but not on the resume
+    prep = c.post("/api/preps", json={"role": "Data Analyst", "jd": "SQL",
+                                      "cv": "Jane Doe. Projects: Weather bot."}).get_json()["prep"]
+    names, seen = _spy_llm(monkeypatch)
+    s = c.post("/api/screens", json={"prep_id": prep["id"], "questions": 5}).get_json()
+    assert names == ["generate_screen_questions"] and "projects" not in seen
+    assert not any(IDEA["title"] in q["text"] for q in s["questions"])
+
+
+def test_live_round_and_model_prompt_carry_the_project_facts(client, monkeypatch):
+    A, c = client
+    pid = _verified(A, c)
+    # a tailored resume whose projects list the verified one by its title
+    recs = A._records()
+    rid = recs.add("Data Analyst", "Acme", 80.0, "", "Data Analyst",
+                   data={"render_profile": {"projects": [{"org": IDEA["title"], "bullets": ["x"]}]},
+                         "jd": "Python and testing."})
+    recs.close()
+    prep = {"id": "p1", "role": "Data Analyst", "company": "Acme", "jd": "Python and testing.",
+            "record_id": str(rid), "questions": [{"q": f"Q{i}", "competency": "General"} for i in range(6)]}
+    facts = A._verified_project_facts(prep)
+    assert [f["title"] for f in facts] == [IDEA["title"]]
+    plan = A._round2_plan(prep, facts)
+    assert len(plan) == 6 and plan[2]["competency"] == "Project" and IDEA["title"] in plan[2]["q"]
+    brief = A._round2_briefing(prep, {}, facts)
+    assert "PROJECTS THEY BUILT" in brief and facts[0]["facts"][0] in brief
+    # a resume without it: nothing added
+    assert A._verified_project_facts(dict(prep, record_id=None, cv="Projects: Weather bot")) == []
+    assert A._round2_plan(dict(prep), []) == A._round2_plan(prep)
+
+    # the real model's prompt: the facts ride in the same screen-question call
+    from llm.anthropic_client import AnthropicLLM
+    llm = object.__new__(AnthropicLLM)
+    sent = {}
+    llm._complete = lambda system, user, **k: sent.update(system=system, user=user) or json.dumps({"questions": []})
+    llm.generate_screen_questions({}, "Data Analyst", "Acme", "jd", kinds=["motivation", "behavioural",
+                                  "behavioural", "behavioural", "situational"], projects=facts)
+    assert "PROJECTS THEY BUILT" in sent["user"] and IDEA["title"] in sent["user"]
+    assert facts[0]["facts"][0] in sent["user"] and "exactly 1 of the behavioural" in sent["system"]

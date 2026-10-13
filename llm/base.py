@@ -260,6 +260,28 @@ def _profile_first_role(profile: dict) -> str:
     return ""
 
 
+def project_facts_text(projects: list[dict] | None) -> str:
+    """The stored facts of the verified projects on this job's resume, as prompt context for the
+    interview question generation (no separate model call). Each project: title, tech, summary,
+    repo, a few facts from Learn it and the Defend it quiz, and up to two ready questions."""
+    blocks = []
+    for pr in projects or []:
+        head = f"- {pr.get('title', '')}" + (f" ({pr['tech']})" if pr.get("tech") else "")
+        lines = [head]
+        if pr.get("summary"):
+            lines.append(f"  What it is: {pr['summary']}")
+        if pr.get("repo_url"):
+            lines.append(f"  Repo: {pr['repo_url']}")
+        for f in (pr.get("facts") or [])[:6]:
+            lines.append(f"  Fact: {f}")
+        for q in (pr.get("questions") or [])[:2]:
+            lines.append(f"  Question it supports: {q}")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return ""
+    return "PROJECTS THEY BUILT (verified, from the project itself):\n" + "\n".join(blocks)
+
+
 class FakeLLM:
     """A deterministic, network-free stand-in for a real LLM.
 
@@ -1511,8 +1533,10 @@ class FakeLLM:
         }
 
     def generate_screen_questions(self, profile: dict, role: str, company: str = "",
-                                  jd: str = "", kinds: list[str] | None = None) -> dict:
-        # Deterministic Round-1 set: exactly one question per requested kind, in order.
+                                  jd: str = "", kinds: list[str] | None = None,
+                                  projects: list[dict] | None = None) -> dict:
+        # Deterministic Round-1 set: exactly one question per requested kind, in order. With
+        # verified ``projects`` (their stored facts), the last behavioural slot asks about one.
         r = (role or "the role").strip()
         co = (company or "").strip() or "this company"
         kinds = list(kinds or ["motivation", "behavioural", "behavioural", "behavioural", "situational"])
@@ -1536,6 +1560,11 @@ class FakeLLM:
             q, comp = items[used.get(k, 0) % len(items)]
             used[k] = used.get(k, 0) + 1
             out.append({"q": q, "kind": k, "competency": comp, "why": f"Probes {comp.lower()}."})
+        for pr in (projects or [])[:1]:
+            slot = max((i for i, q in enumerate(out) if q["kind"] == "behavioural"), default=None)
+            if slot is not None and (pr.get("questions") or []):
+                out[slot] = {"q": pr["questions"][0], "kind": "behavioural", "competency": "Project",
+                             "why": f"Probes how well you know {pr.get('title', 'your project')}."}
         return {"questions": out}
 
     def grade_project_defense(self, project: dict, qa: list[dict]) -> dict:
