@@ -597,9 +597,35 @@ def confirms(evidence: str, sponsor_name: str, need: int = 1, *, squash: bool = 
     if squash and dist:
         sq = _squash(evidence)
         count = max(count, sum(1 for t in dist if len(t) >= 6 and t in sq))
-    if count < need and not _alias_hit(evidence, alias_for(sponsor_name)[1]):
+    alias = _alias_hit(evidence, alias_for(sponsor_name)[1])
+    if count < need and not alias:
+        return False
+    if not alias and not _generic_lead_shown(_tokens(evidence), sponsor_name):
         return False
     return not foreign_qualified(evidence, sponsor_name)
+
+
+def _generic_lead(sponsor_name: str) -> str:
+    """The sponsor's leading word when it is generic and the brand is the ordinary noun after
+    it ("American Tower", "International Paper", "United Airlines"): the two only name the
+    employer together. '' otherwise."""
+    toks = _tokens(sponsor_name)
+    dist = distinctive_tokens(sponsor_name)
+    if len(toks) >= 2 and toks[0] in _GENERIC and toks[0] not in ("the", "and") and len(dist) == 1:
+        return toks[0]
+    return ""
+
+
+def _generic_lead_shown(evidence_toks: list[str], sponsor_name: str) -> bool:
+    """Live 2026-10-12: "Tower Research Capital" passed for American Tower and "Paper Education
+    America" for International Paper on the bare noun. When the brand is a generic word plus an
+    ordinary noun, the evidence must show the generic word too (or the two run together)."""
+    lead = _generic_lead(sponsor_name)
+    if not lead:
+        return True
+    joined = "".join(evidence_toks)
+    nxt = distinctive_tokens(sponsor_name)[0]
+    return lead in evidence_toks or (lead + nxt) in joined
 
 
 _MENTION_NEXT = re.compile(r"[ \t]+([A-Z][A-Za-z&'-]*)")
@@ -639,6 +665,10 @@ def prose_confirms(text: str, sponsor_name: str, need: int = 1, min_mentions: in
     phrase = any(len(_tokens(b)) > 1 and re.search(r"(?<![A-Za-z])" + r"\W+".join(
         re.escape(t) for t in _tokens(b)) + r"(?![A-Za-z])", text, re.I) for b in brands)
     enough = len(found & set(dist)) >= need or phrase or bool(found - set(dist))
+    lead = _generic_lead(sponsor_name)
+    if lead and not phrase and not re.search(
+            rf"(?<![A-Za-z]){re.escape(lead)}\W+{re.escape(dist[0])}(?![A-Za-z])", text, re.I):
+        return False
     return enough and clean >= min_mentions and clean > foreign
 
 

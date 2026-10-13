@@ -460,3 +460,14 @@ _STRAY_MISSES = [
 def test_a_board_that_names_more_than_the_brand_or_a_later_word_alone_is_rejected(sponsor, slug, board):
     fetch = _fetch(gh_jobs={slug: _JOB_US}, gh_names={slug: board})
     assert discover_for_company(sponsor, atss=("greenhouse",), fetch=fetch) is None
+
+
+def test_a_generic_word_plus_an_ordinary_noun_needs_both_words():
+    # Live 2026-10-12: Workday tenants "tower" (Tower Research Capital) and "paper" (Paper
+    # Education America) passed for American Tower and International Paper on the bare noun.
+    assert not confirms("540 Tower Research Capital (Hong Kong) Limited", "American Tower Corporation")
+    assert not confirms("Paper Education America Inc.", "International Paper")
+    assert confirms("American Tower", "American Tower Corporation")
+    assert confirms("International Paper Company", "International Paper")
+    assert confirms("United Airlines", "United Airlines Inc")
+    assert not prose_confirms("Tower continues to grow. At Tower, we trade.", "American Tower Corporation")
