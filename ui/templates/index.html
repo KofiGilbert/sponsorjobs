@@ -700,7 +700,7 @@
             <h1 class="page-title" data-i18n="projects.title">Projects</h1>
             <p class="page-sub" data-i18n="projects.sub">Add a project, prove you can defend it, then it's ready for your resume.</p>
           </div>
-          <div class="page-head-actions">
+          <div class="page-head-actions" id="projHeadActs">
             <button class="btn btn-ghost" id="projSuggestBtn" type="button">
               <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.8a4.2 4.2 0 0 0-2.5 7.6c.5.4.8.9.8 1.5v.3h3.4v-.3c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8Z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/><path d="M6.6 13.6h2.8M7 15h2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
               Suggest a project
@@ -711,6 +711,8 @@
             </button>
           </div>
         </header>
+
+        <div class="proj-body">
 
         <form class="proj-new" id="projForm" hidden>
           <input class="fld" id="projTitle" type="text" placeholder="Project title, e.g. Credit-risk scoring model" autocomplete="off">
@@ -766,6 +768,7 @@
           <div class="proj-build-foot" id="projBuildFoot" hidden>
             <button class="btn btn-primary" id="projBuildDefend" type="button">I've built it, prove I understand it</button>
           </div>
+        </div>
         </div>
       </section>
 

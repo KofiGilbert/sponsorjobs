@@ -4322,11 +4322,22 @@
   }
   function renderProjList() {
     const root = $("#projList"); if (!root) return;
+    const formOpen = !$("#projForm")?.hidden || !$("#projSuggestForm")?.hidden;
+    const acts = $("#projHeadActs");
     if (!PROJECTS.length) {
-      root.innerHTML = `<div class="empty">No projects yet. Add one, then prove you can defend it, that is what makes it resume-ready.</div>`;
+      // The header buttons repeat the card's actions, so they step aside while it shows:
+      // one primary action per screen.
+      if (acts) acts.hidden = !formOpen;
+      root.innerHTML = formOpen ? "" : projEmptyHTML();
+      $("#projEmptyAdd")?.addEventListener("click", () => openProjForm("#projForm", "#projTitle"));
+      $("#projEmptySuggest")?.addEventListener("click", () => openProjForm("#projSuggestForm", "#projTarget"));
       return;
     }
-    root.innerHTML = PROJECTS.map(projCard).join("");
+    if (acts) acts.hidden = false;
+    const ver = PROJECTS.filter(p => p.status === "verified").length;
+    const drafts = PROJECTS.length - ver;
+    root.innerHTML = `<div class="proj-count">${drafts} ${drafts === 1 ? "draft" : "drafts"} &middot; ${ver} verified, ready for your resume</div>`
+      + PROJECTS.map(projCard).join("");
     root.querySelectorAll(".proj-card").forEach(card => {
       const p = PROJECTS.find(x => x.id === card.dataset.id);
       card.querySelector('[data-act="defend"]')?.addEventListener("click", () => startDefend(p));
@@ -4338,8 +4349,30 @@
       });
     });
   }
-  $("#projNew")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) $("#projTitle")?.focus(); } });
-  $("#projCancel")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.reset(); f.hidden = true; } });
+  function projEmptyHTML() {
+    const step = (n, t, d) => `<li class="proj-step"><span class="proj-step-n">${n}</span>
+      <div><div class="proj-step-t">${t}</div><div class="proj-step-d">${d}</div></div></li>`;
+    return `<section class="proj-empty">
+      <h2 class="proj-empty-h">Show what you can build</h2>
+      <p class="proj-empty-sub">A project you can explain in an interview is proof an employer can trust.</p>
+      <ol class="proj-steps">
+        ${step(1, "Add a project or get an idea", "Describe something you built, or get one matched to the role you want.")}
+        ${step(2, "Build it with the guide", "A step-by-step plan, with a coach for each step.")}
+        ${step(3, "Prove you understand it", "Pass a short interview-style check. It is then verified and ready for your resume.")}
+      </ol>
+      <div class="proj-empty-acts">
+        <button class="btn btn-primary" id="projEmptyAdd" type="button">Add a project</button>
+        <button class="btn btn-ghost" id="projEmptySuggest" type="button">Suggest one for my target role</button>
+      </div>
+    </section>`;
+  }
+  function openProjForm(formSel, focusSel) {
+    ["#projForm", "#projSuggestForm"].forEach(sel => { const f = $(sel); if (f) f.hidden = sel !== formSel; });
+    renderProjList();
+    $(focusSel)?.focus();
+  }
+  $("#projNew")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { $("#projSuggestForm") && ($("#projSuggestForm").hidden = true); $("#projTitle")?.focus(); } renderProjList(); } });
+  $("#projCancel")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.reset(); f.hidden = true; } renderProjList(); });
   $("#projForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const msg = $("#projMsg"), setMsg = (t, cls) => { if (msg) { msg.textContent = t; msg.className = "proj-msg " + cls; msg.hidden = false; } };
@@ -4360,6 +4393,7 @@
   });
   $("#projSuggestCancel")?.addEventListener("click", () => {
     const f = $("#projSuggestForm"); if (f) { f.reset(); f.hidden = true; const l = $("#projSuggestList"); if (l) l.innerHTML = ""; }
+    renderProjList();
   });
   $("#projSuggestForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
