@@ -1375,31 +1375,35 @@ class AnthropicLLM:
         data = self._parse_json_object(raw) or {}
         return {"steps": [s for s in (data.get("steps") or []) if isinstance(s, dict)][:8]}
 
-    def generate_project_interview(self, project: dict, files: list, steps: list) -> dict:
-        """Five interview questions on THIS project, from its files and the walkthrough: why this
-        design, trade-offs, what breaks at scale, how it is tested, what you would change."""
-        listing = "\n\n".join(f"### {f['path']}\n{f['content'][:2500]}" for f in files
-                              if f.get("path") != ".gitignore")[:30000]
-        walk = "\n".join(f"- {s.get('title', '')}: {s.get('why', '')}" for s in steps or [])
+    def generate_project_quiz(self, project: dict, files: list, steps: list) -> dict:
+        """Defend it: a 20-question multiple-choice quiz on THIS project, from its files and the
+        Learn it walkthrough. One call, made once per build. Code questions name a file and a line
+        range; the app cuts the real excerpt itself, so no code here is model-written."""
+        listing = "\n\n".join(
+            f"### {f['path']}\n" + "\n".join(f"{i + 1:>3}| {ln}" for i, ln in enumerate(f["content"].splitlines()[:200]))
+            for f in files if f.get("path") != ".gitignore")[:40000]
+        walk = "\n".join(f"- {s.get('title', '')} ({s.get('path', '')}): {s.get('explain', '')} Why: {s.get('why', '')}"
+                         for s in steps or [])[:6000]
         system = (
-            "You are a technical interviewer. The candidate built the project below and will "
-            "defend it in a one-way recorded interview. Write EXACTLY 5 spoken-style questions, "
-            "one per angle, in this order, each grounded in specific files or decisions of THIS "
-            "project: 1 why this design, 2 trade-offs, 3 what breaks at scale, 4 how you tested "
-            "it, 5 what you would change. Plain text, no em or en dashes. Return ONLY JSON "
-            "{\"questions\": [{\"q\": \"...\", \"competency\": \"Design|Trade-offs|Scale|Testing|"
-            "Improvement\"}]}."
+            "You write the final quiz a student takes to prove they understand the project below, "
+            "which an AI pair-programmer built for them and they have just studied. Write EXACTLY 20 "
+            "multiple-choice questions, each grounded in specific files, functions or decisions of "
+            "THIS project (never generic programming trivia). Cover these topics, in any order: "
+            "parts (what each main part does) x4, why (why it was built that way) x3, tradeoffs x3, "
+            "testing (how it is tested, what is not) x3, scale (what breaks at scale) x2, extend (how "
+            "to add a feature) x2, code (reading a short excerpt) x3.\n"
+            "For EACH question: topic (one of parts, why, tradeoffs, testing, scale, extend, code); "
+            "q (one sentence); options (EXACTLY 4 short, distinct, plausible options: wrong ones must "
+            "be believable mistakes, not jokes, and similar in length to the right one); answer (the "
+            "index 0 to 3 of the one right option); explain (one plain sentence on why it is right). "
+            "A code question also gives path (a file from the listing) and start, end (line numbers "
+            "from the listing, at most 12 lines) and asks about that excerpt.\n"
+            "Plain text, no em or en dashes. Return ONLY JSON {\"questions\": [...]}."
         )
         raw = self._complete(system, f"PROJECT\n{self._idea_text(project)}\n\nWALKTHROUGH\n{walk}"
-                                     f"\n\nFILES\n{listing}", max_tokens=1200, effort="medium")
+                                     f"\n\nFILES\n{listing}", max_tokens=7000, effort="medium")
         data = self._parse_json_object(raw) or {}
-        from tailoring.conform import strip_ai_dashes
-        out = []
-        for q in data.get("questions") or []:
-            if isinstance(q, dict) and str(q.get("q") or "").strip():
-                out.append({"q": strip_ai_dashes(str(q["q"]).strip()),
-                            "competency": str(q.get("competency") or "").strip()[:40]})
-        return {"questions": out[:5]}
+        return {"questions": [q for q in (data.get("questions") or []) if isinstance(q, dict)][:24]}
 
     def upskill_plan(self, role: str, gaps: list[str], profile: dict,
                      required: list[str] | None = None) -> dict:

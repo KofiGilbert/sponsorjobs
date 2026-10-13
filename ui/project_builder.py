@@ -1,7 +1,7 @@
 """AI-built portfolio projects: generate a SMALL working project, validate it, teach it.
 
 The flow (approved 2026-10-13): the AI builds a small, runnable project for an idea, the person
-learns it through a walkthrough of the real files, then defends it in a recorded interview.
+learns it through a walkthrough of the real files, then defends it in a 20-question quiz.
 Only a defended (Verified) project goes public or onto the resume; that gate lives in ui/app.py.
 
 This module is pure apart from the local file store: the model is passed in, GitHub is not
@@ -476,3 +476,117 @@ def public_step(step: dict) -> dict:
             "end": step.get("end", 1), "code": step.get("code", ""), "explain": step.get("explain", ""),
             "why": step.get("why", ""),
             "check": {"kind": c.get("kind", "choice"), "q": c.get("q", ""), "options": c.get("options") or []}}
+
+
+# ---- Defend it: the quiz ----------------------------------------------------------------------
+# Twenty multiple-choice questions on THIS project, generated once from the real files and the
+# Learn it walkthrough, cached on the project. The answer key never leaves the server; grading is
+# a local comparison (no model call per answer or per attempt). Pass: 70 percent, 14 of 20.
+QUIZ_SIZE = 20
+QUIZ_PASS_PCT = 70
+QUIZ_TOPICS = ("parts", "why", "tradeoffs", "testing", "scale", "extend", "code")
+QUIZ_EXCERPT_LINES = 14
+
+
+def quiz_pass_mark(total: int = QUIZ_SIZE) -> int:
+    """Questions needed to pass: 70 percent, rounded up (14 of 20)."""
+    return -(-int(total) * QUIZ_PASS_PCT // 100)
+
+
+def quiz_questions(raw: list, files: list[dict]) -> list[dict]:
+    """Normalise the model's quiz against the REAL files. Each question keeps exactly four
+    distinct options with one right answer; a code question's excerpt is cut from the file on
+    disk (never model-written code), at most ``QUIZ_EXCERPT_LINES`` lines; a question about a
+    file that does not exist loses its excerpt but keeps its text. Duplicates are dropped.
+    Returns at most ``QUIZ_SIZE`` questions; the caller refuses a quiz that comes back short."""
+    from tailoring.conform import strip_ai_dashes as clean
+    by_path = {f["path"]: f["content"] for f in files}
+    out, seen = [], set()
+    for s in raw or []:
+        if not isinstance(s, dict):
+            continue
+        q = clean(str(s.get("q") or "").strip())[:400]
+        opts = [clean(str(o).strip())[:200] for o in (s.get("options") or []) if str(o).strip()]
+        if not q or q.lower() in seen or len(opts) != 4 or len({o.lower() for o in opts}) != 4:
+            continue
+        try:
+            ans = int(s.get("answer"))
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= ans < 4:
+            continue
+        topic = str(s.get("topic") or "").strip().lower()
+        item = {"q": q, "options": opts, "answer": ans,
+                "explain": clean(str(s.get("explain") or "").strip())[:300],
+                "topic": topic if topic in QUIZ_TOPICS else "parts"}
+        path = s.get("path")
+        if path in by_path:
+            lines = by_path[path].splitlines()
+            try:
+                a = max(1, int(s.get("start") or 1))
+                b = int(s.get("end") or a + QUIZ_EXCERPT_LINES - 1)
+            except (TypeError, ValueError):
+                a, b = 1, QUIZ_EXCERPT_LINES
+            a = min(a, max(1, len(lines)))
+            b = max(a, min(b, len(lines), a + QUIZ_EXCERPT_LINES - 1))
+            code = "\n".join(lines[a - 1:b])
+            if code.strip():
+                item.update(path=path, start=a, end=b, code=code)
+        seen.add(q.lower())
+        out.append(item)
+        if len(out) >= QUIZ_SIZE:
+            break
+    return out
+
+
+def quiz_attempt(questions: list[dict], rng, previous: dict | None = None) -> dict:
+    """A fresh attempt: the questions in a shuffled order and each question's options shuffled.
+    ``order[k]`` is the question shown k-th; ``opts[k][j]`` is the original index of the option
+    shown j-th for it. A retake never repeats the previous attempt's question order."""
+    n = len(questions)
+    order = list(range(n))
+    for _ in range(8):
+        rng.shuffle(order)
+        if n < 2 or not previous or order != list(previous.get("order") or []):
+            break
+    opts = []
+    for _k in range(n):
+        perm = list(range(4))
+        rng.shuffle(perm)
+        opts.append(perm)
+    return {"order": order, "opts": opts}
+
+
+def public_quiz(questions: list[dict], attempt: dict) -> list[dict]:
+    """The questions as the client sees them, in the attempt's order with shuffled options. The
+    answer key and the explanations stay on the server."""
+    out = []
+    for k, qi in enumerate(attempt["order"]):
+        q = questions[qi]
+        item = {"n": k + 1, "q": q["q"], "options": [q["options"][j] for j in attempt["opts"][k]]}
+        if q.get("code"):
+            item.update(path=q["path"], start=q["start"], end=q["end"], code=q["code"])
+        out.append(item)
+    return out
+
+
+def grade_quiz(questions: list[dict], attempt: dict, answers: list) -> dict:
+    """Grade one attempt locally. ``answers[k]`` is the option index the person picked for the
+    k-th question as shown (None or missing counts as wrong). Returns the score, the pass mark,
+    whether it passed, and each wrong question with the right answer and its explanation."""
+    total = len(attempt["order"])
+    score, wrong = 0, []
+    for k, qi in enumerate(attempt["order"]):
+        q = questions[qi]
+        pick = answers[k] if k < len(answers) else None
+        try:
+            got = attempt["opts"][k][int(pick)] if pick is not None and 0 <= int(pick) < 4 else None
+        except (TypeError, ValueError):
+            got = None
+        if got == q["answer"]:
+            score += 1
+            continue
+        wrong.append({"n": k + 1, "q": q["q"], "yours": q["options"][got] if got is not None else "",
+                      "correct": q["options"][q["answer"]], "explain": q.get("explain", "")})
+    need = quiz_pass_mark(total)
+    return {"score": score, "total": total, "pass_mark": need, "passed": score >= need, "wrong": wrong}

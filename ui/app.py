@@ -5108,12 +5108,13 @@ def _ai_public(p: dict) -> dict:
         return {"origin": p.get("origin") or "manual"}
     b = p.get("build") or {}
     lr = p.get("learn") or {}
-    d = p.get("defense") or {}
+    last = (p.get("quiz") or {}).get("last") or {}
     return {"origin": "ai", "stage": _ai_stage(p), "target": p.get("target") or "local",
             "ai_credit": p.get("ai_credit", True) is not False, "has_files": bool(p.get("files")),
             "build": {k: b.get(k) for k in ("state", "done", "total", "error", "stage")},
             "learn": {"total": len(lr.get("steps") or []), "learned": len(set(lr.get("learned") or []))},
-            "defense": {"score": d.get("score"), "passed": bool(d.get("passed")), "tried": d.get("score") is not None}}
+            "defense": {"score": last.get("score"), "total": last.get("total"), "pass_mark": last.get("pass_mark"),
+                        "passed": bool(last.get("passed")), "tried": last.get("score") is not None}}
 
 
 @app.get("/api/projects")
@@ -5520,18 +5521,15 @@ def projects_delete(pid):
 @app.post("/api/projects/<pid>/test")
 @_guard
 def projects_test(pid):
-    """Generate the defense test for a project, grounded in what they built."""
+    """Generate the written defence test for a project the person built by hand, grounded in
+    what they built. An AI-built project is defended by its quiz instead (/quiz)."""
     projects = _load_projects()
     p = next((x for x in projects if x.get("id") == pid), None)
     if not p:
         return jsonify({"error": "Project not found."}), 404
-    gate = _defense_gate(p)
-    if gate:
-        return gate
-    # The written test is the fallback for Defend it when the recorded interview can't run (no
-    # camera or mic): an AI-built project uses the same five project questions.
-    test = ({"questions": [q["q"] for q in _project_defense_questions(p)]} if p.get("origin") == "ai"
-            else _make_llm().generate_project_test(p))
+    if p.get("origin") == "ai":
+        return _quiz_only()
+    test = _make_llm().generate_project_test(p)
     p["test"] = test
     _save_projects(projects)
     return jsonify(test)
@@ -5597,14 +5595,14 @@ def projects_coach(pid):
 @app.post("/api/projects/<pid>/grade")
 @_guard
 def projects_grade(pid):
-    """Grade the defense. Passing marks the project verified, the CV-inclusion gate."""
+    """Grade the written defence of a hand-built project. Passing marks the project verified,
+    the CV-inclusion gate. An AI-built project is graded by its quiz (/quiz/submit)."""
     projects = _load_projects()
     p = next((x for x in projects if x.get("id") == pid), None)
     if not p:
         return jsonify({"error": "Project not found."}), 404
-    gate = _defense_gate(p)
-    if gate:
-        return gate
+    if p.get("origin") == "ai":
+        return _quiz_only()
     qa = (request.json or {}).get("answers") or []
     result = _make_llm().grade_project_defense(p, qa)
     p["result"] = result
@@ -5716,8 +5714,8 @@ def projects_to_cv(pid):
 
 
 # ---- AI-built projects (approved 2026-10-13): the AI builds a SMALL working project, the person
-# learns it ("Learn it", a walkthrough of the real files), then defends it in the recorded
-# interview ("Defend it"). Only a defended project is Verified, and only Verified goes public or
+# learns it ("Learn it", a walkthrough of the real files), then defends it in a 20-question quiz
+# ("Defend it"). Only a defended project is Verified, and only Verified goes public or
 # onto the resume (the gate above, enforced server-side in /publish and /tocv).
 #
 # Packages: a build is one "package" (the same unit as a tailoring run), counted through the
@@ -5815,8 +5813,10 @@ def _run_build(pid: str, llm, generate: bool = True) -> None:
                 files = [dict(f, content=PB.with_ai_line(f["content"], False)) if f["path"] == "README.md" else f
                          for f in files]
             PB.save_files(_build_dir(pid), files)
-            _update_project(pid, lambda x: x.update(files=True, run=res["plan"].get("run", ""),
-                                                    test_cmd=res["plan"].get("test", "")))
+            # New files: any quiz made from older ones no longer matches them.
+            _update_project(pid, lambda x: (x.pop("quiz", None),
+                                            x.update(files=True, run=res["plan"].get("run", ""),
+                                                     test_cmd=res["plan"].get("test", ""))))
     except PB.BuildError as exc:
         print(f"[projects] build {pid} failed at {exc.stage}: {exc}; tokens {meter.as_dict()}")
         progress(state="failed", error=str(exc), stage=exc.stage, tokens=meter.as_dict(), finished=time.time())
@@ -5866,6 +5866,11 @@ def _run_build(pid: str, llm, generate: bool = True) -> None:
                 _update_project(pid, lambda x: x.update(learn={"steps": steps, "learned": [], "answers": {}}))
         except Exception:
             traceback.print_exc()
+    # The Defend it quiz, also once, here, inside the same token budget. A miss is fine: /quiz
+    # makes it on first open from what is left of this build's budget.
+    cur = next((x for x in _load_projects() if x.get("id") == pid), {}) or {}
+    if not (cur.get("quiz") or {}).get("questions") and (cur.get("learn") or {}).get("steps"):
+        _make_project_quiz(pid, llm, files, cur["learn"]["steps"], meter)
     tokens = meter.as_dict()
     print(f"[projects] build {pid} ready: {len(files)} files, tokens in={tokens['input']} "
           f"out={tokens['output']} calls={tokens['calls']}{' (estimated)' if tokens['estimated'] else ''}")
@@ -6049,37 +6054,6 @@ def projects_learn_answer(pid, idx):
                     "project": _project_public(p)})
 
 
-_DEFENSE_DEFAULTS = (
-    ("Why did you design {t} this way rather than another way?", "Design"),
-    ("What trade-offs did you make, and what did you give up?", "Trade-offs"),
-    ("What would break first if {t} had a hundred times the users or data?", "Scale"),
-    ("How did you test it, and what is not tested yet?", "Testing"),
-    ("If you had another week, what would you change and why?", "Improvement"),
-)
-
-
-def _project_defense_questions(p: dict) -> list[dict]:
-    """Five interview questions on this project (why this design, trade-offs, scale, testing,
-    what you would change), from its files and walkthrough. Generated once and cached."""
-    from ui import project_builder as PB
-    cached = (p.get("defense") or {}).get("questions") or []
-    if len(cached) == 5:
-        return cached
-    files = PB.load_files(_build_dir(p["id"]))
-    try:
-        got = _make_llm().generate_project_interview(PB._idea(p), files, (p.get("learn") or {}).get("steps") or [])
-        qs = [q for q in (got or {}).get("questions") or [] if str(q.get("q") or "").strip()][:5]
-    except Exception:
-        traceback.print_exc()
-        qs = []
-    t = p.get("title") or "this project"
-    for q, comp in _DEFENSE_DEFAULTS[len(qs):]:
-        qs.append({"q": q.format(t=t), "competency": comp})
-    qs = [{"q": str(q["q"])[:600], "competency": str(q.get("competency") or "Project")[:40]} for q in qs]
-    _update_project(p["id"], lambda x: x.setdefault("defense", {}).update(questions=qs))
-    return qs
-
-
 def _defense_gate(p: dict):
     """An AI-built project is defended only once it is built and Learn it is complete."""
     if p.get("origin") == "ai" and p.get("status") != "verified" and not _learn_done(p):
@@ -6087,30 +6061,135 @@ def _defense_gate(p: dict):
     return None
 
 
-# Defend it passes on the Round 1 practice bar, the same 70 the recorded screen already uses,
-# AND every question answered: one strong answer cannot carry a project you can't explain.
-_DEFENSE_PASS = 70
+# ---- Defend it: a 20-question multiple-choice quiz on THIS project (owner decision 2026-10-13,
+# replacing the recorded interview). Generated ONCE per build from the real files and the Learn it
+# walkthrough (one model call, inside the build's token budget, no package charged), cached on the
+# project and never regenerated on a retake. The answer key stays here; grading is local. Each
+# attempt shows the same questions in a fresh order with the options reshuffled. 14 of 20 passes and
+# marks the project Verified, which unlocks Publish to GitHub and Add to resume (the gate above).
+def _quiz_only():
+    return jsonify({"error": "This project is defended with its quiz. Open Defend it."}), 400
 
 
-def _project_defense_result(s: dict, result: dict) -> None:
-    """After a project's recorded defence is scored: Verified when it clears the bar."""
-    pid = s.get("project_id")
-    answered = all(str(a.get("transcript") or "").strip() for a in s.get("answers") or [])
+def _make_project_quiz(pid: str, llm, files: list, steps: list, meter) -> list:
+    """One model call for the quiz, metered against the build's budget. Returns the questions
+    ([] on a short or failed reply) and stores them with the tokens it used."""
+    from ui import project_builder as PB
+    p = next((x for x in _load_projects() if x.get("id") == pid), None)
+    if not p:
+        return []
+    before = meter.used
     try:
-        score = int(result.get("score") or 0)
-    except (TypeError, ValueError):
-        score = 0
-    passed = answered and score >= _DEFENSE_PASS
-    result["project_passed"] = passed
-    result["project_bar"] = _DEFENSE_PASS
+        raw = meter.call(llm, llm.generate_project_quiz, PB._idea(p), files, steps,
+                         prompt_chars=sum(len(f["content"]) for f in files) + 4000)
+        qs = PB.quiz_questions((raw or {}).get("questions"), files)
+    except PB.BuildError as exc:
+        print(f"[projects] quiz {pid} not made: {exc}")
+        return []
+    except Exception:
+        traceback.print_exc()
+        return []
+    spent = meter.used - before
+    print(f"[projects] quiz {pid}: {len(qs)} questions, tokens {spent} "
+          f"(build total {meter.used} of {meter.budget}){' (estimated)' if meter.estimated else ''}")
+    if len(qs) < PB.QUIZ_SIZE:
+        return []
+    _update_project(pid, lambda x: x.update(quiz={"questions": qs, "tokens": spent, "made": time.time(),
+                                                  "attempt": None, "last": None, "tries": 0}))
+    return qs
+
+
+def _quiz_open(p: dict):
+    """The quiz's questions, made now if the build could not (from what is left of its budget).
+    Returns (questions, error response)."""
+    from ui import project_builder as PB
+    qs = (p.get("quiz") or {}).get("questions") or []
+    if len(qs) >= PB.QUIZ_SIZE:
+        return qs, None
+    files = PB.load_files(_build_dir(p["id"]))
+    steps = (p.get("learn") or {}).get("steps") or []
+    if not files:
+        return [], (jsonify({"error": "This project has no files yet."}), 400)
+    spent = int(((p.get("build") or {}).get("tokens") or {}).get("total") or 0)
+    meter = PB.Meter(budget=max(0, PB.TOKEN_BUDGET - spent))
+    qs = _make_project_quiz(p["id"], _make_llm(), files, steps, meter)
+    if not qs:
+        return [], (jsonify({"error": "Couldn't prepare the quiz right now. Try again."}), 502)
+    _update_project(p["id"], lambda x: x.setdefault("build", {}).update(
+        tokens={**((x.get("build") or {}).get("tokens") or {}), "total": spent + meter.used}))
+    return qs, None
+
+
+@app.post("/api/projects/<pid>/quiz")
+@_guard
+def projects_quiz(pid):
+    """Open Defend it: the current attempt (a fresh shuffled one when none is open), questions in
+    their shown order with shuffled options, no answer key. Built and Learn it complete first."""
+    import random
+    from ui import project_builder as PB
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    if p.get("origin") != "ai":
+        return jsonify({"error": "Only an AI-built project has a quiz."}), 400
+    if p.get("status") == "verified":
+        return jsonify({"error": "This project is already verified."}), 409
+    gate = _defense_gate(p)
+    if gate:
+        return gate
+    qs, err = _quiz_open(p)
+    if err:
+        return err
+    holder = {}
+
+    def ensure(x):
+        qz = x.setdefault("quiz", {})
+        att = qz.get("attempt")
+        if not att or att.get("done") or len(att.get("order") or []) != len(qs):
+            prev = att or qz.get("prev")
+            att = {"id": uuid.uuid4().hex[:10], "done": False, "started": time.time(),
+                   **PB.quiz_attempt(qs, random.SystemRandom(), prev)}
+            qz["attempt"] = att
+        holder["att"] = att
+    p = _update_project(pid, ensure)
+    att = holder["att"]
+    last = (p.get("quiz") or {}).get("last")
+    return jsonify({"attempt": att["id"], "questions": PB.public_quiz(qs, att), "total": len(qs),
+                    "pass_mark": PB.quiz_pass_mark(len(qs)), "last": last, "project": _project_public(p)})
+
+
+@app.post("/api/projects/<pid>/quiz/submit")
+@_guard
+def projects_quiz_submit(pid):
+    """Grade an attempt locally: {attempt, answers: [shown option index or null, in shown order]}.
+    14 of 20 marks the project Verified. A miss returns the wrong questions with the right answer
+    and a one-line explanation; the next open is a retake (same questions, new order)."""
+    from ui import project_builder as PB
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    if p.get("origin") != "ai":
+        return jsonify({"error": "Only an AI-built project has a quiz."}), 400
+    qz = p.get("quiz") or {}
+    qs, att = qz.get("questions") or [], qz.get("attempt") or {}
+    b = request.json or {}
+    if not qs or not att or att.get("done") or str(b.get("attempt") or "") != att.get("id"):
+        return jsonify({"error": "This quiz has changed. Open Defend it again."}), 409
+    answers = b.get("answers") if isinstance(b.get("answers"), list) else []
+    res = PB.grade_quiz(qs, att, answers)
 
     def save(x):
-        x.setdefault("defense", {}).update(screen_id=s.get("id"), score=score, passed=passed, at=time.time())
-        if passed:
+        q = x.setdefault("quiz", {})
+        q["prev"] = {"order": att["order"]}
+        q["attempt"] = dict(att, done=True)
+        q["tries"] = int(q.get("tries") or 0) + 1
+        q["last"] = {k: res[k] for k in ("score", "total", "pass_mark", "passed")} | {"at": time.time()}
+        if res["passed"]:
             x["status"] = "verified"
-            x["result"] = {"pass": True, "summary": f"Defended in a recorded interview, {score}/100.",
-                           "via": "recorded"}
-    _update_project(pid, save)
+            x["result"] = {"pass": True, "via": "quiz",
+                           "summary": f"Passed the Defend it quiz, {res['score']} of {res['total']}."}
+    p = _update_project(pid, save)
+    return jsonify({**res, "project": _project_public(p)})
 
 
 # ---- Interview prep (Feature 3): help someone who has LANDED an interview practice BEFOREHAND,
@@ -6854,7 +6933,7 @@ def _screen_public(s: dict, include_video: bool = False) -> dict:
             "company": s.get("company", ""), "config": cfg, "questions": questions,
             "answers": ans, "result": result, "passed": bool(s.get("passed")),
             "created": int(s.get("created") or 0), "stt_available": _stt_available(),
-            "drill": bool(s.get("drill")), "project_id": s.get("project_id") or "",
+            "drill": bool(s.get("drill")),
             "disclaimer": ROUND1_DISCLAIMER}
 
 
@@ -6868,14 +6947,11 @@ def screens_list():
 @_guard
 def screens_create():
     """Start a Round-1 recorded screen from a prep: {prep_id, extra_time?, questions? (3..5,
-    default 5)}. Or {project_id, extra_time?}: "Defend it" for a project, the same recorded flow
-    with its five project questions (see _project_screen_create). The model is asked for EXACTLY N questions with kinds (1 motivation, N-2
+    default 5)}. The model is asked for EXACTLY N questions with kinds (1 motivation, N-2
     behavioural, 1 situational or light technical), grounded in the JD and the saved profile; the
     mix is enforced server-side. Returns the screen (flat, plus under `screen`) and one unscored
     practice prompt; GET /api/screens/<id>/practice hands out more, never stored."""
     b = request.json or {}
-    if str(b.get("project_id") or "").strip():
-        return _project_screen_create(str(b["project_id"]).strip(), bool(b.get("extra_time")))
     prep_id = str(b.get("prep_id") or "").strip()
     prep = next((p for p in _load_preps() if p.get("id") == prep_id), None)
     if not prep:
@@ -6920,49 +6996,6 @@ def screens_create():
     pub = _screen_public(s)
     practice = _practice_question(s["role"])
     return jsonify({**pub, "practice": practice, "screen": {**pub, "practice": practice}})
-
-
-def _project_screen_create(pid: str, extra: bool):
-    """Defend it: a Round 1 recorded screen on THIS project, with its five interview questions
-    (why this design, trade-offs, scale, testing, what you would change). Scored by the same
-    grading and report card; clearing the bar marks the project Verified (_project_defense_result)."""
-    p = next((x for x in _load_projects() if x.get("id") == pid), None)
-    if not p:
-        return jsonify({"error": "Project not found."}), 404
-    gate = _defense_gate(p)
-    if gate:
-        return gate
-    qs = _project_defense_questions(p)
-    answers = [{"q": q["q"], "kind": "technical", "competency": q.get("competency") or "Project",
-                "why": "Defend your project.", "video_path": "", "transcript": "", "per_answer_feedback": None,
-                "delivery_metrics": None, "takes": 0} for q in qs]
-    mult = 2 if extra else 1
-    s = {"id": uuid.uuid4().hex[:12], "prep_id": None, "project_id": pid, "role": p.get("title", ""),
-         "company": "", "answers": answers, "result": None, "passed": False, "created": int(time.time()),
-         "extra_time": extra, "drill": False, "prep_s": _SCREEN_PREP_S * mult,
-         "answer_s": _SCREEN_ANSWER_S * mult, "retakes": _SCREEN_RETAKES}
-    screens = _load_screens()
-    screens.append(s)
-    _save_screens(screens)
-    pub = _screen_public(s)
-    practice = _practice_question("")
-    return jsonify({**pub, "practice": practice, "screen": {**pub, "practice": practice}})
-
-
-@app.post("/api/projects/<pid>/defend")
-@_guard
-def projects_defend(pid):
-    """Get Defend it ready: checks the gate (built, Learn it complete) and prepares the five
-    project questions, so the recorded interview starts at once. The screen itself is created by
-    POST /api/screens {project_id} from the interview's own notice step."""
-    p, err = _project_or_404(pid)
-    if err:
-        return err
-    gate = _defense_gate(p)
-    if gate:
-        return gate
-    qs = _project_defense_questions(p)
-    return jsonify({"questions": len(qs), "bar": _DEFENSE_PASS, "project": _project_public(p)})
 
 
 @app.get("/api/screens/<sid>")
@@ -7120,7 +7153,8 @@ def _interview_readiness_overview(screens: list, interviews: list | None = None)
     up, which competencies are consistently weakest across attempts, and a plain verdict.
     Deterministic, so it is testable and the number never disagrees with itself. Practice only,
     never a hiring prediction."""
-    # A project defence is not job interview practice: it stays out of the readiness read.
+    # A project defence recorded before Defend it became a quiz is not job interview practice:
+    # any such old screen on disk stays out of the readiness read.
     scored = [dict(s, _round=1) for s in (screens or []) if isinstance(s.get("result"), dict)
               and s["result"].get("score") is not None and not s.get("project_id")]
     live = [{"created": iv.get("ended") or iv.get("started") or 0, "role": iv.get("role", ""),
@@ -7211,8 +7245,6 @@ def screens_score(sid):
     result["disclaimer"] = ROUND1_DISCLAIMER
     s["result"] = result
     s["passed"] = bool(result.get("passed"))   # the Round-2 gate marker
-    if s.get("project_id"):
-        _project_defense_result(s, result)     # Defend it: Verified when it clears the bar
     _save_screens(screens)
     try:   # optional: a short note in the Annalisa diary (P1 memory), best-effort
         _palace().remember_summary(

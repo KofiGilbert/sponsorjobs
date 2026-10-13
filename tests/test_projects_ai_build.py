@@ -4,8 +4,8 @@ Acceptance (approved 2026-10-13): "Start this project" counts ONE package and bu
 working project; files are validated (no secrets, no absolute paths, sane sizes, real syntax);
 with GitHub the files land in a PRIVATE repo as one commit through the Git Data API (blobs, tree,
 commit, ref); without GitHub they stay here and download as a zip; Learn it is generated from the
-real files and its progress is saved; Defend it is the recorded Round 1 with the project's own
-questions; publish and Add to resume refuse anything that is not Verified; the README carries the
+real files and its progress is saved; Defend it is a 20-question quiz on the project (see
+tests/test_projects_quiz.py); publish and Add to resume refuse anything that is not Verified; the README carries the
 "Built with an AI pair-programmer" line by default and loses it at publish when toggled off.
 Offline: FakeLLM returns a tiny deterministic project, GitHub is a recorded fixture behind FETCH.
 """
@@ -105,12 +105,24 @@ def _learn_all(c, pid):
     return A_steps
 
 
-def _defend(c, pid, words=60):
-    s = c.post("/api/screens", json={"project_id": pid}).get_json()
-    for q in s["questions"]:
-        c.post(f"/api/screens/{s['id']}/answers/{q['i']}/transcript",
-               json={"transcript": " ".join(["because I chose a pure core"] * (words // 6 + 1))})
-    return s, c.post(f"/api/screens/{s['id']}/score").get_json()
+def _quiz_answers(pid, right=20):
+    """The shown option index for each question of the open attempt: ``right`` correct, the
+    rest wrong. Read from the server's own store (the client never gets the key)."""
+    import ui.app as A
+    qz = next(p for p in A._load_projects() if p["id"] == pid)["quiz"]
+    att, qs = qz["attempt"], qz["questions"]
+    out = []
+    for k, qi in enumerate(att["order"]):
+        good = att["opts"][k].index(qs[qi]["answer"])
+        out.append(good if k < right else (good + 1) % 4)
+    return att["id"], out
+
+
+def _defend(c, pid, right=20):
+    opened = c.post(f"/api/projects/{pid}/quiz").get_json()
+    aid, answers = _quiz_answers(pid, right)
+    assert aid == opened["attempt"]
+    return opened, c.post(f"/api/projects/{pid}/quiz/submit", json={"attempt": aid, "answers": answers}).get_json()
 
 
 # ---- Build -----------------------------------------------------------------------------------
@@ -291,13 +303,11 @@ def test_learn_it_steps_come_from_the_real_files_and_progress_is_saved(client, m
     monkeypatch.setattr(FakeLLM, "generate_learn_steps", lambda *a, **k: pytest.fail("regenerated"))
     assert len(c.post(f"/api/projects/{pid}/learn").get_json()["steps"]) == len(steps)
     # Defend it waits for Learn it
-    assert c.post(f"/api/projects/{pid}/defend").status_code == 409
-    assert c.post("/api/screens", json={"project_id": pid}).status_code == 409
-    assert c.post(f"/api/projects/{pid}/test").status_code == 409
+    assert c.post(f"/api/projects/{pid}/quiz").status_code == 409
 
 
 # ---- Defend it and the gate ------------------------------------------------------------------
-def test_defend_it_is_a_round1_screen_with_project_questions_and_verifies(client, monkeypatch):
+def test_defend_it_quiz_verifies_and_the_gate_holds_until_then(client, monkeypatch):
     A, c = client
     gh = GitData()
     _connect(A, monkeypatch, gh)
@@ -310,23 +320,16 @@ def test_defend_it_is_a_round1_screen_with_project_questions_and_verifies(client
 
     _learn_all(c, pid)
     assert _project(c, pid)["stage"] == "defend"
-    assert c.post(f"/api/projects/{pid}/defend").get_json()["questions"] == 5
-    s = c.post("/api/screens", json={"project_id": pid}).get_json()
-    qs = [q["text"] for q in s["questions"]]
-    assert len(qs) == 5 and s["project_id"] == pid and s["role"] == IDEA["title"]
-    assert "pure core" in qs[0] and "test" in qs[3].lower()            # THIS project's questions
-
-    # a thin defence does not verify
-    _, thin = _defend(c, pid, words=6)
-    assert thin["result"]["project_passed"] is False and _project(c, pid)["status"] == "draft"
+    # a miss keeps the gate shut
+    _, miss = _defend(c, pid, right=13)
+    assert miss["passed"] is False and _project(c, pid)["status"] == "draft"
+    assert c.post(f"/api/projects/{pid}/publish").status_code == 400
     assert c.post(f"/api/projects/{pid}/tocv").status_code == 400
-
-    # a full one clears the bar (70) and the project is Verified
-    _, good = _defend(c, pid, words=60)
-    assert good["result"]["score"] >= 70 and good["result"]["project_passed"] is True
-    assert "report_card" in good["result"]                             # the existing report card rides along
+    # a pass verifies
+    _, good = _defend(c, pid, right=14)
     p = _project(c, pid)
-    assert p["status"] == "verified" and p["stage"] == "verified" and p["defense"]["passed"]
+    assert good["passed"] is True and p["status"] == "verified" and p["stage"] == "verified"
+    assert p["defense"] == {"score": 14, "total": 20, "pass_mark": 14, "passed": True, "tried": True}
 
     # Verified: publish flips the same private repo (README untouched: the line stays on)
     r = c.post(f"/api/projects/{pid}/publish").get_json()
@@ -335,8 +338,6 @@ def test_defend_it_is_a_round1_screen_with_project_questions_and_verifies(client
     assert c.post(f"/api/projects/{pid}/tocv").status_code == 200
     entry = next(e for e in A._memory().load("default")["profile"]["projects"] if e["org"] == IDEA["title"])
     assert entry["link"] == "https://github.com/octocat/spend-stats-cli"
-    # a project defence never counts as job interview practice
-    assert A._interview_readiness_overview(A._load_screens(), []).get("attempts", 0) == 0
 
 
 def test_ai_line_toggle_updates_the_readme_at_publish(client, monkeypatch):
