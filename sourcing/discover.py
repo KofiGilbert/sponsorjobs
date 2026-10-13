@@ -84,6 +84,9 @@ _GENERIC = {
     # Llc", "Fedex Corporate Services Inc", "Target Enterprise Inc", "Pwc Advisory Services Llc")
     "operations", "corporate", "enterprise", "advisory", "worldwide", "ventures", "limited",
     "incorporated", "investments",
+    # Industry words that read as a brand when the real brand is a short acronym the tokenizer
+    # drops ("Cnh Industrial America" -> a Greenhouse board "industrial", caught 2026-10-12).
+    "industrial", "pharma", "medical", "dental", "physicians", "consultants",
 }
 
 # Corporate FILLER: words a legal name carries that say nothing about which company it is
@@ -118,8 +121,8 @@ _FILLER = {
     "infotech", "infosystems", "infosolutions", "info", "soft", "engineering", "engineers",
     "electronics", "computer", "computing", "wireless", "cable", "motor", "motors",
     "automation", "stores", "wholesale", "foods", "power", "games", "publishing", "aerospace",
-    "trading", "resources", "resource", "professional", "professionals", "industry",
-    "devices", "micro", "platforms", "mobility", "staffing", "telecom", "apps", "solution",
+    "trading", "resources", "resource", "industry",
+    "devices", "micro", "platforms", "mobility", "telecom", "apps", "solution",
     "informatics", "subsidiary", "shared", "employees", "intelligence", "innovation",
     "innovations", "scientific", "sciences", "science", "pharmaceutical", "biomedical",
     "construction", "transportation", "supply", "chain", "commercial", "express", "travel",
@@ -278,6 +281,7 @@ ALIASES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "bnp paribas": (("bnpparibas",), ("bnp paribas",)),
     "td bank": (("td",), ("td bank",)),
     "eli lilly": (("lilly",), ("lilly", "eli lilly")),
+    "cnh industrial": (("cnhindustrial", "cnh"), ("cnh industrial", "cnh")),
 }
 
 

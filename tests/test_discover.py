@@ -432,3 +432,13 @@ def test_a_subsidiary_or_regional_wording_is_not_another_employer():
     # ...while a line-of-business word the sponsor lacks still marks a different employer.
     assert not confirms("Fusion Medical Staffing LLC", "Fusion Life Sciences Technologies")
     assert not confirms("Convenience Holdings Pty Ltd", "7 Eleven Inc")
+
+
+def test_generic_industry_words_and_staffing_suffixes_stay_out_of_the_brand():
+    # Caught live 2026-10-12: "Cnh Industrial America" matched a Greenhouse board "industrial",
+    # and "Empower Professionals" (an IT staffing firm) matched Empower's (the retirement
+    # company's) Workday tenant once "professionals" was treated as filler.
+    assert "industrial" not in slug_candidates("Cnh Industrial America Llc")
+    assert "cnhindustrial" in slug_candidates("Cnh Industrial America Llc")
+    assert distinctive_tokens("Empower Professionals Inc") == ["empower", "professionals"]
+    assert not confirms("Empower Annuity Insurance Company of America", "Empower Professionals Inc", need=2)
