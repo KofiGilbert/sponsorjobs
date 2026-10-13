@@ -246,7 +246,8 @@ def search_examples(query: str, token: str = "", limit: int = 3) -> list[dict]:
         except (TypeError, ValueError):
             stars = 0
         out.append({"full_name": full, "url": url, "stars": stars,
-                    "description": str(it.get("description") or "")[:160]})
+                    "description": str(it.get("description") or "")[:160],
+                    "language": str(it.get("language") or "")[:40]})
         if len(out) >= limit:
             break
     return out

@@ -4484,24 +4484,98 @@
     inp?.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); finish(""); } });
     inp?.addEventListener("blur", () => finish(""));
   }
-  function ideaCard(s, i) {
+  // Bento: rank the ideas by how many of the job's missing skills each one covers, so the best
+  // fit leads as a wide hero with a fit ring, and the rest follow in a tidy grid with a fit meter.
+  // Ties fall back to the smaller build, then the title, so the order never shuffles.
+  const IDEA_SIZE_ORDER = { "weekend": 0, "1 week": 1, "2 weeks": 2 };
+  const LANG_DOT = { "python": "#3572A5", "javascript": "#f1e05a", "typescript": "#3178c6", "jupyter notebook": "#DA5B0B",
+    "go": "#00ADD8", "java": "#b07219", "rust": "#dea584", "html": "#e34c26", "css": "#663399", "c++": "#f34b7d", "c": "#555555",
+    "c#": "#178600", "ruby": "#701516", "shell": "#89e051", "r": "#198CE7", "kotlin": "#A97BFF", "swift": "#F05138",
+    "vue": "#41b883", "scala": "#c22d40", "php": "#4F5D95", "dart": "#00B4AB", "svelte": "#ff3e00" };
+  function rankIdeas(ideas) {
+    const all = new Set();
+    ideas.forEach(s => (s.gaps || []).forEach(g => all.add(g.toLowerCase())));
+    const total = all.size;
+    const ranked = ideas.map((s, i) => ({ s, i, fit: new Set((s.gaps || []).map(g => g.toLowerCase())).size, n: (s.skills || []).length }))
+      .sort((a, b) => b.fit - a.fit || (total ? 0 : b.n - a.n)
+        || (IDEA_SIZE_ORDER[(a.s.size || "").toLowerCase()] ?? 9) - (IDEA_SIZE_ORDER[(b.s.size || "").toLowerCase()] ?? 9)
+        || String(a.s.title || "").localeCompare(String(b.s.title || "")));
+    return { ranked, total };
+  }
+  // The rows after the hero: pairs first (the higher ranked get more room), then threes.
+  function bentoSpans(r) {
+    const rows = [];
+    if (r === 1) rows.push(1);
+    else if (r % 3 === 1) { rows.push(2, 2); r -= 4; }
+    else if (r % 3 === 2) { rows.push(2); r -= 2; }
+    for (; r > 0; r -= 3) rows.push(3);
+    return rows.flatMap(n => Array(n).fill(6 / n));
+  }
+  function fitText(fit, total, n) {
+    const fill = (t) => t.replace("{n}", fit).replace("{total}", total).replace("{k}", n);
+    return fill(total === 1 ? PT("projects.coversGap", "Covers {n} of your 1 gap")
+      : total ? PT("projects.coversGaps", "Covers {n} of your {total} gaps")
+      : PT("projects.skillsToShow", "{k} skills to show"));
+  }
+  function fitRing(fit, total, n) {
+    const num = total ? fit : n, den = total || 5, frac = Math.max(0, Math.min(1, num / den));
+    const R = 42, C = 2 * Math.PI * R;
+    return `<div class="proj-ring" role="img" aria-label="${esc(fitText(fit, total, n))}">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <defs><linearGradient id="projRingGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--fit-a)"/><stop offset=".55" stop-color="var(--fit-b)"/><stop offset="1" stop-color="var(--fit-c)"/></linearGradient></defs>
+        <circle class="proj-ring-track" cx="50" cy="50" r="${R}"/>
+        <circle class="proj-ring-arc" cx="50" cy="50" r="${R}" stroke="url(#projRingGrad)" stroke-dasharray="${(C * frac).toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 50 50)"/>
+      </svg>
+      <span class="proj-ring-n"><b>${num}</b><small>/${den}</small></span>
+    </div>`;
+  }
+  function fitMeter(fit, total, n) {
+    const den = total || 5, num = total ? fit : Math.min(n, 5);
+    const segs = Array.from({ length: den }, (_, k) => `<i class="${k < num ? "on" : ""}" style="--k:${k}"></i>`).join("");
+    return `<div class="proj-meter" style="--den:${den}" role="img" aria-label="${esc(fitText(fit, total, n))}"><span class="proj-meter-bar">${segs}</span><span class="proj-meter-t">${esc(fitText(fit, total, n))}</span></div>`;
+  }
+  function ideaCard(s, i, opt = {}) {
+    const { hero = false, span = 6, fit = 0, total = 0 } = opt;
     const gaps = new Set((s.gaps || []).map(g => g.toLowerCase()));
     const chips = (s.skills || []).map(k => gaps.has(k.toLowerCase())
       ? `<li class="proj-skill is-gap" title="${esc(PT("projects.gapHint", "The job asks for this. Your profile doesn't show it yet."))}">${PROJ_ICO.plus}${esc(k)}</li>`
       : `<li class="proj-skill">${esc(k)}</li>`).join("");
     const ex = (s.examples || []).filter(e => /^https:\/\/github\.com\//.test(e.url || ""));
     const exHTML = ex.length ? `<div class="proj-idea-ex"><span class="proj-idea-ex-k">${esc(PT("projects.examples", "Examples"))}</span>
-        ${ex.map(e => `<a class="proj-ex" href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(e.description || e.full_name)}"><span class="proj-ex-n">${esc(e.full_name)}</span><span class="proj-ex-s">${ICO_STAR}${kStars(e.stars)}</span></a>`).join("")}
+        ${ex.map(e => {
+          const lc = LANG_DOT[(e.language || "").toLowerCase()];
+          const dot = e.language ? `<span class="proj-ex-l" title="${esc(e.language)}"><i style="--dot:${lc || "var(--faint)"}"></i>${span >= 3 ? `<span class="proj-ex-lt">${esc(e.language)}</span>` : ""}</span>` : "";
+          return `<a class="proj-ex" href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(e.description || e.full_name)}"><span class="proj-ex-n">${esc(e.full_name)}</span>${dot}<span class="proj-ex-s">${ICO_STAR}${kStars(e.stars)}</span></a>`;
+        }).join("")}
       </div>` : "";
-    return `<article class="proj-idea" data-i="${i}" style="--i:${i}">
+    const n = (s.skills || []).length;
+    const ft = `<div class="proj-idea-ft">
+        <span class="proj-idea-repo" title="${esc(PT("projects.repoName", "Repo name"))}">${ICO_REPO}${esc(s.repo || "")}</span>
+        <button class="btn ${hero ? "btn-primary" : "btn-ghost"} btn-sm" data-start type="button">${esc(PT("projects.start", "Start this project"))}</button>
+      </div>`;
+    if (hero) {
+      return `<article class="proj-idea is-hero" data-i="${i}" style="--i:0">
+        <div class="proj-hero-main">
+          <span class="proj-hero-tag">${ICO_STAR}${esc(total ? PT("projects.bestMatch", "Best match") : PT("projects.topPick", "Top pick"))}<span class="proj-idea-size">${esc(s.size || "")}</span></span>
+          <h3 class="proj-idea-t">${esc(s.title)}</h3>
+          ${s.pitch ? `<p class="proj-idea-p">${esc(s.pitch)}</p>` : ""}
+          ${chips ? `<ul class="proj-skills">${chips}</ul>` : ""}
+          ${exHTML}
+        </div>
+        <aside class="proj-hero-fit">
+          ${fitRing(fit, total, n)}
+          <p class="proj-hero-fit-t">${esc(fitText(fit, total, n))}</p>
+        </aside>
+        ${ft}
+      </article>`;
+    }
+    return `<article class="proj-idea${span <= 2 ? " is-tight" : ""}" data-i="${i}" style="--i:${opt.order || 0};--span:${span}">
       <div class="proj-idea-hd"><h3 class="proj-idea-t">${esc(s.title)}</h3><span class="proj-idea-size">${esc(s.size || "")}</span></div>
       ${s.pitch ? `<p class="proj-idea-p">${esc(s.pitch)}</p>` : ""}
+      ${fitMeter(fit, total, n)}
       ${chips ? `<ul class="proj-skills">${chips}</ul>` : ""}
       ${exHTML}
-      <div class="proj-idea-ft">
-        <span class="proj-idea-repo" title="${esc(PT("projects.repoName", "Repo name"))}">${ICO_REPO}${esc(s.repo || "")}</span>
-        <button class="btn btn-ghost btn-sm" data-start type="button">${esc(PT("projects.start", "Start this project"))}</button>
-      </div>
+      ${ft}
     </article>`;
   }
   function renderIdeas() {
@@ -4514,7 +4588,9 @@
     }
     const hasGap = IDEAS.ideas.some(s => (s.gaps || []).length);
     if (!IDEAS.ideas.length) { grid.innerHTML = `<p class="proj-ideas-empty">${esc(PT("projects.noIdeas", "No ideas came back. Try another role."))}</p>`; return; }
-    grid.innerHTML = IDEAS.ideas.map(ideaCard).join("")
+    const { ranked, total } = rankIdeas(IDEAS.ideas);
+    const spans = bentoSpans(ranked.length - 1);
+    grid.innerHTML = ranked.map((r, k) => ideaCard(r.s, r.i, { hero: k === 0, span: spans[k - 1] || 6, fit: r.fit, total, order: k })).join("")
       + (hasGap ? `<p class="proj-ideas-legend">${PROJ_ICO.plus}${esc(PT("projects.newForYou", "A skill the job asks for that your profile doesn't show yet"))}</p>` : "");
     grid.querySelectorAll(".proj-idea").forEach(card => {
       const s = IDEAS.ideas[+card.dataset.i];

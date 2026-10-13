@@ -3404,6 +3404,110 @@ body.cv-dragging * { cursor: grabbing !important; }
   .proj-target-src { display: none; }
 }
 
+/* Bento (owner asked for more colour on this page): the best-fit idea is a wide hero with a soft
+   gradient glow and a fit ring; the rest sit in a 6-column bento (pairs, then threes), each with a
+   small segmented fit meter. Colour lives in the glow, the rings and meters, gold stars, and
+   language dots; the smaller cards stay calm. */
+.proj-ideas {
+  --fit-a: #8b7bff; --fit-b: #3fd0c9; --fit-c: #ff8fc7; --gold: #f5c451;
+}
+:root[data-theme="light"] .proj-ideas { --fit-a: #6d5cf0; --fit-b: #12a59c; --fit-c: #e0559b; --gold: #d29a17; }
+.proj-ideas-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
+.proj-ideas-grid > .proj-idea { grid-column: span var(--span, 3); }
+.proj-ideas-grid > .proj-idea.is-skel { grid-column: span 3; }
+.proj-ideas-grid > .proj-idea.is-hero { grid-column: 1 / -1; }
+
+/* Hero: content on the left, the fit ring on the right, footer across. */
+.proj-idea.is-hero {
+  position: relative; isolation: isolate; overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px;
+  padding: 28px 30px 18px;
+  border-color: color-mix(in srgb, var(--fit-a) 34%, var(--border));
+  background:
+    radial-gradient(520px 260px at 0% 0%, color-mix(in srgb, var(--fit-a) 20%, transparent), transparent 70%),
+    radial-gradient(420px 240px at 100% 10%, color-mix(in srgb, var(--fit-b) 15%, transparent), transparent 70%),
+    radial-gradient(380px 200px at 70% 120%, color-mix(in srgb, var(--fit-c) 13%, transparent), transparent 70%),
+    var(--surface);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent),
+    0 24px 60px -30px color-mix(in srgb, var(--fit-a) 55%, transparent);
+}
+.proj-idea.is-hero:hover, .proj-idea.is-hero:focus-within { border-color: color-mix(in srgb, var(--fit-a) 55%, var(--border)); }
+.proj-hero-main { min-width: 0; }
+.proj-hero-tag {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border-radius: var(--r-pill);
+  font-size: 11.5px; font-weight: 650; letter-spacing: 0.02em; color: var(--ink);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--fit-a) 26%, transparent), color-mix(in srgb, var(--fit-b) 18%, transparent));
+  border: 1px solid color-mix(in srgb, var(--fit-a) 40%, transparent);
+}
+.proj-hero-tag > svg { color: var(--gold); fill: var(--gold); }
+.proj-hero-tag .proj-idea-size { font-weight: 500; letter-spacing: 0; padding-left: 8px; margin-left: 2px; border-left: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); color: var(--muted); }
+.proj-idea.is-hero .proj-idea-t { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; margin-top: 14px; white-space: normal; }
+.proj-idea.is-hero .proj-idea-p { font-size: 14px; margin-top: 8px; max-width: 60ch; color: var(--ink-2); }
+.proj-idea.is-hero .proj-skills { margin-top: 16px; }
+.proj-idea.is-hero .proj-skill { background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.proj-idea.is-hero .proj-idea-ex { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 20px; }
+.proj-idea.is-hero .proj-idea-ex-k { grid-column: 1 / -1; }
+.proj-idea.is-hero .proj-ex {
+  display: grid; grid-template-columns: auto 1fr; grid-template-areas: "n n" "l s"; row-gap: 8px; column-gap: 10px;
+  padding: 11px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--ink) 9%, transparent);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.proj-idea.is-hero .proj-ex:hover { border-color: color-mix(in srgb, var(--fit-a) 45%, transparent); transform: translateY(-1px); }
+.proj-idea.is-hero .proj-ex-n { grid-area: n; color: var(--ink-2); font-weight: 550; margin: 0; }
+.proj-idea.is-hero .proj-ex-l { grid-area: l; margin: 0; }
+.proj-idea.is-hero .proj-ex-s { grid-area: s; justify-self: end; }
+.proj-idea.is-hero .proj-idea-ft { grid-column: 1 / -1; margin-top: 22px; border-top-color: color-mix(in srgb, var(--ink) 9%, transparent); }
+.proj-idea.is-hero > :nth-last-child(2) { margin-bottom: 0; }
+.proj-hero-fit { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; }
+.proj-hero-fit-t { margin: 0; font-size: 13px; font-weight: 550; color: var(--ink-2); white-space: nowrap; }
+.proj-hero-fit { position: relative; }
+.proj-hero-fit::before { content: ""; position: absolute; z-index: -1; width: 190px; height: 190px; top: 50%; left: 50%; transform: translate(-50%, -58%); border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--fit-a) 22%, transparent), color-mix(in srgb, var(--fit-b) 8%, transparent) 55%, transparent 72%); }
+
+.proj-ring { position: relative; width: 132px; height: 132px; }
+.proj-ring svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 6px 18px color-mix(in srgb, var(--fit-a) 35%, transparent)); }
+.proj-ring circle { fill: none; stroke-width: 8; }
+.proj-ring-track { stroke: color-mix(in srgb, var(--ink) 9%, transparent); }
+.proj-ring-arc { stroke-linecap: round; animation: proj-ring-in 900ms var(--ease) both 120ms; }
+@keyframes proj-ring-in { from { stroke-dasharray: 0 264; } }
+.proj-ring-n { position: absolute; inset: 0; display: flex; align-items: baseline; justify-content: center; padding-top: 44px; gap: 1px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.proj-ring-n b { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
+.proj-ring-n small { font-size: 15px; font-weight: 550; color: var(--faint); }
+
+/* Small cards: a segmented fit meter under the pitch, so nobody counts chips. */
+.proj-meter { display: flex; align-items: center; gap: 10px; margin-top: 14px; min-width: 0; }
+.proj-meter-bar { display: grid; grid-template-columns: repeat(var(--den), 1fr); gap: 3px; width: calc(var(--den) * 14px); flex: none; }
+.proj-meter-bar i { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.proj-meter-bar i.on { background: color-mix(in oklab, var(--fit-a), var(--fit-b) calc(var(--k) / (var(--den) - 1) * 100%)); }
+.proj-meter-t { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.proj-idea.is-tight { padding: 18px 18px 14px; }
+.proj-idea.is-tight .proj-idea-hd { flex-direction: column; gap: 2px; }
+.proj-idea.is-tight .proj-idea-t { white-space: normal; }
+.proj-idea.is-tight .proj-idea-ft { flex-wrap: wrap; row-gap: 10px; }
+
+/* Colour accents that stay small: gold stars, language dots, the gap plus. */
+.proj-ex-s svg { color: var(--gold); fill: color-mix(in srgb, var(--gold) 80%, transparent); }
+.proj-ex-l { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 11.5px; color: var(--faint); margin-left: auto; }
+.proj-ex-l i { width: 8px; flex: none; height: 8px; border-radius: 50%; background: var(--dot); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot) 18%, transparent); }
+.proj-ex { gap: 10px; }
+.proj-ex-n { margin-right: auto; }
+.proj-ex-l + .proj-ex-s { margin-left: 0; }
+.proj-skill.is-gap { border-color: color-mix(in srgb, var(--fit-b) 45%, transparent); }
+.proj-skill.is-gap svg { color: var(--fit-b); }
+.proj-ideas-legend svg { color: var(--fit-b); }
+@media (max-width: 960px) {
+  .proj-ideas-grid > .proj-idea { grid-column: span 3; }
+  .proj-ideas-grid > .proj-idea:last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .proj-ideas-grid > .proj-idea, .proj-ideas-grid > .proj-idea:last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
+  .proj-idea.is-hero { grid-template-columns: minmax(0, 1fr); }
+  .proj-hero-fit { flex-direction: row; justify-content: flex-start; margin-top: 18px; }
+  .proj-ring { width: 84px; height: 84px; }
+  .proj-ring-n { padding-top: 26px; } .proj-ring-n b { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) { .proj-ring-arc { animation: none; } }
+
 /* A repo beside a project's title: the GitHub mark, plus a lock while it is private. */
 .proj-gh {
   flex: none; display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 6px; border-radius: var(--r-sm);
