@@ -3181,3 +3181,31 @@ body.cv-dragging * { cursor: grabbing !important; }
 .rc-goals-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); line-height: 1.55; }
 .rc-goals-list li { margin: 2px 0; }
 .rc-drill-list { margin: 14px 0 10px; max-width: 62ch; }
+
+/* ---- From your inbox (stage suggestions) + per-stage email drafts in the Tracker panel.
+   A quiet framed strip above the funnel, on the same column as the funnel tiles; the one accent is spent on nothing here, the Move
+   button is a ghost because the person is deciding, not being pushed. ---- */
+.trk-inbox { max-width: 1320px; margin: 0 auto 16px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
+.trk-inbox-review { max-width: none; margin: 10px 0 12px; }
+.trk-inbox-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.trk-inbox-h { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+.trk-inbox-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.trk-inbox-row:first-of-type { border-top: 0; }
+.trk-inbox-who { min-width: 0; }
+.trk-inbox-co { font-weight: 600; color: var(--ink); }
+.trk-inbox-kind { font-size: 11.5px; color: var(--faint); margin-left: 6px; }
+.trk-inbox-subj { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trk-inbox-why { font-size: 12px; color: var(--faint); margin-top: 1px; }
+.trk-inbox-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.trk-inbox-empty { font-size: 12.5px; color: var(--faint); padding: 4px 0; }
+.trk-mail-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.trk-mail-row #trkMailType { grid-column: 1 / -1; }
+.trk-mail-out { margin-top: 10px; }
+.trk-mail-subj { width: 100%; margin-bottom: 6px; }
+.trk-mail-body { width: 100%; min-height: 150px; resize: vertical; display: block; }
+.trk-mail-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.trk-mail-hint { font-size: 11.5px; color: var(--faint); }
+@media (max-width: 700px) {
+  .trk-inbox-row, .trk-mail-row { grid-template-columns: 1fr; }
+  .trk-inbox-acts { justify-content: flex-start; }
+}
