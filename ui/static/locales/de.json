@@ -706,5 +706,8 @@
   "projects.yourAnswer": "Deine Antwort",
   "projects.correctAnswer": "Richtig",
   "projects.retake": "Wiederholen",
-  "projects.lastQuiz": "Letzter Versuch {s} von {m}. Bestanden ab {p}."
+  "projects.lastQuiz": "Letzter Versuch {s} von {m}. Bestanden ab {p}.",
+  "projects.selectAll": "Alle zutreffenden auswählen.",
+  "projects.multiRule": "Es zählt nur, wenn du jede richtige Option und keine falsche wählst.",
+  "projects.yourAnswers": "Deine Antworten"
 }

@@ -1382,8 +1382,10 @@ class AnthropicLLM:
 
     def generate_project_quiz(self, project: dict, files: list, steps: list) -> dict:
         """Defend it: a 20-question multiple-choice quiz on THIS project, from its files and the
-        Learn it walkthrough. One call, made once per build. Code questions name a file and a line
-        range; the app cuts the real excerpt itself, so no code here is model-written."""
+        Learn it walkthrough, about 15 single-answer and 5 "Select all that apply" questions
+        (``type`` "single" with ``answer``, or "multi" with ``answers``). One call, made once per
+        build. Code questions name a file and a line range; the app cuts the real excerpt itself,
+        so no code here is model-written."""
         listing = "\n\n".join(
             f"### {f['path']}\n" + "\n".join(f"{i + 1:>3}| {ln}" for i, ln in enumerate(f["content"].splitlines()[:200]))
             for f in files if f.get("path") != ".gitignore")[:40000]
@@ -1397,10 +1399,18 @@ class AnthropicLLM:
             "parts (what each main part does) x4, why (why it was built that way) x3, tradeoffs x3, "
             "testing (how it is tested, what is not) x3, scale (what breaks at scale) x2, extend (how "
             "to add a feature) x2, code (reading a short excerpt) x3.\n"
+            "Make about 15 single-answer questions and about 5 \"Select all that apply\" questions "
+            "where two or three options are genuinely right, spread across the topics.\n"
             "For EACH question: topic (one of parts, why, tradeoffs, testing, scale, extend, code); "
-            "q (one sentence); options (EXACTLY 4 short, distinct, plausible options: wrong ones must "
-            "be believable mistakes, not jokes, and similar in length to the right one); answer (the "
-            "index 0 to 3 of the one right option); explain (one plain sentence on why it is right). "
+            "type (\"single\" or \"multi\"); q (one sentence); options (EXACTLY 4 short, distinct, "
+            "plausible options: wrong ones must be believable mistakes, not jokes, and similar in "
+            "length to the right ones). A single question gives answer (the index 0 to 3 of the one "
+            "right option). A multi question gives answers (the list of indices of EVERY right option, "
+            "two or three of them; it is graded right only when exactly that set is picked) and never "
+            "uses an \"of the above\" option. A single question may use \"All of the above\" or "
+            "\"None of the above\" as its last option, but only a few times in the quiz and only "
+            "where it is genuinely right or genuinely plausible, never as a giveaway. Every question "
+            "gives explain (one plain sentence on why the right option or options are right).\n"
             "A code question also gives path (a file from the listing) and start, end (line numbers "
             "from the listing, at most 12 lines) and asks about that excerpt.\n"
             "Plain text, no em or en dashes. Return ONLY JSON {\"questions\": [...]}."

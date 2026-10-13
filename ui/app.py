@@ -6854,6 +6854,7 @@ def _project_interview_questions(p: dict) -> list[str]:
 
 def _verified_project_facts(prep: dict) -> list[dict]:
     """The Verified projects on this prep's resume (at most two), with their stored facts."""
+    from ui import project_builder as PB
     verified = [p for p in _load_projects() if p.get("status") == "verified"]
     if not verified:
         return []
@@ -6870,7 +6871,8 @@ def _verified_project_facts(prep: dict) -> list[dict]:
             continue
         steps = (p.get("learn") or {}).get("steps") or []
         facts = [f"{s.get('title', '')}: {s.get('why', '')}" for s in steps if s.get("why")][:3]
-        facts += [f"{q['q']} {q['options'][q['answer']]}." for q in (p.get("quiz") or {}).get("questions") or []
+        facts += [f"{q['q']} {'; '.join(q['options'][i] for i in PB.quiz_correct(q))}."
+                  for q in (p.get("quiz") or {}).get("questions") or []
                   if q.get("topic") in ("why", "tradeoffs", "scale")][:3]
         out.append({"title": title, "tech": p.get("tech", ""), "summary": p.get("summary", ""),
                     "repo_url": "" if p.get("repo_private") else (p.get("repo_url") or ""),

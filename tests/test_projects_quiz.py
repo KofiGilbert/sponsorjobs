@@ -50,8 +50,13 @@ def _answers(A, pid, right):
     att, qs = qz["attempt"], qz["questions"]
     out = []
     for k, qi in enumerate(att["order"]):
-        good = att["opts"][k].index(qs[qi]["answer"])
-        out.append(good if k < right else (good + 1) % 4)
+        q, perm = qs[qi], att["opts"][k]
+        if q.get("type") == "multi":
+            good = sorted(perm.index(i) for i in q["answers"])
+            out.append(good if k < right else good[:-1])            # one right option short: wrong
+        else:
+            good = perm.index(q["answer"])
+            out.append(good if k < right else (good + 1) % 4)
     return att["id"], out
 
 
@@ -104,11 +109,13 @@ def test_answer_key_never_reaches_the_client(client):
     assert d["total"] == 20 and d["pass_mark"] == 14 and len(d["questions"]) == 20
     assert [q["n"] for q in d["questions"]] == list(range(1, 21))
     for q in d["questions"]:
-        assert set(q) <= {"n", "q", "options", "path", "start", "end", "code"} and len(q["options"]) == 4
+        assert set(q) <= {"n", "q", "type", "options", "path", "start", "end", "code"} and len(q["options"]) == 4
+        assert q["type"] in ("single", "multi")
+    assert {q["type"] for q in d["questions"]} == {"single", "multi"}
     raw = r.get_data(as_text=True)
     for q in _store(A, pid)["quiz"]["questions"]:
         assert q["explain"] not in raw
-    assert '"answer"' not in raw and '"explain"' not in raw and '"opts"' not in raw and '"order"' not in raw
+    assert '"answer"' not in raw and '"answers"' not in raw and '"explain"' not in raw and '"opts"' not in raw and '"order"' not in raw
     # reopening mid-quiz returns the same attempt, so local answers still line up
     again = c.post(f"/api/projects/{pid}/quiz").get_json()
     assert again["attempt"] == d["attempt"] and again["questions"] == d["questions"]
@@ -132,8 +139,15 @@ def test_13_fails_with_explanations_and_14_verifies_graded_locally(client, monke
     stored = {q["q"]: q for q in _store(A, pid)["quiz"]["questions"]}
     for w in miss["wrong"]:
         q = stored[w["q"]]
-        assert w["correct"] == q["options"][q["answer"]] and w["explain"] == q["explain"]
-        assert w["yours"] and w["yours"] != w["correct"]
+        from ui import project_builder as PB
+        right = [q["options"][i] for i in PB.quiz_correct(q)]
+        if q.get("type") == "multi":
+            assert w["type"] == "multi" and sorted(w["correct"]) == sorted(right)
+            assert w["yours"] and set(w["yours"]) < set(w["correct"])
+        else:
+            assert w["type"] == "single" and w["correct"] == right[0]
+            assert w["yours"] and w["yours"] != w["correct"]
+        assert w["explain"] == q["explain"]
     assert _store(A, pid)["status"] == "draft"
     assert c.post(f"/api/projects/{pid}/publish").status_code == 400
     assert c.post(f"/api/projects/{pid}/tocv").status_code == 400
@@ -264,3 +278,134 @@ def test_live_round_and_model_prompt_carry_the_project_facts(client, monkeypatch
                                   "behavioural", "behavioural", "situational"], projects=facts)
     assert "PROJECTS THEY BUILT" in sent["user"] and IDEA["title"] in sent["user"]
     assert facts[0]["facts"][0] in sent["user"] and "exactly 1 of the behavioural" in sent["system"]
+
+
+# ---- Single and "Select all that apply" questions (2026-10-13) -------------------------------
+def _pb_quiz():
+    from llm.base import FakeLLM
+    from ui import project_builder as PB
+    return PB, PB.quiz_questions(FakeLLM().generate_project_quiz({"title": "T"}, [], [])["questions"], [])
+
+
+def test_fake_quiz_mixes_single_and_multi_with_a_server_side_key():
+    PB, qs = _pb_quiz()
+    assert len(qs) == 20
+    kinds = [q["type"] for q in qs]
+    assert kinds.count("multi") == 5 and kinds.count("single") == 15
+    for q in qs:
+        if q["type"] == "multi":
+            assert 2 <= len(q["answers"]) <= 4 and "answer" not in q
+        else:
+            assert 0 <= q["answer"] < 4 and "answers" not in q
+    assert any(PB._ABOVE.match(o) for q in qs for o in q["options"])      # "None of the above" is used
+
+
+def test_normaliser_downgrades_a_one_answer_multi_and_drops_an_ambiguous_one():
+    from ui import project_builder as PB
+    raw = [{"q": "One right", "type": "multi", "answers": [2], "options": ["a", "b", "c", "d"]},
+           {"q": "Above in multi", "type": "multi", "answers": [0, 3], "options": ["a", "b", "c", "All of the above"]},
+           {"q": "Bad index", "type": "multi", "answers": [0, 7], "options": ["a", "b", "c", "d"]},
+           {"q": "Old style", "answer": 1, "options": ["a", "b", "c", "d"]}]
+    qs = PB.quiz_questions(raw, [])
+    assert [(q["q"], q["type"]) for q in qs] == [("One right", "single"), ("Old style", "single")]
+    assert qs[0]["answer"] == 2
+
+
+def _attempt_for(PB, qs, seed):
+    import random
+    return PB.quiz_attempt(qs, random.Random(seed))
+
+
+def _right_answers(PB, qs, att):
+    out = []
+    for k, qi in enumerate(att["order"]):
+        perm, right = att["opts"][k], PB.quiz_correct(qs[qi])
+        shown = [perm.index(i) for i in right]
+        out.append(shown[::-1] if qs[qi].get("type") == "multi" else shown[0])   # pick order is irrelevant
+    return out
+
+
+def test_multi_is_right_only_for_the_exact_set():
+    PB, qs = _pb_quiz()
+    att = _attempt_for(PB, qs, 1)
+    right = _right_answers(PB, qs, att)
+    assert PB.grade_quiz(qs, att, right)["score"] == 20
+    k = next(k for k, qi in enumerate(att["order"]) if qs[qi]["type"] == "multi")
+    perm = att["opts"][k]
+    good = sorted(right[k])
+    extra = next(j for j in range(4) if j not in good)
+    for bad in (good[:-1], good + [extra], [], [extra], None, 2, good + [9], [True, False]):
+        ans = list(right)
+        ans[k] = bad
+        res = PB.grade_quiz(qs, att, ans)
+        assert res["score"] == 19, bad
+        (w,) = res["wrong"]
+        q = qs[att["order"][k]]
+        assert w["type"] == "multi" and sorted(w["correct"]) == sorted(q["options"][i] for i in q["answers"])
+        assert isinstance(w["yours"], list)
+    ans = list(right)
+    ans[k] = good + good                                                  # duplicates collapse to the set
+    assert PB.grade_quiz(qs, att, ans)["score"] == 20
+    assert perm  # the shown order is the attempt's
+
+
+def test_reshuffle_keeps_multi_and_single_correctness_and_above_stays_last():
+    PB, qs = _pb_quiz()
+    import random
+    prev = None
+    for seed in range(25):
+        att = PB.quiz_attempt(qs, random.Random(seed), prev)
+        assert PB.grade_quiz(qs, att, _right_answers(PB, qs, att))["score"] == 20
+        shown = PB.public_quiz(qs, att)
+        for k, qi in enumerate(att["order"]):
+            assert shown[k]["type"] == qs[qi]["type"]
+            if any(PB._ABOVE.match(o) for o in qs[qi]["options"]):
+                assert PB._ABOVE.match(shown[k]["options"][-1])
+        prev = att
+    perms = {tuple(PB.quiz_attempt(qs, random.Random(s))["opts"][0]) for s in range(25)}
+    assert len(perms) > 1
+
+
+def test_an_old_single_only_quiz_still_opens_and_grades():
+    from ui import project_builder as PB
+    import random
+    old = [{"q": f"Q{i}", "options": ["a", "b", "c", "d"], "answer": i % 4, "explain": "x", "topic": "parts"}
+           for i in range(20)]                                            # cached before types existed
+    att = PB.quiz_attempt(old, random.Random(3))
+    assert {q["type"] for q in PB.public_quiz(old, att)} == {"single"}
+    ans = [att["opts"][k].index(old[qi]["answer"]) for k, qi in enumerate(att["order"])]
+    assert PB.grade_quiz(old, att, ans)["score"] == 20
+    ans[0] = (ans[0] + 1) % 4
+    res = PB.grade_quiz(old, att, ans)
+    assert res["score"] == 19 and res["wrong"][0]["type"] == "single" and isinstance(res["wrong"][0]["correct"], str)
+
+
+def test_old_cached_quiz_works_through_the_endpoints(client):
+    A, c = client
+    pid = _built(A, c)
+    A._update_project(pid, lambda x: x["quiz"].update(
+        questions=[{k: v for k, v in q.items() if k not in ("type", "answers")} | (
+            {"answer": q["answers"][0]} if q.get("type") == "multi" else {})
+            for q in x["quiz"]["questions"]], attempt=None))
+    d = c.post(f"/api/projects/{pid}/quiz").get_json()
+    assert {q["type"] for q in d["questions"]} == {"single"}
+    assert _submit(A, c, pid, 20)["score"] == 20
+
+
+def test_multi_answers_submit_as_lists_through_the_endpoint(client):
+    A, c = client
+    pid = _built(A, c)
+    c.post(f"/api/projects/{pid}/quiz")
+    aid, ans = _answers(A, pid, 20)
+    assert any(isinstance(a, list) for a in ans)
+    r = c.post(f"/api/projects/{pid}/quiz/submit", json={"attempt": aid, "answers": ans}).get_json()
+    assert r["score"] == 20 and r["passed"] is True
+
+
+def test_learn_it_check_is_unchanged():
+    from ui import project_builder as PB
+    step = {"check": {"kind": "choice", "q": "?", "options": ["a", "b", "c"], "answer": 1, "explain": "e"}}
+    assert PB.check_answer(step, 1) and PB.check_answer(step, "1")
+    assert not PB.check_answer(step, 0) and not PB.check_answer(step, None) and not PB.check_answer(step, [1])
+    pub = PB.public_step({**step, "title": "t", "path": "a.py", "start": 1, "end": 2, "code": "x"})
+    assert "answer" not in pub["check"] and pub["check"]["options"] == ["a", "b", "c"]

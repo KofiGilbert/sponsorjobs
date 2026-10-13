@@ -4570,8 +4570,61 @@
   }
   function learnTop() { $("#view-projects .page-head")?.scrollIntoView({ block: "start" }); }
   function leaveLearn() { LEARN = null; $("#projLearn").hidden = true; $("#projList").hidden = false; loadProjects(); }
+  // <code-lang> The highlight.js language for an excerpt, from its file name (null = plain text).
+  const CODE_LANGS = { py: "python", pyw: "python", pyi: "python", js: "javascript", mjs: "javascript", cjs: "javascript",
+    jsx: "javascript", ts: "typescript", tsx: "typescript", mts: "typescript", json: "json", yml: "yaml", yaml: "yaml",
+    sh: "bash", bash: "bash", zsh: "bash", go: "go", java: "java", sql: "sql", toml: "ini", ini: "ini", cfg: "ini",
+    md: "markdown", markdown: "markdown", css: "css", html: "xml", htm: "xml", xml: "xml", svg: "xml" };
+  function codeLang(path) {
+    const name = String(path || "").split("/").pop().toLowerCase();
+    if (name === "dockerfile" || name.startsWith("dockerfile.") || name.endsWith(".dockerfile")) return "dockerfile";
+    if (name === "makefile") return "makefile";
+    const dot = name.lastIndexOf(".");
+    return dot >= 0 ? (CODE_LANGS[name.slice(dot + 1)] || null) : null;
+  }
+  // </code-lang>
+  // Control-flow keywords take the second keyword colour, as VS Code paints them.
+  const CODE_CTL = new Set(["if", "elif", "else", "for", "while", "do", "return", "break", "continue", "try", "except",
+    "finally", "raise", "throw", "catch", "switch", "case", "default", "import", "from", "export", "yield", "await",
+    "with", "goto", "pass", "select", "go", "defer", "fallthrough"]);
+  // The excerpt as one HTML string per line. highlight.js escapes the text it is given; its output is
+  // then parsed inert and REBUILT from text nodes and hljs class names only, so nothing in the file can
+  // become markup, and a token that spans lines is closed and reopened at each line break.
+  function codeLines(code, lang) {
+    const src = String(code || ""), plain = () => src.split("\n").map(esc);
+    const hl = window.hljs;
+    if (!lang || !hl || !hl.getLanguage(lang)) return plain();
+    let html;
+    try { html = hl.highlight(src, { language: lang, ignoreIllegals: true }).value; } catch { return plain(); }
+    const tpl = document.createElement("template"); tpl.innerHTML = html;
+    const out = [""], stack = [];
+    const put = (t) => { out[out.length - 1] += t; };
+    const walk = (node) => node.childNodes.forEach(n => {
+      if (n.nodeType === 3) {
+        n.nodeValue.split("\n").forEach((part, i) => {
+          if (i) { put("</span>".repeat(stack.length)); out.push(stack.map(c => `<span class="${c}">`).join("")); }
+          put(esc(part));
+        });
+      } else if (n.nodeType === 1) {
+        let cls = String(n.getAttribute("class") || "").split(/\s+/).filter(c => /^(hljs-[a-z_-]+|[a-z]+_+)$/.test(c));
+        if (cls.includes("hljs-keyword") && CODE_CTL.has(n.textContent.trim())) cls.push("kw-ctl");
+        cls = cls.join(" ");
+        stack.push(cls); put(`<span class="${cls}">`); walk(n); put("</span>"); stack.pop();
+      }
+    });
+    walk(tpl.content);
+    return out.length === src.split("\n").length ? out : plain();
+  }
   function learnCode(s) {
-    return String(s.code || "").split("\n").map((ln, k) => `<span class="ln" data-n="${s.start + k}">${esc(ln) || " "}</span>`).join("");
+    const raw = String(s.code || "").split("\n"), lines = codeLines(s.code, codeLang(s.path));
+    return lines.map((ln, k) => `<span class="ln" data-n="${s.start + k}">${raw[k] ? ln : " "}</span>`).join("");
+  }
+  // One lettered option row, shared by the Learn it check and the quiz: the letter, the text, and a
+  // tick that is a radio (one answer) or a checkbox (select all that apply).
+  function optRow(o, k, { on = false, multi = false, cls = "", disabled = false } = {}) {
+    return `<button type="button" role="${multi ? "checkbox" : "radio"}" class="learn-opt ${on ? "is-pick" : ""} ${cls}" data-k="${k}" aria-checked="${on}" ${disabled ? "disabled" : ""}>`
+      + `<span class="quiz-key" aria-hidden="true">${"ABCDE"[k] || k + 1}</span><span class="opt-t">${esc(o)}</span>`
+      + `<span class="opt-tick ${multi ? "is-box" : ""}" aria-hidden="true"></span></button>`;
   }
   function renderLearn() {
     const L = LEARN; if (!L) return;
@@ -4583,7 +4636,8 @@
     const c = s.check || {}, fb = L.fb[L.i];
     const opts = c.kind === "line"
       ? `<input class="fld learn-line" id="learnLine" type="text" autocomplete="off" placeholder="${esc(PT("projects.oneLine", "One line is enough"))}" ${done ? "disabled" : ""}>`
-      : `<div class="learn-opts" role="radiogroup" aria-label="${esc(c.q)}">${(c.options || []).map((o, k) => `<button type="button" role="radio" class="learn-opt ${L.pick === k ? "is-pick" : ""} ${fb && fb.k === k ? (fb.ok ? "is-right" : "is-wrong") : ""}" data-k="${k}" aria-checked="${L.pick === k}" ${done ? "disabled" : ""}>${esc(o)}</button>`).join("")}</div>`;
+      : `<div class="learn-opts quiz-opts" role="radiogroup" aria-label="${esc(c.q)}">${(c.options || []).map((o, k) => optRow(o, k,
+          { on: L.pick === k, cls: fb && fb.k === k ? (fb.ok ? "is-right" : "is-wrong") : "", disabled: done })).join("")}</div>`;
     const primary = done
       ? (L.i < n - 1 ? `<button class="btn btn-primary btn-sm" id="learnNext" type="button">${esc(PT("projects.nextStep", "Next step"))}</button>`
         : allDone ? `<button class="btn btn-primary btn-sm" id="learnDefend" type="button">${esc(PT("projects.defendIt", "Defend it"))}</button>`
@@ -4606,12 +4660,7 @@
       </div>`;
     const card = $("#projLearnCard");
     $("#projLearnRail").querySelectorAll(".learn-seg").forEach(b => b.addEventListener("click", () => { L.i = +b.dataset.k; L.pick = null; renderLearn(); }));
-    card.querySelectorAll(".learn-opt").forEach(b => b.addEventListener("click", () => {
-      L.pick = +b.dataset.k; delete L.fb[L.i];
-      card.querySelectorAll(".learn-opt").forEach(o => { const on = +o.dataset.k === L.pick; o.classList.toggle("is-pick", on); o.classList.remove("is-wrong"); o.setAttribute("aria-checked", on); });
-      const chk = $("#learnCheck"); if (chk) chk.disabled = false;
-      const f = $("#learnFb"); if (f) f.hidden = true;
-    }));
+    card.querySelectorAll(".learn-opt").forEach(b => b.addEventListener("click", () => learnPick(+b.dataset.k)));
     $("#learnLine")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); checkLearn(); } });
     $("#learnCheck")?.addEventListener("click", checkLearn);
     $("#learnPrev")?.addEventListener("click", () => { if (L.i > 0) { L.i -= 1; L.pick = null; renderLearn(); learnTop(); } });
@@ -4619,6 +4668,23 @@
     $("#learnNextOpen")?.addEventListener("click", () => { const k = L.steps.findIndex((_, j) => !L.learned.has(j)); if (k >= 0) { L.i = k; L.pick = null; renderLearn(); } });
     $("#learnDefend")?.addEventListener("click", () => { const p = PROJECTS.find(x => x.id === L.id) || { id: L.id, title: L.title }; $("#projLearn").hidden = true; LEARN = null; startQuiz(p); });
   }
+  function learnPick(k) {
+    const L = LEARN; if (!L) return;
+    const card = $("#projLearnCard");
+    L.pick = k; delete L.fb[L.i];
+    card.querySelectorAll(".learn-opt").forEach(o => { const on = +o.dataset.k === L.pick; o.classList.toggle("is-pick", on); o.classList.remove("is-wrong"); o.setAttribute("aria-checked", on); });
+    const chk = $("#learnCheck"); if (chk) chk.disabled = false;
+    const f = $("#learnFb"); if (f) f.hidden = true;
+  }
+  // A to D (or 1 to 4) picks a quick-check option, like the quiz.
+  document.addEventListener("keydown", (e) => {
+    if (!LEARN || $("#projLearn")?.hidden || e.metaKey || e.ctrlKey || e.altKey
+        || e.target.closest?.("input, textarea, select")) return;
+    const s = LEARN.steps[LEARN.i], c = s && s.check;
+    if (!c || c.kind === "line" || LEARN.learned.has(LEARN.i)) return;
+    const key = e.key.toLowerCase(), k = "abcde".indexOf(key) >= 0 ? "abcde".indexOf(key) : "12345".indexOf(key);
+    if (k >= 0 && k < (c.options || []).length) { e.preventDefault(); learnPick(k); }
+  });
   async function checkLearn() {
     const L = LEARN; if (!L) return;
     const s = L.steps[L.i], line = s.check?.kind === "line";
@@ -4686,10 +4752,13 @@
     const code = q.code ? `
       <div class="learn-file"><span class="learn-path">${esc(q.path)}</span><span class="learn-lines">${esc(PT("projects.lines", "lines {a} to {b}").replace("{a}", q.start).replace("{b}", q.end))}</span></div>
       <pre class="learn-code quiz-code" tabindex="0" aria-label="${esc(q.path)}"><code>${learnCode(q)}</code></pre>` : "";
+    const multi = q.type === "multi", picked = (k) => multi ? Array.isArray(pick) && pick.includes(k) : pick === k;
+    const hint = multi ? `<p class="quiz-hint" id="quizHint"><b>${esc(PT("projects.selectAll", "Select all that apply."))}</b> ${esc(PT("projects.multiRule", "It counts only when you pick every right option and no wrong one."))}</p>` : "";
     $("#projQuizCard").innerHTML = `
-      <h3 class="learn-h quiz-q" id="quizQ">${esc(q.q)}</h3>
+      <h3 class="learn-h quiz-q ${multi ? "has-hint" : ""}" id="quizQ">${esc(q.q)}</h3>
+      ${hint}
       ${code}
-      <div class="learn-opts quiz-opts" role="radiogroup" aria-labelledby="quizQ">${q.options.map((o, k) => `<button type="button" role="radio" class="learn-opt ${pick === k ? "is-pick" : ""}" data-k="${k}" aria-checked="${pick === k}"><span class="quiz-key" aria-hidden="true">${"ABCD"[k]}</span>${esc(o)}</button>`).join("")}</div>
+      <div class="learn-opts quiz-opts" role="${multi ? "group" : "radiogroup"}" aria-labelledby="quizQ" ${multi ? 'aria-describedby="quizHint"' : ""}>${q.options.map((o, k) => optRow(o, k, { on: picked(k), multi })).join("")}</div>
       <div class="learn-foot">
         <button class="btn btn-quiet btn-sm" id="quizPrev" type="button" ${Q.i === 0 ? "disabled" : ""}>${esc(PT("projects.prevStep", "Previous"))}</button>
         <button class="btn btn-primary btn-sm" id="quizNext" type="button">${esc(last ? PT("projects.quizToReview", "Review answers") : PT("projects.quizNext", "Next"))}</button>
@@ -4699,10 +4768,21 @@
     $("#quizPrev")?.addEventListener("click", () => quizGo(Q.i - 1));
     $("#quizNext")?.addEventListener("click", () => { if (last) { Q.view = "review"; renderQuiz(); learnTop(); } else quizGo(Q.i + 1); });
   }
+  // One answer replaces the pick; select all that apply toggles it in a sorted list (empty = unanswered).
   function quizPick(k) {
     const Q = QUIZ; if (!Q || Q.view !== "q") return;
-    Q.answers[Q.i] = k; quizSave();
-    $("#projQuizCard").querySelectorAll(".learn-opt").forEach(o => { const on = +o.dataset.k === k; o.classList.toggle("is-pick", on); o.setAttribute("aria-checked", on); });
+    const multi = Q.qs[Q.i]?.type === "multi";
+    if (multi) {
+      const cur = new Set(Array.isArray(Q.answers[Q.i]) ? Q.answers[Q.i] : []);
+      if (cur.has(k)) cur.delete(k); else cur.add(k);
+      Q.answers[Q.i] = cur.size ? [...cur].sort((a, b) => a - b) : null;
+    } else Q.answers[Q.i] = k;
+    quizSave();
+    const a = Q.answers[Q.i];
+    $("#projQuizCard").querySelectorAll(".learn-opt").forEach(o => {
+      const on = multi ? Array.isArray(a) && a.includes(+o.dataset.k) : +o.dataset.k === a;
+      o.classList.toggle("is-pick", on); o.setAttribute("aria-checked", on);
+    });
   }
   // A to D (or 1 to 4) picks an option on a question screen.
   document.addEventListener("keydown", (e) => {
@@ -4724,7 +4804,7 @@
       <ol class="quiz-list">${Q.qs.map((q, k) => { const a = Q.answers[k]; return `<li><button type="button" class="quiz-row" data-k="${k}">
           <span class="quiz-row-n">${k + 1}</span>
           <span class="quiz-row-t"><span class="quiz-row-q">${esc(q.q)}</span>
-            <span class="quiz-row-a ${a == null ? "is-open" : ""}">${esc(a == null ? PT("projects.notAnswered", "Not answered") : q.options[a])}</span></span></button></li>`; }).join("")}</ol>
+            <span class="quiz-row-a ${a == null ? "is-open" : ""}">${esc(a == null ? PT("projects.notAnswered", "Not answered") : Array.isArray(a) ? a.map(i => q.options[i]).join("; ") : q.options[a])}</span></span></button></li>`; }).join("")}</ol>
       <div class="learn-foot">
         <button class="btn btn-quiet btn-sm" id="quizRevBack" type="button">${esc(PT("projects.prevStep", "Previous"))}</button>
         <span class="quiz-foot-r">${open ? `<span class="quiz-open-n">${esc(PT("projects.quizUnanswered", "{n} not answered yet").replace("{n}", open))}</span>` : ""}
@@ -4748,11 +4828,15 @@
   function renderQuizResult() {
     const Q = QUIZ, r = Q.result || {}, ok = !!r.passed;
     $("#projQuizRail").hidden = true;   // the score below says it; a rail would say it twice
-    const wrong = (r.wrong || []).map(w => `<li class="quiz-miss">
+    // A select-all-that-apply miss lists both sets; the picks that were right are not struck through.
+    const missList = (items, cls, keep) => `<ul class="quiz-miss-list">${items.map(t => `<li class="${keep && keep.includes(t) ? "is-kept" : cls}">${esc(t)}</li>`).join("")}</ul>`;
+    const wrong = (r.wrong || []).map(w => { const multi = w.type === "multi" || Array.isArray(w.correct); return `<li class="quiz-miss">
         <div class="quiz-miss-q"><span class="quiz-row-n">${w.n}</span>${esc(w.q)}</div>
-        <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.yourAnswer", "Your answer"))}</span><span class="is-no">${esc(w.yours || PT("projects.notAnswered", "Not answered"))}</span></div>
-        <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.correctAnswer", "Correct"))}</span><span class="is-ok">${esc(w.correct)}</span></div>
-        ${w.explain ? `<p class="quiz-miss-x">${esc(w.explain)}</p>` : ""}</li>`).join("");
+        ${multi ? `<div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.yourAnswers", "Your answers"))}</span>${(w.yours || []).length ? missList(w.yours, "is-no", w.correct) : `<span class="is-no">${esc(PT("projects.notAnswered", "Not answered"))}</span>`}</div>
+        <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.correctAnswer", "Correct"))}</span>${missList(w.correct || [], "is-ok")}</div>`
+        : `<div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.yourAnswer", "Your answer"))}</span><span class="is-no">${esc(w.yours || PT("projects.notAnswered", "Not answered"))}</span></div>
+        <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.correctAnswer", "Correct"))}</span><span class="is-ok">${esc(w.correct)}</span></div>`}
+        ${w.explain ? `<p class="quiz-miss-x">${esc(w.explain)}</p>` : ""}</li>`; }).join("");
     $("#projQuizCard").innerHTML = `
       <div class="quiz-score ${ok ? "is-pass" : ""}">
         <div class="quiz-score-l"><span class="quiz-score-n">${esc(PT("projects.quizScore", "{s} of {m}").replace("{s}", r.score).replace("{m}", r.total))}</span>

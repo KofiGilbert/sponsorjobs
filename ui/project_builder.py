@@ -493,11 +493,26 @@ def quiz_pass_mark(total: int = QUIZ_SIZE) -> int:
     return -(-int(total) * QUIZ_PASS_PCT // 100)
 
 
+QUIZ_MULTI = 5                       # of the 20, about this many are "Select all that apply"
+_ABOVE = re.compile(r"^\s*(all|none|both|neither) of the above\W*$", re.I)
+
+
+def quiz_correct(q: dict) -> list[int]:
+    """The original indices of a question's right options. A question with no ``type`` is an
+    old single-answer one and keeps working as single."""
+    if q.get("type") == "multi":
+        return sorted({int(i) for i in q.get("answers") or []})
+    return [int(q["answer"])]
+
+
 def quiz_questions(raw: list, files: list[dict]) -> list[dict]:
     """Normalise the model's quiz against the REAL files. Each question keeps exactly four
-    distinct options with one right answer; a code question's excerpt is cut from the file on
-    disk (never model-written code), at most ``QUIZ_EXCERPT_LINES`` lines; a question about a
-    file that does not exist loses its excerpt but keeps its text. Duplicates are dropped.
+    distinct options. A single-answer question (``type`` "single") has one right ``answer``; a
+    "Select all that apply" question (``type`` "multi") has two to four right ``answers`` and may
+    not use "All/None of the above" (that would make the set ambiguous); a multi question that
+    comes back with one right option becomes a single one. A code question's excerpt is cut from
+    the file on disk (never model-written code), at most ``QUIZ_EXCERPT_LINES`` lines; a question
+    about a file that does not exist loses its excerpt but keeps its text. Duplicates are dropped.
     Returns at most ``QUIZ_SIZE`` questions; the caller refuses a quiz that comes back short."""
     from tailoring.conform import strip_ai_dashes as clean
     by_path = {f["path"]: f["content"] for f in files}
@@ -509,14 +524,25 @@ def quiz_questions(raw: list, files: list[dict]) -> list[dict]:
         opts = [clean(str(o).strip())[:200] for o in (s.get("options") or []) if str(o).strip()]
         if not q or q.lower() in seen or len(opts) != 4 or len({o.lower() for o in opts}) != 4:
             continue
-        try:
-            ans = int(s.get("answer"))
-        except (TypeError, ValueError):
-            continue
-        if not 0 <= ans < 4:
-            continue
+        key: dict
+        if str(s.get("type") or "").strip().lower() == "multi":
+            try:
+                right = sorted({int(i) for i in (s.get("answers") or [])})
+            except (TypeError, ValueError):
+                continue
+            if not right or any(not 0 <= i < 4 for i in right) or any(_ABOVE.match(o) for o in opts):
+                continue
+            key = {"type": "multi", "answers": right} if len(right) >= 2 else {"type": "single", "answer": right[0]}
+        else:
+            try:
+                ans = int(s.get("answer"))
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= ans < 4:
+                continue
+            key = {"type": "single", "answer": ans}
         topic = str(s.get("topic") or "").strip().lower()
-        item = {"q": q, "options": opts, "answer": ans,
+        item = {"q": q, "options": opts, **key,
                 "explain": clean(str(s.get("explain") or "").strip())[:300],
                 "topic": topic if topic in QUIZ_TOPICS else "parts"}
         path = s.get("path")
@@ -542,7 +568,8 @@ def quiz_questions(raw: list, files: list[dict]) -> list[dict]:
 def quiz_attempt(questions: list[dict], rng, previous: dict | None = None) -> dict:
     """A fresh attempt: the questions in a shuffled order and each question's options shuffled.
     ``order[k]`` is the question shown k-th; ``opts[k][j]`` is the original index of the option
-    shown j-th for it. A retake never repeats the previous attempt's question order."""
+    shown j-th for it. "All of the above" and "None of the above" stay last, where a reader
+    expects them. A retake never repeats the previous attempt's question order."""
     n = len(questions)
     order = list(range(n))
     for _ in range(8):
@@ -550,43 +577,66 @@ def quiz_attempt(questions: list[dict], rng, previous: dict | None = None) -> di
         if n < 2 or not previous or order != list(previous.get("order") or []):
             break
     opts = []
-    for _k in range(n):
-        perm = list(range(4))
-        rng.shuffle(perm)
-        opts.append(perm)
+    for qi in order:
+        o = questions[qi].get("options") or [""] * 4
+        free = [j for j in range(4) if not _ABOVE.match(str(o[j]))]
+        rng.shuffle(free)
+        opts.append(free + [j for j in range(4) if j not in free])
     return {"order": order, "opts": opts}
 
 
 def public_quiz(questions: list[dict], attempt: dict) -> list[dict]:
-    """The questions as the client sees them, in the attempt's order with shuffled options. The
-    answer key and the explanations stay on the server."""
+    """The questions as the client sees them, in the attempt's order with shuffled options and
+    the question's type ("single" or "multi"). The answer key and the explanations stay on the
+    server."""
     out = []
     for k, qi in enumerate(attempt["order"]):
         q = questions[qi]
-        item = {"n": k + 1, "q": q["q"], "options": [q["options"][j] for j in attempt["opts"][k]]}
+        item = {"n": k + 1, "q": q["q"], "type": "multi" if q.get("type") == "multi" else "single",
+                "options": [q["options"][j] for j in attempt["opts"][k]]}
         if q.get("code"):
             item.update(path=q["path"], start=q["start"], end=q["end"], code=q["code"])
         out.append(item)
     return out
 
 
+def _shown_to_original(perm: list[int], pick) -> int | None:
+    try:
+        i = int(pick)
+    except (TypeError, ValueError):
+        return None
+    return perm[i] if 0 <= i < len(perm) and not isinstance(pick, bool) else None
+
+
 def grade_quiz(questions: list[dict], attempt: dict, answers: list) -> dict:
-    """Grade one attempt locally. ``answers[k]`` is the option index the person picked for the
-    k-th question as shown (None or missing counts as wrong). Returns the score, the pass mark,
-    whether it passed, and each wrong question with the right answer and its explanation."""
+    """Grade one attempt locally. ``answers[k]`` is what the person picked for the k-th question
+    as shown: an option index for a single-answer question, a list of option indices for a
+    "Select all that apply" one (None or missing counts as wrong). A multi question is right only
+    when the picked set EXACTLY equals the right set: every right option and no wrong one.
+    Returns the score, the pass mark, whether it passed, and each wrong question with the right
+    answer(s) and its explanation (lists for a multi question, so the review can show both)."""
     total = len(attempt["order"])
     score, wrong = 0, []
     for k, qi in enumerate(attempt["order"]):
-        q = questions[qi]
+        q, perm = questions[qi], attempt["opts"][k]
         pick = answers[k] if k < len(answers) else None
-        try:
-            got = attempt["opts"][k][int(pick)] if pick is not None and 0 <= int(pick) < 4 else None
-        except (TypeError, ValueError):
-            got = None
-        if got == q["answer"]:
+        right = quiz_correct(q)
+        if q.get("type") == "multi":
+            mapped = [_shown_to_original(perm, p) for p in (pick if isinstance(pick, list) else [])]
+            got = sorted({g for g in mapped if g is not None})
+            if got == right and None not in mapped:                  # an invalid pick is never right
+                score += 1
+                continue
+            wrong.append({"n": k + 1, "q": q["q"], "type": "multi",
+                          "yours": [q["options"][g] for g in sorted(got, key=perm.index)],
+                          "correct": [q["options"][r] for r in sorted(right, key=perm.index)],
+                          "explain": q.get("explain", "")})
+            continue
+        got = None if isinstance(pick, list) else _shown_to_original(perm, pick)
+        if got == right[0]:
             score += 1
             continue
-        wrong.append({"n": k + 1, "q": q["q"], "yours": q["options"][got] if got is not None else "",
-                      "correct": q["options"][q["answer"]], "explain": q.get("explain", "")})
+        wrong.append({"n": k + 1, "q": q["q"], "type": "single", "yours": q["options"][got] if got is not None else "",
+                      "correct": q["options"][right[0]], "explain": q.get("explain", "")})
     need = quiz_pass_mark(total)
     return {"score": score, "total": total, "pass_mark": need, "passed": score >= need, "wrong": wrong}

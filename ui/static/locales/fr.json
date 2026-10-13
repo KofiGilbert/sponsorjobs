@@ -706,5 +706,8 @@
   "projects.yourAnswer": "Ta réponse",
   "projects.correctAnswer": "Correcte",
   "projects.retake": "Recommencer",
-  "projects.lastQuiz": "Dernier essai {s} sur {m}. Réussite à {p}."
+  "projects.lastQuiz": "Dernier essai {s} sur {m}. Réussite à {p}.",
+  "projects.selectAll": "Sélectionne toutes les bonnes réponses.",
+  "projects.multiRule": "Elle ne compte que si tu choisis toutes les bonnes options et aucune mauvaise.",
+  "projects.yourAnswers": "Tes réponses"
 }

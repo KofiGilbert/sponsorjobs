@@ -1258,24 +1258,27 @@ class FakeLLM:
         ]}
 
     def generate_project_quiz(self, project: dict, files: list, steps: list) -> dict:
-        """Deterministic 20-question Defend it quiz on the fake tracker project. The right answer
-        is always listed first here; the app shuffles the options for every attempt."""
+        """Deterministic 20-question Defend it quiz on the fake tracker project: 15 single-answer
+        questions (one uses "None of the above") and 5 "Select all that apply" ones. The right
+        answers are always listed first here; the app shuffles the options for every attempt."""
         t = (project.get("title") or "this project").strip()
-        Q = lambda topic, q, opts, why, **code: {"topic": topic, "q": q, "options": opts, "answer": 0,
-                                                 "explain": why, **code}
+        Q = lambda topic, q, opts, why, **code: {"topic": topic, "type": "single", "q": q, "options": opts,
+                                                 "answer": 0, "explain": why, **code}
+        M = lambda topic, q, opts, n, why: {"topic": topic, "type": "multi", "q": q, "options": opts,
+                                            "answers": list(range(n)), "explain": why}
         return {"questions": [
             Q("parts", "What does tracker/cli.py do?", ["Reads numbers from the command line and prints the stats",
               "Stores numbers in a database", "Serves a web page", "Downloads data from an API"],
               "The CLI is the entry point: arguments in, four stats out."),
-            Q("parts", "What does summarize() return?", ["Count, min, max and mean", "Only the mean",
-              "A sorted copy of the list", "A histogram"], "It returns the four summary stats together."),
-            Q("parts", "What does tracker/__init__.py expose?", ["summarize", "main", "mean", "Nothing"],
+            M("parts", "Which of these does summarize() return?", ["The count", "The mean",
+              "A sorted copy of the list", "A histogram"], 2, "It returns count, min, max and mean together."),
+            Q("parts", "What does tracker/__init__.py expose?", ["summarize", "main", "mean", "None of the above"],
               "__all__ lists summarize, the one public function."),
             Q("parts", "Where do the unit tests live?", ["tests/test_core.py", "tracker/cli.py", "README.md",
               "requirements.txt"], "pytest discovers tests/test_core.py."),
-            Q("why", f"Why is {t} split into a pure core and a separate CLI?", ["So the core is easy to test without printing",
-              "Python requires two files", "To make it run faster", "To hide the code"],
-              "Pure functions with no input or output are simple to test."),
+            M("why", f"Why is {t} split into a pure core and a separate CLI?", ["So the core is easy to test without printing",
+              "So other code can reuse the core", "Python requires two files", "To make it run faster"], 2,
+              "Pure functions with no input or output are simple to test and to reuse."),
             Q("why", "Why does mean() raise on an empty list?", ["To avoid dividing by zero with a clear error",
               "To save memory", "Because Python requires it", "To speed up the loop"],
               "len([]) is 0; a named error is clearer than a ZeroDivisionError."),
@@ -1288,9 +1291,9 @@ class FakeLLM:
             Q("tradeoffs", "What does a small public surface trade away?", ["Direct access to internal helpers",
               "The ability to import the package", "Test coverage", "Error handling"],
               "Callers depend on summarize() only, so internals can change freely."),
-            Q("tradeoffs", "Why no third-party maths library?", ["Fewer dependencies for a small job",
-              "Libraries are not allowed on GitHub", "pytest cannot test them", "It would not run on Linux"],
-              "The standard library covers four stats; a dependency would add weight."),
+            M("tradeoffs", "Why no third-party maths library?", ["Fewer dependencies for a small job",
+              "The standard library already covers four stats", "Libraries are not allowed on GitHub",
+              "pytest cannot test them"], 2, "The standard library covers four stats; a dependency would add weight."),
             Q("testing", "Which edge case do the tests cover?", ["An empty list", "Negative numbers",
               "Very large lists", "Non-numeric text"], "test_mean_of_empty_list_is_an_error covers it."),
             Q("testing", "Which command runs the tests?", ["pytest", "python setup.py", "make run", "npm test"],
@@ -1300,12 +1303,12 @@ class FakeLLM:
               "Bad input is the next most likely failure."),
             Q("scale", "What breaks first with millions of numbers?", ["Holding them all in memory as a list",
               "The README", "The test runner", "The package name"], "Every value is kept in a list before summarising."),
-            Q("scale", "How could it handle a stream too big for memory?", ["Keep a running count, sum, min and max",
-              "Sort the list first", "Use more print statements", "Split the README"],
+            M("scale", "How could it handle a stream too big for memory?", ["Keep a running count and sum",
+              "Track min and max as values arrive", "Sort the list first", "Use more print statements"], 2,
               "Running totals need constant memory."),
-            Q("extend", "How would you add a median?", ["Add a function in core.py and return it from summarize()",
-              "Edit the README only", "Add it to .gitignore", "Change requirements.txt"],
-              "New stats belong in the pure core, with a test."),
+            M("extend", "How would you add a median?", ["Add a function in core.py", "Return it from summarize()",
+              "Add a test in tests/test_core.py", "Add it to .gitignore"], 3,
+              "New stats belong in the pure core, returned by summarize(), with a test."),
             Q("extend", "How would you read numbers from a file instead?", ["Parse the file in cli.py and pass the values to summarize()",
               "Rewrite summarize() to open files", "Add the file to tests", "Put the path in __init__.py"],
               "Input handling stays in the CLI; the core keeps taking a list."),

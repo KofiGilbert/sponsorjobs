@@ -113,8 +113,13 @@ def _quiz_answers(pid, right=20):
     att, qs = qz["attempt"], qz["questions"]
     out = []
     for k, qi in enumerate(att["order"]):
-        good = att["opts"][k].index(qs[qi]["answer"])
-        out.append(good if k < right else (good + 1) % 4)
+        q, perm = qs[qi], att["opts"][k]
+        if q.get("type") == "multi":                       # select all that apply: a list of indices
+            good = sorted(perm.index(i) for i in q["answers"])
+            out.append(good if k < right else good[:-1])
+        else:
+            good = perm.index(q["answer"])
+            out.append(good if k < right else (good + 1) % 4)
     return att["id"], out
 
 
