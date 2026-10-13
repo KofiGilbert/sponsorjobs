@@ -176,7 +176,7 @@ def test_ideas_one_click_from_last_tailored_job(client, monkeypatch):
     assert 4 <= len(d["ideas"]) <= 6
     for i in d["ideas"]:
         assert i["title"] and i["pitch"] and 3 <= len(i["skills"]) <= 5
-        assert i["size"] in ("Weekend", "1 week", "2 weeks")
+        assert "size" not in i   # no build-time label: AI build time is not human build time
         assert i["repo"] == i["repo"].lower() and " " not in i["repo"]
         assert set(i["gaps"]) <= set(i["skills"]) and "Python" not in i["gaps"]
     assert any("Airflow" in i["gaps"] or "SQL" in i["gaps"] for i in d["ideas"])
@@ -283,7 +283,7 @@ def test_start_without_github_creates_the_draft_only(client, monkeypatch):
     assert d["github"]["connected"] is False and d["github"]["ok"] is False
     p = d["project"]
     assert p["status"] == "draft" and p["repo_url"] == "" and p["repo"] == "job-market-tracker"
-    assert p["skills"] == ["Python", "SQL", "Airflow"] and p["size"] == "1 week"
+    assert p["skills"] == ["Python", "SQL", "Airflow"] and "size" not in p
     assert gh.calls == []   # nothing touched GitHub
     assert c.post("/api/projects/start", json={"idea": {}}).status_code == 400
 
@@ -493,7 +493,7 @@ def test_saved_ideas_crud_and_persistence(client, monkeypatch, tmp_path):
     s = c.post("/api/projects/ideas/saved", json={"idea": other}).get_json()["saved"]
     assert [i["title"] for i in s] == ["Open data dashboard", "Fraud detection API"]   # newest first
     assert s[1]["examples"] == [idea["examples"][0]]                                      # only github.com
-    assert s[0]["repo"] == "open-data-dashboard"
+    assert s[0]["repo"] == "open-data-dashboard" and "size" not in s[0] and "size" not in s[1]
     # saving again replaces, never duplicates
     s = c.post("/api/projects/ideas/saved", json={"idea": idea}).get_json()["saved"]
     assert [i["title"] for i in s] == ["Fraud detection API", "Open data dashboard"]
@@ -539,7 +539,8 @@ def _js_function(src, name):
 
 
 def test_idea_filters_are_client_side_only():
-    """Size and category filters narrow what is loaded; nothing in the filter path makes a request."""
+    """The category select narrows what is loaded; nothing in the filter path makes a request.
+    There is no size filter, pill or tie-break any more."""
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     for name in ("renderIdeaFilters", "renderIdeaGrid", "ideaPasses", "ideaCat"):
@@ -547,4 +548,19 @@ def test_idea_filters_are_client_side_only():
         for banned in ("api(", "fetch(", "loadIdeas(", "loadMoreIdeas(", "XMLHttpRequest"):
             assert banned not in body, f"{name} calls {banned}"
     filt = _js_function(src, "renderIdeaFilters")
-    assert 'data-fsize' in filt and 'data-fcat' in filt and "renderIdeaGrid({ still: true })" in filt
+    assert "#projIdeasCat" in filt and "<option" in filt and "projects.anyCategory" in filt
+    assert "s.size" not in src and "IDEA_SIZE" not in src and "data-fsize" not in src
+    assert "renderIdeaGrid({ still: true })" in src.split('$("#projIdeasCat")?.addEventListener("change"', 1)[1].split("\n", 1)[0]
+    html = (Path(__file__).resolve().parents[1] / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
+    assert '<select class="jf-input jf-sel" id="projIdeasCat"' in html
+
+
+def test_start_without_github_asks_on_the_card_first():
+    """Start while GitHub is not connected opens an inline ask (Connect, or Start without GitHub)
+    instead of silently creating a project with no repo."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    start = _js_function(src, "startIdea")
+    assert "if (!local && !IDEAS.github?.connected) return askGitHubFirst(s, btn);" in start
+    ask = _js_function(src, "askGitHubFirst")
+    assert "data-gh" in ask and "data-nogh" in ask and "startIdea(s, btn, true)" in ask and "openGitHubSettings()" in ask

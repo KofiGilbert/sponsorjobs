@@ -611,7 +611,6 @@
   "projects.start": "Empezar este proyecto",
   "projects.starting": "Empezando…",
   "projects.ghConnect": "Conectar GitHub",
-  "projects.ghNote": "para empezar cada idea como repositorio privado.",
   "projects.newForYou": "Una habilidad que pide el empleo y que tu perfil aún no muestra",
   "projects.noIdeas": "No llegaron ideas. Prueba con otro puesto.",
   "projects.startedRepo": "Empezado. Tu repositorio privado está listo en GitHub.",
@@ -635,13 +634,17 @@
   "projects.clearSearch": "Borrar búsqueda",
   "projects.moreIdeas": "Más ideas",
   "projects.noMoreIdeas": "No llegaron ideas nuevas. Prueba una búsqueda.",
-  "projects.filterSize": "Tamaño",
   "projects.filterCat": "Categoría",
-  "projects.any": "Todas",
   "projects.noMatch": "Ninguna idea coincide con estos filtros.",
   "projects.saveIdea": "Guardar idea",
   "projects.savedIdea": "Guardada",
   "projects.savedIdeas": "Ideas guardadas",
   "projects.saveFailed": "No se pudo guardar la idea.",
-  "projects.capReached": "Has usado las {n} tandas de ideas de hoy. Más mañana."
+  "projects.capReached": "Has usado las {n} tandas de ideas de hoy. Más mañana.",
+  "projects.anyCategory": "Cualquier categoría",
+  "projects.ghConnected": "GitHub conectado",
+  "projects.ghConnectedAs": "Conectado como",
+  "projects.ghPrompt": "Conecta GitHub para crear el repositorio",
+  "projects.connect": "Conectar",
+  "projects.startNoGh": "Empezar sin GitHub"
 }

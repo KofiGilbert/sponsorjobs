@@ -1078,7 +1078,7 @@ class FakeLLM:
                              exclude: list | None = None) -> dict:
         # Deterministic stand-in: six GitHub-shaped ideas aimed at the role, the first ones
         # carrying the JD skills the profile lacks, so the flow and the gap highlight are
-        # testable offline. Sizes and repo names are fixed per slot. A ``query`` themes every
+        # testable offline. Repo names are fixed per slot. A ``query`` themes every
         # title on that topic; ``exclude`` (titles already shown) is skipped, and later rounds
         # number the titles so "More ideas" always has something new.
         r = (role or "").strip() or "your next role"
@@ -1087,42 +1087,42 @@ class FakeLLM:
         pool = gaps + [t for t in terms if t not in gaps] + ["Python", "SQL", "Git", "Testing", "REST APIs"]
         slots = [
             ("Job market tracker", "Pulls public job postings and charts which skills are rising.",
-             "Python, SQLite, Flask", "1 week", "job-market-tracker", "job postings scraper dashboard"),
+             "Python, SQLite, Flask", "job-market-tracker", "job postings scraper dashboard"),
             ("Expense insights API", "A small REST API that categorises expenses and flags unusual spend.",
-             "Python, FastAPI, PostgreSQL", "1 week", "expense-insights-api", "expense tracker api"),
+             "Python, FastAPI, PostgreSQL", "expense-insights-api", "expense tracker api"),
             ("Open data dashboard", "Turns a public city dataset into a live, filterable dashboard.",
-             "Python, Pandas, Streamlit", "Weekend", "open-data-dashboard", "open data dashboard streamlit"),
+             "Python, Pandas, Streamlit", "open-data-dashboard", "open data dashboard streamlit"),
             ("Resume keyword matcher", "Compares a resume to a job post and lists the missing skills.",
-             "Python, spaCy, pytest", "Weekend", "resume-keyword-matcher", "resume job matcher nlp"),
+             "Python, spaCy, pytest", "resume-keyword-matcher", "resume job matcher nlp"),
             ("Pipeline health monitor", "Runs a nightly data pipeline and alerts when a step fails.",
-             "Python, Airflow, Docker", "2 weeks", "pipeline-health-monitor", "data pipeline monitoring airflow"),
+             "Python, Airflow, Docker", "pipeline-health-monitor", "data pipeline monitoring airflow"),
             ("Study group scheduler", "Matches students into study groups by course and free time.",
-             "TypeScript, React, Node.js", "2 weeks", "study-group-scheduler", "study group scheduler react"),
+             "TypeScript, React, Node.js", "study-group-scheduler", "study group scheduler react"),
         ]
         q = " ".join(str(query or "").split()[:3])
         if q:
             topic = q[:1].upper() + q[1:]
             nouns = ["tracker", "API", "dashboard", "matcher", "monitor", "scheduler"]
             slots = [(f"{topic} {nouns[k]}", f"A {nouns[k]} for {q}, built around a real public dataset.",
-                      tech, size, "", f"{q} {nouns[k]}") for k, (_, _, tech, size, _, _) in enumerate(slots)]
+                      tech, "", f"{q} {nouns[k]}") for k, (_, _, tech, _, _) in enumerate(slots)]
         skip = {str(t).strip().lower() for t in (exclude or [])}
         pick = []
         for rnd in range(1, 10):
             for slot in slots:
                 title = slot[0] if rnd == 1 else f"{slot[0]} {rnd}"
                 if title.lower() not in skip:
-                    pick.append((title,) + slot[1:4] + ((slot[4] if rnd == 1 else "") or "",) + slot[5:])
+                    pick.append((title,) + slot[1:3] + ((slot[3] if rnd == 1 else "") or "",) + slot[4:])
             if len(pick) >= count:
                 break
         ideas = []
-        for i, (title, pitch, tech, size, repo, search) in enumerate(pick[:max(1, min(count, 6))]):
+        for i, (title, pitch, tech, repo, search) in enumerate(pick[:max(1, min(count, 6))]):
             repo = repo or "-".join(title.lower().split())
             skills = []
             for t in [pool[(i + k) % len(pool)] for k in range(3)] + tech.split(", "):
                 if t and t.lower() not in {s.lower() for s in skills}:
                     skills.append(t)
             ideas.append({"title": title, "pitch": pitch, "skills": skills[:5], "tech": tech,
-                          "size": size, "repo": repo, "search": search,
+                          "repo": repo, "search": search,
                           "why": f"Proves {skills[0]} for {r}."})
         return {"ideas": ideas}
 

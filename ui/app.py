@@ -5084,7 +5084,7 @@ def _project_public(p: dict) -> dict:
             "tech": p.get("tech", ""), "status": p.get("status", "draft"), "result": p.get("result"),
             "plan": p.get("plan"), "done": p.get("done") or [], "repo_url": p.get("repo_url") or "",
             "repo_private": bool(p.get("repo_private")), "repo": p.get("repo") or "",
-            "skills": p.get("skills") or [], "size": p.get("size") or ""}
+            "skills": p.get("skills") or []}
 
 
 @app.get("/api/projects")
@@ -5126,7 +5126,6 @@ def projects_suggest():
 # already knows (the last tailored job, else the saved profile's latest title), the model drafts
 # GitHub-shaped ideas aimed at it, and the app adds REAL example repos from GitHub's own search.
 _IDEAS_FILE = _DATA / "project_ideas.json"
-_IDEA_SIZES = ("Weekend", "1 week", "2 weeks")
 
 
 def _ideas_cache() -> dict:
@@ -5195,11 +5194,11 @@ def _clean_idea(raw: dict, terms: list[str], prof_text: str) -> dict | None:
     skills = skills[:5]
     terms_l = {t.lower() for t in terms}
     gaps = [k for k in skills if k.lower() in terms_l and not _has_term(prof_text, k)]
-    size = str(raw.get("size") or "").strip()
-    size = next((z for z in _IDEA_SIZES if z.lower() == size.lower()), "1 week")
+    # No build-time size: AI build time is not human build time, so the label misled. Ideas
+    # cached before this still carry one; the UI ignores it and nothing new is written.
     return {"title": title, "pitch": str(raw.get("pitch") or "").strip()[:160],
             "skills": skills, "gaps": gaps, "tech": str(raw.get("tech") or "").strip()[:160],
-            "size": size, "repo": slugify(raw.get("repo") or title),
+            "repo": slugify(raw.get("repo") or title),
             "search": str(raw.get("search") or title).strip()[:120], "examples": []}
 
 
@@ -5404,7 +5403,6 @@ def projects_ideas_save():
              "skills": [str(k).strip()[:40] for k in (idea.get("skills") or []) if str(k).strip()][:5],
              "gaps": [str(k).strip()[:40] for k in (idea.get("gaps") or []) if str(k).strip()][:5],
              "tech": str(idea.get("tech") or "").strip()[:160],
-             "size": next((z for z in _IDEA_SIZES if z.lower() == str(idea.get("size") or "").strip().lower()), ""),
              "search": str(idea.get("search") or "").strip()[:120],
              "examples": [e for e in (idea.get("examples") or [])
                           if isinstance(e, dict) and str(e.get("url") or "").startswith("https://github.com/")][:3],
@@ -5443,11 +5441,10 @@ def projects_start():
     if not title:
         return jsonify({"error": "Pick an idea to start."}), 400
     skills = [str(k).strip()[:40] for k in (idea.get("skills") or []) if str(k).strip()][:5]
-    size = str(idea.get("size") or "").strip()
     p = {"id": uuid.uuid4().hex[:12], "title": title,
          "summary": str(idea.get("pitch") or idea.get("summary") or "").strip()[:280],
          "tech": str(idea.get("tech") or "").strip()[:160], "skills": skills,
-         "size": size if size in _IDEA_SIZES else "", "repo": slugify(idea.get("repo") or title),
+         "repo": slugify(idea.get("repo") or title),
          "status": "draft"}
     gh = {"connected": False, "ok": False, "url": "", "error": "", "issues": 0}
     token = _cred("GITHUB_TOKEN")

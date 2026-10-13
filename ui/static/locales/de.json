@@ -611,7 +611,6 @@
   "projects.start": "Projekt starten",
   "projects.starting": "Wird gestartet…",
   "projects.ghConnect": "GitHub verbinden",
-  "projects.ghNote": "um jede Idee als privates Repo zu starten.",
   "projects.newForYou": "Eine Fähigkeit, die die Stelle verlangt und dein Profil noch nicht zeigt",
   "projects.noIdeas": "Keine Ideen erhalten. Versuche eine andere Rolle.",
   "projects.startedRepo": "Gestartet. Dein privates Repo ist auf GitHub bereit.",
@@ -635,13 +634,17 @@
   "projects.clearSearch": "Suche löschen",
   "projects.moreIdeas": "Mehr Ideen",
   "projects.noMoreIdeas": "Keine neuen Ideen. Versuche eine Suche.",
-  "projects.filterSize": "Umfang",
   "projects.filterCat": "Kategorie",
-  "projects.any": "Alle",
   "projects.noMatch": "Keine Idee passt zu diesen Filtern.",
   "projects.saveIdea": "Idee merken",
   "projects.savedIdea": "Gemerkt",
   "projects.savedIdeas": "Gemerkte Ideen",
   "projects.saveFailed": "Die Idee konnte nicht gespeichert werden.",
-  "projects.capReached": "Du hast heute alle {n} Ideenrunden genutzt. Morgen gibt es mehr."
+  "projects.capReached": "Du hast heute alle {n} Ideenrunden genutzt. Morgen gibt es mehr.",
+  "projects.anyCategory": "Jede Kategorie",
+  "projects.ghConnected": "GitHub verbunden",
+  "projects.ghConnectedAs": "Verbunden als",
+  "projects.ghPrompt": "Verbinde GitHub, um das Repo zu erstellen",
+  "projects.connect": "Verbinden",
+  "projects.startNoGh": "Ohne GitHub starten"
 }

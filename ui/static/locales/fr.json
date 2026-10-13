@@ -611,7 +611,6 @@
   "projects.start": "Commencer ce projet",
   "projects.starting": "Démarrage…",
   "projects.ghConnect": "Connecter GitHub",
-  "projects.ghNote": "pour démarrer chaque idée en dépôt privé.",
   "projects.newForYou": "Une compétence demandée par le poste que votre profil ne montre pas encore",
   "projects.noIdeas": "Aucune idée reçue. Essayez un autre poste.",
   "projects.startedRepo": "Démarré. Votre dépôt privé est prêt sur GitHub.",
@@ -635,13 +634,17 @@
   "projects.clearSearch": "Effacer la recherche",
   "projects.moreIdeas": "Plus d'idées",
   "projects.noMoreIdeas": "Aucune nouvelle idée. Essayez une recherche.",
-  "projects.filterSize": "Durée",
   "projects.filterCat": "Catégorie",
-  "projects.any": "Toutes",
   "projects.noMatch": "Aucune idée ne correspond à ces filtres.",
   "projects.saveIdea": "Enregistrer l'idée",
   "projects.savedIdea": "Enregistrée",
   "projects.savedIdeas": "Idées enregistrées",
   "projects.saveFailed": "Impossible d'enregistrer l'idée.",
-  "projects.capReached": "Vous avez utilisé les {n} séries d'idées du jour. La suite demain."
+  "projects.capReached": "Vous avez utilisé les {n} séries d'idées du jour. La suite demain.",
+  "projects.anyCategory": "Toutes catégories",
+  "projects.ghConnected": "GitHub connecté",
+  "projects.ghConnectedAs": "Connecté en tant que",
+  "projects.ghPrompt": "Connectez GitHub pour créer le dépôt",
+  "projects.connect": "Connecter",
+  "projects.startNoGh": "Démarrer sans GitHub"
 }

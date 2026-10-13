@@ -4412,7 +4412,7 @@
            title="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}"
            aria-label="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}">${GH_MARK}${p.repo_private ? ICO_LOCK : ""}</a>`
       : "";
-    const meta = [p.tech, p.size].filter(Boolean).join(" \u00b7 ");
+    const meta = p.tech || "";
     return `<article class="proj-card ${verified ? "is-verified" : "is-draft"}" data-id="${esc(p.id)}">
       ${techTile(p, verified ? PROJ_ICO.seal : PROJ_ICO.code, "proj-card-mark")}
       <div class="proj-card-hd">
@@ -4508,13 +4508,13 @@
 
   // Project ideas: one click, no typing. The target role comes from what the app already knows
   // (last tailored job, else the profile's latest title); the chip lets the person change it.
-  // Each idea is GitHub-shaped: skills it proves (gaps marked +), a size, a repo name, and real
+  // Each idea is GitHub-shaped: skills it proves (gaps marked +), a repo name, and real
   // example repos from GitHub search. Start creates the draft, plus a private repo if connected.
   const PT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
   // ideas is the flat list shown; batches holds the size of each batch (the first from the role or
   // search, then one per "More ideas"), so each batch is ranked on its own. filt is client-side only.
   let IDEAS = { role: "", source: "", query: "", ideas: [], batches: [], github: { connected: false }, seq: 0,
-                cap: null, filt: { size: "", cat: "" }, moreBusy: false };
+                cap: null, filt: { cat: "" }, moreBusy: false };
   let SAVED_IDEAS = null;   // the local bookmark list, loaded once per session
   const ICO_BOOKMARK = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M4 2.5h8v11L8 10.8 4 13.5z"/></svg>`;
   const ICO_X = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
@@ -4533,7 +4533,37 @@
     $("#projForm") && ($("#projForm").hidden = true);
     box.hidden = false; renderProjList();
     if (SAVED_IDEAS === null) loadSavedIdeas();
-    if (!IDEAS.ideas.length) loadIdeas({}); else renderIdeas();
+    if (!IDEAS.ideas.length) loadIdeas({}); else { renderIdeas(); refreshIdeasGitHub(); }
+  }
+  // GitHub state for the toolbar and Start. The ideas payload carries it; Settings tells us when
+  // it changes (connect or disconnect), and reopening the gallery re-reads it.
+  async function refreshIdeasGitHub() {
+    try {
+      const gh = await fetch("/api/github/status").then(r => r.json());
+      IDEAS.github = { connected: !!gh.configured, login: gh.login || "" };
+      renderIdeaGitHub();
+    } catch { /* keep what we have */ }
+  }
+  document.addEventListener("tailor:github", refreshIdeasGitHub);
+  async function openGitHubSettings() {
+    await openSettings();
+    document.querySelector('[data-set="connections"]')?.click();
+    const f = $("#ghForm");
+    if (f && f.hidden && !IDEAS.github?.connected) { f.hidden = false; if ($("#ghMsg")) $("#ghMsg").hidden = true; }
+    f?.scrollIntoView?.({ block: "nearest" });
+    $("#ghToken")?.focus();
+  }
+  // The toolbar's GitHub slot: an outline Connect button while not connected, a quiet state once it is.
+  function renderIdeaGitHub() {
+    const box = $("#projIdeasGh"); if (!box) return;
+    const gh = IDEAS.github || {};
+    if (gh.connected) {
+      const who = gh.login ? `${PT("projects.ghConnectedAs", "Connected as")} ${gh.login}` : PT("projects.ghConnected", "GitHub connected");
+      box.innerHTML = `<span class="proj-gh-on" title="${esc(who)}">${GH_MARK}<span>${esc(gh.login || PT("projects.ghConnected", "GitHub connected"))}</span></span>`;
+    } else {
+      box.innerHTML = `<button class="btn btn-ghost proj-gh-btn" id="projIdeasConnect" type="button">${GH_MARK}${esc(PT("projects.ghConnect", "Connect GitHub"))}</button>`;
+      $("#projIdeasConnect")?.addEventListener("click", openGitHubSettings);
+    }
   }
   function closeIdeas() { const box = $("#projIdeas"); if (box) box.hidden = true; renderProjList(); }
   const skelCards = (n, hero) => Array.from({ length: n }, (_, i) => `<div class="proj-idea is-skel${hero && !i ? " is-hero" : ""}" style="--i:${i}" aria-hidden="true"><b class="tech-tile"></b><i></i><i></i><i></i><i></i></div>`).join("");
@@ -4643,15 +4673,13 @@
   // The ideas gallery (2026-10-13 layout; 2026-10 harmony pass: the cards use the Jobs card frame).
   // Layout (E): rank the ideas by how many of the job's missing skills each one covers, so the best
   // fit leads as a wide hero with a fit ring, and the rest follow in a bento with a fit meter.
-  // Ties fall back to the smaller build, then the title, so the order never shuffles.
-  const IDEA_SIZE_ORDER = { "weekend": 0, "1 week": 1, "2 weeks": 2 };
+  // Ties fall back to the title, so the order never shuffles.
   function rankIdeas(ideas) {
     const all = new Set();
     ideas.forEach(s => (s.gaps || []).forEach(g => all.add(g.toLowerCase())));
     const total = all.size;
     const ranked = ideas.map((s, i) => ({ s, i, fit: new Set((s.gaps || []).map(g => g.toLowerCase())).size, n: (s.skills || []).length }))
       .sort((a, b) => b.fit - a.fit || (total ? 0 : b.n - a.n)
-        || (IDEA_SIZE_ORDER[(a.s.size || "").toLowerCase()] ?? 9) - (IDEA_SIZE_ORDER[(b.s.size || "").toLowerCase()] ?? 9)
         || String(a.s.title || "").localeCompare(String(b.s.title || "")));
     return { ranked, total };
   }
@@ -4749,7 +4777,7 @@
     const n = (s.skills || []).length;
     const cat = ideaCat(s), [lk, lf] = IDEA_CATS[cat].label;
     const saved = isSavedIdea(s), saveLbl = saved ? PT("projects.savedIdea", "Saved") : PT("projects.saveIdea", "Save idea");
-    const pills = `${hero ? `<span class="proj-idea-pill is-best">${esc(total ? PT("projects.bestMatch", "Best match") : PT("projects.topPick", "Top pick"))}</span>` : ""}${s.size ? `<span class="proj-idea-pill">${esc(s.size.charAt(0).toUpperCase() + s.size.slice(1))}</span>` : ""}<button class="proj-idea-save" type="button" data-save aria-pressed="${saved}" aria-label="${esc(saveLbl)}" title="${esc(saveLbl)}">${ICO_BOOKMARK}</button>`;
+    const pills = `${hero ? `<span class="proj-idea-pill is-best">${esc(total ? PT("projects.bestMatch", "Best match") : PT("projects.topPick", "Top pick"))}</span>` : ""}<button class="proj-idea-save" type="button" data-save aria-pressed="${saved}" aria-label="${esc(saveLbl)}" title="${esc(saveLbl)}">${ICO_BOOKMARK}</button>`;
     // The Jobs card head: a 40px tile, the "company" line (here the category), the title under it,
     // and the pills top-right where Jobs shows "New 4h ago".
     const head = `<div class="proj-idea-hd">
@@ -4795,12 +4823,8 @@
   // that many batches still, so only an appended batch animates in.
   function renderIdeas(opt = {}) {
     renderTargetChip(IDEAS.role, false);
-    const grid = $("#projIdeasGrid"), note = $("#projIdeasNote"); if (!grid) return;
-    if (note) {
-      note.hidden = !!IDEAS.github?.connected;
-      note.innerHTML = `${GH_MARK}<span><a href="#" id="projIdeasConnect">${esc(PT("projects.ghConnect", "Connect GitHub"))}</a> ${esc(PT("projects.ghNote", "to start each idea as a private repo."))}</span>`;
-      $("#projIdeasConnect")?.addEventListener("click", async (e) => { e.preventDefault(); await openSettings(); document.querySelector('[data-set="connections"]')?.click(); });
-    }
+    const grid = $("#projIdeasGrid"); if (!grid) return;
+    renderIdeaGitHub();
     renderIdeaCap();
     const qline = $("#projIdeasQuery");
     if (qline) {
@@ -4816,24 +4840,19 @@
     renderIdeaFilters();
     renderIdeaGrid(opt);
   }
-  // Filters are client-side only: they narrow the ideas already loaded and never call the model.
-  const ideaPasses = s => (!IDEAS.filt.size || (s.size || "").toLowerCase() === IDEAS.filt.size.toLowerCase())
-    && (!IDEAS.filt.cat || ideaCat(s) === IDEAS.filt.cat);
+  // The category filter is client-side only: it narrows the ideas already loaded and never calls
+  // the model. It is the Jobs filter select ("Any time", "Any type"), listing the categories present.
+  const ideaPasses = s => !IDEAS.filt.cat || ideaCat(s) === IDEAS.filt.cat;
   function renderIdeaFilters() {
-    const box = $("#projIdeasFilters"); if (!box) return;
+    const sel = $("#projIdeasCat"); if (!sel) return;
     const cats = Object.keys(IDEA_CATS).filter(c => IDEAS.ideas.some(s => ideaCat(s) === c));
     if (IDEAS.filt.cat && !cats.includes(IDEAS.filt.cat)) IDEAS.filt.cat = "";
-    box.hidden = IDEAS.ideas.length < 2;
-    const chip = (kind, val, label, on) => `<button class="jf-toggle-btn proj-fchip" type="button" data-f${kind}="${esc(val)}" aria-pressed="${on}">${esc(label)}</button>`;
-    const any = PT("projects.any", "Any");
-    box.innerHTML = `<div class="proj-frow" role="group" aria-label="${esc(PT("projects.filterSize", "Size"))}"><span class="proj-frow-k">${esc(PT("projects.filterSize", "Size"))}</span>
-        ${chip("size", "", any, !IDEAS.filt.size)}${IDEA_SIZES_UI.map(z => chip("size", z, z, IDEAS.filt.size === z)).join("")}</div>
-      <div class="proj-frow" role="group" aria-label="${esc(PT("projects.filterCat", "Category"))}"><span class="proj-frow-k">${esc(PT("projects.filterCat", "Category"))}</span>
-        ${chip("cat", "", any, !IDEAS.filt.cat)}${cats.map(c => chip("cat", c, PT(IDEA_CATS[c].label[0], IDEA_CATS[c].label[1]), IDEAS.filt.cat === c)).join("")}</div>`;
-    box.querySelectorAll("[data-fsize]").forEach(b => b.addEventListener("click", () => { IDEAS.filt.size = b.dataset.fsize; renderIdeaFilters(); renderIdeaGrid({ still: true }); }));
-    box.querySelectorAll("[data-fcat]").forEach(b => b.addEventListener("click", () => { IDEAS.filt.cat = b.dataset.fcat; renderIdeaFilters(); renderIdeaGrid({ still: true }); }));
+    sel.innerHTML = `<option value="">${esc(PT("projects.anyCategory", "Any category"))}</option>`
+      + cats.map(c => `<option value="${c}">${esc(PT(IDEA_CATS[c].label[0], IDEA_CATS[c].label[1]))}</option>`).join("");
+    sel.value = IDEAS.filt.cat;
+    sel.disabled = IDEAS.ideas.length < 2;
   }
-  const IDEA_SIZES_UI = ["Weekend", "1 week", "2 weeks"];
+  $("#projIdeasCat")?.addEventListener("change", (e) => { IDEAS.filt.cat = e.currentTarget.value; renderIdeaGrid({ still: true }); });
   // Each batch is ranked on its own: the first batch leads with the hero, later batches flow in
   // the bento grid under it, so appending never reshuffles what the person is already reading.
   function renderIdeaGrid(opt = {}) {
@@ -4918,8 +4937,30 @@
       toast(err.message || PT("projects.saveFailed", "Couldn't save the idea."));
     } finally { if (btn && btn.isConnected) btn.disabled = false; }
   }
-  async function startIdea(s, btn) {
+  // Start while GitHub is not connected asks first, on the card itself: connect (the Settings flow)
+  // or start here without a repo. Nothing is created until one of the two is picked.
+  function askGitHubFirst(s, btn) {
+    const ft = btn?.closest(".proj-idea-ft"); if (!ft) return startIdea(s, btn, true);
+    if (ft.querySelector(".proj-idea-ghask")) return;
+    const kids = [...ft.children];
+    kids.forEach(k => { k.hidden = true; });
+    ft.insertAdjacentHTML("beforeend", `<div class="proj-idea-ghask" role="group" aria-label="${esc(PT("projects.ghPrompt", "Connect GitHub to create the repo"))}">
+        <span class="proj-idea-ghask-t">${GH_MARK}${esc(PT("projects.ghPrompt", "Connect GitHub to create the repo"))}</span>
+        <span class="proj-idea-ghask-a">
+          <button class="btn btn-quiet btn-sm" type="button" data-nogh>${esc(PT("projects.startNoGh", "Start without GitHub"))}</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-gh>${GH_MARK}${esc(PT("projects.connect", "Connect"))}</button>
+        </span>
+      </div>`);
+    const ask = ft.querySelector(".proj-idea-ghask");
+    const close = () => { ask?.remove(); kids.forEach(k => { k.hidden = false; }); };
+    ask.querySelector("[data-gh]")?.addEventListener("click", () => { close(); openGitHubSettings(); });
+    ask.querySelector("[data-nogh]")?.addEventListener("click", () => { close(); startIdea(s, btn, true); });
+    ask.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); close(); btn.focus(); } });
+    ask.querySelector("[data-gh]")?.focus();
+  }
+  async function startIdea(s, btn, local = false) {
     if (!s) return;
+    if (!local && !IDEAS.github?.connected) return askGitHubFirst(s, btn);
     const label = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = PT("projects.starting", "Starting…"); }
     try {
@@ -7139,11 +7180,13 @@
     setMsg(d.login ? `Connected as ${d.login}.` : "GitHub connected.", "ok");
     $("#ghForm").reset(); $("#ghForm").hidden = true;
     renderConnections();
+    document.dispatchEvent(new CustomEvent("tailor:github"));   // the ideas toolbar and Start follow
   });
   $("#ghDisconnect")?.addEventListener("click", async () => {
     await fetch("/api/github/disconnect", { method: "POST" });
     const f = $("#ghForm"); if (f) { f.reset(); f.hidden = true; }
     renderConnections();
+    document.dispatchEvent(new CustomEvent("tailor:github"));
   });
   $("#extHelp")?.addEventListener("click", () => { const d = $("#extDetail"); if (d) d.hidden = !d.hidden; });
   $("#gmHelp")?.addEventListener("click", () => { const d = $("#gmDetail"); if (d) d.hidden = !d.hidden; });

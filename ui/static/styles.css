@@ -3343,10 +3343,6 @@ body.cv-dragging * { cursor: grabbing !important; }
 .proj-ideas-tools { display: flex; gap: 2px; flex: none; }
 .proj-icon-btn.is-on { opacity: 1; }
 .proj-icon-btn.is-on:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
-.proj-ideas-note { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
-.proj-ideas-note svg { color: var(--faint); flex: none; }
-.proj-ideas-note a { color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
-.proj-ideas-note a:hover { color: var(--ink); text-decoration-color: currentColor; }
 .proj-ideas-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .proj-ideas-empty, .proj-ideas-legend { grid-column: 1 / -1; margin: 2px 0 0; font-size: 12px; color: var(--faint); }
 .proj-ideas-legend { display: flex; align-items: center; gap: 8px; }
@@ -3514,13 +3510,26 @@ body.cv-dragging * { cursor: grabbing !important; }
   .proj-ring-arc, .proj-idea.is-skel b, .proj-idea.is-skel i { animation: none; }
 }
 
-/* Ideas: search, filters, saved ideas, more ideas, daily cap (2026-10-13).
-   Search is the Jobs `.jf-search` field at the header's 34px height. The filter chips are the Jobs
-   `.jf-toggle-btn` at 30px; pressed reads in ink on a neutral wash, not the accent, because "Any" is
-   pressed by default in both rows and the hero's Start already spends the accent. */
-.proj-ideas-search { flex: 0 1 384px; min-width: 200px; }
-.proj-ideas-search .jf-ic { left: 11px; }
-.proj-ideas-search .jf-input { height: 34px; font-size: 13px; padding-left: 34px; }
+/* Ideas: the toolbar, saved ideas, more ideas, daily cap (2026-10-13, cleanup pass).
+   Row 2 of the head is ONE toolbar in the Jobs filter grammar: the Jobs `.jf-search` field and a
+   Jobs `.jf-input.jf-sel` category select, both untouched at 40px, then the GitHub slot (an outline
+   Connect button, or a quiet connected state) and the two icon tools. No labelled chip rows. */
+.proj-ideas-bar { display: flex; align-items: center; gap: 10px; margin-top: 14px; min-width: 0; }
+.proj-ideas-search { min-width: 200px; }
+.proj-ideas-bar .proj-ideas-tools { margin-left: -2px; }
+.proj-ideas-bar .proj-icon-btn { width: 36px; height: 36px; margin-left: 0; }
+.proj-ideas-gh { flex: none; display: flex; align-items: center; min-width: 0; }
+.proj-gh-btn { height: 40px; padding: 0 14px; }
+.proj-gh-btn svg { flex: none; }
+.proj-gh-on { display: inline-flex; align-items: center; gap: 7px; height: 40px; max-width: 200px; padding: 0 4px; font-size: 12.5px; color: var(--muted); }
+.proj-gh-on svg { flex: none; color: var(--faint); }
+.proj-gh-on span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Start while GitHub is not connected: the card's footer becomes a one-line ask, in place. */
+.proj-idea-ghask { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.proj-idea-ghask-t { display: inline-flex; align-items: center; gap: 7px; min-width: 0; font-size: 12.5px; color: var(--ink-2); }
+.proj-idea-ghask-t svg { flex: none; color: var(--faint); }
+.proj-idea-ghask-a { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.proj-idea-ghask-a .btn svg { flex: none; width: 12px; height: 12px; }
 .proj-ideas-search .jf-input:disabled { opacity: 0.55; cursor: not-allowed; }
 .proj-icon-btn.is-on:disabled { opacity: 0.4; cursor: not-allowed; background: none; color: var(--faint); }
 .proj-ideas-cap { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
@@ -3532,14 +3541,6 @@ body.cv-dragging * { cursor: grabbing !important; }
   transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
 .proj-q-clear:hover { color: var(--ink); border-color: var(--border-strong); }
-.proj-ideas-filters { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
-.proj-frow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.proj-frow-k { flex: none; width: 76px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
-.jf-toggle-btn.proj-fchip { height: 30px; padding: 0 12px; font-size: 12.5px; }
-.jf-toggle-btn.proj-fchip[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--ink) 10%, transparent); border-color: color-mix(in srgb, var(--ink) 28%, transparent);
-  color: var(--ink); font-weight: 600;
-}
 .proj-idea-tags { align-items: center; }
 .proj-idea-save {
   width: 26px; height: 24px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0;
@@ -3562,8 +3563,8 @@ body.cv-dragging * { cursor: grabbing !important; }
 .proj-ideas-skelrow { display: contents; }
 .proj-idea.is-still { animation: none; }
 @media (max-width: 760px) {
-  .proj-ideas-search { flex: 1 1 100%; order: 3; }
-  .proj-frow-k { width: 100%; }
+  .proj-ideas-bar { flex-wrap: wrap; }
+  .proj-ideas-search { flex: 1 1 100%; }
 }
 
 /* A repo beside a project's title: the GitHub mark, plus a lock while it is private. */

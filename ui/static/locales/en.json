@@ -611,7 +611,6 @@
   "projects.start": "Start this project",
   "projects.starting": "Starting…",
   "projects.ghConnect": "Connect GitHub",
-  "projects.ghNote": "to start each idea as a private repo.",
   "projects.newForYou": "A skill the job asks for that your profile doesn't show yet",
   "projects.noIdeas": "No ideas came back. Try another role.",
   "projects.startedRepo": "Started. Your private repo is ready on GitHub.",
@@ -635,13 +634,17 @@
   "projects.clearSearch": "Clear search",
   "projects.moreIdeas": "More ideas",
   "projects.noMoreIdeas": "No new ideas came back. Try a search.",
-  "projects.filterSize": "Size",
   "projects.filterCat": "Category",
-  "projects.any": "Any",
   "projects.noMatch": "No ideas match these filters.",
   "projects.saveIdea": "Save idea",
   "projects.savedIdea": "Saved",
   "projects.savedIdeas": "Saved ideas",
   "projects.saveFailed": "Couldn't save the idea.",
-  "projects.capReached": "You've reached today's {n} idea batches. More tomorrow."
+  "projects.capReached": "You've reached today's {n} idea batches. More tomorrow.",
+  "projects.anyCategory": "Any category",
+  "projects.ghConnected": "GitHub connected",
+  "projects.ghConnectedAs": "Connected as",
+  "projects.ghPrompt": "Connect GitHub to create the repo",
+  "projects.connect": "Connect",
+  "projects.startNoGh": "Start without GitHub"
 }

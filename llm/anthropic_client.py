@@ -1183,12 +1183,12 @@ class AnthropicLLM:
             "You are a senior engineer helping an international student pick GitHub portfolio "
             f"projects for a target role. Suggest {count} distinct, ORIGINAL project ideas a "
             "recruiter would want to see pinned. RULES:\n"
-            "- Finishable: a weekend, 1 week, or 2 weeks of evenings. Not a tutorial clone, not "
+            "- Finishable: small and focused. Not a tutorial clone, not "
             "a months-long epic. Each must end with something runnable and demoable.\n"
             "- Each proves 3 to 5 concrete skills the target role asks for. Prefer the MISSING "
             "skills listed (the role wants them, the profile does not show them yet), stretching "
             "from what the person already knows so they can genuinely build and defend it.\n"
-            "- Vary the ideas: different domains and sizes.\n"
+            "- Vary the ideas: different domains.\n"
             "- Use the role's own skill wording.\n"
             + ("- TOPIC: every idea must be about the topic the person searched for (given below), "
                "still aimed at the target role and grounded in their profile.\n" if query else "")
@@ -1196,11 +1196,11 @@ class AnthropicLLM:
                "a genuinely different project.\n" if exclude else "")
             + "- No em or en dashes. Plain words.\n"
             "For each: title (2 to 4 words), pitch (ONE line, under 90 characters, what it does), "
-            "skills (array of 3 to 5 skill names), tech (comma-separated stack), size (exactly "
-            "one of \"Weekend\", \"1 week\", \"2 weeks\"), repo (a kebab-case repo name), "
+            "skills (array of 3 to 5 skill names), tech (comma-separated stack), "
+            "repo (a kebab-case repo name), "
             "search (3 to 5 plain keywords to find similar public repos on GitHub).\n"
             "Return ONLY JSON: {\"ideas\": [{\"title\":\"...\",\"pitch\":\"...\","
-            "\"skills\":[\"...\"],\"tech\":\"...\",\"size\":\"...\",\"repo\":\"...\","
+            "\"skills\":[\"...\"],\"tech\":\"...\",\"repo\":\"...\","
             "\"search\":\"...\"}]}"
         )
         user = (f"TARGET ROLE: {(role or '').strip() or 'not given; infer from the profile'}\n"
@@ -1223,7 +1223,6 @@ class AnthropicLLM:
                 "pitch": strip_ai_dashes(str(s.get("pitch", "")).strip()),
                 "skills": [strip_ai_dashes(str(k).strip()) for k in skills if str(k).strip()][:5],
                 "tech": strip_ai_dashes(str(s.get("tech", "")).strip()),
-                "size": str(s.get("size", "")).strip(),
                 "repo": str(s.get("repo", "")).strip(),
                 "search": str(s.get("search", "")).strip(),
             })
