@@ -456,18 +456,20 @@ def identity_match_count(evidence: str, distinctive: list[str]) -> int:
 
 
 def site_confirms(site: str, orgs: list[str], jds: list[str], display_name: str, need: int) -> bool:
-    """A Workday site is this sponsor when the site's own name or ONE posting's hiring
-    organization confirms it (discover.confirms, with the squashed-spelling rule), or, when
-    neither names anyone, the postings' own descriptions do (discover.prose_confirms: Cadence's
-    postings carry no organization, but every JD says "At Cadence, ..."). Each piece is judged
-    on its own, so a subsidiary's posting ("Immunex") next to the parent's ("Amgen Inc") is
-    fine, while an organization that names a sibling ("Hitachi Energy" for Hitachi Vantara)
-    never confirms."""
-    pieces = [site_words(site), *orgs]
-    if any(confirms(p, display_name, need, squash=True) for p in pieces if p):
+    """Is this Workday site the sponsor's? When the postings name their hiring organization, ONE
+    of those organizations must confirm it (discover.confirms, with the squashed-spelling rule):
+    a subsidiary's posting ("Immunex") next to the parent's ("Amgen Inc") is fine, while a site
+    whose postings all name another employer is not, whatever the site is called (live
+    2026-10-12: fusion.wd5/Fusion is "Fusion Medical Staffing LLC", not Fusion Life Sciences;
+    google.wd501/GOCJobs is "GOC Services India", not Google LLC). Only when no posting names
+    anyone do the site's own name and then the postings' descriptions decide
+    (discover.prose_confirms: Cadence's postings carry no organization, but every JD says "At
+    Cadence, ...")."""
+    named = [o for o in orgs if o]
+    if named:
+        return any(confirms(o, display_name, need, squash=True) for o in named)
+    if confirms(site_words(site), display_name, need, squash=True):
         return True
-    if any(o for o in orgs):
-        return False          # the postings name their employer, and it is not this sponsor
     return prose_confirms("\n".join(j for j in jds if j), display_name, need)
 
 

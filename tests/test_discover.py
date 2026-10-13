@@ -335,14 +335,20 @@ def test_slug_guesses_try_brand_alias_trimmed_and_partial_joins():
     assert "schwab" in slug_candidates("Charles Schwab & Company Inc")
     assert "charlesschwab" in slug_candidates("Charles Schwab & Company Inc")
     assert "goldmansachs" in slug_candidates("Goldman Sachs Co Llc")
-    # Brand words joined without the filler, trusted blind like any whole-brand join.
+    # Brand words joined without the filler: tried on the name lane, but only the whole name
+    # run together is trusted blind on Ashby/Lever.
     g = {x.slug: x for x in slug_guesses("Thermo Fisher Scientific Inc")}
-    assert g["thermofisher"].blind and not g["thermo"].blind and g["thermo"].need == 2
+    assert not g["thermofisher"].blind and g["thermofisherscientific"].blind
+    assert not g["thermo"].blind and g["thermo"].need == 2
+    # Live 2026-10-12: a trimmed join can be an ordinary word -- "healthcare" was a Lever
+    # board of someone else. It is never trusted without a name to check.
+    h = {x.slug: x for x in slug_guesses("Health Care Service Corporation")}
+    assert "healthcare" in h and not h["healthcare"].blind
+    assert discover_for_company("Health Care Service Corporation", atss=("lever",),
+                                fetch=_fetch(lever={"healthcare": _ASHBY_JOB})) is None
     # Trailing filler and geography trimmed.
     assert core_tokens("Nokia Of America Corporation") == ["nokia"]
     assert core_tokens("Cognizant Technology Solutions Us Corp") == ["cognizant"]
-    # A partial join is never trusted blind on an ATS that shows no employer name.
-    assert not g.get("thermo").blind
     assert len(slug_candidates("State Street Bank And Trust Company")) <= 7
 
 
@@ -417,3 +423,12 @@ def test_prose_confirms_needs_capitalized_clean_mentions():
     # A lowercase word is not the brand: "visa sponsorship" never confirms Visa.
     assert not prose_confirms("No visa sponsorship. We sponsor no visa.", "Visa Inc")
     assert not prose_confirms("", "Visa Inc")
+
+
+def test_a_subsidiary_or_regional_wording_is_not_another_employer():
+    # Live 2026-10-12: Netflix's and FactSet's own Workday postings name these entities.
+    assert confirms("Netflix Animation Studios Australia Pty Ltd", "Netflix Inc")
+    assert confirms("10051 FactSet Brasil Consultoria Ltda", "Factset Research Systems Inc")
+    # ...while a line-of-business word the sponsor lacks still marks a different employer.
+    assert not confirms("Fusion Medical Staffing LLC", "Fusion Life Sciences Technologies")
+    assert not confirms("Convenience Holdings Pty Ltd", "7 Eleven Inc")

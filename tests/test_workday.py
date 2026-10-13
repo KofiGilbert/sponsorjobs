@@ -897,3 +897,13 @@ def test_a_tenant_whose_robots_names_no_site_but_forbids_none_is_asked_the_commo
     assert not workday.robots_allows_all("User-agent: *\nDisallow: /\n")
     assert not workday.robots_allows_all("User-agent: *\nDisallow: /Careers/\n")
     assert not workday.robots_allows_all('{"errorCode":"HTTP_422"}')       # not a robots file
+
+
+def test_a_site_whose_postings_name_another_employer_is_rejected_whatever_the_site_is_called():
+    # Live 2026-10-12: fusion.wd5/Fusion matched "Fusion Life Sciences Technologies" on its site
+    # name, but its postings are "Fusion Medical Staffing LLC". Named organizations decide.
+    fake = FakeWorkday({("fusion", 5): {"robots": _robots("Fusion"),
+                                        "sites": {"Fusion": {"org": "Fusion Medical Staffing LLC",
+                                                             "postings": [_posting(0)]}}}})
+    assert workday.discover_workday("Fusion Life Sciences Technologies", fetch=fake) is None
+    assert workday.site_confirms("Fusion", [], [], "Fusion Life Sciences Technologies", 1)   # nothing named

@@ -138,6 +138,9 @@ _INSTITUTION = {
     "credit", "union", "mutual", "insurance", "academy", "museum", "society", "association",
     "center", "centre", "health", "healthcare", "dental", "pharmacy", "law", "realty",
     "aviation", "airlines", "airways", "air", "energy", "capital", "partners",
+    "foods", "food", "grocery", "market", "staffing", "veterinary", "animal", "hotel", "hotels",
+    "restaurant", "restaurants", "nursing", "church", "ministries", "trust", "savings",
+    "federal", "motors", "power", "utilities", "electric", "oil", "gas", "petroleum",
 }
 
 # Words that may follow a brand on a board's own name without making it someone else:
@@ -361,7 +364,10 @@ def slug_guesses(display_name: str) -> list[SlugGuess]:
     abbreviation, the brand words joined without the filler ("thermofisher"), the name with
     its trailing filler cut ("nokia" from "Nokia Of America"), the first two words joined
     ("goldmansachs", "statestreet"), and a lone distinctive word that is not the first one
-    ("schwab" from "Charles Schwab"). Empty when nothing could confirm a hit."""
+    ("schwab" from "Charles Schwab"). Only the whole name run together is trusted blind on
+    Ashby/Lever: a shortened join can be an ordinary word (live 2026-10-12: "Health Care Service
+    Corporation" trimmed to "healthcare", a Lever board of some other company). Empty when
+    nothing could confirm a hit."""
     dist = distinctive_tokens(display_name)
     alias_slugs, alias_brands = alias_for(display_name)
     if not dist and not alias_brands:
@@ -392,10 +398,10 @@ def slug_guesses(display_name: str) -> list[SlugGuess]:
         core = core_tokens(display_name)
         if len(dist) >= 2:
             j = "".join(dist)
-            add(j, "joined", dist, blind=len(j) >= 8)
+            add(j, "joined", dist)
         if len(core) >= 2:
             j = "".join(core)
-            add(j, "joined", core, blind=len(j) >= 8 and set(dist) <= set(core))
+            add(j, "joined", core)
         if len(toks) >= 3 and toks[1] not in _LEGAL:
             add("".join(toks[:2]), "joined", toks[:2])
         if len(toks) >= 2:
@@ -533,9 +539,10 @@ def foreign_qualified(evidence: str, sponsor_name: str, brand_words=None) -> boo
     """True when every mention of the sponsor's brand in a board's (short) name is qualified
     by a word that names a DIFFERENT employer: "Cadence Bank" for Cadence Design Systems,
     "Apple Bank" for Apple, "Hitachi Energy" for Hitachi Vantara, "Ford Foundation" for Ford
-    Motor. A following word is harmless when it is in the sponsor's own name, a legal form or
-    careers-site word, generic or corporate filler — but never an institution word (bank,
-    hospital, college...) the sponsor's name lacks. A board that never names the brand as a
+    Motor. Only an institution / line-of-business word (bank, hospital, college, foods,
+    energy, staffing...) that the sponsor's own name lacks counts against it: a subsidiary's
+    or region's wording is tolerated ("Netflix Animation Studios", "FactSet Brasil
+    Consultoria" are Netflix's and FactSet's own postings). A board that never names the brand as a
     word (a squashed spelling) has nothing to qualify, so this says False."""
     brand = set(brand_words if brand_words is not None else distinctive_tokens(sponsor_name))
     for b in alias_for(sponsor_name)[1]:
@@ -549,8 +556,7 @@ def foreign_qualified(evidence: str, sponsor_name: str, brand_words=None) -> boo
         return False
     for i in mentions:
         nxt = toks[i + 1] if i + 1 < len(toks) else ""
-        if (not nxt or nxt in own or nxt in _SAFE_QUALIFIERS or nxt.isdigit() or len(nxt) <= 2
-                or nxt in brand):
+        if nxt in own or nxt in brand or nxt not in _INSTITUTION:
             return False                         # one clean mention is enough
     return True
 
