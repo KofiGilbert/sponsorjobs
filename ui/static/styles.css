@@ -1217,10 +1217,9 @@ mark.jd-gap { text-decoration-color: var(--flag); }
    the row for someone who needs sponsorship, so it's the one thing here allowed full ink. */
 .fr-visa { font-size: 10.5px; font-weight: 600; color: var(--ink); border: 1px solid var(--border);
   border-radius: 4px; padding: 1px 5px; letter-spacing: .02em; }
-/* Freshness earns emphasis through CONTRAST, not hue: a role posted today is worth more,
-   so it goes to full ink while the rest stay muted. Green and orange said the same thing
-   in two more colours. */
-.fr-fresh.hot { color: var(--ink); }
+/* Freshness: a role posted today says "New" in --good, the same as Home's today card
+   (2026-10, one meaning per colour across pages); yesterday steps up in contrast only. */
+.fr-fresh.hot { color: var(--good); }   /* "New" reads in --good, as on Home's today card */
 .fr-fresh.warm { color: var(--ink-2); }
 .fr-early { font-size: 10px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); background: transparent; border: 1px solid var(--border); padding: 1.5px 6px; border-radius: var(--r-xs); }
 
@@ -2489,78 +2488,9 @@ body.cv-dragging * { cursor: grabbing !important; }
   cursor: pointer; padding: 0 2px; }
 .mem-del:hover { color: var(--danger, #d9534f); }
 
-/* ============ Projects (defend-your-work gate) ============ */
-.proj-new { display: flex; flex-direction: column; gap: 8px; max-width: 620px; margin: 0 0 18px;
-  padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
-.proj-form-foot { display: flex; gap: 8px; align-items: center; margin-top: 2px; }
-.proj-msg { font-size: 12px; margin-top: 2px; }
-.proj-msg.err { color: var(--danger, #d9534f); }
-.proj-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
-  padding: 16px; margin-bottom: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
-.proj-card-hd { min-width: 0; }
-.proj-card-name { font-size: 14px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.proj-pill { font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; }
-.proj-pill.ok { color: var(--ink); border-color: var(--border-strong); }
-.proj-card-tech { margin-top: 3px; font-size: 12px; color: var(--faint); }
-.proj-card-sum { margin-top: 6px; font-size: 12.5px; color: var(--muted); line-height: 1.45; max-width: 70ch; }
-.proj-card-acts { display: flex; gap: 8px; flex: none; }
-.proj-test { max-width: 720px; }
-.proj-test-h { font-size: 18px; font-weight: 600; color: var(--ink); margin: 10px 0 2px; }
-.proj-test-sub { font-size: 12.5px; color: var(--muted); margin-bottom: 16px; max-width: 62ch; }
-.proj-q { margin-bottom: 16px; }
-.proj-q-t { font-size: 13px; font-weight: 550; color: var(--ink-2); margin-bottom: 6px; line-height: 1.4; }
-.proj-q-a { width: 100%; }
-.proj-test-foot { margin-top: 8px; }
-.proj-result { margin-top: 20px; padding: 16px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
-.proj-verdict { font-size: 14px; font-weight: 650; }
-.proj-verdict.pass { color: var(--ink); }
-.proj-verdict.fail { color: var(--muted); }
-.proj-verdict-sum { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
-.proj-per { list-style: none; margin: 12px 0 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted); }
-.proj-per .pv-missing { color: var(--danger, #d9534f); }
-.proj-gaps { margin-top: 12px; }
-.proj-gaps-h { font-size: 12px; font-weight: 600; color: var(--ink-2); margin-bottom: 4px; }
-.proj-gaps ul { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
-.proj-result-foot { display: flex; gap: 8px; margin-top: 16px; }
-
-/* Suggest-a-project */
+/* Shared page-head action row (first used by Projects). */
 .page-head-actions { display: flex; gap: 8px; align-items: center; }
-.proj-suggest { display: flex; flex-direction: column; gap: 10px; max-width: 620px; margin: 0 0 18px;
-  padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
-.proj-suggest-lead { font-size: 12.5px; color: var(--muted); line-height: 1.5; max-width: 58ch; margin: 0; }
-#projSuggestList { display: flex; flex-direction: column; gap: 10px; }
-#projSuggestList:empty { display: none; }
-.proj-sug { padding: 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md, 8px); }
-.proj-sug-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.proj-sug-t { font-size: 13.5px; font-weight: 600; color: var(--ink); margin: 0; }
-.proj-sug-skill { font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted);
-  border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; flex: none; }
-.proj-sug-sum { margin: 8px 0 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
-.proj-sug-tech { margin: 6px 0 0; font-size: 12px; color: var(--faint); }
-.proj-sug-why { margin: 6px 0 10px; font-size: 12px; color: var(--muted); font-style: italic; }
-
-/* Guided build-and-teach loop */
-.proj-build { max-width: 720px; }
-.proj-ms { border: 1px solid var(--border); border-radius: var(--r-md, 8px); background: var(--surface); margin-bottom: 10px; overflow: hidden; }
-.proj-ms.done { opacity: 0.72; }
-.proj-ms-hd { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
-.proj-ms-check { display: inline-flex; align-items: center; gap: 8px; flex: none; cursor: pointer; }
-.proj-ms-check input { width: 15px; height: 15px; accent-color: var(--ink-2); cursor: pointer; }
-.proj-ms-num { font-size: 11px; font-weight: 600; color: var(--faint); min-width: 1ch; }
-.proj-ms-title { font-size: 13.5px; font-weight: 600; color: var(--ink); }
-.proj-ms.done .proj-ms-title { text-decoration: line-through; text-decoration-color: var(--border-strong); }
-.proj-ms-body { padding: 0 14px 14px 40px; display: flex; flex-direction: column; gap: 6px; }
-.proj-ms-line { margin: 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
-.proj-ms-line b { font-weight: 600; color: var(--faint); font-size: 10.5px; letter-spacing: 0.03em; text-transform: uppercase; margin-right: 6px; }
-.proj-ms-learn { color: var(--muted); }
-.proj-ms-coach { margin-top: 4px; }
-.proj-coach-box { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-.proj-coach-q { width: 100%; }
-.proj-coach-a { font-size: 12.5px; color: var(--ink-2); line-height: 1.55; background: var(--surface-2);
-  border: 1px solid var(--border); border-radius: var(--r-md, 8px); padding: 12px; white-space: pre-wrap; width: 100%; }
 .btn-xs { font-size: 11.5px; padding: 3px 9px; }
-.proj-build-foot { margin-top: 16px; }
 
 /* Interview prep */
 .prep-honesty { font-size: 12px; color: var(--danger, #d9534f); font-weight: 550; margin-bottom: 8px; }
@@ -2984,6 +2914,8 @@ body.cv-dragging * { cursor: grabbing !important; }
    starts where the group headings start (it sat indented, Kofi, 2026-10-09). */
 .view-templates .page-head { max-width: 1320px; margin-bottom: 10px; }
 .view-templates .tpl-back { margin-left: -8px; margin-bottom: 0; }
+/* The ideas gallery's back link: the Templates one, so its text sits on the title's left edge. */
+.view-projects .proj-back { margin-left: -8px; margin-bottom: 0; }
 
 /* The job title stays put while the description scrolls under it (LinkedIn does the same).
    A zero-height sticky anchor at the top of the pane carries a compact bar that is shown only
@@ -3294,4 +3226,543 @@ body.cv-dragging * { cursor: grabbing !important; }
 @media (max-width: 700px) {
   .trk-inbox-row, .trk-mail-row { grid-template-columns: 1fr; }
   .trk-inbox-acts { justify-content: flex-start; }
+}
+
+
+/* ================================================================ Projects (defend-your-work gate)
+   The whole screen's CSS lives in this one block. Rules for it (2026-10, premium pass):
+   - Everything below the page head sits in the centered 1040px column (.proj-body), so the
+     forms, the list and the empty card left-align with the page title at any window width.
+   - First run is ONE focal card: a glyph, a five-word headline, one short line, a wordless
+     four-node stepper, one primary action and one quiet one. No paragraphs, no step tiles.
+   - Depth is near-monochrome: a hairline border, a faint radial light from the top, a soft
+     inner highlight. Colour comes only from the :root tokens, so light mode inverts cleanly.
+   - Cards never spend the accent (the header's New project owns it): the main action is an
+     outline button, the secondary a borderless text button, Delete an icon shown on hover. */
+.proj-body { max-width: 1040px; margin: 0 auto; }
+
+/* Quiet text button: reads as an action without a border or the accent. */
+.view-projects .btn-quiet { background: transparent; color: var(--muted); border-color: transparent; }
+.view-projects .btn-quiet:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.view-projects .btn svg { flex: none; }
+
+/* ---- empty state: the single focal point */
+.proj-empty {
+  position: relative; overflow: hidden; isolation: isolate;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding: 64px 32px 56px;
+  background:
+    radial-gradient(ellipse 60% 70% at 50% 0%, color-mix(in srgb, var(--ink) 5.5%, transparent), transparent 70%),
+    var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent);
+  animation: proj-rise 420ms var(--ease) both;
+}
+/* In light the same "light from above" would read as a grey smudge, so it is halved there. */
+:root[data-theme="light"] .proj-empty {
+  background: radial-gradient(ellipse 60% 70% at 50% 0%, color-mix(in srgb, var(--ink) 2.5%, transparent), transparent 70%), var(--surface);
+}
+:root[data-theme="light"] .proj-empty-mark { box-shadow: inset 0 1px 0 #fff, 0 8px 20px -12px rgba(24, 24, 27, 0.25); }
+/* A hairline of light along the top edge: the one "lit" detail on the screen. */
+.proj-empty::before {
+  content: ""; position: absolute; top: 0; left: 50%; width: 46%; height: 1px; transform: translateX(-50%); z-index: -1;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ink) 22%, transparent), transparent);
+}
+.proj-empty-mark {
+  position: relative; width: 60px; height: 60px; border-radius: 16px;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--ink-2);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ink) 7%, var(--surface)), var(--surface));
+  border: 1px solid var(--border-strong);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent), 0 10px 30px -12px rgba(0, 0, 0, 0.55);
+}
+.proj-empty-badge {
+  position: absolute; right: -7px; bottom: -7px; width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--border-strong);
+}
+.proj-empty-badge svg { width: 12px; height: 12px; }
+.proj-empty-h { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; color: var(--ink); margin: 28px 0 0; text-wrap: balance; }
+.proj-empty-sub { font-size: 14px; color: var(--muted); margin: 8px 0 0; }
+
+/* The path, almost wordless: four nodes on one hairline. */
+.proj-flow { list-style: none; margin: 36px 0 0; padding: 0; display: flex; align-items: flex-start; justify-content: center; }
+.proj-flow-step {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 9px; width: 92px;
+  animation: proj-rise 420ms var(--ease) both; animation-delay: calc(120ms + var(--i) * 70ms);
+}
+.proj-flow-step + .proj-flow-step::before {
+  content: ""; position: absolute; top: 15px; right: calc(50% + 22px); width: calc(100% - 44px); height: 1px;
+  background: var(--border-strong);
+}
+.proj-flow-dot {
+  width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--muted); border: 1px solid var(--border-strong); background: var(--surface);
+}
+.proj-flow-t { font-size: 12px; font-weight: 550; color: var(--muted); letter-spacing: 0.01em; }
+/* The outcome node is the one that is "lit". */
+.proj-flow-step:last-child .proj-flow-dot { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 35%, transparent); }
+.proj-flow-step:last-child .proj-flow-t { color: var(--ink-2); }
+.proj-empty-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-top: 38px; }
+
+@keyframes proj-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ---- add and suggest: framed panels */
+.proj-panel {
+  display: flex; flex-direction: column; gap: 10px; max-width: 640px; margin: 0 0 18px;
+  padding: 26px 28px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 4%, transparent);
+  animation: proj-rise 280ms var(--ease) both;
+}
+.proj-panel-h { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); margin: 0 0 4px; }
+.proj-panel .fld { width: 100%; padding: 9px 11px; font-size: 13.5px; line-height: 1.45; resize: vertical; }
+.proj-panel .fld::placeholder { color: var(--faint); }
+.proj-form-foot { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+.proj-msg { font-size: 12px; margin: 0; }
+.proj-msg.err { color: var(--danger, #d9534f); }
+/* ---- project ideas: one click, a gallery of GitHub-shaped ideas (2026-10-13)
+   A head row (title, the target chip, two icon tools), one quiet GitHub line when it is not
+   connected, then a two-column grid of idea cards. No card spends the accent: Start is an
+   outline button. A skill the job wants that the profile lacks is the only brighter chip. */
+.proj-ideas { margin: 0 0 32px; animation: proj-rise 280ms var(--ease) both; }
+.proj-ideas-hd { display: flex; align-items: center; gap: 14px; min-height: 34px; }
+/* The heading is the app's `.section-label` eyebrow (Home's pattern), with the target chip beside it. */
+.proj-ideas-h { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); margin: 0; flex: none; }
+.proj-target { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.proj-target-chip, .proj-target-form {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; height: 28px; padding: 0 11px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-pill); background: transparent;
+  font: inherit; font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.proj-target-chip:hover { border-color: color-mix(in srgb, var(--ink) 30%, transparent); background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.proj-target-chip:disabled { cursor: progress; opacity: 0.6; }
+.proj-target-chip svg { color: var(--faint); flex: none; }
+.proj-target-k { color: var(--faint); font-weight: 550; flex: none; }
+.proj-target-v { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-target-form { cursor: text; border-color: color-mix(in srgb, var(--ink) 35%, transparent); }
+.proj-target-in { border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-weight: 600; width: 220px; min-width: 0; padding: 0; }
+.proj-target-src { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.proj-icon-btn.is-on { opacity: 1; }
+.proj-icon-btn.is-on:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.proj-ideas-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+.proj-ideas-empty, .proj-ideas-legend { grid-column: 1 / -1; margin: 2px 0 0; font-size: 12px; color: var(--faint); }
+.proj-ideas-legend { display: flex; align-items: center; gap: 8px; }
+.proj-ideas-legend .proj-skill { padding: 1.5px 6px; }
+
+/* Ideas gallery (2026-10 harmony pass). The layout stays (a best-match hero, then pairs, then
+   threes, ranked by how many of the job's gaps each idea covers), but every card now sits on the
+   Jobs card frame so Projects reads as the same product as Home, Resumes and Jobs:
+   - head = the Jobs head: a 40px neutral tile (the category glyph in --muted), the category as the
+     "company" line (12px/600 --ink-2), the title under it (700), and the pills top-right where Jobs
+     shows "New 4h ago". Pills are the Resumes `.cv-stage` pill.
+   - chips = Jobs `.fr-tag`; a skill the job wants and the profile lacks = Jobs `.fd-gap-req`.
+   - examples = GitHub grammar in neutral; eyebrows = `.section-label`.
+   - hover = the Home today card: --border-strong, --surface-2, --shadow-md, no movement.
+   - fit = the `.li-ring` on the hero only (--border track, --good arc), plain words elsewhere.
+   Colour comes only from --good (the ring) and --flag (the gap chip). No hex literals here. */
+.proj-ideas-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.proj-ideas-grid > .proj-idea { grid-column: span var(--span, 3); }
+.proj-ideas-grid > .proj-idea.is-skel { grid-column: span 2; }
+.proj-ideas-grid > .proj-idea.is-hero { grid-column: 1 / -1; }
+
+.proj-idea {
+  position: relative; display: flex; flex-direction: column; min-width: 0;
+  padding: 18px 20px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  animation: proj-rise 320ms var(--ease) both; animation-delay: calc(var(--i, 0) * 40ms);
+}
+.proj-idea:not(.is-skel):hover, .proj-idea:not(.is-skel):focus-within {
+  border-color: var(--border-strong); background: var(--surface-2); box-shadow: var(--shadow-md);
+}
+
+/* Head: the Jobs card's logo tile, company line and title. */
+.proj-idea-hd { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+/* The tile is the Jobs `.fr-logo` (40px, radius 9, no border, white under the logo) on every
+   theme: the real logo of the main technology in its own brand colour is the one full colour on
+   the card (vendor/techlogos.js, Simple Icons, CC0). No logo: the same white tile, glyph in mid grey. */
+.tech-tile {
+  position: relative; flex: none; width: 40px; height: 40px; border-radius: 9px; overflow: hidden;
+  display: grid; place-items: center; background: #fff; color: #8a8a8e;
+}
+.tech-tile svg { width: 18px; height: 18px; }
+.tech-tile.is-logo svg { width: 24px; height: 24px; }
+.proj-idea-main { flex: 1; min-width: 0; }
+.proj-idea-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.proj-idea-cat { flex: 1 1 auto; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-idea-tags { flex: none; display: flex; gap: 6px; }
+/* The Resumes `.cv-stage` pill. Best match reads in ink with an ink 28% border, like `.proj-pill.ok`. */
+.proj-idea-pill {
+  display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 600; line-height: 1.2; padding: 3px 8px;
+  color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-pill);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.proj-idea-pill.is-best { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 28%, transparent); }
+.proj-idea-t { font-size: 15.5px; font-weight: 700; line-height: 1.3; color: var(--ink); margin: 3px 0 0; min-width: 0; }
+
+.proj-idea-body { display: flex; flex-direction: column; flex: 1; min-width: 0; margin-top: 12px; }
+.proj-idea-p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+
+/* Fit on the smaller cards: plain words. */
+.proj-fit { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+
+/* Skill chips: the Jobs `.fr-tag`; the gap chips lead as the Jobs `.fd-gap-req`. */
+.proj-skills { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.proj-skill {
+  display: inline-flex; align-items: center; gap: 3px; padding: 2px 9px;
+  font-size: 11.5px; font-weight: 600; line-height: 1.4; color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  border: 1px solid var(--border-strong); border-radius: var(--r-pill);
+}
+.proj-skill.is-gap {
+  padding: 1.5px 8px; font-size: 11px; font-weight: 600;
+  color: var(--flag); background: var(--flag-soft); border-color: color-mix(in srgb, var(--flag) 30%, transparent);
+}
+.proj-skill svg { width: 10px; height: 10px; flex: none; }
+
+/* Example repos: GitHub's grammar, all neutral. */
+.proj-idea-ex { margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; min-width: 0; }
+.proj-idea-ex-k { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
+.proj-ex {
+  display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 -8px; padding: 4px 8px; border-radius: var(--r-sm);
+  color: var(--ink-2); text-decoration: none; transition: background var(--dur) var(--ease);
+}
+.proj-ex > svg { flex: none; color: var(--faint); }
+.proj-ex:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.proj-ex:hover .proj-ex-n { color: var(--ink); }
+.proj-ex-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-ex-o { color: var(--faint); }
+.proj-ex-s { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.proj-ex-s svg { color: var(--faint); }
+
+.proj-idea-ft {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border);
+}
+.proj-idea-body > :nth-last-child(2) { margin-bottom: 16px; }
+.proj-idea-repo {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.proj-idea-repo svg { flex: none; }
+.proj-idea [data-start] { flex: none; }
+
+/* Three to a row: a little tighter, the footer may stack. */
+.proj-idea.is-tight { padding: 16px 18px 12px; }
+.proj-idea.is-tight .proj-idea-ft { flex-wrap: wrap; row-gap: 10px; }
+.proj-idea.is-tight [data-start] { margin-left: auto; }
+
+/* The hero: the same frame, the content and the fit ring side by side. */
+.proj-idea.is-hero { padding: 22px 26px 16px; }
+.proj-idea.is-hero .proj-idea-t { font-size: 19px; }
+.proj-idea.is-hero .proj-idea-body { display: grid; grid-template-columns: minmax(0, 1fr) 180px; column-gap: 32px; margin-top: 14px; }
+.proj-hero-main { min-width: 0; }
+.proj-idea.is-hero .proj-idea-p { font-size: 14px; max-width: 60ch; color: var(--ink-2); }
+.proj-idea.is-hero .proj-skills { margin-top: 16px; }
+.proj-idea.is-hero .proj-idea-ex { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 20px; row-gap: 2px; margin-top: 20px; }
+.proj-idea.is-hero .proj-idea-ex-k { grid-column: 1 / -1; }
+.proj-idea.is-hero .proj-idea-ft { grid-column: 1 / -1; margin-top: 22px; margin-bottom: 0; }
+.proj-idea.is-hero .proj-hero-main, .proj-idea.is-hero .proj-hero-fit { margin-bottom: 0; }
+.proj-hero-fit { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; }
+.proj-hero-fit-t { margin: 0; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+/* The LinkedIn review ring (`.li-ring`): --border track, --good arc. */
+.proj-ring { position: relative; width: 96px; height: 96px; }
+.proj-ring svg { width: 100%; height: 100%; display: block; }
+.proj-ring circle { fill: none; stroke-width: 7; }
+.proj-ring-track { stroke: var(--border); }
+.proj-ring-arc { stroke: var(--good); stroke-linecap: round; animation: proj-ring-in 700ms var(--ease) both 120ms; }
+@keyframes proj-ring-in { from { stroke-dasharray: 0 264; } }
+.proj-ring-n { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink); font-variant-numeric: tabular-nums; }
+.proj-ring-n > span { display: inline-flex; align-items: baseline; gap: 1px; transform: translateX(3px); }
+.proj-ring-n b { font-size: 24px; font-weight: 650; line-height: 1; }
+.proj-ring-n small { font-size: 12px; font-weight: 600; color: var(--faint); }
+
+/* Loading: placeholders in the cards' shape (tile, two lines, a pitch, chips, a footer line). */
+.proj-idea.is-skel { min-height: 230px; padding: 18px 20px; }
+.proj-idea.is-skel.is-hero { min-height: 280px; }
+.proj-idea.is-skel b { display: block; margin-bottom: 14px; animation: proj-pulse 1.4s ease-in-out infinite; }
+.proj-idea.is-skel i { display: block; height: 10px; margin: 0 0 10px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 6%, transparent); animation: proj-pulse 1.4s ease-in-out infinite; }
+.proj-idea.is-skel i:nth-child(2) { width: 46%; height: 13px; }
+.proj-idea.is-skel i:nth-child(3) { width: 72%; }
+.proj-idea.is-skel i:nth-child(4) { width: 54%; margin-top: 8px; height: 20px; border-radius: 11px; }
+.proj-idea.is-skel i:nth-child(5) { width: 34%; margin-top: auto; margin-bottom: 0; }
+@keyframes proj-pulse { 50% { opacity: 0.45; } }
+
+@media (max-width: 1240px) {
+  .proj-idea.is-hero .proj-idea-body { grid-template-columns: minmax(0, 1fr) 160px; column-gap: 24px; }
+}
+@media (max-width: 960px) {
+  .proj-ideas-grid > .proj-idea:not(.is-hero) { grid-column: span 3; }
+  .proj-ideas-grid > .proj-idea:not(.is-hero):last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .proj-ideas-hd { flex-wrap: wrap; }
+  .proj-target-src { display: none; }
+  .proj-ideas-grid > .proj-idea, .proj-ideas-grid > .proj-idea:not(.is-hero):last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
+  .proj-idea.is-hero .proj-idea-body { grid-template-columns: minmax(0, 1fr); }
+  .proj-idea.is-hero .proj-idea-ex { grid-template-columns: minmax(0, 1fr); }
+  .proj-hero-fit { flex-direction: row; justify-content: flex-start; margin-top: 18px; }
+  .proj-ring { width: 72px; height: 72px; }
+  .proj-ring-n b { font-size: 20px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .proj-ring-arc, .proj-idea.is-skel b, .proj-idea.is-skel i { animation: none; }
+}
+
+/* Ideas: the toolbar, saved ideas, more ideas, daily cap (2026-10-13, cleanup pass).
+   Row 2 of the head is ONE toolbar in the Jobs filter grammar: the Jobs `.jf-search` field and a
+   Jobs `.jf-input.jf-sel` category select, both untouched at 40px, then the GitHub slot (an outline
+   Connect button, or a quiet connected state) and the two icon tools. No labelled chip rows. */
+.proj-ideas-bar { display: flex; align-items: center; gap: 10px; margin-top: 14px; min-width: 0; }
+.proj-ideas-search { min-width: 200px; }
+.proj-ideas-bar .proj-icon-btn { width: 36px; height: 36px; margin-left: 0; }
+.proj-ideas-gh { flex: none; display: flex; align-items: center; min-width: 0; }
+.proj-gh-btn { height: 40px; padding: 0 14px; }
+.proj-gh-btn svg { flex: none; }
+.proj-gh-on { display: inline-flex; align-items: center; gap: 7px; height: 40px; max-width: 200px; padding: 0 4px; font-size: 12.5px; color: var(--muted); }
+.proj-gh-on svg { flex: none; color: var(--faint); }
+.proj-gh-on span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Start while GitHub is not connected: the card's footer becomes a one-line ask, in place. */
+.proj-idea-ghask { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.proj-idea-ghask-t { display: inline-flex; align-items: center; gap: 7px; min-width: 0; font-size: 12.5px; color: var(--ink-2); }
+.proj-idea-ghask-t svg { flex: none; color: var(--faint); }
+.proj-idea-ghask-a { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.proj-idea-ghask-a .btn svg { flex: none; width: 12px; height: 12px; }
+.proj-ideas-search .jf-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.proj-icon-btn.is-on:disabled { opacity: 0.4; cursor: not-allowed; background: none; color: var(--faint); }
+.proj-ideas-cap { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
+.proj-ideas-q { display: flex; align-items: center; gap: 8px; margin: 18px 0 0; font-size: 13px; color: var(--muted); }
+.proj-ideas-q b { color: var(--ink); font-weight: 600; }
+.proj-q-clear {
+  width: 22px; height: 22px; flex: none; display: inline-grid; place-items: center; padding: 0; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--r-pill); background: transparent; color: var(--faint);
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.proj-q-clear:hover { color: var(--ink); border-color: var(--border-strong); }
+.proj-idea-tags { align-items: center; }
+.proj-idea-save {
+  width: 26px; height: 24px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  border: 1px solid transparent; border-radius: var(--r-sm); background: none; color: var(--faint); cursor: pointer;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.proj-idea-save:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.proj-idea-save[aria-pressed="true"] { color: var(--ink); }
+.proj-idea-save[aria-pressed="true"] path { fill: currentColor; }
+.proj-idea-save:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.proj-idea-save:disabled { cursor: progress; }
+.proj-saved { margin-top: 18px; padding-bottom: 22px; border-bottom: 1px solid var(--border); }
+.proj-saved-hd { display: inline-flex; align-items: center; gap: 8px; padding: 4px 0; border: 0; background: none; color: var(--faint); font: inherit; cursor: pointer; }
+.proj-saved-hd:hover, .proj-saved-hd:hover .proj-ideas-h { color: var(--ink-2); }
+.proj-saved-hd svg { transition: transform var(--dur) var(--ease); }
+.proj-saved-hd[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.proj-saved-n { font-size: 11.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.proj-saved-grid { margin-top: 10px; }
+.proj-ideas-more { display: flex; justify-content: center; margin-top: 20px; }
+.proj-ideas-skelrow { display: contents; }
+.proj-idea.is-still { animation: none; }
+@media (max-width: 760px) {
+  .proj-ideas-bar { flex-wrap: wrap; }
+  .proj-ideas-search { flex: 1 1 100%; }
+}
+
+/* A repo beside a project's title: the GitHub mark, plus a lock while it is private. */
+.proj-gh {
+  flex: none; display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 6px; border-radius: var(--r-sm);
+  color: var(--muted); text-decoration: none; transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.proj-gh:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.proj-gh svg:first-child { width: 14px; height: 14px; }
+.proj-gh.is-private svg + svg { color: var(--faint); }
+
+/* ---- the list */
+.proj-count { font-size: 12px; color: var(--faint); margin: 0 0 12px; letter-spacing: 0.01em; }
+.proj-card {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px;
+  padding: 20px 22px; margin-bottom: 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+  animation: proj-rise 320ms var(--ease) both;
+}
+.proj-card:hover, .proj-card:focus-within { border-color: var(--border-strong); background: color-mix(in srgb, var(--ink) 1.5%, var(--surface)); }
+.proj-card-mark { align-self: start; }
+.proj-card-hd { min-width: 0; }
+.proj-card-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.proj-card-title { font-size: 15px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-pill {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600; color: var(--muted); line-height: 1;
+  border: 1px solid var(--border-strong); border-radius: var(--r-pill); padding: 3px 8px;
+}
+.proj-pill svg { width: 11px; height: 11px; }
+.proj-pill.ok { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 28%, transparent); }
+.proj-card-tech { margin-top: 4px; font-size: 12.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-card-sum { margin-top: 8px; font-size: 13px; color: var(--muted); line-height: 1.5; max-width: 72ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Guide progress: a 2px rail, the count in tabular figures. */
+.proj-prog { display: flex; align-items: center; gap: 10px; margin-top: 12px; max-width: 260px; }
+.proj-prog-bar { flex: 1; height: 2px; border-radius: 2px; background: var(--border-strong); overflow: hidden; }
+.proj-prog-bar i { display: block; height: 100%; background: var(--ink-2); border-radius: 2px; }
+.proj-prog-n { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.proj-card-acts { display: flex; align-items: center; gap: 4px; flex: none; }
+.proj-icon-btn {
+  width: 30px; height: 30px; margin-left: 2px; border-radius: var(--r-sm); border: 1px solid transparent; background: none;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--faint); cursor: pointer;
+  opacity: 0; transition: opacity var(--dur) var(--ease), color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.proj-card:hover .proj-icon-btn, .proj-card:focus-within .proj-icon-btn { opacity: 1; }
+.proj-icon-btn:hover { color: #d98479; background: color-mix(in srgb, #d98479 10%, transparent); }
+.proj-icon-btn:focus-visible { opacity: 1; outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+@media (hover: none) { .proj-icon-btn { opacity: 1; } }
+@media (max-width: 760px) {
+  .proj-card { grid-template-columns: auto minmax(0, 1fr); }
+  .proj-card-acts { grid-column: 2; justify-content: flex-start; margin-left: -10px; }
+}
+
+/* ---- defend test */
+.proj-test { max-width: 720px; }
+.proj-test-h { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); margin: 12px 0 4px; }
+.proj-test-sub { font-size: 13px; color: var(--muted); margin-bottom: 18px; max-width: 62ch; }
+.proj-q { margin-bottom: 16px; }
+.proj-q-t { font-size: 13.5px; font-weight: 550; color: var(--ink-2); margin-bottom: 6px; line-height: 1.4; }
+.proj-q-a { width: 100%; }
+.proj-test-foot { margin-top: 8px; }
+.proj-result { margin-top: 20px; padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
+.proj-verdict { font-size: 14px; font-weight: 650; }
+.proj-verdict.pass { color: var(--ink); }
+.proj-verdict.fail { color: var(--muted); }
+.proj-verdict-sum { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.proj-per { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted); }
+.proj-per .pv-missing { color: var(--danger, #d9534f); }
+.proj-gaps { margin-top: 12px; }
+.proj-gaps-h { font-size: 12px; font-weight: 600; color: var(--ink-2); margin-bottom: 4px; }
+.proj-gaps ul { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
+.proj-result-foot { display: flex; gap: 8px; margin-top: 16px; }
+
+/* ---- guided build */
+.proj-build { max-width: 720px; }
+.proj-ms { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); margin-bottom: 10px; overflow: hidden; }
+.proj-ms.done { opacity: 0.72; }
+.proj-ms-hd { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.proj-ms-check { display: inline-flex; align-items: center; gap: 8px; flex: none; cursor: pointer; }
+.proj-ms-check input { width: 15px; height: 15px; accent-color: var(--ink-2); cursor: pointer; }
+.proj-ms-num { font-size: 11px; font-weight: 600; color: var(--faint); min-width: 1ch; }
+.proj-ms-title { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.proj-ms.done .proj-ms-title { text-decoration: line-through; text-decoration-color: var(--border-strong); }
+.proj-ms-body { padding: 0 14px 14px 40px; display: flex; flex-direction: column; gap: 6px; }
+.proj-ms-line { margin: 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+.proj-ms-line b { font-weight: 600; color: var(--faint); font-size: 10.5px; letter-spacing: 0.03em; text-transform: uppercase; margin-right: 6px; }
+.proj-ms-learn { color: var(--muted); }
+.proj-ms-coach { margin-top: 4px; }
+.proj-coach-box { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.proj-coach-q { width: 100%; }
+.proj-coach-a { font-size: 12.5px; color: var(--ink-2); line-height: 1.55; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r); padding: 12px; white-space: pre-wrap; width: 100%; }
+.proj-build-foot { margin-top: 16px; }
+
+/* ---- AI-built project cards: the stage line under the summary. Neutral, like the guide rail. */
+.proj-prog-ai { max-width: 320px; }
+.proj-card.is-building .proj-prog-bar i { transition: width 600ms var(--ease); }
+.proj-card-err { margin-top: 10px; font-size: 12.5px; color: var(--flag); line-height: 1.45; max-width: 64ch; }
+.proj-card-note { margin-top: 10px; font-size: 12px; color: var(--faint); }
+.proj-credit { display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.proj-credit input { width: 14px; height: 14px; accent-color: var(--ink-2); cursor: pointer; margin: 0; }
+.proj-icon-btn.is-neutral:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+
+/* ---- Learn it: one step at a time, real code, one check. */
+.proj-learn { max-width: 760px; }
+.learn-rail { list-style: none; display: flex; align-items: center; gap: 6px; margin: 14px 0 16px; padding: 0; }
+.learn-rail li { display: flex; }
+.learn-seg { width: 34px; height: 4px; padding: 0; border: 0; border-radius: 3px; cursor: pointer;
+  background: var(--border-strong); transition: background var(--dur) var(--ease); }
+.learn-seg.is-done { background: var(--ink-2); }
+.learn-seg.is-cur { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px color-mix(in srgb, var(--ink) 45%, transparent); }
+.learn-seg:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 3px; }
+.learn-rail-n { margin-left: 8px; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.learn-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 26px 28px; }
+.learn-n { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.learn-h { font-size: 17px; font-weight: 650; color: var(--ink); margin: 4px 0 14px; letter-spacing: -0.005em; }
+.learn-file { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.learn-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.learn-lines { flex: none; font-size: 11.5px; color: var(--faint); }
+.learn-code { margin: 0; max-height: 340px; overflow: auto; background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--r); padding: 12px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.6; color: var(--ink-2); tab-size: 4; }
+.learn-code code { display: block; min-width: max-content; }
+.learn-code .ln { display: block; padding: 0 16px 0 0; white-space: pre; }
+.learn-code .ln::before { content: attr(data-n); display: inline-block; width: 3.2em; padding-right: 14px; text-align: right;
+  color: var(--faint); user-select: none; }
+.learn-code:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.learn-explain { margin: 16px 0 0; font-size: 13.5px; color: var(--ink-2); line-height: 1.6; max-width: 68ch; }
+.learn-why { margin: 10px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; max-width: 68ch; }
+.learn-why b, .learn-q b { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
+.learn-check { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+.learn-q { font-size: 13.5px; color: var(--ink); font-weight: 550; line-height: 1.5; margin-bottom: 10px; }
+.learn-opts { display: flex; flex-direction: column; gap: 6px; }
+.learn-opt { text-align: left; font: inherit; font-size: 13px; color: var(--ink-2); background: transparent; cursor: pointer;
+  border: 1px solid var(--border-strong); border-radius: var(--r); padding: 9px 12px; line-height: 1.45;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+.learn-opt:hover:not(:disabled) { border-color: var(--faint); background: color-mix(in srgb, var(--ink) 3%, transparent); }
+.learn-opt.is-pick { border-color: color-mix(in srgb, var(--ink) 55%, transparent); color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.learn-opt.is-right { border-color: color-mix(in srgb, var(--good) 70%, transparent); color: var(--ink); background: var(--good-soft); }
+.learn-opt.is-wrong { border-color: color-mix(in srgb, var(--flag) 70%, transparent); }
+.learn-opt:disabled { cursor: default; }
+.learn-opt:disabled:not(.is-right) { opacity: 0.6; }
+.learn-opt:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.learn-line { width: 100%; }
+.learn-fb { margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; }
+.learn-fb.ok { color: var(--good); }
+.learn-fb.no { color: var(--flag); }
+.learn-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 22px; }
+@media (max-width: 760px) { .learn-card { padding: 20px 18px; } .learn-seg { width: 22px; } }
+
+/* ---- Defend it: the quiz. Learn it's card and options; colour only on the result (--good/--flag). */
+.quiz-rail { display: flex; align-items: center; gap: 12px; margin: 14px 0 16px; }
+.quiz-rail[hidden] { display: none; }
+.quiz-rail[hidden] + .quiz-card { margin-top: 18px; }
+.quiz-rail-n { flex: none; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.quiz-rail-bar { flex: 1; max-width: 320px; height: 3px; border-radius: 3px; background: var(--border-strong); overflow: hidden; }
+.quiz-rail-bar i { display: block; height: 100%; background: var(--ink-2); border-radius: 3px; transition: width var(--dur) var(--ease); }
+.quiz-q { margin-bottom: 14px; line-height: 1.45; }
+.quiz-code { max-height: 300px; margin-bottom: 16px; }
+.quiz-opts .learn-opt { display: flex; align-items: baseline; gap: 10px; }
+.quiz-key { flex: none; width: 18px; font-size: 11px; font-weight: 600; color: var(--faint); }
+.learn-opt.is-pick .quiz-key { color: var(--ink); }
+.quiz-list, .quiz-misses { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.quiz-list { gap: 2px; }
+.quiz-row { width: 100%; display: flex; gap: 12px; align-items: baseline; text-align: left; font: inherit; color: inherit;
+  background: transparent; border: 0; border-radius: var(--r); padding: 8px 10px; cursor: pointer; }
+.quiz-row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.quiz-row:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.quiz-row-n { flex: none; width: 22px; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.quiz-row-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.quiz-row-q { font-size: 13px; color: var(--ink); line-height: 1.45; }
+.quiz-row-a { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.quiz-row-a.is-open { color: var(--faint); font-style: italic; }
+.quiz-foot-r { display: flex; align-items: center; gap: 12px; }
+.quiz-open-n { font-size: 12px; color: var(--faint); }
+.quiz-score { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.quiz-score:has(+ .quiz-misses) { padding-bottom: 18px; }
+.quiz-score-l { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.quiz-score-n { font-size: 26px; font-weight: 650; color: var(--ink); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.quiz-score-t { font-size: 13.5px; color: var(--ink-2); line-height: 1.5; }
+.quiz-score.is-pass .quiz-score-n { color: var(--good); }
+.quiz-misses { gap: 0; border-top: 1px solid var(--border); }
+.quiz-miss { padding: 14px 0; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 5px; }
+.quiz-miss-q { display: flex; gap: 12px; font-size: 13px; color: var(--ink); line-height: 1.45; font-weight: 550; }
+.quiz-miss-q .quiz-row-n { font-weight: 400; }
+.quiz-miss-a { display: flex; gap: 12px; padding-left: 34px; font-size: 12.5px; line-height: 1.45; }
+.quiz-miss-k { flex: none; width: 84px; color: var(--faint); }
+.quiz-miss-a .is-no { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--flag) 70%, transparent); }
+.quiz-miss-a .is-ok { color: var(--good); }
+.quiz-miss-x { margin: 2px 0 0; padding-left: 34px; font-size: 12.5px; color: var(--muted); line-height: 1.5; max-width: 68ch; }
+@media (max-width: 760px) { .quiz-miss-a, .quiz-miss-x { padding-left: 0; } .quiz-miss-k { width: 70px; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .proj-empty, .proj-flow-step, .proj-panel, .proj-card, .proj-ideas, .proj-idea { animation: none; }
+  .proj-idea.is-skel i { animation: none; }
+  .proj-icon-btn { transition: none; }
+  .learn-seg, .learn-opt, .proj-card.is-building .proj-prog-bar i, .quiz-rail-bar i { transition: none; }
 }

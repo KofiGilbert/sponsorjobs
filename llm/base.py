@@ -260,6 +260,28 @@ def _profile_first_role(profile: dict) -> str:
     return ""
 
 
+def project_facts_text(projects: list[dict] | None) -> str:
+    """The stored facts of the verified projects on this job's resume, as prompt context for the
+    interview question generation (no separate model call). Each project: title, tech, summary,
+    repo, a few facts from Learn it and the Defend it quiz, and up to two ready questions."""
+    blocks = []
+    for pr in projects or []:
+        head = f"- {pr.get('title', '')}" + (f" ({pr['tech']})" if pr.get("tech") else "")
+        lines = [head]
+        if pr.get("summary"):
+            lines.append(f"  What it is: {pr['summary']}")
+        if pr.get("repo_url"):
+            lines.append(f"  Repo: {pr['repo_url']}")
+        for f in (pr.get("facts") or [])[:6]:
+            lines.append(f"  Fact: {f}")
+        for q in (pr.get("questions") or [])[:2]:
+            lines.append(f"  Question it supports: {q}")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return ""
+    return "PROJECTS THEY BUILT (verified, from the project itself):\n" + "\n".join(blocks)
+
+
 class FakeLLM:
     """A deterministic, network-free stand-in for a real LLM.
 
@@ -1073,6 +1095,59 @@ class FakeLLM:
              "tech": "Python, argparse, pytest", "why": f"Proves you can ship reliable tools for {tgt}."},
         ]}
 
+    def suggest_github_ideas(self, profile: dict, role: str = "", jd_terms: list | None = None,
+                             missing: list | None = None, count: int = 6, query: str = "",
+                             exclude: list | None = None) -> dict:
+        # Deterministic stand-in: six GitHub-shaped ideas aimed at the role, the first ones
+        # carrying the JD skills the profile lacks, so the flow and the gap highlight are
+        # testable offline. Repo names are fixed per slot. A ``query`` themes every
+        # title on that topic; ``exclude`` (titles already shown) is skipped, and later rounds
+        # number the titles so "More ideas" always has something new.
+        r = (role or "").strip() or "your next role"
+        gaps = [str(t) for t in (missing or []) if str(t).strip()]
+        terms = [str(t) for t in (jd_terms or []) if str(t).strip()]
+        pool = gaps + [t for t in terms if t not in gaps] + ["Python", "SQL", "Git", "Testing", "REST APIs"]
+        slots = [
+            ("Job market tracker", "Pulls public job postings and charts which skills are rising.",
+             "Python, SQLite, Flask", "job-market-tracker", "job postings scraper dashboard"),
+            ("Expense insights API", "A small REST API that categorises expenses and flags unusual spend.",
+             "Python, FastAPI, PostgreSQL", "expense-insights-api", "expense tracker api"),
+            ("Open data dashboard", "Turns a public city dataset into a live, filterable dashboard.",
+             "Python, Pandas, Streamlit", "open-data-dashboard", "open data dashboard streamlit"),
+            ("Resume keyword matcher", "Compares a resume to a job post and lists the missing skills.",
+             "Python, spaCy, pytest", "resume-keyword-matcher", "resume job matcher nlp"),
+            ("Pipeline health monitor", "Runs a nightly data pipeline and alerts when a step fails.",
+             "Python, Airflow, Docker", "pipeline-health-monitor", "data pipeline monitoring airflow"),
+            ("Study group scheduler", "Matches students into study groups by course and free time.",
+             "TypeScript, React, Node.js", "study-group-scheduler", "study group scheduler react"),
+        ]
+        q = " ".join(str(query or "").split()[:3])
+        if q:
+            topic = q[:1].upper() + q[1:]
+            nouns = ["tracker", "API", "dashboard", "matcher", "monitor", "scheduler"]
+            slots = [(f"{topic} {nouns[k]}", f"A {nouns[k]} for {q}, built around a real public dataset.",
+                      tech, "", f"{q} {nouns[k]}") for k, (_, _, tech, _, _) in enumerate(slots)]
+        skip = {str(t).strip().lower() for t in (exclude or [])}
+        pick = []
+        for rnd in range(1, 10):
+            for slot in slots:
+                title = slot[0] if rnd == 1 else f"{slot[0]} {rnd}"
+                if title.lower() not in skip:
+                    pick.append((title,) + slot[1:3] + ((slot[3] if rnd == 1 else "") or "",) + slot[4:])
+            if len(pick) >= count:
+                break
+        ideas = []
+        for i, (title, pitch, tech, repo, search) in enumerate(pick[:max(1, min(count, 6))]):
+            repo = repo or "-".join(title.lower().split())
+            skills = []
+            for t in [pool[(i + k) % len(pool)] for k in range(3)] + tech.split(", "):
+                if t and t.lower() not in {s.lower() for s in skills}:
+                    skills.append(t)
+            ideas.append({"title": title, "pitch": pitch, "skills": skills[:5], "tech": tech,
+                          "repo": repo, "search": search,
+                          "why": f"Proves {skills[0]} for {r}."})
+        return {"ideas": ideas}
+
     def generate_build_plan(self, project: dict) -> dict:
         # Deterministic stand-in: a fixed 4-step plan so the guided-build flow is testable offline.
         title = (project.get("title") if isinstance(project, dict) else "") or "the project"
@@ -1085,6 +1160,164 @@ class FakeLLM:
              "learn": "Why the happy path is not enough and what breaks.", "check": "Bad input fails gracefully, not with a crash."},
             {"title": "Polish and document", "build": "Add a README and a couple of tests.",
              "learn": "How to make it defensible and reproducible.", "check": "A stranger could clone and run it."},
+        ]}
+
+    # -- AI-built projects: a tiny deterministic Python project so the flow runs offline --
+    _FAKE_PROJECT = {
+        "README.md": ("# {title}\n\n{pitch}\n\n## Problem\n\nTracking a list of numbers by hand is slow and "
+                      "error prone.\n\n## Approach\n\nA small library computes summary stats, and a CLI "
+                      "prints them.\n\n## Tech stack\n\nPython 3, pytest.\n\n## How to run\n\n```\npip install "
+                      "-r requirements.txt\npython -m tracker.cli 3 5 8\npytest\n```\n\n## Screenshots\n\n"
+                      "_Add a screenshot of the CLI output here._\n\n## What I learned\n\n_Write one thing "
+                      "that was hard, and how you worked through it._\n"),
+        ".gitignore": "__pycache__/\n*.pyc\n.venv/\n.pytest_cache/\n",
+        "requirements.txt": "pytest>=8\n",
+        "tracker/__init__.py": '"""Summary stats for a list of numbers."""\nfrom .core import summarize\n\n__all__ = ["summarize"]\n',
+        "tracker/core.py": ('"""The core: pure functions, so they are easy to test."""\n\n\n'
+                            "def mean(values):\n    # An empty list has no mean; say so instead of dividing by zero.\n"
+                            "    if not values:\n        raise ValueError(\"no values\")\n"
+                            "    return sum(values) / len(values)\n\n\n"
+                            "def summarize(values):\n    \"\"\"Count, min, max and mean in one pass over the data.\"\"\"\n"
+                            "    vals = [float(v) for v in values]\n"
+                            "    return {\"count\": len(vals), \"min\": min(vals), \"max\": max(vals), \"mean\": mean(vals)}\n"),
+        "tracker/cli.py": ('"""Command line entry point: python -m tracker.cli 3 5 8"""\nimport sys\n\n'
+                           "from .core import summarize\n\n\n"
+                           "def main(argv=None):\n    args = sys.argv[1:] if argv is None else argv\n"
+                           "    stats = summarize(args)\n"
+                           "    for key in (\"count\", \"min\", \"max\", \"mean\"):\n"
+                           "        print(f\"{key}: {stats[key]}\")\n    return 0\n\n\n"
+                           "if __name__ == \"__main__\":\n    raise SystemExit(main())\n"),
+        "tests/test_core.py": ("import pytest\n\nfrom tracker.core import mean, summarize\n\n\n"
+                               "def test_summarize_counts_and_bounds():\n"
+                               "    s = summarize([3, 5, 8])\n"
+                               "    assert s[\"count\"] == 3 and s[\"min\"] == 3 and s[\"max\"] == 8\n\n\n"
+                               "def test_mean_of_empty_list_is_an_error():\n"
+                               "    with pytest.raises(ValueError):\n        mean([])\n"),
+    }
+
+    @staticmethod
+    def _fake_delay() -> None:
+        # Browser checks can slow the fake build down to watch its progress (seconds per call).
+        import os
+        import time
+        try:
+            time.sleep(min(10.0, float(os.environ.get("RESUME_AGENT_FAKE_LLM_DELAY") or 0)))
+        except ValueError:
+            pass
+
+    def plan_project_files(self, project: dict, max_files: int = 16, max_bytes: int = 60000) -> dict:
+        self._fake_delay()
+        purposes = {"README.md": "What it is and how to run it", ".gitignore": "Keep build files out of git",
+                    "requirements.txt": "Dependencies", "tracker/__init__.py": "Package entry",
+                    "tracker/core.py": "The core logic", "tracker/cli.py": "Command line entry point",
+                    "tests/test_core.py": "Unit tests for the core"}
+        return {"files": [{"path": p, "purpose": purposes[p]} for p in self._FAKE_PROJECT],
+                "run": "python -m tracker.cli 3 5 8", "test": "pytest"}
+
+    def write_project_files(self, project: dict, plan: dict, paths: list, written: list,
+                            fix: dict | None = None) -> dict:
+        self._fake_delay()
+        title = (project.get("title") or "Project").strip()
+        pitch = (project.get("summary") or "").strip()
+        out = []
+        for p in paths:
+            body = self._FAKE_PROJECT.get(p, f"# {p}\n")
+            if p == "README.md":
+                body = body.replace("{title}", title).replace("{pitch}", pitch)
+            out.append({"path": p, "content": body})
+        return {"files": out}
+
+    def generate_learn_steps(self, project: dict, files: list) -> dict:
+        ch = lambda q, opts, a, why: {"kind": "choice", "q": q, "options": opts, "answer": a, "explain": why}
+        return {"steps": [
+            {"title": "Where it starts", "path": "tracker/cli.py", "start": 1, "end": 16,
+             "explain": "The CLI reads numbers from the command line and prints four stats.",
+             "why": "Keeping input and output here leaves the core free of printing, so it is easy to test.",
+             "check": ch("What does main() pass to summarize()?", ["The command line arguments", "A file path", "Nothing"], 0,
+                         "It passes the arguments after the script name.")},
+            {"title": "The core calculation", "path": "tracker/core.py", "start": 1, "end": 16,
+             "explain": "summarize() converts each value to a float and returns count, min, max and mean.",
+             "why": "Pure functions with no side effects are simple to reason about and to test.",
+             "check": ch("Why does mean() raise on an empty list?", ["To avoid dividing by zero", "To save memory", "Python requires it"], 0,
+                         "len([]) is 0, and dividing by it would crash with a less clear error.")},
+            {"title": "The package surface", "path": "tracker/__init__.py", "start": 1, "end": 4,
+             "explain": "The package exposes summarize() at the top level.",
+             "why": "A small public surface means callers depend on one function, not on file layout.",
+             "check": {"kind": "line", "q": "Which function does the package export?", "accept": ["summarize"],
+                       "explain": "__all__ lists summarize."}},
+            {"title": "How it is tested", "path": "tests/test_core.py", "start": 1, "end": 13,
+             "explain": "Two tests cover the normal case and the empty-list error.",
+             "why": "Testing the edge case proves the error path is deliberate, not an accident.",
+             "check": ch("Which edge case is tested?", ["An empty list", "Negative numbers", "Very large lists"], 0,
+                         "test_mean_of_empty_list_is_an_error covers it.")},
+            {"title": "Running it", "path": "README.md", "start": 1, "end": 30,
+             "explain": "The README says what it solves and the exact commands to run it and its tests.",
+             "why": "A recruiter reads the README first, so the run steps must work as written.",
+             "check": ch("Which command runs the tests?", ["pytest", "python setup.py", "make run"], 0,
+                         "pytest discovers tests/test_core.py.")},
+        ]}
+
+    def generate_project_quiz(self, project: dict, files: list, steps: list) -> dict:
+        """Deterministic 20-question Defend it quiz on the fake tracker project. The right answer
+        is always listed first here; the app shuffles the options for every attempt."""
+        t = (project.get("title") or "this project").strip()
+        Q = lambda topic, q, opts, why, **code: {"topic": topic, "q": q, "options": opts, "answer": 0,
+                                                 "explain": why, **code}
+        return {"questions": [
+            Q("parts", "What does tracker/cli.py do?", ["Reads numbers from the command line and prints the stats",
+              "Stores numbers in a database", "Serves a web page", "Downloads data from an API"],
+              "The CLI is the entry point: arguments in, four stats out."),
+            Q("parts", "What does summarize() return?", ["Count, min, max and mean", "Only the mean",
+              "A sorted copy of the list", "A histogram"], "It returns the four summary stats together."),
+            Q("parts", "What does tracker/__init__.py expose?", ["summarize", "main", "mean", "Nothing"],
+              "__all__ lists summarize, the one public function."),
+            Q("parts", "Where do the unit tests live?", ["tests/test_core.py", "tracker/cli.py", "README.md",
+              "requirements.txt"], "pytest discovers tests/test_core.py."),
+            Q("why", f"Why is {t} split into a pure core and a separate CLI?", ["So the core is easy to test without printing",
+              "Python requires two files", "To make it run faster", "To hide the code"],
+              "Pure functions with no input or output are simple to test."),
+            Q("why", "Why does mean() raise on an empty list?", ["To avoid dividing by zero with a clear error",
+              "To save memory", "Because Python requires it", "To speed up the loop"],
+              "len([]) is 0; a named error is clearer than a ZeroDivisionError."),
+            Q("why", "Why convert every value to a float?", ["Command line arguments arrive as text",
+              "Floats use less memory", "Integers cannot be averaged", "pytest needs floats"],
+              "sys.argv holds strings, so they must be converted before maths."),
+            Q("tradeoffs", "What is given up by converting everything to float?", ["Exact decimal precision",
+              "The ability to run tests", "Support for Python 3", "The CLI entry point"],
+              "Floats can carry rounding error, a fair trade for a small stats tool."),
+            Q("tradeoffs", "What does a small public surface trade away?", ["Direct access to internal helpers",
+              "The ability to import the package", "Test coverage", "Error handling"],
+              "Callers depend on summarize() only, so internals can change freely."),
+            Q("tradeoffs", "Why no third-party maths library?", ["Fewer dependencies for a small job",
+              "Libraries are not allowed on GitHub", "pytest cannot test them", "It would not run on Linux"],
+              "The standard library covers four stats; a dependency would add weight."),
+            Q("testing", "Which edge case do the tests cover?", ["An empty list", "Negative numbers",
+              "Very large lists", "Non-numeric text"], "test_mean_of_empty_list_is_an_error covers it."),
+            Q("testing", "Which command runs the tests?", ["pytest", "python setup.py", "make run", "npm test"],
+              "requirements.txt installs pytest, which finds the tests."),
+            Q("testing", "What would be a good next test to add?", ["Non-numeric input on the command line",
+              "Testing that Python is installed", "Testing the README", "Testing .gitignore"],
+              "Bad input is the next most likely failure."),
+            Q("scale", "What breaks first with millions of numbers?", ["Holding them all in memory as a list",
+              "The README", "The test runner", "The package name"], "Every value is kept in a list before summarising."),
+            Q("scale", "How could it handle a stream too big for memory?", ["Keep a running count, sum, min and max",
+              "Sort the list first", "Use more print statements", "Split the README"],
+              "Running totals need constant memory."),
+            Q("extend", "How would you add a median?", ["Add a function in core.py and return it from summarize()",
+              "Edit the README only", "Add it to .gitignore", "Change requirements.txt"],
+              "New stats belong in the pure core, with a test."),
+            Q("extend", "How would you read numbers from a file instead?", ["Parse the file in cli.py and pass the values to summarize()",
+              "Rewrite summarize() to open files", "Add the file to tests", "Put the path in __init__.py"],
+              "Input handling stays in the CLI; the core keeps taking a list."),
+            Q("code", "Reading this excerpt, what happens when values is empty?", ["mean() raises ValueError",
+              "It returns 0", "It returns None", "It prints a warning"],
+              "The guard raises before any division.", path="tracker/core.py", start=4, end=8),
+            Q("code", "In this excerpt, what does main() pass to summarize()?", ["The arguments after the script name",
+              "The whole of sys.argv", "A file path", "Nothing"], "It slices off the script name first.",
+              path="tracker/cli.py", start=7, end=12),
+            Q("code", "What does this test check?", ["That mean() of an empty list raises", "That the CLI prints",
+              "That floats round correctly", "That summarize() is fast"],
+              "pytest.raises asserts the error path.", path="tests/test_core.py", start=11, end=13),
         ]}
 
     def upskill_plan(self, role: str, gaps: list[str], profile: dict,
@@ -1300,8 +1533,10 @@ class FakeLLM:
         }
 
     def generate_screen_questions(self, profile: dict, role: str, company: str = "",
-                                  jd: str = "", kinds: list[str] | None = None) -> dict:
-        # Deterministic Round-1 set: exactly one question per requested kind, in order.
+                                  jd: str = "", kinds: list[str] | None = None,
+                                  projects: list[dict] | None = None) -> dict:
+        # Deterministic Round-1 set: exactly one question per requested kind, in order. With
+        # verified ``projects`` (their stored facts), the last behavioural slot asks about one.
         r = (role or "the role").strip()
         co = (company or "").strip() or "this company"
         kinds = list(kinds or ["motivation", "behavioural", "behavioural", "behavioural", "situational"])
@@ -1325,6 +1560,11 @@ class FakeLLM:
             q, comp = items[used.get(k, 0) % len(items)]
             used[k] = used.get(k, 0) + 1
             out.append({"q": q, "kind": k, "competency": comp, "why": f"Probes {comp.lower()}."})
+        for pr in (projects or [])[:1]:
+            slot = max((i for i, q in enumerate(out) if q["kind"] == "behavioural"), default=None)
+            if slot is not None and (pr.get("questions") or []):
+                out[slot] = {"q": pr["questions"][0], "kind": "behavioural", "competency": "Project",
+                             "why": f"Probes how well you know {pr.get('title', 'your project')}."}
         return {"questions": out}
 
     def grade_project_defense(self, project: dict, qa: list[dict]) -> dict:

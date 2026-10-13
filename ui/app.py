@@ -5072,17 +5072,49 @@ def _load_projects() -> list:
         return []
 
 
-def _save_projects(projects: list) -> None:
-    _PROJECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _PROJECTS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"projects": projects}, indent=2), encoding="utf-8")
-    tmp.replace(_PROJECTS_FILE)
+_PROJ_LOCK = threading.RLock()
+
+
+def _save_projects(projects: list, _from_build: bool = False) -> None:
+    """Write the list. An AI build runs in its own thread and owns its build fields: when the
+    file holds a NEWER build revision than the list being saved (a request that loaded before the
+    build moved on), those fields are taken from the file, so a request never rolls a build back."""
+    with _PROJ_LOCK:
+        if not _from_build:
+            disk = {x.get("id"): x for x in _load_projects()}
+            for p in projects:
+                d = disk.get(p.get("id"))
+                if d and int((d.get("build") or {}).get("rev") or 0) > int((p.get("build") or {}).get("rev") or 0):
+                    for k in _THREAD_KEYS:
+                        if k in d:
+                            p[k] = d[k]
+        _PROJECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _PROJECTS_FILE.with_suffix(f".{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps({"projects": projects}, indent=2), encoding="utf-8")
+        tmp.replace(_PROJECTS_FILE)
 
 
 def _project_public(p: dict) -> dict:
     return {"id": p.get("id"), "title": p.get("title", ""), "summary": p.get("summary", ""),
             "tech": p.get("tech", ""), "status": p.get("status", "draft"), "result": p.get("result"),
-            "plan": p.get("plan"), "done": p.get("done") or [], "repo_url": p.get("repo_url") or ""}
+            "plan": p.get("plan"), "done": p.get("done") or [], "repo_url": p.get("repo_url") or "",
+            "repo_private": bool(p.get("repo_private")), "repo": p.get("repo") or "",
+            "skills": p.get("skills") or [], **_ai_public(p)}
+
+
+def _ai_public(p: dict) -> dict:
+    """The AI-built fields a card needs: stage, build progress, Learn it progress, defence."""
+    if p.get("origin") != "ai":
+        return {"origin": p.get("origin") or "manual"}
+    b = p.get("build") or {}
+    lr = p.get("learn") or {}
+    last = (p.get("quiz") or {}).get("last") or {}
+    return {"origin": "ai", "stage": _ai_stage(p), "target": p.get("target") or "local",
+            "ai_credit": p.get("ai_credit", True) is not False, "has_files": bool(p.get("files")),
+            "build": {k: b.get(k) for k in ("state", "done", "total", "error", "stage")},
+            "learn": {"total": len(lr.get("steps") or []), "learned": len(set(lr.get("learned") or []))},
+            "defense": {"score": last.get("score"), "total": last.get("total"), "pass_mark": last.get("pass_mark"),
+                        "passed": bool(last.get("passed")), "tried": last.get("score") is not None}}
 
 
 @app.get("/api/projects")
@@ -5120,21 +5152,383 @@ def projects_suggest():
     return jsonify(_make_llm().suggest_buildable_projects(profile, target))
 
 
+# ---- GitHub project ideas: one click, no typing. The target role comes from what the app
+# already knows (the last tailored job, else the saved profile's latest title), the model drafts
+# GitHub-shaped ideas aimed at it, and the app adds REAL example repos from GitHub's own search.
+_IDEAS_FILE = _DATA / "project_ideas.json"
+
+
+def _ideas_cache() -> dict:
+    try:
+        d = json.loads(_IDEAS_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _ideas_cache_put(key: str, entry: dict) -> None:
+    cache = _ideas_cache()
+    cache[key] = entry
+    if len(cache) > 24:   # keep the two dozen most recent (role, search) sets
+        for k in sorted(cache, key=lambda k: cache[k].get("at", 0))[:len(cache) - 24]:
+            cache.pop(k, None)
+    _IDEAS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _IDEAS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cache), encoding="utf-8")
+    tmp.replace(_IDEAS_FILE)
+
+
+def _profile_skill_text(profile: dict) -> str:
+    """Everything the saved profile says, lower-cased, for 'does the profile show this skill'."""
+    try:
+        return json.dumps(profile or {}, ensure_ascii=False).lower()
+    except Exception:
+        return ""
+
+
+def _has_term(text: str, term: str) -> bool:
+    t = (term or "").strip().lower()
+    return bool(t) and re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", text) is not None
+
+
+def _project_target(role_override: str = "") -> tuple[str, list[str], str]:
+    """(role, JD skill terms, source) for project ideas. A role the person typed wins; the JD
+    terms only apply when it is the same role as the last tailored job. source is 'job',
+    'profile', 'typed', or '' when nothing is known yet."""
+    derived, terms = _li_target()
+    recs = _records()
+    try:
+        has_job = bool(recs.list(limit=1))
+    finally:
+        recs.close()
+    typed = re.sub(r"\s+", " ", role_override or "").strip()[:120]
+    if typed:
+        same = typed.lower() == (derived or "").lower()
+        return typed, (terms if same else []), ("job" if same and has_job else "typed")
+    if derived:
+        return derived, terms, ("job" if has_job else "profile")
+    return "", [], ""
+
+
+def _clean_idea(raw: dict, terms: list[str], prof_text: str) -> dict | None:
+    from ui.github_publish import slugify
+    if not isinstance(raw, dict) or not str(raw.get("title") or "").strip():
+        return None
+    title = str(raw["title"]).strip()[:80]
+    skills, seen = [], set()
+    for k in raw.get("skills") or []:
+        k = str(k).strip()
+        if k and k.lower() not in seen:
+            seen.add(k.lower())
+            skills.append(k[:40])
+    skills = skills[:5]
+    terms_l = {t.lower() for t in terms}
+    gaps = [k for k in skills if k.lower() in terms_l and not _has_term(prof_text, k)]
+    # No build-time size: AI build time is not human build time, so the label misled. Ideas
+    # cached before this still carry one; the UI ignores it and nothing new is written.
+    return {"title": title, "pitch": str(raw.get("pitch") or "").strip()[:160],
+            "skills": skills, "gaps": gaps, "tech": str(raw.get("tech") or "").strip()[:160],
+            "repo": slugify(raw.get("repo") or title),
+            "search": str(raw.get("search") or title).strip()[:120], "examples": []}
+
+
+def _add_examples(ideas: list[dict]) -> bool:
+    """Fill each idea's examples from GitHub search, in parallel. Returns whether search
+    answered at all (False means GitHub was unreachable, and every idea shows none)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from ui import github_publish as G
+    token = _cred("GITHUB_TOKEN")
+    if not ideas:
+        return True
+    try:
+        with ThreadPoolExecutor(max_workers=min(6, len(ideas))) as ex:
+            found = list(ex.map(lambda i: G.search_examples(i.get("search") or i["title"], token), ideas))
+    except Exception:
+        found = [[] for _ in ideas]
+    for idea, ex_list in zip(ideas, found):
+        idea["examples"] = ex_list or []
+    return any(found)
+
+
+# Ideas cached before example repos carried a ``language`` show a hollow ring on every repo. Such
+# a set is stale: refetch the examples for the ideas that need it and keep the rest. GitHub allows
+# 10 unauthenticated searches a minute and one idea can cost two (the short-phrase retry), so
+# without a token a pass heals at most 4 ideas, and passes are at least a minute apart; the rest
+# heal on a later open. A search that comes back empty keeps the old examples rather than none.
+_HEAL_GAP = 60
+_HEAL_MAX_ANON = 4
+
+
+def _stale_examples(idea: dict) -> bool:
+    return any(isinstance(e, dict) and "language" not in e for e in idea.get("examples") or [])
+
+
+def _heal_examples(key: str, hit: dict) -> list[dict]:
+    ideas = hit.get("ideas") or []
+    stale = [i for i in ideas if isinstance(i, dict) and _stale_examples(i)]
+    if not stale or time.time() - float(hit.get("healed_at") or 0) < _HEAL_GAP:
+        return ideas
+    from concurrent.futures import ThreadPoolExecutor
+    from ui import github_publish as G
+    token = _cred("GITHUB_TOKEN")
+    batch = stale if token else stale[:_HEAL_MAX_ANON]
+    try:
+        with ThreadPoolExecutor(max_workers=min(6, len(batch))) as ex:
+            found = list(ex.map(lambda i: G.search_examples(i.get("search") or i.get("title") or "", token), batch))
+    except Exception:
+        found = [[] for _ in batch]
+    for idea, ex_list in zip(batch, found):
+        if ex_list:
+            idea["examples"] = ex_list
+    _ideas_cache_put(key, {**hit, "ideas": ideas, "healed_at": time.time()})
+    return ideas
+
+
+# Every new batch of ideas is one model call, so they are capped per local day (cache hits are
+# free). The count lives in a small local file; a new local day starts from zero.
+_IDEAS_USAGE_FILE = _DATA / "project_ideas_usage.json"
+_SAVED_IDEAS_FILE = _DATA / "saved_ideas.json"
+_IDEAS_BATCH = 6
+
+
+def _ideas_day() -> str:
+    """Today's local date (a seam the tests pin)."""
+    from datetime import date
+    return date.today().isoformat()
+
+
+def _ideas_cap() -> int:
+    try:
+        return max(1, int(os.environ.get("PROJECT_IDEAS_DAILY_CAP") or 10))
+    except ValueError:
+        return 10
+
+
+def _ideas_used() -> int:
+    try:
+        d = json.loads(_IDEAS_USAGE_FILE.read_text(encoding="utf-8"))
+        return int(d.get("count") or 0) if d.get("day") == _ideas_day() else 0
+    except Exception:
+        return 0
+
+
+def _ideas_count_batch() -> None:
+    used = _ideas_used() + 1
+    _IDEAS_USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _IDEAS_USAGE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"day": _ideas_day(), "count": used}), encoding="utf-8")
+    tmp.replace(_IDEAS_USAGE_FILE)
+
+
+def _ideas_cap_state() -> dict:
+    cap, used = _ideas_cap(), _ideas_used()
+    return {"limit": cap, "used": used, "left": max(0, cap - used)}
+
+
+def _ideas_key(role: str, query: str) -> str:
+    """Cache key for a (role, search) set. No search keeps the original per-role key."""
+    k = role.lower() or "_"
+    return f"{k}|q:{query.lower()}" if query else k
+
+
+@app.post("/api/projects/ideas")
+@_guard
+def projects_ideas():
+    """GitHub project ideas for the target role, with no typing needed. Body (all optional):
+    {role: a different target, refresh: true to skip the cache, query: a topic to search ideas
+    for (still aimed at the role), exclude: titles already shown, which asks for ANOTHER batch to
+    append}. Ideas are cached per (role, query), so reopening is instant and costs nothing. New
+    batches count against a local daily cap; a cache hit never does."""
+    b = request.json or {}
+    role, terms, source = _project_target(str(b.get("role") or ""))
+    query = re.sub(r"\s+", " ", str(b.get("query") or "")).strip()[:80]
+    exclude = [str(t).strip()[:80] for t in (b.get("exclude") or []) if str(t).strip()][:60] \
+        if isinstance(b.get("exclude"), list) else []
+    more = bool(exclude)
+    key = _ideas_key(role, query)
+    gh = {"connected": bool(_cred("GITHUB_TOKEN")), "login": _cred("GITHUB_LOGIN") or ""}
+    base = {"role": role, "source": source, "query": query, "github": gh}
+    hit = _ideas_cache().get(key)
+    if not b.get("refresh") and not more and hit and hit.get("ideas"):
+        ideas = _heal_examples(key, hit)
+        return jsonify({**base, "ideas": ideas, "batches": hit.get("batches") or [len(ideas)],
+                        "cached": True, "cap": _ideas_cap_state()})
+    cap = _ideas_cap_state()
+    if cap["left"] <= 0:
+        return jsonify({**base, "error": f"You've reached today's {cap['limit']} idea batches. More tomorrow.",
+                        "code": "ideas_cap", "cap": cap}), 429
+    saved = _memory().load("default") or {}
+    profile = saved.get("profile") or saved.get("essentials") or {}
+    prof_text = _profile_skill_text(profile)
+    missing = [t for t in terms if not _has_term(prof_text, t)]
+    # Already shown: what the client sent plus, when appending, what this set already holds.
+    from ui.github_publish import slugify
+    prior = (hit.get("ideas") or []) if (more and hit) else []
+    seen_titles = {t.lower() for t in exclude} | {str(i.get("title") or "").lower() for i in prior}
+    seen_repos = {slugify(t) for t in exclude} | {str(i.get("repo") or "") for i in prior}
+    raw = _make_llm().suggest_github_ideas(profile, role, terms, missing, _IDEAS_BATCH,
+                                           query=query, exclude=list(dict.fromkeys(
+                                               exclude + [str(i.get("title") or "") for i in prior if i.get("title")])))
+    _ideas_count_batch()
+    ideas = []
+    for x in raw.get("ideas") or []:
+        i = _clean_idea(x, terms, prof_text)
+        if not i or i["title"].lower() in seen_titles or i["repo"] in seen_repos:
+            continue
+        seen_titles.add(i["title"].lower())
+        seen_repos.add(i["repo"])
+        ideas.append(i)
+        if len(ideas) >= _IDEAS_BATCH:
+            break
+    _add_examples(ideas)
+    if ideas:
+        if more and prior:
+            batches = list(hit.get("batches") or [len(prior)]) + [len(ideas)]
+            _ideas_cache_put(key, {**hit, "ideas": prior + ideas, "batches": batches, "at": time.time()})
+        else:
+            _ideas_cache_put(key, {"role": role, "query": query, "ideas": ideas, "batches": [len(ideas)],
+                                   "at": time.time()})
+    return jsonify({**base, "ideas": ideas, "batches": [len(ideas)], "append": more, "cached": False,
+                    "cap": _ideas_cap_state()})
+
+
+# Saved ideas: a small local bookmark list, kept across searches, refreshes and restarts.
+_SAVED_IDEAS_MAX = 60
+
+
+def _saved_ideas() -> list[dict]:
+    try:
+        d = json.loads(_SAVED_IDEAS_FILE.read_text(encoding="utf-8"))
+        return [i for i in d if isinstance(i, dict) and i.get("title")] if isinstance(d, list) else []
+    except Exception:
+        return []
+
+
+def _save_saved_ideas(items: list[dict]) -> None:
+    _SAVED_IDEAS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _SAVED_IDEAS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(items[:_SAVED_IDEAS_MAX]), encoding="utf-8")
+    tmp.replace(_SAVED_IDEAS_FILE)
+
+
+def _saved_idea_id(idea: dict) -> str:
+    from ui.github_publish import slugify
+    return slugify(idea.get("repo") or idea.get("title") or "")
+
+
+@app.get("/api/projects/ideas/saved")
+@_guard
+def projects_ideas_saved():
+    return jsonify({"saved": _saved_ideas()})
+
+
+@app.post("/api/projects/ideas/saved")
+@_guard
+def projects_ideas_save():
+    """Bookmark an idea: {idea}. Saving the same idea again replaces it (newest first)."""
+    idea = (request.json or {}).get("idea") or {}
+    if not isinstance(idea, dict) or not str(idea.get("title") or "").strip():
+        return jsonify({"error": "Pick an idea to save."}), 400
+    clean = {"title": str(idea["title"]).strip()[:80], "pitch": str(idea.get("pitch") or "").strip()[:160],
+             "skills": [str(k).strip()[:40] for k in (idea.get("skills") or []) if str(k).strip()][:5],
+             "gaps": [str(k).strip()[:40] for k in (idea.get("gaps") or []) if str(k).strip()][:5],
+             "tech": str(idea.get("tech") or "").strip()[:160],
+             "search": str(idea.get("search") or "").strip()[:120],
+             "examples": [e for e in (idea.get("examples") or [])
+                          if isinstance(e, dict) and str(e.get("url") or "").startswith("https://github.com/")][:3],
+             "saved_at": time.time()}
+    clean["repo"] = _saved_idea_id(idea)
+    items = [i for i in _saved_ideas() if _saved_idea_id(i) != clean["repo"]]
+    _save_saved_ideas([clean] + items)
+    return jsonify({"saved": _saved_ideas()})
+
+
+@app.delete("/api/projects/ideas/saved")
+@_guard
+def projects_ideas_unsave():
+    """Remove a bookmark by its repo name (or title): {repo} in the body or ?repo= in the URL."""
+    b = request.get_json(silent=True) or {}
+    ref = {"repo": str(b.get("repo") or request.args.get("repo") or "").strip(),
+           "title": str(b.get("title") or request.args.get("title") or "").strip()}
+    if not (ref["repo"] or ref["title"]):
+        return jsonify({"error": "Pick an idea to remove."}), 400
+    rid = _saved_idea_id(ref)
+    _save_saved_ideas([i for i in _saved_ideas() if _saved_idea_id(i) != rid])
+    return jsonify({"saved": _saved_ideas()})
+
+
+@app.post("/api/projects/start")
+@_guard
+def projects_start():
+    """Start an idea. By default the AI BUILDS it (see _start_ai_build): one package, a small
+    working project generated in the background, pushed to a PRIVATE repo when GitHub is
+    connected, else kept here ({local: true}). {build: false} keeps the older hand-built start: a
+    draft plus, with GitHub, a private repo with a starter README and the guide's milestones as
+    issues, no code. Either way the defend gate is untouched: nothing goes public or onto the
+    resume until the project is verified."""
+    import uuid
+    from ui.github_publish import slugify
+    body = request.json or {}
+    idea = body.get("idea") or {}
+    title = str(idea.get("title") or "").strip()[:80]
+    if not title:
+        return jsonify({"error": "Pick an idea to start."}), 400
+    if body.get("build", True) is not False:
+        # The AI builds it (one package). {local: true} builds without GitHub: files stay here.
+        p = _start_ai_build(idea, bool(body.get("local")))
+        p = next((x for x in _load_projects() if x.get("id") == p["id"]), p)
+        return jsonify({"project": _project_public(p),
+                        "github": {"connected": bool(_cred("GITHUB_TOKEN")), "target": p.get("target")}})
+    skills = [str(k).strip()[:40] for k in (idea.get("skills") or []) if str(k).strip()][:5]
+    p = {"id": uuid.uuid4().hex[:12], "title": title,
+         "summary": str(idea.get("pitch") or idea.get("summary") or "").strip()[:280],
+         "tech": str(idea.get("tech") or "").strip()[:160], "skills": skills,
+         "repo": slugify(idea.get("repo") or title),
+         "status": "draft"}
+    gh = {"connected": False, "ok": False, "url": "", "error": "", "issues": 0}
+    token = _cred("GITHUB_TOKEN")
+    if token:
+        gh["connected"] = True
+        from ui import github_publish as G
+        try:
+            p["plan"] = _make_llm().generate_build_plan(p)   # the issues ARE the build guide
+            p["done"] = []
+        except Exception:
+            p.pop("plan", None)
+        res = G.create_starter_repo(token, p)
+        if res.get("ok"):
+            p["repo_url"], p["repo_full_name"] = res.get("url", ""), res.get("full_name", "")
+            p["repo_private"] = True
+            gh.update(ok=True, url=p["repo_url"], issues=int(res.get("issues") or 0))
+        else:
+            gh["error"] = res.get("error") or "GitHub wouldn't create the repo."
+    projects = _load_projects()
+    projects.append(p)
+    _save_projects(projects)
+    return jsonify({"project": _project_public(p), "github": gh})
+
+
 @app.delete("/api/projects/<pid>")
 @_guard
 def projects_delete(pid):
-    _save_projects([p for p in _load_projects() if p.get("id") != pid])
+    with _PROJ_LOCK:
+        _save_projects([p for p in _load_projects() if p.get("id") != pid], _from_build=True)
+    import shutil
+    shutil.rmtree(_build_dir(pid), ignore_errors=True)
     return jsonify({"ok": True})
 
 
 @app.post("/api/projects/<pid>/test")
 @_guard
 def projects_test(pid):
-    """Generate the defense test for a project, grounded in what they built."""
+    """Generate the written defence test for a project the person built by hand, grounded in
+    what they built. An AI-built project is defended by its quiz instead (/quiz)."""
     projects = _load_projects()
     p = next((x for x in projects if x.get("id") == pid), None)
     if not p:
         return jsonify({"error": "Project not found."}), 404
+    if p.get("origin") == "ai":
+        return _quiz_only()
     test = _make_llm().generate_project_test(p)
     p["test"] = test
     _save_projects(projects)
@@ -5201,11 +5595,14 @@ def projects_coach(pid):
 @app.post("/api/projects/<pid>/grade")
 @_guard
 def projects_grade(pid):
-    """Grade the defense. Passing marks the project verified, the CV-inclusion gate."""
+    """Grade the written defence of a hand-built project. Passing marks the project verified,
+    the CV-inclusion gate. An AI-built project is graded by its quiz (/quiz/submit)."""
     projects = _load_projects()
     p = next((x for x in projects if x.get("id") == pid), None)
     if not p:
         return jsonify({"error": "Project not found."}), 404
+    if p.get("origin") == "ai":
+        return _quiz_only()
     qa = (request.json or {}).get("answers") or []
     result = _make_llm().grade_project_defense(p, qa)
     p["result"] = result
@@ -5228,13 +5625,62 @@ def projects_publish(pid):
     token = _cred("GITHUB_TOKEN")
     if not token:
         return jsonify({"error": "Connect GitHub in Settings, Connections first."}), 400
-    from ui.github_publish import publish_project
-    res = publish_project(token, p)
+    from ui import github_publish as G
+    if p.get("origin") == "ai":
+        prep = _publish_ai_prepare(token, p)
+        if prep:
+            return prep
+    # A project started on GitHub already has a private repo: publishing flips it to public.
+    res = G.publish_project(token, p)
     if not res.get("ok"):
         return jsonify({"error": res.get("error", "Couldn't publish to GitHub.")}), 400
-    p["repo_url"] = res.get("url", "")
+    p["repo_url"] = res.get("url", "") or p.get("repo_url", "")
+    if res.get("full_name"):
+        p["repo_full_name"] = res["full_name"]
+    p["repo_private"] = False
     _save_projects(projects)
+    # Added to the resume while the repo was still private? Give that entry its link now.
+    mem = _memory()
+    saved = mem.load("default") or {}
+    prof = saved.get("profile") or {}
+    entry = next((pr for pr in prof.get("projects") or [] if pr.get("org") == p.get("title")), None)
+    if entry is not None and not entry.get("link") and p["repo_url"]:
+        entry["link"] = p["repo_url"]
+        mem.save("default", prof, saved.get("essentials") or {}, saved.get("history") or [])
     return jsonify({"ok": True, "url": p["repo_url"]})
+
+
+def _publish_ai_prepare(token: str, p: dict):
+    """Before an AI-built project goes public: a project built without GitHub gets its private
+    repo and its one commit now; and the README on GitHub is brought in line with the
+    "Built with an AI pair-programmer" toggle, in this same step. Returns an error response, or
+    None to carry on (``p`` is updated in place)."""
+    from ui import github_publish as G
+    from ui import project_builder as PB
+    files = PB.load_files(_build_dir(p["id"]))
+    if not files:
+        return jsonify({"error": "This project has no files to publish yet."}), 400
+    want = p.get("ai_credit", True) is not False
+    files = [dict(f, content=PB.with_ai_line(f["content"], want)) if f["path"] == "README.md" else f for f in files]
+    if not p.get("repo_full_name"):
+        made = G.create_private_repo(token, p)
+        if not made.get("ok"):
+            return jsonify({"error": made.get("error") or "GitHub wouldn't create the repo."}), 400
+        fields = {"repo_url": made.get("url", ""), "repo_full_name": made["full_name"], "repo_private": True}
+        p.update(fields)
+        _update_project(p["id"], lambda x: x.update(fields))   # kept even if the push below fails
+    if "readme_credit_pushed" not in p:   # the files never reached GitHub: one commit now
+        pushed = G.push_files(token, p["repo_full_name"], files, "Initial version, built with an AI pair-programmer")
+        if not pushed.get("ok"):
+            return jsonify({"error": pushed.get("error") or "GitHub wouldn't take the files."}), 400
+        p["readme_credit_pushed"] = want
+    elif bool(p.get("readme_credit_pushed")) != want:
+        readme = next((f["content"] for f in files if f["path"] == "README.md"), "")
+        if not G.update_file(token, p["repo_full_name"], "README.md", readme,
+                             "Update README" if want else "README: drop the AI pair-programmer line"):
+            return jsonify({"error": "GitHub wouldn't update the README. Try again."}), 400
+        p["readme_credit_pushed"] = want
+    return None
 
 
 @app.post("/api/projects/<pid>/tocv")
@@ -5260,9 +5706,490 @@ def projects_to_cv(pid):
         if str(p.get("tech") or "").strip():
             bullets.append(f"Built with {p['tech'].strip()}.")
         projects.append({"org": p["title"], "location": "Personal Project", "dates": "",
-                         "link": p.get("repo_url") or "", "bullets": bullets, "suggested": False})
+                         # a private repo would 404 for a recruiter, so only a public one is linked
+                         "link": "" if p.get("repo_private") else (p.get("repo_url") or ""),
+                         "bullets": bullets, "suggested": False})
     mem.save("default", prof, saved.get("essentials") or {}, saved.get("history") or [])
     return jsonify({"ok": True})
+
+
+# ---- AI-built projects (approved 2026-10-13): the AI builds a SMALL working project, the person
+# learns it ("Learn it", a walkthrough of the real files), then defends it in a 20-question quiz
+# ("Defend it"). Only a defended project is Verified, and only Verified goes public or
+# onto the resume (the gate above, enforced server-side in /publish and /tocv).
+#
+# Packages: a build is one "package" (the same unit as a tailoring run), counted through the
+# broker BEFORE any model call by `_count_package`, which also raises the upgrade prompt when none
+# are left. The broker has NO refund route (backend/broker.py: /llm/package only decrements), and a
+# client-callable refund would hand out free packages, so a failed build is made good locally
+# instead: the project keeps the package it paid for and "Try again" rebuilds without counting
+# another, up to _BUILD_ATTEMPTS generations per package. A push that fails after generation keeps
+# the files, and retrying only pushes (no model call, no package).
+_PROJECT_BUILDS = _DATA / "project_builds"
+_BUILD_ATTEMPTS = 3
+_BUILD_ACTIVE = ("queued", "planning", "writing", "pushing", "preparing")
+_BUILD_INLINE = False          # tests run the build in the request thread
+_THREAD_KEYS = ("build", "files", "learn", "repo_url", "repo_full_name", "repo_private",
+                "readme_credit_pushed")
+
+
+def _build_dir(pid: str) -> Path:
+    return _PROJECT_BUILDS / re.sub(r"[^a-z0-9]", "", str(pid).lower())[:24]
+
+
+def _update_project(pid: str, fn) -> dict | None:
+    """Load, change, and save one project under the projects lock. A change to the build bumps
+    its revision so a request that loaded the list earlier never writes an older build back."""
+    with _PROJ_LOCK:
+        projects = _load_projects()
+        p = next((x for x in projects if x.get("id") == pid), None)
+        if p is None:
+            return None
+        fn(p)
+        if isinstance(p.get("build"), dict):
+            p["build"]["rev"] = int(p["build"].get("rev") or 0) + 1
+        _save_projects(projects, _from_build=True)
+        return p
+
+
+def _personal_markers() -> list[str]:
+    """The person's own identifying details, so a generated file that somehow carries one is
+    refused. The model never sees them; this is the belt to that braces."""
+    saved = _memory().load("default") or {}
+    out = []
+    for src in (saved.get("essentials") or {}, saved.get("profile") or {}):
+        for d in (src, src.get("identity") or {}, src.get("contact") or {}):
+            if not isinstance(d, dict):
+                continue
+            for k in ("name", "full_name", "email", "phone"):
+                v = str(d.get(k) or "").strip()
+                if (k in ("name", "full_name") and " " in v and len(v) >= 6) or (k == "email" and "@" in v) \
+                        or (k == "phone" and sum(ch.isdigit() for ch in v) >= 7):
+                    out.append(v)
+    return list(dict.fromkeys(out))
+
+
+def _ai_stage(p: dict) -> str:
+    """Where an AI-built project is: building, failed, learn, defend, or verified."""
+    if p.get("status") == "verified":
+        return "verified"
+    b = p.get("build") or {}
+    if b.get("state") in _BUILD_ACTIVE:
+        return "building"
+    if b.get("state") == "failed":
+        return "failed"
+    lr = p.get("learn") or {}
+    steps = lr.get("steps") or []
+    if not steps or len(set(lr.get("learned") or [])) < len(steps):
+        return "learn"
+    return "defend"
+
+
+def _learn_done(p: dict) -> bool:
+    lr = p.get("learn") or {}
+    steps = lr.get("steps") or []
+    return bool(steps) and len(set(lr.get("learned") or [])) >= len(steps)
+
+
+def _run_build(pid: str, llm, generate: bool = True) -> None:
+    """The build job: generate and validate (unless the files are already here), save them
+    locally, push them to the private repo when the project targets GitHub, prepare Learn it."""
+    from ui import github_publish as G
+    from ui import project_builder as PB
+    p = next((x for x in _load_projects() if x.get("id") == pid), None)
+    if not p:
+        return
+
+    def progress(**kw):
+        _update_project(pid, lambda x: x.setdefault("build", {}).update(kw))
+
+    meter = PB.Meter()
+    files = PB.load_files(_build_dir(pid)) if not generate else []
+    try:
+        if generate or not files:
+            res = PB.generate(llm, p, progress, personal=_personal_markers(), meter=meter)
+            files = res["files"]
+            if not p.get("ai_credit", True):
+                files = [dict(f, content=PB.with_ai_line(f["content"], False)) if f["path"] == "README.md" else f
+                         for f in files]
+            PB.save_files(_build_dir(pid), files)
+            # New files: any quiz made from older ones no longer matches them.
+            _update_project(pid, lambda x: (x.pop("quiz", None),
+                                            x.update(files=True, run=res["plan"].get("run", ""),
+                                                     test_cmd=res["plan"].get("test", ""))))
+    except PB.BuildError as exc:
+        print(f"[projects] build {pid} failed at {exc.stage}: {exc}; tokens {meter.as_dict()}")
+        progress(state="failed", error=str(exc), stage=exc.stage, tokens=meter.as_dict(), finished=time.time())
+        return
+    except Exception as exc:   # the model or the network: say so, keep the package for a retry
+        traceback.print_exc()
+        reason = _classify_outage(exc)
+        msg = ("Your AI allowance ran out partway through. Top it up, then build again."
+               if reason in ("upgrade_required", "no_credit") else
+               "The AI could not finish this build." if not reason else
+               "SponsorJobs could not reach the AI. Check your connection.")
+        progress(state="failed", error=msg, stage="write", tokens=meter.as_dict(), finished=time.time())
+        return
+    if p.get("target") == "github":
+        token = _cred("GITHUB_TOKEN")
+        if not token:
+            progress(state="failed", stage="push", error="Connect GitHub in Settings first. "
+                     "Your files are saved here.", tokens=meter.as_dict(), finished=time.time())
+            return
+        progress(state="pushing", done=len(files), total=len(files))
+        cur = next((x for x in _load_projects() if x.get("id") == pid), {}) or {}
+        full = cur.get("repo_full_name") or ""
+        if not full:
+            made = G.create_private_repo(token, cur)
+            if not made.get("ok"):
+                progress(state="failed", stage="push", error=made.get("error") or "GitHub wouldn't create the repo.",
+                         tokens=meter.as_dict(), finished=time.time())
+                return
+            full = made["full_name"]
+            _update_project(pid, lambda x: x.update(repo_url=made.get("url", ""), repo_full_name=full,
+                                                    repo_private=True))
+        pushed = G.push_files(token, full, files, "Initial version, built with an AI pair-programmer")
+        if not pushed.get("ok"):
+            progress(state="failed", stage="push", error=pushed.get("error") or "GitHub wouldn't take the files.",
+                     tokens=meter.as_dict(), finished=time.time())
+            return
+        credit = any(f["path"] == "README.md" and PB.AI_LINE in f["content"] for f in files)
+        _update_project(pid, lambda x: x.update(readme_credit_pushed=credit))
+    # Learn it is generated once, here, so it opens instantly. A miss is fine: /learn retries.
+    if not ((next((x for x in _load_projects() if x.get("id") == pid), {}) or {}).get("learn") or {}).get("steps"):
+        progress(state="preparing")
+        try:
+            raw = meter.call(llm, llm.generate_learn_steps, PB._idea(p), files,
+                             prompt_chars=sum(len(f["content"]) for f in files) + 2000)
+            steps = PB.learn_steps((raw or {}).get("steps"), files)
+            if len(steps) >= 3:
+                _update_project(pid, lambda x: x.update(learn={"steps": steps, "learned": [], "answers": {}}))
+        except Exception:
+            traceback.print_exc()
+    # The Defend it quiz, also once, here, inside the same token budget. A miss is fine: /quiz
+    # makes it on first open from what is left of this build's budget.
+    cur = next((x for x in _load_projects() if x.get("id") == pid), {}) or {}
+    if not (cur.get("quiz") or {}).get("questions") and (cur.get("learn") or {}).get("steps"):
+        _make_project_quiz(pid, llm, files, cur["learn"]["steps"], meter)
+    tokens = meter.as_dict()
+    print(f"[projects] build {pid} ready: {len(files)} files, tokens in={tokens['input']} "
+          f"out={tokens['output']} calls={tokens['calls']}{' (estimated)' if tokens['estimated'] else ''}")
+    progress(state="ready", error="", stage="", done=len(files), total=len(files), tokens=tokens,
+             finished=time.time())
+
+
+def _spawn_build(pid: str, llm, generate: bool = True) -> None:
+    if _BUILD_INLINE:
+        _run_build(pid, llm, generate)
+        return
+    threading.Thread(target=_run_build, args=(pid, llm, generate), daemon=True,
+                     name=f"project-build-{pid}").start()
+
+
+def _start_ai_build(idea: dict, local: bool) -> dict:
+    """Create the AI-built project, count its package, and start the build job."""
+    from ui.github_publish import slugify
+    title = str(idea.get("title") or "").strip()[:80]
+    target = "local" if (local or not _cred("GITHUB_TOKEN")) else "github"
+    llm = _count_package(_make_llm())     # one build = one package; raises the upgrade prompt
+    p = {"id": uuid.uuid4().hex[:12], "title": title,
+         "summary": str(idea.get("pitch") or idea.get("summary") or "").strip()[:280],
+         "tech": str(idea.get("tech") or "").strip()[:160],
+         "skills": [str(k).strip()[:40] for k in (idea.get("skills") or []) if str(k).strip()][:5],
+         "repo": slugify(idea.get("repo") or title), "status": "draft", "origin": "ai",
+         "target": target, "ai_credit": True,
+         "package": {"counted_at": time.time(), "generations": 1},
+         "build": {"state": "queued", "done": 0, "total": 0, "error": "", "started": time.time(), "rev": 1}}
+    with _PROJ_LOCK:
+        projects = _load_projects()
+        projects.append(p)
+        _save_projects(projects)
+    _spawn_build(p["id"], llm)
+    return p
+
+
+def _project_or_404(pid: str):
+    p = next((x for x in _load_projects() if x.get("id") == pid), None)
+    return p, (None if p else (jsonify({"error": "Project not found."}), 404))
+
+
+@app.get("/api/projects/<pid>/build")
+@_guard
+def projects_build_status(pid):
+    """The build's progress, for the card to poll: state, done/total, error, token counts."""
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    return jsonify({"project": _project_public(p)})
+
+
+@app.post("/api/projects/<pid>/build")
+@_guard
+def projects_build_retry(pid):
+    """Try a failed build again. Files already generated: push only, no model call. Otherwise
+    rebuild on the package this project already paid for (no second charge), up to
+    _BUILD_ATTEMPTS generations; past that, a new build counts a new package."""
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    b = p.get("build") or {}
+    if p.get("origin") != "ai":
+        return jsonify({"error": "Only an AI-built project can be rebuilt."}), 400
+    if b.get("state") in _BUILD_ACTIVE:
+        return jsonify({"project": _project_public(p)})
+    if b.get("state") != "failed":
+        return jsonify({"error": "This project is already built."}), 400
+    from ui import project_builder as PB
+    have_files = bool(p.get("files")) and bool(PB.load_files(_build_dir(pid)))
+    gens = int((p.get("package") or {}).get("generations") or 1)
+    if have_files:
+        llm, generate = _make_llm(), False
+    elif gens < _BUILD_ATTEMPTS:
+        llm, generate = _make_llm(), True
+    else:
+        llm, generate = _count_package(_make_llm()), True
+        gens = 0
+
+    def reset(x):
+        x["build"] = {**(x.get("build") or {}), "state": "queued", "error": "", "stage": "", "done": 0,
+                      "total": 0, "started": time.time()}
+        if generate:
+            x.setdefault("package", {})["generations"] = gens + 1
+    p = _update_project(pid, reset)
+    _spawn_build(pid, llm, generate)
+    return jsonify({"project": _project_public(p)})
+
+
+@app.get("/api/projects/<pid>/download.zip")
+@_guard
+def projects_download(pid):
+    """The generated project as a zip, for a build without GitHub (or a local copy of one)."""
+    import io
+    from ui import project_builder as PB
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    files = PB.load_files(_build_dir(pid))
+    if not files:
+        return jsonify({"error": "This project has no files yet."}), 404
+    slug = p.get("repo") or "project"
+    return send_file(io.BytesIO(PB.zip_bytes(files, slug)), mimetype="application/zip", as_attachment=True,
+                     download_name=f"{slug}.zip", max_age=0)
+
+
+@app.post("/api/projects/<pid>/settings")
+@_guard
+def projects_settings(pid):
+    """Per-project settings: {ai_credit: bool}, the README's "Built with an AI pair-programmer"
+    line (on by default). The local copy changes now; a GitHub repo's README is updated in the
+    same step that makes it public."""
+    from ui import project_builder as PB
+    b = request.json or {}
+    if "ai_credit" not in b:
+        return jsonify({"error": "Nothing to change."}), 400
+    on = bool(b.get("ai_credit"))
+    p = _update_project(pid, lambda x: x.update(ai_credit=on))
+    if not p:
+        return jsonify({"error": "Project not found."}), 404
+    files = PB.load_files(_build_dir(pid))
+    if files:
+        PB.save_files(_build_dir(pid), [dict(f, content=PB.with_ai_line(f["content"], on))
+                                        if f["path"] == "README.md" else f for f in files])
+    return jsonify({"project": _project_public(p)})
+
+
+@app.post("/api/projects/<pid>/learn")
+@_guard
+def projects_learn(pid):
+    """The Learn it walkthrough: 5 to 8 steps from the real files, generated once and cached with
+    the project. Answer keys stay on the server."""
+    from ui import project_builder as PB
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    if p.get("origin") != "ai" or _ai_stage(p) in ("building", "failed"):
+        return jsonify({"error": "Learn it opens once the project is built."}), 400
+    lr = p.get("learn") or {}
+    if not lr.get("steps"):
+        files = PB.load_files(_build_dir(pid))
+        if not files:
+            return jsonify({"error": "This project has no files yet."}), 400
+        raw = _make_llm().generate_learn_steps(PB._idea(p), files)
+        steps = PB.learn_steps((raw or {}).get("steps"), files)
+        if len(steps) < 3:
+            return jsonify({"error": "Couldn't prepare the walkthrough right now. Try again."}), 502
+        lr = {"steps": steps, "learned": [], "answers": {}}
+        p = _update_project(pid, lambda x: x.update(learn=lr))
+    return jsonify({"steps": [PB.public_step(s) for s in lr["steps"]], "learned": sorted(set(lr.get("learned") or [])),
+                    "project": _project_public(p)})
+
+
+@app.post("/api/projects/<pid>/learn/<int:idx>")
+@_guard
+def projects_learn_answer(pid, idx):
+    """Check one step's question: {answer} (an option index, or one line of text). A right
+    answer marks the step learned; either way the explanation comes back for instant feedback."""
+    from ui import project_builder as PB
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    steps = (p.get("learn") or {}).get("steps") or []
+    if not (0 <= idx < len(steps)):
+        return jsonify({"error": "No such step."}), 404
+    ans = (request.json or {}).get("answer")
+    ok = PB.check_answer(steps[idx], ans)
+
+    def save(x):
+        lr = x.setdefault("learn", {})
+        learned = set(lr.get("learned") or [])
+        if ok:
+            learned.add(idx)
+        lr["learned"] = sorted(learned)
+        lr.setdefault("answers", {})[str(idx)] = {"answer": ans if isinstance(ans, (int, str)) else "", "ok": ok}
+    p = _update_project(pid, save)
+    c = steps[idx].get("check") or {}
+    right = c["options"][c["answer"]] if c.get("kind") == "choice" else ""
+    return jsonify({"correct": ok, "explain": c.get("explain", ""), "answer": right if ok else "",
+                    "learned": (p.get("learn") or {}).get("learned") or [], "total": len(steps),
+                    "project": _project_public(p)})
+
+
+def _defense_gate(p: dict):
+    """An AI-built project is defended only once it is built and Learn it is complete."""
+    if p.get("origin") == "ai" and p.get("status") != "verified" and not _learn_done(p):
+        return jsonify({"error": "Finish Learn it first, then defend your project."}), 409
+    return None
+
+
+# ---- Defend it: a 20-question multiple-choice quiz on THIS project (owner decision 2026-10-13,
+# replacing the recorded interview). Generated ONCE per build from the real files and the Learn it
+# walkthrough (one model call, inside the build's token budget, no package charged), cached on the
+# project and never regenerated on a retake. The answer key stays here; grading is local. Each
+# attempt shows the same questions in a fresh order with the options reshuffled. 14 of 20 passes and
+# marks the project Verified, which unlocks Publish to GitHub and Add to resume (the gate above).
+def _quiz_only():
+    return jsonify({"error": "This project is defended with its quiz. Open Defend it."}), 400
+
+
+def _make_project_quiz(pid: str, llm, files: list, steps: list, meter) -> list:
+    """One model call for the quiz, metered against the build's budget. Returns the questions
+    ([] on a short or failed reply) and stores them with the tokens it used."""
+    from ui import project_builder as PB
+    p = next((x for x in _load_projects() if x.get("id") == pid), None)
+    if not p:
+        return []
+    before = meter.used
+    try:
+        raw = meter.call(llm, llm.generate_project_quiz, PB._idea(p), files, steps,
+                         prompt_chars=sum(len(f["content"]) for f in files) + 4000)
+        qs = PB.quiz_questions((raw or {}).get("questions"), files)
+    except PB.BuildError as exc:
+        print(f"[projects] quiz {pid} not made: {exc}")
+        return []
+    except Exception:
+        traceback.print_exc()
+        return []
+    spent = meter.used - before
+    print(f"[projects] quiz {pid}: {len(qs)} questions, tokens {spent} "
+          f"(build total {meter.used} of {meter.budget}){' (estimated)' if meter.estimated else ''}")
+    if len(qs) < PB.QUIZ_SIZE:
+        return []
+    _update_project(pid, lambda x: x.update(quiz={"questions": qs, "tokens": spent, "made": time.time(),
+                                                  "attempt": None, "last": None, "tries": 0}))
+    return qs
+
+
+def _quiz_open(p: dict):
+    """The quiz's questions, made now if the build could not (from what is left of its budget).
+    Returns (questions, error response)."""
+    from ui import project_builder as PB
+    qs = (p.get("quiz") or {}).get("questions") or []
+    if len(qs) >= PB.QUIZ_SIZE:
+        return qs, None
+    files = PB.load_files(_build_dir(p["id"]))
+    steps = (p.get("learn") or {}).get("steps") or []
+    if not files:
+        return [], (jsonify({"error": "This project has no files yet."}), 400)
+    spent = int(((p.get("build") or {}).get("tokens") or {}).get("total") or 0)
+    meter = PB.Meter(budget=max(0, PB.TOKEN_BUDGET - spent))
+    qs = _make_project_quiz(p["id"], _make_llm(), files, steps, meter)
+    if not qs:
+        return [], (jsonify({"error": "Couldn't prepare the quiz right now. Try again."}), 502)
+    _update_project(p["id"], lambda x: x.setdefault("build", {}).update(
+        tokens={**((x.get("build") or {}).get("tokens") or {}), "total": spent + meter.used}))
+    return qs, None
+
+
+@app.post("/api/projects/<pid>/quiz")
+@_guard
+def projects_quiz(pid):
+    """Open Defend it: the current attempt (a fresh shuffled one when none is open), questions in
+    their shown order with shuffled options, no answer key. Built and Learn it complete first."""
+    import random
+    from ui import project_builder as PB
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    if p.get("origin") != "ai":
+        return jsonify({"error": "Only an AI-built project has a quiz."}), 400
+    if p.get("status") == "verified":
+        return jsonify({"error": "This project is already verified."}), 409
+    gate = _defense_gate(p)
+    if gate:
+        return gate
+    qs, err = _quiz_open(p)
+    if err:
+        return err
+    holder = {}
+
+    def ensure(x):
+        qz = x.setdefault("quiz", {})
+        att = qz.get("attempt")
+        if not att or att.get("done") or len(att.get("order") or []) != len(qs):
+            prev = att or qz.get("prev")
+            att = {"id": uuid.uuid4().hex[:10], "done": False, "started": time.time(),
+                   **PB.quiz_attempt(qs, random.SystemRandom(), prev)}
+            qz["attempt"] = att
+        holder["att"] = att
+    p = _update_project(pid, ensure)
+    att = holder["att"]
+    last = (p.get("quiz") or {}).get("last")
+    return jsonify({"attempt": att["id"], "questions": PB.public_quiz(qs, att), "total": len(qs),
+                    "pass_mark": PB.quiz_pass_mark(len(qs)), "last": last, "project": _project_public(p)})
+
+
+@app.post("/api/projects/<pid>/quiz/submit")
+@_guard
+def projects_quiz_submit(pid):
+    """Grade an attempt locally: {attempt, answers: [shown option index or null, in shown order]}.
+    14 of 20 marks the project Verified. A miss returns the wrong questions with the right answer
+    and a one-line explanation; the next open is a retake (same questions, new order)."""
+    from ui import project_builder as PB
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    if p.get("origin") != "ai":
+        return jsonify({"error": "Only an AI-built project has a quiz."}), 400
+    qz = p.get("quiz") or {}
+    qs, att = qz.get("questions") or [], qz.get("attempt") or {}
+    b = request.json or {}
+    if not qs or not att or att.get("done") or str(b.get("attempt") or "") != att.get("id"):
+        return jsonify({"error": "This quiz has changed. Open Defend it again."}), 409
+    answers = b.get("answers") if isinstance(b.get("answers"), list) else []
+    res = PB.grade_quiz(qs, att, answers)
+
+    def save(x):
+        q = x.setdefault("quiz", {})
+        q["prev"] = {"order": att["order"]}
+        q["attempt"] = dict(att, done=True)
+        q["tries"] = int(q.get("tries") or 0) + 1
+        q["last"] = {k: res[k] for k in ("score", "total", "pass_mark", "passed")} | {"at": time.time()}
+        if res["passed"]:
+            x["status"] = "verified"
+            x["result"] = {"pass": True, "via": "quiz",
+                           "summary": f"Passed the Defend it quiz, {res['score']} of {res['total']}."}
+    p = _update_project(pid, save)
+    return jsonify({**res, "project": _project_public(p)})
 
 
 # ---- Interview prep (Feature 3): help someone who has LANDED an interview practice BEFOREHAND,
@@ -5884,6 +6811,95 @@ def _fit_screen_questions(generated: list, kinds: list[str], prep: dict) -> list
     return out
 
 
+# ---- Interview tie-in: a Verified project on the job's resume gets 1 or 2 interview questions.
+# Found by the project's title or repo URL among the projects on the tailored resume this prep was
+# built from (else the resume text attached to the prep, else the saved profile's projects). Its
+# stored facts (Learn it and the Defend it quiz, already on disk) ride as context in the EXISTING
+# question generation, so this costs no model call of its own.
+def _norm_url(u) -> str:
+    return re.sub(r"^https?://(www\.)?", "", str(u or "").strip().lower()).rstrip("/").removesuffix(".git")
+
+
+def _resume_project_entries(prep: dict) -> tuple[list[dict], str]:
+    """(project entries on the resume, the resume's free text) for a prep: the tailored resume's
+    projects when the prep came from a built resume, the attached resume text, or failing both
+    the saved profile's projects."""
+    entries, text = [], str(prep.get("cv") or "")
+    rec = _get_record(prep["record_id"]) if prep.get("record_id") not in (None, "") else None
+    if rec:
+        data = _record_data(rec)
+        for key in ("render_profile", "page_profile"):
+            prof = data.get(key) or {}
+            if isinstance(prof, dict) and prof.get("projects"):
+                entries = [e for e in prof["projects"] if isinstance(e, dict)]
+                break
+        if not entries:
+            text += "\n" + json.dumps(data)
+    elif not text.strip():
+        prof = (_memory().load("default") or {}).get("profile") or {}
+        entries = [e for e in prof.get("projects") or [] if isinstance(e, dict)]
+    return entries, text
+
+
+def _project_interview_questions(p: dict) -> list[str]:
+    """Up to two spoken interview questions on a project, from what is stored: the quiz's why,
+    trade-off, scale and extend questions first, else a plain walk-through question."""
+    t = p.get("title") or "your project"
+    qs = (p.get("quiz") or {}).get("questions") or []
+    pick = [q["q"] for topic in ("why", "tradeoffs", "scale", "extend")
+            for q in qs if q.get("topic") == topic][:2]
+    out = [f"On {t}, which you built: {q}" for q in pick]
+    return out or [f"Walk me through {t}: why you built it the way you did, and what you would change."]
+
+
+def _verified_project_facts(prep: dict) -> list[dict]:
+    """The Verified projects on this prep's resume (at most two), with their stored facts."""
+    verified = [p for p in _load_projects() if p.get("status") == "verified"]
+    if not verified:
+        return []
+    entries, text = _resume_project_entries(prep)
+    low = text.lower()
+    names = {str(e.get(k) or "").strip().lower() for e in entries for k in ("org", "title", "name")} - {""}
+    links = {_norm_url(e.get(k)) for e in entries for k in ("link", "url", "repo")} - {""}
+    out = []
+    for p in verified:
+        title, url = str(p.get("title") or "").strip(), _norm_url(p.get("repo_url"))
+        hit = (title.lower() in names or (url and url in links)
+               or (len(title) >= 4 and title.lower() in low) or (url and url in low))
+        if not hit:
+            continue
+        steps = (p.get("learn") or {}).get("steps") or []
+        facts = [f"{s.get('title', '')}: {s.get('why', '')}" for s in steps if s.get("why")][:3]
+        facts += [f"{q['q']} {q['options'][q['answer']]}." for q in (p.get("quiz") or {}).get("questions") or []
+                  if q.get("topic") in ("why", "tradeoffs", "scale")][:3]
+        out.append({"title": title, "tech": p.get("tech", ""), "summary": p.get("summary", ""),
+                    "repo_url": "" if p.get("repo_private") else (p.get("repo_url") or ""),
+                    "facts": facts, "questions": _project_interview_questions(p)})
+        if len(out) >= 2:
+            break
+    return out
+
+
+def _with_project_questions(qs: list[dict], facts: list[dict], generated: list | None = None) -> list[dict]:
+    """Make sure the screen asks about each Verified project on the resume (1, or 2 for two
+    projects on a 5-question screen): when the model's set does not name a project, its stored
+    question takes the last behavioural slot. Deterministic, no model call."""
+    if not facts:
+        return qs
+    want = facts[:2] if len(qs) >= 5 else facts[:1]
+    out = list(qs)
+    for pr in want:
+        t = pr["title"].lower()
+        if any(t and t in q["q"].lower() for q in out):
+            continue
+        slots = [i for i, q in enumerate(out) if q["kind"] == "behavioural" and q.get("competency") != "Project"]
+        if not slots:
+            break
+        out[slots[-1]] = {"q": pr["questions"][0], "kind": "behavioural", "competency": "Project",
+                          "why": f"Probes how well you know {pr['title']}, which you built."}
+    return out
+
+
 # Unscored practice prompts: the person warms up on as many as they like before the real set.
 # Generic by design (never a leak of the scored questions), never stored, never scored.
 _PRACTICE_POOL = (
@@ -6006,7 +7022,8 @@ def _screen_public(s: dict, include_video: bool = False) -> dict:
             "company": s.get("company", ""), "config": cfg, "questions": questions,
             "answers": ans, "result": result, "passed": bool(s.get("passed")),
             "created": int(s.get("created") or 0), "stt_available": _stt_available(),
-            "drill": bool(s.get("drill")), "disclaimer": ROUND1_DISCLAIMER}
+            "drill": bool(s.get("drill")),
+            "disclaimer": ROUND1_DISCLAIMER}
 
 
 @app.get("/api/screens")
@@ -6046,13 +7063,16 @@ def screens_create():
         kinds = _screen_mix(n)
         profile = (_memory().load("default") or {}).get("profile") or {}
         llm = _make_llm()       # no model -> fails loudly here (CLAUDE.md §13), never a silent fallback
+        # A Verified project on this job's resume rides in the SAME question call as context.
+        facts = _verified_project_facts(prep)
         try:
             gen = llm.generate_screen_questions(profile, prep.get("role", ""), prep.get("company", ""),
-                                                prep.get("jd", ""), kinds=kinds)
+                                                prep.get("jd", ""), kinds=kinds,
+                                                **({"projects": facts} if facts else {}))
             generated = gen.get("questions") or []
         except Exception:
             generated = []      # a bad model reply: the fit falls back to the prep's questions / defaults
-        qs = _fit_screen_questions(generated, kinds, prep)
+        qs = _with_project_questions(_fit_screen_questions(generated, kinds, prep), facts, generated)
     answers = [{"q": q["q"], "kind": q["kind"], "competency": q["competency"], "why": q["why"],
                 "video_path": "", "transcript": "", "per_answer_feedback": None,
                 "delivery_metrics": None, "takes": 0} for q in qs]
@@ -6225,8 +7245,10 @@ def _interview_readiness_overview(screens: list, interviews: list | None = None)
     up, which competencies are consistently weakest across attempts, and a plain verdict.
     Deterministic, so it is testable and the number never disagrees with itself. Practice only,
     never a hiring prediction."""
+    # A project defence recorded before Defend it became a quiz is not job interview practice:
+    # any such old screen on disk stays out of the readiness read.
     scored = [dict(s, _round=1) for s in (screens or []) if isinstance(s.get("result"), dict)
-              and s["result"].get("score") is not None]
+              and s["result"].get("score") is not None and not s.get("project_id")]
     live = [{"created": iv.get("ended") or iv.get("started") or 0, "role": iv.get("role", ""),
              "company": iv.get("company", ""), "result": iv["report"], "_round": 2}
             for iv in (interviews or []) if isinstance(iv.get("report"), dict)
@@ -6927,9 +7949,11 @@ _PAL_GREETING = ("Hi, thanks for joining. I'll be interviewing you today. To sta
                  "me a little about yourself and what drew you to this role?")
 
 
-def _round2_plan(prep: dict) -> list[dict]:
+def _round2_plan(prep: dict, facts: list[dict] | None = None) -> list[dict]:
     """The 4 to 6 questions the interviewer should cover, with the competency each probes, drawn
-    from the prep (JD-grounded). Used in the briefing and to tag competencies in the report."""
+    from the prep (JD-grounded). A Verified project on the job's resume (``facts``) adds one
+    question per project (at most two), third in line so the interviewer reaches it. Used in the
+    briefing and to tag competencies in the report."""
     out = []
     for q in (prep.get("questions") or []):
         text = str(q.get("q") or "").strip()
@@ -6937,10 +7961,13 @@ def _round2_plan(prep: dict) -> list[dict]:
             out.append({"q": text, "competency": str(q.get("competency") or "").strip() or "General"})
         if len(out) >= 6:
             break
+    proj = [{"q": pr["questions"][0], "competency": "Project"} for pr in (facts or [])[:2] if pr.get("questions")]
+    if proj:
+        out = (out[:2] + proj + out[2:])[:6]
     return out
 
 
-def _round2_briefing(prep: dict, profile: dict) -> str:
+def _round2_briefing(prep: dict, profile: dict, facts: list[dict] | None = None) -> str:
     """The per-interview briefing (Tavus `conversational_context`): interviewer persona for this
     company/role, the interview's length and structure, the JD and the person's résumé/profile, and the
     questions to cover. Sent to Tavus to steer the interviewer; not stored by us."""
@@ -6955,10 +7982,14 @@ def _round2_briefing(prep: dict, profile: dict) -> str:
         "Ask one question at a time, listen to the whole answer, probe with short follow-ups, and "
         "keep to: intro, 4 to 6 questions, the candidate's questions, close.",
     ]
-    plan = _round2_plan(prep)
+    plan = _round2_plan(prep, facts)
     if plan:
         lines.append("QUESTIONS TO COVER (adapt the wording, ask in a natural order):")
         lines += [f"- {q['q']} (probes: {q['competency']})" for q in plan]
+    if facts:
+        from llm.base import project_facts_text
+        lines.append("Be sure to ask the Project question(s): the candidate built this and lists it on "
+                     "their resume.\n" + project_facts_text(facts))
     if jd:
         lines.append("JOB DESCRIPTION:\n" + jd[:2500])
     if profile:
@@ -7055,7 +8086,8 @@ def interviews_cvi_start():
     if not status["available"]:
         return jsonify({"error": "round2_unavailable", **status}), 402
     profile = (_memory().load("default") or {}).get("profile") or {}
-    briefing = _round2_briefing(prep, profile)
+    facts = _verified_project_facts(prep)
+    briefing = _round2_briefing(prep, profile, facts)
     role = prep.get("role", "")
     source = status["source"]
     if source == "plan":
@@ -7085,7 +8117,7 @@ def interviews_cvi_start():
           "skipped_screen": not screen_id, "role": role, "company": prep.get("company", ""),
           "source": source, "conversation_id": conversation_id,
           "started": int(time.time()), "max_minutes": ROUND2_MAX_MINUTES,
-          "plan": _round2_plan(prep), "report": None, "transcript": []}
+          "plan": _round2_plan(prep, facts), "report": None, "transcript": []}
     interviews = _load_interviews()
     interviews.append(iv)
     _save_interviews(interviews)

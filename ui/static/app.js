@@ -4289,47 +4289,520 @@
   // ---------------------------------------------------------------- Projects (defend-your-work gate)
   // A project can't reach the CV until you pass a defense test proving you genuinely understand it.
   let PROJECTS = [], DEFEND_ID = null, DEFEND_QS = [], BUILD = null;
+  let QUIZ = null;   // Defend it: the open quiz (see startQuiz)
   async function loadProjects() {
     if ($("#projTest")) $("#projTest").hidden = true;
     if ($("#projBuild")) $("#projBuild").hidden = true;
+    if ($("#projLearn")) $("#projLearn").hidden = true;
+    if ($("#projQuiz")) $("#projQuiz").hidden = true;
+    QUIZ = null;
     if ($("#projList")) $("#projList").hidden = false;
     try { const d = await api("/api/projects"); PROJECTS = d.projects || []; } catch { PROJECTS = []; }
     renderProjList();
   }
+  // Monochrome inline glyphs for the Projects screen (no assets, no colour).
+  // <tech-logo> (2026-10-13). The idea tile is the Jobs logo tile: white, with the real logo of
+  // the idea's main technology in its own brand colour (Simple Icons, vendored in
+  // vendor/techlogos.js, so no request leaves the app). Pure functions; tests/test_tech_logos.py
+  // runs this block under node.
+  // Rank: frameworks and libraries (0) before platforms, databases and infra (1), before
+  // languages (2), before the everywhere tools (3), so React beats JavaScript, FastAPI and Airflow
+  // beat Python. Ties go to whichever the idea lists first.
+  const TECH_ALIAS = {
+    // 0: frameworks and libraries
+    react: [0, "react", "react.js", "reactjs", "react native"], nextdotjs: [0, "next.js", "nextjs", "next"],
+    vuedotjs: [0, "vue", "vue.js", "vuejs", "nuxt"], angular: [0, "angular", "angularjs"], svelte: [0, "svelte", "sveltekit"],
+    nodedotjs: [0, "node", "node.js", "nodejs"], express: [0, "express", "express.js", "expressjs"],
+    fastapi: [0, "fastapi"], flask: [0, "flask"], django: [0, "django", "django rest framework", "drf"],
+    spring: [0, "spring", "spring boot", "springboot"], graphql: [0, "graphql"],
+    tailwindcss: [0, "tailwind", "tailwind css", "tailwindcss"],
+    apacheairflow: [0, "airflow", "apache airflow"], apachespark: [0, "spark", "pyspark", "apache spark", "spark sql"],
+    apachekafka: [0, "kafka", "apache kafka"], pandas: [0, "pandas"], numpy: [0, "numpy"], polars: [0, "polars"],
+    streamlit: [0, "streamlit"], plotly: [0, "plotly", "plotly dash", "dash"],
+    jupyter: [0, "jupyter", "jupyter notebook", "jupyter notebooks", "jupyterlab", "notebooks"],
+    scikitlearn: [0, "scikit-learn", "sklearn", "scikit learn", "scikit"], pytorch: [0, "pytorch", "torch"],
+    tensorflow: [0, "tensorflow", "tf", "keras"], huggingface: [0, "hugging face", "huggingface", "transformers", "hugging face transformers"],
+    langchain: [0, "langchain"], mlflow: [0, "mlflow"], anthropic: [0, "anthropic", "anthropic api", "claude", "claude api"],
+    flutter: [0, "flutter"], selenium: [0, "selenium"], pytest: [0, "pytest"],
+    // 1: platforms, databases and infra
+    postgresql: [1, "postgres", "postgresql", "psql"], mysql: [1, "mysql"], sqlite: [1, "sqlite", "sqlite3"],
+    mongodb: [1, "mongodb", "mongo"], redis: [1, "redis"], snowflake: [1, "snowflake"],
+    googlebigquery: [1, "bigquery", "google bigquery"], databricks: [1, "databricks"], duckdb: [1, "duckdb"],
+    elasticsearch: [1, "elasticsearch", "elastic"], docker: [1, "docker", "docker compose", "docker-compose"],
+    kubernetes: [1, "kubernetes", "k8s"], terraform: [1, "terraform"], githubactions: [1, "github actions", "gh actions"],
+    googlecloud: [1, "gcp", "google cloud", "google cloud platform", "cloud run"], nginx: [1, "nginx"], grafana: [1, "grafana"],
+    android: [1, "android", "jetpack compose"], ios: [1, "ios", "swiftui", "uikit"], postman: [1, "postman"],
+    // 2: languages
+    python: [2, "python", "python3", "py"], javascript: [2, "javascript", "js", "es6"], typescript: [2, "typescript", "ts"],
+    openjdk: [2, "java", "openjdk"], go: [2, "go", "golang"], rust: [2, "rust"], cplusplus: [2, "c++", "cpp"],
+    dotnet: [2, ".net", "dotnet", "c#", "csharp", "asp.net", "asp.net core", ".net core"], kotlin: [2, "kotlin"],
+    swift: [2, "swift"], r: [2, "r"], scala: [2, "scala"], gnubash: [2, "bash", "shell", "shell scripting"], linux: [2, "linux"],
+    // 3: everywhere tools
+    git: [3, "git"],
+  };
+  const TECH_INDEX = (() => {
+    const m = new Map();
+    for (const [slug, [rank, ...names]] of Object.entries(TECH_ALIAS)) for (const n of names) m.set(n, { slug, rank });
+    return m;
+  })();
+  const techNorm = t => String(t || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\d+(\.\d+)*$/, "").trim();
+  // The tech field is free text ("Python, FastAPI and PostgreSQL (Docker)"): split it into terms.
+  const techTerms = s => String(s || "").split(/[,;|/+()\[\]\n]|\s&\s|\sand\s|\swith\s/i).map(techNorm).filter(Boolean);
+  function techLookup(term) {
+    const hit = TECH_INDEX.get(term);
+    if (hit) return hit;
+    // A longer phrase ("PostgreSQL database", "Apache Airflow DAGs"): the first known name of at
+    // least 4 letters that stands alone as a word, so "r" and "go" never match inside words.
+    let best = null, at = Infinity;
+    for (const [n, v] of TECH_INDEX) {
+      if (n.length < 4) continue;
+      const i = ` ${term} `.indexOf(` ${n} `);
+      if (i >= 0 && i < at) { at = i; best = v; }
+    }
+    return best;
+  }
+  // The main technology of an idea or a project: its `tech` text, then its skills, best rank wins.
+  function mainTech(item, logos) {
+    const lib = logos || (typeof window !== "undefined" && window.TECH_LOGOS) || {};
+    const terms = [...techTerms(item?.tech), ...(item?.skills || []).map(techNorm)];
+    let pick = null;
+    terms.forEach((t, i) => {
+      const hit = techLookup(t);
+      if (hit && lib[hit.slug] && (!pick || hit.rank < pick.rank)) pick = { ...hit, i };
+    });
+    return pick ? { slug: pick.slug, ...lib[pick.slug] } : null;
+  }
+  // The brand hex as given (black reads fine on white); a near-white one gets a dark neutral.
+  function logoFill(hex) {
+    const c = String(hex || "").replace("#", "");
+    if (!/^[0-9a-f]{6}$/i.test(c)) return "#3a3a3c";
+    const lin = k => { const v = parseInt(c.slice(k, k + 2), 16) / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    const lum = 0.2126 * lin(0) + 0.7152 * lin(2) + 0.0722 * lin(4);
+    return lum > 0.85 ? "#3a3a3c" : `#${c.toUpperCase()}`;
+  }
+  // The white tile: the logo when the stack has one, else the fallback glyph in mid grey.
+  function techTile(item, fallbackSVG, cls = "") {
+    const lg = mainTech(item);
+    if (!lg) return `<span class="tech-tile${cls ? ` ${cls}` : ""}" aria-hidden="true">${fallbackSVG}</span>`;
+    return `<span class="tech-tile is-logo${cls ? ` ${cls}` : ""}" title="${esc(lg.title)}" data-tech="${esc(lg.slug)}">`
+      + `<svg viewBox="0 0 24 24" role="img" aria-label="${esc(lg.title)}"><path fill="${logoFill(lg.hex)}" d="${lg.path}"/></svg></span>`;
+  }
+  // </tech-logo>
+
+  const PROJ_ICO = {
+    code: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 7.5 4 12l4.5 4.5M15.5 7.5 20 12l-4.5 4.5M13.5 5.5l-3 13"/></svg>`,
+    seal: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.2 1.6 2.7-.1.8 2.6 2.2 1.6-.9 2.6.9 2.6-2.2 1.6-.8 2.6-2.7-.1L12 21l-2.2-1.6-2.7.1-.8-2.6-2.2-1.6.9-2.6-.9-2.6 2.2-1.6.8-2.6 2.7.1z"/><path d="m8.8 12.2 2.2 2.2 4.2-4.4"/></svg>`,
+    plus: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>`,
+    steps: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M8 2 2.5 5 8 8l5.5-3z"/><path d="m2.5 8 5.5 3 5.5-3M2.5 11 8 14l5.5-3"/></svg>`,
+    talk: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 4a1.5 1.5 0 0 1 1.5-1.5h8A1.5 1.5 0 0 1 13.5 4v5.5A1.5 1.5 0 0 1 12 11H7l-3 2.5V11a1.5 1.5 0 0 1-1.5-1.5z"/></svg>`,
+    check: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 8.3 2.9 2.9 6.1-6.4"/></svg>`,
+    bulb: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M8 1.8a4.2 4.2 0 0 0-2.5 7.6c.5.4.8.9.8 1.5v.3h3.4v-.3c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8Z"/><path d="M6.6 13.6h2.8M7 15h2"/></svg>`,
+    download: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8M4.8 7.5 8 10.7l3.2-3.2M3 13.5h10"/></svg>`,
+    trash: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5"/></svg>`,
+  };
   function projCard(p) {
+    if (p.origin === "ai") return aiProjCard(p);
     const verified = p.status === "verified";
     const steps = p.plan?.milestones?.length || 0;
-    const doneN = (p.done || []).length;
-    const guideLabel = steps ? `Build guide (${doneN}/${steps})` : "Build guide";
-    return `<article class="proj-card" data-id="${esc(p.id)}">
+    const doneN = Math.min((p.done || []).length, steps);
+    const guideLabel = !steps ? "Start guide" : doneN >= steps ? "Guide" : "Continue guide";
+    // The guide's progress, as a slim bar: only once a plan exists, and only on drafts.
+    const prog = !verified && steps
+      ? `<div class="proj-prog" title="${doneN} of ${steps} steps built">
+           <span class="proj-prog-bar"><i style="width:${Math.round(doneN / steps * 100)}%"></i></span>
+           <span class="proj-prog-n">${doneN}/${steps}</span></div>`
+      : "";
+    // A repo shows as a small GitHub mark beside the title; a private one carries a lock.
+    const repo = p.repo_url
+      ? `<a class="proj-gh ${p.repo_private ? "is-private" : ""}" href="${esc(p.repo_url)}" target="_blank" rel="noopener"
+           title="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}"
+           aria-label="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}">${GH_MARK}${p.repo_private ? ICO_LOCK : ""}</a>`
+      : "";
+    const meta = p.tech || "";
+    return `<article class="proj-card ${verified ? "is-verified" : "is-draft"}" data-id="${esc(p.id)}">
+      ${techTile(p, verified ? PROJ_ICO.seal : PROJ_ICO.code, "proj-card-mark")}
       <div class="proj-card-hd">
-        <div class="proj-card-name">${esc(p.title)}
-          <span class="proj-pill ${verified ? "ok" : ""}">${verified ? "&#10003; Verified" : "Draft"}</span></div>
-        ${p.tech ? `<div class="proj-card-tech">${esc(p.tech)}</div>` : ""}
-        ${p.summary ? `<div class="proj-card-sum">${esc(p.summary)}</div>` : ""}
+        <div class="proj-card-name"><span class="proj-card-title">${esc(p.title)}</span>
+          <span class="proj-pill ${verified ? "ok" : ""}">${verified ? `${PROJ_ICO.check}Verified` : "Draft"}</span>${repo}</div>
+        ${meta ? `<div class="proj-card-tech">${esc(meta)}</div>` : ""}
+        ${p.summary ? `<div class="proj-card-sum" title="${esc(p.summary)}">${esc(p.summary)}</div>` : ""}
+        ${prog}
       </div>
       <div class="proj-card-acts">
         ${verified
-          ? `<button class="btn btn-primary btn-sm" data-act="tocv">Add to Resume</button>
-             ${p.repo_url
-               ? `<a class="btn btn-ghost btn-sm" href="${esc(p.repo_url)}" target="_blank" rel="noopener">View on GitHub</a>`
-               : `<button class="btn btn-ghost btn-sm" data-act="publish">Publish to GitHub</button>`}`
-          : `<button class="btn btn-ghost btn-sm" data-act="guide">${esc(guideLabel)}</button>
-             <button class="btn btn-primary btn-sm" data-act="defend">Prove you understand it</button>`}
-        <button class="btn btn-ghost btn-sm" data-act="delete">Delete</button>
+          ? `${p.repo_url && !p.repo_private
+               ? ""
+               : `<button class="btn btn-quiet btn-sm" data-act="publish" type="button">${esc(p.repo_url ? PT("projects.makePublic", "Make public") : "Publish to GitHub")}</button>`}
+             <button class="btn btn-ghost btn-sm" data-act="tocv" type="button">Add to resume</button>`
+          : `<button class="btn btn-quiet btn-sm" data-act="guide" type="button">${esc(guideLabel)}</button>
+             <button class="btn btn-ghost btn-sm" data-act="defend" type="button">Defend it</button>`}
+        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="Delete ${esc(p.title)}" title="Delete">${PROJ_ICO.trash}</button>
       </div>
     </article>`;
   }
+  // An AI-built project's card: one stage at a time, one main action. Building (progress),
+  // Learn it (n of m), Defend it, Verified (Publish to GitHub, Add to resume).
+  const BUILD_LABEL = {
+    queued: () => PT("projects.bPlanning", "Planning files"),
+    planning: () => PT("projects.bPlanning", "Planning files"),
+    writing: (b) => b.total && b.done ? PT("projects.bWriting", "Writing code {n} of {m}").replace("{n}", b.done || 0).replace("{m}", b.total) : PT("projects.bWritingStart", "Writing code"),
+    pushing: () => PT("projects.bPushing", "Pushing to GitHub"),
+    preparing: () => PT("projects.bPreparing", "Preparing Learn it"),
+    ready: () => PT("projects.bReady", "Ready"),
+  };
+  function aiBuildPct(b) {
+    const st = b.state || "queued";
+    if (st === "queued" || st === "planning") return 6;
+    if (st === "writing") return 10 + Math.round(70 * ((b.done || 0) / Math.max(1, b.total || 1)));
+    if (st === "pushing") return 86;
+    if (st === "preparing") return 94;
+    return 100;
+  }
+  function aiCardParts(p) {
+    const stage = p.stage, b = p.build || {}, lr = p.learn || {};
+    const btn = (act, label, main) => `<button class="btn ${main ? "btn-ghost" : "btn-quiet"} btn-sm" data-act="${act}" type="button">${esc(label)}</button>`;
+    const bar = (pct, label, title) => `<div class="proj-prog proj-prog-ai" title="${esc(title || label)}">
+        <span class="proj-prog-bar"><i style="width:${pct}%"></i></span><span class="proj-prog-n">${esc(label)}</span></div>`;
+    if (stage === "building") {
+      return { pill: PT("projects.sBuilding", "Building"), cls: "is-building",
+        extra: bar(aiBuildPct(b), (BUILD_LABEL[b.state] || BUILD_LABEL.queued)(b)), acts: "" };
+    }
+    if (stage === "failed") {
+      return { pill: PT("projects.sStopped", "Build stopped"), cls: "is-failed",
+        extra: `<div class="proj-card-err">${esc(b.error || PT("projects.bFailed", "Something went wrong while building."))}</div>`,
+        acts: btn("rebuild", PT("projects.tryAgain", "Try again"), true) };
+    }
+    if (stage === "learn") {
+      const n = lr.learned || 0, m = lr.total || 0;
+      return { pill: PT("projects.sLearn", "Learn it"), cls: "is-learn",
+        extra: m ? bar(Math.round(n / m * 100), PT("projects.nLearned", "{n} of {m} learned").replace("{n}", n).replace("{m}", m)) : "",
+        acts: btn("learn", n ? PT("projects.continueLearn", "Continue") : PT("projects.startLearn", "Start"), true) };
+    }
+    if (stage === "defend") {
+      const d = p.defense || {}, tried = d.tried;
+      // Answers kept in this browser mean a quiz in progress: Continue it.
+      const going = (() => { try { return !!localStorage.getItem(`sj.quiz.${p.id}`); } catch { return false; } })();
+      return { pill: PT("projects.sDefend", "Defend it"), cls: "is-defend",
+        extra: tried ? `<div class="proj-card-note">${esc(PT("projects.lastQuiz", "Last try {s} of {m}. Pass is {p}.").replace("{s}", d.score).replace("{m}", d.total).replace("{p}", d.pass_mark))}</div>` : "",
+        acts: btn("learn", PT("projects.review", "Review"), false)
+          + btn("quiz", going ? PT("projects.continueLearn", "Continue") : tried ? PT("projects.retake", "Retake") : PT("projects.startLearn", "Start"), true) };
+    }
+    // Verified
+    const credit = p.repo_url && !p.repo_private ? "" : `<label class="proj-credit"><input type="checkbox" data-act="credit" ${p.ai_credit ? "checked" : ""}>
+        <span>${esc(PT("projects.aiCredit", "Say it was built with an AI pair-programmer"))}</span></label>`;
+    return { pill: PT("projects.sVerified", "Verified"), cls: "is-verified", extra: credit,
+      acts: (p.repo_url && !p.repo_private ? "" : btn("publish", p.repo_url ? PT("projects.makePublic", "Make public") : PT("projects.publish", "Publish to GitHub"), false))
+        + btn("tocv", PT("projects.addResume", "Add to resume"), true) };
+  }
+  function aiProjCard(p) {
+    const verified = p.stage === "verified";
+    const part = aiCardParts(p);
+    const repo = p.repo_url
+      ? `<a class="proj-gh ${p.repo_private ? "is-private" : ""}" href="${esc(p.repo_url)}" target="_blank" rel="noopener"
+           title="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}"
+           aria-label="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}">${GH_MARK}${p.repo_private ? ICO_LOCK : ""}</a>`
+      : "";
+    const dl = p.has_files && p.stage !== "building"
+      ? `<button class="proj-icon-btn is-neutral" data-act="download" type="button" aria-label="${esc(PT("projects.download", "Download the files"))}" title="${esc(PT("projects.download", "Download the files"))}">${PROJ_ICO.download}</button>` : "";
+    return `<article class="proj-card is-ai ${part.cls}" data-id="${esc(p.id)}">
+      ${techTile(p, verified ? PROJ_ICO.seal : PROJ_ICO.code, "proj-card-mark")}
+      <div class="proj-card-hd">
+        <div class="proj-card-name"><span class="proj-card-title">${esc(p.title)}</span>
+          <span class="proj-pill ${verified ? "ok" : ""}">${verified ? PROJ_ICO.check : ""}${esc(part.pill)}</span>${repo}</div>
+        ${p.tech ? `<div class="proj-card-tech">${esc(p.tech)}</div>` : ""}
+        ${p.summary ? `<div class="proj-card-sum" title="${esc(p.summary)}">${esc(p.summary)}</div>` : ""}
+        ${part.extra}
+      </div>
+      <div class="proj-card-acts">
+        ${part.acts}${dl}
+        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="Delete ${esc(p.title)}" title="Delete">${PROJ_ICO.trash}</button>
+      </div>
+    </article>`;
+  }
+  // While a build runs, the list polls its progress. The job runs on the engine, so leaving the
+  // screen and coming back simply picks the progress up again.
+  let PROJ_POLL = null;
+  function pollBuilds() {
+    clearTimeout(PROJ_POLL); PROJ_POLL = null;
+    if (!PROJECTS.some(p => p.stage === "building")) return;
+    PROJ_POLL = setTimeout(async () => {
+      PROJ_POLL = null;
+      if (!$("#view-projects")?.classList.contains("is-active")) return;   // picked up on the next visit
+      const before = new Map(PROJECTS.map(p => [p.id, p.stage]));
+      try { PROJECTS = (await api("/api/projects")).projects || PROJECTS; } catch { /* keep polling */ }
+      if ($("#projList") && !$("#projList").hidden) renderProjList();
+      PROJECTS.forEach(p => { if (before.get(p.id) === "building" && p.stage === "learn") toast(PT("projects.builtToast", "{t} is built. Learn it next.").replace("{t}", p.title)); });
+      pollBuilds();
+    }, 1500);
+  }
+  async function rebuildProject(p, btn) {
+    if (btn) btn.disabled = true;
+    try { await api(`/api/projects/${p.id}/build`, {}); } catch (err) { toast(err.message || PT("projects.startFailed", "Couldn't start the project.")); }
+    loadProjects();
+  }
+  async function setAiCredit(p, on) {
+    try { await api(`/api/projects/${p.id}/settings`, { ai_credit: !!on }); p.ai_credit = !!on; }
+    catch (err) { toast(err.message || "Couldn't save."); }
+  }
+
+  // ---- Learn it: the real code, what it does, why it was built that way, one quick check.
+  let LEARN = null;
+  async function startLearn(p) {
+    if (!p) return;
+    LEARN = { id: p.id, title: p.title, steps: [], learned: new Set(), i: 0, pick: null, fb: {} };
+    ["#projList", "#projForm", "#projIdeas", "#projTest", "#projBuild", "#projQuiz"].forEach(s => { if ($(s)) $(s).hidden = true; });
+    QUIZ = null;
+    $("#projLearn").hidden = false;
+    // A page of its own: "< Projects" above "Learn <title>", and no header buttons.
+    const back = $("#projIdeasBack"); if (back) back.hidden = false;
+    const pt = $("#projPageTitle"); if (pt) pt.textContent = PT("projects.learnTitle", "Learn {t}").replace("{t}", p.title);
+    const acts = $("#projHeadActs"); if (acts) acts.hidden = true;
+    learnTop();
+    $("#projLearnRail").innerHTML = "";
+    $("#projLearnCard").innerHTML = `<div class="empty">${esc(PT("projects.learnLoading", "Preparing your walkthrough…"))}</div>`;
+    try {
+      const d = await api(`/api/projects/${p.id}/learn`, {});
+      LEARN.steps = d.steps || []; LEARN.learned = new Set(d.learned || []);
+      const first = LEARN.steps.findIndex((_, i) => !LEARN.learned.has(i));
+      LEARN.i = first < 0 ? LEARN.steps.length - 1 : first;
+      renderLearn();
+    } catch (err) { $("#projLearnCard").innerHTML = `<div class="empty">${esc(err.message || PT("projects.learnFailed", "Couldn't prepare the walkthrough right now."))}</div>`; }
+  }
+  function learnTop() { $("#view-projects .page-head")?.scrollIntoView({ block: "start" }); }
+  function leaveLearn() { LEARN = null; $("#projLearn").hidden = true; $("#projList").hidden = false; loadProjects(); }
+  function learnCode(s) {
+    return String(s.code || "").split("\n").map((ln, k) => `<span class="ln" data-n="${s.start + k}">${esc(ln) || " "}</span>`).join("");
+  }
+  function renderLearn() {
+    const L = LEARN; if (!L) return;
+    const s = L.steps[L.i]; if (!s) return;
+    const n = L.steps.length, done = L.learned.has(L.i), allDone = L.learned.size >= n;
+    $("#projLearnRail").innerHTML = L.steps.map((st, k) => `<li><button type="button" class="learn-seg ${L.learned.has(k) ? "is-done" : ""} ${k === L.i ? "is-cur" : ""}" data-k="${k}"
+        aria-label="${esc(PT("projects.stepN", "Step {n}").replace("{n}", k + 1))}: ${esc(st.title)}" ${k === L.i ? 'aria-current="step"' : ""}></button></li>`).join("")
+      + `<li class="learn-rail-n">${esc(PT("projects.nLearned", "{n} of {m} learned").replace("{n}", L.learned.size).replace("{m}", n))}</li>`;
+    const c = s.check || {}, fb = L.fb[L.i];
+    const opts = c.kind === "line"
+      ? `<input class="fld learn-line" id="learnLine" type="text" autocomplete="off" placeholder="${esc(PT("projects.oneLine", "One line is enough"))}" ${done ? "disabled" : ""}>`
+      : `<div class="learn-opts" role="radiogroup" aria-label="${esc(c.q)}">${(c.options || []).map((o, k) => `<button type="button" role="radio" class="learn-opt ${L.pick === k ? "is-pick" : ""} ${fb && fb.k === k ? (fb.ok ? "is-right" : "is-wrong") : ""}" data-k="${k}" aria-checked="${L.pick === k}" ${done ? "disabled" : ""}>${esc(o)}</button>`).join("")}</div>`;
+    const primary = done
+      ? (L.i < n - 1 ? `<button class="btn btn-primary btn-sm" id="learnNext" type="button">${esc(PT("projects.nextStep", "Next step"))}</button>`
+        : allDone ? `<button class="btn btn-primary btn-sm" id="learnDefend" type="button">${esc(PT("projects.defendIt", "Defend it"))}</button>`
+        : `<button class="btn btn-primary btn-sm" id="learnNextOpen" type="button">${esc(PT("projects.nextOpen", "Next unlearned step"))}</button>`)
+      : `<button class="btn btn-primary btn-sm" id="learnCheck" type="button" ${c.kind !== "line" && L.pick == null ? "disabled" : ""}>${esc(PT("projects.check", "Check"))}</button>`;
+    $("#projLearnCard").innerHTML = `
+      <h3 class="learn-h">${esc(s.title)}</h3>
+      <div class="learn-file"><span class="learn-path">${esc(s.path)}</span><span class="learn-lines">${esc(PT("projects.lines", "lines {a} to {b}").replace("{a}", s.start).replace("{b}", s.end))}</span></div>
+      <pre class="learn-code" tabindex="0" aria-label="${esc(s.path)}"><code>${learnCode(s)}</code></pre>
+      ${s.explain ? `<p class="learn-explain">${esc(s.explain)}</p>` : ""}
+      ${s.why ? `<p class="learn-why"><b>${esc(PT("projects.whyWay", "Why this way"))}</b>${esc(s.why)}</p>` : ""}
+      <div class="learn-check">
+        <div class="learn-q"><b>${esc(PT("projects.quickCheck", "Quick check"))}</b>${esc(c.q || "")}</div>
+        ${opts}
+        <p class="learn-fb ${fb ? (fb.ok ? "ok" : "no") : ""}" id="learnFb" ${fb ? "" : "hidden"}>${fb ? `${esc(fb.ok ? PT("projects.right", "Right.") : PT("projects.notQuite", "Not quite. Have another look at the code."))} ${esc(fb.ok ? fb.explain || "" : "")}` : ""}</p>
+      </div>
+      <div class="learn-foot">
+        <button class="btn btn-quiet btn-sm" id="learnPrev" type="button" ${L.i === 0 ? "disabled" : ""}>${esc(PT("projects.prevStep", "Previous"))}</button>
+        ${primary}
+      </div>`;
+    const card = $("#projLearnCard");
+    $("#projLearnRail").querySelectorAll(".learn-seg").forEach(b => b.addEventListener("click", () => { L.i = +b.dataset.k; L.pick = null; renderLearn(); }));
+    card.querySelectorAll(".learn-opt").forEach(b => b.addEventListener("click", () => {
+      L.pick = +b.dataset.k; delete L.fb[L.i];
+      card.querySelectorAll(".learn-opt").forEach(o => { const on = +o.dataset.k === L.pick; o.classList.toggle("is-pick", on); o.classList.remove("is-wrong"); o.setAttribute("aria-checked", on); });
+      const chk = $("#learnCheck"); if (chk) chk.disabled = false;
+      const f = $("#learnFb"); if (f) f.hidden = true;
+    }));
+    $("#learnLine")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); checkLearn(); } });
+    $("#learnCheck")?.addEventListener("click", checkLearn);
+    $("#learnPrev")?.addEventListener("click", () => { if (L.i > 0) { L.i -= 1; L.pick = null; renderLearn(); learnTop(); } });
+    $("#learnNext")?.addEventListener("click", () => { L.i += 1; L.pick = null; renderLearn(); learnTop(); });
+    $("#learnNextOpen")?.addEventListener("click", () => { const k = L.steps.findIndex((_, j) => !L.learned.has(j)); if (k >= 0) { L.i = k; L.pick = null; renderLearn(); } });
+    $("#learnDefend")?.addEventListener("click", () => { const p = PROJECTS.find(x => x.id === L.id) || { id: L.id, title: L.title }; $("#projLearn").hidden = true; LEARN = null; startQuiz(p); });
+  }
+  async function checkLearn() {
+    const L = LEARN; if (!L) return;
+    const s = L.steps[L.i], line = s.check?.kind === "line";
+    const answer = line ? ($("#learnLine")?.value || "").trim() : L.pick;
+    if (line ? !answer : answer == null) return;
+    const btn = $("#learnCheck"); if (btn) btn.disabled = true;
+    try {
+      const d = await api(`/api/projects/${L.id}/learn/${L.i}`, { answer });
+      L.fb[L.i] = { ok: !!d.correct, explain: d.explain || "", k: line ? null : answer };
+      L.learned = new Set(d.learned || []);
+      const pj = PROJECTS.find(x => x.id === L.id); if (pj && d.project) Object.assign(pj, d.project);
+      if (!d.correct) L.pick = line ? null : answer;
+      renderLearn();
+      if (line && !d.correct) { const f = $("#learnLine"); if (f) { f.value = answer; f.focus(); } }
+    } catch (err) { toast(err.message || "Couldn't check that."); if (btn) btn.disabled = false; }
+  }
+
+  // ---- Defend it: a 20-question quiz on THIS project. The questions come in the attempt's own
+  // order with shuffled options and no answer key; answers are kept in this browser as they are
+  // picked, so leaving and coming back resumes. One question at a time, a review, then the result.
+  const QUIZ_KEY = (id) => `sj.quiz.${id}`;
+  function quizSaved(id) { try { return JSON.parse(localStorage.getItem(QUIZ_KEY(id)) || "null"); } catch { return null; } }
+  function quizSave() {
+    const Q = QUIZ; if (!Q || !Q.attempt) return;
+    try { localStorage.setItem(QUIZ_KEY(Q.id), JSON.stringify({ attempt: Q.attempt, answers: Q.answers, i: Q.i })); } catch { /* private window */ }
+  }
+  function quizForget(id) { try { localStorage.removeItem(QUIZ_KEY(id)); } catch { /* private window */ } }
+  async function startQuiz(p) {
+    if (!p) return;
+    QUIZ = { id: p.id, title: p.title, attempt: null, qs: [], total: 0, pass: 0, answers: [], i: 0, view: "q", result: null };
+    ["#projList", "#projForm", "#projIdeas", "#projTest", "#projBuild", "#projLearn"].forEach(s => { if ($(s)) $(s).hidden = true; });
+    LEARN = null;
+    $("#projQuiz").hidden = false;
+    const back = $("#projIdeasBack"); if (back) back.hidden = false;
+    const pt = $("#projPageTitle"); if (pt) pt.textContent = PT("projects.defendTitle", "Defend {t}").replace("{t}", p.title);
+    const acts = $("#projHeadActs"); if (acts) acts.hidden = true;
+    $("#projQuizRail").innerHTML = "";
+    $("#projQuizCard").innerHTML = `<div class="empty">${esc(PT("projects.quizLoading", "Preparing your quiz…"))}</div>`;
+    learnTop();
+    try {
+      const d = await api(`/api/projects/${p.id}/quiz`, {});
+      if (!QUIZ || QUIZ.id !== p.id) return;
+      Object.assign(QUIZ, { attempt: d.attempt, qs: d.questions || [], total: d.total || 0, pass: d.pass_mark || 0 });
+      const saved = quizSaved(p.id);
+      QUIZ.answers = saved && saved.attempt === d.attempt && Array.isArray(saved.answers) ? saved.answers.slice(0, QUIZ.total) : [];
+      while (QUIZ.answers.length < QUIZ.total) QUIZ.answers.push(null);
+      QUIZ.i = saved && saved.attempt === d.attempt ? Math.min(Math.max(0, saved.i | 0), QUIZ.total - 1) : 0;
+      quizSave();
+      renderQuiz();
+    } catch (err) { $("#projQuizCard").innerHTML = `<div class="empty">${esc(err.message || PT("projects.quizFailed", "Couldn't open the quiz right now."))}</div>`; }
+  }
+  function leaveQuiz() { QUIZ = null; $("#projQuiz").hidden = true; $("#projList").hidden = false; loadProjects(); }
+  function quizRail(label, frac) {
+    $("#projQuizRail").hidden = false;
+    $("#projQuizRail").innerHTML = `<span class="quiz-rail-n">${esc(label)}</span>
+      <span class="quiz-rail-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(frac * 100)}" aria-label="${esc(label)}"><i style="width:${(frac * 100).toFixed(1)}%"></i></span>`;
+  }
+  function renderQuiz() {
+    const Q = QUIZ; if (!Q) return;
+    if (Q.view === "review") return renderQuizReview();
+    if (Q.view === "result") return renderQuizResult();
+    const q = Q.qs[Q.i]; if (!q) return;
+    const last = Q.i === Q.total - 1, pick = Q.answers[Q.i];
+    quizRail(PT("projects.quizN", "Question {n} of {m}").replace("{n}", Q.i + 1).replace("{m}", Q.total), (Q.i + 1) / Q.total);
+    const code = q.code ? `
+      <div class="learn-file"><span class="learn-path">${esc(q.path)}</span><span class="learn-lines">${esc(PT("projects.lines", "lines {a} to {b}").replace("{a}", q.start).replace("{b}", q.end))}</span></div>
+      <pre class="learn-code quiz-code" tabindex="0" aria-label="${esc(q.path)}"><code>${learnCode(q)}</code></pre>` : "";
+    $("#projQuizCard").innerHTML = `
+      <h3 class="learn-h quiz-q" id="quizQ">${esc(q.q)}</h3>
+      ${code}
+      <div class="learn-opts quiz-opts" role="radiogroup" aria-labelledby="quizQ">${q.options.map((o, k) => `<button type="button" role="radio" class="learn-opt ${pick === k ? "is-pick" : ""}" data-k="${k}" aria-checked="${pick === k}"><span class="quiz-key" aria-hidden="true">${"ABCD"[k]}</span>${esc(o)}</button>`).join("")}</div>
+      <div class="learn-foot">
+        <button class="btn btn-quiet btn-sm" id="quizPrev" type="button" ${Q.i === 0 ? "disabled" : ""}>${esc(PT("projects.prevStep", "Previous"))}</button>
+        <button class="btn btn-primary btn-sm" id="quizNext" type="button">${esc(last ? PT("projects.quizToReview", "Review answers") : PT("projects.quizNext", "Next"))}</button>
+      </div>`;
+    const card = $("#projQuizCard");
+    card.querySelectorAll(".learn-opt").forEach(b => b.addEventListener("click", () => quizPick(+b.dataset.k)));
+    $("#quizPrev")?.addEventListener("click", () => quizGo(Q.i - 1));
+    $("#quizNext")?.addEventListener("click", () => { if (last) { Q.view = "review"; renderQuiz(); learnTop(); } else quizGo(Q.i + 1); });
+  }
+  function quizPick(k) {
+    const Q = QUIZ; if (!Q || Q.view !== "q") return;
+    Q.answers[Q.i] = k; quizSave();
+    $("#projQuizCard").querySelectorAll(".learn-opt").forEach(o => { const on = +o.dataset.k === k; o.classList.toggle("is-pick", on); o.setAttribute("aria-checked", on); });
+  }
+  // A to D (or 1 to 4) picks an option on a question screen.
+  document.addEventListener("keydown", (e) => {
+    if (!QUIZ || QUIZ.view !== "q" || $("#projQuiz")?.hidden || e.metaKey || e.ctrlKey || e.altKey
+        || e.target.closest?.("input, textarea, select")) return;
+    const k = "abcd".indexOf(e.key.toLowerCase()) >= 0 ? "abcd".indexOf(e.key.toLowerCase()) : "1234".indexOf(e.key);
+    if (k >= 0 && k < (QUIZ.qs[QUIZ.i]?.options.length || 0)) { e.preventDefault(); quizPick(k); }
+  });
+  function quizGo(i) {
+    const Q = QUIZ; if (!Q || i < 0 || i >= Q.total) return;
+    Q.i = i; Q.view = "q"; quizSave(); renderQuiz(); learnTop();
+  }
+  function renderQuizReview() {
+    const Q = QUIZ;
+    const open = Q.answers.filter(a => a == null).length;
+    quizRail(PT("projects.quizAnswered", "{n} of {m} answered").replace("{n}", Q.total - open).replace("{m}", Q.total), (Q.total - open) / Q.total);
+    $("#projQuizCard").innerHTML = `
+      <h3 class="learn-h">${esc(PT("projects.quizReviewH", "Check your answers"))}</h3>
+      <ol class="quiz-list">${Q.qs.map((q, k) => { const a = Q.answers[k]; return `<li><button type="button" class="quiz-row" data-k="${k}">
+          <span class="quiz-row-n">${k + 1}</span>
+          <span class="quiz-row-t"><span class="quiz-row-q">${esc(q.q)}</span>
+            <span class="quiz-row-a ${a == null ? "is-open" : ""}">${esc(a == null ? PT("projects.notAnswered", "Not answered") : q.options[a])}</span></span></button></li>`; }).join("")}</ol>
+      <div class="learn-foot">
+        <button class="btn btn-quiet btn-sm" id="quizRevBack" type="button">${esc(PT("projects.prevStep", "Previous"))}</button>
+        <span class="quiz-foot-r">${open ? `<span class="quiz-open-n">${esc(PT("projects.quizUnanswered", "{n} not answered yet").replace("{n}", open))}</span>` : ""}
+          <button class="btn btn-primary btn-sm" id="quizSubmit" type="button" ${open ? "disabled" : ""}>${esc(PT("projects.quizSubmit", "Submit"))}</button></span>
+      </div>`;
+    $("#projQuizCard").querySelectorAll(".quiz-row").forEach(b => b.addEventListener("click", () => quizGo(+b.dataset.k)));
+    $("#quizRevBack")?.addEventListener("click", () => quizGo(Q.total - 1));
+    $("#quizSubmit")?.addEventListener("click", submitQuiz);
+  }
+  async function submitQuiz() {
+    const Q = QUIZ; if (!Q) return;
+    const btn = $("#quizSubmit"); if (btn) btn.disabled = true;
+    try {
+      const r = await api(`/api/projects/${Q.id}/quiz/submit`, { attempt: Q.attempt, answers: Q.answers });
+      quizForget(Q.id);
+      Q.result = r; Q.view = "result";
+      const pj = PROJECTS.find(x => x.id === Q.id); if (pj && r.project) Object.assign(pj, r.project);
+      renderQuiz(); learnTop();
+    } catch (err) { toast(err.message || PT("projects.quizFailed", "Couldn't open the quiz right now.")); if (btn) btn.disabled = false; }
+  }
+  function renderQuizResult() {
+    const Q = QUIZ, r = Q.result || {}, ok = !!r.passed;
+    $("#projQuizRail").hidden = true;   // the score below says it; a rail would say it twice
+    const wrong = (r.wrong || []).map(w => `<li class="quiz-miss">
+        <div class="quiz-miss-q"><span class="quiz-row-n">${w.n}</span>${esc(w.q)}</div>
+        <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.yourAnswer", "Your answer"))}</span><span class="is-no">${esc(w.yours || PT("projects.notAnswered", "Not answered"))}</span></div>
+        <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.correctAnswer", "Correct"))}</span><span class="is-ok">${esc(w.correct)}</span></div>
+        ${w.explain ? `<p class="quiz-miss-x">${esc(w.explain)}</p>` : ""}</li>`).join("");
+    $("#projQuizCard").innerHTML = `
+      <div class="quiz-score ${ok ? "is-pass" : ""}">
+        <div class="quiz-score-l"><span class="quiz-score-n">${esc(PT("projects.quizScore", "{s} of {m}").replace("{s}", r.score).replace("{m}", r.total))}</span>
+          <span class="quiz-score-t">${esc(ok ? PT("projects.quizPassed", "Passed. {t} is verified.").replace("{t}", Q.title)
+            : PT("projects.quizMissed", "You need {p} to pass. Go over the ones you missed, then retake it.").replace("{p}", r.pass_mark))}</span></div>
+        <button class="btn btn-primary btn-sm" id="quizMain" type="button">${esc(ok ? PT("projects.addResume", "Add to resume") : PT("projects.retake", "Retake"))}</button>
+      </div>
+      ${!ok && wrong ? `<ol class="quiz-misses">${wrong}</ol>` : ""}`;
+    $("#quizMain")?.addEventListener("click", async (e) => {
+      if (!ok) { const p = { id: Q.id, title: Q.title }; startQuiz(p); return; }
+      e.target.disabled = true;
+      try { const res = await fetch(`/api/projects/${Q.id}/tocv`, { method: "POST" }); toast(res.ok ? PT("projects.addedResume", "Added to your resume material.") : PT("projects.cantAdd", "Couldn't add it to your resume.")); }
+      catch { toast(PT("projects.cantAdd", "Couldn't add it to your resume.")); }
+      leaveQuiz();
+    });
+  }
   function renderProjList() {
     const root = $("#projList"); if (!root) return;
+    const formOpen = !$("#projForm")?.hidden || !$("#projIdeas")?.hidden;
+    const acts = $("#projHeadActs");
+    // The ideas gallery is its own page: "Project ideas" under a back link, no header buttons.
+    const ideasOpen = !$("#projIdeas")?.hidden;
+    const back = $("#projIdeasBack"); if (back) back.hidden = !ideasOpen;
+    const pt = $("#projPageTitle");
+    if (pt) pt.textContent = ideasOpen ? PT("projects.ideasPageTitle", "Project ideas") : PT("projects.title", "Projects");
+    if (ideasOpen) { if (acts) acts.hidden = true; root.innerHTML = ""; return; }
     if (!PROJECTS.length) {
-      root.innerHTML = `<div class="empty">No projects yet. Add one, then prove you can defend it, that is what makes it resume-ready.</div>`;
+      // The header buttons repeat the card's actions, so they step aside while it shows:
+      // one primary action per screen.
+      if (acts) acts.hidden = !formOpen;
+      projHeadAccent(formOpen);
+      root.innerHTML = formOpen ? "" : projEmptyHTML();
+      $("#projEmptyAdd")?.addEventListener("click", () => openProjForm("#projForm", "#projTitle"));
+      $("#projEmptySuggest")?.addEventListener("click", () => openIdeas());
       return;
     }
-    root.innerHTML = PROJECTS.map(projCard).join("");
+    if (acts) acts.hidden = false;
+    projHeadAccent(formOpen);
+    const ver = PROJECTS.filter(p => p.status === "verified").length;
+    const drafts = PROJECTS.length - ver;
+    root.innerHTML = `<div class="proj-count">${drafts} ${drafts === 1 ? "draft" : "drafts"} &middot; ${ver} verified</div>`
+      + PROJECTS.map(projCard).join("");
     root.querySelectorAll(".proj-card").forEach(card => {
       const p = PROJECTS.find(x => x.id === card.dataset.id);
       card.querySelector('[data-act="defend"]')?.addEventListener("click", () => startDefend(p));
+      card.querySelector('[data-act="quiz"]')?.addEventListener("click", () => startQuiz(p));
+      card.querySelector('[data-act="learn"]')?.addEventListener("click", () => startLearn(p));
+      card.querySelector('[data-act="rebuild"]')?.addEventListener("click", (e) => rebuildProject(p, e.target));
+      card.querySelector('[data-act="credit"]')?.addEventListener("change", (e) => setAiCredit(p, e.target.checked));
+      card.querySelector('[data-act="download"]')?.addEventListener("click", () => { window.location = `/api/projects/${p.id}/download.zip`; });
       card.querySelector('[data-act="guide"]')?.addEventListener("click", () => startBuildGuide(p));
       card.querySelector('[data-act="tocv"]')?.addEventListener("click", () => addToCv(p));
       card.querySelector('[data-act="publish"]')?.addEventListener("click", (e) => publishToGithub(p, e.target));
@@ -4337,9 +4810,38 @@
         await fetch(`/api/projects/${p.id}`, { method: "DELETE" }); loadProjects();
       });
     });
+    pollBuilds();
   }
-  $("#projNew")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) $("#projTitle")?.focus(); } });
-  $("#projCancel")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.reset(); f.hidden = true; } });
+  // One accent per screen: while a form is open its submit is the primary, so the header's
+  // New project drops to an outline button until the form closes.
+  function projHeadAccent(formOpen) {
+    const b = $("#projNew"); if (!b) return;
+    b.classList.toggle("btn-primary", !formOpen); b.classList.toggle("btn-ghost", formOpen);
+  }
+  // First run: one focal card. A glyph, a few words, the path as a wordless stepper, one
+  // primary action and one quiet one. The header's own buttons step aside while it shows.
+  function projEmptyHTML() {
+    const node = (i, ico, t) => `<li class="proj-flow-step" style="--i:${i}"><span class="proj-flow-dot">${ico}</span><span class="proj-flow-t">${t}</span></li>`;
+    return `<section class="proj-empty" aria-labelledby="projEmptyH">
+      <span class="proj-empty-mark" aria-hidden="true">${PROJ_ICO.code.replace(/width="16" height="16"/, 'width="26" height="26"')}<span class="proj-empty-badge">${PROJ_ICO.check}</span></span>
+      <h2 class="proj-empty-h" id="projEmptyH">Show what you can build</h2>
+      <p class="proj-empty-sub">A project you can explain is proof employers trust.</p>
+      <ol class="proj-flow" aria-label="How it works">
+        ${node(0, PROJ_ICO.plus, "Add")}${node(1, PROJ_ICO.steps, "Build")}${node(2, PROJ_ICO.talk, "Defend")}${node(3, PROJ_ICO.check, "Verified")}
+      </ol>
+      <div class="proj-empty-acts">
+        <button class="btn btn-primary" id="projEmptyAdd" type="button">${PROJ_ICO.plus}Add a project</button>
+        <button class="btn btn-quiet" id="projEmptySuggest" type="button">${PROJ_ICO.bulb}Suggest an idea</button>
+      </div>
+    </section>`;
+  }
+  function openProjForm(formSel, focusSel) {
+    ["#projForm", "#projIdeas"].forEach(sel => { const f = $(sel); if (f) f.hidden = sel !== formSel; });
+    renderProjList();
+    $(focusSel)?.focus();
+  }
+  $("#projNew")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { $("#projIdeas") && ($("#projIdeas").hidden = true); $("#projTitle")?.focus(); } renderProjList(); } });
+  $("#projCancel")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.reset(); f.hidden = true; } renderProjList(); });
   $("#projForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const msg = $("#projMsg"), setMsg = (t, cls) => { if (msg) { msg.textContent = t; msg.className = "proj-msg " + cls; msg.hidden = false; } };
@@ -4351,67 +4853,503 @@
     } catch (err) { setMsg(err.message || "Couldn't add the project.", "err"); }
   });
 
-  // Suggest-a-project: ideas grounded in the saved profile + a target role. Picking one
-  // prefills the create form so it becomes a draft that still has to pass the defend gate.
-  $("#projSuggestBtn")?.addEventListener("click", () => {
-    const f = $("#projSuggestForm"); if (!f) return;
+  // Project ideas: one click, no typing. The target role comes from what the app already knows
+  // (last tailored job, else the profile's latest title); the chip lets the person change it.
+  // Each idea is GitHub-shaped: skills it proves (gaps marked +), a repo name, and real
+  // example repos from GitHub search. Start creates the draft, plus a private repo if connected.
+  const PT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  // ideas is the flat list shown; batches holds the size of each batch (the first from the role or
+  // search, then one per "More ideas"), so each batch is ranked on its own. filt is client-side only.
+  let IDEAS = { role: "", source: "", query: "", ideas: [], batches: [], github: { connected: false }, seq: 0,
+                cap: null, filt: { cat: "" }, moreBusy: false };
+  let SAVED_IDEAS = null;   // the local bookmark list, loaded once per session
+  const ICO_BOOKMARK = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M4 2.5h8v11L8 10.8 4 13.5z"/></svg>`;
+  const ICO_X = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
+  const ICO_CHEV = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg>`;
+  const ideaKey = s => String(s?.repo || s?.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "project";
+  const isSavedIdea = s => (SAVED_IDEAS || []).some(x => ideaKey(x) === ideaKey(s));
+  const GH_MARK = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
+  const ICO_LOCK = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>`;
+  const ICO_REPO = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M3.5 2.5h8.5v9H4.75A1.25 1.25 0 0 0 3.5 12.75z"/><path d="M3.5 12.75A1.25 1.25 0 0 0 4.75 14h7.25v-2.5"/></svg>`;
+  const ICO_STAR = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="m8 1.8 1.9 3.9 4.2.6-3 3 .7 4.2L8 11.5l-3.8 2 .7-4.2-3-3 4.2-.6z"/></svg>`;
+  const ICO_EDIT = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 3 13 5.5 6 12.5H3.5V10z"/></svg>`;
+  const kStars = n => n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "")}k` : String(n || 0);
+
+  function openIdeas() {
+    const box = $("#projIdeas"); if (!box) return;
     $("#projForm") && ($("#projForm").hidden = true);
-    f.hidden = !f.hidden; if (!f.hidden) $("#projTarget")?.focus();
-  });
-  $("#projSuggestCancel")?.addEventListener("click", () => {
-    const f = $("#projSuggestForm"); if (f) { f.reset(); f.hidden = true; const l = $("#projSuggestList"); if (l) l.innerHTML = ""; }
-  });
-  $("#projSuggestForm")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const msg = $("#projSuggestMsg"), setMsg = (t, cls) => { if (msg) { msg.textContent = t; msg.className = "proj-msg " + cls; msg.hidden = !t; } };
-    const list = $("#projSuggestList"), go = $("#projSuggestGo");
-    const target = $("#projTarget")?.value.trim() || "";
-    setMsg("", ""); if (list) list.innerHTML = `<div class="empty">Thinking of projects that fit you…</div>`;
-    if (go) { go.disabled = true; go.textContent = "Thinking…"; }
+    box.hidden = false; renderProjList();
+    if (SAVED_IDEAS === null) loadSavedIdeas();
+    if (!IDEAS.ideas.length) loadIdeas({}); else { renderIdeas(); refreshIdeasGitHub(); }
+  }
+  // GitHub state for the toolbar and Start. The ideas payload carries it; Settings tells us when
+  // it changes (connect or disconnect), and reopening the gallery re-reads it.
+  async function refreshIdeasGitHub() {
     try {
-      const d = await api("/api/projects/suggest", { target });
-      renderSuggestions(d.suggestions || []);
+      const gh = await fetch("/api/github/status").then(r => r.json());
+      IDEAS.github = { connected: !!gh.configured, login: gh.login || "" };
+      renderIdeaGitHub();
+    } catch { /* keep what we have */ }
+  }
+  document.addEventListener("tailor:github", refreshIdeasGitHub);
+  async function openGitHubSettings() {
+    await openSettings();
+    document.querySelector('[data-set="connections"]')?.click();
+    const f = $("#ghForm");
+    if (f && f.hidden && !IDEAS.github?.connected) { f.hidden = false; if ($("#ghMsg")) $("#ghMsg").hidden = true; }
+    f?.scrollIntoView?.({ block: "nearest" });
+    $("#ghToken")?.focus();
+  }
+  // The toolbar's GitHub slot: an outline Connect button while not connected, a quiet state once it is.
+  function renderIdeaGitHub() {
+    const box = $("#projIdeasGh"); if (!box) return;
+    const gh = IDEAS.github || {};
+    if (gh.connected) {
+      const who = gh.login ? `${PT("projects.ghConnectedAs", "Connected as")} ${gh.login}` : PT("projects.ghConnected", "GitHub connected");
+      box.innerHTML = `<span class="proj-gh-on" title="${esc(who)}">${GH_MARK}<span>${esc(gh.login || PT("projects.ghConnected", "GitHub connected"))}</span></span>`;
+    } else {
+      box.innerHTML = `<button class="btn btn-ghost proj-gh-btn" id="projIdeasConnect" type="button">${GH_MARK}${esc(PT("projects.ghConnect", "Connect GitHub"))}</button>`;
+      $("#projIdeasConnect")?.addEventListener("click", openGitHubSettings);
+    }
+  }
+  function closeIdeas() { const box = $("#projIdeas"); if (box) box.hidden = true; renderProjList(); }
+  const skelCards = (n, hero) => Array.from({ length: n }, (_, i) => `<div class="proj-idea is-skel${hero && !i ? " is-hero" : ""}" style="--i:${i}" aria-hidden="true"><b class="tech-tile"></b><i></i><i></i><i></i><i></i></div>`).join("");
+  async function loadIdeas(body) {
+    const seq = ++IDEAS.seq;
+    const grid = $("#projIdeasGrid");
+    renderTargetChip(body.role != null ? body.role : IDEAS.role, true);
+    if (grid) grid.innerHTML = skelCards(4, true);
+    const more = $("#projIdeasMoreRow"); if (more) more.hidden = true;
+    grid?.setAttribute("aria-busy", "true");
+    try {
+      const d = await api("/api/projects/ideas", body);
+      if (seq !== IDEAS.seq) return;   // a newer request superseded this one
+      const ideas = d.ideas || [];
+      IDEAS = { ...IDEAS, role: d.role || "", source: d.source || "", query: d.query || "", ideas,
+                batches: d.batches && d.batches.length ? d.batches : [ideas.length],
+                github: d.github || { connected: false }, cap: d.cap || IDEAS.cap, moreBusy: false };
+      const q = $("#projIdeasQ"); if (q && document.activeElement !== q) q.value = IDEAS.query;
+      renderIdeas();
     } catch (err) {
-      if (list) list.innerHTML = "";
-      setMsg(err.message || "Couldn't suggest projects right now.", "err");
-    } finally { if (go) { go.disabled = false; go.textContent = "Suggest projects"; } }
-  });
-  function renderSuggestions(items) {
-    const list = $("#projSuggestList"); if (!list) return;
-    if (!items.length) { list.innerHTML = `<div class="empty">No suggestions came back. Try naming the target role more specifically.</div>`; return; }
-    list.innerHTML = items.map((s, i) => `
-      <article class="proj-sug" data-i="${i}">
-        <div class="proj-sug-hd">
-          <h3 class="proj-sug-t">${esc(s.title || "")}</h3>
-          ${s.skill ? `<span class="proj-sug-skill">${esc(s.skill)}</span>` : ""}
+      if (seq !== IDEAS.seq) return;
+      if (err.data?.code === "ideas_cap") {
+        // The day's batches are spent: keep what is on screen, say so once, and park the controls.
+        IDEAS.cap = err.data.cap || IDEAS.cap;
+        if (IDEAS.ideas.length) { renderIdeas({ still: true }); return; }
+      }
+      renderTargetChip(IDEAS.role, false);
+      renderIdeaCap();
+      if (grid) grid.innerHTML = `<p class="proj-ideas-empty">${esc(err.message || PT("projects.noIdeas", "No ideas came back. Try another role."))}</p>`;
+    } finally { grid?.removeAttribute("aria-busy"); }
+  }
+  // More ideas: another batch for the same role and search, told what is already on screen so it
+  // does not repeat (the server also drops repeats by title and repo name). A skeleton row stands
+  // in while it loads; the cards already shown do not move or re-animate.
+  async function loadMoreIdeas() {
+    if (IDEAS.moreBusy || !IDEAS.ideas.length || capSpent()) return;
+    const seq = IDEAS.seq, grid = $("#projIdeasGrid");
+    IDEAS.moreBusy = true;
+    const btn = $("#projIdeasMore"); if (btn) btn.disabled = true;
+    const skel = `<div class="proj-ideas-skelrow" data-more-skel aria-hidden="true">${skelCards(3, false)}</div>`;
+    const legend = grid?.querySelector(".proj-ideas-legend");
+    if (legend) legend.insertAdjacentHTML("beforebegin", skel); else grid?.insertAdjacentHTML("beforeend", skel);
+    grid?.setAttribute("aria-busy", "true");
+    try {
+      const d = await api("/api/projects/ideas", { role: IDEAS.role, query: IDEAS.query, exclude: IDEAS.ideas.map(s => s.title) });
+      if (seq !== IDEAS.seq) return;
+      IDEAS.cap = d.cap || IDEAS.cap;
+      const seen = new Set(IDEAS.ideas.flatMap(s => [String(s.title || "").toLowerCase(), ideaKey(s)]));
+      const fresh = (d.ideas || []).filter(s => !seen.has(String(s.title || "").toLowerCase()) && !seen.has(ideaKey(s)));
+      const before = IDEAS.batches.length;
+      if (fresh.length) { IDEAS.ideas = IDEAS.ideas.concat(fresh); IDEAS.batches = IDEAS.batches.concat([fresh.length]); }
+      else toast(PT("projects.noMoreIdeas", "No new ideas came back. Try a search."));
+      IDEAS.moreBusy = false;
+      renderIdeas({ still: before });
+      grid?.removeAttribute("aria-busy");
+    } catch (err) {
+      grid?.removeAttribute("aria-busy");
+      if (seq !== IDEAS.seq) return;
+      IDEAS.moreBusy = false;
+      if (err.data?.code === "ideas_cap") IDEAS.cap = err.data.cap || IDEAS.cap;
+      else toast(err.message || PT("projects.noIdeas", "No ideas came back. Try another role."));
+      renderIdeas({ still: true });
+    }
+  }
+  const capSpent = () => !!IDEAS.cap && IDEAS.cap.left <= 0;
+  // The daily cap: one quiet line, and the controls that would ask for a new batch rest until
+  // tomorrow. Cached sets, filters, saved ideas and Start all keep working.
+  function renderIdeaCap() {
+    const spent = capSpent(), line = $("#projIdeasCap");
+    if (line) {
+      line.hidden = !spent;
+      line.textContent = spent ? PT("projects.capReached", "You've reached today's {n} idea batches. More tomorrow.").replace("{n}", IDEAS.cap.limit) : "";
+    }
+    const q = $("#projIdeasQ"); if (q) q.disabled = spent;
+    const more = $("#projIdeasMore"); if (more) more.disabled = spent || IDEAS.moreBusy;
+  }
+  function renderTargetChip(role, busy) {
+    const box = $("#projTargetBox"); if (!box) return;
+    const src = IDEAS.source === "job" ? PT("projects.fromJob", "From your last resume")
+      : IDEAS.source === "profile" ? PT("projects.fromProfile", "From your profile") : "";
+    box.innerHTML = `<button class="proj-target-chip" id="projTargetChip" type="button" title="${esc(PT("projects.changeRole", "Change the role"))}" ${busy ? "disabled" : ""}>
+        <span class="proj-target-k">${esc(PT("projects.target", "Target"))}</span>
+        <span class="proj-target-v">${esc(role || PT("projects.addRole", "Add a role"))}</span>${ICO_EDIT}</button>
+      ${src && !busy ? `<span class="proj-target-src">${esc(src)}</span>` : ""}`;
+    $("#projTargetChip")?.addEventListener("click", editTarget);
+  }
+  // Inline edit: the chip becomes a field. Enter fetches ideas for the new role, Esc puts it back.
+  function editTarget() {
+    const box = $("#projTargetBox"); if (!box) return;
+    box.innerHTML = `<form class="proj-target-form" id="projTargetForm">
+        <span class="proj-target-k">${esc(PT("projects.target", "Target"))}</span>
+        <input class="proj-target-in" id="projTargetIn" type="text" value="${esc(IDEAS.role)}" placeholder="${esc(PT("projects.rolePh", "e.g. Data Engineer"))}" aria-label="${esc(PT("projects.target", "Target"))}" autocomplete="off" spellcheck="false">
+      </form>`;
+    const inp = $("#projTargetIn"); inp?.focus(); inp?.select();
+    let done = false;
+    const finish = (role) => {
+      if (done) return; done = true;
+      const r = (role || "").trim();
+      if (r && r.toLowerCase() !== (IDEAS.role || "").toLowerCase()) loadIdeas({ role: r });
+      else renderTargetChip(IDEAS.role, false);
+    };
+    $("#projTargetForm")?.addEventListener("submit", e => { e.preventDefault(); finish(inp.value); });
+    inp?.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); finish(""); } });
+    inp?.addEventListener("blur", () => finish(""));
+  }
+  // The ideas gallery (2026-10-13 layout; 2026-10 harmony pass: the cards use the Jobs card frame).
+  // Layout (E): rank the ideas by how many of the job's missing skills each one covers, so the best
+  // fit leads as a wide hero with a fit ring, and the rest follow in a bento with a fit meter.
+  // Ties fall back to the title, so the order never shuffles.
+  function rankIdeas(ideas) {
+    const all = new Set();
+    ideas.forEach(s => (s.gaps || []).forEach(g => all.add(g.toLowerCase())));
+    const total = all.size;
+    const ranked = ideas.map((s, i) => ({ s, i, fit: new Set((s.gaps || []).map(g => g.toLowerCase())).size, n: (s.skills || []).length }))
+      .sort((a, b) => b.fit - a.fit || (total ? 0 : b.n - a.n)
+        || String(a.s.title || "").localeCompare(String(b.s.title || "")));
+    return { ranked, total };
+  }
+  // The rows after the hero: pairs first (the higher ranked get more room), then threes.
+  function bentoSpans(r) {
+    const rows = [];
+    if (r === 1) rows.push(1);
+    else if (r % 3 === 1) { rows.push(2, 2); r -= 4; }
+    else if (r % 3 === 2) { rows.push(2); r -= 2; }
+    for (; r > 0; r -= 3) rows.push(3);
+    return rows.flatMap(n => Array(n).fill(6 / n));
+  }
+  function fitText(fit, total, n) {
+    const fill = (t) => t.replace("{n}", fit).replace("{total}", total).replace("{k}", n);
+    if (total && !fit) return PT("projects.buildsOnSkills", "Builds on skills you already have");
+    return fill(total === 1 ? PT("projects.coversGap", "Covers {n} of your 1 gap")
+      : total ? PT("projects.coversGaps", "Covers {n} of your {total} gaps")
+      : PT("projects.skillsToShow", "{k} skills to show"));
+  }
+  // Fit (2026-10, harmony pass): the hero keeps a ring in the app's own `.li-ring` grammar (a
+  // --border track, a --good arc, no gradient or glow); the smaller cards say it in plain words.
+  function fitRing(fit, total, n) {
+    const num = total ? fit : n, den = total || 5, frac = Math.max(0, Math.min(1, num / den));
+    const R = 42, C = 2 * Math.PI * R;
+    return `<div class="proj-ring" role="img" aria-label="${esc(fitText(fit, total, n))}">
+      <svg viewBox="0 0 100 100" aria-hidden="true" fill="none">
+        <circle class="proj-ring-track" cx="50" cy="50" r="${R}"/>
+        <circle class="proj-ring-arc" cx="50" cy="50" r="${R}" stroke-dasharray="${(C * frac).toFixed(2)} ${C.toFixed(2)}" transform="rotate(-90 50 50)"/>
+      </svg>
+      <span class="proj-ring-n"><span><b>${num}</b><small>/${den}</small></span></span>
+    </div>`;
+  }
+  function fitMeter(fit, total, n) {
+    return `<p class="proj-fit">${esc(fitText(fit, total, n))}</p>`;
+  }
+
+  // Each idea gets a category (a small deterministic keyword score over its title, pitch, skills
+  // and tech). It sits where the Jobs card puts the company: a neutral 40px tile with the category
+  // glyph, and the category name as the line above the title. No per-category colour.
+  const IDEA_CATS = {
+    data:   { k: ["data", "dashboard", "analytics", "pandas", "sql", "chart", "tracker", "insight", "etl", "warehouse", "spark", "tableau", "power bi", "excel", "dbt", "visuali", "statistic", "streamlit", "dataset"],
+              label: ["projects.catData", "Data and analytics"],
+              ico: `<path d="m4 16 4.6-4.8 3.6 3 7.3-7.7"/><path d="M15 6.5h4.5V11"/>` },
+    web:    { k: ["api", "rest", "web", "react", "node", "fastapi", "flask", "django", "frontend", "backend", "graphql", "typescript", "javascript", "next", "vue", "html", "css", "express", "full stack"],
+              label: ["projects.catWeb", "Web and APIs"],
+              ico: `<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.6 3.6 5.4 3.6 8.5S14.4 17.9 12 20.5M12 3.5C9.6 6.1 8.4 8.9 8.4 12s1.2 5.9 3.6 8.5"/>` },
+    devops: { k: ["docker", "kubernetes", "ci", "cd", "devops", "pipeline", "airflow", "terraform", "deploy", "monitor", "alert", "aws", "gcp", "azure", "cloud", "infra", "github actions", "observab", "linux", "nightly"],
+              label: ["projects.catDevops", "DevOps and CI"],
+              ico: `<path d="M7.2 8C4.9 8 3 9.8 3 12s1.9 4 4.2 4c3.4 0 6.2-8 9.6-8C19.1 8 21 9.8 21 12s-1.9 4-4.2 4c-3.4 0-6.2-8-9.6-8Z"/>` },
+    ml:     { k: ["machine learning", "ml", "model", "nlp", "spacy", "pytorch", "tensorflow", "llm", "ai", "classif", "predict", "neural", "embedding", "scikit", "sklearn", "vision", "recommend", "matcher", "keyword"],
+              label: ["projects.catMl", "Machine learning"],
+              ico: `<path d="M12 2.8 13.9 9l6.3 1.9-6.3 1.9L12 19.1l-1.9-6.3L3.8 10.9 10.1 9Z"/><path d="M19 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/>` },
+    mobile: { k: ["mobile", "ios", "android", "swift", "kotlin", "flutter", "react native", "expo", "app store", "swiftui", "jetpack"],
+              label: ["projects.catMobile", "Mobile"],
+              ico: `<rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 18.5h3"/>` },
+    tools:  { k: ["cli", "tool", "script", "automation", "bot", "scheduler", "command", "extension", "plugin", "parser", "library", "sdk", "rust", "go", "bash"],
+              label: ["projects.catTools", "Tools and CLI"],
+              ico: `<rect x="2.5" y="4" width="19" height="16" rx="2.6"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15h4.5"/>` },
+  };
+  function ideaCat(s) {
+    const hay = (f, w) => ({ text: ` ${String(f || "").toLowerCase()} `, w });
+    const fields = [hay(s.title, 3), hay(s.pitch, 1), hay((s.skills || []).join(" , "), 2), hay(s.tech, 2), hay(s.search, 1)];
+    let best = "tools", top = 0;
+    for (const [cat, def] of Object.entries(IDEA_CATS)) {
+      let score = 0;
+      for (const k of def.k) {
+        // Short keys (ml, ai, ci, go) must stand alone as words; longer ones may be a stem.
+        const re = k.length <= 3 ? new RegExp(`[^a-z]${k}[^a-z]`) : null;
+        for (const f of fields) if (re ? re.test(f.text) : f.text.includes(k)) score += f.w;
+      }
+      if (score > top) { top = score; best = cat; }
+    }
+    return best;
+  }
+  const catGlyph = (cat, cls) => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${IDEA_CATS[cat].ico}</svg>`;
+
+  function ideaCard(s, i, opt = {}) {
+    const { hero = false, span = 6, fit = 0, total = 0, compact = false } = opt;
+    const gaps = new Set((s.gaps || []).map(g => g.toLowerCase()));
+    // The skills the job wants and the profile lacks lead the row: they are the reason to build it.
+    // They wear the Jobs page's must-have gap chip; the rest wear its plain tag.
+    const sk = (s.skills || []).map((k, j) => ({ k, j, gap: gaps.has(k.toLowerCase()) })).sort((a, b) => b.gap - a.gap || a.j - b.j);
+    const chips = sk.map(({ k, gap }) => gap
+      ? `<li class="proj-skill is-gap" title="${esc(PT("projects.gapHint", "The job asks for this. Your profile doesn't show it yet."))}">${PROJ_ICO.plus}${esc(k)}</li>`
+      : `<li class="proj-skill">${esc(k)}</li>`).join("");
+    // Example repos in GitHub's own grammar, all neutral: repo icon, owner/name, stars. (The language
+    // was dropped in the harmony pass: it truncated the repo names in the hero's three columns.)
+    const ex = (s.examples || []).filter(e => /^https:\/\/github\.com\//.test(e.url || ""));
+    const exHTML = ex.length ? `<div class="proj-idea-ex"><span class="proj-idea-ex-k">${esc(PT("projects.examples", "Examples"))}</span>
+        ${ex.map(e => {
+          const [own, name] = String(e.full_name || "").split("/");
+          return `<a class="proj-ex" href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(e.description || e.full_name)}">${ICO_REPO}<span class="proj-ex-n"><span class="proj-ex-o">${esc(own || "")}/</span>${esc(name || "")}</span><span class="proj-ex-s">${ICO_STAR}${kStars(e.stars)}</span></a>`;
+        }).join("")}
+      </div>` : "";
+    const n = (s.skills || []).length;
+    const cat = ideaCat(s), [lk, lf] = IDEA_CATS[cat].label;
+    const saved = isSavedIdea(s), saveLbl = saved ? PT("projects.savedIdea", "Saved") : PT("projects.saveIdea", "Save idea");
+    const pills = `${hero ? `<span class="proj-idea-pill is-best">${esc(total ? PT("projects.bestMatch", "Best match") : PT("projects.topPick", "Top pick"))}</span>` : ""}<button class="proj-idea-save" type="button" data-save aria-pressed="${saved}" aria-label="${esc(saveLbl)}" title="${esc(saveLbl)}">${ICO_BOOKMARK}</button>`;
+    // The Jobs card head: a 40px tile, the "company" line (here the category), the title under it,
+    // and the pills top-right where Jobs shows "New 4h ago".
+    const head = `<div class="proj-idea-hd">
+        ${techTile(s, catGlyph(cat, ""), "proj-idea-logo")}
+        <div class="proj-idea-main">
+          <div class="proj-idea-top"><span class="proj-idea-cat">${esc(PT(lk, lf))}</span><span class="proj-idea-tags">${pills}</span></div>
+          <h3 class="proj-idea-t">${esc(s.title)}</h3>
         </div>
-        ${s.summary ? `<p class="proj-sug-sum">${esc(s.summary)}</p>` : ""}
-        ${s.tech ? `<p class="proj-sug-tech">${esc(s.tech)}</p>` : ""}
-        ${s.why ? `<p class="proj-sug-why">${esc(s.why)}</p>` : ""}
-        <button class="btn btn-primary btn-sm" data-build type="button">Build this</button>
-      </article>`).join("");
-    list.querySelectorAll(".proj-sug").forEach(card => {
-      const s = items[+card.dataset.i];
-      card.querySelector("[data-build]")?.addEventListener("click", () => buildSuggestion(s));
+      </div>`;
+    const ft = `<div class="proj-idea-ft">
+        <span class="proj-idea-repo" title="${esc(PT("projects.repoName", "Repo name"))}">${ICO_REPO}${esc(s.repo || "")}</span>
+        <button class="btn ${hero ? "btn-primary" : "btn-ghost"} btn-sm" data-start type="button">${esc(PT("projects.start", "Start this project"))}</button>
+      </div>`;
+    if (hero) {
+      return `<article class="proj-idea is-hero${opt.still ? " is-still" : ""}" data-i="${i}" data-key="${esc(ideaKey(s))}" data-cat="${cat}" style="--i:0">
+        ${head}
+        <div class="proj-idea-body">
+          <div class="proj-hero-main">
+            ${s.pitch ? `<p class="proj-idea-p">${esc(s.pitch)}</p>` : ""}
+            ${chips ? `<ul class="proj-skills">${chips}</ul>` : ""}
+            ${exHTML}
+          </div>
+          <aside class="proj-hero-fit">
+            ${fitRing(fit, total, n)}
+            <p class="proj-hero-fit-t">${esc(fitText(fit, total, n))}</p>
+          </aside>
+          ${ft}
+        </div>
+      </article>`;
+    }
+    return `<article class="proj-idea${span <= 2 ? " is-tight" : ""}${opt.still ? " is-still" : ""}" data-i="${i}" data-key="${esc(ideaKey(s))}" data-cat="${cat}" style="--i:${opt.order || 0};--span:${span}">
+      ${head}
+      <div class="proj-idea-body">
+        ${s.pitch ? `<p class="proj-idea-p">${esc(s.pitch)}</p>` : ""}
+        ${compact ? "" : fitMeter(fit, total, n)}
+        ${chips ? `<ul class="proj-skills">${chips}</ul>` : ""}
+        ${exHTML}
+        ${ft}
+      </div>
+    </article>`;
+  }
+  // opt.still: true keeps every card still (a filter or a cap change); a number keeps the first
+  // that many batches still, so only an appended batch animates in.
+  function renderIdeas(opt = {}) {
+    renderTargetChip(IDEAS.role, false);
+    const grid = $("#projIdeasGrid"); if (!grid) return;
+    renderIdeaGitHub();
+    renderIdeaCap();
+    const qline = $("#projIdeasQuery");
+    if (qline) {
+      qline.hidden = !IDEAS.query;
+      qline.innerHTML = IDEAS.query ? `<span>${esc(PT("projects.resultsFor", "Results for"))} <b>${esc(IDEAS.query)}</b></span>
+        <button class="proj-q-clear" id="projIdeasQClear" type="button" aria-label="${esc(PT("projects.clearSearch", "Clear search"))}" title="${esc(PT("projects.clearSearch", "Clear search"))}">${ICO_X}</button>` : "";
+      $("#projIdeasQClear")?.addEventListener("click", () => {
+        const q = $("#projIdeasQ"); if (q) q.value = "";
+        loadIdeas({ role: IDEAS.role });   // the role's own set, from the cache: no new batch
+      });
+    }
+    renderSavedIdeas();
+    renderIdeaFilters();
+    renderIdeaGrid(opt);
+  }
+  // The category filter is client-side only: it narrows the ideas already loaded and never calls
+  // the model. It is the Jobs filter select ("Any time", "Any type"), listing the categories present.
+  const ideaPasses = s => !IDEAS.filt.cat || ideaCat(s) === IDEAS.filt.cat;
+  function renderIdeaFilters() {
+    const sel = $("#projIdeasCat"); if (!sel) return;
+    const cats = Object.keys(IDEA_CATS).filter(c => IDEAS.ideas.some(s => ideaCat(s) === c));
+    if (IDEAS.filt.cat && !cats.includes(IDEAS.filt.cat)) IDEAS.filt.cat = "";
+    sel.innerHTML = `<option value="">${esc(PT("projects.anyCategory", "Any category"))}</option>`
+      + cats.map(c => `<option value="${c}">${esc(PT(IDEA_CATS[c].label[0], IDEA_CATS[c].label[1]))}</option>`).join("");
+    sel.value = IDEAS.filt.cat;
+    sel.disabled = IDEAS.ideas.length < 2;
+  }
+  $("#projIdeasCat")?.addEventListener("change", (e) => { IDEAS.filt.cat = e.currentTarget.value; renderIdeaGrid({ still: true }); });
+  // Each batch is ranked on its own: the first batch leads with the hero, later batches flow in
+  // the bento grid under it, so appending never reshuffles what the person is already reading.
+  function renderIdeaGrid(opt = {}) {
+    const grid = $("#projIdeasGrid"); if (!grid) return;
+    const moreRow = $("#projIdeasMoreRow");
+    if (moreRow) moreRow.hidden = !IDEAS.ideas.length;
+    if (!IDEAS.ideas.length) { grid.innerHTML = `<p class="proj-ideas-empty">${esc(PT("projects.noIdeas", "No ideas came back. Try another role."))}</p>`; return; }
+    const sizes = IDEAS.batches.length ? IDEAS.batches.slice() : [IDEAS.ideas.length];
+    const used = sizes.reduce((a, b) => a + b, 0);
+    if (used < IDEAS.ideas.length) sizes.push(IDEAS.ideas.length - used);
+    const { total } = rankIdeas(IDEAS.ideas);
+    let html = "", start = 0, shown = 0;
+    sizes.forEach((n, b) => {
+      const batch = IDEAS.ideas.slice(start, start + n).map((s, j) => ({ s, i: start + j })).filter(x => ideaPasses(x.s));
+      start += n;
+      if (!batch.length) return;
+      const ranked = rankIdeas(batch.map(x => x.s)).ranked.map(r => ({ ...r, i: batch[r.i].i }));
+      const hero = b === 0, still = opt.still === true || (typeof opt.still === "number" && b < opt.still);
+      const spans = bentoSpans(hero ? ranked.length - 1 : ranked.length);
+      html += ranked.map((r, k) => ideaCard(r.s, r.i, { hero: hero && k === 0, span: (hero ? spans[k - 1] : spans[k]) || 6,
+        fit: r.fit, total, order: k, still })).join("");
+      shown += ranked.length;
+    });
+    const hasGap = IDEAS.ideas.some(s => ideaPasses(s) && (s.gaps || []).length);
+    grid.innerHTML = (shown ? html : `<p class="proj-ideas-empty">${esc(PT("projects.noMatch", "No ideas match these filters."))}</p>`)
+      + (hasGap ? `<p class="proj-ideas-legend"><span class="proj-skill is-gap" aria-hidden="true">${PROJ_ICO.plus}</span>${esc(PT("projects.newForYou", "A skill the job asks for that your profile doesn't show yet"))}</p>` : "");
+    bindIdeaCards(grid, IDEAS.ideas);
+  }
+  function bindIdeaCards(root, list) {
+    root.querySelectorAll(".proj-idea:not(.is-skel)").forEach(card => {
+      const s = list[+card.dataset.i];
+      card.querySelector("[data-start]")?.addEventListener("click", (e) => startIdea(s, e.currentTarget));
+      card.querySelector("[data-save]")?.addEventListener("click", (e) => toggleSaveIdea(s, e.currentTarget));
     });
   }
-  function buildSuggestion(s) {
-    if (!s) return;
-    if ($("#projTitle")) $("#projTitle").value = s.title || "";
-    if ($("#projSummary")) $("#projSummary").value = s.summary || "";
-    if ($("#projTech")) $("#projTech").value = s.tech || "";
-    const sf = $("#projSuggestForm"); if (sf) sf.hidden = true;
-    const f = $("#projForm"); if (f) f.hidden = false;
-    $("#projTitle")?.focus();
-    toast("Prefilled. Build it for real, then prove you can defend it.");
+
+  // Saved ideas: a local bookmark list (data/saved_ideas.json), shown as a collapsible row at the
+  // top of the gallery. They survive refreshes, searches and restarts; Start works as anywhere.
+  const SAVED_OPEN_KEY = "tailor-saved-ideas-open";
+  const savedOpen = () => { try { return localStorage.getItem(SAVED_OPEN_KEY) !== "0"; } catch { return true; } };
+  async function loadSavedIdeas() {
+    try { SAVED_IDEAS = (await api("/api/projects/ideas/saved")).saved || []; }
+    catch { SAVED_IDEAS = SAVED_IDEAS || []; }
+    renderSavedIdeas(); syncSaveToggles();
   }
+  function renderSavedIdeas() {
+    const box = $("#projSaved"); if (!box) return;
+    const list = SAVED_IDEAS || [];
+    box.hidden = !list.length;
+    if (!list.length) { box.innerHTML = ""; return; }
+    const open = savedOpen();
+    box.innerHTML = `<button class="proj-saved-hd" id="projSavedToggle" type="button" aria-expanded="${open}" aria-controls="projSavedGrid">
+        <span class="proj-ideas-h">${esc(PT("projects.savedIdeas", "Saved ideas"))}</span><span class="proj-saved-n">${list.length}</span>${ICO_CHEV}</button>
+      <div class="proj-ideas-grid proj-saved-grid" id="projSavedGrid"${open ? "" : " hidden"}>
+        ${list.map((s, i) => ideaCard(s, i, { span: 3, compact: true, still: true })).join("")}
+      </div>`;
+    $("#projSavedToggle")?.addEventListener("click", () => {
+      try { localStorage.setItem(SAVED_OPEN_KEY, savedOpen() ? "0" : "1"); } catch {}
+      renderSavedIdeas();
+    });
+    bindIdeaCards($("#projSavedGrid"), list);
+  }
+  function syncSaveToggles() {
+    document.querySelectorAll("#projIdeasGrid .proj-idea[data-key]").forEach(card => {
+      const btn = card.querySelector("[data-save]"); if (!btn) return;
+      const on = (SAVED_IDEAS || []).some(x => ideaKey(x) === card.dataset.key);
+      const lbl = on ? PT("projects.savedIdea", "Saved") : PT("projects.saveIdea", "Save idea");
+      btn.setAttribute("aria-pressed", String(on)); btn.setAttribute("aria-label", lbl); btn.title = lbl;
+    });
+  }
+  async function toggleSaveIdea(s, btn) {
+    if (!s) return;
+    if (btn) btn.disabled = true;
+    try {
+      const r = isSavedIdea(s)
+        ? await fetch(`/api/projects/ideas/saved?repo=${encodeURIComponent(ideaKey(s))}`, { method: "DELETE" }).then(x => x.json())
+        : await api("/api/projects/ideas/saved", { idea: s });
+      if (r.error) throw new Error(r.error);
+      SAVED_IDEAS = r.saved || [];
+      renderSavedIdeas(); syncSaveToggles();
+    } catch (err) {
+      toast(err.message || PT("projects.saveFailed", "Couldn't save the idea."));
+    } finally { if (btn && btn.isConnected) btn.disabled = false; }
+  }
+  // Start while GitHub is not connected asks first, on the card itself: connect (the Settings flow)
+  // or start here without a repo. Nothing is created until one of the two is picked.
+  function askGitHubFirst(s, btn) {
+    const ft = btn?.closest(".proj-idea-ft"); if (!ft) return startIdea(s, btn, true);
+    if (ft.querySelector(".proj-idea-ghask")) return;
+    const kids = [...ft.children];
+    kids.forEach(k => { k.hidden = true; });
+    ft.insertAdjacentHTML("beforeend", `<div class="proj-idea-ghask" role="group" aria-label="${esc(PT("projects.ghPrompt", "Connect GitHub to create the repo"))}">
+        <span class="proj-idea-ghask-t">${GH_MARK}${esc(PT("projects.ghPrompt", "Connect GitHub to create the repo"))}</span>
+        <span class="proj-idea-ghask-a">
+          <button class="btn btn-quiet btn-sm" type="button" data-nogh>${esc(PT("projects.buildNoGh", "Build without GitHub"))}</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-gh>${GH_MARK}${esc(PT("projects.connect", "Connect"))}</button>
+        </span>
+      </div>`);
+    const ask = ft.querySelector(".proj-idea-ghask");
+    const close = () => { ask?.remove(); kids.forEach(k => { k.hidden = false; }); };
+    ask.querySelector("[data-gh]")?.addEventListener("click", () => { close(); openGitHubSettings(); });
+    ask.querySelector("[data-nogh]")?.addEventListener("click", () => { close(); startIdea(s, btn, true); });
+    ask.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); close(); btn.focus(); } });
+    ask.querySelector("[data-gh]")?.focus();
+  }
+  async function startIdea(s, btn, local = false) {
+    if (!s) return;
+    if (!local && !IDEAS.github?.connected) return askGitHubFirst(s, btn);
+    const label = btn ? btn.textContent : "";
+    if (btn) { btn.disabled = true; btn.textContent = PT("projects.starting", "Starting…"); }
+    try {
+      // The AI builds it (one package). The card shows the progress; the build carries on if
+      // the person leaves the screen.
+      const d = await api("/api/projects/start", { idea: s, local: !!local });
+      toast(d.project?.target === "github" ? PT("projects.buildingRepo", "Building it. It goes to a private repo on GitHub.")
+        : PT("projects.buildingLocal", "Building it here. Download the files any time."));
+      const box = $("#projIdeas"); if (box) box.hidden = true;
+      loadProjects();
+    } catch (err) {
+      toast(err.message || PT("projects.startFailed", "Couldn't start the project."));
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  }
+  $("#projSuggestBtn")?.addEventListener("click", () => { const box = $("#projIdeas"); if (box && !box.hidden) closeIdeas(); else openIdeas(); });
+  $("#projIdeasBack")?.addEventListener("click", () => { if (QUIZ) leaveQuiz(); else if (LEARN) leaveLearn(); else closeIdeas(); });
+  // Esc goes back too, unless a field inside the gallery (the Target chip, an inline ask) took it.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (LEARN && !$("#projLearn")?.hidden && $("#view-projects")?.classList.contains("is-active")
+        && !e.target.closest?.("input, textarea")) { e.preventDefault(); leaveLearn(); return; }
+    if (QUIZ && !$("#projQuiz")?.hidden && $("#view-projects")?.classList.contains("is-active")) { e.preventDefault(); leaveQuiz(); return; }
+    const box = $("#projIdeas");
+    if (!box || box.hidden || !$("#view-projects")?.classList.contains("is-active")) return;
+    if (document.querySelector(".modal:not([hidden]), dialog[open]")) return;
+    e.preventDefault(); closeIdeas();
+  });
+  $("#projIdeasMore")?.addEventListener("click", loadMoreIdeas);
+  $("#projIdeasSearch")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = ($("#projIdeasQ")?.value || "").replace(/\s+/g, " ").trim();
+    if (q.toLowerCase() === (IDEAS.query || "").toLowerCase()) return;
+    if (q && capSpent()) return;
+    loadIdeas(q ? { role: IDEAS.role, query: q } : { role: IDEAS.role });
+  });
 
   // Guided build-and-teach loop: an ordered plan that teaches as you build, with a per-step coach.
   async function startBuildGuide(p) {
     if (!p) return;
     BUILD = { id: p.id, title: p.title, milestones: p.plan?.milestones || [], done: new Set(p.done || []) };
     $("#projBuildTitle").textContent = `Build: ${p.title}`;
-    $("#projList").hidden = true; $("#projForm").hidden = true; $("#projSuggestForm").hidden = true; $("#projBuild").hidden = false;
+    $("#projList").hidden = true; $("#projForm").hidden = true; $("#projIdeas").hidden = true; $("#projBuild").hidden = false;
     $("#projBuildFoot").hidden = true;
     if (BUILD.milestones.length) { renderPlan(); }
     else {
@@ -4531,14 +5469,15 @@
     catch { toast("Couldn't add to resume."); }
   }
   async function publishToGithub(p, btn) {
+    const label = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = "Publishing…"; }
     try {
-      const d = await api(`/api/projects/${p.id}/publish`, {});   // {} body -> POST
-      toast("Published to GitHub.");
-      loadProjects();   // re-render: the card now shows "View on GitHub"
+      await api(`/api/projects/${p.id}/publish`, {});   // {} body -> POST
+      toast(p.repo_url ? PT("projects.nowPublic", "Your repo is public now.") : "Published to GitHub.");
+      loadProjects();   // re-render: the GitHub mark beside the title loses its lock
     } catch (err) {
       toast(err.message || "Couldn't publish to GitHub.");
-      if (btn) { btn.disabled = false; btn.textContent = "Publish to GitHub"; }
+      if (btn) { btn.disabled = false; btn.textContent = label; }
     }
   }
 
@@ -4840,7 +5779,8 @@
       const btn = $("#scrNoticeGo"), msg = $("#scrNoticeMsg");
       if (SCREEN && SCREEN.config && !!SCREEN.config.extra_time === SCR_EXTRA && SCREEN.i == null) { goDevices(); return; }   // back from the device check: same screen
       btn.disabled = true;
-      try { SCREEN = await api("/api/screens", { prep_id: SCR_PREP.id, extra_time: SCR_EXTRA, questions: R1_QUESTIONS, ...(SCR_DRILL ? { drill: SCR_DRILL } : {}) }); }
+      const body = { prep_id: SCR_PREP.id, extra_time: SCR_EXTRA, questions: R1_QUESTIONS, ...(SCR_DRILL ? { drill: SCR_DRILL } : {}) };
+      try { SCREEN = await api("/api/screens", body); }
       catch (err) { btn.disabled = false; if (msg) { msg.textContent = err.message || T("r1.cantStart", "Couldn't start the interview."); msg.hidden = false; } return; }
       SCR_PRACTICE = SCREEN.practice || null;
       goDevices();
@@ -5228,7 +6168,8 @@
     stopPrepClock(); stopAnswerClock(); if (SCR_COUNT) { clearInterval(SCR_COUNT); SCR_COUNT = null; }
     if (SCR_REC && SCR_REC.state === "recording") { SCR_REC.onstop = null; try { SCR_REC.stop(); } catch {} }
     SCR_PHASE = "idle"; stopScrStream();
-    $("#prepScreen").hidden = true; $("#prepList").hidden = false; loadPreps();
+    $("#prepScreen").hidden = true; $("#prepList").hidden = false;
+    loadPreps();
   }
   $("#scrQuit")?.addEventListener("click", quitScreen);
 
@@ -6597,11 +7538,13 @@
     setMsg(d.login ? `Connected as ${d.login}.` : "GitHub connected.", "ok");
     $("#ghForm").reset(); $("#ghForm").hidden = true;
     renderConnections();
+    document.dispatchEvent(new CustomEvent("tailor:github"));   // the ideas toolbar and Start follow
   });
   $("#ghDisconnect")?.addEventListener("click", async () => {
     await fetch("/api/github/disconnect", { method: "POST" });
     const f = $("#ghForm"); if (f) { f.reset(); f.hidden = true; }
     renderConnections();
+    document.dispatchEvent(new CustomEvent("tailor:github"));
   });
   $("#extHelp")?.addEventListener("click", () => { const d = $("#extDetail"); if (d) d.hidden = !d.hidden; });
   $("#gmHelp")?.addEventListener("click", () => { const d = $("#gmDetail"); if (d) d.hidden = !d.hidden; });
