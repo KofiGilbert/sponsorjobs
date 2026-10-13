@@ -178,3 +178,11 @@ taken from either project (CLAUDE.md §7).
 OpenCATS (MPL-2.0 / CATS Public License) and PeelJobs (MIT) were reviewed; no code was
 copied from either. OpenCATS's candidate status vocabulary informed the inbox
 classifier's wording list only.
+
+## Bundled brand icons (CC0)
+
+- **Simple Icons** 16.33.0 (simpleicons.org, npm `simple-icons`) — **CC0 1.0 Universal**
+  (public domain dedication). 67 technology logos (SVG path plus official brand hex) are vendored
+  in `ui/static/vendor/techlogos.js` and shown on the Projects cards to name an idea's main
+  technology. Nothing is fetched at runtime. The marks remain trademarks of their owners and are
+  used only to identify the technology, which CC0 does not change.

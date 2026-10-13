@@ -3382,11 +3382,15 @@ body.cv-dragging * { cursor: grabbing !important; }
 
 /* Head: the Jobs card's logo tile, company line and title. */
 .proj-idea-hd { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
-.proj-idea-logo {
-  flex: none; width: 40px; height: 40px; border-radius: 9px; display: grid; place-items: center;
-  color: var(--muted); background: var(--surface-2); border: 1px solid var(--border);
+/* The tile is the Jobs `.fr-logo` (40px, radius 9, no border, white under the logo) on every
+   theme: the real logo of the main technology in its own brand colour is the one full colour on
+   the card (vendor/techlogos.js, Simple Icons, CC0). No logo: the same white tile, glyph in mid grey. */
+.tech-tile {
+  position: relative; flex: none; width: 40px; height: 40px; border-radius: 9px; overflow: hidden;
+  display: grid; place-items: center; background: #fff; color: #8a8a8e;
 }
-.proj-idea-logo svg { width: 18px; height: 18px; }
+.tech-tile svg { width: 18px; height: 18px; }
+.tech-tile.is-logo svg { width: 24px; height: 24px; }
 .proj-idea-main { flex: 1; min-width: 0; }
 .proj-idea-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .proj-idea-cat { flex: 1 1 auto; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3481,7 +3485,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* Loading: placeholders in the cards' shape (tile, two lines, a pitch, chips, a footer line). */
 .proj-idea.is-skel { min-height: 230px; padding: 18px 20px; }
 .proj-idea.is-skel.is-hero { min-height: 280px; }
-.proj-idea.is-skel b { display: block; flex: none; width: 40px; height: 40px; border-radius: 9px; margin-bottom: 14px; background: color-mix(in srgb, var(--ink) 5%, transparent); animation: proj-pulse 1.4s ease-in-out infinite; }
+.proj-idea.is-skel b { display: block; margin-bottom: 14px; animation: proj-pulse 1.4s ease-in-out infinite; }
 .proj-idea.is-skel i { display: block; height: 10px; margin: 0 0 10px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 6%, transparent); animation: proj-pulse 1.4s ease-in-out infinite; }
 .proj-idea.is-skel i:nth-child(2) { width: 46%; height: 13px; }
 .proj-idea.is-skel i:nth-child(3) { width: 72%; }
@@ -3529,12 +3533,7 @@ body.cv-dragging * { cursor: grabbing !important; }
   animation: proj-rise 320ms var(--ease) both;
 }
 .proj-card:hover, .proj-card:focus-within { border-color: var(--border-strong); background: color-mix(in srgb, var(--ink) 1.5%, var(--surface)); }
-.proj-card-mark {
-  align-self: start; width: 36px; height: 36px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center;
-  color: var(--muted); border: 1px solid var(--border-strong);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--ink) 5%, var(--surface)), var(--surface));
-}
-.proj-card.is-verified .proj-card-mark { color: var(--ink); }
+.proj-card-mark { align-self: start; }
 .proj-card-hd { min-width: 0; }
 .proj-card-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .proj-card-title { font-size: 15px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -4297,6 +4297,94 @@
     renderProjList();
   }
   // Monochrome inline glyphs for the Projects screen (no assets, no colour).
+  // <tech-logo> (2026-10-13). The idea tile is the Jobs logo tile: white, with the real logo of
+  // the idea's main technology in its own brand colour (Simple Icons, vendored in
+  // vendor/techlogos.js, so no request leaves the app). Pure functions; tests/test_tech_logos.py
+  // runs this block under node.
+  // Rank: frameworks and libraries (0) before platforms, databases and infra (1), before
+  // languages (2), before the everywhere tools (3), so React beats JavaScript, FastAPI and Airflow
+  // beat Python. Ties go to whichever the idea lists first.
+  const TECH_ALIAS = {
+    // 0: frameworks and libraries
+    react: [0, "react", "react.js", "reactjs", "react native"], nextdotjs: [0, "next.js", "nextjs", "next"],
+    vuedotjs: [0, "vue", "vue.js", "vuejs", "nuxt"], angular: [0, "angular", "angularjs"], svelte: [0, "svelte", "sveltekit"],
+    nodedotjs: [0, "node", "node.js", "nodejs"], express: [0, "express", "express.js", "expressjs"],
+    fastapi: [0, "fastapi"], flask: [0, "flask"], django: [0, "django", "django rest framework", "drf"],
+    spring: [0, "spring", "spring boot", "springboot"], graphql: [0, "graphql"],
+    tailwindcss: [0, "tailwind", "tailwind css", "tailwindcss"],
+    apacheairflow: [0, "airflow", "apache airflow"], apachespark: [0, "spark", "pyspark", "apache spark", "spark sql"],
+    apachekafka: [0, "kafka", "apache kafka"], pandas: [0, "pandas"], numpy: [0, "numpy"], polars: [0, "polars"],
+    streamlit: [0, "streamlit"], plotly: [0, "plotly", "plotly dash", "dash"],
+    jupyter: [0, "jupyter", "jupyter notebook", "jupyter notebooks", "jupyterlab", "notebooks"],
+    scikitlearn: [0, "scikit-learn", "sklearn", "scikit learn", "scikit"], pytorch: [0, "pytorch", "torch"],
+    tensorflow: [0, "tensorflow", "tf", "keras"], huggingface: [0, "hugging face", "huggingface", "transformers", "hugging face transformers"],
+    langchain: [0, "langchain"], mlflow: [0, "mlflow"], anthropic: [0, "anthropic", "anthropic api", "claude", "claude api"],
+    flutter: [0, "flutter"], selenium: [0, "selenium"], pytest: [0, "pytest"],
+    // 1: platforms, databases and infra
+    postgresql: [1, "postgres", "postgresql", "psql"], mysql: [1, "mysql"], sqlite: [1, "sqlite", "sqlite3"],
+    mongodb: [1, "mongodb", "mongo"], redis: [1, "redis"], snowflake: [1, "snowflake"],
+    googlebigquery: [1, "bigquery", "google bigquery"], databricks: [1, "databricks"], duckdb: [1, "duckdb"],
+    elasticsearch: [1, "elasticsearch", "elastic"], docker: [1, "docker", "docker compose", "docker-compose"],
+    kubernetes: [1, "kubernetes", "k8s"], terraform: [1, "terraform"], githubactions: [1, "github actions", "gh actions"],
+    googlecloud: [1, "gcp", "google cloud", "google cloud platform", "cloud run"], nginx: [1, "nginx"], grafana: [1, "grafana"],
+    android: [1, "android", "jetpack compose"], ios: [1, "ios", "swiftui", "uikit"], postman: [1, "postman"],
+    // 2: languages
+    python: [2, "python", "python3", "py"], javascript: [2, "javascript", "js", "es6"], typescript: [2, "typescript", "ts"],
+    openjdk: [2, "java", "openjdk"], go: [2, "go", "golang"], rust: [2, "rust"], cplusplus: [2, "c++", "cpp"],
+    dotnet: [2, ".net", "dotnet", "c#", "csharp", "asp.net", "asp.net core", ".net core"], kotlin: [2, "kotlin"],
+    swift: [2, "swift"], r: [2, "r"], scala: [2, "scala"], gnubash: [2, "bash", "shell", "shell scripting"], linux: [2, "linux"],
+    // 3: everywhere tools
+    git: [3, "git"],
+  };
+  const TECH_INDEX = (() => {
+    const m = new Map();
+    for (const [slug, [rank, ...names]] of Object.entries(TECH_ALIAS)) for (const n of names) m.set(n, { slug, rank });
+    return m;
+  })();
+  const techNorm = t => String(t || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\d+(\.\d+)*$/, "").trim();
+  // The tech field is free text ("Python, FastAPI and PostgreSQL (Docker)"): split it into terms.
+  const techTerms = s => String(s || "").split(/[,;|/+()\[\]\n]|\s&\s|\sand\s|\swith\s/i).map(techNorm).filter(Boolean);
+  function techLookup(term) {
+    const hit = TECH_INDEX.get(term);
+    if (hit) return hit;
+    // A longer phrase ("PostgreSQL database", "Apache Airflow DAGs"): the first known name of at
+    // least 4 letters that stands alone as a word, so "r" and "go" never match inside words.
+    let best = null, at = Infinity;
+    for (const [n, v] of TECH_INDEX) {
+      if (n.length < 4) continue;
+      const i = ` ${term} `.indexOf(` ${n} `);
+      if (i >= 0 && i < at) { at = i; best = v; }
+    }
+    return best;
+  }
+  // The main technology of an idea or a project: its `tech` text, then its skills, best rank wins.
+  function mainTech(item, logos) {
+    const lib = logos || (typeof window !== "undefined" && window.TECH_LOGOS) || {};
+    const terms = [...techTerms(item?.tech), ...(item?.skills || []).map(techNorm)];
+    let pick = null;
+    terms.forEach((t, i) => {
+      const hit = techLookup(t);
+      if (hit && lib[hit.slug] && (!pick || hit.rank < pick.rank)) pick = { ...hit, i };
+    });
+    return pick ? { slug: pick.slug, ...lib[pick.slug] } : null;
+  }
+  // The brand hex as given (black reads fine on white); a near-white one gets a dark neutral.
+  function logoFill(hex) {
+    const c = String(hex || "").replace("#", "");
+    if (!/^[0-9a-f]{6}$/i.test(c)) return "#3a3a3c";
+    const lin = k => { const v = parseInt(c.slice(k, k + 2), 16) / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    const lum = 0.2126 * lin(0) + 0.7152 * lin(2) + 0.0722 * lin(4);
+    return lum > 0.85 ? "#3a3a3c" : `#${c.toUpperCase()}`;
+  }
+  // The white tile: the logo when the stack has one, else the fallback glyph in mid grey.
+  function techTile(item, fallbackSVG, cls = "") {
+    const lg = mainTech(item);
+    if (!lg) return `<span class="tech-tile${cls ? ` ${cls}` : ""}" aria-hidden="true">${fallbackSVG}</span>`;
+    return `<span class="tech-tile is-logo${cls ? ` ${cls}` : ""}" title="${esc(lg.title)}" data-tech="${esc(lg.slug)}">`
+      + `<svg viewBox="0 0 24 24" role="img" aria-label="${esc(lg.title)}"><path fill="${logoFill(lg.hex)}" d="${lg.path}"/></svg></span>`;
+  }
+  // </tech-logo>
+
   const PROJ_ICO = {
     code: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 7.5 4 12l4.5 4.5M15.5 7.5 20 12l-4.5 4.5M13.5 5.5l-3 13"/></svg>`,
     seal: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.2 1.6 2.7-.1.8 2.6 2.2 1.6-.9 2.6.9 2.6-2.2 1.6-.8 2.6-2.7-.1L12 21l-2.2-1.6-2.7.1-.8-2.6-2.2-1.6.9-2.6-.9-2.6 2.2-1.6.8-2.6 2.7.1z"/><path d="m8.8 12.2 2.2 2.2 4.2-4.4"/></svg>`,
@@ -4326,7 +4414,7 @@
       : "";
     const meta = [p.tech, p.size].filter(Boolean).join(" \u00b7 ");
     return `<article class="proj-card ${verified ? "is-verified" : "is-draft"}" data-id="${esc(p.id)}">
-      <span class="proj-card-mark" aria-hidden="true">${verified ? PROJ_ICO.seal : PROJ_ICO.code}</span>
+      ${techTile(p, verified ? PROJ_ICO.seal : PROJ_ICO.code, "proj-card-mark")}
       <div class="proj-card-hd">
         <div class="proj-card-name"><span class="proj-card-title">${esc(p.title)}</span>
           <span class="proj-pill ${verified ? "ok" : ""}">${verified ? `${PROJ_ICO.check}Verified` : "Draft"}</span>${repo}</div>
@@ -4442,7 +4530,7 @@
     const seq = ++IDEAS.seq;
     const grid = $("#projIdeasGrid");
     renderTargetChip(body.role != null ? body.role : IDEAS.role, true);
-    if (grid) grid.innerHTML = Array.from({ length: 4 }, (_, i) => `<div class="proj-idea is-skel${i ? "" : " is-hero"}" style="--i:${i}" aria-hidden="true"><b></b><i></i><i></i><i></i><i></i></div>`).join("");
+    if (grid) grid.innerHTML = Array.from({ length: 4 }, (_, i) => `<div class="proj-idea is-skel${i ? "" : " is-hero"}" style="--i:${i}" aria-hidden="true"><b class="tech-tile"></b><i></i><i></i><i></i><i></i></div>`).join("");
     grid?.setAttribute("aria-busy", "true");
     try {
       const d = await api("/api/projects/ideas", body);
@@ -4596,7 +4684,7 @@
     // The Jobs card head: a 40px tile, the "company" line (here the category), the title under it,
     // and the pills top-right where Jobs shows "New 4h ago".
     const head = `<div class="proj-idea-hd">
-        <span class="proj-idea-logo" aria-hidden="true">${catGlyph(cat, "")}</span>
+        ${techTile(s, catGlyph(cat, ""), "proj-idea-logo")}
         <div class="proj-idea-main">
           <div class="proj-idea-top"><span class="proj-idea-cat">${esc(PT(lk, lf))}</span>${pills ? `<span class="proj-idea-tags">${pills}</span>` : ""}</div>
           <h3 class="proj-idea-t">${esc(s.title)}</h3>
