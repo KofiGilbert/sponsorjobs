@@ -6050,6 +6050,7 @@ def projects_learn_answer(pid, idx):
     c = steps[idx].get("check") or {}
     right = c["options"][c["answer"]] if c.get("kind") == "choice" else ""
     return jsonify({"correct": ok, "explain": c.get("explain", ""), "answer": right if ok else "",
+                    "why": PB.option_why(steps[idx], ans),
                     "learned": (p.get("learn") or {}).get("learned") or [], "total": len(steps),
                     "project": _project_public(p)})
 
