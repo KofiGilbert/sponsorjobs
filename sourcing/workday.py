@@ -35,7 +35,7 @@ from urllib.parse import urlsplit
 
 from .ats import (_WORKDAY_BOARD_ID_RE, _job, fetch_json, fetch_with_backoff, html_to_text,
                   retry_after_seconds)
-from .discover import (PROBE_TIMEOUT, confirms, distinctive_tokens, has_brand, name_match_count, prose_confirms, slug_guesses)
+from .discover import (PROBE_TIMEOUT, confirms, distinctive_tokens, foreign_qualified, has_brand, name_match_count, prose_confirms, slug_guesses)
 
 WD_DOMAIN = "myworkdayjobs.com"
 # The Workday instances a tenant can live on: the ones whose wildcard DNS resolves (checked
@@ -466,10 +466,15 @@ def site_confirms(site: str, orgs: list[str], jds: list[str], display_name: str,
     (discover.prose_confirms: Cadence's postings carry no organization, but every JD says "At
     Cadence, ...")."""
     named = [o for o in orgs if o]
-    if named:
-        return any(confirms(o, display_name, need, squash=True) for o in named)
-    if confirms(site_words(site), display_name, need, squash=True):
+    if any(confirms(o, display_name, need, squash=True) for o in named):
         return True
+    if confirms(site_words(site), display_name, need, squash=True):
+        # The site is named for the sponsor; the postings may still name a regional entity
+        # ("NT Mgmt Services Ireland" on Northern Trust's "northerntrust" site), which is fine,
+        # but never an organization that brands itself as a different line of business.
+        return not any(foreign_qualified(o, display_name) for o in named)
+    if named:
+        return False
     return prose_confirms("\n".join(j for j in jds if j), display_name, need)
 
 

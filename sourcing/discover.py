@@ -282,6 +282,7 @@ ALIASES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "td bank": (("td",), ("td bank",)),
     "eli lilly": (("lilly",), ("lilly", "eli lilly")),
     "cnh industrial": (("cnhindustrial", "cnh"), ("cnh industrial", "cnh")),
+    "northern trust": (("ntrs", "northerntrust"), ("northern trust",)),
 }
 
 

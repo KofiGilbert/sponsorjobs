@@ -907,3 +907,14 @@ def test_a_site_whose_postings_name_another_employer_is_rejected_whatever_the_si
                                                              "postings": [_posting(0)]}}}})
     assert workday.discover_workday("Fusion Life Sciences Technologies", fetch=fake) is None
     assert workday.site_confirms("Fusion", [], [], "Fusion Life Sciences Technologies", 1)   # nothing named
+
+
+def test_a_site_named_for_the_sponsor_survives_a_regional_entity_on_its_postings():
+    # Live 2026-10-12: ntrs.wd1/northerntrust's first postings name "NT Mgmt Services Ireland Ltd";
+    # the site is named for Northern Trust (a curated alias), and nothing names another business.
+    fake = FakeWorkday({("ntrs", 1): {"robots": _robots("northerntrust"),
+                                      "sites": {"northerntrust": {"org": "086 NT Mgmt Services Ireland Ltd",
+                                                                  "postings": [_posting(i) for i in range(3)],
+                                                                  "total": 400}}}})
+    hit = workday.discover_workday("The Northern Trust Company", fetch=fake)
+    assert hit and hit.board_id == "ntrs.wd1/northerntrust" and hit.jobs == 400
