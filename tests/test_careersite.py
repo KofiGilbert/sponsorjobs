@@ -298,3 +298,120 @@ def test_country_objects_and_codes_become_readable_locations():
         "addressLocality": "Mountain View", "addressRegion": "CA", "addressCountry": {"@type": "Country", "name": "US"}}}}))
     job = cs.posting_to_job(HOST, "X", "u", p)
     assert job["location"] == "Mountain View, CA, US" and looks_us(job["location"])
+
+
+# ----------------------------------------------------------------------------------------- #
+# the site table as a data file, the shared page budget, and rotation between runs
+# ----------------------------------------------------------------------------------------- #
+
+def test_shipped_data_file_keeps_the_original_four_and_is_well_formed():
+    table = cs.load_sites()
+    for host in ("apply.careers.microsoft.com", "careers.qualcomm.com",
+                 "www.capitalonecareers.com", "careers.cisco.com"):
+        assert host in table
+    raw = json.loads(cs.SITES_FILE.read_text())["sites"]
+    assert set(raw) == set(table), "every shipped entry passes site_entry_ok"
+    for host, cfg in table.items():
+        assert cfg.get("platform") and cfg.get("verified"), host
+
+
+def test_load_sites_drops_malformed_and_off_host_entries(tmp_path):
+    f = tmp_path / "sites.json"
+    f.write_text(json.dumps({"sites": {
+        HOST: CFG,
+        "jobs.other.com": {"company": "Other", "job_url": r"^https://evil\.com/job/"},       # off host
+        "jobs.third.com": {"company": "Third", "job_url": r"^https://jobs\.third\.com/job/",
+                           "sitemaps": ["https://elsewhere.com/sitemap.xml"]},               # sitemap off host
+        "jobs.fourth.com": {"job_url": r"^https://jobs\.fourth\.com/job/"},                 # no company
+        "Jobs.Upper.com": {"company": "U", "job_url": r"^https://Jobs\.Upper\.com/job/"},     # not lowercase
+    }}))
+    logs: list[str] = []
+    assert cs.load_sites(f, log=logs.append) == {HOST: CFG}
+    assert len(logs) == 4
+
+
+def test_load_sites_falls_back_to_builtin_when_file_missing_or_broken(tmp_path):
+    assert set(cs.load_sites(tmp_path / "nope.json")) == set(cs._BUILTIN_SITES)
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    assert set(cs.load_sites(bad)) == set(cs._BUILTIN_SITES)
+    bad.write_text(json.dumps({"hosts": {}}))
+    assert set(cs.load_sites(bad)) == set(cs._BUILTIN_SITES)
+
+
+def test_page_budget_is_shared_and_thread_safe():
+    import threading
+    b = cs.PageBudget(100)
+    taken: list[bool] = []
+    threads = [threading.Thread(target=lambda: taken.extend(b.take() for _ in range(30))) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sum(taken) == 100 and b.left == 0
+    assert all(cs.PageBudget(None).take() for _ in range(5))
+
+
+def test_budget_stops_page_reads_but_still_touches_known_rows():
+    pages = base_pages()
+    _, store, first, _ = run(pages, budget=cs.PageBudget(1))
+    assert first["fetched"] == 1 and first["stopped"] == "budget"
+    store._conn.execute("UPDATE sourced_job SET last_seen='2020-01-01 00:00:00'")
+    store._conn.commit()
+    site, _, again, _ = run(pages, store=store, budget=cs.PageBudget(0))
+    assert again["fetched"] == 0 and again["known"] == 1 and again["stopped"] == "budget"
+    assert not [u for u in site.calls if "/job/" in u]
+    assert store._conn.execute("SELECT MIN(last_seen) FROM sourced_job").fetchone()[0] > "2025"
+
+
+def _multi_sites(n):
+    sites, pages = {}, {}
+    for i in range(n):
+        h = f"jobs{i}.example.com"
+        sites[h] = {"company": f"C{i}", "job_url": rf"^https://jobs{i}\.example\.com/job/\d+"}
+        for k, v in base_pages().items():
+            pages[k.replace(HOST, h)] = v.replace(HOST, h) if isinstance(v, str) else v
+    return sites, pages
+
+
+def test_rotation_starts_at_the_cursor_and_wraps(tmp_path):
+    sites, _ = _multi_sites(4)
+    cur = tmp_path / "cursor.json"
+    order, start = cs.rotate_sites(sites, cur)
+    assert start == 0 and [h for h, _ in order] == sorted(sites)
+    cur.write_text(json.dumps({"next": 6}))                 # wraps modulo the table size
+    order, start = cs.rotate_sites(sites, cur)
+    assert start == 2 and [h for h, _ in order][:2] == ["jobs2.example.com", "jobs3.example.com"]
+    cur.write_text("garbage")
+    assert cs.rotate_sites(sites, cur)[1] == 0
+    assert cs.rotate_sites({}, cur) == ([], 0)
+
+
+def test_next_cursor_points_at_the_first_unfinished_site():
+    order = ["a", "b", "c", "d"]
+    done = lambda h, stopped="": {"host": h, "stopped": stopped}           # noqa: E731
+    assert cs.next_cursor(order, 0, [done("a"), done("b", "budget"), done("c")]) == 1
+    assert cs.next_cursor(order, 2, [done("a"), done("b")]) == (2 + 2) % 4   # c never started
+    assert cs.next_cursor(order, 3, [done(h, "max_detail") for h in order]) == 0   # all finished: move on one
+    assert cs.next_cursor([], 0, []) == 0
+
+
+def test_crawl_sites_budget_and_cursor_carry_over_between_runs(tmp_path):
+    db = tmp_path / "jobs.db"
+    Watchlist(db).close()
+    sites, pages = _multi_sites(3)
+    cur = tmp_path / "cursor.json"
+    site = Site(pages)
+    out = cs.crawl_sites(db, sites, minutes=1, workers=1, page_budget=4, cursor_path=cur,
+                         text_fetch=site, sleep=lambda s: None)
+    assert sum(x["fetched"] for x in out) == 4                   # 3 pages from jobs0, 1 from jobs1
+    by = {x["host"]: x for x in out}
+    assert by["jobs0.example.com"]["stopped"] == "" and by["jobs1.example.com"]["stopped"] == "budget"
+    assert by["jobs2.example.com"]["fetched"] == 0 and by["jobs2.example.com"]["listed"] == 3
+    assert json.loads(cur.read_text()) == {"next": 1}
+    site2 = Site(pages)
+    out2 = cs.crawl_sites(db, sites, minutes=1, workers=1, page_budget=4, cursor_path=cur,
+                          text_fetch=site2, sleep=lambda s: None)
+    assert out2[0]["host"] == "jobs1.example.com"               # resumes where the budget ran out
+    assert site2.calls[0] == "https://jobs1.example.com/robots.txt"
+    assert sum(x["fetched"] for x in out2) == 4
