@@ -706,5 +706,8 @@
   "projects.yourAnswer": "Your answer",
   "projects.correctAnswer": "Correct",
   "projects.retake": "Retake",
-  "projects.lastQuiz": "Last try {s} of {m}. Pass is {p}."
+  "projects.lastQuiz": "Last try {s} of {m}. Pass is {p}.",
+  "projects.selectAll": "Select all that apply.",
+  "projects.multiRule": "It counts only when you pick every right option and no wrong one.",
+  "projects.yourAnswers": "Your answers"
 }
