@@ -250,6 +250,21 @@ board about 4 times a day), and even a 3,000-board list within 4 runs (about 12 
 so no priority ordering is needed yet; if the list outgrows ~6,000 boards, the high-volume boards
 should be visited every run and the long tail rotated.
 
+**Two crawl shards (2026-10-13).** Real runs reached far fewer boards than that estimate (about
+150 of 1,375 per run), so the workflow now crawls in two parallel jobs. `board_shard` in
+`scripts/build_feed.py` puts each board in shard 0 or 1 by a stable hash of `(ats, board_id)`
+(so a board never moves between shards, and new seed boards split evenly). Each shard job restores
+the saved state read-only, crawls its half from its own cursor (`crawl_cursor.s0of2.json`,
+`crawl_cursor.s1of2.json`; the first sharded run starts from the old `crawl_cursor.json`), and
+uploads only the rows it touched (`--export-delta`). Shard 0 alone runs the career-site lane and the
+aggregator APIs, so nothing is fetched twice; Amazon is a board and lands in one shard. The
+`build-and-upload` job folds the deltas into the saved DB (`--merge-dir`: newer `last_seen` wins,
+earliest `first_seen` kept), prunes, writes the feed (cross-feed dedup and `JOBS_FEED_LIMIT` as
+before), saves the state and publishes once. If one shard fails, the merge still runs: that
+shard's boards keep the rows already saved, and its cursor does not move, so the next run retries
+them. If both fail, the merge refuses to publish and the last feed stays up. Locally nothing
+changes: `FEED_SHARD_INDEX` / `FEED_SHARD_COUNT` default to 0 / 1, the old single build.
+
 ### List-only boards are checked before they are kept (Workday, SmartRecruiters)
 
 Two of the ATSs deliver their job list WITHOUT the description: Workday's `cxs` list and

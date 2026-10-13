@@ -6,6 +6,13 @@ name: feed
 #   r2               Cloudflare R2 via scripts/upload_feed.py (needs the R2_* secrets).
 # Either way the app reads the same address (TAILOR_FEED_URL), so switching hosts is a settings
 # change here, never an app release. Replaces the always-on Render "kitchen".
+#
+# The board crawl is split in two (2026-10-13): a matrix of crawl SHARDS runs side by side, each
+# crawling its own half of the board list (scripts/build_feed.py board_shard) into a copy of the
+# saved crawl state, and uploads only what it changed. One MERGE job then folds both shards'
+# changes into the saved state, writes the feed once and publishes it once. Twice the boards per
+# run at no cost (public repo: Actions minutes are free). Shard 0 also runs the career-site lane
+# and the aggregator APIs, so nothing is fetched twice.
 on:
   schedule:
     - cron: "23 */3 * * *"
@@ -20,18 +27,99 @@ permissions:
   pages: write       # the Pages deploy job publishes the built feed
   id-token: write    # ...and proves it is this repo's workflow doing it
 
-# One build at a time: a slow crawl must never overlap the next tick's run.
+# One build at a time: a slow crawl must never overlap the next tick's run. The group covers the
+# whole run (both crawl shards and the merge), so the next tick waits for the merge to finish.
 concurrency:
   group: static-feed
   cancel-in-progress: false
 
 jobs:
-  build-and-upload:
+  crawl:
     # Skip (no runner, no minutes, no failure email) until the host is set up and the
     # TAILOR_FEED_URL repository variable exists. See docs/feed.md.
     if: ${{ vars.TAILOR_FEED_URL != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 175
+    strategy:
+      # One shard failing must not cancel the other: the merge publishes what succeeded.
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    env:
+      FEED_DATA_DIR: ${{ github.workspace }}/.feed-data
+      FEED_SHARD_INDEX: ${{ matrix.shard }}
+      FEED_SHARD_COUNT: 2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # The crawl's state (jobs DB + sponsor overlay + cursors) persists between runs, so
+      # first_seen, the cross-run dedup and the 21-day prune work as they did on the server. The
+      # shards only READ it (restore, never save): the merge job is the one writer, so two shards
+      # can never overwrite each other's state.
+      - name: Restore crawl state
+        uses: actions/cache/restore@v4
+        with:
+          path: .feed-data
+          key: feed-data-${{ github.run_id }}
+          restore-keys: |
+            feed-data-
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Crawl this shard
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
+          # Repository VARIABLES (Settings > Secrets and variables > Actions > Variables):
+          FEED_INCLUDE_AGGREGATORS: ${{ vars.FEED_INCLUDE_AGGREGATORS }}
+          JOBS_MAX_PER_COMPANY: ${{ vars.JOBS_MAX_PER_COMPANY || 2000 }}
+          FEED_CRAWL_MINUTES: ${{ inputs.crawl_minutes || vars.FEED_CRAWL_MINUTES || 140 }}
+          # Descriptions read per giant Workday / SmartRecruiters board PER RUN. The code default
+          # (2000) let 18 boards eat a whole 20-minute run; 200 lets a run reach many boards, and
+          # descriptions already stored are never re-read, so big boards still fill in over runs.
+          WORKDAY_MAX_DETAIL_FEED: ${{ vars.WORKDAY_MAX_DETAIL_FEED || 600 }}
+          SMARTRECRUITERS_MAX_DETAIL_FEED: ${{ vars.SMARTRECRUITERS_MAX_DETAIL_FEED || 200 }}
+          # The career-site lane (sourcing/careersite.py) runs beside shard 0's board pass: its own
+          # wall-clock cap, job pages read per site per run, and hosts crawled at once (each host
+          # still sees one request at a time). CAREERSITE_LANE=0 switches it off.
+          CAREERSITE_LANE: ${{ vars.CAREERSITE_LANE || 1 }}
+          CAREERSITE_MINUTES: ${{ vars.CAREERSITE_MINUTES || 130 }}
+          CAREERSITE_MAX_DETAIL: ${{ vars.CAREERSITE_MAX_DETAIL || 1000 }}
+          CAREERSITE_WORKERS: ${{ vars.CAREERSITE_WORKERS || 4 }}
+          # Job pages read across ALL career sites per run (the site order rotates between runs
+          # from a cursor in the data dir, so the end of the table is reached too).
+          CAREERSITE_PAGE_BUDGET: ${{ vars.CAREERSITE_PAGE_BUDGET || 12000 }}
+          # Amazon's own search JSON (sourcing/amazonjobs.py) is a board, so it lands in one shard:
+          # newest N per run; stored rows are still capped by JOBS_MAX_PER_COMPANY.
+          AMAZON_MAX_JOBS: ${{ vars.AMAZON_MAX_JOBS || 5000 }}
+        run: |
+          python scripts/build_feed.py --data "$FEED_DATA_DIR" \
+            --export-delta "${{ github.workspace }}/.shard/shard-${{ matrix.shard }}.db"
+
+      - name: Hand the shard's changes to the merge
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-shard-${{ matrix.shard }}
+          path: .shard/shard-${{ matrix.shard }}.db
+          retention-days: 1
+          if-no-files-found: error
+
+  build-and-upload:
+    # Runs when at least one shard finished (always() + the check below), so one failed shard
+    # still publishes the other's fresh boards; the failed shard's boards keep the rows the saved
+    # state already holds and its cursor stays put, so the next run retries them. If NO shard
+    # produced output, build_feed.py --merge-dir fails and nothing is published or saved.
+    needs: crawl
+    if: ${{ always() && !cancelled() && vars.TAILOR_FEED_URL != '' && needs.crawl.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       FEED_DATA_DIR: ${{ github.workspace }}/.feed-data
       # Built under .site/feed so the Pages artifact (.site) serves it at <domain>/feed/...,
@@ -45,11 +133,9 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      # The crawl's state (jobs DB + sponsor overlay) persists between runs, so first_seen, the
-      # cross-run dedup and the 21-day prune work as they did on the server. A per-run key with a
-      # prefix restore means every run starts from the previous run's DB and saves a new copy.
+      # The same state the shards started from (the concurrency group keeps any other run out).
       - name: Restore crawl state
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .feed-data
           key: feed-data-${{ github.run_id }}
@@ -59,38 +145,28 @@ jobs:
       - name: Install
         run: pip install -e . boto3
 
-      - name: Build the feed
+      - name: Collect the shards' changes
+        uses: actions/download-artifact@v4
+        with:
+          pattern: feed-shard-*
+          path: .shards
+
+      - name: Merge the shards and build the feed
         env:
-          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
-          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
-          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
-          # Repository VARIABLES (Settings > Secrets and variables > Actions > Variables):
-          FEED_INCLUDE_AGGREGATORS: ${{ vars.FEED_INCLUDE_AGGREGATORS }}
-          JOBS_MAX_PER_COMPANY: ${{ vars.JOBS_MAX_PER_COMPANY || 2000 }}
           TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
-          FEED_CRAWL_MINUTES: ${{ inputs.crawl_minutes || vars.FEED_CRAWL_MINUTES || 140 }}
-          # Descriptions read per giant Workday / SmartRecruiters board PER RUN. The code default
-          # (2000) let 18 boards eat a whole 20-minute run; 200 lets a run reach many boards, and
-          # descriptions already stored are never re-read, so big boards still fill in over runs.
-          WORKDAY_MAX_DETAIL_FEED: ${{ vars.WORKDAY_MAX_DETAIL_FEED || 600 }}
-          SMARTRECRUITERS_MAX_DETAIL_FEED: ${{ vars.SMARTRECRUITERS_MAX_DETAIL_FEED || 200 }}
-          # The career-site lane (sourcing/careersite.py) runs beside the board pass: its own
-          # wall-clock cap, job pages read per site per run, and hosts crawled at once (each host
-          # still sees one request at a time). CAREERSITE_LANE=0 switches it off.
-          CAREERSITE_LANE: ${{ vars.CAREERSITE_LANE || 1 }}
-          CAREERSITE_MINUTES: ${{ vars.CAREERSITE_MINUTES || 130 }}
-          CAREERSITE_MAX_DETAIL: ${{ vars.CAREERSITE_MAX_DETAIL || 1000 }}
-          CAREERSITE_WORKERS: ${{ vars.CAREERSITE_WORKERS || 4 }}
-          # Job pages read across ALL career sites per run (the site order rotates between runs
-          # from a cursor in the data dir, so the end of the table is reached too).
-          CAREERSITE_PAGE_BUDGET: ${{ vars.CAREERSITE_PAGE_BUDGET || 12000 }}
-          # Amazon's own search JSON (sourcing/amazonjobs.py): newest N per run; stored rows are still
-          # capped by JOBS_MAX_PER_COMPANY. The published list holds up to JOBS_FEED_LIMIT rows.
-          AMAZON_MAX_JOBS: ${{ vars.AMAZON_MAX_JOBS || 5000 }}
           JOBS_FEED_LIMIT: ${{ vars.JOBS_FEED_LIMIT || 150000 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
+            --merge-dir .shards \
             --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"
+
+      # The merged state is saved ONLY after a successful merge, under a new per-run key (the
+      # next run's prefix restore picks the newest), so a failed run never replaces good state.
+      - name: Save crawl state
+        uses: actions/cache/save@v4
+        with:
+          path: .feed-data
+          key: feed-data-${{ github.run_id }}
 
       # The browser extension's own sponsor lookup (works with no app installed): a sharded
       # index of the bundled H-1B / PERM / E-Verify data, written to <feed>/sponsors/. Built
@@ -117,7 +193,8 @@ jobs:
 
   deploy-pages:
     needs: build-and-upload
-    if: ${{ vars.TAILOR_FEED_URL != '' && vars.FEED_HOST != 'r2' }}
+    # Explicit: a failed crawl shard upstream must not stop the deploy of a merge that succeeded.
+    if: ${{ !cancelled() && needs.build-and-upload.result == 'success' && vars.TAILOR_FEED_URL != '' && vars.FEED_HOST != 'r2' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
