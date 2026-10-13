@@ -20,7 +20,8 @@ through the same SponsorDB ingest methods. So the extension's answer matches the
 
 Shard file: ``{"index_version": 1, "version": V, "shard": "a", "records": {norm: rec}}`` where
 ``rec`` is ``[display_name, h1b_approvals, h1b_last_fy, h1b_first_fy, perm_certs, e_verify,
-cap_exempt, naics2, state]``. To keep the download small: ``display_name`` is ``0`` when it is
+cap_exempt, naics2, state, h1b_5y, denial_pct, flags]`` (the last three added 2026-10, see
+``encode_record``; they cost about 0.6 MB gzipped across the index). To keep the download small: ``display_name`` is ``0`` when it is
 just the key title-cased (see ``title_key``), trailing zero / empty fields are omitted, and
 ``naics2`` is only the two-digit NAICS sector (all the profile's "industry" line uses).
 Employers with no signal at all (no H-1B, PERM, E-Verify or cap-exempt flag) are left out:
@@ -52,6 +53,8 @@ MANIFEST = "manifest.json"
 SEED = ROOT / "seed" / "sponsors_seed.csv.gz"
 PERM = ROOT / "config" / "perm_sponsors.csv"
 EVERIFY = ROOT / "config" / "everify_employers.csv.gz"
+HISTORY = ROOT / "seed" / "h1b_history.csv.gz"
+LCA_FLAGS = ROOT / "dist-data" / "lca" / "flags.csv.gz"
 SHARDS = [chr(c) for c in range(ord("a"), ord("z") + 1)] + [str(d) for d in range(10)] + ["_"]
 
 
@@ -73,7 +76,8 @@ def title_key(norm: str) -> str:
     return "".join(out)
 
 
-def build_db(db_path, seed=SEED, perm=PERM, everify=EVERIFY) -> SponsorDB:
+def build_db(db_path, seed=SEED, perm=PERM, everify=EVERIFY, history=HISTORY,
+             lca_flags=LCA_FLAGS) -> SponsorDB:
     """A sponsor DB built the way a fresh app install builds it (ui/app.py `_sponsors`:
     `_load_bundled_perm`, `_load_bundled_everify`, then `_load_bundled_h1b`)."""
     db = SponsorDB(db_path)
@@ -88,32 +92,68 @@ def build_db(db_path, seed=SEED, perm=PERM, everify=EVERIFY) -> SponsorDB:
             db.ingest_everify_rows(csv.DictReader(f))
     if seed and Path(seed).exists():
         db.merge_aggregated_rows(read_seed_rows(seed), h1b_only=True)
+    # The per-employer depth the app also loads on first run: year rows for the 5-year facts,
+    # and the LCA flags. Both optional; a missing bundle just leaves those fields at zero.
+    if history and Path(history).exists():
+        db.ingest_h1b_year_rows(read_seed_rows(history))
+    if lca_flags and Path(lca_flags).exists():
+        from sourcing.lca import read_bundle_rows
+        db.ingest_lca_flag_rows(read_bundle_rows(lca_flags))
     return db
 
 
-def encode_record(norm: str, row) -> list:
+def encode_record(norm: str, row, depth: dict | None = None) -> list:
+    """``[display_name, h1b_approvals, h1b_last_fy, h1b_first_fy, perm_certs, e_verify,
+    cap_exempt, naics2, state, h1b_5y, denial_pct, flags]``. The last three (2026-10) are the
+    compact per-employer facts: approvals over the newest five fiscal years in the history
+    table, the denial rate over those years in whole percent, and a bit set (1 = H-1B
+    dependent, 2 = willful violator) from the DOL LCA attestations. Trailing zeros are
+    dropped, so an employer without them encodes exactly as before (additive format)."""
     naics = re.sub(r"\D", "", str(row["naics"] or ""))
     display = row["display_name"]
+    keys = row.keys() if hasattr(row, "keys") else ()
+    flags = (1 if ("h1b_dependent" in keys and row["h1b_dependent"]) else 0) \
+        | (2 if ("willful_violator" in keys and row["willful_violator"]) else 0)
+    d = depth or {}
     rec = [0 if display is not None and display == title_key(norm) else display,
            int(row["h1b_approvals"] or 0), int(row["h1b_last_fy"] or 0),
            int(row["h1b_first_fy"] or 0), int(row["perm_certs"] or 0),
            1 if row["e_verify"] else 0, 1 if row["cap_exempt"] else 0,
-           naics[:2] if len(naics) >= 2 else "", str(row["state"] or "")]
+           naics[:2] if len(naics) >= 2 else "", str(row["state"] or ""),
+           int(d.get("h1b_5y") or 0), int(d.get("denial_pct") or 0), flags]
     while len(rec) > 1 and rec[-1] in (0, ""):
         rec.pop()
     return rec
 
 
+def depth_facts(db: SponsorDB) -> dict[str, dict]:
+    """{norm: {h1b_5y, denial_pct}} from the newest five fiscal years in sponsor_h1b_year."""
+    fys = db.h1b_year_fiscal_years()
+    if not fys:
+        return {}
+    lo = fys[-5] if len(fys) >= 5 else fys[0]
+    out: dict[str, dict] = {}
+    for r in db._conn.execute(
+            "SELECT norm_name, SUM(initial_approvals + continuing_approvals), "
+            "SUM(initial_denials + continuing_denials) FROM sponsor_h1b_year "
+            "WHERE fy >= ? GROUP BY norm_name", (lo,)):
+        appr, den = int(r[1] or 0), int(r[2] or 0)
+        out[r[0]] = {"h1b_5y": appr,
+                     "denial_pct": int(round(100 * den / (appr + den))) if (appr + den) else 0}
+    return out
+
+
 def collect(db: SponsorDB) -> dict[str, dict]:
     """{shard: {norm: rec}} for every employer with a signal."""
     out: dict[str, dict] = {s: {} for s in SHARDS}
+    depth = depth_facts(db)
     rows = db._conn.execute(
         "SELECT * FROM sponsor_employer WHERE h1b_approvals>0 OR perm_certs>0 OR e_verify>0 "
-        "OR cap_exempt>0 ORDER BY norm_name").fetchall()
+        "OR cap_exempt>0 OR h1b_dependent>0 OR willful_violator>0 ORDER BY norm_name").fetchall()
     for r in rows:
         norm = r["norm_name"]
         if norm:
-            out[shard_of(norm)][norm] = encode_record(norm, r)
+            out[shard_of(norm)][norm] = encode_record(norm, r, depth.get(norm))
     return out
 
 

@@ -40,7 +40,10 @@ packaging/seed/
 
 # Quarterly H-1B snapshot built by scripts/import_h1b_export.py for upload to the
 # TAILOR_DATA_URL host; the committed seed/ is the copy that lives in git.
-dist-data/
+dist-data/*
+# ...except the LCA wage bundle (scripts/import_lca_disclosure.py): a few hundred KB per
+# quarter, loaded on first run like config/perm_sponsors.csv, so it is committed.
+!dist-data/lca/
 
 # macOS folder metadata
 .DS_Store

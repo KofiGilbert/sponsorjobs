@@ -44,6 +44,7 @@ from sourcing.sponsors import (SponsorDB, canonical_h1b_rows, h1b_header_map,  #
 DEFAULT_DB = ROOT / "data" / "sponsors.db"
 DEFAULT_SEED = ROOT / "seed" / "sponsors_seed.csv.gz"
 DEFAULT_OUT = ROOT / "dist-data" / "h1b"
+DEFAULT_HISTORY = ROOT / "seed" / "h1b_history.csv.gz"
 REQUIRED = ("Employer", "Initial Approval", "Continuing Approval")
 
 
@@ -81,7 +82,7 @@ def describe_mapping(headers) -> tuple[dict, list[str]]:
 
 def import_exports(files, db_path=DEFAULT_DB, seed_path=DEFAULT_SEED, out_dir=DEFAULT_OUT,
                    version: str | None = None, fy_override: int | None = None,
-                   force: bool = False, log=print) -> dict:
+                   force: bool = False, log=print, history_path=None) -> dict:
     db_path, seed_path, out_dir = Path(db_path), Path(seed_path), Path(out_dir)
     version = version or _dt.date.today().strftime("%Y-%m")
     db = SponsorDB(db_path)
@@ -148,6 +149,20 @@ def import_exports(files, db_path=DEFAULT_DB, seed_path=DEFAULT_SEED, out_dir=DE
                             "perm_certs"]}
     (out_dir / "latest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     log(f"snapshot {version}: {n_snap:,} rows -> {out_dir / 'latest.csv.gz'} + latest.json")
+    # The export's per-year rows (approvals AND denials) now sit in the store's
+    # sponsor_h1b_year table; refresh the committed history bundle so new installs and the
+    # extension index carry the new year too (scripts/build_h1b_history_bundle.py).
+    # Only when asked (the CLI asks by default; a library caller or a test must opt in, so
+    # a test run never overwrites the committed bundle, which happened once).
+    if history_path:
+        from scripts.build_h1b_history_bundle import write_history
+        hdb = SponsorDB(db_path)
+        try:
+            fys = hdb.h1b_year_fiscal_years()
+            n_hist = write_history(hdb, history_path, min_fy=fys[-10] if len(fys) > 10 else 0)
+        finally:
+            hdb.close()
+        log(f"history: {n_hist:,} employer-years -> {history_path}")
     log(f"store now: {stats['employers']:,} employers, {stats['h1b']:,} H-1B, "
         f"{stats['perm']:,} PERM, {stats['e_verify']:,} E-Verify; "
         f"H-1B fiscal years {sorted(done)}")
@@ -164,9 +179,11 @@ def main(argv=None) -> int:
     ap.add_argument("--db", default=str(DEFAULT_DB))
     ap.add_argument("--seed", default=str(DEFAULT_SEED))
     ap.add_argument("--out", default=str(DEFAULT_OUT))
+    ap.add_argument("--history", default=str(DEFAULT_HISTORY),
+                    help="the per-year history bundle to rewrite ('' to skip)")
     a = ap.parse_args(argv)
     import_exports(a.files, a.db, a.seed, a.out, version=a.version, fy_override=a.fy,
-                   force=a.force)
+                   force=a.force, history_path=a.history)
     return 0
 
 

@@ -607,6 +607,7 @@ def _start_bundled_h1b(db) -> None:
     counts, but there is no reason to read the 340k-row gzip twice)."""
     if os.environ.get("JOBS_SYNC_SEED", "") == "1":
         _load_bundled_h1b(db)
+        _load_bundled_depth(db)
         return
     with _H1B_SEED_LOCK:
         if _h1b_seed_running():
@@ -617,6 +618,9 @@ def _start_bundled_h1b(db) -> None:
                 n = _load_bundled_h1b(db)
                 if n:
                     print(f"[sponsors] bundled H-1B seed loaded: {n} employers")
+                # The per-employer depth (year rows, PERM by year, LCA wages) rides the same
+                # background thread: it is detail behind the badge, never worth a slow start.
+                _load_bundled_depth(db)
             except Exception:                        # noqa: BLE001 - badges stay empty; app lives
                 traceback.print_exc()
             finally:
@@ -3624,7 +3628,122 @@ def sponsors_status():
     # The canonical "historical signal, not a guarantee" caveat, so the UI shows the same
     # honest framing next to the badges/filters rather than inventing its own copy.
     s["disclaimer"] = SPONSOR_DISCLAIMER
+    # Per-employer depth: which fiscal years the year-by-year history covers and what the
+    # LCA wage bundle holds, so the UI can say "wages from FY2024 to 2026 filings".
+    s["history_fiscal_years"] = db.h1b_year_fiscal_years()
+    s["lca"] = db.lca_stats()
+    s["lca_updated_at"] = db.get_meta("lca_updated_at")
+    s["lca_bundle_version"] = db.get_meta("lca_bundle_version")
     return jsonify(s)
+
+
+def _split_location(location: str) -> tuple[str, str]:
+    """'Chicago, IL' / 'Austin, Texas, United States' -> ('Chicago', 'IL'); a location
+    without a readable US city and state gives ('', '')."""
+    import re as _re
+    text = (location or "").strip()
+    if not text:
+        return "", ""
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    state = ""
+    for p in parts[1:]:
+        m = _re.match(r"^([A-Za-z]{2})\b", p)
+        if m and m.group(1).upper() in _US_STATE_CODES:
+            state = m.group(1).upper()
+            break
+        full = p.lower()
+        if full in _US_STATE_BY_NAME:
+            state = _US_STATE_BY_NAME[full]
+            break
+    city = parts[0] if parts and state else ""
+    if city.lower() in ("remote", "united states", "us", "usa", "anywhere"):
+        city = ""
+    return city, state
+
+
+_US_STATE_CODES = set(
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ "
+    "NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC PR".split())
+_US_STATE_BY_NAME = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA",
+    "colorado": "CO", "connecticut": "CT", "delaware": "DE", "florida": "FL", "georgia": "GA",
+    "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+    "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD", "massachusetts": "MA",
+    "michigan": "MI", "minnesota": "MN", "mississippi": "MS", "missouri": "MO", "montana": "MT",
+    "nebraska": "NE", "nevada": "NV", "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM",
+    "new york": "NY", "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT",
+    "virginia": "VA", "washington": "WA", "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+    "district of columbia": "DC", "puerto rico": "PR",
+}
+
+
+@app.get("/api/sponsors/<path:name>/history")
+@_guard
+def sponsors_history(name):
+    """Year-by-year record for one employer: H-1B approvals and denials per fiscal year
+    (USCIS Data Hub), certified PERM cases per fiscal year (DOL), E-Verify enrollment, and
+    the three flags (H-1B dependent and willful violator from the DOL LCA attestations;
+    cap-exempt as the name/industry heuristic). Employer-level public history, never a promise about a role."""
+    company = (name or "").strip()
+    h = _sponsors().history(company) if company else None
+    if not h:
+        return _nostore(jsonify({"company": company, "matched": False, "years": [],
+                                 "flags": {"h1b_dependent": False, "willful_violator": False,
+                                           "cap_exempt": False, "e_verify": False}}))
+    return _nostore(jsonify({"company": company, "matched": True, **h}))
+
+
+def _wage_args(args) -> tuple[str, str, str]:
+    title = (args.get("title") or "").strip()
+    city, state = (args.get("city") or "").strip(), (args.get("state") or "").strip()
+    if not (city and state) and args.get("location"):
+        c2, s2 = _split_location(args.get("location") or "")
+        city, state = city or c2, state or s2
+    return title, city, state
+
+
+@app.get("/api/sponsors/<path:name>/wages")
+@_guard
+def sponsors_wages(name):
+    """What this employer paid for a title at a worksite, from DOL LCA disclosure data
+    (certified H-1B filings): count, min / median / max annual wage, the prevailing-wage
+    level split, narrowing from the exact title and city to the employer as a whole
+    (`scope` says which). ?title=&city=&state= or ?location="Austin, TX"."""
+    company = (name or "").strip()
+    title, city, state = _wage_args(request.args)
+    w = _sponsors().wages(company, title, city, state) if company else None
+    return _nostore(jsonify({"company": company, "title": title, "city": city, "state": state,
+                             "found": bool(w), "wages": w}))
+
+
+@app.post("/api/sponsors/offer-check")
+@_guard
+def sponsors_offer_check():
+    """Compare an offer with the employer's LCA wages for the title and place, state the
+    likely prevailing-wage level and the weighted-lottery odds at it, and give three
+    negotiation talking points. Pure arithmetic on public filings; the result carries its
+    own "estimate, not legal advice" note. Nothing is stored."""
+    from sourcing.lottery import offer_check
+    body = request.json or {}
+    company = str(body.get("company") or "").strip()
+    title = str(body.get("title") or "").strip()
+    city, state = str(body.get("city") or "").strip(), str(body.get("state") or "").strip()
+    if not (city and state) and body.get("location"):
+        c2, s2 = _split_location(str(body.get("location") or ""))
+        city, state = city or c2, state or s2
+    raw = str(body.get("offer") or "").replace(",", "").replace("$", "").strip().lower()
+    try:
+        offer = int(float(raw[:-1]) * 1000) if raw.endswith("k") else int(float(raw or 0))
+    except ValueError:
+        offer = 0
+    if offer <= 0:
+        return jsonify({"error": "Enter the annual salary in dollars, for example 125000."}), 400
+    w = _sponsors().wages(company, title, city, state) if company else None
+    out = offer_check(offer, w, title=title, city=city, state=state)
+    out.update({"company": company, "title": title, "city": city, "state": state, "wages": w})
+    return _nostore(jsonify(out))
 
 
 # ---- Extension (P6, FrogHire parity): a profile-vs-JD keyword MATCH estimate and a read-only
@@ -7933,6 +8052,8 @@ def sponsors_refresh():
     snapshot = _sync_h1b_snapshot(db)
     _load_bundled_perm(db)      # green-card data ships with the app; loads instantly
     _load_bundled_everify(db)   # STEM-OPT list IF a bundle has been added (see scripts/)
+    _load_bundled_depth(db)     # year rows, PERM by year, LCA wages (bundled)
+    lca = _sync_lca_bundle(db)  # and the hosted LCA bundle, when a data host is set
     stats = db.stats()
     years = sorted(db.h1b_fys_ingested())
     if snapshot.get("status") == "merged":
@@ -7949,7 +8070,7 @@ def sponsors_refresh():
     return jsonify({"ok": not errors, "ingested": ingested,
                     "loaded_fys": sorted(loaded), "skipped_fys": skipped,
                     "unavailable_fys": sorted(unavailable), "fiscal_years": years,
-                    "errors": errors, "snapshot": snapshot, "note": note, **stats})
+                    "errors": errors, "snapshot": snapshot, "lca": lca, "note": note, **stats})
 
 
 # The committed sponsor seed (seed/sponsors_seed.csv.gz, ~340k employers with a real
@@ -7979,6 +8100,58 @@ def _load_bundled_h1b(db) -> int:
     except Exception:   # don't crash startup, but don't hide a corrupt bundle either
         traceback.print_exc()
         return 0
+
+
+# Per-employer depth bundles (2026-10). All optional: a missing file is a quiet no-op and the
+# badges keep working on the totals. None means "resolve under ROOT at call time" so the
+# packaged app's relocated ROOT and a test's monkeypatch both work.
+BUNDLED_H1B_HISTORY = None     # seed/h1b_history.csv.gz (scripts/build_h1b_history_bundle.py)
+BUNDLED_PERM_YEARS = None      # config/perm_by_year.csv.gz (scripts/build_perm_bundle.py)
+BUNDLED_LCA_DIR = None         # dist-data/lca/ (scripts/import_lca_disclosure.py)
+
+
+def _load_bundled_depth(db) -> dict:
+    """Load the year-by-year H-1B history, the PERM-by-year list and the LCA wage bundle
+    when the store has none of each. Each is idempotent (SET / MAX per key, the LCA bundle
+    by version), prints a failure and never raises."""
+    from sourcing.lca import load_lca_bundle
+    from sourcing.sponsors import read_seed_rows
+    out = {"history": 0, "perm_years": 0, "lca": "absent"}
+    hist = Path(BUNDLED_H1B_HISTORY) if BUNDLED_H1B_HISTORY else ROOT / "seed" / "h1b_history.csv.gz"
+    try:
+        if hist.exists() and not db.h1b_year_fiscal_years():
+            out["history"] = db.ingest_h1b_year_rows(read_seed_rows(hist))
+            if out["history"]:
+                db.set_meta("history_updated_at", _now_iso())
+    except Exception:
+        traceback.print_exc()
+    perm_years = Path(BUNDLED_PERM_YEARS) if BUNDLED_PERM_YEARS else ROOT / "config" / "perm_by_year.csv.gz"
+    try:
+        if perm_years.exists() and not db.perm_year_fiscal_years():
+            out["perm_years"] = db.ingest_perm_year_counts(read_seed_rows(perm_years))
+    except Exception:
+        traceback.print_exc()
+    lca_dir = Path(BUNDLED_LCA_DIR) if BUNDLED_LCA_DIR else ROOT / "dist-data" / "lca"
+    try:
+        out["lca"] = load_lca_bundle(db, lca_dir).get("status", "absent")
+    except Exception:
+        traceback.print_exc()
+    return out
+
+
+def _sync_lca_bundle(db) -> dict:
+    """Fetch SponsorJobs' LCA wage bundle from TAILOR_DATA_URL ({base}/lca/latest.json +
+    wages.csv.gz + flags.csv.gz) when set; applied once per version. Quiet when unset or
+    unreachable, like the H-1B snapshot."""
+    base = os.environ.get("TAILOR_DATA_URL", "").strip()
+    if not base:
+        return {"status": "disabled"}
+    try:
+        from sourcing.lca import sync_lca_bundle
+        return sync_lca_bundle(db, base)
+    except Exception as exc:    # noqa: BLE001
+        traceback.print_exc()
+        return {"status": "unreachable", "reason": str(exc)[:200]}
 
 
 def _sync_h1b_snapshot(db) -> dict:

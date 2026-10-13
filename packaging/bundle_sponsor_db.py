@@ -51,7 +51,9 @@ EVERIFY = ROOT / "config" / "everify_employers.csv.gz"
 # means someone changed the schema or pointed this at the wrong file: refuse either way.
 # sponsor_meta is a handful of ingest timestamps, and shipping it is a feature: the buyer's
 # app then reports the snapshot's real age ("updated ...") instead of pretending it is fresh.
-ALLOWED_TABLES = {"sponsor_employer", "sponsor_meta"}
+ALLOWED_TABLES = {"sponsor_employer", "sponsor_meta",
+                  # per-employer depth (2026-10): year rows, PERM by year, LCA wage cells
+                  "sponsor_h1b_year", "sponsor_perm_year", "sponsor_lca_wage"}
 # A real ingest is hundreds of thousands of employers; a nearly-empty file means the dev
 # DB was reset and shipping it would recreate the exact bug this exists to fix.
 MIN_EMPLOYERS = 50_000
@@ -67,6 +69,20 @@ def _counts(path: Path) -> dict:
         con.close()
     return {"employers": row[0] or 0, "h1b": row[1] or 0, "perm": row[2] or 0,
             "e_verify": row[3] or 0}
+
+
+def _depth_counts(path: Path) -> dict:
+    con = sqlite3.connect(path)
+    try:
+        def n(table):
+            try:
+                return con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] or 0
+            except sqlite3.OperationalError:
+                return 0
+        return {"year_rows": n("sponsor_h1b_year"), "perm_years": n("sponsor_perm_year"),
+                "lca_cells": n("sponsor_lca_wage")}
+    finally:
+        con.close()
 
 
 def vet(path: Path, min_employers: int = MIN_EMPLOYERS) -> str:
@@ -90,7 +106,33 @@ def vet(path: Path, min_employers: int = MIN_EMPLOYERS) -> str:
     return ""
 
 
-def _build_from_seed(seed: Path, dest: Path, everify: Path) -> None:
+HISTORY = ROOT / "seed" / "h1b_history.csv.gz"
+PERM_YEARS = ROOT / "config" / "perm_by_year.csv.gz"
+LCA_DIR = ROOT / "dist-data" / "lca"
+
+
+def _layer_depth(db, history: Path | None = None, perm_years: Path | None = None,
+                 lca_dir: Path | None = None) -> dict:
+    """Load the per-employer depth (2026-10) the app would otherwise load on first run:
+    the year-by-year H-1B history, the PERM-by-year list and the LCA wage bundle. All
+    three are idempotent (SET per key, MAX per flag, the LCA bundle by version), so layering
+    them onto a local database that already holds them changes nothing. Returns counts."""
+    from sourcing.lca import load_lca_bundle
+    from sourcing.sponsors import read_seed_rows
+    history = Path(history or HISTORY)
+    perm_years = Path(perm_years or PERM_YEARS)
+    lca_dir = Path(lca_dir or LCA_DIR)
+    out = {"history": 0, "perm_years": 0, "lca": "absent"}
+    if history.exists():
+        out["history"] = db.ingest_h1b_year_rows(read_seed_rows(history))
+    if perm_years.exists():
+        out["perm_years"] = db.ingest_perm_year_counts(read_seed_rows(perm_years))
+    if lca_dir.is_dir():
+        out["lca"] = load_lca_bundle(db, lca_dir).get("status", "absent")
+    return out
+
+
+def _build_from_seed(seed: Path, dest: Path, everify: Path, depth: dict | None = None) -> None:
     """Load the committed seed into a fresh database at `dest` through the store code, and
     record what it holds so the app reports the data's real vintage."""
     from sourcing.sponsors import SponsorDB
@@ -108,6 +150,7 @@ def _build_from_seed(seed: Path, dest: Path, everify: Path) -> None:
             import gzip
             with gzip.open(everify, "rt", encoding="utf-8-sig") as f:
                 db.ingest_everify_rows(csv.DictReader(f))
+        _layer_depth(db, **(depth or {}))
         stamp = _dt.datetime.fromtimestamp(seed.stat().st_mtime, _dt.timezone.utc) \
             .replace(microsecond=0).isoformat()
         fys = db.h1b_fiscal_years()
@@ -124,7 +167,9 @@ def _build_from_seed(seed: Path, dest: Path, everify: Path) -> None:
 
 
 def build(seed: Path = SEED, source: Path = SOURCE, dest: Path = DEST,
-          min_employers: int = MIN_EMPLOYERS, everify: Path = EVERIFY, log=print) -> dict:
+          min_employers: int = MIN_EMPLOYERS, everify: Path = EVERIFY, log=print,
+          history: Path | None = None, perm_years: Path | None = None,
+          lca_dir: Path | None = None) -> dict:
     """Stage `dest`. Returns {"used": "seed"|"local", **counts}; raises RuntimeError when
     nothing shippable exists. Writes to a temp path first so a failed build never leaves a
     half-written file where the pyinstaller spec will pick it up."""
@@ -132,7 +177,8 @@ def build(seed: Path = SEED, source: Path = SOURCE, dest: Path = DEST,
         raise RuntimeError(f"no {seed}: the committed seed is missing; nothing to stage.")
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".building.db")
-    _build_from_seed(seed, tmp, everify)
+    depth = {"history": history, "perm_years": perm_years, "lca_dir": lca_dir}
+    _build_from_seed(seed, tmp, everify, depth)
     seed_counts = _counts(tmp)
     log(f"seed {seed.name}: {seed_counts['employers']:,} employers, "
         f"{seed_counts['h1b']:,} H-1B, {seed_counts['perm']:,} PERM, "
@@ -150,12 +196,23 @@ def build(seed: Path = SEED, source: Path = SOURCE, dest: Path = DEST,
             if local_counts["h1b"] > seed_counts["h1b"]:
                 shutil.copyfile(source, tmp)
                 used, counts = "local", local_counts
+                # The local DB may predate the depth bundles (or hold older ones); the
+                # layering is idempotent, so the staged copy always has the shipped ones.
+                from sourcing.sponsors import SponsorDB
+                db = SponsorDB(tmp)
+                try:
+                    _layer_depth(db, **depth)
+                finally:
+                    db.close()
             else:
                 log("local DB has no more H-1B employers than the seed; using the seed.")
     reason = vet(tmp, min_employers)
     if reason:
         tmp.unlink(missing_ok=True)
         raise RuntimeError(f"REFUSING to stage: {reason}")
+    depth = _depth_counts(tmp)
+    log(f"depth: {depth['year_rows']:,} employer-years, {depth['perm_years']:,} PERM-by-year rows, "
+        f"{depth['lca_cells']:,} LCA wage cells")
     os.replace(tmp, dest)
     log(f"staged {dest} from the {used} ({counts['employers']:,} employers: "
         f"{counts['h1b']:,} H-1B, {counts['perm']:,} PERM, {counts['e_verify']:,} E-Verify, "

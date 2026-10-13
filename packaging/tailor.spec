@@ -44,6 +44,14 @@ datas = [
 # person's visa DB is empty). Without these an installed app falls back to three hardcoded
 # boards and no H-1B badges. Both resolve as ROOT/seed/... in ui/ and sourcing/.
 datas.append((str(ROOT / "seed"), "seed"))
+# The per-employer depth (2026-10): the year-by-year H-1B history rides in seed/ above; the
+# PERM-by-year list and the LCA wage bundle live in config/ and dist-data/lca/ and resolve as
+# ROOT/config/... and ROOT/dist-data/lca in ui/app.py (_load_bundled_depth). The staged
+# sponsors.db already holds all three tables; the files let a refresh re-check them by version.
+if (ROOT / "config" / "perm_by_year.csv.gz").exists():
+    datas.append((str(ROOT / "config" / "perm_by_year.csv.gz"), "config"))
+if (ROOT / "dist-data" / "lca").is_dir():
+    datas.append((str(ROOT / "dist-data" / "lca"), "dist-data/lca"))
 
 _seed = ROOT / "packaging" / "seed" / "sponsors.db"
 if _seed.exists():
