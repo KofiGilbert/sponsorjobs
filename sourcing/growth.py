@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -40,6 +41,7 @@ from urllib.parse import urlparse
 from .ats import fetch_json, valid_board_id_for
 from .discover import DISCOVER_ATS, discover_for_company, slug_candidates
 from .quality import employer_is_clearance_heavy
+from .workday import WD_EXTRA_INSTANCES, WD_INSTANCES
 from .sponsors import normalize_employer
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,15 +63,27 @@ ATS_HOSTS = {
     "api.ashbyhq.com": "ashby",
     "apply.workable.com": "workable",
     "api.smartrecruiters.com": "smartrecruiters",
-    "myworkdayjobs.com": "workday",           # every {tenant}.wd{n}.myworkdayjobs.com, one lane
+    "myworkdayjobs.com": "workday",           # any Workday host not on a known instance
 }
+# Workday runs each instance (wd1, wd5, wd103...) as its own cluster with its own address, and
+# every tenant on it shares it. So each INSTANCE is one pacing lane, with its own spacing and
+# its own 429 state: every guessed tenant on wd5 waits its turn on the wd5 lane, while a probe
+# of wd1 does not queue behind it. (Until 2026-10-12 all instances shared one lane, which made
+# Workday -- up to 30 robots.txt guesses per employer -- the bottleneck of every crawl.)
+_WD_LANE = re.compile(r"^[a-z0-9-]+\.(wd\d{1,3})\.myworkdayjobs\.com$")
+for _n in (*WD_INSTANCES, *WD_EXTRA_INSTANCES):
+    ATS_HOSTS[f"wd{_n}.myworkdayjobs.com"] = "workday"
 
 
 def host_lane(host: str) -> str:
-    """The pacing lane a hostname belongs to. Each Workday tenant has its own hostname, but
-    they are all one vendor behind one edge, so they share a single lane (and a single
-    throttle state) instead of each guessed tenant getting its own unspaced burst."""
+    """The pacing lane a hostname belongs to. A Workday tenant's host is paced on its
+    instance's lane ("nvidia.wd5.myworkdayjobs.com" -> "wd5.myworkdayjobs.com"), shared with
+    every other tenant on that instance, so guessed tenants never each get their own unspaced
+    burst; every other ATS host is its own lane."""
     host = (host or "").lower()
+    m = _WD_LANE.match(host)
+    if m and f"{m.group(1)}.myworkdayjobs.com" in ATS_HOSTS:
+        return f"{m.group(1)}.myworkdayjobs.com"
     for lane in ATS_HOSTS:
         if host == lane or host.endswith("." + lane):
             return lane

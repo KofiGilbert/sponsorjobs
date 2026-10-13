@@ -44,21 +44,45 @@ DEFAULT_CRAWL_MINUTES = 140
 CURSOR_FILE = "crawl_cursor.json"     # where the next run resumes in the board list, under --data
 
 
+def _board_key(b: dict) -> list[str]:
+    """A board's place in the watchlist order (Watchlist.companies sorts by company, case-blind)."""
+    return [str(b.get("company") or "").lower(), str(b.get("ats") or ""), str(b.get("board_id") or "")]
+
+
 def rotate_boards(boards: list[dict], data_dir) -> tuple[list[dict], int]:
     """The boards in crawl order for this run, starting where the last run stopped, and that start
-    index. A capped run that always began at "A" would never reach the end of the list."""
+    index. A capped run that always began at "A" would never reach the end of the list.
+
+    The cursor remembers the next board ITSELF, not just its index: the watchlist is sorted by
+    company, so a seed sync that adds boards (the 2026-10 growth roughly tripled it) shifts every
+    index after the new names, and an index-only cursor would silently skip a stretch of boards
+    for a whole lap. When the remembered board has gone, the run starts at the first board after
+    where it sorted. An old index-only cursor still works."""
     if not boards:
         return [], 0
     try:
-        start = int(json.loads((Path(data_dir) / CURSOR_FILE).read_text())["next"]) % len(boards)
+        cur = json.loads((Path(data_dir) / CURSOR_FILE).read_text())
+        start = int(cur["next"]) % len(boards)
     except (OSError, ValueError, KeyError, TypeError):
-        start = 0
+        return list(boards), 0
+    key = cur.get("key") if isinstance(cur, dict) else None
+    if isinstance(key, list) and len(key) == 3:
+        keys = [_board_key(b) for b in boards]
+        if key in keys:
+            start = keys.index(key)
+        else:
+            start = next((i for i, k in enumerate(keys) if k > key), 0)
     return boards[start:] + boards[:start], start
 
 
-def save_cursor(data_dir, start: int, crawled: int, total: int) -> None:
+def save_cursor(data_dir, start: int, crawled: int, total: int, order: list[dict] | None = None) -> None:
+    """Remember where the next run starts: `crawled` boards into this run's `order` (the rotated
+    list rotate_boards returned), by index and, when the order is given, by the board's key."""
     nxt = (start + crawled) % total if total else 0
-    (Path(data_dir) / CURSOR_FILE).write_text(json.dumps({"next": nxt}) + "\n")
+    cur: dict = {"next": nxt}
+    if order and total:
+        cur["key"] = _board_key(order[crawled % len(order)])
+    (Path(data_dir) / CURSOR_FILE).write_text(json.dumps(cur) + "\n")
 
 
 def aggregators_for_feed(env=None, log=print) -> list[str]:
@@ -152,7 +176,7 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
                 summary = refresh_watchlist(w, **({"fetch": fetch} if fetch else {}),
                                             detail_budgets=feed_detail_budgets(), boards=boards,
                                             time_budget=crawl_minutes * 60 if crawl_minutes else None)
-                save_cursor(data_dir, start, summary.get("boards_crawled", 0), len(boards))
+                save_cursor(data_dir, start, summary.get("boards_crawled", 0), len(boards), boards)
                 log(f"[build_feed] boards {summary.get('boards_crawled')}/{len(boards)} from #{start}"
                     + (" (stopped at the time cap; the next run continues)"
                        if summary.get("stopped_early") else ""))

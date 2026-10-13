@@ -766,15 +766,22 @@ def test_workday_slugs_are_hostname_labels_only():
 
 # -- growth: the shared lane, and a new ATS is owed by old misses -------------- #
 
-def test_growth_paces_every_workday_tenant_through_one_lane():
-    assert growth.host_lane("nvidia.wd5.myworkdayjobs.com") == "myworkdayjobs.com"
+def test_growth_paces_workday_tenants_per_instance_lane():
+    # Every tenant on one instance shares that instance's lane (guessed tenants never each get
+    # their own unspaced burst); a different instance is a different cluster and its own lane.
+    assert growth.host_lane("nvidia.wd5.myworkdayjobs.com") == "wd5.myworkdayjobs.com"
+    assert growth.host_lane("intel.wd1.myworkdayjobs.com") == "wd1.myworkdayjobs.com"
+    assert growth.host_lane("odd.wd999.myworkdayjobs.com") == "myworkdayjobs.com"   # unknown: shared
     assert growth.host_lane("boards-api.greenhouse.io") == "boards-api.greenhouse.io"
-    assert growth.ATS_HOSTS["myworkdayjobs.com"] == "workday"
+    assert growth.ATS_HOSTS["wd5.myworkdayjobs.com"] == "workday"
+    assert growth.lanes_for(("workday",)) >= {"wd1.myworkdayjobs.com", "wd5.myworkdayjobs.com"}
     sleeps: list[float] = []
     pf = growth.PoliteFetch(fetch=lambda url, timeout, **kw: kw, sleep=sleeps.append, clock=lambda: 100.0)
-    pf("https://a.wd1.myworkdayjobs.com/robots.txt", raw=True)
+    pf("https://a.wd5.myworkdayjobs.com/robots.txt", raw=True)
     assert pf("https://b.wd5.myworkdayjobs.com/robots.txt", raw=True) == {"raw": True}   # kwargs pass through
-    assert sleeps == [pytest.approx(growth.HOST_DELAYS["myworkdayjobs.com"])]          # same lane: spaced
+    assert sleeps == [pytest.approx(growth.HOST_DELAY)]                                # same instance: spaced
+    pf("https://c.wd1.myworkdayjobs.com/robots.txt", raw=True)
+    assert len(sleeps) == 1                                                            # other instance: no wait
 
 
 def test_a_legacy_miss_owes_workday_and_a_workday_only_run_completes_it(tmp_path):
@@ -829,3 +836,64 @@ def test_grow_script_ats_filter_probes_only_workday(tmp_path, monkeypatch, capsy
     with pytest.raises(SystemExit):
         script.main(["--sponsors", str(sponsors), "--seed", str(seed), "--checkpoint", str(cp),
                      "--ats", "linkedin"])
+
+
+# -- widened Workday discovery (2026-10-12) ------------------------------------- #
+
+def test_a_site_whose_postings_name_no_organization_is_confirmed_by_its_own_job_descriptions():
+    # Live 2026-10-12: cadence.wd1/External_Careers has 650 jobs, but every posting's
+    # hiringOrganization is blank, so the site was turned down as "External Careers". Its JDs
+    # say who they are ("At Cadence, ...").
+    jd = "<p>At Cadence, we hire and develop leaders.</p><p>Cadence is an equal opportunity employer.</p>"
+    posts = [_posting(i, desc=jd) for i in range(3)]
+    fake = FakeWorkday({("cadence", 1): {"robots": _robots("External_Careers"),
+                                         "sites": {"External_Careers": {"org": "", "postings": posts,
+                                                                        "total": 650}}}})
+    hit = workday.discover_workday("Cadence Design Systems Inc", fetch=fake)
+    assert hit and hit.board_id == "cadence.wd1/External_Careers" and hit.jobs == 650
+    # Near miss: another employer's tenant whose JDs say "Cadence Bank" is not Cadence.
+    bank = "<p>Cadence Bank is hiring.</p><p>Join Cadence Bank and grow.</p>"
+    fake = FakeWorkday({("cadence", 1): {"robots": _robots("External_Careers"),
+                                         "sites": {"External_Careers": {"org": "", "postings":
+                                                   [_posting(i, desc=bank) for i in range(3)]}}}})
+    assert workday.discover_workday("Cadence Design Systems Inc", fetch=fake) is None
+
+
+def test_a_subsidiary_that_names_its_own_organization_is_not_confirmed_by_prose():
+    # Live 2026-10-12: google.wd501/GOCJobs is Google Operations Center, whose postings name
+    # "GOC Services India Private Limited". Its JDs mention Google, but an organization that names
+    # a different legal employer outranks the prose: it is not Google LLC's board.
+    jd = "<p>At Google Operations Center we help Google users.</p><p>Google is great.</p>"
+    fake = FakeWorkday({("google", 501): {"robots": _robots("GOCJobs"),
+                                          "sites": {"GOCJobs": {"org": "GOC Services India Private Limited",
+                                                                "postings": [_posting(i, desc=jd) for i in range(3)]}}}})
+    rej: list[str] = []
+    assert workday.discover_workday("Google Llc", fetch=fake, reject=lambda a, s, r: rej.append(r)) is None
+    assert rej and "GOC Services India" in rej[0]
+
+
+def test_extra_instances_are_asked_only_for_the_most_likely_slug():
+    fake = FakeWorkday({})
+    workday.discover_workday("Cisco Systems Inc", fetch=fake)
+    robots = [u for u in fake.urls if u.endswith("/robots.txt")]
+    first = [u for u in robots if u.startswith("https://cisco.")]
+    other = [u for u in robots if not u.startswith("https://cisco.")]
+    assert len(first) == len(workday.WD_INSTANCES) + len(workday.WD_EXTRA_INSTANCES)
+    assert other and all(".wd501." not in u for u in other)
+    assert len({u.split(".")[0] for u in robots}) <= workday.MAX_WD_SLUGS
+    # A tenant on a newer instance is found through the extras.
+    fake = FakeWorkday({("cisco", 501): {"robots": _robots("Cisco_Careers"),
+                                         "sites": {"Cisco_Careers": {"org": "Cisco Systems, Inc.",
+                                                                     "postings": [_posting(0)]}}}})
+    assert workday.discover_workday("Cisco Systems Inc", fetch=fake).board_id == "cisco.wd501/Cisco_Careers"
+
+
+def test_a_tenant_whose_robots_names_no_site_but_forbids_none_is_asked_the_common_names():
+    fake = FakeWorkday({("acmecorp", 5): {"robots": "User-agent: *\nDisallow: /refreshFacet/\n",
+                                          "sites": {"Careers": {"org": "Acmecorp Inc", "postings": [_posting(0)]}}}})
+    hit = workday.discover_workday("Acmecorp Inc", fetch=fake)
+    assert hit and hit.board_id == "acmecorp.wd5/Careers"
+    assert workday.robots_allows_all("User-agent: *\nDisallow: /refreshFacet/\n")
+    assert not workday.robots_allows_all("User-agent: *\nDisallow: /\n")
+    assert not workday.robots_allows_all("User-agent: *\nDisallow: /Careers/\n")
+    assert not workday.robots_allows_all('{"errorCode":"HTTP_422"}')       # not a robots file
