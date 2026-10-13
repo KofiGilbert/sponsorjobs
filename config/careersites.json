@@ -91,6 +91,642 @@
       "platform": "other",
       "verified": "2026-10-12",
       "jobs_seen": 952
+    },
+    "bostonscientific.eightfold.ai": {
+      "company": "Boston Scientific",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://bostonscientific.eightfold.ai/careers/sitemap_index.xml?domain=bostonscientific.com"
+      ],
+      "job_url": "^https://bostonscientific\\.eightfold\\.ai/careers/job/\\d+",
+      "verified": "2026-10-12",
+      "jobs_seen": 475,
+      "sponsor": "Boston Scientific Corporation",
+      "h1b_approvals": 406
+    },
+    "career.lpl.com": {
+      "company": "LPL Financial",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://career.lpl.com/sitemap.xml"
+      ],
+      "job_url": "^https://career\\.lpl\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 296,
+      "sponsor": "Lpl Financial Llc",
+      "h1b_approvals": 256
+    },
+    "careers.ancestry.com": {
+      "company": "Ancestry",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.ancestry.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.ancestry\\.com/jobs/",
+      "verified": "2026-10-12",
+      "jobs_seen": 13,
+      "sponsor": "Ancestry Com Operations Inc",
+      "h1b_approvals": 215
+    },
+    "careers.appliedmaterials.com": {
+      "company": "Applied Materials",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://careers.appliedmaterials.com/careers/sitemap.xml?domain=appliedmaterials.com"
+      ],
+      "job_url": "^https://careers\\.appliedmaterials\\.com/careers/job/\\d+",
+      "verified": "2026-10-12",
+      "jobs_seen": 2012,
+      "sponsor": "Applied Materials Inc",
+      "h1b_approvals": 1417
+    },
+    "careers.arm.com": {
+      "company": "Arm",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://careers.arm.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.arm\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 414,
+      "sponsor": "Arm Inc",
+      "h1b_approvals": 340
+    },
+    "careers.arrow.com": {
+      "company": "Arrow Electronics",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.arrow.com/us/en/sitemap_index.xml"
+      ],
+      "job_url": "^https://careers\\.arrow\\.com/us/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 513,
+      "sponsor": "Arrow Electronics Inc",
+      "h1b_approvals": 238
+    },
+    "careers.blueyonder.com": {
+      "company": "Blue Yonder",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.blueyonder.com/us/en/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.blueyonder\\.com/us/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 139,
+      "sponsor": "Blue Yonder Inc",
+      "h1b_approvals": 218
+    },
+    "careers.chewy.com": {
+      "company": "Chewy",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.chewy.com/us/en/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.chewy\\.com/us/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 255,
+      "sponsor": "Chewy Inc",
+      "h1b_approvals": 820
+    },
+    "careers.costco.com": {
+      "company": "Costco",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.costco.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.costco\\.com/jobs/",
+      "verified": "2026-10-12",
+      "jobs_seen": 20381,
+      "sponsor": "Costco Wholesale Corporation",
+      "h1b_approvals": 284
+    },
+    "careers.deere.com": {
+      "company": "John Deere",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://careers.deere.com/careers/sitemap_index.xml?domain=johndeere.com"
+      ],
+      "job_url": "^https://careers\\.deere\\.com/careers/job/\\d+",
+      "verified": "2026-10-12",
+      "jobs_seen": 300,
+      "sponsor": "Deere And Company",
+      "h1b_approvals": 573
+    },
+    "careers.dpr.com": {
+      "company": "DPR Construction",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://careers.dpr.com/careers/sitemap.xml?domain=dpr.com"
+      ],
+      "job_url": "^https://careers\\.dpr\\.com/careers/job/\\d+",
+      "verified": "2026-10-12",
+      "jobs_seen": 446,
+      "sponsor": "Dpr Construction",
+      "h1b_approvals": 208
+    },
+    "careers.epam.com": {
+      "company": "EPAM Systems",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.epam.com/sitemap.xml.gz"
+      ],
+      "job_url": "^https://careers\\.epam\\.com/en/vacancy/",
+      "verified": "2026-10-12",
+      "jobs_seen": 1293,
+      "sponsor": "Epam Systems Inc",
+      "h1b_approvals": 1128
+    },
+    "careers.equifax.com": {
+      "company": "Equifax",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.equifax.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.equifax\\.com/en/jobs/",
+      "verified": "2026-10-12",
+      "jobs_seen": 220,
+      "sponsor": "Equifax Inc",
+      "h1b_approvals": 758
+    },
+    "careers.equinix.com": {
+      "company": "Equinix",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.equinix.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.equinix\\.com/jobs/",
+      "verified": "2026-10-12",
+      "jobs_seen": 50,
+      "sponsor": "Equinix Inc",
+      "h1b_approvals": 392
+    },
+    "careers.freedommortgage.com": {
+      "company": "Freedom Mortgage",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.freedommortgage.com/us/en/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.freedommortgage\\.com/us/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 26,
+      "sponsor": "Freedom Mortgage Corporation",
+      "h1b_approvals": 214
+    },
+    "careers.garmin.com": {
+      "company": "Garmin",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.garmin.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.garmin\\.com/jobs/",
+      "verified": "2026-10-12",
+      "jobs_seen": 420,
+      "sponsor": "Garmin International Inc",
+      "h1b_approvals": 240
+    },
+    "careers.gehealthcare.com": {
+      "company": "GE HealthCare",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.gehealthcare.com/global/en/sitemap_index.xml"
+      ],
+      "job_url": "^https://careers\\.gehealthcare\\.com/global/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 889,
+      "sponsor": "Ge Healthcare Iits Usa Corp",
+      "h1b_approvals": 221
+    },
+    "careers.henryford.com": {
+      "company": "Henry Ford Health System",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.henryford.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.henryford\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 1539,
+      "sponsor": "Henry Ford Health System",
+      "h1b_approvals": 400
+    },
+    "careers.hitachi.com": {
+      "company": "Hitachi",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.hitachi.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.hitachi\\.com/[^/]+/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 2513,
+      "sponsor": "Hitachi Vantara Llc",
+      "h1b_approvals": 724
+    },
+    "careers.howardhughes.com": {
+      "company": "Howard Hughes Medical Institute",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.howardhughes.com/us/en/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.howardhughes\\.com/us/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 14,
+      "sponsor": "Howard Hughes Medical Institute Hhmi",
+      "h1b_approvals": 206
+    },
+    "careers.infor.com": {
+      "company": "Infor",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.infor.com/sitemap"
+      ],
+      "job_url": "^https://careers\\.infor\\.com/postings/",
+      "verified": "2026-10-12",
+      "jobs_seen": 220,
+      "sponsor": "Infor Us Llc",
+      "h1b_approvals": 276
+    },
+    "careers.lamresearch.com": {
+      "company": "Lam Research",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://careers.lamresearch.com/careers/sitemap_index.xml?domain=lamresearch.com"
+      ],
+      "job_url": "^https://careers\\.lamresearch\\.com/careers/job/\\d+",
+      "verified": "2026-10-12",
+      "jobs_seen": 1365,
+      "sponsor": "Lam Research Corporation",
+      "h1b_approvals": 635
+    },
+    "careers.marriott.com": {
+      "company": "Marriott International",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.marriott.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.marriott\\.com/[^/]+/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 13614,
+      "sponsor": "Marriott International Inc",
+      "h1b_approvals": 213
+    },
+    "careers.netapp.com": {
+      "company": "NetApp",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://careers.netapp.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.netapp\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 308,
+      "sponsor": "Netapp Inc",
+      "h1b_approvals": 660
+    },
+    "careers.nike.com": {
+      "company": "Nike",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.nike.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.nike\\.com/de/[^/]+/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 1289,
+      "sponsor": "Nike Inc",
+      "h1b_approvals": 1124
+    },
+    "careers.nttdata.com": {
+      "company": "NTT DATA",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.nttdata.com/global/en/sitemap_index.xml"
+      ],
+      "job_url": "^https://careers\\.nttdata\\.com/global/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 2910,
+      "sponsor": "Ntt Data Inc",
+      "h1b_approvals": 2244
+    },
+    "careers.questdiagnostics.com": {
+      "company": "Quest Diagnostics",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://careers.questdiagnostics.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.questdiagnostics\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 2197,
+      "sponsor": "Quest Diagnostics Incorporated",
+      "h1b_approvals": 505
+    },
+    "careers.snowflake.com": {
+      "company": "Snowflake",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.snowflake.com/us/en/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.snowflake\\.com/us/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 364,
+      "sponsor": "Snowflake Inc",
+      "h1b_approvals": 525
+    },
+    "careers.southwestair.com": {
+      "company": "Southwest Airlines",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.southwestair.com/us/en/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.southwestair\\.com/us/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 18,
+      "sponsor": "Southwest Airlines Co",
+      "h1b_approvals": 227
+    },
+    "careers.statestreet.com": {
+      "company": "State Street",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.statestreet.com/global/en/sitemap_index.xml"
+      ],
+      "job_url": "^https://careers\\.statestreet\\.com/global/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 1098,
+      "sponsor": "State Street Bank And Trust Company",
+      "h1b_approvals": 1317
+    },
+    "careers.synopsys.com": {
+      "company": "Synopsys",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://careers.synopsys.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.synopsys\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 620,
+      "sponsor": "Synopsys Inc",
+      "h1b_approvals": 1169
+    },
+    "careers.teradata.com": {
+      "company": "Teradata",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.teradata.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.teradata\\.com/jobs/",
+      "verified": "2026-10-12",
+      "jobs_seen": 146,
+      "sponsor": "Teradata Operations Inc",
+      "h1b_approvals": 233
+    },
+    "careers.xoriant.com": {
+      "company": "Xoriant",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.xoriant.com/in/en/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.xoriant\\.com/in/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 481,
+      "sponsor": "Xoriant Corporation",
+      "h1b_approvals": 605
+    },
+    "jobs.amdocs.com": {
+      "company": "Amdocs",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://jobs.amdocs.com/careers/sitemap_index.xml?domain=amdocs.com"
+      ],
+      "job_url": "^https://jobs\\.amdocs\\.com/careers/job/\\d+",
+      "verified": "2026-10-12",
+      "jobs_seen": 25,
+      "sponsor": "Amdocs Inc",
+      "h1b_approvals": 316
+    },
+    "jobs.arcadis.com": {
+      "company": "Arcadis",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://jobs.arcadis.com/careers/sitemap_index.xml?domain=arcadis.com"
+      ],
+      "job_url": "^https://jobs\\.arcadis\\.com/careers/job/\\d+",
+      "verified": "2026-10-12",
+      "jobs_seen": 1316,
+      "sponsor": "Arcadis U S Inc",
+      "h1b_approvals": 219
+    },
+    "jobs.citizensbank.com": {
+      "company": "Citizens",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://jobs.citizensbank.com/sitemap.xml"
+      ],
+      "job_url": "^https://jobs\\.citizensbank\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 467,
+      "sponsor": "Citizens Financial Group Inc",
+      "h1b_approvals": 700
+    },
+    "jobs.comcast.com": {
+      "company": "Comcast",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://jobs.comcast.com/sitemap.xml"
+      ],
+      "job_url": "^https://jobs\\.comcast\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 702,
+      "sponsor": "Comcast Cable Communications Llc",
+      "h1b_approvals": 1955
+    },
+    "jobs.ericsson.com": {
+      "company": "Ericsson",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://jobs.ericsson.com/careers/sitemap_index.xml?domain=ericsson.com"
+      ],
+      "job_url": "^https://jobs\\.ericsson\\.com/careers/job/\\d+",
+      "verified": "2026-10-12",
+      "jobs_seen": 523,
+      "sponsor": "Ericsson Inc",
+      "h1b_approvals": 773
+    },
+    "jobs.gartner.com": {
+      "company": "Gartner",
+      "platform": "other",
+      "sitemaps": [
+        "https://jobs.gartner.com/sitemap.xml"
+      ],
+      "job_url": "^https://jobs\\.gartner\\.com/jobs/",
+      "verified": "2026-10-12",
+      "jobs_seen": 763,
+      "sponsor": "Gartner Inc",
+      "h1b_approvals": 306
+    },
+    "jobs.intuit.com": {
+      "company": "Intuit",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://jobs.intuit.com/sitemap.xml"
+      ],
+      "job_url": "^https://jobs\\.intuit\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 615,
+      "sponsor": "Intuit Inc",
+      "h1b_approvals": 2225
+    },
+    "jobs.merck.com": {
+      "company": "Merck",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://jobs.merck.com/us/en/sitemap.xml"
+      ],
+      "job_url": "^https://jobs\\.merck\\.com/us/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 390,
+      "sponsor": "Merck Sharp Dohme Llc",
+      "h1b_approvals": 370
+    },
+    "jobs.rbc.com": {
+      "company": "RBC",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://jobs.rbc.com/ca/en/sitemap_index.xml"
+      ],
+      "job_url": "^https://jobs\\.rbc\\.com/ca/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 799,
+      "sponsor": "Rbc Capital Markets Llc",
+      "h1b_approvals": 322
+    },
+    "jobs.sap.com": {
+      "company": "SAP",
+      "platform": "other",
+      "sitemaps": [
+        "https://jobs.sap.com/sitemap.xml"
+      ],
+      "job_url": "^https://jobs\\.sap\\.com/en/jobs/",
+      "verified": "2026-10-12",
+      "jobs_seen": 161,
+      "sponsor": "Sap America Inc",
+      "h1b_approvals": 1122
+    },
+    "jobs.thecignagroup.com": {
+      "company": "The Cigna Group",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://jobs.thecignagroup.com/us/en/sitemap_index.xml"
+      ],
+      "job_url": "^https://jobs\\.thecignagroup\\.com/us/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 528,
+      "sponsor": "Cigna Health And Life Insurance Company",
+      "h1b_approvals": 487
+    },
+    "jobs.thermofisher.com": {
+      "company": "Thermo Fisher Scientific",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://jobs.thermofisher.com/global/en/sitemap_index.xml"
+      ],
+      "job_url": "^https://jobs\\.thermofisher\\.com/global/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 2392,
+      "sponsor": "Thermo Fisher Scientific Inc",
+      "h1b_approvals": 970
+    },
+    "jobs.trinet.com": {
+      "company": "TriNet",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://jobs.trinet.com/careers/sitemap_index.xml?domain=trinet.com"
+      ],
+      "job_url": "^https://jobs\\.trinet\\.com/careers/job/\\d+",
+      "verified": "2026-10-12",
+      "jobs_seen": 196,
+      "sponsor": "Trinet Usa Inc",
+      "h1b_approvals": 269
+    },
+    "jobs.whirlpool.com": {
+      "company": "Whirlpool",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://jobs.whirlpool.com/careers/sitemap_index.xml?domain=whirlpool.com"
+      ],
+      "job_url": "^https://jobs\\.whirlpool\\.com/careers/job/\\d+",
+      "verified": "2026-10-12",
+      "jobs_seen": 228,
+      "sponsor": "Whirlpool Corporation",
+      "h1b_approvals": 297
+    },
+    "www.audiblecareers.com": {
+      "company": "Audible",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://www.audiblecareers.com/sitemap.xml"
+      ],
+      "job_url": "^https://www\\.audiblecareers\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 54,
+      "sponsor": "Audible Inc",
+      "h1b_approvals": 562
+    },
+    "www.careers.ford.com": {
+      "company": "Ford",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://www.careers.ford.com/sitemap.xml"
+      ],
+      "job_url": "^https://www\\.careers\\.ford\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 901,
+      "sponsor": "Ford Motor Company",
+      "h1b_approvals": 2049
+    },
+    "www.gapinc.com": {
+      "company": "Gap Inc.",
+      "platform": "other",
+      "sitemaps": [
+        "https://www.gapinc.com/googlesitemap.xml"
+      ],
+      "job_url": "^https://www\\.gapinc\\.com/en\\-us/jobs/",
+      "verified": "2026-10-12",
+      "jobs_seen": 24,
+      "sponsor": "The Gap Inc",
+      "h1b_approvals": 395
+    },
+    "www.santandercareers.com": {
+      "company": "Santander Bank",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://www.santandercareers.com/sitemap.xml"
+      ],
+      "job_url": "^https://www\\.santandercareers\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 176,
+      "sponsor": "Santander Bank Na",
+      "h1b_approvals": 271
+    },
+    "www.synchronycareers.com": {
+      "company": "Synchrony Bank",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://www.synchronycareers.com/sitemap.xml"
+      ],
+      "job_url": "^https://www\\.synchronycareers\\.com/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 45,
+      "sponsor": "Synchrony Bank",
+      "h1b_approvals": 229
+    },
+    "www.yelp.careers": {
+      "company": "Yelp",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://www.yelp.careers/us/en/sitemap.xml"
+      ],
+      "job_url": "^https://www\\.yelp\\.careers/us/en/job/",
+      "verified": "2026-10-12",
+      "jobs_seen": 19,
+      "sponsor": "Yelp Inc",
+      "h1b_approvals": 242
     }
   }
 }
