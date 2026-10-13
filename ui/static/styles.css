@@ -3702,16 +3702,21 @@ body.cv-dragging * { cursor: grabbing !important; }
 
 /* ---- Learn it and Defend it: one split page (owner decision 2026-10-13). The material on the left,
    the question on the right, the PAGE never scrolls: each pane scrolls on its own and the action
-   bar at the bottom of the right pane never moves. The split lives in the 1040 column, so its left
-   edge is the page title's. */
+   bar at the bottom of the right pane never moves. The code pane takes all the width the question
+   pane (at most 520px) leaves, and the header shares the split's column so the title lines up. */
 .view-projects.is-split { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 16px; }
 .view-projects.is-split > .page-head { width: 100%; flex: none; margin-bottom: 18px; }
+/* A code workspace uses the whole window, not the 1040 reading column: on a 1440 screen the column
+   left about a third of the width empty while long lines scrolled sideways (owner, 2026-10-13). The
+   header and the split share one wider column so the title still lines up with the panes. */
+.view-projects.is-split > .page-head,
+.view-projects.is-split > .proj-body { max-width: 1680px; }
 .view-projects.is-split > .proj-body { width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column;
   container-type: inline-size; container-name: sx; }
 .view-projects.is-split .proj-learn { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .sx-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .sx-host > .empty { margin: auto; }
-.sx { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(520px, 1.35fr) minmax(420px, 1fr); gap: 24px; }
+.sx { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(520px, 1fr) minmax(400px, 520px); gap: 28px; }
 .sx.is-solo { grid-template-columns: minmax(0, 680px); justify-content: center; }
 
 /* Header progress, right of the title row: "Step 3 of 6" with dots, or "Question 7 of 20" with the bar. */
