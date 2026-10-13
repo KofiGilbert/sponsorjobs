@@ -6,8 +6,10 @@ Rules, consistent with the rest of the app's Connections model:
   opening issues, or changing visibility is an outward action, never done unattended).
 - Auth is a Personal Access Token stored LOCALLY and git-ignored, like the other
   Connections credentials. No cloud, no server.
-- We never push code for the person. A started repo holds a README to fill in and the
-  build guide's milestones as issues; the code is theirs to write.
+- A hand-started repo holds a README to fill in and the build guide's milestones as issues.
+  An AI-built project (approved 2026-10-13) is pushed as ONE commit to a PRIVATE repo through
+  the Git Data API (blobs, tree, commit, ref), only after its files pass the safety checks in
+  ui/project_builder.py. It stays private until the person defends it and clicks Publish.
 - Example repos come only from GitHub's own search results. A URL is never invented: if
   search fails or returns nothing usable, there are simply no examples.
 
@@ -127,14 +129,14 @@ def validate_token(token: str) -> dict:
     return {"ok": False, "error": "That token was rejected by GitHub. Create a token with 'repo' scope and paste it again."}
 
 
-def _create_repo(token: str, name: str, desc: str, private: bool) -> dict:
+def _create_repo(token: str, name: str, desc: str, private: bool, auto_init: bool = False) -> dict:
     """POST /user/repos, stepping to name-2, name-3 when the person already has that name."""
     base = slugify(name)
     for n in range(1, 4):
         cand = base if n == 1 else f"{base[:76]}-{n}"
         status, data = _fetch("POST", f"{API}/user/repos", token,
                               {"name": cand, "description": desc[:280], "private": bool(private),
-                               "auto_init": False, "has_issues": True})
+                               "auto_init": bool(auto_init), "has_issues": True})
         if status == 0:
             return {"ok": False, "error": "Couldn't reach GitHub to create the repo. Check your connection."}
         if status == 422:
@@ -209,6 +211,65 @@ def publish_project(token: str, project: dict, private: bool = False) -> dict:
         return res
     _put_readme(token, res["full_name"], readme_for(project))
     return {"ok": True, "url": res["url"], "full_name": res["full_name"]}
+
+
+# ---- AI-built projects: one commit of generated files through the Git Data API. ----
+def create_private_repo(token: str, project: dict) -> dict:
+    """A PRIVATE repo for an AI-built project, initialised by GitHub (auto_init) so the Git Data
+    API has a branch to commit onto; the generated tree then replaces that first README."""
+    return _create_repo(token, project.get("repo") or project.get("title", ""),
+                        project.get("summary") or "", private=True, auto_init=True)
+
+
+def push_files(token: str, full_name: str, files: list[dict], message: str) -> dict:
+    """Commit ``files`` ([{path, content}]) as ONE commit on the default branch: a blob per file,
+    one tree (no base tree, so the commit holds exactly these files), one commit on the branch's
+    head, then the ref moved to it. {'ok', 'sha', 'branch'} or {'ok': False, 'error'}."""
+    def fail(what):
+        return {"ok": False, "error": f"GitHub wouldn't {what}. Check your connection and the token's 'repo' scope."}
+    st, repo = _fetch("GET", f"{API}/repos/{full_name}", token)
+    if st != 200 or not isinstance(repo, dict):
+        return fail("open the repo")
+    branch = repo.get("default_branch") or "main"
+    st, ref = _fetch("GET", f"{API}/repos/{full_name}/git/ref/heads/{branch}", token)
+    parent = ((ref or {}).get("object") or {}).get("sha") if st == 200 and isinstance(ref, dict) else None
+    if not parent:
+        # An empty repo has no branch, and the Git Data API refuses an empty repo: seed it first.
+        if not _put_readme(token, full_name, "# " + full_name.split("/")[-1] + "\n"):
+            return fail("start the repo")
+        st, ref = _fetch("GET", f"{API}/repos/{full_name}/git/ref/heads/{branch}", token)
+        parent = ((ref or {}).get("object") or {}).get("sha") if st == 200 and isinstance(ref, dict) else None
+        if not parent:
+            return fail("find the repo's branch")
+    tree = []
+    for f in files:
+        st, blob = _fetch("POST", f"{API}/repos/{full_name}/git/blobs", token,
+                          {"content": base64.b64encode(f["content"].encode("utf-8")).decode(), "encoding": "base64"})
+        if st not in (200, 201) or not isinstance(blob, dict) or not blob.get("sha"):
+            return fail(f"take {f['path']}")
+        tree.append({"path": f["path"], "mode": "100644", "type": "blob", "sha": blob["sha"]})
+    st, t = _fetch("POST", f"{API}/repos/{full_name}/git/trees", token, {"tree": tree})
+    if st not in (200, 201) or not isinstance(t, dict) or not t.get("sha"):
+        return fail("build the file tree")
+    st, c = _fetch("POST", f"{API}/repos/{full_name}/git/commits", token,
+                   {"message": message, "tree": t["sha"], "parents": [parent]})
+    if st not in (200, 201) or not isinstance(c, dict) or not c.get("sha"):
+        return fail("make the commit")
+    st, _ = _fetch("PATCH", f"{API}/repos/{full_name}/git/refs/heads/{branch}", token,
+                   {"sha": c["sha"], "force": False})
+    if st != 200:
+        return fail("move the branch to the new commit")
+    return {"ok": True, "sha": c["sha"], "branch": branch}
+
+
+def update_file(token: str, full_name: str, path: str, text: str, message: str) -> bool:
+    """Replace one file through the contents API (it needs the current blob sha)."""
+    st, cur = _fetch("GET", f"{API}/repos/{full_name}/contents/{path}", token)
+    body = {"message": message, "content": base64.b64encode(text.encode("utf-8")).decode()}
+    if st == 200 and isinstance(cur, dict) and cur.get("sha"):
+        body["sha"] = cur["sha"]
+    st, _ = _fetch("PUT", f"{API}/repos/{full_name}/contents/{path}", token, body)
+    return st in (200, 201)
 
 
 # ---- Example repos: real public repos from GitHub's search, for inspiration only. ----

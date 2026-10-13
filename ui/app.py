@@ -5072,11 +5072,26 @@ def _load_projects() -> list:
         return []
 
 
-def _save_projects(projects: list) -> None:
-    _PROJECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _PROJECTS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"projects": projects}, indent=2), encoding="utf-8")
-    tmp.replace(_PROJECTS_FILE)
+_PROJ_LOCK = threading.RLock()
+
+
+def _save_projects(projects: list, _from_build: bool = False) -> None:
+    """Write the list. An AI build runs in its own thread and owns its build fields: when the
+    file holds a NEWER build revision than the list being saved (a request that loaded before the
+    build moved on), those fields are taken from the file, so a request never rolls a build back."""
+    with _PROJ_LOCK:
+        if not _from_build:
+            disk = {x.get("id"): x for x in _load_projects()}
+            for p in projects:
+                d = disk.get(p.get("id"))
+                if d and int((d.get("build") or {}).get("rev") or 0) > int((p.get("build") or {}).get("rev") or 0):
+                    for k in _THREAD_KEYS:
+                        if k in d:
+                            p[k] = d[k]
+        _PROJECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _PROJECTS_FILE.with_suffix(f".{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps({"projects": projects}, indent=2), encoding="utf-8")
+        tmp.replace(_PROJECTS_FILE)
 
 
 def _project_public(p: dict) -> dict:
@@ -5084,7 +5099,21 @@ def _project_public(p: dict) -> dict:
             "tech": p.get("tech", ""), "status": p.get("status", "draft"), "result": p.get("result"),
             "plan": p.get("plan"), "done": p.get("done") or [], "repo_url": p.get("repo_url") or "",
             "repo_private": bool(p.get("repo_private")), "repo": p.get("repo") or "",
-            "skills": p.get("skills") or []}
+            "skills": p.get("skills") or [], **_ai_public(p)}
+
+
+def _ai_public(p: dict) -> dict:
+    """The AI-built fields a card needs: stage, build progress, Learn it progress, defence."""
+    if p.get("origin") != "ai":
+        return {"origin": p.get("origin") or "manual"}
+    b = p.get("build") or {}
+    lr = p.get("learn") or {}
+    d = p.get("defense") or {}
+    return {"origin": "ai", "stage": _ai_stage(p), "target": p.get("target") or "local",
+            "ai_credit": p.get("ai_credit", True) is not False, "has_files": bool(p.get("files")),
+            "build": {k: b.get(k) for k in ("state", "done", "total", "error", "stage")},
+            "learn": {"total": len(lr.get("steps") or []), "learned": len(set(lr.get("learned") or []))},
+            "defense": {"score": d.get("score"), "passed": bool(d.get("passed")), "tried": d.get("score") is not None}}
 
 
 @app.get("/api/projects")
@@ -5430,16 +5459,25 @@ def projects_ideas_unsave():
 @app.post("/api/projects/start")
 @_guard
 def projects_start():
-    """Start an idea: create the draft project here and, when GitHub is connected, a PRIVATE
-    repo in the person's own account with a starter README and the build guide's milestones as
-    issues. Only on this click; no code is pushed. The defend gate is untouched: the project is a
-    draft, and it only goes public or onto the resume once verified."""
+    """Start an idea. By default the AI BUILDS it (see _start_ai_build): one package, a small
+    working project generated in the background, pushed to a PRIVATE repo when GitHub is
+    connected, else kept here ({local: true}). {build: false} keeps the older hand-built start: a
+    draft plus, with GitHub, a private repo with a starter README and the guide's milestones as
+    issues, no code. Either way the defend gate is untouched: nothing goes public or onto the
+    resume until the project is verified."""
     import uuid
     from ui.github_publish import slugify
-    idea = (request.json or {}).get("idea") or {}
+    body = request.json or {}
+    idea = body.get("idea") or {}
     title = str(idea.get("title") or "").strip()[:80]
     if not title:
         return jsonify({"error": "Pick an idea to start."}), 400
+    if body.get("build", True) is not False:
+        # The AI builds it (one package). {local: true} builds without GitHub: files stay here.
+        p = _start_ai_build(idea, bool(body.get("local")))
+        p = next((x for x in _load_projects() if x.get("id") == p["id"]), p)
+        return jsonify({"project": _project_public(p),
+                        "github": {"connected": bool(_cred("GITHUB_TOKEN")), "target": p.get("target")}})
     skills = [str(k).strip()[:40] for k in (idea.get("skills") or []) if str(k).strip()][:5]
     p = {"id": uuid.uuid4().hex[:12], "title": title,
          "summary": str(idea.get("pitch") or idea.get("summary") or "").strip()[:280],
@@ -5472,7 +5510,10 @@ def projects_start():
 @app.delete("/api/projects/<pid>")
 @_guard
 def projects_delete(pid):
-    _save_projects([p for p in _load_projects() if p.get("id") != pid])
+    with _PROJ_LOCK:
+        _save_projects([p for p in _load_projects() if p.get("id") != pid], _from_build=True)
+    import shutil
+    shutil.rmtree(_build_dir(pid), ignore_errors=True)
     return jsonify({"ok": True})
 
 
@@ -5484,7 +5525,13 @@ def projects_test(pid):
     p = next((x for x in projects if x.get("id") == pid), None)
     if not p:
         return jsonify({"error": "Project not found."}), 404
-    test = _make_llm().generate_project_test(p)
+    gate = _defense_gate(p)
+    if gate:
+        return gate
+    # The written test is the fallback for Defend it when the recorded interview can't run (no
+    # camera or mic): an AI-built project uses the same five project questions.
+    test = ({"questions": [q["q"] for q in _project_defense_questions(p)]} if p.get("origin") == "ai"
+            else _make_llm().generate_project_test(p))
     p["test"] = test
     _save_projects(projects)
     return jsonify(test)
@@ -5555,6 +5602,9 @@ def projects_grade(pid):
     p = next((x for x in projects if x.get("id") == pid), None)
     if not p:
         return jsonify({"error": "Project not found."}), 404
+    gate = _defense_gate(p)
+    if gate:
+        return gate
     qa = (request.json or {}).get("answers") or []
     result = _make_llm().grade_project_defense(p, qa)
     p["result"] = result
@@ -5578,6 +5628,10 @@ def projects_publish(pid):
     if not token:
         return jsonify({"error": "Connect GitHub in Settings, Connections first."}), 400
     from ui import github_publish as G
+    if p.get("origin") == "ai":
+        prep = _publish_ai_prepare(token, p)
+        if prep:
+            return prep
     # A project started on GitHub already has a private repo: publishing flips it to public.
     res = G.publish_project(token, p)
     if not res.get("ok"):
@@ -5596,6 +5650,39 @@ def projects_publish(pid):
         entry["link"] = p["repo_url"]
         mem.save("default", prof, saved.get("essentials") or {}, saved.get("history") or [])
     return jsonify({"ok": True, "url": p["repo_url"]})
+
+
+def _publish_ai_prepare(token: str, p: dict):
+    """Before an AI-built project goes public: a project built without GitHub gets its private
+    repo and its one commit now; and the README on GitHub is brought in line with the
+    "Built with an AI pair-programmer" toggle, in this same step. Returns an error response, or
+    None to carry on (``p`` is updated in place)."""
+    from ui import github_publish as G
+    from ui import project_builder as PB
+    files = PB.load_files(_build_dir(p["id"]))
+    if not files:
+        return jsonify({"error": "This project has no files to publish yet."}), 400
+    want = p.get("ai_credit", True) is not False
+    files = [dict(f, content=PB.with_ai_line(f["content"], want)) if f["path"] == "README.md" else f for f in files]
+    if not p.get("repo_full_name"):
+        made = G.create_private_repo(token, p)
+        if not made.get("ok"):
+            return jsonify({"error": made.get("error") or "GitHub wouldn't create the repo."}), 400
+        fields = {"repo_url": made.get("url", ""), "repo_full_name": made["full_name"], "repo_private": True}
+        p.update(fields)
+        _update_project(p["id"], lambda x: x.update(fields))   # kept even if the push below fails
+    if "readme_credit_pushed" not in p:   # the files never reached GitHub: one commit now
+        pushed = G.push_files(token, p["repo_full_name"], files, "Initial version, built with an AI pair-programmer")
+        if not pushed.get("ok"):
+            return jsonify({"error": pushed.get("error") or "GitHub wouldn't take the files."}), 400
+        p["readme_credit_pushed"] = want
+    elif bool(p.get("readme_credit_pushed")) != want:
+        readme = next((f["content"] for f in files if f["path"] == "README.md"), "")
+        if not G.update_file(token, p["repo_full_name"], "README.md", readme,
+                             "Update README" if want else "README: drop the AI pair-programmer line"):
+            return jsonify({"error": "GitHub wouldn't update the README. Try again."}), 400
+        p["readme_credit_pushed"] = want
+    return None
 
 
 @app.post("/api/projects/<pid>/tocv")
@@ -5626,6 +5713,404 @@ def projects_to_cv(pid):
                          "bullets": bullets, "suggested": False})
     mem.save("default", prof, saved.get("essentials") or {}, saved.get("history") or [])
     return jsonify({"ok": True})
+
+
+# ---- AI-built projects (approved 2026-10-13): the AI builds a SMALL working project, the person
+# learns it ("Learn it", a walkthrough of the real files), then defends it in the recorded
+# interview ("Defend it"). Only a defended project is Verified, and only Verified goes public or
+# onto the resume (the gate above, enforced server-side in /publish and /tocv).
+#
+# Packages: a build is one "package" (the same unit as a tailoring run), counted through the
+# broker BEFORE any model call by `_count_package`, which also raises the upgrade prompt when none
+# are left. The broker has NO refund route (backend/broker.py: /llm/package only decrements), and a
+# client-callable refund would hand out free packages, so a failed build is made good locally
+# instead: the project keeps the package it paid for and "Try again" rebuilds without counting
+# another, up to _BUILD_ATTEMPTS generations per package. A push that fails after generation keeps
+# the files, and retrying only pushes (no model call, no package).
+_PROJECT_BUILDS = _DATA / "project_builds"
+_BUILD_ATTEMPTS = 3
+_BUILD_ACTIVE = ("queued", "planning", "writing", "pushing", "preparing")
+_BUILD_INLINE = False          # tests run the build in the request thread
+_THREAD_KEYS = ("build", "files", "learn", "repo_url", "repo_full_name", "repo_private",
+                "readme_credit_pushed")
+
+
+def _build_dir(pid: str) -> Path:
+    return _PROJECT_BUILDS / re.sub(r"[^a-z0-9]", "", str(pid).lower())[:24]
+
+
+def _update_project(pid: str, fn) -> dict | None:
+    """Load, change, and save one project under the projects lock. A change to the build bumps
+    its revision so a request that loaded the list earlier never writes an older build back."""
+    with _PROJ_LOCK:
+        projects = _load_projects()
+        p = next((x for x in projects if x.get("id") == pid), None)
+        if p is None:
+            return None
+        fn(p)
+        if isinstance(p.get("build"), dict):
+            p["build"]["rev"] = int(p["build"].get("rev") or 0) + 1
+        _save_projects(projects, _from_build=True)
+        return p
+
+
+def _personal_markers() -> list[str]:
+    """The person's own identifying details, so a generated file that somehow carries one is
+    refused. The model never sees them; this is the belt to that braces."""
+    saved = _memory().load("default") or {}
+    out = []
+    for src in (saved.get("essentials") or {}, saved.get("profile") or {}):
+        for d in (src, src.get("identity") or {}, src.get("contact") or {}):
+            if not isinstance(d, dict):
+                continue
+            for k in ("name", "full_name", "email", "phone"):
+                v = str(d.get(k) or "").strip()
+                if (k in ("name", "full_name") and " " in v and len(v) >= 6) or (k == "email" and "@" in v) \
+                        or (k == "phone" and sum(ch.isdigit() for ch in v) >= 7):
+                    out.append(v)
+    return list(dict.fromkeys(out))
+
+
+def _ai_stage(p: dict) -> str:
+    """Where an AI-built project is: building, failed, learn, defend, or verified."""
+    if p.get("status") == "verified":
+        return "verified"
+    b = p.get("build") or {}
+    if b.get("state") in _BUILD_ACTIVE:
+        return "building"
+    if b.get("state") == "failed":
+        return "failed"
+    lr = p.get("learn") or {}
+    steps = lr.get("steps") or []
+    if not steps or len(set(lr.get("learned") or [])) < len(steps):
+        return "learn"
+    return "defend"
+
+
+def _learn_done(p: dict) -> bool:
+    lr = p.get("learn") or {}
+    steps = lr.get("steps") or []
+    return bool(steps) and len(set(lr.get("learned") or [])) >= len(steps)
+
+
+def _run_build(pid: str, llm, generate: bool = True) -> None:
+    """The build job: generate and validate (unless the files are already here), save them
+    locally, push them to the private repo when the project targets GitHub, prepare Learn it."""
+    from ui import github_publish as G
+    from ui import project_builder as PB
+    p = next((x for x in _load_projects() if x.get("id") == pid), None)
+    if not p:
+        return
+
+    def progress(**kw):
+        _update_project(pid, lambda x: x.setdefault("build", {}).update(kw))
+
+    meter = PB.Meter()
+    files = PB.load_files(_build_dir(pid)) if not generate else []
+    try:
+        if generate or not files:
+            res = PB.generate(llm, p, progress, personal=_personal_markers(), meter=meter)
+            files = res["files"]
+            if not p.get("ai_credit", True):
+                files = [dict(f, content=PB.with_ai_line(f["content"], False)) if f["path"] == "README.md" else f
+                         for f in files]
+            PB.save_files(_build_dir(pid), files)
+            _update_project(pid, lambda x: x.update(files=True, run=res["plan"].get("run", ""),
+                                                    test_cmd=res["plan"].get("test", "")))
+    except PB.BuildError as exc:
+        print(f"[projects] build {pid} failed at {exc.stage}: {exc}; tokens {meter.as_dict()}")
+        progress(state="failed", error=str(exc), stage=exc.stage, tokens=meter.as_dict(), finished=time.time())
+        return
+    except Exception as exc:   # the model or the network: say so, keep the package for a retry
+        traceback.print_exc()
+        reason = _classify_outage(exc)
+        msg = ("Your AI allowance ran out partway through. Try again once it is topped up."
+               if reason in ("upgrade_required", "no_credit") else
+               "The AI could not finish this build. Try again." if not reason else
+               "SponsorJobs could not reach the AI. Check your connection and try again.")
+        progress(state="failed", error=msg, stage="write", tokens=meter.as_dict(), finished=time.time())
+        return
+    if p.get("target") == "github":
+        token = _cred("GITHUB_TOKEN")
+        if not token:
+            progress(state="failed", stage="push", error="Connect GitHub in Settings, then try again. "
+                     "Your files are saved here.", tokens=meter.as_dict(), finished=time.time())
+            return
+        progress(state="pushing", done=len(files), total=len(files))
+        cur = next((x for x in _load_projects() if x.get("id") == pid), {}) or {}
+        full = cur.get("repo_full_name") or ""
+        if not full:
+            made = G.create_private_repo(token, cur)
+            if not made.get("ok"):
+                progress(state="failed", stage="push", error=made.get("error") or "GitHub wouldn't create the repo.",
+                         tokens=meter.as_dict(), finished=time.time())
+                return
+            full = made["full_name"]
+            _update_project(pid, lambda x: x.update(repo_url=made.get("url", ""), repo_full_name=full,
+                                                    repo_private=True))
+        pushed = G.push_files(token, full, files, "Initial version, built with an AI pair-programmer")
+        if not pushed.get("ok"):
+            progress(state="failed", stage="push", error=pushed.get("error") or "GitHub wouldn't take the files.",
+                     tokens=meter.as_dict(), finished=time.time())
+            return
+        credit = any(f["path"] == "README.md" and PB.AI_LINE in f["content"] for f in files)
+        _update_project(pid, lambda x: x.update(readme_credit_pushed=credit))
+    # Learn it is generated once, here, so it opens instantly. A miss is fine: /learn retries.
+    if not ((next((x for x in _load_projects() if x.get("id") == pid), {}) or {}).get("learn") or {}).get("steps"):
+        progress(state="preparing")
+        try:
+            raw = meter.call(llm, llm.generate_learn_steps, PB._idea(p), files,
+                             prompt_chars=sum(len(f["content"]) for f in files) + 2000)
+            steps = PB.learn_steps((raw or {}).get("steps"), files)
+            if len(steps) >= 3:
+                _update_project(pid, lambda x: x.update(learn={"steps": steps, "learned": [], "answers": {}}))
+        except Exception:
+            traceback.print_exc()
+    tokens = meter.as_dict()
+    print(f"[projects] build {pid} ready: {len(files)} files, tokens in={tokens['input']} "
+          f"out={tokens['output']} calls={tokens['calls']}{' (estimated)' if tokens['estimated'] else ''}")
+    progress(state="ready", error="", stage="", done=len(files), total=len(files), tokens=tokens,
+             finished=time.time())
+
+
+def _spawn_build(pid: str, llm, generate: bool = True) -> None:
+    if _BUILD_INLINE:
+        _run_build(pid, llm, generate)
+        return
+    threading.Thread(target=_run_build, args=(pid, llm, generate), daemon=True,
+                     name=f"project-build-{pid}").start()
+
+
+def _start_ai_build(idea: dict, local: bool) -> dict:
+    """Create the AI-built project, count its package, and start the build job."""
+    from ui.github_publish import slugify
+    title = str(idea.get("title") or "").strip()[:80]
+    target = "local" if (local or not _cred("GITHUB_TOKEN")) else "github"
+    llm = _count_package(_make_llm())     # one build = one package; raises the upgrade prompt
+    p = {"id": uuid.uuid4().hex[:12], "title": title,
+         "summary": str(idea.get("pitch") or idea.get("summary") or "").strip()[:280],
+         "tech": str(idea.get("tech") or "").strip()[:160],
+         "skills": [str(k).strip()[:40] for k in (idea.get("skills") or []) if str(k).strip()][:5],
+         "repo": slugify(idea.get("repo") or title), "status": "draft", "origin": "ai",
+         "target": target, "ai_credit": True,
+         "package": {"counted_at": time.time(), "generations": 1},
+         "build": {"state": "queued", "done": 0, "total": 0, "error": "", "started": time.time(), "rev": 1}}
+    with _PROJ_LOCK:
+        projects = _load_projects()
+        projects.append(p)
+        _save_projects(projects)
+    _spawn_build(p["id"], llm)
+    return p
+
+
+def _project_or_404(pid: str):
+    p = next((x for x in _load_projects() if x.get("id") == pid), None)
+    return p, (None if p else (jsonify({"error": "Project not found."}), 404))
+
+
+@app.get("/api/projects/<pid>/build")
+@_guard
+def projects_build_status(pid):
+    """The build's progress, for the card to poll: state, done/total, error, token counts."""
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    return jsonify({"project": _project_public(p)})
+
+
+@app.post("/api/projects/<pid>/build")
+@_guard
+def projects_build_retry(pid):
+    """Try a failed build again. Files already generated: push only, no model call. Otherwise
+    rebuild on the package this project already paid for (no second charge), up to
+    _BUILD_ATTEMPTS generations; past that, a new build counts a new package."""
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    b = p.get("build") or {}
+    if p.get("origin") != "ai":
+        return jsonify({"error": "Only an AI-built project can be rebuilt."}), 400
+    if b.get("state") in _BUILD_ACTIVE:
+        return jsonify({"project": _project_public(p)})
+    if b.get("state") != "failed":
+        return jsonify({"error": "This project is already built."}), 400
+    from ui import project_builder as PB
+    have_files = bool(p.get("files")) and bool(PB.load_files(_build_dir(pid)))
+    gens = int((p.get("package") or {}).get("generations") or 1)
+    if have_files:
+        llm, generate = _make_llm(), False
+    elif gens < _BUILD_ATTEMPTS:
+        llm, generate = _make_llm(), True
+    else:
+        llm, generate = _count_package(_make_llm()), True
+        gens = 0
+
+    def reset(x):
+        x["build"] = {**(x.get("build") or {}), "state": "queued", "error": "", "stage": "", "done": 0,
+                      "total": 0, "started": time.time()}
+        if generate:
+            x.setdefault("package", {})["generations"] = gens + 1
+    p = _update_project(pid, reset)
+    _spawn_build(pid, llm, generate)
+    return jsonify({"project": _project_public(p)})
+
+
+@app.get("/api/projects/<pid>/download.zip")
+@_guard
+def projects_download(pid):
+    """The generated project as a zip, for a build without GitHub (or a local copy of one)."""
+    import io
+    from ui import project_builder as PB
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    files = PB.load_files(_build_dir(pid))
+    if not files:
+        return jsonify({"error": "This project has no files yet."}), 404
+    slug = p.get("repo") or "project"
+    return send_file(io.BytesIO(PB.zip_bytes(files, slug)), mimetype="application/zip", as_attachment=True,
+                     download_name=f"{slug}.zip", max_age=0)
+
+
+@app.post("/api/projects/<pid>/settings")
+@_guard
+def projects_settings(pid):
+    """Per-project settings: {ai_credit: bool}, the README's "Built with an AI pair-programmer"
+    line (on by default). The local copy changes now; a GitHub repo's README is updated in the
+    same step that makes it public."""
+    from ui import project_builder as PB
+    b = request.json or {}
+    if "ai_credit" not in b:
+        return jsonify({"error": "Nothing to change."}), 400
+    on = bool(b.get("ai_credit"))
+    p = _update_project(pid, lambda x: x.update(ai_credit=on))
+    if not p:
+        return jsonify({"error": "Project not found."}), 404
+    files = PB.load_files(_build_dir(pid))
+    if files:
+        PB.save_files(_build_dir(pid), [dict(f, content=PB.with_ai_line(f["content"], on))
+                                        if f["path"] == "README.md" else f for f in files])
+    return jsonify({"project": _project_public(p)})
+
+
+@app.post("/api/projects/<pid>/learn")
+@_guard
+def projects_learn(pid):
+    """The Learn it walkthrough: 5 to 8 steps from the real files, generated once and cached with
+    the project. Answer keys stay on the server."""
+    from ui import project_builder as PB
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    if p.get("origin") != "ai" or _ai_stage(p) in ("building", "failed"):
+        return jsonify({"error": "Learn it opens once the project is built."}), 400
+    lr = p.get("learn") or {}
+    if not lr.get("steps"):
+        files = PB.load_files(_build_dir(pid))
+        if not files:
+            return jsonify({"error": "This project has no files yet."}), 400
+        raw = _make_llm().generate_learn_steps(PB._idea(p), files)
+        steps = PB.learn_steps((raw or {}).get("steps"), files)
+        if len(steps) < 3:
+            return jsonify({"error": "Couldn't prepare the walkthrough right now. Try again."}), 502
+        lr = {"steps": steps, "learned": [], "answers": {}}
+        p = _update_project(pid, lambda x: x.update(learn=lr))
+    return jsonify({"steps": [PB.public_step(s) for s in lr["steps"]], "learned": sorted(set(lr.get("learned") or [])),
+                    "project": _project_public(p)})
+
+
+@app.post("/api/projects/<pid>/learn/<int:idx>")
+@_guard
+def projects_learn_answer(pid, idx):
+    """Check one step's question: {answer} (an option index, or one line of text). A right
+    answer marks the step learned; either way the explanation comes back for instant feedback."""
+    from ui import project_builder as PB
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    steps = (p.get("learn") or {}).get("steps") or []
+    if not (0 <= idx < len(steps)):
+        return jsonify({"error": "No such step."}), 404
+    ans = (request.json or {}).get("answer")
+    ok = PB.check_answer(steps[idx], ans)
+
+    def save(x):
+        lr = x.setdefault("learn", {})
+        learned = set(lr.get("learned") or [])
+        if ok:
+            learned.add(idx)
+        lr["learned"] = sorted(learned)
+        lr.setdefault("answers", {})[str(idx)] = {"answer": ans if isinstance(ans, (int, str)) else "", "ok": ok}
+    p = _update_project(pid, save)
+    c = steps[idx].get("check") or {}
+    right = c["options"][c["answer"]] if c.get("kind") == "choice" else ""
+    return jsonify({"correct": ok, "explain": c.get("explain", ""), "answer": right if ok else "",
+                    "learned": (p.get("learn") or {}).get("learned") or [], "total": len(steps),
+                    "project": _project_public(p)})
+
+
+_DEFENSE_DEFAULTS = (
+    ("Why did you design {t} this way rather than another way?", "Design"),
+    ("What trade-offs did you make, and what did you give up?", "Trade-offs"),
+    ("What would break first if {t} had a hundred times the users or data?", "Scale"),
+    ("How did you test it, and what is not tested yet?", "Testing"),
+    ("If you had another week, what would you change and why?", "Improvement"),
+)
+
+
+def _project_defense_questions(p: dict) -> list[dict]:
+    """Five interview questions on this project (why this design, trade-offs, scale, testing,
+    what you would change), from its files and walkthrough. Generated once and cached."""
+    from ui import project_builder as PB
+    cached = (p.get("defense") or {}).get("questions") or []
+    if len(cached) == 5:
+        return cached
+    files = PB.load_files(_build_dir(p["id"]))
+    try:
+        got = _make_llm().generate_project_interview(PB._idea(p), files, (p.get("learn") or {}).get("steps") or [])
+        qs = [q for q in (got or {}).get("questions") or [] if str(q.get("q") or "").strip()][:5]
+    except Exception:
+        traceback.print_exc()
+        qs = []
+    t = p.get("title") or "this project"
+    for q, comp in _DEFENSE_DEFAULTS[len(qs):]:
+        qs.append({"q": q.format(t=t), "competency": comp})
+    qs = [{"q": str(q["q"])[:600], "competency": str(q.get("competency") or "Project")[:40]} for q in qs]
+    _update_project(p["id"], lambda x: x.setdefault("defense", {}).update(questions=qs))
+    return qs
+
+
+def _defense_gate(p: dict):
+    """An AI-built project is defended only once it is built and Learn it is complete."""
+    if p.get("origin") == "ai" and p.get("status") != "verified" and not _learn_done(p):
+        return jsonify({"error": "Finish Learn it first, then defend your project."}), 409
+    return None
+
+
+# Defend it passes on the Round 1 practice bar, the same 70 the recorded screen already uses,
+# AND every question answered: one strong answer cannot carry a project you can't explain.
+_DEFENSE_PASS = 70
+
+
+def _project_defense_result(s: dict, result: dict) -> None:
+    """After a project's recorded defence is scored: Verified when it clears the bar."""
+    pid = s.get("project_id")
+    answered = all(str(a.get("transcript") or "").strip() for a in s.get("answers") or [])
+    try:
+        score = int(result.get("score") or 0)
+    except (TypeError, ValueError):
+        score = 0
+    passed = answered and score >= _DEFENSE_PASS
+    result["project_passed"] = passed
+    result["project_bar"] = _DEFENSE_PASS
+
+    def save(x):
+        x.setdefault("defense", {}).update(screen_id=s.get("id"), score=score, passed=passed, at=time.time())
+        if passed:
+            x["status"] = "verified"
+            x["result"] = {"pass": True, "summary": f"Defended in a recorded interview, {score}/100.",
+                           "via": "recorded"}
+    _update_project(pid, save)
 
 
 # ---- Interview prep (Feature 3): help someone who has LANDED an interview practice BEFOREHAND,
@@ -6369,7 +6854,8 @@ def _screen_public(s: dict, include_video: bool = False) -> dict:
             "company": s.get("company", ""), "config": cfg, "questions": questions,
             "answers": ans, "result": result, "passed": bool(s.get("passed")),
             "created": int(s.get("created") or 0), "stt_available": _stt_available(),
-            "drill": bool(s.get("drill")), "disclaimer": ROUND1_DISCLAIMER}
+            "drill": bool(s.get("drill")), "project_id": s.get("project_id") or "",
+            "disclaimer": ROUND1_DISCLAIMER}
 
 
 @app.get("/api/screens")
@@ -6382,11 +6868,14 @@ def screens_list():
 @_guard
 def screens_create():
     """Start a Round-1 recorded screen from a prep: {prep_id, extra_time?, questions? (3..5,
-    default 5)}. The model is asked for EXACTLY N questions with kinds (1 motivation, N-2
+    default 5)}. Or {project_id, extra_time?}: "Defend it" for a project, the same recorded flow
+    with its five project questions (see _project_screen_create). The model is asked for EXACTLY N questions with kinds (1 motivation, N-2
     behavioural, 1 situational or light technical), grounded in the JD and the saved profile; the
     mix is enforced server-side. Returns the screen (flat, plus under `screen`) and one unscored
     practice prompt; GET /api/screens/<id>/practice hands out more, never stored."""
     b = request.json or {}
+    if str(b.get("project_id") or "").strip():
+        return _project_screen_create(str(b["project_id"]).strip(), bool(b.get("extra_time")))
     prep_id = str(b.get("prep_id") or "").strip()
     prep = next((p for p in _load_preps() if p.get("id") == prep_id), None)
     if not prep:
@@ -6431,6 +6920,49 @@ def screens_create():
     pub = _screen_public(s)
     practice = _practice_question(s["role"])
     return jsonify({**pub, "practice": practice, "screen": {**pub, "practice": practice}})
+
+
+def _project_screen_create(pid: str, extra: bool):
+    """Defend it: a Round 1 recorded screen on THIS project, with its five interview questions
+    (why this design, trade-offs, scale, testing, what you would change). Scored by the same
+    grading and report card; clearing the bar marks the project Verified (_project_defense_result)."""
+    p = next((x for x in _load_projects() if x.get("id") == pid), None)
+    if not p:
+        return jsonify({"error": "Project not found."}), 404
+    gate = _defense_gate(p)
+    if gate:
+        return gate
+    qs = _project_defense_questions(p)
+    answers = [{"q": q["q"], "kind": "technical", "competency": q.get("competency") or "Project",
+                "why": "Defend your project.", "video_path": "", "transcript": "", "per_answer_feedback": None,
+                "delivery_metrics": None, "takes": 0} for q in qs]
+    mult = 2 if extra else 1
+    s = {"id": uuid.uuid4().hex[:12], "prep_id": None, "project_id": pid, "role": p.get("title", ""),
+         "company": "", "answers": answers, "result": None, "passed": False, "created": int(time.time()),
+         "extra_time": extra, "drill": False, "prep_s": _SCREEN_PREP_S * mult,
+         "answer_s": _SCREEN_ANSWER_S * mult, "retakes": _SCREEN_RETAKES}
+    screens = _load_screens()
+    screens.append(s)
+    _save_screens(screens)
+    pub = _screen_public(s)
+    practice = _practice_question("")
+    return jsonify({**pub, "practice": practice, "screen": {**pub, "practice": practice}})
+
+
+@app.post("/api/projects/<pid>/defend")
+@_guard
+def projects_defend(pid):
+    """Get Defend it ready: checks the gate (built, Learn it complete) and prepares the five
+    project questions, so the recorded interview starts at once. The screen itself is created by
+    POST /api/screens {project_id} from the interview's own notice step."""
+    p, err = _project_or_404(pid)
+    if err:
+        return err
+    gate = _defense_gate(p)
+    if gate:
+        return gate
+    qs = _project_defense_questions(p)
+    return jsonify({"questions": len(qs), "bar": _DEFENSE_PASS, "project": _project_public(p)})
 
 
 @app.get("/api/screens/<sid>")
@@ -6588,8 +7120,9 @@ def _interview_readiness_overview(screens: list, interviews: list | None = None)
     up, which competencies are consistently weakest across attempts, and a plain verdict.
     Deterministic, so it is testable and the number never disagrees with itself. Practice only,
     never a hiring prediction."""
+    # A project defence is not job interview practice: it stays out of the readiness read.
     scored = [dict(s, _round=1) for s in (screens or []) if isinstance(s.get("result"), dict)
-              and s["result"].get("score") is not None]
+              and s["result"].get("score") is not None and not s.get("project_id")]
     live = [{"created": iv.get("ended") or iv.get("started") or 0, "role": iv.get("role", ""),
              "company": iv.get("company", ""), "result": iv["report"], "_round": 2}
             for iv in (interviews or []) if isinstance(iv.get("report"), dict)
@@ -6678,6 +7211,8 @@ def screens_score(sid):
     result["disclaimer"] = ROUND1_DISCLAIMER
     s["result"] = result
     s["passed"] = bool(result.get("passed"))   # the Round-2 gate marker
+    if s.get("project_id"):
+        _project_defense_result(s, result)     # Defend it: Verified when it clears the bar
     _save_screens(screens)
     try:   # optional: a short note in the Annalisa diary (P1 memory), best-effort
         _palace().remember_summary(

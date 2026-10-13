@@ -1140,6 +1140,99 @@ class FakeLLM:
              "learn": "How to make it defensible and reproducible.", "check": "A stranger could clone and run it."},
         ]}
 
+    # -- AI-built projects: a tiny deterministic Python project so the flow runs offline --
+    _FAKE_PROJECT = {
+        "README.md": ("# {title}\n\n{pitch}\n\n## Problem\n\nTracking a list of numbers by hand is slow and "
+                      "error prone.\n\n## Approach\n\nA small library computes summary stats, and a CLI "
+                      "prints them.\n\n## Tech stack\n\nPython 3, pytest.\n\n## How to run\n\n```\npip install "
+                      "-r requirements.txt\npython -m tracker.cli 3 5 8\npytest\n```\n\n## Screenshots\n\n"
+                      "_Add a screenshot of the CLI output here._\n\n## What I learned\n\n_Write one thing "
+                      "that was hard, and how you worked through it._\n"),
+        ".gitignore": "__pycache__/\n*.pyc\n.venv/\n.pytest_cache/\n",
+        "requirements.txt": "pytest>=8\n",
+        "tracker/__init__.py": '"""Summary stats for a list of numbers."""\nfrom .core import summarize\n\n__all__ = ["summarize"]\n',
+        "tracker/core.py": ('"""The core: pure functions, so they are easy to test."""\n\n\n'
+                            "def mean(values):\n    # An empty list has no mean; say so instead of dividing by zero.\n"
+                            "    if not values:\n        raise ValueError(\"no values\")\n"
+                            "    return sum(values) / len(values)\n\n\n"
+                            "def summarize(values):\n    \"\"\"Count, min, max and mean in one pass over the data.\"\"\"\n"
+                            "    vals = [float(v) for v in values]\n"
+                            "    return {\"count\": len(vals), \"min\": min(vals), \"max\": max(vals), \"mean\": mean(vals)}\n"),
+        "tracker/cli.py": ('"""Command line entry point: python -m tracker.cli 3 5 8"""\nimport sys\n\n'
+                           "from .core import summarize\n\n\n"
+                           "def main(argv=None):\n    args = sys.argv[1:] if argv is None else argv\n"
+                           "    stats = summarize(args)\n"
+                           "    for key in (\"count\", \"min\", \"max\", \"mean\"):\n"
+                           "        print(f\"{key}: {stats[key]}\")\n    return 0\n\n\n"
+                           "if __name__ == \"__main__\":\n    raise SystemExit(main())\n"),
+        "tests/test_core.py": ("import pytest\n\nfrom tracker.core import mean, summarize\n\n\n"
+                               "def test_summarize_counts_and_bounds():\n"
+                               "    s = summarize([3, 5, 8])\n"
+                               "    assert s[\"count\"] == 3 and s[\"min\"] == 3 and s[\"max\"] == 8\n\n\n"
+                               "def test_mean_of_empty_list_is_an_error():\n"
+                               "    with pytest.raises(ValueError):\n        mean([])\n"),
+    }
+
+    def plan_project_files(self, project: dict, max_files: int = 16, max_bytes: int = 60000) -> dict:
+        purposes = {"README.md": "What it is and how to run it", ".gitignore": "Keep build files out of git",
+                    "requirements.txt": "Dependencies", "tracker/__init__.py": "Package entry",
+                    "tracker/core.py": "The core logic", "tracker/cli.py": "Command line entry point",
+                    "tests/test_core.py": "Unit tests for the core"}
+        return {"files": [{"path": p, "purpose": purposes[p]} for p in self._FAKE_PROJECT],
+                "run": "python -m tracker.cli 3 5 8", "test": "pytest"}
+
+    def write_project_files(self, project: dict, plan: dict, paths: list, written: list,
+                            fix: dict | None = None) -> dict:
+        title = (project.get("title") or "Project").strip()
+        pitch = (project.get("summary") or "").strip()
+        out = []
+        for p in paths:
+            body = self._FAKE_PROJECT.get(p, f"# {p}\n")
+            if p == "README.md":
+                body = body.replace("{title}", title).replace("{pitch}", pitch)
+            out.append({"path": p, "content": body})
+        return {"files": out}
+
+    def generate_learn_steps(self, project: dict, files: list) -> dict:
+        ch = lambda q, opts, a, why: {"kind": "choice", "q": q, "options": opts, "answer": a, "explain": why}
+        return {"steps": [
+            {"title": "Where it starts", "path": "tracker/cli.py", "start": 1, "end": 16,
+             "explain": "The CLI reads numbers from the command line and prints four stats.",
+             "why": "Keeping input and output here leaves the core free of printing, so it is easy to test.",
+             "check": ch("What does main() pass to summarize()?", ["The command line arguments", "A file path", "Nothing"], 0,
+                         "It passes the arguments after the script name.")},
+            {"title": "The core calculation", "path": "tracker/core.py", "start": 1, "end": 16,
+             "explain": "summarize() converts each value to a float and returns count, min, max and mean.",
+             "why": "Pure functions with no side effects are simple to reason about and to test.",
+             "check": ch("Why does mean() raise on an empty list?", ["To avoid dividing by zero", "To save memory", "Python requires it"], 0,
+                         "len([]) is 0, and dividing by it would crash with a less clear error.")},
+            {"title": "The package surface", "path": "tracker/__init__.py", "start": 1, "end": 4,
+             "explain": "The package exposes summarize() at the top level.",
+             "why": "A small public surface means callers depend on one function, not on file layout.",
+             "check": {"kind": "line", "q": "Which function does the package export?", "accept": ["summarize"],
+                       "explain": "__all__ lists summarize."}},
+            {"title": "How it is tested", "path": "tests/test_core.py", "start": 1, "end": 13,
+             "explain": "Two tests cover the normal case and the empty-list error.",
+             "why": "Testing the edge case proves the error path is deliberate, not an accident.",
+             "check": ch("Which edge case is tested?", ["An empty list", "Negative numbers", "Very large lists"], 0,
+                         "test_mean_of_empty_list_is_an_error covers it.")},
+            {"title": "Running it", "path": "README.md", "start": 1, "end": 30,
+             "explain": "The README says what it solves and the exact commands to run it and its tests.",
+             "why": "A recruiter reads the README first, so the run steps must work as written.",
+             "check": ch("Which command runs the tests?", ["pytest", "python setup.py", "make run"], 0,
+                         "pytest discovers tests/test_core.py.")},
+        ]}
+
+    def generate_project_interview(self, project: dict, files: list, steps: list) -> dict:
+        t = (project.get("title") or "this project").strip()
+        return {"questions": [
+            {"q": f"Why did you split {t} into a pure core and a separate CLI?", "competency": "Design"},
+            {"q": "What did you trade off by converting every value to a float?", "competency": "Trade-offs"},
+            {"q": "What would break first if the input grew to millions of numbers?", "competency": "Scale"},
+            {"q": "How did you test it, and which case would you add next?", "competency": "Testing"},
+            {"q": "If you had another week, what would you change and why?", "competency": "Improvement"},
+        ]}
+
     def upskill_plan(self, role: str, gaps: list[str], profile: dict,
                      required: list[str] | None = None) -> dict:
         # Deterministic stand-in: one concrete step per gap so the upskill flow is testable offline.

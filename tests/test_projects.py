@@ -273,22 +273,25 @@ def test_search_examples_passes_the_language_through(monkeypatch):
 
 
 def test_start_without_github_creates_the_draft_only(client, monkeypatch):
+    # The hand-built start ({build: false}); the AI build is in tests/test_projects_ai_build.py.
     A, c = client
     import ui.github_publish as G
     gh = FakeGitHub()
     monkeypatch.setattr(G, "FETCH", gh)
     idea = {"title": "Job market tracker", "pitch": "Charts rising skills.", "tech": "Python, SQLite",
             "skills": ["Python", "SQL", "Airflow"], "size": "1 week", "repo": "job-market-tracker"}
-    d = c.post("/api/projects/start", json={"idea": idea}).get_json()
+    d = c.post("/api/projects/start", json={"idea": idea, "build": False}).get_json()
     assert d["github"]["connected"] is False and d["github"]["ok"] is False
     p = d["project"]
     assert p["status"] == "draft" and p["repo_url"] == "" and p["repo"] == "job-market-tracker"
     assert p["skills"] == ["Python", "SQL", "Airflow"] and "size" not in p
     assert gh.calls == []   # nothing touched GitHub
+    assert c.post("/api/projects/start", json={"idea": {}, "build": False}).status_code == 400
     assert c.post("/api/projects/start", json={"idea": {}}).status_code == 400
 
 
 def test_start_with_github_private_repo_readme_issues_then_publish_flips(client, monkeypatch):
+    # The hand-built start ({build: false}): a starter README and issues, no code pushed.
     A, c = client
     import ui.github_publish as G
     _connect(A, monkeypatch)
@@ -296,7 +299,7 @@ def test_start_with_github_private_repo_readme_issues_then_publish_flips(client,
     monkeypatch.setattr(G, "FETCH", gh)
     idea = {"title": "Expense insights API", "pitch": "Flags unusual spend.", "tech": "Python, FastAPI",
             "skills": ["Python", "REST APIs", "PostgreSQL"], "size": "Weekend", "repo": "expense-insights-api"}
-    d = c.post("/api/projects/start", json={"idea": idea}).get_json()
+    d = c.post("/api/projects/start", json={"idea": idea, "build": False}).get_json()
     assert d["github"]["ok"] is True and d["github"]["url"] == "https://github.com/octocat/expense-insights-api"
     p = d["project"]
     assert p["repo_private"] is True and p["status"] == "draft"

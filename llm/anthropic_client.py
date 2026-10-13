@@ -68,6 +68,18 @@ def _load_key() -> str | None:
     return None
 
 
+_FILE_BLOCK = re.compile(r"^=== FILE: (.+?) ===[ \t]*\n(.*?)^=== END FILE ===[ \t]*$", re.S | re.M)
+
+
+def parse_file_blocks(raw: str) -> list[dict]:
+    """Files written between ``=== FILE: path ===`` and ``=== END FILE ===`` markers."""
+    out = []
+    for m in _FILE_BLOCK.finditer(raw or ""):
+        content = m.group(2)
+        out.append({"path": m.group(1).strip(), "content": content if content.endswith("\n") else content + "\n"})
+    return out
+
+
 class AnthropicLLM:
     """Production LLM backend. Constructed lazily so imports never require a key."""
 
@@ -121,6 +133,10 @@ class AnthropicLLM:
                 msg = self._client.messages.create(**create)
             else:
                 raise
+        # Token counts for callers that log usage (an AI-built project logs its build's total).
+        u = getattr(msg, "usage", None)
+        self.last_usage = ({"input": int(getattr(u, "input_tokens", 0) or 0),
+                            "output": int(getattr(u, "output_tokens", 0) or 0)} if u else None)
         return "".join(
             block.text for block in msg.content if getattr(block, "type", "") == "text"
         ).strip()
@@ -1262,6 +1278,128 @@ class AnthropicLLM:
             out.append({k: strip_ai_dashes(str(m.get(k, "")).strip())
                         for k in ("title", "build", "learn", "check")})
         return {"milestones": out}
+
+    # -- AI-built projects: plan the files, write them in batches, teach them, defend them -- #
+    # The person's personal data is never sent here: only the idea (title, pitch, tech, skills).
+    @staticmethod
+    def _idea_text(project: dict) -> str:
+        return (f"title: {project.get('title', '')}\n"
+                f"pitch: {project.get('summary', '')}\n"
+                f"tech: {project.get('tech', '')}\n"
+                f"skills it should prove: {', '.join(project.get('skills') or [])}")
+
+    def plan_project_files(self, project: dict, max_files: int = 16, max_bytes: int = 60000) -> dict:
+        """The file tree for a SMALL, working, runnable portfolio project. Paths and a one-line
+        purpose each; the code is written later, in batches. Returns {"files": [{path, purpose}],
+        "run": the command that runs it, "test": the command that runs the tests}."""
+        system = (
+            "You are a senior engineer planning a SMALL but genuinely working portfolio project a "
+            "student will study and then defend in an interview. Plan the file tree only.\n"
+            f"- At most {max_files} files, total code under about {max_bytes // 1000} KB. Small and "
+            "finishable, not a framework.\n"
+            "- Use the idea's own stack. Real, runnable code with only common, well-known "
+            "dependencies. No paid APIs, no API keys, no network calls needed to run the tests "
+            "(use local sample data or fakes).\n"
+            "- MUST include: README.md, .gitignore, a dependency file for the stack (e.g. "
+            "requirements.txt or package.json), and 2 to 4 focused unit tests in a test file.\n"
+            "- Relative POSIX paths only, no leading slash, no '..', at most 4 folders deep.\n"
+            "Return ONLY JSON: {\"files\": [{\"path\": \"...\", \"purpose\": \"one line\"}], "
+            "\"run\": \"command to run it\", \"test\": \"command to run the tests\"}."
+        )
+        raw = self._complete(system, "PROJECT IDEA\n" + self._idea_text(project),
+                             max_tokens=2000, effort="medium")
+        data = self._parse_json_object(raw) or {}
+        files = []
+        for f in data.get("files") or []:
+            if isinstance(f, dict) and str(f.get("path") or "").strip():
+                files.append({"path": str(f["path"]).strip(), "purpose": str(f.get("purpose") or "").strip()[:200]})
+        return {"files": files[:max_files], "run": str(data.get("run") or "").strip()[:200],
+                "test": str(data.get("test") or "").strip()[:200]}
+
+    def write_project_files(self, project: dict, plan: dict, paths: list, written: list,
+                            fix: dict | None = None) -> dict:
+        """Write the content of ``paths`` (a batch of the plan), consistent with the files already
+        ``written`` (their paths and first lines are passed for context). ``fix`` maps a path to
+        the validation problem its last version had. Files come back between plain markers, not
+        JSON, so code needs no escaping. Returns {"files": [{path, content}]}."""
+        tree = "\n".join(f"- {f['path']}: {f.get('purpose', '')}" for f in plan.get("files") or [])
+        ctx = "\n\n".join(f"### {w['path']}\n{w['content'][:1500]}" for w in (written or [])[-8:])
+        fixes = "".join(f"\n- {p}: {why}" for p, why in (fix or {}).items())
+        system = (
+            "You write the files of a SMALL, working portfolio project, exactly as planned. Real, "
+            "correct, idiomatic code a student can read and defend. Rules:\n"
+            "- Never include API keys, tokens, passwords, or personal data. Read any config from "
+            "environment variables with a safe default.\n"
+            "- No absolute file paths. No network calls at import time; network code, if any, only "
+            "runs inside functions, and tests never need the network.\n"
+            "- Short, useful comments that explain WHY, not what.\n"
+            "- README.md (when asked) has these sections in order: Problem, Approach, Tech stack, "
+            "How to run, Screenshots (a placeholder line), What I learned (a prompt for the "
+            "student to fill in). Do not put anyone's name in it.\n"
+            "Output each requested file as:\n=== FILE: <path> ===\n<content>\n=== END FILE ===\n"
+            "Output nothing else."
+        )
+        user = (f"PROJECT IDEA\n{self._idea_text(project)}\n\nRUN: {plan.get('run', '')}\n"
+                f"TEST: {plan.get('test', '')}\n\nFILE TREE\n{tree}\n\n"
+                + (f"FILES ALREADY WRITTEN (for consistency)\n{ctx}\n\n" if ctx else "")
+                + (f"FIX THESE PROBLEMS FROM THE LAST VERSION:{fixes}\n\n" if fixes else "")
+                + "WRITE THESE FILES NOW:\n" + "\n".join(f"- {p}" for p in paths))
+        raw = self._complete(system, user, max_tokens=8000, effort="medium")
+        return {"files": parse_file_blocks(raw)}
+
+    def generate_learn_steps(self, project: dict, files: list) -> dict:
+        """A 5 to 8 step walkthrough of the ACTUAL files: each step points at a file and a line
+        range (the app cuts the real excerpt itself), explains what it does and why it was built
+        that way, and asks one quick check question."""
+        listing = "\n\n".join(
+            f"### {f['path']}\n" + "\n".join(f"{i + 1:>3}| {ln}" for i, ln in enumerate(f["content"].splitlines()[:220]))
+            for f in files if f.get("path") != ".gitignore")[:45000]
+        system = (
+            "You are a patient senior engineer teaching a student the project below, which an AI "
+            "pair-programmer wrote for them. They must understand it well enough to defend it in "
+            "an interview. Write a 5 to 8 step walkthrough in the order a reader should learn it "
+            "(entry point, core logic, data, tests). For EACH step:\n"
+            "- title: short.\n- path: one file from the listing.\n- start, end: the line range "
+            "(numbers in the listing) of the excerpt to study, at most 40 lines.\n"
+            "- explain: 2 to 4 plain-English sentences on what this code does.\n"
+            "- why: 1 to 3 sentences on why it was built this way and the alternative.\n"
+            "- check: one quick question with instant feedback. Prefer multiple choice: "
+            "{\"kind\": \"choice\", \"q\": \"...\", \"options\": [3 or 4 short options], \"answer\": "
+            "index of the right option, \"explain\": \"why that is right\"}. Or one line: "
+            "{\"kind\": \"line\", \"q\": \"...\", \"accept\": [1 to 3 short keywords any right answer "
+            "contains], \"explain\": \"...\"}.\nPlain text, no em or en dashes. Return ONLY JSON "
+            "{\"steps\": [...]}."
+        )
+        raw = self._complete(system, f"PROJECT\n{self._idea_text(project)}\n\nFILES\n{listing}",
+                             max_tokens=5000, effort="medium")
+        data = self._parse_json_object(raw) or {}
+        return {"steps": [s for s in (data.get("steps") or []) if isinstance(s, dict)][:8]}
+
+    def generate_project_interview(self, project: dict, files: list, steps: list) -> dict:
+        """Five interview questions on THIS project, from its files and the walkthrough: why this
+        design, trade-offs, what breaks at scale, how it is tested, what you would change."""
+        listing = "\n\n".join(f"### {f['path']}\n{f['content'][:2500]}" for f in files
+                              if f.get("path") != ".gitignore")[:30000]
+        walk = "\n".join(f"- {s.get('title', '')}: {s.get('why', '')}" for s in steps or [])
+        system = (
+            "You are a technical interviewer. The candidate built the project below and will "
+            "defend it in a one-way recorded interview. Write EXACTLY 5 spoken-style questions, "
+            "one per angle, in this order, each grounded in specific files or decisions of THIS "
+            "project: 1 why this design, 2 trade-offs, 3 what breaks at scale, 4 how you tested "
+            "it, 5 what you would change. Plain text, no em or en dashes. Return ONLY JSON "
+            "{\"questions\": [{\"q\": \"...\", \"competency\": \"Design|Trade-offs|Scale|Testing|"
+            "Improvement\"}]}."
+        )
+        raw = self._complete(system, f"PROJECT\n{self._idea_text(project)}\n\nWALKTHROUGH\n{walk}"
+                                     f"\n\nFILES\n{listing}", max_tokens=1200, effort="medium")
+        data = self._parse_json_object(raw) or {}
+        from tailoring.conform import strip_ai_dashes
+        out = []
+        for q in data.get("questions") or []:
+            if isinstance(q, dict) and str(q.get("q") or "").strip():
+                out.append({"q": strip_ai_dashes(str(q["q"]).strip()),
+                            "competency": str(q.get("competency") or "").strip()[:40]})
+        return {"questions": out[:5]}
 
     def upskill_plan(self, role: str, gaps: list[str], profile: dict,
                      required: list[str] | None = None) -> dict:
