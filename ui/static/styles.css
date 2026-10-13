@@ -3382,51 +3382,53 @@ body.cv-dragging * { cursor: grabbing !important; }
 .proj-idea:not(.is-skel):hover, .proj-idea:not(.is-skel):focus-within {
   border-color: color-mix(in srgb, var(--hue) 26%, var(--border));
   transform: translateY(-2px);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 3.5%, transparent), 0 18px 40px -26px color-mix(in srgb, var(--c2) 60%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 3.5%, transparent), 0 18px 40px -26px color-mix(in srgb, var(--c2) 22%, transparent);
 }
 
-/* The cover band: three soft glows in the category's hues, a fine dot texture, one large faint
-   glyph, the category label, and the size (plus Best match on the hero) as glass pills. */
+/* The cover band (2026-10-13, toned down to about a third: the owner found the painted bands too
+   loud for the near-black app). Now a faint tint OVER the card's own surface, so the band names the
+   category at a glance but the idea title is what the eye lands on. Three soft glows in the
+   category's hues, a barely-there dot texture, one faint glyph, the category label in the hue, and
+   the size (plus Best match on the hero) as neutral pills. Stops: c1 72->20%, c2 78->22%, c3 58->14%,
+   base wash c2 42%/c1 30% of #0b0b10 -> c2 10%/c1 7% over the surface. */
 .proj-idea-cover {
-  position: relative; height: 76px; flex: none; overflow: hidden; isolation: isolate;
+  position: relative; height: 60px; flex: none; overflow: hidden; isolation: isolate;
   background:
-    linear-gradient(180deg, transparent 45%, rgba(8, 8, 12, 0.22)),
-    radial-gradient(110% 150% at var(--mx, 10%) 0%, color-mix(in srgb, var(--c1) 72%, transparent) 0%, transparent 60%),
-    radial-gradient(90% 170% at 100% 100%, color-mix(in srgb, var(--c2) 78%, transparent) 0%, transparent 62%),
-    radial-gradient(55% 120% at var(--nx, 62%) var(--my, 10%), color-mix(in srgb, var(--c3) 58%, transparent) 0%, transparent 62%),
-    linear-gradient(135deg, color-mix(in srgb, var(--c2) 42%, #0b0b10), color-mix(in srgb, var(--c1) 30%, #0b0b10));
+    radial-gradient(110% 150% at var(--mx, 10%) 0%, color-mix(in srgb, var(--c1) 20%, transparent) 0%, transparent 60%),
+    radial-gradient(90% 170% at 100% 100%, color-mix(in srgb, var(--c2) 22%, transparent) 0%, transparent 62%),
+    radial-gradient(55% 120% at var(--nx, 62%) var(--my, 10%), color-mix(in srgb, var(--c3) 14%, transparent) 0%, transparent 62%),
+    linear-gradient(135deg, color-mix(in srgb, var(--c2) 10%, transparent), color-mix(in srgb, var(--c1) 7%, transparent));
 }
 .proj-idea-cover::before {
   content: ""; position: absolute; inset: 0; z-index: -1;
   background-image: radial-gradient(rgba(255, 255, 255, 0.22) 0.7px, transparent 1.1px);
   background-size: 9px 9px;
   -webkit-mask-image: linear-gradient(100deg, transparent 15%, #000 85%); mask-image: linear-gradient(100deg, transparent 15%, #000 85%);
-  opacity: 0.55;
+  opacity: 0.18;
 }
 .proj-idea-cover::after {
   content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.26), transparent);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--hue) 22%, transparent), transparent);
 }
 .proj-idea-glyph {
-  position: absolute; right: 18px; top: -18px; width: 108px; height: 108px; z-index: -1;
-  color: #fff; opacity: 0.2; stroke-width: 1.1; transform: rotate(-8deg);
+  position: absolute; right: 96px; top: -24px; width: 108px; height: 108px; z-index: -1;
+  color: var(--hue); opacity: 0.1; stroke-width: 1.1; transform: rotate(-8deg);
   transition: transform 420ms var(--ease), opacity 420ms var(--ease);
 }
-.proj-idea:hover .proj-idea-glyph { transform: rotate(-4deg) scale(1.04); opacity: 0.25; }
+.proj-idea:hover .proj-idea-glyph { transform: rotate(-4deg) scale(1.04); opacity: 0.14; }
 .proj-idea-cat {
-  position: absolute; left: 18px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px;
+  position: absolute; left: 18px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; gap: 6px;
   font-size: 10.5px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap;
-  color: rgba(255, 255, 255, 0.92); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.25);
+  color: color-mix(in srgb, var(--hue) 62%, var(--muted));
 }
 .proj-idea-cat svg { width: 13px; height: 13px; stroke-width: 1.7; }
-.proj-idea-tags { position: absolute; left: 16px; top: 12px; display: flex; gap: 6px; }
+.proj-idea-tags { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); display: flex; gap: 6px; }
 .proj-idea-size, .proj-hero-tag {
   display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px;
-  font-size: 11px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap;
-  background: rgba(10, 10, 14, 0.28); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: var(--r-pill);
-  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  font-size: 11px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap;
+  background: color-mix(in srgb, var(--surface) 70%, transparent); border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); border-radius: var(--r-pill);
 }
-.proj-hero-tag { background: rgba(10, 10, 14, 0.42); border-color: rgba(255, 255, 255, 0.26); }
+.proj-hero-tag { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 14%, transparent); }
 .proj-hero-tag svg { color: var(--gold); }
 
 /* The body stays neutral. */
@@ -3507,19 +3509,19 @@ body.cv-dragging * { cursor: grabbing !important; }
 
 /* The hero: a taller band, the content and the fit ring side by side, a glow in the band's hue. */
 .proj-idea.is-hero {
-  border-color: color-mix(in srgb, var(--c2) 30%, var(--border));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent), 0 24px 60px -34px color-mix(in srgb, var(--c2) 70%, transparent);
+  border-color: color-mix(in srgb, var(--c2) 14%, var(--border));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent), 0 24px 60px -34px color-mix(in srgb, var(--c2) 26%, transparent);
 }
-.proj-idea.is-hero:hover, .proj-idea.is-hero:focus-within { transform: none; border-color: color-mix(in srgb, var(--c2) 48%, var(--border)); }
-.proj-idea.is-hero .proj-idea-cover { height: 124px; }
-.proj-idea.is-hero .proj-idea-glyph { width: 168px; height: 168px; right: 248px; top: -26px; opacity: 0.18; }
-.proj-idea.is-hero .proj-idea-cat { left: 28px; bottom: 16px; font-size: 11px; }
-.proj-idea.is-hero .proj-idea-tags { left: 26px; top: 16px; }
+.proj-idea.is-hero:hover, .proj-idea.is-hero:focus-within { transform: none; border-color: color-mix(in srgb, var(--c2) 24%, var(--border)); }
+.proj-idea.is-hero .proj-idea-cover { height: 84px; }
+.proj-idea.is-hero .proj-idea-glyph { width: 150px; height: 150px; right: 248px; top: -32px; opacity: 0.09; }
+.proj-idea.is-hero .proj-idea-cat { left: 28px; font-size: 11px; }
+.proj-idea.is-hero .proj-idea-tags { right: 28px; }
 .proj-idea.is-hero .proj-idea-body {
   display: grid; grid-template-columns: minmax(0, 1fr) 200px; column-gap: 32px; padding: 22px 28px 16px;
   background:
-    radial-gradient(560px 220px at 12% 0%, color-mix(in srgb, var(--c1) 9%, transparent), transparent 70%),
-    radial-gradient(360px 240px at 100% 30%, color-mix(in srgb, var(--c2) 10%, transparent), transparent 70%);
+    radial-gradient(560px 220px at 12% 0%, color-mix(in srgb, var(--c1) 3.5%, transparent), transparent 70%),
+    radial-gradient(360px 240px at 100% 30%, color-mix(in srgb, var(--c2) 4%, transparent), transparent 70%);
 }
 .proj-hero-main { min-width: 0; }
 .proj-idea.is-hero .proj-idea-t { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; white-space: normal; }
@@ -3542,11 +3544,11 @@ body.cv-dragging * { cursor: grabbing !important; }
 .proj-hero-fit { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; }
 .proj-hero-fit::before {
   content: ""; position: absolute; z-index: -1; width: 180px; height: 180px; top: 50%; left: 50%; transform: translate(-50%, -58%); border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--c1) 16%, transparent), color-mix(in srgb, var(--c2) 6%, transparent) 55%, transparent 72%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--c1) 7%, transparent), color-mix(in srgb, var(--c2) 2.5%, transparent) 55%, transparent 72%);
 }
 .proj-hero-fit-t { margin: 0; font-size: 13px; font-weight: 550; color: var(--ink-2); white-space: nowrap; }
 .proj-ring { position: relative; width: 128px; height: 128px; }
-.proj-ring svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 6px 16px color-mix(in srgb, var(--c2) 30%, transparent)); }
+.proj-ring svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 6px 16px color-mix(in srgb, var(--c2) 12%, transparent)); }
 .proj-ring circle { fill: none; stroke-width: 8; }
 .proj-ring-track { stroke: color-mix(in srgb, var(--ink) 8%, transparent); }
 .proj-ring-arc { stroke-linecap: round; animation: proj-ring-in 900ms var(--ease) both 120ms; }
@@ -3556,27 +3558,30 @@ body.cv-dragging * { cursor: grabbing !important; }
 .proj-ring-n b { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
 .proj-ring-n small { font-size: 15px; font-weight: 550; color: var(--faint); }
 
-/* Light mode: the band keeps its colour on a pale base; glyph and pills adjust. */
+/* Light mode: the same restraint, a pale tint of the hue over the white surface (stops c1 85->16%,
+   c2 100->18%, c3 70->12%, base c2 70%/c1 60% of white -> c2 8%/c1 5% over the surface; a tint on white
+   reads stronger than the same alpha on near-black, so light sits lower), the glyph and
+   label in the deeper hue, neutral pills. */
 :root[data-theme="light"] .proj-idea-cover {
   background:
-    linear-gradient(180deg, transparent 50%, rgba(8, 8, 12, 0.1)),
-    radial-gradient(110% 150% at var(--mx, 10%) 0%, color-mix(in srgb, var(--c1) 85%, transparent) 0%, transparent 62%),
-    radial-gradient(90% 170% at 100% 100%, var(--c2) 0%, transparent 64%),
-    radial-gradient(55% 120% at var(--nx, 62%) var(--my, 10%), color-mix(in srgb, var(--c3) 70%, transparent) 0%, transparent 62%),
-    linear-gradient(135deg, color-mix(in srgb, var(--c2) 70%, #fff), color-mix(in srgb, var(--c1) 60%, #fff));
+    radial-gradient(110% 150% at var(--mx, 10%) 0%, color-mix(in srgb, var(--c1) 16%, transparent) 0%, transparent 62%),
+    radial-gradient(90% 170% at 100% 100%, color-mix(in srgb, var(--c2) 18%, transparent) 0%, transparent 64%),
+    radial-gradient(55% 120% at var(--nx, 62%) var(--my, 10%), color-mix(in srgb, var(--c3) 12%, transparent) 0%, transparent 62%),
+    linear-gradient(135deg, color-mix(in srgb, var(--c2) 8%, transparent), color-mix(in srgb, var(--c1) 5%, transparent));
 }
-:root[data-theme="light"] .proj-idea-cover::before { background-image: radial-gradient(rgba(255, 255, 255, 0.7) 0.7px, transparent 1.1px); }
-:root[data-theme="light"] .proj-idea-glyph { opacity: 0.4; }
-:root[data-theme="light"] .proj-idea-size, :root[data-theme="light"] .proj-hero-tag { background: rgba(255, 255, 255, 0.4); border-color: rgba(255, 255, 255, 0.65); color: #18181b; }
+:root[data-theme="light"] .proj-idea-cover::before { background-image: radial-gradient(color-mix(in srgb, var(--c2) 60%, transparent) 0.7px, transparent 1.1px); opacity: 0.16; }
+:root[data-theme="light"] .proj-idea-glyph { color: var(--c2); opacity: 0.12; }
+:root[data-theme="light"] .proj-idea.is-hero .proj-idea-glyph { opacity: 0.1; }
+:root[data-theme="light"] .proj-idea-size, :root[data-theme="light"] .proj-hero-tag { background: color-mix(in srgb, var(--surface) 75%, transparent); }
 :root[data-theme="light"] .proj-hero-tag svg { color: #a16207; }
-:root[data-theme="light"] .proj-idea-cat { color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 10px rgba(0, 0, 0, 0.18); }
+:root[data-theme="light"] .proj-idea-cat { color: color-mix(in srgb, var(--c2) 70%, #3f3f46); }
 :root[data-theme="light"] .proj-idea.is-hero .proj-ex { background: color-mix(in srgb, var(--surface) 85%, transparent); }
 
 /* Loading: placeholders in the cards' shape, cover band included, the first one as the hero. */
 .proj-idea.is-skel { min-height: 250px; }
 .proj-idea.is-skel.is-hero { min-height: 300px; }
-.proj-idea.is-skel b { display: block; flex: none; height: 76px; margin-bottom: 18px; background: color-mix(in srgb, var(--ink) 5%, transparent); animation: proj-pulse 1.4s ease-in-out infinite; }
-.proj-idea.is-skel.is-hero b { height: 124px; }
+.proj-idea.is-skel b { display: block; flex: none; height: 60px; margin-bottom: 18px; background: color-mix(in srgb, var(--ink) 5%, transparent); animation: proj-pulse 1.4s ease-in-out infinite; }
+.proj-idea.is-skel.is-hero b { height: 84px; }
 .proj-idea.is-skel i { display: block; height: 10px; margin: 0 20px 10px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 6%, transparent); animation: proj-pulse 1.4s ease-in-out infinite; }
 .proj-idea.is-skel i:nth-child(2) { width: 46%; height: 13px; }
 .proj-idea.is-skel i:nth-child(3) { width: 72%; }
@@ -3593,7 +3598,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 @media (max-width: 960px) {
   .proj-ideas-grid > .proj-idea:not(.is-hero) { grid-column: span 3; }
   .proj-ideas-grid > .proj-idea:not(.is-hero):last-of-type:nth-of-type(even) { grid-column: 1 / -1; }
-  .proj-idea.is-hero .proj-idea-glyph { right: 24px; }
+  .proj-idea.is-hero .proj-idea-glyph { right: 180px; }
 }
 @media (max-width: 760px) {
   .proj-ideas-hd { flex-wrap: wrap; }

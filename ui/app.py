@@ -5221,6 +5221,40 @@ def _add_examples(ideas: list[dict]) -> bool:
     return any(found)
 
 
+# Ideas cached before example repos carried a ``language`` show a hollow ring on every repo. Such
+# a set is stale: refetch the examples for the ideas that need it and keep the rest. GitHub allows
+# 10 unauthenticated searches a minute and one idea can cost two (the short-phrase retry), so
+# without a token a pass heals at most 4 ideas, and passes are at least a minute apart; the rest
+# heal on a later open. A search that comes back empty keeps the old examples rather than none.
+_HEAL_GAP = 60
+_HEAL_MAX_ANON = 4
+
+
+def _stale_examples(idea: dict) -> bool:
+    return any(isinstance(e, dict) and "language" not in e for e in idea.get("examples") or [])
+
+
+def _heal_examples(key: str, hit: dict) -> list[dict]:
+    ideas = hit.get("ideas") or []
+    stale = [i for i in ideas if isinstance(i, dict) and _stale_examples(i)]
+    if not stale or time.time() - float(hit.get("healed_at") or 0) < _HEAL_GAP:
+        return ideas
+    from concurrent.futures import ThreadPoolExecutor
+    from ui import github_publish as G
+    token = _cred("GITHUB_TOKEN")
+    batch = stale if token else stale[:_HEAL_MAX_ANON]
+    try:
+        with ThreadPoolExecutor(max_workers=min(6, len(batch))) as ex:
+            found = list(ex.map(lambda i: G.search_examples(i.get("search") or i.get("title") or "", token), batch))
+    except Exception:
+        found = [[] for _ in batch]
+    for idea, ex_list in zip(batch, found):
+        if ex_list:
+            idea["examples"] = ex_list
+    _ideas_cache_put(key, {**hit, "ideas": ideas, "healed_at": time.time()})
+    return ideas
+
+
 @app.post("/api/projects/ideas")
 @_guard
 def projects_ideas():
@@ -5234,7 +5268,7 @@ def projects_ideas():
     if not b.get("refresh"):
         hit = _ideas_cache().get(key)
         if hit and hit.get("ideas"):
-            return jsonify({"role": role, "source": source, "ideas": hit["ideas"], "cached": True,
+            return jsonify({"role": role, "source": source, "ideas": _heal_examples(key, hit), "cached": True,
                             "github": gh})
     saved = _memory().load("default") or {}
     profile = saved.get("profile") or saved.get("essentials") or {}

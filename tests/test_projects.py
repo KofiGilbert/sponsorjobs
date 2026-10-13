@@ -192,6 +192,48 @@ def test_ideas_one_click_from_last_tailored_job(client, monkeypatch):
     assert again["cached"] is True and again["ideas"] == d["ideas"] and len(gh.calls) == n
 
 
+def test_ideas_cache_heals_examples_without_language(client, monkeypatch):
+    """Ideas cached before ``language`` was passed through drew a hollow ring on every repo. A hit
+    with such examples is stale: the examples are refetched (at most 4 ideas a pass without a
+    token, passes a minute apart, inside GitHub's 10 searches a minute), the rest are reused."""
+    A, c = client
+    import ui.github_publish as G
+    gh = FakeGitHub(search=SEARCH_FIXTURE)
+    monkeypatch.setattr(G, "FETCH", gh)
+    old_ex = [{"full_name": "old/repo", "url": "https://github.com/old/repo", "stars": 5, "description": ""}]
+    fresh_ex = [{"full_name": "keep/me", "url": "https://github.com/keep/me", "stars": 9, "description": "",
+                 "language": "Go"}]
+    ideas = [{"title": f"Idea {n}", "pitch": "p", "skills": ["Python"], "gaps": [], "size": "Weekend",
+              "repo": f"idea-{n}", "search": f"idea {n}", "examples": [dict(e) for e in old_ex]} for n in range(6)]
+    ideas.append({"title": "Fine", "pitch": "p", "skills": ["Go"], "gaps": [], "size": "Weekend",
+                  "repo": "fine", "search": "fine", "examples": fresh_ex})
+    ideas.append({"title": "None found", "pitch": "p", "skills": ["Go"], "gaps": [], "size": "Weekend",
+                  "repo": "none", "search": "none", "examples": []})
+    A._ideas_cache_put("data engineer", {"role": "Data Engineer", "ideas": ideas, "at": 1.0})
+
+    d = c.post("/api/projects/ideas", json={"role": "Data Engineer"}).get_json()
+    assert d["cached"] is True
+    searches = gh.of("GET", "/search/repositories")
+    assert 1 <= len(searches) <= 8            # 4 ideas at most, each at most 2 searches
+    healed = [i for i in d["ideas"] if i["examples"] and i["examples"][0]["full_name"] == "real/one"]
+    assert len(healed) == 4 and all(i["examples"][0]["language"] == "Python" for i in healed)
+    assert next(i for i in d["ideas"] if i["title"] == "Fine")["examples"] == fresh_ex   # reused
+    assert next(i for i in d["ideas"] if i["title"] == "None found")["examples"] == []
+    # the healed set is saved, so reopening does not search again for those ideas
+    assert sum(1 for i in A._ideas_cache()["data engineer"]["ideas"] if A._stale_examples(i)) == 2
+
+    # within the minute, a reopen spends no searches; after it, the last two heal
+    n = len(gh.calls)
+    c.post("/api/projects/ideas", json={"role": "Data Engineer"})
+    assert len(gh.calls) == n
+    monkeypatch.setattr(A, "_HEAL_GAP", 0)
+    d = c.post("/api/projects/ideas", json={"role": "Data Engineer"}).get_json()
+    assert not any(A._stale_examples(i) for i in d["ideas"])
+    n = len(gh.calls)
+    c.post("/api/projects/ideas", json={"role": "Data Engineer"})
+    assert len(gh.calls) == n                 # nothing stale, nothing fetched
+
+
 def test_ideas_fall_back_to_profile_then_typed_role(client, monkeypatch):
     A, c = client
     import ui.github_publish as G
