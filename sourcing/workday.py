@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import zlib
 from datetime import date, timedelta
 from typing import NamedTuple
 from urllib.parse import urlsplit
@@ -490,6 +491,18 @@ class WorkdayHit(NamedTuple):
         return board_id_for(self.tenant, self.host, self.site)
 
 
+def _spread(instances: tuple, slug: str) -> tuple:
+    """The instances in a slug-dependent rotation. Every employer's probe asks every instance
+    for every slug, so when all threads walk them in the same order they convoy on one
+    instance's lane at a time (the workday-only run of 2026-10-12 managed 5 employers a minute);
+    a rotation keyed on the slug spreads them across the lanes. Deterministic, so a rerun asks
+    in the same order."""
+    if not instances:
+        return instances
+    k = zlib.crc32(slug.encode()) % len(instances)
+    return instances[k:] + instances[:k]
+
+
 def discovery_backoff(seconds: float) -> None:
     """The default back-off sleep for discovery's detail reads: Retry-After (or the exponential
     gap) honoured for real, capped at DISCOVERY_MAX_BACKOFF."""
@@ -528,7 +541,8 @@ def discover_workday(display_name: str, fetch=fetch_json, reject=None, sleep=Non
     f = _bounded(fetch, PROBE_TIMEOUT)
     quiet = sleep or (lambda: None)
     for rank, (slug, need) in enumerate(cands):
-        insts = tuple(instances) + (tuple(extra_instances) if rank < MAX_EXTRA_SLUGS else ())
+        insts = _spread(tuple(instances), slug) + (
+            _spread(tuple(extra_instances), slug) if rank < MAX_EXTRA_SLUGS else ())
         for n in insts:
             host = f"{slug}.wd{n}.{WD_DOMAIN}"
             try:

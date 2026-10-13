@@ -615,9 +615,14 @@ def test_discover_finds_the_tenant_confirms_identity_and_counts_jobs():
                                                  "Internal": {"org": "x", "postings": []}}}})
     hit = workday.discover_workday("Nvidia Corporation", fetch=fake)
     assert hit == ("nvidia", HOST, SITE, 2000, "2100 NVIDIA USA") and hit.board_id == BOARD
-    # Instances are probed in order; after the hit nothing else is asked.
+    # Instances are probed in the slug's rotation; after the hit nothing else is asked.
     robots = [u for u in fake.urls if u.endswith("/robots.txt")]
-    assert robots[-1] == f"https://{HOST}/robots.txt" and len(robots) == workday.WD_INSTANCES.index(5) + 1
+    order = workday._spread(workday.WD_INSTANCES, "nvidia")
+    assert robots[-1] == f"https://{HOST}/robots.txt" and len(robots) == order.index(5) + 1
+    assert sorted(order) == sorted(workday.WD_INSTANCES)
+    # Different slugs start on different instances, so parallel probes do not convoy on one lane.
+    assert len({workday._spread(workday.WD_INSTANCES, s)[0] for s in ("nvidia", "cisco", "intel",
+                                                                      "visa", "adobe", "target")}) > 1
     hit = workday.discover_workday("Cisco Systems Inc", fetch=fake)
     assert hit and hit.board_id == "cisco.wd5/Cisco_Careers" and hit.jobs == 1
     # The whole probe stays on *.myworkdayjobs.com and never guesses a site on the cxs path blind.
