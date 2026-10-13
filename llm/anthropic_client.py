@@ -1006,6 +1006,59 @@ class AnthropicLLM:
             return {"headline": "", "about": ""}
         return {"headline": str(data.get("headline") or ""), "about": str(data.get("about") or "")}
 
+    def classify_application_mail(self, subject: str, body: str, sender: str, company: str) -> dict:
+        """Stage triage for ONE message from a TRACKED employer the rules could not place
+        (inbox/suggestions.py). Cheap and strict: "other" unless the text plainly supports a kind."""
+        system = (
+            "You read one email a job applicant received from an employer they applied to, and say "
+            "what it is. Answer with ONLY JSON: {\"kind\": ..., \"phrase\": ..., \"reason\": ...}.\n"
+            "kind is exactly one of: interview_invite (an interview, a call, a screen, scheduling, "
+            "next steps), rejection (not moving forward), offer (a job offer or offer letter), "
+            "assessment (a coding test, take-home or online assessment), application_received "
+            "(a confirmation that the application arrived), recruiter_outreach (a recruiter "
+            "reaching out about a role), other.\n"
+            "phrase: the exact words from the message that decided it (under 12 words). "
+            "reason: one short plain sentence, no dashes. Say other whenever the text does not "
+            "plainly support a kind; never guess."
+        )
+        user = (f"EMPLOYER: {company}\nFROM: {sender}\nSUBJECT: {subject}\n\nMESSAGE:\n"
+                f"{(body or '')[:3000]}")
+        raw = self._complete(system, user, max_tokens=200, effort="low")
+        data = self._parse_json_object(raw) or {}
+        return {"kind": str(data.get("kind") or "other"), "phrase": str(data.get("phrase") or ""),
+                "reason": str(data.get("reason") or "")}
+
+    def draft_stage_email(self, kind: str, job: dict, profile: dict, contact: dict,
+                          stage: str) -> dict:
+        """One short per-stage email for a tracked job (inbox/drafts.py). The person edits and
+        sends it from their own mail; nothing is sent here."""
+        from inbox.drafts import DRAFT_LABELS
+        purpose = DRAFT_LABELS.get(kind, kind)
+        system = (
+            "You draft one short, plain email for a job applicant to send themselves, about ONE "
+            "job they are tracking. Write it for this purpose: " + purpose + ".\n"
+            "STRICT RULES:\n"
+            "- Use ONLY facts in the APPLICANT PROFILE, the JOB and the CONTACT given. Never invent "
+            "dates, times, salary figures, names, employers, metrics, or anything the inputs do "
+            "not state. Keep availability flexible and qualitative.\n"
+            "- 3 to 6 sentences, warm, first person, no filler, no cliches. Plain text, no "
+            "markdown, no bullet points, no em or en dashes.\n"
+            "- Greet the contact by first name when one is given, else a neutral greeting. Sign "
+            "off with the applicant's name from the profile.\n"
+            "- For a negotiation, ask to discuss, do not state a number unless the profile "
+            "gives a desired salary. For a decline, be gracious and brief.\n"
+            "Return ONLY JSON: {\"subject\": \"...\", \"body\": \"...\"}."
+        )
+        user = (f"JOB (JSON):\n{json.dumps({k: (job or {}).get(k) for k in ('company', 'title', 'location', 'stage', 'applied_at', 'notes')})}\n"
+                f"STAGE: {stage}\n"
+                f"CONTACT (JSON):\n{json.dumps(contact or {})}\n\n"
+                f"APPLICANT PROFILE (JSON):\n{json.dumps(profile)[:5000]}")
+        raw = self._complete(system, user, max_tokens=700, effort="medium")
+        data = self._parse_json_object(raw) or {}
+        from tailoring.conform import strip_ai_dashes
+        return {"subject": strip_ai_dashes(str(data.get("subject") or "")),
+                "body": strip_ai_dashes(str(data.get("body") or raw or ""))}
+
     # -- Project builder: defend-your-work test (the honesty gate) --------- #
     def generate_project_test(self, project: dict) -> dict:
         """A short DEFENSE test that reveals whether the person GENUINELY understands a

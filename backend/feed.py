@@ -37,7 +37,11 @@ FEED_SEEN_DAYS = int(os.environ.get("JOBS_SEEN_DAYS", "7"))       # ...unless th
 # How many rows the cached full list HOLDS (for server-side filtering + pagination). The response
 # only ever sends ONE page, so this can be large without bloating any single payload -- it just
 # sets how deep the browsable board goes and the max "N jobs" total we can report.
-FEED_LIMIT = int(os.environ.get("JOBS_FEED_LIMIT", "50000"))
+FEED_LIMIT = int(os.environ.get("JOBS_FEED_LIMIT", "50000"))          # rows PUBLISHED
+# Rows READ from the database before the US / ad-stance / relevance filters run. This must be far
+# above FEED_LIMIT: the filters drop about half of what they see, and the database passed 74,000
+# rows on 2026-10-12, so a 50,000-row read was cutting live jobs before any filter saw them.
+FEED_SCAN_LIMIT = int(os.environ.get("JOBS_FEED_SCAN_LIMIT", "400000"))
 FUNNEL: dict = {}
 FUNNEL_SAMPLES: dict = {}
 FEED_TTL = int(os.environ.get("JOBS_FEED_TTL", "120"))            # seconds a built feed is reused
@@ -109,7 +113,7 @@ def feed_jobs(level: str | None = None) -> list[dict]:
         # RECENT-sorted, fresh-only, and bounded -- so page 1 is never a 5-month-old posting
         # and the endpoint isn't tagging tens of thousands of rows on every hit.
         jobs = _sponsors(spon_db).tag_jobs(
-            w.list_jobs(order="recent", since_days=FEED_FRESH_DAYS, seen_days=FEED_SEEN_DAYS, limit=FEED_LIMIT))
+            w.list_jobs(order="recent", since_days=FEED_FRESH_DAYS, seen_days=FEED_SEEN_DAYS, limit=FEED_SCAN_LIMIT))
         try:   # diagnostics only: how old are the rows the freshness window drops, and are they still live?
             FUNNEL_SAMPLES["too_old"] = [dict(r) for r in w._conn.execute(
                 "SELECT company, title, location, posted_at, last_seen FROM sourced_job WHERE posted_at IS NOT NULL "
