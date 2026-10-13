@@ -578,5 +578,20 @@
   "emp.entries": "Einträge",
   "emp.talk": "Drei Punkte zum Ansprechen",
   "emp.atMostLevel": "Höchstens Stufe",
-  "emp.atMost": "höchstens etwa"
+  "emp.atMost": "höchstens etwa",
+  "li.title": "LinkedIn-Check",
+  "li.rescore": "Neu bewerten",
+  "li.rescoring": "Wird bewertet...",
+  "li.empty": "Öffne dein eigenes LinkedIn-Profil in Chrome mit installierter SponsorJobs-Erweiterung, dann erscheint dein Ergebnis hier.",
+  "li.headline": "Entwurf für den Slogan",
+  "li.about": "Entwurf für Info",
+  "li.copy": "Kopieren",
+  "li.copied": "Kopiert",
+  "li.copyFailed": "Markieren und kopieren",
+  "li.target": "Bewertet für: {role}",
+  "li.scored": "Bewertet {when}",
+  "li.weight": "Pkt.",
+  "li.fix": "Lösung:",
+  "li.noDrafts": "Klicke auf Neu bewerten, um Slogan und Info aus deinem gespeicherten Profil zu entwerfen.",
+  "li.flags": "Prüfe diese Zahlen vor dem Einfügen, sie stehen nicht in deinem gespeicherten Profil: {list}"
 }
