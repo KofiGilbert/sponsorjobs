@@ -627,5 +627,6 @@
   "projects.catDevops": "DevOps and CI",
   "projects.catMl": "Machine learning",
   "projects.catMobile": "Mobile",
-  "projects.catTools": "Tools and CLI"
+  "projects.catTools": "Tools and CLI",
+  "projects.buildsOnSkills": "Builds on skills you already have"
 }

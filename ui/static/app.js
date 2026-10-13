@@ -4510,6 +4510,7 @@
   }
   function fitText(fit, total, n) {
     const fill = (t) => t.replace("{n}", fit).replace("{total}", total).replace("{k}", n);
+    if (total && !fit) return PT("projects.buildsOnSkills", "Builds on skills you already have");
     return fill(total === 1 ? PT("projects.coversGap", "Covers {n} of your 1 gap")
       : total ? PT("projects.coversGaps", "Covers {n} of your {total} gaps")
       : PT("projects.skillsToShow", "{k} skills to show"));
@@ -4591,7 +4592,7 @@
       </div>` : "";
     const n = (s.skills || []).length;
     const cat = ideaCat(s), [lk, lf] = IDEA_CATS[cat].label;
-    const pills = `${hero ? `<span class="proj-idea-pill is-best">${esc(total ? PT("projects.bestMatch", "Best match") : PT("projects.topPick", "Top pick"))}</span>` : ""}${s.size ? `<span class="proj-idea-pill">${esc(s.size)}</span>` : ""}`;
+    const pills = `${hero ? `<span class="proj-idea-pill is-best">${esc(total ? PT("projects.bestMatch", "Best match") : PT("projects.topPick", "Top pick"))}</span>` : ""}${s.size ? `<span class="proj-idea-pill">${esc(s.size.charAt(0).toUpperCase() + s.size.slice(1))}</span>` : ""}`;
     // The Jobs card head: a 40px tile, the "company" line (here the category), the title under it,
     // and the pills top-right where Jobs shows "New 4h ago".
     const head = `<div class="proj-idea-hd">
