@@ -4296,27 +4296,46 @@
     try { const d = await api("/api/projects"); PROJECTS = d.projects || []; } catch { PROJECTS = []; }
     renderProjList();
   }
+  // Monochrome inline glyphs for the Projects screen (no assets, no colour).
+  const PROJ_ICO = {
+    code: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 7.5 4 12l4.5 4.5M15.5 7.5 20 12l-4.5 4.5M13.5 5.5l-3 13"/></svg>`,
+    seal: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.2 1.6 2.7-.1.8 2.6 2.2 1.6-.9 2.6.9 2.6-2.2 1.6-.8 2.6-2.7-.1L12 21l-2.2-1.6-2.7.1-.8-2.6-2.2-1.6.9-2.6-.9-2.6 2.2-1.6.8-2.6 2.7.1z"/><path d="m8.8 12.2 2.2 2.2 4.2-4.4"/></svg>`,
+    plus: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>`,
+    steps: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M8 2 2.5 5 8 8l5.5-3z"/><path d="m2.5 8 5.5 3 5.5-3M2.5 11 8 14l5.5-3"/></svg>`,
+    talk: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 4a1.5 1.5 0 0 1 1.5-1.5h8A1.5 1.5 0 0 1 13.5 4v5.5A1.5 1.5 0 0 1 12 11H7l-3 2.5V11a1.5 1.5 0 0 1-1.5-1.5z"/></svg>`,
+    check: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 8.3 2.9 2.9 6.1-6.4"/></svg>`,
+    bulb: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M8 1.8a4.2 4.2 0 0 0-2.5 7.6c.5.4.8.9.8 1.5v.3h3.4v-.3c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8Z"/><path d="M6.6 13.6h2.8M7 15h2"/></svg>`,
+    trash: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5"/></svg>`,
+  };
   function projCard(p) {
     const verified = p.status === "verified";
     const steps = p.plan?.milestones?.length || 0;
-    const doneN = (p.done || []).length;
-    const guideLabel = steps ? `Build guide (${doneN}/${steps})` : "Build guide";
-    return `<article class="proj-card" data-id="${esc(p.id)}">
+    const doneN = Math.min((p.done || []).length, steps);
+    const guideLabel = !steps ? "Start guide" : doneN >= steps ? "Guide" : "Continue guide";
+    // The guide's progress, as a slim bar: only once a plan exists, and only on drafts.
+    const prog = !verified && steps
+      ? `<div class="proj-prog" title="${doneN} of ${steps} steps built">
+           <span class="proj-prog-bar"><i style="width:${Math.round(doneN / steps * 100)}%"></i></span>
+           <span class="proj-prog-n">${doneN}/${steps}</span></div>`
+      : "";
+    return `<article class="proj-card ${verified ? "is-verified" : "is-draft"}" data-id="${esc(p.id)}">
+      <span class="proj-card-mark" aria-hidden="true">${verified ? PROJ_ICO.seal : PROJ_ICO.code}</span>
       <div class="proj-card-hd">
-        <div class="proj-card-name">${esc(p.title)}
-          <span class="proj-pill ${verified ? "ok" : ""}">${verified ? "&#10003; Verified" : "Draft"}</span></div>
+        <div class="proj-card-name"><span class="proj-card-title">${esc(p.title)}</span>
+          <span class="proj-pill ${verified ? "ok" : ""}">${verified ? `${PROJ_ICO.check}Verified` : "Draft"}</span></div>
         ${p.tech ? `<div class="proj-card-tech">${esc(p.tech)}</div>` : ""}
-        ${p.summary ? `<div class="proj-card-sum">${esc(p.summary)}</div>` : ""}
+        ${p.summary ? `<div class="proj-card-sum" title="${esc(p.summary)}">${esc(p.summary)}</div>` : ""}
+        ${prog}
       </div>
       <div class="proj-card-acts">
         ${verified
-          ? `<button class="btn btn-primary btn-sm" data-act="tocv">Add to Resume</button>
-             ${p.repo_url
-               ? `<a class="btn btn-ghost btn-sm" href="${esc(p.repo_url)}" target="_blank" rel="noopener">View on GitHub</a>`
-               : `<button class="btn btn-ghost btn-sm" data-act="publish">Publish to GitHub</button>`}`
-          : `<button class="btn btn-ghost btn-sm" data-act="guide">${esc(guideLabel)}</button>
-             <button class="btn btn-primary btn-sm" data-act="defend">Prove you understand it</button>`}
-        <button class="btn btn-ghost btn-sm" data-act="delete">Delete</button>
+          ? `${p.repo_url
+               ? `<a class="btn btn-quiet btn-sm" href="${esc(p.repo_url)}" target="_blank" rel="noopener">View on GitHub</a>`
+               : `<button class="btn btn-quiet btn-sm" data-act="publish" type="button">Publish to GitHub</button>`}
+             <button class="btn btn-ghost btn-sm" data-act="tocv" type="button">Add to resume</button>`
+          : `<button class="btn btn-quiet btn-sm" data-act="guide" type="button">${esc(guideLabel)}</button>
+             <button class="btn btn-ghost btn-sm" data-act="defend" type="button">Defend it</button>`}
+        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="Delete ${esc(p.title)}" title="Delete">${PROJ_ICO.trash}</button>
       </div>
     </article>`;
   }
@@ -4328,15 +4347,17 @@
       // The header buttons repeat the card's actions, so they step aside while it shows:
       // one primary action per screen.
       if (acts) acts.hidden = !formOpen;
+      projHeadAccent(formOpen);
       root.innerHTML = formOpen ? "" : projEmptyHTML();
       $("#projEmptyAdd")?.addEventListener("click", () => openProjForm("#projForm", "#projTitle"));
       $("#projEmptySuggest")?.addEventListener("click", () => openProjForm("#projSuggestForm", "#projTarget"));
       return;
     }
     if (acts) acts.hidden = false;
+    projHeadAccent(formOpen);
     const ver = PROJECTS.filter(p => p.status === "verified").length;
     const drafts = PROJECTS.length - ver;
-    root.innerHTML = `<div class="proj-count">${drafts} ${drafts === 1 ? "draft" : "drafts"} &middot; ${ver} verified, ready for your resume</div>`
+    root.innerHTML = `<div class="proj-count">${drafts} ${drafts === 1 ? "draft" : "drafts"} &middot; ${ver} verified</div>`
       + PROJECTS.map(projCard).join("");
     root.querySelectorAll(".proj-card").forEach(card => {
       const p = PROJECTS.find(x => x.id === card.dataset.id);
@@ -4349,20 +4370,26 @@
       });
     });
   }
+  // One accent per screen: while a form is open its submit is the primary, so the header's
+  // New project drops to an outline button until the form closes.
+  function projHeadAccent(formOpen) {
+    const b = $("#projNew"); if (!b) return;
+    b.classList.toggle("btn-primary", !formOpen); b.classList.toggle("btn-ghost", formOpen);
+  }
+  // First run: one focal card. A glyph, a few words, the path as a wordless stepper, one
+  // primary action and one quiet one. The header's own buttons step aside while it shows.
   function projEmptyHTML() {
-    const step = (n, t, d) => `<li class="proj-step"><span class="proj-step-n">${n}</span>
-      <div><div class="proj-step-t">${t}</div><div class="proj-step-d">${d}</div></div></li>`;
-    return `<section class="proj-empty">
-      <h2 class="proj-empty-h">Show what you can build</h2>
-      <p class="proj-empty-sub">A project you can explain in an interview is proof an employer can trust.</p>
-      <ol class="proj-steps">
-        ${step(1, "Add a project or get an idea", "Describe something you built, or get one matched to the role you want.")}
-        ${step(2, "Build it with the guide", "A step-by-step plan, with a coach for each step.")}
-        ${step(3, "Prove you understand it", "Pass a short interview-style check. It is then verified and ready for your resume.")}
+    const node = (i, ico, t) => `<li class="proj-flow-step" style="--i:${i}"><span class="proj-flow-dot">${ico}</span><span class="proj-flow-t">${t}</span></li>`;
+    return `<section class="proj-empty" aria-labelledby="projEmptyH">
+      <span class="proj-empty-mark" aria-hidden="true">${PROJ_ICO.code.replace(/width="16" height="16"/, 'width="26" height="26"')}<span class="proj-empty-badge">${PROJ_ICO.check}</span></span>
+      <h2 class="proj-empty-h" id="projEmptyH">Show what you can build</h2>
+      <p class="proj-empty-sub">A project you can explain is proof employers trust.</p>
+      <ol class="proj-flow" aria-label="How it works">
+        ${node(0, PROJ_ICO.plus, "Add")}${node(1, PROJ_ICO.steps, "Build")}${node(2, PROJ_ICO.talk, "Defend")}${node(3, PROJ_ICO.check, "Verified")}
       </ol>
       <div class="proj-empty-acts">
-        <button class="btn btn-primary" id="projEmptyAdd" type="button">Add a project</button>
-        <button class="btn btn-ghost" id="projEmptySuggest" type="button">Suggest one for my target role</button>
+        <button class="btn btn-primary" id="projEmptyAdd" type="button">${PROJ_ICO.plus}Add a project</button>
+        <button class="btn btn-quiet" id="projEmptySuggest" type="button">${PROJ_ICO.bulb}Suggest an idea</button>
       </div>
     </section>`;
   }
@@ -4389,7 +4416,7 @@
   $("#projSuggestBtn")?.addEventListener("click", () => {
     const f = $("#projSuggestForm"); if (!f) return;
     $("#projForm") && ($("#projForm").hidden = true);
-    f.hidden = !f.hidden; if (!f.hidden) $("#projTarget")?.focus();
+    f.hidden = !f.hidden; renderProjList(); if (!f.hidden) $("#projTarget")?.focus();
   });
   $("#projSuggestCancel")?.addEventListener("click", () => {
     const f = $("#projSuggestForm"); if (f) { f.reset(); f.hidden = true; const l = $("#projSuggestList"); if (l) l.innerHTML = ""; }
@@ -4422,7 +4449,7 @@
         ${s.summary ? `<p class="proj-sug-sum">${esc(s.summary)}</p>` : ""}
         ${s.tech ? `<p class="proj-sug-tech">${esc(s.tech)}</p>` : ""}
         ${s.why ? `<p class="proj-sug-why">${esc(s.why)}</p>` : ""}
-        <button class="btn btn-primary btn-sm" data-build type="button">Build this</button>
+        <button class="btn btn-ghost btn-sm" data-build type="button">Build this</button>
       </article>`).join("");
     list.querySelectorAll(".proj-sug").forEach(card => {
       const s = items[+card.dataset.i];

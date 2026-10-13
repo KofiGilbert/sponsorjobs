@@ -37,7 +37,6 @@
   "settings.connections": "Connexions",
   "nav.projects": "Projets",
   "projects.title": "Projets",
-  "projects.sub": "Ajoutez un projet, prouvez que vous pouvez le défendre, et il sera prêt pour votre CV.",
   "job.via": "via {source}",
   "job.dismiss": "Fermer",
   "job.visaErr": "Impossible de télécharger les données H-1B pour {years}.",

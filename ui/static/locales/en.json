@@ -37,7 +37,6 @@
   "settings.connections": "Connections",
   "nav.projects": "Projects",
   "projects.title": "Projects",
-  "projects.sub": "Add a project, prove you can defend it, then it's ready for your resume.",
   "job.via": "via {source}",
   "job.dismiss": "Dismiss",
   "job.visaErr": "Couldn't download H-1B data for {years}.",

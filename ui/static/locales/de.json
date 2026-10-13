@@ -37,7 +37,6 @@
   "settings.connections": "Verbindungen",
   "nav.projects": "Projekte",
   "projects.title": "Projekte",
-  "projects.sub": "Füge ein Projekt hinzu, zeige, dass du es verteidigen kannst, dann ist es bereit für deinen Lebenslauf.",
   "job.via": "über {source}",
   "job.dismiss": "Schließen",
   "job.visaErr": "Die H-1B-Daten für {years} konnten nicht geladen werden.",

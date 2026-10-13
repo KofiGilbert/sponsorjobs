@@ -698,7 +698,6 @@
         <header class="page-head">
           <div>
             <h1 class="page-title" data-i18n="projects.title">Projects</h1>
-            <p class="page-sub" data-i18n="projects.sub">Add a project, prove you can defend it, then it's ready for your resume.</p>
           </div>
           <div class="page-head-actions" id="projHeadActs">
             <button class="btn btn-ghost" id="projSuggestBtn" type="button">
@@ -714,25 +713,27 @@
 
         <div class="proj-body">
 
-        <form class="proj-new" id="projForm" hidden>
-          <input class="fld" id="projTitle" type="text" placeholder="Project title, e.g. Credit-risk scoring model" autocomplete="off">
-          <textarea class="fld" id="projSummary" rows="3" placeholder="What does it do, and how did you build it? The more real detail, the sharper the defense test."></textarea>
-          <input class="fld" id="projTech" type="text" placeholder="Tech and tools, e.g. Python, scikit-learn, FastAPI" autocomplete="off">
+        <form class="proj-new proj-panel" id="projForm" hidden>
+          <h2 class="proj-panel-h">New project</h2>
+          <input class="fld" id="projTitle" type="text" placeholder="Title" aria-label="Title" autocomplete="off">
+          <textarea class="fld" id="projSummary" rows="3" placeholder="What it does, and how you built it" aria-label="What it does, and how you built it"></textarea>
+          <input class="fld" id="projTech" type="text" placeholder="Tech, e.g. Python, FastAPI" aria-label="Tech" autocomplete="off">
           <div class="proj-form-foot">
             <button class="btn btn-primary btn-sm" id="projSave" type="submit">Add project</button>
-            <button class="btn btn-ghost btn-sm" id="projCancel" type="button">Cancel</button>
+            <button class="btn btn-quiet btn-sm" id="projCancel" type="button">Cancel</button>
           </div>
           <p class="proj-msg" id="projMsg" hidden></p>
         </form>
 
         <!-- Suggest-a-project: turn the gap between the saved profile and a target role into
              concrete, buildable ideas. Picking one prefills a draft that still faces the gate. -->
-        <form class="proj-suggest" id="projSuggestForm" hidden>
-          <p class="proj-suggest-lead">Not sure what to build? Name the role you're aiming for, or paste a job description, and I'll suggest projects that close the gap, grounded in your saved profile.</p>
-          <textarea class="fld" id="projTarget" rows="2" placeholder="Target role or pasted job description, e.g. Data Analyst at a fintech, needs SQL and dashboards"></textarea>
+        <form class="proj-suggest proj-panel" id="projSuggestForm" hidden>
+          <h2 class="proj-panel-h">Suggest a project</h2>
+          <p class="proj-suggest-lead">For the role you want, from your profile.</p>
+          <textarea class="fld" id="projTarget" rows="2" placeholder="Target role or job description" aria-label="Target role or job description"></textarea>
           <div class="proj-form-foot">
             <button class="btn btn-primary btn-sm" id="projSuggestGo" type="submit">Suggest projects</button>
-            <button class="btn btn-ghost btn-sm" id="projSuggestCancel" type="button">Cancel</button>
+            <button class="btn btn-quiet btn-sm" id="projSuggestCancel" type="button">Cancel</button>
           </div>
           <p class="proj-msg" id="projSuggestMsg" hidden></p>
           <div id="projSuggestList"><!-- suggestion cards injected --></div>
@@ -747,7 +748,7 @@
             Back
           </button>
           <h2 class="proj-test-h" id="projTestTitle">Prove you understand it</h2>
-          <p class="proj-test-sub">Answer as you would in an interview. Passing this is what makes the project ready for your resume, no shortcut.</p>
+          <p class="proj-test-sub">Answer as you would in an interview.</p>
           <div id="projQuestions"><!-- questions injected --></div>
           <div class="proj-test-foot">
             <button class="btn btn-primary" id="projSubmit" type="button">Submit for review</button>
@@ -763,7 +764,7 @@
             Back
           </button>
           <h2 class="proj-test-h" id="projBuildTitle">Build it, step by step</h2>
-          <p class="proj-test-sub">A plan that teaches as you go. Build each step yourself and learn why it works, so when you defend it later, the understanding is genuinely yours.</p>
+          <p class="proj-test-sub">Build each step yourself. The coach explains, never does it for you.</p>
           <div id="projPlan"><!-- milestones injected --></div>
           <div class="proj-build-foot" id="projBuildFoot" hidden>
             <button class="btn btn-primary" id="projBuildDefend" type="button">I've built it, prove I understand it</button>
