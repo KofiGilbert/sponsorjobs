@@ -1173,7 +1173,8 @@ class AnthropicLLM:
         return {"suggestions": out}
 
     def suggest_github_ideas(self, profile: dict, role: str = "", jd_terms: list | None = None,
-                             missing: list | None = None, count: int = 6) -> dict:
+                             missing: list | None = None, count: int = 6, query: str = "",
+                             exclude: list | None = None) -> dict:
         """GitHub portfolio ideas aimed at a target role: small, finishable projects a recruiter
         would pin, each proving 3 to 5 skills the role asks for, favouring the ones the profile
         lacks. The model only drafts the ideas; the app adds real example repos from GitHub's
@@ -1189,7 +1190,11 @@ class AnthropicLLM:
             "from what the person already knows so they can genuinely build and defend it.\n"
             "- Vary the ideas: different domains and sizes.\n"
             "- Use the role's own skill wording.\n"
-            "- No em or en dashes. Plain words.\n"
+            + ("- TOPIC: every idea must be about the topic the person searched for (given below), "
+               "still aimed at the target role and grounded in their profile.\n" if query else "")
+            + ("- Do NOT repeat or lightly reword any idea in the ALREADY SHOWN list; each must be "
+               "a genuinely different project.\n" if exclude else "")
+            + "- No em or en dashes. Plain words.\n"
             "For each: title (2 to 4 words), pitch (ONE line, under 90 characters, what it does), "
             "skills (array of 3 to 5 skill names), tech (comma-separated stack), size (exactly "
             "one of \"Weekend\", \"1 week\", \"2 weeks\"), repo (a kebab-case repo name), "
@@ -1200,8 +1205,11 @@ class AnthropicLLM:
         )
         user = (f"TARGET ROLE: {(role or '').strip() or 'not given; infer from the profile'}\n"
                 f"SKILLS THE ROLE ASKS FOR: {', '.join(map(str, jd_terms or [])) or 'not known'}\n"
-                f"MISSING FROM THE PROFILE: {', '.join(map(str, missing or [])) or 'none known'}\n\n"
-                f"APPLICANT PROFILE (JSON):\n{json.dumps(profile)[:5000]}")
+                f"MISSING FROM THE PROFILE: {', '.join(map(str, missing or [])) or 'none known'}\n"
+                + (f"TOPIC THE PERSON SEARCHED FOR: {query.strip()[:80]}\n" if query else "")
+                + (f"ALREADY SHOWN (do not repeat): {'; '.join(map(str, (exclude or [])[:60]))}\n" if exclude else "")
+                + "\n"
+                + f"APPLICANT PROFILE (JSON):\n{json.dumps(profile)[:5000]}")
         raw = self._complete(system, user, max_tokens=1600, effort="medium")
         data = self._parse_json_object(raw) or {}
         from tailoring.conform import strip_ai_dashes

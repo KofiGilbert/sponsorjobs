@@ -1074,10 +1074,13 @@ class FakeLLM:
         ]}
 
     def suggest_github_ideas(self, profile: dict, role: str = "", jd_terms: list | None = None,
-                             missing: list | None = None, count: int = 6) -> dict:
+                             missing: list | None = None, count: int = 6, query: str = "",
+                             exclude: list | None = None) -> dict:
         # Deterministic stand-in: six GitHub-shaped ideas aimed at the role, the first ones
         # carrying the JD skills the profile lacks, so the flow and the gap highlight are
-        # testable offline. Sizes and repo names are fixed per slot.
+        # testable offline. Sizes and repo names are fixed per slot. A ``query`` themes every
+        # title on that topic; ``exclude`` (titles already shown) is skipped, and later rounds
+        # number the titles so "More ideas" always has something new.
         r = (role or "").strip() or "your next role"
         gaps = [str(t) for t in (missing or []) if str(t).strip()]
         terms = [str(t) for t in (jd_terms or []) if str(t).strip()]
@@ -1096,8 +1099,24 @@ class FakeLLM:
             ("Study group scheduler", "Matches students into study groups by course and free time.",
              "TypeScript, React, Node.js", "2 weeks", "study-group-scheduler", "study group scheduler react"),
         ]
+        q = " ".join(str(query or "").split()[:3])
+        if q:
+            topic = q[:1].upper() + q[1:]
+            nouns = ["tracker", "API", "dashboard", "matcher", "monitor", "scheduler"]
+            slots = [(f"{topic} {nouns[k]}", f"A {nouns[k]} for {q}, built around a real public dataset.",
+                      tech, size, "", f"{q} {nouns[k]}") for k, (_, _, tech, size, _, _) in enumerate(slots)]
+        skip = {str(t).strip().lower() for t in (exclude or [])}
+        pick = []
+        for rnd in range(1, 10):
+            for slot in slots:
+                title = slot[0] if rnd == 1 else f"{slot[0]} {rnd}"
+                if title.lower() not in skip:
+                    pick.append((title,) + slot[1:4] + ((slot[4] if rnd == 1 else "") or "",) + slot[5:])
+            if len(pick) >= count:
+                break
         ideas = []
-        for i, (title, pitch, tech, size, repo, search) in enumerate(slots[:max(1, min(count, 6))]):
+        for i, (title, pitch, tech, size, repo, search) in enumerate(pick[:max(1, min(count, 6))]):
+            repo = repo or "-".join(title.lower().split())
             skills = []
             for t in [pool[(i + k) % len(pool)] for k in range(3)] + tech.split(", "):
                 if t and t.lower() not in {s.lower() for s in skills}:

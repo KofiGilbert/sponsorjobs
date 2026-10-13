@@ -628,5 +628,20 @@
   "projects.catMl": "Machine learning",
   "projects.catMobile": "Mobile",
   "projects.catTools": "Tools and CLI",
-  "projects.buildsOnSkills": "Builds on skills you already have"
+  "projects.buildsOnSkills": "Builds on skills you already have",
+  "projects.searchPh": "Search ideas, e.g. React dashboard or fraud detection",
+  "projects.searchLabel": "Search ideas",
+  "projects.resultsFor": "Results for",
+  "projects.clearSearch": "Clear search",
+  "projects.moreIdeas": "More ideas",
+  "projects.noMoreIdeas": "No new ideas came back. Try a search.",
+  "projects.filterSize": "Size",
+  "projects.filterCat": "Category",
+  "projects.any": "Any",
+  "projects.noMatch": "No ideas match these filters.",
+  "projects.saveIdea": "Save idea",
+  "projects.savedIdea": "Saved",
+  "projects.savedIdeas": "Saved ideas",
+  "projects.saveFailed": "Couldn't save the idea.",
+  "projects.capReached": "You've reached today's {n} idea batches. More tomorrow."
 }

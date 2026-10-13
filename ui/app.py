@@ -5140,8 +5140,8 @@ def _ideas_cache() -> dict:
 def _ideas_cache_put(key: str, entry: dict) -> None:
     cache = _ideas_cache()
     cache[key] = entry
-    if len(cache) > 12:   # keep the dozen most recent roles
-        for k in sorted(cache, key=lambda k: cache[k].get("at", 0))[:len(cache) - 12]:
+    if len(cache) > 24:   # keep the two dozen most recent (role, search) sets
+        for k in sorted(cache, key=lambda k: cache[k].get("at", 0))[:len(cache) - 24]:
             cache.pop(k, None)
     _IDEAS_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = _IDEAS_FILE.with_suffix(".tmp")
@@ -5255,31 +5255,178 @@ def _heal_examples(key: str, hit: dict) -> list[dict]:
     return ideas
 
 
+# Every new batch of ideas is one model call, so they are capped per local day (cache hits are
+# free). The count lives in a small local file; a new local day starts from zero.
+_IDEAS_USAGE_FILE = _DATA / "project_ideas_usage.json"
+_SAVED_IDEAS_FILE = _DATA / "saved_ideas.json"
+_IDEAS_BATCH = 6
+
+
+def _ideas_day() -> str:
+    """Today's local date (a seam the tests pin)."""
+    from datetime import date
+    return date.today().isoformat()
+
+
+def _ideas_cap() -> int:
+    try:
+        return max(1, int(os.environ.get("PROJECT_IDEAS_DAILY_CAP") or 10))
+    except ValueError:
+        return 10
+
+
+def _ideas_used() -> int:
+    try:
+        d = json.loads(_IDEAS_USAGE_FILE.read_text(encoding="utf-8"))
+        return int(d.get("count") or 0) if d.get("day") == _ideas_day() else 0
+    except Exception:
+        return 0
+
+
+def _ideas_count_batch() -> None:
+    used = _ideas_used() + 1
+    _IDEAS_USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _IDEAS_USAGE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"day": _ideas_day(), "count": used}), encoding="utf-8")
+    tmp.replace(_IDEAS_USAGE_FILE)
+
+
+def _ideas_cap_state() -> dict:
+    cap, used = _ideas_cap(), _ideas_used()
+    return {"limit": cap, "used": used, "left": max(0, cap - used)}
+
+
+def _ideas_key(role: str, query: str) -> str:
+    """Cache key for a (role, search) set. No search keeps the original per-role key."""
+    k = role.lower() or "_"
+    return f"{k}|q:{query.lower()}" if query else k
+
+
 @app.post("/api/projects/ideas")
 @_guard
 def projects_ideas():
     """GitHub project ideas for the target role, with no typing needed. Body (all optional):
-    {role: a different target, refresh: true to skip the cache}. Ideas are cached per role, so
-    reopening Suggest is instant and costs nothing."""
+    {role: a different target, refresh: true to skip the cache, query: a topic to search ideas
+    for (still aimed at the role), exclude: titles already shown, which asks for ANOTHER batch to
+    append}. Ideas are cached per (role, query), so reopening is instant and costs nothing. New
+    batches count against a local daily cap; a cache hit never does."""
     b = request.json or {}
     role, terms, source = _project_target(str(b.get("role") or ""))
-    key = role.lower() or "_"
+    query = re.sub(r"\s+", " ", str(b.get("query") or "")).strip()[:80]
+    exclude = [str(t).strip()[:80] for t in (b.get("exclude") or []) if str(t).strip()][:60] \
+        if isinstance(b.get("exclude"), list) else []
+    more = bool(exclude)
+    key = _ideas_key(role, query)
     gh = {"connected": bool(_cred("GITHUB_TOKEN")), "login": _cred("GITHUB_LOGIN") or ""}
-    if not b.get("refresh"):
-        hit = _ideas_cache().get(key)
-        if hit and hit.get("ideas"):
-            return jsonify({"role": role, "source": source, "ideas": _heal_examples(key, hit), "cached": True,
-                            "github": gh})
+    base = {"role": role, "source": source, "query": query, "github": gh}
+    hit = _ideas_cache().get(key)
+    if not b.get("refresh") and not more and hit and hit.get("ideas"):
+        ideas = _heal_examples(key, hit)
+        return jsonify({**base, "ideas": ideas, "batches": hit.get("batches") or [len(ideas)],
+                        "cached": True, "cap": _ideas_cap_state()})
+    cap = _ideas_cap_state()
+    if cap["left"] <= 0:
+        return jsonify({**base, "error": f"You've reached today's {cap['limit']} idea batches. More tomorrow.",
+                        "code": "ideas_cap", "cap": cap}), 429
     saved = _memory().load("default") or {}
     profile = saved.get("profile") or saved.get("essentials") or {}
     prof_text = _profile_skill_text(profile)
     missing = [t for t in terms if not _has_term(prof_text, t)]
-    raw = _make_llm().suggest_github_ideas(profile, role, terms, missing, 6)
-    ideas = [i for i in (_clean_idea(x, terms, prof_text) for x in (raw.get("ideas") or [])) if i][:6]
+    # Already shown: what the client sent plus, when appending, what this set already holds.
+    from ui.github_publish import slugify
+    prior = (hit.get("ideas") or []) if (more and hit) else []
+    seen_titles = {t.lower() for t in exclude} | {str(i.get("title") or "").lower() for i in prior}
+    seen_repos = {slugify(t) for t in exclude} | {str(i.get("repo") or "") for i in prior}
+    raw = _make_llm().suggest_github_ideas(profile, role, terms, missing, _IDEAS_BATCH,
+                                           query=query, exclude=list(dict.fromkeys(
+                                               exclude + [str(i.get("title") or "") for i in prior if i.get("title")])))
+    _ideas_count_batch()
+    ideas = []
+    for x in raw.get("ideas") or []:
+        i = _clean_idea(x, terms, prof_text)
+        if not i or i["title"].lower() in seen_titles or i["repo"] in seen_repos:
+            continue
+        seen_titles.add(i["title"].lower())
+        seen_repos.add(i["repo"])
+        ideas.append(i)
+        if len(ideas) >= _IDEAS_BATCH:
+            break
     _add_examples(ideas)
     if ideas:
-        _ideas_cache_put(key, {"role": role, "ideas": ideas, "at": time.time()})
-    return jsonify({"role": role, "source": source, "ideas": ideas, "cached": False, "github": gh})
+        if more and prior:
+            batches = list(hit.get("batches") or [len(prior)]) + [len(ideas)]
+            _ideas_cache_put(key, {**hit, "ideas": prior + ideas, "batches": batches, "at": time.time()})
+        else:
+            _ideas_cache_put(key, {"role": role, "query": query, "ideas": ideas, "batches": [len(ideas)],
+                                   "at": time.time()})
+    return jsonify({**base, "ideas": ideas, "batches": [len(ideas)], "append": more, "cached": False,
+                    "cap": _ideas_cap_state()})
+
+
+# Saved ideas: a small local bookmark list, kept across searches, refreshes and restarts.
+_SAVED_IDEAS_MAX = 60
+
+
+def _saved_ideas() -> list[dict]:
+    try:
+        d = json.loads(_SAVED_IDEAS_FILE.read_text(encoding="utf-8"))
+        return [i for i in d if isinstance(i, dict) and i.get("title")] if isinstance(d, list) else []
+    except Exception:
+        return []
+
+
+def _save_saved_ideas(items: list[dict]) -> None:
+    _SAVED_IDEAS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _SAVED_IDEAS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(items[:_SAVED_IDEAS_MAX]), encoding="utf-8")
+    tmp.replace(_SAVED_IDEAS_FILE)
+
+
+def _saved_idea_id(idea: dict) -> str:
+    from ui.github_publish import slugify
+    return slugify(idea.get("repo") or idea.get("title") or "")
+
+
+@app.get("/api/projects/ideas/saved")
+@_guard
+def projects_ideas_saved():
+    return jsonify({"saved": _saved_ideas()})
+
+
+@app.post("/api/projects/ideas/saved")
+@_guard
+def projects_ideas_save():
+    """Bookmark an idea: {idea}. Saving the same idea again replaces it (newest first)."""
+    idea = (request.json or {}).get("idea") or {}
+    if not isinstance(idea, dict) or not str(idea.get("title") or "").strip():
+        return jsonify({"error": "Pick an idea to save."}), 400
+    clean = {"title": str(idea["title"]).strip()[:80], "pitch": str(idea.get("pitch") or "").strip()[:160],
+             "skills": [str(k).strip()[:40] for k in (idea.get("skills") or []) if str(k).strip()][:5],
+             "gaps": [str(k).strip()[:40] for k in (idea.get("gaps") or []) if str(k).strip()][:5],
+             "tech": str(idea.get("tech") or "").strip()[:160],
+             "size": next((z for z in _IDEA_SIZES if z.lower() == str(idea.get("size") or "").strip().lower()), ""),
+             "search": str(idea.get("search") or "").strip()[:120],
+             "examples": [e for e in (idea.get("examples") or [])
+                          if isinstance(e, dict) and str(e.get("url") or "").startswith("https://github.com/")][:3],
+             "saved_at": time.time()}
+    clean["repo"] = _saved_idea_id(idea)
+    items = [i for i in _saved_ideas() if _saved_idea_id(i) != clean["repo"]]
+    _save_saved_ideas([clean] + items)
+    return jsonify({"saved": _saved_ideas()})
+
+
+@app.delete("/api/projects/ideas/saved")
+@_guard
+def projects_ideas_unsave():
+    """Remove a bookmark by its repo name (or title): {repo} in the body or ?repo= in the URL."""
+    b = request.get_json(silent=True) or {}
+    ref = {"repo": str(b.get("repo") or request.args.get("repo") or "").strip(),
+           "title": str(b.get("title") or request.args.get("title") or "").strip()}
+    if not (ref["repo"] or ref["title"]):
+        return jsonify({"error": "Pick an idea to remove."}), 400
+    rid = _saved_idea_id(ref)
+    _save_saved_ideas([i for i in _saved_ideas() if _saved_idea_id(i) != rid])
+    return jsonify({"saved": _saved_ideas()})
 
 
 @app.post("/api/projects/start")

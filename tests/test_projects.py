@@ -344,3 +344,207 @@ def test_publish_without_a_started_repo_creates_a_public_one(client, monkeypatch
     res = G.publish_project("tok", {"title": "Churn model", "summary": "s"})
     assert res["ok"] and gh.of("POST", "/user/repos")[0][3]["private"] is False
     assert gh.of("PATCH", "") == []
+
+
+# ---- Ideas gallery: search, More ideas, the daily cap, saved ideas, client-side filters. ----
+
+def _seed_job(A):
+    A._memory().save("default", {"skills": {"Data": "Python, Excel"},
+                                 "experience": [{"org": "Acme", "roles": [{"title": "Intern"}]}]}, {}, [])
+    recs = A._records()
+    recs.add("Data Engineer", "Bank", 0.8, "", data={"jd": "We need SQL, Airflow, Docker and Python."})
+    recs.close()
+
+
+class _SpyLLM:
+    """Wraps FakeLLM's suggest_github_ideas and records each call's kwargs."""
+
+    def __init__(self, inner, override=None):
+        self.inner, self.override, self.calls = inner, override, []
+
+    def suggest_github_ideas(self, profile, role="", jd_terms=None, missing=None, count=6, query="", exclude=None):
+        self.calls.append({"role": role, "query": query, "exclude": list(exclude or [])})
+        if self.override:
+            return self.override(len(self.calls))
+        return self.inner.suggest_github_ideas(profile, role, jd_terms, missing, count, query=query, exclude=exclude)
+
+
+def _spy(A, monkeypatch, override=None):
+    from llm.base import FakeLLM
+    spy = _SpyLLM(FakeLLM(), override)
+    monkeypatch.setattr(A, "_make_llm", lambda: spy)
+    return spy
+
+
+def _pin_day(A, monkeypatch, day):
+    monkeypatch.setattr(A, "_ideas_day", lambda: day)
+
+
+def test_ideas_search_query_reaches_model_and_is_cached_separately(client, monkeypatch):
+    A, c = client
+    import ui.github_publish as G
+    monkeypatch.setattr(G, "FETCH", FakeGitHub(search=SEARCH_FIXTURE))
+    _seed_job(A)
+    _pin_day(A, monkeypatch, "2026-10-13")
+    spy = _spy(A, monkeypatch)
+
+    base = c.post("/api/projects/ideas", json={}).get_json()
+    q = c.post("/api/projects/ideas", json={"query": "  fraud   detection "}).get_json()
+    assert q["query"] == "fraud detection" and q["role"] == "Data Engineer" and q["cached"] is False
+    assert spy.calls[-1]["query"] == "fraud detection" and spy.calls[-1]["role"] == "Data Engineer"
+    assert all("Fraud detection" in i["title"] for i in q["ideas"])
+    assert {i["title"] for i in q["ideas"]}.isdisjoint({i["title"] for i in base["ideas"]})
+    assert len(spy.calls) == 2
+
+    # each (role, query) set is its own cache entry: both reopen free, and the role's set is intact
+    again = c.post("/api/projects/ideas", json={"query": "Fraud Detection"}).get_json()
+    assert again["cached"] is True and again["ideas"] == q["ideas"]
+    plain = c.post("/api/projects/ideas", json={}).get_json()
+    assert plain["cached"] is True and plain["ideas"] == base["ideas"] and plain["query"] == ""
+    assert len(spy.calls) == 2
+    assert set(A._ideas_cache()) == {"data engineer", "data engineer|q:fraud detection"}
+
+
+def test_more_ideas_excludes_shown_titles_and_server_dedupes(client, monkeypatch):
+    A, c = client
+    import ui.github_publish as G
+    monkeypatch.setattr(G, "FETCH", FakeGitHub(search=SEARCH_FIXTURE))
+    _seed_job(A)
+    _pin_day(A, monkeypatch, "2026-10-13")
+    spy = _spy(A, monkeypatch)
+
+    first = c.post("/api/projects/ideas", json={}).get_json()["ideas"]
+    shown = [i["title"] for i in first]
+    more = c.post("/api/projects/ideas", json={"exclude": shown}).get_json()
+    assert more["append"] is True and more["cached"] is False and more["ideas"]
+    assert set(shown) <= set(spy.calls[-1]["exclude"])          # the model is told what is on screen
+    assert {i["title"] for i in more["ideas"]}.isdisjoint(shown)
+    # the cache now holds both batches, so reopening restores the whole gallery
+    hit = c.post("/api/projects/ideas", json={}).get_json()
+    assert hit["cached"] and len(hit["ideas"]) == len(first) + len(more["ideas"])
+    assert hit["batches"] == [len(first), len(more["ideas"])]
+
+    # a model that ignores exclude: the server drops repeats by title (any case) and by repo name
+    def stubborn(n):
+        return {"ideas": [
+            {"title": shown[0].upper(), "pitch": "p", "skills": ["SQL", "Python", "Git"], "size": "Weekend", "repo": "x-1"},
+            {"title": "Brand new name", "pitch": "p", "skills": ["SQL", "Python", "Git"], "size": "Weekend",
+             "repo": first[1]["repo"]},
+            {"title": "Truly new", "pitch": "p", "skills": ["SQL", "Python", "Git"], "size": "Weekend", "repo": "truly-new"},
+            {"title": "truly new", "pitch": "p", "skills": ["SQL", "Python", "Git"], "size": "Weekend", "repo": "other"},
+        ]}
+    spy.override = stubborn
+    d = c.post("/api/projects/ideas", json={"exclude": shown[:1]}).get_json()
+    assert [i["title"] for i in d["ideas"]] == ["Truly new"]
+
+
+def test_daily_cap_counts_only_model_batches_and_resets_each_day(client, monkeypatch):
+    A, c = client
+    import ui.github_publish as G
+    monkeypatch.setattr(G, "FETCH", FakeGitHub(search=SEARCH_FIXTURE))
+    _seed_job(A)
+    monkeypatch.setenv("PROJECT_IDEAS_DAILY_CAP", "3")
+    _pin_day(A, monkeypatch, "2026-10-13")
+    spy = _spy(A, monkeypatch)
+
+    d = c.post("/api/projects/ideas", json={}).get_json()                      # 1: model
+    assert d["cap"] == {"limit": 3, "used": 1, "left": 2}
+    assert c.post("/api/projects/ideas", json={}).get_json()["cap"]["used"] == 1   # cache hit: free
+    c.post("/api/projects/ideas", json={"query": "fraud"})                       # 2: search
+    c.post("/api/projects/ideas", json={"query": "fraud"})                       # cache hit: free
+    c.post("/api/projects/ideas", json={"refresh": True})                        # 3: refresh
+    assert len(spy.calls) == 3
+
+    r = c.post("/api/projects/ideas", json={"exclude": [i["title"] for i in d["ideas"]]})   # 4: refused
+    assert r.status_code == 429
+    body = r.get_json()
+    assert body["code"] == "ideas_cap" and "reason" not in body             # no outage overlay
+    assert body["error"] == "You've reached today's 3 idea batches. More tomorrow."
+    assert body["cap"] == {"limit": 3, "used": 3, "left": 0}
+    assert c.post("/api/projects/ideas", json={"query": "new topic"}).status_code == 429
+    assert len(spy.calls) == 3                                             # refused calls cost nothing
+    # cached sets keep working at the cap
+    ok = c.post("/api/projects/ideas", json={"query": "fraud"})
+    assert ok.status_code == 200 and ok.get_json()["cached"] is True
+
+    # a new local day starts from zero
+    _pin_day(A, monkeypatch, "2026-10-14")
+    d2 = c.post("/api/projects/ideas", json={"query": "new topic"}).get_json()
+    assert d2["cap"] == {"limit": 3, "used": 1, "left": 2} and len(spy.calls) == 4
+
+
+def test_daily_cap_defaults_to_ten(client, monkeypatch):
+    A, _ = client
+    monkeypatch.delenv("PROJECT_IDEAS_DAILY_CAP", raising=False)
+    assert A._ideas_cap() == 10
+    monkeypatch.setenv("PROJECT_IDEAS_DAILY_CAP", "nonsense")
+    assert A._ideas_cap() == 10
+
+
+def test_saved_ideas_crud_and_persistence(client, monkeypatch, tmp_path):
+    A, c = client
+    assert c.get("/api/projects/ideas/saved").get_json() == {"saved": []}
+    idea = {"title": "Fraud detection API", "pitch": "Flags odd payments.", "skills": ["Python", "SQL", "Kafka"],
+            "gaps": ["Kafka"], "tech": "Python, FastAPI", "size": "1 week", "repo": "fraud-detection-api",
+            "examples": [{"full_name": "real/one", "url": "https://github.com/real/one", "stars": 3},
+                         {"full_name": "bad/one", "url": "https://evil.example/bad/one", "stars": 9}]}
+    other = {"title": "Open data dashboard", "skills": ["Pandas"], "size": "Weekend"}
+    c.post("/api/projects/ideas/saved", json={"idea": idea})
+    s = c.post("/api/projects/ideas/saved", json={"idea": other}).get_json()["saved"]
+    assert [i["title"] for i in s] == ["Open data dashboard", "Fraud detection API"]   # newest first
+    assert s[1]["examples"] == [idea["examples"][0]]                                      # only github.com
+    assert s[0]["repo"] == "open-data-dashboard"
+    # saving again replaces, never duplicates
+    s = c.post("/api/projects/ideas/saved", json={"idea": idea}).get_json()["saved"]
+    assert [i["title"] for i in s] == ["Fraud detection API", "Open data dashboard"]
+    assert c.post("/api/projects/ideas/saved", json={"idea": {}}).status_code == 400
+
+    # persisted in the data dir: a fresh app (a restart) still has them
+    assert (tmp_path / "data" / "saved_ideas.json").exists()
+    importlib.reload(A)
+    c2 = A.app.test_client()
+    assert [i["title"] for i in c2.get("/api/projects/ideas/saved").get_json()["saved"]] == \
+        ["Fraud detection API", "Open data dashboard"]
+
+    # delete by repo (query string, as the UI sends it) or by title in the body
+    s = c2.delete("/api/projects/ideas/saved?repo=fraud-detection-api").get_json()["saved"]
+    assert [i["title"] for i in s] == ["Open data dashboard"]
+    s = c2.delete("/api/projects/ideas/saved", json={"title": "Open data dashboard"}).get_json()["saved"]
+    assert s == []
+    assert c2.delete("/api/projects/ideas/saved").status_code == 400
+
+    # starting a saved idea is the same flow as any idea
+    import ui.github_publish as G
+    monkeypatch.setattr(G, "FETCH", FakeGitHub())
+    d = c2.post("/api/projects/start", json={"idea": idea}).get_json()
+    assert d["project"]["title"] == "Fraud detection API"
+
+
+def _js_function(src, name):
+    """The source of a top-level-ish `function name(` or `const name = ` in app.js, to its balanced end."""
+    import re
+    m = re.search(r"(function " + re.escape(name) + r"\(|const " + re.escape(name) + r" = )", src)
+    assert m, name
+    i, depth, started = m.start(), 0, False
+    for j in range(m.start(), len(src)):
+        ch = src[j]
+        if ch in "({[":
+            depth += 1; started = True
+        elif ch in ")}]":
+            depth -= 1
+            if started and depth == 0 and (ch == "}" or src[j + 1] in ";\n"):
+                if ch == "}" or src[j + 1] == ";":
+                    return src[i:j + 1]
+    raise AssertionError(name)
+
+
+def test_idea_filters_are_client_side_only():
+    """Size and category filters narrow what is loaded; nothing in the filter path makes a request."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    for name in ("renderIdeaFilters", "renderIdeaGrid", "ideaPasses", "ideaCat"):
+        body = _js_function(src, name)
+        for banned in ("api(", "fetch(", "loadIdeas(", "loadMoreIdeas(", "XMLHttpRequest"):
+            assert banned not in body, f"{name} calls {banned}"
+    filt = _js_function(src, "renderIdeaFilters")
+    assert 'data-fsize' in filt and 'data-fcat' in filt and "renderIdeaGrid({ still: true })" in filt

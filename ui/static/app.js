@@ -4511,7 +4511,16 @@
   // Each idea is GitHub-shaped: skills it proves (gaps marked +), a size, a repo name, and real
   // example repos from GitHub search. Start creates the draft, plus a private repo if connected.
   const PT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
-  let IDEAS = { role: "", source: "", ideas: [], github: { connected: false }, seq: 0 };
+  // ideas is the flat list shown; batches holds the size of each batch (the first from the role or
+  // search, then one per "More ideas"), so each batch is ranked on its own. filt is client-side only.
+  let IDEAS = { role: "", source: "", query: "", ideas: [], batches: [], github: { connected: false }, seq: 0,
+                cap: null, filt: { size: "", cat: "" }, moreBusy: false };
+  let SAVED_IDEAS = null;   // the local bookmark list, loaded once per session
+  const ICO_BOOKMARK = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M4 2.5h8v11L8 10.8 4 13.5z"/></svg>`;
+  const ICO_X = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
+  const ICO_CHEV = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg>`;
+  const ideaKey = s => String(s?.repo || s?.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "project";
+  const isSavedIdea = s => (SAVED_IDEAS || []).some(x => ideaKey(x) === ideaKey(s));
   const GH_MARK = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
   const ICO_LOCK = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>`;
   const ICO_REPO = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M3.5 2.5h8.5v9H4.75A1.25 1.25 0 0 0 3.5 12.75z"/><path d="M3.5 12.75A1.25 1.25 0 0 0 4.75 14h7.25v-2.5"/></svg>`;
@@ -4523,25 +4532,84 @@
     const box = $("#projIdeas"); if (!box) return;
     $("#projForm") && ($("#projForm").hidden = true);
     box.hidden = false; renderProjList();
+    if (SAVED_IDEAS === null) loadSavedIdeas();
     if (!IDEAS.ideas.length) loadIdeas({}); else renderIdeas();
   }
   function closeIdeas() { const box = $("#projIdeas"); if (box) box.hidden = true; renderProjList(); }
+  const skelCards = (n, hero) => Array.from({ length: n }, (_, i) => `<div class="proj-idea is-skel${hero && !i ? " is-hero" : ""}" style="--i:${i}" aria-hidden="true"><b class="tech-tile"></b><i></i><i></i><i></i><i></i></div>`).join("");
   async function loadIdeas(body) {
     const seq = ++IDEAS.seq;
     const grid = $("#projIdeasGrid");
     renderTargetChip(body.role != null ? body.role : IDEAS.role, true);
-    if (grid) grid.innerHTML = Array.from({ length: 4 }, (_, i) => `<div class="proj-idea is-skel${i ? "" : " is-hero"}" style="--i:${i}" aria-hidden="true"><b class="tech-tile"></b><i></i><i></i><i></i><i></i></div>`).join("");
+    if (grid) grid.innerHTML = skelCards(4, true);
+    const more = $("#projIdeasMoreRow"); if (more) more.hidden = true;
     grid?.setAttribute("aria-busy", "true");
     try {
       const d = await api("/api/projects/ideas", body);
       if (seq !== IDEAS.seq) return;   // a newer request superseded this one
-      IDEAS = { ...IDEAS, role: d.role || "", source: d.source || "", ideas: d.ideas || [], github: d.github || { connected: false } };
+      const ideas = d.ideas || [];
+      IDEAS = { ...IDEAS, role: d.role || "", source: d.source || "", query: d.query || "", ideas,
+                batches: d.batches && d.batches.length ? d.batches : [ideas.length],
+                github: d.github || { connected: false }, cap: d.cap || IDEAS.cap, moreBusy: false };
+      const q = $("#projIdeasQ"); if (q && document.activeElement !== q) q.value = IDEAS.query;
       renderIdeas();
     } catch (err) {
       if (seq !== IDEAS.seq) return;
+      if (err.data?.code === "ideas_cap") {
+        // The day's batches are spent: keep what is on screen, say so once, and park the controls.
+        IDEAS.cap = err.data.cap || IDEAS.cap;
+        if (IDEAS.ideas.length) { renderIdeas({ still: true }); return; }
+      }
       renderTargetChip(IDEAS.role, false);
+      renderIdeaCap();
       if (grid) grid.innerHTML = `<p class="proj-ideas-empty">${esc(err.message || PT("projects.noIdeas", "No ideas came back. Try another role."))}</p>`;
     } finally { grid?.removeAttribute("aria-busy"); }
+  }
+  // More ideas: another batch for the same role and search, told what is already on screen so it
+  // does not repeat (the server also drops repeats by title and repo name). A skeleton row stands
+  // in while it loads; the cards already shown do not move or re-animate.
+  async function loadMoreIdeas() {
+    if (IDEAS.moreBusy || !IDEAS.ideas.length || capSpent()) return;
+    const seq = IDEAS.seq, grid = $("#projIdeasGrid");
+    IDEAS.moreBusy = true;
+    const btn = $("#projIdeasMore"); if (btn) btn.disabled = true;
+    const skel = `<div class="proj-ideas-skelrow" data-more-skel aria-hidden="true">${skelCards(3, false)}</div>`;
+    const legend = grid?.querySelector(".proj-ideas-legend");
+    if (legend) legend.insertAdjacentHTML("beforebegin", skel); else grid?.insertAdjacentHTML("beforeend", skel);
+    grid?.setAttribute("aria-busy", "true");
+    try {
+      const d = await api("/api/projects/ideas", { role: IDEAS.role, query: IDEAS.query, exclude: IDEAS.ideas.map(s => s.title) });
+      if (seq !== IDEAS.seq) return;
+      IDEAS.cap = d.cap || IDEAS.cap;
+      const seen = new Set(IDEAS.ideas.flatMap(s => [String(s.title || "").toLowerCase(), ideaKey(s)]));
+      const fresh = (d.ideas || []).filter(s => !seen.has(String(s.title || "").toLowerCase()) && !seen.has(ideaKey(s)));
+      const before = IDEAS.batches.length;
+      if (fresh.length) { IDEAS.ideas = IDEAS.ideas.concat(fresh); IDEAS.batches = IDEAS.batches.concat([fresh.length]); }
+      else toast(PT("projects.noMoreIdeas", "No new ideas came back. Try a search."));
+      IDEAS.moreBusy = false;
+      renderIdeas({ still: before });
+      grid?.removeAttribute("aria-busy");
+    } catch (err) {
+      grid?.removeAttribute("aria-busy");
+      if (seq !== IDEAS.seq) return;
+      IDEAS.moreBusy = false;
+      if (err.data?.code === "ideas_cap") IDEAS.cap = err.data.cap || IDEAS.cap;
+      else toast(err.message || PT("projects.noIdeas", "No ideas came back. Try another role."));
+      renderIdeas({ still: true });
+    }
+  }
+  const capSpent = () => !!IDEAS.cap && IDEAS.cap.left <= 0;
+  // The daily cap: one quiet line, and the controls that would ask for a new batch rest until
+  // tomorrow. Cached sets, filters, saved ideas and Start all keep working.
+  function renderIdeaCap() {
+    const spent = capSpent(), line = $("#projIdeasCap");
+    if (line) {
+      line.hidden = !spent;
+      line.textContent = spent ? PT("projects.capReached", "You've reached today's {n} idea batches. More tomorrow.").replace("{n}", IDEAS.cap.limit) : "";
+    }
+    const q = $("#projIdeasQ"); if (q) q.disabled = spent;
+    const more = $("#projIdeasMore"); if (more) more.disabled = spent || IDEAS.moreBusy;
+    const ref = $("#projIdeasRefresh"); if (ref) ref.disabled = spent;
   }
   function renderTargetChip(role, busy) {
     const box = $("#projTargetBox"); if (!box) return;
@@ -4661,7 +4729,7 @@
   const catGlyph = (cat, cls) => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${IDEA_CATS[cat].ico}</svg>`;
 
   function ideaCard(s, i, opt = {}) {
-    const { hero = false, span = 6, fit = 0, total = 0 } = opt;
+    const { hero = false, span = 6, fit = 0, total = 0, compact = false } = opt;
     const gaps = new Set((s.gaps || []).map(g => g.toLowerCase()));
     // The skills the job wants and the profile lacks lead the row: they are the reason to build it.
     // They wear the Jobs page's must-have gap chip; the rest wear its plain tag.
@@ -4680,13 +4748,14 @@
       </div>` : "";
     const n = (s.skills || []).length;
     const cat = ideaCat(s), [lk, lf] = IDEA_CATS[cat].label;
-    const pills = `${hero ? `<span class="proj-idea-pill is-best">${esc(total ? PT("projects.bestMatch", "Best match") : PT("projects.topPick", "Top pick"))}</span>` : ""}${s.size ? `<span class="proj-idea-pill">${esc(s.size.charAt(0).toUpperCase() + s.size.slice(1))}</span>` : ""}`;
+    const saved = isSavedIdea(s), saveLbl = saved ? PT("projects.savedIdea", "Saved") : PT("projects.saveIdea", "Save idea");
+    const pills = `${hero ? `<span class="proj-idea-pill is-best">${esc(total ? PT("projects.bestMatch", "Best match") : PT("projects.topPick", "Top pick"))}</span>` : ""}${s.size ? `<span class="proj-idea-pill">${esc(s.size.charAt(0).toUpperCase() + s.size.slice(1))}</span>` : ""}<button class="proj-idea-save" type="button" data-save aria-pressed="${saved}" aria-label="${esc(saveLbl)}" title="${esc(saveLbl)}">${ICO_BOOKMARK}</button>`;
     // The Jobs card head: a 40px tile, the "company" line (here the category), the title under it,
     // and the pills top-right where Jobs shows "New 4h ago".
     const head = `<div class="proj-idea-hd">
         ${techTile(s, catGlyph(cat, ""), "proj-idea-logo")}
         <div class="proj-idea-main">
-          <div class="proj-idea-top"><span class="proj-idea-cat">${esc(PT(lk, lf))}</span>${pills ? `<span class="proj-idea-tags">${pills}</span>` : ""}</div>
+          <div class="proj-idea-top"><span class="proj-idea-cat">${esc(PT(lk, lf))}</span><span class="proj-idea-tags">${pills}</span></div>
           <h3 class="proj-idea-t">${esc(s.title)}</h3>
         </div>
       </div>`;
@@ -4695,7 +4764,7 @@
         <button class="btn ${hero ? "btn-primary" : "btn-ghost"} btn-sm" data-start type="button">${esc(PT("projects.start", "Start this project"))}</button>
       </div>`;
     if (hero) {
-      return `<article class="proj-idea is-hero" data-i="${i}" data-cat="${cat}" style="--i:0">
+      return `<article class="proj-idea is-hero${opt.still ? " is-still" : ""}" data-i="${i}" data-key="${esc(ideaKey(s))}" data-cat="${cat}" style="--i:0">
         ${head}
         <div class="proj-idea-body">
           <div class="proj-hero-main">
@@ -4711,18 +4780,20 @@
         </div>
       </article>`;
     }
-    return `<article class="proj-idea${span <= 2 ? " is-tight" : ""}" data-i="${i}" data-cat="${cat}" style="--i:${opt.order || 0};--span:${span}">
+    return `<article class="proj-idea${span <= 2 ? " is-tight" : ""}${opt.still ? " is-still" : ""}" data-i="${i}" data-key="${esc(ideaKey(s))}" data-cat="${cat}" style="--i:${opt.order || 0};--span:${span}">
       ${head}
       <div class="proj-idea-body">
         ${s.pitch ? `<p class="proj-idea-p">${esc(s.pitch)}</p>` : ""}
-        ${fitMeter(fit, total, n)}
+        ${compact ? "" : fitMeter(fit, total, n)}
         ${chips ? `<ul class="proj-skills">${chips}</ul>` : ""}
         ${exHTML}
         ${ft}
       </div>
     </article>`;
   }
-  function renderIdeas() {
+  // opt.still: true keeps every card still (a filter or a cap change); a number keeps the first
+  // that many batches still, so only an appended batch animates in.
+  function renderIdeas(opt = {}) {
     renderTargetChip(IDEAS.role, false);
     const grid = $("#projIdeasGrid"), note = $("#projIdeasNote"); if (!grid) return;
     if (note) {
@@ -4730,16 +4801,122 @@
       note.innerHTML = `${GH_MARK}<span><a href="#" id="projIdeasConnect">${esc(PT("projects.ghConnect", "Connect GitHub"))}</a> ${esc(PT("projects.ghNote", "to start each idea as a private repo."))}</span>`;
       $("#projIdeasConnect")?.addEventListener("click", async (e) => { e.preventDefault(); await openSettings(); document.querySelector('[data-set="connections"]')?.click(); });
     }
-    const hasGap = IDEAS.ideas.some(s => (s.gaps || []).length);
+    renderIdeaCap();
+    const qline = $("#projIdeasQuery");
+    if (qline) {
+      qline.hidden = !IDEAS.query;
+      qline.innerHTML = IDEAS.query ? `<span>${esc(PT("projects.resultsFor", "Results for"))} <b>${esc(IDEAS.query)}</b></span>
+        <button class="proj-q-clear" id="projIdeasQClear" type="button" aria-label="${esc(PT("projects.clearSearch", "Clear search"))}" title="${esc(PT("projects.clearSearch", "Clear search"))}">${ICO_X}</button>` : "";
+      $("#projIdeasQClear")?.addEventListener("click", () => {
+        const q = $("#projIdeasQ"); if (q) q.value = "";
+        loadIdeas({ role: IDEAS.role });   // the role's own set, from the cache: no new batch
+      });
+    }
+    renderSavedIdeas();
+    renderIdeaFilters();
+    renderIdeaGrid(opt);
+  }
+  // Filters are client-side only: they narrow the ideas already loaded and never call the model.
+  const ideaPasses = s => (!IDEAS.filt.size || (s.size || "").toLowerCase() === IDEAS.filt.size.toLowerCase())
+    && (!IDEAS.filt.cat || ideaCat(s) === IDEAS.filt.cat);
+  function renderIdeaFilters() {
+    const box = $("#projIdeasFilters"); if (!box) return;
+    const cats = Object.keys(IDEA_CATS).filter(c => IDEAS.ideas.some(s => ideaCat(s) === c));
+    if (IDEAS.filt.cat && !cats.includes(IDEAS.filt.cat)) IDEAS.filt.cat = "";
+    box.hidden = IDEAS.ideas.length < 2;
+    const chip = (kind, val, label, on) => `<button class="jf-toggle-btn proj-fchip" type="button" data-f${kind}="${esc(val)}" aria-pressed="${on}">${esc(label)}</button>`;
+    const any = PT("projects.any", "Any");
+    box.innerHTML = `<div class="proj-frow" role="group" aria-label="${esc(PT("projects.filterSize", "Size"))}"><span class="proj-frow-k">${esc(PT("projects.filterSize", "Size"))}</span>
+        ${chip("size", "", any, !IDEAS.filt.size)}${IDEA_SIZES_UI.map(z => chip("size", z, z, IDEAS.filt.size === z)).join("")}</div>
+      <div class="proj-frow" role="group" aria-label="${esc(PT("projects.filterCat", "Category"))}"><span class="proj-frow-k">${esc(PT("projects.filterCat", "Category"))}</span>
+        ${chip("cat", "", any, !IDEAS.filt.cat)}${cats.map(c => chip("cat", c, PT(IDEA_CATS[c].label[0], IDEA_CATS[c].label[1]), IDEAS.filt.cat === c)).join("")}</div>`;
+    box.querySelectorAll("[data-fsize]").forEach(b => b.addEventListener("click", () => { IDEAS.filt.size = b.dataset.fsize; renderIdeaFilters(); renderIdeaGrid({ still: true }); }));
+    box.querySelectorAll("[data-fcat]").forEach(b => b.addEventListener("click", () => { IDEAS.filt.cat = b.dataset.fcat; renderIdeaFilters(); renderIdeaGrid({ still: true }); }));
+  }
+  const IDEA_SIZES_UI = ["Weekend", "1 week", "2 weeks"];
+  // Each batch is ranked on its own: the first batch leads with the hero, later batches flow in
+  // the bento grid under it, so appending never reshuffles what the person is already reading.
+  function renderIdeaGrid(opt = {}) {
+    const grid = $("#projIdeasGrid"); if (!grid) return;
+    const moreRow = $("#projIdeasMoreRow");
+    if (moreRow) moreRow.hidden = !IDEAS.ideas.length;
     if (!IDEAS.ideas.length) { grid.innerHTML = `<p class="proj-ideas-empty">${esc(PT("projects.noIdeas", "No ideas came back. Try another role."))}</p>`; return; }
-    const { ranked, total } = rankIdeas(IDEAS.ideas);
-    const spans = bentoSpans(ranked.length - 1);
-    grid.innerHTML = ranked.map((r, k) => ideaCard(r.s, r.i, { hero: k === 0, span: spans[k - 1] || 6, fit: r.fit, total, order: k })).join("")
-      + (hasGap ? `<p class="proj-ideas-legend"><span class="proj-skill is-gap" aria-hidden="true">${PROJ_ICO.plus}</span>${esc(PT("projects.newForYou", "A skill the job asks for that your profile doesn't show yet"))}</p>` : "");
-    grid.querySelectorAll(".proj-idea").forEach(card => {
-      const s = IDEAS.ideas[+card.dataset.i];
-      card.querySelector("[data-start]")?.addEventListener("click", (e) => startIdea(s, e.currentTarget));
+    const sizes = IDEAS.batches.length ? IDEAS.batches.slice() : [IDEAS.ideas.length];
+    const used = sizes.reduce((a, b) => a + b, 0);
+    if (used < IDEAS.ideas.length) sizes.push(IDEAS.ideas.length - used);
+    const { total } = rankIdeas(IDEAS.ideas);
+    let html = "", start = 0, shown = 0;
+    sizes.forEach((n, b) => {
+      const batch = IDEAS.ideas.slice(start, start + n).map((s, j) => ({ s, i: start + j })).filter(x => ideaPasses(x.s));
+      start += n;
+      if (!batch.length) return;
+      const ranked = rankIdeas(batch.map(x => x.s)).ranked.map(r => ({ ...r, i: batch[r.i].i }));
+      const hero = b === 0, still = opt.still === true || (typeof opt.still === "number" && b < opt.still);
+      const spans = bentoSpans(hero ? ranked.length - 1 : ranked.length);
+      html += ranked.map((r, k) => ideaCard(r.s, r.i, { hero: hero && k === 0, span: (hero ? spans[k - 1] : spans[k]) || 6,
+        fit: r.fit, total, order: k, still })).join("");
+      shown += ranked.length;
     });
+    const hasGap = IDEAS.ideas.some(s => ideaPasses(s) && (s.gaps || []).length);
+    grid.innerHTML = (shown ? html : `<p class="proj-ideas-empty">${esc(PT("projects.noMatch", "No ideas match these filters."))}</p>`)
+      + (hasGap ? `<p class="proj-ideas-legend"><span class="proj-skill is-gap" aria-hidden="true">${PROJ_ICO.plus}</span>${esc(PT("projects.newForYou", "A skill the job asks for that your profile doesn't show yet"))}</p>` : "");
+    bindIdeaCards(grid, IDEAS.ideas);
+  }
+  function bindIdeaCards(root, list) {
+    root.querySelectorAll(".proj-idea:not(.is-skel)").forEach(card => {
+      const s = list[+card.dataset.i];
+      card.querySelector("[data-start]")?.addEventListener("click", (e) => startIdea(s, e.currentTarget));
+      card.querySelector("[data-save]")?.addEventListener("click", (e) => toggleSaveIdea(s, e.currentTarget));
+    });
+  }
+
+  // Saved ideas: a local bookmark list (data/saved_ideas.json), shown as a collapsible row at the
+  // top of the gallery. They survive refreshes, searches and restarts; Start works as anywhere.
+  const SAVED_OPEN_KEY = "tailor-saved-ideas-open";
+  const savedOpen = () => { try { return localStorage.getItem(SAVED_OPEN_KEY) !== "0"; } catch { return true; } };
+  async function loadSavedIdeas() {
+    try { SAVED_IDEAS = (await api("/api/projects/ideas/saved")).saved || []; }
+    catch { SAVED_IDEAS = SAVED_IDEAS || []; }
+    renderSavedIdeas(); syncSaveToggles();
+  }
+  function renderSavedIdeas() {
+    const box = $("#projSaved"); if (!box) return;
+    const list = SAVED_IDEAS || [];
+    box.hidden = !list.length;
+    if (!list.length) { box.innerHTML = ""; return; }
+    const open = savedOpen();
+    box.innerHTML = `<button class="proj-saved-hd" id="projSavedToggle" type="button" aria-expanded="${open}" aria-controls="projSavedGrid">
+        <span class="proj-ideas-h">${esc(PT("projects.savedIdeas", "Saved ideas"))}</span><span class="proj-saved-n">${list.length}</span>${ICO_CHEV}</button>
+      <div class="proj-ideas-grid proj-saved-grid" id="projSavedGrid"${open ? "" : " hidden"}>
+        ${list.map((s, i) => ideaCard(s, i, { span: 3, compact: true, still: true })).join("")}
+      </div>`;
+    $("#projSavedToggle")?.addEventListener("click", () => {
+      try { localStorage.setItem(SAVED_OPEN_KEY, savedOpen() ? "0" : "1"); } catch {}
+      renderSavedIdeas();
+    });
+    bindIdeaCards($("#projSavedGrid"), list);
+  }
+  function syncSaveToggles() {
+    document.querySelectorAll("#projIdeasGrid .proj-idea[data-key]").forEach(card => {
+      const btn = card.querySelector("[data-save]"); if (!btn) return;
+      const on = (SAVED_IDEAS || []).some(x => ideaKey(x) === card.dataset.key);
+      const lbl = on ? PT("projects.savedIdea", "Saved") : PT("projects.saveIdea", "Save idea");
+      btn.setAttribute("aria-pressed", String(on)); btn.setAttribute("aria-label", lbl); btn.title = lbl;
+    });
+  }
+  async function toggleSaveIdea(s, btn) {
+    if (!s) return;
+    if (btn) btn.disabled = true;
+    try {
+      const r = isSavedIdea(s)
+        ? await fetch(`/api/projects/ideas/saved?repo=${encodeURIComponent(ideaKey(s))}`, { method: "DELETE" }).then(x => x.json())
+        : await api("/api/projects/ideas/saved", { idea: s });
+      if (r.error) throw new Error(r.error);
+      SAVED_IDEAS = r.saved || [];
+      renderSavedIdeas(); syncSaveToggles();
+    } catch (err) {
+      toast(err.message || PT("projects.saveFailed", "Couldn't save the idea."));
+    } finally { if (btn && btn.isConnected) btn.disabled = false; }
   }
   async function startIdea(s, btn) {
     if (!s) return;
@@ -4760,7 +4937,15 @@
   }
   $("#projSuggestBtn")?.addEventListener("click", () => { const box = $("#projIdeas"); if (box && !box.hidden) closeIdeas(); else openIdeas(); });
   $("#projIdeasClose")?.addEventListener("click", closeIdeas);
-  $("#projIdeasRefresh")?.addEventListener("click", () => loadIdeas({ role: IDEAS.role, refresh: true }));
+  $("#projIdeasRefresh")?.addEventListener("click", () => { if (!capSpent()) loadIdeas({ role: IDEAS.role, query: IDEAS.query, refresh: true }); });
+  $("#projIdeasMore")?.addEventListener("click", loadMoreIdeas);
+  $("#projIdeasSearch")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const q = ($("#projIdeasQ")?.value || "").replace(/\s+/g, " ").trim();
+    if (q.toLowerCase() === (IDEAS.query || "").toLowerCase()) return;
+    if (q && capSpent()) return;
+    loadIdeas(q ? { role: IDEAS.role, query: q } : { role: IDEAS.role });
+  });
 
   // Guided build-and-teach loop: an ordered plan that teaches as you build, with a per-step coach.
   async function startBuildGuide(p) {

@@ -628,5 +628,20 @@
   "projects.catMl": "Aprendizado de máquina",
   "projects.catMobile": "Mobile",
   "projects.catTools": "Ferramentas e CLI",
-  "projects.buildsOnSkills": "Usa as habilidades que você já tem"
+  "projects.buildsOnSkills": "Usa as habilidades que você já tem",
+  "projects.searchPh": "Busque ideias, ex. painel em React ou detecção de fraude",
+  "projects.searchLabel": "Buscar ideias",
+  "projects.resultsFor": "Resultados para",
+  "projects.clearSearch": "Limpar busca",
+  "projects.moreIdeas": "Mais ideias",
+  "projects.noMoreIdeas": "Nenhuma ideia nova. Tente uma busca.",
+  "projects.filterSize": "Tamanho",
+  "projects.filterCat": "Categoria",
+  "projects.any": "Todas",
+  "projects.noMatch": "Nenhuma ideia corresponde a estes filtros.",
+  "projects.saveIdea": "Salvar ideia",
+  "projects.savedIdea": "Salva",
+  "projects.savedIdeas": "Ideias salvas",
+  "projects.saveFailed": "Não foi possível salvar a ideia.",
+  "projects.capReached": "Você usou as {n} rodadas de ideias de hoje. Mais amanhã."
 }

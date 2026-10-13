@@ -628,5 +628,20 @@
   "projects.catMl": "Maschinelles Lernen",
   "projects.catMobile": "Mobil",
   "projects.catTools": "Tools und CLI",
-  "projects.buildsOnSkills": "Baut auf deinen vorhandenen Fähigkeiten auf"
+  "projects.buildsOnSkills": "Baut auf deinen vorhandenen Fähigkeiten auf",
+  "projects.searchPh": "Ideen suchen, z. B. React-Dashboard oder Betrugserkennung",
+  "projects.searchLabel": "Ideen suchen",
+  "projects.resultsFor": "Ergebnisse für",
+  "projects.clearSearch": "Suche löschen",
+  "projects.moreIdeas": "Mehr Ideen",
+  "projects.noMoreIdeas": "Keine neuen Ideen. Versuche eine Suche.",
+  "projects.filterSize": "Umfang",
+  "projects.filterCat": "Kategorie",
+  "projects.any": "Alle",
+  "projects.noMatch": "Keine Idee passt zu diesen Filtern.",
+  "projects.saveIdea": "Idee merken",
+  "projects.savedIdea": "Gemerkt",
+  "projects.savedIdeas": "Gemerkte Ideen",
+  "projects.saveFailed": "Die Idee konnte nicht gespeichert werden.",
+  "projects.capReached": "Du hast heute alle {n} Ideenrunden genutzt. Morgen gibt es mehr."
 }

@@ -628,5 +628,20 @@
   "projects.catMl": "Apprentissage automatique",
   "projects.catMobile": "Mobile",
   "projects.catTools": "Outils et CLI",
-  "projects.buildsOnSkills": "S'appuie sur les compétences que vous avez déjà"
+  "projects.buildsOnSkills": "S'appuie sur les compétences que vous avez déjà",
+  "projects.searchPh": "Chercher des idées, ex. tableau de bord React ou détection de fraude",
+  "projects.searchLabel": "Chercher des idées",
+  "projects.resultsFor": "Résultats pour",
+  "projects.clearSearch": "Effacer la recherche",
+  "projects.moreIdeas": "Plus d'idées",
+  "projects.noMoreIdeas": "Aucune nouvelle idée. Essayez une recherche.",
+  "projects.filterSize": "Durée",
+  "projects.filterCat": "Catégorie",
+  "projects.any": "Toutes",
+  "projects.noMatch": "Aucune idée ne correspond à ces filtres.",
+  "projects.saveIdea": "Enregistrer l'idée",
+  "projects.savedIdea": "Enregistrée",
+  "projects.savedIdeas": "Idées enregistrées",
+  "projects.saveFailed": "Impossible d'enregistrer l'idée.",
+  "projects.capReached": "Vous avez utilisé les {n} séries d'idées du jour. La suite demain."
 }
