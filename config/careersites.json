@@ -40,6 +40,57 @@
       "job_url": "^https://careers\\.cisco\\.com/global/en/job/",
       "verified": "2026-10-11",
       "jobs_seen": 1500
+    },
+    "careers.walmart.com": {
+      "company": "Walmart",
+      "sitemaps": [
+        "https://careers.walmart.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.walmart\\.com/us/en/jobs/R-\\d+$",
+      "reader": "nextdata",
+      "id_order": "/R-(\\d+)$",
+      "max_urls": 20000,
+      "keep": {
+        "department": "^corporate / home office\\b",
+        "else": "drop"
+      },
+      "platform": "other",
+      "verified": "2026-10-12",
+      "jobs_seen": 15839
+    },
+    "careers.homedepot.com": {
+      "company": "The Home Depot",
+      "sitemaps": [
+        "https://careers.homedepot.com/jobsitemap"
+      ],
+      "job_url": "^https://careers\\.homedepot\\.com/job/\\d+/",
+      "keep": {
+        "drop": "\\b(field sales|sales consultant|installers?|install|store support)\\b",
+        "else": "drop"
+      },
+      "platform": "other",
+      "verified": "2026-10-12",
+      "jobs_seen": 25333
+    },
+    "careers.bankofamerica.com": {
+      "company": "Bank of America",
+      "sitemaps": [
+        "https://careers.bankofamerica.com/sitemap_main.xml"
+      ],
+      "job_url": "^https://careers\\.bankofamerica\\.com/en-us/job-detail/\\d+/",
+      "platform": "other",
+      "verified": "2026-10-12",
+      "jobs_seen": 2113
+    },
+    "www.accenture.com": {
+      "company": "Accenture",
+      "sitemaps": [
+        "https://www.accenture.com/us-en/jobpostings-sitemap.xml"
+      ],
+      "job_url": "^https://www\\.accenture\\.com/us-en/careers/jobdetails\\?id=",
+      "platform": "other",
+      "verified": "2026-10-12",
+      "jobs_seen": 952
     }
   }
 }

@@ -970,6 +970,42 @@ class AnthropicLLM:
                 f"APPLICANT PROFILE (JSON):\n{json.dumps(profile)[:5000]}")
         return self._complete(system, user, max_tokens=600, effort="medium")
 
+    def draft_linkedin_profile(self, profile: dict, target_role: str,
+                               current_headline: str = "", current_about: str = "") -> dict:
+        """A LinkedIn headline and About aimed at the person's target role, grounded ONLY in
+        the saved profile. The person pastes them into LinkedIn themselves."""
+        system = (
+            "You write a LinkedIn HEADLINE and ABOUT section for a job applicant, aimed at the "
+            "TARGET ROLE, so recruiters searching for that role find and pick them.\n"
+            "STRICT RULES:\n"
+            "- Ground ONLY in the APPLICANT PROFILE. NEVER invent an employer, a number, a "
+            "metric, a degree, a certification, or a skill the profile does not state. If the "
+            "profile has no numbers, write without numbers.\n"
+            "- HEADLINE: under 200 characters. Target role first, then two or three searchable "
+            "skills in the wording a job description would use, then one outcome or strength. "
+            "Separate parts with ' | '. Not a job title alone, and never 'seeking opportunities'.\n"
+            "- ABOUT: 900 to 1,600 characters, first person, plain language, no em dashes or "
+            "en dashes, no bullet symbols. Paragraph 1: who they are and the roles they target. "
+            "Paragraph 2: what they have actually done, naming three to five skills in the "
+            "target role's vocabulary. Paragraph 3: one proof point from the profile. Last line: "
+            "a short call to action (open to the target roles; how to reach them, without "
+            "inventing contact details).\n"
+            "- Keep anything true and useful from the CURRENT headline/About; drop filler.\n"
+            "Return ONLY a JSON object: {\"headline\": \"...\", \"about\": \"...\"}."
+        )
+        cur = ""
+        if current_headline:
+            cur += f"CURRENT HEADLINE: {current_headline[:300]}\n"
+        if current_about:
+            cur += f"CURRENT ABOUT:\n{current_about[:2600]}\n"
+        user = (f"TARGET ROLE: {target_role or '(the most recent role in the profile)'}\n{cur}\n"
+                f"APPLICANT PROFILE (JSON):\n{json.dumps(profile, ensure_ascii=False)[:7000]}")
+        raw = self._complete(system, user, max_tokens=1200, effort="medium")
+        data = self._parse_json_object(raw) or {}
+        if not isinstance(data, dict):
+            return {"headline": "", "about": ""}
+        return {"headline": str(data.get("headline") or ""), "about": str(data.get("about") or "")}
+
     def classify_application_mail(self, subject: str, body: str, sender: str, company: str) -> dict:
         """Stage triage for ONE message from a TRACKED employer the rules could not place
         (inbox/suggestions.py). Cheap and strict: "other" unless the text plainly supports a kind."""

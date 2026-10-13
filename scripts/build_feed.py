@@ -40,7 +40,7 @@ DEFAULT_INCLUDE = "jsearch"
 # The board pass stops after this many minutes so the run always finishes inside the workflow's
 # 120-minute limit. A run the limit kills saves nothing (actions/cache only saves on success), so
 # every later run would start from zero and be killed too -- the first run on 2026-10-06 did that.
-DEFAULT_CRAWL_MINUTES = 70
+DEFAULT_CRAWL_MINUTES = 140
 CURSOR_FILE = "crawl_cursor.json"     # where the next run resumes in the board list, under --data
 CAREERSITE_CURSOR_FILE = "careersite_cursor.json"   # the same for the career-site table
 
@@ -207,7 +207,7 @@ def main(argv=None) -> int:
                     help="where to write jobs.json.gz, jd/, manifest.json")
     ap.add_argument("--jobs-url", default=os.environ.get("FEED_JOBS_URL", ""),
                     help="absolute URL of jobs.json.gz, recorded in manifest.json")
-    ap.add_argument("--limit", type=int, default=None, help="cap rows (default JOBS_FEED_LIMIT, 50000)")
+    ap.add_argument("--limit", type=int, default=None, help="cap rows (default JOBS_FEED_LIMIT, 150000)")
     ap.add_argument("--no-crawl", action="store_true", help="skip the crawl; publish what the DB holds")
     ap.add_argument("--crawl-minutes", type=float,
                     default=float(os.environ.get("FEED_CRAWL_MINUTES", DEFAULT_CRAWL_MINUTES)),

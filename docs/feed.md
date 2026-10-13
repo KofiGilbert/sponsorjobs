@@ -239,8 +239,50 @@ and Google disallows paging its results). **Amazon**, the largest sponsor, has n
 either, but the public keyless JSON its own search page reads is open to crawlers (robots.txt
 disallows only `/internal`): `sourcing/amazonjobs.py` reads it as the `amazonjobs` adapter (board id
 = country code, `AMAZON_MAX_JOBS` newest rows per run, default 1,000, full text in every row; the newest 500 are stored per run, and a row stays while it is re-seen).
-Walmart (15,900 job URLs, clean robots, job data in Next.js page JSON rather than JSON-LD) is the
-next worthwhile site once a `__NEXT_DATA__` reader exists.
+
+#### Page readers and the keep rule (`sourcing/careersite_readers.py`)
+
+Some sponsors' sites have a clean `robots.txt` and job sitemap but put the job data in the page's
+framework JSON instead of JSON-LD. A site entry may name a **reader** (`"reader": "nextdata"`):
+JSON-LD is still tried first, and only a page without it is handed to the reader, which returns a
+JobPosting-shaped dict so the rest of the lane is unchanged. `nextdata` reads the Next.js
+`__NEXT_DATA__` script: a known shape first (Walmart's `props.pageProps.jobDetails`, a closed
+requisition is skipped), then a generic walk for the object with a title-like key and the longest
+description-like string (at least 200 characters, so an SEO blurb never passes for an ad).
+
+A site whose sitemap is mostly store, warehouse and driver hourly roles gets a **keep** rule
+(`"keep": {...}`), because those roles are not what our users (international students looking for
+sponsored professional jobs) can use. Hourly words drop first (cashier, stocker, driver, cart
+attendant, personal shopper, technician, part time, hourly...), then professional words keep
+(software, engineer, data, analyst, product manager, finance, risk, supply chain, director...),
+then the site's optional `department` pattern keeps, and `else` (default `drop`) decides the rest;
+`drop` / `keep` add site-specific words. It is applied to the sitemap URL's **slug first**, before
+any request, when the slug spells the title; when the URL is only an id the page's title (and the
+department the reader found) decide, and a page dropped that way, or one with no posting (a closed
+requisition), is remembered for 30 days in a `careersite_skip` table in the same SQLite file so the
+next run spends its page budget on pages it has not read. `id_order` reads a sitemap that has no
+`lastmod` newest requisition first; `max_urls` lifts the per-site sitemap cap (6,000).
+
+Added 2026-10-12 (robots.txt read by hand, sitemap counted, pages parsed, no challenge):
+
+| Site | Job URLs | How | Keep rule effect |
+|---|---|---|---|
+| Walmart (`careers.walmart.com`) | 15,839 (`/us/en/jobs/R-<id>`, no `lastmod`, no title in the URL) | `nextdata` reader; robots disallows only `/api`, `/results`, `/cms`, `/debug`, `/docs` | 200-page random sample: 3 closed, 12 of 197 kept (6%): Staff / Principal Software Engineer, Technical Program Manager, Principal Data Analyst, Senior Director Technology Operations, Realty Project Coach. Dropped: store and club roles, pharmacists and optometrists (store-based), distribution-center floor managers, facility technicians. Department rule: `corporate / Home Office` |
+| The Home Depot (`careers.homedepot.com`) | 25,333 (`/jobsitemap`, which redirects to its sitemap vendor's file on `feeds.hodesdigital.com`) | JSON-LD | Slug rule, no request spent: 354 of 25,333 kept (1.4%; 0 of a random 200, all store roles); kept are Atlanta HQ product, data science, analyst, engineering, marketing analytics roles |
+| Bank of America (`careers.bankofamerica.com`) | 2,113 (`sitemap_main.xml`) | JSON-LD (`datePosted` as MM/DD/YYYY, now read) | none |
+| Accenture US (`www.accenture.com/us-en/jobpostings-sitemap.xml`) | 952 | JSON-LD (a description holding `&quot;` inside a JSON string: the block is parsed raw before unescaping) | none |
+
+Live capped run 2026-10-12 (fresh database): Walmart, two runs of 30 pages each, 0 kept, 51 dropped by
+the keep rule, 9 pages with no posting (closed requisitions); the newest requisitions are all store
+hiring, and the second run did not re-read the 26 pages the first run dropped. At a 6% keep rate the default 400 pages a
+run yields about 24 Walmart roles a run and covers the whole sitemap in about 40 runs. Home Depot
+12 pages, 12 kept (Senior Data Scientist, Senior Product Manager, Controls Engineer, Manager
+Marketing Analytics...). Bank of America 6 of 6, Accenture 6 of 6. No block, no challenge.
+
+Checked and left OUT on 2026-10-12: Goldman Sachs (`higher.gs.com` robots.txt disallows
+everything), Wells Fargo and Cognizant (robots.txt allows and the sitemaps list 1,402 and 2,126
+jobs, but every job page answers a Cloudflare challenge), Target (a Workday tenant, `sourcing/workday.py`);
+Salesforce (`careers.salesforce.com` answers a redirect; not followed further). None of the candidates needed the `nextdata` reader besides Walmart.
 
 ## Set-up, step by step
 

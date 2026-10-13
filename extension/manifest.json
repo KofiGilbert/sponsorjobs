@@ -77,6 +77,16 @@
         "content.css"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.linkedin.com/in/*"
+      ],
+      "js": [
+        "profile_core.js",
+        "profile.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "icons": {

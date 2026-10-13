@@ -31,7 +31,7 @@ jobs:
     # TAILOR_FEED_URL repository variable exists. See docs/feed.md.
     if: ${{ vars.TAILOR_FEED_URL != '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 175
     env:
       FEED_DATA_DIR: ${{ github.workspace }}/.feed-data
       # Built under .site/feed so the Pages artifact (.site) serves it at <domain>/feed/...,
@@ -66,24 +66,28 @@ jobs:
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
           # Repository VARIABLES (Settings > Secrets and variables > Actions > Variables):
           FEED_INCLUDE_AGGREGATORS: ${{ vars.FEED_INCLUDE_AGGREGATORS }}
-          JOBS_MAX_PER_COMPANY: ${{ vars.JOBS_MAX_PER_COMPANY || 500 }}
+          JOBS_MAX_PER_COMPANY: ${{ vars.JOBS_MAX_PER_COMPANY || 2000 }}
           TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
-          FEED_CRAWL_MINUTES: ${{ inputs.crawl_minutes || vars.FEED_CRAWL_MINUTES || 70 }}
+          FEED_CRAWL_MINUTES: ${{ inputs.crawl_minutes || vars.FEED_CRAWL_MINUTES || 140 }}
           # Descriptions read per giant Workday / SmartRecruiters board PER RUN. The code default
           # (2000) let 18 boards eat a whole 20-minute run; 200 lets a run reach many boards, and
           # descriptions already stored are never re-read, so big boards still fill in over runs.
-          WORKDAY_MAX_DETAIL_FEED: ${{ vars.WORKDAY_MAX_DETAIL_FEED || 200 }}
+          WORKDAY_MAX_DETAIL_FEED: ${{ vars.WORKDAY_MAX_DETAIL_FEED || 600 }}
           SMARTRECRUITERS_MAX_DETAIL_FEED: ${{ vars.SMARTRECRUITERS_MAX_DETAIL_FEED || 200 }}
           # The career-site lane (sourcing/careersite.py) runs beside the board pass: its own
           # wall-clock cap, job pages read per site per run, and hosts crawled at once (each host
           # still sees one request at a time). CAREERSITE_LANE=0 switches it off.
           CAREERSITE_LANE: ${{ vars.CAREERSITE_LANE || 1 }}
-          CAREERSITE_MINUTES: ${{ vars.CAREERSITE_MINUTES || 60 }}
-          CAREERSITE_MAX_DETAIL: ${{ vars.CAREERSITE_MAX_DETAIL || 400 }}
+          CAREERSITE_MINUTES: ${{ vars.CAREERSITE_MINUTES || 130 }}
+          CAREERSITE_MAX_DETAIL: ${{ vars.CAREERSITE_MAX_DETAIL || 1000 }}
           CAREERSITE_WORKERS: ${{ vars.CAREERSITE_WORKERS || 4 }}
           # Job pages read across ALL career sites per run (the site order rotates between runs
           # from a cursor in the data dir, so the end of the table is reached too).
-          CAREERSITE_PAGE_BUDGET: ${{ vars.CAREERSITE_PAGE_BUDGET || 4000 }}
+          CAREERSITE_PAGE_BUDGET: ${{ vars.CAREERSITE_PAGE_BUDGET || 12000 }}
+          # Amazon's own search JSON (sourcing/amazonjobs.py): newest N per run; stored rows are still
+          # capped by JOBS_MAX_PER_COMPANY. The published list holds up to JOBS_FEED_LIMIT rows.
+          AMAZON_MAX_JOBS: ${{ vars.AMAZON_MAX_JOBS || 5000 }}
+          JOBS_FEED_LIMIT: ${{ vars.JOBS_FEED_LIMIT || 150000 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
             --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"

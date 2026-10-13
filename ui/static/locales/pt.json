@@ -578,5 +578,20 @@
   "emp.entries": "entradas",
   "emp.talk": "Três coisas para dizer",
   "emp.atMostLevel": "No máximo Nível",
-  "emp.atMost": "no máximo cerca de"
+  "emp.atMost": "no máximo cerca de",
+  "li.title": "Revisão do LinkedIn",
+  "li.rescore": "Pontuar de novo",
+  "li.rescoring": "Pontuando...",
+  "li.empty": "Abra o seu próprio perfil do LinkedIn no Chrome com a extensão SponsorJobs instalada e a sua pontuação aparece aqui.",
+  "li.headline": "Título sugerido",
+  "li.about": "Sobre sugerido",
+  "li.copy": "Copiar",
+  "li.copied": "Copiado",
+  "li.copyFailed": "Selecione e copie",
+  "li.target": "Pontuado para: {role}",
+  "li.scored": "Pontuado {when}",
+  "li.weight": "pts",
+  "li.fix": "Correção:",
+  "li.noDrafts": "Clique em Pontuar de novo para redigir um título e um Sobre a partir do seu perfil salvo.",
+  "li.flags": "Confira estes números antes de colar, eles não estão no seu perfil salvo: {list}"
 }
