@@ -394,7 +394,12 @@ class PoliteFetch:
         """Is some OTHER lane of the current employer's probe reachable within max_wait? Only
         then is deferring `host` worth anything: the thread moves on to that lane. Lock held."""
         lanes = getattr(self._local, "lanes", None) or set(ATS_HOSTS)
-        return any(self._wait_for(h, now) <= self.max_wait for h in lanes if h != host)
+        mine = ATS_HOSTS.get(host)
+        # Another Workday INSTANCE is no alternative to this one: the probe needs every instance
+        # it asks, so deferring one just marks all of Workday owed (the 2026-10-12 long run
+        # deferred Workday for 2,468 of 2,747 employers that way). Only a different ATS counts.
+        return any(self._wait_for(h, now) <= self.max_wait for h in lanes
+                   if h != host and (mine is None or ATS_HOSTS.get(h) != mine))
 
     def next_free(self, atss=None) -> float:
         """The clock time at which the earliest of these ATSs' lanes (all lanes when None) can

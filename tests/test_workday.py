@@ -918,3 +918,20 @@ def test_a_site_named_for_the_sponsor_survives_a_regional_entity_on_its_postings
                                                                   "total": 400}}}})
     hit = workday.discover_workday("The Northern Trust Company", fetch=fake)
     assert hit and hit.board_id == "ntrs.wd1/northerntrust" and hit.jobs == 400
+
+
+def test_a_busy_workday_instance_is_waited_for_not_deferred_to_another_instance():
+    # Per-instance lanes must not count each other as alternatives: deferring wd1 because wd5 is
+    # free marks the whole Workday probe owed (2,468 of 2,747 employers on 2026-10-12).
+    clock = {"t": 0.0}
+    pf = growth.PoliteFetch(fetch=lambda url, timeout, **kw: "ok", max_wait=1.0,
+                            sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+                            clock=lambda: clock["t"], host_delays={"wd1.myworkdayjobs.com": 5.0})
+    pf.begin(("workday",))
+    for _ in range(3):                                      # 0s, 5s, 10s: beyond max_wait
+        pf("https://a.wd1.myworkdayjobs.com/robots.txt", raw=True)
+    assert pf.deferred == 0 and not pf.throttled and pf.requests == 3
+    pf.begin(("workday", "greenhouse"))                     # a different ATS IS an alternative
+    with pytest.raises(growth.HostCoolingDown):
+        pf("https://a.wd1.myworkdayjobs.com/robots.txt", raw=True)
+    assert pf.deferred == 1
