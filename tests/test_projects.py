@@ -567,3 +567,19 @@ def test_start_without_github_asks_on_the_card_first():
     assert "if (!local && !IDEAS.github?.connected) return askGitHubFirst(s, btn);" in start
     ask = _js_function(src, "askGitHubFirst")
     assert "data-gh" in ask and "data-nogh" in ask and "startIdea(s, btn, true)" in ask and "openGitHubSettings()" in ask
+
+
+def test_ideas_gallery_is_a_page_with_a_back_link():
+    """The gallery has the Templates back link above the title, no close or refresh icons, and
+    Esc goes back; while it is open the title reads Project ideas and the header buttons hide."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
+    assert 'class="btn btn-ghost btn-back tpl-back proj-back" id="projIdeasBack"' in html
+    assert 'id="projIdeasClose"' not in html and 'id="projIdeasRefresh"' not in html
+    css = (root / "ui" / "static" / "styles.css").read_text(encoding="utf-8")
+    assert ".view-projects .proj-back { margin-left: -8px; margin-bottom: 0; }" in css
+    src = (root / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    body = _js_function(src, "renderProjList")
+    assert 'projects.ideasPageTitle' in body and "acts.hidden = true" in body
+    assert 'e.key !== "Escape"' in src and "closeIdeas();" in src
