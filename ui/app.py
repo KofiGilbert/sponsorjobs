@@ -7240,7 +7240,132 @@ def inbox_scan():
                 v["auto"] = complete_verification(v["link"])
     # A recruiter reply SUGGESTS a tracker move (Interviewing, or Rejected); the person clicks.
     _board_suggestions(result.get("recruiters") or [])
+    # The finer triage (interview / rejection / offer / assessment / confirmation) for mail
+    # that names a TRACKED employer lands in the "From your inbox" strip. Stored by message id
+    # so a rescan never re-asks about mail the person already settled.
+    result["suggestions"] = _store_inbox_suggestions(messages, llm)
     return _nostore(jsonify({"ok": True, **result}))
+
+
+_SUGGESTIONS_FILE = _DATA / "inbox_suggestions.json"
+
+
+def _suggestion_store():
+    from inbox.suggestions import SuggestionStore
+    return SuggestionStore(_SUGGESTIONS_FILE)
+
+
+def _store_inbox_suggestions(messages: list[dict], llm=None) -> list[dict]:
+    """Triage ``messages`` against the board, keep the new suggestions, return the pending
+    ones. The model pass (``llm``) only ever sees mail the rules left as "other" AND that
+    names a tracked employer (CLAUDE.md §5: nothing unrelated is read by anyone)."""
+    from inbox.suggestions import build_suggestions
+    store = _suggestion_store()
+    known = {s["id"] for s in store.all()}
+    from inbox.suggestions import suggestion_id
+    fresh = [m for m in (messages or []) if suggestion_id(m) not in known]
+    if fresh:
+        w = _watchlist()
+        try:
+            _board_reconcile(w)
+            jobs = w.board_jobs()
+        finally:
+            w.close()
+        store.add(build_suggestions(fresh, jobs, llm=llm))
+    return store.pending()
+
+
+@app.get("/api/inbox/suggestions")
+@_guard
+def inbox_suggestions():
+    """The pending "From your inbox" suggestions (Tracker strip, Review page). Read-only."""
+    return _nostore(jsonify({"ok": True, "suggestions": _suggestion_store().pending()}))
+
+
+@app.post("/api/inbox/suggestions/<sid>/accept")
+@_guard
+def inbox_suggestion_accept(sid):
+    """The person's click: move the card to the suggested stage, log the mail subject in the
+    timeline, and settle the suggestion (plus any other pending one for the same job and
+    stage). This is the ONLY path from a suggestion to a move."""
+    from datetime import date
+    store = _suggestion_store()
+    s = store.get(sid)
+    if s is None:
+        return jsonify({"error": "No such suggestion."}), 404
+    if s.get("status", "pending") != "pending":
+        return jsonify({"error": "That suggestion was already settled."}), 409
+    w = _watchlist()
+    try:
+        by_job = _board_reconcile(w)
+        job_id = s["source_id"]
+        if not w.stage_of(job_id):
+            store.set_status(sid, "dismissed")
+            return jsonify({"error": "That job is no longer on your board."}), 404
+        note = f'From your inbox: "{(s.get("subject") or "").strip()[:120]}"'
+        row = w.move_stage(job_id, s["stage"], note=note)
+        _board_patch_records(by_job.get(job_id, []), s["stage"])
+        job = _sponsors().tag_jobs([row])[0]
+        due = len(w.due_followups(date.today()))
+    finally:
+        w.close()
+    store.set_status(sid, "accepted")
+    for other in store.pending():
+        if other.get("source_id") == job_id and other.get("stage") == s["stage"]:
+            store.set_status(other["id"], "dismissed")
+    return jsonify({"ok": True, "suggestion": store.get(sid),
+                    "job": _board_card(job, by_job.get(job_id, []), date.today()),
+                    "due_count": due, "suggestions": store.pending()})
+
+
+@app.post("/api/inbox/suggestions/<sid>/dismiss")
+@_guard
+def inbox_suggestion_dismiss(sid):
+    """"Not this": the suggestion is kept as dismissed so the same mail never asks again."""
+    store = _suggestion_store()
+    s = store.get(sid)
+    if s is None:
+        return jsonify({"error": "No such suggestion."}), 404
+    store.set_status(sid, "dismissed")
+    return jsonify({"ok": True, "suggestion": store.get(sid), "suggestions": store.pending()})
+
+
+@app.post("/api/tracker/<path:sid>/draft-email")
+@_guard
+def tracker_draft_email(sid):
+    """Draft one email for a tracked job, for the PERSON to send (CLAUDE.md §5). Body:
+    {type: inbox.drafts.DRAFT_TYPES, contact_id?}. Returns the editable subject and body, the
+    recipient (the contact's email when there is one), and the Gmail compose link. Nothing is
+    sent and no Gmail draft is created."""
+    from inbox.drafts import DRAFT_TYPES, draft_email, gmail_compose_url
+    body = request.json or {}
+    kind = str(body.get("type") or "").strip()
+    if kind not in DRAFT_TYPES:
+        return jsonify({"error": f"type must be one of {', '.join(DRAFT_TYPES)}"}), 400
+    w = _watchlist()
+    try:
+        job = w.board_job(sid)
+        if job is None or not job.get("stage"):
+            return jsonify({"error": "That job is not on your board."}), 404
+        contact = None
+        if body.get("contact_id") not in (None, ""):
+            try:
+                cid = int(body.get("contact_id"))
+            except (TypeError, ValueError):
+                return jsonify({"error": "contact_id must be a number"}), 400
+            contact = next((c for c in w.contacts(sid) if c["id"] == cid), None)
+            if contact is None:
+                return jsonify({"error": "No such contact on that job."}), 404
+    finally:
+        w.close()
+    try:
+        out = draft_email(_make_llm(), kind, job, _saved_full_profile(), contact=contact,
+                          stage=job.get("stage") or "")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    out["gmail_url"] = gmail_compose_url(out["to"], out["subject"], out["body"])
+    out["source_id"] = sid
+    return _nostore(jsonify({"ok": True, **out}))
 
 
 @app.post("/api/inbox/draft_reply")

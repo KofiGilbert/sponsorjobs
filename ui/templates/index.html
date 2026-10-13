@@ -543,6 +543,9 @@
             <button class="btn btn-ghost btn-sm" id="inboxScan" type="button">Scan inbox</button>
           </div>
           <p class="pkg-hint" id="inboxStatus">Checking your mailbox connection…</p>
+          <!-- From your inbox: stage suggestions for tracked jobs. Move / Not this, nothing
+               moves without a click (same strip as the Tracker page). -->
+          <div class="trk-inbox" id="rvwInbox" hidden><!-- injected --></div>
           <div id="inboxResults"></div>
         </div>
 
@@ -580,6 +583,10 @@
           </div>
         </header>
 
+        <!-- From your inbox: mail that reads like an interview invite, rejection, offer,
+             assessment or confirmation for a job on the board. Move / Not this; nothing
+             moves without a click. -->
+        <div class="trk-inbox" id="trkInbox" hidden><!-- injected --></div>
         <div class="trk-metrics" id="trkMetrics"><!-- funnel tiles injected --></div>
         <div class="trk-board" id="trkBoard"><!-- columns injected --></div>
         <div class="trk-table-wrap" id="trkTable" hidden><!-- table injected --></div>

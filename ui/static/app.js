@@ -3502,6 +3502,7 @@
     const st = $("#inboxStatus"), btn = $("#inboxScan");
     try {
       const s = await api("/api/inbox/status");
+      INBOX_CONNECTED = !!s.configured;
       if (s.configured) {
         st.textContent = "Connected to your Gmail (read-only)." +
           (s.auto_verify ? " Autonomous verification is ON." : "");
@@ -3546,7 +3547,6 @@
         parts.push(`<div class="inbox-row inbox-reply">
           <div class="inbox-meta"><b>${esc(m.sender || m.from)}</b> · ${esc(m.subject || "")}</div>
           <div class="prof-dim">${esc(m.snippet || "")}</div>
-          ${trkSuggestHtml(m, i)}
           <textarea class="fld pe-bullets" data-reply="${i}" rows="5">${esc(m.reply || "")}</textarea>
           <div class="pkg-cl-foot">
             <button class="btn btn-ghost btn-sm" data-copy-reply="${i}" type="button">Copy</button>
@@ -3557,7 +3557,7 @@
     }
     if (!parts.length) parts.push(`<p class="prof-dim">Nothing application-related in the last scan (${r.scanned} messages checked, ${r.other} unrelated left untouched).</p>`);
     $("#inboxResults").innerHTML = parts.join("");
-    trkBindSuggestions();
+    if (Array.isArray(r.suggestions)) { INBOX_SUGG = r.suggestions; renderInboxStrip(); }
 
     document.querySelectorAll("[data-verify]").forEach(b => b.addEventListener("click", async () => {
       b.disabled = true; b.textContent = "Verifying…";
@@ -3607,6 +3607,7 @@
     $("#rvwCount").textContent = q.count ? `${q.count} waiting` : "";
     $("#rvwTelegram").disabled = !s.telegram_configured;
     loadInboxStatus();
+    loadInboxSuggestions();
     $("#rvwTelegram").title = s.telegram_configured
       ? "Send this batch to your Telegram" : "Connect Telegram in Settings, Notifications, to enable";
 
@@ -3745,6 +3746,7 @@
     renderTrackerMetrics();
     renderTracker();
     trkSetDot(metrics ? metrics.due_count : (board ? board.due_count : 0));
+    loadInboxSuggestions();
   }
 
   async function trkReloadCards() {
@@ -3934,6 +3936,7 @@
     let j;
     try { j = await api("/api/tracker/job?source_id=" + encodeURIComponent(sid)); }
     catch { toast(trkT("tracker.loadFail", "Couldn't open that job.")); return; }
+    try { INBOX_CONNECTED = !!(await api("/api/inbox/status")).configured; } catch { /* keep what we knew */ }
     TRK_OPEN = sid;
     const panel = $("#trkPanel"), scrim = $("#trkScrim");
     if (!panel) return;
@@ -3986,6 +3989,7 @@
           <button class="btn btn-ghost btn-sm trk-contact-add" type="submit">${esc(trkT("tracker.addContact", "Add contact"))}</button>
         </form>
       </div>
+      ${trkMailSectionHtml(j)}
       <div class="trk-p-sec">
         <div class="trk-p-h">${esc(trkT("tracker.files", "Files"))}</div>
         ${files}
@@ -3997,6 +4001,7 @@
     panel.hidden = false;
     if (scrim) scrim.hidden = false;
     $("#trkPanelClose").addEventListener("click", closeTrackerPanel);
+    trkBindMail(sid, j);
     $("#trkPanelStage").addEventListener("change", (e) => trkMove(sid, e.target.value));
     $("#trkPanelFu").addEventListener("change", async (e) => {
       try {
@@ -4031,24 +4036,156 @@
     }));
   }
 
-  // A recruiter reply from the inbox SUGGESTS a move (Interviewing, or Rejected); the person
-  // clicks, the board moves. Rendered inside the Review page's inbox card.
-  function trkSuggestHtml(m, i) {
-    const s = m.suggest;
-    if (!s) return "";
-    return `<div class="trk-suggest"><span class="prof-dim">${esc(s.company)} · ${esc(s.title)}</span>
-      <button class="btn btn-ghost btn-sm" type="button" data-trk-suggest="${i}" data-sid="${esc(s.source_id)}" data-stage="${esc(s.stage)}">${esc(trkT("tracker.suggest", "Move to {stage}").replace("{stage}", trkStageName(s.stage)))}</button></div>`;
+  /* ---------------------------------------------------------------- From your inbox
+     Stage suggestions built from the person's OWN mail (inbox/suggestions.py): a message that
+     names an employer on the board and reads like an interview invite, a rejection, an offer,
+     an assessment or an application confirmation. One strip, shown on the Tracker and inside
+     the Review page's inbox card. Move <stage> is the person's click; Not this settles it so
+     the same mail never asks again. Nothing moves on its own. */
+  let INBOX_SUGG = [], INBOX_CONNECTED = false;
+  const INBOX_KIND_EN = { interview_invite: "Interview invite", rejection: "Rejection", offer: "Offer",
+    assessment: "Assessment", application_received: "Application received" };
+
+  async function loadInboxSuggestions() {
+    try { const d = await api("/api/inbox/suggestions"); INBOX_SUGG = d.suggestions || []; }
+    catch { INBOX_SUGG = []; }
+    renderInboxStrip();
   }
-  function trkBindSuggestions() {
-    document.querySelectorAll("[data-trk-suggest]").forEach(b => b.addEventListener("click", async () => {
-      b.disabled = true;
-      try {
-        const out = await api("/api/tracker/move", { source_id: b.dataset.sid, stage: b.dataset.stage,
-          note: trkT("tracker.fromReply", "From a recruiter reply") });
-        b.textContent = trkT("tracker.moved", "Moved");
+
+  function inboxSuggRow(sg) {
+    const kind = trkT("inbox.kind." + sg.kind, INBOX_KIND_EN[sg.kind] || sg.kind);
+    return `<div class="trk-inbox-row" data-sugg-row="${esc(sg.id)}">
+      <div class="trk-inbox-who">
+        <div><span class="trk-inbox-co">${esc(sg.company)}</span>${sg.title ? ` <span class="prof-dim">${esc(sg.title)}</span>` : ""}<span class="trk-inbox-kind">${esc(kind)}</span></div>
+        <div class="trk-inbox-subj" title="${esc(sg.subject)}">${esc(sg.sender || sg.from || "")}${sg.subject ? ` &middot; ${esc(sg.subject)}` : ""}</div>
+        ${sg.reason ? `<div class="trk-inbox-why">${esc(sg.reason)}</div>` : ""}
+      </div>
+      <div class="trk-inbox-acts">
+        <button class="btn btn-ghost btn-sm" type="button" data-sugg-accept="${esc(sg.id)}">${esc(trkT("tracker.suggest", "Move to {stage}").replace("{stage}", trkStageName(sg.stage)))}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-sugg-dismiss="${esc(sg.id)}">${esc(trkT("inbox.strip.notThis", "Not this"))}</button>
+      </div>
+    </div>`;
+  }
+
+  function renderInboxStrip() {
+    const hosts = [$("#trkInbox"), $("#rvwInbox")].filter(Boolean);
+    hosts.forEach(host => {
+      const onReview = host.id === "rvwInbox";
+      host.classList.toggle("trk-inbox-review", onReview);
+      // On the Review page the inbox card already has its own Scan button; the Tracker strip
+      // gets one of its own when Gmail is connected, and hides entirely when there is nothing.
+      if (!INBOX_SUGG.length && (onReview || !INBOX_CONNECTED)) { host.hidden = true; host.innerHTML = ""; return; }
+      host.hidden = false;
+      host.innerHTML = `<div class="trk-inbox-head">
+          <span class="trk-inbox-h">${esc(trkT("inbox.strip.title", "From your inbox"))}${INBOX_SUGG.length ? ` (${INBOX_SUGG.length})` : ""}</span>
+          ${!onReview && INBOX_CONNECTED ? `<button class="btn btn-ghost btn-sm" type="button" data-sugg-scan>${esc(trkT("inbox.strip.scan", "Scan inbox"))}</button>` : ""}
+        </div>
+        ${INBOX_SUGG.length ? INBOX_SUGG.map(inboxSuggRow).join("") : `<div class="trk-inbox-empty">${esc(trkT("inbox.strip.empty", "Nothing new from your inbox. Scan to check for interview invites, offers and rejections for jobs on your board."))}</div>`}`;
+      host.querySelectorAll("[data-sugg-accept]").forEach(b => b.addEventListener("click", () => inboxSuggDecide(b.dataset.suggAccept, "accept")));
+      host.querySelectorAll("[data-sugg-dismiss]").forEach(b => b.addEventListener("click", () => inboxSuggDecide(b.dataset.suggDismiss, "dismiss")));
+      host.querySelector("[data-sugg-scan]")?.addEventListener("click", async (e) => {
+        const b = e.currentTarget; b.disabled = true; b.textContent = trkT("inbox.strip.scanning", "Scanning...");
+        try { const r = await api("/api/inbox/scan", { draft: false }); INBOX_SUGG = r.suggestions || []; renderInboxStrip(); }
+        catch (err) { toast(err.message || trkT("inbox.strip.fail", "Couldn't do that, try again.")); b.disabled = false; b.textContent = trkT("inbox.strip.scan", "Scan inbox"); }
+      });
+    });
+  }
+
+  async function inboxSuggDecide(id, action) {
+    const sg = INBOX_SUGG.find(x => x.id === id);
+    if (!sg) return;
+    document.querySelectorAll(`[data-sugg-row="${CSS.escape(id)}"] button`).forEach(b => b.disabled = true);
+    try {
+      const out = await api(`/api/inbox/suggestions/${encodeURIComponent(id)}/${action}`, {});
+      INBOX_SUGG = out.suggestions || INBOX_SUGG.filter(x => x.id !== id);
+      renderInboxStrip();
+      if (action === "accept") {
+        toast(trkT("inbox.strip.moved", "Moved {company} to {stage}").replace("{company}", sg.company).replace("{stage}", trkStageName(sg.stage)));
         trkSetDot(out.due_count);
-      } catch { b.disabled = false; toast(trkT("tracker.moveFail", "Couldn't move that job, try again.")); }
-    }));
+        trkReloadCards();
+        TRK_METRICS = await api("/api/tracker/metrics").catch(() => TRK_METRICS);
+        renderTrackerMetrics();
+        if (TRK_OPEN === sg.source_id) openTrackerPanel(sg.source_id);
+      }
+    } catch (err) {
+      renderInboxStrip();
+      toast(err.message || trkT("inbox.strip.fail", "Couldn't do that, try again."));
+    }
+  }
+
+  /* ---------------------------------------------------------------- Draft an email (Tracker panel)
+     One model call per draft, grounded in the saved profile, the job and its stage
+     (inbox/drafts.py). The draft lands in an editable box: Copy, or Open in Gmail (a compose
+     link in the browser, shown when Gmail is connected; otherwise the mail app). The person
+     sends it. Nothing is sent from the app. */
+  const TRK_MAIL_TYPES = ["follow_up", "thank_you", "interview_reply", "referral", "negotiation", "decline"];
+  const TRK_MAIL_EN = { follow_up: "Follow-up after applying", thank_you: "Thank-you after an interview",
+    interview_reply: "Reply to an interview invite with availability", referral: "Ask a contact for a referral",
+    negotiation: "Reply to an offer (negotiate)", decline: "Decline politely" };
+  // The type that fits each stage best is pre-selected.
+  const TRK_MAIL_DEFAULT = { saved: "referral", applied: "follow_up", interviewing: "thank_you", offer: "negotiation", rejected: "thank_you", archived: "follow_up" };
+
+  function gmailComposeUrl(to, subject, body) {
+    const q = [];
+    if (to) q.push("to=" + encodeURIComponent(to));
+    q.push("su=" + encodeURIComponent(subject || ""));
+    q.push("body=" + encodeURIComponent(body || ""));
+    return "https://mail.google.com/mail/?view=cm&" + q.join("&");
+  }
+
+  function trkMailSectionHtml(j) {
+    const def = TRK_MAIL_DEFAULT[j.stage] || "follow_up";
+    const types = TRK_MAIL_TYPES.map(t => `<option value="${t}"${t === def ? " selected" : ""}>${esc(trkT("tracker.emailType." + t, TRK_MAIL_EN[t]))}</option>`).join("");
+    const contacts = (j.contacts || []).map(c => `<option value="${c.id}">${esc(c.name)}${c.email ? ` (${esc(c.email)})` : ""}</option>`).join("");
+    return `<div class="trk-p-sec" id="trkMail">
+        <div class="trk-p-h">${esc(trkT("tracker.email", "Email"))}</div>
+        <div class="trk-mail-row">
+          <select class="fld" id="trkMailType" aria-label="${esc(trkT("tracker.emailDraft", "Draft an email"))}">${types}</select>
+          <select class="fld" id="trkMailContact" aria-label="${esc(trkT("tracker.contacts", "Contacts"))}"><option value="">${esc(trkT("tracker.emailNoContact", "No contact"))}</option>${contacts}</select>
+          <button class="btn btn-ghost btn-sm" id="trkMailGo" type="button">${esc(trkT("tracker.emailDraft", "Draft an email"))}</button>
+        </div>
+        <div class="trk-mail-out" id="trkMailOut" hidden></div>
+      </div>`;
+  }
+
+  function trkBindMail(sid, j) {
+    const go = $("#trkMailGo"), out = $("#trkMailOut"), typeSel = $("#trkMailType"), contactSel = $("#trkMailContact");
+    if (!go) return;
+    go.addEventListener("click", async () => {
+      const type = typeSel.value, contact_id = contactSel.value || null;
+      if (type === "referral" && !contact_id) { toast(trkT("tracker.emailNeedContact", "Pick a contact for a referral.")); return; }
+      go.disabled = true; const label = go.textContent; go.textContent = trkT("tracker.emailDrafting", "Drafting...");
+      try {
+        const d = await api(`/api/tracker/${encodeURIComponent(sid)}/draft-email`, { type, contact_id });
+        out.hidden = false;
+        out.innerHTML = `
+          <input class="fld trk-mail-subj" id="trkMailSubj" value="${esc(d.subject || "")}" aria-label="${esc(trkT("tracker.emailSubject", "Subject"))}" placeholder="${esc(trkT("tracker.emailSubject", "Subject"))}">
+          <textarea class="fld trk-mail-body" id="trkMailBody" rows="7">${esc(d.body || "")}</textarea>
+          <div class="trk-mail-foot">
+            <button class="btn btn-ghost btn-sm" id="trkMailCopy" type="button">${esc(trkT("tracker.emailCopy", "Copy"))}</button>
+            ${INBOX_CONNECTED
+              ? `<a class="btn btn-primary btn-sm" id="trkMailOpen" href="${esc(gmailComposeUrl(d.to, d.subject, d.body))}" target="_blank" rel="noopener">${esc(trkT("tracker.emailGmail", "Open in Gmail"))}</a>`
+              : `<a class="btn btn-primary btn-sm" id="trkMailOpen" href="mailto:${encodeURIComponent(d.to || "")}?subject=${encodeURIComponent(d.subject || "")}&body=${encodeURIComponent(d.body || "")}">${esc(trkT("tracker.emailApp", "Open in your email app"))}</a>`}
+            <span class="trk-mail-hint">${esc(trkT("tracker.emailHint", "You send it. Nothing is sent from here."))}</span>
+          </div>`;
+        const subj = $("#trkMailSubj"), body = $("#trkMailBody"), open = $("#trkMailOpen");
+        const sync = () => {
+          open.setAttribute("href", INBOX_CONNECTED
+            ? gmailComposeUrl(d.to, subj.value, body.value)
+            : `mailto:${encodeURIComponent(d.to || "")}?subject=${encodeURIComponent(subj.value)}&body=${encodeURIComponent(body.value)}`);
+        };
+        subj.addEventListener("input", sync); body.addEventListener("input", sync);
+        $("#trkMailCopy").addEventListener("click", () => {
+          navigator.clipboard.writeText(body.value);
+          const b = $("#trkMailCopy"); b.textContent = trkT("tracker.emailCopied", "Copied");
+          setTimeout(() => { b.textContent = trkT("tracker.emailCopy", "Copy"); }, 1500);
+        });
+      } catch (err) {
+        toast(err.message || trkT("tracker.emailFail", "Couldn't draft that, try again."));
+      } finally {
+        go.disabled = false; go.textContent = label;
+      }
+    });
   }
 
   $("#trkViewBoard")?.addEventListener("click", () => trkSetView("board"));
