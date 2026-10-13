@@ -1173,7 +1173,18 @@ class FakeLLM:
                                "    with pytest.raises(ValueError):\n        mean([])\n"),
     }
 
+    @staticmethod
+    def _fake_delay() -> None:
+        # Browser checks can slow the fake build down to watch its progress (seconds per call).
+        import os
+        import time
+        try:
+            time.sleep(min(10.0, float(os.environ.get("RESUME_AGENT_FAKE_LLM_DELAY") or 0)))
+        except ValueError:
+            pass
+
     def plan_project_files(self, project: dict, max_files: int = 16, max_bytes: int = 60000) -> dict:
+        self._fake_delay()
         purposes = {"README.md": "What it is and how to run it", ".gitignore": "Keep build files out of git",
                     "requirements.txt": "Dependencies", "tracker/__init__.py": "Package entry",
                     "tracker/core.py": "The core logic", "tracker/cli.py": "Command line entry point",
@@ -1183,6 +1194,7 @@ class FakeLLM:
 
     def write_project_files(self, project: dict, plan: dict, paths: list, written: list,
                             fix: dict | None = None) -> dict:
+        self._fake_delay()
         title = (project.get("title") or "Project").strip()
         pitch = (project.get("summary") or "").strip()
         out = []

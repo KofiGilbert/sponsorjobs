@@ -4292,6 +4292,7 @@
   async function loadProjects() {
     if ($("#projTest")) $("#projTest").hidden = true;
     if ($("#projBuild")) $("#projBuild").hidden = true;
+    if ($("#projLearn")) $("#projLearn").hidden = true;
     if ($("#projList")) $("#projList").hidden = false;
     try { const d = await api("/api/projects"); PROJECTS = d.projects || []; } catch { PROJECTS = []; }
     renderProjList();
@@ -4393,9 +4394,11 @@
     talk: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 4a1.5 1.5 0 0 1 1.5-1.5h8A1.5 1.5 0 0 1 13.5 4v5.5A1.5 1.5 0 0 1 12 11H7l-3 2.5V11a1.5 1.5 0 0 1-1.5-1.5z"/></svg>`,
     check: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 8.3 2.9 2.9 6.1-6.4"/></svg>`,
     bulb: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"><path d="M8 1.8a4.2 4.2 0 0 0-2.5 7.6c.5.4.8.9.8 1.5v.3h3.4v-.3c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8Z"/><path d="M6.6 13.6h2.8M7 15h2"/></svg>`,
+    download: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8M4.8 7.5 8 10.7l3.2-3.2M3 13.5h10"/></svg>`,
     trash: `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5"/></svg>`,
   };
   function projCard(p) {
+    if (p.origin === "ai") return aiProjCard(p);
     const verified = p.status === "verified";
     const steps = p.plan?.milestones?.length || 0;
     const doneN = Math.min((p.done || []).length, steps);
@@ -4434,6 +4437,210 @@
       </div>
     </article>`;
   }
+  // An AI-built project's card: one stage at a time, one main action. Building (progress),
+  // Learn it (n of m), Defend it, Verified (Publish to GitHub, Add to resume).
+  const BUILD_LABEL = {
+    queued: () => PT("projects.bPlanning", "Planning files"),
+    planning: () => PT("projects.bPlanning", "Planning files"),
+    writing: (b) => b.total && b.done ? PT("projects.bWriting", "Writing code {n} of {m}").replace("{n}", b.done || 0).replace("{m}", b.total) : PT("projects.bWritingStart", "Writing code"),
+    pushing: () => PT("projects.bPushing", "Pushing to GitHub"),
+    preparing: () => PT("projects.bPreparing", "Preparing Learn it"),
+    ready: () => PT("projects.bReady", "Ready"),
+  };
+  function aiBuildPct(b) {
+    const st = b.state || "queued";
+    if (st === "queued" || st === "planning") return 6;
+    if (st === "writing") return 10 + Math.round(70 * ((b.done || 0) / Math.max(1, b.total || 1)));
+    if (st === "pushing") return 86;
+    if (st === "preparing") return 94;
+    return 100;
+  }
+  function aiCardParts(p) {
+    const stage = p.stage, b = p.build || {}, lr = p.learn || {};
+    const btn = (act, label, main) => `<button class="btn ${main ? "btn-ghost" : "btn-quiet"} btn-sm" data-act="${act}" type="button">${esc(label)}</button>`;
+    const bar = (pct, label, title) => `<div class="proj-prog proj-prog-ai" title="${esc(title || label)}">
+        <span class="proj-prog-bar"><i style="width:${pct}%"></i></span><span class="proj-prog-n">${esc(label)}</span></div>`;
+    if (stage === "building") {
+      return { pill: PT("projects.sBuilding", "Building"), cls: "is-building",
+        extra: bar(aiBuildPct(b), (BUILD_LABEL[b.state] || BUILD_LABEL.queued)(b)), acts: "" };
+    }
+    if (stage === "failed") {
+      return { pill: PT("projects.sStopped", "Build stopped"), cls: "is-failed",
+        extra: `<div class="proj-card-err">${esc(b.error || PT("projects.bFailed", "The build stopped. Try again."))}</div>`,
+        acts: btn("rebuild", PT("projects.tryAgain", "Try again"), true) };
+    }
+    if (stage === "learn") {
+      const n = lr.learned || 0, m = lr.total || 0;
+      return { pill: PT("projects.sLearn", "Learn it"), cls: "is-learn",
+        extra: m ? bar(Math.round(n / m * 100), PT("projects.nLearned", "{n} of {m} learned").replace("{n}", n).replace("{m}", m)) : "",
+        acts: btn("learn", n ? PT("projects.continueLearn", "Continue") : PT("projects.learnIt", "Learn it"), true) };
+    }
+    if (stage === "defend") {
+      const tried = p.defense && p.defense.tried;
+      return { pill: PT("projects.sDefend", "Defend it"), cls: "is-defend",
+        extra: tried ? `<div class="proj-card-note">${esc(PT("projects.lastScore", "Last try {s}. The bar is 70.").replace("{s}", p.defense.score))}</div>` : "",
+        acts: btn("learn", PT("projects.review", "Review"), false) + btn("defend-rec", PT("projects.defendIt", "Defend it"), true) };
+    }
+    // Verified
+    const credit = p.repo_url && !p.repo_private ? "" : `<label class="proj-credit"><input type="checkbox" data-act="credit" ${p.ai_credit ? "checked" : ""}>
+        <span>${esc(PT("projects.aiCredit", "Say it was built with an AI pair-programmer"))}</span></label>`;
+    return { pill: PT("projects.sVerified", "Verified"), cls: "is-verified", extra: credit,
+      acts: (p.repo_url && !p.repo_private ? "" : btn("publish", p.repo_url ? PT("projects.makePublic", "Make public") : PT("projects.publish", "Publish to GitHub"), false))
+        + btn("tocv", PT("projects.addResume", "Add to resume"), true) };
+  }
+  function aiProjCard(p) {
+    const verified = p.stage === "verified";
+    const part = aiCardParts(p);
+    const repo = p.repo_url
+      ? `<a class="proj-gh ${p.repo_private ? "is-private" : ""}" href="${esc(p.repo_url)}" target="_blank" rel="noopener"
+           title="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}"
+           aria-label="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}">${GH_MARK}${p.repo_private ? ICO_LOCK : ""}</a>`
+      : "";
+    const dl = p.has_files && p.stage !== "building"
+      ? `<button class="proj-icon-btn is-neutral" data-act="download" type="button" aria-label="${esc(PT("projects.download", "Download the files"))}" title="${esc(PT("projects.download", "Download the files"))}">${PROJ_ICO.download}</button>` : "";
+    return `<article class="proj-card is-ai ${part.cls}" data-id="${esc(p.id)}">
+      ${techTile(p, verified ? PROJ_ICO.seal : PROJ_ICO.code, "proj-card-mark")}
+      <div class="proj-card-hd">
+        <div class="proj-card-name"><span class="proj-card-title">${esc(p.title)}</span>
+          <span class="proj-pill ${verified ? "ok" : ""}">${verified ? PROJ_ICO.check : ""}${esc(part.pill)}</span>${repo}</div>
+        ${p.tech ? `<div class="proj-card-tech">${esc(p.tech)}</div>` : ""}
+        ${p.summary ? `<div class="proj-card-sum" title="${esc(p.summary)}">${esc(p.summary)}</div>` : ""}
+        ${part.extra}
+      </div>
+      <div class="proj-card-acts">
+        ${part.acts}${dl}
+        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="Delete ${esc(p.title)}" title="Delete">${PROJ_ICO.trash}</button>
+      </div>
+    </article>`;
+  }
+  // While a build runs, the list polls its progress. The job runs on the engine, so leaving the
+  // screen and coming back simply picks the progress up again.
+  let PROJ_POLL = null;
+  function pollBuilds() {
+    clearTimeout(PROJ_POLL); PROJ_POLL = null;
+    if (!PROJECTS.some(p => p.stage === "building")) return;
+    PROJ_POLL = setTimeout(async () => {
+      PROJ_POLL = null;
+      if (!$("#view-projects")?.classList.contains("is-active")) return;   // picked up on the next visit
+      const before = new Map(PROJECTS.map(p => [p.id, p.stage]));
+      try { PROJECTS = (await api("/api/projects")).projects || PROJECTS; } catch { /* keep polling */ }
+      if ($("#projList") && !$("#projList").hidden) renderProjList();
+      PROJECTS.forEach(p => { if (before.get(p.id) === "building" && p.stage === "learn") toast(PT("projects.builtToast", "{t} is built. Learn it next.").replace("{t}", p.title)); });
+      pollBuilds();
+    }, 1500);
+  }
+  async function rebuildProject(p, btn) {
+    if (btn) btn.disabled = true;
+    try { await api(`/api/projects/${p.id}/build`, {}); } catch (err) { toast(err.message || PT("projects.startFailed", "Couldn't start the project.")); }
+    loadProjects();
+  }
+  async function setAiCredit(p, on) {
+    try { await api(`/api/projects/${p.id}/settings`, { ai_credit: !!on }); p.ai_credit = !!on; }
+    catch (err) { toast(err.message || "Couldn't save."); }
+  }
+
+  // ---- Learn it: the real code, what it does, why it was built that way, one quick check.
+  let LEARN = null;
+  async function startLearn(p) {
+    if (!p) return;
+    LEARN = { id: p.id, title: p.title, steps: [], learned: new Set(), i: 0, pick: null, fb: {} };
+    ["#projList", "#projForm", "#projIdeas", "#projTest", "#projBuild"].forEach(s => { if ($(s)) $(s).hidden = true; });
+    $("#projLearn").hidden = false;
+    // A page of its own: "< Projects" above "Learn <title>", and no header buttons.
+    const back = $("#projIdeasBack"); if (back) back.hidden = false;
+    const pt = $("#projPageTitle"); if (pt) pt.textContent = PT("projects.learnTitle", "Learn {t}").replace("{t}", p.title);
+    const acts = $("#projHeadActs"); if (acts) acts.hidden = true;
+    learnTop();
+    $("#projLearnRail").innerHTML = "";
+    $("#projLearnCard").innerHTML = `<div class="empty">${esc(PT("projects.learnLoading", "Preparing your walkthrough…"))}</div>`;
+    try {
+      const d = await api(`/api/projects/${p.id}/learn`, {});
+      LEARN.steps = d.steps || []; LEARN.learned = new Set(d.learned || []);
+      const first = LEARN.steps.findIndex((_, i) => !LEARN.learned.has(i));
+      LEARN.i = first < 0 ? LEARN.steps.length - 1 : first;
+      renderLearn();
+    } catch (err) { $("#projLearnCard").innerHTML = `<div class="empty">${esc(err.message || PT("projects.learnFailed", "Couldn't prepare the walkthrough right now."))}</div>`; }
+  }
+  function learnTop() { $("#view-projects .page-head")?.scrollIntoView({ block: "start" }); }
+  function leaveLearn() { LEARN = null; $("#projLearn").hidden = true; $("#projList").hidden = false; loadProjects(); }
+  function learnCode(s) {
+    return String(s.code || "").split("\n").map((ln, k) => `<span class="ln" data-n="${s.start + k}">${esc(ln) || " "}</span>`).join("");
+  }
+  function renderLearn() {
+    const L = LEARN; if (!L) return;
+    const s = L.steps[L.i]; if (!s) return;
+    const n = L.steps.length, done = L.learned.has(L.i), allDone = L.learned.size >= n;
+    $("#projLearnRail").innerHTML = L.steps.map((st, k) => `<li><button type="button" class="learn-seg ${L.learned.has(k) ? "is-done" : ""} ${k === L.i ? "is-cur" : ""}" data-k="${k}"
+        aria-label="${esc(PT("projects.stepN", "Step {n}").replace("{n}", k + 1))}: ${esc(st.title)}" ${k === L.i ? 'aria-current="step"' : ""}></button></li>`).join("")
+      + `<li class="learn-rail-n">${esc(PT("projects.nLearned", "{n} of {m} learned").replace("{n}", L.learned.size).replace("{m}", n))}</li>`;
+    const c = s.check || {}, fb = L.fb[L.i];
+    const opts = c.kind === "line"
+      ? `<input class="fld learn-line" id="learnLine" type="text" autocomplete="off" placeholder="${esc(PT("projects.oneLine", "One line is enough"))}" ${done ? "disabled" : ""}>`
+      : `<div class="learn-opts" role="radiogroup" aria-label="${esc(c.q)}">${(c.options || []).map((o, k) => `<button type="button" role="radio" class="learn-opt ${L.pick === k ? "is-pick" : ""} ${fb && fb.k === k ? (fb.ok ? "is-right" : "is-wrong") : ""}" data-k="${k}" aria-checked="${L.pick === k}" ${done ? "disabled" : ""}>${esc(o)}</button>`).join("")}</div>`;
+    const primary = done
+      ? (L.i < n - 1 ? `<button class="btn btn-primary btn-sm" id="learnNext" type="button">${esc(PT("projects.nextStep", "Next step"))}</button>`
+        : allDone ? `<button class="btn btn-primary btn-sm" id="learnDefend" type="button">${esc(PT("projects.defendIt", "Defend it"))}</button>`
+        : `<button class="btn btn-primary btn-sm" id="learnNextOpen" type="button">${esc(PT("projects.nextOpen", "Next unlearned step"))}</button>`)
+      : `<button class="btn btn-primary btn-sm" id="learnCheck" type="button" ${c.kind !== "line" && L.pick == null ? "disabled" : ""}>${esc(PT("projects.check", "Check"))}</button>`;
+    $("#projLearnCard").innerHTML = `
+      <div class="learn-hd"><span class="learn-n">${esc(PT("projects.stepOf", "Step {n} of {m}").replace("{n}", L.i + 1).replace("{m}", n))}</span>
+        <h3 class="learn-h">${esc(s.title)}</h3></div>
+      <div class="learn-file"><span class="learn-path">${esc(s.path)}</span><span class="learn-lines">${esc(PT("projects.lines", "lines {a} to {b}").replace("{a}", s.start).replace("{b}", s.end))}</span></div>
+      <pre class="learn-code" tabindex="0" aria-label="${esc(s.path)}"><code>${learnCode(s)}</code></pre>
+      ${s.explain ? `<p class="learn-explain">${esc(s.explain)}</p>` : ""}
+      ${s.why ? `<p class="learn-why"><b>${esc(PT("projects.whyWay", "Why this way"))}</b>${esc(s.why)}</p>` : ""}
+      <div class="learn-check">
+        <div class="learn-q"><b>${esc(PT("projects.quickCheck", "Quick check"))}</b>${esc(c.q || "")}</div>
+        ${opts}
+        <p class="learn-fb ${fb ? (fb.ok ? "ok" : "no") : ""}" id="learnFb" ${fb ? "" : "hidden"}>${fb ? `${esc(fb.ok ? PT("projects.right", "Right.") : PT("projects.notQuite", "Not quite. Have another look at the code."))} ${esc(fb.ok ? fb.explain || "" : "")}` : ""}</p>
+      </div>
+      <div class="learn-foot">
+        <button class="btn btn-quiet btn-sm" id="learnPrev" type="button" ${L.i === 0 ? "disabled" : ""}>${esc(PT("projects.prevStep", "Previous"))}</button>
+        ${primary}
+      </div>`;
+    const card = $("#projLearnCard");
+    $("#projLearnRail").querySelectorAll(".learn-seg").forEach(b => b.addEventListener("click", () => { L.i = +b.dataset.k; L.pick = null; renderLearn(); }));
+    card.querySelectorAll(".learn-opt").forEach(b => b.addEventListener("click", () => {
+      L.pick = +b.dataset.k; delete L.fb[L.i];
+      card.querySelectorAll(".learn-opt").forEach(o => { const on = +o.dataset.k === L.pick; o.classList.toggle("is-pick", on); o.classList.remove("is-wrong"); o.setAttribute("aria-checked", on); });
+      const chk = $("#learnCheck"); if (chk) chk.disabled = false;
+      const f = $("#learnFb"); if (f) f.hidden = true;
+    }));
+    $("#learnLine")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); checkLearn(); } });
+    $("#learnCheck")?.addEventListener("click", checkLearn);
+    $("#learnPrev")?.addEventListener("click", () => { if (L.i > 0) { L.i -= 1; L.pick = null; renderLearn(); learnTop(); } });
+    $("#learnNext")?.addEventListener("click", () => { L.i += 1; L.pick = null; renderLearn(); learnTop(); });
+    $("#learnNextOpen")?.addEventListener("click", () => { const k = L.steps.findIndex((_, j) => !L.learned.has(j)); if (k >= 0) { L.i = k; L.pick = null; renderLearn(); } });
+    $("#learnDefend")?.addEventListener("click", () => { const p = PROJECTS.find(x => x.id === L.id) || { id: L.id, title: L.title }; $("#projLearn").hidden = true; LEARN = null; startProjectDefend(p); });
+  }
+  async function checkLearn() {
+    const L = LEARN; if (!L) return;
+    const s = L.steps[L.i], line = s.check?.kind === "line";
+    const answer = line ? ($("#learnLine")?.value || "").trim() : L.pick;
+    if (line ? !answer : answer == null) return;
+    const btn = $("#learnCheck"); if (btn) btn.disabled = true;
+    try {
+      const d = await api(`/api/projects/${L.id}/learn/${L.i}`, { answer });
+      L.fb[L.i] = { ok: !!d.correct, explain: d.explain || "", k: line ? null : answer };
+      L.learned = new Set(d.learned || []);
+      const pj = PROJECTS.find(x => x.id === L.id); if (pj && d.project) Object.assign(pj, d.project);
+      if (!d.correct) L.pick = line ? null : answer;
+      renderLearn();
+      if (line && !d.correct) { const f = $("#learnLine"); if (f) { f.value = answer; f.focus(); } }
+    } catch (err) { toast(err.message || "Couldn't check that."); if (btn) btn.disabled = false; }
+  }
+
+  // ---- Defend it: the recorded Round 1 interview, on THIS project. The questions are ready
+  // before it opens; the written test is the fallback when the camera or mic can't be used.
+  async function startProjectDefend(p) {
+    if (!p) return;
+    try { await api(`/api/projects/${p.id}/defend`, {}); }
+    catch (err) { toast(err.message || PT("projects.defendFailed", "Couldn't start the interview.")); loadProjects(); return; }
+    ["#projLearn", "#projTest", "#projBuild"].forEach(s => { if ($(s)) $(s).hidden = true; });
+    if ($("#projList")) $("#projList").hidden = false;
+    showView("prep");
+    startScreen({ id: null, project_id: p.id, role: p.title, company: "", questions: [] }, { project: p });
+  }
   function renderProjList() {
     const root = $("#projList"); if (!root) return;
     const formOpen = !$("#projForm")?.hidden || !$("#projIdeas")?.hidden;
@@ -4463,6 +4670,11 @@
     root.querySelectorAll(".proj-card").forEach(card => {
       const p = PROJECTS.find(x => x.id === card.dataset.id);
       card.querySelector('[data-act="defend"]')?.addEventListener("click", () => startDefend(p));
+      card.querySelector('[data-act="defend-rec"]')?.addEventListener("click", () => startProjectDefend(p));
+      card.querySelector('[data-act="learn"]')?.addEventListener("click", () => startLearn(p));
+      card.querySelector('[data-act="rebuild"]')?.addEventListener("click", (e) => rebuildProject(p, e.target));
+      card.querySelector('[data-act="credit"]')?.addEventListener("change", (e) => setAiCredit(p, e.target.checked));
+      card.querySelector('[data-act="download"]')?.addEventListener("click", () => { window.location = `/api/projects/${p.id}/download.zip`; });
       card.querySelector('[data-act="guide"]')?.addEventListener("click", () => startBuildGuide(p));
       card.querySelector('[data-act="tocv"]')?.addEventListener("click", () => addToCv(p));
       card.querySelector('[data-act="publish"]')?.addEventListener("click", (e) => publishToGithub(p, e.target));
@@ -4470,6 +4682,7 @@
         await fetch(`/api/projects/${p.id}`, { method: "DELETE" }); loadProjects();
       });
     });
+    pollBuilds();
   }
   // One accent per screen: while a form is open its submit is the primary, so the header's
   // New project drops to an outline button until the form closes.
@@ -4952,7 +5165,7 @@
     ft.insertAdjacentHTML("beforeend", `<div class="proj-idea-ghask" role="group" aria-label="${esc(PT("projects.ghPrompt", "Connect GitHub to create the repo"))}">
         <span class="proj-idea-ghask-t">${GH_MARK}${esc(PT("projects.ghPrompt", "Connect GitHub to create the repo"))}</span>
         <span class="proj-idea-ghask-a">
-          <button class="btn btn-quiet btn-sm" type="button" data-nogh>${esc(PT("projects.startNoGh", "Start without GitHub"))}</button>
+          <button class="btn btn-quiet btn-sm" type="button" data-nogh>${esc(PT("projects.buildNoGh", "Build without GitHub"))}</button>
           <button class="btn btn-ghost btn-sm" type="button" data-gh>${GH_MARK}${esc(PT("projects.connect", "Connect"))}</button>
         </span>
       </div>`);
@@ -4969,11 +5182,11 @@
     const label = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = PT("projects.starting", "Starting…"); }
     try {
-      const d = await api("/api/projects/start", { idea: s });
-      const gh = d.github || {};
-      toast(gh.ok ? PT("projects.startedRepo", "Started. Your private repo is ready on GitHub.")
-        : gh.connected ? `${PT("projects.startedHere", "Started here.")} ${gh.error || ""}`.trim()
-        : PT("projects.startedLocal", "Started. Connect GitHub to add a repo."));
+      // The AI builds it (one package). The card shows the progress; the build carries on if
+      // the person leaves the screen.
+      const d = await api("/api/projects/start", { idea: s, local: !!local });
+      toast(d.project?.target === "github" ? PT("projects.buildingRepo", "Building it. It goes to a private repo on GitHub.")
+        : PT("projects.buildingLocal", "Building it here. Download the files any time."));
       const box = $("#projIdeas"); if (box) box.hidden = true;
       loadProjects();
     } catch (err) {
@@ -4982,10 +5195,12 @@
     }
   }
   $("#projSuggestBtn")?.addEventListener("click", () => { const box = $("#projIdeas"); if (box && !box.hidden) closeIdeas(); else openIdeas(); });
-  $("#projIdeasBack")?.addEventListener("click", closeIdeas);
+  $("#projIdeasBack")?.addEventListener("click", () => { if (LEARN) leaveLearn(); else closeIdeas(); });
   // Esc goes back too, unless a field inside the gallery (the Target chip, an inline ask) took it.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (LEARN && !$("#projLearn")?.hidden && $("#view-projects")?.classList.contains("is-active")
+        && !e.target.closest?.("input, textarea")) { e.preventDefault(); leaveLearn(); return; }
     const box = $("#projIdeas");
     if (!box || box.hidden || !$("#view-projects")?.classList.contains("is-active")) return;
     if (document.querySelector(".modal:not([hidden]), dialog[open]")) return;
@@ -5368,11 +5583,13 @@
   // this computer; there is no facial analysis, ever.
   const R1_QUESTIONS = 5;
   let SCREEN = null, SCR_PREP = null, SCR_EXTRA = false;
+  let SCR_PROJECT = null;   // Defend it: the project this recorded interview is on (null for job prep)
   let SCR_DRILL = null, SCR_REC_T0 = 0, SCR_SECS = {};   // report card: re-drill questions + measured take lengths
   let SCR_STREAM = null, SCR_REC = null, SCR_CHUNKS = [], SCR_TIMER = null, SCR_PREPT = null, SCR_COUNT = null;
   let SCR_PRACTICE = null, SCR_UPLOADS = {}, SCR_TR = {}, SCR_RETAKES = {}, SCR_PHASE = "idle", SCR_CUR = null;
   const fmtClock = (x) => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, "0")}`;
   function startScreen(prep, opts) {
+    SCR_PROJECT = (opts && opts.project) || null;
     SCR_PREP = prep; SCREEN = null; SCR_EXTRA = false; SCR_UPLOADS = {}; SCR_TR = {}; SCR_RETAKES = {}; SCR_PRACTICE = null;
     SCR_DRILL = (opts && Array.isArray(opts.drill) && opts.drill.length) ? opts.drill : null; SCR_SECS = {};
     $("#prepList").hidden = true; $("#prepScreen").hidden = false;
@@ -5393,21 +5610,23 @@
     scrHead("", "");
     $("#scrStage").innerHTML = `
       <div class="scr-intro"><div class="scr-welcome">
-        <div class="r1-eyebrow">${esc(T("r1.eyebrow", "Round 1, recorded interview"))}</div>
+        <div class="r1-eyebrow">${esc(SCR_PROJECT ? T("projects.defendEyebrow", "Defend your project, recorded interview") : T("r1.eyebrow", "Round 1, recorded interview"))}</div>
         <h2 class="scr-welcome-h">${r1Title(p)}</h2>
-        <p class="scr-welcome-sub">${SCR_DRILL
+        <p class="scr-welcome-sub">${SCR_PROJECT
+          ? esc(T("projects.defendFacts", "5 questions on how you built it. Score 70 to verify it."))
+          : SCR_DRILL
           ? esc(T("rc.drillFacts", "Re-drill: {n} questions from your report card.").replace("{n}", String(SCR_DRILL.length)))
           : esc(T("r1.landingFacts", "5 questions, about 20 minutes.")) + " " + esc((k => k ? k.charAt(0).toUpperCase() + k.slice(1) : "")(r1Kinds(p))) + "."}</p>
         <div class="scr-welcome-acts">
           <button class="btn btn-primary" id="scrBegin" type="button">${esc(T("r1.getStarted", "Get started"))}</button>
           <button class="btn btn-ghost" id="scrBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
         </div>
-        ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : `<div class="rc-goals" id="prepGoals" hidden></div>`}
+        ${SCR_PROJECT ? "" : SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : `<div class="rc-goals" id="prepGoals" hidden></div>`}
         <p class="scr-disclaimer">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>
       </div></div>`;
     $("#scrBegin")?.addEventListener("click", renderR1Notice);
     $("#scrBail")?.addEventListener("click", quitScreen);
-    if (!SCR_DRILL) loadPrepGoals(p && p.id, $("#prepGoals"));   // report card: the prep checklist
+    if (!SCR_DRILL && !SCR_PROJECT) loadPrepGoals(p && p.id, $("#prepGoals"));   // report card: the prep checklist
   }
   // Screen 2: the notice. Where recordings go, how to delete them, no facial analysis, and the
   // extra-time option (doubles the clocks), which replaced the old Realistic/Relaxed switch.
@@ -5435,7 +5654,9 @@
       const btn = $("#scrNoticeGo"), msg = $("#scrNoticeMsg");
       if (SCREEN && SCREEN.config && !!SCREEN.config.extra_time === SCR_EXTRA && SCREEN.i == null) { goDevices(); return; }   // back from the device check: same screen
       btn.disabled = true;
-      try { SCREEN = await api("/api/screens", { prep_id: SCR_PREP.id, extra_time: SCR_EXTRA, questions: R1_QUESTIONS, ...(SCR_DRILL ? { drill: SCR_DRILL } : {}) }); }
+      const body = SCR_PROJECT ? { project_id: SCR_PROJECT.id, extra_time: SCR_EXTRA }
+        : { prep_id: SCR_PREP.id, extra_time: SCR_EXTRA, questions: R1_QUESTIONS, ...(SCR_DRILL ? { drill: SCR_DRILL } : {}) };
+      try { SCREEN = await api("/api/screens", body); }
       catch (err) { btn.disabled = false; if (msg) { msg.textContent = err.message || T("r1.cantStart", "Couldn't start the interview."); msg.hidden = false; } return; }
       SCR_PRACTICE = SCREEN.practice || null;
       goDevices();
@@ -5444,12 +5665,22 @@
   // Screen 3: device check. Camera and mic turn on here; the person confirms they can see and
   // hear themselves. Tips in the real product's wording.
   async function goDevices() {
-    if (!navigator.mediaDevices?.getUserMedia) { toast(T("r1.noCamera", "This browser can't reach your camera. Try Chrome or Edge.")); renderR1Notice(); return; }
+    if (!navigator.mediaDevices?.getUserMedia) { if (projectDefendWritten()) return; toast(T("r1.noCamera", "This browser can't reach your camera. Try Chrome or Edge.")); renderR1Notice(); return; }
     if (!SCR_STREAM) {
       try { SCR_STREAM = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); }
-      catch { toast(T("r1.allowCamera", "Camera and mic access is needed. Please allow them and try again.")); renderR1Notice(); return; }
+      catch { if (projectDefendWritten()) return; toast(T("r1.allowCamera", "Camera and mic access is needed. Please allow them and try again.")); renderR1Notice(); return; }
     }
     renderR1Devices();
+  }
+  // Defend it without a camera or mic: the written defence on the same five questions, said out
+  // loud (a fallback must announce itself).
+  function projectDefendWritten() {
+    if (!SCR_PROJECT) return false;
+    const p = SCR_PROJECT;
+    toast(T("projects.writtenFallback", "No camera or mic here, so you'll defend it in writing instead."));
+    quitScreen();
+    startDefend(p);
+    return true;
   }
   function r1Connection() {
     const on = navigator.onLine !== false;
@@ -5704,7 +5935,7 @@
         <div id="r1Gate"></div>
         <div class="mock-next">
           <button class="btn btn-ghost btn-sm" id="scrReport" type="button">${esc(T("r1.docx", "Download report (.docx)"))}</button>
-          <button class="btn btn-ghost btn-sm" id="scrDone" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>
+          <button class="btn btn-ghost btn-sm" id="scrDone" type="button">${esc(SCR_PROJECT ? T("projects.backToProjects", "Back to projects") : T("r1.backToPrep", "Back to prep"))}</button>
           <button class="btn btn-danger-ghost btn-sm" id="scrDelete" type="button">${esc(T("r1.deleteRec", "Delete recordings"))}</button>
         </div>
       </div>`;
@@ -5719,7 +5950,23 @@
       try { await fetch(`/api/screens/${SCREEN.id}/delete`, { method: "POST" }); } catch {}
       toast(T("r1.deleted", "Deleted.")); quitScreen();
     });
-    if (GUIDED) renderR1Next(passed);
+    if (SCR_PROJECT) renderProjectVerdict(r);
+    else if (GUIDED) renderR1Next(passed);
+  }
+  // Defend it's verdict, under the report: Verified (score 70 and every question answered), or
+  // one more go. The report card's re-drill is a job-prep tool, so it steps aside here.
+  function renderProjectVerdict(r) {
+    const box = $("#r1Gate"); if (!box) return;
+    $("#rcRedrill")?.closest(".rc-weak-acts")?.setAttribute("hidden", "");
+    const ok = !!r.project_passed, p = SCR_PROJECT;
+    box.innerHTML = `<div class="scr-unlock proj-verdict-box ${ok ? "ok" : ""}">
+      <b>${esc(ok ? T("projects.verifiedH", "Verified. Your project can go public and onto your resume.")
+                  : T("projects.notYetH", "Not verified yet. The bar is 70 on every question answered."))}</b>
+      <button class="btn btn-primary btn-sm" id="projVerdictGo" type="button">${esc(ok ? T("projects.backToProjects", "Back to projects") : T("projects.tryAgain", "Try again"))}</button></div>`;
+    $("#projVerdictGo")?.addEventListener("click", () => {
+      if (ok) { quitScreen(); return; }
+      stopScrStream(); startScreen({ id: null, project_id: p.id, role: p.title, company: "", questions: [] }, { project: p });
+    });
   }
   // Full mock only: after Round 1, where next. A pass with a live interviewer available goes to
   // Round 2; a pass without one meets the gate; a miss offers another go.
@@ -5823,7 +6070,11 @@
     stopPrepClock(); stopAnswerClock(); if (SCR_COUNT) { clearInterval(SCR_COUNT); SCR_COUNT = null; }
     if (SCR_REC && SCR_REC.state === "recording") { SCR_REC.onstop = null; try { SCR_REC.stop(); } catch {} }
     SCR_PHASE = "idle"; stopScrStream();
-    $("#prepScreen").hidden = true; $("#prepList").hidden = false; loadPreps();
+    $("#prepScreen").hidden = true; $("#prepList").hidden = false;
+    if (SCR_PROJECT) {   // Defend it came from Projects: go back there
+      SCR_PROJECT = null; showView("projects"); loadProjects(); return;
+    }
+    loadPreps();
   }
   $("#scrQuit")?.addEventListener("click", quitScreen);
 
