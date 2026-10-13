@@ -4525,7 +4525,8 @@ def profile_prefs_set():
     not changed here) only knows this route, so a body of the form {event: {type: ...}} is
     routed to the matching endpoint instead of being saved as answers:
       {type: "learn", fields, screening, eeo_decline} -> POST /api/profile/autofill
-      {type: "applied", url, page_url, record_id}     -> POST /api/autofill/applied"""
+      {type: "applied", url, page_url, record_id}     -> POST /api/autofill/applied
+      {type: "linkedin_review", profile}              -> POST /api/profile/linkedin-review"""
     body = request.json or {}
     ev = body.get("event")
     if isinstance(ev, dict):
@@ -4534,6 +4535,10 @@ def profile_prefs_set():
             return _nostore(jsonify(_learn_from_corrections(ev)))
         if kind == "applied":
             return _nostore(jsonify(_mark_applied_from_page(ev)))
+        if kind == "linkedin_review":
+            # The extension read the person's OWN LinkedIn profile page (read-only, no
+            # scrolling or clicking) and sends the extraction here, to the local app only.
+            return _nostore(jsonify(_linkedin_review_run(ev.get("profile"), draft=False)))
         return jsonify({"ok": False, "error": f"Unknown event {kind!r}."}), 400
     return _nostore(jsonify({"ok": True, "prefs": _save_prefs(body)}))
 
@@ -4615,6 +4620,144 @@ def profile_referral():
                                             recipient_name=recipient,
                                             relationship=relationship)["message"]
     return _nostore(jsonify(out))
+
+
+# ---- LinkedIn profile review (read-only; the person edits LinkedIn by hand) ----------
+# The extension reads the person's OWN profile page while they have it open and posts the
+# extraction here. We score it (linkedin_review.py), draft a headline + About from the saved
+# profile with one model call, and keep the last review in a local JSON file so the Profile
+# page can show it and "Re-score" without the browser. Nothing goes anywhere but this app.
+_LI_REVIEW_PATH = _DATA / "linkedin_review.json"
+_LI_LIST_KEYS = {"experience": ("title", "company", "dates", "description", "has_description"),
+                 "education": ("school", "degree", "dates"),
+                 "licenses": ("name", "issuer")}
+_LI_STR_KEYS = ("url", "slug", "name", "headline", "about", "location", "current_title",
+                "current_company")
+_LI_BOOL_KEYS = ("photo", "banner", "open_to_work", "custom_url", "featured", "activity",
+                 "activity_recent", "recommendations")
+_LI_INT_KEYS = ("featured_count", "projects_count", "recommendations_count", "followers")
+
+
+def _li_clean(raw) -> dict:
+    """Keep only the fields the scorer reads, with caps, so an odd page can't bloat the
+    local file or the UI."""
+    raw = raw if isinstance(raw, dict) else {}
+    out: dict = {}
+    for k in _LI_STR_KEYS:
+        out[k] = str(raw.get(k) or "")[:3000]
+    for k in _LI_BOOL_KEYS:
+        out[k] = bool(raw.get(k))
+    for k in _LI_INT_KEYS:
+        try:
+            out[k] = max(0, int(raw.get(k) or 0))
+        except (TypeError, ValueError):
+            out[k] = 0
+    for k, keys in _LI_LIST_KEYS.items():
+        rows = []
+        for e in (raw.get(k) or [])[:40]:
+            if not isinstance(e, dict):
+                continue
+            row = {kk: (bool(e.get(kk)) if kk == "has_description" else str(e.get(kk) or "")[:1500])
+                   for kk in keys}
+            if "has_description" in keys and row.get("description"):
+                row["has_description"] = True
+            rows.append(row)
+        out[k] = rows
+    out["skills"] = [str(x)[:80] for x in (raw.get("skills") or [])[:100] if str(x).strip()]
+    return out
+
+
+def _li_load() -> dict:
+    import json as _json
+    try:
+        return _json.loads(_LI_REVIEW_PATH.read_text(encoding="utf-8")) if _LI_REVIEW_PATH.exists() else {}
+    except Exception:
+        return {}
+
+
+def _li_save(doc: dict) -> None:
+    import json as _json
+    _LI_REVIEW_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _LI_REVIEW_PATH.write_text(_json.dumps(doc), encoding="utf-8")
+
+
+def _li_target() -> tuple[str, list[str]]:
+    """The role the review aims at (last tailored job, else the saved profile's most recent
+    title) and the JD skill terms the app already extracted for it."""
+    from linkedin_review import target_role_from
+    from tailoring.keywords import skill_terms
+    recs = _records()
+    try:
+        rows = recs.list(limit=1)
+    finally:
+        recs.close()
+    saved = _memory().load("default") or {}
+    profile = saved.get("profile") or saved.get("essentials") or {}
+    role = target_role_from(profile, rows)
+    terms: list[str] = []
+    if rows:
+        jd = str(_record_data(rows[0]).get("jd") or "")
+        if jd:
+            terms = skill_terms(jd)[:12]
+    return role, terms
+
+
+def _linkedin_review_run(extracted=None, draft: bool = False) -> dict:
+    """Score the extraction (a fresh one from the extension, else the stored one), optionally
+    draft the headline + About with one model call, store, and return the review."""
+    from linkedin_review import draft_headline_about, score_profile
+    stored = _li_load()
+    if isinstance(extracted, dict) and extracted:
+        x = _li_clean(extracted)
+    else:
+        x = stored.get("extracted") or {}
+    if not x:
+        return {"ok": True, "has_review": False, "app_url": "http://127.0.0.1:57000/"}
+    role, terms = _li_target()
+    review = score_profile(x, role, terms)
+    doc = {"extracted": x, "review": review, "drafts": stored.get("drafts") or None,
+           "at": time.time(), "draft_error": ""}
+    if draft:
+        profile = _saved_full_profile()
+        loaded = bool((profile.get("identity") or {}).get("name") or profile.get("experience"))
+        if not loaded:
+            doc["draft_error"] = "Add your profile in SponsorJobs first, the drafts are written from it."
+        else:
+            try:
+                doc["drafts"] = draft_headline_about(_make_llm(), profile, role, x)
+            except Exception as exc:   # the score still stands without the drafts
+                doc["draft_error"] = str(exc)[:300] or "The drafts could not be written right now."
+    _li_save(doc)
+    return {"ok": True, "has_review": True, "score": review["score"], "review": review,
+            "drafts": doc["drafts"], "draft_error": doc["draft_error"], "at": doc["at"],
+            "name": x.get("name") or "", "url": x.get("url") or "",
+            "app_url": "http://127.0.0.1:57000/"}
+
+
+@app.get("/api/profile/linkedin-review")
+@_guard
+def linkedin_review_get():
+    """The last stored LinkedIn review for the Profile page. Nothing is computed here."""
+    doc = _li_load()
+    if not doc.get("review"):
+        return _nostore(jsonify({"ok": True, "has_review": False}))
+    x = doc.get("extracted") or {}
+    return _nostore(jsonify({"ok": True, "has_review": True, "score": doc["review"]["score"],
+                             "review": doc["review"], "drafts": doc.get("drafts"),
+                             "draft_error": doc.get("draft_error") or "", "at": doc.get("at"),
+                             "name": x.get("name") or "", "url": x.get("url") or ""}))
+
+
+@app.post("/api/profile/linkedin-review")
+@_guard
+def linkedin_review_post():
+    """Score a LinkedIn profile extraction. Body: {profile: {...}} with a fresh extraction
+    (the extension's path, via the prefs event channel, lands here too), or {} to re-score
+    the stored one. ``draft`` (default true from the app) also writes the headline + About
+    with one model call; the extension's call never spends the model."""
+    body = request.json or {}
+    draft = body.get("draft", True) is not False
+    return _nostore(jsonify(_linkedin_review_run(body.get("profile"), draft=draft)))
 
 
 @app.get("/api/inbox/status")

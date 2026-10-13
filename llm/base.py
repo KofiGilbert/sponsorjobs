@@ -166,6 +166,14 @@ class LLMBackend(Protocol):
         reply body as plain text (no preamble, no markdown). The person reviews and sends.
         """
 
+    def draft_linkedin_profile(self, profile: dict, target_role: str,
+                               current_headline: str = "", current_about: str = "") -> dict:
+        """Draft a LinkedIn headline (under 220 characters) and About (under 2,000) aimed at
+        the person's target role, grounded ONLY in the PROFILE: no invented employers,
+        numbers, or credentials. Returns ``{"headline": str, "about": str}``. The person
+        pastes them into LinkedIn by hand; nothing here touches the page.
+        """
+
     def classify_application_mail(self, subject: str, body: str, sender: str, company: str) -> dict:
         """What ONE message from an employer the person is tracking is, when the rules in
         inbox/detect could not tell: {"kind": one of inbox.detect.KINDS, "phrase": the deciding
@@ -947,6 +955,27 @@ class FakeLLM:
               f"to share more or set up a time to talk, I'm generally flexible on scheduling.")
         p3 = "Please let me know what works best on your end, and thank you again for your time."
         return f"{greet}\n\n{p1} {p2}\n\n{p3}\n\nBest regards,\n{name}"
+
+    def draft_linkedin_profile(self, profile: dict, target_role: str,
+                               current_headline: str = "", current_about: str = "") -> dict:
+        """Deterministic headline + About from the profile only: role, top skills, first
+        role, and a call to action. No figures that the profile does not state."""
+        ident = (profile or {}).get("identity", {}) or {}
+        name = ident.get("name") or "I"
+        role = (target_role or "").strip() or _profile_first_role(profile) or "the roles I target"
+        skills = _profile_skill_phrases(profile)[:3]
+        skill_bit = " | ".join(skills) if skills else "hands-on delivery"
+        headline = f"{role} | {skill_bit}"[:220]
+        exp = _profile_first_role(profile)
+        p1 = (f"I am a {role} who works with "
+              f"{', '.join(skills) if skills else 'the tools this role calls for'}.")
+        p2 = (f"Most recently I worked as {exp}, where I took ownership of real delivery end to end."
+              if exp else "I take ownership of real delivery end to end.")
+        p3 = ("I am open to " + role + " roles. Reach out here or by email and I will reply quickly.")
+        about = "\n\n".join([p1, p2, p3])
+        if name != "I":
+            about = about.replace("I am a", f"I am {name}, a", 1)
+        return {"headline": headline, "about": about[:2000]}
 
     # -- inbox: stage triage + per-stage drafts (deterministic stand-ins) --- #
     # Soft cues the rules in inbox/detect do not know, so the model pass is testable: a

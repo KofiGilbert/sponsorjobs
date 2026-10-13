@@ -37,6 +37,7 @@ from datetime import date, datetime
 from urllib.parse import quote, urlsplit
 from xml.etree import ElementTree as ET
 
+from . import careersite_readers as readers
 from .ats import _job, html_to_text
 
 SOURCE = "careersite"
@@ -64,6 +65,8 @@ MAX_PAGE_ERRORS = 25            # unreadable job pages (404, timeout) before the
 # Tesla (Akamai 403 on robots.txt itself), Meta (robots.txt header forbids automated collection
 # without written permission), Amazon and Apple and Google (no sitemap, no JobPosting block;
 # Amazon's public search JSON is a separate adapter). Intel is a Workday tenant (sourcing/workday.py).
+# 2026-10-12: Goldman Sachs (higher.gs.com robots.txt disallows everything), Wells Fargo and
+# Cognizant (robots allows, but every job page answers a Cloudflare challenge) left OUT.
 SITES: dict[str, dict] = {
     "apply.careers.microsoft.com": {
         "company": "Microsoft",
@@ -84,6 +87,45 @@ SITES: dict[str, dict] = {
         "company": "Cisco",
         "sitemaps": ["https://careers.cisco.com/global/en/sitemap_index.xml"],
         "job_url": r"^https://careers\.cisco\.com/global/en/job/",
+    },
+    # Verified 2026-10-12 (robots.txt read, sitemap counted, job pages parsed, no challenge).
+    # `reader` names a sourcing/careersite_readers.py reader for pages without JSON-LD; `keep` is
+    # the professional-roles rule (careersite_readers.decide: hourly words drop, professional
+    # words keep, `department` keeps, `else` decides the rest; `drop` / `keep` add site words);
+    # `id_order` reads a sitemap without lastmod newest requisition first; `max_urls` lifts the
+    # per-site sitemap cap.
+    # Walmart: 15,839 job URLs (/us/en/jobs/R-<id>, no lastmod, no title in the URL); job data in
+    # the Next.js __NEXT_DATA__ script. 12 of 197 readable pages in a 200-page sample were kept.
+    "careers.walmart.com": {
+        "company": "Walmart",
+        "sitemaps": ["https://careers.walmart.com/sitemap.xml"],
+        "job_url": r"^https://careers\.walmart\.com/us/en/jobs/R-\d+$",
+        "reader": "nextdata",
+        "id_order": r"/R-(\d+)$",
+        "max_urls": 20000,
+        "keep": {"department": r"^corporate / home office\b", "else": "drop"},
+    },
+    # Home Depot: 25,333 job URLs; robots.txt names /jobsitemap, which redirects to the file its
+    # sitemap vendor hosts (feeds.hodesdigital.com, no robots.txt there). JSON-LD on every page.
+    # The slug spells the title, so the keep rule drops store roles with no request: 354 of
+    # 25,333 kept (0 of a random 200, which are all store roles).
+    "careers.homedepot.com": {
+        "company": "The Home Depot",
+        "sitemaps": ["https://careers.homedepot.com/jobsitemap"],
+        "job_url": r"^https://careers\.homedepot\.com/job/\d+/",
+        "keep": {"drop": r"\b(field sales|sales consultant|installers?|install|store support)\b", "else": "drop"},
+    },
+    # Bank of America: 2,113 job URLs in sitemap_main.xml (JSON-LD, datePosted as MM/DD/YYYY).
+    "careers.bankofamerica.com": {
+        "company": "Bank of America",
+        "sitemaps": ["https://careers.bankofamerica.com/sitemap_main.xml"],
+        "job_url": r"^https://careers\.bankofamerica\.com/en-us/job-detail/\d+/",
+    },
+    # Accenture (US): 952 job URLs in the us-en job sitemap (JSON-LD).
+    "www.accenture.com": {
+        "company": "Accenture",
+        "sitemaps": ["https://www.accenture.com/us-en/jobpostings-sitemap.xml"],
+        "job_url": r"^https://www\.accenture\.com/us-en/careers/jobdetails\?id=",
     },
 }
 
@@ -200,6 +242,7 @@ class Host:
         self.robots: Robots | None = None
         self.requests = 0
         self.server_errors = 0
+        self.slug_dropped = 0                 # sitemap URLs the keep rule dropped by their slug
 
     def get(self, url: str) -> str:
         """One polite request. Blocked on 403 / 429 / a challenge page; other HTTP errors
@@ -319,8 +362,11 @@ def job_urls(host: Host, *, max_urls: int = DEFAULT_MAX_URLS, log=None) -> list[
             continue
         for loc, lastmod in entries:
             if pat.match(loc) and host.allowed(loc) and loc not in found:
+                if readers.keep_by_slug(host.cfg, loc) is False:      # "keep" rule, no request
+                    host.slug_dropped += 1
+                    continue
                 found[loc] = lastmod
-    rows = sorted(found.items(), key=lambda kv: kv[1], reverse=True)
+    rows = readers.order_urls(host.cfg, found)
     return rows[:max_urls]
 
 
@@ -353,11 +399,17 @@ def _walk(obj):
 def extract_jobposting(page_html: str) -> dict | None:
     """The first schema.org JobPosting object embedded in a page, or None."""
     for block in _LD.findall(page_html):
-        text = _html.unescape(block).strip()
-        text = re.sub(r"^\s*<!--|-->\s*$", "", text).strip()
-        try:
-            doc = json.loads(text, strict=False)
-        except ValueError:
+        doc = None
+        # Raw first: a description holding escaped markup (Accenture: &quot; inside a JSON
+        # string) breaks once unescaped. Unescaped second, for sites that entity-encode the block.
+        for text in (block, _html.unescape(block)):
+            text = re.sub(r"^\s*<!--|-->\s*$", "", text.strip()).strip()
+            try:
+                doc = json.loads(text, strict=False)
+                break
+            except ValueError:
+                continue
+        if doc is None:
             continue
         for obj in _walk(doc):
             if _is_posting(obj):
@@ -424,6 +476,9 @@ def _location_text(posting: dict) -> tuple[str, str]:
 
 def _date(s) -> str:
     s = str(s or "").strip()
+    us = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s)          # Bank of America: "10/09/2026"
+    if us:
+        return f"{us.group(3)}-{int(us.group(1)):02d}-{int(us.group(2)):02d}"
     return s[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", s) else ""
 
 
@@ -479,18 +534,22 @@ def crawl_site(store, host_name: str, cfg: dict, *, text_fetch=fetch_page, sleep
         max_detail = _env_int("CAREERSITE_MAX_DETAIL", DEFAULT_MAX_DETAIL)
     host = Host(host_name, cfg, text_fetch=text_fetch, sleep=sleep, clock=clock)
     summary = {"host": host_name, "listed": 0, "known": 0, "fetched": 0, "kept": 0,
-               "no_posting": 0, "excluded": 0, "errors": 0, "requests": 0, "blocked": "", "error": ""}
+               "no_posting": 0, "excluded": 0, "errors": 0, "requests": 0, "blocked": "", "error": "",
+               "dropped": 0}
     try:
         host.load_robots()
-        urls = job_urls(host, max_urls=max_urls, log=log)
+        urls = job_urls(host, max_urls=int(cfg.get("max_urls", max_urls)), log=log)
         summary["listed"] = len(urls)
+        summary["dropped"] = host.slug_dropped
+        skip = readers.SkipMemory(store) if cfg.get("keep") is not None else None
+        skipped = skip.recent([u for u, _ in urls]) if skip else set()
         known = store.source_ids_by_url(SOURCE, [u for u, _ in urls])
         if known:
             store.touch_seen(list(known.values()))
             summary["known"] = len(known)
         kept: list[dict] = []
         for url, lastmod in urls:
-            if url in known:
+            if url in known or url in skipped:
                 continue
             if summary["fetched"] >= max_detail or (deadline is not None and clock() >= deadline):
                 break
@@ -505,9 +564,17 @@ def crawl_site(store, host_name: str, cfg: dict, *, text_fetch=fetch_page, sleep
                     raise Blocked(f"{host_name}: {summary['errors']} unreadable pages ({exc!s:.60})") from exc
                 continue
             posting = extract_jobposting(page)
+            if posting is None and cfg.get("reader"):              # framework JSON, no JSON-LD
+                posting = readers.read_page(cfg["reader"], page, url)
+            if posting is not None and skip is not None and not readers.keep_by_page(cfg, posting):
+                summary["dropped"] += 1                            # an hourly / store role
+                skip.remember(host_name, url, str(posting.get("title") or ""))
+                continue
             job = posting_to_job(host_name, cfg.get("company", host_name), url, posting) if posting else None
             if job is None:
                 summary["no_posting"] += 1
+                if skip is not None:                               # closed requisition (Walmart
+                    skip.remember(host_name, url, "no posting")    # redirects it to job-not-found)
                 continue
             if not job["posted_at"]:
                 job["posted_at"] = lastmod
@@ -530,7 +597,7 @@ def crawl_site(store, host_name: str, cfg: dict, *, text_fetch=fetch_page, sleep
     if log:
         log(f"[careersite] {host_name}: listed={summary['listed']} known={summary['known']} "
             f"fetched={summary['fetched']} kept={summary['kept']} no_posting={summary['no_posting']} "
-            f"excluded={summary['excluded']} errors={summary['errors']} requests={summary['requests']}"
+            f"excluded={summary['excluded']} dropped={summary['dropped']} errors={summary['errors']} requests={summary['requests']}"
             + (f" BLOCKED: {summary['blocked']}" if summary["blocked"] else "")
             + (f" error: {summary['error']}" if summary["error"] else ""))
     return summary
