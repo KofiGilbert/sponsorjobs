@@ -141,6 +141,13 @@ def test_job_url_detection_and_pattern():
     pat = d.job_url_pattern(h, "eightfold", f"https://{h}/careers/job/123?domain=acme.com")
     assert pat == r"^https://careers\.acme\.com/careers/job/\d+"
     assert d.job_url_pattern(h, "phenom", f"https://{h}/global/en/job/R1/x") == r"^https://careers\.acme\.com/global/en/job/"
+    # a title slug before the job segment varies per job: it becomes a wildcard segment
+    assert d.job_prefix(f"https://{h}/de/athlete-iii/job/R-94223") == "/de/*/job/"
+    assert d.job_prefix(f"https://{h}/en-us/project-manager/job/R1") == "/en-us/*/job/"
+    import re
+    pat = d.job_url_pattern(h, "other", f"https://{h}/en/project-manager/job/R0139637")
+    assert pat == r"^https://careers\.acme\.com/en/[^/]+/job/"
+    assert re.match(pat, f"https://{h}/en/data-engineer/job/R1") and not re.match(pat, f"https://{h}/de/x-y/job/R1")
 
 
 def test_robots_text_that_forbids_collection_is_respected():

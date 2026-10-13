@@ -195,16 +195,24 @@ def is_job_url(url: str, host: str) -> bool:
     return bool(m and re.search(r"\d{3,}", p.path[m.end():]))
 
 
+_LOCALE = re.compile(r"^[a-z]{2}([-_][a-z]{2})?$", re.I)
+
+
 def job_prefix(url: str) -> str:
-    """The path up to and including the job segment: /global/en/job/, /careers/job/, /job/."""
+    """The path up to and including the job segment: /global/en/job/, /careers/job/, /job/.
+    A title slug BEFORE the job segment (/de/athlete-iii/job/R-1, Attrax-style sites) varies per
+    job, so it becomes `*`; a locale or a fixed word stays literal."""
     p = urlsplit(url).path
     m = _JOB_SEG.search(p)
-    return p[:m.end()] if m else ""
+    if not m:
+        return ""
+    segs = p[:m.end()].split("/")
+    return "/".join("*" if (s and "-" in s and not _LOCALE.match(s)) else s for s in segs)
 
 
 def job_url_pattern(host: str, platform: str, sample_url: str) -> str:
     prefix = job_prefix(sample_url)
-    pat = "^https://" + re.escape(host) + re.escape(prefix)
+    pat = "^https://" + re.escape(host) + "[^/]+".join(re.escape(part) for part in prefix.split("*"))
     if platform == "eightfold" and prefix.endswith("/careers/job/"):
         pat += r"\d+"
     return pat
@@ -323,7 +331,7 @@ class Prober:
         url = f"https://{host}/robots.txt"
         status, body, loc = self._get(host, url)
         if 300 <= status < 400:
-            target = urlsplit(urljoin(url, loc)).netloc.lower()
+            target = (urlsplit(urljoin(url, loc)).hostname or "").lower()
             if target and target != host:
                 return {**res, "status": "redirect", "redirect": target,
                         "reason": f"robots.txt redirects to {target}"}
