@@ -646,5 +646,6 @@
   "projects.ghConnectedAs": "Verbunden als",
   "projects.ghPrompt": "Verbinde GitHub, um das Repo zu erstellen",
   "projects.connect": "Verbinden",
-  "projects.startNoGh": "Ohne GitHub starten"
+  "projects.startNoGh": "Ohne GitHub starten",
+  "projects.ideasPageTitle": "Projektideen"
 }

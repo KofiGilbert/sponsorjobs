@@ -697,7 +697,12 @@
       <section class="view view-projects" id="view-projects">
         <header class="page-head">
           <div>
-            <h1 class="page-title" data-i18n="projects.title">Projects</h1>
+            <!-- The ideas gallery is its own page: a back link above the title, like Templates. -->
+            <button class="btn btn-ghost btn-back tpl-back proj-back" id="projIdeasBack" type="button" hidden>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span data-i18n="projects.title">Projects</span>
+            </button>
+            <h1 class="page-title" id="projPageTitle" data-i18n="projects.title">Projects</h1>
           </div>
           <div class="page-head-actions" id="projHeadActs">
             <button class="btn btn-ghost" id="projSuggestBtn" type="button">
@@ -730,7 +735,8 @@
              draft here and, when GitHub is connected, a private repo. The defend gate still applies. -->
         <section class="proj-ideas" id="projIdeas" hidden aria-labelledby="projIdeasH">
           <!-- Row 1: the eyebrow and the Target chip. Row 2: one toolbar on the Jobs filter grammar
-               (search, the category select, GitHub, refresh, close). No labelled chip rows. -->
+               (search, the category select, GitHub). No labelled chip rows. No close or refresh: the
+               back link above the title leaves, and Search and More ideas bring new ideas. -->
           <div class="proj-ideas-hd">
             <h2 class="proj-ideas-h" id="projIdeasH" data-i18n="projects.ideasTitle">Ideas for you</h2>
             <div class="proj-target" id="projTargetBox"><!-- target chip injected --></div>
@@ -746,14 +752,6 @@
               <option value="" data-i18n="projects.anyCategory">Any category</option>
             </select>
             <div class="proj-ideas-gh" id="projIdeasGh"><!-- Connect GitHub button, or the connected state --></div>
-            <div class="proj-ideas-tools">
-              <button class="proj-icon-btn is-on" id="projIdeasRefresh" type="button" title="New ideas" aria-label="New ideas">
-                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/></svg>
-              </button>
-              <button class="proj-icon-btn is-on" id="projIdeasClose" type="button" title="Close" aria-label="Close">
-                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
-              </button>
-            </div>
           </div>
           <p class="proj-ideas-cap" id="projIdeasCap" hidden></p>
           <div class="proj-saved" id="projSaved" hidden><!-- saved ideas injected --></div>

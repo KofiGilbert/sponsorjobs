@@ -646,5 +646,6 @@
   "projects.ghConnectedAs": "Conectado como",
   "projects.ghPrompt": "Conecta GitHub para crear el repositorio",
   "projects.connect": "Conectar",
-  "projects.startNoGh": "Empezar sin GitHub"
+  "projects.startNoGh": "Empezar sin GitHub",
+  "projects.ideasPageTitle": "Ideas de proyectos"
 }

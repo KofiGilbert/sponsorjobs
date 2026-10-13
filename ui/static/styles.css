@@ -2914,6 +2914,8 @@ body.cv-dragging * { cursor: grabbing !important; }
    starts where the group headings start (it sat indented, Kofi, 2026-10-09). */
 .view-templates .page-head { max-width: 1320px; margin-bottom: 10px; }
 .view-templates .tpl-back { margin-left: -8px; margin-bottom: 0; }
+/* The ideas gallery's back link: the Templates one, so its text sits on the title's left edge. */
+.view-projects .proj-back { margin-left: -8px; margin-bottom: 0; }
 
 /* The job title stays put while the description scrolls under it (LinkedIn does the same).
    A zero-height sticky anchor at the top of the pane carries a compact bar that is shown only
@@ -3340,7 +3342,6 @@ body.cv-dragging * { cursor: grabbing !important; }
 .proj-target-form { cursor: text; border-color: color-mix(in srgb, var(--ink) 35%, transparent); }
 .proj-target-in { border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-weight: 600; width: 220px; min-width: 0; padding: 0; }
 .proj-target-src { font-size: 12px; color: var(--faint); white-space: nowrap; }
-.proj-ideas-tools { display: flex; gap: 2px; flex: none; }
 .proj-icon-btn.is-on { opacity: 1; }
 .proj-icon-btn.is-on:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .proj-ideas-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
@@ -3516,7 +3517,6 @@ body.cv-dragging * { cursor: grabbing !important; }
    Connect button, or a quiet connected state) and the two icon tools. No labelled chip rows. */
 .proj-ideas-bar { display: flex; align-items: center; gap: 10px; margin-top: 14px; min-width: 0; }
 .proj-ideas-search { min-width: 200px; }
-.proj-ideas-bar .proj-ideas-tools { margin-left: -2px; }
 .proj-ideas-bar .proj-icon-btn { width: 36px; height: 36px; margin-left: 0; }
 .proj-ideas-gh { flex: none; display: flex; align-items: center; min-width: 0; }
 .proj-gh-btn { height: 40px; padding: 0 14px; }

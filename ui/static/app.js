@@ -4438,6 +4438,12 @@
     const root = $("#projList"); if (!root) return;
     const formOpen = !$("#projForm")?.hidden || !$("#projIdeas")?.hidden;
     const acts = $("#projHeadActs");
+    // The ideas gallery is its own page: "Project ideas" under a back link, no header buttons.
+    const ideasOpen = !$("#projIdeas")?.hidden;
+    const back = $("#projIdeasBack"); if (back) back.hidden = !ideasOpen;
+    const pt = $("#projPageTitle");
+    if (pt) pt.textContent = ideasOpen ? PT("projects.ideasPageTitle", "Project ideas") : PT("projects.title", "Projects");
+    if (ideasOpen) { if (acts) acts.hidden = true; root.innerHTML = ""; return; }
     if (!PROJECTS.length) {
       // The header buttons repeat the card's actions, so they step aside while it shows:
       // one primary action per screen.
@@ -4639,7 +4645,6 @@
     }
     const q = $("#projIdeasQ"); if (q) q.disabled = spent;
     const more = $("#projIdeasMore"); if (more) more.disabled = spent || IDEAS.moreBusy;
-    const ref = $("#projIdeasRefresh"); if (ref) ref.disabled = spent;
   }
   function renderTargetChip(role, busy) {
     const box = $("#projTargetBox"); if (!box) return;
@@ -4977,8 +4982,15 @@
     }
   }
   $("#projSuggestBtn")?.addEventListener("click", () => { const box = $("#projIdeas"); if (box && !box.hidden) closeIdeas(); else openIdeas(); });
-  $("#projIdeasClose")?.addEventListener("click", closeIdeas);
-  $("#projIdeasRefresh")?.addEventListener("click", () => { if (!capSpent()) loadIdeas({ role: IDEAS.role, query: IDEAS.query, refresh: true }); });
+  $("#projIdeasBack")?.addEventListener("click", closeIdeas);
+  // Esc goes back too, unless a field inside the gallery (the Target chip, an inline ask) took it.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    const box = $("#projIdeas");
+    if (!box || box.hidden || !$("#view-projects")?.classList.contains("is-active")) return;
+    if (document.querySelector(".modal:not([hidden]), dialog[open]")) return;
+    e.preventDefault(); closeIdeas();
+  });
   $("#projIdeasMore")?.addEventListener("click", loadMoreIdeas);
   $("#projIdeasSearch")?.addEventListener("submit", (e) => {
     e.preventDefault();
