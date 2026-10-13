@@ -42,6 +42,7 @@ DEFAULT_INCLUDE = "jsearch"
 # every later run would start from zero and be killed too -- the first run on 2026-10-06 did that.
 DEFAULT_CRAWL_MINUTES = 140
 CURSOR_FILE = "crawl_cursor.json"     # where the next run resumes in the board list, under --data
+CAREERSITE_CURSOR_FILE = "careersite_cursor.json"   # the same for the career-site table
 
 
 def _board_key(b: dict) -> list[str]:
@@ -107,11 +108,11 @@ def aggregators_for_feed(env=None, log=print) -> list[str]:
 class _CareerSiteLane:
     """Runs sourcing.careersite.crawl_sites in a background thread for the feed build."""
 
-    def __init__(self, db_path, log):
+    def __init__(self, db_path, log, cursor_path=None):
         from sourcing.careersite import crawl_sites
         self.summaries: list[dict] = []
         self._thread = threading.Thread(
-            target=lambda: self.summaries.extend(crawl_sites(db_path, log=log)),
+            target=lambda: self.summaries.extend(crawl_sites(db_path, cursor_path=cursor_path, log=log)),
             name="careersite-lane", daemon=True)
 
     def start(self):
@@ -167,7 +168,7 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
             # threads and connections: different hosts, so neither slows the other's politeness.
             lane = None
             if crawler is None and fetch is None and os.environ.get("CAREERSITE_LANE", "1") != "0":
-                lane = _CareerSiteLane(jobs_db, log)
+                lane = _CareerSiteLane(jobs_db, log, cursor_path=data_dir / CAREERSITE_CURSOR_FILE)
                 lane.start()
             if crawler is not None:
                 summary = crawler(w)

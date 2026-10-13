@@ -81,6 +81,9 @@ jobs:
           CAREERSITE_MINUTES: ${{ vars.CAREERSITE_MINUTES || 130 }}
           CAREERSITE_MAX_DETAIL: ${{ vars.CAREERSITE_MAX_DETAIL || 1000 }}
           CAREERSITE_WORKERS: ${{ vars.CAREERSITE_WORKERS || 4 }}
+          # Job pages read across ALL career sites per run (the site order rotates between runs
+          # from a cursor in the data dir, so the end of the table is reached too).
+          CAREERSITE_PAGE_BUDGET: ${{ vars.CAREERSITE_PAGE_BUDGET || 12000 }}
           # Amazon's own search JSON (sourcing/amazonjobs.py): newest N per run; stored rows are still
           # capped by JOBS_MAX_PER_COMPANY. The published list holds up to JOBS_FEED_LIMIT rows.
           AMAZON_MAX_JOBS: ${{ vars.AMAZON_MAX_JOBS || 5000 }}

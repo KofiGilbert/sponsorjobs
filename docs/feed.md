@@ -293,9 +293,24 @@ threads and SQLite connections (`CAREERSITE_WORKERS` hosts at once, default 4, e
 at a time), under its own wall-clock cap (`CAREERSITE_MINUTES`, default 60). `CAREERSITE_LANE=0`
 switches it off.
 
-The site table (`SITES` in `sourcing/careersite.py`) is the allowlist: only a host in it is ever
-fetched, and a site is added only after a maintainer has read its `robots.txt` by hand and confirmed
-the sitemap and the JSON-LD. Submission on these sites stays ASSISTED (`submit/allowlist.py`).
+With dozens of sites the lane also has a **page budget** across all of them,
+`CAREERSITE_PAGE_BUDGET` (default 12,000 job pages a run; `0` = no cap), shared by the worker
+threads. Only job pages count: a site reached after the budget is spent still reads its robots.txt
+and sitemap and stamps its stored rows "still listed", so nothing is pruned just because the budget
+ran out. The order **rotates**: sites are sorted by host and the run starts at a cursor kept in the
+feed data dir (`careersite_cursor.json`, next to the board pass's `crawl_cursor.json`); the next run
+starts at the first site this one did not finish (cut short by the budget or the deadline, or never
+started), so a capped run never starves the end of the table. Within a site, pages are read newest
+`lastmod` first, as before.
+
+The site table is the allowlist: only a host in it is ever fetched. It lives in
+**`config/careersites.json`** (`{"sites": {host: {...}}}`), loaded by `sourcing/careersite.py` into
+the same `SITES` dict; each entry has `company`, `sitemaps`, `job_url` (anchored to its own host),
+`platform`, `verified` (date) and `jobs_seen`, plus the optional `reader` / `keep` / `id_order` /
+`max_urls` below. An entry whose `job_url` or sitemaps leave its own host is dropped at load time,
+and the original four are built in as the fallback if the file is missing or unreadable. A site is
+added only after the checks below (by `scripts/discover_careersites.py` or by hand). Submission on
+these sites stays ASSISTED (`submit/allowlist.py`).
 
 Verified 2026-10-11 and in the table: Microsoft (2,296 jobs) and Qualcomm (2,068), both Eightfold
 (the sitemap and every job URL carry `?domain=`, and the robots file is "Disallow: / then Allow:
@@ -309,6 +324,64 @@ and Google disallows paging its results). **Amazon**, the largest sponsor, has n
 either, but the public keyless JSON its own search page reads is open to crawlers (robots.txt
 disallows only `/internal`): `sourcing/amazonjobs.py` reads it as the `amazonjobs` adapter (board id
 = country code, `AMAZON_MAX_JOBS` newest rows per run, default 1,000, full text in every row; the newest 500 are stored per run, and a row stays while it is re-seen).
+
+#### Discovering more sites (`scripts/discover_careersites.py`)
+
+A maintainer script finds and verifies career sites for the biggest sponsors. It ranks employers by
+H-1B approvals (recent years weighted, `seed/sponsors_seed.csv.gz`), skips those already on the
+watchlist, already in the table, clearance-heavy, or recorded above as blocked (JPMorgan, Oracle,
+IBM, Deloitte, Infosys, Tesla, Meta, Apple, Google; Amazon and Walmart have their own paths), and
+for each of the rest tries a few hosts guessed from the brand: `careers.<brand>.com`,
+`jobs.<brand>.com`, `<brand>.eightfold.ai`, `apply.careers.<brand>.com`, `www.<brand>careers.com`
+(a robots.txt redirect to another careers host is followed once). Per host:
+
+1. `robots.txt` first, with our user agent. A 404 means no rules; an HTML page, a 5xx, or a file
+   whose comments forbid automated collection means leave it; 401 / 403 / 429 or a challenge page
+   stops that host at once.
+2. The platform is named from robots.txt and the sitemap: Eightfold (`/api/pcsx`, `careerhub`,
+   `?domain=` sitemaps), Phenom (`phenomtrack`, `px-widgets`, `/<country>/<lang>/job/` URLs), Radancy
+   (`/search-jobs/`, `/job/<city>/<title>/<id>/<id>`), Workday, iCIMS, SuccessFactors, Oracle, Avature.
+3. The sitemap(s) robots.txt names (or the platform's usual one), only if robots.txt allows them;
+   job-page URLs are counted (at least 10 needed). A multi-locale site keeps one locale (English when
+   it lists a fair share), and a title slug before `/job/` becomes a wildcard segment in `job_url`.
+4. One robots-allowed job page must carry a schema.org `JobPosting` with a title.
+
+Politeness as in the lane: one request at a time per registrable domain (every `*.eightfold.ai`
+tenant shares one gate) at least 1 s apart, raised by `Crawl-delay`; short timeouts; no retry.
+
+    python scripts/discover_careersites.py --limit 600 --minutes 60 [--workers 8] [--write] [--ipv4]
+    python scripts/discover_careersites.py --report        # what the checkpoint holds
+
+Progress is checkpointed in `data/careersite_discovery.json` (git-ignored), so a rerun continues and
+never probes a host twice. `--write` adds verified hosts to `config/careersites.json` (never
+overwriting an entry); review the diff before committing. Workday tenants are reported, not added
+(Workday boards belong on the watchlist, read by `sourcing/workday.py`). Platforms checked for
+sitemap + JSON-LD: Eightfold, Phenom and Radancy qualify; Workday also has a per-tenant `siteMap.xml`
+and JSON-LD but is already covered through its JSON API; SuccessFactors / SAP pages tried carried no
+JSON-LD; iCIMS hosts guessed answered "gone"; Oracle and Avature are client-rendered. Each one is
+judged on the four checks above, not on its platform name. `--ipv4` is for a network whose IPv6
+route is broken (Python waits about 10 s per v6 address before falling back).
+
+First run, 2026-10-12: the top 600 uncovered sponsors, 4,147 hosts probed (3,694 did not exist),
+**53 sites verified and added, 67,162 job URLs in their sitemaps**:
+
+- **Other (own sitemap + JSON-LD)** (15): Costco (`careers.costco.com`, 20,381), Marriott International (`careers.marriott.com`, 13,614), Hitachi (`careers.hitachi.com`, 2,513), Henry Ford Health System (`careers.henryford.com`, 1,539), EPAM Systems (`careers.epam.com`, 1,293), Nike (`careers.nike.com`, 1,289), Gartner (`jobs.gartner.com`, 763), Garmin (`careers.garmin.com`, 420), Equifax (`careers.equifax.com`, 220), Infor (`careers.infor.com`, 220), SAP (`jobs.sap.com`, 161), Teradata (`careers.teradata.com`, 146), Equinix (`careers.equinix.com`, 50), Gap Inc. (`www.gapinc.com`, 24), Ancestry (`careers.ancestry.com`, 13).
+- **Phenom** (17): NTT DATA (`careers.nttdata.com`, 2,910), Thermo Fisher Scientific (`jobs.thermofisher.com`, 2,392), State Street (`careers.statestreet.com`, 1,098), GE HealthCare (`careers.gehealthcare.com`, 889), RBC (`jobs.rbc.com`, 799), The Cigna Group (`jobs.thecignagroup.com`, 528), Arrow Electronics (`careers.arrow.com`, 513), Xoriant (`careers.xoriant.com`, 481), Merck (`jobs.merck.com`, 390), Snowflake (`careers.snowflake.com`, 364), LPL Financial (`career.lpl.com`, 296), Chewy (`careers.chewy.com`, 255), Blue Yonder (`careers.blueyonder.com`, 139), Freedom Mortgage (`careers.freedommortgage.com`, 26), Yelp (`www.yelp.careers`, 19), Southwest Airlines (`careers.southwestair.com`, 18), Howard Hughes Medical Institute (`careers.howardhughes.com`, 14).
+- **Radancy (TalentBrew)** (11): Quest Diagnostics (`careers.questdiagnostics.com`, 2,197), Ford (`www.careers.ford.com`, 901), Comcast (`jobs.comcast.com`, 702), Synopsys (`careers.synopsys.com`, 620), Intuit (`jobs.intuit.com`, 615), Citizens (`jobs.citizensbank.com`, 467), Arm (`careers.arm.com`, 414), NetApp (`careers.netapp.com`, 308), Santander Bank (`www.santandercareers.com`, 176), Audible (`www.audiblecareers.com`, 54), Synchrony Bank (`www.synchronycareers.com`, 45).
+- **Eightfold** (10): Applied Materials (`careers.appliedmaterials.com`, 2,012), Lam Research (`careers.lamresearch.com`, 1,365), Arcadis (`jobs.arcadis.com`, 1,316), Ericsson (`jobs.ericsson.com`, 523), Boston Scientific (`bostonscientific.eightfold.ai`, 475), DPR Construction (`careers.dpr.com`, 446), John Deere (`careers.deere.com`, 300), Whirlpool (`jobs.whirlpool.com`, 228), TriNet (`jobs.trinet.com`, 196), Amdocs (`jobs.amdocs.com`, 25).
+
+Rejected (297 hosts): the sitemap listed no job pages (206, mostly corporate sites and wildcard
+`*.eightfold.ai` tenants with an empty sitemap), robots.txt disallows the sitemap (41), job pages
+without JobPosting JSON-LD (21: Capgemini, Cognizant, Wipro, PwC, Caterpillar, Nutanix, DocuSign,
+eBay, Keysight, ADP, HSBC, Rivian, Paramount, SiriusXM, TEKsystems...), robots.txt an HTML page (11),
+robots.txt answered a 5xx (11) or a 202 / 406 (3), too few job URLs (4). Blocked on contact (403 / 401, left alone): T-Mobile,
+DoorDash, Verizon, Akamai, Lowe's, UBS, Change Healthcare, Box, Hallmark, Cohesity, Shutterfly,
+Cummins (403 on its sitemap), credit.com (401). One Workday tenant (Northern Trust) reported for the watchlist.
+
+Live capped run after adding them (fresh database, `CAREERSITE_MAX_DETAIL` 20): Lam Research
+(Eightfold) 20 pages, 20 kept; Thermo Fisher (Phenom) 20 pages, 16 kept, 4 without a posting;
+Intuit (Radancy) 20 of 20. Then 10 pages each from Marriott, Hitachi and EPAM (own sitemaps,
+wildcard job URLs): 30 of 30. No block, no challenge, no errors; the cursor moved on as designed.
 
 #### Page readers and the keep rule (`sourcing/careersite_readers.py`)
 
