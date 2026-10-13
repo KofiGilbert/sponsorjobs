@@ -4466,20 +4466,20 @@
     }
     if (stage === "failed") {
       return { pill: PT("projects.sStopped", "Build stopped"), cls: "is-failed",
-        extra: `<div class="proj-card-err">${esc(b.error || PT("projects.bFailed", "The build stopped. Try again."))}</div>`,
+        extra: `<div class="proj-card-err">${esc(b.error || PT("projects.bFailed", "Something went wrong while building."))}</div>`,
         acts: btn("rebuild", PT("projects.tryAgain", "Try again"), true) };
     }
     if (stage === "learn") {
       const n = lr.learned || 0, m = lr.total || 0;
       return { pill: PT("projects.sLearn", "Learn it"), cls: "is-learn",
         extra: m ? bar(Math.round(n / m * 100), PT("projects.nLearned", "{n} of {m} learned").replace("{n}", n).replace("{m}", m)) : "",
-        acts: btn("learn", n ? PT("projects.continueLearn", "Continue") : PT("projects.learnIt", "Learn it"), true) };
+        acts: btn("learn", n ? PT("projects.continueLearn", "Continue") : PT("projects.startLearn", "Start"), true) };
     }
     if (stage === "defend") {
       const tried = p.defense && p.defense.tried;
       return { pill: PT("projects.sDefend", "Defend it"), cls: "is-defend",
         extra: tried ? `<div class="proj-card-note">${esc(PT("projects.lastScore", "Last try {s}. The bar is 70.").replace("{s}", p.defense.score))}</div>` : "",
-        acts: btn("learn", PT("projects.review", "Review"), false) + btn("defend-rec", PT("projects.defendIt", "Defend it"), true) };
+        acts: btn("learn", PT("projects.review", "Review"), false) + btn("defend-rec", PT("projects.startInterview", "Start interview"), true) };
     }
     // Verified
     const credit = p.repo_url && !p.repo_private ? "" : `<label class="proj-credit"><input type="checkbox" data-act="credit" ${p.ai_credit ? "checked" : ""}>
@@ -4583,8 +4583,7 @@
         : `<button class="btn btn-primary btn-sm" id="learnNextOpen" type="button">${esc(PT("projects.nextOpen", "Next unlearned step"))}</button>`)
       : `<button class="btn btn-primary btn-sm" id="learnCheck" type="button" ${c.kind !== "line" && L.pick == null ? "disabled" : ""}>${esc(PT("projects.check", "Check"))}</button>`;
     $("#projLearnCard").innerHTML = `
-      <div class="learn-hd"><span class="learn-n">${esc(PT("projects.stepOf", "Step {n} of {m}").replace("{n}", L.i + 1).replace("{m}", n))}</span>
-        <h3 class="learn-h">${esc(s.title)}</h3></div>
+      <h3 class="learn-h">${esc(s.title)}</h3>
       <div class="learn-file"><span class="learn-path">${esc(s.path)}</span><span class="learn-lines">${esc(PT("projects.lines", "lines {a} to {b}").replace("{a}", s.start).replace("{b}", s.end))}</span></div>
       <pre class="learn-code" tabindex="0" aria-label="${esc(s.path)}"><code>${learnCode(s)}</code></pre>
       ${s.explain ? `<p class="learn-explain">${esc(s.explain)}</p>` : ""}
@@ -5364,6 +5363,7 @@
     if ($("#prepList")) $("#prepList").hidden = false;
     if ($("#prepTilesMsg")) $("#prepTilesMsg").hidden = true;
     GUIDED = false; hideGuidedProgress();   // returning to the entry ends any guided flow
+    if (SCR_PROJECT) { SCR_PROJECT = null; } prepHead(null);   // the ordinary Interview prep head
     try { const d = await api("/api/preps"); PREPS = d.preps || []; } catch { PREPS = []; }
     // Simple manual entry: a fresh role + JD + CV form on every visit. Each visit goes through
     // step 1, so there's no "change the role" affordance on step 2, you just re-enter here.
@@ -5590,6 +5590,7 @@
   const fmtClock = (x) => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, "0")}`;
   function startScreen(prep, opts) {
     SCR_PROJECT = (opts && opts.project) || null;
+    prepHead(SCR_PROJECT);
     SCR_PREP = prep; SCREEN = null; SCR_EXTRA = false; SCR_UPLOADS = {}; SCR_TR = {}; SCR_RETAKES = {}; SCR_PRACTICE = null;
     SCR_DRILL = (opts && Array.isArray(opts.drill) && opts.drill.length) ? opts.drill : null; SCR_SECS = {};
     $("#prepList").hidden = true; $("#prepScreen").hidden = false;
@@ -5610,16 +5611,16 @@
     scrHead("", "");
     $("#scrStage").innerHTML = `
       <div class="scr-intro"><div class="scr-welcome">
-        <div class="r1-eyebrow">${esc(SCR_PROJECT ? T("projects.defendEyebrow", "Defend your project, recorded interview") : T("r1.eyebrow", "Round 1, recorded interview"))}</div>
-        <h2 class="scr-welcome-h">${r1Title(p)}</h2>
+        <div class="r1-eyebrow">${esc(SCR_PROJECT ? T("projects.defendEyebrow", "Recorded interview") : T("r1.eyebrow", "Round 1, recorded interview"))}</div>
+        <h2 class="scr-welcome-h">${SCR_PROJECT ? esc(T("projects.defendH", "5 questions on how you built it")) : r1Title(p)}</h2>
         <p class="scr-welcome-sub">${SCR_PROJECT
-          ? esc(T("projects.defendFacts", "5 questions on how you built it. Score 70 to verify it."))
+          ? esc(T("projects.defendFacts", "About 15 minutes. Score 70, answering every question, to verify it."))
           : SCR_DRILL
           ? esc(T("rc.drillFacts", "Re-drill: {n} questions from your report card.").replace("{n}", String(SCR_DRILL.length)))
           : esc(T("r1.landingFacts", "5 questions, about 20 minutes.")) + " " + esc((k => k ? k.charAt(0).toUpperCase() + k.slice(1) : "")(r1Kinds(p))) + "."}</p>
         <div class="scr-welcome-acts">
           <button class="btn btn-primary" id="scrBegin" type="button">${esc(T("r1.getStarted", "Get started"))}</button>
-          <button class="btn btn-ghost" id="scrBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
+          ${SCR_PROJECT ? "" : `<button class="btn btn-ghost" id="scrBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>`}
         </div>
         ${SCR_PROJECT ? "" : SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : `<div class="rc-goals" id="prepGoals" hidden></div>`}
         <p class="scr-disclaimer">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>
@@ -5672,6 +5673,30 @@
     }
     renderR1Devices();
   }
+  // The page head: Interview prep, or for Defend it "Defend <project>" under a back link to
+  // Projects (the person came from there), with no Quit in the interview bar.
+  function prepHead(project) {
+    const t = $("#prepTitle"), sub = $("#prepSub"), back = $("#prepProjBack"), quit = $("#scrQuit");
+    if (back) back.hidden = !project;
+    if (quit) quit.hidden = !!project;
+    hideProjLeave();
+    if (t) t.textContent = project ? T("projects.defendTitle", "Defend {t}").replace("{t}", project.title || "") : T("prep.title", "Interview prep");
+    if (sub) sub.textContent = project ? T("projects.defendSub", "Answer as you would in an interview. Pass to verify this project.")
+      : T("prep.sub", "Practice for a real interview, built from the job you applied to.");
+  }
+  function hideProjLeave() { const b = $("#prepProjLeave"); if (b) b.hidden = true; }
+  // Back to Projects. Mid-interview (a screen started, not yet scored) asks first, in the page:
+  // recorded answers are kept, exactly as Quit keeps them.
+  $("#prepProjBack")?.addEventListener("click", () => {
+    if (!(SCREEN && SCREEN.id && !SCREEN.result)) { quitScreen(); return; }
+    const box = $("#prepProjLeave"); if (!box) { quitScreen(); return; }
+    $("#prepProjLeaveT").textContent = T("projects.leaveQ", "Leave this interview? Answers you recorded are kept.");
+    $("#prepProjStay").textContent = T("projects.stay", "Stay");
+    $("#prepProjLeaveGo").textContent = T("projects.leave", "Leave");
+    box.hidden = false; $("#prepProjStay").focus();
+  });
+  $("#prepProjStay")?.addEventListener("click", () => { hideProjLeave(); $("#prepProjBack")?.focus(); });
+  $("#prepProjLeaveGo")?.addEventListener("click", () => { hideProjLeave(); quitScreen(); });
   // Defend it without a camera or mic: the written defence on the same five questions, said out
   // loud (a fallback must announce itself).
   function projectDefendWritten() {
@@ -5935,7 +5960,7 @@
         <div id="r1Gate"></div>
         <div class="mock-next">
           <button class="btn btn-ghost btn-sm" id="scrReport" type="button">${esc(T("r1.docx", "Download report (.docx)"))}</button>
-          <button class="btn btn-ghost btn-sm" id="scrDone" type="button">${esc(SCR_PROJECT ? T("projects.backToProjects", "Back to projects") : T("r1.backToPrep", "Back to prep"))}</button>
+          ${SCR_PROJECT ? "" : `<button class="btn btn-ghost btn-sm" id="scrDone" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>`}
           <button class="btn btn-danger-ghost btn-sm" id="scrDelete" type="button">${esc(T("r1.deleteRec", "Delete recordings"))}</button>
         </div>
       </div>`;
@@ -5962,9 +5987,13 @@
     box.innerHTML = `<div class="scr-unlock proj-verdict-box ${ok ? "ok" : ""}">
       <b>${esc(ok ? T("projects.verifiedH", "Verified. Your project can go public and onto your resume.")
                   : T("projects.notYetH", "Not verified yet. The bar is 70 on every question answered."))}</b>
-      <button class="btn btn-primary btn-sm" id="projVerdictGo" type="button">${esc(ok ? T("projects.backToProjects", "Back to projects") : T("projects.tryAgain", "Try again"))}</button></div>`;
-    $("#projVerdictGo")?.addEventListener("click", () => {
-      if (ok) { quitScreen(); return; }
+      <button class="btn btn-primary btn-sm" id="projVerdictGo" type="button">${esc(ok ? T("projects.addResume", "Add to resume") : T("projects.tryAgain", "Try again"))}</button></div>`;
+    $("#projVerdictGo")?.addEventListener("click", async () => {
+      if (ok) {   // the next real step; the back link above already goes to Projects
+        try { const res = await fetch(`/api/projects/${p.id}/tocv`, { method: "POST" }); toast(res.ok ? T("projects.addedResume", "Added to your resume material.") : T("projects.cantAdd", "Couldn't add it to your resume.")); }
+        catch { toast(T("projects.cantAdd", "Couldn't add it to your resume.")); }
+        quitScreen(); return;
+      }
       stopScrStream(); startScreen({ id: null, project_id: p.id, role: p.title, company: "", questions: [] }, { project: p });
     });
   }
@@ -6072,7 +6101,7 @@
     SCR_PHASE = "idle"; stopScrStream();
     $("#prepScreen").hidden = true; $("#prepList").hidden = false;
     if (SCR_PROJECT) {   // Defend it came from Projects: go back there
-      SCR_PROJECT = null; showView("projects"); loadProjects(); return;
+      SCR_PROJECT = null; prepHead(null); showView("projects"); loadProjects(); return;
     }
     loadPreps();
   }

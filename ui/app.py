@@ -5824,16 +5824,16 @@ def _run_build(pid: str, llm, generate: bool = True) -> None:
     except Exception as exc:   # the model or the network: say so, keep the package for a retry
         traceback.print_exc()
         reason = _classify_outage(exc)
-        msg = ("Your AI allowance ran out partway through. Try again once it is topped up."
+        msg = ("Your AI allowance ran out partway through. Top it up, then build again."
                if reason in ("upgrade_required", "no_credit") else
-               "The AI could not finish this build. Try again." if not reason else
-               "SponsorJobs could not reach the AI. Check your connection and try again.")
+               "The AI could not finish this build." if not reason else
+               "SponsorJobs could not reach the AI. Check your connection.")
         progress(state="failed", error=msg, stage="write", tokens=meter.as_dict(), finished=time.time())
         return
     if p.get("target") == "github":
         token = _cred("GITHUB_TOKEN")
         if not token:
-            progress(state="failed", stage="push", error="Connect GitHub in Settings, then try again. "
+            progress(state="failed", stage="push", error="Connect GitHub in Settings first. "
                      "Your files are saved here.", tokens=meter.as_dict(), finished=time.time())
             return
         progress(state="pushing", done=len(files), total=len(files))

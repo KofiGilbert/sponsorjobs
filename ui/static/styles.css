@@ -2515,6 +2515,12 @@ body.cv-dragging * { cursor: grabbing !important; }
    then cap the inner content at 720 (its tuned width for the recording grid). */
 .prep-screen { max-width: 1040px; margin: 0 auto; }
 .prep-screen > .mock-top, .prep-screen > .scr-stage { max-width: 880px; }
+/* Defend it: leaving mid-interview asks in the page, on the interview's own 880 column. */
+.scr-leave { max-width: 880px; margin: 0 0 14px max(0px, calc((100% - 1040px) / 2)); display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  flex-wrap: wrap; padding: 12px 16px; box-sizing: border-box; font-size: 13px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r); }
+.scr-leave[hidden] { display: none; }
+.scr-leave-acts { display: flex; gap: 6px; }
 /* Recorded-interview intro: framed as a card, matching the landing's card system. */
 .scr-intro { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 30px 32px; }
 /* Round 1 landing and notice: minimal, one action. */
@@ -2915,7 +2921,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 .view-templates .page-head { max-width: 1320px; margin-bottom: 10px; }
 .view-templates .tpl-back { margin-left: -8px; margin-bottom: 0; }
 /* The ideas gallery's back link: the Templates one, so its text sits on the title's left edge. */
-.view-projects .proj-back { margin-left: -8px; margin-bottom: 0; }
+.view-projects .proj-back, .view-prep .proj-back { margin-left: -8px; margin-bottom: 0; }
 
 /* The job title stays put while the description scrolls under it (LinkedIn does the same).
    A zero-height sticky anchor at the top of the pane carries a compact bar that is shown only

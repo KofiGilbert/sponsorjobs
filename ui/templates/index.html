@@ -733,12 +733,11 @@
         <!-- Project ideas: one click, no typing. GitHub-shaped ideas aimed at the target role the
              app already knows, each with real example repos from GitHub search. Start creates the
              draft here and, when GitHub is connected, a private repo. The defend gate still applies. -->
-        <section class="proj-ideas" id="projIdeas" hidden aria-labelledby="projIdeasH">
-          <!-- Row 1: the eyebrow and the Target chip. Row 2: one toolbar on the Jobs filter grammar
+        <section class="proj-ideas" id="projIdeas" hidden aria-labelledby="projPageTitle">
+          <!-- Row 1: the Target chip (the page title already says "Project ideas", so no eyebrow). Row 2: one toolbar on the Jobs filter grammar
                (search, the category select, GitHub). No labelled chip rows. No close or refresh: the
                back link above the title leaves, and Search and More ideas bring new ideas. -->
           <div class="proj-ideas-hd">
-            <h2 class="proj-ideas-h" id="projIdeasH" data-i18n="projects.ideasTitle">Ideas for you</h2>
             <div class="proj-target" id="projTargetBox"><!-- target chip injected --></div>
           </div>
           <div class="proj-ideas-bar" id="projIdeasBar">
@@ -809,10 +808,23 @@
       <section class="view view-prep" id="view-prep">
         <header class="page-head">
           <div>
-            <h1 class="page-title" data-i18n="prep.title">Interview prep</h1>
-            <p class="page-sub" data-i18n="prep.sub">Practice for a real interview, built from the job you applied to.</p>
+            <!-- Defend it (a project's recorded interview) only: back to Projects, like Templates. -->
+            <button class="btn btn-ghost btn-back tpl-back proj-back" id="prepProjBack" type="button" hidden>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span data-i18n="projects.title">Projects</span>
+            </button>
+            <h1 class="page-title" id="prepTitle" data-i18n="prep.title">Interview prep</h1>
+            <p class="page-sub" id="prepSub" data-i18n="prep.sub">Practice for a real interview, built from the job you applied to.</p>
           </div>
         </header>
+        <!-- Leaving Defend it mid-interview asks here, in the page. -->
+        <div class="scr-leave" id="prepProjLeave" role="alertdialog" aria-labelledby="prepProjLeaveT" hidden>
+          <span id="prepProjLeaveT"></span>
+          <span class="scr-leave-acts">
+            <button class="btn btn-quiet btn-sm" id="prepProjStay" type="button"></button>
+            <button class="btn btn-ghost btn-sm" id="prepProjLeaveGo" type="button"></button>
+          </span>
+        </div>
 
         <!-- Guided-flow progress: shown only during a Full mock (Round 1, then Round 2). -->
         <div class="prep-progress" id="prepProgress" hidden>

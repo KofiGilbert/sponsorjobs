@@ -310,7 +310,7 @@ def generate(llm, project: dict, progress=lambda **kw: None, personal: list[str]
     raw_plan = meter.call(llm, llm.plan_project_files, idea, 16, MAX_TOTAL_BYTES, prompt_chars=3000)
     plan_files = _clean_plan(raw_plan or {})
     if len(plan_files) < 3:
-        raise BuildError("The AI could not plan this project. Try again.", "plan")
+        raise BuildError("The AI could not plan this project.", "plan")
     plan = {"files": plan_files, "run": (raw_plan or {}).get("run", ""), "test": (raw_plan or {}).get("test", "")}
     total = len(plan_files)
     written: list[dict] = []
