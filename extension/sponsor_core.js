@@ -139,6 +139,11 @@
       display_name: r[0] === 0 || r[0] === undefined ? titleKey(norm) : r[0],
       h1b_approvals: num(1), h1b_last_fy: num(2), h1b_first_fy: num(3), perm_certs: num(4),
       e_verify: !!r[5], cap_exempt: !!r[6], naics: r[7] || "", state: r[8] || "",
+      // Compact per-employer facts (index 2026-10, additive): approvals over the newest five
+      // fiscal years, the denial rate over them in whole percent, and the DOL LCA attestation
+      // flags (bit 1 = H-1B dependent, bit 2 = willful violator). Older shards leave them 0.
+      h1b_5y: num(9), denial_pct: num(10),
+      h1b_dependent: (num(11) & 1) === 1, willful_violator: (num(11) & 2) === 2,
     };
   }
 

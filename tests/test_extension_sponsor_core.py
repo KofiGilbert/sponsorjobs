@@ -126,6 +126,10 @@ def _fixture_db(path) -> SponsorDB:
 def _app_answers(monkeypatch, db_path, cases) -> list[dict]:
     import ui.app as app
     monkeypatch.setattr(app, "_SPONSORS_DB", Path(db_path))
+    # The app would otherwise pour the shipped depth bundles into the fixture database.
+    monkeypatch.setattr(app, "BUNDLED_H1B_HISTORY", Path(db_path).with_name("no-history.csv.gz"))
+    monkeypatch.setattr(app, "BUNDLED_PERM_YEARS", Path(db_path).with_name("no-perm-years.csv.gz"))
+    monkeypatch.setattr(app, "BUNDLED_LCA_DIR", Path(db_path).with_name("no-lca"))
     app._SPONSORS.clear()
     c = app.app.test_client()
     out = []

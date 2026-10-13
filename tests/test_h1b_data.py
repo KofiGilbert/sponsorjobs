@@ -26,6 +26,9 @@ def _bundler():
     spec = importlib.util.spec_from_file_location("bundle_sponsor_db", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    # Keep the shipped depth bundles (3 MB of real history, the LCA cells) out of these
+    # small fixtures; tests/test_sponsor_depth.py covers the layering with its own files.
+    mod.HISTORY = mod.PERM_YEARS = mod.LCA_DIR = Path("/nonexistent/sponsor-depth")
     return mod
 
 
@@ -128,6 +131,10 @@ def _fresh_app(tmp_path, monkeypatch, seed_rows=SEED_ROWS):
     monkeypatch.setattr(app, "BUNDLED_H1B_SEED", _seed_gz(tmp_path / "seed.csv.gz", seed_rows))
     monkeypatch.setattr(app, "_load_bundled_perm", lambda db: None)
     monkeypatch.setattr(app, "_load_bundled_everify", lambda db: None)
+    # The per-employer depth bundles ride the same seed thread; keep the real ones out.
+    monkeypatch.setattr(app, "BUNDLED_H1B_HISTORY", tmp_path / "no-history.csv.gz")
+    monkeypatch.setattr(app, "BUNDLED_PERM_YEARS", tmp_path / "no-perm-years.csv.gz")
+    monkeypatch.setattr(app, "BUNDLED_LCA_DIR", tmp_path / "no-lca")
     monkeypatch.delenv("TAILOR_DATA_URL", raising=False)
     return app
 
