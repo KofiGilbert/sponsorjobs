@@ -4318,20 +4318,27 @@
            <span class="proj-prog-bar"><i style="width:${Math.round(doneN / steps * 100)}%"></i></span>
            <span class="proj-prog-n">${doneN}/${steps}</span></div>`
       : "";
+    // A repo shows as a small GitHub mark beside the title; a private one carries a lock.
+    const repo = p.repo_url
+      ? `<a class="proj-gh ${p.repo_private ? "is-private" : ""}" href="${esc(p.repo_url)}" target="_blank" rel="noopener"
+           title="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}"
+           aria-label="${esc(p.repo_private ? PT("projects.privateRepo", "Private repo on GitHub") : PT("projects.publicRepo", "Repo on GitHub"))}">${GH_MARK}${p.repo_private ? ICO_LOCK : ""}</a>`
+      : "";
+    const meta = [p.tech, p.size].filter(Boolean).join(" \u00b7 ");
     return `<article class="proj-card ${verified ? "is-verified" : "is-draft"}" data-id="${esc(p.id)}">
       <span class="proj-card-mark" aria-hidden="true">${verified ? PROJ_ICO.seal : PROJ_ICO.code}</span>
       <div class="proj-card-hd">
         <div class="proj-card-name"><span class="proj-card-title">${esc(p.title)}</span>
-          <span class="proj-pill ${verified ? "ok" : ""}">${verified ? `${PROJ_ICO.check}Verified` : "Draft"}</span></div>
-        ${p.tech ? `<div class="proj-card-tech">${esc(p.tech)}</div>` : ""}
+          <span class="proj-pill ${verified ? "ok" : ""}">${verified ? `${PROJ_ICO.check}Verified` : "Draft"}</span>${repo}</div>
+        ${meta ? `<div class="proj-card-tech">${esc(meta)}</div>` : ""}
         ${p.summary ? `<div class="proj-card-sum" title="${esc(p.summary)}">${esc(p.summary)}</div>` : ""}
         ${prog}
       </div>
       <div class="proj-card-acts">
         ${verified
-          ? `${p.repo_url
-               ? `<a class="btn btn-quiet btn-sm" href="${esc(p.repo_url)}" target="_blank" rel="noopener">View on GitHub</a>`
-               : `<button class="btn btn-quiet btn-sm" data-act="publish" type="button">Publish to GitHub</button>`}
+          ? `${p.repo_url && !p.repo_private
+               ? ""
+               : `<button class="btn btn-quiet btn-sm" data-act="publish" type="button">${esc(p.repo_url ? PT("projects.makePublic", "Make public") : "Publish to GitHub")}</button>`}
              <button class="btn btn-ghost btn-sm" data-act="tocv" type="button">Add to resume</button>`
           : `<button class="btn btn-quiet btn-sm" data-act="guide" type="button">${esc(guideLabel)}</button>
              <button class="btn btn-ghost btn-sm" data-act="defend" type="button">Defend it</button>`}
@@ -4341,7 +4348,7 @@
   }
   function renderProjList() {
     const root = $("#projList"); if (!root) return;
-    const formOpen = !$("#projForm")?.hidden || !$("#projSuggestForm")?.hidden;
+    const formOpen = !$("#projForm")?.hidden || !$("#projIdeas")?.hidden;
     const acts = $("#projHeadActs");
     if (!PROJECTS.length) {
       // The header buttons repeat the card's actions, so they step aside while it shows:
@@ -4350,7 +4357,7 @@
       projHeadAccent(formOpen);
       root.innerHTML = formOpen ? "" : projEmptyHTML();
       $("#projEmptyAdd")?.addEventListener("click", () => openProjForm("#projForm", "#projTitle"));
-      $("#projEmptySuggest")?.addEventListener("click", () => openProjForm("#projSuggestForm", "#projTarget"));
+      $("#projEmptySuggest")?.addEventListener("click", () => openIdeas());
       return;
     }
     if (acts) acts.hidden = false;
@@ -4394,11 +4401,11 @@
     </section>`;
   }
   function openProjForm(formSel, focusSel) {
-    ["#projForm", "#projSuggestForm"].forEach(sel => { const f = $(sel); if (f) f.hidden = sel !== formSel; });
+    ["#projForm", "#projIdeas"].forEach(sel => { const f = $(sel); if (f) f.hidden = sel !== formSel; });
     renderProjList();
     $(focusSel)?.focus();
   }
-  $("#projNew")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { $("#projSuggestForm") && ($("#projSuggestForm").hidden = true); $("#projTitle")?.focus(); } renderProjList(); } });
+  $("#projNew")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { $("#projIdeas") && ($("#projIdeas").hidden = true); $("#projTitle")?.focus(); } renderProjList(); } });
   $("#projCancel")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.reset(); f.hidden = true; } renderProjList(); });
   $("#projForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -4411,68 +4418,136 @@
     } catch (err) { setMsg(err.message || "Couldn't add the project.", "err"); }
   });
 
-  // Suggest-a-project: ideas grounded in the saved profile + a target role. Picking one
-  // prefills the create form so it becomes a draft that still has to pass the defend gate.
-  $("#projSuggestBtn")?.addEventListener("click", () => {
-    const f = $("#projSuggestForm"); if (!f) return;
+  // Project ideas: one click, no typing. The target role comes from what the app already knows
+  // (last tailored job, else the profile's latest title); the chip lets the person change it.
+  // Each idea is GitHub-shaped: skills it proves (gaps marked +), a size, a repo name, and real
+  // example repos from GitHub search. Start creates the draft, plus a private repo if connected.
+  const PT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  let IDEAS = { role: "", source: "", ideas: [], github: { connected: false }, seq: 0 };
+  const GH_MARK = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
+  const ICO_LOCK = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>`;
+  const ICO_REPO = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M3.5 2.5h8.5v9H4.75A1.25 1.25 0 0 0 3.5 12.75z"/><path d="M3.5 12.75A1.25 1.25 0 0 0 4.75 14h7.25v-2.5"/></svg>`;
+  const ICO_STAR = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="m8 1.8 1.9 3.9 4.2.6-3 3 .7 4.2L8 11.5l-3.8 2 .7-4.2-3-3 4.2-.6z"/></svg>`;
+  const ICO_EDIT = `<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 3 13 5.5 6 12.5H3.5V10z"/></svg>`;
+  const kStars = n => n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "")}k` : String(n || 0);
+
+  function openIdeas() {
+    const box = $("#projIdeas"); if (!box) return;
     $("#projForm") && ($("#projForm").hidden = true);
-    f.hidden = !f.hidden; renderProjList(); if (!f.hidden) $("#projTarget")?.focus();
-  });
-  $("#projSuggestCancel")?.addEventListener("click", () => {
-    const f = $("#projSuggestForm"); if (f) { f.reset(); f.hidden = true; const l = $("#projSuggestList"); if (l) l.innerHTML = ""; }
-    renderProjList();
-  });
-  $("#projSuggestForm")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const msg = $("#projSuggestMsg"), setMsg = (t, cls) => { if (msg) { msg.textContent = t; msg.className = "proj-msg " + cls; msg.hidden = !t; } };
-    const list = $("#projSuggestList"), go = $("#projSuggestGo");
-    const target = $("#projTarget")?.value.trim() || "";
-    setMsg("", ""); if (list) list.innerHTML = `<div class="empty">Thinking of projects that fit you…</div>`;
-    if (go) { go.disabled = true; go.textContent = "Thinking…"; }
+    box.hidden = false; renderProjList();
+    if (!IDEAS.ideas.length) loadIdeas({}); else renderIdeas();
+  }
+  function closeIdeas() { const box = $("#projIdeas"); if (box) box.hidden = true; renderProjList(); }
+  async function loadIdeas(body) {
+    const seq = ++IDEAS.seq;
+    const grid = $("#projIdeasGrid");
+    renderTargetChip(body.role != null ? body.role : IDEAS.role, true);
+    if (grid) grid.innerHTML = Array.from({ length: 4 }, (_, i) => `<div class="proj-idea is-skel" style="--i:${i}" aria-hidden="true"><i></i><i></i><i></i><i></i></div>`).join("");
+    grid?.setAttribute("aria-busy", "true");
     try {
-      const d = await api("/api/projects/suggest", { target });
-      renderSuggestions(d.suggestions || []);
+      const d = await api("/api/projects/ideas", body);
+      if (seq !== IDEAS.seq) return;   // a newer request superseded this one
+      IDEAS = { ...IDEAS, role: d.role || "", source: d.source || "", ideas: d.ideas || [], github: d.github || { connected: false } };
+      renderIdeas();
     } catch (err) {
-      if (list) list.innerHTML = "";
-      setMsg(err.message || "Couldn't suggest projects right now.", "err");
-    } finally { if (go) { go.disabled = false; go.textContent = "Suggest projects"; } }
-  });
-  function renderSuggestions(items) {
-    const list = $("#projSuggestList"); if (!list) return;
-    if (!items.length) { list.innerHTML = `<div class="empty">No suggestions came back. Try naming the target role more specifically.</div>`; return; }
-    list.innerHTML = items.map((s, i) => `
-      <article class="proj-sug" data-i="${i}">
-        <div class="proj-sug-hd">
-          <h3 class="proj-sug-t">${esc(s.title || "")}</h3>
-          ${s.skill ? `<span class="proj-sug-skill">${esc(s.skill)}</span>` : ""}
-        </div>
-        ${s.summary ? `<p class="proj-sug-sum">${esc(s.summary)}</p>` : ""}
-        ${s.tech ? `<p class="proj-sug-tech">${esc(s.tech)}</p>` : ""}
-        ${s.why ? `<p class="proj-sug-why">${esc(s.why)}</p>` : ""}
-        <button class="btn btn-ghost btn-sm" data-build type="button">Build this</button>
-      </article>`).join("");
-    list.querySelectorAll(".proj-sug").forEach(card => {
-      const s = items[+card.dataset.i];
-      card.querySelector("[data-build]")?.addEventListener("click", () => buildSuggestion(s));
+      if (seq !== IDEAS.seq) return;
+      renderTargetChip(IDEAS.role, false);
+      if (grid) grid.innerHTML = `<p class="proj-ideas-empty">${esc(err.message || PT("projects.noIdeas", "No ideas came back. Try another role."))}</p>`;
+    } finally { grid?.removeAttribute("aria-busy"); }
+  }
+  function renderTargetChip(role, busy) {
+    const box = $("#projTargetBox"); if (!box) return;
+    const src = IDEAS.source === "job" ? PT("projects.fromJob", "From your last resume")
+      : IDEAS.source === "profile" ? PT("projects.fromProfile", "From your profile") : "";
+    box.innerHTML = `<button class="proj-target-chip" id="projTargetChip" type="button" title="${esc(PT("projects.changeRole", "Change the role"))}" ${busy ? "disabled" : ""}>
+        <span class="proj-target-k">${esc(PT("projects.target", "Target"))}</span>
+        <span class="proj-target-v">${esc(role || PT("projects.addRole", "Add a role"))}</span>${ICO_EDIT}</button>
+      ${src && !busy ? `<span class="proj-target-src">${esc(src)}</span>` : ""}`;
+    $("#projTargetChip")?.addEventListener("click", editTarget);
+  }
+  // Inline edit: the chip becomes a field. Enter fetches ideas for the new role, Esc puts it back.
+  function editTarget() {
+    const box = $("#projTargetBox"); if (!box) return;
+    box.innerHTML = `<form class="proj-target-form" id="projTargetForm">
+        <span class="proj-target-k">${esc(PT("projects.target", "Target"))}</span>
+        <input class="proj-target-in" id="projTargetIn" type="text" value="${esc(IDEAS.role)}" placeholder="${esc(PT("projects.rolePh", "e.g. Data Engineer"))}" aria-label="${esc(PT("projects.target", "Target"))}" autocomplete="off" spellcheck="false">
+      </form>`;
+    const inp = $("#projTargetIn"); inp?.focus(); inp?.select();
+    let done = false;
+    const finish = (role) => {
+      if (done) return; done = true;
+      const r = (role || "").trim();
+      if (r && r.toLowerCase() !== (IDEAS.role || "").toLowerCase()) loadIdeas({ role: r });
+      else renderTargetChip(IDEAS.role, false);
+    };
+    $("#projTargetForm")?.addEventListener("submit", e => { e.preventDefault(); finish(inp.value); });
+    inp?.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); finish(""); } });
+    inp?.addEventListener("blur", () => finish(""));
+  }
+  function ideaCard(s, i) {
+    const gaps = new Set((s.gaps || []).map(g => g.toLowerCase()));
+    const chips = (s.skills || []).map(k => gaps.has(k.toLowerCase())
+      ? `<li class="proj-skill is-gap" title="${esc(PT("projects.gapHint", "The job asks for this. Your profile doesn't show it yet."))}">${PROJ_ICO.plus}${esc(k)}</li>`
+      : `<li class="proj-skill">${esc(k)}</li>`).join("");
+    const ex = (s.examples || []).filter(e => /^https:\/\/github\.com\//.test(e.url || ""));
+    const exHTML = ex.length ? `<div class="proj-idea-ex"><span class="proj-idea-ex-k">${esc(PT("projects.examples", "Examples"))}</span>
+        ${ex.map(e => `<a class="proj-ex" href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(e.description || e.full_name)}"><span class="proj-ex-n">${esc(e.full_name)}</span><span class="proj-ex-s">${ICO_STAR}${kStars(e.stars)}</span></a>`).join("")}
+      </div>` : "";
+    return `<article class="proj-idea" data-i="${i}" style="--i:${i}">
+      <div class="proj-idea-hd"><h3 class="proj-idea-t">${esc(s.title)}</h3><span class="proj-idea-size">${esc(s.size || "")}</span></div>
+      ${s.pitch ? `<p class="proj-idea-p">${esc(s.pitch)}</p>` : ""}
+      ${chips ? `<ul class="proj-skills">${chips}</ul>` : ""}
+      ${exHTML}
+      <div class="proj-idea-ft">
+        <span class="proj-idea-repo" title="${esc(PT("projects.repoName", "Repo name"))}">${ICO_REPO}${esc(s.repo || "")}</span>
+        <button class="btn btn-ghost btn-sm" data-start type="button">${esc(PT("projects.start", "Start this project"))}</button>
+      </div>
+    </article>`;
+  }
+  function renderIdeas() {
+    renderTargetChip(IDEAS.role, false);
+    const grid = $("#projIdeasGrid"), note = $("#projIdeasNote"); if (!grid) return;
+    if (note) {
+      note.hidden = !!IDEAS.github?.connected;
+      note.innerHTML = `${GH_MARK}<span><a href="#" id="projIdeasConnect">${esc(PT("projects.ghConnect", "Connect GitHub"))}</a> ${esc(PT("projects.ghNote", "to start each idea as a private repo."))}</span>`;
+      $("#projIdeasConnect")?.addEventListener("click", async (e) => { e.preventDefault(); await openSettings(); document.querySelector('[data-set="connections"]')?.click(); });
+    }
+    const hasGap = IDEAS.ideas.some(s => (s.gaps || []).length);
+    if (!IDEAS.ideas.length) { grid.innerHTML = `<p class="proj-ideas-empty">${esc(PT("projects.noIdeas", "No ideas came back. Try another role."))}</p>`; return; }
+    grid.innerHTML = IDEAS.ideas.map(ideaCard).join("")
+      + (hasGap ? `<p class="proj-ideas-legend">${PROJ_ICO.plus}${esc(PT("projects.newForYou", "A skill the job asks for that your profile doesn't show yet"))}</p>` : "");
+    grid.querySelectorAll(".proj-idea").forEach(card => {
+      const s = IDEAS.ideas[+card.dataset.i];
+      card.querySelector("[data-start]")?.addEventListener("click", (e) => startIdea(s, e.currentTarget));
     });
   }
-  function buildSuggestion(s) {
+  async function startIdea(s, btn) {
     if (!s) return;
-    if ($("#projTitle")) $("#projTitle").value = s.title || "";
-    if ($("#projSummary")) $("#projSummary").value = s.summary || "";
-    if ($("#projTech")) $("#projTech").value = s.tech || "";
-    const sf = $("#projSuggestForm"); if (sf) sf.hidden = true;
-    const f = $("#projForm"); if (f) f.hidden = false;
-    $("#projTitle")?.focus();
-    toast("Prefilled. Build it for real, then prove you can defend it.");
+    const label = btn ? btn.textContent : "";
+    if (btn) { btn.disabled = true; btn.textContent = PT("projects.starting", "Starting…"); }
+    try {
+      const d = await api("/api/projects/start", { idea: s });
+      const gh = d.github || {};
+      toast(gh.ok ? PT("projects.startedRepo", "Started. Your private repo is ready on GitHub.")
+        : gh.connected ? `${PT("projects.startedHere", "Started here.")} ${gh.error || ""}`.trim()
+        : PT("projects.startedLocal", "Started. Connect GitHub to add a repo."));
+      const box = $("#projIdeas"); if (box) box.hidden = true;
+      loadProjects();
+    } catch (err) {
+      toast(err.message || PT("projects.startFailed", "Couldn't start the project."));
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
   }
+  $("#projSuggestBtn")?.addEventListener("click", () => { const box = $("#projIdeas"); if (box && !box.hidden) closeIdeas(); else openIdeas(); });
+  $("#projIdeasClose")?.addEventListener("click", closeIdeas);
+  $("#projIdeasRefresh")?.addEventListener("click", () => loadIdeas({ role: IDEAS.role, refresh: true }));
 
   // Guided build-and-teach loop: an ordered plan that teaches as you build, with a per-step coach.
   async function startBuildGuide(p) {
     if (!p) return;
     BUILD = { id: p.id, title: p.title, milestones: p.plan?.milestones || [], done: new Set(p.done || []) };
     $("#projBuildTitle").textContent = `Build: ${p.title}`;
-    $("#projList").hidden = true; $("#projForm").hidden = true; $("#projSuggestForm").hidden = true; $("#projBuild").hidden = false;
+    $("#projList").hidden = true; $("#projForm").hidden = true; $("#projIdeas").hidden = true; $("#projBuild").hidden = false;
     $("#projBuildFoot").hidden = true;
     if (BUILD.milestones.length) { renderPlan(); }
     else {
@@ -4592,14 +4667,15 @@
     catch { toast("Couldn't add to resume."); }
   }
   async function publishToGithub(p, btn) {
+    const label = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = "Publishing…"; }
     try {
-      const d = await api(`/api/projects/${p.id}/publish`, {});   // {} body -> POST
-      toast("Published to GitHub.");
-      loadProjects();   // re-render: the card now shows "View on GitHub"
+      await api(`/api/projects/${p.id}/publish`, {});   // {} body -> POST
+      toast(p.repo_url ? PT("projects.nowPublic", "Your repo is public now.") : "Published to GitHub.");
+      loadProjects();   // re-render: the GitHub mark beside the title loses its lock
     } catch (err) {
       toast(err.message || "Couldn't publish to GitHub.");
-      if (btn) { btn.disabled = false; btn.textContent = "Publish to GitHub"; }
+      if (btn) { btn.disabled = false; btn.textContent = label; }
     }
   }
 

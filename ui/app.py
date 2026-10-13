@@ -5082,7 +5082,9 @@ def _save_projects(projects: list) -> None:
 def _project_public(p: dict) -> dict:
     return {"id": p.get("id"), "title": p.get("title", ""), "summary": p.get("summary", ""),
             "tech": p.get("tech", ""), "status": p.get("status", "draft"), "result": p.get("result"),
-            "plan": p.get("plan"), "done": p.get("done") or [], "repo_url": p.get("repo_url") or ""}
+            "plan": p.get("plan"), "done": p.get("done") or [], "repo_url": p.get("repo_url") or "",
+            "repo_private": bool(p.get("repo_private")), "repo": p.get("repo") or "",
+            "skills": p.get("skills") or [], "size": p.get("size") or ""}
 
 
 @app.get("/api/projects")
@@ -5118,6 +5120,175 @@ def projects_suggest():
     saved = _memory().load("default") or {}
     profile = saved.get("profile") or {}
     return jsonify(_make_llm().suggest_buildable_projects(profile, target))
+
+
+# ---- GitHub project ideas: one click, no typing. The target role comes from what the app
+# already knows (the last tailored job, else the saved profile's latest title), the model drafts
+# GitHub-shaped ideas aimed at it, and the app adds REAL example repos from GitHub's own search.
+_IDEAS_FILE = _DATA / "project_ideas.json"
+_IDEA_SIZES = ("Weekend", "1 week", "2 weeks")
+
+
+def _ideas_cache() -> dict:
+    try:
+        d = json.loads(_IDEAS_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _ideas_cache_put(key: str, entry: dict) -> None:
+    cache = _ideas_cache()
+    cache[key] = entry
+    if len(cache) > 12:   # keep the dozen most recent roles
+        for k in sorted(cache, key=lambda k: cache[k].get("at", 0))[:len(cache) - 12]:
+            cache.pop(k, None)
+    _IDEAS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _IDEAS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cache), encoding="utf-8")
+    tmp.replace(_IDEAS_FILE)
+
+
+def _profile_skill_text(profile: dict) -> str:
+    """Everything the saved profile says, lower-cased, for 'does the profile show this skill'."""
+    try:
+        return json.dumps(profile or {}, ensure_ascii=False).lower()
+    except Exception:
+        return ""
+
+
+def _has_term(text: str, term: str) -> bool:
+    t = (term or "").strip().lower()
+    return bool(t) and re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", text) is not None
+
+
+def _project_target(role_override: str = "") -> tuple[str, list[str], str]:
+    """(role, JD skill terms, source) for project ideas. A role the person typed wins; the JD
+    terms only apply when it is the same role as the last tailored job. source is 'job',
+    'profile', 'typed', or '' when nothing is known yet."""
+    derived, terms = _li_target()
+    recs = _records()
+    try:
+        has_job = bool(recs.list(limit=1))
+    finally:
+        recs.close()
+    typed = re.sub(r"\s+", " ", role_override or "").strip()[:120]
+    if typed:
+        same = typed.lower() == (derived or "").lower()
+        return typed, (terms if same else []), ("job" if same and has_job else "typed")
+    if derived:
+        return derived, terms, ("job" if has_job else "profile")
+    return "", [], ""
+
+
+def _clean_idea(raw: dict, terms: list[str], prof_text: str) -> dict | None:
+    from ui.github_publish import slugify
+    if not isinstance(raw, dict) or not str(raw.get("title") or "").strip():
+        return None
+    title = str(raw["title"]).strip()[:80]
+    skills, seen = [], set()
+    for k in raw.get("skills") or []:
+        k = str(k).strip()
+        if k and k.lower() not in seen:
+            seen.add(k.lower())
+            skills.append(k[:40])
+    skills = skills[:5]
+    terms_l = {t.lower() for t in terms}
+    gaps = [k for k in skills if k.lower() in terms_l and not _has_term(prof_text, k)]
+    size = str(raw.get("size") or "").strip()
+    size = next((z for z in _IDEA_SIZES if z.lower() == size.lower()), "1 week")
+    return {"title": title, "pitch": str(raw.get("pitch") or "").strip()[:160],
+            "skills": skills, "gaps": gaps, "tech": str(raw.get("tech") or "").strip()[:160],
+            "size": size, "repo": slugify(raw.get("repo") or title),
+            "search": str(raw.get("search") or title).strip()[:120], "examples": []}
+
+
+def _add_examples(ideas: list[dict]) -> bool:
+    """Fill each idea's examples from GitHub search, in parallel. Returns whether search
+    answered at all (False means GitHub was unreachable, and every idea shows none)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from ui import github_publish as G
+    token = _cred("GITHUB_TOKEN")
+    if not ideas:
+        return True
+    try:
+        with ThreadPoolExecutor(max_workers=min(6, len(ideas))) as ex:
+            found = list(ex.map(lambda i: G.search_examples(i.get("search") or i["title"], token), ideas))
+    except Exception:
+        found = [[] for _ in ideas]
+    for idea, ex_list in zip(ideas, found):
+        idea["examples"] = ex_list or []
+    return any(found)
+
+
+@app.post("/api/projects/ideas")
+@_guard
+def projects_ideas():
+    """GitHub project ideas for the target role, with no typing needed. Body (all optional):
+    {role: a different target, refresh: true to skip the cache}. Ideas are cached per role, so
+    reopening Suggest is instant and costs nothing."""
+    b = request.json or {}
+    role, terms, source = _project_target(str(b.get("role") or ""))
+    key = role.lower() or "_"
+    gh = {"connected": bool(_cred("GITHUB_TOKEN")), "login": _cred("GITHUB_LOGIN") or ""}
+    if not b.get("refresh"):
+        hit = _ideas_cache().get(key)
+        if hit and hit.get("ideas"):
+            return jsonify({"role": role, "source": source, "ideas": hit["ideas"], "cached": True,
+                            "github": gh})
+    saved = _memory().load("default") or {}
+    profile = saved.get("profile") or saved.get("essentials") or {}
+    prof_text = _profile_skill_text(profile)
+    missing = [t for t in terms if not _has_term(prof_text, t)]
+    raw = _make_llm().suggest_github_ideas(profile, role, terms, missing, 6)
+    ideas = [i for i in (_clean_idea(x, terms, prof_text) for x in (raw.get("ideas") or [])) if i][:6]
+    _add_examples(ideas)
+    if ideas:
+        _ideas_cache_put(key, {"role": role, "ideas": ideas, "at": time.time()})
+    return jsonify({"role": role, "source": source, "ideas": ideas, "cached": False, "github": gh})
+
+
+@app.post("/api/projects/start")
+@_guard
+def projects_start():
+    """Start an idea: create the draft project here and, when GitHub is connected, a PRIVATE
+    repo in the person's own account with a starter README and the build guide's milestones as
+    issues. Only on this click; no code is pushed. The defend gate is untouched: the project is a
+    draft, and it only goes public or onto the resume once verified."""
+    import uuid
+    from ui.github_publish import slugify
+    idea = (request.json or {}).get("idea") or {}
+    title = str(idea.get("title") or "").strip()[:80]
+    if not title:
+        return jsonify({"error": "Pick an idea to start."}), 400
+    skills = [str(k).strip()[:40] for k in (idea.get("skills") or []) if str(k).strip()][:5]
+    size = str(idea.get("size") or "").strip()
+    p = {"id": uuid.uuid4().hex[:12], "title": title,
+         "summary": str(idea.get("pitch") or idea.get("summary") or "").strip()[:280],
+         "tech": str(idea.get("tech") or "").strip()[:160], "skills": skills,
+         "size": size if size in _IDEA_SIZES else "", "repo": slugify(idea.get("repo") or title),
+         "status": "draft"}
+    gh = {"connected": False, "ok": False, "url": "", "error": "", "issues": 0}
+    token = _cred("GITHUB_TOKEN")
+    if token:
+        gh["connected"] = True
+        from ui import github_publish as G
+        try:
+            p["plan"] = _make_llm().generate_build_plan(p)   # the issues ARE the build guide
+            p["done"] = []
+        except Exception:
+            p.pop("plan", None)
+        res = G.create_starter_repo(token, p)
+        if res.get("ok"):
+            p["repo_url"], p["repo_full_name"] = res.get("url", ""), res.get("full_name", "")
+            p["repo_private"] = True
+            gh.update(ok=True, url=p["repo_url"], issues=int(res.get("issues") or 0))
+        else:
+            gh["error"] = res.get("error") or "GitHub wouldn't create the repo."
+    projects = _load_projects()
+    projects.append(p)
+    _save_projects(projects)
+    return jsonify({"project": _project_public(p), "github": gh})
 
 
 @app.delete("/api/projects/<pid>")
@@ -5228,12 +5399,24 @@ def projects_publish(pid):
     token = _cred("GITHUB_TOKEN")
     if not token:
         return jsonify({"error": "Connect GitHub in Settings, Connections first."}), 400
-    from ui.github_publish import publish_project
-    res = publish_project(token, p)
+    from ui import github_publish as G
+    # A project started on GitHub already has a private repo: publishing flips it to public.
+    res = G.publish_project(token, p)
     if not res.get("ok"):
         return jsonify({"error": res.get("error", "Couldn't publish to GitHub.")}), 400
-    p["repo_url"] = res.get("url", "")
+    p["repo_url"] = res.get("url", "") or p.get("repo_url", "")
+    if res.get("full_name"):
+        p["repo_full_name"] = res["full_name"]
+    p["repo_private"] = False
     _save_projects(projects)
+    # Added to the resume while the repo was still private? Give that entry its link now.
+    mem = _memory()
+    saved = mem.load("default") or {}
+    prof = saved.get("profile") or {}
+    entry = next((pr for pr in prof.get("projects") or [] if pr.get("org") == p.get("title")), None)
+    if entry is not None and not entry.get("link") and p["repo_url"]:
+        entry["link"] = p["repo_url"]
+        mem.save("default", prof, saved.get("essentials") or {}, saved.get("history") or [])
     return jsonify({"ok": True, "url": p["repo_url"]})
 
 
@@ -5260,7 +5443,9 @@ def projects_to_cv(pid):
         if str(p.get("tech") or "").strip():
             bullets.append(f"Built with {p['tech'].strip()}.")
         projects.append({"org": p["title"], "location": "Personal Project", "dates": "",
-                         "link": p.get("repo_url") or "", "bullets": bullets, "suggested": False})
+                         # a private repo would 404 for a recruiter, so only a public one is linked
+                         "link": "" if p.get("repo_private") else (p.get("repo_url") or ""),
+                         "bullets": bullets, "suggested": False})
     mem.save("default", prof, saved.get("essentials") or {}, saved.get("history") or [])
     return jsonify({"ok": True})
 

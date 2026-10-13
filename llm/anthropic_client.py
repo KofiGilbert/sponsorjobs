@@ -1172,6 +1172,55 @@ class AnthropicLLM:
                         for k in ("title", "skill", "summary", "tech", "why")})
         return {"suggestions": out}
 
+    def suggest_github_ideas(self, profile: dict, role: str = "", jd_terms: list | None = None,
+                             missing: list | None = None, count: int = 6) -> dict:
+        """GitHub portfolio ideas aimed at a target role: small, finishable projects a recruiter
+        would pin, each proving 3 to 5 skills the role asks for, favouring the ones the profile
+        lacks. The model only drafts the ideas; the app adds real example repos from GitHub's
+        own search (never a model-written URL) and works out which skills are gaps."""
+        system = (
+            "You are a senior engineer helping an international student pick GitHub portfolio "
+            f"projects for a target role. Suggest {count} distinct, ORIGINAL project ideas a "
+            "recruiter would want to see pinned. RULES:\n"
+            "- Finishable: a weekend, 1 week, or 2 weeks of evenings. Not a tutorial clone, not "
+            "a months-long epic. Each must end with something runnable and demoable.\n"
+            "- Each proves 3 to 5 concrete skills the target role asks for. Prefer the MISSING "
+            "skills listed (the role wants them, the profile does not show them yet), stretching "
+            "from what the person already knows so they can genuinely build and defend it.\n"
+            "- Vary the ideas: different domains and sizes.\n"
+            "- Use the role's own skill wording.\n"
+            "- No em or en dashes. Plain words.\n"
+            "For each: title (2 to 4 words), pitch (ONE line, under 90 characters, what it does), "
+            "skills (array of 3 to 5 skill names), tech (comma-separated stack), size (exactly "
+            "one of \"Weekend\", \"1 week\", \"2 weeks\"), repo (a kebab-case repo name), "
+            "search (3 to 5 plain keywords to find similar public repos on GitHub).\n"
+            "Return ONLY JSON: {\"ideas\": [{\"title\":\"...\",\"pitch\":\"...\","
+            "\"skills\":[\"...\"],\"tech\":\"...\",\"size\":\"...\",\"repo\":\"...\","
+            "\"search\":\"...\"}]}"
+        )
+        user = (f"TARGET ROLE: {(role or '').strip() or 'not given; infer from the profile'}\n"
+                f"SKILLS THE ROLE ASKS FOR: {', '.join(map(str, jd_terms or [])) or 'not known'}\n"
+                f"MISSING FROM THE PROFILE: {', '.join(map(str, missing or [])) or 'none known'}\n\n"
+                f"APPLICANT PROFILE (JSON):\n{json.dumps(profile)[:5000]}")
+        raw = self._complete(system, user, max_tokens=1600, effort="medium")
+        data = self._parse_json_object(raw) or {}
+        from tailoring.conform import strip_ai_dashes
+        out = []
+        for s in (data.get("ideas") or [])[:count]:
+            if not isinstance(s, dict) or not str(s.get("title", "")).strip():
+                continue
+            skills = s.get("skills") if isinstance(s.get("skills"), list) else str(s.get("skills") or "").split(",")
+            out.append({
+                "title": strip_ai_dashes(str(s.get("title", "")).strip()),
+                "pitch": strip_ai_dashes(str(s.get("pitch", "")).strip()),
+                "skills": [strip_ai_dashes(str(k).strip()) for k in skills if str(k).strip()][:5],
+                "tech": strip_ai_dashes(str(s.get("tech", "")).strip()),
+                "size": str(s.get("size", "")).strip(),
+                "repo": str(s.get("repo", "")).strip(),
+                "search": str(s.get("search", "")).strip(),
+            })
+        return {"ideas": out}
+
     def generate_build_plan(self, project: dict) -> dict:
         """An ordered, buildable plan for a project the person is about to build THEMSELVES. Each
         milestone both tells them what to build AND teaches the concept behind it, so that by the

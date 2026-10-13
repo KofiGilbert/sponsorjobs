@@ -1073,6 +1073,40 @@ class FakeLLM:
              "tech": "Python, argparse, pytest", "why": f"Proves you can ship reliable tools for {tgt}."},
         ]}
 
+    def suggest_github_ideas(self, profile: dict, role: str = "", jd_terms: list | None = None,
+                             missing: list | None = None, count: int = 6) -> dict:
+        # Deterministic stand-in: six GitHub-shaped ideas aimed at the role, the first ones
+        # carrying the JD skills the profile lacks, so the flow and the gap highlight are
+        # testable offline. Sizes and repo names are fixed per slot.
+        r = (role or "").strip() or "your next role"
+        gaps = [str(t) for t in (missing or []) if str(t).strip()]
+        terms = [str(t) for t in (jd_terms or []) if str(t).strip()]
+        pool = gaps + [t for t in terms if t not in gaps] + ["Python", "SQL", "Git", "Testing", "REST APIs"]
+        slots = [
+            ("Job market tracker", "Pulls public job postings and charts which skills are rising.",
+             "Python, SQLite, Flask", "1 week", "job-market-tracker", "job postings scraper dashboard"),
+            ("Expense insights API", "A small REST API that categorises expenses and flags unusual spend.",
+             "Python, FastAPI, PostgreSQL", "1 week", "expense-insights-api", "expense tracker api"),
+            ("Open data dashboard", "Turns a public city dataset into a live, filterable dashboard.",
+             "Python, Pandas, Streamlit", "Weekend", "open-data-dashboard", "open data dashboard streamlit"),
+            ("Resume keyword matcher", "Compares a resume to a job post and lists the missing skills.",
+             "Python, spaCy, pytest", "Weekend", "resume-keyword-matcher", "resume job matcher nlp"),
+            ("Pipeline health monitor", "Runs a nightly data pipeline and alerts when a step fails.",
+             "Python, Airflow, Docker", "2 weeks", "pipeline-health-monitor", "data pipeline monitoring airflow"),
+            ("Study group scheduler", "Matches students into study groups by course and free time.",
+             "TypeScript, React, Node.js", "2 weeks", "study-group-scheduler", "study group scheduler react"),
+        ]
+        ideas = []
+        for i, (title, pitch, tech, size, repo, search) in enumerate(slots[:max(1, min(count, 6))]):
+            skills = []
+            for t in [pool[(i + k) % len(pool)] for k in range(3)] + tech.split(", "):
+                if t and t.lower() not in {s.lower() for s in skills}:
+                    skills.append(t)
+            ideas.append({"title": title, "pitch": pitch, "skills": skills[:5], "tech": tech,
+                          "size": size, "repo": repo, "search": search,
+                          "why": f"Proves {skills[0]} for {r}."})
+        return {"ideas": ideas}
+
     def generate_build_plan(self, project: dict) -> dict:
         # Deterministic stand-in: a fixed 4-step plan so the guided-build flow is testable offline.
         title = (project.get("title") if isinstance(project, dict) else "") or "the project"

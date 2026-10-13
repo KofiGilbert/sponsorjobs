@@ -725,19 +725,25 @@
           <p class="proj-msg" id="projMsg" hidden></p>
         </form>
 
-        <!-- Suggest-a-project: turn the gap between the saved profile and a target role into
-             concrete, buildable ideas. Picking one prefills a draft that still faces the gate. -->
-        <form class="proj-suggest proj-panel" id="projSuggestForm" hidden>
-          <h2 class="proj-panel-h">Suggest a project</h2>
-          <p class="proj-suggest-lead">For the role you want, from your profile.</p>
-          <textarea class="fld" id="projTarget" rows="2" placeholder="Target role or job description" aria-label="Target role or job description"></textarea>
-          <div class="proj-form-foot">
-            <button class="btn btn-primary btn-sm" id="projSuggestGo" type="submit">Suggest projects</button>
-            <button class="btn btn-quiet btn-sm" id="projSuggestCancel" type="button">Cancel</button>
+        <!-- Project ideas: one click, no typing. GitHub-shaped ideas aimed at the target role the
+             app already knows, each with real example repos from GitHub search. Start creates the
+             draft here and, when GitHub is connected, a private repo. The defend gate still applies. -->
+        <section class="proj-ideas" id="projIdeas" hidden aria-labelledby="projIdeasH">
+          <div class="proj-ideas-hd">
+            <h2 class="proj-ideas-h" id="projIdeasH" data-i18n="projects.ideasTitle">Ideas for you</h2>
+            <div class="proj-target" id="projTargetBox"><!-- target chip injected --></div>
+            <div class="proj-ideas-tools">
+              <button class="proj-icon-btn is-on" id="projIdeasRefresh" type="button" title="New ideas" aria-label="New ideas">
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/></svg>
+              </button>
+              <button class="proj-icon-btn is-on" id="projIdeasClose" type="button" title="Close" aria-label="Close">
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+              </button>
+            </div>
           </div>
-          <p class="proj-msg" id="projSuggestMsg" hidden></p>
-          <div id="projSuggestList"><!-- suggestion cards injected --></div>
-        </form>
+          <p class="proj-ideas-note" id="projIdeasNote" hidden></p>
+          <div class="proj-ideas-grid" id="projIdeasGrid"><!-- idea cards injected --></div>
+        </section>
 
         <div id="projList"><!-- project cards injected --></div>
 
@@ -1267,7 +1273,7 @@
           <div class="conn-row">
             <div class="conn-hd">
               <div class="conn-name">GitHub <span class="conn-status" id="ghStatus"></span></div>
-              <div class="conn-desc">Publish a project you've defended straight to your own GitHub, then link it on your resume.</div>
+              <div class="conn-desc">Start project ideas as private repos on your own GitHub. They go public once you've defended them.</div>
             </div>
             <button class="btn btn-ghost" id="ghToggle" type="button">Connect</button>
           </div>

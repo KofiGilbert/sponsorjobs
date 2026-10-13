@@ -3318,16 +3318,100 @@ body.cv-dragging * { cursor: grabbing !important; }
 .proj-form-foot { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
 .proj-msg { font-size: 12px; margin: 0; }
 .proj-msg.err { color: var(--danger, #d9534f); }
-.proj-suggest-lead { font-size: 13px; color: var(--muted); margin: -4px 0 2px; }
-#projSuggestList { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
-#projSuggestList:empty { display: none; }
-.proj-sug { padding: 16px 18px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); }
-.proj-sug-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.proj-sug-t { font-size: 14px; font-weight: 600; color: var(--ink); margin: 0; }
-.proj-sug-skill { font-size: 11px; font-weight: 550; color: var(--muted); border: 1px solid var(--border-strong); border-radius: var(--r-pill); padding: 2px 9px; flex: none; }
-.proj-sug-sum { margin: 8px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.5; }
-.proj-sug-tech { margin: 6px 0 0; font-size: 12px; color: var(--faint); }
-.proj-sug-why { margin: 6px 0 12px; font-size: 12.5px; color: var(--muted); }
+/* ---- project ideas: one click, a gallery of GitHub-shaped ideas (2026-10-13)
+   A head row (title, the target chip, two icon tools), one quiet GitHub line when it is not
+   connected, then a two-column grid of idea cards. No card spends the accent: Start is an
+   outline button. A skill the job wants that the profile lacks is the only brighter chip. */
+.proj-ideas { margin: 0 0 32px; animation: proj-rise 280ms var(--ease) both; }
+.proj-ideas-hd { display: flex; align-items: center; gap: 14px; min-height: 34px; }
+.proj-ideas-h { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); margin: 0; flex: none; }
+.proj-target { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.proj-target-chip, .proj-target-form {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; height: 28px; padding: 0 11px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-pill); background: transparent;
+  font: inherit; font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.proj-target-chip:hover { border-color: color-mix(in srgb, var(--ink) 30%, transparent); background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.proj-target-chip:disabled { cursor: progress; opacity: 0.6; }
+.proj-target-chip svg { color: var(--faint); flex: none; }
+.proj-target-k { color: var(--faint); font-weight: 550; flex: none; }
+.proj-target-v { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-target-form { cursor: text; border-color: color-mix(in srgb, var(--ink) 35%, transparent); }
+.proj-target-in { border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-weight: 600; width: 220px; min-width: 0; padding: 0; }
+.proj-target-src { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.proj-ideas-tools { display: flex; gap: 2px; flex: none; }
+.proj-icon-btn.is-on { opacity: 1; }
+.proj-icon-btn.is-on:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.proj-ideas-note { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
+.proj-ideas-note svg { color: var(--faint); flex: none; }
+.proj-ideas-note a { color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+.proj-ideas-note a:hover { color: var(--ink); text-decoration-color: currentColor; }
+.proj-ideas-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+.proj-ideas-empty, .proj-ideas-legend { grid-column: 1 / -1; margin: 2px 0 0; font-size: 12px; color: var(--faint); }
+.proj-ideas-legend { display: flex; align-items: center; gap: 6px; }
+.proj-ideas-legend svg { width: 11px; height: 11px; color: var(--ink-2); }
+
+.proj-idea {
+  display: flex; flex-direction: column; min-width: 0; padding: 20px 22px 16px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 3.5%, transparent);
+  transition: border-color var(--dur) var(--ease);
+  animation: proj-rise 320ms var(--ease) both; animation-delay: calc(var(--i, 0) * 40ms);
+}
+.proj-idea:hover, .proj-idea:focus-within { border-color: var(--border-strong); }
+.proj-idea-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.proj-idea-t { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-idea-size { flex: none; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.proj-idea-p { margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.proj-skills { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.proj-skill {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 9px;
+  font-size: 11.5px; font-weight: 500; color: var(--muted);
+  border: 1px solid var(--border); border-radius: var(--r-pill);
+}
+/* The job wants it, the profile lacks it: brighter ink and a plus, no fill. */
+.proj-skill.is-gap { color: var(--ink); font-weight: 550; border-color: color-mix(in srgb, var(--ink) 22%, transparent); }
+.proj-skill svg { width: 10px; height: 10px; margin-left: -2px; }
+.proj-idea-ex { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; font-size: 12px; min-width: 0; }
+.proj-idea-ex-k { font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); margin-bottom: 1px; }
+.proj-ex { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; color: var(--muted); text-decoration: none; }
+.proj-ex:hover .proj-ex-n { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
+.proj-ex-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-ex-s { display: inline-flex; align-items: center; gap: 3px; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; flex: none; }
+.proj-idea-ft {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border);
+}
+.proj-idea > :nth-last-child(2) { margin-bottom: 16px; }
+.proj-idea-repo {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.proj-idea-repo svg { flex: none; }
+/* Loading: four quiet placeholders in the cards' shape. */
+.proj-idea.is-skel { gap: 10px; min-height: 196px; }
+.proj-idea.is-skel i { display: block; height: 10px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 6%, transparent); animation: proj-pulse 1.4s ease-in-out infinite; }
+.proj-idea.is-skel i:nth-child(1) { width: 46%; height: 13px; }
+.proj-idea.is-skel i:nth-child(2) { width: 82%; }
+.proj-idea.is-skel i:nth-child(3) { width: 64%; margin-top: 8px; height: 20px; border-radius: 11px; }
+.proj-idea.is-skel i:nth-child(4) { width: 38%; margin-top: auto; }
+@keyframes proj-pulse { 50% { opacity: 0.45; } }
+@media (max-width: 760px) {
+  .proj-ideas-grid { grid-template-columns: minmax(0, 1fr); }
+  .proj-ideas-hd { flex-wrap: wrap; }
+  .proj-target-src { display: none; }
+}
+
+/* A repo beside a project's title: the GitHub mark, plus a lock while it is private. */
+.proj-gh {
+  flex: none; display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 6px; border-radius: var(--r-sm);
+  color: var(--muted); text-decoration: none; transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.proj-gh:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.proj-gh svg:first-child { width: 14px; height: 14px; }
+.proj-gh.is-private svg + svg { color: var(--faint); }
 
 /* ---- the list */
 .proj-count { font-size: 12px; color: var(--faint); margin: 0 0 12px; letter-spacing: 0.01em; }
@@ -3420,6 +3504,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 .proj-build-foot { margin-top: 16px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .proj-empty, .proj-flow-step, .proj-panel, .proj-card { animation: none; }
+  .proj-empty, .proj-flow-step, .proj-panel, .proj-card, .proj-ideas, .proj-idea { animation: none; }
+  .proj-idea.is-skel i { animation: none; }
   .proj-icon-btn { transition: none; }
 }
