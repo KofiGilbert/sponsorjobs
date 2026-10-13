@@ -186,3 +186,13 @@ classifier's wording list only.
   in `ui/static/vendor/techlogos.js` and shown on the Projects cards to name an idea's main
   technology. Nothing is fetched at runtime. The marks remain trademarks of their owners and are
   used only to identify the technology, which CC0 does not change.
+
+## Bundled syntax highlighter (BSD-3-Clause)
+
+- **highlight.js** 11.11.1 (highlightjs.org, cdnjs `highlight.js/11.11.1`), **BSD 3-Clause**,
+  Copyright (c) 2006, Ivan Sagalaev. The common bundle (`ui/static/vendor/highlight-11.11.1.min.js`,
+  which carries python, javascript, typescript, json, yaml, bash, go, java, sql, ini/toml, markdown,
+  css and xml/html) plus the `dockerfile` grammar (`ui/static/vendor/highlight-dockerfile-11.11.1.min.js`)
+  colour the code excerpts in Projects, Learn it and Defend it. No highlight.js theme CSS is shipped;
+  the colours are our own tokens in `styles.css`. Nothing is fetched at runtime. Full license text:
+  `ui/static/vendor/highlight-LICENSE.txt`.
