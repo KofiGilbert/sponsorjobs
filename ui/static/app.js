@@ -4296,6 +4296,7 @@
     if ($("#projLearn")) $("#projLearn").hidden = true;
     if ($("#projQuiz")) $("#projQuiz").hidden = true;
     QUIZ = null;
+    projSplit(false);
     if ($("#projList")) $("#projList").hidden = false;
     try { const d = await api("/api/projects"); PROJECTS = d.projects || []; } catch { PROJECTS = []; }
     renderProjList();
@@ -4545,31 +4546,41 @@
     catch (err) { toast(err.message || "Couldn't save."); }
   }
 
-  // ---- Learn it: the real code, what it does, why it was built that way, one quick check.
+  // ---- Learn it and Defend it share one page shape (owner decision 2026-10-13, after HackerRank,
+  // Codecademy, DataCamp, LeetCode, CodeSignal, Exercism and the Bluebook test app): the code and
+  // the question sit side by side, the PAGE never scrolls, each pane scrolls on its own, and the
+  // action bar at the bottom of the right pane never moves.
   let LEARN = null;
+  function projSplit(on) {
+    $("#view-projects")?.classList.toggle("is-split", !!on);
+    const pg = $("#projProg");
+    if (pg && !on) { pg.hidden = true; pg.innerHTML = ""; }
+  }
+  // A page of its own: "< Projects" above the page title, the header's buttons hidden.
+  function projPage(title) {
+    const back = $("#projIdeasBack"); if (back) back.hidden = false;
+    const pt = $("#projPageTitle"); if (pt) pt.textContent = title;
+    const acts = $("#projHeadActs"); if (acts) acts.hidden = true;
+    projSplit(true);
+  }
   async function startLearn(p) {
     if (!p) return;
-    LEARN = { id: p.id, title: p.title, steps: [], learned: new Set(), i: 0, pick: null, fb: {} };
+    LEARN = { id: p.id, title: p.title, steps: [], learned: new Set(), i: 0, pick: null, fb: {}, unfold: {}, codeOff: false };
     ["#projList", "#projForm", "#projIdeas", "#projTest", "#projBuild", "#projQuiz"].forEach(s => { if ($(s)) $(s).hidden = true; });
     QUIZ = null;
     $("#projLearn").hidden = false;
-    // A page of its own: "< Projects" above "Learn <title>", and no header buttons.
-    const back = $("#projIdeasBack"); if (back) back.hidden = false;
-    const pt = $("#projPageTitle"); if (pt) pt.textContent = PT("projects.learnTitle", "Learn {t}").replace("{t}", p.title);
-    const acts = $("#projHeadActs"); if (acts) acts.hidden = true;
-    learnTop();
-    $("#projLearnRail").innerHTML = "";
+    projPage(PT("projects.learnTitle", "Learn {t}").replace("{t}", p.title));
     $("#projLearnCard").innerHTML = `<div class="empty">${esc(PT("projects.learnLoading", "Preparing your walkthrough…"))}</div>`;
     try {
       const d = await api(`/api/projects/${p.id}/learn`, {});
+      if (!LEARN || LEARN.id !== p.id) return;
       LEARN.steps = d.steps || []; LEARN.learned = new Set(d.learned || []);
       const first = LEARN.steps.findIndex((_, i) => !LEARN.learned.has(i));
       LEARN.i = first < 0 ? LEARN.steps.length - 1 : first;
       renderLearn();
     } catch (err) { $("#projLearnCard").innerHTML = `<div class="empty">${esc(err.message || PT("projects.learnFailed", "Couldn't prepare the walkthrough right now."))}</div>`; }
   }
-  function learnTop() { $("#view-projects .page-head")?.scrollIntoView({ block: "start" }); }
-  function leaveLearn() { LEARN = null; $("#projLearn").hidden = true; $("#projList").hidden = false; loadProjects(); }
+  function leaveLearn() { LEARN = null; $("#projLearn").hidden = true; projSplit(false); $("#projList").hidden = false; loadProjects(); }
   // <code-lang> The highlight.js language for an excerpt, from its file name (null = plain text).
   const CODE_LANGS = { py: "python", pyw: "python", pyi: "python", js: "javascript", mjs: "javascript", cjs: "javascript",
     jsx: "javascript", ts: "typescript", tsx: "typescript", mts: "typescript", json: "json", yml: "yaml", yaml: "yaml",
@@ -4615,75 +4626,239 @@
     walk(tpl.content);
     return out.length === src.split("\n").length ? out : plain();
   }
-  function learnCode(s) {
+  // <code-fold> Pure helpers for the code panel; tests/test_learn_quiz_split.py runs this block under node.
+  // An excerpt longer than FOLD_OVER lines shows its focus plus FOLD_CTX lines of context, with a
+  // "Show lines a to b" row above and below that opens in place.
+  const FOLD_OVER = 60, FOLD_CTX = 6;
+  function foldPlan(start, end, focus, open) {
+    const f = Array.isArray(focus) && focus.length === 2 ? focus : [start, end];
+    if (end - start + 1 <= FOLD_OVER) return { from: start, to: end, above: null, below: null };
+    let from = Math.max(start, f[0] - FOLD_CTX), to = Math.min(end, f[1] + FOLD_CTX);
+    if (open && open.top) from = start;
+    if (open && open.bottom) to = end;
+    return { from, to, above: from > start ? [start, from - 1] : null, below: to < end ? [to + 1, end] : null };
+  }
+  // "line 22" or "lines 4 to 8" in prose, kept only when the lines are inside the excerpt.
+  function lineRefs(text, start, end) {
+    const out = [], re = /\b(lines?)\s+(\d+)(?:\s*(?:to|-|and|through)\s*(\d+))?/gi;
+    let m;
+    while ((m = re.exec(String(text || "")))) {
+      const a = +m[2], b = m[3] ? +m[3] : a;
+      if (a <= b && a >= start && b <= end) out.push({ i: m.index, len: m[0].length, a, b });
+    }
+    return out;
+  }
+  // </code-fold>
+  // <quiz-state> Pure helpers for the saved quiz; tests/test_learn_quiz_split.py runs this block under node.
+  // Answers, marks for review and the current question are kept in this browser per attempt.
+  function quizRestore(saved, attempt, total) {
+    const same = !!saved && saved.attempt === attempt;
+    const pad = (a, v) => { const o = Array.isArray(a) ? a.slice(0, total) : []; while (o.length < total) o.push(v); return o; };
+    return { answers: pad(same ? saved.answers : null, null), flags: pad(same ? saved.flags : null, false).map(Boolean),
+      i: same ? Math.min(Math.max(0, saved.i | 0), Math.max(0, total - 1)) : 0 };
+  }
+  function quizSnapshot(Q) { return { attempt: Q.attempt, answers: Q.answers, flags: Q.flags, i: Q.i }; }
+  function quizTally(answers, flags) {
+    const left = answers.filter(a => a == null || (Array.isArray(a) && !a.length)).length;
+    return { answered: answers.length - left, left, marked: (flags || []).filter(Boolean).length,
+      canSubmit: answers.length > 0 && left === 0 };
+  }
+  // </quiz-state>
+  const LANG_NAMES = { python: "Python", javascript: "JavaScript", typescript: "TypeScript", json: "JSON", yaml: "YAML",
+    bash: "Shell", go: "Go", java: "Java", sql: "SQL", markdown: "Markdown", css: "CSS", xml: "HTML",
+    dockerfile: "Dockerfile", makefile: "Makefile" };
+  function langLabel(path) {
+    const l = codeLang(path), ext = String(path || "").toLowerCase().split(".").pop();
+    if (l === "ini") return ext === "toml" ? "TOML" : "INI";
+    return LANG_NAMES[l] || PT("projects.plainText", "Plain text");
+  }
+  const SVG_GRID = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="2" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="9" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="9" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>`;
+  const SVG_MARK = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4.5 2.5h7v11L8 10.8l-3.5 2.7Z" fill="var(--mark-fill, none)" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
+  // Prose with its line references as small chips; hovering or focusing one flashes those lines.
+  function chipify(text, start, end) {
+    const t = String(text || ""), refs = lineRefs(t, start, end);
+    let out = "", at = 0;
+    refs.forEach(r => {
+      out += esc(t.slice(at, r.i));
+      // Punctuation right after a chip stays on its line.
+      const tail = (t.slice(r.i + r.len).match(/^[.,;:)!?]+/) || [""])[0];
+      out += `<span class="ln-ref"><button type="button" class="ln-chip" data-a="${r.a}" data-b="${r.b}">${esc(t.substr(r.i, r.len))}</button>${esc(tail)}</span>`;
+      at = r.i + r.len + tail.length;
+    });
+    return out + esc(t.slice(at));
+  }
+  // The code panel: a VS Code style tab (file, lines, language) over the coloured excerpt with its
+  // line numbers. Focus lines get a faint band and a gutter marker; long excerpts fold around them.
+  function codePanel(s, { focus = null, unfold = {}, toggle = true, codeOff = false } = {}) {
     const raw = String(s.code || "").split("\n"), lines = codeLines(s.code, codeLang(s.path));
-    return lines.map((ln, k) => `<span class="ln" data-n="${s.start + k}">${raw[k] ? ln : " "}</span>`).join("");
+    const start = +s.start || 1, end = start + raw.length - 1;
+    const f = Array.isArray(focus) && focus.length === 2 ? focus : [start, end];
+    const band = !(f[0] <= start && f[1] >= end);
+    const plan = foldPlan(start, end, f, unfold);
+    const fold = (rng, where) => rng ? `<button type="button" class="cp-fold" data-fold="${where}">${esc(PT("projects.showLines", "Show lines {a} to {b}").replace("{a}", rng[0]).replace("{b}", rng[1]))}</button>` : "";
+    let body = fold(plan.above, "top");
+    for (let n = plan.from; n <= plan.to; n++) {
+      const k = n - start;
+      body += `<span class="ln${band && n >= f[0] && n <= f[1] ? " is-focus" : ""}" data-n="${n}">${raw[k] ? lines[k] : " "}</span>`;
+    }
+    body += fold(plan.below, "bottom");
+    const path = String(s.path || ""), name = path.split("/").pop(), dir = path.slice(0, path.length - name.length);
+    const span = PT("projects.lines", "lines {a} to {b}").replace("{a}", start).replace("{b}", end);
+    return `<section class="cp ${codeOff ? "is-off" : ""}" role="region" aria-label="${esc(PT("projects.codeRegion", "Code"))}">
+      <div class="cp-tab"><span class="cp-file" title="${esc(path)}">${dir ? `<span class="cp-dir">${esc(dir)}</span>` : ""}${esc(name)}</span>
+        <span class="cp-meta">${esc(span)}</span><span class="cp-lang">${esc(langLabel(path))}</span>
+        ${toggle ? `<button type="button" class="cp-toggle" aria-expanded="${!codeOff}">${esc(codeOff ? PT("projects.showCode", "Show code") : PT("projects.hideCode", "Hide code"))}</button>` : ""}</div>
+      <pre class="cp-body learn-code" tabindex="0" aria-label="${esc(path + ", " + span)}"><code>${body}</code></pre>
+    </section>`;
   }
-  // One lettered option row, shared by the Learn it check and the quiz: the letter, the text, and a
-  // tick that is a radio (one answer) or a checkbox (select all that apply).
-  function optRow(o, k, { on = false, multi = false, cls = "", disabled = false } = {}) {
-    return `<button type="button" role="${multi ? "checkbox" : "radio"}" class="learn-opt ${on ? "is-pick" : ""} ${cls}" data-k="${k}" aria-checked="${on}" ${disabled ? "disabled" : ""}>`
+  // Wire a rendered code panel: scroll the first focus line to about a third from the top, open
+  // folds in place, hide or show the code when stacked, and flash lines from the prose's chips.
+  function wireCode(root, st, redraw) {
+    const body = root.querySelector(".cp-body"); if (!body) return;
+    const first = body.querySelector(".ln.is-focus");
+    if (first) body.scrollTop = Math.max(0, first.offsetTop - body.clientHeight / 3);
+    root.querySelectorAll(".cp-fold").forEach(b => b.addEventListener("click", () => {
+      const top = b.dataset.fold === "top", h = body.scrollHeight, y = body.scrollTop;
+      st.unfold = Object.assign({}, st.unfold, { [b.dataset.fold]: true });
+      redraw();
+      const nb = root.querySelector(".cp-body");
+      if (nb) nb.scrollTop = top ? y + (nb.scrollHeight - h) : y;
+    }));
+    root.querySelector(".cp-toggle")?.addEventListener("click", () => {
+      st.codeOff = !st.codeOff;
+      const cp = root.querySelector(".cp"), t = root.querySelector(".cp-toggle");
+      cp?.classList.toggle("is-off", st.codeOff);
+      if (t) { t.setAttribute("aria-expanded", String(!st.codeOff)); t.textContent = st.codeOff ? PT("projects.showCode", "Show code") : PT("projects.hideCode", "Hide code"); }
+    });
+    const flash = (a, b) => {
+      let el = root.querySelector(`.cp-body .ln[data-n="${a}"]`);
+      if (!el && root.querySelector(".cp-fold")) { st.unfold = { top: true, bottom: true }; redraw(); el = root.querySelector(`.cp-body .ln[data-n="${a}"]`); }
+      if (!el) return;
+      if (st.codeOff) root.querySelector(".cp-toggle")?.click();
+      const pre = root.querySelector(".cp-body");
+      root.querySelectorAll(".cp-body .ln.is-flash").forEach(x => x.classList.remove("is-flash"));
+      for (let n = a; n <= b; n++) { const x = root.querySelector(`.cp-body .ln[data-n="${n}"]`); if (x) { void x.offsetWidth; x.classList.add("is-flash"); } }
+      const top = el.offsetTop, bottom = top + el.offsetHeight * (b - a + 1);
+      if (top < pre.scrollTop || bottom > pre.scrollTop + pre.clientHeight) {
+        const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        pre.scrollTo({ top: Math.max(0, top - pre.clientHeight / 3), behavior: reduce ? "auto" : "smooth" });
+      }
+    };
+    root.querySelectorAll(".ln-chip").forEach(c => {
+      const go = () => flash(+c.dataset.a, +c.dataset.b);
+      c.addEventListener("mouseenter", go); c.addEventListener("focus", go); c.addEventListener("click", go);
+    });
+  }
+  // One lettered option row, shared by the Learn it check and the quiz: a native radio (one answer)
+  // or checkbox (select all that apply), the letter, the text, and the drawn tick.
+  function optRow(o, k, { name = "opt", on = false, multi = false, cls = "", disabled = false } = {}) {
+    return `<label class="learn-opt ${on ? "is-pick" : ""} ${cls} ${disabled ? "is-off" : ""}" data-k="${k}">`
+      + `<input class="opt-in" type="${multi ? "checkbox" : "radio"}" name="${name}" value="${k}" ${on ? "checked" : ""} ${disabled ? "disabled" : ""}>`
       + `<span class="quiz-key" aria-hidden="true">${"ABCDE"[k] || k + 1}</span><span class="opt-t">${esc(o)}</span>`
-      + `<span class="opt-tick ${multi ? "is-box" : ""}" aria-hidden="true"></span></button>`;
+      + `<span class="opt-tick ${multi ? "is-box" : ""}" aria-hidden="true"></span></label>`;
   }
+  function syncOpts(root, isOn) {
+    root.querySelectorAll(".learn-opt").forEach(o => {
+      const on = isOn(+o.dataset.k), inp = o.querySelector("input");
+      o.classList.toggle("is-pick", on); if (inp) inp.checked = on;
+    });
+  }
+  // A text field or a native control that uses the key itself; radios and checkboxes are not.
+  const typing = (t) => !!t.closest?.("textarea, select, input:not([type=radio]):not([type=checkbox])");
   function renderLearn() {
     const L = LEARN; if (!L) return;
     const s = L.steps[L.i]; if (!s) return;
     const n = L.steps.length, done = L.learned.has(L.i), allDone = L.learned.size >= n;
-    $("#projLearnRail").innerHTML = L.steps.map((st, k) => `<li><button type="button" class="learn-seg ${L.learned.has(k) ? "is-done" : ""} ${k === L.i ? "is-cur" : ""}" data-k="${k}"
-        aria-label="${esc(PT("projects.stepN", "Step {n}").replace("{n}", k + 1))}: ${esc(st.title)}" ${k === L.i ? 'aria-current="step"' : ""}></button></li>`).join("")
-      + `<li class="learn-rail-n">${esc(PT("projects.nLearned", "{n} of {m} learned").replace("{n}", L.learned.size).replace("{m}", n))}</li>`;
-    const c = s.check || {}, fb = L.fb[L.i];
+    const frontier = L.steps.findIndex((_, k) => !L.learned.has(k));
+    // Progress in the header: "Step 3 of 6" and the dots (done steps and the next open one revisit).
+    const pg = $("#projProg");
+    pg.hidden = false;
+    pg.innerHTML = `<span class="prog-n">${esc(PT("projects.stepOf", "Step {n} of {m}").replace("{n}", L.i + 1).replace("{m}", n))}</span>
+      <ol class="step-dots" aria-label="${esc(PT("projects.steps", "Steps"))}">${L.steps.map((st, k) => {
+        const d = L.learned.has(k), cur = k === L.i, open = (d || k === frontier) && !cur;
+        return `<li><button type="button" class="step-dot ${d ? "is-done" : ""} ${cur ? "is-cur" : ""}" data-k="${k}" ${open ? "" : "disabled"}
+          aria-label="${esc(PT("projects.stepN", "Step {n}").replace("{n}", k + 1))}: ${esc(st.title)}${d ? `, ${esc(PT("projects.learned", "learned"))}` : ""}" ${cur ? 'aria-current="step"' : ""}></button></li>`;
+      }).join("")}</ol>`;
+    pg.querySelectorAll(".step-dot").forEach(b => b.addEventListener("click", () => { L.i = +b.dataset.k; L.pick = null; L.unfold = {}; renderLearn(); }));
+    const c = s.check || {}, fb = L.fb[L.i], chip = (t) => chipify(t, s.start, s.end);
     const opts = c.kind === "line"
-      ? `<input class="fld learn-line" id="learnLine" type="text" autocomplete="off" placeholder="${esc(PT("projects.oneLine", "One line is enough"))}" ${done ? "disabled" : ""}>`
-      : `<div class="learn-opts quiz-opts" role="radiogroup" aria-label="${esc(c.q)}">${(c.options || []).map((o, k) => optRow(o, k,
-          { on: L.pick === k, cls: fb && fb.k === k ? (fb.ok ? "is-right" : "is-wrong") : "", disabled: done })).join("")}</div>`;
+      ? `<input class="fld learn-line" id="learnLine" type="text" autocomplete="off" aria-labelledby="learnQ" placeholder="${esc(PT("projects.oneLine", "One line is enough"))}" ${done ? "disabled" : ""}>`
+      : `<div class="learn-opts quiz-opts" role="radiogroup" aria-labelledby="learnQ">${(c.options || []).map((o, k) => optRow(o, k,
+          { name: `learn-${L.i}`, on: L.pick === k || (fb && fb.ok && fb.k === k), cls: fb && fb.k === k ? (fb.ok ? "is-right" : "is-wrong") : "", disabled: done })).join("")}</div>`;
     const primary = done
       ? (L.i < n - 1 ? `<button class="btn btn-primary btn-sm" id="learnNext" type="button">${esc(PT("projects.nextStep", "Next step"))}</button>`
         : allDone ? `<button class="btn btn-primary btn-sm" id="learnDefend" type="button">${esc(PT("projects.defendIt", "Defend it"))}</button>`
         : `<button class="btn btn-primary btn-sm" id="learnNextOpen" type="button">${esc(PT("projects.nextOpen", "Next unlearned step"))}</button>`)
       : `<button class="btn btn-primary btn-sm" id="learnCheck" type="button" ${c.kind !== "line" && L.pick == null ? "disabled" : ""}>${esc(PT("projects.check", "Check"))}</button>`;
-    $("#projLearnCard").innerHTML = `
-      <h3 class="learn-h">${esc(s.title)}</h3>
-      <div class="learn-file"><span class="learn-path">${esc(s.path)}</span><span class="learn-lines">${esc(PT("projects.lines", "lines {a} to {b}").replace("{a}", s.start).replace("{b}", s.end))}</span></div>
-      <pre class="learn-code" tabindex="0" aria-label="${esc(s.path)}"><code>${learnCode(s)}</code></pre>
-      ${s.explain ? `<p class="learn-explain">${esc(s.explain)}</p>` : ""}
-      ${s.why ? `<p class="learn-why"><b>${esc(PT("projects.whyWay", "Why this way"))}</b>${esc(s.why)}</p>` : ""}
-      <div class="learn-check">
-        <div class="learn-q"><b>${esc(PT("projects.quickCheck", "Quick check"))}</b>${esc(c.q || "")}</div>
-        ${opts}
-        <p class="learn-fb ${fb ? (fb.ok ? "ok" : "no") : ""}" id="learnFb" ${fb ? "" : "hidden"}>${fb ? `${esc(fb.ok ? PT("projects.right", "Right.") : PT("projects.notQuite", "Not quite. Have another look at the code."))} ${esc(fb.ok ? fb.explain || "" : "")}` : ""}</p>
-      </div>
-      <div class="learn-foot">
-        <button class="btn btn-quiet btn-sm" id="learnPrev" type="button" ${L.i === 0 ? "disabled" : ""}>${esc(PT("projects.prevStep", "Previous"))}</button>
-        ${primary}
-      </div>`;
+    // "Why this way" stays open when the right pane has the room (700px or more), otherwise it is a
+    // one-line disclosure. Measured from the host before drawing, so it opens without an animation.
+    const host = $("#projLearnCard");
+    const paneH = host.clientHeight - (host.clientWidth < 700 && !L.codeOff ? 0.4 * innerHeight + 14 : 0);
+    if (L.whyOpen == null) L.whyOpen = paneH >= 700;
+    const draw = () => {
+      $("#projLearnCard").innerHTML = `<div class="sx">
+        ${codePanel(s, { focus: s.focus, unfold: L.unfold, codeOff: L.codeOff })}
+        <section class="sx-main" role="region" aria-labelledby="learnH">
+          <div class="sx-scroll">
+            <h2 class="sx-h" id="learnH">${esc(s.title)}</h2>
+            ${s.explain ? `<h3 class="sx-k">${esc(PT("projects.whatItDoes", "What it does"))}</h3><p class="sx-p">${chip(s.explain)}</p>` : ""}
+            ${s.why ? `<details class="sx-why" ${L.whyOpen ? "open" : ""}><summary class="sx-k">${esc(PT("projects.whyWay", "Why this way"))}</summary><p>${chip(s.why)}</p></details>` : ""}
+            <div class="sx-check">
+              <h3 class="sx-k">${esc(PT("projects.quickCheck", "Quick check"))}</h3>
+              <p class="sx-q" id="learnQ">${chip(c.q || "")}</p>
+              ${opts}
+              <p class="sx-fb" id="learnFb" aria-live="polite"></p>
+            </div>
+          </div>
+          <div class="sx-bar">
+            <button class="btn btn-quiet btn-sm" id="learnPrev" type="button" ${L.i === 0 ? "disabled" : ""}>${esc(PT("projects.prevStepFull", "Previous step"))}</button>
+            <div class="sx-bar-r">${primary}</div>
+          </div>
+        </section></div>`;
+      wireCode($("#projLearnCard"), L, draw);
+    };
+    draw();
     const card = $("#projLearnCard");
-    $("#projLearnRail").querySelectorAll(".learn-seg").forEach(b => b.addEventListener("click", () => { L.i = +b.dataset.k; L.pick = null; renderLearn(); }));
-    card.querySelectorAll(".learn-opt").forEach(b => b.addEventListener("click", () => learnPick(+b.dataset.k)));
+    card.querySelector(".sx-why")?.addEventListener("toggle", (e) => { L.whyOpen = e.target.open; });
+    const fbEl = $("#learnFb");
+    if (fb && fbEl) {
+      const line = fb.ok ? `${PT("projects.right", "Right.")} ${fb.why || fb.explain || ""}`
+        : fb.why ? `${PT("projects.notQuiteShort", "Not quite.")} ${fb.why}` : PT("projects.notQuite", "Not quite. Have another look at the code.");
+      fbEl.className = `sx-fb ${fb.ok ? "ok" : "no"}`;
+      const put = () => { fbEl.innerHTML = chip(line.trim()); wireCode(card, L, draw); };
+      if (fb.fresh) { fb.fresh = false; requestAnimationFrame(put); } else put();   // a fresh line is announced
+    }
+    card.querySelectorAll(".opt-in").forEach(inp => inp.addEventListener("change", () => learnPick(+inp.value)));
     $("#learnLine")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); checkLearn(); } });
     $("#learnCheck")?.addEventListener("click", checkLearn);
-    $("#learnPrev")?.addEventListener("click", () => { if (L.i > 0) { L.i -= 1; L.pick = null; renderLearn(); learnTop(); } });
-    $("#learnNext")?.addEventListener("click", () => { L.i += 1; L.pick = null; renderLearn(); learnTop(); });
-    $("#learnNextOpen")?.addEventListener("click", () => { const k = L.steps.findIndex((_, j) => !L.learned.has(j)); if (k >= 0) { L.i = k; L.pick = null; renderLearn(); } });
+    $("#learnPrev")?.addEventListener("click", () => { if (L.i > 0) { L.i -= 1; L.pick = null; L.unfold = {}; renderLearn(); } });
+    $("#learnNext")?.addEventListener("click", () => { L.i += 1; L.pick = null; L.unfold = {}; renderLearn(); });
+    $("#learnNextOpen")?.addEventListener("click", () => { const k = L.steps.findIndex((_, j) => !L.learned.has(j)); if (k >= 0) { L.i = k; L.pick = null; L.unfold = {}; renderLearn(); } });
     $("#learnDefend")?.addEventListener("click", () => { const p = PROJECTS.find(x => x.id === L.id) || { id: L.id, title: L.title }; $("#projLearn").hidden = true; LEARN = null; startQuiz(p); });
   }
   function learnPick(k) {
-    const L = LEARN; if (!L) return;
+    const L = LEARN; if (!L || L.learned.has(L.i)) return;
     const card = $("#projLearnCard");
     L.pick = k; delete L.fb[L.i];
-    card.querySelectorAll(".learn-opt").forEach(o => { const on = +o.dataset.k === L.pick; o.classList.toggle("is-pick", on); o.classList.remove("is-wrong"); o.setAttribute("aria-checked", on); });
+    syncOpts(card, j => j === k);
+    card.querySelectorAll(".learn-opt").forEach(o => o.classList.remove("is-wrong", "is-right"));
     const chk = $("#learnCheck"); if (chk) chk.disabled = false;
-    const f = $("#learnFb"); if (f) f.hidden = true;
+    const f = $("#learnFb"); if (f) { f.textContent = ""; f.className = "sx-fb"; }
   }
-  // A to D (or 1 to 4) picks a quick-check option, like the quiz.
+  // A to D (or 1 to 4) picks a quick-check option; Enter checks, then moves on.
   document.addEventListener("keydown", (e) => {
-    if (!LEARN || $("#projLearn")?.hidden || e.metaKey || e.ctrlKey || e.altKey
-        || e.target.closest?.("input, textarea, select")) return;
+    if (!LEARN || $("#projLearn")?.hidden || e.metaKey || e.ctrlKey || e.altKey || typing(e.target)) return;
     const s = LEARN.steps[LEARN.i], c = s && s.check;
-    if (!c || c.kind === "line" || LEARN.learned.has(LEARN.i)) return;
+    if (!c) return;
+    if (e.key === "Enter") {
+      if (e.target.closest?.("button, a, summary")) return;
+      const go = ["#learnCheck", "#learnNext", "#learnDefend", "#learnNextOpen"].map(x => $(x)).find(b => b && !b.disabled);
+      if (go) { e.preventDefault(); go.click(); }
+      return;
+    }
+    if (c.kind === "line" || LEARN.learned.has(LEARN.i)) return;
     const key = e.key.toLowerCase(), k = "abcde".indexOf(key) >= 0 ? "abcde".indexOf(key) : "12345".indexOf(key);
-    if (k >= 0 && k < (c.options || []).length) { e.preventDefault(); learnPick(k); }
+    if (key.length === 1 && k >= 0 && k < (c.options || []).length) { e.preventDefault(); learnPick(k); }
   });
   async function checkLearn() {
     const L = LEARN; if (!L) return;
@@ -4693,158 +4868,278 @@
     const btn = $("#learnCheck"); if (btn) btn.disabled = true;
     try {
       const d = await api(`/api/projects/${L.id}/learn/${L.i}`, { answer });
-      L.fb[L.i] = { ok: !!d.correct, explain: d.explain || "", k: line ? null : answer };
+      L.fb[L.i] = { ok: !!d.correct, explain: d.explain || "", why: d.why || "", k: line ? null : answer, fresh: true };
       L.learned = new Set(d.learned || []);
       const pj = PROJECTS.find(x => x.id === L.id); if (pj && d.project) Object.assign(pj, d.project);
-      if (!d.correct) L.pick = line ? null : answer;
+      L.pick = line || d.correct ? null : answer;
       renderLearn();
       if (line && !d.correct) { const f = $("#learnLine"); if (f) { f.value = answer; f.focus(); } }
+      else (d.correct ? $("#learnNext") || $("#learnDefend") || $("#learnNextOpen") : $("#projLearnCard .opt-in:checked"))?.focus();
     } catch (err) { toast(err.message || "Couldn't check that."); if (btn) btn.disabled = false; }
   }
 
   // ---- Defend it: a 20-question quiz on THIS project. The questions come in the attempt's own
-  // order with shuffled options and no answer key; answers are kept in this browser as they are
-  // picked, so leaving and coming back resumes. One question at a time, a review, then the result.
+  // order with shuffled options and no answer key; answers and marks for review are kept in this
+  // browser as they are picked, so leaving and coming back resumes. One question per view, a
+  // review grid, then the result.
   const QUIZ_KEY = (id) => `sj.quiz.${id}`;
   function quizSaved(id) { try { return JSON.parse(localStorage.getItem(QUIZ_KEY(id)) || "null"); } catch { return null; } }
   function quizSave() {
     const Q = QUIZ; if (!Q || !Q.attempt) return;
-    try { localStorage.setItem(QUIZ_KEY(Q.id), JSON.stringify({ attempt: Q.attempt, answers: Q.answers, i: Q.i })); } catch { /* private window */ }
+    try { localStorage.setItem(QUIZ_KEY(Q.id), JSON.stringify(quizSnapshot(Q))); } catch { /* private window */ }
   }
   function quizForget(id) { try { localStorage.removeItem(QUIZ_KEY(id)); } catch { /* private window */ } }
+  const TOPIC_LABELS = () => ({ parts: PT("projects.topicParts", "Parts"), why: PT("projects.topicWhy", "Design"),
+    tradeoffs: PT("projects.topicTradeoffs", "Trade-offs"), testing: PT("projects.topicTesting", "Testing"),
+    scale: PT("projects.topicScale", "Scale"), extend: PT("projects.topicExtend", "Extending"), code: PT("projects.topicCode", "Reading code") });
+  const LETTERS = "ABCDE";
+  const letters = (a) => a == null ? "" : Array.isArray(a) ? a.map(i => LETTERS[i]).join(", ") : LETTERS[a];
   async function startQuiz(p) {
     if (!p) return;
-    QUIZ = { id: p.id, title: p.title, attempt: null, qs: [], total: 0, pass: 0, answers: [], i: 0, view: "q", result: null };
+    QUIZ = { id: p.id, title: p.title, attempt: null, qs: [], total: 0, pass: 0, answers: [], flags: [], i: 0, view: "q",
+      result: null, fromReview: false, filter: "all", navOpen: false, codeOff: false, unfold: {}, sel: null, showAll: false };
     ["#projList", "#projForm", "#projIdeas", "#projTest", "#projBuild", "#projLearn"].forEach(s => { if ($(s)) $(s).hidden = true; });
     LEARN = null;
     $("#projQuiz").hidden = false;
-    const back = $("#projIdeasBack"); if (back) back.hidden = false;
-    const pt = $("#projPageTitle"); if (pt) pt.textContent = PT("projects.defendTitle", "Defend {t}").replace("{t}", p.title);
-    const acts = $("#projHeadActs"); if (acts) acts.hidden = true;
-    $("#projQuizRail").innerHTML = "";
+    projPage(PT("projects.defendTitle", "Defend {t}").replace("{t}", p.title));
+    const pg = $("#projProg"); if (pg) { pg.hidden = true; pg.innerHTML = ""; }
     $("#projQuizCard").innerHTML = `<div class="empty">${esc(PT("projects.quizLoading", "Preparing your quiz…"))}</div>`;
-    learnTop();
     try {
       const d = await api(`/api/projects/${p.id}/quiz`, {});
       if (!QUIZ || QUIZ.id !== p.id) return;
       Object.assign(QUIZ, { attempt: d.attempt, qs: d.questions || [], total: d.total || 0, pass: d.pass_mark || 0 });
-      const saved = quizSaved(p.id);
-      QUIZ.answers = saved && saved.attempt === d.attempt && Array.isArray(saved.answers) ? saved.answers.slice(0, QUIZ.total) : [];
-      while (QUIZ.answers.length < QUIZ.total) QUIZ.answers.push(null);
-      QUIZ.i = saved && saved.attempt === d.attempt ? Math.min(Math.max(0, saved.i | 0), QUIZ.total - 1) : 0;
+      Object.assign(QUIZ, quizRestore(quizSaved(p.id), d.attempt, QUIZ.total));
       quizSave();
       renderQuiz();
     } catch (err) { $("#projQuizCard").innerHTML = `<div class="empty">${esc(err.message || PT("projects.quizFailed", "Couldn't open the quiz right now."))}</div>`; }
   }
-  function leaveQuiz() { QUIZ = null; $("#projQuiz").hidden = true; $("#projList").hidden = false; loadProjects(); }
-  function quizRail(label, frac) {
-    $("#projQuizRail").hidden = false;
-    $("#projQuizRail").innerHTML = `<span class="quiz-rail-n">${esc(label)}</span>
-      <span class="quiz-rail-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(frac * 100)}" aria-label="${esc(label)}"><i style="width:${(frac * 100).toFixed(1)}%"></i></span>`;
+  function leaveQuiz() { QUIZ = null; $("#projQuiz").hidden = true; projSplit(false); $("#projList").hidden = false; loadProjects(); }
+  // The header on a question: "Question 7 of 20", the 3px bar, the Questions grid and the mark.
+  function quizHead() {
+    const Q = QUIZ, pg = $("#projProg"); if (!Q || !pg) return;
+    if (Q.view !== "q") { pg.hidden = true; pg.innerHTML = ""; return; }
+    const label = PT("projects.quizN", "Question {n} of {m}").replace("{n}", Q.i + 1).replace("{m}", Q.total);
+    const frac = (Q.i + 1) / Q.total, marked = !!Q.flags[Q.i];
+    const sq = Q.qs.map((q, k) => {
+      const a = Q.answers[k] != null, f = !!Q.flags[k];
+      const lbl = `${PT("projects.quizN", "Question {n} of {m}").replace("{n}", k + 1).replace("{m}", Q.total)}, ${a ? PT("projects.answered", "answered") : PT("projects.notAnsweredLow", "not answered")}${f ? `, ${PT("projects.markedLow", "marked")}` : ""}`;
+      return `<button type="button" class="qnav-sq ${a ? "is-ans" : ""} ${f ? "is-flag" : ""} ${k === Q.i ? "is-cur" : ""}" data-k="${k}" aria-label="${esc(lbl)}" ${k === Q.i ? 'aria-current="true"' : ""}>${k + 1}</button>`;
+    }).join("");
+    pg.hidden = false;
+    pg.innerHTML = `<span class="prog-n">${esc(label)}</span>
+      <span class="quiz-rail-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(frac * 100)}" aria-label="${esc(label)}"><i style="width:${(frac * 100).toFixed(1)}%"></i></span>
+      <div class="qnav">
+        <button type="button" class="btn btn-ghost btn-sm hd-btn" id="quizNavBtn" aria-haspopup="dialog" aria-expanded="${Q.navOpen}" aria-controls="quizNav" title="${esc(PT("projects.questions", "Questions"))}">${SVG_GRID}<span class="hd-lbl">${esc(PT("projects.questions", "Questions"))}</span></button>
+        <div class="qnav-pop" id="quizNav" role="dialog" aria-label="${esc(PT("projects.questions", "Questions"))}" ${Q.navOpen ? "" : "hidden"}>
+          <div class="qnav-grid">${sq}</div>
+          <div class="qnav-key"><span><i class="qk is-ans"></i>${esc(PT("projects.answeredCap", "Answered"))}</span><span><i class="qk"></i>${esc(PT("projects.notAnswered", "Not answered"))}</span><span><i class="qk is-flag"></i>${esc(PT("projects.markedCap", "Marked"))}</span></div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm hd-btn qflag ${marked ? "is-on" : ""}" id="quizFlag" aria-pressed="${marked}" title="${esc(PT("projects.markReview", "Mark for review"))} (F)">${SVG_MARK}<span class="hd-lbl">${esc(marked ? PT("projects.markedCap", "Marked") : PT("projects.mark", "Mark"))}</span></button>`;
+    $("#quizNavBtn")?.addEventListener("click", (e) => { e.stopPropagation(); quizNav(!Q.navOpen); });
+    pg.querySelectorAll(".qnav-sq").forEach(b => b.addEventListener("click", () => { Q.navOpen = false; quizGo(+b.dataset.k); }));
+    $("#quizFlag")?.addEventListener("click", quizFlag);
   }
+  function quizNav(open) {
+    const Q = QUIZ; if (!Q) return;
+    Q.navOpen = !!open;
+    const pop = $("#quizNav"), btn = $("#quizNavBtn");
+    if (pop) pop.hidden = !Q.navOpen;
+    if (btn) btn.setAttribute("aria-expanded", String(Q.navOpen));
+    if (Q.navOpen) (pop?.querySelector(".qnav-sq.is-cur") || pop?.querySelector(".qnav-sq"))?.focus();
+  }
+  function quizFlag() {
+    const Q = QUIZ; if (!Q || Q.view !== "q") return;
+    Q.flags[Q.i] = !Q.flags[Q.i]; quizSave(); quizHead();
+    $("#quizFlag")?.focus();
+  }
+  document.addEventListener("click", (e) => { if (QUIZ && QUIZ.navOpen && !e.target.closest?.(".qnav")) quizNav(false); });
   function renderQuiz() {
     const Q = QUIZ; if (!Q) return;
+    quizHead();
     if (Q.view === "review") return renderQuizReview();
     if (Q.view === "result") return renderQuizResult();
     const q = Q.qs[Q.i]; if (!q) return;
-    const last = Q.i === Q.total - 1, pick = Q.answers[Q.i];
-    quizRail(PT("projects.quizN", "Question {n} of {m}").replace("{n}", Q.i + 1).replace("{m}", Q.total), (Q.i + 1) / Q.total);
-    const code = q.code ? `
-      <div class="learn-file"><span class="learn-path">${esc(q.path)}</span><span class="learn-lines">${esc(PT("projects.lines", "lines {a} to {b}").replace("{a}", q.start).replace("{b}", q.end))}</span></div>
-      <pre class="learn-code quiz-code" tabindex="0" aria-label="${esc(q.path)}"><code>${learnCode(q)}</code></pre>` : "";
-    const multi = q.type === "multi", picked = (k) => multi ? Array.isArray(pick) && pick.includes(k) : pick === k;
+    const last = Q.i === Q.total - 1, pick = Q.answers[Q.i], multi = q.type === "multi";
+    const picked = (k) => multi ? Array.isArray(pick) && pick.includes(k) : pick === k;
+    const stem = q.code ? chipify(q.q, q.start, q.end) : esc(q.q);
     const hint = multi ? `<p class="quiz-hint" id="quizHint"><b>${esc(PT("projects.selectAll", "Select all that apply."))}</b> ${esc(PT("projects.multiRule", "It counts only when you pick every right option and no wrong one."))}</p>` : "";
-    $("#projQuizCard").innerHTML = `
-      <h3 class="learn-h quiz-q ${multi ? "has-hint" : ""}" id="quizQ">${esc(q.q)}</h3>
-      ${hint}
-      ${code}
-      <div class="learn-opts quiz-opts" role="${multi ? "group" : "radiogroup"}" aria-labelledby="quizQ" ${multi ? 'aria-describedby="quizHint"' : ""}>${q.options.map((o, k) => optRow(o, k, { on: picked(k), multi })).join("")}</div>
-      <div class="learn-foot">
-        <button class="btn btn-quiet btn-sm" id="quizPrev" type="button" ${Q.i === 0 ? "disabled" : ""}>${esc(PT("projects.prevStep", "Previous"))}</button>
-        <button class="btn btn-primary btn-sm" id="quizNext" type="button">${esc(last ? PT("projects.quizToReview", "Review answers") : PT("projects.quizNext", "Next"))}</button>
-      </div>`;
+    const right = Q.fromReview
+      ? `${last ? "" : `<button class="btn btn-quiet btn-sm" id="quizNext" type="button">${esc(PT("projects.quizNext", "Next"))}</button>`}<button class="btn btn-primary btn-sm" id="quizToReview" type="button">${esc(PT("projects.backToReview", "Back to review"))}</button>`
+      : `<button class="btn btn-primary btn-sm" id="${last ? "quizToReview" : "quizNext"}" type="button">${esc(last ? PT("projects.quizToReview", "Review answers") : PT("projects.quizNext", "Next"))}</button>`;
+    const draw = () => {
+      $("#projQuizCard").innerHTML = `<div class="sx ${q.code ? "" : "is-solo"}">
+        ${q.code ? codePanel(q, { focus: stemFocus(q), unfold: Q.unfold, codeOff: Q.codeOff }) : ""}
+        <section class="sx-main" role="region" aria-labelledby="quizQ">
+          <div class="sx-scroll">
+            <h2 class="sx-h quiz-q ${multi ? "has-hint" : ""}" id="quizQ">${stem}</h2>
+            ${hint}
+            <div class="learn-opts quiz-opts" role="${multi ? "group" : "radiogroup"}" aria-labelledby="quizQ" ${multi ? 'aria-describedby="quizHint"' : ""}>${q.options.map((o, k) => optRow(o, k, { name: `quiz-${Q.i}`, on: picked(k), multi })).join("")}</div>
+          </div>
+          <div class="sx-bar">
+            <button class="btn btn-quiet btn-sm" id="quizPrev" type="button" ${Q.i === 0 ? "disabled" : ""}>${esc(PT("projects.prevStep", "Previous"))}</button>
+            <div class="sx-bar-r">${right}</div>
+          </div>
+        </section></div>`;
+      wireCode($("#projQuizCard"), Q, draw);
+    };
+    draw();
     const card = $("#projQuizCard");
-    card.querySelectorAll(".learn-opt").forEach(b => b.addEventListener("click", () => quizPick(+b.dataset.k)));
+    card.querySelectorAll(".opt-in").forEach(inp => inp.addEventListener("change", () => quizSet(+inp.value, inp.checked)));
     $("#quizPrev")?.addEventListener("click", () => quizGo(Q.i - 1));
-    $("#quizNext")?.addEventListener("click", () => { if (last) { Q.view = "review"; renderQuiz(); learnTop(); } else quizGo(Q.i + 1); });
+    $("#quizNext")?.addEventListener("click", () => quizGo(Q.i + 1));
+    $("#quizToReview")?.addEventListener("click", () => { Q.view = "review"; Q.fromReview = false; quizSave(); renderQuiz(); });
   }
-  // One answer replaces the pick; select all that apply toggles it in a sorted list (empty = unanswered).
-  function quizPick(k) {
+  // One answer replaces the pick; select all that apply keeps a sorted list (empty = unanswered).
+  function quizSet(k, on) {
     const Q = QUIZ; if (!Q || Q.view !== "q") return;
     const multi = Q.qs[Q.i]?.type === "multi";
     if (multi) {
       const cur = new Set(Array.isArray(Q.answers[Q.i]) ? Q.answers[Q.i] : []);
-      if (cur.has(k)) cur.delete(k); else cur.add(k);
+      if (on) cur.add(k); else cur.delete(k);
       Q.answers[Q.i] = cur.size ? [...cur].sort((a, b) => a - b) : null;
     } else Q.answers[Q.i] = k;
     quizSave();
     const a = Q.answers[Q.i];
-    $("#projQuizCard").querySelectorAll(".learn-opt").forEach(o => {
-      const on = multi ? Array.isArray(a) && a.includes(+o.dataset.k) : +o.dataset.k === a;
-      o.classList.toggle("is-pick", on); o.setAttribute("aria-checked", on);
-    });
+    syncOpts($("#projQuizCard"), j => multi ? Array.isArray(a) && a.includes(j) : j === a);
   }
-  // A to D (or 1 to 4) picks an option on a question screen.
+  function quizPick(k) {
+    const Q = QUIZ; if (!Q) return;
+    const a = Q.answers[Q.i], multi = Q.qs[Q.i]?.type === "multi";
+    quizSet(k, multi ? !(Array.isArray(a) && a.includes(k)) : true);
+  }
+  // A to D (or 1 to 4) picks, F marks for review, Esc closes the Questions grid; on the result,
+  // the arrow keys or J and K move through the misses.
   document.addEventListener("keydown", (e) => {
-    if (!QUIZ || QUIZ.view !== "q" || $("#projQuiz")?.hidden || e.metaKey || e.ctrlKey || e.altKey
-        || e.target.closest?.("input, textarea, select")) return;
-    const k = "abcd".indexOf(e.key.toLowerCase()) >= 0 ? "abcd".indexOf(e.key.toLowerCase()) : "1234".indexOf(e.key);
-    if (k >= 0 && k < (QUIZ.qs[QUIZ.i]?.options.length || 0)) { e.preventDefault(); quizPick(k); }
+    if (!QUIZ || $("#projQuiz")?.hidden || e.metaKey || e.ctrlKey || e.altKey || typing(e.target)) return;
+    const Q = QUIZ;
+    if (e.key === "Escape" && Q.navOpen) { e.preventDefault(); quizNav(false); $("#quizNavBtn")?.focus(); return; }
+    if (Q.view === "result") {
+      const dir = { ArrowDown: 1, j: 1, J: 1, ArrowUp: -1, k: -1, K: -1 }[e.key];
+      if (dir) { e.preventDefault(); resultMove(dir); }
+      return;
+    }
+    if (Q.view !== "q") return;
+    const key = e.key.toLowerCase();
+    if (key === "f") { e.preventDefault(); quizFlag(); return; }
+    const k = "abcd".indexOf(key) >= 0 ? "abcd".indexOf(key) : "1234".indexOf(key);
+    if (key.length === 1 && k >= 0 && k < (Q.qs[Q.i]?.options.length || 0)) { e.preventDefault(); quizPick(k); }
   });
+  // A question that names lines of its excerpt ("line 6") focuses them.
+  function stemFocus(q) { const r = q.code ? lineRefs(q.q, q.start, q.end)[0] : null; return r ? [r.a, r.b] : null; }
   function quizGo(i) {
     const Q = QUIZ; if (!Q || i < 0 || i >= Q.total) return;
-    Q.i = i; Q.view = "q"; quizSave(); renderQuiz(); learnTop();
+    Q.i = i; Q.view = "q"; Q.unfold = {}; quizSave(); renderQuiz();
   }
   function renderQuizReview() {
-    const Q = QUIZ;
-    const open = Q.answers.filter(a => a == null).length;
-    quizRail(PT("projects.quizAnswered", "{n} of {m} answered").replace("{n}", Q.total - open).replace("{m}", Q.total), (Q.total - open) / Q.total);
-    $("#projQuizCard").innerHTML = `
-      <h3 class="learn-h">${esc(PT("projects.quizReviewH", "Check your answers"))}</h3>
-      <ol class="quiz-list">${Q.qs.map((q, k) => { const a = Q.answers[k]; return `<li><button type="button" class="quiz-row" data-k="${k}">
-          <span class="quiz-row-n">${k + 1}</span>
-          <span class="quiz-row-t"><span class="quiz-row-q">${esc(q.q)}</span>
-            <span class="quiz-row-a ${a == null ? "is-open" : ""}">${esc(a == null ? PT("projects.notAnswered", "Not answered") : Array.isArray(a) ? a.map(i => q.options[i]).join("; ") : q.options[a])}</span></span></button></li>`; }).join("")}</ol>
-      <div class="learn-foot">
-        <button class="btn btn-quiet btn-sm" id="quizRevBack" type="button">${esc(PT("projects.prevStep", "Previous"))}</button>
-        <span class="quiz-foot-r">${open ? `<span class="quiz-open-n">${esc(PT("projects.quizUnanswered", "{n} not answered yet").replace("{n}", open))}</span>` : ""}
-          <button class="btn btn-primary btn-sm" id="quizSubmit" type="button" ${open ? "disabled" : ""}>${esc(PT("projects.quizSubmit", "Submit"))}</button></span>
-      </div>`;
-    $("#projQuizCard").querySelectorAll(".quiz-row").forEach(b => b.addEventListener("click", () => quizGo(+b.dataset.k)));
+    const Q = QUIZ, t = quizTally(Q.answers, Q.flags), f = Q.filter || "all";
+    const tiles = Q.qs.map((q, k) => {
+      const a = Q.answers[k], open = a == null, fl = !!Q.flags[k];
+      if ((f === "open" && !open) || (f === "flag" && !fl)) return "";
+      const lbl = `${PT("projects.quizN", "Question {n} of {m}").replace("{n}", k + 1).replace("{m}", Q.total)}, ${open ? PT("projects.notAnsweredLow", "not answered") : letters(a)}${fl ? `, ${PT("projects.markedLow", "marked")}` : ""}`;
+      return `<li><button type="button" class="rv-tile ${open ? "is-open" : ""} ${fl ? "is-flag" : ""}" data-k="${k}" aria-label="${esc(lbl)}">
+        <span class="rv-top"><span class="rv-n">${k + 1}</span>${fl ? `<span class="rv-mark">${SVG_MARK}</span>` : ""}</span>
+        <span class="rv-a">${esc(open ? PT("projects.notAnswered", "Not answered") : letters(a))}</span></button></li>`;
+    }).join("");
+    const chipB = (id, label) => `<button type="button" class="rv-chip ${f === id ? "is-on" : ""}" data-f="${id}" aria-pressed="${f === id}">${esc(label)}</button>`;
+    $("#projQuizCard").innerHTML = `<div class="sx is-solo is-review">
+      <section class="sx-main" role="region" aria-labelledby="rvH">
+        <div class="sx-scroll">
+          <h2 class="sx-h" id="rvH">${esc(PT("projects.reviewH", "Review your answers"))}</h2>
+          <p class="rv-sum">${esc(PT("projects.rvSum", "{a} answered, {l} left, {m} marked").replace("{a}", t.answered).replace("{l}", t.left).replace("{m}", t.marked))}</p>
+          <div class="rv-chips" role="group" aria-label="${esc(PT("projects.rvShow", "Show"))}">${chipB("all", PT("projects.rvAll", "All"))}${chipB("open", PT("projects.rvOpen", "Unanswered"))}${chipB("flag", PT("projects.rvFlag", "Marked"))}</div>
+          ${tiles ? `<ol class="rv-grid">${tiles}</ol>` : `<p class="rv-none">${esc(PT("projects.rvNone", "Nothing here."))}</p>`}
+        </div>
+        <div class="sx-bar">
+          <button class="btn btn-quiet btn-sm" id="quizRevBack" type="button">${esc(PT("projects.prevStep", "Previous"))}</button>
+          <div class="sx-bar-r">${t.canSubmit ? "" : `<span class="quiz-open-n" id="quizLeft">${esc(PT("projects.answerMore", "Answer {n} more to submit").replace("{n}", t.left))}</span>`}
+            <button class="btn btn-primary btn-sm" id="quizSubmit" type="button" ${t.canSubmit ? "" : 'disabled aria-describedby="quizLeft"'}>${esc(PT("projects.quizSubmit", "Submit"))}</button></div>
+        </div>
+      </section></div>`;
+    const card = $("#projQuizCard");
+    card.querySelectorAll(".rv-tile").forEach(b => b.addEventListener("click", () => { Q.fromReview = true; quizGo(+b.dataset.k); }));
+    card.querySelectorAll(".rv-chip").forEach(b => b.addEventListener("click", () => { Q.filter = b.dataset.f; renderQuizReview(); card.querySelector(`.rv-chip[data-f="${Q.filter}"]`)?.focus(); }));
     $("#quizRevBack")?.addEventListener("click", () => quizGo(Q.total - 1));
     $("#quizSubmit")?.addEventListener("click", submitQuiz);
   }
   async function submitQuiz() {
-    const Q = QUIZ; if (!Q) return;
+    const Q = QUIZ; if (!Q || !quizTally(Q.answers, Q.flags).canSubmit) return;
     const btn = $("#quizSubmit"); if (btn) btn.disabled = true;
     try {
       const r = await api(`/api/projects/${Q.id}/quiz/submit`, { attempt: Q.attempt, answers: Q.answers });
       quizForget(Q.id);
-      Q.result = r; Q.view = "result";
+      Q.result = r; Q.view = "result"; Q.sel = null; Q.showAll = false;
       const pj = PROJECTS.find(x => x.id === Q.id); if (pj && r.project) Object.assign(pj, r.project);
-      renderQuiz(); learnTop();
+      renderQuiz();
     } catch (err) { toast(err.message || PT("projects.quizFailed", "Couldn't open the quiz right now.")); if (btn) btn.disabled = false; }
   }
+  // The result rows: misses only by default, all 20 on request (a right one is your own answer).
+  function resultRows() {
+    const Q = QUIZ, r = Q.result || {}, wrong = new Map((r.wrong || []).map(w => [w.n, w]));
+    const items = Array.isArray(r.items) && r.items.length === Q.qs.length ? r.items : null;
+    const all = Q.qs.map((q, k) => {
+      const w = wrong.get(k + 1), idx = (t) => q.options.indexOf(t);
+      const right = w ? (Array.isArray(w.correct) ? w.correct.map(idx).filter(i => i >= 0) : idx(w.correct)) : Q.answers[k];
+      return { n: k + 1, q, w, ok: !w, topic: (items && items[k].topic) || (w && w.topic) || "", you: Q.answers[k], right };
+    });
+    const misses = all.filter(x => !x.ok);
+    return { all, misses, list: Q.showAll || !misses.length ? all : misses };
+  }
+  function resultMove(dir) {
+    const Q = QUIZ, { list } = resultRows(); if (!list.length) return;
+    const at = Math.max(0, list.findIndex(x => x.n === Q.sel));
+    Q.sel = list[Math.min(list.length - 1, Math.max(0, at + dir))].n;
+    renderQuizResult();
+    $(`#projQuizCard .rs-row[data-n="${Q.sel}"]`)?.focus();
+  }
   function renderQuizResult() {
-    const Q = QUIZ, r = Q.result || {}, ok = !!r.passed;
-    $("#projQuizRail").hidden = true;   // the score below says it; a rail would say it twice
-    // A select-all-that-apply miss lists both sets; the picks that were right are not struck through.
-    const missList = (items, cls, keep) => `<ul class="quiz-miss-list">${items.map(t => `<li class="${keep && keep.includes(t) ? "is-kept" : cls}">${esc(t)}</li>`).join("")}</ul>`;
-    const wrong = (r.wrong || []).map(w => { const multi = w.type === "multi" || Array.isArray(w.correct); return `<li class="quiz-miss">
-        <div class="quiz-miss-q"><span class="quiz-row-n">${w.n}</span>${esc(w.q)}</div>
-        ${multi ? `<div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.yourAnswers", "Your answers"))}</span>${(w.yours || []).length ? missList(w.yours, "is-no", w.correct) : `<span class="is-no">${esc(PT("projects.notAnswered", "Not answered"))}</span>`}</div>
-        <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.correctAnswer", "Correct"))}</span>${missList(w.correct || [], "is-ok")}</div>`
-        : `<div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.yourAnswer", "Your answer"))}</span><span class="is-no">${esc(w.yours || PT("projects.notAnswered", "Not answered"))}</span></div>
-        <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.correctAnswer", "Correct"))}</span><span class="is-ok">${esc(w.correct)}</span></div>`}
-        ${w.explain ? `<p class="quiz-miss-x">${esc(w.explain)}</p>` : ""}</li>`; }).join("");
-    $("#projQuizCard").innerHTML = `
-      <div class="quiz-score ${ok ? "is-pass" : ""}">
+    const Q = QUIZ, r = Q.result || {}, ok = !!r.passed, T = TOPIC_LABELS();
+    const { all, misses, list } = resultRows();
+    if (!list.some(x => x.n === Q.sel)) Q.sel = list.length ? list[0].n : null;
+    const topics = (r.topics || []).map(t => `${T[t.topic] || t.topic} ${PT("projects.quizScore", "{s} of {m}").replace("{s}", t.right).replace("{m}", t.total)}`).join(", ");
+    const row = (x) => `<li><button type="button" class="rs-row ${x.n === Q.sel ? "is-sel" : ""}" data-n="${x.n}" ${x.n === Q.sel ? 'aria-current="true"' : ""}>
+        <span class="rs-l1"><span class="rs-n">Q${x.n}</span>${x.topic ? `<span class="rs-t">${esc(T[x.topic] || x.topic)}</span>` : ""}</span>
+        <span class="rs-l2">${x.ok ? `<span class="rs-ok">${esc(PT("projects.youRight", "You: {a}, right").replace("{a}", letters(x.you)))}</span>`
+          : esc(PT("projects.youVsRight", "You: {a}, Right: {b}").replace("{a}", x.you == null ? "-" : letters(x.you)).replace("{b}", letters(x.right)))}</span></button></li>`;
+    const sel = all.find(x => x.n === Q.sel);
+    const opt = (i, cls) => `<li class="${cls}"><span class="rs-letter">${LETTERS[i]}</span>${esc(sel.q.options[i])}</li>`;
+    let detail = "";
+    if (sel) {
+      const you = sel.you == null ? [] : Array.isArray(sel.you) ? sel.you : [sel.you];
+      const right = Array.isArray(sel.right) ? sel.right : sel.right == null ? [] : [sel.right];
+      const multi = sel.q.type === "multi";
+      detail = `${sel.q.code ? codePanel(sel.q, { focus: stemFocus(sel.q), toggle: false }) : ""}
+        <div class="rs-text">
+          <p class="rs-meta">${esc(PT("projects.quizN", "Question {n} of {m}").replace("{n}", sel.n).replace("{m}", Q.total))}${sel.topic ? `, ${esc(T[sel.topic] || sel.topic)}` : ""}</p>
+          <h2 class="sx-h" id="rsQ">${sel.q.code ? chipify(sel.q.q, sel.q.start, sel.q.end) : esc(sel.q.q)}</h2>
+          <div class="quiz-miss-a"><span class="quiz-miss-k">${esc(multi ? PT("projects.yourAnswers", "Your answers") : PT("projects.yourAnswer", "Your answer"))}</span>
+            ${you.length ? `<ul class="quiz-miss-list">${you.map(i => opt(i, right.includes(i) ? (sel.ok ? "is-ok" : "is-kept") : "is-no")).join("")}</ul>` : `<span class="is-no">${esc(PT("projects.notAnswered", "Not answered"))}</span>`}</div>
+          ${sel.ok ? `<p class="rs-good">${esc(PT("projects.correctAnswer", "Correct"))}</p>` : `<div class="quiz-miss-a"><span class="quiz-miss-k">${esc(PT("projects.correctAnswer", "Correct"))}</span><ul class="quiz-miss-list">${right.map(i => opt(i, "is-ok")).join("")}</ul></div>`}
+          ${sel.w && sel.w.explain ? `<p class="quiz-miss-x">${esc(sel.w.explain)}</p>` : ""}
+        </div>`;
+    }
+    const verdict = ok ? PT("projects.quizPassed", "Passed. {t} is verified.").replace("{t}", Q.title)
+      : PT("projects.quizMissed", "You need {p} to pass. Go over the ones you missed, then retake it.").replace("{p}", r.pass_mark);
+    $("#projQuizCard").innerHTML = `<div class="sx is-result">
+      <div class="rs-band ${ok ? "is-pass" : ""}">
         <div class="quiz-score-l"><span class="quiz-score-n">${esc(PT("projects.quizScore", "{s} of {m}").replace("{s}", r.score).replace("{m}", r.total))}</span>
-          <span class="quiz-score-t">${esc(ok ? PT("projects.quizPassed", "Passed. {t} is verified.").replace("{t}", Q.title)
-            : PT("projects.quizMissed", "You need {p} to pass. Go over the ones you missed, then retake it.").replace("{p}", r.pass_mark))}</span></div>
+          <span class="quiz-score-t">${esc(verdict)}</span>
+          ${topics ? `<span class="rs-topics">${esc(topics)}</span>` : ""}</div>
         <button class="btn btn-primary btn-sm" id="quizMain" type="button">${esc(ok ? PT("projects.addResume", "Add to resume") : PT("projects.retake", "Retake"))}</button>
       </div>
-      ${!ok && wrong ? `<ol class="quiz-misses">${wrong}</ol>` : ""}`;
+      <div class="rs-md">
+        <section class="rs-list" role="region" aria-labelledby="rsListH">
+          <div class="rs-list-h"><span id="rsListH">${esc(Q.showAll || !misses.length ? PT("projects.allQuestions", "All questions") : PT("projects.missedN", "Missed {n}").replace("{n}", misses.length))}</span>
+            ${misses.length ? `<button type="button" class="btn btn-quiet btn-sm" id="rsAll" aria-pressed="${Q.showAll}">${esc(Q.showAll ? PT("projects.showMisses", "Show misses") : PT("projects.showAllN", "Show all {n}").replace("{n}", Q.total))}</button>` : ""}</div>
+          <ol class="rs-rows">${list.map(row).join("")}</ol>
+        </section>
+        <section class="rs-main ${sel && sel.q.code ? "has-code" : ""}" role="region" aria-labelledby="rsQ">${detail}</section>
+      </div></div>`;
+    const card = $("#projQuizCard");
+    wireCode(card, Q, renderQuizResult);
+    card.querySelectorAll(".rs-row").forEach(b => b.addEventListener("click", () => { Q.sel = +b.dataset.n; renderQuizResult(); $(`#projQuizCard .rs-row[data-n="${Q.sel}"]`)?.focus(); }));
+    $("#rsAll")?.addEventListener("click", () => { Q.showAll = !Q.showAll; renderQuizResult(); $("#rsAll")?.focus(); });
+    card.querySelector(".rs-row.is-sel")?.scrollIntoView({ block: "nearest" });
     $("#quizMain")?.addEventListener("click", async (e) => {
       if (!ok) { const p = { id: Q.id, title: Q.title }; startQuiz(p); return; }
       e.target.disabled = true;
@@ -5412,7 +5707,7 @@
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || e.defaultPrevented) return;
     if (LEARN && !$("#projLearn")?.hidden && $("#view-projects")?.classList.contains("is-active")
-        && !e.target.closest?.("input, textarea")) { e.preventDefault(); leaveLearn(); return; }
+        && !typing(e.target)) { e.preventDefault(); leaveLearn(); return; }
     if (QUIZ && !$("#projQuiz")?.hidden && $("#view-projects")?.classList.contains("is-active")) { e.preventDefault(); leaveQuiz(); return; }
     const box = $("#projIdeas");
     if (!box || box.hidden || !$("#view-projects")?.classList.contains("is-active")) return;

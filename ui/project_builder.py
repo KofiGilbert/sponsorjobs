@@ -424,18 +424,38 @@ def learn_steps(raw_steps: list, files: list[dict]) -> list[dict]:
             b = int(s.get("end") or a + 30)
         except (TypeError, ValueError):
             a, b = 1, 30
-        b = max(a, min(b, len(lines), a + 59))
+        b = max(a, min(b, len(lines), a + LEARN_MAX_LINES - 1))
         a = min(a, max(1, len(lines)))
         chk = _clean_check(s.get("check"))
         if not chk:
             continue
         out.append({"title": clean(str(s.get("title") or s["path"]).strip())[:80], "path": s["path"],
-                    "start": a, "end": b, "code": "\n".join(lines[a - 1:b]),
+                    "start": a, "end": b, "focus": _focus(s.get("focus"), a, b), "code": "\n".join(lines[a - 1:b]),
                     "explain": clean(str(s.get("explain") or "").strip())[:900],
                     "why": clean(str(s.get("why") or "").strip())[:700], "check": chk})
         if len(out) >= 8:
             break
     return out
+
+
+LEARN_MAX_LINES = 120     # an excerpt can be a whole function or file section; the focus is the part to study
+
+
+def _focus(raw, a: int, b: int) -> list[int]:
+    """The lines a step is really about, clamped inside its excerpt [a, b]. A missing or broken
+    focus falls back to the whole excerpt, so a step always has one."""
+    try:
+        fa, fb = (int(raw[0]), int(raw[1])) if isinstance(raw, (list, tuple)) and len(raw) == 2 else (a, b)
+    except (TypeError, ValueError):
+        fa, fb = a, b
+    fa, fb = max(a, min(fa, b)), max(a, min(fb, b))
+    return [fa, fb] if fa <= fb else [a, b]
+
+
+def step_focus(step: dict) -> list[int]:
+    """A step's focus range; an old cached step without one focuses on its whole excerpt."""
+    a, b = int(step.get("start") or 1), int(step.get("end") or 1)
+    return _focus(step.get("focus"), a, b)
 
 
 def _clean_check(c) -> dict | None:
@@ -450,7 +470,13 @@ def _clean_check(c) -> dict | None:
         except (TypeError, ValueError):
             return None
         if 0 <= ans < len(opts):
-            return {"kind": "choice", "q": q, "options": opts, "answer": ans, "explain": why}
+            out = {"kind": "choice", "q": q, "options": opts, "answer": ans, "explain": why}
+            # One line per option on why it is right or wrong, shown after Check for the option
+            # picked. Kept only when there is exactly one per option (and never sent before Check).
+            whys = [clean(str(w).strip())[:220] for w in (c.get("whys") or []) if isinstance(w, (str, int, float))]
+            if len(whys) == len(opts) and all(whys):
+                out["whys"] = whys
+            return out
         return None
     acc = [str(a).strip().lower()[:60] for a in (c.get("accept") or []) if str(a).strip()]
     if acc:
@@ -469,11 +495,23 @@ def check_answer(step: dict, answer) -> bool:
     return bool(said) and any(a in said for a in c.get("accept") or [])
 
 
+def option_why(step: dict, answer) -> str:
+    """The one line on the option that was picked, or "" when the step has none (old caches)."""
+    c = step.get("check") or {}
+    whys = c.get("whys") or []
+    try:
+        k = int(answer)
+    except (TypeError, ValueError):
+        return ""
+    return whys[k] if c.get("kind") == "choice" and not isinstance(answer, bool) and 0 <= k < len(whys) else ""
+
+
 def public_step(step: dict) -> dict:
-    """A step as the client sees it: the answer key stays on the server."""
+    """A step as the client sees it: the answer key and the per-option lines stay on the server."""
     c = step.get("check") or {}
     return {"title": step.get("title", ""), "path": step.get("path", ""), "start": step.get("start", 1),
-            "end": step.get("end", 1), "code": step.get("code", ""), "explain": step.get("explain", ""),
+            "end": step.get("end", 1), "focus": step_focus(step), "code": step.get("code", ""),
+            "explain": step.get("explain", ""),
             "why": step.get("why", ""),
             "check": {"kind": c.get("kind", "choice"), "q": c.get("q", ""), "options": c.get("options") or []}}
 
@@ -616,7 +654,7 @@ def grade_quiz(questions: list[dict], attempt: dict, answers: list) -> dict:
     Returns the score, the pass mark, whether it passed, and each wrong question with the right
     answer(s) and its explanation (lists for a multi question, so the review can show both)."""
     total = len(attempt["order"])
-    score, wrong = 0, []
+    score, wrong, items = 0, [], []
     for k, qi in enumerate(attempt["order"]):
         q, perm = questions[qi], attempt["opts"][k]
         pick = answers[k] if k < len(answers) else None
@@ -626,8 +664,10 @@ def grade_quiz(questions: list[dict], attempt: dict, answers: list) -> dict:
             got = sorted({g for g in mapped if g is not None})
             if got == right and None not in mapped:                  # an invalid pick is never right
                 score += 1
+                items.append({"n": k + 1, "ok": True, "topic": q.get("topic", "")})
                 continue
-            wrong.append({"n": k + 1, "q": q["q"], "type": "multi",
+            items.append({"n": k + 1, "ok": False, "topic": q.get("topic", "")})
+            wrong.append({"n": k + 1, "q": q["q"], "type": "multi", "topic": q.get("topic", ""),
                           "yours": [q["options"][g] for g in sorted(got, key=perm.index)],
                           "correct": [q["options"][r] for r in sorted(right, key=perm.index)],
                           "explain": q.get("explain", "")})
@@ -635,8 +675,25 @@ def grade_quiz(questions: list[dict], attempt: dict, answers: list) -> dict:
         got = None if isinstance(pick, list) else _shown_to_original(perm, pick)
         if got == right[0]:
             score += 1
+            items.append({"n": k + 1, "ok": True, "topic": q.get("topic", "")})
             continue
-        wrong.append({"n": k + 1, "q": q["q"], "type": "single", "yours": q["options"][got] if got is not None else "",
+        items.append({"n": k + 1, "ok": False, "topic": q.get("topic", "")})
+        wrong.append({"n": k + 1, "q": q["q"], "type": "single", "topic": q.get("topic", ""),
+                      "yours": q["options"][got] if got is not None else "",
                       "correct": q["options"][right[0]], "explain": q.get("explain", "")})
     need = quiz_pass_mark(total)
-    return {"score": score, "total": total, "pass_mark": need, "passed": score >= need, "wrong": wrong}
+    return {"score": score, "total": total, "pass_mark": need, "passed": score >= need, "wrong": wrong,
+            "items": items, "topics": quiz_breakdown(items)}
+
+
+def quiz_breakdown(items: list[dict]) -> list[dict]:
+    """Right out of asked per topic, in the quiz's topic order. Empty when the questions carry no
+    topic (a quiz cached before topics), so the result simply leaves the line out."""
+    if not items or not all(i.get("topic") for i in items):
+        return []
+    out = []
+    for t in QUIZ_TOPICS + tuple(sorted({i["topic"] for i in items} - set(QUIZ_TOPICS))):
+        mine = [i for i in items if i["topic"] == t]
+        if mine:
+            out.append({"topic": t, "right": sum(1 for i in mine if i["ok"]), "total": len(mine)})
+    return out

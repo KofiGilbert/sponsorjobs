@@ -1227,34 +1227,67 @@ class FakeLLM:
             out.append({"path": p, "content": body})
         return {"files": out}
 
+    def choice_checks_for(self, items: list) -> dict:
+        """Deterministic stand-in: the accepted keyword becomes option A, three fixed decoys follow."""
+        out = []
+        for it in items or []:
+            right = (it.get("accept") or ["it"])[0]
+            opts = [right, "It is required by Python", "It makes the code faster", "Nothing in particular"]
+            out.append({"i": it.get("i"), "q": it.get("q", ""), "options": opts, "answer": 0,
+                        "explain": it.get("explain", ""),
+                        "whys": ["Right: " + (it.get("explain") or "this matches the code."), "Python does not require it.",
+                                 "Speed is not the reason here.", "The code does it on purpose."]})
+        return {"checks": out}
+
     def generate_learn_steps(self, project: dict, files: list) -> dict:
-        ch = lambda q, opts, a, why: {"kind": "choice", "q": q, "options": opts, "answer": a, "explain": why}
+        ch = lambda q, opts, a, why, whys: {"kind": "choice", "q": q, "options": opts, "answer": a, "explain": why,
+                                            "whys": whys}
         return {"steps": [
-            {"title": "Where it starts", "path": "tracker/cli.py", "start": 1, "end": 16,
-             "explain": "The CLI reads numbers from the command line and prints four stats.",
+            {"title": "Where it starts", "path": "tracker/cli.py", "start": 1, "end": 16, "focus": [7, 12],
+             "explain": "The CLI is the front door. main() on line 8 takes the arguments after the script name, "
+                        "line 9 hands them to summarize(), and lines 10 to 11 print the four stats one per line. "
+                        "Returning 0 tells the shell the run worked.",
              "why": "Keeping input and output here leaves the core free of printing, so it is easy to test.",
              "check": ch("What does main() pass to summarize()?", ["The command line arguments", "A file path", "Nothing"], 0,
-                         "It passes the arguments after the script name.")},
-            {"title": "The core calculation", "path": "tracker/core.py", "start": 1, "end": 16,
-             "explain": "summarize() converts each value to a float and returns count, min, max and mean.",
+                         "It passes the arguments after the script name.",
+                         ["Right: line 8 slices sys.argv after the script name and line 9 passes it on.",
+                          "No file is opened anywhere in main(); the values come straight from the command line.",
+                          "Line 9 calls summarize(args), so it always receives the arguments."])},
+            {"title": "The core calculation", "path": "tracker/core.py", "start": 1, "end": 14, "focus": [4, 8],
+             "explain": "mean() guards the empty case on line 6 before dividing on line 8. summarize() converts each "
+                        "value to a float on line 13 and returns count, min, max and mean in one dictionary.",
              "why": "Pure functions with no side effects are simple to reason about and to test.",
              "check": ch("Why does mean() raise on an empty list?", ["To avoid dividing by zero", "To save memory", "Python requires it"], 0,
-                         "len([]) is 0, and dividing by it would crash with a less clear error.")},
-            {"title": "The package surface", "path": "tracker/__init__.py", "start": 1, "end": 4,
+                         "len([]) is 0, and dividing by it would crash with a less clear error.",
+                         ["Right: len([]) is 0, so line 8 would divide by zero without the guard on line 6.",
+                          "The guard allocates nothing; it only stops a division by zero.",
+                          "Python would happily run the division and crash; the guard is a deliberate choice."])},
+            {"title": "The package surface", "path": "tracker/__init__.py", "start": 1, "end": 4, "focus": [2, 4],
              "explain": "The package exposes summarize() at the top level.",
              "why": "A small public surface means callers depend on one function, not on file layout.",
-             "check": {"kind": "line", "q": "Which function does the package export?", "accept": ["summarize"],
-                       "explain": "__all__ lists summarize."}},
-            {"title": "How it is tested", "path": "tests/test_core.py", "start": 1, "end": 13,
-             "explain": "Two tests cover the normal case and the empty-list error.",
+             "check": ch("Which function does the package export?", ["summarize", "mean", "main", "clean"], 0,
+                         "__all__ lists summarize.",
+                         ["Right: __all__ lists summarize, the one public entry point.",
+                          "mean is an internal helper, not in __all__.",
+                          "main lives in the CLI module, not the package surface.",
+                          "There is no clean function in this project."])},
+            {"title": "How it is tested", "path": "tests/test_core.py", "start": 1, "end": 13, "focus": [11, 13],
+             "explain": "Two tests cover the normal case and the empty-list error. Lines 11 to 13 assert that "
+                        "mean([]) raises ValueError.",
              "why": "Testing the edge case proves the error path is deliberate, not an accident.",
              "check": ch("Which edge case is tested?", ["An empty list", "Negative numbers", "Very large lists"], 0,
-                         "test_mean_of_empty_list_is_an_error covers it.")},
+                         "test_mean_of_empty_list_is_an_error covers it.",
+                         ["Right: line 13 calls mean([]) inside pytest.raises.",
+                          "No test passes a negative number; that case is not covered.",
+                          "The tests use three numbers at most; size is not tested."])},
             {"title": "Running it", "path": "README.md", "start": 1, "end": 30,
              "explain": "The README says what it solves and the exact commands to run it and its tests.",
              "why": "A recruiter reads the README first, so the run steps must work as written.",
              "check": ch("Which command runs the tests?", ["pytest", "python setup.py", "make run"], 0,
-                         "pytest discovers tests/test_core.py.")},
+                         "pytest discovers tests/test_core.py.",
+                         ["Right: pytest finds tests/test_core.py on its own.",
+                          "There is no setup.py in this project.",
+                          "There is no Makefile in this project."])},
         ]}
 
     def generate_project_quiz(self, project: dict, files: list, steps: list) -> dict:

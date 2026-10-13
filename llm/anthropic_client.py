@@ -1365,20 +1365,39 @@ class AnthropicLLM:
             "an interview. Write a 5 to 8 step walkthrough in the order a reader should learn it "
             "(entry point, core logic, data, tests). For EACH step:\n"
             "- title: short.\n- path: one file from the listing.\n- start, end: the line range "
-            "(numbers in the listing) of the excerpt to study, at most 40 lines.\n"
-            "- explain: 2 to 4 plain-English sentences on what this code does.\n"
+            "(numbers in the listing) of the excerpt to show, a whole function or section, at most 80 lines.\n"
+            "- focus: [first, last], the few lines inside that range the step is really about, at most "
+            "15 lines.\n"
+            "- explain: what this code does, plain English, 60 to 110 words. Name lines as \"line 12\" or "
+            "\"lines 12 to 15\" using the listing's numbers.\n"
             "- why: 1 to 3 sentences on why it was built this way and the alternative.\n"
-            "- check: one quick question with instant feedback. Prefer multiple choice: "
-            "{\"kind\": \"choice\", \"q\": \"...\", \"options\": [3 or 4 short options], \"answer\": "
-            "index of the right option, \"explain\": \"why that is right\"}. Or one line: "
-            "{\"kind\": \"line\", \"q\": \"...\", \"accept\": [1 to 3 short keywords any right answer "
-            "contains], \"explain\": \"...\"}.\nPlain text, no em or en dashes. Return ONLY JSON "
+            "- check: one quick MULTIPLE-CHOICE question with instant feedback, always this shape: "
+            "{\"kind\": \"choice\", \"q\": \"...\", \"options\": [EXACTLY 4 short options, one right and "
+            "three plausible wrong ones], \"answer\": index of the right option, \"explain\": \"why that is "
+            "right\", \"whys\": [one short line per option, in the same order, saying why THAT option is "
+            "right or wrong]}. Never ask for typed answers.\nPlain text, no em or en dashes. Return ONLY JSON "
             "{\"steps\": [...]}."
         )
         raw = self._complete(system, f"PROJECT\n{self._idea_text(project)}\n\nFILES\n{listing}",
                              max_tokens=5000, effort="medium")
         data = self._parse_json_object(raw) or {}
         return {"steps": [s for s in (data.get("steps") or []) if isinstance(s, dict)][:8]}
+
+    def choice_checks_for(self, items: list) -> dict:
+        """Turn typed one-line Learn it checks (walkthroughs cached before checks were always multiple
+        choice) into multiple-choice ones. ``items`` is [{"i", "q", "accept", "explain", "code"}];
+        returns {"checks": [{"i", "q", "options", "answer", "explain", "whys"}]}. One small call."""
+        system = (
+            "Rewrite each quick-check question below as multiple choice for a student learning this "
+            "code. For each item return {\"i\": same i, \"q\": the question, \"options\": EXACTLY 4 short "
+            "options (one right, matching the accepted answer, three plausible wrong ones), \"answer\": "
+            "index of the right option, \"explain\": why it is right, \"whys\": [one short line per "
+            "option saying why THAT option is right or wrong]}. Plain text, no em or en dashes. Return "
+            "ONLY JSON {\"checks\": [...]}."
+        )
+        raw = self._complete(system, json.dumps(items)[:12000], max_tokens=2500, effort="low")
+        data = self._parse_json_object(raw) or {}
+        return {"checks": [c for c in (data.get("checks") or []) if isinstance(c, dict)]}
 
     def generate_project_quiz(self, project: dict, files: list, steps: list) -> dict:
         """Defend it: a 20-question multiple-choice quiz on THIS project, from its files and the

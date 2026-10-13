@@ -6020,6 +6020,29 @@ def projects_learn(pid):
             return jsonify({"error": "Couldn't prepare the walkthrough right now. Try again."}), 502
         lr = {"steps": steps, "learned": [], "answers": {}}
         p = _update_project(pid, lambda x: x.update(learn=lr))
+    # Checks are always multiple choice (owner, 2026-10-13). A walkthrough cached before that rule may
+    # still hold typed one-line checks: convert them once with one small call and cache the result.
+    typed = [i for i, s in enumerate(lr["steps"]) if (s.get("check") or {}).get("kind") == "line"]
+    if typed:
+        try:
+            items = [{"i": i, "q": lr["steps"][i]["check"].get("q", ""), "accept": lr["steps"][i]["check"].get("accept") or [],
+                      "explain": lr["steps"][i]["check"].get("explain", ""), "code": lr["steps"][i].get("code", "")[:1500]}
+                     for i in typed]
+            got = {c.get("i"): c for c in (_make_llm().choice_checks_for(items) or {}).get("checks") or []}
+            fixed = {}
+            for i in typed:
+                c = PB._clean_check(dict(got.get(i) or {}, kind="choice"))
+                if c and c.get("kind") == "choice":
+                    fixed[i] = c
+            if fixed:
+                def apply(x):
+                    for i, c in fixed.items():
+                        x["learn"]["steps"][i]["check"] = c
+                        (x["learn"].get("answers") or {}).pop(str(i), None)
+                p = _update_project(pid, apply)
+                lr = p.get("learn") or lr
+        except Exception as exc:                       # noqa: BLE001 - a typed check still works
+            print(f"[projects] learn {pid}: could not convert typed checks: {exc}")
     return jsonify({"steps": [PB.public_step(s) for s in lr["steps"]], "learned": sorted(set(lr.get("learned") or [])),
                     "project": _project_public(p)})
 
@@ -6050,6 +6073,7 @@ def projects_learn_answer(pid, idx):
     c = steps[idx].get("check") or {}
     right = c["options"][c["answer"]] if c.get("kind") == "choice" else ""
     return jsonify({"correct": ok, "explain": c.get("explain", ""), "answer": right if ok else "",
+                    "why": PB.option_why(steps[idx], ans),
                     "learned": (p.get("learn") or {}).get("learned") or [], "total": len(steps),
                     "project": _project_public(p)})
 
