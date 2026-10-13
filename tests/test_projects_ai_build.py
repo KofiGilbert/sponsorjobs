@@ -300,7 +300,7 @@ def test_learn_it_steps_come_from_the_real_files_and_progress_is_saved(client, m
     r = c.post(f"/api/projects/{pid}/learn/0", json={"answer": 2}).get_json()
     assert r["correct"] is False and r["explain"]
     assert c.post(f"/api/projects/{pid}/learn/0", json={"answer": 0}).get_json()["correct"] is True
-    assert c.post(f"/api/projects/{pid}/learn/2", json={"answer": "It exports summarize"}).get_json()["correct"]
+    assert c.post(f"/api/projects/{pid}/learn/2", json={"answer": 0}).get_json()["correct"]      # A: summarize
     p = _project(c, pid)
     assert p["learn"] == {"total": len(steps), "learned": 2} and p["stage"] == "learn"
     # generated once and cached: a second open makes no model call

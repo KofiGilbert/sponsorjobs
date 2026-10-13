@@ -179,10 +179,44 @@ def test_split_markup_and_accessibility_hooks():
     html = (ROOT / "ui" / "templates" / "index.html").read_text()
     css = (ROOT / "ui" / "static" / "styles.css").read_text()
     assert 'id="projProg"' in html and "projLearnRail" not in html and "projQuizRail" not in html
-    assert "minmax(520px, 1.35fr) minmax(420px, 1fr)" in css and "@container sx (max-width: 699px)" in css
+    assert "minmax(520px, 1fr) minmax(400px, 520px)" in css and "@container sx (max-width: 699px)" in css
     assert "@media (max-height: 640px)" in css
     panel = APP[APP.index("function codePanel("):APP.index("function wireCode(")]
     assert 'role="region"' in panel and 'tabindex="0"' in panel
     row = APP[APP.index("function optRow("):APP.index("function syncOpts(")]
     assert 'type="${multi ? "checkbox" : "radio"}"' in row
     assert 'id="learnFb" aria-live="polite"' in APP
+
+
+def test_learn_checks_are_always_multiple_choice(client):
+    """Owner decision 2026-10-13: every Learn it check is A to D multiple choice, never typed."""
+    A, c = client
+    pid = c.post("/api/projects/start", json={"idea": IDEA, "local": True}).get_json()["project"]["id"]
+    d = c.post(f"/api/projects/{pid}/learn").get_json()
+    assert d["steps"] and all(s["check"]["kind"] == "choice" and len(s["check"]["options"]) >= 3 for s in d["steps"])
+
+
+def test_typed_checks_cached_earlier_are_converted_once(client):
+    A, c = client
+    pid = c.post("/api/projects/start", json={"idea": IDEA, "local": True}).get_json()["project"]["id"]
+    c.post(f"/api/projects/{pid}/learn")
+
+    def make_typed(x):
+        x["learn"]["steps"][1]["check"] = {"kind": "line", "q": "Which function is exported?",
+                                           "accept": ["summarize"], "explain": "__all__ lists it."}
+    A._update_project(pid, make_typed)
+    d = c.post(f"/api/projects/{pid}/learn").get_json()
+    chk = d["steps"][1]["check"]
+    assert chk["kind"] == "choice" and len(chk["options"]) == 4 and "answer" not in chk
+    stored = _store(A, pid)["learn"]["steps"][1]["check"]
+    assert stored["kind"] == "choice" and stored["options"][stored["answer"]] == "summarize"
+    # cached: a second open makes no further conversion
+    calls = []
+    import llm.base as B
+    orig = B.FakeLLM.choice_checks_for
+    B.FakeLLM.choice_checks_for = lambda self, items: (calls.append(items), orig(self, items))[1]
+    try:
+        c.post(f"/api/projects/{pid}/learn")
+    finally:
+        B.FakeLLM.choice_checks_for = orig
+    assert calls == []

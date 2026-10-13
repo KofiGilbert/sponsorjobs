@@ -1227,6 +1227,18 @@ class FakeLLM:
             out.append({"path": p, "content": body})
         return {"files": out}
 
+    def choice_checks_for(self, items: list) -> dict:
+        """Deterministic stand-in: the accepted keyword becomes option A, three fixed decoys follow."""
+        out = []
+        for it in items or []:
+            right = (it.get("accept") or ["it"])[0]
+            opts = [right, "It is required by Python", "It makes the code faster", "Nothing in particular"]
+            out.append({"i": it.get("i"), "q": it.get("q", ""), "options": opts, "answer": 0,
+                        "explain": it.get("explain", ""),
+                        "whys": ["Right: " + (it.get("explain") or "this matches the code."), "Python does not require it.",
+                                 "Speed is not the reason here.", "The code does it on purpose."]})
+        return {"checks": out}
+
     def generate_learn_steps(self, project: dict, files: list) -> dict:
         ch = lambda q, opts, a, why, whys: {"kind": "choice", "q": q, "options": opts, "answer": a, "explain": why,
                                             "whys": whys}
@@ -1253,8 +1265,12 @@ class FakeLLM:
             {"title": "The package surface", "path": "tracker/__init__.py", "start": 1, "end": 4, "focus": [2, 4],
              "explain": "The package exposes summarize() at the top level.",
              "why": "A small public surface means callers depend on one function, not on file layout.",
-             "check": {"kind": "line", "q": "Which function does the package export?", "accept": ["summarize"],
-                       "explain": "__all__ lists summarize."}},
+             "check": ch("Which function does the package export?", ["summarize", "mean", "main", "clean"], 0,
+                         "__all__ lists summarize.",
+                         ["Right: __all__ lists summarize, the one public entry point.",
+                          "mean is an internal helper, not in __all__.",
+                          "main lives in the CLI module, not the package surface.",
+                          "There is no clean function in this project."])},
             {"title": "How it is tested", "path": "tests/test_core.py", "start": 1, "end": 13, "focus": [11, 13],
              "explain": "Two tests cover the normal case and the empty-list error. Lines 11 to 13 assert that "
                         "mean([]) raises ValueError.",
