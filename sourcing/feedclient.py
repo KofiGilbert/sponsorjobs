@@ -8,7 +8,18 @@ descriptions are fetched per shard when a role is opened and cached for a day.
 
 Every network failure degrades, never raises, as long as a cached copy exists; with no cache at
 all `FeedUnavailable` tells the caller to fall back to the local crawl. A data dir with no cache
-yet downloads the list at once (the app shows "fetching jobs" meanwhile). A failed download is
+yet starts the download at once; `FeedLoading` (a FeedUnavailable) tells the caller the first
+download is still running, with the bytes so far in `status()`, so the board says "downloading".
+
+The list is NEVER downloaded inside a request (2026-10-14: on a ~60 KB/s link the ~10 MB list took
+minutes, the request held the lock the whole time, a 10 s read timeout then killed it, and the
+board fell back to an empty local list after 332 s). `jobs()` serves the cached copy and starts a
+BACKGROUND download when one is due (one at a time); it waits at most `wait` seconds (under a
+second) for it, so a fast link still gets the fresh list on the same request. The download streams
+to a temp file in chunks, gives up after STALL_TIMEOUT seconds with no bytes or DOWNLOAD_CAP in
+total, retries a couple of times, and lands by atomic rename; the old list keeps serving meanwhile.
+Every request asks for `Accept-Encoding: gzip`: the CDN otherwise inflates the stored gzip on the
+fly and sends ~18x the bytes (~180 MB) with no Content-Length. A failed download is
 remembered and not retried for a short, growing back-off (5 min doubling up to the hourly slot), so
 an unreachable host costs one short timeout per window instead of one per request. Flask serves
 requests from several threads: refresh/load run under a per-instance lock, every file lands via a
@@ -37,13 +48,25 @@ CHECK_EVERY = 3600          # a new list is looked for at most once an hour
 RETRY_AFTER = 300           # a failed download is not retried for 5 min, doubling per failure...
 RETRY_MAX = CHECK_EVERY     # ...up to the hourly slot
 JD_TTL = 86400              # a cached JD shard is trusted for a day (matches its Cache-Control)
-DEFAULT_TIMEOUT = 10        # a background refresh must never hold a request longer than this
+DEFAULT_TIMEOUT = 10        # a JD shard fetch (small, opened by a click) gives up after this
+STALL_TIMEOUT = 30          # the list download: this long with no bytes at all = a stalled link
+DOWNLOAD_CAP = 45 * 60      # ...and the whole download is abandoned after this long (the origin ignores
+                            # Range, so a cut-off download restarts from zero: the cap must admit a
+                            # ~10 MB list on a few KB/s, and the stall timeout catches a dead link)
+DOWNLOAD_TRIES = 3          # attempts per background download before it counts as one failure
+RETRY_PAUSE = 5             # seconds between those attempts (doubling)
+REQUEST_WAIT = 0.8          # how long a request waits on a download it just started
+CHUNK = 64 * 1024
 STATE_FILE = "feed_state.json"
 _UA = "resume-agent/1.0 (static feed client)"
 
 
 class FeedUnavailable(RuntimeError):
     """No cached feed and the download failed: the caller should use the local crawl."""
+
+
+class FeedLoading(FeedUnavailable):
+    """No cached feed yet, and the first download is running in the background right now."""
 
 
 def is_placeholder(url: str) -> bool:
@@ -55,8 +78,10 @@ def is_placeholder(url: str) -> bool:
 
 
 def _http_fetch(url: str, headers: dict, timeout: float = DEFAULT_TIMEOUT) -> tuple[int, dict, bytes]:
-    """(status, response headers, body). A 304 is returned as a status, not raised."""
-    req = urllib.request.Request(url, headers={"User-Agent": _UA, **headers})
+    """(status, response headers, body). A 304 is returned as a status, not raised. Asks for gzip
+    (the stored bytes); loads_maybe_gz reads either form."""
+    req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept-Encoding": "gzip",
+                                               **headers})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read()
@@ -65,6 +90,47 @@ def _http_fetch(url: str, headers: dict, timeout: float = DEFAULT_TIMEOUT) -> tu
     except urllib.error.HTTPError as exc:
         if exc.code == 304:
             return 304, {}, b""
+        raise
+
+
+def _http_download(url: str, headers: dict, dest, on_progress=None,
+                   stall: float | None = None, cap: float | None = None) -> tuple[int, dict]:
+    """Stream `url` into the open binary file `dest` in chunks. (status, headers); a 304 is a
+    status. `stall` is the socket timeout, so a link that sends nothing for that long raises
+    TimeoutError; a slow link that keeps sending never trips it. `cap` bounds the whole transfer.
+    `on_progress(bytes_so_far, total_or_None)` is called after each chunk."""
+    stall = STALL_TIMEOUT if stall is None else stall
+    cap = DOWNLOAD_CAP if cap is None else cap
+    req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept-Encoding": "gzip",
+                                               **headers})
+    start = time.monotonic()
+    try:
+        with urllib.request.urlopen(req, timeout=stall) as resp:
+            status = int(getattr(resp, "status", 200) or 200)
+            hdrs = getattr(resp, "headers", None)
+            hdrs = dict(hdrs.items()) if hdrs else {}
+            total = next((v for k, v in hdrs.items() if k.lower() == "content-length"), None)
+            total = int(total) if total and str(total).isdigit() else None
+            got = 0
+            # read1 returns whatever has arrived (up to CHUNK), so progress moves on a slow link;
+            # read(CHUNK) would sit until a full 64 KB had trickled in.
+            read = getattr(resp, "read1", None) or resp.read
+            while True:
+                chunk = read(CHUNK)
+                if not chunk:
+                    break
+                dest.write(chunk)
+                got += len(chunk)
+                if on_progress:
+                    on_progress(got, total)
+                if time.monotonic() - start > cap:
+                    raise TimeoutError(f"feed download passed {int(cap)} s")
+            if total is not None and got < total:
+                raise OSError(f"feed download ended early ({got} of {total} bytes)")
+            return status, hdrs
+    except urllib.error.HTTPError as exc:
+        if exc.code == 304:
+            return 304, {}
         raise
 
 
@@ -77,11 +143,34 @@ class StaticFeed:
     cache it already holds."""
 
     def __init__(self, base_url: str, cache_dir, fetch=None, clock=time.time,
-                 timeout: float = DEFAULT_TIMEOUT):
+                 timeout: float = DEFAULT_TIMEOUT, download=None, wait: float | None = None,
+                 tries: int | None = None, retry_pause: float | None = None):
         self.base_url = (base_url or "").rstrip("/")
         self.cache_dir = Path(cache_dir)
         self._fetch = fetch or (lambda u, h: _http_fetch(u, h, timeout))
+        # The list streams to disk. An injected `fetch` (tests) serves the list too, as one body.
+        if download is not None:
+            self._stream = download
+        elif fetch is not None:
+            self._stream = self._stream_via_fetch
+        else:
+            self._stream = _http_download
+        # Defaults are read from the module at construction (so a test can monkeypatch them). An
+        # injected one-shot `fetch` is a unit test's fake origin: one try, no pause, so its call
+        # counts and back-off assertions see exactly one attempt per refresh.
+        fake = fetch is not None and download is None
+        self._wait = REQUEST_WAIT if wait is None else wait
+        self._tries = max(1, int(tries if tries is not None else (1 if fake else DOWNLOAD_TRIES)))
+        self._retry_pause = (retry_pause if retry_pause is not None
+                             else (0 if fake else RETRY_PAUSE))
         self._clock = clock
+        # The background download: one at a time, never under self._lock while bytes flow.
+        self._dl_lock = threading.Lock()
+        self._dl_thread: threading.Thread | None = None
+        self._dl_done = threading.Event()
+        self._dl_done.set()
+        self._progress: dict = {"running": False, "bytes": 0, "total": None, "started": None,
+                                "attempt": 0, "error": ""}
         # Flask is threaded: /api/jobs and /api/jobs/detail can both find the list due at the same
         # moment. One downloads; the other waits, sees it is no longer due, and serves the cache.
         self._lock = threading.RLock()
@@ -156,17 +245,108 @@ class StaticFeed:
     # -- the list -------------------------------------------------------------------------- #
 
     def refresh(self, force: bool = False) -> bool:
-        """Download jobs.json.gz if due (or forced). Returns True when a NEW file landed. Raises on
-        network/format errors; callers decide whether a cached copy covers for it. A failure is
-        recorded so the next attempt waits out `retry_after()`. Serialized per instance."""
+        """Download jobs.json.gz now if due (or forced), on THIS thread. Returns True when a NEW
+        file landed. Raises on network/format errors; callers decide whether a cached copy covers
+        for it. A failure is recorded so the next attempt waits out `retry_after()`. One download
+        at a time: a second caller waits for the first, then finds the list no longer due."""
+        with self._dl_lock:
+            with self._lock:
+                if not force and not self.due():
+                    return False
+            return self._run_download()
+
+    def start_refresh(self, force: bool = False) -> bool:
+        """Start a BACKGROUND download when one is due (or forced) and none is running. Returns
+        True when a download is running after the call. Never blocks on the network."""
         with self._lock:
+            if self._dl_thread is not None and self._dl_thread.is_alive():
+                return True
             if not force and not self.due():
                 return False
+            self._dl_done.clear()
+            self._progress.update({"running": True, "bytes": 0, "total": None,
+                                   "started": time.time(), "attempt": 0, "error": ""})
+
+            def run():
+                try:
+                    with self._dl_lock:
+                        with self._lock:
+                            still = force or self.due()
+                        if still:
+                            self._run_download()
+                except Exception:                     # noqa: BLE001 - recorded in state + status
+                    traceback.print_exc()
+                finally:
+                    with self._lock:
+                        self._progress["running"] = False
+                    self._dl_done.set()
+
+            t = threading.Thread(target=run, name="feed-download", daemon=True)
+            self._dl_thread = t
+            t.start()
+            return True
+
+    def downloading(self) -> bool:
+        t = self._dl_thread
+        return bool(t is not None and t.is_alive())
+
+    def wait_download(self, timeout: float | None = None) -> bool:
+        """Block until the background download (if any) finishes. True when none is running."""
+        return self._dl_done.wait(timeout)
+
+    def status(self) -> dict:
+        """What the board shows while there is no list yet: is a download running, how far along,
+        and the last failure. Cheap; never touches the network."""
+        with self._lock:
+            p = dict(self._progress)
+            has = self.jobs_path.exists()
+        return {"configured": bool(self.base_url), "has_cache": has,
+                "downloading": self.downloading(), "bytes": p.get("bytes") or 0,
+                "total": p.get("total"), "attempt": p.get("attempt") or 0,
+                "error": "" if self.downloading() else (p.get("error") or ""),
+                "failing": bool(int(self._state.get("fail_count") or 0)),
+                "retry_in": max(0, int(float(self._state.get("last_fail") or 0)
+                                       + self.retry_after() - self._clock()))
+                            if int(self._state.get("fail_count") or 0) else 0}
+
+    def _run_download(self) -> bool:
+        """Up to `tries` attempts with a short growing pause; a final failure is recorded."""
+        last: Exception | None = None
+        for attempt in range(1, self._tries + 1):
+            with self._lock:
+                self._progress.update({"attempt": attempt, "bytes": 0, "total": None})
             try:
-                return self._download()
-            except Exception:
-                self._record_failure()
-                raise
+                landed = self._download()
+                with self._lock:
+                    self._progress["error"] = ""
+                return landed
+            except Exception as exc:                      # noqa: BLE001 - retried, then raised
+                last = exc
+                with self._lock:
+                    self._progress["error"] = f"{type(exc).__name__}: {exc}"[:200]
+                    got = self._progress.get("bytes") or 0
+                print(f"[feed] download attempt {attempt}/{self._tries} failed after {got} bytes: "
+                      f"{self._progress['error']}", flush=True)
+                if isinstance(exc, FeedUnavailable) and "HTTP 4" in str(exc):
+                    break                                 # a 404 / 403 will not fix itself in seconds
+                if attempt < self._tries and self._retry_pause:
+                    time.sleep(self._retry_pause * 2 ** (attempt - 1))
+        with self._lock:
+            self._record_failure()
+        raise last  # type: ignore[misc]
+
+    def _stream_via_fetch(self, url, headers, dest, on_progress=None):
+        """Adapter: an injected one-shot `fetch` (the unit tests' fake origin) as a stream."""
+        status, hdrs, body = self._fetch(url, headers)
+        if body:
+            dest.write(body)
+            if on_progress:
+                on_progress(len(body), len(body))
+        return status, hdrs
+
+    def _on_progress(self, got: int, total) -> None:
+        self._progress["bytes"] = got
+        self._progress["total"] = total
 
     def _record_failure(self) -> None:
         now = self._clock()
@@ -184,10 +364,27 @@ class StaticFeed:
         self._state.pop("fail_count", None)
 
     def _download(self) -> bool:
+        """One attempt: stream to a uniquely named temp file (no lock held while bytes flow), then
+        validate and publish under the lock by atomic rename."""
         headers = {"Accept": "application/json"}
-        if self._state.get("etag") and self.jobs_path.exists():
-            headers["If-None-Match"] = self._state["etag"]
-        status, hdrs, body = self._fetch(f"{self.base_url}/{JOBS_FILE}", headers)
+        with self._lock:
+            if self._state.get("etag") and self.jobs_path.exists():
+                headers["If-None-Match"] = self._state["etag"]
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(self.cache_dir), prefix=JOBS_FILE + ".", suffix=".part")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                status, hdrs = self._stream(f"{self.base_url}/{JOBS_FILE}", headers, f,
+                                            self._on_progress)
+            with self._lock:
+                return self._publish(status, hdrs or {}, Path(tmp))
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    def _publish(self, status: int, hdrs: dict, tmp: Path) -> bool:
         now = self._clock()
         if status == 304:
             self._state["last_check"] = now
@@ -196,19 +393,23 @@ class StaticFeed:
             return False
         if status != 200:
             raise FeedUnavailable(f"feed returned HTTP {status}")
+        body = tmp.read_bytes()
         data = loads_maybe_gz(body)
         if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
             raise FeedUnavailable("feed file has an unexpected shape")
-        raw = body if body[:2] == b"\x1f\x8b" else gzip.compress(body, mtime=0)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
         if not data.get("jobs") and self._cached_rows_exist():
             # A crawl that errored on every board still publishes a valid, empty list. Keep the
             # rows we have, note the check so this is not retried every request, and let the
             # caller decide (ui/app.py treats a persistently empty feed as absent).
             self._state.update({"last_check": now})
+            self._clear_failures()
             self._save_state()
             return False
-        _atomic_write(self.jobs_path, raw)
+        if body[:2] == b"\x1f\x8b":
+            os.replace(tmp, self.jobs_path)               # already the stored gzip: just rename
+        else:
+            _atomic_write(self.jobs_path, gzip.compress(body, mtime=0))
+        del body
         etag = next((v for k, v in (hdrs or {}).items() if k.lower() == "etag"), None)
         self._state.update({"last_check": now, "etag": etag,
                             "generated_at": data.get("generated_at")})
@@ -277,19 +478,27 @@ class StaticFeed:
             traceback.print_exc()
 
     def jobs(self) -> tuple[list[dict], dict]:
-        """(rows, header). Refreshes when due; a failed refresh falls back to the cached copy;
-        no copy at all raises FeedUnavailable."""
+        """(rows, header). Never downloads on the caller's thread: when a refresh is due it starts
+        one in the background and waits at most `wait` seconds for it (a fast link gets the new
+        list now; a slow one gets the cached copy, or FeedLoading when there is none yet). A
+        failed refresh falls back to the cached copy; no copy and no download raises
+        FeedUnavailable."""
         with self._lock:
             self._load_cached()      # drops a corrupt file first, so the refresh below is due now
-            try:
-                self.refresh()
-            except Exception:                             # noqa: BLE001 - serve the cache instead
-                if self._jobs is None and not self.jobs_path.exists():
-                    raise FeedUnavailable("feed download failed and nothing is cached")
-                traceback.print_exc()
+            running = self.start_refresh()
+            started = float(self._progress.get("started") or 0)
+        # Wait at most `wait` seconds from the download's START: a fast link lands it for every
+        # request in that window, while the polls of a long download answer at once.
+        left = (started + self._wait - time.time()) if running else 0
+        if left > 0:
+            self._dl_done.wait(left)
+        with self._lock:
             self._load_cached()
             if self._jobs is None:
-                raise FeedUnavailable("no cached feed")
+                if self.downloading():
+                    raise FeedLoading("the job list is still downloading")
+                raise FeedUnavailable("feed download failed and nothing is cached"
+                                      if self._state.get("fail_count") else "no cached feed")
             return self._jobs, self._header
 
     def refreshed_at(self) -> str | None:
@@ -301,11 +510,11 @@ class StaticFeed:
         built outside it from the list jobs() returned, a reload on another thread in between
         (which nulls the index) left an index of the superseded list in place for an hour, and
         the detail view said "no longer in the feed" for roles the board was showing."""
+        try:
+            self.jobs()                     # outside the lock: it may wait briefly on a download
+        except FeedUnavailable:
+            return None
         with self._lock:
-            try:
-                self.jobs()
-            except FeedUnavailable:
-                return None
             if self._jobs is None:
                 return None
             if self._by_id is None or self._by_id[0] != self._loaded_mtime:

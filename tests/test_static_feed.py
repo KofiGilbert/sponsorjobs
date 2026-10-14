@@ -422,8 +422,12 @@ class _Resp:
     def __exit__(self, *a):
         return False
 
-    def read(self):
-        return self._b
+    def read(self, n=-1):                          # streamed in chunks, like http.client
+        if n is None or n < 0:
+            out, self._b = self._b, b""
+            return out
+        out, self._b = self._b[:n], self._b[n:]
+        return out
 
 
 def _install_origin(monkeypatch, rows, jd=None):

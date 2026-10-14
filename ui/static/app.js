@@ -613,16 +613,70 @@
   const rankForReachability = (jobs) =>
     [...jobs].sort((a, b) => eligibilityScore(b) - eligibilityScore(a));
 
+  // The job list's FIRST download. On a slow link it takes minutes (2026-10-14: ~10 MB at
+  // 10 to 60 KB/s), so Home and Jobs say so calmly, with the size so far, poll a light status
+  // endpoint, and reload on their own when it lands. A failure after the engine's retries says
+  // so in one line with a Retry button. "No roles yet" is kept for a board that is truly empty.
+  let FEED_DL_TIMER = null;
+  const FEED_DL_WAITERS = new Set();
+  const mbText = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB");
+  function feedDownloadText(st) {
+    const got = st && st.bytes ? mbText(st.bytes) : "";
+    const of = got && st.total ? ` of ${mbText(st.total)}` : "";
+    return got ? `Downloading today's jobs\u2026 ${got}${of}` : "Downloading today's jobs\u2026";
+  }
+  const feedFailed = (st) => !!(st && st.configured && !st.downloading && !st.has_cache && st.failing);
+  function feedLoadingHtml(st) {
+    return `<div class="feed-dl" role="status"><span class="feed-dl-dot" aria-hidden="true"></span>` +
+      `<span data-feed-dl>${esc(feedDownloadText(st))}</span>` +
+      `<span class="feed-dl-sub">This can take a few minutes on a slow connection. The list appears here on its own.</span></div>`;
+  }
+  function feedFailHtml() {
+    return `<div class="feed-dl is-failed" role="alert"><span>Couldn't download the job list. Check your connection and try again.</span>` +
+      `<button class="btn btn-ghost btn-sm" data-feed-retry type="button">Retry</button></div>`;
+  }
+  // Wire any Retry button inside `root`; `then` reloads the screen that owns it.
+  function wireFeedRetry(root, then) {
+    root.querySelectorAll("[data-feed-retry]").forEach(b => b.addEventListener("click", async () => {
+      b.disabled = true;
+      try { await api("/api/jobs/feed-retry", {}); } catch { /* the status poll reports it */ }
+      then();
+    }));
+  }
+  // Poll /api/jobs/feed-status every 2.5 s while the download runs, updating every progress line
+  // on screen; when it ends (landed or failed) call each waiter once.
+  function watchFeedDownload(onDone) {
+    if (onDone) FEED_DL_WAITERS.add(onDone);
+    if (FEED_DL_TIMER) return;
+    const tick = async () => {
+      FEED_DL_TIMER = null;
+      let st = null;
+      try { st = await (await fetch("/api/jobs/feed-status")).json(); } catch { /* engine busy */ }
+      if (st && st.downloading) {
+        document.querySelectorAll("[data-feed-dl]").forEach(n => { n.textContent = feedDownloadText(st); });
+        FEED_DL_TIMER = setTimeout(tick, 2500);
+        return;
+      }
+      if (!st) { FEED_DL_TIMER = setTimeout(tick, 5000); return; }
+      const waiters = [...FEED_DL_WAITERS];
+      FEED_DL_WAITERS.clear();
+      waiters.forEach(fn => { try { fn(); } catch { /* one screen's reload never stops another */ } });
+    };
+    FEED_DL_TIMER = setTimeout(tick, 2500);
+  }
+
   // Home: a small curated peek at the freshest roles (full feed lives in Jobs).
   async function loadHomeToday() {
     const el = $("#homeToday");
     if (!el) return;
     try {
       const r = await api("/api/jobs");
+      const foot = $(".home-roles-foot");
+      if (r.loading) { if (foot) foot.hidden = true; el.innerHTML = feedLoadingHtml(r.feed); watchFeedDownload(loadHomeToday); return; }
       // The list scrolls under the fixed prompt, so it can hold more than a peek.
       const jobs = rankForReachability(r.jobs || []).slice(0, 12);
-      const foot = $(".home-roles-foot");
       if (foot) foot.hidden = jobs.length < 3;
+      if (!jobs.length && feedFailed(r.feed)) { el.innerHTML = feedFailHtml(); wireFeedRetry(el, loadHomeToday); return; }
       if (!jobs.length) { el.innerHTML = `<div class="empty small">No roles yet, open <b>Jobs</b> to add sources.</div>`; return; }
       // The same card language as the Jobs tab (logo, framed card, company then role, badges), so
       // a job reads the same everywhere in the app. The old strip drew a bare first letter and
@@ -1419,9 +1473,12 @@
     renderActiveFilters();
     renderNote();
     if (!jobs.length) {
-      list.innerHTML = FEED_LOADED
+      list.innerHTML = FEED_DL ? feedLoadingHtml(FEED_DL)
+        : FEED_FAIL ? feedFailHtml()
+        : FEED_LOADED
         ? `<div class="empty small">No roles match your filters. <button class="link-btn" data-clear="all" type="button">Clear filters</button></div>`
         : jobSkeleton();
+      wireFeedRetry(list, () => { FEED_FAIL = false; FEED_DL = {}; paintFeed(); loadPage(JOBS_PAGE); });
       $("#feedDetail").innerHTML = `<div class="fd-empty">Pick a role on the left to read the full description here.</div>`;
       list.querySelector("[data-clear]")?.addEventListener("click", () => clearFilter("all"));
       return;
@@ -2066,6 +2123,8 @@
   let FEED_CRAWLING = false;     // the engine is filling an empty local store for the first time
   let FEED_CRAWL_ERROR = "";     // the last first-open crawl failed and nothing is stored yet
   let FEED_CRAWL_TIMER = null;
+  let FEED_DL = null;          // the first download's status while the list is still downloading
+  let FEED_FAIL = false;       // that download failed and nothing is cached: show Retry
   let FEED_RETRY = null;       // pending fast-retry timer while the hosted feed is unreachable
   let FEED_RETRY_N = 0;        // retry attempt count, for capped exponential backoff
   let FEED_SINCE = 0;          // when the current reconnect window started (ms), 0 when connected
@@ -2100,6 +2159,26 @@
     try {
       const r = await api("/api/jobs?" + feedParams(JOBS_PAGE));
       if (my !== FEED_REQ) return;                 // a newer request already superseded this
+      // The first download of the list is still running: show its progress and reload when it
+      // lands (never the empty "no roles" pane, never the stale local fallback).
+      if (r.loading) {
+        clearReconnect();
+        FEED_DL = r.feed || {}; FEED_FAIL = false;
+        LAST_JOBS = []; FEED_TOTAL = 0; FEED_ALLTOTAL = 0; FEED_LOADED = false;
+        paintFeed();
+        watchFeedDownload(() => loadPage(JOBS_PAGE));
+        return;
+      }
+      FEED_DL = null;
+      // The download failed (after the engine's retries) and nothing is cached: say so with a
+      // Retry, rather than "connecting" forever over an empty board.
+      FEED_FAIL = !!(r.degraded && feedFailed(r.feed) && !(r.jobs || []).length);
+      if (FEED_FAIL) {
+        clearReconnect();
+        LAST_JOBS = []; FEED_TOTAL = 0; FEED_ALLTOTAL = 0; FEED_LOADED = true;
+        paintFeed();
+        return;
+      }
       // A DEGRADED response = the hosted feed was unreachable (e.g. a deploy restart) and the server
       // fell back to its small stale local copy. Never flash that stale copy over a live board:
       //  - if we already have a good board, KEEP it and reconnect in the background;
@@ -2165,6 +2244,8 @@
       : `${shown.toLocaleString()} of ${total.toLocaleString()} role${total === 1 ? "" : "s"}`;
     // While reconnecting, say so instead of flashing a stale count or a frozen timestamp. On a cold
     // start (no good board yet) there's no count to keep, so just show "connecting to the live feed".
+    // The list pane says it once (downloading, or the failure with Retry): keep the note quiet.
+    if (FEED_DL || FEED_FAIL) { el.textContent = ""; return; }
     if (FEED_RECONNECTING) {
       el.textContent = FEED_OK ? `${count} · reconnecting` : "connecting to the live feed";
       return;
@@ -8395,6 +8476,12 @@
     $("#aaNextCount").textContent = jobs.length
       ? (saved ? T("aa.nextSaved", "{n}, saved roles first") : T("aa.nextOf", "{n} of {m} matches")).replace("{n}", jobs.length).replace("{m}", fmtN(r.matches))
       : "";
+    if (!jobs.length && r.feed_loading) {
+      // The job list is still on its first download: say so and look again when it lands.
+      host.innerHTML = `<div class="aa-empty"><div class="aa-empty-s" data-feed-dl>${esc(feedDownloadText(null))}</div></div>`;
+      watchFeedDownload(() => { AA.next = null; aaLoadNext(); });
+      return;
+    }
     if (!jobs.length) {
       const why = !r.board && !r.matches ? T("aa.nextNoBoard", "No roles on your board yet. Open Jobs to load them.")
         : T("aa.nextNone", "No new roles reach {p}% match. Lower the match or broaden your focus.").replace("{p}", r.min_fit);

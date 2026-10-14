@@ -84,6 +84,19 @@ At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
   per-install random minute (drawn once, persisted in `feed_state.json`) so a fleet of installs
   spreads its downloads across the hour. The request carries `If-None-Match`; an unchanged file costs
   one 304. The first run with no cache downloads immediately.
+- **The download never runs inside a request** (fixed 2026-10-14). It runs on one background thread
+  (started at launch and whenever a request finds the list due), streams to a `.part` file in 64 KB
+  reads, and lands by atomic rename; an older cached list keeps serving meanwhile. A link that sends
+  nothing for **30 s** (`STALL_TIMEOUT`) or a transfer past **45 min** (`DOWNLOAD_CAP`) is abandoned;
+  each download gets **3 attempts** (5 s, 10 s apart) before it counts as one failure for the back-off.
+  Every request sends `Accept-Encoding: gzip`: without it Cloudflare inflates the stored gzip on the
+  fly and sends the raw JSON (about 18x the bytes, ~180 MB for 96k roles, chunked with no
+  Content-Length). The origin ignores `Range`, so a cut-off download restarts from zero.
+- While the FIRST download runs (nothing cached yet), `/api/jobs` answers at once with
+  `"loading": true` and `"feed": {downloading, bytes, total, ...}`; Home, Jobs and Auto-apply show
+  "Downloading today's jobs... 4.2 MB" and poll `GET /api/jobs/feed-status` (memory only, no network)
+  until it lands. A failed first download shows one line with a Retry button
+  (`POST /api/jobs/feed-retry`, which starts a new download past the back-off).
 - `/api/jobs` filters and paginates the cached list with `sourcing/filters.py` -- the same facets the
   kitchen applied (`q, loc, days, remote, visa, level, pay, sort, sponsored, page, per_page`) -- and
   overlays the person's saved bookmarks. It reports `"source": "central"` and `refreshed_at` =
@@ -106,8 +119,8 @@ sitting on "0 live roles" -- or from crawling 1,105 boards from the person's lap
 that got an IP barred by Workable for 19 hours, and during a feed outage every new install would have
 done it at once):
 
-1. **The live feed.** With a real `JOBS_FEED_URL`, the first request downloads the live list at once;
-   the client shows its "connecting" state meanwhile and re-polls until the list arrives. From then on
+1. **The live feed.** With a real `JOBS_FEED_URL`, the live list starts downloading in the background
+   at launch; the board shows the download's progress meanwhile and reloads when the list arrives. From then on
    the hourly, ETag-conditional download keeps it fresh, and if the origin is down the last download
    keeps serving.
 2. **The polite fallback crawl**, only when the feed is genuinely absent: `JOBS_FEED_URL` unset or the

@@ -469,6 +469,31 @@ def _static_feed():
     return sf
 
 
+def _start_feed_download() -> None:
+    """Begin the static feed's download (when one is due) on its own background thread, so the
+    list is on its way before the first screen asks for it. Never blocks; never raises."""
+    if not _feed_base_url():
+        return
+    try:
+        _static_feed().start_refresh()
+    except Exception:                                # noqa: BLE001 - the board still asks later
+        traceback.print_exc()
+
+
+def _feed_status() -> dict:
+    """The static feed's download state for the board ("downloading 4.2 MB", or a failure with a
+    retry): cheap, no network. {"configured": False} when no feed is set."""
+    if not _feed_base_url():
+        return {"configured": False}
+    return _static_feed().status()
+
+
+def _feed_loading() -> bool:
+    """Is the FIRST download of the job list still running (nothing cached to show yet)?"""
+    st = _feed_status()
+    return bool(st.get("configured") and st.get("downloading") and not st.get("has_cache"))
+
+
 def _facets(a) -> dict:
     """The board's facet query params in the shape sourcing.filters.apply_facets takes. Shared by
     the static-feed and local paths so both filter identically."""
@@ -3226,6 +3251,25 @@ def _newest_arrival(jobs) -> str | None:
     return max((str(j.get("first_seen") or "") for j in jobs), default="") or None
 
 
+@app.get("/api/jobs/feed-status")
+@_guard
+def jobs_feed_status():
+    """What the board polls while the first job list downloads: {downloading, bytes, total,
+    has_cache, error, ...}. Light: reads memory only."""
+    return jsonify(_feed_status())
+
+
+@app.post("/api/jobs/feed-retry")
+@_guard
+def jobs_feed_retry():
+    """The Retry button after a failed download: start a fresh background download now, past
+    the back-off. Returns the new status at once."""
+    if not _feed_base_url():
+        return jsonify({"configured": False})
+    _static_feed().start_refresh(force=True)
+    return jsonify(_feed_status())
+
+
 @app.get("/api/jobs")
 @_guard
 def jobs_list():
@@ -3246,6 +3290,7 @@ def jobs_list():
         # and filtered + paginated HERE with the same sourcing/filters the kitchen used, so one
         # download serves every facet change. Any failure with nothing cached falls back to the
         # local crawl below (flagged `degraded`, so the client keeps its last good board).
+        from sourcing.feedclient import FeedLoading
         try:
             from sourcing.filters import apply_facets, paginate
             sf = _static_feed()
@@ -3272,6 +3317,15 @@ def jobs_list():
                                 "newest_at": _newest_arrival(jobs),
                                 "stale": _is_stale(refreshed, hours=12) if refreshed else False,
                                 "source": "central"})
+        except FeedLoading:
+            # The first download of the list is still running (a slow link can take minutes).
+            # Say so at once instead of holding the request or flashing an empty local board;
+            # the client shows the progress and polls /api/jobs/feed-status until it lands.
+            a = request.args
+            return jsonify({"jobs": [], "count": 0, "total": 0, "page": 1,
+                            "per_page": int(a.get("per_page", 30) or 30), "refreshed_at": None,
+                            "newest_at": None, "stale": False, "source": "central",
+                            "loading": True, "feed": _feed_status()})
         except Exception:                            # noqa: BLE001 - fall back to the local feed
             traceback.print_exc()
     w = _watchlist()
@@ -3335,7 +3389,8 @@ def jobs_list():
                         "stale": _is_stale(refreshed, hours=12),
                         "source": "local",
                         "degraded": bool(feed_url), "crawling": crawling,
-                        "crawl_error": crawl_error or None})
+                        "crawl_error": crawl_error or None,
+                        "feed": _feed_status() if feed_url else None})
     finally:
         w.close()
 
@@ -10215,7 +10270,10 @@ def autoapply_upnext():
         })
     out = {"ok": True, "jobs": rows_out, "count": count, "min_fit": min_fit,
            "matches": res["available"], "has_profile": _aa_has_profile(),
-           "board": meta["board"], "search": meta["search"]}
+           "board": meta["board"], "search": meta["search"],
+           "feed_loading": _feed_loading()}
+    if out["feed_loading"]:
+        return jsonify(out)                  # not cached: the list lands in a few minutes
     _AA_NEXT_CACHE["v"] = (key, time.time(), out)
     return jsonify(out)
 
@@ -10682,6 +10740,7 @@ def main() -> None:
 
     start_auto_updater()   # keep the job feed fresh on its own (only if RESUME_AGENT_AUTOUPDATE=1)
     start_notify_loop()    # Telegram: taps, job-match alerts, the away digest (every 30 s)
+    _start_feed_download()  # the job list downloads in the background from launch, never in a request
     server_only = "--server-only" in sys.argv or os.environ.get("TAILOR_SERVER_ONLY") == "1"
     # TAILOR_PORT lets a test engine run beside the installed app (which owns 57000). Without
     # it, a second engine fails to start and its caller's requests land on the installed app's
