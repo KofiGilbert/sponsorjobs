@@ -91,5 +91,5 @@ def test_cover_pdf_endpoint_and_export_include_pdf(tmp_path, monkeypatch):
     # The export bundle carries the cover letter as BOTH .pdf and .txt.
     z = zipfile.ZipFile(io.BytesIO(client.get(f"/api/record/{rid}/export").data))
     names = z.namelist()
-    assert any(n.endswith("_Cover_Letter.pdf") for n in names)
-    assert any(n.endswith("_Cover_Letter.txt") for n in names)
+    assert any(n.endswith("Cover Letter.pdf") for n in names)
+    assert any(n.endswith("Cover Letter.txt") for n in names)
