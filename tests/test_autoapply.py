@@ -33,6 +33,7 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "UPLOADS_DIR", tmp_path / "up")
     monkeypatch.setattr(app, "WORKDIR", tmp_path / "cv")
     monkeypatch.setattr(app, "PALACE_DIR", tmp_path / "palace")
+    monkeypatch.setattr(app, "_PREFS_FILE", tmp_path / "prefs.json")
     return db
 
 
@@ -40,40 +41,11 @@ def test_autoapply_needs_a_profile(tmp_path, monkeypatch):
     db = _isolate(tmp_path, monkeypatch)
     Watchlist(db).upsert_jobs([JOB])                      # a job, but no profile yet
     r = app.app.test_client().post("/api/autoapply/run", json={"count": 1})
-    assert r.status_code == 400 and "profile" in r.get_json()["error"].lower()
+    assert r.status_code == 400 and r.get_json()["action"] == "add_resume"
 
 
 # --- focus: which KINDS of roles the autopilot tailors today ------------------ #
-
-_FOCUS_JOBS = [
-    {"title": "Senior Backend Engineer", "location": "New York, NY", "company": "Acme"},
-    {"title": "Data Scientist", "location": "Remote", "company": "Beta"},
-    {"title": "Frontend Developer", "location": "Austin, TX", "company": "Gamma"},
-]
-
-
-def test_select_focus_jobs_empty_focus_returns_all():
-    assert app._select_focus_jobs(_FOCUS_JOBS, [], [], False) == _FOCUS_JOBS
-
-
-def test_select_focus_jobs_filters_by_title_and_preserves_order():
-    jobs = _FOCUS_JOBS + [{"title": "Backend Lead", "location": "Denver"}]
-    picked = app._select_focus_jobs(jobs, ["backend"], [], False)
-    assert [j["title"] for j in picked] == ["Senior Backend Engineer", "Backend Lead"]
-
-
-def test_select_focus_jobs_sponsor_only_keeps_only_badged(monkeypatch):
-    def fake_tag(js):
-        for j in js:
-            j["visa"] = [{"code": "H-1B"}] if j["company"] == "Acme" else []
-        return js
-    picked = app._select_focus_jobs(_FOCUS_JOBS, [], [], True, tag_fn=fake_tag)
-    assert [j["company"] for j in picked] == ["Acme"]
-
-
-def test_select_focus_jobs_sponsor_only_is_a_noop_without_a_tagger():
-    # Defensive: no tag function injected -> can't judge sponsorship, so don't drop anything.
-    assert app._select_focus_jobs(_FOCUS_JOBS, [], [], True, tag_fn=None) == _FOCUS_JOBS
+# (the picking itself is covered in tests/test_autoapply_picker.py)
 
 
 def test_autoapply_focus_that_matches_nothing_returns_a_clear_message(tmp_path, monkeypatch):
@@ -81,7 +53,7 @@ def test_autoapply_focus_that_matches_nothing_returns_a_clear_message(tmp_path, 
     app._memory().save("default",
                        {"experience": [{"org": "Acme", "title": "Engineer",
                                         "bullets": ["did things"]}]}, {}, [])
-    Watchlist(db).upsert_jobs([JOB])                       # title: "Senior Software Engineer"
+    monkeypatch.setattr(app, "_board_rows", lambda: [dict(JOB)])   # title: "Senior Software Engineer"
     r = app.app.test_client().post("/api/autoapply/run",
                                    json={"count": 1, "focus": {"titles": ["nursing"]}})
     assert r.status_code == 400 and "focus" in r.get_json()["error"].lower()
@@ -96,9 +68,9 @@ def test_autoapply_tailors_queues_and_keeps_base_profile(tmp_path, monkeypatch):
         assert client.post("/api/profile/from_cv", data={"file": (f, "resume.docx")},
                            content_type="multipart/form-data").get_json()["ok"]
     base = client.get("/api/profile").get_json()          # snapshot the base profile
-    Watchlist(db).upsert_jobs([JOB])
+    monkeypatch.setattr(app, "_board_rows", lambda: [dict(JOB)])   # the board the person sees
 
-    r = client.post("/api/autoapply/run", json={"count": 1}).get_json()
+    r = client.post("/api/autoapply/run", json={"count": 1, "min_fit": 0}).get_json()
     assert r["ok"] and r["considered"] == 1
     assert r["queued"] >= 1, r                             # the role got tailored + queued
     recs = client.get("/api/records").get_json()["records"]

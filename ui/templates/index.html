@@ -640,7 +640,7 @@
         <header class="page-head">
           <div>
             <h1 class="page-title">Auto-apply</h1>
-            <p class="page-sub">SponsorJobs builds your top fresh roles from your saved profile. You approve, then it applies where the site allows it.</p>
+            <p class="page-sub">SponsorJobs tailors your best-fit roles from Jobs. You approve, then it applies where the site allows it.</p>
           </div>
           <span class="aa-badge">Pro</span>
         </header>
@@ -648,18 +648,22 @@
         <div class="aa-grid">
           <div class="aa-card">
             <div class="aa-card-h">Targets for today</div>
-            <p class="aa-p">Tell SponsorJobs what to focus on, then pick how many to tailor now. Each becomes a ready package in <b>Review &amp; submit</b>. Leave the focus blank for your freshest best-fit roles.</p>
+            <p class="aa-p">Your saved jobs go first, then the best fits from Jobs. Each becomes a package in <b>Review &amp; submit</b>.</p>
             <div class="aa-focus">
               <input class="fld" id="aaFocus" type="text" placeholder="Roles to focus on, e.g. backend, data (optional)">
               <input class="fld" id="aaLocation" type="text" placeholder="Location, e.g. New York or Remote (optional)">
               <label class="aa-sponly"><input type="checkbox" id="aaSponsorOnly"> Only roles from employers with a visa-sponsorship record</label>
+              <label class="aa-sponly aa-floor">Skip roles below
+                <select class="fld" id="aaMinFit"><option value="30">30%</option><option value="40">40%</option><option value="50">50%</option><option value="60" selected>60%</option><option value="70">70%</option><option value="80">80%</option></select>
+                fit</label>
             </div>
+            <p class="aa-pool" id="aaPool" hidden><!-- how many roles the run draws from --></p>
             <div class="aa-run">
               <label class="aa-count">Tailor
                 <select class="fld" id="aaCount"><option>3</option><option>5</option><option>8</option><option>10</option></select>
                 roles now
               </label>
-              <button class="btn btn-primary" id="aaRun" type="button">Tailor &amp; queue →</button>
+              <button class="btn btn-primary" id="aaRun" type="button">Tailor &amp; queue &rarr;</button>
             </div>
             <div class="aa-msg" id="aaMsg" hidden></div>
             <div class="aa-results" id="aaResults"></div>
@@ -673,7 +677,7 @@
             </ul>
             <label class="aa-toggle">
               <input type="checkbox" id="aaAutonomous" />
-              <span><b>Autonomous submit</b>, let SponsorJobs submit the verified-portal ones without a click. <span class="aa-off">Off by default.</span></span>
+              <span><b>Autonomous submit.</b> On verified sites, Submit on a package and Apply for me in Telegram send the application without a click on the site. <span class="aa-off">Off by default. Approve in Review &amp; submit sends them either way.</span></span>
             </label>
             <p class="aa-reach" id="aaReach" hidden><!-- how many roles this can really submit --></p>
             <div class="aa-cap" id="aaCap"></div>
