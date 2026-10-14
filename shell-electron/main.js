@@ -427,37 +427,6 @@ function waitPaneLoad(timeoutMs = 25000) {
   });
 }
 
-ipcMain.handle("assist:fill", async (_e, url) => {
-  if (!/^https?:/i.test(url || "")) return { ok: false, reason: "bad-url" };
-  // LinkedIn is browse-by-hand only, never automated (CLAUDE.md §7).
-  try {
-    if (/(^|\.)linkedin\.com$/i.test(new URL(url).hostname)) {
-      openInPane(url);                       // they can still browse and fill by hand
-      return { ok: false, reason: "linkedin" };
-    }
-  } catch (e) { return { ok: false, reason: "bad-url" }; }
-
-  openInPane(url);
-  await new Promise((r) => setTimeout(r, 400));   // navigation kickoff
-  await waitPaneLoad();
-  await new Promise((r) => setTimeout(r, 900));   // let SPA forms hydrate
-
-  const payload = await fetchAutofillPayload();
-  if (!payload || payload.loaded === false) return { ok: false, reason: "no-profile" };
-
-  const wc = pane.webContents;
-  try {
-    await wc.insertCSS(FILLED_CSS);
-    await wc.executeJavaScript(autofillCore(), true);
-    const report = await wc.executeJavaScript(
-      `window.TailorAutofill.fill(${JSON.stringify(payload)})`, true);
-    if (report && report.ok) { await armCorrections(wc); armSuccessWatch(wc, url, null); }
-    return report && typeof report === "object" ? report : { ok: false, reason: "no-report" };
-  } catch (err) {
-    return { ok: false, reason: "inject-failed" };
-  }
-});
-
 async function armCorrections(wc) {
   try { await wc.executeJavaScript("window.TailorAutofill.watchCorrections(null)", true); }
   catch (e) { /* the page may have navigated; the next fill re-arms it */ }
@@ -500,7 +469,12 @@ const WALL_JS = `(() => {
   return captcha ? 'captcha' : (login ? 'login' : '');
 })()`;
 
-const SUBMIT_JS = `(() => {
+// Find the site's own final submit control. With click=false (every site NOT on the verified
+// AUTO allowlist) it only scrolls to the button and outlines it so the person sees where THEIR
+// click goes; with click=true (allowlisted sites only, decided by the engine) it clicks it.
+function submitScript(click) {
+  return `(() => {
+  const doClick = ${click ? "true" : "false"};
   const vis = e => e.offsetParent !== null && !e.disabled;
   const label = e => ((e.innerText || e.value || '') + ' ' + (e.getAttribute('aria-label') || ''))
     .trim().toLowerCase();
@@ -525,101 +499,19 @@ const SUBMIT_JS = `(() => {
       || box.tagName || '').toString().slice(0, 60);
     return { clicked: false, covered_by: what, seen: [label(btn)] };
   }
+  if (!doClick) {
+    try { btn.classList.add('tailor-submit-hint'); } catch (e) { /* non-element */ }
+    if (!document.getElementById('tailor-submit-hint-css')) {
+      const st = document.createElement('style'); st.id = 'tailor-submit-hint-css';
+      st.textContent = '.tailor-submit-hint{outline:3px solid #f79009 !important;outline-offset:3px !important}';
+      (document.head || document.documentElement).appendChild(st);
+    }
+    return { clicked: false, highlighted: true, label: label(btn) };
+  }
   btn.click();
   return { clicked: true, label: label(btn) };
 })()`;
-
-// Apply = fill, attach the résumé, and submit. The person's click on Apply IS the
-// authorisation; they asked not to be shown a form they never wanted to read. Everything
-// the guarded path forbids still holds: never LinkedIn, never past a captcha or login
-// wall, and a failure to find a real submit control is reported rather than assumed.
-ipcMain.handle("assist:apply", async (_e, opts) => {
-  const { url, resumePath } = opts || {};
-  if (!/^https?:/i.test(url || "")) return { ok: false, reason: "bad-url" };
-  try {
-    if (/(^|\.)linkedin\.com$/i.test(new URL(url).hostname)) {
-      return { ok: false, reason: "linkedin" };
-    }
-  } catch (e) { return { ok: false, reason: "bad-url" }; }
-
-  openInPane(url);
-  await new Promise((r) => setTimeout(r, 400));
-  await waitPaneLoad();
-  await new Promise((r) => setTimeout(r, 1200));   // let the ATS form hydrate
-
-  const payload = await fetchAutofillPayload();
-  if (!payload || payload.loaded === false) return { ok: false, reason: "no-profile" };
-
-  const wc = pane.webContents;
-  let report;
-  try {
-    await wc.insertCSS(FILLED_CSS);
-    await wc.executeJavaScript(autofillCore(), true);
-    report = await wc.executeJavaScript(
-      `window.TailorAutofill.fill(${JSON.stringify(payload)})`, true);
-  } catch (err) {
-    return { ok: false, reason: "inject-failed" };
-  }
-
-  if (report && report.ok === false) {
-    return report;                       // auth wall: the form isn't reachable yet
-  }
-
-  const attached = await attachResume(wc, resumePath);
-  await new Promise((r) => setTimeout(r, 500));
-
-  // Fill happens either way; only SUBMISSION stops at the wall. The form is now complete
-  // and waiting on the one thing only a person can do.
-  const wall = (report && report.captcha) ? "captcha"
-             : await wc.executeJavaScript(WALL_JS, true);
-  if (wall) {
-    return { ...report, ok: true, submitted: false, reason: wall, resume_attached: attached };
-  }
-
-  const click = await wc.executeJavaScript(SUBMIT_JS, true);
-  if (!click || !click.clicked) {
-    return { ...report, ok: true, submitted: false,
-             reason: click && click.covered_by ? "submit-covered" : "no-submit-button",
-             covered_by: click && click.covered_by, seen: click && click.seen,
-             resume_attached: attached };
-  }
-  await new Promise((r) => setTimeout(r, 3500));    // let the POST land
-
-  const confirmed = await wc.executeJavaScript(`(() => {
-    const t = (document.body.innerText || '').toLowerCase();
-    return /thank you|application (was )?(submitted|received)|we('| ha)?ve received/.test(t);
-  })()`, true);
-
-  return { ...report, ok: true, submitted: true, confirmed: !!confirmed,
-           resume_attached: attached, clicked: click.label };
-});
-
-// Fill whatever page is CURRENTLY open in the pane, without navigating away.
-// Multi-step ATS flows (Amazon, Workday) gate the form behind sign-in and several
-// steps; the person walks there in the Browser tab, then fills in place.
-ipcMain.handle("assist:fill-current", async () => {
-  if (!pane) return { ok: false, reason: "no-page" };
-  const wc = pane.webContents;
-  const url = wc.getURL() || "";
-  if (!/^https?:/i.test(url)) return { ok: false, reason: "no-page" };
-  try {
-    if (/(^|\.)linkedin\.com$/i.test(new URL(url).hostname)) {
-      return { ok: false, reason: "linkedin" };
-    }
-  } catch (e) { return { ok: false, reason: "no-page" }; }
-  const payload = await fetchAutofillPayload();
-  if (!payload || payload.loaded === false) return { ok: false, reason: "no-profile" };
-  try {
-    await wc.insertCSS(FILLED_CSS);
-    await wc.executeJavaScript(autofillCore(), true);
-    const report = await wc.executeJavaScript(
-      `window.TailorAutofill.fill(${JSON.stringify(payload)})`, true);
-    if (report && report.ok) { await armCorrections(wc); armSuccessWatch(wc, url, null); }
-    return report && typeof report === "object" ? report : { ok: false, reason: "no-report" };
-  } catch (err) {
-    return { ok: false, reason: "inject-failed" };
-  }
-});
+}
 
 // ------------------------------------------------------------- AI autonomous fill (autoapply)
 // The AI-planned upgrade of assisted apply: extract the open form's STRUCTURE, ask the engine's
@@ -697,7 +589,17 @@ async function runAutoApplyOnPane(recordId) {
       });
       plan = resp.ok ? await resp.json() : null;
     } catch (e) { plan = null; }
-    if (!plan || !plan.ok) return { ok: false, reason: (plan && plan.reason) || "no-plan" };
+    if (!plan || !plan.ok) {
+      // The AI plan is the LAST step; if it is unavailable, what the recipe already filled stands.
+      if (preFilled) {
+        await armCorrections(wc); armSuccessWatch(wc, url, recordId);
+        return { ok: true, filled: preFilled, uploaded: 0, pending_upload: 0, skipped: 0,
+                 system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
+                 continue_hint: pre.continue_hint, submit_highlighted: pre.submit_highlighted,
+                 captcha: !!pre.captcha };
+      }
+      return { ok: false, reason: (plan && plan.reason) || "no-plan" };
+    }
 
     const ops = plan.ops || [];
     const report = await wc.executeJavaScript(
@@ -719,6 +621,92 @@ async function runAutoApplyOnPane(recordId) {
     return { ok: false, reason: "inject-failed" };
   }
 }
+
+// ------------------------------------------------------------- the ONE apply path
+// Every "Fill application" / "Apply" / "Open application" button in the app comes here, so the
+// behaviour is the same everywhere: open the application in the in-app pane, run the best fill
+// (site recipe, then the AI plan, then the resume upload), then ask the ENGINE whether this site
+// may be submitted by SponsorJobs (submit.policy.apply_decision). Only a site on the verified
+// AUTO allowlist is ever clicked; everywhere else the form is filled and left for the person,
+// with the site's submit button scrolled into view and outlined (CLAUDE.md section 7). LinkedIn
+// and the other prohibited boards are never filled. A captcha or sign-in wall always stops it.
+async function applyDecision(url, pageUrl) {
+  try {
+    const q = "?url=" + encodeURIComponent(url || "") + "&page_url=" + encodeURIComponent(pageUrl || "");
+    const resp = await net.fetch(SERVER + "/api/submit/decision" + q);
+    if (!resp.ok) return { fill: false, click_submit: false };
+    const d = await resp.json();
+    return { fill: d.fill === true, click_submit: d.click_submit === true };
+  } catch (e) {
+    return { fill: false, click_submit: false };   // engine unreachable: never submit, never fill
+  }
+}
+
+// opts: { url, recordId, resumePath, submit, here }
+//   here   -> fill the page already open in the pane (after the person pressed Next / signed in)
+//   submit -> the caller is an Apply button; the engine still has the final say per site
+ipcMain.handle("assist:apply", async (_e, opts) => {
+  const { url, recordId, resumePath, submit, here } = opts || {};
+  let startUrl = url || "";
+  if (here) {
+    if (!pane) return { ok: false, reason: "no-page" };
+    startUrl = pane.webContents.getURL() || "";
+  }
+  if (!/^https?:/i.test(startUrl)) return { ok: false, reason: here ? "no-page" : "bad-url" };
+  try {
+    if (/(^|\.)linkedin\.com$/i.test(new URL(startUrl).hostname)) {
+      if (!here) openInPane(startUrl);           // they can still browse and apply by hand
+      return { ok: false, reason: "linkedin" };
+    }
+  } catch (e) { return { ok: false, reason: "bad-url" }; }
+
+  const before = await applyDecision(startUrl, "");
+  if (!before.fill) {
+    if (!here) openInPane(startUrl);
+    return { ok: false, reason: "fill-by-hand" };
+  }
+
+  if (!here) {
+    openInPane(startUrl);
+    await new Promise((r) => setTimeout(r, 400));   // navigation kickoff
+    await waitPaneLoad();
+    await new Promise((r) => setTimeout(r, 1200));  // let the ATS form hydrate
+  }
+  if (!pane) return { ok: false, reason: "no-page" };
+  const wc = pane.webContents;
+
+  const report = await runAutoApplyOnPane(recordId);
+  const filledOk = !!(report && report.ok !== false);
+  if (report && report.reason === "blocked") return report;   // never fight an auth wall
+  let attached = !!(report && report.uploaded);
+  if (!attached && resumePath) attached = await attachResume(wc, resumePath);
+  if (!filledOk && !attached) return report || { ok: false, reason: "inject-failed" };
+  await new Promise((r) => setTimeout(r, 500));
+
+  const base = Object.assign({}, report && report.ok !== false ? report : { filled: 0 },
+                             { ok: true, resume_attached: attached });
+  const wall = (report && report.captcha) ? "captcha" : await wc.executeJavaScript(WALL_JS, true);
+  if (wall) return { ...base, submitted: false, reason: wall };
+
+  // Ask again with the page that is open NOW: a redirect to another host is judged on its own.
+  const now = await applyDecision(startUrl, wc.getURL() || "");
+  const mayClick = !!submit && now.click_submit === true;
+  const res = await wc.executeJavaScript(submitScript(mayClick), true);
+  if (!mayClick || !res || !res.clicked) {
+    return { ...base, submitted: false,
+             reason: res && res.covered_by ? "submit-covered"
+                   : !mayClick ? "your-click" : "no-submit-button",
+             submit_highlighted: !!(res && res.highlighted) || !!base.submit_highlighted,
+             covered_by: res && res.covered_by, seen: res && res.seen };
+  }
+  await new Promise((r) => setTimeout(r, 3500));    // let the POST land
+  const confirmed = await wc.executeJavaScript(`(() => {
+    const t = (document.body.innerText || '').toLowerCase();
+    return /thank you|application (was )?(submitted|received)|we('| ha)?ve received/.test(t);
+  })()`, true);
+  return { ...base, submitted: true, confirmed: !!confirmed, clicked: res.label };
+});
+
 
 // Open the apply URL in the pane, let it settle, then AI-fill it.
 ipcMain.handle("autoapply:run", async (_e, url, recordId) => {

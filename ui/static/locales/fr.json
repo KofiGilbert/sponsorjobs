@@ -755,5 +755,7 @@
   "projects.topicTesting": "Tests",
   "projects.topicScale": "Montée en charge",
   "projects.topicExtend": "Extension",
-  "projects.topicCode": "Lecture du code"
+  "projects.topicCode": "Lecture du code",
+  "pkg.fill": "Remplir la candidature",
+  "pkg.fillAgain": "Remplir à nouveau cette page"
 }

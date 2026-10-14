@@ -333,22 +333,16 @@
               <div class="pkg-card-h">Submission</div>
               <div class="pkg-submit-tier"><span class="pkg-tier-pill" id="pkgTier"></span></div>
               <p class="pkg-hint" id="pkgSubmitMsg"></p>
+              <!-- Desktop shell only: the ONE fill button. Opens the application in the in-app
+                   browser and fills it (recipe, AI plan, resume). The site's submit is clicked
+                   only on the verified auto-submit list; everywhere else the person clicks it. -->
+              <input class="fld" id="pkgAssistUrl" type="text" spellcheck="false" hidden
+                     placeholder="Paste the application link" aria-label="Application link" />
               <div class="pkg-cl-foot">
+                <button class="btn btn-primary btn-sm" id="pkgFillBtn" type="button" hidden data-i18n="pkg.fill">Fill application</button>
+                <button class="btn btn-ghost btn-sm" id="pkgFillHereBtn" type="button" hidden data-i18n="pkg.fillAgain"
+                        title="After you click Next on the site, fill the new page">Fill this page again</button>
                 <button class="btn btn-primary btn-sm" id="pkgSubmitBtn" type="button">Submit</button>
-              </div>
-            </div>
-
-            <!-- Desktop shell only: open the application in the in-app browser and
-                 pre-fill it from the saved profile. The submit click stays yours. -->
-            <div class="pkg-card" id="pkgAssistCard" hidden>
-              <div class="pkg-card-h">Apply in SponsorJobs' browser</div>
-              <p class="pkg-hint">Opens the application inside SponsorJobs and fills it for you. <b>AI auto-fill</b> reads the whole form and fills it intelligently (your personal details never go to the AI); <b>quick fill</b> just drops in your saved contact details. Either way you review every field and click submit yourself.</p>
-              <input class="fld" id="pkgAssistUrl" type="text" spellcheck="false" placeholder="Paste the application page URL" aria-label="Application page URL" />
-              <div class="pkg-cl-foot">
-                <button class="btn btn-primary btn-sm" id="pkgAutoBtn" type="button">AI auto-fill</button>
-                <button class="btn btn-ghost btn-sm" id="pkgAutoHereBtn" type="button">AI-fill the open page</button>
-                <button class="btn btn-ghost btn-sm" id="pkgAssistBtn" type="button">Quick fill</button>
-                <button class="btn btn-ghost btn-sm" id="pkgAssistHereBtn" type="button">Quick-fill open page</button>
               </div>
               <p class="pkg-hint" id="pkgAssistNote"></p>
             </div>

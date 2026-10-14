@@ -1913,6 +1913,16 @@ def submit_settings():
     })
 
 
+@app.get("/api/submit/decision")
+@_guard
+def submit_decision():
+    """May the desktop shell fill this page, and may it click the site's submit? Asked by
+    shell-electron/main.js before every in-app Apply, so the rule lives in ONE tested place
+    (submit.policy.apply_decision): submit is clicked only on the verified AUTO allowlist."""
+    from submit.policy import apply_decision
+    return jsonify(apply_decision(request.args.get("url", ""), request.args.get("page_url", "")))
+
+
 @app.post("/api/submit/settings")
 @_guard
 def submit_settings_set():
