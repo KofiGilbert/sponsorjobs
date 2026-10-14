@@ -4658,6 +4658,49 @@ def autofill_applied():
     return _nostore(jsonify(_mark_applied_from_page(request.json or {})))
 
 
+@app.post("/api/autoapply/fill-report")
+@_guard
+@_extension_only
+def autoapply_fill_report():
+    """What the in-app fill did on one page of an application form: how many fields it filled
+    and which it left for the person (by label). The desktop shell posts this after every page
+    it fills, including the later pages of a multi-page form. Kept on the record as
+    ``fill_report`` = {pages: [{page, url, filled, left, system, at}], updated}, one entry per
+    page number (a re-fill of the same page replaces it), for the Auto-apply drawer.
+    Body {record_id, page, url, filled, left:[labels], system?}."""
+    b = request.json or {}
+    try:
+        rid = int(b.get("record_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "record_id is required."}), 400
+    try:
+        page = max(1, min(50, int(b.get("page") or 1)))
+        filled = max(0, min(500, int(b.get("filled") or 0)))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "page and filled must be numbers."}), 400
+    left = []
+    for lab in (b.get("left") or [])[:60]:
+        t = " ".join(str(lab or "").split())[:200]
+        if t and t not in left:
+            left.append(t)
+    entry = {"page": page, "url": str(b.get("url") or "")[:500], "filled": filled, "left": left,
+             "system": str(b.get("system") or "")[:40], "at": _now_iso()}
+    recs = _records()
+    try:
+        rec = recs.get(rid)
+        if not rec:
+            return jsonify({"ok": False, "error": "That application was not found."}), 404
+        cur = _record_data(rec).get("fill_report")
+        pages = [p for p in ((cur or {}).get("pages") or []) if isinstance(p, dict)
+                 and p.get("page") != page]
+        pages = sorted(pages + [entry], key=lambda p: p.get("page") or 0)[-12:]
+        report = {"pages": pages, "updated": entry["at"]}
+        recs.merge_data(rid, {"fill_report": report})
+    finally:
+        recs.close()
+    return _nostore(jsonify({"ok": True, "fill_report": report}))
+
+
 @app.get("/api/profile/autofill")
 @_guard
 @_extension_only

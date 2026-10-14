@@ -24,6 +24,8 @@
     },
     "files": [
       "main.js",
+      "frames.js",
+      "pagewatch.js",
       "preload.js",
       "package.json"
     ],

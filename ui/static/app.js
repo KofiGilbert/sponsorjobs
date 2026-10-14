@@ -963,8 +963,11 @@
     else if (r.reason === "submit-covered") {
       msg += " A banner" + (r.covered_by ? " (" + r.covered_by + ")" : "") + " covers the submit button. Close it first.";
     }
-    if (r.next_page) msg += " Click Next on the site, then Fill this page again.";
+    if (r.next_page) msg += " Click Next on the site when ready, the next page fills itself.";
     if (r.pending_upload && !r.resume_attached) msg += " Attach your resume PDF yourself.";
+    if (r.left && r.left.length) {
+      msg += " Left for you: " + r.left.slice(0, 3).join(", ") + (r.left.length > 3 ? ", and " + (r.left.length - 3) + " more." : ".");
+    }
     msg += r.submit_highlighted
       ? " Check it and click Submit on the site, it's outlined in orange."
       : " Check it and click Submit on the site.";
@@ -1012,6 +1015,28 @@
       if (r.learned && r.learned.length) loadProfile().catch(() => {});
     });
     note.insertAdjacentElement("afterend", b);
+  }
+
+  // Page-by-page fill progress from the desktop shell, including the pages it fills by itself
+  // after the person presses Next on the site: "Page 2 filled: 9 fields. 2 left for you."
+  if (window.tailorShell && window.tailorShell.onAutoApplyProgress) {
+    window.tailorShell.onAutoApplyProgress((info) => {
+      if (!info || !info.message) return;
+      const bar = $("#bbFill");
+      if (bar) {
+        let text = info.message;
+        if (!info.wall && info.left && info.left.length) {
+          text += " " + info.left.slice(0, 4).join(", ") + (info.left.length > 4 ? ", and more." : ".");
+        }
+        bar.textContent = text;
+        bar.classList.toggle("is-wall", !!info.wall);
+        bar.hidden = false;
+      }
+      const note = $("#pkgAssistNote");
+      if (note && PKG_ID && String(info.record_id) === String(PKG_ID) && (info.page > 1 || info.wall)) {
+        note.textContent = info.message;
+      }
+    });
   }
 
   // The engine saw the site's "application received" page after the person submitted.

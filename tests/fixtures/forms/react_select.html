@@ -1,0 +1,33 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (react-select fixture)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script></head>
+<body>
+<h1>Software Engineer</h1>
+<form id="application-form" onsubmit="return false">
+  <div class="field"><label for="first_name">First Name *</label><input type="text" id="first_name" name="first_name"></div>
+  <div class="field"><label for="last_name">Last Name *</label><input type="text" id="last_name" name="last_name"></div>
+  <div class="field"><label for="email">Email *</label><input type="email" id="email" name="email"></div>
+  <div class="field"><label for="phone">Phone</label><input type="tel" id="phone" name="phone"></div>
+  <div id="widgets"></div>
+  <button type="submit" id="submit">Submit application</button>
+</form>
+<script>
+  const W = window.FixtureWidgets, host = document.getElementById("widgets");
+  window.fx = {
+    country: W.ReactSelect(host, { id: "country", label: "Country *", required: true,
+      options: ["Canada", "Mexico", "United Kingdom", "United States", "United States Minor Outlying Islands"] }),
+    location: W.ReactSelect(host, { id: "candidate-location", label: "Location (City) *", async: true,
+      options: ["Chicago, Ontario, Canada", "Chicago Heights, Illinois, United States", "Chicago, Illinois, United States"] }),
+    auth: W.ReactSelect(host, { id: "question_101", label: "Are you legally authorized to work in the United States? *",
+      options: ["Yes", "No"], roles: true }),
+    sponsor: W.ReactSelect(host, { id: "question_102",
+      label: "Will you now or in the future require sponsorship for employment visa status? *", options: ["Yes", "No"] }),
+    gender: W.ReactSelect(host, { id: "gender", label: "Gender",
+      options: ["Male", "Female", "Non-binary", "Decline To Self Identify"] }),
+    source: W.ReactSelect(host, { id: "question_103", label: "How did you hear about this job?",
+      options: ["LinkedIn", "Company website", "Referral", "Other"] }),
+    privacy: W.AriaCheckbox(host, { label: "I agree to the candidate privacy notice *", required: true }),
+  };
+  window.fxValues = () => Object.fromEntries(Object.entries(window.fx).map(([k, v]) => [k, v.value]));
+</script>
+</body></html>
