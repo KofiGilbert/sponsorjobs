@@ -80,6 +80,17 @@ def contact_key(label: str) -> str:
     return ""
 
 
+_EEO = re.compile(r"gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation"
+                  r"|transgender|pronoun", re.I)
+_DECLINE = re.compile(r"decline|prefer not|do not wish|don't wish|choose not|rather not|not to (say|answer|disclose)", re.I)
+
+
+def decline_option(options) -> str | None:
+    """The one "decline to self-identify" option, or None."""
+    hits = [str(o) for o in (options or []) if _DECLINE.search(str(o))]
+    return hits[0] if len(hits) == 1 else None
+
+
 _RESUME = re.compile(r"r[ée]sum[ée]|\bcv\b|curriculum", re.I)
 _LETTER = re.compile(r"cover\s*letter|letter of (interest|motivation)|motivation(al)? letter", re.I)
 
@@ -145,6 +156,7 @@ class KnownContext:
     resume_path: str = ""
     job_country: str = "US"
     company: str = ""
+    eeo_decline: bool = False                    # pick "Decline to self-identify" on EEO questions
 
 
 @dataclass
@@ -177,6 +189,15 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.actions.append(FillAction(f.ref, "upload", origin="resume"))
             else:
                 out.rest.append(f)
+            continue
+
+        # 0. EEO / demographics: only the person's standing "decline" choice, never a guess
+        if _EEO.search(label) and not workauth.classify(label):
+            v = decline_option(f.options) if ctx.eeo_decline and f.options else None
+            if v:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="eeo", sensitive=True))
+            else:
+                out.left.append(f)
             continue
 
         # 1. work authorization

@@ -9876,7 +9876,8 @@ def autoapply_plan():
         ctx = KnownContext(work_auth=_work_auth(), library=lib,
                            drafted=[x for x in (data.get("screening") or []) if isinstance(x, dict)],
                            cover_letter=str(data.get("cover_letter") or ""), applicant=applicant,
-                           resume_path=resume, job_country=_job_country(data), company=company)
+                           resume_path=resume, job_country=_job_country(data), company=company,
+                           eeo_decline=bool(_load_prefs().get("eeo_decline")))
         res = plan_known(fields, ctx)
         if res.rest:
             try:

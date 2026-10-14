@@ -239,3 +239,12 @@ def test_plan_uses_drafted_letter_and_workauth(app):
     assert by["f3"]["text"].startswith("Dear Acme") and by["f3"]["from"] == "letter"
     assert by["f4"]["text"] == "Yes" and by["f4"]["from"] == "workauth"
     assert "f5" not in by and {"ref": "f5", "label": "What is your race?"} in d["left"]
+
+
+def test_eeo_decline_only_when_chosen():
+    f = [FormField("g", "Gender", "select", ["Male", "Female", "I don't wish to answer"]),
+         FormField("v", "Veteran status", "radio", ["I am a veteran", "I am not a veteran"])]
+    res = plan_known(f, KnownContext(eeo_decline=True))
+    assert [(a.ref, a.value) for a in res.actions] == [("g", "I don't wish to answer")]
+    assert [x.ref for x in res.left] == ["v"]            # no decline option: theirs
+    assert plan_known(f, KnownContext()).actions == []    # not chosen: never answered

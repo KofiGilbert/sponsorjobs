@@ -201,3 +201,14 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   and site/lane/posted. Unknowns are left out, never estimated. The Review nav item is gone: approve
   (one or all), skip, edit and Send to Telegram live here, "One-tap approve all" moved to Settings,
   Notifications, and an old "review" destination opens Auto-apply on To review.
+- 2026-10: "Your answers" is its own page (`view-answers`, 1040 column, `.tpl-back` back link named
+  for where you came from: Auto-apply, Your profile, Application). Two surface cards: Work
+  authorization (country switch US / UK / Canada / Australia / EU, status select, Yes/No segmented
+  controls for authorized, sponsorship now, sponsorship in the future, relocate, a permit end date
+  only for dated statuses, EEO decline; one primary Save) and Saved answers (search, Add answer,
+  rows with Edit / Delete, a dashed "Drafted" tag on answers drafted from the profile). A citizen
+  or permanent resident sees authorized Yes / sponsorship No locked, shown not asked. Doors: a
+  Today-panel row on Auto-apply, a "Your answers" button on the drawer's Screening answers card
+  and on the package page's Screening card, and the profile's Application answers card. Screening
+  answers on the package page are editable in place; a saved edit also lands in Your answers
+  unless the question is about that one company.
