@@ -82,6 +82,7 @@
 
   --r-xs: 5px;
   --r-sm: 7px;
+  --r-md: 8px;           /* inputs + small boxes (Jobs search/filters, pager); most var(--r-md, ...) fallbacks assumed 8px */
   --r: 10px;
   --r-lg: 14px;
   --r-pill: 999px;
@@ -902,7 +903,7 @@ button { font-family: inherit; cursor: pointer; }
 /* The assisted lane's actual call to action. Without it the "Assisted, your click"
    pill promised a click the card never offered, so a queued application had nowhere
    to go. Weighted heavier than the resume link: applying is the job on this screen. */
-.rvw-apply { color: var(--text); background: var(--chip, rgba(255,255,255,.07));
+.rvw-apply { color: var(--ink); background: var(--chip, rgba(255,255,255,.07));
              padding: 6px 12px; border-radius: 8px; margin-left: 10px;
              border: 0; cursor: pointer; font: inherit; font-size: 13px; font-weight: 550; }
 .rvw-apply[disabled] { opacity: .6; cursor: default; }
@@ -922,7 +923,7 @@ button { font-family: inherit; cursor: pointer; }
 .prof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
 .prof-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
 .prof-field.prof-wide { grid-column: 1 / -1; }
-.prof-field.prof-check > span { display: flex; align-items: flex-start; gap: 8px; color: var(--text); font-size: 13px; }
+.prof-field.prof-check > span { display: flex; align-items: flex-start; gap: 8px; color: var(--ink); font-size: 13px; }
 .prof-field.prof-check input { margin-top: 3px; }
 .prof-card-foot { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .prof-saved { font-size: 12px; color: var(--good); }
@@ -3226,7 +3227,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 .li-row-why b { color: var(--ink-2); font-weight: 500; }
 .li-drafts { display: flex; flex-direction: column; gap: 16px; }
 .li-draft-h { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin-bottom: 8px; }
-.li-draft-t { font-size: 13.5px; line-height: 1.55; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md, 10px); padding: 12px 14px; }
+.li-draft-t { font-size: 13.5px; line-height: 1.55; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 12px 14px; }
 .li-pre { white-space: pre-wrap; }
 @media (max-width: 720px) { .li-row { grid-template-columns: 1fr 56px; } .li-bar { display: none; } }
 
