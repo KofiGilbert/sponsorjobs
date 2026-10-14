@@ -667,6 +667,7 @@
               </section>
             </div>
 
+            <div class="aa-sidecol">
             <aside class="aa-side" aria-label="Today">
               <h2 class="aa-side-h" data-i18n="aa.today">Today</h2>
               <div class="aa-cap">
@@ -691,6 +692,30 @@
               </div>
               <button class="link-btn aa-see-all" id="aaSeeAll" type="button" hidden></button>
             </aside>
+
+            <!-- Preferences: company lists and what skip reasons taught the picker (each undoable). -->
+            <section class="aa-side aa-prefs" id="aaPrefs" aria-labelledby="aaPrefsH">
+              <h2 class="aa-side-h" id="aaPrefsH" data-i18n="aa.pf.h">Preferences</h2>
+              <div class="aa-pf">
+                <div class="aa-pf-h" data-i18n="aa.pf.never">Never apply to</div>
+                <div class="aa-pf-chips" id="aaPfExclude"></div>
+                <input class="aa-pf-add" id="aaPfExcludeAdd" type="text" autocomplete="off" maxlength="120" placeholder="Add a company" data-i18n-ph="aa.pf.addPh" aria-label="Add a company to never apply to" />
+              </div>
+              <div class="aa-pf">
+                <div class="aa-pf-h" data-i18n="aa.pf.prio">Prioritize</div>
+                <div class="aa-pf-chips" id="aaPfPrio"></div>
+                <input class="aa-pf-add" id="aaPfPrioAdd" type="text" autocomplete="off" maxlength="120" placeholder="Add a company" data-i18n-ph="aa.pf.addPh" aria-label="Add a company to prioritize" />
+              </div>
+              <div class="aa-pf">
+                <div class="aa-pf-h" data-i18n="aa.pf.learned">What I've learned</div>
+                <ul class="aa-pf-learn" id="aaPfLearned"></ul>
+              </div>
+              <div class="aa-pf aa-pf-visa" id="aaPfVisa" hidden>
+                <span id="aaPfVisaText"></span>
+                <button class="link-btn" id="aaPfVisaChange" type="button" data-i18n="aa.pf.change">Change</button>
+              </div>
+            </section>
+            </div>
           </div>
         </div>
 
@@ -701,6 +726,9 @@
           <div class="aa-dr-body" id="aaDrBody"></div>
         </aside>
       </section>
+
+      <!-- Why was this skipped? One tap, optional. Shared by Up next, the drawer and Jobs. -->
+      <div class="skip-why" id="skipWhy" role="region" aria-label="Why did you skip it?" hidden></div>
 
       <!-- ============ PROJECTS (build it, prove you can defend it, then add to CV) ============
            The honesty keystone: a project can't reach the CV until you pass a defense test

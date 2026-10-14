@@ -3258,10 +3258,10 @@ def jobs_list():
             if jobs:
                 a = request.args
                 facets = _facets(a)
-                filtered = apply_facets(jobs, **facets)
+                filtered = _jobs_personal(apply_facets(jobs, **facets))
                 page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1),
                                                             a.get("per_page", 30))
-                page_jobs = [dict(j) for j in page_jobs]     # never mutate the shared cached rows
+                page_jobs = _jobs_mark([dict(j) for j in page_jobs])   # never mutate the cached rows
                 saved = _saved_ids()                         # overlay the user's bookmarks onto feed rows
                 if saved:
                     for j in page_jobs:
@@ -3313,7 +3313,9 @@ def jobs_list():
                                        if j.get("source_id") not in seen]
             except Exception:                            # noqa: BLE001 - search still returns the local matches
                 pass
+        filtered = _jobs_personal(filtered)
         page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1), a.get("per_page", 30))
+        page_jobs = _jobs_mark([dict(j) for j in page_jobs])
         refreshed = _sponsors().get_meta("jobs_refreshed_at")
         # An empty local store on a fresh install: start the first-open crawl (only when the feed is
         # genuinely absent, see _first_crawl_allowed) and say so, so the client shows "fetching
@@ -9803,9 +9805,11 @@ def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
     strat = _aa_saved_search()
     snap = _memory().load("default") or {}
     profile = snap.get("profile") or snap.get("essentials") or {}
+    from autoapply.learning import needs_sponsorship
     rows = candidates(board, saved, facets=(strat or {}).get("filters") or {},
                       titles=titles, locations=locations, sponsor_only=sponsor_only,
-                      targets=profile_targets(profile))
+                      targets=profile_targets(profile), learn=_learn_state(),
+                      needs_sponsor=needs_sponsorship(_load_prefs()))
     skip = set(_prefs().get("aa_skip") or [])
     if skip:
         rows = [j for j in rows if str(j.get("source_id") or "") not in skip]
@@ -10197,7 +10201,8 @@ def autoapply_upnext():
     min_fit = _aa_min_fit()
     records = _aa_records()
     key = (count, tuple(focus["titles"]), tuple(focus["locations"]), focus["sponsor_only"],
-           min_fit, len(records), tuple(_prefs().get("aa_skip") or []))
+           min_fit, len(records), tuple(_prefs().get("aa_skip") or []),
+           _LEARN_VER[0], _load_prefs().get("needs_sponsorship"))
     hit = _AA_NEXT_CACHE.get("v")
     if hit and hit[0] == key and time.time() - hit[1] < 120:
         return jsonify(hit[2])
@@ -10212,6 +10217,7 @@ def autoapply_upnext():
             "visa": j.get("visa") or [], "ad_stance": j.get("ad_stance"),
             "ad_sentence": j.get("ad_sentence"), "sponsorship_stated": j.get("sponsorship_stated"),
             "fit": j.get("fit"), "saved": bool(j.get("saved")), "url": j.get("url") or "",
+            "salary": j.get("salary") or "", "priority": bool(j.get("priority")),
         })
     out = {"ok": True, "jobs": rows_out, "count": count, "min_fit": min_fit,
            "matches": res["available"], "has_profile": _aa_has_profile(),
@@ -10235,6 +10241,124 @@ def autoapply_skip():
     _set_prefs({"aa_skip": cur})
     _AA_NEXT_CACHE.pop("v", None)
     return jsonify({"ok": True, "skipped": len(cur)})
+
+
+# ---------------------------------------------------------------- skip reasons + company lists
+# Why the person skipped a role (one tap, optional), what that taught the picker, and their
+# "Never apply to" / "Prioritize" company lists. Local JSON next to the other prefs; the rules
+# are re-derived from the skips every time (autoapply/learning.py), so undo is exact.
+_LEARN_FILE = _DATA / "aa_learn.json"
+_LEARN_VER = [0]       # bumped on every write, so Up next's cache never serves an old pick
+
+
+def _learn_state() -> dict:
+    from autoapply.learning import clean_state
+    try:
+        return clean_state(_json_prefs.loads(_LEARN_FILE.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return clean_state(None)
+
+
+def _save_learn(state: dict) -> None:
+    _LEARN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _LEARN_FILE.write_text(_json_prefs.dumps(state), encoding="utf-8")
+    _LEARN_VER[0] += 1
+    _AA_NEXT_CACHE.pop("v", None)
+
+
+def _learn_view(state: dict | None = None) -> dict:
+    from autoapply.learning import learned, needs_sponsorship
+    st = state if state is not None else _learn_state()
+    names = lambda k: [c.get("name") for c in st.get(k, []) if c.get("name")]  # noqa: E731
+    rules = [{k: r[k] for k in ("id", "kind", "value", "count")} for r in learned(st)]
+    return {"ok": True, "exclude": names("exclude"), "prioritize": names("prioritize"),
+            "learned": rules, "skips": sum(1 for s in st.get("skips", []) if s.get("reason")),
+            "needs_sponsorship": needs_sponsorship(_load_prefs())}
+
+
+@app.get("/api/autoapply/prefs")
+@_guard
+def autoapply_prefs():
+    """The company lists and what Auto-apply learned from skip reasons, for the Preferences
+    panel. Every learned line names its rule id so it can be undone."""
+    return jsonify(_learn_view())
+
+
+@app.post("/api/autoapply/reason")
+@_guard
+def autoapply_reason():
+    """Say why a role was skipped. Body {source_id | record_id, title, company, location,
+    salary, reason, note}. The skip itself already happened (Up next x, the drawer's Skip, Jobs
+    Dismiss); this only records the reason, and may be sent with no reason at all. A "company"
+    reason returns ask_company so the page can ask once "Skip all roles at X?"."""
+    from autoapply.learning import REASONS, record_skip
+    b = request.json or {}
+    reason = str(b.get("reason") or "")
+    if reason and reason not in REASONS:
+        return jsonify({"error": "Unknown reason."}), 400
+    key = str(b.get("source_id") or "").strip()
+    if not key and b.get("record_id") not in (None, ""):
+        key = f"rec:{b.get('record_id')}"
+    if not key:
+        return jsonify({"error": "Which role? source_id or record_id is required."}), 400
+    st = _learn_state()
+    before = {r["id"] for r in _learn_view(st)["learned"]}
+    record_skip(st, {**b, "key": key}, reason, b.get("note") or "")
+    _save_learn(st)
+    view = _learn_view(st)
+    company = str(b.get("company") or "").strip()
+    from autoapply.learning import company_key
+    already = company_key(company) in {company_key(n) for n in view["exclude"]}
+    view["new"] = [r for r in view["learned"] if r["id"] not in before]
+    view["ask_company"] = company if reason == "company" and company and not already else ""
+    return jsonify(view)
+
+
+@app.post("/api/autoapply/company")
+@_guard
+def autoapply_company():
+    """Add or remove a company on "Never apply to" (list=exclude) or "Prioritize"
+    (list=prioritize). Body {list, name, remove?}. A company sits on one list at a time."""
+    from autoapply.learning import set_company
+    b = request.json or {}
+    st = _learn_state()
+    if not set_company(st, str(b.get("list") or ""), b.get("name") or "",
+                       on=not b.get("remove"), why="skip" if b.get("from_skip") else "you"):
+        return jsonify({"error": "Name a company and a list (exclude or prioritize)."}), 400
+    _save_learn(st)
+    return jsonify(_learn_view(st))
+
+
+@app.post("/api/autoapply/forget")
+@_guard
+def autoapply_forget():
+    """Undo one thing Auto-apply learned. Body {id} (a rule id from /api/autoapply/prefs)."""
+    from autoapply.learning import forget
+    st = _learn_state()
+    if not forget(st, str((request.json or {}).get("id") or "")):
+        return jsonify({"error": "That rule is already gone."}), 404
+    _save_learn(st)
+    return jsonify(_learn_view(st))
+
+
+def _jobs_personal(rows: list[dict]) -> list[dict]:
+    """The Jobs board through the person's own settings: a role whose ad requires citizenship or
+    a clearance, or says it will not sponsor, is hidden while they need sponsorship (the feed
+    already drops most of these; this catches local and on-demand rows). Company lists only mark
+    rows (see _jobs_mark), they never hide them."""
+    from autoapply.learning import closed_to_visa, needs_sponsorship
+    if not needs_sponsorship(_load_prefs()):
+        return rows
+    return [j for j in rows if not closed_to_visa(j)]
+
+
+def _jobs_mark(page_rows: list[dict]) -> list[dict]:
+    """One page of Jobs rows with ``excluded`` / ``priority`` set from the company lists."""
+    from autoapply.learning import mark_board
+    st = _learn_state()
+    if not st.get("exclude") and not st.get("prioritize"):
+        return page_rows
+    return mark_board(page_rows, st)
 
 
 # ============================================================================ tracker board

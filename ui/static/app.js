@@ -1432,7 +1432,7 @@
       const wm = workMode(j);
       const tags = roleTags(j);
       const visas = visaBadges(j);
-      return `<button class="feed-row${j.source_id === SELECTED_SID ? " is-active" : ""}${j.saved ? " is-saved" : ""}" data-sid="${esc(j.source_id)}" type="button">
+      return `<button class="feed-row${j.source_id === SELECTED_SID ? " is-active" : ""}${j.saved ? " is-saved" : ""}${j.excluded ? " is-excluded" : ""}" data-sid="${esc(j.source_id)}" type="button">
         ${j.saved ? `<span class="fr-saved" title="Saved" aria-label="Saved">★</span>` : ""}
         ${companyAvatar(j)}
         <div class="fr-main">
@@ -1449,6 +1449,8 @@
             <span class="fr-fact">${esc(employmentType(j))}</span>
             ${j.entry_level ? `<span class="fr-fact fr-fact-entry">Entry-level</span>` : ""}
             ${viaFact(j)}
+            ${j.excluded ? `<span class="fr-fact fr-fact-never" title="${esc(I18N.t("jobs.neverTip", "On your Never apply to list. Auto-apply skips it."))}">${esc(I18N.t("jobs.never", "Never apply"))}</span>`
+              : j.priority ? `<span class="fr-fact">${esc(I18N.t("aa.priority", "Priority"))}</span>` : ""}
           </div>
           <div class="fr-visas">${visas}</div>
         </div>
@@ -1536,6 +1538,7 @@
       await api("/api/jobs/dismiss", { source_id: s });
       SELECTED_SID = null;
       loadPage(JOBS_PAGE);              // re-fetch the page so counts + backfill stay correct
+      skipWhy({ source_id: s, title: j.title, company: j.company, location: j.location, salary: j.salary });
     });
     loadJobDetail(sid);
   }
@@ -7963,6 +7966,7 @@
     AA.tile = want || (AA.tile && AA.board.counts[AA.tile] ? AA.tile : b.default);
     aaRender();
     aaLoadNext();
+    aaLoadPrefs();
     if (AA.open != null) aaOpen(AA.open, { keep: true });   // refresh an open drawer
   }
 
@@ -8146,10 +8150,12 @@
     return msg;
   }
   async function aaSkip(id) {
+    const it = (AA.item && AA.item.id === id) ? AA.item : aaFind(id);
     await api("/api/review/approve", { skip: [id] });
     if (AA.open === id) aaClose();
-    toast(T("aa.skipped", "Skipped."));
     loadAutoApply();
+    if (it) skipWhy({ record_id: id, title: it.role, company: it.company, location: it.location, salary: it.pay });
+    else toast(T("aa.skipped", "Skipped."));
   }
 
   $("#aaList")?.addEventListener("click", e => {
@@ -8410,7 +8416,7 @@
         ${companyAvatar(j)}
         <div class="aa-row-main"><div class="aa-t">${esc(j.title)}</div>
           <div class="aa-s"><span class="co">${esc(j.company)}${j.location ? " · " + esc(usLocation(j.location)) : ""}</span>${aaChip(j)}</div></div>
-        <span class="aa-tag">${j.saved ? star + " " + esc(T("aa.saved", "Saved")) : esc(T("aa.best", "Best match"))}</span>
+        <span class="aa-tag">${j.saved ? star + " " + esc(T("aa.saved", "Saved")) : j.priority ? esc(T("aa.priority", "Priority")) : esc(T("aa.best", "Best match"))}</span>
         <span class="aa-match">${j.fit != null ? `${j.fit}%<small>${esc(T("aa.match", "match"))}</small>` : ""}</span>
         <div class="aa-act"><button class="aa-x" type="button" data-skip="${esc(j.source_id)}" title="${esc(T("aa.skipNext", "Skip this role in the next run"))}" aria-label="${esc(T("aa.skipNext", "Skip this role in the next run"))}"><svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
       </div>`).join("")
@@ -8423,8 +8429,10 @@
     x.disabled = true;
     try {
       await api("/api/autoapply/skip", { source_id: x.dataset.skip });
+      const j = ((AA.next && AA.next.jobs) || []).find(r => r.source_id === x.dataset.skip);
       x.closest(".aa-row")?.remove();
       aaLoadNext();
+      if (j) skipWhy({ source_id: j.source_id, title: j.title, company: j.company, location: j.location, salary: j.salary });
     } catch (err) { x.disabled = false; toast(err.message); }
   });
   let AA_NEXT_T = null;
@@ -8440,6 +8448,158 @@
     aaLoadNext();
   });
   document.addEventListener("click", e => { const h = $("#aaHow"); if (h && h.open && !h.contains(e.target)) h.open = false; });
+
+  /* ---- Skip with a reason (one tap, optional) and what it teaches the picker ----
+     AIApply's "decline with a reason" pattern: the skip happens at once, then a small bar asks
+     why. Picking a reason is optional; it is stored locally (/api/autoapply/reason) and shapes
+     the next runs (autoapply/learning.py). "Company" asks once whether to skip every role there.
+     Everything learned shows under Preferences with an Undo. */
+  const SW_REASONS = [["wrong_role", "aa.why.role", "Wrong role"], ["too_senior", "aa.why.senior", "Too senior"],
+    ["too_junior", "aa.why.junior", "Too junior"], ["location", "aa.why.location", "Location"],
+    ["pay_low", "aa.why.pay", "Pay too low"], ["company", "aa.why.company", "Company"],
+    ["no_sponsorship", "aa.why.nospon", "No sponsorship"], ["other", "aa.why.other", "Other"]];
+  const AA_LEVEL = { intern: ["aa.lvl.intern", "Intern"], entry: ["aa.lvl.entry", "Entry"], mid: ["aa.lvl.mid", "Mid"],
+    senior: ["aa.lvl.senior", "Senior"], lead: ["aa.lvl.lead", "Lead"], manager: ["aa.lvl.manager", "Manager"] };
+  const fmtPay = v => "$" + Math.round(Number(v) / 1000) + "k";
+  function learnedLine(r) {
+    const lvl = () => T(...(AA_LEVEL[r.value] || AA_LEVEL.mid));
+    switch (r.kind) {
+      case "role": return T("aa.learn.role", "Fewer roles like {v}").replace("{v}", r.value);
+      case "senior": return T("aa.learn.senior", "Fewer roles at {v} level or above").replace("{v}", lvl());
+      case "junior": return T("aa.learn.junior", "Fewer roles at {v} level or below").replace("{v}", lvl());
+      case "location": return T("aa.learn.location", "Fewer roles in {v}").replace("{v}", usLocation(r.value));
+      case "pay": return T("aa.learn.pay", "Only roles paying over {v}").replace("{v}", fmtPay(r.value));
+      case "nospon": return T("aa.learn.nospon", "Leave out {v}, no sponsorship").replace("{v}", r.value);
+      default: return "";
+    }
+  }
+  const SW = { job: null, timer: null };
+  function swHide() {
+    const bar = $("#skipWhy");
+    clearTimeout(SW.timer);
+    if (bar) { bar.hidden = true; bar.innerHTML = ""; }
+    SW.job = null;
+  }
+  function swLater(ms) {
+    clearTimeout(SW.timer);
+    SW.timer = setTimeout(() => {
+      const bar = $("#skipWhy");
+      if (bar && (bar.matches(":hover") || bar.contains(document.activeElement))) return swLater(2000);
+      swHide();
+    }, ms);
+  }
+  const SW_X = `<button class="sw-x" type="button" data-sw="close" aria-label="${esc(T("aa.why.close", "Close"))}"><svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>`;
+  // job: {source_id | record_id, title, company, location, salary}. Called right after a skip.
+  function skipWhy(job) {
+    const bar = $("#skipWhy");
+    if (!bar || !job) return;
+    SW.job = job;
+    bar.innerHTML = `<span class="sw-t">${esc(T("aa.why.t", "Skipped. Why?"))}</span>
+      <span class="sw-chips">${SW_REASONS.map(([k, key, fb]) => `<button class="sw-chip" type="button" data-why="${k}">${esc(T(key, fb))}</button>`).join("")}</span>${SW_X}`;
+    bar.hidden = false;
+    swLater(9000);
+  }
+  function swSay(html, ms) {
+    const bar = $("#skipWhy");
+    if (!bar) return;
+    bar.innerHTML = `<span class="sw-t">${html}</span>${SW_X}`;
+    swLater(ms || 2600);
+  }
+  async function swSend(reason, note) {
+    const j = SW.job;
+    if (!j) return;
+    let r;
+    try {
+      r = await api("/api/autoapply/reason", { source_id: j.source_id || "", record_id: j.record_id ?? "",
+        title: j.title || "", company: j.company || "", location: j.location || "", salary: j.salary || "", reason, note: note || "" });
+    } catch (e) { swSay(esc(e.message || T("aa.fail", "Couldn't do that, try again."))); return; }
+    aaPaintPrefs(r);
+    AA.next = null; if (AA.board) aaLoadNext();
+    if (r.ask_company) {
+      const bar = $("#skipWhy");
+      bar.innerHTML = `<span class="sw-t">${esc(T("aa.why.allAt", "Skip all roles at {c}?").replace("{c}", r.ask_company))}</span>
+        <button class="btn btn-ghost btn-sm" type="button" data-sw="all">${esc(T("aa.why.skipAll", "Skip all"))}</button>
+        <button class="link-btn" type="button" data-sw="one">${esc(T("aa.why.justOne", "Just this one"))}</button>${SW_X}`;
+      SW.company = r.ask_company;
+      swLater(12000);
+      return;
+    }
+    const line = (r.new || []).map(learnedLine).filter(Boolean)[0];
+    swSay(esc(T("aa.why.thanks", "Got it.")) + (line ? ` <span class="sw-sub">${esc(line)}</span>` : ""), line ? 4200 : 2200);
+  }
+  $("#skipWhy")?.addEventListener("click", async e => {
+    const why = e.target.closest("[data-why]");
+    if (why) {
+      if (why.dataset.why === "other") {
+        $("#skipWhy").innerHTML = `<span class="sw-t">${esc(T("aa.why.otherT", "Other"))}</span>
+          <input class="sw-note" id="swNote" type="text" maxlength="200" autocomplete="off" placeholder="${esc(T("aa.why.notePh", "Add a note (optional)"))}" />
+          <button class="btn btn-ghost btn-sm" type="button" data-sw="note">${esc(T("aa.why.save", "Save"))}</button>${SW_X}`;
+        $("#swNote").focus();
+        swLater(20000);
+        return;
+      }
+      why.disabled = true;
+      return swSend(why.dataset.why);
+    }
+    const act = e.target.closest("[data-sw]")?.dataset.sw;
+    if (act === "close") return swHide();
+    if (act === "note") return swSend("other", $("#swNote")?.value || "");
+    if (act === "one") return swSay(esc(T("aa.why.thanks", "Got it.")));
+    if (act === "all") {
+      try {
+        aaPaintPrefs(await api("/api/autoapply/company", { list: "exclude", name: SW.company, from_skip: true }));
+        AA.next = null; if (AA.board) aaLoadNext();
+        swSay(esc(T("aa.why.allDone", "You won't see {c} in Auto-apply again.").replace("{c}", SW.company)), 3200);
+      } catch (err) { swSay(esc(err.message || T("aa.fail", "Couldn't do that, try again."))); }
+    }
+  });
+  $("#skipWhy")?.addEventListener("keydown", e => {
+    if (e.key === "Escape") { e.preventDefault(); swHide(); }
+    if (e.key === "Enter" && e.target.id === "swNote") { e.preventDefault(); swSend("other", e.target.value); }
+  });
+
+  /* ---- Preferences: company lists, what was learned, and the visa filter ---- */
+  async function aaLoadPrefs() {
+    try { aaPaintPrefs(await api("/api/autoapply/prefs")); } catch { /* the panel keeps its last state */ }
+  }
+  function aaPaintPrefs(p) {
+    if (!p || !$("#aaPfExclude")) return;
+    const chips = (names, list) => names.map(n => `<span class="aa-pf-chip">${esc(n)}<button type="button" data-pf-rm="${list}" data-name="${esc(n)}" aria-label="${esc(T("aa.pf.remove", "Remove {c}").replace("{c}", n))}"><svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></span>`).join("");
+    $("#aaPfExclude").innerHTML = chips(p.exclude || [], "exclude");
+    $("#aaPfPrio").innerHTML = chips(p.prioritize || [], "prioritize");
+    const rules = p.learned || [];
+    $("#aaPfLearned").innerHTML = rules.length
+      ? rules.map(r => `<li><span>${esc(learnedLine(r))}</span><button class="link-btn" type="button" data-pf-forget="${esc(r.id)}">${esc(T("aa.pf.undo", "Undo"))}</button></li>`).join("")
+      : `<li class="aa-pf-none">${esc(T("aa.pf.none", "Nothing yet. Pick a reason when you skip."))}</li>`;
+    const v = $("#aaPfVisa");
+    v.hidden = !p.needs_sponsorship;
+    $("#aaPfVisaText").textContent = T("aa.pf.visa", "Hiding citizen-only and clearance roles");
+  }
+  $("#aaPrefs")?.addEventListener("click", async e => {
+    const rm = e.target.closest("[data-pf-rm]"), fg = e.target.closest("[data-pf-forget]");
+    try {
+      if (rm) aaPaintPrefs(await api("/api/autoapply/company", { list: rm.dataset.pfRm, name: rm.dataset.name, remove: true }));
+      else if (fg) aaPaintPrefs(await api("/api/autoapply/forget", { id: fg.dataset.pfForget }));
+      else return;
+      AA.next = null; aaLoadNext();
+    } catch (err) { toast(err.message || T("aa.fail", "Couldn't do that, try again.")); }
+  });
+  [["#aaPfExcludeAdd", "exclude"], ["#aaPfPrioAdd", "prioritize"]].forEach(([id, list]) =>
+    $(id)?.addEventListener("keydown", async e => {
+      if (e.key !== "Enter") return;
+      const name = e.target.value.trim();
+      if (!name) return;
+      e.preventDefault();
+      try {
+        aaPaintPrefs(await api("/api/autoapply/company", { list, name }));
+        e.target.value = "";
+        AA.next = null; aaLoadNext();
+      } catch (err) { toast(err.message || T("aa.fail", "Couldn't do that, try again.")); }
+    }));
+  $("#aaPfVisaChange")?.addEventListener("click", () => {
+    loadProfile(); showView("profile");
+    setTimeout(() => $("#answersCard")?.scrollIntoView({ block: "center" }), 150);
+  });
 
   // An error the person can act on gets the action as a button next to it.
   const AA_ACTIONS = {

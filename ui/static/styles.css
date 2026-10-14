@@ -1735,6 +1735,52 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .view-autoapply .aa-rec-none { font-size: 12.5px; color: var(--faint); padding: 4px 0 6px; }
 .view-autoapply .aa-see-all { padding: 4px 0 10px; display: inline-flex; }
 
+/* Preferences: company lists + what skip reasons taught the picker (under the Today panel) */
+.view-autoapply .aa-sidecol { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.view-autoapply .aa-prefs { padding-bottom: 12px; }
+.view-autoapply .aa-pf { padding: 12px 0; border-top: 1px solid var(--border); }
+.view-autoapply .aa-side-h + .aa-pf { margin-top: 12px; }
+.view-autoapply .aa-pf-h { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.view-autoapply .aa-pf-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.view-autoapply .aa-pf-chips:not(:empty) { margin-bottom: 8px; }
+.view-autoapply .aa-pf-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; font-size: 12.5px; color: var(--ink-2);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 99px; padding: 2px 3px 2px 10px; }
+.view-autoapply .aa-pf-chip button { width: 20px; height: 20px; display: grid; place-items: center; border: 0; background: none; color: var(--faint); border-radius: 50%; cursor: pointer; }
+.view-autoapply .aa-pf-chip button:hover { color: var(--ink); background: var(--surface); }
+.view-autoapply .aa-pf-add { width: 100%; height: 32px; font: inherit; font-size: 13px; color: var(--ink); background: transparent;
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 0 10px; }
+.view-autoapply .aa-pf-add::placeholder { color: var(--faint); }
+.view-autoapply .aa-pf-add:focus { outline: none; border-color: var(--border-strong); }
+.view-autoapply .aa-pf-learn { list-style: none; margin: 0; padding: 0; }
+.view-autoapply .aa-pf-learn li { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--ink-2); padding: 3px 0; }
+.view-autoapply .aa-pf-learn li .link-btn { flex: none; font-size: 12.5px; }
+.view-autoapply .aa-pf-learn .aa-pf-none { font-size: 12.5px; color: var(--faint); }
+.view-autoapply .aa-pf-visa { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); padding-bottom: 2px; }
+.view-autoapply .aa-pf-visa .link-btn { flex: none; font-size: 12px; }
+
+/* Skipped. Why? One tap, optional; shared by Up next, the drawer and Jobs Dismiss. */
+.skip-why { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 300;
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; width: max-content; max-width: calc(100vw - 32px);
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md); padding: 8px 8px 8px 16px; }
+.skip-why[hidden] { display: none; }
+.skip-why .sw-t { font-size: 13px; font-weight: 600; color: var(--ink); margin-right: 4px; flex: none; }
+.skip-why .sw-sub { font-weight: 500; color: var(--muted); margin-left: 4px; }
+.skip-why .sw-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.skip-why .sw-chip { height: 28px; padding: 0 11px; font: inherit; font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 99px; }
+.skip-why .sw-chip:hover { color: var(--ink); border-color: var(--border-strong); }
+.skip-why .sw-chip:disabled { opacity: .6; cursor: default; }
+.skip-why .sw-note { height: 30px; width: 280px; min-width: 0; flex: 0 1 280px; font: inherit; font-size: 13px; color: var(--ink);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 0 10px; }
+.skip-why .sw-note:focus { outline: none; border-color: var(--border-strong); }
+.skip-why .sw-x { width: 28px; height: 28px; display: grid; place-items: center; border: 0; background: none; color: var(--faint); border-radius: var(--r-xs); cursor: pointer; flex: none; }
+.skip-why .sw-x:hover { color: var(--ink); background: var(--surface-2); }
+
+/* Jobs: a "Never apply to" company's role stays findable, quietly marked. */
+.feed-row.is-excluded { opacity: .6; }
+.feed-row.is-excluded:hover, .feed-row.is-excluded.is-active { opacity: 1; }
+
 /* the detail drawer */
 .view-autoapply .aa-scrim { position: fixed; inset: 0; z-index: 80; background: rgba(15, 18, 24, 0.28); }
 :root:not([data-theme="light"]) .view-autoapply .aa-scrim { background: rgba(0, 0, 0, 0.5); }
