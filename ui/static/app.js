@@ -671,8 +671,11 @@
     if (!el) return;
     try {
       const r = await api("/api/jobs");
-      if (r.loading) { el.innerHTML = feedLoadingHtml(r.feed); watchFeedDownload(loadHomeToday); return; }
-      const jobs = rankForReachability(r.jobs || []).slice(0, 4);
+      const foot = $(".home-roles-foot");
+      if (r.loading) { if (foot) foot.hidden = true; el.innerHTML = feedLoadingHtml(r.feed); watchFeedDownload(loadHomeToday); return; }
+      // The list scrolls under the fixed prompt, so it can hold more than a peek.
+      const jobs = rankForReachability(r.jobs || []).slice(0, 12);
+      if (foot) foot.hidden = jobs.length < 3;
       if (!jobs.length && feedFailed(r.feed)) { el.innerHTML = feedFailHtml(); wireFeedRetry(el, loadHomeToday); return; }
       if (!jobs.length) { el.innerHTML = `<div class="empty small">No roles yet, open <b>Jobs</b> to add sources.</div>`; return; }
       // The same card language as the Jobs tab (logo, framed card, company then role, badges), so

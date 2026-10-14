@@ -24,6 +24,8 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
+from submit.filenames import export_filename
+
 
 def _post_json(url: str, payload: dict) -> tuple[int, str]:  # pragma: no cover - network
     """POST JSON, return (status, body). Kept for callers that send plain JSON."""
@@ -233,7 +235,7 @@ def recruitee_submit(url: str, record_data: dict, http=_post_multipart, get=_get
             fields.append((f"{key}[flag]", "true" if a["flag"] else "false"))
         for v in a.get("multi_content") or []:
             fields.append((f"{key}[multi_content][]", v))
-    filename = (re.sub(r"[^\w.-]+", "_", f["name"]).strip("_") or "resume") + "_resume.pdf"
+    filename = export_filename(f["name"], "resume")   # "<Name> Resume.pdf", not cv-<id>.pdf
     form = {"fields": fields, "files": [("candidate[cv]", filename, cv, "application/pdf")]}
 
     try:

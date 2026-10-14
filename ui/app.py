@@ -35,6 +35,7 @@ from intake.palace_memory import PalaceMemory  # noqa: E402
 from ui.lock import Lock  # noqa: E402
 from ui.records import CVRecords  # noqa: E402
 from ui.session import WebIntake  # noqa: E402
+from submit.filenames import export_filename, upload_copy  # noqa: E402
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 # Reject oversized uploads before they're read (a résumé/transcript is small); this bounds
@@ -2128,7 +2129,7 @@ def _review_item(rec: dict) -> dict:
         "screening_count": len(data.get("screening") or []),
         "has_cover_letter": bool((data.get("cover_letter") or "").strip()),
         "coverage": cov.get("ratio") if cov.get("ratio") is not None else round(rec.get("coverage") or 0),
-        "cv_path": str(cv) if cv.exists() else "",
+        "cv_path": _resume_upload_path(rec) if cv.exists() else "",
         "cv_url": f"/api/cv.pdf?job=cv-{rid}" if cv.exists() else "",
     }
 
@@ -2422,7 +2423,7 @@ def record_cover_pdf(rid):
     if not pdf.exists():
         return jsonify({"error": "No cover letter PDF yet, draft or save a cover letter first."}), 404
     resp = send_file(str(pdf), mimetype="application/pdf",
-                     download_name="cover_letter.pdf", max_age=0)
+                     download_name=_export_name(rid, "cover"), max_age=0)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -2442,7 +2443,8 @@ def record_cover_docx(rid):
         return jsonify({"error": "No cover letter yet, draft or save one first."}), 404
     from tailoring.docx_export import build_cover_docx
     out = build_cover_docx(_saved_identity(), text, WORKDIR / f"cover-{rid}.docx")
-    resp = send_file(out, download_name="cover_letter.docx", max_age=0,
+    resp = send_file(out, download_name=export_filename(_person_name(rec), "cover", "docx"),
+                     max_age=0,
                      mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -2469,15 +2471,15 @@ def record_export(rid):
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         pdf = WORKDIR / f"cv-{rid}.pdf"
         if pdf.exists():
-            z.write(pdf, arcname=f"{slug}_CV.pdf")
+            z.write(pdf, arcname=export_filename(_person_name(rec), "resume"))
         cover = (data.get("cover_letter") or "").strip()
         if cover:
             cover_pdf = WORKDIR / f"cover-{rid}.pdf"
             if not cover_pdf.exists():
                 _render_cover_pdf(rid, cover)   # build it for the bundle if we haven't yet
             if cover_pdf.exists():
-                z.write(cover_pdf, arcname=f"{slug}_Cover_Letter.pdf")
-            z.writestr(f"{slug}_Cover_Letter.txt", cover)
+                z.write(cover_pdf, arcname=export_filename(_person_name(rec), "cover"))
+            z.writestr(export_filename(_person_name(rec), "cover", "txt"), cover)
         cov = data.get("coverage") or {}
         lines = [f"Application summary, {role}" + (f" at {company}" if company else ""), ""]
         if cov.get("ratio") is not None:
@@ -2511,6 +2513,8 @@ def record_delete(rid):
             (WORKDIR / name).unlink(missing_ok=True)
         except OSError:
             pass
+    import shutil
+    shutil.rmtree(WORKDIR / "uploads" / str(int(rid)), ignore_errors=True)   # the named copy
     return jsonify({"ok": True, "deleted": rid})
 
 
@@ -2910,7 +2914,8 @@ def cover_letter_txt():
     if not path.exists():
         return jsonify({"error": "not built yet"}), 404
     resp = send_file(str(path), mimetype="text/plain; charset=utf-8",
-                     download_name="cover_letter.txt", max_age=0)
+                     download_name=_export_name(_record_id_of(name[:-4]), "cover", "txt"),
+                     max_age=0)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -2952,12 +2957,14 @@ def cv_pdf():
     path = WORKDIR / name
     if not path.exists():
         return jsonify({"error": "not built yet"}), 404
+    # Saved as "<Name> Resume.pdf", never the internal cv-<id>.pdf storage name.
+    nice = _export_name(_record_id_of(name[:-4]), "resume")
     if request.args.get("preview"):
         resp = send_file(_preview_safe_pdf(path), mimetype="application/pdf",
-                         download_name="resume.pdf", max_age=0)
+                         download_name=nice, max_age=0)
     else:
         resp = send_file(str(path), mimetype="application/pdf",
-                         download_name="resume.pdf", max_age=0)
+                         download_name=nice, max_age=0)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -2983,7 +2990,8 @@ def cv_docx():
         return jsonify({"error": "no profile to export yet"}), 404
     name = "cv-" + ("".join(ch for ch in rid if ch.isalnum()) or "resume")
     out = build_docx(profile, WORKDIR / f"{name}.docx")
-    resp = send_file(out, download_name="resume.docx", max_age=0,
+    resp = send_file(out, download_name=_export_name(int(rid) if rid.isdigit() else None,
+                                                     "resume", "docx"), max_age=0,
                      mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -4057,6 +4065,52 @@ def _saved_identity() -> dict:
         ident = dict((mem.get("essentials") or {}).get("identity")
                      or (mem.get("profile") or {}).get("identity") or ident)
     return ident
+
+
+def _person_name(rec=None) -> str:
+    """The person's name for an outgoing file's name: the name on THIS application's tailored
+    CV when there is one, else the saved profile's. '' when none is known."""
+    if rec:
+        ident = (_record_data(rec).get("render_profile") or {}).get("identity") or {}
+        if str(ident.get("name") or "").strip():
+            return str(ident["name"])
+    try:
+        return str(_saved_identity().get("name") or "")
+    except Exception:   # noqa: BLE001 - a filename never blocks a download
+        return ""
+
+
+def _record_id_of(job: str):
+    """The record id in an internal file stem ('cv-12' / 'cover-12'), or None."""
+    m = re.fullmatch(r"(?:cv|cover)-(\d+)", job or "")
+    return int(m.group(1)) if m else None
+
+
+def _export_name(rid, kind: str = "resume", ext: str = "pdf") -> str:
+    """'<Name> Resume.pdf' / '<Name> Cover Letter.pdf' for application ``rid`` (or the live
+    session when ``rid`` is None), never the internal cv-<id>.pdf storage name."""
+    rec = None
+    if rid is not None:
+        try:
+            rec = _get_record(rid)
+        except Exception:   # noqa: BLE001
+            rec = None
+    return export_filename(_person_name(rec), kind, ext)
+
+
+def _resume_upload_path(rec: dict) -> str:
+    """The tailored resume as a file an upload can take its name from. A browser file input
+    set through CDP sends the path's basename, so the in-app fill uploads a copy named after
+    the person (WORKDIR/uploads/<id>/<Name> Resume.pdf), not cv-<id>.pdf. '' when no CV."""
+    rid = int(rec["id"])
+    cv = WORKDIR / f"cv-{rid}.pdf"
+    if not cv.exists():
+        return ""
+    try:
+        return str(upload_copy(cv, WORKDIR / "uploads" / str(rid),
+                               export_filename(_person_name(rec), "resume")))
+    except OSError:
+        return str(cv)
 
 
 def _saved_full_profile() -> dict:
@@ -9708,8 +9762,7 @@ def autoapply_plan():
     applicant = applicant_from_record({"profile": prof})
     resume = ""
     if rec:
-        cv = WORKDIR / f"cv-{rec['id']}.pdf"
-        resume = str(cv) if cv.exists() else ""
+        resume = _resume_upload_path(rec)   # named after the person, not cv-<id>.pdf
     ops = resolve_plan(plan, applicant, resume_path=resume)
     return jsonify({"ok": True, "filled": len(ops),
                     "ops": [{"ref": o.ref, "op": o.op, "text": o.text, "path": o.path,
@@ -10069,7 +10122,7 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         "posting_url": url,
         "site": _aa_site(url),
         "saved": bool(job.get("saved")),
-        "cv_path": str(WORKDIR / f"cv-{rec['id']}.pdf") if (WORKDIR / f"cv-{rec['id']}.pdf").exists() else "",
+        "cv_path": _resume_upload_path(rec),
         "created_at": rec.get("created_at") or "",
         "approved_at": data.get("approved_at") or "",
         "submitted_at": data.get("applied_at") or sub.get("at") or "",
