@@ -4389,6 +4389,19 @@ def _save_prefs(prefs: dict) -> dict:
         "hear_about_us": _txt(prefs.get("hear_about_us"), 60),
         "eeo_decline": bool(prefs.get("eeo_decline")),
     }
+    # The structured work-authorization profile (autoapply/workauth.py) is the truth; the flat
+    # Yes/No answers above are derived from it so the extension and older code fill the same
+    # answer. A write from an older surface (no work_auth in it) is carried into the US entry.
+    from autoapply import workauth as _wa
+    if isinstance(prefs.get("work_auth"), dict):
+        wa = _wa.clean(prefs["work_auth"])
+    else:
+        prev = _load_prefs().get("work_auth")
+        wa = _wa.apply_legacy(prev, clean) if isinstance(prev, dict) else None
+    if wa is not None:
+        clean["work_auth"] = wa
+        for k, v in _wa.legacy_prefs(wa).items():
+            clean[k] = v
     _DATA.mkdir(parents=True, exist_ok=True)
     _PREFS_PATH.write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
@@ -4400,12 +4413,17 @@ def _merge_prefs(patch: dict) -> dict:
     cur.update({k: v for k, v in (patch or {}).items() if k in _PREF_KEYS})
     if "work_auth_us" in (patch or {}):          # the profile screen's spelling wins when given
         cur["work_authorized"] = patch["work_auth_us"]
+    legacy = ("work_auth_us", "work_authorized", "needs_sponsorship", "willing_to_relocate")
+    if "work_auth" not in (patch or {}) and isinstance(cur.get("work_auth"), dict) \
+            and any(k in (patch or {}) for k in legacy):
+        from autoapply import workauth as _wa     # carry the flat answer into the structured profile
+        cur["work_auth"] = _wa.apply_legacy(cur["work_auth"], patch)
     return _save_prefs(cur)
 
 
 _PREF_KEYS = ("work_authorized", "work_auth_us", "needs_sponsorship", "willing_to_relocate",
               "over_18", "years_experience", "desired_salary", "earliest_start", "hear_about_us",
-              "eeo_decline")
+              "eeo_decline", "work_auth")
 
 
 def _profile_answers(prefs: dict | None = None) -> dict:
@@ -4501,7 +4519,18 @@ def _learn_from_corrections(body: dict) -> dict:
     if "eeo_decline" in body:
         pref_patch["eeo_decline"] = bool(body.get("eeo_decline"))
     prefs = _merge_prefs(pref_patch) if pref_patch else _load_prefs()
-    return {"ok": True, "learned": sorted(list(patch) + list(pref_patch)),
+    learned_q = 0
+    qa_list = [x for x in (body.get("answers") or []) if isinstance(x, dict)][:40]
+    if qa_list:                                   # a typed answer the person fixed on a form
+        lib = _answer_lib()
+        try:
+            for x in qa_list:
+                if lib.save(str(x.get("question") or ""), str(x.get("answer") or ""), "you",
+                            company=str(body.get("company") or "")):
+                    learned_q += 1
+        finally:
+            lib.close()
+    return {"ok": True, "learned": sorted(list(patch) + list(pref_patch)), "learned_answers": learned_q,
             "identity": {k: str(saved_identity.get(k) or "") for k in IDENTITY_KEYS} if patch else None,
             "answers": _profile_answers(prefs)}
 
@@ -4707,6 +4736,143 @@ def profile_answers_save():
         patch["eeo_decline"] = bool(b.get("eeo_decline"))
     prefs = _merge_prefs(patch) if patch else _load_prefs()
     return jsonify({"ok": True, "answers": _profile_answers(prefs)})
+
+
+# --------------------------------------------------------------------------- Your answers
+# The answer library (autoapply/answers.py) + the structured work-authorization profile
+# (autoapply/workauth.py): fix an answer once, reused on every later form. Local SQLite in the
+# data dir; nothing here goes to the model.
+_ANSWERS_DB = _DATA / "answers.db"
+
+
+def _answer_lib():
+    """Open the answer library, seeding it once from the older saved answers."""
+    from autoapply.answers import AnswerLibrary, seed_once
+    lib = AnswerLibrary(_ANSWERS_DB)
+    try:
+        seed_once(lib, _load_prefs())
+    except Exception:
+        pass
+    return lib
+
+
+def _work_auth() -> dict:
+    """The person's work-authorization profile (structured, or built from the older answers)."""
+    from autoapply import workauth as _wa
+    return _wa.load(_load_prefs())
+
+
+def _answers_payload(query: str = "") -> dict:
+    from autoapply import workauth as _wa
+    lib = _answer_lib()
+    try:
+        rows = lib.list(query)
+        total = lib.count()
+    finally:
+        lib.close()
+    return {"ok": True, "work_auth": _work_auth(),
+            "countries": [{"code": c, "name": _wa.COUNTRY_NAMES[c],
+                           "statuses": [{"code": k, "label": v} for k, v in _wa.STATUSES[c]]}
+                          for c in _wa.COUNTRIES],
+            "implied": sorted(_wa.CITIZEN | _wa.PERMANENT), "dated": sorted(_wa.DATED),
+            "eeo_decline": bool(_load_prefs().get("eeo_decline")),
+            "answers": rows, "total": total}
+
+
+@app.get("/api/answers")
+@_guard
+def answers_list():
+    """Your answers: the work-authorization profile and the saved answer library (?q= filters)."""
+    return _nostore(jsonify(_answers_payload(str(request.args.get("q") or ""))))
+
+
+@app.post("/api/answers/workauth")
+@_guard
+def answers_workauth_save():
+    """Save the work-authorization profile {work_auth:{countries:{US:{...}}, relocate}} and,
+    optionally, eeo_decline. The flat Yes/No answers are derived from it."""
+    from autoapply import workauth as _wa
+    b = request.json or {}
+    patch: dict = {}
+    if isinstance(b.get("work_auth"), dict):
+        patch["work_auth"] = _wa.clean(b["work_auth"])
+    if "eeo_decline" in b:
+        patch["eeo_decline"] = bool(b.get("eeo_decline"))
+    prefs = _merge_prefs(patch) if patch else _load_prefs()
+    return jsonify({"ok": True, "work_auth": _wa.load(prefs),
+                    "eeo_decline": bool(prefs.get("eeo_decline")),
+                    "answers": _profile_answers(prefs)})
+
+
+@app.post("/api/answers")
+@_guard
+def answers_save():
+    """Add or replace one saved answer {question, answer, key?}. With ``key`` it edits that
+    entry (re-keyed if the question changed). Saved as the person's own."""
+    b = request.json or {}
+    q = str(b.get("question") or "").strip()
+    a = str(b.get("answer") or "").strip()
+    if not a:
+        return jsonify({"error": "Write an answer first."}), 400
+    lib = _answer_lib()
+    try:
+        key = str(b.get("key") or "").strip()
+        row = lib.update(key, question=q or None, answer=a) if key else lib.save(q, a, "you")
+    finally:
+        lib.close()
+    if row is None:
+        return jsonify({"error": "That question can't be saved for reuse."}), 400
+    return jsonify({"ok": True, "answer": row})
+
+
+@app.post("/api/answers/delete")
+@_guard
+def answers_delete():
+    """Delete one saved answer {key}."""
+    key = str((request.json or {}).get("key") or "").strip()
+    lib = _answer_lib()
+    try:
+        ok = lib.delete(key) if key else False
+    finally:
+        lib.close()
+    return jsonify({"ok": ok})
+
+
+@app.post("/api/record/<int:rid>/screening")
+@_guard
+def record_screening_save(rid: int):
+    """The person edited one screening answer on an application {index, answer}: saved on the
+    record AND in the answer library, so every later form reuses it (unless the question is
+    about this one company or role)."""
+    b = request.json or {}
+    try:
+        idx = int(b.get("index"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Which answer?"}), 400
+    ans = str(b.get("answer") or "").strip()[:4000]
+    recs = _records()
+    try:
+        rec = recs.get(rid)
+        if not rec:
+            return jsonify({"error": "That application was not found."}), 404
+        data = _record_data(rec)
+        scr = [dict(x) for x in (data.get("screening") or []) if isinstance(x, dict)]
+        if not 0 <= idx < len(scr):
+            return jsonify({"error": "Which answer?"}), 400
+        scr[idx]["answer"] = ans
+        scr[idx]["edited"] = True
+        recs.merge_data(rid, {"screening": scr})
+        company = rec.get("company") or ""
+    finally:
+        recs.close()
+    saved = None
+    if ans:
+        lib = _answer_lib()
+        try:
+            saved = lib.save(scr[idx].get("question") or "", ans, "you", company=company)
+        finally:
+            lib.close()
+    return jsonify({"ok": True, "screening": scr, "reused": bool(saved)})
 
 
 @app.post("/api/profile/draft")
@@ -9674,7 +9840,7 @@ def autoapply_plan():
 
     Honest gate: refuses bot-prohibited sites (LinkedIn etc.) via fill_permitted, so those stay
     fill-by-hand; returns needs_assist (never a guess) whenever it can't plan confidently."""
-    from autoapply import applicant_from_record, build_fill_plan, resolve_plan
+    from autoapply import KnownContext, applicant_from_record, build_fill_plan, plan_known, resolve_plan
     from autoapply.fields import FormField
     from submit.policy import fill_permitted
     b = request.json or {}
@@ -9697,21 +9863,56 @@ def autoapply_plan():
     role = (rec.get("role") if rec else "") or ""
     company = (rec.get("company") if rec else "") or ""
     jd = data.get("jd_text") or data.get("jd") or ""
-    plan = build_fill_plan(fields, _make_llm(), role=role, company=company, jd=jd)
-    if not plan:
-        return jsonify({"ok": False, "needs_assist": True,
-                        "reason": "Could not plan this form confidently. Fill it in and I'll help."})
     prof = data.get("render_profile") or data.get("profile") or {}
     if not (prof.get("identity") or {}).get("name"):
         prof = _saved_full_profile() or prof             # fall back to the saved profile's identity
     applicant = applicant_from_record({"profile": prof})
-    resume = ""
-    if rec:
-        resume = _resume_upload_path(rec)   # named after the person, not cv-<id>.pdf
+    resume = _resume_upload_path(rec) if rec else ""   # named after the person, not cv-<id>.pdf
+    # The person's own answers first (work authorization, the answer library, this record's
+    # drafted screening answers, the cover letter, contact fields); the model only for what is
+    # left, behind the fact gate (autoapply/planner.py). None of these answers reach the model.
+    lib = _answer_lib()
+    try:
+        ctx = KnownContext(work_auth=_work_auth(), library=lib,
+                           drafted=[x for x in (data.get("screening") or []) if isinstance(x, dict)],
+                           cover_letter=str(data.get("cover_letter") or ""), applicant=applicant,
+                           resume_path=resume, job_country=_job_country(data), company=company)
+        res = plan_known(fields, ctx)
+        if res.rest:
+            try:
+                llm = _make_llm()
+            except Exception:                            # no model: what we know still fills
+                llm = None
+            if llm is not None:
+                ai = build_fill_plan(res.rest, llm, role=role, company=company, jd=jd)
+                res.actions.extend(ai)
+        for k in res.used_library:
+            lib.mark_used(k)
+        for q, a in res.drafted_used:                    # a generic drafted answer, kept to confirm
+            lib.save(q, a, "drafted", company=company)
+    finally:
+        lib.close()
+    plan = res.actions
+    if not plan:
+        return jsonify({"ok": False, "needs_assist": True,
+                        "reason": "Could not plan this form confidently. Fill it in and I'll help.",
+                        "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
     ops = resolve_plan(plan, applicant, resume_path=resume)
     return jsonify({"ok": True, "filled": len(ops),
                     "ops": [{"ref": o.ref, "op": o.op, "text": o.text, "path": o.path,
-                             "sensitive": o.is_sensitive} for o in ops]})
+                             "sensitive": o.is_sensitive, "from": o.origin} for o in ops],
+                    "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
+
+
+def _job_country(data: dict) -> str:
+    """The country of the job, from its location (US when it does not say)."""
+    from autoapply import workauth as _wa
+    sj = data.get("source_job") if isinstance(data.get("source_job"), dict) else {}
+    loc = " ".join(str(x or "") for x in (data.get("location"), sj.get("location"), data.get("job_location")))
+    if not loc.strip():
+        return "US"
+    cc = _wa.question_country(loc, "")
+    return cc or "US"
 
 
 def _tailor_job_unattended(job: dict, llm, tex: str, tname: str, scratch: str) -> dict:

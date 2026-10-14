@@ -123,6 +123,27 @@ def load(prefs: dict | None) -> dict:
     return from_legacy(p)
 
 
+def apply_legacy(wa: dict | None, prefs: dict) -> dict:
+    """An older surface (the extension popup, a form correction) wrote the flat answers: carry
+    the ones it actually set into the US entry, keeping everything else in the profile."""
+    out = clean(wa or {})
+    p = prefs or {}
+    us = dict(out["countries"].get("US") or {"status": "", "authorized": "", "sponsor_now": "",
+                                              "sponsor_future": "", "auth_end": ""})
+    wa_v = _yn(p.get("work_auth_us") or p.get("work_authorized"))
+    if wa_v:
+        us["authorized"] = wa_v
+    ns = str(p.get("needs_sponsorship") or "")
+    if ns in ("Yes", "No", "Future"):
+        us["sponsor_now"], us["sponsor_future"] = {"Yes": ("Yes", "Yes"), "No": ("No", "No"),
+                                                   "Future": ("No", "Yes")}[ns]
+    out["countries"]["US"] = us
+    rel = _yn(p.get("willing_to_relocate"))
+    if rel:
+        out["relocate"] = rel
+    return clean(out)
+
+
 def legacy_prefs(wa: dict) -> dict:
     """The flat answers the browser extension and older code read, derived from the US entry,
     so every surface fills the same answer."""
@@ -271,8 +292,12 @@ def classify(question: str) -> str | None:
     sponsor = bool(_SPONSOR.search(q)) or bool(re.fullmatch(
         r"(do you (need|require) )?(visa |immigration |employment )?sponsorship( required| needed| status)?\s*\??\*?", q, re.I))
     auth = bool(_AUTH.search(q))
-    if auth and (sponsor or _NO_SPONSOR.search(q)):
+    if auth and _NO_SPONSOR.search(q):
         return "authorized_no_sponsor"
+    if auth and sponsor:
+        ms, ma = _SPONSOR.search(q), _AUTH.search(q)
+        if not (ms and ma and ms.start() < ma.start()):
+            return None                           # "authorized AND sponsorship?" in one: theirs
     if sponsor:
         now, fut = bool(_NOW.search(q)), bool(_FUTURE.search(q))
         if now and not fut:
