@@ -752,5 +752,7 @@
   "projects.topicTesting": "Testes",
   "projects.topicScale": "Escala",
   "projects.topicExtend": "Extensão",
-  "projects.topicCode": "Leitura de código"
+  "projects.topicCode": "Leitura de código",
+  "pkg.fill": "Preencher candidatura",
+  "pkg.fillAgain": "Preencher esta página de novo"
 }

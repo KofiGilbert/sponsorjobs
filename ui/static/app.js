@@ -658,6 +658,7 @@
   /* ---------------------------------------------------------------- application package */
   let PKG_ID = null;
   let PKG_APPLY_URL = "";
+  let PKG_FILL_URL = "", PKG_CV_PATH = "";   // the in-app fill: this package's link + resume file
 
   let PKG_ORIGIN = "dashboard";
   function openPackage(id) {
@@ -699,11 +700,16 @@
       return;
     }
     $("#pkgRole").textContent = (p.role || "Untitled") + (p.company ? " · " + p.company : "");
-    $("#pkgAssistCard").hidden = !window.tailorShell;
     loadVariantCard();
-    if (window.tailorShell && !$("#pkgAssistUrl").value) {
-      $("#pkgAssistUrl").value = p.job_url || p.url || "";
-    }
+    // The application link comes from the package itself (apply_url); the box only shows
+    // when no link is known. Reset on every package, so one job's link never carries over.
+    PKG_FILL_URL = p.apply_url || p.job_url || p.url || "";
+    PKG_CV_PATH = p.cv_path || "";
+    $("#pkgAssistUrl").value = PKG_FILL_URL;
+    $("#pkgAssistUrl").hidden = !window.tailorShell || !!PKG_FILL_URL;
+    $("#pkgAssistNote").textContent = "";
+    $("#pkgFillHereBtn").hidden = true;
+    document.querySelectorAll("#pkgSubmitCard .assist-learn").forEach(b => b.remove());
     setPkgStatus(p.status);
 
     if (p.pdf) {
@@ -757,6 +763,13 @@
     PKG_APPLY_URL = p.apply_url || "";
     $("#pkgSubmitBtn").textContent = sub.tier === "auto" ? "Auto-submit"
       : (PKG_APPLY_URL ? "Open posting & apply →" : "Submit");
+    // Desktop app: ONE primary button. Assisted sites get "Fill application" (it opens the
+    // application here and fills it); the auto-submit button stays only where the site's own
+    // API is verified, and then Fill is the quiet secondary.
+    const shellFill = !!window.tailorShell;
+    $("#pkgFillBtn").hidden = !shellFill;
+    $("#pkgSubmitBtn").hidden = shellFill && sub.tier !== "auto";
+    $("#pkgFillBtn").className = "btn btn-sm " + (shellFill && sub.tier === "auto" ? "btn-ghost" : "btn-primary");
   }
 
   function pkgFlash(elm, msg, ms = 2500) {
@@ -813,91 +826,76 @@
     }
   });
 
-  // AI auto-fill: the whole form, read and filled intelligently by the engine's brain (your personal
-  // details are resolved locally and never sent to the AI). The submit click stays yours.
-  function reportAutoApply(r) {
-    const note = $("#pkgAssistNote");
+  // ------------------------------------------------ the ONE apply path (desktop app)
+  // Fill application (package page), Apply (Review cards) and Open application (Auto-apply page)
+  // all go here: open the application in the in-app browser and run the best fill (site recipe,
+  // then the AI plan, then the resume upload). The shell asks the engine before it touches the
+  // site's submit button: only a site on the verified auto-submit list is ever clicked
+  // (submit.policy.apply_decision). Everywhere else it stops, and the submit button is scrolled
+  // into view and outlined for the person.
+  async function applyInPane(opts) {
+    if (!window.tailorShell || !window.tailorShell.assistApply) return null;
+    try { return await window.tailorShell.assistApply(opts); } catch { return null; }
+  }
+
+  // One plain sentence for whatever the apply path reported. Same words on every page.
+  function applyMessage(r) {
     if (!r || r.ok === false) {
-      note.textContent =
-        r && r.reason === "linkedin" ? "LinkedIn is browse-by-hand only. SponsorJobs never automates LinkedIn." :
-        r && r.reason === "blocked" ? (r.blocker === "captcha"
-          ? "This page has a captcha, so I stopped, I won't try to get past it. Solve it, then fill again."
-          : "This page needs you to sign in first. Sign in, then click AI-fill the open page.") :
-        r && r.reason === "no-fields" ? "No form fields found on this page yet. Open the application form, then fill again." :
-        (r && r.reason) === "This site is fill-by-hand only. Open it and apply yourself." ? r.reason :
-        r && r.reason && r.reason.startsWith("Could not plan") ? r.reason :
-        "Couldn't AI-fill this page. It's open in the browser, fill it by hand.";
-      return;
+      const why = r && r.reason;
+      if (why === "linkedin" || why === "fill-by-hand") {
+        return "This site doesn't allow automated filling. It's open in the Browser tab, apply there yourself.";
+      }
+      if (why === "blocked") {
+        return r.blocker === "captcha"
+          ? "This page has a captcha. Solve it, then click Fill this page again."
+          : "This site wants you to sign in first. Sign in in the Browser tab, then click Fill this page again.";
+      }
+      if (why === "no-page") return "Nothing is open in the Browser tab yet.";
+      if (why === "no-fields") return "No form on this page yet. Open the application form, then click Fill this page again.";
+      if (why === "bad-url") return "This application has no link. Paste the application link first.";
+      return "Couldn't fill this page. It's open in the Browser tab, fill it by hand.";
+    }
+    if (r.submitted) {
+      return r.confirmed ? "Submitted, and the site confirmed it."
+        : "Submitted. The page showed no confirmation, so check the Browser tab once.";
     }
     const bits = [];
     if (r.filled) bits.push(r.filled + " field" + (r.filled === 1 ? "" : "s"));
-    if (r.uploaded) bits.push("resume attached");
-    note.textContent = (bits.length
-      ? "Filled " + bits.join(", ") + "."
-        + (r.pending_upload ? " Attach your resume PDF yourself." : "")
-        + " Review every field, the submit click is yours."
-      : "Nothing to fill on this step. Continue to the next page of the application and AI-fill again.");
+    if (r.resume_attached) bits.push("resume attached");
+    let msg = bits.length ? "Filled " + bits.join(", ") + "." : "Nothing to fill on this page.";
+    if (r.reason === "captcha") msg += " This form has a captcha, so the submit is yours.";
+    else if (r.reason === "login") msg += " The site wants a sign-in. Sign in, then click Fill this page again.";
+    else if (r.reason === "submit-covered") {
+      msg += " A banner" + (r.covered_by ? " (" + r.covered_by + ")" : "") + " covers the submit button. Close it first.";
+    }
+    if (r.next_page) msg += " Click Next on the site, then Fill this page again.";
+    if (r.pending_upload && !r.resume_attached) msg += " Attach your resume PDF yourself.";
+    msg += r.submit_highlighted
+      ? " Check it and click Submit on the site, it's outlined in orange."
+      : " Check it and click Submit on the site.";
+    return msg;
   }
 
-  $("#pkgAutoBtn")?.addEventListener("click", async () => {
+  async function pkgFill(here) {
     if (!window.tailorShell || !PKG_ID) return;
-    const url = $("#pkgAssistUrl").value.trim();
     const note = $("#pkgAssistNote");
-    if (!/^https?:\/\//i.test(url)) { note.textContent = "Paste the application page URL first (https://…)."; return; }
-    const btn = $("#pkgAutoBtn"); btn.disabled = true;
-    note.textContent = "Opening the application and AI-filling it…";
-    const r = await window.tailorShell.autoApplyRun(url, PKG_ID);
-    btn.disabled = false;
-    reportAutoApply(r);
-  });
-
-  $("#pkgAutoHereBtn")?.addEventListener("click", async () => {
-    if (!window.tailorShell || !PKG_ID) return;
-    const btn = $("#pkgAutoHereBtn"); btn.disabled = true;
-    $("#pkgAssistNote").textContent = "AI-filling the page that's open in the browser…";
-    const r = await window.tailorShell.autoApplyFillCurrent(PKG_ID);
-    btn.disabled = false;
-    reportAutoApply(r);
-  });
-
-  $("#pkgAssistHereBtn")?.addEventListener("click", async () => {
-    if (!window.tailorShell) return;
-    const note = $("#pkgAssistNote");
-    const btn = $("#pkgAssistHereBtn"); btn.disabled = true;
-    note.textContent = "Filling the page that's open in the browser…";
-    const r = await window.tailorShell.assistFillCurrent();
-    btn.disabled = false;
-    if (!r || r.ok === false) {
-      note.textContent =
-        r && r.reason === "linkedin" ? "LinkedIn is browse-by-hand only. SponsorJobs never automates LinkedIn." :
-        r && r.reason === "no-page" ? "Nothing is open in the browser tab yet. Open the application page first." :
-        r && r.reason === "no-profile" ? "No saved profile yet. Build a resume once, then fill." :
-        "Couldn't fill this page.";
+    const url = (PKG_FILL_URL || $("#pkgAssistUrl").value || "").trim();
+    if (!here && !/^https?:\/\//i.test(url)) {
+      $("#pkgAssistUrl").hidden = false; $("#pkgAssistUrl").focus();
+      note.textContent = "Paste the application link first.";
       return;
     }
-    const bits = [];
-    if (r.filled) bits.push(r.filled + " contact field" + (r.filled === 1 ? "" : "s"));
-    if (r.screening) bits.push(r.screening + " screening answer" + (r.screening === 1 ? "" : "s"));
-    if (r.eeo) bits.push("EEO set to decline");
-    note.textContent = (bits.length
-      ? "Filled " + bits.join(", ") + "." + (r.resume_upload ? " Attach your resume PDF yourself." : "")
-        + " Review everything, the submit click is yours."
-      : "Nothing to fill on this step. Continue to the next page of the application and fill again.");
-    note.textContent += assistExtras(r);
-    offerLearn(note);
-  });
-
-  // What the fill recipe adds to a report: which system it recognised, the multi-page hint,
-  // and that the submit button is outlined (it is never clicked by SponsorJobs).
-  function assistExtras(r) {
-    if (!r) return "";
-    let s = "";
-    if (r.system_name) s += " Recognised " + r.system_name + (r.via_recipe ? " (" + r.via_recipe + " via its recipe)" : "") + ".";
-    if (r.next_page) s += " " + (r.continue_hint || "Continue to the next page, then press Fill again.");
-    if (r.submit_highlighted) s += " The submit button is outlined in orange for you.";
-    if (r.handoff) s += " This careers site hands the application to its own ATS: press Apply there, then fill again.";
-    return s;
+    const btn = here ? $("#pkgFillHereBtn") : $("#pkgFillBtn");
+    btn.disabled = true;
+    note.textContent = "Filling…";
+    const r = await applyInPane({ url, recordId: PKG_ID, resumePath: PKG_CV_PATH, submit: false, here });
+    btn.disabled = false;
+    note.textContent = applyMessage(r);
+    if (r && r.ok !== false) { $("#pkgFillHereBtn").hidden = false; offerLearn(note); }
   }
+  $("#pkgFillBtn")?.addEventListener("click", () => pkgFill(false));
+  $("#pkgFillHereBtn")?.addEventListener("click", () => pkgFill(true));
+  $("#pkgAssistUrl")?.addEventListener("input", e => { PKG_FILL_URL = e.target.value.trim(); });
 
   // Learn from corrections: after a fill, a one-click way to save what the person changed on
   // the form into their profile (only the fields SponsorJobs itself filled are watched).
@@ -933,33 +931,6 @@
       if (info && info.matched && typeof loadReview === "function") loadReview().catch(() => {});
     });
   }
-
-  $("#pkgAssistBtn")?.addEventListener("click", async () => {
-    if (!window.tailorShell) return;
-    const url = $("#pkgAssistUrl").value.trim();
-    const note = $("#pkgAssistNote");
-    if (!/^https?:\/\//i.test(url)) { note.textContent = "Paste the application page URL first (https://…)."; return; }
-    const btn = $("#pkgAssistBtn"); btn.disabled = true;
-    note.textContent = "Opening and filling…";
-    const r = await window.tailorShell.assistFill(url);
-    btn.disabled = false;
-    if (!r || r.ok === false) {
-      note.textContent =
-        r && r.reason === "linkedin" ? "LinkedIn is browse-by-hand only. SponsorJobs never automates LinkedIn." :
-        r && r.reason === "no-profile" ? "No saved profile yet. Build a resume once, then fill." :
-        "Couldn't fill this page. It's open in the browser, fill it by hand.";
-      return;
-    }
-    const bits = [];
-    if (r.filled) bits.push(r.filled + " contact field" + (r.filled === 1 ? "" : "s"));
-    if (r.screening) bits.push(r.screening + " screening answer" + (r.screening === 1 ? "" : "s"));
-    if (r.eeo) bits.push("EEO set to decline");
-    note.textContent = assistExtras(r) + (bits.length
-        ? "Filled " + bits.join(", ") + "." + (r.resume_upload ? " Attach your resume PDF yourself." : "")
-          + " Review everything, the submit click is yours."
-        : "Nothing to fill here. If the site wants a sign-in first (Amazon does), log in "
-          + "in the Browser tab, walk to the application form, then click Fill the open page.");
-  });
 
   $("#pkgSubmitBtn").addEventListener("click", async () => {
     if (!PKG_ID) return;
@@ -3710,48 +3681,23 @@
     }).join("");
   }
 
-  // Apply means APPLY. The click is there so a person authorises each submission, not so
-  // they can be shown a form they never asked to read: it fills, attaches the resume and
-  // submits in one action. It stops short only where the site says no -- a captcha or a
-  // login wall -- and then hands the open page back rather than trying to get past it.
+  // Apply on a Review card = the same in-app fill as the package page's Fill application. It
+  // only clicks the site's submit where the engine's policy allows it (the verified auto-submit
+  // list); everywhere else it fills, stops, and points at the site's submit button.
   $("#rvwList")?.addEventListener("click", async (e) => {
     const btn = e.target.closest("[data-apply]");
     if (!btn) return;
     const { apply: url, cv, id } = btn.dataset;
     if (!window.tailorShell) { window.open(url, "_blank", "noopener"); return; }
-    btn.disabled = true; btn.textContent = "Applying…";
-    let r;
-    try { r = await window.tailorShell.assistApply(url, cv || ""); } catch (err) { r = null; }
+    btn.disabled = true; btn.textContent = "Filling…";
+    const r = await applyInPane({ url, recordId: Number(id), resumePath: cv || "", submit: true });
     btn.disabled = false; btn.textContent = "Apply";
-
-    if (!r || r.ok === false) {
-      rvwFlash(
-        r && r.reason === "linkedin" ? "LinkedIn is browse-by-hand only, SponsorJobs never automates it."
-        : r && r.reason === "no-profile" ? "No saved profile yet, build a resume once first."
-        : "Couldn't open that application. It's in the Browser tab, apply by hand.");
-      return;
-    }
-    if (r.submitted) {
+    if (r && r.submitted) {
       btn.textContent = r.confirmed ? "Applied ✓" : "Submitted";
       btn.disabled = true;
       api(`/api/record/${id}/status`, { status: "applied" }).catch(() => {});  // off the queue
-      rvwFlash(r.confirmed
-        ? "Submitted, and the site confirmed it."
-        : "Submitted. No confirmation text on the page, so check the Browser tab once.");
-      return;
     }
-    // Not submitted: say WHY, in the site's terms, and leave the filled page open.
-    rvwFlash(
-      r.reason === "captcha" ? "This form uses a captcha, so it's yours to submit. "
-        + "It's filled and open in the Browser tab."
-      : r.reason === "login" ? "This site wants a sign-in first. Sign in in the Browser tab, "
-        + "then use Fill the open page."
-      : r.reason === "no-submit-button" ? "Filled it, but couldn't find the submit control, "
-        + "so nothing was sent. Finish it in the Browser tab."
-      : r.reason === "submit-covered" ? "Filled it, but something is covering the submit button"
-        + (r.covered_by ? " (" + r.covered_by + ")" : "") + ", likely a cookie or consent "
-        + "banner. Close it in the Browser tab and submit there."
-      : "Filled it, but didn't submit. It's open in the Browser tab.");
+    rvwFlash(applyMessage(r));
   });
 
   function rvwSelected() {
@@ -8049,7 +7995,7 @@
         ? `<span class="pkg-tier-pill auto">Auto-submit</span>`
         : `<span class="pkg-tier-pill assisted">Your click</span>`;
       const open = /^https?:\/\//i.test(it.apply_url || "")
-        ? `<button class="btn btn-ghost btn-sm" data-ready-open="${esc(it.apply_url)}" type="button">Open application</button>`
+        ? `<button class="btn btn-ghost btn-sm" data-ready-open="${esc(it.apply_url)}" type="button">${window.tailorShell ? "Fill application" : "Open application"}</button>`
         : `<button class="btn btn-ghost btn-sm" data-ready-view="${it.id}" type="button">View package</button>`;
       return `<div class="aa-ready-row"><span class="aa-ready-role">${esc(it.role)} · ${esc(it.company)}</span>`
         + `${lane}<span class="aa-ready-actions">${open}`
@@ -8058,7 +8004,22 @@
   }
   $("#aaReadyList")?.addEventListener("click", async e => {
     const open = e.target.closest("[data-ready-open]");
-    if (open) { window.open(open.dataset.readyOpen, "_blank", "noopener"); return; }
+    if (open) {
+      // Desktop app: the same in-app fill as everywhere else. Web: just open the posting.
+      if (!window.tailorShell) { window.open(open.dataset.readyOpen, "_blank", "noopener"); return; }
+      const row = open.closest(".aa-ready-row");
+      const rid = Number(row?.querySelector("[data-ready-done]")?.dataset.readyDone) || null;
+      open.disabled = true;
+      const r = await applyInPane({ url: open.dataset.readyOpen, recordId: rid, submit: false });
+      open.disabled = false;
+      let note = row?.nextElementSibling;
+      if (!note || !note.classList.contains("aa-ready-note")) {
+        note = document.createElement("p"); note.className = "pkg-hint aa-ready-note";
+        row?.insertAdjacentElement("afterend", note);
+      }
+      note.textContent = applyMessage(r);
+      return;
+    }
     const view = e.target.closest("[data-ready-view]");
     if (view) { openPackage(Number(view.dataset.readyView)); return; }
     const done = e.target.closest("[data-ready-done]");
