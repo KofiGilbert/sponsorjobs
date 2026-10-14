@@ -3512,6 +3512,7 @@
         + "Review below and edit anything.";
       await loadProfile();
       invalidateJobDetail();   // match now reflects the freshly-imported profile
+      if ($("#view-autoapply")?.classList.contains("is-active")) { $("#aaMsg").hidden = true; paintAutoPool(); }
     } catch (err) {
       msg.className = "prof-import-msg err";
       msg.textContent = "Couldn't build your profile, " + err.message;
@@ -7993,24 +7994,47 @@
   };
 
   /* ---------------------------------------------------------------- auto-apply (Pro) */
-  // Say how many of YOUR roles this can actually submit. The page advertised a "daily
-  // submit cap: 40 of 40" next to a capability that fired on 0 of 133 real jobs, because
-  // auto-submit needs a keyless candidate API and only Recruitee has one (§7) while the
-  // feed was seeded with greenhouse, lever and ashby, all of which gate submission behind
-  // the EMPLOYER's key. A cap of 40 over a reach of 0 reads as a promise; the real number
-  // is the only honest thing to show, and it is also the number that tells the person
-  // whether the paid tier is worth anything TO THEM.
-  async function paintAutoReach() {
-    const el = $("#aaReach");
-    if (!el) return;
-    let jobs = [];
-    try { jobs = (await api("/api/jobs")).jobs || []; } catch { el.hidden = true; return; }
-    const auto = jobs.filter(j => (j.source || "").toLowerCase() === "recruitee");
-    el.hidden = false;
-    el.textContent = auto.length
-      ? `${auto.length} of your ${jobs.length} roles can be submitted automatically. The rest we fill in, and you click Apply.`
-      : `None of your ${jobs.length} roles can be submitted automatically today: they need a site with a keyless application API. We tailor and fill every one, and you click Apply.`;
+  // Say how many of YOUR roles this can actually submit. The page once advertised a "daily
+  // submit cap: 40 of 40" next to a capability that fired on 0 real jobs, and later counted
+  // source==="recruitee" over one page of 30, while feed rows arrive as "freehire" with a
+  // recruitee.com apply URL. The count now comes from the server, over the whole set a run
+  // draws from, by the shipped submission policy on each apply URL (CLAUDE.md section 7).
+  const csv = id => ($(id)?.value || "").split(",").map(s => s.trim()).filter(Boolean);
+  const aaFocus = () => ({ titles: csv("#aaFocus"), locations: csv("#aaLocation"),
+                           sponsor_only: !!$("#aaSponsorOnly")?.checked });
+  const fmtN = n => Number(n || 0).toLocaleString();
+  let AA_POOL_REQ = 0;
+  async function paintAutoPool() {
+    const pool = $("#aaPool"), reachEl = $("#aaReach");
+    if (!pool || !reachEl) return;
+    const f = aaFocus(), my = ++AA_POOL_REQ;
+    const q = new URLSearchParams({ titles: f.titles.join(","), locations: f.locations.join(","),
+                                    sponsor_only: f.sponsor_only ? "1" : "" });
+    let r;
+    try { r = await api("/api/autoapply/preview?" + q); } catch { pool.hidden = reachEl.hidden = true; return; }
+    if (my !== AA_POOL_REQ) return;   // a newer focus change is already on its way
+    const sel = $("#aaMinFit");
+    if (sel && r.min_fit != null) {
+      if (![...sel.options].some(o => Number(o.value) === r.min_fit)) sel.add(new Option(r.min_fit + "%", r.min_fit));
+      sel.value = String(r.min_fit);
+    }
+    pool.hidden = false;
+    pool.textContent = r.matches
+      ? `${fmtN(r.matches)} roles to choose from${r.search ? `, using your saved search "${r.search}"` : ""}.`
+      : (r.board ? "No new roles match this focus. Broaden or clear it." : "The job board is still loading.");
+    const n = r.reach || {};
+    reachEl.hidden = !n.total;
+    reachEl.textContent = n.auto
+      ? `${fmtN(n.auto)} of your ${fmtN(n.total)} matches can be submitted automatically; the rest are filled for your click.`
+      : `None of your ${fmtN(n.total)} matches can be submitted automatically today; all are filled for your click.`;
   }
+  let AA_POOL_T = null;
+  const paintAutoPoolSoon = () => { clearTimeout(AA_POOL_T); AA_POOL_T = setTimeout(paintAutoPool, 350); };
+  ["#aaFocus", "#aaLocation"].forEach(id => $(id)?.addEventListener("input", paintAutoPoolSoon));
+  $("#aaSponsorOnly")?.addEventListener("change", paintAutoPool);
+  $("#aaMinFit")?.addEventListener("change", async e => {
+    try { await api("/api/submit/settings", { aa_min_fit: Number(e.target.value) }); } catch { /* sent with the next run too */ }
+  });
 
   async function loadAutoApply() {
     try {
@@ -8018,11 +8042,11 @@
       $("#aaAutonomous").checked = !!s.autonomous;
       const rate = s.rate || {}, left = rate.remaining != null ? rate.remaining : s.daily_cap;
       $("#aaCap").textContent = `Daily submit cap: ${left} of ${s.daily_cap} left today.`;
-      paintAutoReach();
       $("#aaTg").innerHTML = s.telegram_configured
         ? `<span class="aa-dot go"></span> Telegram connected, you'll get a summary there.`
         : `<span class="aa-dot warn"></span> Telegram not connected, connect it for away-from-desk updates.`;
     } catch { /* leave defaults */ }
+    paintAutoPool();
     loadReadyToApply();
   }
 
@@ -8083,28 +8107,43 @@
     try { await api("/api/submit/settings", { autonomous: e.target.checked }); }
     catch { e.target.checked = !e.target.checked; }
   });
-  const csv = id => ($(id)?.value || "").split(",").map(s => s.trim()).filter(Boolean);
+  // An error the person can act on gets the action as a button next to it.
+  const AA_ACTIONS = {
+    add_resume: ["Add your resume", () => openResumeBox()],
+    open_jobs: ["Open Jobs", () => document.querySelector('.nav-item[data-nav="jobs"]')?.click()],
+  };
+  function aaError(msg, e) {
+    const d = (e && e.data) || {};
+    const act = AA_ACTIONS[d.action];
+    msg.className = "aa-msg err" + (act ? " has-act" : "");
+    msg.innerHTML = `<span>${esc(e.message || "Couldn't run auto-apply.")}`
+      + (d.summary ? ` <span class="aa-msg-sub">Skipped ${esc(d.summary)}.</span>` : "") + `</span>`
+      + (act ? `<button class="btn btn-ghost btn-sm" id="aaErrAct" type="button">${esc(act[0])}</button>` : "");
+    if (act) $("#aaErrAct").addEventListener("click", act[1]);
+  }
   $("#aaRun")?.addEventListener("click", async () => {
     const btn = $("#aaRun"), count = Number($("#aaCount").value) || 5;
-    const focus = { titles: csv("#aaFocus"), locations: csv("#aaLocation"),
-                    sponsor_only: !!$("#aaSponsorOnly")?.checked };
-    const focused = focus.titles.length || focus.locations.length || focus.sponsor_only;
+    const focus = aaFocus(), min_fit = Number($("#aaMinFit")?.value) || 60;
     const msg = $("#aaMsg"), res = $("#aaResults");
-    btn.disabled = true; btn.textContent = "Tailoring…";
+    btn.disabled = true; btn.textContent = "Tailoring\u2026";
     msg.hidden = false; msg.className = "aa-msg working";
-    msg.textContent = `Tailoring ${count} ${focused ? "matching" : "fresh"} roles, this can take a moment…`;
+    msg.textContent = `Finding your ${count} best-fit roles and tailoring them, this can take a moment\u2026`;
     res.innerHTML = "";
     try {
-      const r = await api("/api/autoapply/run", { count, focus });
+      const r = await api("/api/autoapply/run", { count, focus, min_fit });
       msg.className = "aa-msg ok";
-      msg.innerHTML = `Queued <b>${r.queued}</b> of ${r.considered}, review and approve them in <b>Review &amp; submit</b>.`;
+      msg.innerHTML = `Queued <b>${r.queued}</b>${r.queued < count ? ` of the ${count} you asked for` : ""}, review and approve them in <b>Review &amp; submit</b>.`
+        + (r.summary ? ` <span class="aa-msg-sub">Skipped ${esc(r.summary)}.</span>` : "");
       res.innerHTML = (r.tailored || []).map(t =>
-        `<div class="aa-row"><span class="aa-row-role">${esc(t.role)} · ${esc(t.company)}</span>`
-        + `<span class="chip ${t.coverage >= 50 ? "good" : "mid"} chip-ml"><span class="tick"></span>${t.coverage}% match</span></div>`).join("")
+        `<div class="aa-row"><span class="aa-row-role">${esc(t.role)} \u00b7 ${esc(t.company)}</span>`
+        + `<span class="aa-row-meta">${t.lane === "auto" ? "Auto-submit" : "Your click"}`
+        + `<span class="chip ${t.fit >= 70 ? "good" : "mid"} chip-ml"><span class="tick"></span>${t.fit != null ? t.fit : t.coverage}% match</span></span></div>`).join("")
         + (r.skipped || []).map(s =>
           `<div class="aa-row skip"><span class="aa-row-role">${esc(s.role)}</span><span class="aa-skip">skipped, ${esc(s.reason)}</span></div>`).join("");
-    } catch (e) { msg.className = "aa-msg err"; msg.textContent = e.message || "Couldn't run auto-apply."; }
-    finally { btn.disabled = false; btn.textContent = "Tailor & queue →"; }
+      paintAutoPool();       // the queued roles leave the pool
+      loadReadyToApply();
+    } catch (e) { aaError(msg, e); }
+    finally { btn.disabled = false; btn.innerHTML = "Tailor &amp; queue &rarr;"; }
   });
 
   /* ---------------------------------------------------------------- first run
@@ -8136,6 +8175,7 @@
       wizMsg(msg, `Got it${(r.summary || {}).name ? ", " + r.summary.name : ""}, your profile is filled.`, "ok");
       await loadProfile();
       invalidateJobDetail();   // match now reflects the freshly-imported profile
+      if ($("#view-autoapply")?.classList.contains("is-active")) { $("#aaMsg").hidden = true; paintAutoPool(); }
       hideFirstBanner(true);
       setTimeout(closeResumeBox, 900);
     } catch (err) { wizMsg(msg, "Couldn't read that file, " + err.message, "err"); }

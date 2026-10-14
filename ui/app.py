@@ -1853,7 +1853,8 @@ import json as _json_prefs  # noqa: E402
 _PREFS_FILE = _DATA / "review_prefs.json"
 _RATE_FILE = _DATA / "submit_rate.json"
 _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
-                  "inbox_auto_verify": False, "folders": [], "tracker_weekly_goal": 10}
+                  "inbox_auto_verify": False, "folders": [], "tracker_weekly_goal": 10,
+                  "aa_min_fit": 60}   # Auto-apply's fit floor (autoapply/picker.py)
 
 
 def _prefs() -> dict:
@@ -1878,6 +1879,9 @@ def _set_prefs(patch: dict) -> dict:
                           if str(f).strip()][:50]
     if "tracker_weekly_goal" in patch:       # the Tracker page's applications-per-week target
         cur["tracker_weekly_goal"] = max(0, min(500, int(patch["tracker_weekly_goal"])))
+    if "aa_min_fit" in patch:                # Auto-apply's fit floor, a match percent
+        from autoapply.picker import clamp_min_fit
+        cur["aa_min_fit"] = clamp_min_fit(patch["aa_min_fit"], cur.get("aa_min_fit", 60))
     _PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
     _PREFS_FILE.write_text(_json_prefs.dumps(cur), encoding="utf-8")
     return cur
@@ -9602,22 +9606,6 @@ def start_from_job():
     return jsonify(session.start())
 
 
-def _select_focus_jobs(all_jobs: list, titles: list, locations: list,
-                       sponsor_only: bool, tag_fn=None) -> list:
-    """Narrow the watchlist to the person's FOCUS for today before the autopilot tailors
-    (Kofi's "tell SponsorJobs what to focus on applying to that day"). Empty focus = all jobs,
-    the prior behavior. `tag_fn` (SponsorDB.tag_jobs) is injected so this stays unit-testable.
-    Order is preserved, so the caller still takes the freshest matches."""
-    picked = list(all_jobs)
-    if titles or locations:
-        from sourcing.service import matches_criteria
-        crit = {"titles": titles, "locations": locations, "remote": "any"}
-        picked = [j for j in picked if matches_criteria(j, crit)]
-    if sponsor_only and tag_fn is not None:
-        picked = [j for j in tag_fn(picked) if (j.get("visa") or [])]
-    return picked
-
-
 @app.post("/api/autoapply/plan")
 @_guard
 def autoapply_plan():
@@ -9697,7 +9685,8 @@ def _tailor_job_unattended(job: dict, llm, tex: str, tname: str, scratch: str) -
     session.company = job.get("company") or session.company
     session.role = job.get("title") or session.role
     session.source_job = {"url": job.get("url") or "", "source": job.get("source") or "",
-                          "source_id": job.get("source_id") or ""}
+                          "source_id": job.get("source_id") or "",
+                          "location": job.get("location") or ""}   # Auto-apply's dedup key
     session.essentials["override"] = True   # autonomous, build with what's saved
     # Truly unattended: there is no one to answer a question, so this is the one
     # path allowed past the page-filling gate (build_from_saved). Interactive
@@ -9714,40 +9703,158 @@ def _tailor_job_unattended(job: dict, llm, tex: str, tname: str, scratch: str) -
     return {"ok": False, "role": session.role, "reason": "held for your review"}
 
 
-@app.post("/api/autoapply/run")
-@_guard
-def autoapply_run():
-    """Auto-apply (the paid autopilot, CLAUDE.md §4c): tailor the person's FOCUS roles from
-    the SAVED profile, no per-role input, and queue each package for review. Submission stays
-    on the existing guarded path (verified allowlist + opt-in), so this run never submits on
-    its own; it fills the review queue for the person to approve."""
-    body = request.json or {}
-    count = max(1, min(int(body.get("count") or 5), 10))
-    snap = _memory().load("default") or {}
-    base_profile = snap.get("profile") or {}
-    if not base_profile.get("experience"):
-        return jsonify({"error": "Add your profile first (drop your resume), then SponsorJobs can "
-                                 "build these for you."}), 400
+def _aa_records() -> list[dict]:
+    """Every tailored record as the picker reads it: its data bag plus company and role."""
+    recs = _records()
+    try:
+        rows = recs.list(limit=10000)
+    finally:
+        recs.close()
+    return [{**_record_data(r), "company": r.get("company") or "",
+             "role": r.get("jd_label") or r.get("role") or ""} for r in rows]
 
-    # What KINDS of roles to tailor today (all optional; empty = the freshest roles).
-    focus = body.get("focus") or {}
+
+def _aa_saved_search() -> dict | None:
+    """The person's default saved Jobs search (a strategy), or None."""
+    try:
+        st = _strategies()
+        try:
+            return st.default()
+        finally:
+            st.close()
+    except Exception:   # noqa: BLE001 - no saved search is the normal case
+        return None
+
+
+def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
+    """The roles an Auto-apply run may tailor: the jobs the person sees on Jobs (the central
+    feed, or the local board) plus their saved jobs, saved first, narrowed by their default
+    saved search and today's focus, ordered by fit to the profile. See autoapply/picker.py."""
+    from autoapply.picker import candidates
+    from notify.alerts import profile_targets
+    from sourcing.quality import is_entry_level
     titles = [str(t).strip() for t in (focus.get("titles") or []) if str(t).strip()]
     locations = [str(l).strip() for l in (focus.get("locations") or []) if str(l).strip()]
     sponsor_only = bool(focus.get("sponsor_only"))
-
     w = _watchlist()
     try:
-        all_jobs = [w.get_job(r["source_id"]) or r for r in w.list_jobs()]
+        saved = _sponsors().tag_jobs(w.list_jobs(order="recent", saved_only=True, limit=5000))
     finally:
         w.close()
-    if not all_jobs:
-        return jsonify({"error": "No roles in your feed yet, open Jobs to add sources."}), 400
-    picked = _select_focus_jobs(all_jobs, titles, locations, sponsor_only,
-                                tag_fn=_sponsors().tag_jobs)
-    if not picked:
-        return jsonify({"error": "No fresh roles match today's focus. Broaden or clear it, "
-                                 "or open Jobs to add more sources."}), 400
-    jobs = picked[:count]
+    for j in saved:
+        j["entry_level"] = is_entry_level(j.get("title", ""))
+    board = _board_rows()
+    strat = _aa_saved_search()
+    snap = _memory().load("default") or {}
+    profile = snap.get("profile") or snap.get("essentials") or {}
+    rows = candidates(board, saved, facets=(strat or {}).get("filters") or {},
+                      titles=titles, locations=locations, sponsor_only=sponsor_only,
+                      targets=profile_targets(profile))
+    meta = {"titles": titles, "locations": locations, "sponsor_only": sponsor_only,
+            "search": (strat or {}).get("name") or None, "board": len(board), "saved": len(saved)}
+    return rows, meta
+
+
+def _aa_fit(job: dict) -> int | None:
+    """The same fit the Jobs detail shows for this role (0..100), or None when there is no
+    description or it names no skills to match. Fills job["jd_text"] for the tailoring."""
+    from notify.alerts import match_percent
+    sid = job.get("source_id") or ""
+    jd = (job.get("jd_text") or "").strip()
+    if not jd and sid:
+        w = _watchlist()
+        try:
+            jd = ((w.get_job(sid) or {}).get("jd_text") or "").strip()
+        finally:
+            w.close()
+    if not jd and sid and _feed_serving():
+        fj = _feed_job_with_jd(sid)
+        jd = ((fj or {}).get("jd_text") or "").strip()
+    if not jd:
+        return None
+    job["jd_text"] = jd
+    m = _job_match(jd, job.get("title") or "")
+    if not m or not m.get("total"):
+        return None
+    return match_percent(m)
+
+
+def _aa_min_fit(body: dict | None = None) -> int:
+    from autoapply.picker import clamp_min_fit
+    p = _prefs()
+    if body and body.get("min_fit") is not None:
+        v = clamp_min_fit(body.get("min_fit"), p["aa_min_fit"])
+        if v != p["aa_min_fit"]:
+            _set_prefs({"aa_min_fit": v})
+        return v
+    return clamp_min_fit(p["aa_min_fit"])
+
+
+def _aa_has_profile() -> bool:
+    snap = _memory().load("default") or {}
+    return bool((snap.get("profile") or {}).get("experience"))
+
+
+_AA_NO_PROFILE = {"error": "Add your resume first, then SponsorJobs can build these for you.",
+                  "action": "add_resume"}
+
+
+@app.get("/api/autoapply/preview")
+@_guard
+def autoapply_preview():
+    """What a run would draw from, before it runs: how many roles match (not already queued
+    or applied), how many of those the shipped submission policy can submit automatically,
+    the saved search in use, and the fit floor. No JD is fetched and nothing is tailored."""
+    from autoapply.picker import reach, taken_index, taken_status
+    from submit.policy import submission_policy
+    a = request.args
+    focus = {"titles": _split(a.get("titles")), "locations": _split(a.get("locations")),
+             "sponsor_only": a.get("sponsor_only") in ("1", "true", "on")}
+    rows, meta = _aa_candidates(focus)
+    idx = taken_index(_aa_records())
+    fresh = [j for j in rows if taken_status(j, idx) is None]
+    return jsonify({"ok": True, "has_profile": _aa_has_profile(), "matches": len(fresh),
+                    "taken": len(rows) - len(fresh), "reach": reach(fresh, submission_policy),
+                    "search": meta["search"], "board": meta["board"], "min_fit": _aa_min_fit()})
+
+
+@app.post("/api/autoapply/run")
+@_guard
+def autoapply_run():
+    """Auto-apply (the paid autopilot, CLAUDE.md §4c): tailor the best-fit roles from the jobs
+    the person sees on Jobs (saved jobs first), from the SAVED profile, no per-role input, and
+    queue each package for review. Skips roles that already have a package and roles below the
+    person's fit floor. Submission stays on the existing guarded path (verified allowlist +
+    opt-in), so this run never submits on its own; it fills the review queue."""
+    from autoapply.picker import pick, reach, skip_summary
+    from submit.policy import submission_policy
+    body = request.json or {}
+    count = max(1, min(int(body.get("count") or 5), 10))
+    if not _aa_has_profile():
+        return jsonify(_AA_NO_PROFILE), 400
+    min_fit = _aa_min_fit(body)
+
+    rows, meta = _aa_candidates(body.get("focus") or {})
+    focus_meta = {"titles": meta["titles"], "locations": meta["locations"],
+                  "sponsor_only": meta["sponsor_only"]}
+    if not meta["board"] and not meta["saved"]:
+        return jsonify({"error": "The job board is still loading. Open Jobs, wait for roles to "
+                                 "appear, then try again.", "action": "open_jobs"}), 400
+    if not rows:
+        return jsonify({"error": "No roles match today's focus or your saved search. Broaden "
+                                 "or clear it.", "focus": focus_meta}), 400
+    res = pick(rows, records=_aa_records(), score_fn=_aa_fit, count=count, min_fit=min_fit)
+    summary = skip_summary(res, min_fit)
+    passed = {k: res[k] for k in ("below", "unscored", "queued", "applied", "scored")}
+    jobs = res["jobs"]
+    if not jobs:
+        if not res["available"]:
+            err = "Every matching role already has a package. Broaden your focus for new ones."
+        else:
+            err = (f"None of the {res['scored']} best-fit roles we checked reach your fit floor "
+                   f"of {min_fit}%. Lower the floor or broaden your focus.")
+        return jsonify({"error": err, "summary": summary, "passed": passed, "min_fit": min_fit,
+                        "focus": focus_meta}), 400
 
     llm = _make_llm()   # real model; clear error if the key/connectivity is missing
     tex, tname = _load_template(None)
@@ -9774,7 +9881,10 @@ def autoapply_run():
             skipped.append({"role": job.get("title", "a role"), "reason": str(exc)[:80]})
             continue
         if out.get("ok"):
-            tailored.append({k: out[k] for k in ("id", "role", "company", "coverage")})
+            item = {k: out[k] for k in ("id", "role", "company", "coverage")}
+            item["fit"] = job.get("fit")
+            item["lane"] = submission_policy(job.get("url") or "")
+            tailored.append(item)
         else:
             skipped.append({"role": out.get("role") or job.get("title", "a role"),
                             "reason": out.get("reason") or "held for your review"})
@@ -9784,9 +9894,10 @@ def autoapply_run():
         pass
     return jsonify({"ok": True, "queued": len(tailored), "tailored": tailored,
                     "skipped": skipped, "considered": len(jobs), "halted": halted,
-                    "matched": len(picked),
-                    "focus": {"titles": titles, "locations": locations,
-                              "sponsor_only": sponsor_only}})
+                    "matched": res["available"], "min_fit": min_fit,
+                    "passed": passed, "summary": summary,
+                    "reach": reach([j for j in rows], submission_policy),
+                    "search": meta["search"], "focus": focus_meta})
 
 
 # ============================================================================ tracker board
