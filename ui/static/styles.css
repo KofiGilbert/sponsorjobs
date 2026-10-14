@@ -4087,3 +4087,51 @@ body.cv-dragging * { cursor: grabbing !important; }
 @keyframes feed-dl-pulse { 0%, 100% { opacity: .25; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .feed-dl-dot { animation: none; opacity: .6; } }
 .feed-dl.is-failed { gap: 12px; }
+/* ---- Your answers: work authorization + the answer library (one centered 1040 column) ---- */
+.view-answers .page-head { max-width: 1040px; margin-left: auto; margin-right: auto; }
+.ans-wrap { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; padding-bottom: 40px; }
+.ans-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 24px 28px; }
+.ans-card-h { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+.ans-h { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); display: flex; align-items: baseline; gap: 8px; margin: 0; }
+.ans-count { font-size: 13px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ans-seg { display: inline-flex; gap: 2px; padding: 2px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm); flex-wrap: wrap; }
+.ans-seg-b { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12.5px; font-weight: 550; padding: 5px 12px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.ans-seg-b:hover:not(:disabled) { color: var(--ink-2); }
+.ans-seg-b.is-on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.ans-seg-b:disabled { cursor: default; }
+.ans-seg-b:disabled:not(.is-on) { opacity: 0.45; }
+.ans-seg-b:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.ans-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 24px; }
+.ans-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.ans-field > span { font-size: 12.5px; color: var(--muted); }
+.ans-field .ans-seg { align-self: flex-start; }
+.ans-field .fld { height: 36px; }
+.ans-wide { grid-column: 1 / -1; max-width: 420px; }
+.ans-check { display: flex; align-items: center; gap: 9px; margin-top: 20px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.ans-foot { display: flex; align-items: center; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.ans-note { font-size: 12.5px; color: var(--muted); }
+.ans-search { margin-bottom: 14px; max-width: 420px; }
+.ans-list { border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+.ans-row { display: flex; align-items: flex-start; gap: 16px; padding: 14px 16px; }
+.ans-row + .ans-row { border-top: 1px solid var(--border); }
+.ans-row-main { flex: 1; min-width: 0; }
+.ans-q { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.ans-a { font-size: 13px; color: var(--ink-2); margin-top: 3px; line-height: 1.5; white-space: pre-line; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.ans-meta { font-size: 11.5px; color: var(--faint); margin-top: 5px; }
+.ans-tag { font-size: 10.5px; font-weight: 600; color: var(--muted); border: 1px dashed var(--border-strong); border-radius: var(--r-pill); padding: 0 7px; margin-left: 6px; vertical-align: 1px; }
+.ans-row-acts { display: flex; align-items: center; gap: 6px; flex: none; }
+.ans-row-acts .btn { padding: 5px 10px; font-size: 12.5px; }
+.ans-del:hover { color: var(--flag); }
+.ans-row.is-editing { flex-direction: column; align-items: stretch; gap: 10px; background: var(--surface-2); }
+.ans-row.is-editing .fld { width: 100%; font-size: 13px; }
+.ans-row.is-editing textarea.fld { resize: vertical; line-height: 1.5; }
+.ans-empty { padding: 18px 16px; font-size: 13px; color: var(--muted); }
+@media (max-width: 760px) {
+  .ans-grid { grid-template-columns: 1fr; }
+  .ans-card { padding: 20px 16px; }
+  .ans-row { flex-direction: column; }
+}
+/* package page: an editable screening answer */
+.pkg-qa-acts { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.pkg-a-edit { width: 100%; margin-top: 6px; font-size: 13px; line-height: 1.5; resize: vertical; }
+.pkg-qa-acts .link-btn { padding: 0; font-size: 12.5px; }

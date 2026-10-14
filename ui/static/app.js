@@ -802,17 +802,9 @@
     // first time a package is opened without one, so there's nothing extra to click.
     if (!(p.cover_letter || "").trim() && p.status !== "applied") draftCover(true);
 
-    const scr = p.screening || [];
-    $("#pkgScrCard").hidden = !scr.length;
-    // A knock-out question is one the ATS auto-rejects on (work authorization, years,
-    // degree, salary...). It gets a visible mark so the person answers it themselves,
-    // carefully, instead of trusting a draft.
-    $("#pkgScr").innerHTML = scr.map(qa =>
-      `<div class="pkg-qa${qa.knockout ? " pkg-qa-knockout" : ""}">
-         <div class="pkg-q">${esc(qa.question)}${qa.knockout
-           ? ` <span class="pkg-knockout" title="Employers auto-reject on this question. Check the answer yourself.">auto-reject question, check this one</span>`
-           : ""}</div>
-         <div class="pkg-a">${esc(qa.answer)}</div></div>`).join("");
+    PKG_SCR = (p.screening || []).map(qa => ({ ...qa }));
+    $("#pkgScrCard").hidden = !PKG_SCR.length;
+    renderPkgScreening();
 
     const sub = p.submission || {};
     $("#pkgTier").className = "pkg-tier-pill " + (sub.tier || "assisted");
@@ -829,6 +821,50 @@
     $("#pkgSubmitBtn").hidden = shellFill && sub.tier !== "auto";
     $("#pkgFillBtn").className = "btn btn-sm " + (shellFill && sub.tier === "auto" ? "btn-ghost" : "btn-primary");
   }
+
+  // Screening answers: each one is editable here. A saved edit lands on this application AND in
+  // Your answers, so every later form reuses it (unless the question is about this company).
+  // A knock-out question (one an ATS auto-rejects on) keeps its visible mark.
+  let PKG_SCR = [];
+  function renderPkgScreening() {
+    $("#pkgScr").innerHTML = PKG_SCR.map((qa, i) =>
+      `<div class="pkg-qa${qa.knockout ? " pkg-qa-knockout" : ""}" data-i="${i}">
+         <div class="pkg-q">${esc(qa.question)}${qa.knockout
+           ? ` <span class="pkg-knockout" title="Employers auto-reject on this question. Check the answer yourself.">auto-reject question, check this one</span>`
+           : ""}</div>
+         <div class="pkg-a">${esc(qa.answer)}</div>
+         <div class="pkg-qa-acts"><button class="link-btn" type="button" data-scr="edit">${esc(I18N.t("aa.edit", "Edit"))}</button>
+           <span class="pkg-hint" data-scr-note></span></div></div>`).join("");
+  }
+  $("#pkgScr")?.addEventListener("click", async e => {
+    const b = e.target.closest("[data-scr]");
+    if (!b) return;
+    const box = b.closest(".pkg-qa"), i = Number(box.dataset.i), act = b.dataset.scr;
+    if (act === "edit") {
+      box.querySelector(".pkg-a").outerHTML = `<textarea class="fld pkg-a-edit" rows="3">${esc(PKG_SCR[i].answer || "")}</textarea>`;
+      box.querySelector(".pkg-qa-acts").innerHTML = `<button class="btn btn-primary btn-sm" type="button" data-scr="save">${esc(I18N.t("ans.save", "Save"))}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-scr="cancel">${esc(I18N.t("ans.cancel", "Cancel"))}</button><span class="pkg-hint" data-scr-note></span>`;
+      box.querySelector("textarea").focus();
+      return;
+    }
+    if (act === "cancel") { renderPkgScreening(); return; }
+    if (act === "save" && PKG_ID) {
+      const answer = box.querySelector("textarea").value.trim();
+      b.disabled = true;
+      try {
+        const r = await api(`/api/record/${PKG_ID}/screening`, { index: i, answer });
+        PKG_SCR = (r.screening || PKG_SCR);
+        renderPkgScreening();
+        const note = $(`#pkgScr .pkg-qa[data-i="${i}"] [data-scr-note]`);
+        if (note) pkgFlash(note, r.reused ? I18N.t("ans.reused", "Saved. Later forms reuse it.") : I18N.t("ans.savedHere", "Saved for this application."), 3500);
+      } catch (err) {
+        b.disabled = false;
+        const note = box.querySelector("[data-scr-note]");
+        if (note) note.textContent = err.message || I18N.t("profile.answers.failed", "Couldn't save.");
+      }
+    }
+  });
+  $("#pkgAnsOpen")?.addEventListener("click", () => openAnswers("package"));
 
   function pkgFlash(elm, msg, ms = 2500) {
     elm.textContent = msg;
@@ -3552,33 +3588,17 @@
     setTimeout(() => { b.textContent = was; }, 1800);
   }));
 
-  /* ---- application answers (work authorization, sponsorship, EEO decline): the three
-     answers nearly every form asks, saved once here and filled into every application for
-     the person to review. One store with the extension popup, via /api/profile/answers. */
+  /* ---- application answers: the profile card is a door to Your answers (openAnswers). */
   function paintAnswers(a) {
-    const wa = $("#ansWorkAuth"), sp = $("#ansSponsorship"), eeo = $("#ansEeoDecline");
-    if (!wa || !sp || !eeo) return;
-    wa.value = a.work_auth_us || "";
-    sp.value = a.needs_sponsorship || "";
-    eeo.checked = !!a.eeo_decline;
+    const el = $("#profAnsSum");
+    if (!el) return;
+    const bits = [];
+    if (a.work_auth_us) bits.push(I18N.t("ans.sumAuth", "Authorized in the US: {v}").replace("{v}", a.work_auth_us === "Yes" ? I18N.t("ans.yes", "Yes") : I18N.t("ans.no", "No")));
+    if (a.needs_sponsorship) bits.push(I18N.t("ans.sumSponsor", "Sponsorship: {v}").replace("{v}",
+      { Yes: I18N.t("ans.sponsorNowShort", "now"), Future: I18N.t("ans.sponsorFutureShort", "in the future"), No: I18N.t("ans.no", "No") }[a.needs_sponsorship] || ""));
+    el.textContent = bits.length ? bits.join(" · ") : I18N.t("ans.sub", "Answer once. Every application reuses it.");
   }
-
-  $("#ansSave")?.addEventListener("click", async () => {
-    const note = $("#ansSaved");
-    const body = {
-      work_auth_us: $("#ansWorkAuth").value,
-      needs_sponsorship: $("#ansSponsorship").value,
-      eeo_decline: $("#ansEeoDecline").checked,
-    };
-    try {
-      const r = await api("/api/profile/answers", body);
-      paintAnswers(r.answers || body);
-      note.textContent = I18N.t("profile.answers.saved", "Saved. Filled into every application form for you to review.");
-    } catch {
-      note.textContent = I18N.t("profile.answers.failed", "Couldn't save.");
-    }
-    setTimeout(() => { note.textContent = ""; }, 4000);
-  });
+  $("#profAnsOpen")?.addEventListener("click", () => openAnswers("profile"));
 
   $("#idEdit").addEventListener("click", () => { setIdentityMode(true); $("#idEdit").hidden = true; });
   $("#idCancel").addEventListener("click", () => {
@@ -8029,6 +8049,7 @@
   }
 
   async function loadAutoApply() {
+    aaPaintAnswers();
     aaRunLabel();
     loadInboxStatus();
     let b;
@@ -8351,6 +8372,7 @@
       cards.push(`<div class="aa-item"><div class="aa-item-top"><span class="aa-fic">${AA_IC.list}</span>
         <div class="aa-it-main"><div class="aa-it-t">${esc(T("aa.screening", "Screening answers"))}</div>
         <div class="aa-it-m">${esc(T(scr.length === 1 ? "aa.answer" : "aa.answers", scr.length === 1 ? "1 answer" : "{n} answers").replace("{n}", scr.length))}</div></div>
+        <button class="aa-open" type="button" data-dr="answers">${esc(T("ans.title", "Your answers"))}</button>
         <button class="aa-open" type="button" data-dr="open">${esc(T("aa.edit", "Edit"))}</button></div>
         <dl class="aa-qa">${scr.slice(0, 6).map(q => `<dt>${esc(q.q)}</dt><dd>${esc(q.a)}</dd>`).join("")}</dl></div>`);
     }
@@ -8442,6 +8464,7 @@
     if (act === "fill") return aaFill(id, { btn: b });
     if (act === "again") return aaFill(id, { btn: b, here: true });
     if (act === "edit" || act === "open") { aaClose(); openPackage(id); return; }
+    if (act === "answers") { aaClose(); openAnswers("autoapply"); return; }
     if (act === "skip") { b.disabled = true; try { await aaSkip(id); } catch (err) { b.disabled = false; toast(err.message); } return; }
     if (act === "approve") {
       b.disabled = true;
@@ -8453,6 +8476,203 @@
       b.disabled = true;
       try { await api(`/api/record/${id}/status`, { status: "applied" }); await loadAutoApply(); }
       catch (err) { b.disabled = false; toast(err.message); }
+    }
+  });
+
+  /* ---- Your answers: work authorization + the answer library (one page, a back link) ----
+     The planner answers every visa / sponsorship question from the work authorization here,
+     and reuses a saved answer on every later form. Nothing here is guessed or sent to a model. */
+  const ANS = { data: null, country: "US", wa: null, origin: "autoapply", editing: null, adding: false };
+  const ANS_CC = { US: "US", UK: "UK", CA: "Canada", AU: "Australia", EU: "EU" };
+  const ANS_YN = [["Yes", "ans.yes", "Yes"], ["No", "ans.no", "No"]];
+  const ANS_BACK = { autoapply: ["nav.autoapply", "Auto-apply"], profile: ["ans.backProfile", "Your profile"],
+                     package: ["ans.backApp", "Application"] };
+  function waEntry(cc) {
+    const c = (ANS.wa.countries = ANS.wa.countries || {});
+    return (c[cc] = c[cc] || { status: "", authorized: "", sponsor_now: "", sponsor_future: "", auth_end: "" });
+  }
+  function ansStatusLabel(cc, code) {
+    const c = (ANS.data.countries || []).find(x => x.code === cc);
+    const st = c && c.statuses.find(x => x.code === code);
+    return st ? T("ans.st." + code, st.label) : "";
+  }
+  async function aaPaintAnswers() {
+    const sub = $("#aaAnsSub");
+    if (!sub) return;
+    let d;
+    try { d = await api("/api/answers"); } catch { return; }
+    ANS.data = d;
+    const us = ((d.work_auth || {}).countries || {}).US || {};
+    const bits = [];
+    if (us.status) bits.push(ansStatusLabel("US", us.status));
+    bits.push(T(d.total === 1 ? "ans.nSaved1" : "ans.nSaved", d.total === 1 ? "1 saved" : "{n} saved").replace("{n}", d.total || 0));
+    sub.textContent = us.status || d.total ? bits.join(" · ") : T("ans.todaySub", "Work authorization and saved answers");
+  }
+  $("#aaAnsBtn")?.addEventListener("click", () => openAnswers("autoapply"));
+
+  async function openAnswers(origin) {
+    ANS.origin = origin || "autoapply";
+    const [k, f] = ANS_BACK[ANS.origin] || ANS_BACK.autoapply;
+    $("#ansBackLbl").textContent = T(k, f);
+    ANS.editing = null; ANS.adding = false;
+    $("#ansQ").value = "";
+    showView("answers");
+    window.scrollTo(0, 0);
+    await ansLoad();
+  }
+  $("#ansBack")?.addEventListener("click", () => {
+    if (ANS.origin === "profile") { loadProfile(); showView("profile"); }
+    else if (ANS.origin === "package") { showView("package"); }
+    else { loadAutoApply(); showView("autoapply"); }
+  });
+  async function ansLoad() {
+    let d;
+    try { d = await api("/api/answers"); }
+    catch (e) { $("#ansList").innerHTML = `<div class="ans-empty">${esc(e.message)}</div>`; return; }
+    ANS.data = d;
+    ANS.wa = JSON.parse(JSON.stringify(d.work_auth || { countries: {}, relocate: "" }));
+    // Open on the first country they have answered, US otherwise.
+    const have = Object.keys(ANS.wa.countries || {});
+    ANS.country = have.includes(ANS.country) ? ANS.country : (have[0] || "US");
+    $("#ansEeo").checked = !!d.eeo_decline;
+    $("#ansWaNote").textContent = "";
+    paintWa();
+    paintAnsList(d.answers || [], d.total || 0);
+  }
+  function paintWa() {
+    const d = ANS.data, cc = ANS.country, e = waEntry(cc);
+    $("#ansCountry").innerHTML = (d.countries || []).map(c =>
+      `<button type="button" class="ans-seg-b${c.code === cc ? " is-on" : ""}" data-cc="${c.code}" aria-pressed="${c.code === cc}"
+        title="${esc(T("ans.cc." + c.code, c.name))}">${esc(T("ans.ccShort." + c.code, ANS_CC[c.code] || c.code))}</button>`).join("");
+    const c = (d.countries || []).find(x => x.code === cc) || { statuses: [] };
+    $("#ansStatus").innerHTML = `<option value="">${esc(T("profile.answers.notSet", "Not set"))}</option>`
+      + c.statuses.map(st => `<option value="${st.code}"${st.code === e.status ? " selected" : ""}>${esc(T("ans.st." + st.code, st.label))}</option>`).join("");
+    const implied = (d.implied || []).includes(e.status);
+    document.querySelectorAll("#ansWaCard .ans-yn").forEach(g => {
+      const k = g.dataset.yn;
+      const v = k === "relocate" ? (ANS.wa.relocate || "") : (e[k] || "");
+      // A citizen or permanent resident is authorized and needs no sponsorship: shown, not asked.
+      const fixed = implied && k !== "relocate";
+      const shown = fixed ? (k === "authorized" ? "Yes" : "No") : v;
+      g.innerHTML = ANS_YN.map(([val, key, fb]) =>
+        `<button type="button" class="ans-seg-b${shown === val ? " is-on" : ""}" data-v="${val}" aria-pressed="${shown === val}"${fixed ? " disabled" : ""}>${esc(T(key, fb))}</button>`).join("");
+    });
+    const dated = (d.dated || []).includes(e.status);
+    $("#ansEndWrap").hidden = !dated;
+    $("#ansAuthEnd").value = dated ? (e.auth_end || "") : "";
+  }
+  $("#ansCountry")?.addEventListener("click", e => {
+    const b = e.target.closest("[data-cc]");
+    if (!b) return;
+    ANS.country = b.dataset.cc;
+    paintWa();
+  });
+  $("#ansStatus")?.addEventListener("change", e => {
+    const ent = waEntry(ANS.country);
+    ent.status = e.target.value;
+    if ((ANS.data.implied || []).includes(ent.status)) {
+      ent.authorized = "Yes"; ent.sponsor_now = "No"; ent.sponsor_future = "No"; ent.auth_end = "";
+    }
+    paintWa();
+  });
+  $("#ansWaCard")?.addEventListener("click", e => {
+    const b = e.target.closest(".ans-yn [data-v]");
+    if (!b || b.disabled) return;
+    const k = b.closest(".ans-yn").dataset.yn, ent = waEntry(ANS.country);
+    const cur = k === "relocate" ? ANS.wa.relocate : ent[k];
+    const v = cur === b.dataset.v ? "" : b.dataset.v;          // click again to clear
+    if (k === "relocate") ANS.wa.relocate = v; else ent[k] = v;
+    if (k === "sponsor_now" && v === "Yes" && !ent.sponsor_future) ent.sponsor_future = "Yes";
+    paintWa();
+  });
+  $("#ansAuthEnd")?.addEventListener("change", e => { waEntry(ANS.country).auth_end = e.target.value; });
+  $("#ansWaSave")?.addEventListener("click", async () => {
+    const btn = $("#ansWaSave"), note = $("#ansWaNote");
+    btn.disabled = true;
+    try {
+      const r = await api("/api/answers/workauth", { work_auth: ANS.wa, eeo_decline: $("#ansEeo").checked });
+      ANS.wa = JSON.parse(JSON.stringify(r.work_auth));
+      ANS.data.work_auth = r.work_auth;
+      paintWa();
+      note.textContent = T("ans.waSaved", "Saved. Every form gets this answer.");
+    } catch (err) { note.textContent = err.message || T("profile.answers.failed", "Couldn't save."); }
+    btn.disabled = false;
+    setTimeout(() => { note.textContent = ""; }, 4000);
+  });
+
+  function ansWhen(ts) {
+    if (!ts) return "";
+    const days = Math.floor((Date.now() / 1000 - ts) / 86400);
+    return days <= 0 ? T("ans.today", "today") : days === 1 ? T("ans.yesterday", "yesterday")
+      : T("ans.daysAgo", "{n} days ago").replace("{n}", days);
+  }
+  function ansEditor(row) {
+    return `<div class="ans-row is-editing"${row ? ` data-key="${esc(row.key)}"` : ""}>
+      <input class="fld ans-in-q" type="text" maxlength="300" value="${esc(row ? row.question : "")}" placeholder="${esc(T("ans.qPh", "Question, as forms ask it"))}" aria-label="${esc(T("ans.qPh", "Question, as forms ask it"))}" />
+      <textarea class="fld ans-in-a" rows="3" maxlength="4000" placeholder="${esc(T("ans.aPh", "Your answer"))}" aria-label="${esc(T("ans.aPh", "Your answer"))}">${esc(row ? row.answer : "")}</textarea>
+      <div class="ans-row-acts"><button class="btn btn-primary btn-sm" type="button" data-ans="save">${esc(T("ans.save", "Save"))}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-ans="cancel">${esc(T("ans.cancel", "Cancel"))}</button>
+        <span class="ans-note" data-ans-note></span></div></div>`;
+  }
+  function paintAnsList(rows, total) {
+    $("#ansCount").textContent = total ? String(total) : "";
+    const q = $("#ansQ").value.trim();
+    const add = ANS.adding ? ansEditor(null) : "";
+    if (!rows.length) {
+      $("#ansList").innerHTML = add + (ANS.adding ? "" : `<div class="ans-empty">${esc(q
+        ? T("ans.noMatch", "No saved answer matches that.")
+        : T("ans.empty", "Nothing saved yet. Fix an answer on any application and it lands here."))}</div>`);
+      return;
+    }
+    $("#ansList").innerHTML = add + rows.map(r => ANS.editing === r.key ? ansEditor(r) : `<div class="ans-row" data-key="${esc(r.key)}">
+        <div class="ans-row-main">
+          <div class="ans-q">${esc(r.question)}${r.source === "drafted" ? ` <span class="ans-tag" title="${esc(T("ans.draftedTip", "Drafted from your profile. Edit it to make it yours."))}">${esc(T("ans.drafted", "Drafted"))}</span>` : ""}</div>
+          <div class="ans-a">${esc(r.answer)}</div>
+          <div class="ans-meta">${esc(r.uses ? T(r.uses === 1 ? "ans.used1" : "ans.used", r.uses === 1 ? "Used once, {when}" : "Used {n} times, last {when}").replace("{n}", r.uses).replace("{when}", ansWhen(r.last_used)) : T("ans.notUsed", "Not used yet"))}</div>
+        </div>
+        <div class="ans-row-acts"><button class="btn btn-ghost btn-sm" type="button" data-ans="edit">${esc(T("aa.edit", "Edit"))}</button>
+          <button class="btn btn-ghost btn-sm ans-del" type="button" data-ans="delete" aria-label="${esc(T("ans.delete", "Delete"))}">${esc(T("ans.delete", "Delete"))}</button></div>
+      </div>`).join("");
+  }
+  async function ansRefresh() {
+    let d;
+    try { d = await api("/api/answers?q=" + encodeURIComponent($("#ansQ").value.trim())); } catch { return; }
+    ANS.data.answers = d.answers; ANS.data.total = d.total;
+    paintAnsList(d.answers || [], d.total || 0);
+  }
+  let ANS_T = 0;
+  $("#ansQ")?.addEventListener("input", () => { clearTimeout(ANS_T); ANS_T = setTimeout(ansRefresh, 180); });
+  $("#ansAdd")?.addEventListener("click", () => {
+    ANS.adding = true; ANS.editing = null;
+    paintAnsList(ANS.data.answers || [], ANS.data.total || 0);
+    $("#ansList .ans-in-q")?.focus();
+  });
+  $("#ansList")?.addEventListener("click", async e => {
+    const b = e.target.closest("[data-ans]");
+    if (!b) return;
+    const row = b.closest(".ans-row"), key = row && row.dataset.key, act = b.dataset.ans;
+    if (act === "edit") {
+      ANS.editing = key; ANS.adding = false;
+      paintAnsList(ANS.data.answers || [], ANS.data.total || 0);
+      $(`#ansList .is-editing .ans-in-a`)?.focus();
+      return;
+    }
+    if (act === "cancel") { ANS.editing = null; ANS.adding = false; paintAnsList(ANS.data.answers || [], ANS.data.total || 0); return; }
+    if (act === "delete") {
+      b.disabled = true;
+      try { await api("/api/answers/delete", { key }); toast(T("ans.deleted", "Deleted.")); } catch (err) { b.disabled = false; toast(err.message); return; }
+      await ansRefresh();
+      return;
+    }
+    if (act === "save") {
+      const question = row.querySelector(".ans-in-q").value.trim(), answer = row.querySelector(".ans-in-a").value.trim();
+      const note = row.querySelector("[data-ans-note]");
+      if (!question || !answer) { note.textContent = T("ans.needBoth", "Add the question and your answer."); return; }
+      b.disabled = true;
+      try { await api("/api/answers", key ? { key, question, answer } : { question, answer }); }
+      catch (err) { b.disabled = false; note.textContent = err.message; return; }
+      ANS.editing = null; ANS.adding = false;
+      await ansRefresh();
     }
   });
 
