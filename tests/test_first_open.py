@@ -295,7 +295,9 @@ def test_a_feed_serving_zero_jobs_for_thirty_minutes_kicks_the_crawl(client, mon
         def __init__(self, body): self._b = body
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def read(self): return self._b
+        def read(self, n=-1):
+            out, self._b = (self._b, b"") if n is None or n < 0 else (self._b[:n], self._b[n:])
+            return out
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=30: _Resp(_feed_bytes([], LIVE_AT)))
     c = A.app.test_client()
     d = c.get("/api/jobs").get_json()

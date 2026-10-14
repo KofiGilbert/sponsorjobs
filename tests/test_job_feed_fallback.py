@@ -34,7 +34,9 @@ def test_job_from_feed_resolves_from_the_static_feed(monkeypatch, tmp_path):
         def __init__(self, body): self._b = body
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def read(self): return self._b
+        def read(self, n=-1):
+            out, self._b = (self._b, b"") if n is None or n < 0 else (self._b[:n], self._b[n:])
+            return out
 
     def _fake_urlopen(req, timeout=30):
         if req.full_url.endswith("/jobs.json.gz"):

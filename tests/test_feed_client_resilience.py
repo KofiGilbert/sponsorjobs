@@ -220,11 +220,17 @@ def test_forced_refresh_ignores_the_back_off(tmp_path):
     assert sf.refresh(force=True) is True and sf.retry_after() == 0
 
 
-def test_default_network_timeout_is_short(monkeypatch, tmp_path):
+def test_network_timeouts_stall_based_for_the_list_short_for_a_jd(monkeypatch, tmp_path):
+    """The list download's socket timeout is a STALL timeout (no bytes for that long), not a
+    budget for the whole file: a slow link that keeps sending is never cut off. A JD shard fetch
+    keeps the short 10 s timeout. Both ask for gzip, so the CDN sends the stored bytes."""
     seen = {}
 
     class _Resp:
         status, headers = 200, {}
+
+        def __init__(self):
+            self._b = _feed_bytes([_row("greenhouse:acme:1")])
 
         def __enter__(self):
             return self
@@ -232,16 +238,20 @@ def test_default_network_timeout_is_short(monkeypatch, tmp_path):
         def __exit__(self, *a):
             return False
 
-        def read(self):
-            return _feed_bytes([_row("greenhouse:acme:1")])
+        def read(self, n=-1):
+            out, self._b = (self._b, b"") if n is None or n < 0 else (self._b[:n], self._b[n:])
+            return out
 
     def urlopen(req, timeout=None):
         seen["timeout"] = timeout
+        seen["gzip"] = req.get_header("Accept-encoding")
         return _Resp()
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     sf = StaticFeed("https://f.example.com/feed", tmp_path)          # production wiring, no fake fetch
     assert len(sf.jobs()[0]) == 1
-    assert seen["timeout"] == DEFAULT_TIMEOUT == 10
+    assert seen["timeout"] == feedclient.STALL_TIMEOUT == 30 and seen["gzip"] == "gzip"
+    StaticFeed("https://f.example.com/feed", tmp_path)._fetch("https://f.example.com/x", {})
+    assert seen["timeout"] == DEFAULT_TIMEOUT == 10 and seen["gzip"] == "gzip"
     StaticFeed("https://f.example.com/feed", tmp_path, timeout=3)._fetch("https://f.example.com/x", {})
     assert seen["timeout"] == 3                                        # still overridable
 
@@ -270,8 +280,12 @@ class _Resp:
     def __exit__(self, *a):
         return False
 
-    def read(self):
-        return self._b
+    def read(self, n=-1):                          # streamed in chunks, like http.client
+        if n is None or n < 0:
+            out, self._b = self._b, b""
+            return out
+        out, self._b = self._b[:n], self._b[n:]
+        return out
 
 
 def _install_origin(monkeypatch, rows, jd=None):

@@ -172,3 +172,11 @@ def _no_first_open_crawl(monkeypatch):
     monkeypatch.setenv("JOBS_FIRST_CRAWL", "0")
     monkeypatch.setenv("NOTIFY_OFFICIAL", "0")
     monkeypatch.setenv("JOBS_SYNC_SEED", "1")
+    # The static feed downloads in the background (sourcing/feedclient.py). Fake origins answer at
+    # once, so a request may wait longer for that thread here and stay deterministic, and a
+    # download is one attempt (the app tests count network calls per back-off window). The retry
+    # and slow-link behaviour is tested on its own in tests/test_feed_slow.py.
+    from sourcing import feedclient
+    monkeypatch.setattr(feedclient, "RETRY_PAUSE", 0)
+    monkeypatch.setattr(feedclient, "DOWNLOAD_TRIES", 1)
+    monkeypatch.setattr(feedclient, "REQUEST_WAIT", 5.0)
