@@ -619,7 +619,10 @@
     if (!el) return;
     try {
       const r = await api("/api/jobs");
-      const jobs = rankForReachability(r.jobs || []).slice(0, 4);
+      // The list scrolls under the fixed prompt, so it can hold more than a peek.
+      const jobs = rankForReachability(r.jobs || []).slice(0, 12);
+      const foot = $(".home-roles-foot");
+      if (foot) foot.hidden = jobs.length < 3;
       if (!jobs.length) { el.innerHTML = `<div class="empty small">No roles yet, open <b>Jobs</b> to add sources.</div>`; return; }
       // The same card language as the Jobs tab (logo, framed card, company then role, badges), so
       // a job reads the same everywhere in the app. The old strip drew a bare first letter and

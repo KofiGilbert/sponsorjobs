@@ -93,12 +93,18 @@
             </div>
           </div>
 
-          <div class="home-fade">
+          <!-- The prompt stays put; only the roles scroll under it (Kofi, 2026-10-14). -->
+          <div class="home-fade home-roles">
             <div class="home-block-head">
               <h2 class="section-label" style="margin:0" data-i18n="home.today">Today · fresh best-fit roles</h2>
               <button class="link-btn" data-nav-to="jobs" type="button" data-i18n="home.seeall">See all jobs →</button>
             </div>
-            <div class="today-list" id="homeToday"><!-- top fresh roles injected --></div>
+            <div class="home-roles-scroll">
+              <div class="today-list" id="homeToday"><!-- top fresh roles injected --></div>
+              <div class="home-roles-foot">
+                <button class="link-btn" data-nav-to="jobs" type="button" data-i18n="home.seeall">See all jobs →</button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
