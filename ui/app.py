@@ -552,6 +552,10 @@ def _seed_sponsors(target: Path) -> None:
                 existing.close()
         import shutil
         target.parent.mkdir(parents=True, exist_ok=True)
+        # The store runs in WAL mode: drop the empty DB's journal siblings so SQLite never
+        # replays a stale -wal over the freshly copied snapshot.
+        for side in ("-wal", "-shm"):
+            Path(str(target) + side).unlink(missing_ok=True)
         shutil.copyfile(seed, target)
     except Exception:
         # A failed seed must never block startup: the app still works, the person can
@@ -559,8 +563,22 @@ def _seed_sponsors(target: Path) -> None:
         traceback.print_exc()
 
 
+_SPONSORS_OPEN_LOCK = threading.Lock()
+
+
 def _sponsors() -> SponsorDB:
+    """The process-wide visa-sponsor store. Safe to share across request threads: SponsorDB
+    gives each thread its own SQLite connection. Opened (and seeded) once per data dir, under a
+    lock so two first requests arriving together never both seed and load the bundles."""
     key = str(_SPONSORS_DB) if _SPONSORS_DB is not None else str(_DATA / "sponsors.db")
+    db = _SPONSORS.get(key)
+    if db is not None:
+        return db
+    with _SPONSORS_OPEN_LOCK:
+        return _open_sponsors(key)
+
+
+def _open_sponsors(key: str) -> SponsorDB:
     db = _SPONSORS.get(key)
     if db is None:
         _seed_sponsors(Path(key))

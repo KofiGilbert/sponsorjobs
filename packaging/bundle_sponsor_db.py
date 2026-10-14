@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import os
-import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -166,6 +165,30 @@ def _build_from_seed(seed: Path, dest: Path, everify: Path, depth: dict | None =
         db.close()
 
 
+def _snapshot(source: Path, dst: Path) -> None:
+    """Copy a sponsor DB that may be open in WAL mode (SponsorDB uses WAL, so the newest commits
+    can still sit in sponsors.db-wal). A plain file copy would miss them; the backup API reads
+    the committed state, -wal included."""
+    dst.unlink(missing_ok=True)
+    src, out = sqlite3.connect(str(source)), sqlite3.connect(str(dst))
+    try:
+        src.backup(out)
+    finally:
+        out.close()
+        src.close()
+
+
+def _single_file(path: Path) -> None:
+    """Ship ONE self-contained file: fold any WAL back in and switch to the classic rollback
+    journal, so the installer never carries (or needs) -wal/-shm siblings."""
+    con = sqlite3.connect(str(path))
+    try:
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        con.execute("PRAGMA journal_mode=DELETE")
+    finally:
+        con.close()
+
+
 def build(seed: Path = SEED, source: Path = SOURCE, dest: Path = DEST,
           min_employers: int = MIN_EMPLOYERS, everify: Path = EVERIFY, log=print,
           history: Path | None = None, perm_years: Path | None = None,
@@ -194,7 +217,7 @@ def build(seed: Path = SEED, source: Path = SOURCE, dest: Path = DEST,
                 f"{local_counts['h1b']:,} H-1B, {local_counts['perm']:,} PERM, "
                 f"{local_counts['e_verify']:,} E-Verify")
             if local_counts["h1b"] > seed_counts["h1b"]:
-                shutil.copyfile(source, tmp)
+                _snapshot(source, tmp)
                 used, counts = "local", local_counts
                 # The local DB may predate the depth bundles (or hold older ones); the
                 # layering is idempotent, so the staged copy always has the shipped ones.
@@ -213,6 +236,7 @@ def build(seed: Path = SEED, source: Path = SOURCE, dest: Path = DEST,
     depth = _depth_counts(tmp)
     log(f"depth: {depth['year_rows']:,} employer-years, {depth['perm_years']:,} PERM-by-year rows, "
         f"{depth['lca_cells']:,} LCA wage cells")
+    _single_file(tmp)
     os.replace(tmp, dest)
     log(f"staged {dest} from the {used} ({counts['employers']:,} employers: "
         f"{counts['h1b']:,} H-1B, {counts['perm']:,} PERM, {counts['e_verify']:,} E-Verify, "

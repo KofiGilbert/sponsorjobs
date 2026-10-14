@@ -473,3 +473,64 @@ def test_seed_if_empty_falls_back_to_defaults_without_seed(tmp_path, monkeypatch
     w = Watchlist(str(tmp_path / "db2.sqlite"))
     svc.seed_if_empty(w)
     assert len(w.companies()) == len(svc.SEED_COMPANIES)   # the built-in example set
+
+
+# --- criteria["aggregators"] persists (FEED_INCLUDE_AGGREGATORS used to be silently dropped) --- #
+def test_set_criteria_persists_the_aggregator_choice():
+    w = Watchlist(":memory:")
+    try:
+        w.set_criteria({"titles": ["engineer"], "locations": [], "remote": "any",
+                        "aggregator_terms": ["analyst"],
+                        "aggregators": ["Remotive", "remoteok", "remotive", " "]})
+        c = w.get_criteria()
+        assert c["aggregators"] == ["remotive", "remoteok"]
+        assert c["aggregator_terms"] == ["analyst"]          # existing keys still saved
+        # A caller that does not mention aggregators (the Jobs criteria form) keeps the choice.
+        w.set_criteria({"titles": ["nurse"], "locations": [], "remote": "any"})
+        assert w.get_criteria()["aggregators"] == ["remotive", "remoteok"]
+        # An explicit empty list is a real choice ("none"), not "use the defaults".
+        w.set_criteria({"titles": ["nurse"], "locations": [], "remote": "any", "aggregators": []})
+        assert w.get_criteria()["aggregators"] == []
+    finally:
+        w.close()
+
+
+def test_refresh_runs_only_the_saved_aggregators():
+    from sourcing.service import refresh_watchlist
+    urls: list[str] = []
+
+    def fetch(url, timeout=20, **_):
+        urls.append(url)
+        return {"jobs": []} if "remotive" in url else []
+
+    w = Watchlist(":memory:")
+    try:
+        w.set_criteria({"titles": ["engineer"], "locations": [], "remote": "any",
+                        "aggregators": ["remotive"]})
+        refresh_watchlist(w, fetch=fetch, boards=[])
+        assert urls and all("remotive" in u for u in urls), urls
+        urls.clear()
+        w.set_criteria({"titles": ["engineer"], "locations": [], "remote": "any", "aggregators": []})
+        refresh_watchlist(w, fetch=fetch, boards=[])
+        assert urls == [], urls
+    finally:
+        w.close()
+
+
+def test_feed_build_saves_its_aggregator_setting(tmp_path, monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "build_feed_mod", Path(__file__).resolve().parents[1] / "scripts" / "build_feed.py")
+    bf = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bf)
+    monkeypatch.setenv("FEED_INCLUDE_AGGREGATORS", "none")
+    aggs = bf.aggregators_for_feed(log=lambda *_: None)
+    w = Watchlist(str(tmp_path / "j.db"))
+    try:
+        c = w.get_criteria()
+        c["aggregators"] = aggs
+        w.set_criteria(c)
+        assert w.get_criteria()["aggregators"] == list(aggs)
+        assert "jsearch" not in w.get_criteria()["aggregators"]
+    finally:
+        w.close()

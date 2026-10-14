@@ -75,7 +75,7 @@ def test_new_aggregator_sources_route_to_assisted_never_auto():
 def test_watchlist_fills_from_a_keyless_default_aggregator():
     # refresh_watchlist runs the KEYLESS default aggregators; remoteok is one, so its fixture
     # should land in the store (keyword-matched + accessible). (arbeitnow is covered as an adapter
-    # above; it isn't a default, and set_criteria doesn't persist a per-run aggregator override.)
+    # above; it isn't a default, and this store names no aggregators, so the defaults run.)
     store = Watchlist(":memory:")
     try:
         store.set_criteria({"titles": ["engineer"], "locations": [], "remote": "any"})

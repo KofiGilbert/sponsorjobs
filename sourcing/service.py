@@ -333,9 +333,11 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
     # the keyword aggregators need search terms, so it names them separately.
     titles = [t for t in (criteria.get("aggregator_terms") or criteria.get("titles", [])) if t.strip()][:4]
     if include_aggregators and remote_pref != "onsite" and titles:
-        for agg in (criteria.get("aggregators") or DEFAULT_AGGREGATORS):
+        chosen = criteria.get("aggregators")
+        # None = not configured -> the defaults; an explicit empty list means "run none".
+        for agg in (DEFAULT_AGGREGATORS if chosen is None else chosen):
             fn = AGGREGATORS.get(agg)
-            if fn is None:
+            if fn is None or agg == "freehire":    # freehire runs as the bulk pull (step 3), not per term
                 continue
             seen: set[str] = set()
             for term in titles:
