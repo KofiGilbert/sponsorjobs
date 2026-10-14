@@ -1854,7 +1854,8 @@ _PREFS_FILE = _DATA / "review_prefs.json"
 _RATE_FILE = _DATA / "submit_rate.json"
 _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
                   "inbox_auto_verify": False, "folders": [], "tracker_weekly_goal": 10,
-                  "aa_min_fit": 60}   # Auto-apply's fit floor (autoapply/picker.py)
+                  "aa_min_fit": 60,   # Auto-apply's fit floor (autoapply/picker.py)
+                  "aa_skip": []}      # roles the person took out of the next Auto-apply run
 
 
 def _prefs() -> dict:
@@ -1879,6 +1880,8 @@ def _set_prefs(patch: dict) -> dict:
                           if str(f).strip()][:50]
     if "tracker_weekly_goal" in patch:       # the Tracker page's applications-per-week target
         cur["tracker_weekly_goal"] = max(0, min(500, int(patch["tracker_weekly_goal"])))
+    if "aa_skip" in patch:                   # source_ids skipped from Auto-apply's Up next
+        cur["aa_skip"] = [str(x)[:300] for x in (patch["aa_skip"] or []) if str(x).strip()][-500:]
     if "aa_min_fit" in patch:                # Auto-apply's fit floor, a match percent
         from autoapply.picker import clamp_min_fit
         cur["aa_min_fit"] = clamp_min_fit(patch["aa_min_fit"], cur.get("aa_min_fit", 60))
@@ -2190,7 +2193,7 @@ class _BatchActions:
                 ts, today = _now_ts_today()
                 allowed, reason = _rate_limiter().allow(ts, today)
                 if not allowed:
-                    recs.merge_data(rid, queued_patch(reason))
+                    recs.merge_data(rid, {**queued_patch(reason), "approved_at": _now_iso()})
                     return {"ok": True, "stage": "approved",
                             "message": f"Approved: {who}, queued to submit for you ({reason})."}
                 result = submit_record({**data, "profile": _saved_full_profile(),
@@ -2210,7 +2213,7 @@ class _BatchActions:
                         "message": f"Not sent: {who}. {result['message']}"}
             # Assisted lane: never auto-submit, and nothing has been filled yet. Approval only
             # means "reviewed"; the person submits on the site.
-            recs.merge_data(rid, approved_patch())
+            recs.merge_data(rid, {**approved_patch(), "approved_at": _now_iso()})
             return {"ok": True, "stage": "approved",
                     "message": f"Approved: {who}. Open the application and submit it."}
         finally:
@@ -9750,6 +9753,9 @@ def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
     rows = candidates(board, saved, facets=(strat or {}).get("filters") or {},
                       titles=titles, locations=locations, sponsor_only=sponsor_only,
                       targets=profile_targets(profile))
+    skip = set(_prefs().get("aa_skip") or [])
+    if skip:
+        rows = [j for j in rows if str(j.get("source_id") or "") not in skip]
     meta = {"titles": titles, "locations": locations, "sponsor_only": sponsor_only,
             "search": (strat or {}).get("name") or None, "board": len(board), "saved": len(saved)}
     return rows, meta
@@ -9883,6 +9889,7 @@ def autoapply_run():
         if out.get("ok"):
             item = {k: out[k] for k in ("id", "role", "company", "coverage")}
             item["fit"] = job.get("fit")
+            _aa_keep_fit(out["id"], job.get("fit"))
             item["lane"] = submission_policy(job.get("url") or "")
             tailored.append(item)
         else:
@@ -9898,6 +9905,283 @@ def autoapply_run():
                     "passed": passed, "summary": summary,
                     "reach": reach([j for j in rows], submission_policy),
                     "search": meta["search"], "focus": focus_meta})
+
+
+# ============================================================================ Auto-apply page
+# One page for the whole loop (tailor-ux 2026-10): four stage tiles (To review, Waiting on you,
+# Submitted, Needs you) from submit/stages.py, a row list per tile, an Up next preview of the
+# next run, a Today panel, and a detail drawer per application. The old Review page folded in
+# here; its endpoints (/api/review/*) stay and this page calls them.
+
+def _aa_keep_fit(rid, fit) -> None:
+    """Keep the run's fit percent on the record, so the page shows the same match the run used."""
+    if fit is None:
+        return
+    recs = _records()
+    try:
+        recs.merge_data(int(rid), {"fit": int(fit)})
+    except Exception:   # noqa: BLE001 - the package is saved; the number is a nicety
+        pass
+    finally:
+        recs.close()
+
+
+_ATS_NAMES = {"greenhouse": "Greenhouse", "lever": "Lever", "ashbyhq": "Ashby", "ashby": "Ashby",
+              "workable": "Workable", "smartrecruiters": "SmartRecruiters", "recruitee": "Recruitee",
+              "myworkdayjobs": "Workday", "workday": "Workday", "linkedin": "LinkedIn",
+              "icims": "iCIMS", "jobvite": "Jobvite", "bamboohr": "BambooHR", "taleo": "Taleo"}
+
+
+def _aa_site(url: str) -> str:
+    """The site an application opens on, by name ("Greenhouse"), else its host."""
+    from submit.policy import _host
+    host = _host(url or "")
+    if not host:
+        return ""
+    for key, name in _ATS_NAMES.items():
+        if key in host:
+            return name
+    return host[4:] if host.startswith("www.") else host
+
+
+def _aa_job_index(rows: list[dict]) -> dict[str, dict]:
+    """{source_id: stored job} for the records' jobs, read once per request."""
+    sids = []
+    for r in rows:
+        sid = str((_record_data(r).get("source_job") or {}).get("source_id") or "").strip()
+        if sid:
+            sids.append(sid)
+    if not sids:
+        return {}
+    out: dict[str, dict] = {}
+    w = _watchlist()
+    try:
+        for sid in dict.fromkeys(sids):
+            j = w.get_job(sid)
+            if j:
+                out[sid] = j
+    except Exception:   # noqa: BLE001 - the row still has its record's own fields
+        pass
+    finally:
+        w.close()
+    return out
+
+
+def _aa_when(data: dict, rec: dict) -> str:
+    """When an application last moved, for ordering a tile (newest first)."""
+    sub = data.get("submission") if isinstance(data.get("submission"), dict) else {}
+    return str(data.get("applied_at") or sub.get("at") or data.get("approved_at")
+               or rec.get("created_at") or "")
+
+
+def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
+    """One application as the Auto-apply page lists it. Only facts the record or its stored
+    job hold; anything unknown is left empty, never guessed."""
+    from submit import classify_record
+    from submit.stages import app_stage, row_action, tile_of
+    st = app_stage(data)
+    tile = tile_of(data) or ""
+    sj = data.get("source_job") or {}
+    job = jobs.get(str(sj.get("source_id") or "").strip()) or {}
+    company = rec.get("company") or job.get("company") or ""
+    location = str(sj.get("location") or job.get("location") or "")
+    tagged = _sponsors().tag_jobs([{"company": company, "location": location or "United States"}])[0]
+    stance = {}
+    jd = job.get("jd_text") or ""
+    if jd:
+        from sourcing.adstance import UNKNOWN, ad_stance
+        a = ad_stance(jd)
+        if a["stance"] != UNKNOWN:
+            stance = {"ad_stance": a["stance"], "ad_sentence": a["sentence"]}
+    sub = data.get("submission") if isinstance(data.get("submission"), dict) else {}
+    cov = data.get("coverage") or {}
+    fit = data.get("fit")
+    match = fit if isinstance(fit, (int, float)) else (
+        cov.get("ratio") if cov.get("ratio") is not None else round(rec.get("coverage") or 0))
+    url = (sj.get("url") or job.get("url") or "")
+    plan = classify_record(data)
+    return {
+        "id": rec["id"], "role": (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0],
+        "company": company, "location": location,
+        "visa": tagged.get("visa") or [], "sponsorship_stated": job.get("sponsorship_stated"),
+        **stance,
+        "match": round(match) if match is not None else None,
+        "tile": tile, "stage": st["stage"], "stage_label": st["label"], "stage_detail": st["detail"],
+        "reason": st["reason"], "how": st["how"], "queued": bool(data.get("queued")),
+        "action": row_action(tile, st["reason"]),
+        "lane": plan["tier"],
+        "apply_url": _application_url(url, company) if url else "",
+        "posting_url": url,
+        "site": _aa_site(url),
+        "saved": bool(job.get("saved")),
+        "cv_path": str(WORKDIR / f"cv-{rec['id']}.pdf") if (WORKDIR / f"cv-{rec['id']}.pdf").exists() else "",
+        "created_at": rec.get("created_at") or "",
+        "approved_at": data.get("approved_at") or "",
+        "submitted_at": data.get("applied_at") or sub.get("at") or "",
+        "when": _aa_when(data, rec),
+    }
+
+
+def _aa_week_start():
+    from datetime import date, timedelta
+    today = date.today()
+    return (today - timedelta(days=today.weekday())).isoformat()
+
+
+@app.get("/api/autoapply/board")
+@_guard
+def autoapply_board():
+    """Everything the Auto-apply page shows except Up next: the four tiles with their counts
+    and rows, the Needs you reasons, this week's submissions, today's auto-submit count against
+    the daily cap, recent submissions, and which connections exist. Read-only."""
+    from submit.stages import TILES, default_tile, needs_summary
+    recs = _records()
+    try:
+        rows = recs.list(limit=10000)
+    finally:
+        recs.close()
+    jobs = _aa_job_index(rows)
+    tiles: dict[str, list[dict]] = {t: [] for t in TILES}
+    for r in rows:
+        data = _record_data(r)
+        item = _aa_row(r, data, jobs)
+        if item["tile"] in tiles:
+            tiles[item["tile"]].append(item)
+    for t in TILES:
+        tiles[t].sort(key=lambda x: x["when"], reverse=True)
+    week = _aa_week_start()
+    sent_week = [x for x in tiles["submitted"] if str(x["submitted_at"])[:10] >= week]
+    counts = {t: len(tiles[t]) for t in TILES}
+    ident = (_saved_full_profile().get("identity") or {})
+    p = _prefs()
+    ts, today = _now_ts_today()
+    return jsonify({
+        "ok": True,
+        "has_profile": _aa_has_profile(),
+        "counts": counts,
+        "default": default_tile(counts),
+        "tiles": tiles,
+        "week": {"sent": len(sent_week), "for_you": sum(1 for x in sent_week if x["how"] == "auto")},
+        "needs_summary": needs_summary([x["reason"] for x in tiles["needs"]]),
+        "missing_contact": [k for k in ("name", "email") if not ident.get(k)],
+        "today": {**_rate_limiter().status(ts, today), "autonomous": _autonomous_on()},
+        "recent": tiles["submitted"][:5],
+        "telegram": _active_channel() is not None,
+        "approve_all": bool(p.get("approve_all")),
+        "min_fit": _aa_min_fit(),
+    })
+
+
+def _pdf_pages(path) -> int | None:
+    try:
+        import pypdfium2 as pdfium
+        doc = pdfium.PdfDocument(str(path))
+        try:
+            return len(doc)
+        finally:
+            doc.close()
+    except Exception:   # noqa: BLE001 - unknown page count is left out, not guessed
+        return None
+
+
+@app.get("/api/autoapply/item/<int:rid>")
+@_guard
+def autoapply_item(rid: int):
+    """One application for the Auto-apply drawer: the row, plus what will be sent (the resume
+    with its matched job terms, the cover letter, the screening answers), the job's type, pay
+    and posting date when the stored job has them, and the timeline from the record's own
+    timestamps. Nothing here is estimated."""
+    rec = _get_record(rid)
+    if not rec:
+        return jsonify({"error": "That application was not found."}), 404
+    data = _record_data(rec)
+    jobs = _aa_job_index([rec])
+    row = _aa_row(rec, data, jobs)
+    job = jobs.get(str((data.get("source_job") or {}).get("source_id") or "").strip()) or {}
+    cov = data.get("coverage") or {}
+    present = [str(t) for t in (cov.get("present") or [])]
+    missing = [str(t) for t in (cov.get("missing") or [])] + \
+              [str(t) for t in (cov.get("missing_supported") or [])]
+    pdf = WORKDIR / f"cv-{rid}.pdf"
+    letter = (data.get("cover_letter") or "").strip()
+    remote = (job.get("remote") or "").lower()
+    sub = data.get("submission") if isinstance(data.get("submission"), dict) else {}
+    return jsonify({
+        **row,
+        "type": {"remote": "Remote", "hybrid": "Hybrid", "onsite": "On-site"}.get(remote, ""),
+        "pay": (job.get("salary") or "").strip(),
+        "posted_at": str(job.get("posted_at") or "")[:10],
+        "resume": {"exists": pdf.exists(), "pages": _pdf_pages(pdf) if pdf.exists() else None,
+                   "url": f"/api/cv.pdf?job=cv-{rid}" if pdf.exists() else "",
+                   "path": str(pdf) if pdf.exists() else "",
+                   "terms": present, "missing": missing,
+                   "terms_total": len(present) + len(missing)},
+        "letter": {"words": len(letter.split()), "text": letter[:700],
+                   "url": f"/api/record/{rid}/cover_letter.pdf" if letter else ""},
+        "screening": [{"q": str(qa.get("question") or ""), "a": str(qa.get("answer") or ""),
+                       "knockout": bool(qa.get("knockout"))}
+                      for qa in (data.get("screening") or []) if isinstance(qa, dict)],
+        "message": sub.get("message") or "",
+        "picked": bool((data.get("source_job") or {}).get("source_id")),
+    })
+
+
+_AA_NEXT_CACHE: dict = {}
+
+
+@app.get("/api/autoapply/upnext")
+@_guard
+def autoapply_upnext():
+    """The roles the next run would tailor, in the order it would take them: saved jobs first,
+    then the best matches at or above the fit floor, skipping roles that already have a package
+    and roles the person skipped here. The same picker as /api/autoapply/run, with a smaller
+    scoring budget so the page stays quick. Nothing is tailored."""
+    from autoapply.picker import pick
+    a = request.args
+    count = max(1, min(int(a.get("count") or 5), 10))
+    focus = {"titles": _split(a.get("titles")), "locations": _split(a.get("locations")),
+             "sponsor_only": a.get("sponsor_only") in ("1", "true", "on")}
+    min_fit = _aa_min_fit()
+    records = _aa_records()
+    key = (count, tuple(focus["titles"]), tuple(focus["locations"]), focus["sponsor_only"],
+           min_fit, len(records), tuple(_prefs().get("aa_skip") or []))
+    hit = _AA_NEXT_CACHE.get("v")
+    if hit and hit[0] == key and time.time() - hit[1] < 120:
+        return jsonify(hit[2])
+    rows, meta = _aa_candidates(focus)
+    res = pick(rows, records=records, score_fn=_aa_fit, count=count, min_fit=min_fit,
+               max_scored=max(12, count * 3), time_budget=8.0)
+    rows_out = []
+    for j in res["jobs"]:
+        rows_out.append({
+            "source_id": j.get("source_id") or "", "title": j.get("title") or "",
+            "company": j.get("company") or "", "location": j.get("location") or "",
+            "visa": j.get("visa") or [], "ad_stance": j.get("ad_stance"),
+            "ad_sentence": j.get("ad_sentence"), "sponsorship_stated": j.get("sponsorship_stated"),
+            "fit": j.get("fit"), "saved": bool(j.get("saved")), "url": j.get("url") or "",
+        })
+    out = {"ok": True, "jobs": rows_out, "count": count, "min_fit": min_fit,
+           "matches": res["available"], "has_profile": _aa_has_profile(),
+           "board": meta["board"], "search": meta["search"]}
+    _AA_NEXT_CACHE["v"] = (key, time.time(), out)
+    return jsonify(out)
+
+
+@app.post("/api/autoapply/skip")
+@_guard
+def autoapply_skip():
+    """Take one role out of the next Auto-apply run (Up next's x). Body {source_id, undo?}.
+    The role stays on Jobs; only the run passes it over."""
+    b = request.json or {}
+    sid = str(b.get("source_id") or "").strip()
+    if not sid:
+        return jsonify({"error": "Which role? source_id is required."}), 400
+    cur = [x for x in (_prefs().get("aa_skip") or []) if x != sid]
+    if not b.get("undo"):
+        cur.append(sid)
+    _set_prefs({"aa_skip": cur})
+    _AA_NEXT_CACHE.pop("v", None)
+    return jsonify({"ok": True, "skipped": len(cur)})
 
 
 # ============================================================================ tracker board

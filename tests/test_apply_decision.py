@@ -148,8 +148,8 @@ def test_old_fill_handlers_are_gone():
 # ---------------------------------------------------------------- one button, one path (app.js)
 
 def test_every_apply_button_uses_the_one_path():
-    # Package page, Review card and Auto-apply page all call applyInPane.
-    assert APP_JS.count("applyInPane({") == 3
+    # The package page and the Auto-apply page (its rows and drawer share aaFill) call applyInPane.
+    assert APP_JS.count("applyInPane({") == 2
     assert "assistFill(" not in APP_JS and "assistFillCurrent(" not in APP_JS
     for gone in ("pkgAutoBtn", "pkgAutoHereBtn", "pkgAssistBtn", "pkgAssistHereBtn"):
         assert gone not in APP_JS

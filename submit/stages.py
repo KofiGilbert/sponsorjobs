@@ -111,3 +111,55 @@ def submitted_by(how: str, tier: str = "", message: str = "", at: str | None = N
     return {"submission": {"tier": tier or ("auto" if how == "auto" else "assisted"),
                            "status": "auto_submitted" if how == "auto" else "submitted",
                            "by": how, "message": msg, "at": at}}
+
+
+# --------------------------------------------------------------------------- Auto-apply tiles
+# The Auto-apply page groups every application into four tiles. Each is a stage above, named
+# for what the person does next. Skipped applications are on no tile.
+TILES = ("review", "waiting", "submitted", "needs")
+TILE_OF_STAGE = {"queued": "review", "approved": "waiting", "submitted": "submitted",
+                 "failed": "needs"}
+
+# Short reason words for the "Needs you" tile ("1 sign-in, 1 form question").
+REASON_SHORT = {
+    "needs_signin": ("sign-in", "sign-ins"),
+    "form_blocker": ("form question", "form questions"),
+    "site_error": ("site error", "site errors"),
+    "posting_closed": ("closed posting", "closed postings"),
+}
+
+# The one row action per tile (and per reason on "Needs you"). The page turns the code into
+# the button label; the server decides it so the row and the drawer never disagree.
+ROW_ACTION = {"review": "review", "waiting": "fill", "submitted": "view"}
+NEEDS_ACTION = {"needs_signin": "signin", "form_blocker": "finish", "site_error": "finish",
+                "posting_closed": "view"}
+
+
+def tile_of(data: dict | None) -> str | None:
+    """Which Auto-apply tile one record sits on, or None for a skipped one."""
+    return TILE_OF_STAGE.get(app_stage(data)["stage"])
+
+
+def row_action(tile: str, reason: str = "") -> str:
+    if tile == "needs":
+        return NEEDS_ACTION.get(reason, "finish")
+    return ROW_ACTION.get(tile, "view")
+
+
+def needs_summary(reasons: list[str]) -> str:
+    """'1 sign-in, 1 form question' from the reasons of the Needs you items, most first."""
+    counts: dict[str, int] = {}
+    for r in reasons:
+        key = r if r in REASON_SHORT else "site_error"
+        counts[key] = counts.get(key, 0) + 1
+    order = sorted(counts, key=lambda k: (-counts[k], list(REASON_SHORT).index(k)))
+    return ", ".join(f"{counts[k]} {REASON_SHORT[k][0 if counts[k] == 1 else 1]}" for k in order)
+
+
+def default_tile(counts: dict) -> str:
+    """The tile the page opens on: the first one with something to do (Waiting on you, then To
+    review, then Needs you), else Submitted when there is history, else To review."""
+    for t in ("waiting", "review", "needs", "submitted"):
+        if counts.get(t):
+            return t
+    return "review"
