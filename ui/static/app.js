@@ -8465,8 +8465,8 @@
     const lvl = () => T(...(AA_LEVEL[r.value] || AA_LEVEL.mid));
     switch (r.kind) {
       case "role": return T("aa.learn.role", "Fewer roles like {v}").replace("{v}", r.value);
-      case "senior": return T("aa.learn.senior", "Fewer roles at {v} level or above").replace("{v}", lvl());
-      case "junior": return T("aa.learn.junior", "Fewer roles at {v} level or below").replace("{v}", lvl());
+      case "senior": return T("aa.learn.senior", "Fewer roles above {v} level").replace("{v}", lvl());
+      case "junior": return T("aa.learn.junior", "Fewer roles below {v} level").replace("{v}", lvl());
       case "location": return T("aa.learn.location", "Fewer roles in {v}").replace("{v}", usLocation(r.value));
       case "pay": return T("aa.learn.pay", "Only roles paying over {v}").replace("{v}", fmtPay(r.value));
       case "nospon": return T("aa.learn.nospon", "Leave out {v}, no sponsorship").replace("{v}", r.value);

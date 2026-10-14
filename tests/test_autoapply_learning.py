@@ -93,12 +93,23 @@ def test_shape_excludes_boosts_and_down_weights():
     assert out[1]["priority"] and out[3]["down"]
 
 
-def test_seniority_down_weight_moves_levels_back():
+def test_too_senior_moves_back_only_levels_above_the_skipped_role():
     st = L.empty_state()
-    _skip(st, "x", "too_senior", title="Senior Analyst")
-    rows = [_job("1", title="Staff Data Engineer"), _job("2", title="Data Engineer"),
-            _job("3", title="Junior Data Engineer")]
-    assert [j["source_id"] for j in L.shape(rows, st)] == ["2", "3", "1"]
+    _skip(st, "x", "too_senior", title="Data Engineer")          # a plain, mid-level title
+    rows = [_job("1", title="Staff Data Engineer"), _job("2", title="Senior Data Engineer"),
+            _job("3", title="Data Analyst"), _job("4", title="Lead Data Engineer"),
+            _job("5", title="Junior Data Engineer"), _job("6", title="Principal Engineer")]
+    out = L.shape(rows, st)
+    assert [j["source_id"] for j in out] == ["3", "5", "1", "2", "4", "6"]
+    assert not any(j.get("down") for j in out[:2])               # other mid and junior roles stay
+
+
+def test_too_junior_moves_back_only_levels_below_the_skipped_role():
+    st = L.empty_state()
+    _skip(st, "x", "too_junior", title="Data Engineer")
+    rows = [_job("1", title="Junior Data Engineer"), _job("2", title="Data Analyst"),
+            _job("3", title="Data Engineering Intern"), _job("4", title="Senior Data Engineer")]
+    assert [j["source_id"] for j in L.shape(rows, st)] == ["2", "4", "1", "3"]
 
 
 def test_pay_floor_drops_only_known_lower_pay():
@@ -124,11 +135,63 @@ def test_no_sponsorship_reason_leaves_the_employer_out_only_while_needed():
     assert len(L.shape(rows, st, needs_sponsor=False)) == 2
 
 
-def test_needs_sponsorship_adapter():
+def _no_workauth(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "autoapply.workauth", None)   # import raises ImportError
+
+
+def test_needs_sponsorship_falls_back_to_the_saved_answer(monkeypatch):
+    _no_workauth(monkeypatch)
     assert L.needs_sponsorship({"needs_sponsorship": "No"}) is False
     for v in ("Yes", "Future", "", None):
         assert L.needs_sponsorship({"needs_sponsorship": v}) is True
     assert L.needs_sponsorship(None) is True
+
+
+def _stub_workauth(monkeypatch, *, citizen_or_pr=None, sponsor=None, boom=False):
+    """A stand-in for autoapply/workauth.py with its real signatures (Builder A, PR #53)."""
+    import sys
+    import types
+    calls = []
+    mod = types.ModuleType("autoapply.workauth")
+
+    def load(prefs):
+        if boom:
+            raise RuntimeError("bad profile")
+        return {"loaded_from": prefs}
+
+    def is_citizen_or_pr(wa, country="US"):
+        calls.append(("citizen", wa, country))
+        return citizen_or_pr
+
+    def needs_sponsorship(wa, country="US", when="any"):
+        calls.append(("sponsor", wa, country, when))
+        return sponsor
+
+    mod.load, mod.is_citizen_or_pr, mod.needs_sponsorship = load, is_citizen_or_pr, needs_sponsorship
+    monkeypatch.setitem(sys.modules, "autoapply.workauth", mod)
+    import autoapply
+    monkeypatch.setattr(autoapply, "workauth", mod, raising=False)
+    return calls
+
+
+def test_needs_sponsorship_uses_the_work_authorization_profile(monkeypatch):
+    calls = _stub_workauth(monkeypatch, sponsor=False)
+    prefs = {"needs_sponsorship": "Yes"}                       # the profile wins over the flat answer
+    assert L.needs_sponsorship(prefs) is False
+    assert ("sponsor", {"loaded_from": prefs}, "US", "any") in calls
+    _stub_workauth(monkeypatch, sponsor=True)
+    assert L.needs_sponsorship({"needs_sponsorship": "No"}) is True
+    _stub_workauth(monkeypatch, citizen_or_pr=True, sponsor=True)
+    assert L.needs_sponsorship({}) is False                    # a citizen or PR never needs it
+
+
+def test_needs_sponsorship_profile_silent_or_broken_falls_back(monkeypatch):
+    _stub_workauth(monkeypatch, sponsor=None)
+    assert L.needs_sponsorship({"needs_sponsorship": "No"}) is False
+    assert L.needs_sponsorship({}) is True
+    _stub_workauth(monkeypatch, boom=True)
+    assert L.needs_sponsorship({"needs_sponsorship": "No"}) is False
 
 
 def test_picker_candidates_uses_the_learned_state():
@@ -225,6 +288,7 @@ def test_page_has_preferences_and_the_reason_bar():
 def test_priority_still_leads_among_down_weighted_roles():
     st = L.empty_state()
     L.set_company(st, "prioritize", "Globex")
-    _skip(st, "x", "too_senior", title="Data Engineer")       # mid and above go to the back
-    rows = [_job("1", company="Acme"), _job("2", company="Globex")]
+    _skip(st, "x", "too_senior", title="Data Engineer")       # above mid goes to the back
+    rows = [_job("1", title="Senior Data Engineer", company="Acme"),
+            _job("2", title="Senior Data Engineer", company="Globex")]
     assert [j["source_id"] for j in L.shape(rows, st)] == ["2", "1"]

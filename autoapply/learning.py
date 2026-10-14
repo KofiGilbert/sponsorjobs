@@ -5,7 +5,7 @@ the person skips a role they may say why in one tap. A few plain rules come out 
 each one visible on the Auto-apply page as a line in "What I've learned" and each one undoable:
 
 * "Wrong role" twice on similar titles  -> fewer roles like that title (moved to the back)
-* "Too senior" / "Too junior"            -> fewer roles at that level and above / below
+* "Too senior" / "Too junior"            -> fewer roles above / below that role's level
 * "Location"                             -> fewer roles in that place
 * "Pay too low" on a role with known pay -> a pay floor: roles whose known pay is at or under it
                                             are left out (unknown pay is never guessed)
@@ -251,19 +251,24 @@ def forget(state: dict, rule_id: str) -> int:
 
 # --------------------------------------------------------------------------- sponsorship
 def needs_sponsorship(answers: dict | None) -> bool:
-    """Whether the person needs visa sponsorship, through ONE adapter so the work-authorization
-    profile (autoapply/workauth.py, being added separately) can take over without touching the
-    callers. Until then it reads the saved application answer: "No" means they do not need it;
-    "Yes", "Future" and unanswered all mean they do (SponsorJobs' audience, and the feed already
-    leaves these roles out for everyone, so an unanswered profile keeps today's behaviour)."""
+    """Whether the person needs visa sponsorship (in the US, now or in the future), through ONE
+    adapter. When the work-authorization profile exists (autoapply/workauth.py) it decides:
+    ``load(prefs)``, then a citizen or permanent resident does not need it, else
+    ``needs_sponsorship(wa, country="US", when="any")``. When that module is absent or the
+    profile does not say, the saved flat answer decides: "No" means they do not need it; "Yes",
+    "Future" and unanswered all mean they do (SponsorJobs' audience, and the feed already leaves
+    these roles out for everyone, so an unanswered profile keeps today's behaviour)."""
     answers = answers or {}
     try:
-        from autoapply.workauth import needs_sponsorship as _workauth   # type: ignore
+        from autoapply import workauth   # type: ignore
     except ImportError:
-        _workauth = None
-    if _workauth is not None:
+        workauth = None
+    if workauth is not None:
         try:
-            v = _workauth(answers)
+            wa = workauth.load(answers)
+            if workauth.is_citizen_or_pr(wa, "US") is True:
+                return False
+            v = workauth.needs_sponsorship(wa, country="US", when="any")
             if v is not None:
                 return bool(v)
         except Exception:   # noqa: BLE001 - fall back to the saved answer
@@ -288,7 +293,7 @@ def shape(rows: list[dict], state: dict | None, *, needs_sponsor: bool = True) -
     needs sponsorship), roles closed to a visa holder (same condition), and roles whose known pay
     is at or under the learned floor. Saved roles keep their place at the front; among the rest,
     prioritized companies come first and down-weighted roles (similar to a "Wrong role", at a
-    skipped level, in a skipped place) go last (prioritized ones first among them), each group
+    level past a skipped one, in a skipped place) go last (prioritized ones first among them), each group
     otherwise in its original order. Each kept row
     gets ``priority`` / ``down`` flags so the page can say why."""
     state = state or empty_state()
@@ -310,7 +315,9 @@ def shape(rows: list[dict], state: dict | None, *, needs_sponsor: bool = True) -
             return True
         if max_lvl is not None or min_lvl is not None:
             lvl = level_of(j.get("title"))
-            if (max_lvl is not None and lvl >= max_lvl) or (min_lvl is not None and lvl <= min_lvl):
+            # Only levels strictly ABOVE a "Too senior" role (or below a "Too junior" one) move
+            # back: skipping a plain "Data Engineer" as too senior leaves other mid roles alone.
+            if (max_lvl is not None and lvl > max_lvl) or (min_lvl is not None and lvl < min_lvl):
                 return True
         if places:
             k = "remote" if _is_remote(j) else place_key(j.get("location"))
