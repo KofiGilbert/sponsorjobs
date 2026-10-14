@@ -313,8 +313,8 @@
             <span class="builder-kicker">Application package</span>
             <span class="builder-role" id="pkgRole">Role · Company</span>
           </div>
-          <a class="btn btn-ghost btn-sm" id="pkgDownload" download="resume.pdf" hidden>Download PDF</a>
-          <a class="btn btn-ghost btn-sm" id="pkgDownloadDocx" download="resume.docx" hidden
+          <a class="btn btn-ghost btn-sm" id="pkgDownload" download hidden>Download PDF</a>
+          <a class="btn btn-ghost btn-sm" id="pkgDownloadDocx" download hidden
              title="ATS-friendly Word version, parses more reliably than PDF on some systems">Download .docx</a>
           <span class="pkg-status ready" id="pkgStatus">Ready to submit</span>
         </header>
@@ -377,7 +377,7 @@
                   <button class="btn btn-ghost btn-sm" id="pkgClGen" type="button">Draft</button>
                   <button class="btn btn-ghost btn-sm" id="pkgClCopy" type="button">Copy</button>
                   <a class="btn btn-ghost btn-sm" id="pkgClPdf" target="_blank" rel="noopener" hidden>PDF ↗</a>
-                  <a class="btn btn-ghost btn-sm" id="pkgClDocx" download="cover_letter.docx" hidden>.docx</a>
+                  <a class="btn btn-ghost btn-sm" id="pkgClDocx" download hidden>.docx</a>
                 </span>
               </div>
               <textarea class="pkg-cl" id="pkgCl" placeholder="No cover letter yet, “Draft” writes one from your profile, grounded in your real material. You edit and own it."></textarea>
@@ -1561,7 +1561,7 @@
         <button class="sp-tab is-active" id="spTabCv" role="tab" type="button">Resume</button>
         <button class="sp-tab" id="spTabBrowser" role="tab" type="button">Browser</button>
       </div>
-      <a class="btn btn-ghost btn-sm" id="spDownload" download="resume.pdf" hidden>Download</a>
+      <a class="btn btn-ghost btn-sm" id="spDownload" download hidden>Download</a>
       <button class="bb-btn sp-close" id="spClose" title="Close panel" aria-label="Close panel">&#10005;</button>
     </div>
 
@@ -1608,7 +1608,7 @@
             <div class="accept-bar">
               <p class="accept-note" id="acceptNote">Answer a few questions and I’ll draft this for you.</p>
               <div class="accept-actions">
-                <a class="btn btn-ghost" id="downloadBtn" hidden download="resume.pdf">Download PDF</a>
+                <a class="btn btn-ghost" id="downloadBtn" hidden download>Download PDF</a>
                 <button class="btn btn-primary" id="acceptBtn" disabled>Accept &amp; Save</button>
               </div>
             </div>

@@ -134,8 +134,8 @@ def test_export_bundle_is_a_zip_with_the_pieces(tmp_path, monkeypatch):
     assert r.status_code == 200 and r.mimetype == "application/zip"
     z = zipfile.ZipFile(io.BytesIO(r.data))
     names = z.namelist()
-    assert any(n.endswith("_CV.pdf") for n in names)
-    assert any("Cover_Letter" in n for n in names)
+    assert any(n.endswith("Resume.pdf") and "cv-" not in n for n in names)
+    assert any("Cover Letter" in n for n in names)
     summary = next(n for n in names if "Summary" in n)
     text = z.read(summary).decode("utf-8")
     assert "68%" in text and "Why us?" in text
