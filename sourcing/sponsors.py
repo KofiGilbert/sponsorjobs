@@ -497,8 +497,29 @@ class SponsorDB:
         self.db_path = str(db_path)
         if self.db_path != ":memory:":
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        # ONE CONNECTION PER THREAD. This object is cached once per process (ui.app._sponsors())
+        # and used from every Flask request thread plus the background H-1B seed thread. It used
+        # to share a single connection opened with check_same_thread=False, and most calls took
+        # no lock, so two threads drove the same connection and its statement cache at once:
+        # intermittent `InterfaceError: bad parameter or other API misuse`, cursors returning
+        # None, and every request queueing behind a long background merge. Now each thread
+        # gets its own connection (opened lazily, cheap) and WAL lets readers keep serving the
+        # last committed data while a writer works; busy_timeout makes writer-vs-writer wait
+        # instead of failing. ":memory:" has no cross-connection sharing, so it keeps a single
+        # connection (single-threaded tests and one-off scripts only).
+        self._local = threading.local()
+        self._conns: list[tuple[threading.Thread, sqlite3.Connection]] = []
+        self._conns_lock = threading.Lock()
+        self._closed = False
+        self._memory_conn: sqlite3.Connection | None = None
+        if self.db_path == ":memory:":
+            self._memory_conn = self._open()
+        else:
+            try:
+                # journal_mode persists on the file, so this only has to happen once.
+                self._conn.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.OperationalError:
+                pass                                    # keep working even if WAL is refused
         self._conn.execute("""CREATE TABLE IF NOT EXISTS sponsor_employer (
             norm_name TEXT PRIMARY KEY, display_name TEXT,
             h1b_approvals INTEGER DEFAULT 0, h1b_last_fy INTEGER DEFAULT 0,
@@ -546,12 +567,55 @@ class SponsorDB:
         # lookup() no longer holds all 717k employers in RAM (that ~290MB build was a multi-second
         # CPU spike on boot that starved the 1-CPU broker's health check -> Render restart loop).
         # Instead each lookup queries this SQLite table directly (indexed on the norm_name PRIMARY
-        # KEY). The lock serialises the read cursor with concurrent ingests on the shared connection.
+        # KEY). Reads need no lock (each thread has its own connection); this one only guards
+        # clearing the lookup cache below.
         self._index_lock = threading.Lock()
         # Per-process cache of lookup() results (norm -> record|None). A feed build tags thousands
         # of jobs and many share a company, so this turns most lookups into a dict hit. Bounded,
         # and cleared whenever the sponsor data changes (see _invalidate_index).
         self._lookup_cache: dict[str, SponsorRecord | None] = {}
+
+    # -- connections ---------------------------------------------------- #
+    def _open(self) -> sqlite3.Connection:
+        # check_same_thread=False only so close() may reap a finished thread's connection; each
+        # connection is still USED by exactly one thread.
+        c = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA busy_timeout=30000")      # a background merge can hold the write lock
+        if self.db_path != ":memory:":
+            try:
+                c.execute("PRAGMA synchronous=NORMAL")  # safe under WAL, far less fsync stall
+            except sqlite3.OperationalError:
+                pass
+        return c
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        """This thread's connection (opened on first use)."""
+        if self._memory_conn is not None:
+            return self._memory_conn
+        c = getattr(self._local, "conn", None)
+        if c is None:
+            if self._closed:
+                raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+            c = self._open()
+            self._local.conn = c
+            me = threading.current_thread()
+            with self._conns_lock:
+                # Flask runs each request on a fresh thread, so reap the connections of threads
+                # that have finished instead of letting them pile up until garbage collection.
+                keep = []
+                for t, old in self._conns:
+                    if t.is_alive():
+                        keep.append((t, old))
+                    else:
+                        try:
+                            old.close()
+                        except sqlite3.Error:
+                            pass
+                keep.append((me, c))
+                self._conns = keep
+        return c
 
     # -- meta (timestamps for auto-refresh) ---------------------------- #
     def get_meta(self, key: str) -> str:
@@ -906,12 +970,11 @@ class SponsorDB:
             params = (*wanted, norm + " ", norm + " \uffff")
         else:
             where, params = "norm_name = ?", (norm,)
-        with self._index_lock:
-            rows = self._conn.execute(
-                f"SELECT norm_name FROM sponsor_employer WHERE {where} "
-                f"UNION SELECT norm_name FROM sponsor_h1b_year WHERE {where} "
-                f"UNION SELECT norm_name FROM sponsor_perm_year WHERE {where}",
-                (*params, *params, *params)).fetchall()
+        rows = self._conn.execute(
+            f"SELECT norm_name FROM sponsor_employer WHERE {where} "
+            f"UNION SELECT norm_name FROM sponsor_h1b_year WHERE {where} "
+            f"UNION SELECT norm_name FROM sponsor_perm_year WHERE {where}",
+            (*params, *params, *params)).fetchall()
         return _matching_candidates(norm, allow_prefix, [r[0] for r in rows])
 
     def ingest_perm_counts(self, rows) -> int:
@@ -1181,15 +1244,14 @@ class SponsorDB:
             parts = norm.split(" ")
             wanted = [norm] + [" ".join(parts[:i]) for i in range(1, len(parts))]   # exact + parents
             marks = ",".join("?" * len(wanted))
-            with self._index_lock:                    # serialise the read cursor with ingests
-                rows = self._conn.execute(
-                    f"SELECT * FROM sponsor_employer WHERE norm_name IN ({marks}) "
-                    "OR (norm_name >= ? AND norm_name < ?)",
-                    (*wanted, norm + " ", norm + " \uffff")).fetchall()
+            # Each thread reads on its own connection (see __init__), so no lock is needed here.
+            rows = self._conn.execute(
+                f"SELECT * FROM sponsor_employer WHERE norm_name IN ({marks}) "
+                "OR (norm_name >= ? AND norm_name < ?)",
+                (*wanted, norm + " ", norm + " \uffff")).fetchall()
         else:
-            with self._index_lock:
-                rows = self._conn.execute(
-                    "SELECT * FROM sponsor_employer WHERE norm_name = ?", (norm,)).fetchall()
+            rows = self._conn.execute(
+                "SELECT * FROM sponsor_employer WHERE norm_name = ?", (norm,)).fetchall()
         index: dict[str, SponsorRecord] = {
             r["norm_name"]: SponsorRecord(
                 r["display_name"], r["h1b_approvals"], r["h1b_last_fy"], r["naics"], r["state"],
@@ -1239,7 +1301,18 @@ class SponsorDB:
         return jobs
 
     def close(self) -> None:
-        self._conn.close()
+        self._closed = True
+        if self._memory_conn is not None:
+            self._memory_conn.close()
+            return
+        with self._conns_lock:
+            conns, self._conns = self._conns, []
+        for _t, c in conns:
+            try:
+                c.close()
+            except sqlite3.Error:
+                pass
+        self._local = threading.local()
 
 
 def _find_employer_col(headers):

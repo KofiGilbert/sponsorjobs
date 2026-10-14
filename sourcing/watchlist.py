@@ -140,6 +140,21 @@ class Watchlist(BoardMixin):
         terms = [t.strip() for t in criteria.get("aggregator_terms") or [] if str(t).strip()]
         if terms:
             clean["aggregator_terms"] = terms
+        # Which keyword aggregators refresh_watchlist may run (sourcing.service reads
+        # criteria["aggregators"]; absent means its defaults, an empty list means none). The feed
+        # build sets it from FEED_INCLUDE_AGGREGATORS, so it has to be stored or that setting is
+        # silently ignored. A caller that does not mention it (the Jobs criteria form) keeps the
+        # stored choice rather than wiping it.
+        if "aggregators" in criteria:
+            aggs = criteria.get("aggregators")
+            if aggs is not None:
+                clean["aggregators"] = list(dict.fromkeys(
+                    str(a).strip().lower() for a in aggs if str(a).strip()))
+        else:
+            row = self._conn.execute("SELECT data FROM criteria WHERE id=1").fetchone()
+            prev = json.loads(row[0]).get("aggregators") if row else None
+            if prev is not None:
+                clean["aggregators"] = prev
         self._conn.execute(
             "INSERT INTO criteria(id, data) VALUES(1, ?) "
             "ON CONFLICT(id) DO UPDATE SET data=excluded.data",
