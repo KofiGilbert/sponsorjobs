@@ -898,6 +898,15 @@ button { font-family: inherit; cursor: pointer; }
 .rvw-top h3 { font-size: 15px; font-weight: 620; letter-spacing: -0.01em; }
 .rvw-co { color: var(--muted); font-weight: 500; }
 .rvw-meta { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+/* Stage of a reviewed card (submit/stages.py). Quiet grey once approved, amber when it is
+   back with the person. Approved cards dim slightly so the ones still to review lead. */
+.rvw-stage { font-size: 11px; font-weight: 650; padding: 3px 10px; border-radius: var(--r-pill);
+             color: var(--muted); background: var(--surface-2, rgba(255,255,255,.06)); }
+.rvw-stage-failed { color: var(--flag); background: var(--flag-soft); }
+.rvw-approved .rvw-top h3 { color: var(--muted); }
+.rvw-warn { color: var(--flag); }
+.trk-card-state { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.trk-card-state.needs { color: var(--flag); }
 .rvw-cv { flex: none; color: var(--accent); font-size: 13px; font-weight: 550; text-decoration: none; }
 .rvw-cv:hover { text-decoration: underline; }
 /* The assisted lane's actual call to action. Without it the "Assisted, your click"
@@ -3064,7 +3073,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 .trk-goal-lbl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 8px; }
 .trk-goal-in { width: 58px; padding: 2px 6px; font-size: 12px; }
 /* board */
-.trk-board { max-width: 1320px; margin: 0 auto; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.trk-board { max-width: 1320px; margin: 0 auto; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; align-items: start; }
 .trk-col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 10px; min-height: 180px; min-width: 0;
   transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
 .trk-col.is-over { border-color: var(--accent); background: var(--surface-2); }

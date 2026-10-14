@@ -22,18 +22,20 @@ from __future__ import annotations
 
 
 def item_caption(item: dict) -> str:
-    """The short 'what was filled' summary shown under an application's CV preview."""
-    filled = item.get("filled") or {}
-    got = [k for k in ("name", "email", "phone") if filled.get(k)]
+    """The short summary under an application's resume preview: what the package holds.
+    Nothing is filled into a form at review time, so the caption never says it was."""
     who = f"{item.get('role') or 'Role'} at {item.get('company') or 'Company'}"
     lane = item.get("lane_label") or item.get("lane") or "assisted"
     lines = [
         f"🏢 {who}",
         f"Lane: {lane}",
-        "Filled: " + (", ".join(got) if got else "none")
+        "Package: resume"
         + f" · {item.get('screening_count', 0)} screening answer(s)"
         + (" · cover letter ✓" if item.get("has_cover_letter") else ""),
     ]
+    missing = item.get("missing_contact") or []
+    if missing:
+        lines.append("Add to your profile first: " + ", ".join(missing))
     if item.get("coverage") is not None:
         lines.append(f"JD match: {item['coverage']}%")
     return "\n".join(lines)
@@ -50,7 +52,7 @@ def batch_summary_text(items: list) -> str:
     for it in items:
         company = it.get("company")
         lines.append(f"• #{it.get('id')} {it.get('role') or 'role'}" + (f" at {company}" if company else ""))
-    lines.append("\nEach one below has the resume preview, what was filled, and Approve / Skip.")
+    lines.append("\nEach one below has the resume preview, what it includes, and Approve / Skip.")
     return "\n".join(lines)
 
 

@@ -3181,12 +3181,11 @@ class WebIntake:
         }
         # Records are named for the JOB APPLIED TO, never the CV's first role title:
         # four Amazon builds once all read "Founder (Side Project)" and the person
-        # couldn't tell which was which (obs #35). The template label disambiguates
-        # variants of the same application; siblings link back via data.variant_of.
-        tlabel = str((self.manifest or {}).get("display_name") or "").strip()
+        # couldn't tell which was which (obs #35). The template is NOT part of that name:
+        # it leaked into Review, Ready to apply and cover letters ("the X \u00b7 Classic
+        # position"). Variants are told apart by data.template (shown as its own meta on
+        # Resumes); siblings link back via data.variant_of.
         label = (self.role or title or "Resume").strip() or "Resume"
-        if tlabel:
-            label += f" · {tlabel}"
         if getattr(self, "variant_of", None):
             data["variant_of"] = self.variant_of
         rec_id = self.records.add(role=label, company=self.company, coverage=cov,

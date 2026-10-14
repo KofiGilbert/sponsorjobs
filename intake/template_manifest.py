@@ -28,6 +28,40 @@ def load_manifest(name: str | None = None) -> dict:
         return {}
 
 
+_LABELS: tuple[str, ...] | None = None
+
+
+def template_labels() -> tuple[str, ...]:
+    """Every shipped template's display name ("Classic", "Software Engineer", ...), longest
+    first so a label that contains another is matched whole."""
+    global _LABELS
+    if _LABELS is None:
+        names = set()
+        for p in _DIR.glob("*.json"):
+            try:
+                n = str(json.loads(p.read_text(encoding="utf-8")).get("display_name") or "").strip()
+            except (OSError, ValueError, AttributeError):
+                continue
+            if n:
+                names.add(n)
+        _LABELS = tuple(sorted(names, key=len, reverse=True))
+    return _LABELS
+
+
+def strip_template_label(text: str) -> str:
+    """Remove a " · <template name>" tag from a role title or a sentence that quotes one.
+
+    Records used to be named "Product Manager · Classic", and that tag leaked into every
+    screen and even into cover letters ("the Product Manager · Classic position"). The
+    template is a layout, never part of the job title, so it is cut wherever it appears."""
+    if not text or "\u00b7" not in text:
+        return text or ""
+    out = text
+    for label in template_labels():
+        out = out.replace(f" \u00b7 {label}", "")
+    return out
+
+
 def elicit_leads(manifest: dict, key: str) -> list[str]:
     """Example leading questions for a section (e.g. 'extracurricular')."""
     return list(((manifest.get("elicit") or {}).get(key) or {}).get("leads") or [])

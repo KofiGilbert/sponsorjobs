@@ -1118,7 +1118,9 @@ class _RecordActions:
             rec = recs.get(rid)
             if not rec:
                 return None
-            recs.merge_data(rid, {"status": "applied", "applied_at": _now_iso()})
+            from submit.stages import submitted_by
+            recs.merge_data(rid, {"status": "applied", "applied_at": _now_iso(),
+                                  **submitted_by("you")})
         finally:
             recs.close()
         return {"id": rid, "role": rec.get("role") or "", "company": rec.get("company") or ""}
@@ -1509,9 +1511,17 @@ def _safe_slug(text: str) -> str:
 def _record_data(rec: dict) -> dict:
     import json as _json
     try:
-        return _json.loads(rec.get("data") or "{}")
+        data = _json.loads(rec.get("data") or "{}")
     except (TypeError, ValueError):
         return {}
+    if not isinstance(data, dict):
+        return {}
+    # Letters drafted while records were titled "Role \u00b7 Classic" quote the template name
+    # ("the Role \u00b7 Classic position"). Cut it on every read so it is never shown or sent.
+    if isinstance(data.get("cover_letter"), str):
+        from intake.template_manifest import strip_template_label
+        data["cover_letter"] = strip_template_label(data["cover_letter"])
+    return data
 
 
 def _get_record(rid):
@@ -1588,8 +1598,18 @@ def records_list():
             "screening_count": len(data.get("screening") or []),
             "folder": str(data.get("folder") or ""),
             "sort": data.get("sort"),
+            # The layout, as its own field (never in the title), so two variants of one
+            # application are still told apart on Resumes.
+            "template_label": _template_label(data.get("template")),
         })
     return jsonify({"records": out})
+
+
+def _template_label(name) -> str:
+    if not name:
+        return ""
+    from intake.template_manifest import load_manifest
+    return str(load_manifest(str(name)).get("display_name") or "")
 
 
 @app.post("/api/record/<int:rid>/meta")
@@ -1703,8 +1723,13 @@ def record_status(rid):
             return jsonify({"error": f"No application {rid}."}), 404
         # Route through the tracker so marking "applied" also arms the follow-up nudge (and
         # "ready" clears it) -- one code path shared with the funnel's /stage endpoint.
-        patch = stage_patch(_record_data(rec), "applied" if status == "applied" else "saved",
-                            _now_iso())
+        cur = _record_data(rec)
+        patch = stage_patch(cur, "applied" if status == "applied" else "saved", _now_iso())
+        if status == "applied" and cur.get("status") != "applied":
+            from submit.stages import submitted_by
+            patch.update(submitted_by("you", (cur.get("submission") or {}).get("tier") or ""))
+        elif status == "ready":
+            patch.update({"submission": None, "queued": False})   # back to review, clean slate
         data = recs.merge_data(rid, patch)
     finally:
         recs.close()
@@ -1765,11 +1790,12 @@ def followups():
 @app.get("/api/records/ready")
 @_guard
 def records_ready():
-    """The apply TO-DO: tailored applications that are built but NOT yet applied or skipped,
-    each with its destination URL and submission lane, so the person can work through the
-    ones still waiting for their on-site submit. Closes the loop find -> tailor -> fill ->
-    submit: nothing built falls through the cracks."""
+    """Ready to apply: applications the person APPROVED that are not submitted yet (waiting
+    for their click on the site, queued for an auto-submit, or an auto attempt that came back
+    as "Needs you"), each with its destination URL and submission lane. Approving an item
+    adds it here; submitting or skipping it takes it off."""
     from submit import classify_record
+    from submit.stages import app_stage, is_waiting_to_submit
     recs = _records()
     try:
         rows = recs.list()
@@ -1778,12 +1804,15 @@ def records_ready():
     out = []
     for r in rows:
         data = _record_data(r)
-        if (data.get("status") or "ready") != "ready":
-            continue                       # applied / skipped are done, not on the to-do
+        if not is_waiting_to_submit(data):
+            continue        # still to review, submitted, or skipped: not on this list
+        st = app_stage(data)
         out.append({
             "id": r["id"], "role": r.get("role") or "", "company": r.get("company") or "",
             "apply_url": (data.get("source_job") or {}).get("url") or "",
             "lane": classify_record(data)["tier"],     # 'auto' | 'assisted'
+            "stage": st["stage"], "stage_label": st["label"], "stage_detail": st["detail"],
+            "reason": st["reason"],
         })
     return jsonify({"ready": out, "count": len(out)})
 
@@ -1928,6 +1957,24 @@ def record_submit(rid):
     return jsonify(result)
 
 
+def _auto_result_patch(data: dict, result: dict) -> dict:
+    """The record patch for one auto-lane submit attempt (submit.stages): sent -> submitted
+    by the auto lane (and on the funnel as applied, follow-up armed); any other answer from
+    the site -> back to the person as "Needs you" with a reason; not attempted -> unchanged
+    stage with the honest message."""
+    from submit.stages import failed_patch, submitted_by
+    from submit.tracker import stage_patch
+    st = result.get("status")
+    if st == "auto_submitted":
+        at = result.get("submitted_at") or _now_iso()
+        return {**stage_patch({**data, "applied_at": at}, "applied", at), "queued": False,
+                **submitted_by("auto", "auto", result.get("message") or "", at)}
+    if st == "auto_failed" or (st == "assisted" and result.get("reason")):
+        return failed_patch(result)
+    return {"submission": {"tier": result.get("tier"), "status": st,
+                           "message": result.get("message") or "", "at": result.get("submitted_at")}}
+
+
 def _submit_record_id(rid: int) -> dict | None:
     """The per-site submit for one queued application (shared by the route and the Telegram
     [Apply for me] button). None when the record doesn't exist."""
@@ -1958,7 +2005,8 @@ def _submit_record_id(rid: int) -> dict | None:
                                      "daily volume cap/spacing applies. It'll submit on the "
                                      "next cycle.", "submitted_at": None}
             else:
-                data = {**data, "profile": _saved_full_profile()}  # honest identity to submit
+                data = {**data, "profile": _saved_full_profile(),   # honest identity to submit
+                        "cv_pdf_path": str(WORKDIR / f"cv-{rid}.pdf")}
                 result = submit_record(data, driver=driver, now=_now_iso())
                 if result["status"] == "auto_submitted":
                     _rate_limiter().record(ts, today)   # count it against the cap
@@ -1966,12 +2014,8 @@ def _submit_record_id(rid: int) -> dict | None:
                     _rate_limiter().record_attempt(ts, today)   # a real POST fired -> space the next
         else:
             result = submit_record(data, driver=None, now=_now_iso())
-        patch = {"submission": {"tier": result["tier"], "status": result["status"],
-                                "message": result["message"], "at": result.get("submitted_at")}}
-        if result["status"] == "auto_submitted":   # only a real auto-submit marks applied
-            patch["status"] = "applied"
-            patch["applied_at"] = result.get("submitted_at")
-        recs.merge_data(rid, patch)
+        # Only a real auto-submit marks applied; a site's "no" goes back to the person.
+        recs.merge_data(rid, _auto_result_patch(_record_data(rec), result))
     finally:
         recs.close()
     if result["status"] == "assisted":
@@ -2018,7 +2062,9 @@ def _review_item(rec: dict) -> dict:
     data = _record_data(rec)
     rid = rec["id"]
     from submit import classify_record
+    from submit.stages import app_stage
     plan = classify_record(data)
+    st = app_stage(data)
     ident = (_saved_full_profile().get("identity") or {})
     cv = WORKDIR / f"cv-{rid}.pdf"
     cov = data.get("coverage") or {}
@@ -2031,8 +2077,12 @@ def _review_item(rec: dict) -> dict:
         "lane_label": plan["label"],
         # The APPLICATION form where one is derivable, not the advert (see _application_url).
         "url": _application_url(plan["url"], rec.get("company") or ""),
-        "filled": {"name": bool(ident.get("name")), "email": bool(ident.get("email")),
-                   "phone": bool(ident.get("phone"))},
+        # Where it stands (submit/stages.py): to review / approved / needs you, in true words.
+        # Nothing is "filled" at review time; what we can say is whether the profile has the
+        # contact details a form will ask for.
+        "stage": st["stage"], "stage_label": st["label"], "stage_detail": st["detail"],
+        "reason": st["reason"],
+        "missing_contact": [k for k in ("name", "email") if not ident.get(k)],
         "screening_count": len(data.get("screening") or []),
         "has_cover_letter": bool((data.get("cover_letter") or "").strip()),
         "coverage": cov.get("ratio") if cov.get("ratio") is not None else round(rec.get("coverage") or 0),
@@ -2108,49 +2158,47 @@ class _BatchActions:
     def approve(self, rid) -> dict:
         from submit import driver_for, submit_record
         from submit.policy import _host
+        from submit.stages import app_stage, approved_patch, queued_patch
         recs = _records()
         try:
             rec = recs.get(rid)
             if not rec:
                 return {"ok": False, "message": f"#{rid} not found."}
             data = _record_data(rec)
+            who = rec.get("company") or "application"
             if (data.get("status") or "ready") == "applied":   # never re-submit (idempotent)
-                return {"ok": True, "message": f"Already submitted: {rec.get('company') or 'application'}."}
+                return {"ok": True, "stage": "submitted", "message": f"Already submitted: {who}."}
             url = (data.get("source_job") or {}).get("url") or ""
             driver = driver_for(_host(url))     # approval IS the consent for THIS item
             if driver is not None:
                 # Auto-lane (verified), this really submits over the sanctioned API, so it
-                # is rate-limited (daily cap + spacing). Over the limit → queue for later.
+                # is rate-limited (daily cap + spacing). Over the limit -> queue for later.
                 ts, today = _now_ts_today()
                 allowed, reason = _rate_limiter().allow(ts, today)
                 if not allowed:
-                    recs.merge_data(rid, {"status": "approved", "queued": True,
-                                          "submission": {"tier": "auto", "status": "queued",
-                                                         "message": f"Approved, queued ({reason})."}})
-                    return {"ok": True, "message": f"Approved, queued ({reason}); will submit shortly."}
-                result = submit_record({**data, "profile": _saved_full_profile()},
+                    recs.merge_data(rid, queued_patch(reason))
+                    return {"ok": True, "stage": "approved",
+                            "message": f"Approved: {who}, queued to submit for you ({reason})."}
+                result = submit_record({**data, "profile": _saved_full_profile(),
+                                        "cv_pdf_path": str(WORKDIR / f"cv-{rid}.pdf")},
                                        driver=driver, now=_now_iso())
                 if result["status"] == "auto_submitted":
                     _rate_limiter().record(ts, today)
-                    recs.merge_data(rid, {"status": "applied", "applied_at": result.get("submitted_at"),
-                                          "queued": False,
-                                          "submission": {"tier": result["tier"], "status": result["status"],
-                                                         "message": result["message"]}})
-                    return {"ok": True, "message": f"Approved & submitted: {rec.get('company') or 'application'} ✓"}
-                if result.get("posted"):
+                elif result.get("posted"):
                     _rate_limiter().record_attempt(ts, today)   # a real POST fired -> space the next
                 # Un-queue on any non-success (failure / captcha-auth-wall drop-to-assisted): the
                 # site already answered, so drain() must NOT keep re-POSTing this item every tick.
-                recs.merge_data(rid, {"status": "approved", "queued": False,
-                                      "submission": {"tier": result["tier"], "status": result["status"],
-                                                     "message": result["message"]}})
-                return {"ok": False, "message": result["message"]}
-            # Assisted-lane, never auto-submit; mark approved/reviewed for on-site submit.
-            recs.merge_data(rid, {"status": "approved", "queued": False,
-                                  "submission": {"tier": "assisted", "status": "approved",
-                                                 "message": "Approved, open the site and submit (it's filled)."}})
-            return {"ok": True, "message": f"Approved: {rec.get('company') or 'application'}, "
-                                           "open it and submit (assisted site)."}
+                merged = recs.merge_data(rid, _auto_result_patch(data, result))
+                st = app_stage(merged)
+                if st["stage"] == "submitted":
+                    return {"ok": True, "stage": "submitted", "message": f"Submitted for you: {who}."}
+                return {"ok": False, "stage": st["stage"], "reason": st["reason"],
+                        "message": f"Not sent: {who}. {result['message']}"}
+            # Assisted lane: never auto-submit, and nothing has been filled yet. Approval only
+            # means "reviewed"; the person submits on the site.
+            recs.merge_data(rid, approved_patch())
+            return {"ok": True, "stage": "approved",
+                    "message": f"Approved: {who}. Open the application and submit it."}
         finally:
             recs.close()
 
@@ -4424,7 +4472,12 @@ def _mark_applied_from_page(body: dict) -> dict:
                     break
         if rec is None:
             return {"ok": True, "matched": False, "record_id": None}
-        data = recs.merge_data(rec["id"], stage_patch(_record_data(rec), "applied", _now_iso()))
+        cur = _record_data(rec)
+        patch = stage_patch(cur, "applied", _now_iso())
+        if cur.get("status") != "applied":
+            from submit.stages import submitted_by
+            patch.update(submitted_by("you", (cur.get("submission") or {}).get("tier") or ""))
+        data = recs.merge_data(rec["id"], patch)
     finally:
         recs.close()
     return {"ok": True, "matched": True, "record_id": rec["id"], "stage": data.get("stage"),
@@ -9750,6 +9803,18 @@ def _board_key(rec: dict) -> tuple[str, dict | None]:
                  "title": role, "url": sj.get("url") or "", "posted_at": (rec.get("created_at") or "")[:10]}
 
 
+def _record_board_stage(data: dict) -> str:
+    """The board column one record belongs in: its funnel stage, except that a tailored
+    record the person approved (not submitted yet, or handed back after an auto attempt)
+    sits in Approved rather than Saved."""
+    from submit.stages import app_stage
+    from submit.tracker import effective_stage
+    rstage = effective_stage(data)
+    if rstage == "saved" and app_stage(data)["stage"] in ("approved", "failed"):
+        return "approved"
+    return rstage
+
+
 def _board_reconcile(w) -> dict[str, list[dict]]:
     """Pull every tailored record onto the board and return {source_id: [records]}.
 
@@ -9759,7 +9824,6 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
     and logs why. The board is never moved backwards from here: once the person drags a card, the
     board is the source of truth and the move patches the records instead."""
     from sourcing.board import RANK, STAGES
-    from submit.tracker import effective_stage
     recs = _records()
     try:
         rows = recs.list(limit=10000)
@@ -9769,12 +9833,12 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
     for r in rows:
         sid, snap = _board_key(r)
         data = _record_data(r)
-        rstage = effective_stage(data)
+        rstage = _record_board_stage(data)
         if rstage not in STAGES:
             rstage = "saved"
         applied_at = data.get("applied_at") or None
         cur = w.stage_of(sid)
-        note = "Application submitted" if rstage == "applied" else "Tailored a resume"
+        note = {"applied": "Application submitted", "approved": "Approved"}.get(rstage, "Tailored a resume")
         if cur is None:
             existing = w.get_job(sid)
             w.track_job(sid, rstage, note=note, now=(r.get("created_at") or None) if rstage == "saved" else None,
@@ -9813,15 +9877,38 @@ def _board_patch_records(records: list[dict], stage: str) -> None:
     stage, so those records are left alone)."""
     from submit.tracker import STAGES as REC_STAGES
     from submit.tracker import stage_patch
+    if stage == "approved" and records:
+        # Dragged to Approved: the same as approving it in Review, minus any submit. A record
+        # already approved or past it is left alone (the board never un-submits a record).
+        from submit.stages import app_stage, approved_patch
+        recs = _records()
+        try:
+            for r in records:
+                data = _record_data(r)
+                if app_stage(data)["stage"] == "queued":
+                    recs.merge_data(r["id"], approved_patch())
+                elif data.get("status") == "applied":
+                    recs.merge_data(r["id"], {**stage_patch(data, "saved", _now_iso()),
+                                              **approved_patch()})
+        finally:
+            recs.close()
+        return
     if stage not in REC_STAGES or not records:
         return
     recs = _records()
     try:
         for r in records:
             data = _record_data(r)
-            if data.get("stage") == stage or (stage == "applied" and data.get("status") == "applied"):
+            if stage == "saved":
+                # Already back before review: nothing approved or sent to undo.
+                if (data.get("status") or "ready") == "ready" and data.get("stage") in (None, "saved"):
+                    continue
+            elif data.get("stage") == stage or (stage == "applied" and data.get("status") == "applied"):
                 continue
-            recs.merge_data(r["id"], stage_patch(data, stage, _now_iso()))
+            patch = stage_patch(data, stage, _now_iso())
+            if stage == "saved":
+                patch.update({"submission": None, "queued": False})   # back before review
+            recs.merge_data(r["id"], patch)
     finally:
         recs.close()
 
@@ -9834,7 +9921,12 @@ def _board_card(j: dict, records: list[dict], today) -> dict:
     if latest:
         data = _record_data(latest)
         job = f"cv-{latest['id']}"
+        from submit.stages import app_stage
+        st = app_stage(data)
         rec = {"id": latest["id"], "role": latest.get("role") or "",
+               # How it was sent, or why it came back: "Submitted for you", "Needs you".
+               "state": st["stage"], "state_label": st["label"], "state_detail": st["detail"],
+               "how": st["how"],
                "pdf": f"/api/cv.pdf?job={job}" if (WORKDIR / f"{job}.pdf").exists() else None,
                "cover_letter": (f"/api/record/{latest['id']}/cover_letter.pdf"
                                 if (data.get("cover_letter") or "").strip() else None),

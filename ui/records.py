@@ -13,6 +13,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _clean(row: dict) -> dict:
+    """Older records carry the template name in the title ("Engineer \u00b7 Classic"). The
+    template is a layout, not part of the role, so every read hands back the plain title."""
+    from intake.template_manifest import strip_template_label
+    for k in ("role", "jd_label"):
+        if row.get(k):
+            row[k] = strip_template_label(row[k])
+    return row
+
+
 @dataclass
 class CVRecords:
     db_path: str | Path
@@ -53,13 +63,13 @@ class CVRecords:
         rows = self._conn.execute(
             "SELECT * FROM cv_record ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [_clean(dict(r)) for r in rows]
 
     def get(self, record_id: int) -> dict | None:
         row = self._conn.execute(
             "SELECT * FROM cv_record WHERE id=?", (record_id,)
         ).fetchone()
-        return dict(row) if row else None
+        return _clean(dict(row)) if row else None
 
     def merge_data(self, record_id: int, patch: dict) -> dict:
         """Shallow-merge ``patch`` into a record's JSON ``data`` bag and persist it.

@@ -236,7 +236,7 @@
     const opts = CV_STAGES.map(([v, lbl]) =>
       `<option value="${v}"${v === stage ? " selected" : ""}>${lbl}</option>`).join("");
     const nudge = c.follow_up_is_due ? `<span class="cv-followup" title="It has been a few days, a short follow-up helps">Follow up due</span>` : "";
-    const sub = [esc(c.company || ""), c.coverage ? `${c.coverage}% match` : ""].filter(Boolean).join("  \u00b7  ");
+    const sub = [esc(c.company || ""), esc(c.template_label || ""), c.coverage ? `${c.coverage}% match` : ""].filter(Boolean).join("  \u00b7  ");
     return `<article class="cv-card cv-row" tabindex="0" role="button" data-id="${c.id}" title="${esc(c.role)}">
       <span class="cv-row-ic"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M9 1.5v3h3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M6 8.2h4M6 10.6h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg></span>
       <div class="cv-row-main">
@@ -3581,7 +3581,7 @@
           (s.auto_verify ? " Autonomous verification is ON." : "");
         btn.disabled = false;
       } else if (!s.libs) {
-        st.textContent = "Gmail support needs the Google client libraries: pip install google-api-python-client google-auth-oauthlib";
+        st.textContent = "Gmail isn't available in this version yet.";
         btn.disabled = true;
       } else if (!s.creds) {
         st.textContent = "Not connected. Put your Google OAuth client file at " + s.creds_path + " (stays on this machine, git-ignored), then scan once to sign in.";
@@ -3677,7 +3677,8 @@
     const rate = s.rate || {};
     $("#rvwCap").textContent = rate.cap
       ? `${rate.remaining ?? rate.cap} of ${rate.cap} left today` : "";
-    $("#rvwCount").textContent = q.count ? `${q.count} waiting` : "";
+    const toReview = q.pending.filter(it => (it.stage || "queued") === "queued").length;
+    $("#rvwCount").textContent = toReview ? `${toReview} to review` : "";
     $("#rvwTelegram").disabled = !s.telegram_configured;
     loadInboxStatus();
     loadInboxSuggestions();
@@ -3687,22 +3688,31 @@
     const empty = !q.pending.length;
     $("#rvwEmpty").hidden = !empty;
     $("#rvwList").innerHTML = q.pending.map(it => {
-      const f = it.filled || {};
-      const got = ["name", "email", "phone"].filter(k => f[k]);
+      // Where it stands, in true words (submit/stages.py): To review, Approved, Needs you.
+      // Only items still to review can be ticked; an approved card shows what happens next.
+      const stage = it.stage || "queued";
       const laneCls = it.lane === "auto" ? "auto" : "assisted";
-      return `<article class="rvw-card" data-id="${it.id}">
-        <label class="rvw-pick"><input type="checkbox" class="rvw-item" checked data-id="${it.id}"></label>
+      const pkg = [it.screening_count ? `${it.screening_count} screening answer${it.screening_count === 1 ? "" : "s"}` : "",
+        it.has_cover_letter ? "cover letter" : "",
+        it.coverage != null ? it.coverage + "% match" : ""].filter(Boolean).join(" · ");
+      const missing = (it.missing_contact || []).length
+        ? `<div class="rvw-meta rvw-warn">Add your ${(it.missing_contact || []).join(" and ")} in Profile first.</div>` : "";
+      const line = stage === "queued" ? pkg : esc(it.stage_detail || "");
+      return `<article class="rvw-card rvw-${stage}" data-id="${it.id}" data-stage="${stage}">
+        <label class="rvw-pick">${stage === "queued"
+          ? `<input type="checkbox" class="rvw-item" checked data-id="${it.id}">` : ""}</label>
         <div class="rvw-body">
           <div class="rvw-top">
             <h3>${esc(it.role || "Role")} · <span class="rvw-co">${esc(it.company || "Unknown")}</span></h3>
-            <span class="pkg-tier-pill ${laneCls}">${it.lane === "auto" ? "Auto-submit" : "Assisted, your click"}</span>
+            ${stage === "queued"
+              ? `<span class="pkg-tier-pill ${laneCls}">${it.lane === "auto" ? "Auto-submit" : "Your click"}</span>`
+              : `<span class="rvw-stage rvw-stage-${stage}">${esc(it.stage_label || "")}</span>`}
           </div>
-          <div class="rvw-meta">Filled: ${got.length ? got.join(", ") : "nothing yet"} ·
-            ${it.screening_count} screening ${it.has_cover_letter ? "· cover letter ✓" : ""} ·
-            ${it.coverage != null ? it.coverage + "% match" : ""}</div>
+          <div class="rvw-meta">${line}</div>
+          ${missing}
         </div>
         ${it.cv_url ? `<a class="rvw-cv" href="${it.cv_url}" target="_blank" rel="noopener">View Resume ↗</a>` : ""}
-        ${it.lane !== "auto" && /^https?:\/\//i.test(it.url || "")
+        ${(it.lane !== "auto" || stage === "failed") && /^https?:\/\//i.test(it.url || "")
           ? `<button class="rvw-cv rvw-apply" type="button" data-apply="${esc(it.url)}"
                      data-cv="${esc(it.cv_path || "")}" data-id="${it.id}">Apply</button>`
           : ""}
@@ -3754,6 +3764,34 @@
       : "Filled it, but didn't submit. It's open in the Browser tab.");
   });
 
+  // Show each approved card's new stage at once, in the same words the server will use.
+  function rvwMarkApproved(items) {
+    const LABEL = { approved: "Approved", failed: "Needs you", submitted: "Submitted" };
+    items.forEach(a => {
+      const card = document.querySelector(`.rvw-card[data-id="${Number(a.id)}"]`);
+      if (!card || !LABEL[a.stage]) return;
+      card.dataset.stage = a.stage;
+      card.className = `rvw-card rvw-${a.stage}`;
+      card.querySelector(".rvw-pick").innerHTML = "";
+      const pill = card.querySelector(".rvw-top > span");
+      if (pill) { pill.className = `rvw-stage rvw-stage-${a.stage}`; pill.textContent = LABEL[a.stage]; }
+      const meta = card.querySelector(".rvw-meta");
+      if (meta) meta.textContent = a.stage !== "approved" ? (a.message || "")
+        : /queued/i.test(a.message || "") ? "Queued to submit for you" : "Waiting for you to submit it on the site";
+    });
+  }
+
+  // Say what actually happened to the batch: sent, waiting on the person, or handed back.
+  function rvwApproveSummary(items) {
+    const n = (st) => items.filter(a => a.stage === st).length;
+    if (items.length === 1 && items[0].message) return items[0].message;
+    const parts = [];
+    if (n("submitted")) parts.push(`${n("submitted")} submitted for you`);
+    if (n("approved")) parts.push(`${n("approved")} approved, waiting for you to submit`);
+    if (n("failed")) parts.push(`${n("failed")} need you`);
+    return parts.length ? parts.join(", ") + "." : "Nothing changed.";
+  }
+
   function rvwSelected() {
     return [...document.querySelectorAll(".rvw-item:checked")].map(c => Number(c.dataset.id));
   }
@@ -3773,8 +3811,8 @@
     if (!ids.length) { rvwFlash("Select at least one application to approve."); return; }
     try {
       const r = await api("/api/review/approve", { approve: ids });
-      const ok = (r.approved || []).filter(a => a.ok).length;
-      rvwFlash(`Approved ${ok}/${ids.length}. Auto-lane submits via the site’s API; assisted ones are marked for your on-site submit.`);
+      rvwFlash(rvwApproveSummary(r.approved || []));
+      rvwMarkApproved(r.approved || []);   // change the cards now; the full reload is slower
       loadReview();
     } catch (e) { rvwFlash("Couldn’t approve, " + e.message); }
   });
@@ -3791,8 +3829,8 @@
      drag and drop, a table view, and a side panel per card (notes saved on blur, contacts, a
      follow-up date, the timeline, links to the tailored resume and cover letter). The funnel at
      the top is computed server-side so the numbers match the claims export. */
-  const TRK_STAGES = ["saved", "applied", "interviewing", "offer", "rejected", "archived"];
-  const TRK_STAGE_EN = { saved: "Saved", applied: "Applied", interviewing: "Interviewing",
+  const TRK_STAGES = ["saved", "approved", "applied", "interviewing", "offer", "rejected", "archived"];
+  const TRK_STAGE_EN = { saved: "Saved", approved: "Approved", applied: "Applied", interviewing: "Interviewing",
     offer: "Offer", rejected: "Rejected", archived: "Archived" };
   const trkT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
   const trkStageName = (s) => trkT("tracker.stage." + s, TRK_STAGE_EN[s] || s);
@@ -3874,9 +3912,16 @@
     if (rec && rec.pdf) meta.push(`<a href="${esc(rec.pdf)}" target="_blank" rel="noopener">${esc(trkT("tracker.resume", "Resume"))}${rec.count > 1 ? ` (${rec.count})` : ""}</a>`);
     if (c.has_notes) meta.push(`<span>${esc(trkT("tracker.hasNotes", "Notes"))}</span>`);
     const chips = trkChips(c);
+    // How it was sent, or why it came back (submit/stages.py). Only said where it adds news:
+    // an auto-submit, or an approved application that is back with the person.
+    const st = rec && rec.state === "failed"
+      ? `<div class="trk-card-state needs" title="${esc(rec.state_detail || "")}">${esc(trkT("tracker.needsYou", "Needs you"))}</div>`
+      : rec && rec.state === "submitted" && rec.how === "auto" && c.stage === "applied"
+      ? `<div class="trk-card-state">${esc(trkT("tracker.submittedForYou", "Submitted for you"))}</div>` : "";
     return `<div class="trk-card" draggable="true" data-sid="${esc(c.source_id)}" role="button" tabindex="0">
       <div class="trk-card-co">${esc(c.company)}</div>
       <div class="trk-card-t">${esc(c.title)}</div>
+      ${st}
       ${chips ? `<div class="trk-card-chips">${chips}</div>` : ""}
       ${meta.length ? `<div class="trk-card-meta">${meta.join("")}</div>` : ""}
     </div>`;
@@ -8035,7 +8080,7 @@
     loadReadyToApply();
   }
 
-  // The apply TO-DO: built + reviewed applications still awaiting your on-site submit.
+  // Ready to apply: approved, not submitted yet (submit/stages.py is_waiting_to_submit).
   async function loadReadyToApply() {
     const card = $("#aaReadyCard"), list = $("#aaReadyList");
     if (!card || !list) return;
@@ -8045,7 +8090,11 @@
     card.hidden = items.length === 0;
     $("#aaReadyCount").textContent = items.length ? `· ${items.length}` : "";
     list.innerHTML = items.map(it => {
-      const lane = it.lane === "auto"
+      // Approved, not submitted yet: queued for the auto lane, waiting on your click, or
+      // handed back after an auto attempt ("Needs you", with why).
+      const lane = it.stage === "failed"
+        ? `<span class="rvw-stage rvw-stage-failed" title="${esc(it.stage_detail || "")}">Needs you</span>`
+        : it.lane === "auto"
         ? `<span class="pkg-tier-pill auto">Auto-submit</span>`
         : `<span class="pkg-tier-pill assisted">Your click</span>`;
       const open = /^https?:\/\//i.test(it.apply_url || "")

@@ -21,7 +21,9 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 
-STAGES = ("saved", "applied", "interviewing", "offer", "rejected", "archived")
+# "approved" = reviewed and approved in the app, not submitted yet (submit/stages.py); a failed
+# auto-submit stays here, marked "Needs you", until the person submits it.
+STAGES = ("saved", "approved", "applied", "interviewing", "offer", "rejected", "archived")
 RANK = {s: i for i, s in enumerate(STAGES)}
 # Stages where a "did they see it?" nudge still helps. A new Applied job gets a default follow-up
 # this many days out (the same window submit/tracker.py uses for a record's nudge).
@@ -130,8 +132,8 @@ class BoardMixin:
                 params.append((d + timedelta(days=FOLLOW_UP_DAYS)).isoformat() if d else None)
         elif stage in ("rejected", "archived"):
             sets.append("follow_up_at=NULL")
-        elif stage == "saved":
-            # Back to Saved means "not applied after all" (the review queue's stage_patch does
+        elif stage in ("saved", "approved"):
+            # Back to Saved (or Approved) means "not applied after all" (the review queue's stage_patch does
             # the same for a record), so the funnel stops counting it and the nudge is dropped.
             sets.append("applied_at=NULL"); sets.append("follow_up_at=NULL")
         elif RANK[stage] > RANK["applied"] and not cur["applied_at"]:

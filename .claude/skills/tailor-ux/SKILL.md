@@ -180,3 +180,10 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   pre-filled from the newest tailored resume or Tracker job (`GET /api/preps/prefill`, its tailored
   resume attached when there is one), so most people just click Start. The STAR story bank was
   removed (UI, routes, `suggest_star_stories`). Supersedes the 2026-08 two-step and plain-form entries.
+- 2026-10: Application status must be TRUE. One stage model (`submit/stages.py`) feeds Review,
+  Ready to apply and the Tracker: To review -> Approved (not submitted) -> Submitted (by the auto
+  lane or by you) or Needs you (an auto attempt came back, with a reason: posting closed, form
+  needs you, sign-in or verification, site error). Approving keeps the card on Review and changes
+  its pill at once; Ready to apply lists approved-not-submitted; the Tracker has an Approved
+  column. Never say "filled" unless a form was actually filled. The template name is a layout,
+  never part of a role title; it shows as its own meta on Resumes only.
