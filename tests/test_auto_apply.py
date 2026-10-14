@@ -8,6 +8,10 @@ never evades. Autonomous submission is opt-in and OFF by default.
 
 from __future__ import annotations
 
+import json
+import tempfile
+from pathlib import Path
+
 import ui.app as app
 from submit import allowlist, drivers
 from submit.drivers import recruitee_submit
@@ -56,9 +60,19 @@ def test_a_maintainer_cannot_enable_a_non_usable_site():
 
 # --- Recruitee driver: keyless submit, honest, never evades ------------------ #
 
+_CV = Path(tempfile.mkdtemp()) / "cv-1.pdf"
+_CV.write_bytes(b"%PDF-1.4 test resume")
+
+
 def _record():
     return {"profile": {"identity": {"name": "Sam Rivera", "email": "sam@x.com", "phone": "123"}},
-            "cover_letter": "Hello", "screening": [{"question": "Q", "answer": "A"}]}
+            "cover_letter": "Hello", "screening": [{"question": "Q", "answer": "A"}],
+            "cv_pdf_path": str(_CV)}
+
+
+def _offer(url):
+    """The public offer JSON, stubbed (tests never touch a real employer's endpoint)."""
+    return 200, json.dumps({"offer": {"slug": "eng", "status": "published", "open_questions": []}})
 
 
 def test_recruitee_endpoint_derivation():
@@ -70,31 +84,31 @@ def test_recruitee_endpoint_derivation():
 
 def test_recruitee_submit_posts_honest_candidate():
     sent = {}
-    def http(url, payload):
+    def http(url, form):
         sent["url"] = url
-        sent["payload"] = payload
+        sent["fields"] = dict(form["fields"])
         return 201, '{"candidate":{"id":1}}'
-    r = recruitee_submit("https://acme.recruitee.com/o/eng", _record(), http=http)
+    r = recruitee_submit("https://acme.recruitee.com/o/eng", _record(), http=http, get=_offer)
     assert r["ok"] is True and r["needs_assist"] is False
     assert sent["url"] == "https://acme.recruitee.com/api/offers/eng/candidates"
-    assert sent["payload"]["candidate"]["email"] == "sam@x.com"    # honest identity
-    assert sent["payload"]["candidate"]["name"] == "Sam Rivera"
+    assert sent["fields"]["candidate[email]"] == "sam@x.com"    # honest identity
+    assert sent["fields"]["candidate[name]"] == "Sam Rivera"
 
 
 def test_recruitee_submit_missing_identity_defers_to_assisted():
     r = recruitee_submit("https://acme.recruitee.com/o/eng", {"cover_letter": "hi"},
-                         http=lambda u, p: (201, "{}"))
+                         http=lambda u, p: (201, "{}"), get=_offer)
     assert r["ok"] is False and r["needs_assist"] is True
 
 
 def test_recruitee_submit_aborts_on_captcha():
-    r = recruitee_submit("https://acme.recruitee.com/o/eng", _record(),
+    r = recruitee_submit("https://acme.recruitee.com/o/eng", _record(), get=_offer,
                          http=lambda u, p: (200, "Please complete the reCAPTCHA challenge"))
     assert r["ok"] is False and r["needs_assist"] is True
 
 
 def test_recruitee_submit_aborts_on_auth_wall():
-    r = recruitee_submit("https://acme.recruitee.com/o/eng", _record(),
+    r = recruitee_submit("https://acme.recruitee.com/o/eng", _record(), get=_offer,
                          http=lambda u, p: (403, "forbidden"))
     assert r["ok"] is False and r["needs_assist"] is True
 

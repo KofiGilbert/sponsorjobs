@@ -236,7 +236,7 @@
     const opts = CV_STAGES.map(([v, lbl]) =>
       `<option value="${v}"${v === stage ? " selected" : ""}>${lbl}</option>`).join("");
     const nudge = c.follow_up_is_due ? `<span class="cv-followup" title="It has been a few days, a short follow-up helps">Follow up due</span>` : "";
-    const sub = [esc(c.company || ""), c.coverage ? `${c.coverage}% match` : ""].filter(Boolean).join("  \u00b7  ");
+    const sub = [esc(c.company || ""), esc(c.template_label || ""), c.coverage ? `${c.coverage}% match` : ""].filter(Boolean).join("  \u00b7  ");
     return `<article class="cv-card cv-row" tabindex="0" role="button" data-id="${c.id}" title="${esc(c.role)}">
       <span class="cv-row-ic"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M9 1.5v3h3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M6 8.2h4M6 10.6h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg></span>
       <div class="cv-row-main">
@@ -658,12 +658,14 @@
   /* ---------------------------------------------------------------- application package */
   let PKG_ID = null;
   let PKG_APPLY_URL = "";
+  let PKG_FILL_URL = "", PKG_CV_PATH = "";   // the in-app fill: this package's link + resume file
 
   let PKG_ORIGIN = "dashboard";
   function openPackage(id) {
     PKG_ORIGIN = document.querySelector(".view.is-active")?.id?.replace("view-", "") || "dashboard";
     const lbl = $("#pkgBackLbl");
-    if (lbl) lbl.textContent = PKG_ORIGIN === "cvs" ? "Saved Resumes" : "Dashboard";
+    if (lbl) lbl.textContent = PKG_ORIGIN === "cvs" ? "Saved Resumes"
+      : PKG_ORIGIN === "autoapply" ? T("nav.autoapply", "Auto-apply") : "Dashboard";
     PKG_ID = id; showView("package"); loadPackage(id);
   }
 
@@ -699,11 +701,16 @@
       return;
     }
     $("#pkgRole").textContent = (p.role || "Untitled") + (p.company ? " · " + p.company : "");
-    $("#pkgAssistCard").hidden = !window.tailorShell;
     loadVariantCard();
-    if (window.tailorShell && !$("#pkgAssistUrl").value) {
-      $("#pkgAssistUrl").value = p.job_url || p.url || "";
-    }
+    // The application link comes from the package itself (apply_url); the box only shows
+    // when no link is known. Reset on every package, so one job's link never carries over.
+    PKG_FILL_URL = p.apply_url || p.job_url || p.url || "";
+    PKG_CV_PATH = p.cv_path || "";
+    $("#pkgAssistUrl").value = PKG_FILL_URL;
+    $("#pkgAssistUrl").hidden = !window.tailorShell || !!PKG_FILL_URL;
+    $("#pkgAssistNote").textContent = "";
+    $("#pkgFillHereBtn").hidden = true;
+    document.querySelectorAll("#pkgSubmitCard .assist-learn").forEach(b => b.remove());
     setPkgStatus(p.status);
 
     if (p.pdf) {
@@ -757,6 +764,13 @@
     PKG_APPLY_URL = p.apply_url || "";
     $("#pkgSubmitBtn").textContent = sub.tier === "auto" ? "Auto-submit"
       : (PKG_APPLY_URL ? "Open posting & apply →" : "Submit");
+    // Desktop app: ONE primary button. Assisted sites get "Fill application" (it opens the
+    // application here and fills it); the auto-submit button stays only where the site's own
+    // API is verified, and then Fill is the quiet secondary.
+    const shellFill = !!window.tailorShell;
+    $("#pkgFillBtn").hidden = !shellFill;
+    $("#pkgSubmitBtn").hidden = shellFill && sub.tier !== "auto";
+    $("#pkgFillBtn").className = "btn btn-sm " + (shellFill && sub.tier === "auto" ? "btn-ghost" : "btn-primary");
   }
 
   function pkgFlash(elm, msg, ms = 2500) {
@@ -776,6 +790,7 @@
 
   $("#pkgBack").addEventListener("click", () => {
     if (PKG_ORIGIN === "cvs") { loadCvs(); showView("cvs"); }
+    else if (PKG_ORIGIN === "autoapply") { loadAutoApply(); showView("autoapply"); }
     else { loadDashboard(); showView("dashboard"); }
   });
   $("#pkgExport").addEventListener("click", () => { if (PKG_ID) window.location = `/api/record/${PKG_ID}/export`; });
@@ -813,91 +828,76 @@
     }
   });
 
-  // AI auto-fill: the whole form, read and filled intelligently by the engine's brain (your personal
-  // details are resolved locally and never sent to the AI). The submit click stays yours.
-  function reportAutoApply(r) {
-    const note = $("#pkgAssistNote");
+  // ------------------------------------------------ the ONE apply path (desktop app)
+  // Fill application on the package page and on the Auto-apply page (row and drawer)
+  // all go here: open the application in the in-app browser and run the best fill (site recipe,
+  // then the AI plan, then the resume upload). The shell asks the engine before it touches the
+  // site's submit button: only a site on the verified auto-submit list is ever clicked
+  // (submit.policy.apply_decision). Everywhere else it stops, and the submit button is scrolled
+  // into view and outlined for the person.
+  async function applyInPane(opts) {
+    if (!window.tailorShell || !window.tailorShell.assistApply) return null;
+    try { return await window.tailorShell.assistApply(opts); } catch { return null; }
+  }
+
+  // One plain sentence for whatever the apply path reported. Same words on every page.
+  function applyMessage(r) {
     if (!r || r.ok === false) {
-      note.textContent =
-        r && r.reason === "linkedin" ? "LinkedIn is browse-by-hand only. SponsorJobs never automates LinkedIn." :
-        r && r.reason === "blocked" ? (r.blocker === "captcha"
-          ? "This page has a captcha, so I stopped, I won't try to get past it. Solve it, then fill again."
-          : "This page needs you to sign in first. Sign in, then click AI-fill the open page.") :
-        r && r.reason === "no-fields" ? "No form fields found on this page yet. Open the application form, then fill again." :
-        (r && r.reason) === "This site is fill-by-hand only. Open it and apply yourself." ? r.reason :
-        r && r.reason && r.reason.startsWith("Could not plan") ? r.reason :
-        "Couldn't AI-fill this page. It's open in the browser, fill it by hand.";
-      return;
+      const why = r && r.reason;
+      if (why === "linkedin" || why === "fill-by-hand") {
+        return "This site doesn't allow automated filling. It's open in the Browser tab, apply there yourself.";
+      }
+      if (why === "blocked") {
+        return r.blocker === "captcha"
+          ? "This page has a captcha. Solve it, then click Fill this page again."
+          : "This site wants you to sign in first. Sign in in the Browser tab, then click Fill this page again.";
+      }
+      if (why === "no-page") return "Nothing is open in the Browser tab yet.";
+      if (why === "no-fields") return "No form on this page yet. Open the application form, then click Fill this page again.";
+      if (why === "bad-url") return "This application has no link. Paste the application link first.";
+      return "Couldn't fill this page. It's open in the Browser tab, fill it by hand.";
+    }
+    if (r.submitted) {
+      return r.confirmed ? "Submitted, and the site confirmed it."
+        : "Submitted. The page showed no confirmation, so check the Browser tab once.";
     }
     const bits = [];
     if (r.filled) bits.push(r.filled + " field" + (r.filled === 1 ? "" : "s"));
-    if (r.uploaded) bits.push("resume attached");
-    note.textContent = (bits.length
-      ? "Filled " + bits.join(", ") + "."
-        + (r.pending_upload ? " Attach your resume PDF yourself." : "")
-        + " Review every field, the submit click is yours."
-      : "Nothing to fill on this step. Continue to the next page of the application and AI-fill again.");
+    if (r.resume_attached) bits.push("resume attached");
+    let msg = bits.length ? "Filled " + bits.join(", ") + "." : "Nothing to fill on this page.";
+    if (r.reason === "captcha") msg += " This form has a captcha, so the submit is yours.";
+    else if (r.reason === "login") msg += " The site wants a sign-in. Sign in, then click Fill this page again.";
+    else if (r.reason === "submit-covered") {
+      msg += " A banner" + (r.covered_by ? " (" + r.covered_by + ")" : "") + " covers the submit button. Close it first.";
+    }
+    if (r.next_page) msg += " Click Next on the site, then Fill this page again.";
+    if (r.pending_upload && !r.resume_attached) msg += " Attach your resume PDF yourself.";
+    msg += r.submit_highlighted
+      ? " Check it and click Submit on the site, it's outlined in orange."
+      : " Check it and click Submit on the site.";
+    return msg;
   }
 
-  $("#pkgAutoBtn")?.addEventListener("click", async () => {
+  async function pkgFill(here) {
     if (!window.tailorShell || !PKG_ID) return;
-    const url = $("#pkgAssistUrl").value.trim();
     const note = $("#pkgAssistNote");
-    if (!/^https?:\/\//i.test(url)) { note.textContent = "Paste the application page URL first (https://…)."; return; }
-    const btn = $("#pkgAutoBtn"); btn.disabled = true;
-    note.textContent = "Opening the application and AI-filling it…";
-    const r = await window.tailorShell.autoApplyRun(url, PKG_ID);
-    btn.disabled = false;
-    reportAutoApply(r);
-  });
-
-  $("#pkgAutoHereBtn")?.addEventListener("click", async () => {
-    if (!window.tailorShell || !PKG_ID) return;
-    const btn = $("#pkgAutoHereBtn"); btn.disabled = true;
-    $("#pkgAssistNote").textContent = "AI-filling the page that's open in the browser…";
-    const r = await window.tailorShell.autoApplyFillCurrent(PKG_ID);
-    btn.disabled = false;
-    reportAutoApply(r);
-  });
-
-  $("#pkgAssistHereBtn")?.addEventListener("click", async () => {
-    if (!window.tailorShell) return;
-    const note = $("#pkgAssistNote");
-    const btn = $("#pkgAssistHereBtn"); btn.disabled = true;
-    note.textContent = "Filling the page that's open in the browser…";
-    const r = await window.tailorShell.assistFillCurrent();
-    btn.disabled = false;
-    if (!r || r.ok === false) {
-      note.textContent =
-        r && r.reason === "linkedin" ? "LinkedIn is browse-by-hand only. SponsorJobs never automates LinkedIn." :
-        r && r.reason === "no-page" ? "Nothing is open in the browser tab yet. Open the application page first." :
-        r && r.reason === "no-profile" ? "No saved profile yet. Build a resume once, then fill." :
-        "Couldn't fill this page.";
+    const url = (PKG_FILL_URL || $("#pkgAssistUrl").value || "").trim();
+    if (!here && !/^https?:\/\//i.test(url)) {
+      $("#pkgAssistUrl").hidden = false; $("#pkgAssistUrl").focus();
+      note.textContent = "Paste the application link first.";
       return;
     }
-    const bits = [];
-    if (r.filled) bits.push(r.filled + " contact field" + (r.filled === 1 ? "" : "s"));
-    if (r.screening) bits.push(r.screening + " screening answer" + (r.screening === 1 ? "" : "s"));
-    if (r.eeo) bits.push("EEO set to decline");
-    note.textContent = (bits.length
-      ? "Filled " + bits.join(", ") + "." + (r.resume_upload ? " Attach your resume PDF yourself." : "")
-        + " Review everything, the submit click is yours."
-      : "Nothing to fill on this step. Continue to the next page of the application and fill again.");
-    note.textContent += assistExtras(r);
-    offerLearn(note);
-  });
-
-  // What the fill recipe adds to a report: which system it recognised, the multi-page hint,
-  // and that the submit button is outlined (it is never clicked by SponsorJobs).
-  function assistExtras(r) {
-    if (!r) return "";
-    let s = "";
-    if (r.system_name) s += " Recognised " + r.system_name + (r.via_recipe ? " (" + r.via_recipe + " via its recipe)" : "") + ".";
-    if (r.next_page) s += " " + (r.continue_hint || "Continue to the next page, then press Fill again.");
-    if (r.submit_highlighted) s += " The submit button is outlined in orange for you.";
-    if (r.handoff) s += " This careers site hands the application to its own ATS: press Apply there, then fill again.";
-    return s;
+    const btn = here ? $("#pkgFillHereBtn") : $("#pkgFillBtn");
+    btn.disabled = true;
+    note.textContent = "Filling…";
+    const r = await applyInPane({ url, recordId: PKG_ID, resumePath: PKG_CV_PATH, submit: false, here });
+    btn.disabled = false;
+    note.textContent = applyMessage(r);
+    if (r && r.ok !== false) { $("#pkgFillHereBtn").hidden = false; offerLearn(note); }
   }
+  $("#pkgFillBtn")?.addEventListener("click", () => pkgFill(false));
+  $("#pkgFillHereBtn")?.addEventListener("click", () => pkgFill(true));
+  $("#pkgAssistUrl")?.addEventListener("input", e => { PKG_FILL_URL = e.target.value.trim(); });
 
   // Learn from corrections: after a fill, a one-click way to save what the person changed on
   // the form into their profile (only the fields SponsorJobs itself filled are watched).
@@ -930,36 +930,9 @@
           ? "The site confirmed your application. Marked as applied."
           : "The site confirmed your application. No saved package matched this page, so mark it applied yourself if you built one.";
       }
-      if (info && info.matched && typeof loadReview === "function") loadReview().catch(() => {});
+      if (info && info.matched && $("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
     });
   }
-
-  $("#pkgAssistBtn")?.addEventListener("click", async () => {
-    if (!window.tailorShell) return;
-    const url = $("#pkgAssistUrl").value.trim();
-    const note = $("#pkgAssistNote");
-    if (!/^https?:\/\//i.test(url)) { note.textContent = "Paste the application page URL first (https://…)."; return; }
-    const btn = $("#pkgAssistBtn"); btn.disabled = true;
-    note.textContent = "Opening and filling…";
-    const r = await window.tailorShell.assistFill(url);
-    btn.disabled = false;
-    if (!r || r.ok === false) {
-      note.textContent =
-        r && r.reason === "linkedin" ? "LinkedIn is browse-by-hand only. SponsorJobs never automates LinkedIn." :
-        r && r.reason === "no-profile" ? "No saved profile yet. Build a resume once, then fill." :
-        "Couldn't fill this page. It's open in the browser, fill it by hand.";
-      return;
-    }
-    const bits = [];
-    if (r.filled) bits.push(r.filled + " contact field" + (r.filled === 1 ? "" : "s"));
-    if (r.screening) bits.push(r.screening + " screening answer" + (r.screening === 1 ? "" : "s"));
-    if (r.eeo) bits.push("EEO set to decline");
-    note.textContent = assistExtras(r) + (bits.length
-        ? "Filled " + bits.join(", ") + "." + (r.resume_upload ? " Attach your resume PDF yourself." : "")
-          + " Review everything, the submit click is yours."
-        : "Nothing to fill here. If the site wants a sign-in first (Amazon does), log in "
-          + "in the Browser tab, walk to the application form, then click Fill the open page.");
-  });
 
   $("#pkgSubmitBtn").addEventListener("click", async () => {
     if (!PKG_ID) return;
@@ -2322,8 +2295,19 @@
     } catch (e) { wk.remove(); if (!e.reason || !OUTAGE[e.reason]) bubble("agent", `<span style="color:var(--flag)">${esc(e.message)}</span>`); }
   }
 
+  // Go to a page by its nav name. A destination that moved still lands in the right place: the
+  // Review page folded into Auto-apply (2026-10), so an old "review" link (a stale button, a
+  // notification, a saved deep link) opens Auto-apply on its To review tile.
+  const NAV_MOVED = { review: ["autoapply", "review"] };
+  function navTo(dest, tile) {
+    const moved = NAV_MOVED[dest];
+    if (moved) { dest = moved[0]; tile = tile || moved[1]; }
+    if (dest === "autoapply" && tile) AA_WANT = tile;
+    document.querySelector(`.nav-item[data-nav="${dest}"]`)?.click();
+  }
+  let AA_WANT = null;   // the tile Auto-apply should open on next (set by navTo)
   document.querySelectorAll("[data-nav-to]").forEach(b =>
-    b.addEventListener("click", () => document.querySelector(`.nav-item[data-nav="${b.dataset.navTo}"]`)?.click()));
+    b.addEventListener("click", () => navTo(b.dataset.navTo, b.dataset.aaTile)));
   // Faceted filters. Every change jumps back to page 1 (a new server query) so you're never
   // stranded on a page that no longer exists. Text inputs are debounced so we fetch once the
   // person pauses typing, not on every keystroke.
@@ -3541,6 +3525,7 @@
         + "Review below and edit anything.";
       await loadProfile();
       invalidateJobDetail();   // match now reflects the freshly-imported profile
+      if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
     } catch (err) {
       msg.className = "prof-import-msg err";
       msg.textContent = "Couldn't build your profile, " + err.message;
@@ -3566,34 +3551,25 @@
     setTimeout(() => { $("#idSaved").textContent = ""; }, 4000);
   });
 
-  /* ---------------------------------------------------------------- review & submit */
   /* ------------------------------------------------------------- inbox (§5)
-     Read-first: only application mail (verifications + recruiter replies) comes
-     back. Buttons are the consent: Complete verification visits ONE link; replies
-     are drafted for YOU to send from your own mail app. SponsorJobs never sends. */
+     Read-first: only application mail (verifications + recruiter replies) comes back. Lives on
+     the Auto-apply page's Today panel (it was on the Review page). Buttons are the consent:
+     Complete verification visits ONE link; replies are drafted for YOU to send from your own
+     mail app. SponsorJobs never sends. The row shows only when Gmail can actually be used. */
   async function loadInboxStatus() {
-    const st = $("#inboxStatus"), btn = $("#inboxScan");
+    const row = $("#aaInboxRow"), st = $("#inboxStatus"), btn = $("#inboxScan");
+    if (!row) return;
     try {
       const s = await api("/api/inbox/status");
       INBOX_CONNECTED = !!s.configured;
-      if (s.configured) {
-        st.textContent = "Connected to your Gmail (read-only)." +
-          (s.auto_verify ? " Autonomous verification is ON." : "");
-        btn.disabled = false;
-      } else if (!s.libs) {
-        st.textContent = "Gmail support needs the Google client libraries: pip install google-api-python-client google-auth-oauthlib";
-        btn.disabled = true;
-      } else if (!s.creds) {
-        st.textContent = "Not connected. Put your Google OAuth client file at " + s.creds_path + " (stays on this machine, git-ignored), then scan once to sign in.";
-        btn.disabled = true;
-      } else {
-        st.textContent = "Almost there: first scan will open Google sign-in (read-only scope) and store the token locally.";
-        btn.disabled = false;
-      }
-    } catch (e) {
-      st.textContent = "Couldn't read inbox status.";
-      btn.disabled = true;
-    }
+      // No Google libraries, or no OAuth client file: nothing the person can do from here, so
+      // the row stays hidden rather than showing a setting that cannot work.
+      row.hidden = !(s.libs && (s.configured || s.creds));
+      st.textContent = s.configured
+        ? T("aa.inbox.on", "Connected, read-only") + (s.auto_verify ? T("aa.inbox.auto", ", verifies for you") : "")
+        : T("aa.inbox.first", "Scan once to sign in to Google");
+      btn.disabled = false;
+    } catch { row.hidden = true; }
   }
 
   function renderInbox(r) {
@@ -3628,9 +3604,15 @@
         </div>`);
       });
     }
-    if (!parts.length) parts.push(`<p class="prof-dim">Nothing application-related in the last scan (${r.scanned} messages checked, ${r.other} unrelated left untouched).</p>`);
-    $("#inboxResults").innerHTML = parts.join("");
     if (Array.isArray(r.suggestions)) { INBOX_SUGG = r.suggestions; renderInboxStrip(); }
+    if (INBOX_SUGG.length) {
+      parts.push(`<div class="inbox-row"><div class="inbox-meta">${esc(T("aa.inbox.sugg", "{n} updates for jobs on your board.").replace("{n}", INBOX_SUGG.length))}</div>
+        <button class="btn btn-ghost btn-sm" type="button" data-nav-go="tracker">${esc(T("aa.inbox.openTracker", "Open Tracker"))}</button></div>`);
+    }
+    if (!parts.length) parts.push(`<p class="prof-dim">${esc(T("aa.inbox.none", "Nothing application-related in the last scan ({n} messages checked).").replace("{n}", r.scanned))}</p>`);
+    $("#inboxResults").innerHTML = parts.join("");
+    $("#aaInboxSec").hidden = false;
+    $("#inboxResults").querySelector("[data-nav-go]")?.addEventListener("click", () => navTo("tracker"));
 
     document.querySelectorAll("[data-verify]").forEach(b => b.addEventListener("click", async () => {
       b.disabled = true; b.textContent = "Verifying…";
@@ -3656,134 +3638,18 @@
 
   $("#inboxScan")?.addEventListener("click", async () => {
     const btn = $("#inboxScan"), st = $("#inboxStatus");
-    btn.disabled = true; st.textContent = "Reading application mail (and drafting replies)…";
+    btn.disabled = true; st.textContent = T("aa.inbox.reading", "Reading application mail\u2026");
     try {
       const r = await api("/api/inbox/scan", {});
-      st.textContent = `Scanned ${r.scanned} application-related message${r.scanned === 1 ? "" : "s"}.`;
+      st.textContent = T("aa.inbox.scanned", "Scanned {n} application messages").replace("{n}", r.scanned);
       renderInbox(r);
     } catch (e) {
-      st.textContent = e.message || "Scan failed.";
+      st.textContent = e.message || T("aa.inbox.fail", "Scan failed");
     } finally {
       btn.disabled = false;
     }
   });
-
-  async function loadReview() {
-    let s = {}, q = { pending: [], count: 0 };
-    try { s = await api("/api/submit/settings"); } catch { /* keep defaults */ }
-    try { q = await api("/api/review/queue"); } catch { /* keep empty */ }
-
-    $("#rvwApproveAll").checked = !!s.approve_all;      // off by default
-    const rate = s.rate || {};
-    $("#rvwCap").textContent = rate.cap
-      ? `${rate.remaining ?? rate.cap} of ${rate.cap} left today` : "";
-    $("#rvwCount").textContent = q.count ? `${q.count} waiting` : "";
-    $("#rvwTelegram").disabled = !s.telegram_configured;
-    loadInboxStatus();
-    loadInboxSuggestions();
-    $("#rvwTelegram").title = s.telegram_configured
-      ? "Send this batch to your Telegram" : "Connect Telegram in Settings, Notifications, to enable";
-
-    const empty = !q.pending.length;
-    $("#rvwEmpty").hidden = !empty;
-    $("#rvwList").innerHTML = q.pending.map(it => {
-      const f = it.filled || {};
-      const got = ["name", "email", "phone"].filter(k => f[k]);
-      const laneCls = it.lane === "auto" ? "auto" : "assisted";
-      return `<article class="rvw-card" data-id="${it.id}">
-        <label class="rvw-pick"><input type="checkbox" class="rvw-item" checked data-id="${it.id}"></label>
-        <div class="rvw-body">
-          <div class="rvw-top">
-            <h3>${esc(it.role || "Role")} · <span class="rvw-co">${esc(it.company || "Unknown")}</span></h3>
-            <span class="pkg-tier-pill ${laneCls}">${it.lane === "auto" ? "Auto-submit" : "Assisted, your click"}</span>
-          </div>
-          <div class="rvw-meta">Filled: ${got.length ? got.join(", ") : "nothing yet"} ·
-            ${it.screening_count} screening ${it.has_cover_letter ? "· cover letter ✓" : ""} ·
-            ${it.coverage != null ? it.coverage + "% match" : ""}</div>
-        </div>
-        ${it.cv_url ? `<a class="rvw-cv" href="${it.cv_url}" target="_blank" rel="noopener">View Resume ↗</a>` : ""}
-        ${it.lane !== "auto" && /^https?:\/\//i.test(it.url || "")
-          ? `<button class="rvw-cv rvw-apply" type="button" data-apply="${esc(it.url)}"
-                     data-cv="${esc(it.cv_path || "")}" data-id="${it.id}">Apply</button>`
-          : ""}
-      </article>`;
-    }).join("");
-  }
-
-  // Apply means APPLY. The click is there so a person authorises each submission, not so
-  // they can be shown a form they never asked to read: it fills, attaches the resume and
-  // submits in one action. It stops short only where the site says no -- a captcha or a
-  // login wall -- and then hands the open page back rather than trying to get past it.
-  $("#rvwList")?.addEventListener("click", async (e) => {
-    const btn = e.target.closest("[data-apply]");
-    if (!btn) return;
-    const { apply: url, cv, id } = btn.dataset;
-    if (!window.tailorShell) { window.open(url, "_blank", "noopener"); return; }
-    btn.disabled = true; btn.textContent = "Applying…";
-    let r;
-    try { r = await window.tailorShell.assistApply(url, cv || ""); } catch (err) { r = null; }
-    btn.disabled = false; btn.textContent = "Apply";
-
-    if (!r || r.ok === false) {
-      rvwFlash(
-        r && r.reason === "linkedin" ? "LinkedIn is browse-by-hand only, SponsorJobs never automates it."
-        : r && r.reason === "no-profile" ? "No saved profile yet, build a resume once first."
-        : "Couldn't open that application. It's in the Browser tab, apply by hand.");
-      return;
-    }
-    if (r.submitted) {
-      btn.textContent = r.confirmed ? "Applied ✓" : "Submitted";
-      btn.disabled = true;
-      api(`/api/record/${id}/status`, { status: "applied" }).catch(() => {});  // off the queue
-      rvwFlash(r.confirmed
-        ? "Submitted, and the site confirmed it."
-        : "Submitted. No confirmation text on the page, so check the Browser tab once.");
-      return;
-    }
-    // Not submitted: say WHY, in the site's terms, and leave the filled page open.
-    rvwFlash(
-      r.reason === "captcha" ? "This form uses a captcha, so it's yours to submit. "
-        + "It's filled and open in the Browser tab."
-      : r.reason === "login" ? "This site wants a sign-in first. Sign in in the Browser tab, "
-        + "then use Fill the open page."
-      : r.reason === "no-submit-button" ? "Filled it, but couldn't find the submit control, "
-        + "so nothing was sent. Finish it in the Browser tab."
-      : r.reason === "submit-covered" ? "Filled it, but something is covering the submit button"
-        + (r.covered_by ? " (" + r.covered_by + ")" : "") + ", likely a cookie or consent "
-        + "banner. Close it in the Browser tab and submit there."
-      : "Filled it, but didn't submit. It's open in the Browser tab.");
-  });
-
-  function rvwSelected() {
-    return [...document.querySelectorAll(".rvw-item:checked")].map(c => Number(c.dataset.id));
-  }
-  function rvwFlash(msg) {
-    const m = $("#rvwMsg"); m.hidden = false; m.textContent = msg;
-  }
-
-  $("#rvwSelectAll")?.addEventListener("change", e => {
-    document.querySelectorAll(".rvw-item").forEach(c => { c.checked = e.target.checked; });
-  });
-  $("#rvwApproveAll")?.addEventListener("change", async e => {
-    try { await api("/api/submit/settings", { approve_all: e.target.checked }); }
-    catch { e.target.checked = !e.target.checked; }
-  });
-  $("#rvwApprove")?.addEventListener("click", async () => {
-    const ids = rvwSelected();
-    if (!ids.length) { rvwFlash("Select at least one application to approve."); return; }
-    try {
-      const r = await api("/api/review/approve", { approve: ids });
-      const ok = (r.approved || []).filter(a => a.ok).length;
-      rvwFlash(`Approved ${ok}/${ids.length}. Auto-lane submits via the site’s API; assisted ones are marked for your on-site submit.`);
-      loadReview();
-    } catch (e) { rvwFlash("Couldn’t approve, " + e.message); }
-  });
-  $("#rvwTelegram")?.addEventListener("click", async () => {
-    try {
-      const r = await api("/api/review/telegram/send", {});
-      rvwFlash(`Sent ${r.sent} application(s) to your Telegram. Tap Approve / Skip there, the app polls for your taps.`);
-    } catch (e) { rvwFlash("Couldn’t send to Telegram, " + e.message); }
-  });
+  $("#aaInboxClose")?.addEventListener("click", () => { $("#aaInboxSec").hidden = true; });
 
   /* ---------------------------------------------------------------- Tracker (the job board)
      Huntr / Teal style, local-first: one stage per job you saved, tailored or applied to, on the
@@ -3791,8 +3657,8 @@
      drag and drop, a table view, and a side panel per card (notes saved on blur, contacts, a
      follow-up date, the timeline, links to the tailored resume and cover letter). The funnel at
      the top is computed server-side so the numbers match the claims export. */
-  const TRK_STAGES = ["saved", "applied", "interviewing", "offer", "rejected", "archived"];
-  const TRK_STAGE_EN = { saved: "Saved", applied: "Applied", interviewing: "Interviewing",
+  const TRK_STAGES = ["saved", "approved", "applied", "interviewing", "offer", "rejected", "archived"];
+  const TRK_STAGE_EN = { saved: "Saved", approved: "Approved", applied: "Applied", interviewing: "Interviewing",
     offer: "Offer", rejected: "Rejected", archived: "Archived" };
   const trkT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
   const trkStageName = (s) => trkT("tracker.stage." + s, TRK_STAGE_EN[s] || s);
@@ -3874,9 +3740,16 @@
     if (rec && rec.pdf) meta.push(`<a href="${esc(rec.pdf)}" target="_blank" rel="noopener">${esc(trkT("tracker.resume", "Resume"))}${rec.count > 1 ? ` (${rec.count})` : ""}</a>`);
     if (c.has_notes) meta.push(`<span>${esc(trkT("tracker.hasNotes", "Notes"))}</span>`);
     const chips = trkChips(c);
+    // How it was sent, or why it came back (submit/stages.py). Only said where it adds news:
+    // an auto-submit, or an approved application that is back with the person.
+    const st = rec && rec.state === "failed"
+      ? `<div class="trk-card-state needs" title="${esc(rec.state_detail || "")}">${esc(trkT("tracker.needsYou", "Needs you"))}</div>`
+      : rec && rec.state === "submitted" && rec.how === "auto" && c.stage === "applied"
+      ? `<div class="trk-card-state">${esc(trkT("tracker.submittedForYou", "Submitted for you"))}</div>` : "";
     return `<div class="trk-card" draggable="true" data-sid="${esc(c.source_id)}" role="button" tabindex="0">
       <div class="trk-card-co">${esc(c.company)}</div>
       <div class="trk-card-t">${esc(c.title)}</div>
+      ${st}
       ${chips ? `<div class="trk-card-chips">${chips}</div>` : ""}
       ${meta.length ? `<div class="trk-card-meta">${meta.join("")}</div>` : ""}
     </div>`;
@@ -4141,17 +4014,15 @@
   }
 
   function renderInboxStrip() {
-    const hosts = [$("#trkInbox"), $("#rvwInbox")].filter(Boolean);
+    const hosts = [$("#trkInbox")].filter(Boolean);
     hosts.forEach(host => {
-      const onReview = host.id === "rvwInbox";
-      host.classList.toggle("trk-inbox-review", onReview);
-      // On the Review page the inbox card already has its own Scan button; the Tracker strip
-      // gets one of its own when Gmail is connected, and hides entirely when there is nothing.
-      if (!INBOX_SUGG.length && (onReview || !INBOX_CONNECTED)) { host.hidden = true; host.innerHTML = ""; return; }
+      // The Tracker strip gets its own Scan button when Gmail is connected, and hides entirely
+      // when there is nothing.
+      if (!INBOX_SUGG.length && !INBOX_CONNECTED) { host.hidden = true; host.innerHTML = ""; return; }
       host.hidden = false;
       host.innerHTML = `<div class="trk-inbox-head">
           <span class="trk-inbox-h">${esc(trkT("inbox.strip.title", "From your inbox"))}${INBOX_SUGG.length ? ` (${INBOX_SUGG.length})` : ""}</span>
-          ${!onReview && INBOX_CONNECTED ? `<button class="btn btn-ghost btn-sm" type="button" data-sugg-scan>${esc(trkT("inbox.strip.scan", "Scan inbox"))}</button>` : ""}
+          ${INBOX_CONNECTED ? `<button class="btn btn-ghost btn-sm" type="button" data-sugg-scan>${esc(trkT("inbox.strip.scan", "Scan inbox"))}</button>` : ""}
         </div>
         ${INBOX_SUGG.length ? INBOX_SUGG.map(inboxSuggRow).join("") : `<div class="trk-inbox-empty">${esc(trkT("inbox.strip.empty", "Nothing new from your inbox. Scan to check for interview invites, offers and rejections for jobs on your board."))}</div>`}`;
       host.querySelectorAll("[data-sugg-accept]").forEach(b => b.addEventListener("click", () => inboxSuggDecide(b.dataset.suggAccept, "accept")));
@@ -4279,7 +4150,6 @@
     else if (n.dataset.nav === "templates") { loadTemplates(); showView("templates"); }
     else if (n.dataset.nav === "jobs") { loadJobsFeed(); showView("jobs"); }
     else if (n.dataset.nav === "tracker") { loadTracker(); showView("tracker"); }
-    else if (n.dataset.nav === "review") { loadReview(); showView("review"); }
     else if (n.dataset.nav === "autoapply") { loadAutoApply(); showView("autoapply"); }
     else if (n.dataset.nav === "projects") { loadProjects(); showView("projects"); }
     else if (n.dataset.nav === "prep") { loadPreps(); showView("prep"); }
@@ -7775,6 +7645,7 @@
     document.querySelectorAll("#ntCap [data-cap]").forEach(b => b.classList.toggle("is-on", +b.dataset.cap === +p.daily_cap));
     ntHours($("#ntQuietStart"), p.quiet_start ?? 22);
     ntHours($("#ntQuietEnd"), p.quiet_end ?? 8);
+    api("/api/submit/settings").then(s => { if ($("#ntApproveAll")) $("#ntApproveAll").checked = !!s.approve_all; }).catch(() => {});
   }
   function ntSave(patch) { api("/api/notify/settings", patch).then(renderNotify).catch(() => {}); }
   function ntShowOwnBot() {
@@ -7815,6 +7686,10 @@
   $("#ntJobs")?.addEventListener("change", (e) => ntSave({ job_alerts: e.target.checked }));
   $("#ntUpdates")?.addEventListener("change", (e) => ntSave({ app_updates: e.target.checked }));
   $("#ntContact")?.addEventListener("change", (e) => ntSave({ show_contact: e.target.checked }));
+  $("#ntApproveAll")?.addEventListener("change", async (e) => {   // off by default (CLAUDE.md 7)
+    try { await api("/api/submit/settings", { approve_all: e.target.checked }); }
+    catch { e.target.checked = !e.target.checked; }
+  });
   document.querySelectorAll("#ntCap [data-cap]").forEach(b =>
     b.addEventListener("click", () => ntSave({ daily_cap: +b.dataset.cap })));
   $("#ntQuietStart")?.addEventListener("change", (e) => ntSave({ quiet_start: +e.target.value }));
@@ -8001,100 +7876,599 @@
     hideOutage(); openAiModal(true);
   };
 
-  /* ---------------------------------------------------------------- auto-apply (Pro) */
-  // Say how many of YOUR roles this can actually submit. The page advertised a "daily
-  // submit cap: 40 of 40" next to a capability that fired on 0 of 133 real jobs, because
-  // auto-submit needs a keyless candidate API and only Recruitee has one (§7) while the
-  // feed was seeded with greenhouse, lever and ashby, all of which gate submission behind
-  // the EMPLOYER's key. A cap of 40 over a reach of 0 reads as a promise; the real number
-  // is the only honest thing to show, and it is also the number that tells the person
-  // whether the paid tier is worth anything TO THEM.
-  async function paintAutoReach() {
-    const el = $("#aaReach");
-    if (!el) return;
-    let jobs = [];
-    try { jobs = (await api("/api/jobs")).jobs || []; } catch { el.hidden = true; return; }
-    const auto = jobs.filter(j => (j.source || "").toLowerCase() === "recruitee");
-    el.hidden = false;
-    el.textContent = auto.length
-      ? `${auto.length} of your ${jobs.length} roles can be submitted automatically. The rest we fill in, and you click Apply.`
-      : `None of your ${jobs.length} roles can be submitted automatically today: they need a site with a keyless application API. We tailor and fill every one, and you click Apply.`;
+  /* ---------------------------------------------------------------- auto-apply
+     One page for the whole loop (tailor-ux 2026-10): run settings in the Jobs filter bar, four
+     stage tiles with real counts (submit/stages.py via /api/autoapply/board), the selected tile
+     as a row list, Up next (/api/autoapply/upnext: what the next run would tailor), a Today
+     panel, and a detail drawer per application (/api/autoapply/item). The old Review page folded
+     in here: approve (one or all), skip, open and edit the package, send the batch to Telegram,
+     and fill the application, all on the same endpoints Review used. Only real data is shown;
+     anything the app does not know is left out, never estimated. */
+  const AA = { board: null, tile: null, next: null, open: null, item: null, back: null, runBusy: false };
+  const AA_PREF_KEY = "sj_aa_focus";
+  const csv = id => ($(id)?.value || "").split(",").map(s => s.trim()).filter(Boolean);
+  const aaSponsor = () => $("#aaSponsorOnly")?.getAttribute("aria-pressed") === "true";
+  const aaFocus = () => ({ titles: csv("#aaFocus"), locations: csv("#aaLocation"), sponsor_only: aaSponsor() });
+  const aaCount = () => Number($("#aaCount")?.value) || 5;
+  const fmtN = n => Number(n || 0).toLocaleString();
+  const AA_TILE_NAME = { review: ["aa.tile.review", "To review"], waiting: ["aa.tile.waiting", "Waiting on you"],
+    submitted: ["aa.tile.submitted", "Submitted"], needs: ["aa.tile.needs", "Needs you"] };
+  const aaTileName = t => T(...(AA_TILE_NAME[t] || AA_TILE_NAME.review));
+  const AA_ACT = { review: ["aa.act.review", "Review"], fill: ["aa.act.fill", "Fill application"],
+    signin: ["aa.act.signin", "Sign in and fill"], finish: ["aa.act.finish", "Open and finish"], view: ["aa.act.view", "View"] };
+  const aaActName = a => T(...(AA_ACT[a] || AA_ACT.view));
+  const AA_REASON = { needs_signin: ["aa.reason.signin", "Needs your sign-in"],
+    form_blocker: ["aa.reason.form", "A form question needs you"],
+    site_error: ["aa.reason.site", "The site had an error"],
+    posting_closed: ["aa.reason.closed", "The posting is closed"] };
+
+  // Per-viewer convenience only: the focus fields come back as you left them.
+  (function aaRestoreFocus() {
+    let f = null;
+    try { f = JSON.parse(localStorage.getItem(AA_PREF_KEY) || "null"); } catch { f = null; }
+    if (!f) return;
+    if ($("#aaFocus")) $("#aaFocus").value = f.titles || "";
+    if ($("#aaLocation")) $("#aaLocation").value = f.locations || "";
+    $("#aaSponsorOnly")?.setAttribute("aria-pressed", f.sponsor ? "true" : "false");
+    if ($("#aaCount") && f.count) $("#aaCount").value = String(f.count);
+  })();
+  function aaSaveFocus() {
+    try {
+      localStorage.setItem(AA_PREF_KEY, JSON.stringify({ titles: $("#aaFocus").value, locations: $("#aaLocation").value,
+        sponsor: aaSponsor(), count: aaCount() }));
+    } catch { /* private window */ }
+  }
+  function aaRunLabel() {
+    const b = $("#aaRun");
+    if (b && !AA.runBusy) b.innerHTML = esc(T("aa.run", "Tailor & queue {n}").replace("{n}", aaCount())) + " &rarr;";
+  }
+
+  // "2h", "Yesterday", "Oct 12": when something last happened, short.
+  function aaAgo(v) {
+    const t = tsUTC(v) ?? (v ? new Date(String(v).slice(0, 10) + "T12:00:00").getTime() : null);
+    if (t == null || isNaN(t)) return "";
+    const s = (Date.now() - t) / 1000;
+    if (s < 3600) return Math.max(1, Math.round(s / 60)) + "m";
+    const d = new Date(t), now = new Date();
+    if (d.toDateString() === now.toDateString()) return Math.round(s / 3600) + "h";
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return T("aa.yesterday", "Yesterday");
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  function aaClock(v) {
+    const t = tsUTC(v);
+    if (t == null) return "";
+    const d = new Date(t), now = new Date();
+    const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (d.toDateString() === now.toDateString()) return T("aa.todayAt", "Today, {t}").replace("{t}", time);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + time;
   }
 
   async function loadAutoApply() {
-    try {
-      const s = await api("/api/submit/settings");
-      $("#aaAutonomous").checked = !!s.autonomous;
-      const rate = s.rate || {}, left = rate.remaining != null ? rate.remaining : s.daily_cap;
-      $("#aaCap").textContent = `Daily submit cap: ${left} of ${s.daily_cap} left today.`;
-      paintAutoReach();
-      $("#aaTg").innerHTML = s.telegram_configured
-        ? `<span class="aa-dot go"></span> Telegram connected, you'll get a summary there.`
-        : `<span class="aa-dot warn"></span> Telegram not connected, connect it for away-from-desk updates.`;
-    } catch { /* leave defaults */ }
-    loadReadyToApply();
+    aaRunLabel();
+    loadInboxStatus();
+    let b;
+    try { b = await api("/api/autoapply/board"); }
+    catch (e) { $("#aaList").innerHTML = `<div class="aa-empty">${esc(e.message || T("aa.loadFail", "Couldn't load your applications."))}</div>`; return; }
+    AA.board = b;
+    const sel = $("#aaMinFit");
+    if (sel && b.min_fit != null) {
+      if (![...sel.options].some(o => Number(o.value) === b.min_fit)) sel.add(new Option(`Match ${b.min_fit}%+`, b.min_fit));
+      sel.value = String(b.min_fit);
+    }
+    const want = AA_WANT; AA_WANT = null;
+    AA.tile = want || (AA.tile && AA.board.counts[AA.tile] ? AA.tile : b.default);
+    aaRender();
+    aaLoadNext();
+    if (AA.open != null) aaOpen(AA.open, { keep: true });   // refresh an open drawer
   }
 
-  // The apply TO-DO: built + reviewed applications still awaiting your on-site submit.
-  async function loadReadyToApply() {
-    const card = $("#aaReadyCard"), list = $("#aaReadyList");
-    if (!card || !list) return;
-    let r;
-    try { r = await api("/api/records/ready"); } catch { card.hidden = true; return; }
-    const items = (r && r.ready) || [];
-    card.hidden = items.length === 0;
-    $("#aaReadyCount").textContent = items.length ? `· ${items.length}` : "";
-    list.innerHTML = items.map(it => {
-      const lane = it.lane === "auto"
-        ? `<span class="pkg-tier-pill auto">Auto-submit</span>`
-        : `<span class="pkg-tier-pill assisted">Your click</span>`;
-      const open = /^https?:\/\//i.test(it.apply_url || "")
-        ? `<button class="btn btn-ghost btn-sm" data-ready-open="${esc(it.apply_url)}" type="button">Open application</button>`
-        : `<button class="btn btn-ghost btn-sm" data-ready-view="${it.id}" type="button">View package</button>`;
-      return `<div class="aa-ready-row"><span class="aa-ready-role">${esc(it.role)} · ${esc(it.company)}</span>`
-        + `${lane}<span class="aa-ready-actions">${open}`
-        + `<button class="btn btn-ghost btn-sm" data-ready-done="${it.id}" type="button">Mark applied</button></span></div>`;
-    }).join("");
+  function aaRender() {
+    const b = AA.board;
+    if (!b) return;
+    const c = b.counts;
+    const sub = {
+      review: c.review ? T("aa.sub.review", "Tailored, ready for a look") : T("aa.sub.reviewNone", "Nothing to review"),
+      waiting: c.waiting ? T("aa.sub.waiting", "Approved, your click to send") : T("aa.sub.waitingNone", "Nothing waiting"),
+      submitted: c.submitted ? T("aa.sub.submitted", "{w} this week, {a} sent for you").replace("{w}", b.week.sent).replace("{a}", b.week.for_you)
+        : T("aa.sub.submittedNone", "Nothing sent yet"),
+      needs: c.needs ? `<span class="aa-flag"></span>${esc(b.needs_summary)}` : esc(T("aa.sub.needsNone", "All clear")),
+    };
+    document.querySelectorAll("[data-aa-tile]").forEach(el => {
+      const t = el.dataset.aaTile, on = t === AA.tile;
+      el.classList.toggle("is-selected", on);
+      el.setAttribute("aria-pressed", String(on));
+      el.querySelector("[data-aa-num]").textContent = fmtN(c[t]);
+      const s = el.querySelector("[data-aa-sub]");
+      if (t === "needs") s.innerHTML = sub.needs; else s.textContent = sub[t];
+    });
+    aaRenderList();
+    aaRenderToday();
   }
-  $("#aaReadyList")?.addEventListener("click", async e => {
-    const open = e.target.closest("[data-ready-open]");
-    if (open) { window.open(open.dataset.readyOpen, "_blank", "noopener"); return; }
-    const view = e.target.closest("[data-ready-view]");
-    if (view) { openPackage(Number(view.dataset.readyView)); return; }
-    const done = e.target.closest("[data-ready-done]");
-    if (done) {
-      done.disabled = true;
-      try { await api(`/api/record/${Number(done.dataset.readyDone)}/status`, { status: "applied" }); }
-      catch { done.disabled = false; return; }
-      loadReadyToApply();   // drop it from the to-do
+
+  function aaStageLine(it) {
+    if (it.tile === "review") {
+      return (b => b.missing_contact.length
+        ? ["flag", T("aa.st.contact", "Add your {f} in Profile").replace("{f}", b.missing_contact.join(" and "))]
+        : ["", T("aa.st.review", "Ready for a look")])(AA.board);
+    }
+    if (it.tile === "waiting") return ["ready", it.queued ? T("aa.st.queued", "Queued to send for you") : T("aa.st.waiting", "Approved, ready to fill")];
+    if (it.tile === "needs") return ["flag", T(...(AA_REASON[it.reason] || AA_REASON.site_error))];
+    const when = aaAgo(it.submitted_at);
+    return ["", (it.how === "auto" ? T("aa.st.forYou", "Sent for you") : T("aa.st.byYou", "You sent it")) + (when ? " · " + when : "")];
+  }
+
+  // One sponsorship chip per row, like the mock and the Jobs card's lead chip: the employer's
+  // first visa record, else what the ad says, else the honest "No sponsorship record". The
+  // drawer shows every chip.
+  function aaChip(it) {
+    const v = it.visa || [];
+    if (v.length) {
+      const x = v[0], name = x.code === "H-1B" ? T("aa.h1b", "H-1B sponsor") : badgeName(x.code);
+      return `<span class="vbadge vb-spon vb-${esc(x.code)}" title="${esc(visaTitle(x))}">${esc(name)}</span>`;
+    }
+    return visaBadges(it, { primary: true });
+  }
+
+  function aaRow(it) {
+    const [cls, text] = aaStageLine(it);
+    const loc = usLocation(it.location);
+    const act = it.action;
+    const primaryish = act === "fill" || act === "signin" || act === "finish";
+    return `<div class="aa-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(it.role)}, ${esc(it.company)}">
+      ${companyAvatar(it)}
+      <div class="aa-row-main"><div class="aa-t">${esc(it.role || T("aa.role", "Role"))}</div>
+        <div class="aa-s"><span class="co">${esc(it.company)}${it.location ? " · " + esc(loc) : ""}</span>${aaChip(it)}</div></div>
+      <span class="aa-stage ${cls}"><span class="pip"></span><span class="aa-stage-x">${esc(text)}</span></span>
+      <span class="aa-match">${it.match != null ? `${it.match}%<small>${esc(T("aa.match", "match"))}</small>` : ""}</span>
+      <div class="aa-act"><button class="btn btn-ghost btn-sm${primaryish ? " aa-fillbtn" : ""}" type="button" data-act="${act}">${esc(aaActName(act))}</button></div>
+    </div>`;
+  }
+
+  function aaRenderList() {
+    const b = AA.board, t = AA.tile, items = b.tiles[t] || [];
+    $("#aaSecTitle").textContent = aaTileName(t);
+    $("#aaSecCount").textContent = items.length ? fmtN(items.length) : "";
+    const all = $("#aaApproveAll"), tg = $("#aaTelegramSend");
+    all.hidden = !(t === "review" && items.length > 1);
+    all.textContent = T("aa.approveAll", "Approve all {n}").replace("{n}", items.length);
+    tg.hidden = !(t === "review" && items.length && b.telegram);
+    const list = $("#aaList");
+    if (items.length) { list.classList.remove("is-empty"); list.innerHTML = items.map(aaRow).join(""); return; }
+    list.classList.add("is-empty");
+    if (!b.has_profile) {
+      list.innerHTML = `<div class="aa-empty"><div><div class="aa-empty-t">${esc(T("aa.empty.noResume", "Add your resume to start"))}</div>
+        <div class="aa-empty-s">${esc(T("aa.empty.noResumeSub", "Auto-apply tailors it to your best matches."))}</div></div>
+        <button class="btn btn-ghost btn-sm" type="button" id="aaAddResume">${esc(T("aa.addResume", "Add your resume"))}</button></div>`;
+      $("#aaAddResume").addEventListener("click", () => openResumeBox());
+      return;
+    }
+    const EMPTY = {
+      review: ["aa.empty.review", "Nothing to review. Tailor & queue tailors your best matches into here."],
+      waiting: ["aa.empty.waiting", "Nothing waiting on you. Approve a tailored role and it moves here."],
+      submitted: ["aa.empty.submitted", "Nothing sent yet."],
+      needs: ["aa.empty.needs", "Nothing needs you."],
+    };
+    list.innerHTML = `<div class="aa-empty"><div class="aa-empty-s">${esc(T(...EMPTY[t]))}</div></div>`;
+  }
+
+  function aaRenderToday() {
+    const b = AA.board, d = b.today || {};
+    const cap = d.cap || 0, sent = d.count || 0;
+    $("#aaCapSent").innerHTML = T("aa.capSent", "{n} sent for you of {cap}").replace("{n}", `<b>${fmtN(sent)}</b>`).replace("{cap}", fmtN(cap));
+    $("#aaCapLeft").textContent = T("aa.capLeft", "{n} left today").replace("{n}", fmtN(d.remaining ?? cap));
+    $("#aaMeter").style.width = cap ? Math.min(100, Math.round(sent / cap * 100)) + "%" : "0%";
+    const sw = $("#aaAutonomous");
+    sw.setAttribute("aria-checked", String(!!d.autonomous));
+    $("#aaTgSub").textContent = b.telegram ? T("aa.tgOn", "Connected") : T("aa.tgOff", "Approve from your phone");
+    $("#aaTgBtn").textContent = b.telegram ? T("aa.tgSettings", "Settings") : T("aa.tgConnect", "Connect");
+    const rec = b.recent || [];
+    $("#aaRecent").innerHTML = rec.length ? rec.map(it => `<button class="aa-rec" type="button" data-id="${it.id}">${companyAvatar(it)}
+        <span class="aa-rec-m"><span class="aa-rec-t" title="${esc(it.role)}">${esc(it.role)}</span>
+        <span class="aa-rec-s">${esc(it.company)} · ${esc(it.how === "auto" ? T("aa.forYou", "For you") : T("aa.byYou", "By you"))}</span></span>
+        <span class="aa-rec-w">${esc(aaAgo(it.submitted_at))}</span></button>`).join("")
+      : `<div class="aa-rec-none">${esc(T("aa.recentNone", "Nothing sent yet."))}</div>`;
+    const all = $("#aaSeeAll");
+    all.hidden = !b.counts.submitted || AA.tile === "submitted";
+    all.innerHTML = esc(T("aa.seeAll", "See all {n} submitted").replace("{n}", fmtN(b.counts.submitted))) + " &rarr;";
+  }
+
+  function aaSelectTile(t) {
+    if (!AA.board) return;
+    AA.tile = t;
+    aaRender();
+  }
+  document.querySelectorAll("[data-aa-tile]").forEach(el => el.addEventListener("click", () => aaSelectTile(el.dataset.aaTile)));
+  $("#aaSeeAll")?.addEventListener("click", () => { aaSelectTile("submitted"); $("#aaList")?.scrollIntoView({ block: "nearest" }); });
+  $("#aaTgBtn")?.addEventListener("click", async () => { await openSettings(); document.querySelector('[data-set="notify"]')?.click(); });
+  $("#aaAutonomous")?.addEventListener("click", async e => {
+    const sw = e.currentTarget, on = sw.getAttribute("aria-checked") !== "true";
+    sw.setAttribute("aria-checked", String(on));
+    try { await api("/api/submit/settings", { autonomous: on }); if (AA.board) AA.board.today.autonomous = on; }
+    catch { sw.setAttribute("aria-checked", String(!on)); }
+  });
+  $("#aaRecent")?.addEventListener("click", e => { const r = e.target.closest("[data-id]"); if (r) aaOpen(Number(r.dataset.id)); });
+
+  const aaFind = id => {
+    const t = AA.board && AA.board.tiles;
+    if (!t) return null;
+    for (const k of Object.keys(t)) { const hit = t[k].find(x => x.id === id); if (hit) return hit; }
+    return null;
+  };
+
+  // The ONE fill path on this page (row, drawer, and "Fill this page again"): the same in-app
+  // fill as the package page. The shell asks the engine before it touches the site's submit, so
+  // only a site on the verified auto-submit list is ever clicked, and here only with Autonomous
+  // submit on; everywhere else it fills and stops for the person's click.
+  async function aaFill(id, opts) {
+    const it = (AA.item && AA.item.id === id) ? AA.item : aaFind(id);
+    if (!it) return;
+    const here = !!(opts && opts.here);
+    if (!here && !/^https?:\/\//i.test(it.apply_url || "")) { aaNote(id, T("aa.noLink", "This application has no link. Open the package to add one.")); return; }
+    if (!window.tailorShell) { window.open(it.apply_url, "_blank", "noopener"); return; }
+    const btn = opts && opts.btn;
+    if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = T("aa.filling", "Filling…"); }
+    const auto = it.lane === "auto" && !!(AA.board && AA.board.today && AA.board.today.autonomous);
+    const r = await applyInPane({ url: it.apply_url, recordId: id, resumePath: it.cv_path || "", submit: auto, here });
+    if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; }
+    aaNote(id, applyMessage(r), r && r.ok !== false && !r.submitted);
+    if (r && r.submitted) {
+      await api(`/api/record/${id}/status`, { status: "applied" }).catch(() => {});   // off the to-do
+      loadAutoApply();
+    }
+  }
+  // Say what the fill did: in the drawer when it is open on this application, else a toast.
+  function aaNote(id, msg, again) {
+    if (AA.open === id && $("#aaDrNote")) {
+      $("#aaDrNote").textContent = msg; $("#aaDrNote").hidden = !msg;
+      const a = $("#aaDrAgain"); if (a && again && window.tailorShell) a.hidden = false;
+      return;
+    }
+    if (msg) toast(msg);
+  }
+
+  async function aaApprove(ids) {
+    const r = await api("/api/review/approve", { approve: ids });
+    const items = r.approved || [];
+    const n = st => items.filter(a => a.stage === st).length;
+    let msg;
+    if (items.length === 1 && items[0].message) msg = items[0].message;
+    else {
+      const parts = [];
+      if (n("submitted")) parts.push(T("aa.sum.sent", "{n} sent for you").replace("{n}", n("submitted")));
+      if (n("approved")) parts.push(T("aa.sum.waiting", "{n} waiting on you").replace("{n}", n("approved")));
+      if (n("failed")) parts.push(T("aa.sum.needs", "{n} need you").replace("{n}", n("failed")));
+      msg = parts.length ? parts.join(", ") + "." : T("aa.sum.none", "Nothing changed.");
+    }
+    return msg;
+  }
+  async function aaSkip(id) {
+    await api("/api/review/approve", { skip: [id] });
+    if (AA.open === id) aaClose();
+    toast(T("aa.skipped", "Skipped."));
+    loadAutoApply();
+  }
+
+  $("#aaList")?.addEventListener("click", e => {
+    const row = e.target.closest(".aa-row[data-id]");
+    if (!row) return;
+    const id = Number(row.dataset.id);
+    const btn = e.target.closest("[data-act]");
+    if (btn && /^(fill|signin|finish)$/.test(btn.dataset.act)) { aaFill(id, { btn }); return; }
+    aaOpen(id);
+  });
+  $("#aaList")?.addEventListener("keydown", e => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches(".aa-row[data-id]")) { e.preventDefault(); aaOpen(Number(e.target.dataset.id)); }
+  });
+  $("#aaApproveAll")?.addEventListener("click", async e => {
+    const ids = ((AA.board && AA.board.tiles.review) || []).map(x => x.id);
+    if (!ids.length) return;
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try { toast(await aaApprove(ids)); } catch (err) { toast(err.message || T("aa.fail", "Couldn't do that, try again.")); }
+    btn.disabled = false;
+    loadAutoApply();
+  });
+  $("#aaTelegramSend")?.addEventListener("click", async () => {
+    try {
+      const r = await api("/api/review/telegram/send", {});
+      toast(T("aa.tgSent", "Sent {n} to your Telegram. Approve or skip them there.").replace("{n}", r.sent));
+    } catch (e) { toast(e.message || T("aa.fail", "Couldn't do that, try again.")); }
+  });
+
+  /* ---- the drawer: one application, what will be sent, and where it stands ---- */
+  const AA_IC = {
+    doc: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 3v4h4M9 12h6M9 16h6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    mail: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 7l8 6 8-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+    list: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    info: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 7.2v3.6M8 5.1v.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  };
+  function aaHint(it) {
+    const site = it.site || "";
+    if (it.tile === "review") {
+      return it.lane === "auto"
+        ? T("aa.hint.reviewAuto", "Approving sends it for you on {site}.").replace("{site}", site)
+        : T("aa.hint.review", "Approving moves it to Waiting on you. Nothing is sent.");
+    }
+    if (it.tile === "submitted") return it.stage_detail || "";
+    if (it.tile === "needs") return it.stage_detail || "";   // why it came back, and what to do
+    if (!window.tailorShell) return T("aa.hint.web", "Opens the posting. Apply there with this package.");
+    const auto = it.lane === "auto" && !!(AA.board && AA.board.today && AA.board.today.autonomous);
+    if (auto) return T("aa.hint.auto", "Opens on {site}, fills it and sends it for you.").replace("{site}", site);
+    return site ? T("aa.hint.fill", "Opens on {site} and fills it. You click Submit.").replace("{site}", site)
+      : T("aa.hint.fillNoSite", "Opens the application and fills it. You click Submit.");
+  }
+  function aaDrawerActions(it) {
+    const post = /^https?:\/\//i.test(it.posting_url || "")
+      ? `<a class="btn btn-ghost" href="${esc(it.posting_url)}" target="_blank" rel="noopener">${esc(T("aa.viewPosting", "View posting"))} &#8599;</a>` : "";
+    const skip = `<button class="btn btn-ghost" type="button" data-dr="skip">${esc(T("aa.skip", "Skip"))}</button>`;
+    if (it.tile === "review") {
+      return `<button class="btn btn-primary" type="button" data-dr="approve">${esc(T("aa.approve", "Approve"))}</button>
+        <button class="btn btn-ghost" type="button" data-dr="edit">${esc(T("aa.editResume", "Edit resume"))}</button>${post}${skip}`;
+    }
+    if (it.tile === "waiting" || (it.tile === "needs" && it.reason !== "posting_closed")) {
+      return `<button class="btn btn-primary" type="button" data-dr="fill">${esc(aaActName(it.action === "view" ? "fill" : it.action))} &rarr;</button>
+        <button class="btn btn-ghost" type="button" data-dr="again" id="aaDrAgain" hidden>${esc(T("pkg.fillAgain", "Fill this page again"))}</button>${post}${skip}`;
+    }
+    if (it.tile === "needs") return `${post}${skip}`;
+    return post;
+  }
+  function aaTimeline(it) {
+    const li = (cls, t, m) => `<li class="${cls}"><span class="dot"></span><div class="t">${esc(t)}</div>${m ? `<div class="m">${esc(m)}</div>` : ""}</li>`;
+    const out = [];
+    if (it.picked) out.push(li("done", T("aa.tl.picked", "Picked from Jobs"), it.saved ? T("aa.tl.saved", "Saved job") : ""));
+    out.push(li("done", T("aa.tl.tailored", "Tailored"), aaClock(it.created_at)));
+    if (it.tile === "review") {
+      out.push(li("now", T("aa.tl.approve", "Approve"), T("aa.tl.yourTurn", "Your turn")));
+      out.push(li("later", T("aa.act.fill", "Fill application")));
+      out.push(li("later", T("aa.tile.submitted", "Submitted")));
+      return out.join("");
+    }
+    // A record marked applied straight from review was never approved: no step for it then.
+    if (it.tile !== "submitted" || it.approved_at) out.push(li("done", T("aa.tl.approved", "Approved by you"), aaClock(it.approved_at)));
+    if (it.tile === "waiting") {
+      out.push(it.queued ? li("now", T("aa.tl.queued", "Queued to send"), T("aa.tl.forYou", "Sent for you when a slot opens"))
+        : li("now", T("aa.act.fill", "Fill application"), T("aa.tl.yourTurn", "Your turn")));
+      out.push(li("later", T("aa.tile.submitted", "Submitted")));
+    } else if (it.tile === "needs") {
+      out.push(li("now flag", T("aa.tl.back", "Came back to you"), T(...(AA_REASON[it.reason] || AA_REASON.site_error))));
+      out.push(li("later", T("aa.tile.submitted", "Submitted")));
+    } else {
+      out.push(li("done", T("aa.tile.submitted", "Submitted"),
+        (it.how === "auto" ? T("aa.forYou", "For you") : T("aa.byYou", "By you")) + (it.submitted_at ? " · " + aaClock(it.submitted_at) : "")));
+    }
+    return out.join("");
+  }
+  function aaTerms(r) {
+    const shown = r.terms.slice(0, 8), more = r.terms.length - shown.length;
+    return shown.map(t => `<span class="aa-term">${esc(t)}</span>`).join("")
+      + (more > 0 ? `<span class="aa-term">+${more}</span>` : "")
+      + r.missing.slice(0, 3).map(t => `<span class="aa-term miss" title="${esc(T("aa.termMiss", "The job asks for this; your resume does not show it"))}">${esc(t)}</span>`).join("");
+  }
+  function aaSent(it) {
+    const r = it.resume || {}, l = it.letter || {}, scr = it.screening || [];
+    const meta = [];
+    if (r.pages) meta.push(T(r.pages === 1 ? "aa.page" : "aa.pages", r.pages === 1 ? "1 page" : "{n} pages").replace("{n}", r.pages));
+    if (r.terms_total) meta.push(T("aa.terms", "{k} of {n} job terms").replace("{k}", `<b>${r.terms.length}</b>`).replace("{n}", r.terms_total));
+    const cards = [];
+    cards.push(`<div class="aa-item"><div class="aa-item-top"><span class="aa-fic">${AA_IC.doc}</span>
+      <div class="aa-it-main"><div class="aa-it-t">${esc(T("aa.resume", "Tailored resume"))}</div>
+      <div class="aa-it-m">${r.exists ? meta.join(" · ") : esc(T("aa.noPdf", "The PDF isn't on this computer"))}</div></div>
+      <button class="aa-open" type="button" data-dr="open">${esc(T("aa.open", "Open"))}</button></div>
+      ${r.terms && (r.terms.length || r.missing.length) ? `<div class="aa-terms">${aaTerms(r)}</div>` : ""}</div>`);
+    const sent = it.tile === "submitted";
+    const words = l.words ? T("aa.words", "{n} words").replace("{n}", l.words) : T("aa.noLetter", "Not written yet. Open it to draft one.");
+    const quote = l.text ? esc(l.text.length > 420 ? l.text.slice(0, 420).replace(/\s+\S*$/, "") + "…" : l.text) : "";
+    if (l.words || !sent) cards.push(`<div class="aa-item"><div class="aa-item-top"><span class="aa-fic">${AA_IC.mail}</span>
+      <div class="aa-it-main"><div class="aa-it-t">${esc(T("aa.letter", "Cover letter"))}</div><div class="aa-it-m">${esc(words)}</div></div>
+      <button class="aa-open" type="button" data-dr="open">${esc(T("aa.open", "Open"))}</button></div>
+      ${quote ? `<p class="aa-quote">${quote}</p>` : ""}</div>`);
+    if (scr.length) {
+      cards.push(`<div class="aa-item"><div class="aa-item-top"><span class="aa-fic">${AA_IC.list}</span>
+        <div class="aa-it-main"><div class="aa-it-t">${esc(T("aa.screening", "Screening answers"))}</div>
+        <div class="aa-it-m">${esc(T(scr.length === 1 ? "aa.answer" : "aa.answers", scr.length === 1 ? "1 answer" : "{n} answers").replace("{n}", scr.length))}</div></div>
+        <button class="aa-open" type="button" data-dr="open">${esc(T("aa.edit", "Edit"))}</button></div>
+        <dl class="aa-qa">${scr.slice(0, 6).map(q => `<dt>${esc(q.q)}</dt><dd>${esc(q.a)}</dd>`).join("")}</dl></div>`);
+    }
+    return cards.join("");
+  }
+  function aaDrawerHtml(it, loading) {
+    const facts = [it.company, it.location ? usLocation(it.location) : "", it.type || "", it.pay || ""].filter(Boolean);
+    const stagePill = { review: T("aa.tile.review", "To review"), waiting: it.queued ? T("aa.pill.queued", "Queued") : T("aa.pill.approved", "Approved"),
+      submitted: T("aa.tile.submitted", "Submitted"), needs: T("aa.tile.needs", "Needs you") }[it.tile] || "";
+    const lane = it.lane === "auto" ? T("aa.lane.auto", "Sent for you") : T("aa.lane.you", "Your click");
+    const posted = it.posted_at ? aaAgo(it.posted_at) : "";
+    const markable = it.tile === "waiting" || it.tile === "needs";
+    return `<article class="aa-detail">
+      <div class="fd-head">
+        <div class="fd-headrow">${companyAvatar(it)}
+          <div class="fd-headmain">
+            <h2 class="fd-title" id="aaDrTitle">${esc(it.role || T("aa.role", "Role"))}</h2>
+            <div class="fd-co">${facts.map(esc).join(" <span>&middot;</span> ")}</div>
+            <div class="fd-meta">${it.match != null ? `<span class="aa-dr-match">${it.match}% <span>${esc(T("aa.match", "match"))}</span></span>` : ""}
+              ${visaBadges(it)}<span class="aa-pill${it.tile === "needs" ? " flag" : ""}">${esc(stagePill)}</span></div>
+          </div>
+        </div>
+        <div class="fd-actions">${aaDrawerActions(it)}</div>
+        <p class="aa-hint">${esc(aaHint(it))}${markable ? ` <button class="link-btn aa-mark" type="button" data-dr="applied">${esc(T("aa.markApplied", "Sent it yourself? Mark as applied"))}</button>` : ""}</p>
+        <p class="aa-dr-note" id="aaDrNote" hidden></p>
+      </div>
+      <div class="aa-dr-cols">
+        <div><div class="aa-h">${esc(it.tile === "submitted" ? T("aa.wasSent", "What was sent") : T("aa.willSend", "What will be sent"))}</div>
+          <div class="aa-sent">${loading ? `<div class="aa-item aa-loading">${esc(T("aa.loading", "Loading…"))}</div>` : aaSent(it)}</div></div>
+        <aside class="aa-dr-side"><div class="aa-h">${esc(T("aa.progress", "Progress"))}</div>
+          <ol class="aa-tl">${aaTimeline(it)}</ol>
+          <div class="aa-facts">
+            ${it.site ? `<div>${esc(T("aa.site", "Site"))} <b>${esc(it.site)}</b></div>` : ""}
+            <div>${esc(T("aa.lane", "Lane"))} <b>${esc(lane)}</b></div>
+            ${posted ? `<div>${esc(T("aa.posted", "Posted"))} <b>${esc(posted)}</b></div>` : ""}
+          </div>
+        </aside>
+      </div>
+      <div class="aa-dr-foot">${AA_IC.info}<span>${esc(T("aa.foot", "Sent for you only on verified sites. Everywhere else, you click Submit."))}</span></div>
+    </article>`;
+  }
+  async function aaOpen(id, opts) {
+    const keep = !!(opts && opts.keep);
+    const row = aaFind(id);
+    if (!keep) {
+      if (!row) return;
+      if (AA.open == null) AA.back = document.activeElement;
+      AA.open = id; AA.item = null;
+      $("#aaDrBody").innerHTML = aaDrawerHtml(row, true);
+      $("#aaScrim").hidden = false; $("#aaDrawer").hidden = false;
+      document.querySelectorAll("#aaList .aa-row").forEach(r => r.classList.toggle("is-active", Number(r.dataset.id) === id));
+      $("#aaDrClose").focus();
+    }
+    let it;
+    try { it = await api("/api/autoapply/item/" + id); }
+    catch (e) { if (keep && !row) { aaClose(); } return; }
+    if (AA.open !== id) return;                      // closed or moved on meanwhile
+    AA.item = it;
+    const note = $("#aaDrNote") && !$("#aaDrNote").hidden ? $("#aaDrNote").textContent : "";
+    $("#aaDrBody").innerHTML = aaDrawerHtml(it, false);
+    if (note) { $("#aaDrNote").textContent = note; $("#aaDrNote").hidden = false; }
+  }
+  function aaClose() {
+    $("#aaScrim").hidden = true; $("#aaDrawer").hidden = true;
+    AA.open = null; AA.item = null;
+    document.querySelectorAll("#aaList .aa-row.is-active").forEach(r => r.classList.remove("is-active"));
+    if (AA.back && document.contains(AA.back)) AA.back.focus();
+    AA.back = null;
+  }
+  $("#aaDrClose")?.addEventListener("click", aaClose);
+  $("#aaScrim")?.addEventListener("click", aaClose);
+  document.addEventListener("keydown", e => {
+    if (AA.open == null || $("#aaDrawer").hidden) return;
+    if (e.key === "Escape") { e.preventDefault(); aaClose(); return; }
+    if (e.key !== "Tab") return;
+    // Keep focus inside the drawer while it is open.
+    const f = [...$("#aaDrawer").querySelectorAll('button:not([disabled]):not([hidden]), a[href], [tabindex]:not([tabindex="-1"])')]
+      .filter(el => el.offsetParent !== null);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!$("#aaDrawer").contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  });
+  $("#aaDrBody")?.addEventListener("click", async e => {
+    const b = e.target.closest("[data-dr]");
+    if (!b || AA.open == null) return;
+    const id = AA.open, act = b.dataset.dr;
+    if (act === "fill") return aaFill(id, { btn: b });
+    if (act === "again") return aaFill(id, { btn: b, here: true });
+    if (act === "edit" || act === "open") { aaClose(); openPackage(id); return; }
+    if (act === "skip") { b.disabled = true; try { await aaSkip(id); } catch (err) { b.disabled = false; toast(err.message); } return; }
+    if (act === "approve") {
+      b.disabled = true;
+      try { const msg = await aaApprove([id]); aaNote(id, msg); await loadAutoApply(); }
+      catch (err) { b.disabled = false; aaNote(id, err.message || T("aa.fail", "Couldn't do that, try again.")); }
+      return;
+    }
+    if (act === "applied") {
+      b.disabled = true;
+      try { await api(`/api/record/${id}/status`, { status: "applied" }); await loadAutoApply(); }
+      catch (err) { b.disabled = false; toast(err.message); }
     }
   });
-  $("#aaAutonomous")?.addEventListener("change", async e => {
-    try { await api("/api/submit/settings", { autonomous: e.target.checked }); }
-    catch { e.target.checked = !e.target.checked; }
-  });
-  const csv = id => ($(id)?.value || "").split(",").map(s => s.trim()).filter(Boolean);
-  $("#aaRun")?.addEventListener("click", async () => {
-    const btn = $("#aaRun"), count = Number($("#aaCount").value) || 5;
-    const focus = { titles: csv("#aaFocus"), locations: csv("#aaLocation"),
-                    sponsor_only: !!$("#aaSponsorOnly")?.checked };
-    const focused = focus.titles.length || focus.locations.length || focus.sponsor_only;
-    const msg = $("#aaMsg"), res = $("#aaResults");
-    btn.disabled = true; btn.textContent = "Tailoring…";
-    msg.hidden = false; msg.className = "aa-msg working";
-    msg.textContent = `Tailoring ${count} ${focused ? "matching" : "fresh"} roles, this can take a moment…`;
-    res.innerHTML = "";
+
+  /* ---- Up next: what the next run would tailor ---- */
+  let AA_NEXT_REQ = 0;
+  async function aaLoadNext() {
+    const host = $("#aaNext");
+    if (!host) return;
+    const my = ++AA_NEXT_REQ, f = aaFocus(), count = aaCount();
+    if (AA.board && !AA.board.has_profile) { $("#aaNextSec").hidden = true; return; }
+    $("#aaNextSec").hidden = false;
+    if (!AA.next) host.innerHTML = `<div class="aa-empty"><div class="aa-empty-s">${esc(T("aa.nextLoading", "Finding your best matches…"))}</div></div>`;
+    const q = new URLSearchParams({ count, titles: f.titles.join(","), locations: f.locations.join(","), sponsor_only: f.sponsor_only ? "1" : "" });
+    let r;
+    try { r = await api("/api/autoapply/upnext?" + q); }
+    catch (e) { if (my === AA_NEXT_REQ) host.innerHTML = `<div class="aa-empty"><div class="aa-empty-s">${esc(e.message)}</div></div>`; return; }
+    if (my !== AA_NEXT_REQ) return;   // a newer focus change is already on its way
+    AA.next = r;
+    const jobs = r.jobs || [];
+    const saved = jobs.filter(j => j.saved).length;
+    $("#aaNextCount").textContent = jobs.length
+      ? (saved ? T("aa.nextSaved", "{n}, saved roles first") : T("aa.nextOf", "{n} of {m} matches")).replace("{n}", jobs.length).replace("{m}", fmtN(r.matches))
+      : "";
+    if (!jobs.length) {
+      const why = !r.board && !r.matches ? T("aa.nextNoBoard", "No roles on your board yet. Open Jobs to load them.")
+        : T("aa.nextNone", "No new roles reach {p}% match. Lower the match or broaden your focus.").replace("{p}", r.min_fit);
+      host.innerHTML = `<div class="aa-empty"><div class="aa-empty-s">${esc(why)}</div>
+        <button class="link-btn" type="button" data-next="focus">${esc(T("aa.changeFocus", "Change focus"))}</button></div>`;
+      return;
+    }
+    const star = '<svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z" fill="currentColor"/></svg>';
+    const foot = jobs.length < count
+      ? T("aa.nextShort", "Only {n} roles reach {p}% today. The next run tailors these.").replace("{n}", jobs.length).replace("{p}", r.min_fit)
+      : T("aa.nextFoot", "Next run tailors these {n}.").replace("{n}", jobs.length);
+    host.innerHTML = jobs.map(j => `<div class="aa-row" data-sid="${esc(j.source_id)}">
+        ${companyAvatar(j)}
+        <div class="aa-row-main"><div class="aa-t">${esc(j.title)}</div>
+          <div class="aa-s"><span class="co">${esc(j.company)}${j.location ? " · " + esc(usLocation(j.location)) : ""}</span>${aaChip(j)}</div></div>
+        <span class="aa-tag">${j.saved ? star + " " + esc(T("aa.saved", "Saved")) : esc(T("aa.best", "Best match"))}</span>
+        <span class="aa-match">${j.fit != null ? `${j.fit}%<small>${esc(T("aa.match", "match"))}</small>` : ""}</span>
+        <div class="aa-act"><button class="aa-x" type="button" data-skip="${esc(j.source_id)}" title="${esc(T("aa.skipNext", "Skip this role in the next run"))}" aria-label="${esc(T("aa.skipNext", "Skip this role in the next run"))}"><svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
+      </div>`).join("")
+      + `<div class="aa-more"><span>${esc(foot)}</span><button class="link-btn" type="button" data-next="focus">${esc(T("aa.changeFocus", "Change focus"))}</button></div>`;
+  }
+  $("#aaNext")?.addEventListener("click", async e => {
+    if (e.target.closest('[data-next="focus"]')) { $("#aaFocus").focus(); $("#aaFocus").select(); return; }
+    const x = e.target.closest("[data-skip]");
+    if (!x) return;
+    x.disabled = true;
     try {
-      const r = await api("/api/autoapply/run", { count, focus });
+      await api("/api/autoapply/skip", { source_id: x.dataset.skip });
+      x.closest(".aa-row")?.remove();
+      aaLoadNext();
+    } catch (err) { x.disabled = false; toast(err.message); }
+  });
+  let AA_NEXT_T = null;
+  const aaNextSoon = () => { aaSaveFocus(); clearTimeout(AA_NEXT_T); AA_NEXT_T = setTimeout(aaLoadNext, 400); };
+  ["#aaFocus", "#aaLocation"].forEach(id => $(id)?.addEventListener("input", aaNextSoon));
+  $("#aaSponsorOnly")?.addEventListener("click", e => {
+    const b = e.currentTarget; b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true"));
+    aaSaveFocus(); aaLoadNext();
+  });
+  $("#aaCount")?.addEventListener("change", () => { aaSaveFocus(); aaRunLabel(); aaLoadNext(); });
+  $("#aaMinFit")?.addEventListener("change", async e => {
+    try { await api("/api/submit/settings", { aa_min_fit: Number(e.target.value) }); } catch { /* sent with the next run too */ }
+    aaLoadNext();
+  });
+  document.addEventListener("click", e => { const h = $("#aaHow"); if (h && h.open && !h.contains(e.target)) h.open = false; });
+
+  // An error the person can act on gets the action as a button next to it.
+  const AA_ACTIONS = {
+    add_resume: [() => T("aa.addResume", "Add your resume"), () => openResumeBox()],
+    open_jobs: [() => T("aa.openJobs", "Open Jobs"), () => navTo("jobs")],
+  };
+  function aaError(msg, e) {
+    const d = (e && e.data) || {};
+    const act = AA_ACTIONS[d.action];
+    msg.hidden = false;
+    msg.className = "aa-msg err" + (act ? " has-act" : "");
+    msg.innerHTML = `<span>${esc(e.message || T("aa.runFail", "Couldn't run auto-apply."))}`
+      + (d.summary ? ` <span class="aa-msg-sub">${esc(T("aa.skippedSum", "Skipped {s}.").replace("{s}", d.summary))}</span>` : "") + `</span>`
+      + (act ? `<button class="btn btn-ghost btn-sm" id="aaErrAct" type="button">${esc(act[0]())}</button>` : "");
+    if (act) $("#aaErrAct").addEventListener("click", act[1]);
+  }
+  $("#aaRun")?.addEventListener("click", async () => {
+    const btn = $("#aaRun"), count = aaCount();
+    const focus = aaFocus(), min_fit = Number($("#aaMinFit")?.value) || 60;
+    const msg = $("#aaMsg");
+    AA.runBusy = true; btn.disabled = true; btn.textContent = T("aa.tailoring", "Tailoring…");
+    msg.hidden = false; msg.className = "aa-msg working";
+    msg.textContent = T("aa.working", "Tailoring your {n} best matches. This can take a few minutes.").replace("{n}", count);
+    try {
+      const r = await api("/api/autoapply/run", { count, focus, min_fit });
       msg.className = "aa-msg ok";
-      msg.innerHTML = `Queued <b>${r.queued}</b> of ${r.considered}, review and approve them in <b>Review &amp; submit</b>.`;
-      res.innerHTML = (r.tailored || []).map(t =>
-        `<div class="aa-row"><span class="aa-row-role">${esc(t.role)} · ${esc(t.company)}</span>`
-        + `<span class="chip ${t.coverage >= 50 ? "good" : "mid"} chip-ml"><span class="tick"></span>${t.coverage}% match</span></div>`).join("")
-        + (r.skipped || []).map(s =>
-          `<div class="aa-row skip"><span class="aa-row-role">${esc(s.role)}</span><span class="aa-skip">skipped, ${esc(s.reason)}</span></div>`).join("");
-    } catch (e) { msg.className = "aa-msg err"; msg.textContent = e.message || "Couldn't run auto-apply."; }
-    finally { btn.disabled = false; btn.textContent = "Tailor & queue →"; }
+      msg.innerHTML = esc(T("aa.queued", "Queued {n}. They are in To review.").replace("{n}", r.queued))
+        + (r.summary ? ` <span class="aa-msg-sub">${esc(T("aa.skippedSum", "Skipped {s}.").replace("{s}", r.summary))}</span>` : "");
+      AA_WANT = "review"; AA.next = null;
+      loadAutoApply();
+    } catch (e) { aaError(msg, e); }
+    finally { AA.runBusy = false; btn.disabled = false; aaRunLabel(); }
   });
 
   /* ---------------------------------------------------------------- first run
@@ -8126,6 +8500,7 @@
       wizMsg(msg, `Got it${(r.summary || {}).name ? ", " + r.summary.name : ""}, your profile is filled.`, "ok");
       await loadProfile();
       invalidateJobDetail();   // match now reflects the freshly-imported profile
+      if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
       hideFirstBanner(true);
       setTimeout(closeResumeBox, 900);
     } catch (err) { wizMsg(msg, "Couldn't read that file, " + err.message, "err"); }

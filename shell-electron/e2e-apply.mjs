@@ -7,7 +7,8 @@
  * window shows.
  *
  *   node e2e-apply.mjs           # fill + attach only, stops before submitting
- *   node e2e-apply.mjs --submit  # really submits the first queued application
+ *   node e2e-apply.mjs --submit  # submits the first queued application ONLY if its site is on
+ *                                # the verified auto-submit list; elsewhere it fills and stops
  */
 import { _electron as electron } from "playwright";
 import path from "path";
@@ -61,8 +62,9 @@ check("Apply carries the tailored CV", !!cv && cv.endsWith(".pdf"), cv || "(none
 // Drive the real handler. Without --submit we stop at the wall check so nothing is sent.
 const report = await win.evaluate(async ({ url, cv, submit }) => {
   if (!window.tailorShell) return { error: "no shell bridge" };
-  return submit ? await window.tailorShell.assistApply(url, cv)
-                : await window.tailorShell.assistFill(url);
+  // The engine's policy still decides per site: submit is clicked only on the verified
+  // auto-submit list (submit.policy.apply_decision), so --submit on any other site fills only.
+  return await window.tailorShell.assistApply({ url, resumePath: cv, submit });
 }, { url, cv, submit: SUBMIT });
 
 console.log("\nhandler report:", JSON.stringify(report, null, 1));

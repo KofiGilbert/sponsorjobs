@@ -76,10 +76,9 @@ def _require_google():
         from googleapiclient.discovery import build
         return Request, Credentials, InstalledAppFlow, build
     except ImportError as e:  # pragma: no cover - only hit without the optional deps
-        raise RuntimeError(
-            "Gmail support needs the Google client libraries. Install them with:\n"
-            "  pip install google-api-python-client google-auth-oauthlib"
-        ) from e
+        # Developer fix: pip install google-api-python-client google-auth-oauthlib. The person
+        # sees a plain sentence, never a terminal command.
+        raise RuntimeError("Gmail isn't available in this version yet.") from e
 
 
 def build_service(token_path=_TOKEN_PATH, creds_path=_CREDS_PATH):

@@ -180,3 +180,24 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   pre-filled from the newest tailored resume or Tracker job (`GET /api/preps/prefill`, its tailored
   resume attached when there is one), so most people just click Start. The STAR story bank was
   removed (UI, routes, `suggest_star_stories`). Supersedes the 2026-08 two-step and plain-form entries.
+- 2026-10: Application status must be TRUE. One stage model (`submit/stages.py`) feeds Review,
+  Ready to apply and the Tracker: To review -> Approved (not submitted) -> Submitted (by the auto
+  lane or by you) or Needs you (an auto attempt came back, with a reason: posting closed, form
+  needs you, sign-in or verification, site error). Approving keeps the card on Review and changes
+  its pill at once; Ready to apply lists approved-not-submitted; the Tracker has an Approved
+  column. Never say "filled" unless a form was actually filled. The template name is a layout,
+  never part of a role title; it shows as its own meta on Resumes only.
+- 2026-10: Auto-apply page = stage tiles + row list + Today panel + detail drawer; Review folded in.
+  Header: title, one-line subtitle, "How it applies" popover (3 sentences), one primary "Tailor &
+  queue N". Run settings sit in the Jobs filter bar classes. Four clickable tiles with real counts from
+  submit/stages.py (To review, Waiting on you, Submitted, Needs you with a reason summary); the
+  selected tile uses the Jobs selected-card border and fills a slim row list (logo, title, company and
+  location, one sponsorship chip, stage text, match, ONE outlined action named for the stage). Up next
+  shows what the next run tailors (saved first; x skips a role for the run only, it stays on Jobs).
+  The Today panel shows auto sends against the daily cap, the Autonomous submit switch, Telegram (a
+  quiet Connect when not set up), the inbox only when Gmail can actually be used, and recent sends. A
+  row opens a right drawer (scrim, close x, Esc, focus trapped) with the stage's actions, what will
+  be sent (resume terms, letter, screening answers), the timeline from the record's own timestamps,
+  and site/lane/posted. Unknowns are left out, never estimated. The Review nav item is gone: approve
+  (one or all), skip, edit and Send to Telegram live here, "One-tap approve all" moved to Settings,
+  Notifications, and an old "review" destination opens Auto-apply on To review.

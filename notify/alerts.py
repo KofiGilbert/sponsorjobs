@@ -269,7 +269,7 @@ def digest_text(d: dict) -> str:
         parts.append(f"submitted {d['submitted']}" + (f" ({sites})" if sites else ""))
     if d.get("waiting"):
         parts.append(f"{d['waiting']} waiting for your click")
-    tail = (" Open SponsorJobs and go to the review queue to finish them."
+    tail = (" Open SponsorJobs and go to Auto-apply to finish them."
             if d.get("waiting") else "")
     return "While you were away: " + ", ".join(parts) + "." + tail
 

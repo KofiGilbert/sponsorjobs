@@ -1118,7 +1118,9 @@ class _RecordActions:
             rec = recs.get(rid)
             if not rec:
                 return None
-            recs.merge_data(rid, {"status": "applied", "applied_at": _now_iso()})
+            from submit.stages import submitted_by
+            recs.merge_data(rid, {"status": "applied", "applied_at": _now_iso(),
+                                  **submitted_by("you")})
         finally:
             recs.close()
         return {"id": rid, "role": rec.get("role") or "", "company": rec.get("company") or ""}
@@ -1509,9 +1511,17 @@ def _safe_slug(text: str) -> str:
 def _record_data(rec: dict) -> dict:
     import json as _json
     try:
-        return _json.loads(rec.get("data") or "{}")
+        data = _json.loads(rec.get("data") or "{}")
     except (TypeError, ValueError):
         return {}
+    if not isinstance(data, dict):
+        return {}
+    # Letters drafted while records were titled "Role \u00b7 Classic" quote the template name
+    # ("the Role \u00b7 Classic position"). Cut it on every read so it is never shown or sent.
+    if isinstance(data.get("cover_letter"), str):
+        from intake.template_manifest import strip_template_label
+        data["cover_letter"] = strip_template_label(data["cover_letter"])
+    return data
 
 
 def _get_record(rid):
@@ -1588,8 +1598,18 @@ def records_list():
             "screening_count": len(data.get("screening") or []),
             "folder": str(data.get("folder") or ""),
             "sort": data.get("sort"),
+            # The layout, as its own field (never in the title), so two variants of one
+            # application are still told apart on Resumes.
+            "template_label": _template_label(data.get("template")),
         })
     return jsonify({"records": out})
+
+
+def _template_label(name) -> str:
+    if not name:
+        return ""
+    from intake.template_manifest import load_manifest
+    return str(load_manifest(str(name)).get("display_name") or "")
 
 
 @app.post("/api/record/<int:rid>/meta")
@@ -1703,8 +1723,13 @@ def record_status(rid):
             return jsonify({"error": f"No application {rid}."}), 404
         # Route through the tracker so marking "applied" also arms the follow-up nudge (and
         # "ready" clears it) -- one code path shared with the funnel's /stage endpoint.
-        patch = stage_patch(_record_data(rec), "applied" if status == "applied" else "saved",
-                            _now_iso())
+        cur = _record_data(rec)
+        patch = stage_patch(cur, "applied" if status == "applied" else "saved", _now_iso())
+        if status == "applied" and cur.get("status") != "applied":
+            from submit.stages import submitted_by
+            patch.update(submitted_by("you", (cur.get("submission") or {}).get("tier") or ""))
+        elif status == "ready":
+            patch.update({"submission": None, "queued": False})   # back to review, clean slate
         data = recs.merge_data(rid, patch)
     finally:
         recs.close()
@@ -1765,11 +1790,12 @@ def followups():
 @app.get("/api/records/ready")
 @_guard
 def records_ready():
-    """The apply TO-DO: tailored applications that are built but NOT yet applied or skipped,
-    each with its destination URL and submission lane, so the person can work through the
-    ones still waiting for their on-site submit. Closes the loop find -> tailor -> fill ->
-    submit: nothing built falls through the cracks."""
+    """Ready to apply: applications the person APPROVED that are not submitted yet (waiting
+    for their click on the site, queued for an auto-submit, or an auto attempt that came back
+    as "Needs you"), each with its destination URL and submission lane. Approving an item
+    adds it here; submitting or skipping it takes it off."""
     from submit import classify_record
+    from submit.stages import app_stage, is_waiting_to_submit
     recs = _records()
     try:
         rows = recs.list()
@@ -1778,12 +1804,15 @@ def records_ready():
     out = []
     for r in rows:
         data = _record_data(r)
-        if (data.get("status") or "ready") != "ready":
-            continue                       # applied / skipped are done, not on the to-do
+        if not is_waiting_to_submit(data):
+            continue        # still to review, submitted, or skipped: not on this list
+        st = app_stage(data)
         out.append({
             "id": r["id"], "role": r.get("role") or "", "company": r.get("company") or "",
             "apply_url": (data.get("source_job") or {}).get("url") or "",
             "lane": classify_record(data)["tier"],     # 'auto' | 'assisted'
+            "stage": st["stage"], "stage_label": st["label"], "stage_detail": st["detail"],
+            "reason": st["reason"],
         })
     return jsonify({"ready": out, "count": len(out)})
 
@@ -1824,7 +1853,9 @@ import json as _json_prefs  # noqa: E402
 _PREFS_FILE = _DATA / "review_prefs.json"
 _RATE_FILE = _DATA / "submit_rate.json"
 _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
-                  "inbox_auto_verify": False, "folders": [], "tracker_weekly_goal": 10}
+                  "inbox_auto_verify": False, "folders": [], "tracker_weekly_goal": 10,
+                  "aa_min_fit": 60,   # Auto-apply's fit floor (autoapply/picker.py)
+                  "aa_skip": []}      # roles the person took out of the next Auto-apply run
 
 
 def _prefs() -> dict:
@@ -1849,6 +1880,11 @@ def _set_prefs(patch: dict) -> dict:
                           if str(f).strip()][:50]
     if "tracker_weekly_goal" in patch:       # the Tracker page's applications-per-week target
         cur["tracker_weekly_goal"] = max(0, min(500, int(patch["tracker_weekly_goal"])))
+    if "aa_skip" in patch:                   # source_ids skipped from Auto-apply's Up next
+        cur["aa_skip"] = [str(x)[:300] for x in (patch["aa_skip"] or []) if str(x).strip()][-500:]
+    if "aa_min_fit" in patch:                # Auto-apply's fit floor, a match percent
+        from autoapply.picker import clamp_min_fit
+        cur["aa_min_fit"] = clamp_min_fit(patch["aa_min_fit"], cur.get("aa_min_fit", 60))
     _PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
     _PREFS_FILE.write_text(_json_prefs.dumps(cur), encoding="utf-8")
     return cur
@@ -1882,6 +1918,16 @@ def submit_settings():
         "telegram_configured": _active_channel() is not None,
         "rate": _rate_limiter().status(ts, today),
     })
+
+
+@app.get("/api/submit/decision")
+@_guard
+def submit_decision():
+    """May the desktop shell fill this page, and may it click the site's submit? Asked by
+    shell-electron/main.js before every in-app Apply, so the rule lives in ONE tested place
+    (submit.policy.apply_decision): submit is clicked only on the verified AUTO allowlist."""
+    from submit.policy import apply_decision
+    return jsonify(apply_decision(request.args.get("url", ""), request.args.get("page_url", "")))
 
 
 @app.post("/api/submit/settings")
@@ -1928,6 +1974,24 @@ def record_submit(rid):
     return jsonify(result)
 
 
+def _auto_result_patch(data: dict, result: dict) -> dict:
+    """The record patch for one auto-lane submit attempt (submit.stages): sent -> submitted
+    by the auto lane (and on the funnel as applied, follow-up armed); any other answer from
+    the site -> back to the person as "Needs you" with a reason; not attempted -> unchanged
+    stage with the honest message."""
+    from submit.stages import failed_patch, submitted_by
+    from submit.tracker import stage_patch
+    st = result.get("status")
+    if st == "auto_submitted":
+        at = result.get("submitted_at") or _now_iso()
+        return {**stage_patch({**data, "applied_at": at}, "applied", at), "queued": False,
+                **submitted_by("auto", "auto", result.get("message") or "", at)}
+    if st == "auto_failed" or (st == "assisted" and result.get("reason")):
+        return failed_patch(result)
+    return {"submission": {"tier": result.get("tier"), "status": st,
+                           "message": result.get("message") or "", "at": result.get("submitted_at")}}
+
+
 def _submit_record_id(rid: int) -> dict | None:
     """The per-site submit for one queued application (shared by the route and the Telegram
     [Apply for me] button). None when the record doesn't exist."""
@@ -1958,7 +2022,8 @@ def _submit_record_id(rid: int) -> dict | None:
                                      "daily volume cap/spacing applies. It'll submit on the "
                                      "next cycle.", "submitted_at": None}
             else:
-                data = {**data, "profile": _saved_full_profile()}  # honest identity to submit
+                data = {**data, "profile": _saved_full_profile(),   # honest identity to submit
+                        "cv_pdf_path": str(WORKDIR / f"cv-{rid}.pdf")}
                 result = submit_record(data, driver=driver, now=_now_iso())
                 if result["status"] == "auto_submitted":
                     _rate_limiter().record(ts, today)   # count it against the cap
@@ -1966,12 +2031,8 @@ def _submit_record_id(rid: int) -> dict | None:
                     _rate_limiter().record_attempt(ts, today)   # a real POST fired -> space the next
         else:
             result = submit_record(data, driver=None, now=_now_iso())
-        patch = {"submission": {"tier": result["tier"], "status": result["status"],
-                                "message": result["message"], "at": result.get("submitted_at")}}
-        if result["status"] == "auto_submitted":   # only a real auto-submit marks applied
-            patch["status"] = "applied"
-            patch["applied_at"] = result.get("submitted_at")
-        recs.merge_data(rid, patch)
+        # Only a real auto-submit marks applied; a site's "no" goes back to the person.
+        recs.merge_data(rid, _auto_result_patch(_record_data(rec), result))
     finally:
         recs.close()
     if result["status"] == "assisted":
@@ -2018,7 +2079,9 @@ def _review_item(rec: dict) -> dict:
     data = _record_data(rec)
     rid = rec["id"]
     from submit import classify_record
+    from submit.stages import app_stage
     plan = classify_record(data)
+    st = app_stage(data)
     ident = (_saved_full_profile().get("identity") or {})
     cv = WORKDIR / f"cv-{rid}.pdf"
     cov = data.get("coverage") or {}
@@ -2031,8 +2094,12 @@ def _review_item(rec: dict) -> dict:
         "lane_label": plan["label"],
         # The APPLICATION form where one is derivable, not the advert (see _application_url).
         "url": _application_url(plan["url"], rec.get("company") or ""),
-        "filled": {"name": bool(ident.get("name")), "email": bool(ident.get("email")),
-                   "phone": bool(ident.get("phone"))},
+        # Where it stands (submit/stages.py): to review / approved / needs you, in true words.
+        # Nothing is "filled" at review time; what we can say is whether the profile has the
+        # contact details a form will ask for.
+        "stage": st["stage"], "stage_label": st["label"], "stage_detail": st["detail"],
+        "reason": st["reason"],
+        "missing_contact": [k for k in ("name", "email") if not ident.get(k)],
         "screening_count": len(data.get("screening") or []),
         "has_cover_letter": bool((data.get("cover_letter") or "").strip()),
         "coverage": cov.get("ratio") if cov.get("ratio") is not None else round(rec.get("coverage") or 0),
@@ -2108,49 +2175,47 @@ class _BatchActions:
     def approve(self, rid) -> dict:
         from submit import driver_for, submit_record
         from submit.policy import _host
+        from submit.stages import app_stage, approved_patch, queued_patch
         recs = _records()
         try:
             rec = recs.get(rid)
             if not rec:
                 return {"ok": False, "message": f"#{rid} not found."}
             data = _record_data(rec)
+            who = rec.get("company") or "application"
             if (data.get("status") or "ready") == "applied":   # never re-submit (idempotent)
-                return {"ok": True, "message": f"Already submitted: {rec.get('company') or 'application'}."}
+                return {"ok": True, "stage": "submitted", "message": f"Already submitted: {who}."}
             url = (data.get("source_job") or {}).get("url") or ""
             driver = driver_for(_host(url))     # approval IS the consent for THIS item
             if driver is not None:
                 # Auto-lane (verified), this really submits over the sanctioned API, so it
-                # is rate-limited (daily cap + spacing). Over the limit → queue for later.
+                # is rate-limited (daily cap + spacing). Over the limit -> queue for later.
                 ts, today = _now_ts_today()
                 allowed, reason = _rate_limiter().allow(ts, today)
                 if not allowed:
-                    recs.merge_data(rid, {"status": "approved", "queued": True,
-                                          "submission": {"tier": "auto", "status": "queued",
-                                                         "message": f"Approved, queued ({reason})."}})
-                    return {"ok": True, "message": f"Approved, queued ({reason}); will submit shortly."}
-                result = submit_record({**data, "profile": _saved_full_profile()},
+                    recs.merge_data(rid, {**queued_patch(reason), "approved_at": _now_iso()})
+                    return {"ok": True, "stage": "approved",
+                            "message": f"Approved: {who}, queued to submit for you ({reason})."}
+                result = submit_record({**data, "profile": _saved_full_profile(),
+                                        "cv_pdf_path": str(WORKDIR / f"cv-{rid}.pdf")},
                                        driver=driver, now=_now_iso())
                 if result["status"] == "auto_submitted":
                     _rate_limiter().record(ts, today)
-                    recs.merge_data(rid, {"status": "applied", "applied_at": result.get("submitted_at"),
-                                          "queued": False,
-                                          "submission": {"tier": result["tier"], "status": result["status"],
-                                                         "message": result["message"]}})
-                    return {"ok": True, "message": f"Approved & submitted: {rec.get('company') or 'application'} ✓"}
-                if result.get("posted"):
+                elif result.get("posted"):
                     _rate_limiter().record_attempt(ts, today)   # a real POST fired -> space the next
                 # Un-queue on any non-success (failure / captcha-auth-wall drop-to-assisted): the
                 # site already answered, so drain() must NOT keep re-POSTing this item every tick.
-                recs.merge_data(rid, {"status": "approved", "queued": False,
-                                      "submission": {"tier": result["tier"], "status": result["status"],
-                                                     "message": result["message"]}})
-                return {"ok": False, "message": result["message"]}
-            # Assisted-lane, never auto-submit; mark approved/reviewed for on-site submit.
-            recs.merge_data(rid, {"status": "approved", "queued": False,
-                                  "submission": {"tier": "assisted", "status": "approved",
-                                                 "message": "Approved, open the site and submit (it's filled)."}})
-            return {"ok": True, "message": f"Approved: {rec.get('company') or 'application'}, "
-                                           "open it and submit (assisted site)."}
+                merged = recs.merge_data(rid, _auto_result_patch(data, result))
+                st = app_stage(merged)
+                if st["stage"] == "submitted":
+                    return {"ok": True, "stage": "submitted", "message": f"Submitted for you: {who}."}
+                return {"ok": False, "stage": st["stage"], "reason": st["reason"],
+                        "message": f"Not sent: {who}. {result['message']}"}
+            # Assisted lane: never auto-submit, and nothing has been filled yet. Approval only
+            # means "reviewed"; the person submits on the site.
+            recs.merge_data(rid, {**approved_patch(), "approved_at": _now_iso()})
+            return {"ok": True, "stage": "approved",
+                    "message": f"Approved: {who}. Open the application and submit it."}
         finally:
             recs.close()
 
@@ -4424,7 +4489,12 @@ def _mark_applied_from_page(body: dict) -> dict:
                     break
         if rec is None:
             return {"ok": True, "matched": False, "record_id": None}
-        data = recs.merge_data(rec["id"], stage_patch(_record_data(rec), "applied", _now_iso()))
+        cur = _record_data(rec)
+        patch = stage_patch(cur, "applied", _now_iso())
+        if cur.get("status") != "applied":
+            from submit.stages import submitted_by
+            patch.update(submitted_by("you", (cur.get("submission") or {}).get("tier") or ""))
+        data = recs.merge_data(rec["id"], patch)
     finally:
         recs.close()
     return {"ok": True, "matched": True, "record_id": rec["id"], "stage": data.get("stage"),
@@ -9539,22 +9609,6 @@ def start_from_job():
     return jsonify(session.start())
 
 
-def _select_focus_jobs(all_jobs: list, titles: list, locations: list,
-                       sponsor_only: bool, tag_fn=None) -> list:
-    """Narrow the watchlist to the person's FOCUS for today before the autopilot tailors
-    (Kofi's "tell SponsorJobs what to focus on applying to that day"). Empty focus = all jobs,
-    the prior behavior. `tag_fn` (SponsorDB.tag_jobs) is injected so this stays unit-testable.
-    Order is preserved, so the caller still takes the freshest matches."""
-    picked = list(all_jobs)
-    if titles or locations:
-        from sourcing.service import matches_criteria
-        crit = {"titles": titles, "locations": locations, "remote": "any"}
-        picked = [j for j in picked if matches_criteria(j, crit)]
-    if sponsor_only and tag_fn is not None:
-        picked = [j for j in tag_fn(picked) if (j.get("visa") or [])]
-    return picked
-
-
 @app.post("/api/autoapply/plan")
 @_guard
 def autoapply_plan():
@@ -9634,7 +9688,8 @@ def _tailor_job_unattended(job: dict, llm, tex: str, tname: str, scratch: str) -
     session.company = job.get("company") or session.company
     session.role = job.get("title") or session.role
     session.source_job = {"url": job.get("url") or "", "source": job.get("source") or "",
-                          "source_id": job.get("source_id") or ""}
+                          "source_id": job.get("source_id") or "",
+                          "location": job.get("location") or ""}   # Auto-apply's dedup key
     session.essentials["override"] = True   # autonomous, build with what's saved
     # Truly unattended: there is no one to answer a question, so this is the one
     # path allowed past the page-filling gate (build_from_saved). Interactive
@@ -9651,40 +9706,161 @@ def _tailor_job_unattended(job: dict, llm, tex: str, tname: str, scratch: str) -
     return {"ok": False, "role": session.role, "reason": "held for your review"}
 
 
-@app.post("/api/autoapply/run")
-@_guard
-def autoapply_run():
-    """Auto-apply (the paid autopilot, CLAUDE.md §4c): tailor the person's FOCUS roles from
-    the SAVED profile, no per-role input, and queue each package for review. Submission stays
-    on the existing guarded path (verified allowlist + opt-in), so this run never submits on
-    its own; it fills the review queue for the person to approve."""
-    body = request.json or {}
-    count = max(1, min(int(body.get("count") or 5), 10))
-    snap = _memory().load("default") or {}
-    base_profile = snap.get("profile") or {}
-    if not base_profile.get("experience"):
-        return jsonify({"error": "Add your profile first (drop your resume), then SponsorJobs can "
-                                 "build these for you."}), 400
+def _aa_records() -> list[dict]:
+    """Every tailored record as the picker reads it: its data bag plus company and role."""
+    recs = _records()
+    try:
+        rows = recs.list(limit=10000)
+    finally:
+        recs.close()
+    return [{**_record_data(r), "company": r.get("company") or "",
+             "role": r.get("jd_label") or r.get("role") or ""} for r in rows]
 
-    # What KINDS of roles to tailor today (all optional; empty = the freshest roles).
-    focus = body.get("focus") or {}
+
+def _aa_saved_search() -> dict | None:
+    """The person's default saved Jobs search (a strategy), or None."""
+    try:
+        st = _strategies()
+        try:
+            return st.default()
+        finally:
+            st.close()
+    except Exception:   # noqa: BLE001 - no saved search is the normal case
+        return None
+
+
+def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
+    """The roles an Auto-apply run may tailor: the jobs the person sees on Jobs (the central
+    feed, or the local board) plus their saved jobs, saved first, narrowed by their default
+    saved search and today's focus, ordered by fit to the profile. See autoapply/picker.py."""
+    from autoapply.picker import candidates
+    from notify.alerts import profile_targets
+    from sourcing.quality import is_entry_level
     titles = [str(t).strip() for t in (focus.get("titles") or []) if str(t).strip()]
     locations = [str(l).strip() for l in (focus.get("locations") or []) if str(l).strip()]
     sponsor_only = bool(focus.get("sponsor_only"))
-
     w = _watchlist()
     try:
-        all_jobs = [w.get_job(r["source_id"]) or r for r in w.list_jobs()]
+        saved = _sponsors().tag_jobs(w.list_jobs(order="recent", saved_only=True, limit=5000))
     finally:
         w.close()
-    if not all_jobs:
-        return jsonify({"error": "No roles in your feed yet, open Jobs to add sources."}), 400
-    picked = _select_focus_jobs(all_jobs, titles, locations, sponsor_only,
-                                tag_fn=_sponsors().tag_jobs)
-    if not picked:
-        return jsonify({"error": "No fresh roles match today's focus. Broaden or clear it, "
-                                 "or open Jobs to add more sources."}), 400
-    jobs = picked[:count]
+    for j in saved:
+        j["entry_level"] = is_entry_level(j.get("title", ""))
+    board = _board_rows()
+    strat = _aa_saved_search()
+    snap = _memory().load("default") or {}
+    profile = snap.get("profile") or snap.get("essentials") or {}
+    rows = candidates(board, saved, facets=(strat or {}).get("filters") or {},
+                      titles=titles, locations=locations, sponsor_only=sponsor_only,
+                      targets=profile_targets(profile))
+    skip = set(_prefs().get("aa_skip") or [])
+    if skip:
+        rows = [j for j in rows if str(j.get("source_id") or "") not in skip]
+    meta = {"titles": titles, "locations": locations, "sponsor_only": sponsor_only,
+            "search": (strat or {}).get("name") or None, "board": len(board), "saved": len(saved)}
+    return rows, meta
+
+
+def _aa_fit(job: dict) -> int | None:
+    """The same fit the Jobs detail shows for this role (0..100), or None when there is no
+    description or it names no skills to match. Fills job["jd_text"] for the tailoring."""
+    from notify.alerts import match_percent
+    sid = job.get("source_id") or ""
+    jd = (job.get("jd_text") or "").strip()
+    if not jd and sid:
+        w = _watchlist()
+        try:
+            jd = ((w.get_job(sid) or {}).get("jd_text") or "").strip()
+        finally:
+            w.close()
+    if not jd and sid and _feed_serving():
+        fj = _feed_job_with_jd(sid)
+        jd = ((fj or {}).get("jd_text") or "").strip()
+    if not jd:
+        return None
+    job["jd_text"] = jd
+    m = _job_match(jd, job.get("title") or "")
+    if not m or not m.get("total"):
+        return None
+    return match_percent(m)
+
+
+def _aa_min_fit(body: dict | None = None) -> int:
+    from autoapply.picker import clamp_min_fit
+    p = _prefs()
+    if body and body.get("min_fit") is not None:
+        v = clamp_min_fit(body.get("min_fit"), p["aa_min_fit"])
+        if v != p["aa_min_fit"]:
+            _set_prefs({"aa_min_fit": v})
+        return v
+    return clamp_min_fit(p["aa_min_fit"])
+
+
+def _aa_has_profile() -> bool:
+    snap = _memory().load("default") or {}
+    return bool((snap.get("profile") or {}).get("experience"))
+
+
+_AA_NO_PROFILE = {"error": "Add your resume first, then SponsorJobs can build these for you.",
+                  "action": "add_resume"}
+
+
+@app.get("/api/autoapply/preview")
+@_guard
+def autoapply_preview():
+    """What a run would draw from, before it runs: how many roles match (not already queued
+    or applied), how many of those the shipped submission policy can submit automatically,
+    the saved search in use, and the fit floor. No JD is fetched and nothing is tailored."""
+    from autoapply.picker import reach, taken_index, taken_status
+    from submit.policy import submission_policy
+    a = request.args
+    focus = {"titles": _split(a.get("titles")), "locations": _split(a.get("locations")),
+             "sponsor_only": a.get("sponsor_only") in ("1", "true", "on")}
+    rows, meta = _aa_candidates(focus)
+    idx = taken_index(_aa_records())
+    fresh = [j for j in rows if taken_status(j, idx) is None]
+    return jsonify({"ok": True, "has_profile": _aa_has_profile(), "matches": len(fresh),
+                    "taken": len(rows) - len(fresh), "reach": reach(fresh, submission_policy),
+                    "search": meta["search"], "board": meta["board"], "min_fit": _aa_min_fit()})
+
+
+@app.post("/api/autoapply/run")
+@_guard
+def autoapply_run():
+    """Auto-apply (the paid autopilot, CLAUDE.md §4c): tailor the best-fit roles from the jobs
+    the person sees on Jobs (saved jobs first), from the SAVED profile, no per-role input, and
+    queue each package for review. Skips roles that already have a package and roles below the
+    person's fit floor. Submission stays on the existing guarded path (verified allowlist +
+    opt-in), so this run never submits on its own; it fills the review queue."""
+    from autoapply.picker import pick, reach, skip_summary
+    from submit.policy import submission_policy
+    body = request.json or {}
+    count = max(1, min(int(body.get("count") or 5), 10))
+    if not _aa_has_profile():
+        return jsonify(_AA_NO_PROFILE), 400
+    min_fit = _aa_min_fit(body)
+
+    rows, meta = _aa_candidates(body.get("focus") or {})
+    focus_meta = {"titles": meta["titles"], "locations": meta["locations"],
+                  "sponsor_only": meta["sponsor_only"]}
+    if not meta["board"] and not meta["saved"]:
+        return jsonify({"error": "The job board is still loading. Open Jobs, wait for roles to "
+                                 "appear, then try again.", "action": "open_jobs"}), 400
+    if not rows:
+        return jsonify({"error": "No roles match today's focus or your saved search. Broaden "
+                                 "or clear it.", "focus": focus_meta}), 400
+    res = pick(rows, records=_aa_records(), score_fn=_aa_fit, count=count, min_fit=min_fit)
+    summary = skip_summary(res, min_fit)
+    passed = {k: res[k] for k in ("below", "unscored", "queued", "applied", "scored")}
+    jobs = res["jobs"]
+    if not jobs:
+        if not res["available"]:
+            err = "Every matching role already has a package. Broaden your focus for new ones."
+        else:
+            err = (f"None of the {res['scored']} best-fit roles we checked reach your fit floor "
+                   f"of {min_fit}%. Lower the floor or broaden your focus.")
+        return jsonify({"error": err, "summary": summary, "passed": passed, "min_fit": min_fit,
+                        "focus": focus_meta}), 400
 
     llm = _make_llm()   # real model; clear error if the key/connectivity is missing
     tex, tname = _load_template(None)
@@ -9711,7 +9887,11 @@ def autoapply_run():
             skipped.append({"role": job.get("title", "a role"), "reason": str(exc)[:80]})
             continue
         if out.get("ok"):
-            tailored.append({k: out[k] for k in ("id", "role", "company", "coverage")})
+            item = {k: out[k] for k in ("id", "role", "company", "coverage")}
+            item["fit"] = job.get("fit")
+            _aa_keep_fit(out["id"], job.get("fit"))
+            item["lane"] = submission_policy(job.get("url") or "")
+            tailored.append(item)
         else:
             skipped.append({"role": out.get("role") or job.get("title", "a role"),
                             "reason": out.get("reason") or "held for your review"})
@@ -9721,9 +9901,287 @@ def autoapply_run():
         pass
     return jsonify({"ok": True, "queued": len(tailored), "tailored": tailored,
                     "skipped": skipped, "considered": len(jobs), "halted": halted,
-                    "matched": len(picked),
-                    "focus": {"titles": titles, "locations": locations,
-                              "sponsor_only": sponsor_only}})
+                    "matched": res["available"], "min_fit": min_fit,
+                    "passed": passed, "summary": summary,
+                    "reach": reach([j for j in rows], submission_policy),
+                    "search": meta["search"], "focus": focus_meta})
+
+
+# ============================================================================ Auto-apply page
+# One page for the whole loop (tailor-ux 2026-10): four stage tiles (To review, Waiting on you,
+# Submitted, Needs you) from submit/stages.py, a row list per tile, an Up next preview of the
+# next run, a Today panel, and a detail drawer per application. The old Review page folded in
+# here; its endpoints (/api/review/*) stay and this page calls them.
+
+def _aa_keep_fit(rid, fit) -> None:
+    """Keep the run's fit percent on the record, so the page shows the same match the run used."""
+    if fit is None:
+        return
+    recs = _records()
+    try:
+        recs.merge_data(int(rid), {"fit": int(fit)})
+    except Exception:   # noqa: BLE001 - the package is saved; the number is a nicety
+        pass
+    finally:
+        recs.close()
+
+
+_ATS_NAMES = {"greenhouse": "Greenhouse", "lever": "Lever", "ashbyhq": "Ashby", "ashby": "Ashby",
+              "workable": "Workable", "smartrecruiters": "SmartRecruiters", "recruitee": "Recruitee",
+              "myworkdayjobs": "Workday", "workday": "Workday", "linkedin": "LinkedIn",
+              "icims": "iCIMS", "jobvite": "Jobvite", "bamboohr": "BambooHR", "taleo": "Taleo"}
+
+
+def _aa_site(url: str) -> str:
+    """The site an application opens on, by name ("Greenhouse"), else its host."""
+    from submit.policy import _host
+    host = _host(url or "")
+    if not host:
+        return ""
+    for key, name in _ATS_NAMES.items():
+        if key in host:
+            return name
+    return host[4:] if host.startswith("www.") else host
+
+
+def _aa_job_index(rows: list[dict]) -> dict[str, dict]:
+    """{source_id: stored job} for the records' jobs, read once per request."""
+    sids = []
+    for r in rows:
+        sid = str((_record_data(r).get("source_job") or {}).get("source_id") or "").strip()
+        if sid:
+            sids.append(sid)
+    if not sids:
+        return {}
+    out: dict[str, dict] = {}
+    w = _watchlist()
+    try:
+        for sid in dict.fromkeys(sids):
+            j = w.get_job(sid)
+            if j:
+                out[sid] = j
+    except Exception:   # noqa: BLE001 - the row still has its record's own fields
+        pass
+    finally:
+        w.close()
+    return out
+
+
+def _aa_when(data: dict, rec: dict) -> str:
+    """When an application last moved, for ordering a tile (newest first)."""
+    sub = data.get("submission") if isinstance(data.get("submission"), dict) else {}
+    return str(data.get("applied_at") or sub.get("at") or data.get("approved_at")
+               or rec.get("created_at") or "")
+
+
+def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
+    """One application as the Auto-apply page lists it. Only facts the record or its stored
+    job hold; anything unknown is left empty, never guessed."""
+    from submit import classify_record
+    from submit.stages import app_stage, row_action, tile_of
+    st = app_stage(data)
+    tile = tile_of(data) or ""
+    sj = data.get("source_job") or {}
+    job = jobs.get(str(sj.get("source_id") or "").strip()) or {}
+    company = rec.get("company") or job.get("company") or ""
+    location = str(sj.get("location") or job.get("location") or "")
+    tagged = _sponsors().tag_jobs([{"company": company, "location": location or "United States"}])[0]
+    stance = {}
+    jd = job.get("jd_text") or ""
+    if jd:
+        from sourcing.adstance import UNKNOWN, ad_stance
+        a = ad_stance(jd)
+        if a["stance"] != UNKNOWN:
+            stance = {"ad_stance": a["stance"], "ad_sentence": a["sentence"]}
+    sub = data.get("submission") if isinstance(data.get("submission"), dict) else {}
+    cov = data.get("coverage") or {}
+    fit = data.get("fit")
+    match = fit if isinstance(fit, (int, float)) else (
+        cov.get("ratio") if cov.get("ratio") is not None else round(rec.get("coverage") or 0))
+    url = (sj.get("url") or job.get("url") or "")
+    plan = classify_record(data)
+    return {
+        "id": rec["id"], "role": (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0],
+        "company": company, "location": location,
+        "visa": tagged.get("visa") or [], "sponsorship_stated": job.get("sponsorship_stated"),
+        **stance,
+        "match": round(match) if match is not None else None,
+        "tile": tile, "stage": st["stage"], "stage_label": st["label"], "stage_detail": st["detail"],
+        "reason": st["reason"], "how": st["how"], "queued": bool(data.get("queued")),
+        "action": row_action(tile, st["reason"]),
+        "lane": plan["tier"],
+        "apply_url": _application_url(url, company) if url else "",
+        "posting_url": url,
+        "site": _aa_site(url),
+        "saved": bool(job.get("saved")),
+        "cv_path": str(WORKDIR / f"cv-{rec['id']}.pdf") if (WORKDIR / f"cv-{rec['id']}.pdf").exists() else "",
+        "created_at": rec.get("created_at") or "",
+        "approved_at": data.get("approved_at") or "",
+        "submitted_at": data.get("applied_at") or sub.get("at") or "",
+        "when": _aa_when(data, rec),
+    }
+
+
+def _aa_week_start():
+    from datetime import date, timedelta
+    today = date.today()
+    return (today - timedelta(days=today.weekday())).isoformat()
+
+
+@app.get("/api/autoapply/board")
+@_guard
+def autoapply_board():
+    """Everything the Auto-apply page shows except Up next: the four tiles with their counts
+    and rows, the Needs you reasons, this week's submissions, today's auto-submit count against
+    the daily cap, recent submissions, and which connections exist. Read-only."""
+    from submit.stages import TILES, default_tile, needs_summary
+    recs = _records()
+    try:
+        rows = recs.list(limit=10000)
+    finally:
+        recs.close()
+    jobs = _aa_job_index(rows)
+    tiles: dict[str, list[dict]] = {t: [] for t in TILES}
+    for r in rows:
+        data = _record_data(r)
+        item = _aa_row(r, data, jobs)
+        if item["tile"] in tiles:
+            tiles[item["tile"]].append(item)
+    for t in TILES:
+        tiles[t].sort(key=lambda x: x["when"], reverse=True)
+    week = _aa_week_start()
+    sent_week = [x for x in tiles["submitted"] if str(x["submitted_at"])[:10] >= week]
+    counts = {t: len(tiles[t]) for t in TILES}
+    ident = (_saved_full_profile().get("identity") or {})
+    p = _prefs()
+    ts, today = _now_ts_today()
+    return jsonify({
+        "ok": True,
+        "has_profile": _aa_has_profile(),
+        "counts": counts,
+        "default": default_tile(counts),
+        "tiles": tiles,
+        "week": {"sent": len(sent_week), "for_you": sum(1 for x in sent_week if x["how"] == "auto")},
+        "needs_summary": needs_summary([x["reason"] for x in tiles["needs"]]),
+        "missing_contact": [k for k in ("name", "email") if not ident.get(k)],
+        "today": {**_rate_limiter().status(ts, today), "autonomous": _autonomous_on()},
+        "recent": tiles["submitted"][:5],
+        "telegram": _active_channel() is not None,
+        "approve_all": bool(p.get("approve_all")),
+        "min_fit": _aa_min_fit(),
+    })
+
+
+def _pdf_pages(path) -> int | None:
+    try:
+        import pypdfium2 as pdfium
+        doc = pdfium.PdfDocument(str(path))
+        try:
+            return len(doc)
+        finally:
+            doc.close()
+    except Exception:   # noqa: BLE001 - unknown page count is left out, not guessed
+        return None
+
+
+@app.get("/api/autoapply/item/<int:rid>")
+@_guard
+def autoapply_item(rid: int):
+    """One application for the Auto-apply drawer: the row, plus what will be sent (the resume
+    with its matched job terms, the cover letter, the screening answers), the job's type, pay
+    and posting date when the stored job has them, and the timeline from the record's own
+    timestamps. Nothing here is estimated."""
+    rec = _get_record(rid)
+    if not rec:
+        return jsonify({"error": "That application was not found."}), 404
+    data = _record_data(rec)
+    jobs = _aa_job_index([rec])
+    row = _aa_row(rec, data, jobs)
+    job = jobs.get(str((data.get("source_job") or {}).get("source_id") or "").strip()) or {}
+    cov = data.get("coverage") or {}
+    present = [str(t) for t in (cov.get("present") or [])]
+    missing = [str(t) for t in (cov.get("missing") or [])] + \
+              [str(t) for t in (cov.get("missing_supported") or [])]
+    pdf = WORKDIR / f"cv-{rid}.pdf"
+    letter = (data.get("cover_letter") or "").strip()
+    remote = (job.get("remote") or "").lower()
+    sub = data.get("submission") if isinstance(data.get("submission"), dict) else {}
+    return jsonify({
+        **row,
+        "type": {"remote": "Remote", "hybrid": "Hybrid", "onsite": "On-site"}.get(remote, ""),
+        "pay": (job.get("salary") or "").strip(),
+        "posted_at": str(job.get("posted_at") or "")[:10],
+        "resume": {"exists": pdf.exists(), "pages": _pdf_pages(pdf) if pdf.exists() else None,
+                   "url": f"/api/cv.pdf?job=cv-{rid}" if pdf.exists() else "",
+                   "path": str(pdf) if pdf.exists() else "",
+                   "terms": present, "missing": missing,
+                   "terms_total": len(present) + len(missing)},
+        "letter": {"words": len(letter.split()), "text": letter[:700],
+                   "url": f"/api/record/{rid}/cover_letter.pdf" if letter else ""},
+        "screening": [{"q": str(qa.get("question") or ""), "a": str(qa.get("answer") or ""),
+                       "knockout": bool(qa.get("knockout"))}
+                      for qa in (data.get("screening") or []) if isinstance(qa, dict)],
+        "message": sub.get("message") or "",
+        "picked": bool((data.get("source_job") or {}).get("source_id")),
+    })
+
+
+_AA_NEXT_CACHE: dict = {}
+
+
+@app.get("/api/autoapply/upnext")
+@_guard
+def autoapply_upnext():
+    """The roles the next run would tailor, in the order it would take them: saved jobs first,
+    then the best matches at or above the fit floor, skipping roles that already have a package
+    and roles the person skipped here. The same picker as /api/autoapply/run, with a smaller
+    scoring budget so the page stays quick. Nothing is tailored."""
+    from autoapply.picker import pick
+    a = request.args
+    count = max(1, min(int(a.get("count") or 5), 10))
+    focus = {"titles": _split(a.get("titles")), "locations": _split(a.get("locations")),
+             "sponsor_only": a.get("sponsor_only") in ("1", "true", "on")}
+    min_fit = _aa_min_fit()
+    records = _aa_records()
+    key = (count, tuple(focus["titles"]), tuple(focus["locations"]), focus["sponsor_only"],
+           min_fit, len(records), tuple(_prefs().get("aa_skip") or []))
+    hit = _AA_NEXT_CACHE.get("v")
+    if hit and hit[0] == key and time.time() - hit[1] < 120:
+        return jsonify(hit[2])
+    rows, meta = _aa_candidates(focus)
+    res = pick(rows, records=records, score_fn=_aa_fit, count=count, min_fit=min_fit,
+               max_scored=max(12, count * 3), time_budget=8.0)
+    rows_out = []
+    for j in res["jobs"]:
+        rows_out.append({
+            "source_id": j.get("source_id") or "", "title": j.get("title") or "",
+            "company": j.get("company") or "", "location": j.get("location") or "",
+            "visa": j.get("visa") or [], "ad_stance": j.get("ad_stance"),
+            "ad_sentence": j.get("ad_sentence"), "sponsorship_stated": j.get("sponsorship_stated"),
+            "fit": j.get("fit"), "saved": bool(j.get("saved")), "url": j.get("url") or "",
+        })
+    out = {"ok": True, "jobs": rows_out, "count": count, "min_fit": min_fit,
+           "matches": res["available"], "has_profile": _aa_has_profile(),
+           "board": meta["board"], "search": meta["search"]}
+    _AA_NEXT_CACHE["v"] = (key, time.time(), out)
+    return jsonify(out)
+
+
+@app.post("/api/autoapply/skip")
+@_guard
+def autoapply_skip():
+    """Take one role out of the next Auto-apply run (Up next's x). Body {source_id, undo?}.
+    The role stays on Jobs; only the run passes it over."""
+    b = request.json or {}
+    sid = str(b.get("source_id") or "").strip()
+    if not sid:
+        return jsonify({"error": "Which role? source_id is required."}), 400
+    cur = [x for x in (_prefs().get("aa_skip") or []) if x != sid]
+    if not b.get("undo"):
+        cur.append(sid)
+    _set_prefs({"aa_skip": cur})
+    _AA_NEXT_CACHE.pop("v", None)
+    return jsonify({"ok": True, "skipped": len(cur)})
 
 
 # ============================================================================ tracker board
@@ -9750,6 +10208,18 @@ def _board_key(rec: dict) -> tuple[str, dict | None]:
                  "title": role, "url": sj.get("url") or "", "posted_at": (rec.get("created_at") or "")[:10]}
 
 
+def _record_board_stage(data: dict) -> str:
+    """The board column one record belongs in: its funnel stage, except that a tailored
+    record the person approved (not submitted yet, or handed back after an auto attempt)
+    sits in Approved rather than Saved."""
+    from submit.stages import app_stage
+    from submit.tracker import effective_stage
+    rstage = effective_stage(data)
+    if rstage == "saved" and app_stage(data)["stage"] in ("approved", "failed"):
+        return "approved"
+    return rstage
+
+
 def _board_reconcile(w) -> dict[str, list[dict]]:
     """Pull every tailored record onto the board and return {source_id: [records]}.
 
@@ -9759,7 +10229,6 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
     and logs why. The board is never moved backwards from here: once the person drags a card, the
     board is the source of truth and the move patches the records instead."""
     from sourcing.board import RANK, STAGES
-    from submit.tracker import effective_stage
     recs = _records()
     try:
         rows = recs.list(limit=10000)
@@ -9769,12 +10238,12 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
     for r in rows:
         sid, snap = _board_key(r)
         data = _record_data(r)
-        rstage = effective_stage(data)
+        rstage = _record_board_stage(data)
         if rstage not in STAGES:
             rstage = "saved"
         applied_at = data.get("applied_at") or None
         cur = w.stage_of(sid)
-        note = "Application submitted" if rstage == "applied" else "Tailored a resume"
+        note = {"applied": "Application submitted", "approved": "Approved"}.get(rstage, "Tailored a resume")
         if cur is None:
             existing = w.get_job(sid)
             w.track_job(sid, rstage, note=note, now=(r.get("created_at") or None) if rstage == "saved" else None,
@@ -9813,15 +10282,38 @@ def _board_patch_records(records: list[dict], stage: str) -> None:
     stage, so those records are left alone)."""
     from submit.tracker import STAGES as REC_STAGES
     from submit.tracker import stage_patch
+    if stage == "approved" and records:
+        # Dragged to Approved: the same as approving it in Review, minus any submit. A record
+        # already approved or past it is left alone (the board never un-submits a record).
+        from submit.stages import app_stage, approved_patch
+        recs = _records()
+        try:
+            for r in records:
+                data = _record_data(r)
+                if app_stage(data)["stage"] == "queued":
+                    recs.merge_data(r["id"], approved_patch())
+                elif data.get("status") == "applied":
+                    recs.merge_data(r["id"], {**stage_patch(data, "saved", _now_iso()),
+                                              **approved_patch()})
+        finally:
+            recs.close()
+        return
     if stage not in REC_STAGES or not records:
         return
     recs = _records()
     try:
         for r in records:
             data = _record_data(r)
-            if data.get("stage") == stage or (stage == "applied" and data.get("status") == "applied"):
+            if stage == "saved":
+                # Already back before review: nothing approved or sent to undo.
+                if (data.get("status") or "ready") == "ready" and data.get("stage") in (None, "saved"):
+                    continue
+            elif data.get("stage") == stage or (stage == "applied" and data.get("status") == "applied"):
                 continue
-            recs.merge_data(r["id"], stage_patch(data, stage, _now_iso()))
+            patch = stage_patch(data, stage, _now_iso())
+            if stage == "saved":
+                patch.update({"submission": None, "queued": False})   # back before review
+            recs.merge_data(r["id"], patch)
     finally:
         recs.close()
 
@@ -9834,7 +10326,12 @@ def _board_card(j: dict, records: list[dict], today) -> dict:
     if latest:
         data = _record_data(latest)
         job = f"cv-{latest['id']}"
+        from submit.stages import app_stage
+        st = app_stage(data)
         rec = {"id": latest["id"], "role": latest.get("role") or "",
+               # How it was sent, or why it came back: "Submitted for you", "Needs you".
+               "state": st["stage"], "state_label": st["label"], "state_detail": st["detail"],
+               "how": st["how"],
                "pdf": f"/api/cv.pdf?job={job}" if (WORKDIR / f"{job}.pdf").exists() else None,
                "cover_letter": (f"/api/record/{latest['id']}/cover_letter.pdf"
                                 if (data.get("cover_letter") or "").strip() else None),

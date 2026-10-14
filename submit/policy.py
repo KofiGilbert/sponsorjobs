@@ -58,3 +58,24 @@ def fill_permitted(url: str) -> bool:
     Prohibited sites are the honest hard line (CLAUDE.md section 7). Unknown/unparseable URL -> no."""
     host = _host(url)
     return bool(host) and not _matches(host, PROHIBITED_HOSTS)
+
+
+def apply_decision(start_url: str, page_url: str = "") -> dict:
+    """What the in-app Apply / Fill may do on a page. The ONE place the desktop shell asks
+    before it touches a site's own submit button (shell-electron/main.js, assist:apply).
+
+    - ``fill``: may Tailor fill the form at all (False on LinkedIn and the other prohibited
+      boards: the person fills those by hand).
+    - ``click_submit``: may Tailor click the site's final submit. True ONLY when BOTH the
+      application link the person chose and the page actually open now are on the verified
+      AUTO allowlist. A redirect from an allowlisted link to another host (a careers site
+      handing off to its own ATS) therefore drops to assisted. Everywhere else the shell fills,
+      stops, and points at the submit button for the person to click (CLAUDE.md section 7).
+
+    Conservative by construction: an empty or unparseable URL is never auto."""
+    urls = [u for u in (start_url, page_url) if (u or "").strip()]
+    if not urls:
+        return {"fill": False, "click_submit": False, "lane": "assisted"}
+    fill = all(fill_permitted(u) for u in urls)
+    click = fill and all(submission_policy(u) == "auto" for u in urls)
+    return {"fill": fill, "click_submit": click, "lane": "auto" if click else "assisted"}

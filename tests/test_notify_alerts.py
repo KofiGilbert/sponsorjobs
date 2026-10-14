@@ -377,8 +377,8 @@ def test_away_digest_text_and_timing():
                                    sub={"status": "auto_submitted", "at": t.isoformat()})]
     act = away_activity(recs, since, lambda u: "Recruitee" if "recruitee" in u else "")
     assert digest_text(act) == ("While you were away: tailored 3, submitted 1 (Recruitee), "
-                                "2 waiting for your click. Open SponsorJobs and go to the review "
-                                "queue to finish them.")
+                                "2 waiting for your click. Open SponsorJobs and go to "
+                                "Auto-apply to finish them.")
     assert digest_due(act, None, t + timedelta(minutes=2)) == "wait"
     assert digest_due(act, None, t + timedelta(minutes=20)) == "send"
     assert digest_due(act, t + timedelta(minutes=5), t + timedelta(minutes=20)) == "reset"

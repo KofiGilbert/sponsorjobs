@@ -60,10 +60,10 @@ class FakeActions:
 
 def _items():
     return [{"id": 12, "role": "SWE", "company": "Acme", "lane": "auto",
-             "lane_label": "Auto", "filled": {"name": True, "email": True, "phone": False},
+             "lane_label": "Auto", "missing_contact": [],
              "screening_count": 2, "has_cover_letter": True, "coverage": 71, "cv_path": "/tmp/cv-12.pdf"},
             {"id": 14, "role": "Data", "company": "Beta", "lane": "assisted",
-             "lane_label": "Assisted", "filled": {"name": True, "email": True, "phone": True},
+             "lane_label": "Assisted", "missing_contact": ["email"],
              "screening_count": 0, "has_cover_letter": False, "coverage": 55, "cv_path": ""}]
 
 
@@ -74,11 +74,12 @@ def _bot(updates=None, chat_id="99"):
 
 # --- caption / summary formatting -------------------------------------------- #
 
-def test_item_caption_lists_company_role_and_filled():
+def test_item_caption_lists_company_role_and_package():
     cap = item_caption(_items()[0])
     assert "Acme" in cap and "SWE" in cap
-    assert "name" in cap and "email" in cap and "2 screening" in cap
-    assert "cover letter" in cap and "71%" in cap
+    assert "2 screening" in cap and "cover letter" in cap and "71%" in cap
+    assert "Filled" not in cap                    # nothing is filled at review time
+    assert "Add to your profile first: email" in item_caption(_items()[1])
 
 
 def test_batch_summary_lists_each():

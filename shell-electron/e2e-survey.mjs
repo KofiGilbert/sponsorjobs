@@ -37,7 +37,7 @@ console.log(`surveying ${jobs.length} queued applications (fill only, nothing su
 const rows = [];
 for (const job of jobs) {
   const r = await win.evaluate(
-    async ({ url }) => await window.tailorShell.assistFill(url), { url: job.url });
+    async ({ url }) => await window.tailorShell.assistApply({ url, submit: false }), { url: job.url });
   const host = new URL(job.url).host;
   const verdict = !r ? "no report"
     : r.ok === false ? `BLOCKED (${r.blocker || r.reason})`

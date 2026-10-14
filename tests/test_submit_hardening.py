@@ -12,7 +12,9 @@ user's behalf when it shouldn't, the worst failure mode in the product:
 from __future__ import annotations
 
 import json
+import tempfile
 from datetime import datetime
+from pathlib import Path
 
 import ui.app as app
 from submit import classify_record, submit_record  # noqa: F401 (submit_record used below)
@@ -22,9 +24,20 @@ from submit.rate_limit import RateLimiter
 from ui.records import CVRecords
 
 
+_CV = Path(tempfile.mkdtemp()) / "cv-1.pdf"
+_CV.write_bytes(b"%PDF-1.4 test resume")
+
+
 def _record():
     return {"profile": {"identity": {"name": "Sam Rivera", "email": "sam@x.com", "phone": "1"}},
-            "cover_letter": "Hi", "screening": [{"question": "Q", "answer": "A"}]}
+            "cover_letter": "Hi", "screening": [{"question": "Q", "answer": "A"}],
+            "cv_pdf_path": str(_CV)}
+
+
+def _offer(status=200, questions=()):
+    """A stand-in for the public offer JSON lookup (never the network)."""
+    return lambda url: (status, json.dumps({"offer": {"slug": "eng", "status": "published",
+                                                      "open_questions": list(questions)}}))
 
 
 # ============================ bug 3: rate store fails closed / atomic ============================
@@ -92,13 +105,14 @@ def test_assisted_url_never_fires_a_supplied_driver():
 def test_recruitee_payload_carries_no_secret():
     sent = {}
 
-    def http(url, payload):
-        sent["payload"] = payload
+    def http(url, form):
+        sent["form"] = form
         return 201, "{}"
 
-    recruitee_submit("https://acme.recruitee.com/o/eng", _record(), http=http)
-    keys = set(sent["payload"]["candidate"].keys())
-    assert keys <= {"name", "email", "phone", "cover_letter", "open_question_answers"}
+    recruitee_submit("https://acme.recruitee.com/o/eng", _record(), http=http, get=_offer())
+    names = [n for n, _ in sent["form"]["fields"]] + [f[0] for f in sent["form"]["files"]]
+    keys = {n.split("[")[1].rstrip("]") for n in names}
+    assert keys <= {"name", "email", "phone", "cover_letter", "open_question_answers_attributes", "cv"}
     for forbidden in ("api_key", "apikey", "token", "secret", "authorization", "key"):
         assert forbidden not in keys
 
@@ -132,7 +146,7 @@ def test_default_transport_sends_no_auth_header(monkeypatch):
 def test_non_2xx_status_aborts_to_assisted():
     # The generic non-2xx fall-through (e.g. 500/429) must abort to assisted, not fake success.
     for status in (500, 429, 400):
-        r = recruitee_submit("https://acme.recruitee.com/o/eng", _record(),
+        r = recruitee_submit("https://acme.recruitee.com/o/eng", _record(), get=_offer(),
                              http=lambda u, p, s=status: (s, "server error"))
         assert r["ok"] is False and r["needs_assist"] is True and r["posted"] is True
 

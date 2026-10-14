@@ -76,6 +76,7 @@ def submit_record(record_data: dict, driver=None, now: str = "") -> dict:
         res = driver(url, record_data) or {}
     except Exception as exc:   # a driver failure must never crash the queue
         return {"ok": False, "tier": tier, "status": "auto_failed", "posted": True,
+                "reason": "site_error",
                 "message": f"Auto-submit tried but failed: {exc}", "submitted_at": None}
     # `posted`: did the driver actually hit the site's API? The caller advances the min-gap
     # spacing clock on any posted attempt (even a failure), so failures can't hammer the API.
@@ -84,12 +85,14 @@ def submit_record(record_data: dict, driver=None, now: str = "") -> dict:
         # A captcha / auth wall — the site is telling us it doesn't want a bot. Drop to assisted.
         out = _assisted(res.get("detail") or "Site needs a human step, so fill it and click submit.")
         out["posted"] = posted
+        out["reason"] = res.get("reason") or "needs_signin"   # why the auto lane handed it back
         return out
     if res.get("ok"):
         return {"ok": True, "tier": tier, "status": "auto_submitted", "posted": posted,
                 "message": res.get("detail") or "Submitted automatically.",
                 "submitted_at": now or None}
     return {"ok": False, "tier": tier, "status": "auto_failed", "posted": posted,
+            "reason": res.get("reason") or "site_error",
             "message": res.get("detail") or "Auto-submit did not complete.",
             "submitted_at": None}
 
