@@ -2055,6 +2055,19 @@ body.panel-open .app {
 }
 .home-prompt-foot { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
 .home-fade { transition: opacity .25s ease; }
+/* Home: the heading and prompt stay fixed; only the role list scrolls beneath them. */
+#view-dashboard.is-active { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+#view-dashboard .home-head { width: 100%; box-sizing: border-box; flex: 0 0 auto; }
+#view-dashboard .home-center { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; }
+.home-roles { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.home-roles-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  margin: 0 -24px; padding: 6px 24px 40px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 28px), transparent 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 28px), transparent 100%);
+}
+.home-roles-foot { display: flex; justify-content: center; padding: 18px 0 4px; }
+.home-roles-foot[hidden] { display: none; }
 .home-typing .home-fade { opacity: .07; pointer-events: none; }
 
 /* ---------------- slim, quiet scrollbars (desktop-app style) ----------------
