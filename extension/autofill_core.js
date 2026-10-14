@@ -852,6 +852,7 @@
     const t = (el.type || "text").toLowerCase();
     if (t === "file") return "file";
     if (t === "checkbox") return "checkbox";
+    if (t === "radio") return "radio";          // a native radio group: the plan's answer picks an option
     return ["email", "tel", "url", "date", "number"].includes(t) ? t : "text";
   }
 

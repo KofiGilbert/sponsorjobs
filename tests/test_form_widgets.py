@@ -274,3 +274,27 @@ def test_shell_frame_and_page_code_never_clicks():
     main = (ROOT / "shell-electron" / "main.js").read_text(encoding="utf-8")
     watch = main[main.index("function armPageWatch"):main.index("function disarmPageWatch")]
     assert "submitScript" not in watch and ".click(" not in watch
+
+
+# ------------------------------------------------------------------ native radios via the plan
+@pytest.mark.parametrize("fn", ["applyOps", "applyOpsAsync"])
+def test_planned_answer_reaches_a_native_radio_group(tmp_path, fn):
+    """A plan op for a radio group ("select" with the option's text) picks that option. It used to
+    fall through fieldType() as a text box and never reach pickRadio."""
+    js = ("(async () => { const T = window.TailorAutofill; const f = T.extractForm({onlyEmpty: true});"
+          " const ref = (lab) => f.find(x => x.label.startsWith(lab)).ref;"
+          f" const rep = await T.{fn}([{{ref: ref('What is your highest'), op: 'select', text: \"Master's degree\"}},"
+          " {ref: ref('Are you willing'), op: 'select', text: 'Yes'}]);"
+          " return {rep, types: f.map(x => x.type)}; })()")
+    r = run(tmp_path, "native_radio.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "out", "js": js},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "again", "js": js.replace("onlyEmpty: true", "onlyEmpty: false")},
+        {"do": "eval", "as": "values2", "js": "window.fxValues()"},
+    ])
+    assert r["out"]["types"] == ["radio", "radio"]
+    assert r["out"]["rep"]["filled"] == 2 and r["out"]["rep"]["skipped"] == 0
+    assert r["values"] == {"edu": "ms", "onsite": "y"}
+    assert r["again"]["rep"]["filled"] == 0                    # an answered group is never changed
+    assert r["values2"] == r["values"]

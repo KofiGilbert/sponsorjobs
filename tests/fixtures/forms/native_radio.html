@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (native radio fixture)</title>
+<link rel="stylesheet" href="style.css"></head>
+<body>
+<form onsubmit="return false">
+  <fieldset><legend>What is your highest level of education?</legend>
+    <label><input type="radio" name="edu" value="hs"> High school</label>
+    <label><input type="radio" name="edu" value="ba"> Bachelor's degree</label>
+    <label><input type="radio" name="edu" value="ms"> Master's degree</label>
+  </fieldset>
+  <fieldset><legend>Are you willing to work on site?</legend>
+    <label><input type="radio" name="onsite" value="y"> Yes</label>
+    <label><input type="radio" name="onsite" value="n"> No</label>
+  </fieldset>
+</form>
+<script>
+  window.fxValues = () => ({
+    edu: (document.querySelector("input[name=edu]:checked") || {}).value || null,
+    onsite: (document.querySelector("input[name=onsite]:checked") || {}).value || null });
+</script>
+</body></html>
