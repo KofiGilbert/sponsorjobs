@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>iCIMS-style application (inner frame)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script></head>
+<body>
+<div id="form-area">
+<form id="iCIMS_ApplicantProfile" onsubmit="return false">
+  <div class="field"><label for="PersonProfileFields.FirstName">First Name</label><input type="text" id="PersonProfileFields.FirstName"></div>
+  <div class="field"><label for="PersonProfileFields.LastName">Last Name</label><input type="text" id="PersonProfileFields.LastName"></div>
+  <div class="field"><label for="PersonProfileFields.Email">Email</label><input type="email" id="PersonProfileFields.Email"></div>
+  <div class="field"><label for="PersonProfileFields.Phone">Phone Number</label><input type="tel" id="PersonProfileFields.Phone"></div>
+  <div class="field"><label for="resume_upload">Resume</label><input type="file" id="resume_upload" accept=".pdf,.doc,.docx"></div>
+  <div id="w"></div>
+  <button type="button" id="icims-submit">Submit</button>
+</form>
+</div>
+<script>
+  window.fx = { auth: window.FixtureWidgets.ReactSelect(document.getElementById("w"),
+    { id: "auth-q", label: "Are you legally authorized to work in the United States?", options: ["Yes", "No"] }) };
+  document.getElementById("icims-submit").addEventListener("click", () => {
+    document.getElementById("form-area").innerHTML = "<h2>Thank you for applying!</h2><p>Your application has been submitted.</p>";
+  });
+  window.fxValues = () => {
+    const v = (id) => { const e = document.getElementById(id); return e ? e.value : null; };
+    const f = document.getElementById("resume_upload");
+    return { first: v("PersonProfileFields.FirstName"), last: v("PersonProfileFields.LastName"),
+             email: v("PersonProfileFields.Email"), phone: v("PersonProfileFields.Phone"),
+             auth: window.fx.auth.value, resume: f && f.files.length ? f.files[0].name : "" };
+  };
+</script>
+</body></html>

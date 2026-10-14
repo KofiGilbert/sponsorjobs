@@ -1,0 +1,49 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (shadow DOM fixture)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script></head>
+<body>
+<h1>Data Analyst</h1>
+<sj-apply-form></sj-apply-form>
+<sj-closed-box></sj-closed-box>
+<script>
+  // An application form drawn by web components: an OPEN shadow root holding the contact
+  // fields, a nested component with its own open root (email), and a react-select style
+  // dropdown; plus a CLOSED shadow root, which no script can see (must stay untouched).
+  class Nested extends HTMLElement {
+    connectedCallback() {
+      const r = this.attachShadow({ mode: "open" });
+      r.innerHTML = '<div class="field"><label for="em">Email address</label><input type="email" id="em"></div>';
+    }
+  }
+  customElements.define("sj-nested-email", Nested);
+  class Form extends HTMLElement {
+    connectedCallback() {
+      const r = this.attachShadow({ mode: "open" });
+      r.innerHTML = '<style>.field{margin:8px 0}</style>'
+        + '<div class="field"><label for="fn">First name</label><input type="text" id="fn"></div>'
+        + '<div class="field"><label for="ln">Last name</label><input type="text" id="ln"></div>'
+        + '<sj-nested-email></sj-nested-email>'
+        + '<div class="field"><label for="ph">Mobile phone</label><input type="tel" id="ph"></div>'
+        + '<div id="w"></div>';
+      window.fxShadow = { auth: window.FixtureWidgets.ReactSelect(r.getElementById("w"),
+        { id: "auth-q", label: "Are you legally authorized to work in the US?", options: ["Yes", "No"] }) };
+    }
+  }
+  customElements.define("sj-apply-form", Form);
+  class Closed extends HTMLElement {
+    connectedCallback() {
+      const r = this.attachShadow({ mode: "closed" });
+      r.innerHTML = '<label for="c">First name</label><input type="text" id="c">';
+      window.fxClosedInput = r.getElementById("c");
+    }
+  }
+  customElements.define("sj-closed-box", Closed);
+  window.fxValues = () => {
+    const r = document.querySelector("sj-apply-form").shadowRoot;
+    return { first: r.getElementById("fn").value, last: r.getElementById("ln").value,
+             email: r.querySelector("sj-nested-email").shadowRoot.getElementById("em").value,
+             phone: r.getElementById("ph").value, auth: window.fxShadow.auth.value,
+             closed: window.fxClosedInput.value };
+  };
+</script>
+</body></html>
