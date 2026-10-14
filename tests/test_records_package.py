@@ -64,15 +64,19 @@ def test_record_status_on_a_missing_id_is_a_clean_404(tmp_path, monkeypatch):
 
 
 def test_records_ready_is_the_apply_todo_with_url_and_lane(tmp_path, monkeypatch):
-    """The apply TO-DO lists only built-but-unsubmitted applications, with each one's
-    destination URL and submission lane (auto vs assisted)."""
+    """Ready to apply lists APPROVED applications not submitted yet (including an auto attempt
+    handed back as "Needs you"), with each one's destination URL and submission lane. Items
+    still to review, submitted, or skipped are not on it."""
     import ui.app as app
     monkeypatch.setattr(app, "DB_PATH", str(tmp_path / "r.db"))
     recs = CVRecords(app.DB_PATH)
     ready = recs.add("Backend", "Chan", 80, "", data={
-        "status": "ready", "source_job": {"url": "https://chan.recruitee.com/o/backend"}})
+        "status": "approved", "source_job": {"url": "https://chan.recruitee.com/o/backend"},
+        "submission": {"tier": "auto", "status": "failed", "reason": "form_blocker"}})
     assisted = recs.add("Data", "Acme", 70, "", data={
-        "status": "ready", "source_job": {"url": "https://boards.greenhouse.io/acme/jobs/1"}})
+        "status": "approved", "source_job": {"url": "https://boards.greenhouse.io/acme/jobs/1"}})
+    recs.add("New", "Delta", 65, "", data={   # still to review -> not on the to-do yet
+        "status": "ready", "source_job": {"url": "https://boards.greenhouse.io/delta/jobs/2"}})
     recs.add("FE", "Beta", 60, "", data={   # already applied -> not on the to-do
         "status": "applied", "source_job": {"url": "https://x"}})
     recs.add("SRE", "Gamma", 55, "", data={"status": "skipped"})   # skipped -> not on the to-do
@@ -80,10 +84,12 @@ def test_records_ready_is_the_apply_todo_with_url_and_lane(tmp_path, monkeypatch
 
     out = app.app.test_client().get("/api/records/ready").get_json()
     by_id = {x["id"]: x for x in out["ready"]}
-    assert set(by_id) == {ready, assisted} and out["count"] == 2   # applied/skipped excluded
+    assert set(by_id) == {ready, assisted} and out["count"] == 2
     assert by_id[ready]["lane"] == "auto"                          # recruitee.com is AUTO
     assert by_id[ready]["apply_url"] == "https://chan.recruitee.com/o/backend"
+    assert by_id[ready]["stage"] == "failed"                       # handed back: Needs you
     assert by_id[assisted]["lane"] == "assisted"                   # greenhouse needs employer key
+    assert by_id[assisted]["stage"] == "approved"
 
 
 def test_records_list_and_detail(tmp_path, monkeypatch):
