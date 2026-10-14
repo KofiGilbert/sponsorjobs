@@ -263,7 +263,7 @@ def matches_criteria(job: dict, criteria: dict) -> bool:
 def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail: int | None = None,
                       detail_budgets: dict[str, int] | None = None, sleep=time.sleep,
                       boards: list[dict] | None = None, time_budget: float | None = None,
-                      clock=time.monotonic) -> dict:
+                      clock=time.monotonic, include_aggregators: bool = True) -> dict:
     """Fetch every watched company's official feed, filter by criteria, and
     upsert matches. Returns a summary the UI can show. `detail_budgets` is the per-board
     description budget of each list-only ATS ({"workday": n, "smartrecruiters": n}; default: env
@@ -273,7 +273,8 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
     these watchlist rows (default: every active board); `time_budget` (seconds, by `clock`) stops
     the board pass once it is spent -- the aggregator pulls that follow are a handful of requests
     and still run. The summary's `boards_crawled` / `boards_total` / `stopped_early` say how far
-    it got."""
+    it got. `include_aggregators=False` runs the board pass only (sections 2-3b are skipped): the
+    feed build's second crawl shard leaves the aggregators to the first, so no API is hit twice."""
     criteria = store.get_criteria()
     fetched = matched = new_total = duplicates = 0
     budgets = dict(detail_budgets or {})
@@ -331,7 +332,7 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
     # The central feed crawls boards with NO title filter (every field a sponsor hires in) but
     # the keyword aggregators need search terms, so it names them separately.
     titles = [t for t in (criteria.get("aggregator_terms") or criteria.get("titles", [])) if t.strip()][:4]
-    if remote_pref != "onsite" and titles:
+    if include_aggregators and remote_pref != "onsite" and titles:
         for agg in (criteria.get("aggregators") or DEFAULT_AGGREGATORS):
             fn = AGGREGATORS.get(agg)
             if fn is None:
@@ -364,7 +365,7 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
     # that dump is off by default: FREEHIRE_GENERAL_BULK=1 turns it back on for a deployment
     # that wants the breadth and filters at serve time. The sponsor slice (3b) is the default.
     general_bulk = os.environ.get("FREEHIRE_GENERAL_BULK", "0") == "1"
-    if (aggs is None or "freehire" in aggs) and general_bulk:
+    if include_aggregators and (aggs is None or "freehire" in aggs) and general_bulk:
         try:
             fjobs = freehire_bulk(fetch=fetch)
             fetched += len(fjobs)
@@ -377,7 +378,7 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
         except Exception as exc:                         # never let one source kill the refresh
             errors.append({"company": "freehire", "error": str(exc)})
 
-    if aggs is None or "freehire" in aggs:
+    if include_aggregators and (aggs is None or "freehire" in aggs):
         # 3b) freehire SPONSOR slice: a second, smaller pull using freehire's own verified
         # visa_sponsorship filter, so the board reliably carries a healthy depth of roles whose
         # POSTING states sponsorship -- the ones our international-student users most want. The

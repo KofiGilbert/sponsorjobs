@@ -21,8 +21,10 @@ set; Adzuna's developer terms forbid redistribution without written consent, so 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import sqlite3
 import sys
 import threading
 import time
@@ -43,6 +45,54 @@ DEFAULT_INCLUDE = "jsearch"
 DEFAULT_CRAWL_MINUTES = 140
 CURSOR_FILE = "crawl_cursor.json"     # where the next run resumes in the board list, under --data
 CAREERSITE_CURSOR_FILE = "careersite_cursor.json"   # the same for the career-site table
+# Crawl shards (2026-10-13): the workflow splits the board list across parallel jobs, each crawling
+# its own slice into a copy of the shared DB, then ONE merge job folds every shard's changes back
+# into the shared DB and publishes. FEED_SHARD_INDEX / FEED_SHARD_COUNT pick the slice; the default
+# 0 of 1 is the old single-job build (local runs and tests unchanged).
+DELTA_SINCE_SLACK = "-5 seconds"     # export rows touched from a hair before the crawl started
+
+
+def shard_config(env=None) -> tuple[int, int]:
+    """(index, count) of this build's crawl shard from FEED_SHARD_INDEX / FEED_SHARD_COUNT.
+    Unset means (0, 1): one shard holding every board. Raises on a nonsense pair, so a typo in
+    the workflow fails the job instead of silently crawling the wrong slice."""
+    env = os.environ if env is None else env
+    count = int(env.get("FEED_SHARD_COUNT") or 1)
+    index = int(env.get("FEED_SHARD_INDEX") or 0)
+    if count < 1 or not 0 <= index < count:
+        raise ValueError(f"bad crawl shard {index} of {count}")
+    return index, count
+
+
+def board_shard(board: dict, count: int) -> int:
+    """Which of `count` shards crawls this board: a stable hash of (ats, board_id), the board's
+    unique key in the watchlist. Not Python's hash() (salted per process) and not the company
+    name (a seed sync can rename it), so a board stays in the same shard run after run, and a
+    board added to the seed lands in one shard without moving any other."""
+    if count <= 1:
+        return 0
+    key = f"{str(board.get('ats') or '').lower()}:{str(board.get('board_id') or '')}"
+    return int(hashlib.sha1(key.encode("utf-8")).hexdigest()[:8], 16) % count
+
+
+def shard_boards(boards: list[dict], index: int, count: int) -> list[dict]:
+    """This shard's boards, in the watchlist's own (company-sorted) order."""
+    if count <= 1:
+        return list(boards)
+    return [b for b in boards if board_shard(b, count) == index]
+
+
+def cursor_file_for(index: int, count: int) -> str:
+    """The resume-cursor file of one shard. A single-shard build keeps the original name, so the
+    cursor a pre-shard run saved is still read; each real shard has its own file, so two shards
+    never overwrite each other's place in the list."""
+    return CURSOR_FILE if count <= 1 else f"crawl_cursor.s{index}of{count}.json"
+
+
+def owns_lanes(index: int) -> bool:
+    """Only the first shard runs the lanes that are not split by board (the career-site lane and
+    the aggregator APIs), so a sharded run never crawls a site or calls an API twice."""
+    return index == 0
 
 
 def _board_key(b: dict) -> list[str]:
@@ -50,7 +100,8 @@ def _board_key(b: dict) -> list[str]:
     return [str(b.get("company") or "").lower(), str(b.get("ats") or ""), str(b.get("board_id") or "")]
 
 
-def rotate_boards(boards: list[dict], data_dir) -> tuple[list[dict], int]:
+def rotate_boards(boards: list[dict], data_dir, cursor_file: str = CURSOR_FILE,
+                  fallback_file: str | None = None) -> tuple[list[dict], int]:
     """The boards in crawl order for this run, starting where the last run stopped, and that start
     index. A capped run that always began at "A" would never reach the end of the list.
 
@@ -58,11 +109,18 @@ def rotate_boards(boards: list[dict], data_dir) -> tuple[list[dict], int]:
     company, so a seed sync that adds boards (the 2026-10 growth roughly tripled it) shifts every
     index after the new names, and an index-only cursor would silently skip a stretch of boards
     for a whole lap. When the remembered board has gone, the run starts at the first board after
-    where it sorted. An old index-only cursor still works."""
+    where it sorted. An old index-only cursor still works.
+
+    `fallback_file` is read when `cursor_file` does not exist yet: a shard's first run starts
+    where the single-job crawl stopped (its remembered board, or the first after it in this
+    shard's slice) rather than back at "A"."""
     if not boards:
         return [], 0
+    path = Path(data_dir) / cursor_file
+    if fallback_file and not path.exists():
+        path = Path(data_dir) / fallback_file
     try:
-        cur = json.loads((Path(data_dir) / CURSOR_FILE).read_text())
+        cur = json.loads(path.read_text())
         start = int(cur["next"]) % len(boards)
     except (OSError, ValueError, KeyError, TypeError):
         return list(boards), 0
@@ -76,14 +134,103 @@ def rotate_boards(boards: list[dict], data_dir) -> tuple[list[dict], int]:
     return boards[start:] + boards[:start], start
 
 
-def save_cursor(data_dir, start: int, crawled: int, total: int, order: list[dict] | None = None) -> None:
+def save_cursor(data_dir, start: int, crawled: int, total: int, order: list[dict] | None = None,
+                cursor_file: str = CURSOR_FILE) -> None:
     """Remember where the next run starts: `crawled` boards into this run's `order` (the rotated
     list rotate_boards returned), by index and, when the order is given, by the board's key."""
     nxt = (start + crawled) % total if total else 0
     cur: dict = {"next": nxt}
     if order and total:
         cur["key"] = _board_key(order[crawled % len(order)])
-    (Path(data_dir) / CURSOR_FILE).write_text(json.dumps(cur) + "\n")
+    (Path(data_dir) / cursor_file).write_text(json.dumps(cur) + "\n")
+
+
+# -- shard output ("delta") and the merge --------------------------------------------------- #
+
+def _has_table(conn, schema: str, name: str) -> bool:
+    return conn.execute(f"SELECT 1 FROM {schema}.sqlite_master WHERE type='table' AND name=?",
+                        (name,)).fetchone() is not None
+
+
+def export_delta(jobs_db, data_dir, since: str, delta_path, *, index: int = 0, count: int = 1) -> dict:
+    """Write what this shard's crawl changed into `delta_path` (a small SQLite file the workflow
+    hands to the merge job): every sourced_job row stamped at or after `since` (inserted, updated
+    or seen again), the career-site skip memory touched today, and this shard's cursor files.
+    Rows the crawl did not touch are already in the shared DB, so they are not copied."""
+    delta_path = Path(delta_path)
+    delta_path.parent.mkdir(parents=True, exist_ok=True)
+    if delta_path.exists():
+        delta_path.unlink()
+    conn = sqlite3.connect(str(jobs_db))
+    try:
+        conn.execute("ATTACH DATABASE ? AS d", (str(delta_path),))
+        conn.execute("CREATE TABLE d.sourced_job AS SELECT * FROM main.sourced_job "
+                     "WHERE last_seen >= datetime(?, ?) OR first_seen >= datetime(?, ?)",
+                     (since, DELTA_SINCE_SLACK, since, DELTA_SINCE_SLACK))
+        if _has_table(conn, "main", "careersite_skip"):
+            conn.execute("CREATE TABLE d.careersite_skip AS SELECT * FROM main.careersite_skip "
+                         "WHERE at >= substr(?, 1, 10)", (since,))
+        conn.execute("CREATE TABLE d.delta_meta (k TEXT PRIMARY KEY, v TEXT)")
+        files = [cursor_file_for(index, count)] + ([CAREERSITE_CURSOR_FILE] if owns_lanes(index) else [])
+        for name in files:
+            f = Path(data_dir) / name
+            if f.exists():
+                conn.execute("INSERT INTO d.delta_meta VALUES (?, ?)", (f"file:{name}", f.read_text()))
+        conn.execute("INSERT INTO d.delta_meta VALUES ('shard', ?)", (f"{index}/{count}",))
+        conn.execute("INSERT INTO d.delta_meta VALUES ('since', ?)", (since,))
+        conn.commit()
+        rows = conn.execute("SELECT COUNT(*) FROM d.sourced_job").fetchone()[0]
+        conn.execute("DETACH DATABASE d")
+    finally:
+        conn.close()
+    return {"rows": rows, "path": str(delta_path)}
+
+
+def merge_delta(jobs_db, data_dir, delta_path, log=print) -> dict:
+    """Fold one shard's delta into the shared DB: each row is inserted, or replaces the stored
+    copy when it was seen at least as recently (so merging the same delta twice, or two deltas
+    in either order, ends the same). first_seen keeps the earlier of the two, so a role never
+    looks newer than it is. The shard's cursor files are written into `data_dir`, which moves
+    that shard's place in the board list forward; a shard that produced no delta keeps its old
+    cursor and simply resumes from there next run."""
+    from sourcing.watchlist import Watchlist
+    Watchlist(str(jobs_db)).close()                       # the shared DB exists, fully migrated
+    conn = sqlite3.connect(str(jobs_db))
+    try:
+        conn.execute("ATTACH DATABASE ? AS d", (str(delta_path),))
+        if not _has_table(conn, "d", "sourced_job"):
+            raise ValueError(f"{delta_path} is not a crawl-shard delta")
+        main_cols = [r[1] for r in conn.execute("PRAGMA main.table_info(sourced_job)")]
+        cols = [c for c in (r[1] for r in conn.execute("PRAGMA d.table_info(sourced_job)")) if c in main_cols]
+        upd = [c for c in cols if c not in ("source_id", "first_seen")]
+        sets = ", ".join(f"{c}=excluded.{c}" for c in upd)
+        if "first_seen" in cols:
+            sets += (", first_seen=CASE WHEN sourced_job.first_seen IS NULL OR excluded.first_seen "
+                     "< sourced_job.first_seen THEN excluded.first_seen ELSE sourced_job.first_seen END")
+        cl = ", ".join(cols)
+        cur = conn.execute(
+            f"INSERT INTO main.sourced_job ({cl}) SELECT {cl} FROM d.sourced_job WHERE true "
+            f"ON CONFLICT(source_id) DO UPDATE SET {sets} "
+            "WHERE sourced_job.last_seen IS NULL OR excluded.last_seen >= sourced_job.last_seen")
+        rows = cur.rowcount
+        if _has_table(conn, "d", "careersite_skip"):
+            conn.execute("CREATE TABLE IF NOT EXISTS main.careersite_skip ("
+                         "url TEXT PRIMARY KEY, host TEXT, reason TEXT, at TEXT)")
+            conn.execute("INSERT OR REPLACE INTO main.careersite_skip (url, host, reason, at) "
+                         "SELECT url, host, reason, at FROM d.careersite_skip")
+        meta = dict(conn.execute("SELECT k, v FROM d.delta_meta").fetchall()) \
+            if _has_table(conn, "d", "delta_meta") else {}
+        conn.commit()
+        conn.execute("DETACH DATABASE d")
+    finally:
+        conn.close()
+    for k, v in meta.items():
+        if k.startswith("file:"):
+            name = Path(k[5:]).name                        # a bare file name, never a path
+            if name.endswith(".json"):
+                (Path(data_dir) / name).write_text(v)
+    log(f"[build_feed] merged shard {meta.get('shard', '?')}: {rows} rows from {delta_path}")
+    return {"rows": rows, "shard": meta.get("shard")}
 
 
 def aggregators_for_feed(env=None, log=print) -> list[str]:
@@ -124,12 +271,19 @@ class _CareerSiteLane:
 
 def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = "",
           limit: int | None = None, log=print, crawler=None,
-          crawl_minutes: float | None = None) -> dict:
+          crawl_minutes: float | None = None, shard: tuple[int, int] = (0, 1),
+          delta_out=None, merge=()) -> dict:
     """Crawl (unless crawl=False) into the DB under `data_dir`, then write the feed files into
     `out_dir`. Returns the manifest. `fetch` is injectable so tests run against canned JSON.
     `crawler(watchlist) -> summary` replaces the full refresh_watchlist crawl (e.g. the bounded,
     polite first_open_refresh). `crawl_minutes` caps the board
-    pass; the next build resumes where this one stopped (rotate_boards)."""
+    pass; the next build resumes where this one stopped (rotate_boards).
+
+    Sharded runs: `shard=(i, n)` crawls only board slice i of n (shard 0 also runs the career-site
+    lane and the aggregators); with `delta_out` the build stops after the crawl and writes what it
+    changed there instead of a feed (export_delta). `merge` (paths of shard deltas) folds them into
+    the DB first (merge_delta), then prunes and writes the feed from the whole DB, as one build."""
+    index, count = shard
     data_dir = Path(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     os.environ["JOBS_DATA_DIR"] = str(data_dir)         # backend.feed derives its DB paths from this
@@ -143,6 +297,11 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
         feed.FEED_LIMIT = int(limit)
     jobs_db, _ = feed._paths()
     t0 = time.time()
+    since = None
+    if crawl and delta_out is not None:
+        c = sqlite3.connect(str(jobs_db))
+        since = c.execute("SELECT CURRENT_TIMESTAMP").fetchone()[0]   # the clock the rows are stamped by
+        c.close()
     w = Watchlist(jobs_db)
     try:
         seed_if_empty(w)
@@ -167,18 +326,25 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
             # The career-site lane (sourcing/careersite.py) runs beside the board pass in its own
             # threads and connections: different hosts, so neither slows the other's politeness.
             lane = None
-            if crawler is None and fetch is None and os.environ.get("CAREERSITE_LANE", "1") != "0":
+            if (crawler is None and fetch is None and owns_lanes(index)
+                    and os.environ.get("CAREERSITE_LANE", "1") != "0"):
                 lane = _CareerSiteLane(jobs_db, log, cursor_path=data_dir / CAREERSITE_CURSOR_FILE)
                 lane.start()
             if crawler is not None:
                 summary = crawler(w)
             else:
-                boards, start = rotate_boards(w.companies(active_only=True), data_dir)
+                cfile = cursor_file_for(index, count)
+                boards, start = rotate_boards(shard_boards(w.companies(active_only=True), index, count),
+                                              data_dir, cfile,
+                                              fallback_file=CURSOR_FILE if count > 1 else None)
                 summary = refresh_watchlist(w, **({"fetch": fetch} if fetch else {}),
                                             detail_budgets=feed_detail_budgets(), boards=boards,
-                                            time_budget=crawl_minutes * 60 if crawl_minutes else None)
-                save_cursor(data_dir, start, summary.get("boards_crawled", 0), len(boards), boards)
-                log(f"[build_feed] boards {summary.get('boards_crawled')}/{len(boards)} from #{start}"
+                                            time_budget=crawl_minutes * 60 if crawl_minutes else None,
+                                            include_aggregators=owns_lanes(index))
+                save_cursor(data_dir, start, summary.get("boards_crawled", 0), len(boards), boards,
+                            cursor_file=cfile)
+                log(f"[build_feed] {'shard %d/%d ' % (index, count) if count > 1 else ''}"
+                    f"boards {summary.get('boards_crawled')}/{len(boards)} from #{start}"
                     + (" (stopped at the time cap; the next run continues)"
                        if summary.get("stopped_early") else ""))
             if lane is not None:
@@ -195,6 +361,21 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
                 f"errors={len(summary.get('errors') or [])} in {time.time() - t0:.0f}s")
     finally:
         w.close()
+
+    if delta_out is not None and since is not None:
+        d = export_delta(jobs_db, data_dir, since, delta_out, index=index, count=count)
+        log(f"[build_feed] shard {index}/{count}: wrote {d['rows']} changed rows to {delta_out} "
+            f"({time.time() - t0:.0f}s total)")
+        return {"delta": d["path"], "rows": d["rows"], "shard": f"{index}/{count}"}
+
+    if merge:
+        for p in merge:
+            merge_delta(jobs_db, data_dir, p, log=log)
+        w = Watchlist(jobs_db)
+        try:
+            log(f"[build_feed] merge: pruned={w.prune_stale(PRUNE_DAYS)} stale rows")
+        finally:
+            w.close()
 
     fj = feed.feed_jobs()
     rows = dedupe_rows(fj)[:feed.FEED_LIMIT]    # tagged, US-only, fresh, recent-sorted
@@ -237,9 +418,26 @@ def main(argv=None) -> int:
                     default=float(os.environ.get("FEED_CRAWL_MINUTES", DEFAULT_CRAWL_MINUTES)),
                     help=f"stop the board pass after this long (default {DEFAULT_CRAWL_MINUTES}; "
                          "0 = no cap); the next run resumes where it stopped")
+    ap.add_argument("--export-delta", metavar="PATH", default=None,
+                    help="crawl shard mode: crawl this shard's boards (FEED_SHARD_INDEX of "
+                         "FEED_SHARD_COUNT), write the changed rows to PATH, write no feed")
+    ap.add_argument("--merge-dir", metavar="DIR", default=None,
+                    help="merge mode: fold every shard delta (*.db) under DIR into the DB, then "
+                         "write the feed (no crawl). Fails when DIR holds no delta")
     a = ap.parse_args(argv)
-    build(a.out, a.data, crawl=not a.no_crawl, jobs_url=a.jobs_url, limit=a.limit,
-          crawl_minutes=a.crawl_minutes)
+    shard = shard_config()
+    if a.export_delta and a.merge_dir:
+        ap.error("--export-delta and --merge-dir are separate steps")
+    merge: list[Path] = []
+    if a.merge_dir:
+        merge = sorted(Path(a.merge_dir).rglob("*.db"))
+        if not merge:
+            # Every shard failed: publishing now would only re-publish the old DB, and saving the
+            # state would pretend a run happened. Fail loudly instead; the last feed stays up.
+            print(f"[build_feed] no shard delta under {a.merge_dir}: refusing to publish", file=sys.stderr)
+            return 2
+    build(a.out, a.data, crawl=not (a.no_crawl or a.merge_dir), jobs_url=a.jobs_url, limit=a.limit,
+          crawl_minutes=a.crawl_minutes, shard=shard, delta_out=a.export_delta, merge=merge)
     return 0
 
 
