@@ -2585,24 +2585,28 @@ body.cv-dragging * { cursor: grabbing !important; }
 .scr-coach-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); margin-bottom: 4px; }
 .scr-star-row { margin: 3px 0; }
 .scr-star-k { display: inline-block; min-width: 74px; font-weight: 700; color: var(--accent, #4f46e5); }
-/* Interview prep entry: the role form, then the Full mock card and the two round tiles. */
+/* Interview prep entry: the choices (Full mock card + two round tiles), then a setup page per choice. */
 /* Center the entry in the same 1040px column as .page-head so heading and content line up. */
 #prepList { max-width: 1040px; margin: 0 auto; }
-.prep-ctx { margin: 6px 0 14px; }
+/* The setup page's back link: the Templates one, so its text sits on the title's left edge. */
+.view-prep .prep-back { margin-left: -8px; margin-bottom: 0; }
 
-/* Step 1 action row + validation hint. */
-.prep-step1-acts { display: flex; align-items: center; gap: 14px; margin-top: 22px; }
-.prep-step1-msg { font-size: 12.5px; color: var(--danger, #d9534f); }
-/* Step 2 context line: confirms the chosen role. */
-.prep-chosen { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 10px; margin-bottom: 20px; }
-.prep-chosen-lab { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
-.prep-chosen-role { font-size: 15px; font-weight: 650; color: var(--ink); }
-
-/* The prep form: type the role, paste the JD, attach the resume. */
-.prep-open { display: flex; flex-direction: column; gap: 10px; max-width: 620px; margin: 0 0 22px; }
+/* Setup page: one card with the role, the job description and the resume, then Start interview. */
+.prep-setup { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 30px 32px; }
+.prep-open { display: flex; flex-direction: column; gap: 8px; }
+.prep-open .fld { width: 100%; }
+.prep-open textarea.fld { resize: vertical; min-height: 180px; line-height: 1.5; }
+.prep-open-lab { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin-top: 10px; }
+.prep-open-lab:first-child { margin-top: 0; }
 .prep-open-cv { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .prep-open-attach { cursor: pointer; flex: none; }
 .prep-open-cvname { font-size: 12px; color: var(--faint); }
+.prep-open-cvname.is-set { font-size: 13px; color: var(--ink); }
+.prep-setup-acts { display: flex; align-items: center; gap: 14px; margin-top: 26px; }
+.prep-setup-msg { font-size: 12.5px; color: var(--muted); }
+.prep-setup-msg.is-err { color: var(--danger, #d9534f); }
+/* Inline validation hint, shared by the Round 1 notice and the report card re-drill. */
+.prep-step1-msg { font-size: 12.5px; color: var(--danger, #d9534f); }
 
 /* Two big portfolio-style tiles: index + status up top, a short line, a bold name at the base. */
 .prep-tiles-lab { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 22px 0 10px; }
@@ -2626,7 +2630,6 @@ body.cv-dragging * { cursor: grabbing !important; }
 .prep-tile-cta { flex: none; font-size: 13px; font-weight: 600; color: var(--muted); white-space: nowrap;
   transition: color var(--dur) var(--ease), transform var(--dur) var(--ease); }
 .prep-tile:hover .prep-tile-cta { color: var(--ink); transform: translateX(2px); }
-.prep-tiles-msg { margin: 14px 0 0; font-size: 13px; color: var(--ink-2); }
 
 /* Guided "Full mock" card: the recommended path, visually primary above the a-la-carte tiles. */
 .prep-guided { display: flex; align-items: center; justify-content: space-between; gap: 20px; width: 100%;
@@ -2697,28 +2700,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 .scr-tr-body { margin: 6px 0 0; line-height: 1.6; color: var(--ink); }
 .scr-mark-filler { background: #fff2c9; color: #7a5b00; border-radius: 3px; padding: 0 2px; }
 .scr-mark-hedge { background: #fde3e1; color: #a5241b; border-radius: 3px; padding: 0 2px; }
-/* STAR story bank */
-.story-card { margin: 6px 0; padding: 8px 10px; border: 1px solid var(--border, #e4e7ec); border-radius: 10px; }
-.story-card summary { cursor: pointer; }
-.story-body { margin-top: 8px; font-size: 13px; line-height: 1.55; }
 
-/* STAR story bank panel (on the prep landing): build/reuse stories + suggest from real experience. */
-.story-bank { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
-.sb-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
-.sb-title { font-size: 16px; font-weight: 700; margin: 0; }
-.sb-sub { font-size: 12.5px; color: var(--muted); margin: 3px 0 0; max-width: 52ch; line-height: 1.5; }
-.sb-acts { display: flex; gap: 8px; flex-wrap: wrap; }
-.sb-suggest { margin-top: 14px; }
-.sb-suggest-lead { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 8px; }
-.sb-sug-card { padding: 10px 12px; margin: 8px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
-.sb-sug-hd { font-size: 13.5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.sb-sug-body { margin: 7px 0; font-size: 12.5px; line-height: 1.5; }
-.story-form { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; max-width: 640px; }
-.story-form .fld { width: 100%; }
-.sf-rough { display: flex; gap: 8px; align-items: flex-start; }
-.sf-rough textarea { flex: 1; }
-.sf-acts { display: flex; gap: 8px; align-items: center; }
-.story-list { margin-top: 14px; }
 
 .rec-meter { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .rec-meter-ic { font-size: 14px; opacity: .7; }

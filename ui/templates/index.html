@@ -817,7 +817,13 @@
       <section class="view view-prep" id="view-prep">
         <header class="page-head">
           <div>
+            <!-- The setup page is its own page: a back link above the title, like Templates. -->
+            <button class="btn btn-ghost btn-back tpl-back prep-back" id="prepBack" type="button" hidden>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span data-i18n="prep.title">Interview prep</span>
+            </button>
             <h1 class="page-title" id="prepTitle" data-i18n="prep.title">Interview prep</h1>
+            <h1 class="page-title" id="prepSetupTitle" hidden></h1>
             <p class="page-sub" id="prepSub" data-i18n="prep.sub">Practice for a real interview, built from the job you applied to.</p>
           </div>
         </header>
@@ -829,22 +835,10 @@
           <span class="prep-progress-step" data-step="2"><span class="prep-progress-n">2</span> <span data-i18n="prep.round2">Round 2</span></span>
         </div>
 
-        <!-- Entry, two steps. Step 1 is the prep form (role, JD, optional resume); step 2 reveals the
-             two paths once the role is known. Wrapped in #prepList so the round show/hide toggles work. -->
+        <!-- Entry: the choices first (Full mock, or one round). Start on any opens its setup page
+             (role, JD, optional resume). Wrapped in #prepList so the round show/hide toggles work. -->
         <div id="prepList">
-        <div id="prepStep1">
-          <div class="prep-ctx" id="prepCtx"></div>
-          <div class="prep-open" id="prepOpen" hidden><!-- the role, JD and resume inputs are injected --></div>
-          <div class="prep-step1-acts">
-            <button class="btn btn-primary" id="prepContinue" type="button">Continue &rarr;</button>
-            <span class="prep-step1-msg" id="prepStep1Msg" hidden></span>
-          </div>
-        </div>
-
-        <!-- Step 2: which path, revealed after the role is chosen. A context line confirms the role. -->
-        <div id="prepStep2" hidden>
-          <div class="prep-chosen" id="prepChosen"><!-- "Interviewing for X" injected --></div>
-
+        <div id="prepChoices">
           <!-- Two entry paths. Full mock (recommended): Round 1, then Round 2, a pass unlocking the
                live round. The tiles below run either round on its own. -->
           <button class="prep-guided" id="prepFullMock" type="button">
@@ -870,46 +864,17 @@
               <span class="prep-tile-foot"><span class="prep-tile-name" data-i18n="prep.tile2Name">Live interview</span><span class="prep-tile-cta">Start &rarr;</span></span>
             </button>
           </div>
-          <p class="prep-tiles-msg" id="prepTilesMsg" hidden></p>
         </div>
 
-        <!-- STAR story bank: build a few strong interview stories once, from your REAL experience,
-             then deploy the right one for any behavioral question. "Suggest from my experience"
-             drafts candidates from your profile so you never face a blank page; nothing is invented. -->
-        <section class="story-bank" id="storyBank">
-          <div class="sb-head">
-            <div>
-              <h2 class="sb-title">Your STAR story bank</h2>
-              <p class="sb-sub">Build a few strong stories once, in Situation, Task, Action, Result form, then reuse them for any behavioral question. All from your real experience.</p>
-            </div>
-            <div class="sb-acts">
-              <button class="btn btn-ghost btn-sm" id="storySuggestBtn" type="button">Suggest from my experience</button>
-              <button class="btn btn-primary btn-sm" id="storyAddBtn" type="button">Add a story</button>
-            </div>
+        <!-- Setup for the chosen interview: role + JD required, resume optional. Pre-filled from the
+             newest tailored resume or Tracker job, so most people just click Start interview. -->
+        <div class="prep-setup" id="prepSetup" hidden>
+          <div class="prep-open" id="prepOpen"><!-- the role, JD and resume inputs are injected --></div>
+          <div class="prep-setup-acts">
+            <button class="btn btn-primary" id="prepStart" type="button" data-i18n="prep.startInterview">Start interview</button>
+            <span class="prep-setup-msg" id="prepSetupMsg" hidden></span>
           </div>
-
-          <div class="sb-suggest" id="storySuggestions" hidden></div>
-
-          <form class="story-form" id="storyForm" hidden>
-            <div class="sf-rough">
-              <textarea class="fld" id="storyRough" rows="2" placeholder="Optional: paste a few rough sentences about a real experience, and I'll shape them into STAR."></textarea>
-              <button class="btn btn-ghost btn-sm" id="storyStructure" type="button">Structure into STAR</button>
-            </div>
-            <input class="fld" id="storyTitle" placeholder="Short title (e.g. Payments migration)" />
-            <textarea class="fld" id="storyS" rows="2" placeholder="Situation, the context and challenge"></textarea>
-            <textarea class="fld" id="storyT" rows="2" placeholder="Task, what you were responsible for"></textarea>
-            <textarea class="fld" id="storyA" rows="2" placeholder="Action, what YOU specifically did"></textarea>
-            <textarea class="fld" id="storyR" rows="2" placeholder="Result, the outcome (with a number if you have one)"></textarea>
-            <input class="fld" id="storyComp" placeholder="Competencies, comma-separated (e.g. Ownership, Problem solving)" />
-            <div class="sf-acts">
-              <button class="btn btn-primary btn-sm" type="submit">Save story</button>
-              <button class="btn btn-ghost btn-sm" id="storyCancel" type="button">Cancel</button>
-              <span class="proj-msg" id="storyMsg" hidden></span>
-            </div>
-          </form>
-
-          <div class="story-list" id="storyList"></div>
-        </section>
+        </div>
         </div><!-- /#prepList entry wrapper -->
 
         <!-- Round 1: a HireVue-style one-way recorded interview. Landing, notice, device check,
