@@ -19,6 +19,7 @@ FIELDS = [
     FormField("f4", "Phone number", "tel"),
     FormField("f5", "Resume", "file"),
     FormField("f6", "Are you authorized to work in the US?", "select", options=["Yes", "No"]),
+    FormField("f7", "Preferred contact method", "select", options=["Email", "Phone"]),
 ]
 
 APPLICANT = {"first_name": "Kofi", "last_name": "Gilbert", "email": "kofi@example.com",
@@ -38,12 +39,13 @@ def test_parse_plan_rejects_unknown_fields_and_keys():
         {"ref": "f3", "op": "fill", "source": "email"},        # valid
         {"ref": "GHOST", "op": "fill", "source": "email"},     # unknown field -> dropped
         {"ref": "f4", "op": "fill", "source": "ssn"},          # bogus key -> source cleared -> dropped (no value)
-        {"ref": "f6", "op": "select", "value": "Yes"},         # literal choice -> kept
+        {"ref": "f6", "op": "select", "value": "Yes"},         # a fact about the person -> fact gate drops it
+        {"ref": "f7", "op": "select", "value": "Email"},       # a plain non-personal choice -> kept
     ]}
     plan = parse_plan(raw, FIELDS)
     refs = {a.ref for a in plan}
-    assert refs == {"f3", "f6"}
-    assert next(a for a in plan if a.ref == "f6").value == "Yes"
+    assert refs == {"f3", "f7"}
+    assert next(a for a in plan if a.ref == "f7").value == "Email"
 
 
 def test_resolve_substitutes_real_values_locally():

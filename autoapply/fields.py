@@ -49,6 +49,8 @@ class FillAction:
     op: str                                      # fill|select|check|upload|skip
     source: str = ""                             # a placeholder key from APPLICANT_KEYS (PII)
     value: str = ""                              # a literal: an option label, a date, a short answer
+    origin: str = "ai"                           # who decided: workauth|library|drafted|letter|profile|resume|ai
+    sensitive: bool = False                      # the literal is the person's own answer (never sent to the model)
 
 
 @dataclass
@@ -60,6 +62,7 @@ class ConcreteOp:
     text: str = ""                               # real value to type/select (may be PII)
     path: str = ""                               # file path for an upload
     is_sensitive: bool = False                   # true when text came from personal data
+    origin: str = "ai"                           # which step of the planner decided it
 
 
 def applicant_from_record(record_data: dict) -> dict:
@@ -101,13 +104,14 @@ def resolve_plan(actions: list[FillAction], applicant: dict, *, resume_path: str
             continue
         if a.op == "upload":
             if resume_path:
-                ops.append(ConcreteOp(a.ref, "upload", path=resume_path))
+                ops.append(ConcreteOp(a.ref, "upload", path=resume_path, origin=a.origin))
             continue
         if a.source:                             # personal-data key -> real value, resolved locally
             val = str(applicant.get(a.source, "")).strip()
             if val:
-                ops.append(ConcreteOp(a.ref, a.op or "fill", text=val, is_sensitive=True))
+                ops.append(ConcreteOp(a.ref, a.op or "fill", text=val, is_sensitive=True, origin=a.origin))
             continue
         if str(a.value).strip():                 # a non-personal literal the model chose
-            ops.append(ConcreteOp(a.ref, a.op or "fill", text=str(a.value).strip()))
+            ops.append(ConcreteOp(a.ref, a.op or "fill", text=str(a.value).strip(),
+                                  is_sensitive=bool(a.sensitive), origin=a.origin))
     return ops

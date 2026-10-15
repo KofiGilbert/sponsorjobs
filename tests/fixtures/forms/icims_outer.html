@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Careers (iCIMS-style outer page)</title>
+<link rel="stylesheet" href="style.css"></head>
+<body>
+<h1>Careers at Example Co</h1>
+<p>The application below is embedded from the applicant tracking system.</p>
+<iframe id="icims_content_iframe" title="Job application" width="700" height="900"></iframe>
+<script>
+  // ?inner=<url> picks the frame source: another port (cross-origin, same site), another host
+  // (cross-site, its own process), or a relative path (same origin).
+  const p = new URLSearchParams(location.search);
+  document.getElementById("icims_content_iframe").src = p.get("inner") || "icims_inner.html";
+</script>
+</body></html>

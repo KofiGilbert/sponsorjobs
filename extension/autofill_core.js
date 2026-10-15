@@ -37,6 +37,97 @@
     try { return Array.from((root || document).querySelectorAll(sel)); } catch (e) { return []; }
   }
 
+  // ------------------------------------------------------ deep DOM: shadow roots + frames
+  // Modern application forms do not keep every control in the top document. Some render
+  // inside OPEN shadow roots (web components), and some (iCIMS, a few career sites) inside an
+  // iframe. Every lookup below goes through searchRoots(): the document, every open shadow
+  // root under it, and every SAME-ORIGIN frame's document, recursively. A CROSS-origin frame
+  // cannot be reached from here at all (the browser forbids it); the desktop shell runs this
+  // same engine inside such a frame through CDP instead (shell-electron/frames.js).
+  // Closed shadow roots stay closed: they are invisible to script by design.
+  let _rootsMemo = null;               // set for the length of one synchronous pass
+  function shadowHosts(root) {
+    return qsaSafe("*", root).filter((e) => e && e.shadowRoot);
+  }
+  function frameDocs(root) {
+    const out = [];
+    for (const f of qsaSafe("iframe, frame", root)) {
+      let d = null;
+      try { d = f.contentDocument; } catch (e) { d = null; }    // cross-origin: null or throws
+      if (d && d.documentElement) out.push(d);
+    }
+    return out;
+  }
+  function searchRoots() {
+    if (_rootsMemo) return _rootsMemo;
+    const out = [];
+    const seen = new Set();
+    const visit = (root, depth) => {
+      if (!root || seen.has(root) || depth > 8) return;
+      seen.add(root);
+      out.push(root);
+      for (const h of shadowHosts(root)) visit(h.shadowRoot, depth + 1);
+      for (const d of frameDocs(root)) visit(d, depth + 1);
+    };
+    visit(document, 0);
+    return out;
+  }
+  function withRoots(fn) {
+    if (_rootsMemo) return fn();
+    _rootsMemo = null;
+    _rootsMemo = searchRoots();
+    try { return fn(); } finally { _rootsMemo = null; }
+  }
+  function qsaDeep(sel) {
+    const out = [];
+    for (const r of searchRoots()) for (const el of qsaSafe(sel, r)) out.push(el);
+    return out;
+  }
+  // The document or shadow root an element lives in: its labels and aria ids live there too.
+  function rootOf(el) {
+    try { const r = el && el.getRootNode && el.getRootNode(); if (r && r.querySelector) return r; } catch (e) { /* old DOM */ }
+    return document;
+  }
+  function byId(el, id) {
+    if (!id) return null;
+    const r = rootOf(el);
+    try { if (r.getElementById) { const n = r.getElementById(id); if (n) return n; } } catch (e) { /* fragment */ }
+    try { return document.getElementById(id); } catch (e) { return null; }
+  }
+  function labelFor(el) {
+    if (!el || !el.id) return null;
+    const sel = `label[for="${CSS.escape(el.id)}"]`;
+    try { return rootOf(el).querySelector(sel) || null; } catch (e) { return null; }
+  }
+  function ariaLabelledText(el) {
+    const al = el && el.getAttribute && el.getAttribute("aria-labelledby");
+    if (!al) return "";
+    return al.split(/\s+/).map((id) => { const n = byId(el, id); return n ? n.textContent : ""; })
+      .filter(Boolean).join(" ").trim();
+  }
+  function rootText(r) {
+    try { return String((r.body ? r.body.textContent : r.textContent) || ""); } catch (e) { return ""; }
+  }
+  // Visible iframes this engine CANNOT enter (cross-origin), not counting captcha widgets.
+  function crossOriginFrames() {
+    let n = 0;
+    for (const r of searchRoots()) {
+      for (const f of qsaSafe("iframe, frame", r)) {
+        let d = null;
+        try { d = f.contentDocument; } catch (e) { d = null; }
+        if (d) continue;
+        const src = norm(f.getAttribute && f.getAttribute("src"));
+        if (/recaptcha|hcaptcha|captcha|turnstile|arkoselabs|challenges\.cloudflare/.test(src)) continue;
+        const rect = f.getBoundingClientRect ? f.getBoundingClientRect() : {};
+        if (rect.width > 40 && rect.height > 40) n++;
+      }
+    }
+    return n;
+  }
+  // Fill refs must be unique across frames: the shell gives each frame's engine a prefix.
+  let _refPrefix = "";
+  function setRefPrefix(p) { _refPrefix = String(p || ""); return _refPrefix; }
+
   function hereUrl(url) {
     if (url) return String(url);
     try { return String((typeof location !== "undefined" && location.href) || ""); } catch (e) { return ""; }
@@ -60,7 +151,7 @@
 
   const CONTROL_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
   function recipeTarget(sel, taken) {
-    for (const el of qsaSafe(sel)) {
+    for (const el of qsaDeep(sel)) {
       if (!el || !CONTROL_TAGS.has(String(el.tagName || "").toUpperCase())) continue;
       if (taken.has(el)) continue;
       const t = String(el.tagName).toUpperCase() === "INPUT" ? String(el.type || "text").toLowerCase() : "";
@@ -106,7 +197,7 @@
 
   function firstShown(selectors) {
     for (const sel of selectors || []) {
-      for (const el of qsaSafe(sel)) if (el && shown(el)) return el;
+      for (const el of qsaDeep(sel)) if (el && shown(el)) return el;
     }
     return null;
   }
@@ -131,14 +222,14 @@
   function detectSuccess(recipe, url) {
     const r = recipe || recipeFor(url);
     const here = hereUrl(url);
-    const body = norm((document.body && document.body.textContent) || "").slice(0, 20000);
+    const body = norm(searchRoots().map(rootText).join(" ")).slice(0, 20000);
     const markers = (r && r.success_markers) || [];
     // A "thank you" PHRASE only counts once the form is gone: while the recipe's submit button
     // (or, with no recipe, a file upload) is still on the page, the person has not submitted,
     // whatever the page says elsewhere. A selector or URL marker is specific enough on its own.
-    const formOpen = r ? !!firstShown(r.submit_buttons) : qsaSafe("input[type='file']").some(shown);
+    const formOpen = r ? !!firstShown(r.submit_buttons) : qsaDeep("input[type='file']").some(shown);
     for (const m of markers) {
-      if (m.selector && qsaSafe(m.selector).length) return true;
+      if (m.selector && qsaDeep(m.selector).length) return true;
       if (m.text && !formOpen && body.includes(norm(m.text))) return true;
       if (m.url_re) { try { if (new RegExp(m.url_re, "i").test(here)) return true; } catch (e) { /* bad re */ } }
     }
@@ -196,7 +287,14 @@
       document.addEventListener("change", onPossibleCorrection, true);
       watchCorrections._armed = true;
     }
+    // "change" does not cross a shadow-root or frame boundary: listen in each of those too.
+    for (const r of searchRoots()) {
+      if (r === document || _armedRoots.has(r) || typeof r.addEventListener !== "function") continue;
+      r.addEventListener("change", onPossibleCorrection, true);
+      _armedRoots.add(r);
+    }
   }
+  const _armedRoots = new WeakSet();
   // Corrections so far, as {key: value}; the carrier offers to save them to the profile.
   function takeCorrections() {
     const out = {};
@@ -225,6 +323,7 @@
     { key: "linkedin",   ac: [],                        re: /linkedin/ },
     { key: "github",     ac: [],                        re: /github/ },
     { key: "website",    ac: ["url"],                   re: /portfolio|personal.?(web)?site|\bwebsite\b|\bblog\b|personal.?url/ },
+    { key: "country",    ac: ["country", "country-name"], re: /\bcountry\b/ },
     { key: "city",       ac: ["address-level2"],        re: /\bcity\b|\btown\b/ },
     { key: "state",      ac: ["address-level1"],        re: /\bstate\b|province|\bregion\b/ },
     { key: "zip",        ac: ["postal-code"],           re: /\bzip\b|postal|post.?code/ },
@@ -242,10 +341,10 @@
     const bits = [el.name, el.id, el.placeholder, el.getAttribute("aria-label")];
     const al = el.getAttribute("aria-labelledby");
     if (al) al.split(/\s+/).forEach((id) => {
-      const n = document.getElementById(id); if (n) bits.push(n.textContent);
+      const n = byId(el, id); if (n) bits.push(n.textContent);
     });
     if (el.id) {
-      const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      const lab = labelFor(el);
       if (lab) bits.push(lab.textContent);
     }
     let p = el.closest("label");                       // wrapping <label>
@@ -289,7 +388,10 @@
     if (!rect.width && !rect.height) return false;                        // no box at all
     if ((rect.right !== undefined && rect.right <= 0) ||
         (rect.bottom !== undefined && rect.bottom <= 0)) return false;    // parked off-canvas
-    const gcs = (typeof window.getComputedStyle === "function") ? window.getComputedStyle(el) : null;
+    // An element inside a same-origin frame is styled by ITS window.
+    let view = window;
+    try { if (el.ownerDocument && el.ownerDocument.defaultView) view = el.ownerDocument.defaultView; } catch (e) { view = window; }
+    const gcs = (view && typeof view.getComputedStyle === "function") ? view.getComputedStyle(el) : null;
     if (gcs && (gcs.display === "none" || gcs.visibility === "hidden" ||
                 gcs.opacity === "0")) return false;
     return true;
@@ -297,12 +399,13 @@
 
   function candidates() {
     const out = [];
-    document.querySelectorAll("input, textarea, select").forEach((el) => {
+    qsaDeep("input, textarea, select").forEach((el) => {
       if (!shown(el)) return;
       const tag = el.tagName.toLowerCase();
       if (tag === "input") {
         const t = (el.type || "text").toLowerCase();
         if (!FILLABLE_TYPES.has(t)) return;                // skip file/checkbox/radio/password/submit
+        if (isWidgetInput(el)) return;                     // a custom dropdown's search box: fillWidgets
       }
       out.push(el);
     });
@@ -471,7 +574,7 @@
   const NO_RE  = /^\W*(no|n|i am not|i do not|i'?m not|false)/;
 
   function radioOptionText(r) {
-    if (r.id) { const l = document.querySelector(`label[for="${CSS.escape(r.id)}"]`); if (l) return norm(l.textContent); }
+    if (r.id) { const l = labelFor(r); if (l) return norm(l.textContent); }
     const p = r.closest("label"); if (p) return norm(p.textContent);
     if (r.nextElementSibling) return norm(r.nextElementSibling.textContent);
     return norm(r.value);
@@ -492,13 +595,13 @@
     for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
       const tag = String(node.tagName || "").toUpperCase();
       if (tag === "FORM" || tag === "BODY" || tag === "HTML") break;
-      const others = qsaSafe("input, select, textarea", node).filter((o) =>
-        o !== control && String(o.type || "").toLowerCase() !== "hidden" &&
+      const others = qsaSafe("input, select, textarea, [role='combobox'], [role='radiogroup'], [role='checkbox']", node).filter((o) =>
+        o !== control && !control.contains(o) && !o.contains(control) && String(o.type || "").toLowerCase() !== "hidden" &&
         !(radioName && String(o.type || "").toLowerCase() === "radio" && o.name === radioName));
       if (others.length) break;                       // past this question's box
       for (const lab of qsaSafe(QUESTION_LABEL, node)) {
         // An option's label wraps its control (this one's or a sibling's); the question's never does.
-        if (lab.contains(control) || qsaSafe("input, select, textarea", lab).length) continue;
+        if (lab.contains(control) || control.contains(lab) || qsaSafe("input, select, textarea", lab).length) continue;
         const t = norm(lab.textContent);
         if (t) return t;
       }
@@ -510,7 +613,7 @@
   function radioGroups() {
     const groups = new Map();
     let n = 0;
-    document.querySelectorAll('input[type="radio"]').forEach((r) => {
+    qsaDeep('input[type="radio"]').forEach((r) => {
       if (r.disabled) return;
       const key = r.name || ("__anon" + (n++));
       if (!groups.has(key)) groups.set(key, []);
@@ -578,7 +681,7 @@
       }
     };
     for (const radios of radioGroups()) routeAndFill(radios[0], radios);
-    document.querySelectorAll("select").forEach((sel) => routeAndFill(sel, null));
+    qsaDeep("select").forEach((sel) => routeAndFill(sel, null));
     return count;
   }
 
@@ -590,7 +693,7 @@
     for (const radios of radioGroups()) {
       if (topics.test(groupQuestion(radios[0])) && pickRadio(radios, (t) => decline.test(t))) count++;
     }
-    document.querySelectorAll("select").forEach((sel) => {
+    qsaDeep("select").forEach((sel) => {
       const q = groupQuestion(sel) || signature(sel);
       if (topics.test(q) && pickSelectOption(sel, (t) => decline.test(t))) count++;
     });
@@ -600,7 +703,7 @@
   // A résumé/CV file input we can SEE but cannot fill (browsers block setting file inputs
   // from script). Surface it so the person attaches their tailored PDF themselves.
   function hasResumeUpload() {
-    for (const f of document.querySelectorAll('input[type="file"]')) {
+    for (const f of qsaDeep('input[type="file"]')) {
       if (f.disabled) continue;
       const sig = signature(f) + " " + norm(f.getAttribute("accept") || "");
       if (/resume|résumé|\bcv\b|cover.?letter|upload|attach|\.pdf|\.docx?/.test(sig)) return true;
@@ -616,9 +719,11 @@
     const fs = el.closest("fieldset");
     if (fs) { const lg = fs.querySelector("legend"); if (lg) return lg.textContent.trim(); }
     if (el.id) {
-      const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      const l = labelFor(el);
       if (l) return l.textContent.trim();
     }
+    const lab = ariaLabelledText(el);
+    if (lab) return lab;
     const p = el.closest("label"); if (p) return p.textContent.trim();
     const grp = el.closest("div,li,section,fieldset");
     if (grp) { const l = grp.querySelector("label, legend, .label, [class*='question']"); if (l) return l.textContent.trim(); }
@@ -627,7 +732,7 @@
 
   function answerableTextareas() {
     const out = [];
-    document.querySelectorAll("textarea").forEach((t) => {
+    qsaDeep("textarea").forEach((t) => {
       if (t.disabled || t.readOnly) return;
       if (t.getBoundingClientRect().width === 0) return;
       const q = rawLabel(t).replace(/\s+/g, " ").replace(/\*+$/, "").trim();
@@ -656,7 +761,7 @@
   // A captcha or auth/login wall means the site wants a HUMAN here. We NEVER try to get past it
   // (no evasion, no stealth, per CLAUDE.md §7): we detect it and drop the whole fill to the person.
   function pageBlocker() {
-    for (const f of document.querySelectorAll("iframe")) {
+    for (const f of qsaDeep("iframe")) {
       const src = norm(f.getAttribute && f.getAttribute("src"));
       if (/recaptcha|hcaptcha|\bcaptcha\b|turnstile|arkoselabs|funcaptcha|challenges\.cloudflare/.test(src))
         return "captcha";
@@ -664,8 +769,8 @@
     const body = norm((document.body && document.body.textContent) || "").slice(0, 5000);
     if (/are you (a )?human|verify (that )?you.?re (a )?human|verify you are human|i'?m not a robot|complete the captcha|press (and|&) hold|unusual traffic|checking your browser before/.test(body))
       return "captcha";
-    const pw = document.querySelector('input[type="password"]');
-    if (pw && (!pw.getBoundingClientRect || pw.getBoundingClientRect().width > 0)) return "auth";
+    const pw = qsaDeep('input[type="password"]').find((x) => !x.getBoundingClientRect || x.getBoundingClientRect().width > 0);
+    if (pw) return "auth";
     if (/(please )?(sign in|log ?in) to (apply|continue|view this)|you must (sign in|log ?in|be logged in)|create an account to apply|sign in to your account to continue/.test(body))
       return "auth";
     return "";
@@ -673,7 +778,8 @@
 
   // One-call orchestrator for the desktop shell: fill everything the payload supports and report
   // "filled X of Y" so the person knows exactly what to review. Never clicks submit.
-  function fill(payload) {
+  function fill(payload) { return withRoots(() => fillPass(payload)); }
+  function fillPass(payload) {
     // Assisted apply must NEVER run on LinkedIn, browse-by-hand only (CLAUDE.md §7).
     if (/(^|\.)linkedin\.com$/i.test(location.hostname)) {
       return { ok: false, reason: "linkedin" };
@@ -734,7 +840,7 @@
   function fieldRef(el) {
     let r = el.getAttribute("data-tailor-ref");
     if (!r) {
-      r = "t" + (_refN++);
+      r = _refPrefix + "t" + (_refN++);
       if (typeof el.setAttribute === "function") el.setAttribute("data-tailor-ref", r);
     }
     return r;
@@ -746,6 +852,7 @@
     const t = (el.type || "text").toLowerCase();
     if (t === "file") return "file";
     if (t === "checkbox") return "checkbox";
+    if (t === "radio") return "radio";          // a native radio group: the plan's answer picks an option
     return ["email", "tel", "url", "date", "number"].includes(t) ? t : "text";
   }
 
@@ -756,10 +863,11 @@
   function extractForm(opts) {
     const onlyEmpty = !!(opts && opts.onlyEmpty);
     const fields = [];
-    document.querySelectorAll("input, textarea, select").forEach((el) => {
+    qsaDeep("input, textarea, select").forEach((el) => {
       if (el.disabled || el.readOnly) return;
       const raw = el.tagName.toLowerCase() === "input" ? (el.type || "text").toLowerCase() : el.tagName.toLowerCase();
       if (["radio", "hidden", "submit", "button", "reset", "password", "image"].includes(raw)) return;
+      if (isWidgetInput(el)) return;                                         // listed below as a widget
       if (onlyEmpty && raw !== "file" && raw !== "checkbox" && String(el.value || "").trim()
           && !/^(select|choose|--|please)/i.test(String(el.value))) return;
       const rect = el.getBoundingClientRect();
@@ -783,10 +891,11 @@
       fields.push({ ref, label: (rawLabel(radios[0]) || q).slice(0, 200), type: "radio",
                     options: radios.map((r) => radioOptionText(r)).filter(Boolean).slice(0, 40), required: false });
     }
+    for (const f of widgetFields(onlyEmpty)) fields.push(f);                // custom dropdowns, ARIA radios/checkboxes
     return fields;
   }
 
-  const elByRef = (ref) => document.querySelector(`[data-tailor-ref="${CSS.escape(ref)}"]`);
+  const elByRef = (ref) => qsaDeep(`[data-tailor-ref="${CSS.escape(ref)}"]`)[0] || null;
 
   // Execute the brain's resolved ops. Returns {filled, uploads:[refs], skipped}. Upload ops are
   // returned for the shell to fulfil via CDP (a file input can't be set from script). Never submits,
@@ -798,11 +907,12 @@
       const el = elByRef(op.ref);
       if (!el) { skipped++; continue; }
       if (op.op === "upload") { uploads.push(op.ref); continue; }
+      if (el.getAttribute && el.getAttribute("data-tailor-widget")) { skipped++; continue; }   // applyOpsAsync
       const type = fieldType(el);
       const text = String(op.text == null ? "" : op.text);
       try {
         if (type === "radio") {
-          const radios = [...document.querySelectorAll(`[data-tailor-group="${CSS.escape(op.ref)}"]`)];
+          const radios = qsaDeep(`[data-tailor-group="${CSS.escape(op.ref)}"]`);
           if (pickRadio(radios, (t) => norm(t) === norm(text) || norm(t).startsWith(norm(text)))) filled++; else skipped++;
         } else if (type === "select") {
           const cur = norm(el.value);
@@ -819,11 +929,549 @@
     return { filled, uploads, skipped };
   }
 
+  // ---------------------------------------------------------- custom widgets
+  // Most current ATS forms draw their own dropdowns, radio groups and checkboxes instead of
+  // using <select>/<input type=radio>: react-select on Greenhouse's new boards, Workday's
+  // listbox and prompt widgets (data-automation-id), Ashby/Lever custom selects, and plain ARIA
+  // role=combobox / role=radio / role=checkbox. The native passes above never see them. This
+  // layer drives them the way a keyboard-and-mouse user does: open the menu, type to filter,
+  // pick the best matching option, then CHECK that the choice stuck (a click a widget ignored is
+  // reported as left for the person, never counted as filled).
+  // Waits are fixed polling steps while a menu renders, never randomized: nothing here imitates
+  // a human or hides from bot detection (CLAUDE.md section 7). Submit / Next are never touched.
+  const PLACEHOLDER_RE = /^(select|choose|--|please|search|start typing|type to search|none selected|no selection)/;
+  const COMBO_SEL = "[role='combobox'], button[aria-haspopup='listbox'], [data-uxi-widget-type='selectinput']";
+  const OPTION_SEL = "[role='option'], [id*='-option-'], [data-automation-id='promptOption'], [data-automation-id='promptLeafNode']";
+  const VALUE_SEL = "[class*='singleValue'], [class*='single-value'], [class*='multiValue__label'], "
+                  + "[class*='multi-value__label'], [data-automation-id='selectedItem']";
+  const NOT_AN_OPTION = /^(no options|no results|loading|searching|no matches|type to search|start typing)/;
+  const WIDGET_WAIT_MS = 2500;
+  const STEP_MS = 50;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function viewOf(el) {
+    try { return (el.ownerDocument && el.ownerDocument.defaultView) || window; } catch (e) { return window; }
+  }
+  // Dispatch a plain DOM event of the element's own realm (frames have their own constructors).
+  function fire(el, type, init) {
+    const v = viewOf(el);
+    const C = /^(mouse|click|pointer)/.test(type) ? (v.MouseEvent || MouseEvent)
+            : /^key/.test(type) ? (v.KeyboardEvent || KeyboardEvent) : (v.Event || Event);
+    try {
+      el.dispatchEvent(new C(type, Object.assign({ bubbles: true, cancelable: true, composed: true }, init || {})));
+    } catch (e) { /* a detached node */ }
+  }
+  function press(el) {
+    for (const t of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) fire(el, t, { button: 0 });
+  }
+  function boxShown(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    const r = el.getBoundingClientRect() || {};
+    if (!r.width && !r.height) return false;
+    try {
+      const cs = viewOf(el).getComputedStyle(el);
+      if (cs && (cs.display === "none" || cs.visibility === "hidden")) return false;
+    } catch (e) { /* no styles */ }
+    return true;
+  }
+  const tagOf = (el) => String((el && el.tagName) || "").toUpperCase();
+  const canon = (s) => String(s || "").toLowerCase().replace(/\./g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+  function otherCombo(node, el) {
+    return qsaSafe(COMBO_SEL, node).some((o) => o !== el && !o.contains(el) && !el.contains(o));
+  }
+  // The visible control a person clicks (react-select's control box, else the element itself).
+  function controlOf(el) {
+    let node = el;
+    for (let i = 0; i < 4 && node && node.parentElement; i++) {
+      node = node.parentElement;
+      if (/control/i.test(String(node.className || ""))) return node;
+    }
+    return el;
+  }
+
+  function comboboxes() {
+    const out = [];
+    for (const el of qsaDeep(COMBO_SEL)) {
+      const tag = tagOf(el);
+      if (tag === "SELECT" || out.includes(el)) continue;
+      if (el.getAttribute("aria-disabled") === "true" || el.disabled) continue;
+      // ARIA 1.1: a wrapper says role=combobox and holds the real text input. Use the input.
+      if (tag !== "INPUT" && tag !== "BUTTON" && qsaSafe("input", el).some((i) => String(i.type || "text") !== "hidden")) continue;
+      if (!boxShown(el) && !boxShown(controlOf(el))) continue;
+      out.push(el);
+    }
+    return out;
+  }
+
+  // What the widget shows as chosen now ("" = nothing chosen yet).
+  function comboValue(el) {
+    if (tagOf(el) !== "INPUT") {
+      const t = norm(el.textContent);
+      return PLACEHOLDER_RE.test(t) ? "" : t;
+    }
+    let node = el;
+    for (let i = 0; i < 5 && node.parentElement; i++) {
+      node = node.parentElement;
+      if (otherCombo(node, el)) break;
+      const v = qsaSafe(VALUE_SEL, node).find((x) => norm(x.textContent));
+      if (v) return norm(v.textContent);
+      if (qsaSafe("[class*='placeholder']", node).length) return "";
+    }
+    return el.getAttribute("aria-expanded") === "true" ? "" : norm(el.value);
+  }
+
+  // Does this input sit in a select-style control that shows a chosen value (react-select)?
+  function hasValueBox(el) {
+    let node = el;
+    for (let i = 0; i < 5 && node.parentElement; i++) {
+      node = node.parentElement;
+      if (otherCombo(node, el)) break;
+      if (qsaSafe(VALUE_SEL + ", [class*='placeholder']", node).length) return true;
+    }
+    return false;
+  }
+  function isWidgetInput(el) {
+    return !!(el && el.getAttribute && (el.getAttribute("role") === "combobox"
+      || el.getAttribute("data-uxi-widget-type") === "selectinput"));
+  }
+
+  function cleanLabel(t) {
+    return String(t || "").replace(/\s+/g, " ").replace(/\b(select one|required)\b/ig, "").replace(/\*+/g, "").trim();
+  }
+  function widgetLabel(el) {
+    return cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "");
+  }
+
+  function listboxFor(el) {
+    for (const attr of ["aria-controls", "aria-owns"]) {
+      for (const id of String(el.getAttribute(attr) || "").split(/\s+/).filter(Boolean)) {
+        const n = byId(el, id); if (n) return n;
+      }
+    }
+    let node = el;
+    for (let i = 0; i < 6 && node.parentElement; i++) {     // react-select: the menu sits beside the control
+      node = node.parentElement;
+      if (otherCombo(node, el)) break;
+      const m = qsaSafe("[role='listbox'], [class*='menu']", node).find((x) => !x.contains(el) && boxShown(x));
+      if (m) return m;
+    }
+    // A menu portalled to the end of <body> (Workday, react-select menuPortalTarget): the
+    // visible listbox, newest last.
+    const lbs = qsaDeep("[role='listbox']").filter((x) => boxShown(x) && !x.contains(el));
+    return lbs.length ? lbs[lbs.length - 1] : null;
+  }
+  function optionText(o) { return norm(o.textContent || o.getAttribute("aria-label") || ""); }
+  function optionsFor(el) {
+    const lb = listboxFor(el);
+    if (!lb) return [];
+    let opts = qsaSafe(OPTION_SEL, lb).filter(boxShown);
+    if (!opts.length) opts = qsaSafe("[class*='option']", lb).filter(boxShown);
+    opts = opts.filter((o) => !opts.some((p) => p !== o && o.contains(p)));   // innermost: its click bubbles up
+    return opts.filter((o) => o.getAttribute("aria-disabled") !== "true" && optionText(o)
+                              && !NOT_AN_OPTION.test(optionText(o)));
+  }
+  function menuOpen(el) {
+    return el.getAttribute("aria-expanded") === "true" || optionsFor(el).length > 0;
+  }
+  async function openCombo(el) {
+    try { if (el.focus) el.focus(); } catch (e) { /* fine */ }
+    if (menuOpen(el)) return true;
+    fire(el, "pointerdown", { button: 0 }); fire(el, "mousedown", { button: 0 });
+    await sleep(STEP_MS);
+    if (menuOpen(el)) return true;
+    fire(el, "mouseup", { button: 0 }); fire(el, "click", { button: 0 });
+    await sleep(STEP_MS);
+    if (menuOpen(el)) return true;
+    fire(el, "keydown", { key: "ArrowDown", code: "ArrowDown", keyCode: 40, which: 40 });
+    await sleep(STEP_MS);
+    return menuOpen(el);
+  }
+  async function closeCombo(el) {
+    if (el.getAttribute("aria-expanded") === "true" || optionsFor(el).length) {
+      fire(el, "keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27 });
+      await sleep(STEP_MS);
+    }
+    try { if (el.blur) el.blur(); } catch (e) { /* fine */ }
+  }
+
+  // ---- matching an option to the value we want
+  const SYNONYMS = [
+    ["united states", "united states of america", "usa", "us", "america", "u s a", "u s"],
+    ["united kingdom", "uk", "great britain", "gb", "england"],
+    ["united arab emirates", "uae"],
+    ["south korea", "republic of korea", "korea republic of", "korea"],
+  ];
+  const US_STATES = {al:"alabama",ak:"alaska",az:"arizona",ar:"arkansas",ca:"california",co:"colorado",
+    ct:"connecticut",de:"delaware",dc:"district of columbia",fl:"florida",ga:"georgia",hi:"hawaii",id:"idaho",
+    il:"illinois",in:"indiana",ia:"iowa",ks:"kansas",ky:"kentucky",la:"louisiana",me:"maine",md:"maryland",
+    ma:"massachusetts",mi:"michigan",mn:"minnesota",ms:"mississippi",mo:"missouri",mt:"montana",ne:"nebraska",
+    nv:"nevada",nh:"new hampshire",nj:"new jersey",nm:"new mexico",ny:"new york",nc:"north carolina",
+    nd:"north dakota",oh:"ohio",ok:"oklahoma",or:"oregon",pa:"pennsylvania",ri:"rhode island",
+    sc:"south carolina",sd:"south dakota",tn:"tennessee",tx:"texas",ut:"utah",vt:"vermont",va:"virginia",
+    wa:"washington",wv:"west virginia",wi:"wisconsin",wy:"wyoming"};
+  function variants(value) {
+    const c = canon(value);
+    const out = new Set(c ? [c] : []);
+    for (const g of SYNONYMS) if (g.includes(c)) g.forEach((x) => out.add(x));
+    if (US_STATES[c]) out.add(US_STATES[c]);
+    for (const k of Object.keys(US_STATES)) if (US_STATES[k] === c) out.add(k);
+    return [...out];
+  }
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Score an option's text for a wanted value: exact > starts with > is a prefix of > contains
+  // as whole words > shares the first part ("Chicago" of "Chicago, IL"). Shorter wins a tie.
+  function valueScorer(value) {
+    const vs = variants(value);
+    const first = canon(String(value || "").split(",")[0]);
+    const rest = String(value || "").split(",").slice(1).map((x) => x.trim()).filter(Boolean);
+    return (text) => {
+      const t = canon(text);
+      if (!t) return 0;
+      let s = 0;
+      for (const v of vs) {
+        if (!v) continue;
+        if (t === v) s = Math.max(s, 100);
+        else if (new RegExp("^" + reEsc(v) + "\\b").test(t)) s = Math.max(s, 80);
+        else if (t.length >= 4 && new RegExp("^" + reEsc(t) + "\\b").test(v)) s = Math.max(s, 70);
+        else if (v.length >= 3 && new RegExp("\\b" + reEsc(v) + "\\b").test(t)) s = Math.max(s, 60);
+      }
+      if (!s && first && first.length >= 3 && new RegExp("\\b" + reEsc(first) + "\\b").test(t)) {
+        s = 40;
+        // "Chicago, IL": the state (or country) after the comma breaks a tie between Chicagos.
+        for (const part of rest) {
+          if (variants(part).some((v) => v.length >= 2 && new RegExp("\\b" + reEsc(v) + "\\b").test(t))) s += 15;
+        }
+      }
+      return s ? s - Math.min(9, t.length / 20) : 0;
+    };
+  }
+  function regexScorer(re) {
+    return (text) => (re.test(norm(text)) ? 50 - Math.min(9, norm(text).length / 20) : 0);
+  }
+  function bestOf(opts, score) {
+    let best = null;
+    for (const o of opts) {
+      const s = score(optionText(o));
+      if (s > 0 && (!best || s > best.score)) best = { opt: o, score: s };
+    }
+    return best;
+  }
+  async function waitBest(el, score, ms) {
+    const until = Date.now() + ms;
+    let lastN = -1;
+    while (Date.now() < until) {
+      const opts = optionsFor(el);
+      const best = bestOf(opts, score);
+      if (best && (best.score >= 99 || opts.length === lastN)) return best;
+      lastN = opts.length;
+      await sleep(STEP_MS);
+    }
+    return bestOf(optionsFor(el), score);
+  }
+  function sameChoice(v, label) {
+    const a = canon(v), b = canon(label);
+    return !!a && !!b && (a === b || a.includes(b) || b.includes(a));
+  }
+  function typeQueries(text) {
+    const out = [];
+    for (const q of [String(text || "").trim(), String(text || "").split(",")[0].trim()]) {
+      if (q && !out.includes(q)) out.push(q);
+    }
+    return out;
+  }
+
+  // Open a combobox, find the best option (typing to filter when the list is long or loads as
+  // you type), click it, and verify. Returns {ok, value} or {ok:false, why}.
+  async function pickCombo(el, want) {
+    if (comboValue(el)) return { ok: false, why: "answered" };
+    const isInput = tagOf(el) === "INPUT";
+    await openCombo(el);
+    let best = await waitBest(el, want.score, isInput && want.text ? 400 : WIDGET_WAIT_MS);
+    if (!best && isInput && want.text) {
+      for (const q of typeQueries(want.text)) {
+        setNativeValue(el, q);
+        best = await waitBest(el, want.score, WIDGET_WAIT_MS);
+        if (best) break;
+      }
+    }
+    if (!best && isInput && want.freeText && want.text && !hasValueBox(el)) {
+      // A plain type-ahead text box (an address autocomplete): no list to pick from, so the
+      // typed value IS the answer, the way a person would leave it.
+      if (canon(el.value) !== canon(want.text)) setNativeValue(el, want.text);
+      await closeCombo(el);
+      return { ok: canon(el.value) === canon(want.text), value: want.text };
+    }
+    if (!best) {
+      if (isInput && el.value) setNativeValue(el, "");        // leave no stray filter text behind
+      await closeCombo(el);
+      return { ok: false, why: "no-match" };
+    }
+    const label = optionText(best.opt);
+    try { if (best.opt.scrollIntoView) best.opt.scrollIntoView({ block: "nearest" }); } catch (e) { /* fine */ }
+    fire(best.opt, "mouseover"); fire(best.opt, "mousemove");
+    press(best.opt);
+    await sleep(STEP_MS * 2);
+    let v = comboValue(el);
+    if (!sameChoice(v, label) && menuOpen(el) && isInput) {
+      // A menu that commits on Enter (keyboard pattern). Only while the menu is open, where
+      // Enter means "choose the highlighted option", never "send the form".
+      fire(el, "keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13 });
+      await sleep(STEP_MS * 2);
+      v = comboValue(el);
+    }
+    await closeCombo(el);
+    v = comboValue(el);
+    return sameChoice(v, label) ? { ok: true, value: label } : { ok: false, why: "did-not-stick" };
+  }
+
+  // ---- ARIA radio groups (and Yes/No button pairs with aria-pressed), ARIA checkboxes
+  function ariaRadioGroups() {
+    const groups = new Map();
+    for (const r of qsaDeep("[role='radio'], button[aria-pressed]")) {
+      if (r.getAttribute("aria-disabled") === "true" || r.disabled || !boxShown(r)) continue;
+      const box = (r.closest && r.closest("[role='radiogroup']")) || r.parentElement;
+      if (!box) continue;
+      if (!groups.has(box)) groups.set(box, []);
+      groups.get(box).push(r);
+    }
+    const out = [];
+    for (const [box, radios] of groups) {
+      if (radios.length < 2 && box.getAttribute("role") !== "radiogroup") continue;
+      out.push({ box, radios });
+    }
+    return out;
+  }
+  const isOn = (r) => r.getAttribute("aria-checked") === "true" || r.getAttribute("aria-pressed") === "true";
+  // The group's question in its own case (for the plan); route with norm(widgetQuestion(box)).
+  function widgetQuestion(box) {
+    const t = ariaLabelledText(box) || box.getAttribute("aria-label") || "";
+    if (t) return cleanLabel(t);
+    return groupQuestion(box);
+  }
+  const rawText = (o) => String(o.textContent || o.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+  async function pickAriaRadio(radios, score) {
+    if (radios.some(isOn)) return false;
+    const best = bestOf(radios, score);
+    if (!best) return false;
+    press(best.opt);
+    for (let i = 0; i < 10 && !isOn(best.opt); i++) await sleep(STEP_MS);
+    if (!isOn(best.opt)) {                  // the keyboard way: Space selects a focused radio
+      try { if (best.opt.focus) best.opt.focus(); } catch (e) { /* fine */ }
+      fire(best.opt, "keydown", { key: " ", code: "Space", keyCode: 32, which: 32 });
+      await sleep(STEP_MS * 2);
+    }
+    if (isOn(best.opt)) { markFilled(best.opt); return true; }
+    return false;
+  }
+  function ariaCheckboxes() {
+    return qsaDeep("[role='checkbox'], [role='switch']").filter((c) =>
+      c.getAttribute("aria-disabled") !== "true" && tagOf(c) !== "INPUT" && boxShown(c));
+  }
+  async function toggleAria(el) {
+    if (el.getAttribute("aria-checked") === "true") return false;
+    press(el);
+    for (let i = 0; i < 10 && el.getAttribute("aria-checked") !== "true"; i++) await sleep(STEP_MS);
+    return el.getAttribute("aria-checked") === "true";
+  }
+
+  // The widget fields for extractForm: a combobox is a "select", an ARIA radio group a "radio",
+  // an ARIA checkbox a "checkbox", in the same plan format as the native fields.
+  const _comboOptions = new WeakMap();
+  function widgetFields(onlyEmpty) {
+    const fields = [];
+    for (const el of comboboxes()) {
+      const label = widgetLabel(el);
+      if (!label) continue;
+      if (onlyEmpty && comboValue(el)) continue;
+      const ref = fieldRef(el);
+      el.setAttribute("data-tailor-widget", "combobox");
+      fields.push({ ref, label: label.slice(0, 200), type: "select", widget: "combobox",
+                    options: (_comboOptions.get(el) || []).slice(0, 40),
+                    required: el.getAttribute("aria-required") === "true" || /\*\s*$/.test(rawLabel(el)) });
+    }
+    for (const g of ariaRadioGroups()) {
+      const q = widgetQuestion(g.box);
+      if (!q) continue;
+      if (onlyEmpty && g.radios.some(isOn)) continue;
+      const ref = fieldRef(g.box);
+      g.box.setAttribute("data-tailor-widget", "radio");
+      g.radios.forEach((r) => r.setAttribute("data-tailor-group", ref));
+      fields.push({ ref, label: q.slice(0, 200), type: "radio", widget: "radio",
+                    options: g.radios.map(rawText).filter(Boolean).slice(0, 40),
+                    required: g.box.getAttribute("aria-required") === "true" });
+    }
+    for (const c of ariaCheckboxes()) {
+      const label = cleanLabel(ariaLabelledText(c) || c.getAttribute("aria-label") || c.textContent || rawLabel(c));
+      if (!label) continue;
+      if (onlyEmpty && c.getAttribute("aria-checked") === "true") continue;
+      const ref = fieldRef(c);
+      c.setAttribute("data-tailor-widget", "checkbox");
+      fields.push({ ref, label: label.slice(0, 200), type: "checkbox", widget: "checkbox",
+                    required: c.getAttribute("aria-required") === "true" });
+    }
+    return fields;
+  }
+
+  // extractForm, plus the option lists of custom dropdowns, which only exist in the page while
+  // the menu is open: open each (at most 15), read up to 40 options, close it again.
+  async function extractFormAsync(opts) {
+    let n = 0;
+    for (const el of comboboxes()) {
+      if (n >= 15) break;
+      if (_comboOptions.has(el) || comboValue(el)) continue;
+      n++;
+      await openCombo(el);
+      const until = Date.now() + 600;
+      let opts2 = optionsFor(el), last = -1;
+      while (Date.now() < until && (opts2.length === 0 || opts2.length !== last)) {
+        last = opts2.length; await sleep(STEP_MS); opts2 = optionsFor(el);
+      }
+      _comboOptions.set(el, opts2.map((o) => (o.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 40));
+      await closeCombo(el);
+    }
+    return extractForm(opts);
+  }
+
+  // Screening / EEO / contact values for the custom widgets, by the same rules as the native
+  // passes: saved Yes/No answers, the EEO decline the person opted into, and profile values
+  // (country, state, city, location). Anything else is left for the model plan or the person.
+  async function fillWidgets(payload) {
+    const out = { filled: 0, fields: 0, screening: 0, eeo: 0 };
+    if (!payload) return out;
+    const f = derivedFields(payload.fields || {});
+    const rules = screenRules();
+    const { topics, decline } = eeoRes();
+    const route = (q) => {
+      const hits = rules.filter((s) => s.re.test(q));
+      if (hits.length > 1) return null;                    // combined question: polarity unclear
+      if (hits.length === 1) {
+        const a = screeningAnswer(payload.screening, hits[0].key, q);
+        return a ? { kind: "screening", score: regexScorer(a === "Yes" ? YES_RE : NO_RE) } : null;
+      }
+      if (topics.test(q)) {
+        return (payload.eeo && payload.eeo.decline) ? { kind: "eeo", score: regexScorer(decline) } : null;
+      }
+      return undefined;
+    };
+    for (const el of comboboxes()) {
+      if (comboValue(el)) continue;
+      const q = norm(widgetLabel(el));
+      let r = route(q);
+      if (r === null) continue;
+      if (r === undefined) {
+        let value = "";
+        if (/\blocation\b/.test(q)) value = f.location;
+        else {
+          const key = categorize(el, signature(el) || q);
+          if (key) value = f[key];
+        }
+        if (!value) continue;
+        r = { kind: "fields", text: value, score: valueScorer(value), freeText: true };
+      }
+      const res = await pickCombo(el, r);
+      if (res.ok) { out[r.kind]++; out.filled++; markFilled(controlOf(el)); }
+    }
+    for (const g of ariaRadioGroups()) {
+      if (g.radios.some(isOn)) continue;
+      const r = route(norm(widgetQuestion(g.box)));
+      if (!r) continue;
+      if (await pickAriaRadio(g.radios, r.score)) { out[r.kind]++; out.filled++; }
+    }
+    return out;
+  }
+
+  // One op of the model plan on a custom widget. "filled" | "skipped".
+  async function applyWidgetOp(el, op) {
+    const kind = el.getAttribute("data-tailor-widget");
+    const text = String(op.text == null ? "" : op.text);
+    if (kind === "combobox") {
+      if (!text) return "skipped";
+      const r = await pickCombo(el, { text, score: valueScorer(text) });
+      if (r.ok) { markFilled(controlOf(el)); return "filled"; }
+      return "skipped";
+    }
+    if (kind === "radio") {
+      const radios = qsaDeep(`[data-tailor-group="${CSS.escape(op.ref)}"]`);
+      return (await pickAriaRadio(radios, valueScorer(text))) ? "filled" : "skipped";
+    }
+    if (kind === "checkbox") {
+      if (!/^(yes|true|1|checked|on)$/i.test(text)) return "skipped";
+      if (await toggleAria(el)) { markFilled(el); return "filled"; }
+      return "skipped";
+    }
+    return "skipped";
+  }
+
+  // applyOps for the shell: native fields as before, custom widgets driven and verified.
+  async function applyOpsAsync(ops) {
+    const native = [], widget = [];
+    for (const op of (ops || [])) {
+      const el = elByRef(op.ref);
+      if (el && op.op !== "upload" && el.getAttribute("data-tailor-widget")) widget.push([el, op]);
+      else native.push(op);
+    }
+    const rep = applyOps(native);
+    for (const [el, op] of widget) {
+      let res = "skipped";
+      try { res = await applyWidgetOp(el, op); } catch (e) { res = "skipped"; }
+      if (res === "filled") rep.filled++; else rep.skipped++;
+    }
+    return rep;
+  }
+
+  // The keyword fill plus the custom widgets: what the desktop shell runs.
+  async function fillAsync(payload) {
+    const r = fill(payload);
+    if (!r || !r.ok) return r;
+    let w = { filled: 0, fields: 0, screening: 0, eeo: 0 };
+    try { w = await fillWidgets(payload); } catch (e) { /* a widget threw: the rest stands */ }
+    r.filled += w.fields;
+    r.screening += w.screening;
+    r.eeo += w.eeo;
+    r.total += w.filled;
+    r.widgets = w.filled;
+    r.remaining = extractForm({ onlyEmpty: true }).length;
+    return r;
+  }
+
+  // What is still blank on this page and needs the person, by label: required checkboxes only
+  // (an optional newsletter box is not "left"), a file input only while no file is attached.
+  function leftover() {
+    const out = [];
+    for (const f of extractForm({ onlyEmpty: true })) {
+      const el = elByRef(f.ref);
+      if (f.type === "file") { if (el && el.files && el.files.length) continue; }
+      else if (f.type === "checkbox") {
+        if (!f.required) continue;
+        if (el && (el.checked || el.getAttribute("aria-checked") === "true")) continue;
+      }
+      const label = cleanLabel(f.label);
+      if (label && !out.includes(label)) out.push(label);
+    }
+    return out;
+  }
+
+  // A cheap fingerprint of the form on screen, for spotting "the person pressed Next and a new
+  // page of questions appeared" (URL changes alone miss single-page apps like Workday).
+  function pageSignature() {
+    return withRoots(() => {
+      const all = extractForm({});
+      return { labels: all.map((f) => cleanLabel(f.label)).filter(Boolean).slice(0, 200),
+               empty: extractForm({ onlyEmpty: true }).length,
+               blocker: pageBlocker(), success: !!detectSuccess(), url: hereUrl(),
+               cross_frames: crossOriginFrames() };
+    });
+  }
+
   window.TailorAutofill = {
     fill, pageBlocker, planFill, applyFill, fillScreening, fillTextAnswers, answerKeyForLabel,
     fillEeo, hasResumeUpload, candidates, categorize, signature, setNativeValue, markFilled,
     rawLabel, answerableTextareas, pageJobContext, screeningAnswer,
     extractForm, applyOps, fieldRef,                                         // AI-planned autoapply
+    // deep DOM + custom widgets + multi-page (desktop shell)
+    fillAsync, fillWidgets, extractFormAsync, applyOpsAsync, leftover, pageSignature, setRefPrefix,
+    crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer,
     // recipes: the per-system table, success detection, continue hints, corrections
     setRecipes, recipes: () => RECIPES, recipeFor, globToRe, highlightSubmit, continueButton,
     detectSuccess, watchSuccess, stopSuccessWatch, watchCorrections, takeCorrections,

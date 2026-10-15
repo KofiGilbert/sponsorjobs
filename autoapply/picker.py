@@ -169,11 +169,16 @@ def profile_rank(job: dict, title_words: set[str], skill_words: set[str]) -> flo
 
 def candidates(board: list[dict], saved: list[dict], *, facets: dict | None = None,
                titles=(), locations=(), sponsor_only: bool = False,
-               targets: dict | None = None) -> list[dict]:
+               targets: dict | None = None, learn: dict | None = None,
+               needs_sponsor: bool = False) -> list[dict]:
     """The roles a run may tailor, best first: the person's saved jobs (in their order), then
     the board ranked by how well each title fits the profile (stable, so the board's recency
     order breaks ties). Each is narrowed by the saved Jobs search (``facets``) and today's
-    focus. Rows are copied, so the caller can annotate them freely."""
+    focus. Rows are copied, so the caller can annotate them freely.
+
+    ``learn`` is the person's skip reasons and company lists (autoapply/learning.py): when given,
+    "Never apply to" companies and roles closed to a visa holder (when ``needs_sponsor``) are
+    left out, prioritized companies move up and roles like the ones skipped move to the back."""
     facets = {k: v for k, v in (facets or {}).items() if v not in (None, "", 0, [], False)}
     titles = [t for t in (titles or []) if str(t).strip()]
     locations = [l for l in (locations or []) if str(l).strip()]
@@ -206,6 +211,9 @@ def candidates(board: list[dict], saved: list[dict], *, facets: dict | None = No
         ranked = [(profile_rank(j, tw, sw), i, j) for i, j in enumerate(rest)]
         ranked.sort(key=lambda x: (-x[0], x[1]))
         rest = [j for _r, _i, j in ranked]
+    if learn is not None:
+        from autoapply.learning import shape
+        return shape(out + rest, learn, needs_sponsor=needs_sponsor)
     return out + rest
 
 

@@ -3303,10 +3303,10 @@ def jobs_list():
             if jobs:
                 a = request.args
                 facets = _facets(a)
-                filtered = apply_facets(jobs, **facets)
+                filtered = _jobs_personal(apply_facets(jobs, **facets))
                 page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1),
                                                             a.get("per_page", 30))
-                page_jobs = [dict(j) for j in page_jobs]     # never mutate the shared cached rows
+                page_jobs = _jobs_mark([dict(j) for j in page_jobs])   # never mutate the cached rows
                 saved = _saved_ids()                         # overlay the user's bookmarks onto feed rows
                 if saved:
                     for j in page_jobs:
@@ -3367,7 +3367,9 @@ def jobs_list():
                                        if j.get("source_id") not in seen]
             except Exception:                            # noqa: BLE001 - search still returns the local matches
                 pass
+        filtered = _jobs_personal(filtered)
         page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1), a.get("per_page", 30))
+        page_jobs = _jobs_mark([dict(j) for j in page_jobs])
         refreshed = _sponsors().get_meta("jobs_refreshed_at")
         # An empty local store on a fresh install: start the first-open crawl (only when the feed is
         # genuinely absent, see _first_crawl_allowed) and say so, so the client shows "fetching
@@ -4444,6 +4446,19 @@ def _save_prefs(prefs: dict) -> dict:
         "hear_about_us": _txt(prefs.get("hear_about_us"), 60),
         "eeo_decline": bool(prefs.get("eeo_decline")),
     }
+    # The structured work-authorization profile (autoapply/workauth.py) is the truth; the flat
+    # Yes/No answers above are derived from it so the extension and older code fill the same
+    # answer. A write from an older surface (no work_auth in it) is carried into the US entry.
+    from autoapply import workauth as _wa
+    if isinstance(prefs.get("work_auth"), dict):
+        wa = _wa.clean(prefs["work_auth"])
+    else:
+        prev = _load_prefs().get("work_auth")
+        wa = _wa.apply_legacy(prev, clean) if isinstance(prev, dict) else None
+    if wa is not None:
+        clean["work_auth"] = wa
+        for k, v in _wa.legacy_prefs(wa).items():
+            clean[k] = v
     _DATA.mkdir(parents=True, exist_ok=True)
     _PREFS_PATH.write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
@@ -4455,12 +4470,17 @@ def _merge_prefs(patch: dict) -> dict:
     cur.update({k: v for k, v in (patch or {}).items() if k in _PREF_KEYS})
     if "work_auth_us" in (patch or {}):          # the profile screen's spelling wins when given
         cur["work_authorized"] = patch["work_auth_us"]
+    legacy = ("work_auth_us", "work_authorized", "needs_sponsorship", "willing_to_relocate")
+    if "work_auth" not in (patch or {}) and isinstance(cur.get("work_auth"), dict) \
+            and any(k in (patch or {}) for k in legacy):
+        from autoapply import workauth as _wa     # carry the flat answer into the structured profile
+        cur["work_auth"] = _wa.apply_legacy(cur["work_auth"], patch)
     return _save_prefs(cur)
 
 
 _PREF_KEYS = ("work_authorized", "work_auth_us", "needs_sponsorship", "willing_to_relocate",
               "over_18", "years_experience", "desired_salary", "earliest_start", "hear_about_us",
-              "eeo_decline")
+              "eeo_decline", "work_auth")
 
 
 def _profile_answers(prefs: dict | None = None) -> dict:
@@ -4556,7 +4576,18 @@ def _learn_from_corrections(body: dict) -> dict:
     if "eeo_decline" in body:
         pref_patch["eeo_decline"] = bool(body.get("eeo_decline"))
     prefs = _merge_prefs(pref_patch) if pref_patch else _load_prefs()
-    return {"ok": True, "learned": sorted(list(patch) + list(pref_patch)),
+    learned_q = 0
+    qa_list = [x for x in (body.get("answers") or []) if isinstance(x, dict)][:40]
+    if qa_list:                                   # a typed answer the person fixed on a form
+        lib = _answer_lib()
+        try:
+            for x in qa_list:
+                if lib.save(str(x.get("question") or ""), str(x.get("answer") or ""), "you",
+                            company=str(body.get("company") or "")):
+                    learned_q += 1
+        finally:
+            lib.close()
+    return {"ok": True, "learned": sorted(list(patch) + list(pref_patch)), "learned_answers": learned_q,
             "identity": {k: str(saved_identity.get(k) or "") for k in IDENTITY_KEYS} if patch else None,
             "answers": _profile_answers(prefs)}
 
@@ -4627,6 +4658,49 @@ def autofill_applied():
     """The engine detected the application-received page: mark that job applied.
     Body {url, page_url?, record_id?, title?, system?}."""
     return _nostore(jsonify(_mark_applied_from_page(request.json or {})))
+
+
+@app.post("/api/autoapply/fill-report")
+@_guard
+@_extension_only
+def autoapply_fill_report():
+    """What the in-app fill did on one page of an application form: how many fields it filled
+    and which it left for the person (by label). The desktop shell posts this after every page
+    it fills, including the later pages of a multi-page form. Kept on the record as
+    ``fill_report`` = {pages: [{page, url, filled, left, system, at}], updated}, one entry per
+    page number (a re-fill of the same page replaces it), for the Auto-apply drawer.
+    Body {record_id, page, url, filled, left:[labels], system?}."""
+    b = request.json or {}
+    try:
+        rid = int(b.get("record_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "record_id is required."}), 400
+    try:
+        page = max(1, min(50, int(b.get("page") or 1)))
+        filled = max(0, min(500, int(b.get("filled") or 0)))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "page and filled must be numbers."}), 400
+    left = []
+    for lab in (b.get("left") or [])[:60]:
+        t = " ".join(str(lab or "").split())[:200]
+        if t and t not in left:
+            left.append(t)
+    entry = {"page": page, "url": str(b.get("url") or "")[:500], "filled": filled, "left": left,
+             "system": str(b.get("system") or "")[:40], "at": _now_iso()}
+    recs = _records()
+    try:
+        rec = recs.get(rid)
+        if not rec:
+            return jsonify({"ok": False, "error": "That application was not found."}), 404
+        cur = _record_data(rec).get("fill_report")
+        pages = [p for p in ((cur or {}).get("pages") or []) if isinstance(p, dict)
+                 and p.get("page") != page]
+        pages = sorted(pages + [entry], key=lambda p: p.get("page") or 0)[-12:]
+        report = {"pages": pages, "updated": entry["at"]}
+        recs.merge_data(rid, {"fill_report": report})
+    finally:
+        recs.close()
+    return _nostore(jsonify({"ok": True, "fill_report": report}))
 
 
 @app.get("/api/profile/autofill")
@@ -4762,6 +4836,143 @@ def profile_answers_save():
         patch["eeo_decline"] = bool(b.get("eeo_decline"))
     prefs = _merge_prefs(patch) if patch else _load_prefs()
     return jsonify({"ok": True, "answers": _profile_answers(prefs)})
+
+
+# --------------------------------------------------------------------------- Your answers
+# The answer library (autoapply/answers.py) + the structured work-authorization profile
+# (autoapply/workauth.py): fix an answer once, reused on every later form. Local SQLite in the
+# data dir; nothing here goes to the model.
+_ANSWERS_DB = _DATA / "answers.db"
+
+
+def _answer_lib():
+    """Open the answer library, seeding it once from the older saved answers."""
+    from autoapply.answers import AnswerLibrary, seed_once
+    lib = AnswerLibrary(_ANSWERS_DB)
+    try:
+        seed_once(lib, _load_prefs())
+    except Exception:
+        pass
+    return lib
+
+
+def _work_auth() -> dict:
+    """The person's work-authorization profile (structured, or built from the older answers)."""
+    from autoapply import workauth as _wa
+    return _wa.load(_load_prefs())
+
+
+def _answers_payload(query: str = "") -> dict:
+    from autoapply import workauth as _wa
+    lib = _answer_lib()
+    try:
+        rows = lib.list(query)
+        total = lib.count()
+    finally:
+        lib.close()
+    return {"ok": True, "work_auth": _work_auth(),
+            "countries": [{"code": c, "name": _wa.COUNTRY_NAMES[c],
+                           "statuses": [{"code": k, "label": v} for k, v in _wa.STATUSES[c]]}
+                          for c in _wa.COUNTRIES],
+            "implied": sorted(_wa.CITIZEN | _wa.PERMANENT), "dated": sorted(_wa.DATED),
+            "eeo_decline": bool(_load_prefs().get("eeo_decline")),
+            "answers": rows, "total": total}
+
+
+@app.get("/api/answers")
+@_guard
+def answers_list():
+    """Your answers: the work-authorization profile and the saved answer library (?q= filters)."""
+    return _nostore(jsonify(_answers_payload(str(request.args.get("q") or ""))))
+
+
+@app.post("/api/answers/workauth")
+@_guard
+def answers_workauth_save():
+    """Save the work-authorization profile {work_auth:{countries:{US:{...}}, relocate}} and,
+    optionally, eeo_decline. The flat Yes/No answers are derived from it."""
+    from autoapply import workauth as _wa
+    b = request.json or {}
+    patch: dict = {}
+    if isinstance(b.get("work_auth"), dict):
+        patch["work_auth"] = _wa.clean(b["work_auth"])
+    if "eeo_decline" in b:
+        patch["eeo_decline"] = bool(b.get("eeo_decline"))
+    prefs = _merge_prefs(patch) if patch else _load_prefs()
+    return jsonify({"ok": True, "work_auth": _wa.load(prefs),
+                    "eeo_decline": bool(prefs.get("eeo_decline")),
+                    "answers": _profile_answers(prefs)})
+
+
+@app.post("/api/answers")
+@_guard
+def answers_save():
+    """Add or replace one saved answer {question, answer, key?}. With ``key`` it edits that
+    entry (re-keyed if the question changed). Saved as the person's own."""
+    b = request.json or {}
+    q = str(b.get("question") or "").strip()
+    a = str(b.get("answer") or "").strip()
+    if not a:
+        return jsonify({"error": "Write an answer first."}), 400
+    lib = _answer_lib()
+    try:
+        key = str(b.get("key") or "").strip()
+        row = lib.update(key, question=q or None, answer=a) if key else lib.save(q, a, "you")
+    finally:
+        lib.close()
+    if row is None:
+        return jsonify({"error": "That question can't be saved for reuse."}), 400
+    return jsonify({"ok": True, "answer": row})
+
+
+@app.post("/api/answers/delete")
+@_guard
+def answers_delete():
+    """Delete one saved answer {key}."""
+    key = str((request.json or {}).get("key") or "").strip()
+    lib = _answer_lib()
+    try:
+        ok = lib.delete(key) if key else False
+    finally:
+        lib.close()
+    return jsonify({"ok": ok})
+
+
+@app.post("/api/record/<int:rid>/screening")
+@_guard
+def record_screening_save(rid: int):
+    """The person edited one screening answer on an application {index, answer}: saved on the
+    record AND in the answer library, so every later form reuses it (unless the question is
+    about this one company or role)."""
+    b = request.json or {}
+    try:
+        idx = int(b.get("index"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Which answer?"}), 400
+    ans = str(b.get("answer") or "").strip()[:4000]
+    recs = _records()
+    try:
+        rec = recs.get(rid)
+        if not rec:
+            return jsonify({"error": "That application was not found."}), 404
+        data = _record_data(rec)
+        scr = [dict(x) for x in (data.get("screening") or []) if isinstance(x, dict)]
+        if not 0 <= idx < len(scr):
+            return jsonify({"error": "Which answer?"}), 400
+        scr[idx]["answer"] = ans
+        scr[idx]["edited"] = True
+        recs.merge_data(rid, {"screening": scr})
+        company = rec.get("company") or ""
+    finally:
+        recs.close()
+    saved = None
+    if ans:
+        lib = _answer_lib()
+        try:
+            saved = lib.save(scr[idx].get("question") or "", ans, "you", company=company)
+        finally:
+            lib.close()
+    return jsonify({"ok": True, "screening": scr, "reused": bool(saved)})
 
 
 @app.post("/api/profile/draft")
@@ -9729,7 +9940,7 @@ def autoapply_plan():
 
     Honest gate: refuses bot-prohibited sites (LinkedIn etc.) via fill_permitted, so those stay
     fill-by-hand; returns needs_assist (never a guess) whenever it can't plan confidently."""
-    from autoapply import applicant_from_record, build_fill_plan, resolve_plan
+    from autoapply import KnownContext, applicant_from_record, build_fill_plan, plan_known, resolve_plan
     from autoapply.fields import FormField
     from submit.policy import fill_permitted
     b = request.json or {}
@@ -9752,21 +9963,57 @@ def autoapply_plan():
     role = (rec.get("role") if rec else "") or ""
     company = (rec.get("company") if rec else "") or ""
     jd = data.get("jd_text") or data.get("jd") or ""
-    plan = build_fill_plan(fields, _make_llm(), role=role, company=company, jd=jd)
-    if not plan:
-        return jsonify({"ok": False, "needs_assist": True,
-                        "reason": "Could not plan this form confidently. Fill it in and I'll help."})
     prof = data.get("render_profile") or data.get("profile") or {}
     if not (prof.get("identity") or {}).get("name"):
         prof = _saved_full_profile() or prof             # fall back to the saved profile's identity
     applicant = applicant_from_record({"profile": prof})
-    resume = ""
-    if rec:
-        resume = _resume_upload_path(rec)   # named after the person, not cv-<id>.pdf
+    resume = _resume_upload_path(rec) if rec else ""   # named after the person, not cv-<id>.pdf
+    # The person's own answers first (work authorization, the answer library, this record's
+    # drafted screening answers, the cover letter, contact fields); the model only for what is
+    # left, behind the fact gate (autoapply/planner.py). None of these answers reach the model.
+    lib = _answer_lib()
+    try:
+        ctx = KnownContext(work_auth=_work_auth(), library=lib,
+                           drafted=[x for x in (data.get("screening") or []) if isinstance(x, dict)],
+                           cover_letter=str(data.get("cover_letter") or ""), applicant=applicant,
+                           resume_path=resume, job_country=_job_country(data), company=company,
+                           eeo_decline=bool(_load_prefs().get("eeo_decline")))
+        res = plan_known(fields, ctx)
+        if res.rest:
+            try:
+                llm = _make_llm()
+            except Exception:                            # no model: what we know still fills
+                llm = None
+            if llm is not None:
+                ai = build_fill_plan(res.rest, llm, role=role, company=company, jd=jd)
+                res.actions.extend(ai)
+        for k in res.used_library:
+            lib.mark_used(k)
+        for q, a in res.drafted_used:                    # a generic drafted answer, kept to confirm
+            lib.save(q, a, "drafted", company=company)
+    finally:
+        lib.close()
+    plan = res.actions
+    if not plan:
+        return jsonify({"ok": False, "needs_assist": True,
+                        "reason": "Could not plan this form confidently. Fill it in and I'll help.",
+                        "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
     ops = resolve_plan(plan, applicant, resume_path=resume)
     return jsonify({"ok": True, "filled": len(ops),
                     "ops": [{"ref": o.ref, "op": o.op, "text": o.text, "path": o.path,
-                             "sensitive": o.is_sensitive} for o in ops]})
+                             "sensitive": o.is_sensitive, "from": o.origin} for o in ops],
+                    "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
+
+
+def _job_country(data: dict) -> str:
+    """The country of the job, from its location (US when it does not say)."""
+    from autoapply import workauth as _wa
+    sj = data.get("source_job") if isinstance(data.get("source_job"), dict) else {}
+    loc = " ".join(str(x or "") for x in (data.get("location"), sj.get("location"), data.get("job_location")))
+    if not loc.strip():
+        return "US"
+    cc = _wa.question_country(loc, "")
+    return cc or "US"
 
 
 def _tailor_job_unattended(job: dict, llm, tex: str, tname: str, scratch: str) -> dict:
@@ -9858,9 +10105,11 @@ def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
     strat = _aa_saved_search()
     snap = _memory().load("default") or {}
     profile = snap.get("profile") or snap.get("essentials") or {}
+    from autoapply.learning import needs_sponsorship
     rows = candidates(board, saved, facets=(strat or {}).get("filters") or {},
                       titles=titles, locations=locations, sponsor_only=sponsor_only,
-                      targets=profile_targets(profile))
+                      targets=profile_targets(profile), learn=_learn_state(),
+                      needs_sponsor=needs_sponsorship(_load_prefs()))
     skip = set(_prefs().get("aa_skip") or [])
     if skip:
         rows = [j for j in rows if str(j.get("source_id") or "") not in skip]
@@ -10252,7 +10501,8 @@ def autoapply_upnext():
     min_fit = _aa_min_fit()
     records = _aa_records()
     key = (count, tuple(focus["titles"]), tuple(focus["locations"]), focus["sponsor_only"],
-           min_fit, len(records), tuple(_prefs().get("aa_skip") or []))
+           min_fit, len(records), tuple(_prefs().get("aa_skip") or []),
+           _LEARN_VER[0], _load_prefs().get("needs_sponsorship"))
     hit = _AA_NEXT_CACHE.get("v")
     if hit and hit[0] == key and time.time() - hit[1] < 120:
         return jsonify(hit[2])
@@ -10267,6 +10517,7 @@ def autoapply_upnext():
             "visa": j.get("visa") or [], "ad_stance": j.get("ad_stance"),
             "ad_sentence": j.get("ad_sentence"), "sponsorship_stated": j.get("sponsorship_stated"),
             "fit": j.get("fit"), "saved": bool(j.get("saved")), "url": j.get("url") or "",
+            "salary": j.get("salary") or "", "priority": bool(j.get("priority")),
         })
     out = {"ok": True, "jobs": rows_out, "count": count, "min_fit": min_fit,
            "matches": res["available"], "has_profile": _aa_has_profile(),
@@ -10293,6 +10544,124 @@ def autoapply_skip():
     _set_prefs({"aa_skip": cur})
     _AA_NEXT_CACHE.pop("v", None)
     return jsonify({"ok": True, "skipped": len(cur)})
+
+
+# ---------------------------------------------------------------- skip reasons + company lists
+# Why the person skipped a role (one tap, optional), what that taught the picker, and their
+# "Never apply to" / "Prioritize" company lists. Local JSON next to the other prefs; the rules
+# are re-derived from the skips every time (autoapply/learning.py), so undo is exact.
+_LEARN_FILE = _DATA / "aa_learn.json"
+_LEARN_VER = [0]       # bumped on every write, so Up next's cache never serves an old pick
+
+
+def _learn_state() -> dict:
+    from autoapply.learning import clean_state
+    try:
+        return clean_state(_json_prefs.loads(_LEARN_FILE.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return clean_state(None)
+
+
+def _save_learn(state: dict) -> None:
+    _LEARN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _LEARN_FILE.write_text(_json_prefs.dumps(state), encoding="utf-8")
+    _LEARN_VER[0] += 1
+    _AA_NEXT_CACHE.pop("v", None)
+
+
+def _learn_view(state: dict | None = None) -> dict:
+    from autoapply.learning import learned, needs_sponsorship
+    st = state if state is not None else _learn_state()
+    names = lambda k: [c.get("name") for c in st.get(k, []) if c.get("name")]  # noqa: E731
+    rules = [{k: r[k] for k in ("id", "kind", "value", "count")} for r in learned(st)]
+    return {"ok": True, "exclude": names("exclude"), "prioritize": names("prioritize"),
+            "learned": rules, "skips": sum(1 for s in st.get("skips", []) if s.get("reason")),
+            "needs_sponsorship": needs_sponsorship(_load_prefs())}
+
+
+@app.get("/api/autoapply/prefs")
+@_guard
+def autoapply_prefs():
+    """The company lists and what Auto-apply learned from skip reasons, for the Preferences
+    panel. Every learned line names its rule id so it can be undone."""
+    return jsonify(_learn_view())
+
+
+@app.post("/api/autoapply/reason")
+@_guard
+def autoapply_reason():
+    """Say why a role was skipped. Body {source_id | record_id, title, company, location,
+    salary, reason, note}. The skip itself already happened (Up next x, the drawer's Skip, Jobs
+    Dismiss); this only records the reason, and may be sent with no reason at all. A "company"
+    reason returns ask_company so the page can ask once "Skip all roles at X?"."""
+    from autoapply.learning import REASONS, record_skip
+    b = request.json or {}
+    reason = str(b.get("reason") or "")
+    if reason and reason not in REASONS:
+        return jsonify({"error": "Unknown reason."}), 400
+    key = str(b.get("source_id") or "").strip()
+    if not key and b.get("record_id") not in (None, ""):
+        key = f"rec:{b.get('record_id')}"
+    if not key:
+        return jsonify({"error": "Which role? source_id or record_id is required."}), 400
+    st = _learn_state()
+    before = {r["id"] for r in _learn_view(st)["learned"]}
+    record_skip(st, {**b, "key": key}, reason, b.get("note") or "")
+    _save_learn(st)
+    view = _learn_view(st)
+    company = str(b.get("company") or "").strip()
+    from autoapply.learning import company_key
+    already = company_key(company) in {company_key(n) for n in view["exclude"]}
+    view["new"] = [r for r in view["learned"] if r["id"] not in before]
+    view["ask_company"] = company if reason == "company" and company and not already else ""
+    return jsonify(view)
+
+
+@app.post("/api/autoapply/company")
+@_guard
+def autoapply_company():
+    """Add or remove a company on "Never apply to" (list=exclude) or "Prioritize"
+    (list=prioritize). Body {list, name, remove?}. A company sits on one list at a time."""
+    from autoapply.learning import set_company
+    b = request.json or {}
+    st = _learn_state()
+    if not set_company(st, str(b.get("list") or ""), b.get("name") or "",
+                       on=not b.get("remove"), why="skip" if b.get("from_skip") else "you"):
+        return jsonify({"error": "Name a company and a list (exclude or prioritize)."}), 400
+    _save_learn(st)
+    return jsonify(_learn_view(st))
+
+
+@app.post("/api/autoapply/forget")
+@_guard
+def autoapply_forget():
+    """Undo one thing Auto-apply learned. Body {id} (a rule id from /api/autoapply/prefs)."""
+    from autoapply.learning import forget
+    st = _learn_state()
+    if not forget(st, str((request.json or {}).get("id") or "")):
+        return jsonify({"error": "That rule is already gone."}), 404
+    _save_learn(st)
+    return jsonify(_learn_view(st))
+
+
+def _jobs_personal(rows: list[dict]) -> list[dict]:
+    """The Jobs board through the person's own settings: a role whose ad requires citizenship or
+    a clearance, or says it will not sponsor, is hidden while they need sponsorship (the feed
+    already drops most of these; this catches local and on-demand rows). Company lists only mark
+    rows (see _jobs_mark), they never hide them."""
+    from autoapply.learning import closed_to_visa, needs_sponsorship
+    if not needs_sponsorship(_load_prefs()):
+        return rows
+    return [j for j in rows if not closed_to_visa(j)]
+
+
+def _jobs_mark(page_rows: list[dict]) -> list[dict]:
+    """One page of Jobs rows with ``excluded`` / ``priority`` set from the company lists."""
+    from autoapply.learning import mark_board
+    st = _learn_state()
+    if not st.get("exclude") and not st.get("prioritize"):
+        return page_rows
+    return mark_board(page_rows, st)
 
 
 # ============================================================================ tracker board
