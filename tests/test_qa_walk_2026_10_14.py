@@ -122,7 +122,9 @@ def test_unknown_package_count_is_not_shown_as_zero():
 
 
 def test_bare_united_states_location_is_named_not_blank():
-    assert '.trim() || "United States";' in APP_JS
+    # usLocation (shared with Up next) names a bare US location instead of returning blank;
+    # tests/test_us_location.py runs it on real spellings.
+    assert 'if (!t) return "United States";' in APP_JS
 
 
 def test_package_visa_badges_use_the_readable_labels():
