@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import time
+from functools import lru_cache
 
 from sourcing.dedup import role_key, url_key
 from sourcing.filters import apply_facets
@@ -29,6 +30,9 @@ DEFAULT_MIN_FIT = 60
 MIN_FIT_RANGE = (0, 95)
 MAX_SCORED = 60           # JD fetches per run, so a run on a 70k board stays bounded
 TIME_BUDGET_S = 60.0
+POOL = 300                # roles the fit is scored on, after the cheap prefilter over the board
+SPONSOR_BONUS = 0.25      # how far a known sponsor moves up the cheap prefilter (title fit is 0..1)
+PENDING = "pending"       # a score_fn answer: this role's description is not here yet
 
 _TOKEN = re.compile(r"[a-z0-9+#]+")
 
@@ -106,16 +110,61 @@ def _job_keys(job: dict, loose: bool = True) -> list[str]:
     return keys
 
 
-def taken_index(records: list[dict]) -> dict[str, str]:
+_URL_HEAD = re.compile(r"^https?://(?:www\.)?")
+
+
+def _cheap_url(url: str) -> str:
+    """Host + path, lowercased, without query or fragment: equal url_key()s always give equal
+    cheap keys, so this is a safe first gate before the full key is built."""
+    u = _URL_HEAD.sub("", str(url or "").strip().lower())
+    return u.split("#", 1)[0].split("?", 1)[0].rstrip("/")
+
+
+def _company_words(company: str) -> set[str]:
+    return {w for w in _TOKEN.findall((company or "").lower()) if w not in _LEGAL}
+
+
+class TakenIndex(dict):
+    """{key: "applied" | "queued"} plus a cheap gate. Building every key for every row of a
+    100k-row board took ~2.5 s; a row can only share a key with a record when it shares the
+    source_id, the apply URL's host + path, or a company word, so only those rows get keys."""
+
+    def __init__(self):
+        super().__init__()
+        self.sids: set[str] = set()
+        self.urls: set[str] = set()
+        self.words: set[str] = set()
+
+    def may_hold(self, job: dict) -> bool:
+        if not self:
+            return False
+        if str(job.get("source_id") or "").strip() in self.sids:
+            return True
+        cu = _cheap_url(job.get("url") or "")
+        if cu and cu in self.urls:
+            return True
+        words = _company_words(job.get("company") or "")
+        return not words or not words.isdisjoint(self.words)
+
+
+def taken_index(records: list[dict]) -> TakenIndex:
     """{key: "applied" | "queued"} over every record the person already has. "applied" wins
     when two records share a key. Any record counts: a package that exists for a job is
     either waiting in the queue or already sent, and a second one is a duplicate."""
-    idx: dict[str, str] = {}
+    idx = TakenIndex()
     for rec in records or []:
         status = "applied" if _is_applied(rec) else "queued"
         for k in _record_keys(rec):
             if idx.get(k) != "applied":
                 idx[k] = status
+        sj = rec.get("source_job") or {}
+        sid = str(sj.get("source_id") or "").strip()
+        if sid:
+            idx.sids.add(sid)
+        cu = _cheap_url(sj.get("url") or "")
+        if cu:
+            idx.urls.add(cu)
+        idx.words |= _company_words(rec.get("company") or "")
     return idx
 
 
@@ -126,6 +175,8 @@ def _is_applied(rec: dict) -> bool:
 
 
 def taken_status(job: dict, idx: dict[str, str]) -> str | None:
+    if isinstance(idx, TakenIndex) and not idx.may_hold(job):
+        return None
     hit = None
     for k in _job_keys(job):
         st = idx.get(k)
@@ -153,14 +204,29 @@ def _matches_focus(job: dict, titles: list[str], locations: list[str]) -> bool:
     return True
 
 
-def _is_sponsor(job: dict) -> bool:
-    return bool(job.get("visa")) or job.get("sponsorship_stated") is True
+def is_sponsor(job: dict) -> bool:
+    """A role the person sees as sponsoring: an employer with a public visa record, or an ad that
+    says sponsorship is available. Exactly the chip the row shows: the aggregator's own
+    ``sponsorship_stated`` flag alone is shown as "No sponsorship record" (it was wrong for most
+    flagged ads, sourcing/adstance.py), so it does not count here either. An ad that refuses
+    sponsorship or requires citizenship never counts."""
+    stance = job.get("ad_stance")
+    if stance in ("not_offered", "restricted"):
+        return False
+    return bool(job.get("visa")) or stance == "offered"
+
+
+@lru_cache(maxsize=1 << 18)
+def _title_words(title: str) -> frozenset[str]:
+    """A title's words, cached: the board repeats titles ("Software Engineer" thousands of
+    times), and the prefilter reads every title on every Up next request."""
+    return frozenset(_tokens(title))
 
 
 def profile_rank(job: dict, title_words: set[str], skill_words: set[str]) -> float:
     """0..1 from the job TITLE alone vs the profile's role titles and skills (no JD needed):
     orders tens of thousands of roles cheaply so the JD scoring is spent on likely fits."""
-    words = _tokens(job.get("title") or "")
+    words = _title_words(job.get("title") or "")
     if not words:
         return 0.0
     hit = len(words & title_words) + 0.5 * len((words - title_words) & skill_words)
@@ -189,7 +255,7 @@ def candidates(board: list[dict], saved: list[dict], *, facets: dict | None = No
         rows = apply_facets(rows, **facets) if facets else list(rows)
         rows = [j for j in rows if _matches_focus(j, titles, locations)]
         if sponsor_only:
-            rows = [j for j in rows if _is_sponsor(j)]
+            rows = [j for j in rows if is_sponsor(j)]
         return rows
 
     seen: set[str] = set()
@@ -206,11 +272,17 @@ def candidates(board: list[dict], saved: list[dict], *, facets: dict | None = No
         if not sid or sid in seen:
             continue
         seen.add(sid)
-        rest.append(dict(j))
+        rest.append(j if learn is not None else dict(j))   # shape() copies the rows it keeps
+    # The cheap prefilter over the whole board: title fit to the profile, with known sponsors
+    # moved up (a person who left "Visa sponsors only" off still sees sponsors first among
+    # equals). Stable, so the board's recency order breaks ties.
     if tw or sw:
-        ranked = [(profile_rank(j, tw, sw), i, j) for i, j in enumerate(rest)]
-        ranked.sort(key=lambda x: (-x[0], x[1]))
-        rest = [j for _r, _i, j in ranked]
+        ranked = [(profile_rank(j, tw, sw) + (SPONSOR_BONUS if is_sponsor(j) else 0.0), i, j)
+                  for i, j in enumerate(rest)]
+    else:
+        ranked = [(SPONSOR_BONUS if is_sponsor(j) else 0.0, i, j) for i, j in enumerate(rest)]
+    ranked.sort(key=lambda x: (-x[0], x[1]))
+    rest = [j for _r, _i, j in ranked]
     if learn is not None:
         from autoapply.learning import shape
         return shape(out + rest, learn, needs_sponsor=needs_sponsor)
@@ -271,6 +343,61 @@ def pick(rows: list[dict], *, records: list[dict], score_fn, count: int, min_fit
         picked.append(j)
     return {"jobs": picked, "applied": applied, "queued": queued, "below": below,
             "unscored": unscored, "scored": scored, "available": len(fresh)}
+
+
+def rank(rows: list[dict], *, records: list[dict], score_fn, count: int, min_fit: int,
+         pool: int = POOL) -> dict:
+    """Up next and the run: score the fit on the first ``pool`` untaken roles of ``rows``
+    (already ordered by ``candidates``, the cheap prefilter over the whole board), keep those at
+    or above ``min_fit`` and return the best ``count``: saved roles first, then prioritized
+    companies, then by fit (highest first), a known sponsor ahead of an equal fit without one.
+
+    ``score_fn(job)`` returns the fit (0..100), None when the role cannot be scored, or PENDING
+    when its description is not on this machine yet (the caller scores those later). The
+    same opening listed twice (two feeds) is scored once.
+
+    Returns {"jobs", "applied", "queued", "below", "unscored", "pending", "scored",
+    "available", "pool"}."""
+    idx = taken_index(records)
+    fresh, applied, queued = [], 0, 0
+    for j in rows:
+        st = taken_status(j, idx)
+        if st == "applied":
+            applied += 1
+        elif st == "queued":
+            queued += 1
+        else:
+            fresh.append(j)
+    kept, below, unscored, pending, scored = [], 0, 0, 0, 0
+    run_keys: set[str] = set()
+    head = fresh[:max(pool, 0)]
+    for pos, j in enumerate(head):
+        j = dict(j)                 # the fit is written on a copy: ``rows`` may be a cached list
+        keys = _job_keys(j, loose=False)
+        if any(k in run_keys for k in keys):
+            continue
+        run_keys.update(keys)
+        try:
+            pct = score_fn(j)
+        except Exception:   # noqa: BLE001 - one unreadable posting never stops the list
+            pct = None
+        if pct == PENDING:
+            pending += 1
+            continue
+        scored += 1
+        if pct is None:
+            unscored += 1
+            continue
+        j["fit"] = int(pct)
+        if pct < min_fit:
+            below += 1
+            continue
+        kept.append((pos, j))
+    kept.sort(key=lambda x: (not x[1].get("saved"), not x[1].get("priority"), -x[1]["fit"],
+                             not is_sponsor(x[1]), x[0]))
+    return {"jobs": [j for _p, j in kept[:count]], "applied": applied, "queued": queued,
+            "below": below, "unscored": unscored, "pending": pending, "scored": scored,
+            "available": len(fresh), "pool": len(head)}
 
 
 def skip_summary(result: dict, min_fit: int) -> str:
