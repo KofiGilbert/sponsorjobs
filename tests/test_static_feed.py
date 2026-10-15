@@ -466,6 +466,28 @@ def test_app_filters_the_static_feed_locally_and_overlays_bookmarks(client, monk
     assert (client._DATA / "feed_cache" / "jobs.json.gz").exists()
 
 
+def test_dismissing_a_feed_role_hides_it_from_the_board(client, monkeypatch):
+    """QA 2026-10-14: Dismiss on a static-feed role was a no-op (the role had no local row to flag
+    and the feed path never read dismissals), so it stayed on the board. It must vanish and stay
+    gone, and a later prune must not bring it back."""
+    rows = [_row("greenhouse:acme:1"),
+            _row("lever:beta:2", company="Beta", source="lever", url="https://beta.example/2")]
+    _install_origin(monkeypatch, rows)
+    c = client.app.test_client()
+    assert c.get("/api/jobs").get_json()["count"] == 2
+    assert c.post("/api/jobs/dismiss", json={"source_id": "greenhouse:acme:1"}).get_json()["ok"]
+    d = c.get("/api/jobs").get_json()
+    assert [j["source_id"] for j in d["jobs"]] == ["lever:beta:2"] and d["count"] == 1
+    w = client._watchlist()
+    try:
+        w._conn.execute("UPDATE sourced_job SET last_seen=datetime('now','-90 days')")
+        w._conn.commit()
+        w.prune_stale()
+        assert "greenhouse:acme:1" in w.dismissed_ids()
+    finally:
+        w.close()
+
+
 def test_app_detail_reads_the_jd_shard_and_computes_match_locally(client, monkeypatch):
     _install_origin(monkeypatch, [_row("greenhouse:acme:1")],
                     jd={"greenhouse:acme:1": "Build distributed systems in Go."})

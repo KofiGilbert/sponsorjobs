@@ -248,10 +248,11 @@ class Watchlist(BoardMixin):
         last_seen (stamped on every refresh that re-sees a job). Conservative window so a
         single missed refresh never drops a live role. Returns how many were pruned."""
         # A bookmarked or tracked row is the person's own record (Saved list, tracker board), not
-        # a feed entry that can age out, so it is never pruned.
+        # a feed entry that can age out, so it is never pruned. Nor is a dismissal: pruning it
+        # would bring a role the person hid back onto their board.
         cur = self._conn.execute(
             "DELETE FROM sourced_job WHERE last_seen < datetime('now', ?) "
-            "AND saved=0 AND (stage IS NULL OR stage='')",
+            "AND saved=0 AND dismissed=0 AND (stage IS NULL OR stage='')",
             (f"-{int(days)} days",))
         self._conn.commit()
         return cur.rowcount
@@ -373,9 +374,22 @@ class Watchlist(BoardMixin):
         return cur.rowcount
 
     def dismiss(self, source_id: str) -> None:
+        """Hide a role from the person's board. A role from the static feed has no local row yet,
+        so a bare one is kept to hold the flag (the feed path filters on dismissed_ids())."""
+        if not source_id:
+            return
+        self._conn.execute(
+            "INSERT OR IGNORE INTO sourced_job (source_id, source) VALUES (?, 'dismissed')",
+            (source_id,))
         self._conn.execute(
             "UPDATE sourced_job SET dismissed=1 WHERE source_id=?", (source_id,))
         self._conn.commit()
+
+    def dismissed_ids(self) -> set[str]:
+        """The source_ids the person dismissed, to drop from a feed whose rows come from the
+        kitchen (which holds no personal state)."""
+        return {r[0] for r in self._conn.execute(
+            "SELECT source_id FROM sourced_job WHERE dismissed=1")}
 
     def set_saved(self, source_id: str, saved: bool, job: dict | None = None) -> None:
         """Bookmark (or un-bookmark) a role. When the row isn't in the local DB yet (it came

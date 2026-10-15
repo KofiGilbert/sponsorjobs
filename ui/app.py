@@ -528,6 +528,15 @@ def _saved_ids() -> set:
         w.close()
 
 
+def _dismissed_ids() -> set:
+    """The source_ids the person dismissed, to drop from a kitchen-sourced feed."""
+    w = _watchlist()
+    try:
+        return w.dismissed_ids()
+    finally:
+        w.close()
+
+
 def _saved_jobs_view():
     """The Saved list: the user's bookmarked roles, from the LOCAL snapshot store, with the same
     facets + pagination the main feed uses (so search/filter work inside Saved too)."""
@@ -1518,7 +1527,7 @@ def dashboard():
     return jsonify({
         "cvs": [{
             "id": c["id"], "role": c["role"], "company": c["company"] or "",
-            "coverage": round(c["coverage"] or 0), "when": (c["created_at"] or "")[:10],
+            "coverage": round(c["coverage"] or 0), "when": _local_day(c["created_at"]),
         } for c in cvs],
         "jobs": jobs,
         "stats": {"cvs": len(cvs), "jobs": len(jobs), "avg": avg},
@@ -1615,7 +1624,7 @@ def records_list():
         out.append({
             "id": r["id"], "role": r.get("role") or "", "company": r.get("company") or "",
             "coverage": round(r.get("coverage") or 0),
-            "when": (r.get("created_at") or "")[:10],
+            "when": _local_day(r.get("created_at")),
             "status": data.get("status") or "ready",
             "stage": effective_stage(data),               # the funnel: saved..rejected
             "follow_up_due": (fu or {}).get("due"),        # when to nudge yourself (if applied)
@@ -1629,6 +1638,29 @@ def records_list():
             "template_label": _template_label(data.get("template")),
         })
     return jsonify({"records": out})
+
+
+def _local_stamp(ts) -> str:
+    """A SQLite CURRENT_TIMESTAMP (stored in UTC, no offset) as local wall-clock ISO with its
+    offset, the form the tracker board stores (sourcing.board.now_iso). "" when empty; an
+    unparseable value comes back as it was."""
+    from datetime import datetime, timezone
+    raw = str(ts or "").strip()
+    if not raw:
+        return ""
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone().isoformat(timespec="seconds")
+
+
+def _local_day(ts) -> str:
+    """The person's own calendar day for a SQLite CURRENT_TIMESTAMP (stored in UTC). Slicing the
+    UTC string showed an evening's resume as made "tomorrow" (QA 2026-10-14)."""
+    return _local_stamp(ts)[:10]
 
 
 def _template_label(name) -> str:
@@ -3304,6 +3336,9 @@ def jobs_list():
                 a = request.args
                 facets = _facets(a)
                 filtered = _jobs_personal(apply_facets(jobs, **facets))
+                hidden = _dismissed_ids()                    # the person's own Dismiss, kept locally
+                if hidden:
+                    filtered = [j for j in filtered if j.get("source_id") not in hidden]
                 page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1),
                                                             a.get("per_page", 30))
                 page_jobs = _jobs_mark([dict(j) for j in page_jobs])   # never mutate the cached rows
@@ -6750,6 +6785,14 @@ def preps_prefill():
                 jd = str(full.get("jd_text") or "").strip()
                 if not jd and mine:
                     jd = str(_record_data(mine[0]).get("jd_text") or "").strip()
+                if not jd and _feed_serving():
+                    # A role saved from the job feed keeps only its slim row locally; its
+                    # description lives in the feed's shards (the setup showed the role over an
+                    # empty description box, QA 2026-10-14).
+                    try:
+                        jd = str((_feed_job_with_jd(j["source_id"]) or {}).get("jd_text") or "").strip()
+                    except Exception:                    # noqa: BLE001 - the person can paste it
+                        jd = ""
                 best = (when, {"role": (j.get("title") or "").strip(), "company": j.get("company") or "",
                                "jd": jd, "record_id": rid})
     finally:
@@ -10612,7 +10655,7 @@ def _board_reconcile(w) -> dict[str, list[dict]]:
         note = {"applied": "Application submitted", "approved": "Approved"}.get(rstage, "Tailored a resume")
         if cur is None:
             existing = w.get_job(sid)
-            w.track_job(sid, rstage, note=note, now=(r.get("created_at") or None) if rstage == "saved" else None,
+            w.track_job(sid, rstage, note=note, now=(_local_stamp(r.get("created_at")) or None) if rstage == "saved" else None,
                         job=None if existing else snap, applied_at=applied_at)
         elif cur not in ("rejected", "archived") and RANK[rstage] > RANK[cur]:
             w.move_stage(sid, rstage, note=note, applied_at=applied_at)
@@ -10802,7 +10845,7 @@ def tracker_job():
     for r in sorted(by_job.get(sid, []), key=lambda r: -r["id"]):
         data = _record_data(r)
         jobname = f"cv-{r['id']}"
-        recs.append({"id": r["id"], "role": r.get("role") or "", "when": (r.get("created_at") or "")[:10],
+        recs.append({"id": r["id"], "role": r.get("role") or "", "when": _local_day(r.get("created_at")),
                      "pdf": f"/api/cv.pdf?job={jobname}" if (WORKDIR / f"{jobname}.pdf").exists() else None,
                      "cover_letter": (f"/api/record/{r['id']}/cover_letter.pdf"
                                       if (data.get("cover_letter") or "").strip() else None)})
