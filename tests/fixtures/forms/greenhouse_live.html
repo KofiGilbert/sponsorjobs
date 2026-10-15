@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (Greenhouse current-board fixture)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script>
+<style>.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }</style>
+</head>
+<body>
+<!-- Markup patterns seen on job-boards.greenhouse.io (October 2026): the phone number's country
+     picker inside <fieldset><legend>Phone, react-select's hidden "required" mirror input, a
+     location search that answers slowly, a résumé upload whose own label is just "Attach", and a
+     multi-choice checkbox question. Field labels only; no page text. -->
+<h1>Software Engineer</h1>
+<form id="application-form" onsubmit="return false">
+  <div class="field"><label for="first_name">First Name*</label><input type="text" id="first_name"></div>
+  <div class="field"><label for="email">Email*</label><input type="text" id="email" autocomplete="email"></div>
+  <fieldset class="phone-input"><legend class="visually-hidden">Phone</legend>
+    <div id="phone-country"></div>
+    <input id="phone" type="tel" aria-label="Phone" aria-required="true">
+  </fieldset>
+  <div id="loc"></div>
+  <div class="field"><div role="group" aria-labelledby="upload-label-resume" class="file-upload">
+    <div id="upload-label-resume" class="label upload-label">Resume/CV<span class="required">*</span></div>
+    <div><button type="button" class="btn">Attach</button><label class="visually-hidden" for="resume">Attach</label>
+      <input id="resume" class="visually-hidden" type="file" accept=".pdf,.doc,.docx"></div>
+    <div><button type="button" class="btn">Enter manually</button><label class="visually-hidden" for="resume_text">Enter manually</label></div>
+  </div></div>
+  <div class="field"><div role="group" aria-labelledby="upload-label-cover_letter" class="file-upload">
+    <div id="upload-label-cover_letter" class="label upload-label">Cover Letter</div>
+    <div><button type="button" class="btn">Attach</button><label class="visually-hidden" for="cover_letter">Attach</label>
+      <input id="cover_letter" class="visually-hidden" type="file" accept=".pdf,.doc,.docx"></div>
+  </div></div>
+  <fieldset class="checkbox"><legend>How did you hear about us?*</legend>
+    <div><input type="checkbox" id="hear_0" name="question_9[]" value="0" required><label for="hear_0">LinkedIn</label></div>
+    <div><input type="checkbox" id="hear_1" name="question_9[]" value="1" required><label for="hear_1">Referral</label></div>
+    <div><input type="checkbox" id="hear_2" name="question_9[]" value="2" required><label for="hear_2">Other</label></div>
+  </fieldset>
+  <button type="submit" id="submit">Submit application</button>
+</form>
+<script>
+  const W = window.FixtureWidgets;
+  const q = new URLSearchParams(location.search);
+  window.fx = {
+    country: W.ReactSelect(document.getElementById("phone-country"), { id: "country", label: "Country*", live: true,
+      options: ["Canada +1", "United Kingdom +44", "United States +1"] }),
+    location: W.ReactSelect(document.getElementById("loc"), { id: "candidate-location", label: "Location (City)*",
+      live: true, async: true, delayMs: Number(q.get("delay") || 3200),
+      options: q.get("empty") ? [] : ["Chicago, Ontario, Canada", "Chicago, Illinois, United States"] }),
+  };
+  window.fxValues = () => ({ country: fx.country.value, location: fx.location.value,
+    phone: document.getElementById("phone").value, first: document.getElementById("first_name").value,
+    hear: [...document.querySelectorAll("input[name='question_9[]']")].filter((c) => c.checked).length });
+</script>
+</body></html>

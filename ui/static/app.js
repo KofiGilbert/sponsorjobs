@@ -1388,15 +1388,25 @@
   // This is a US board, so when a posting lists several locations (e.g. "London; New York, NY;
   // San Francisco, CA"), show the US one, not whichever came first. Strips a trailing
   // ", United States" for brevity. Falls back to the original string if nothing looks US.
+  // One place, one spelling, on every card: the US part of a multi-place listing, without the
+  // country the feeds tack on in a dozen spellings ("Redmond, WA,US, US", "San Jose, California,
+  // United States of America", "USA - Remote", "Remote-USA"). A listing that is only the country
+  // reads "United States"; only "Remote" plus the country reads "Remote (US)".
+  const US_WORD = "(?:united states(?: of america)?|u\\.s\\.a\\.?|u\\.s\\.?|usa|us)";
+  const US_TAIL = new RegExp("(?:^|[\\s,;|/\u2013\u2014-]+)" + US_WORD + "\\s*$", "i");
+  const US_HEAD = new RegExp("^" + US_WORD + "\\s*(?:[,;|/:\u2013\u2014-]\\s*)+", "i");
   function usLocation(loc) {
     const s = (loc || "").trim();
     if (!s) return "Not listed";
     const parts = s.split(";").map(p => p.trim()).filter(Boolean);
     const us = parts.find(p => /\b(united states|usa|u\.s\.?)\b/i.test(p))
       || parts.find(p => /,\s*[A-Z]{2}\b/.test(p) && !/\b(UK|BC|ON|QC)\b/.test(p));
-    // A bare "United States" (a nationwide or unspecified US role) strips to nothing, which left
-    // a blank line on the Jobs card and "Location not listed" on Home; say what it is.
-    return (us || parts[0] || s).replace(/,?\s*(united states|usa)\.?$/i, "").trim() || "United States";
+    let t = (us || parts[0] || s).trim(), prev;
+    do { prev = t; t = t.replace(US_TAIL, "").trim(); } while (t && t !== prev);
+    t = t.replace(US_HEAD, "").replace(/^[\s,;|/\u2013\u2014-]+|[\s,;|/\u2013\u2014-]+$/g, "").trim();
+    if (!t) return "United States";
+    if (/^remote$/i.test(t)) return "Remote (US)";
+    return t.replace(/\s*,\s*/g, ", ");
   }
 
   let SELECTED_SID = null;
@@ -8711,10 +8721,11 @@
   });
 
   /* ---- Up next: what the next run would tailor ---- */
-  let AA_NEXT_REQ = 0;
-  async function aaLoadNext() {
+  let AA_NEXT_REQ = 0, AA_NEXT_POLL = null, AA_NEXT_POLLS = 0;
+  async function aaLoadNext(poll) {
     const host = $("#aaNext");
     if (!host) return;
+    if (!poll) AA_NEXT_POLLS = 0;
     const my = ++AA_NEXT_REQ, f = aaFocus(), count = aaCount();
     if (AA.board && !AA.board.has_profile) { $("#aaNextSec").hidden = true; return; }
     $("#aaNextSec").hidden = false;
@@ -8725,6 +8736,10 @@
     catch (e) { if (my === AA_NEXT_REQ) host.innerHTML = `<div class="aa-empty"><div class="aa-empty-s">${esc(e.message)}</div></div>`; return; }
     if (my !== AA_NEXT_REQ) return;   // a newer focus change is already on its way
     AA.next = r;
+    // Roles whose description is still downloading are scored in the background: look again
+    // shortly (a few times at most) so the list settles on the real best fits.
+    clearTimeout(AA_NEXT_POLL);
+    if (r.pending && AA_NEXT_POLLS < 8) { AA_NEXT_POLLS++; AA_NEXT_POLL = setTimeout(() => { if (my === AA_NEXT_REQ) aaLoadNext(true); }, 3000); }
     const jobs = r.jobs || [];
     const saved = jobs.filter(j => j.saved).length;
     $("#aaNextCount").textContent = jobs.length
@@ -8734,6 +8749,10 @@
       // The job list is still on its first download: say so and look again when it lands.
       host.innerHTML = `<div class="aa-empty"><div class="aa-empty-s" data-feed-dl>${esc(feedDownloadText(null))}</div></div>`;
       watchFeedDownload(() => { AA.next = null; aaLoadNext(); });
+      return;
+    }
+    if (!jobs.length && r.pending) {
+      host.innerHTML = `<div class="aa-empty"><div class="aa-empty-s">${esc(T("aa.nextLoading", "Finding your best matches…"))}</div></div>`;
       return;
     }
     if (!jobs.length) {
@@ -8747,14 +8766,15 @@
       return;
     }
     const star = '<svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z" fill="currentColor"/></svg>';
-    const foot = jobs.length < count
+    const foot = r.pending ? T("aa.nextChecking", "Checking {n} more roles for a better match…").replace("{n}", fmtN(r.pending))
+      : jobs.length < count
       ? T("aa.nextShort", "Only {n} roles reach {p}% today. The next run tailors these.").replace("{n}", jobs.length).replace("{p}", r.min_fit)
       : T("aa.nextFoot", "Next run tailors these {n}.").replace("{n}", jobs.length);
     host.innerHTML = jobs.map(j => `<div class="aa-row" data-sid="${esc(j.source_id)}">
         ${companyAvatar(j)}
         <div class="aa-row-main"><div class="aa-t">${esc(j.title)}</div>
           <div class="aa-s"><span class="co">${esc(j.company)}${j.location ? " · " + esc(usLocation(j.location)) : ""}</span>${aaChip(j)}</div></div>
-        <span class="aa-tag">${j.saved ? star + " " + esc(T("aa.saved", "Saved")) : j.priority ? esc(T("aa.priority", "Priority")) : esc(T("aa.best", "Best match"))}</span>
+        <span class="aa-tag">${j.saved ? star + " " + esc(T("aa.saved", "Saved")) : j.priority ? esc(T("aa.priority", "Priority")) : ""}</span>
         <span class="aa-match">${j.fit != null ? `${j.fit}%<small>${esc(T("aa.match", "match"))}</small>` : ""}</span>
         <div class="aa-act"><button class="aa-x" type="button" data-skip="${esc(j.source_id)}" title="${esc(T("aa.skipNext", "Skip this role in the next run"))}" aria-label="${esc(T("aa.skipNext", "Skip this role in the next run"))}"><svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
       </div>`).join("")

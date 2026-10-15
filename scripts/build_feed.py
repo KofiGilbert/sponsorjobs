@@ -399,7 +399,9 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
     finally:
         w.close()
     manifest = write_feed(out_dir, rows, jd_by_id, jobs_url=jobs_url)
-    log(f"[build_feed] wrote {manifest['count']} jobs + {manifest['jd_shard_count']} JD shards to "
+    parts = manifest.get("parts") or {}
+    log(f"[build_feed] wrote {manifest['count']} jobs ({len(parts.get('files') or [])} list parts, "
+        f"version {parts.get('version')}) + {manifest['jd_shard_count']} JD shards to "
         f"{out_dir} ({time.time() - t0:.0f}s total)")
     return manifest
 
@@ -409,7 +411,7 @@ def main(argv=None) -> int:
     ap.add_argument("--data", default=os.environ.get("FEED_DATA_DIR", ".feed-data"),
                     help="persistent crawl state dir (jobs DB + sponsor overlay)")
     ap.add_argument("--out", default=os.environ.get("FEED_OUT_DIR", ".feed-out"),
-                    help="where to write jobs.json.gz, jd/, manifest.json")
+                    help="where to write jobs.json.gz, parts/, jd/, manifest.json")
     ap.add_argument("--jobs-url", default=os.environ.get("FEED_JOBS_URL", ""),
                     help="absolute URL of jobs.json.gz, recorded in manifest.json")
     ap.add_argument("--limit", type=int, default=None, help="cap rows (default JOBS_FEED_LIMIT, 150000)")

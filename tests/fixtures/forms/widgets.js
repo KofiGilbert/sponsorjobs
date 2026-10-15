@@ -4,6 +4,10 @@
 //     <input role=combobox>), opens on mousedown, filters on input events only (a plain
 //     el.value = x is ignored, like React), selects on option click, clears its search text on
 //     blur, optional async options that arrive 150ms after typing ("Loading..." meanwhile).
+//     Real-page options seen on Greenhouse's current boards (cfg.live): the placeholder HIDES
+//     while there is search text, a loading indicator spins in the control while options load
+//     (cfg.delayMs, e.g. a slow location search), and a hidden aria-hidden "required" mirror
+//     input sits beside the control.
 //   - WorkdayListbox: <button aria-haspopup=listbox data-automation-id=...> "Select One", opens
 //     on CLICK only, menu portalled to <body> as ul[role=listbox] > li[role=option] > div[promptOption].
 //   - WorkdayPrompt: input[data-uxi-widget-type=selectinput] search box; typing shows
@@ -31,8 +35,14 @@
                                type: "text", style: "width:40px" });
     if (cfg.required) input.setAttribute("aria-required", "true");
     const vc = h("div", { class: "select__value-container" }, [ph, h("div", { class: "select__input-container" }, [input])]);
-    const control = h("div", { class: "select__control" }, [vc, h("div", { class: "select__indicators", text: "v" })]);
+    const indicators = h("div", { class: "select__indicators", text: "v" });
+    const control = h("div", { class: "select__control" }, [vc, indicators]);
     const box = h("div", { class: "select__container select-shell" }, [control]);
+    let spinner = null;
+    if (cfg.live) {
+      box.appendChild(h("input", { required: "", tabindex: "-1", "aria-hidden": "true", class: "css-1a0ro4n-requiredInput",
+                                   style: "opacity:0;pointer-events:none;position:absolute;height:12px;width:100%", value: "" }));
+    }
     host.appendChild(h("div", { class: "field" }, [label, box]));
     const st = { open: false, q: "", value: null, loading: false, async: !!cfg.async, timer: null };
     let menu = null;
@@ -43,6 +53,12 @@
     }
     function render() {
       if (menu) { menu.remove(); menu = null; }
+      if (cfg.live) {
+        if (st.value || input.value) ph.remove();                 // react-select unmounts it
+        else if (!ph.isConnected) vc.insertBefore(ph, vc.firstChild);
+        if (st.loading && !spinner) { spinner = h("div", { class: "select__indicator select__loading-indicator", text: "..." }); indicators.insertBefore(spinner, indicators.firstChild); }
+        if (!st.loading && spinner) { spinner.remove(); spinner = null; }
+      }
       input.setAttribute("aria-expanded", st.open ? "true" : "false");
       input.removeAttribute("aria-controls");
       if (!st.open) return;
@@ -81,7 +97,7 @@
       if (st.async) {
         st.loading = true; render();
         clearTimeout(st.timer);
-        st.timer = setTimeout(() => { st.loading = false; render(); }, 150);
+        st.timer = setTimeout(() => { st.loading = false; render(); }, cfg.delayMs || 150);
       } else render();
     });
     input.addEventListener("keydown", (e) => {

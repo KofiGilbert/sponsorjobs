@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (Ashby fixture)</title>
+<link rel="stylesheet" href="style.css"></head>
+<body>
+<!-- Markup patterns seen on jobs.ashbyhq.com/.../application (October 2026): a radio question in
+     a <fieldset> with NO legend, its question in a <label for=...> heading, and each option in its
+     own <label for=option-id>. Field labels only; no page text. -->
+<form onsubmit="return false">
+  <div class="fieldEntry"><label class="heading required label" for="name-field">Name</label>
+    <input type="text" id="name-field" name="_systemfield_name" required></div>
+  <div class="fieldEntry"><label class="heading required label" for="email-field">Email</label>
+    <input type="email" id="email-field" name="_systemfield_email" required></div>
+  <div data-field-path="geo"><fieldset class="container fieldEntry">
+    <label class="heading required label" for="geo">What is your current geographic availability for this role?</label>
+    <div class="option"><span class="container"><input type="radio" id="geo-0" name="geo"></span>
+      <label for="geo-0" class="label">I live within commuting distance of the office</label></div>
+    <div class="option"><span class="container"><input type="radio" id="geo-1" name="geo"></span>
+      <label for="geo-1" class="label">I am willing to relocate</label></div>
+    <div class="option"><span class="container"><input type="radio" id="geo-2" name="geo"></span>
+      <label for="geo-2" class="label">I am looking for a fully remote role</label></div>
+  </fieldset></div>
+  <div data-field-path="auth"><fieldset class="container fieldEntry">
+    <label class="heading required label" for="auth">Are you legally authorized to work in the United States?</label>
+    <div class="option"><span class="container"><input type="radio" id="auth-0" name="auth" value="Yes"></span>
+      <label for="auth-0" class="label">Yes</label></div>
+    <div class="option"><span class="container"><input type="radio" id="auth-1" name="auth" value="No"></span>
+      <label for="auth-1" class="label">No</label></div>
+  </fieldset></div>
+  <button type="submit">Submit Application</button>
+</form>
+<script>
+  const val = (n) => { const c = [...document.getElementsByName(n)].find((x) => x.checked); return c ? c.id : null; };
+  window.fxValues = () => ({ geo: val("geo"), auth: val("auth") });
+</script>
+</body></html>

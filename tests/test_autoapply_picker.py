@@ -218,3 +218,131 @@ def test_career_site_and_workday_copies_of_one_opening_are_one_job():
     res = picker.pick(rows, records=[rec], score_fn=lambda j: 80, count=5, min_fit=60)
     assert [j["source_id"] for j in res["jobs"]] == ["careersite:careers.cisco.com:2024295"]
     assert res["queued"] == 1
+
+
+# --------------------------------------------------------------------------- Up next ranking
+# QA, Oct 2026: every Up next row said "Best match", rows were not in fit order (38% under 33%),
+# "No sponsorship record" roles showed up, and only ~15 of 96k roles were ever scored.
+def test_rank_orders_saved_then_priority_then_fit_and_scores_the_whole_pool():
+    fits = {"a": 33, "b": 38, "c": 91, "p": 40, "s": 31, "low": 10}
+    rows = [_job("s", "Analyst", "S", saved=True), _job("p", "Analyst", "P", priority=True),
+            _job("a", "Analyst", "A"), _job("low", "Analyst", "L"), _job("b", "Analyst", "B"),
+            _job("c", "Analyst", "C")]
+    res = picker.rank(rows, records=[], score_fn=lambda j: fits[j["source_id"]], count=5, min_fit=30)
+    assert [j["source_id"] for j in res["jobs"]] == ["s", "p", "c", "b", "a"]
+    assert res["below"] == 1 and res["scored"] == 6 and res["pool"] == 6
+    assert "fit" not in rows[2]                          # the caller's rows are left as they were
+
+
+def test_rank_finds_the_best_fit_deep_in_the_pool_and_stops_at_the_pool():
+    rows = [_job(str(i), "Analyst", f"Co{i}") for i in range(500)]
+    fit = lambda j: 95 if j["source_id"] == "250" else (99 if j["source_id"] == "400" else 40)
+    res = picker.rank(rows, records=[], score_fn=fit, count=3, min_fit=30, pool=300)
+    assert res["jobs"][0]["source_id"] == "250"          # the old walk stopped after ~15 roles
+    assert res["pool"] == 300 and res["scored"] == 300   # role 400 is past the pool: not scored
+    assert all(j["source_id"] != "400" for j in res["jobs"])
+    assert picker.POOL >= 300
+
+
+def test_rank_puts_a_sponsor_ahead_at_an_equal_fit_and_counts_pending():
+    rows = [_job("n", "Analyst", "N"), _job("v", "Analyst", "V", visa=[{"code": "H-1B"}]),
+            _job("w", "Analyst", "W")]
+    score = lambda j: picker.PENDING if j["source_id"] == "w" else 50
+    res = picker.rank(rows, records=[], score_fn=score, count=5, min_fit=30)
+    assert [j["source_id"] for j in res["jobs"]] == ["v", "n"]
+    assert res["pending"] == 1 and res["scored"] == 2
+
+
+def test_is_sponsor_matches_the_chip_the_row_shows():
+    assert picker.is_sponsor({"visa": [{"code": "H-1B"}]})
+    assert picker.is_sponsor({"ad_stance": "offered"})
+    # The aggregator's flag alone shows "No sponsorship record" on the row: not a sponsor.
+    assert not picker.is_sponsor({"sponsorship_stated": True})
+    assert not picker.is_sponsor({"visa": [{"code": "H-1B"}], "ad_stance": "not_offered"})
+    assert not picker.is_sponsor({"visa": [{"code": "H-1B"}], "ad_stance": "restricted"})
+    assert not picker.is_sponsor({})
+
+
+def test_sponsor_filter_excludes_no_record_roles_and_off_still_prefers_sponsors():
+    board = [_job("n1", "Data Analyst", "NoRec", sponsorship_stated=True),
+             _job("n2", "Data Analyst", "NoRec2"),
+             _job("v1", "Data Analyst", "Spon", visa=[{"code": "H-1B"}]),
+             _job("o1", "Data Analyst", "Ad", ad_stance="offered")]
+    on = picker.candidates(board, [], sponsor_only=True)
+    assert [r["source_id"] for r in on] == ["v1", "o1"]
+    off = picker.candidates(board, [], sponsor_only=False,
+                            targets={"title_words": {"data", "analyst"}, "skill_words": set()})
+    assert [r["source_id"] for r in off] == ["v1", "o1", "n1", "n2"]
+    # A clearly better title still beats a sponsor with a poor title (a preference, not a filter).
+    board2 = [_job("t", "Data Analyst", "NoRec"), _job("u", "Nurse", "Spon", visa=[{"code": "H-1B"}])]
+    off2 = picker.candidates(board2, [], targets={"title_words": {"data", "analyst"}, "skill_words": set()})
+    assert [r["source_id"] for r in off2] == ["t", "u"]
+
+
+def test_taken_gate_agrees_with_the_full_key_check():
+    recs = [{"source_job": {"source_id": "x1", "url": "https://boards.greenhouse.io/acme/jobs/1",
+                            "location": "New York, NY"}, "company": "Acme Inc", "role": "Engineer"},
+            {"source_job": {}, "company": "The Beta Group", "role": "Analyst", "status": "applied"},
+            {"source_job": {"source_id": "careersite:c.com:2019448", "url": "https://c.com/j/2019448"},
+             "company": "Cisco", "role": "Software Engineer"}]
+    rows = [_job("x1", "Engineer", "Acme Inc"),
+            _job("x2", "Engineer", "ACME", url="https://www.boards.greenhouse.io/acme/jobs/1/?utm_source=x"),
+            _job("x3", "Analyst", "Beta"), _job("x4", "Analyst", "Beta Group", location="Austin, TX"),
+            _job("workday:c:2019448", "Software Engineer", "Cisco Systems Inc"),
+            _job("x5", "Engineer", "Gamma"), _job("x6", "Engineer", "The Inc")]
+    idx = picker.taken_index(recs)
+    plain = dict(idx)                                     # the same keys, no gate
+    for r in rows:
+        assert picker.taken_status(r, idx) == picker.taken_status(r, plain), r["source_id"]
+    assert picker.taken_status(rows[0], idx) == "queued"
+    assert picker.taken_status(rows[5], idx) is None
+
+
+def test_upnext_endpoint_ranks_by_fit_labels_honestly_and_reports_the_pool(tmp_path, monkeypatch):
+    board = [_job(f"r{i}", "Backend Engineer", f"Co{i}", visa=[{"code": "H-1B"}]) for i in range(120)]
+    board.append(_job("nospon", "Backend Engineer", "Plain", sponsorship_stated=True))
+    client, _ = _setup(tmp_path, monkeypatch, board)
+    app._memory().save("default", PROFILE, {}, [])
+    app._AA_FIT_CACHE.clear()
+    fits = {f"r{i}": 30 + (i * 7) % 60 for i in range(120)}
+    fits["nospon"] = 99
+    monkeypatch.setattr(app, "_aa_fit", lambda j: fits[j["source_id"]])
+    app._set_prefs({"aa_min_fit": 30})
+    d = client.get("/api/autoapply/upnext?count=5").get_json()
+    got = [j["fit"] for j in d["jobs"]]
+    assert got == sorted(got, reverse=True) and got[0] == 99     # sorted by fit, best first
+    assert d["pool"] == 121 and d["scored"] == 121 and d["pending"] == 0
+    assert not any(j["saved"] or j["priority"] for j in d["jobs"])
+    app._AA_NEXT_CACHE.clear()
+    d = client.get("/api/autoapply/upnext?count=5&sponsor_only=1").get_json()
+    assert "nospon" not in [j["source_id"] for j in d["jobs"]] and d["matches"] == 120
+    assert [j["fit"] for j in d["jobs"]] == sorted(fits[f"r{i}"] for i in range(120))[::-1][:5]
+
+
+def test_upnext_waits_for_descriptions_it_does_not_have_and_scores_them_later(tmp_path, monkeypatch):
+    board = [_job("g1", "Backend Engineer", "Acme"), _job("g2", "Backend Engineer", "Beta")]
+    client, _ = _setup(tmp_path, monkeypatch, board)
+    app._memory().save("default", PROFILE, {}, [])
+    app._AA_FIT_CACHE.clear()
+    monkeypatch.setattr(app, "_feed_serving", lambda: True)
+    monkeypatch.setattr(app, "_aa_jd_on_disk", lambda sid: GOOD_JD if sid == "g1" else None)
+    warmed = []
+    monkeypatch.setattr(app, "_aa_warm", lambda jobs: warmed.extend(j["source_id"] for j in jobs))
+    d = client.get("/api/autoapply/upnext?count=5").get_json()
+    assert [j["source_id"] for j in d["jobs"]] == ["g1"] and d["pending"] == 1
+    assert "g2" in warmed
+    # The background scorer (here: by hand) fills the cache; the next request shows both.
+    app._AA_FIT_CACHE[(str(app.DB_PATH), app._aa_profile_sig(), "g2")] = 95
+    app._aa_warm_bump()
+    d = client.get("/api/autoapply/upnext?count=5").get_json()
+    assert {j["source_id"]: j["fit"] for j in d["jobs"]}["g2"] == 95 and d["pending"] == 0
+    got = [j["fit"] for j in d["jobs"]]
+    assert len(got) == 2 and got == sorted(got, reverse=True)
+
+
+def test_up_next_rows_never_say_best_match():
+    js = open("ui/static/app.js", encoding="utf-8").read()
+    start = js.index("async function aaLoadNext(")
+    body = js[start:js.index("$(\"#aaNext\")?.addEventListener", start)]
+    assert "Best match" not in body and "aa.best" not in body
+    assert "usLocation(j.location)" in body                # the Jobs cards' location formatter

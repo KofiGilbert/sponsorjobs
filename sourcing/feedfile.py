@@ -10,7 +10,16 @@ filters it locally with sourcing/filters.py, and fetches one small JD shard when
                     every field the board's facets need (sourcing/filters.py) plus the sponsor badge.
   jd/{xx}.json.gz   {source_id: jd_text} for every job whose sha1(source_id) starts with `xx`, so the
                     descriptions are 256 fixed objects (one crawl = ~257 uploads, not 50,000).
-  manifest.json     tiny, uncompressed, never cached: {"generated_at", "count", "jobs_url", ...}.
+  parts/jobs-{version}-{nnn}.json.gz
+                    THE SAME LIST split into ~1 MB gzipped parts (2026-10-14), so a client on a
+                    flaky link that drops every 1-3 MB resumes part by part instead of restarting a
+                    ~10 MB download from zero (the CDN ignores Range). `version` is a hash of the
+                    rows, so the names are content-addressed: a part never changes once published
+                    and may be cached forever. Each part: {"version", "part", "parts", "jobs": [...]}.
+  manifest.json     tiny, uncompressed, never cached: {"generated_at", "count", "jobs_url", ...,
+                    "parts": {"version", "count", "total_bytes", "attribution", "files":
+                    [{"url", "sha256", "bytes", "count"}, ...]}}. jobs.json.gz is still written for
+                    app versions that predate the parts.
 
 Public job postings only. No personal data ever touches this file (CLAUDE.md §5).
 """
@@ -31,6 +40,8 @@ JOBS_FILE = "jobs.json.gz"
 MANIFEST_FILE = "manifest.json"
 JD_DIR = "jd"
 JD_SHARDS = 256
+PARTS_DIR = "parts"
+PART_TARGET_BYTES = 1_000_000      # each list part is about this many gzipped bytes
 
 # Everything the board + its facets read from a row (see sourcing/filters.apply_facets and the
 # card renderer in ui/static/app.js). jd_text is deliberately absent: it lives in the shards.
@@ -101,8 +112,55 @@ def loads_maybe_gz(body: bytes):
     return json.loads(body.decode("utf-8"))
 
 
+def rows_version(rows: list[dict]) -> str:
+    """A content hash of the slim rows: the list's version, unchanged while the rows are."""
+    raw = json.dumps(rows, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def part_name(version: str, index: int) -> str:
+    return f"{PARTS_DIR}/jobs-{version}-{index:03d}.json.gz"
+
+
+def write_parts(out_dir, slim: list[dict], whole_gz_bytes: int, *,
+                target_bytes: int = PART_TARGET_BYTES) -> dict:
+    """Split the slim list into ~`target_bytes` gzipped parts under `out_dir/parts/`. Returns the
+    manifest's "parts" block. Rows are split into contiguous runs of near-equal count (rows are
+    similar in size, so the parts are near-equal in bytes too); joining the parts in order gives
+    the list back exactly. Old versions' parts are removed from `out_dir` (the CDN host keeps or
+    prunes its own copies; see scripts/upload_feed.py)."""
+    out = Path(out_dir)
+    pdir = out / PARTS_DIR
+    pdir.mkdir(parents=True, exist_ok=True)
+    version = rows_version(slim)
+    n = max(1, -(-int(whole_gz_bytes) // max(1, int(target_bytes))))
+    n = min(n, max(1, len(slim)))
+    size, extra = divmod(len(slim), n)
+    files, start = [], 0
+    for i in range(n):
+        end = start + size + (1 if i < extra else 0)
+        chunk = slim[start:end]
+        start = end
+        raw = json.dumps({"version": version, "part": i, "parts": n, "jobs": chunk},
+                         ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        body = gzip.compress(raw, mtime=0)
+        name = part_name(version, i)
+        (out / name).write_bytes(body)
+        # sha256 of the stored bytes; raw_sha256 of the JSON inside, so a part a CDN re-encodes
+        # (or inflates) on the way still verifies.
+        files.append({"url": name, "sha256": hashlib.sha256(body).hexdigest(),
+                      "raw_sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(body),
+                      "count": len(chunk)})
+    keep = {Path(f["url"]).name for f in files}
+    for p in pdir.glob("jobs-*.json.gz"):
+        if p.name not in keep:
+            p.unlink()
+    return {"version": version, "count": len(slim), "total_bytes": sum(f["bytes"] for f in files),
+            "files": files}
+
+
 def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
-               generated_at: str | None = None) -> dict:
+               generated_at: str | None = None, part_bytes: int | None = None) -> dict:
     """Write jobs.json.gz + jd/*.json.gz + manifest.json into `out_dir`. Returns the manifest.
     All 256 shards are written (empty ones too), so a shard fetch is never a 404."""
     out = Path(out_dir)
@@ -128,7 +186,11 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
     header = {"feed_version": FEED_VERSION, "generated_at": generated_at, "count": len(slim),
               "attribution": {k: v for k, v in ATTRIBUTION.items() if k in sources},
               "jobs": slim}
-    (out / JOBS_FILE).write_bytes(dumps_gz(header))
+    whole = dumps_gz(header)
+    (out / JOBS_FILE).write_bytes(whole)
+    parts = write_parts(out, slim, len(whole), target_bytes=part_bytes or PART_TARGET_BYTES)
+    parts["attribution"] = header["attribution"]
+    del whole
     shards: dict[str, dict] = {s: {} for s in all_shards()}
     for r in rows:
         sid = r.get("source_id")
@@ -139,6 +201,6 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
         (out / JD_DIR / f"{s}.json.gz").write_bytes(dumps_gz(m))
     manifest = {"feed_version": FEED_VERSION, "generated_at": generated_at, "count": len(slim),
                 "jobs_url": jobs_url or JOBS_FILE, "jd_shard_count": JD_SHARDS,
-                "jd_url_template": f"{JD_DIR}/{{shard}}.json.gz"}
+                "jd_url_template": f"{JD_DIR}/{{shard}}.json.gz", "parts": parts}
     (out / MANIFEST_FILE).write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     return manifest

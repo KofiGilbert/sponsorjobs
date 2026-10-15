@@ -15,6 +15,7 @@ import threading
 import time
 import traceback
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_file
@@ -10035,16 +10036,194 @@ def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
     snap = _memory().load("default") or {}
     profile = snap.get("profile") or snap.get("essentials") or {}
     from autoapply.learning import needs_sponsorship
-    rows = candidates(board, saved, facets=(strat or {}).get("filters") or {},
-                      titles=titles, locations=locations, sponsor_only=sponsor_only,
-                      targets=profile_targets(profile), learn=_learn_state(),
-                      needs_sponsor=needs_sponsorship(_load_prefs()))
-    skip = set(_prefs().get("aa_skip") or [])
-    if skip:
-        rows = [j for j in rows if str(j.get("source_id") or "") not in skip]
+    needs = needs_sponsorship(_load_prefs())
+    skip = tuple(_prefs().get("aa_skip") or [])
+    # The prefilter reads every row of the board (~0.7 s on 100k rows), so its order is kept
+    # until something it depends on changes: the board itself, the focus, the saved search,
+    # the saved jobs, the profile, the skips and company lists, the visa answer.
+    key = (id(board), len(board), str(DB_PATH), tuple(titles), tuple(locations), sponsor_only,
+           json.dumps((strat or {}).get("filters") or {}, sort_keys=True, default=str),
+           tuple(str(j.get("source_id") or "") for j in saved), _aa_profile_sig(profile),
+           skip, _LEARN_VER[0], needs)
+    hit = _AA_CAND_CACHE.get("v")
+    if hit and hit[0] == key and hit[2] is board:
+        rows = hit[1]
+    else:
+        rows = candidates(board, saved, facets=(strat or {}).get("filters") or {},
+                          titles=titles, locations=locations, sponsor_only=sponsor_only,
+                          targets=profile_targets(profile), learn=_learn_state(),
+                          needs_sponsor=needs)
+        if skip:
+            skipped = set(skip)
+            rows = [j for j in rows if str(j.get("source_id") or "") not in skipped]
+        _AA_CAND_CACHE["v"] = (key, rows, board)
     meta = {"titles": titles, "locations": locations, "sponsor_only": sponsor_only,
             "search": (strat or {}).get("name") or None, "board": len(board), "saved": len(saved)}
     return rows, meta
+
+
+_AA_CAND_CACHE: dict = {}
+_AA_FIT_CACHE: dict = {}         # (db, profile, source_id) -> fit | None, so a role is scored once
+_AA_FIT_MAX = 60000
+_AA_SHARDS: "OrderedDict[Path, tuple]" = OrderedDict()   # JD shards on disk, parsed (LRU)
+_AA_SHARDS_LOCK = threading.Lock()
+_AA_WARM = {"thread": None, "queue": [], "ver": 0}
+_AA_WARM_LOCK = threading.Lock()
+UPNEXT_BUDGET_S = 0.8            # Up next answers inside ~1 s; roles left are scored after
+
+
+def _aa_profile_sig(profile: dict | None = None) -> str:
+    """A short fingerprint of the saved profile: a cached fit is only reused for the profile it
+    was scored against."""
+    import hashlib
+    if profile is None:
+        snap = _memory().load("default") or {}
+        profile = snap.get("profile") or snap.get("essentials") or {}
+    blob = json.dumps(profile or {}, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha1(blob).hexdigest()[:16]
+
+
+def _aa_jd_on_disk(sid: str) -> str | None:
+    """A feed role's description when its JD shard is already on this machine (any age: a
+    day-old description scores the same), read without touching the network. None otherwise."""
+    if not sid or not _feed_serving():
+        return None
+    from sourcing.ats import html_to_text
+    from sourcing.feedfile import JD_DIR, loads_maybe_gz, shard_for
+    path = _static_feed().cache_dir / JD_DIR / f"{shard_for(sid)}.json.gz"
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    with _AA_SHARDS_LOCK:
+        hit = _AA_SHARDS.get(path)
+        if hit and hit[0] == mtime:
+            _AA_SHARDS.move_to_end(path)
+    if not hit or hit[0] != mtime:
+        try:
+            data = loads_maybe_gz(path.read_bytes()) or {}
+        except Exception:                            # noqa: BLE001 - a corrupt shard = no JD
+            data = {}
+        hit = (mtime, data if isinstance(data, dict) else {})
+        with _AA_SHARDS_LOCK:
+            _AA_SHARDS[path] = hit
+            while len(_AA_SHARDS) > 32:
+                _AA_SHARDS.popitem(last=False)
+    jd = hit[1].get(sid)
+    return html_to_text(jd).strip() if jd else None
+
+
+def _aa_scorer(rows: list[dict], *, deadline: float | None = None, network: bool = False):
+    """The fit scorer the picker calls (autoapply.picker.rank): a role scored before (for this
+    profile) answers from memory; one whose description is on this machine (on the row, in the
+    local store, or in a JD shard on disk) is scored now with the same fit the Jobs detail shows
+    (_aa_fit); one that would need a download answers PENDING unless ``network`` is on (a run).
+    Past ``deadline`` every unscored role is PENDING, so Up next stays quick."""
+    from autoapply.picker import POOL, PENDING
+    sig = _aa_profile_sig()
+    feed = _feed_serving()
+    need = [str(j.get("source_id") or "") for j in rows[:POOL * 2]
+            if j.get("source_id") and not (j.get("jd_text") or "").strip()
+            and (str(DB_PATH), sig, str(j.get("source_id"))) not in _AA_FIT_CACHE]
+    local: dict = {}
+    if need:
+        w = _watchlist()
+        try:
+            local = w.get_jd_texts(need) or {}
+        except Exception:                            # noqa: BLE001 - scored from the feed instead
+            local = {}
+        finally:
+            w.close()
+
+    def score(job: dict):
+        sid = str(job.get("source_id") or "")
+        key = (str(DB_PATH), sig, sid)
+        if sid and key in _AA_FIT_CACHE:
+            return _AA_FIT_CACHE[key]
+        if deadline is not None and time.monotonic() > deadline:
+            return PENDING
+        if not (job.get("jd_text") or "").strip():
+            jd = (local.get(sid) or "").strip() or _aa_jd_on_disk(sid)
+            if jd:
+                job["jd_text"] = jd
+            elif feed and not network:
+                return PENDING
+        pct = _aa_fit(job)
+        if sid:
+            if len(_AA_FIT_CACHE) > _AA_FIT_MAX:
+                _AA_FIT_CACHE.clear()
+            _AA_FIT_CACHE[key] = pct
+        return pct
+    return score
+
+
+def _aa_warm(jobs: list[dict]) -> None:
+    """Score Up next's waiting roles in the background (downloading their JD shards), then let
+    the next Up next request see them. One worker; a new request just adds to its list."""
+    with _AA_WARM_LOCK:
+        queued = {str(j.get("source_id") or "") for j in _AA_WARM["queue"]}
+        _AA_WARM["queue"].extend(dict(j) for j in jobs
+                                 if str(j.get("source_id") or "") not in queued)
+        th = _AA_WARM["thread"]
+        if th is not None and th.is_alive():
+            return
+        th = threading.Thread(target=_aa_warm_run, name="aa-upnext-warm", daemon=True)
+        _AA_WARM["thread"] = th
+    th.start()
+
+
+def _aa_warm_bump() -> None:
+    with _AA_WARM_LOCK:
+        _AA_WARM["ver"] += 1
+    _AA_NEXT_CACHE.pop("v", None)
+
+
+def _aa_warm_run() -> None:
+    """Drain the waiting list: download each missing JD shard once (a few at a time), score
+    every role whose description is then on disk, and only then ask companies' own boards for
+    the few descriptions the shards lack (one request each, the slow part)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from autoapply.picker import PENDING
+    try:
+        local = _aa_scorer([], network=False)
+        net = _aa_scorer([], network=True)
+    except Exception:                                # noqa: BLE001 - Up next just stays partial
+        traceback.print_exc()
+        return
+    while True:
+        with _AA_WARM_LOCK:
+            batch, _AA_WARM["queue"] = _AA_WARM["queue"], []
+        if not batch:
+            break
+        if _feed_serving():
+            from sourcing.feedfile import JD_DIR, shard_for
+            sf = _static_feed()
+            first: dict = {}
+            for j in batch:
+                sid = str(j.get("source_id") or "")
+                if sid:
+                    first.setdefault(shard_for(sid), sid)
+            missing = [sid for sh, sid in first.items()
+                       if not (sf.cache_dir / JD_DIR / f"{sh}.json.gz").exists()]
+            if missing:
+                with ThreadPoolExecutor(max_workers=4) as ex:
+                    list(ex.map(sf.jd, missing))
+        later = []
+        for j in batch:
+            try:
+                if local(j) == PENDING:
+                    later.append(j)
+            except Exception:                        # noqa: BLE001 - one bad posting, keep going
+                pass
+        _aa_warm_bump()
+        for n, j in enumerate(later, 1):
+            try:
+                net(j)
+            except Exception:                        # noqa: BLE001
+                pass
+            if n % 20 == 0:
+                _aa_warm_bump()
+        _aa_warm_bump()
 
 
 def _aa_fit(job: dict) -> int | None:
@@ -10118,7 +10297,7 @@ def autoapply_run():
     queue each package for review. Skips roles that already have a package and roles below the
     person's fit floor. Submission stays on the existing guarded path (verified allowlist +
     opt-in), so this run never submits on its own; it fills the review queue."""
-    from autoapply.picker import pick, reach, skip_summary
+    from autoapply.picker import TIME_BUDGET_S, rank, reach, skip_summary
     from submit.policy import submission_policy
     body = request.json or {}
     count = max(1, min(int(body.get("count") or 5), 10))
@@ -10135,7 +10314,13 @@ def autoapply_run():
     if not rows:
         return jsonify({"error": "No roles match today's focus or your saved search. Broaden "
                                  "or clear it.", "focus": focus_meta}), 400
-    res = pick(rows, records=_aa_records(), score_fn=_aa_fit, count=count, min_fit=min_fit)
+    # The same ranking Up next shows (picker.rank), so the run tailors the roles listed there;
+    # a role Up next could not score yet is fetched and scored now, within the time budget.
+    score = _aa_scorer(rows, deadline=time.monotonic() + TIME_BUDGET_S, network=True)
+    res = rank(rows, records=_aa_records(), score_fn=score, count=count, min_fit=min_fit)
+    for job in res["jobs"]:
+        if not (job.get("jd_text") or "").strip():
+            _aa_fit(job)                         # fills jd_text: the fit came from memory
     summary = skip_summary(res, min_fit)
     passed = {k: res[k] for k in ("below", "unscored", "queued", "applied", "scored")}
     jobs = res["jobs"]
@@ -10419,10 +10604,14 @@ _AA_NEXT_CACHE: dict = {}
 @_guard
 def autoapply_upnext():
     """The roles the next run would tailor, in the order it would take them: saved jobs first,
-    then the best matches at or above the fit floor, skipping roles that already have a package
-    and roles the person skipped here. The same picker as /api/autoapply/run, with a smaller
-    scoring budget so the page stays quick. Nothing is tailored."""
-    from autoapply.picker import pick
+    then prioritized companies, then the best fits at or above the fit floor, skipping roles that
+    already have a package and roles the person skipped here. The same picker as
+    /api/autoapply/run (autoapply.picker.rank): a cheap prefilter over the whole board, then the
+    real fit on the top few hundred. Roles whose description is not on this machine yet are
+    scored in the background; ``pending`` says how many, and the page asks again. Nothing is
+    tailored."""
+    from autoapply.picker import rank
+    t0 = time.monotonic()
     a = request.args
     count = max(1, min(int(a.get("count") or 5), 10))
     focus = {"titles": _split(a.get("titles")), "locations": _split(a.get("locations")),
@@ -10431,13 +10620,13 @@ def autoapply_upnext():
     records = _aa_records()
     key = (count, tuple(focus["titles"]), tuple(focus["locations"]), focus["sponsor_only"],
            min_fit, len(records), tuple(_prefs().get("aa_skip") or []),
-           _LEARN_VER[0], _load_prefs().get("needs_sponsorship"))
+           _LEARN_VER[0], _load_prefs().get("needs_sponsorship"), _AA_WARM["ver"])
     hit = _AA_NEXT_CACHE.get("v")
     if hit and hit[0] == key and time.time() - hit[1] < 120:
         return jsonify(hit[2])
     rows, meta = _aa_candidates(focus)
-    res = pick(rows, records=records, score_fn=_aa_fit, count=count, min_fit=min_fit,
-               max_scored=max(12, count * 3), time_budget=8.0)
+    score = _aa_scorer(rows, deadline=t0 + UPNEXT_BUDGET_S)
+    res = rank(rows, records=records, score_fn=score, count=count, min_fit=min_fit)
     rows_out = []
     for j in res["jobs"]:
         rows_out.append({
@@ -10449,9 +10638,16 @@ def autoapply_upnext():
             "salary": j.get("salary") or "", "priority": bool(j.get("priority")),
         })
     out = {"ok": True, "jobs": rows_out, "count": count, "min_fit": min_fit,
-           "matches": res["available"], "has_profile": _aa_has_profile(),
+           "matches": res["available"], "scored": res["scored"], "pool": res["pool"],
+           "pending": res["pending"], "has_profile": _aa_has_profile(),
            "board": meta["board"], "search": meta["search"],
            "feed_loading": _feed_loading()}
+    if res["pending"]:
+        from autoapply.picker import taken_index, taken_status
+        idx = taken_index(records)
+        _aa_warm([j for j in rows[:res["pool"] + res["applied"] + res["queued"]]
+                  if taken_status(j, idx) is None][:res["pool"]])
+        return jsonify(out)                  # not cached: the rest of the list is on its way
     if out["feed_loading"]:
         return jsonify(out)                  # not cached: the list lands in a few minutes
     _AA_NEXT_CACHE["v"] = (key, time.time(), out)

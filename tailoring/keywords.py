@@ -127,6 +127,7 @@ def extract_jd_terms(jd_text: str) -> list[str]:
         # term. Real names and tools (Python, Amazon, Tableau) never show up
         # lowercase in the same posting. (obs #18)
         if (is_capitalized and not (is_acronym or has_inner_caps or has_symbol)
+                and low in jd_text                      # the literal first: cheap, same result
                 and re.search(r"(?<![A-Za-z0-9])" + re.escape(low) + r"(?![A-Za-z0-9])",
                               jd_text)):
             continue
@@ -318,7 +319,7 @@ def _skill_terms_cached(jd_text: str) -> tuple[str, ...]:
     out: list[str] = []
     seen: set[str] = set()
     for s, pat in _SKILL_PATTERNS:
-        if pat.search(low):
+        if s in low and pat.search(low):    # the literal first: same result, ~10x faster
             disp = _SKILL_DISPLAY[s]
             if disp.lower() not in seen:
                 seen.add(disp.lower())
@@ -470,7 +471,7 @@ def vocab_skills(text: str) -> list[str]:
     low = text.lower()
     out: list[str] = []
     for s, pat in _SKILL_PATTERNS:
-        if pat.search(low):
+        if s in low and pat.search(low):    # the literal first: same result, ~10x faster
             disp = _SKILL_DISPLAY[s]
             if disp not in out:
                 out.append(disp)
