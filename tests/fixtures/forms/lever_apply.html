@@ -1,0 +1,80 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (Lever fixture)</title>
+<link rel="stylesheet" href="style.css">
+<style>.hidden { display: none; } ul { list-style: none; padding: 0; }</style>
+</head>
+<body>
+<!-- Markup patterns seen on jobs.lever.co/.../apply (October 2026): every question is a
+     <label> WRAPPING its heading (div.application-label), its control, and hidden status text; a
+     wrapped <select>; checkbox and radio options each with their own wrapping label under one
+     question. Field labels only; no page text. -->
+<form id="application-form" onsubmit="return false">
+  <ul>
+    <li class="application-question resume"><label>
+      <div class="application-label">Resume/CV<span class="required">✱</span></div>
+      <div class="application-field"><a class="postings-btn">ATTACH RESUME/CV<input type="file" name="resume" id="resume-upload-input" style="position:absolute;opacity:0;width:1px;height:1px"></a>
+        <span class="resume-upload-failure hidden">Couldn't auto-read resume.</span>
+        <span class="resume-upload-working hidden">Analyzing resume...</span>
+        <span class="resume-upload-success hidden">Success!</span></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Full name<span class="required">✱</span></div>
+      <div class="application-field"><input type="text" name="name" required></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Email<span class="required">✱</span></div>
+      <div class="application-field"><input type="email" name="email" required></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Current company</div>
+      <div class="application-field"><input type="text" name="org"></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Current location<span class="required">✱</span></div>
+      <div class="application-field"><input type="text" name="location" id="location-input">
+        <div class="dropdown-no-results hidden">No location found. Try entering a different location</div></div>
+    </label></li>
+  </ul>
+  <div class="application-question custom-question"><label>
+    <div class="application-label">What is your location?</div>
+    <div class="application-field"><select name="cards[a][field0]" id="loc-select">
+      <option value="">Select...</option><option>Canada</option><option>United Kingdom</option><option>United States</option>
+    </select></div>
+  </label></div>
+  <div class="application-question custom-question">
+    <div class="application-label">Pronouns</div>
+    <div class="application-field"><ul>
+      <li><label><input type="checkbox" name="pronouns" value="He/him"><span class="application-answer-alternative">He/him</span></label></li>
+      <li><label><input type="checkbox" name="pronouns" value="She/her"><span class="application-answer-alternative">She/her</span></label></li>
+      <li><label><input type="checkbox" name="pronouns" value="They/them"><span class="application-answer-alternative">They/them</span></label></li>
+    </ul></div>
+  </div>
+  <div class="application-question custom-question">
+    <div class="application-label">Have you worked here before?<span class="required">✱</span></div>
+    <div class="application-field"><ul>
+      <li><label><input type="checkbox" name="cards[b][field0]" value="No" required><span class="application-answer-alternative">No</span></label></li>
+      <li><label><input type="checkbox" name="cards[b][field0]" value="Yes" required><span class="application-answer-alternative">Yes</span></label></li>
+    </ul></div>
+  </div>
+  <div class="application-question custom-question">
+    <div class="application-label">Are you legally authorized to work in the United States?<span class="required">✱</span></div>
+    <div class="application-field"><ul>
+      <li><label><input type="radio" name="cards[c][field0]" value="Yes"><span class="application-answer-alternative">Yes</span></label></li>
+      <li><label><input type="radio" name="cards[c][field0]" value="No"><span class="application-answer-alternative">No</span></label></li>
+    </ul></div>
+  </div>
+  <div class="application-question custom-question">
+    <div class="application-label">Are you open to working on site?<span class="required">✱</span></div>
+    <div class="application-field"><ul>
+      <li><label><input type="radio" name="cards[d][field0]" value="Yes"><span class="application-answer-alternative">Yes</span></label></li>
+      <li><label><input type="radio" name="cards[d][field0]" value="No"><span class="application-answer-alternative">No</span></label></li>
+    </ul></div>
+  </div>
+  <button type="submit" id="btn-submit">Submit application</button>
+</form>
+<script>
+  const val = (n) => { const c = [...document.getElementsByName(n)].filter((x) => x.checked).map((x) => x.value); return c.length ? c.join("|") : null; };
+  window.fxValues = () => ({ name: document.querySelector("[name=name]").value, auth: val("cards[c][field0]"),
+    onsite: val("cards[d][field0]"), loc: document.getElementById("loc-select").value });
+</script>
+</body></html>

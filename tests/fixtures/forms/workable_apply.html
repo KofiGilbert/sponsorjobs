@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (Workable fixture)</title>
+<link rel="stylesheet" href="style.css"></head>
+<body>
+<!-- Markup patterns seen on apply.workable.com/.../apply (October 2026): an essay question in a
+     <label> wrapping its <textarea> whose text happens to contain a contact keyword, an inline SVG
+     icon inside labels (with fallback text in <desc>), and a photo upload whose own label holds
+     only that icon. Field labels only; no page text. -->
+<form data-ui="application-form" onsubmit="return false">
+  <div><label><span><strong>*</strong><span id="firstname_label"><strong>First name</strong></span></span>
+    <div><input type="text" id="firstname" name="firstname" aria-labelledby="firstname_label" required></div></label></div>
+  <div><label><span><strong>*</strong><span id="address_label"><strong>Address</strong></span>
+      <svg width="20" height="20"><desc aria-hidden="true"><p>SVGs not supported by this browser.</p></desc><use></use></svg></span>
+    <div><input type="text" id="address" name="address" aria-labelledby="address_label" required></div></label></div>
+  <div><label><span><strong>*</strong><span id="QA_1_label"><strong>Could you share examples of projects you have designed? What challenges did you face and how did you address them?</strong></span></span>
+    <div><textarea id="QA_1" name="QA_1" aria-labelledby="QA_1_label" rows="4" required></textarea></div></label></div>
+  <div><p id="photo_label">Photo</p>
+    <div data-role="dropzone"><label for="photo_input"><svg width="24" height="24"><desc aria-hidden="true"><p>SVGs not supported by this browser.</p></desc></svg></label>
+      <label role="button" for="photo_input" id="photo_btn">Choose file</label>
+      <input type="file" id="photo_input" aria-labelledby="photo_label photo_btn" accept=".jpg,.png" style="opacity:0;width:1px;height:1px"></div></div>
+  <button type="submit">Submit application</button>
+</form>
+<script>
+  window.fxValues = () => ({ first: document.getElementById("firstname").value, address: document.getElementById("address").value,
+    essay: document.getElementById("QA_1").value });
+</script>
+</body></html>

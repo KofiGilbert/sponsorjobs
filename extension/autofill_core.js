@@ -156,7 +156,10 @@
       if (taken.has(el)) continue;
       const t = String(el.tagName).toUpperCase() === "INPUT" ? String(el.type || "text").toLowerCase() : "";
       if (t === "file" || t === "hidden" || t === "checkbox" || t === "radio" || t === "password") continue;
-      if (!shown(el)) continue;
+      // A dropdown's search box (Greenhouse's #candidate-location is a react-select): typed text
+      // is not a choice, so the widget layer picks the option instead of the recipe typing.
+      if (isWidgetInput(el)) continue;
+      if (!shown(el) || honeypot(el)) continue;
       return el;
     }
     return null;
@@ -386,8 +389,7 @@
     if (el.disabled || el.readOnly) return false;
     const rect = el.getBoundingClientRect() || {};
     if (!rect.width && !rect.height) return false;                        // no box at all
-    if ((rect.right !== undefined && rect.right <= 0) ||
-        (rect.bottom !== undefined && rect.bottom <= 0)) return false;    // parked off-canvas
+    if (parkedOffCanvas(el, rect)) return false;                         // parked off-canvas
     // An element inside a same-origin frame is styled by ITS window.
     let view = window;
     try { if (el.ownerDocument && el.ownerDocument.defaultView) view = el.ownerDocument.defaultView; } catch (e) { view = window; }
@@ -397,10 +399,37 @@
     return true;
   }
 
+  // An anti-spam trap that says so in its label (Workday: "Enter website. This input is for
+  // robots only, do not enter if you're human."). A value in it marks the application as a bot's.
+  const HONEYPOT_RE = /robots? only|if you('|\u2019| a)re (a )?human|leave (this|it)( field)? (blank|empty)/i;
+  function honeypot(el) {
+    const bits = [el.getAttribute("aria-label"), el.placeholder, el.name];
+    if (el.id) { const l = labelFor(el); if (l) bits.push(l.textContent); }
+    const p = el.closest && el.closest("label"); if (p) bits.push(p.textContent);
+    bits.push(ariaLabelledText(el));
+    return HONEYPOT_RE.test(bits.filter(Boolean).join(" "));
+  }
+
+  // Off the PAGE (left:-9999px), not merely scrolled out of view. The rect is relative to the
+  // viewport, so a field the person scrolled past has a negative bottom too: add the scroll back
+  // (a real page filled after scrolling to the bottom skipped every field above the fold).
+  function parkedOffCanvas(el, rect) {
+    if (rect.right === undefined || rect.bottom === undefined) return false;
+    let v = window;
+    try { v = (el.ownerDocument && el.ownerDocument.defaultView) || window; } catch (e) { v = window; }
+    const sx = Number(v.scrollX || v.pageXOffset || 0), sy = Number(v.scrollY || v.pageYOffset || 0);
+    if (rect.right + sx <= 0) return true;
+    if (rect.bottom + sy > 0) return false;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if (p.scrollTop > 0) return false;                  // scrolled past inside a scrolling panel
+    }
+    return true;
+  }
+
   function candidates() {
     const out = [];
     qsaDeep("input, textarea, select").forEach((el) => {
-      if (!shown(el)) return;
+      if (!shown(el) || honeypot(el)) return;
       const tag = el.tagName.toLowerCase();
       if (tag === "input") {
         const t = (el.type || "text").toLowerCase();
@@ -458,10 +487,24 @@
       if (!key || placed.has(key)) continue;
       const value = fields[key];
       if (!value) continue;
+      if (!labelFits(el, key)) continue;
       taken.add(el);
       plan.push({ el, key, value, via: "label" });
     }
     return plan;
+  }
+
+  // A contact field's label is short ("Address", "Phone"). A long question that merely mentions
+  // a keyword ("...what challenges did you face and how did you ADDRESS them?", a Workable essay)
+  // is not one, and an essay box only ever takes a street address. The browser's autocomplete
+  // hint, when the page gives one, is trusted over the label.
+  function labelFits(el, key) {
+    const ac = norm(el.getAttribute("autocomplete"));
+    if (ac && CATEGORIES.some((c) => c.ac.includes(ac))) return true;
+    const lab = cleanLabel(rawLabel(el));
+    if (lab.length > 60) return false;
+    if (tagOf(el) === "TEXTAREA" && key !== "street") return false;
+    return true;
   }
 
   function applyFill(plan) {
@@ -587,28 +630,41 @@
   // Lever's div.application-question > ul > li > label markup still finds its question, and
   // the walk never reaches up to another question's text).
   const QUESTION_LABEL = "legend, label:not([for]), .label, [class*='question'], [class*='label'], [class*='title'], [class*='prompt']";
-  function groupQuestion(control) {
+  // A <label for=...> that names a radio or checkbox OPTION (Ashby: "I currently reside within
+  // commuting distance"), never the question above the options.
+  function isOptionLabel(lab) {
+    if (tagOf(lab) !== "LABEL" || !lab.htmlFor) return false;
+    const t = byId(lab, lab.htmlFor);
+    return !!(t && /^(radio|checkbox)$/i.test(String(t.type || "")));
+  }
+  function groupQuestion(control) { return norm(groupQuestionText(control)); }
+  // The question in its own case (what the plan and the "left for you" list show).
+  function groupQuestionText(control) {
     const fs = control.closest("fieldset");
-    if (fs) { const lg = fs.querySelector("legend"); if (lg) return norm(lg.textContent); }
-    const radioName = (String(control.type || "").toLowerCase() === "radio") ? control.name : null;
+    if (fs) { const lg = fs.querySelector("legend"); if (lg && cleanText(lg.textContent)) return cleanText(lg.textContent); }
+    const ctype = String(control.type || "").toLowerCase();
+    const radioName = (ctype === "radio" || ctype === "checkbox") && control.name ? control.name : null;
     let node = control.parentElement;
     for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
       const tag = String(node.tagName || "").toUpperCase();
       if (tag === "FORM" || tag === "BODY" || tag === "HTML") break;
       const others = qsaSafe("input, select, textarea, [role='combobox'], [role='radiogroup'], [role='checkbox']", node).filter((o) =>
         o !== control && !control.contains(o) && !o.contains(control) && String(o.type || "").toLowerCase() !== "hidden" &&
-        !(radioName && String(o.type || "").toLowerCase() === "radio" && o.name === radioName));
+        !(radioName && String(o.type || "").toLowerCase() === ctype && o.name === radioName));
       if (others.length) break;                       // past this question's box
       for (const lab of qsaSafe(QUESTION_LABEL, node)) {
-        // An option's label wraps its control (this one's or a sibling's); the question's never does.
+        // An option's label wraps its control (this one's or a sibling's), or points at one with
+        // for=; the question's does neither.
         if (lab.contains(control) || control.contains(lab) || qsaSafe("input, select, textarea", lab).length) continue;
-        const t = norm(lab.textContent);
+        if (isOptionLabel(lab)) continue;
+        const t = cleanText(lab.textContent);
         if (t) return t;
       }
-      const aria = node.getAttribute && node.getAttribute("aria-label"); if (aria) return norm(aria);
+      const aria = node.getAttribute && node.getAttribute("aria-label"); if (aria) return cleanText(aria);
     }
-    return norm(control.getAttribute("aria-label") || "");
+    return cleanText(control.getAttribute("aria-label") || "");
   }
+  const cleanText = (t) => String(t || "").replace(/\s+/g, " ").trim();
 
   function radioGroups() {
     const groups = new Map();
@@ -715,19 +771,97 @@
   // ---------------------------------------------------------- essay questions
   // The QUESTION prompt for a control, in its original case (for sending to the model
   // and displaying), unlike signature()/groupQuestion(), which lowercase for matching.
+  //
+  // Order: a radio/checkbox takes its group's <legend>; any other control its OWN label first
+  // (label[for], aria-labelledby, a wrapping label), and only then the fieldset's legend: on
+  // Greenhouse's new boards the phone number's country picker sits in <fieldset><legend>Phone
+  // but is labelled "Country" itself.
   function rawLabel(el) {
-    const fs = el.closest("fieldset");
-    if (fs) { const lg = fs.querySelector("legend"); if (lg) return lg.textContent.trim(); }
-    if (el.id) {
-      const l = labelFor(el);
-      if (l) return l.textContent.trim();
+    const type = String(el.type || "").toLowerCase();
+    const legend = () => {
+      const fs = el.closest("fieldset");
+      const lg = fs && fs.querySelector("legend");
+      return lg ? cleanText(lg.textContent) : "";
+    };
+    let out = (type === "radio" || type === "checkbox") ? legend() : "";
+    if (!out && el.id) { const l = labelFor(el); if (l) out = labelText(l, el); }
+    if (!out) out = cleanText(ariaLabelledText(el));
+    if (!out) { const p = el.closest("label"); if (p) out = labelText(p, el); }
+    if (!out) out = legend();
+    if (!out) {
+      const grp = el.closest("div,li,section,fieldset");
+      const l = grp && grp.querySelector("label, legend, .label, [class*='question']");
+      if (l) out = labelText(l, el);
     }
-    const lab = ariaLabelledText(el);
-    if (lab) return lab;
-    const p = el.closest("label"); if (p) return p.textContent.trim();
-    const grp = el.closest("div,li,section,fieldset");
-    if (grp) { const l = grp.querySelector("label, legend, .label, [class*='question']"); if (l) return l.textContent.trim(); }
-    return (el.getAttribute("aria-label") || el.placeholder || "").trim();
+    if (!out) out = cleanText(el.getAttribute("aria-label") || el.placeholder || "");
+    // A file input's own label is often just its button ("Attach", "Upload"): the question is
+    // the group's ("Resume/CV").
+    if (type === "file" && (!out || GENERIC_FILE_RE.test(out))) out = fileGroupLabel(el) || out;
+    return out;
+  }
+  const GENERIC_FILE_RE = /^(attach|upload|browse|choose|select|add|drop|drag)\b[\w\s]{0,12}$/i;
+  // The text a person SEES in a label: its label-ish heading when it wraps the control (Lever:
+  // <label><div class="application-label">Full name</div><div><input></div></label>), else its
+  // visible text without a wrapped <select>'s options or hidden status messages.
+  const LABELISH = "[class*='label'], [class*='question'], [class*='title'], [class*='prompt'], legend";
+  function labelText(lab, el) {
+    if (el && lab.contains(el)) {
+      for (const h of qsaSafe(LABELISH, lab)) {
+        if (h.contains(el) || qsaSafe("input, select, textarea", h).length) continue;
+        const t = visibleText(h);
+        if (t) return t;
+      }
+    }
+    return visibleText(lab);
+  }
+  function visibleText(node) {
+    const out = [];
+    const doc = node.ownerDocument || document;
+    let w = null;
+    try { w = doc.createTreeWalker(node, 4 /* NodeFilter.SHOW_TEXT */); } catch (e) { return cleanText(node.textContent); }
+    const okEl = new Map();
+    const visible = (p) => {
+      if (okEl.has(p)) return okEl.get(p);
+      let ok = true;
+      for (let e = p; e; e = e.parentElement) {
+        if (/^(SELECT|OPTION|TEXTAREA|SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG)$/.test(tagOf(e))) { ok = false; break; }
+        if (e !== node && (e.hidden || (e.getAttribute && e.getAttribute("aria-hidden") === "true"))) { ok = false; break; }
+        try {
+          const cs = viewOf(e).getComputedStyle(e);
+          if (cs && (cs.display === "none" || cs.visibility === "hidden")) { ok = false; break; }
+        } catch (err) { /* no styles */ }
+        if (e === node) break;
+      }
+      okEl.set(p, ok);
+      return ok;
+    };
+    for (let t = w.nextNode(); t; t = w.nextNode()) {
+      if (t.parentElement && visible(t.parentElement)) out.push(t.nodeValue);
+    }
+    return cleanText(out.join(" "));
+  }
+  // The question of a file input: the labelled group around it, or the nearest heading-like
+  // text in its box that is not another button word.
+  function fileGroupLabel(el) {
+    const boxes = [];
+    for (let node = el.parentElement, i = 0; node && i < 6; i++, node = node.parentElement) {
+      if (/^(FORM|BODY)$/.test(tagOf(node))) break;
+      if (qsaSafe("input[type='file']", node).length > 1) break;      // reached another upload's box
+      boxes.push(node);
+    }
+    for (const node of boxes) {                         // Greenhouse: <div role=group aria-labelledby>
+      const al = cleanText(ariaLabelledText(node));
+      if (al && !GENERIC_FILE_RE.test(al)) return al;
+    }
+    for (const node of boxes) {
+      for (const h of qsaSafe("label, legend, " + LABELISH, node)) {
+        if (h.contains(el)) continue;
+        if (tagOf(h) === "LABEL" && h.htmlFor && h.htmlFor !== el.id) continue;   // another control's label
+        const t = visibleText(h);
+        if (t && !GENERIC_FILE_RE.test(t) && t.length < 120) return t;
+      }
+    }
+    return "";
   }
 
   function answerableTextareas() {
@@ -872,10 +1006,15 @@
           && !/^(select|choose|--|please)/i.test(String(el.value))) return;
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0 && raw !== "file") return;   // truly hidden (files can be styled away)
-      const label = rawLabel(el);
+      // A box a person cannot see or reach: react-select's hidden "required" mirror input
+      // (aria-hidden, opacity 0), and the classic honeypot. Never offered to the plan.
+      if (raw !== "file" && raw !== "checkbox" && (el.getAttribute("aria-hidden") === "true" || !shown(el))) return;
+      if (honeypot(el)) return;
+      let label = rawLabel(el);
       if (!label && raw !== "file") return;                                  // need a question to answer
+      if (raw === "checkbox") label = checkboxLabel(el, label);
       const f = { ref: fieldRef(el), label: (label || "Résumé / CV").slice(0, 200),
-                  type: fieldType(el), required: !!(el.required || /\*\s*$/.test(label || "")) };
+                  type: fieldType(el), required: !!(el.required || REQUIRED_MARK.test(label || "")) };
       if (el.tagName.toLowerCase() === "select") {
         f.options = [...el.options].map((o) => (o.textContent || o.value).trim())
           .filter((t) => t && !/^(select|choose|--|please)/i.test(t)).slice(0, 40);
@@ -883,16 +1022,43 @@
       fields.push(f);
     });
     for (const radios of radioGroups()) {                                    // one field per radio group
-      const q = groupQuestion(radios[0]);
+      // The QUESTION, never the first option's own label (Lever and Ashby label each option).
+      const q = groupQuestionText(radios[0]);
       if (!q) continue;
       if (onlyEmpty && radios.some((r) => r.checked)) continue;
       const ref = fieldRef(radios[0]);
       radios.forEach((r) => r.setAttribute("data-tailor-group", ref));
-      fields.push({ ref, label: (rawLabel(radios[0]) || q).slice(0, 200), type: "radio",
+      fields.push({ ref, label: q.slice(0, 200), type: "radio",
                     options: radios.map((r) => radioOptionText(r)).filter(Boolean).slice(0, 40), required: false });
     }
     for (const f of widgetFields(onlyEmpty)) fields.push(f);                // custom dropdowns, ARIA radios/checkboxes
     return fields;
+  }
+
+  const REQUIRED_MARK = /[*\u2731]\s*$/;
+  // The other checkboxes answering the same question (same name, or the same fieldset).
+  function checkboxGroup(el) {
+    const root = rootOf(el);
+    let peers = [];
+    if (el.name) peers = qsaSafe('input[type="checkbox"]', root).filter((c) => c.name === el.name);
+    if (peers.length < 2) {
+      const fs = el.closest("fieldset");
+      peers = fs ? qsaSafe('input[type="checkbox"]', fs) : [el];
+    }
+    return peers;
+  }
+  // One box of a multi-choice question ("How did you hear about us?": LinkedIn / Referral / ...)
+  // is labelled "Question: Option", so the plan and the person see what it answers.
+  function checkboxLabel(el, label) {
+    if (checkboxGroup(el).length < 2) return label;
+    const q = groupQuestionText(el);
+    let opt = "";
+    if (el.id) { const l = labelFor(el); if (l) opt = labelText(l, el); }
+    if (!opt) { const p = el.closest("label"); if (p) opt = labelText(p, el); }
+    if (!opt) opt = cleanText(el.getAttribute("aria-label") || el.value || "");
+    if (!q || canon(q) === canon(opt)) return opt || label;
+    if (!opt || canon(opt) === canon(q)) return q;
+    return q + ": " + opt;
   }
 
   const elByRef = (ref) => qsaDeep(`[data-tailor-ref="${CSS.escape(ref)}"]`)[0] || null;
@@ -944,6 +1110,8 @@
   const OPTION_SEL = "[role='option'], [id*='-option-'], [data-automation-id='promptOption'], [data-automation-id='promptLeafNode']";
   const VALUE_SEL = "[class*='singleValue'], [class*='single-value'], [class*='multiValue__label'], "
                   + "[class*='multi-value__label'], [data-automation-id='selectedItem']";
+  const VALUE_BOX_SEL = "[class*='value-container'], [class*='ValueContainer']";
+  const LOADING_MAX_MS = 6000;
   const NOT_AN_OPTION = /^(no options|no results|loading|searching|no matches|type to search|start typing)/;
   const WIDGET_WAIT_MS = 2500;
   const STEP_MS = 50;
@@ -1016,7 +1184,9 @@
       if (otherCombo(node, el)) break;
       const v = qsaSafe(VALUE_SEL, node).find((x) => norm(x.textContent));
       if (v) return norm(v.textContent);
-      if (qsaSafe("[class*='placeholder']", node).length) return "";
+      // A select-style box with no chosen value: its search text is NOT an answer (react-select
+      // hides the placeholder while you type and drops the text on blur).
+      if (qsaSafe("[class*='placeholder'], " + VALUE_BOX_SEL, node).length) return "";
     }
     return el.getAttribute("aria-expanded") === "true" ? "" : norm(el.value);
   }
@@ -1027,7 +1197,7 @@
     for (let i = 0; i < 5 && node.parentElement; i++) {
       node = node.parentElement;
       if (otherCombo(node, el)) break;
-      if (qsaSafe(VALUE_SEL + ", [class*='placeholder']", node).length) return true;
+      if (qsaSafe(VALUE_SEL + ", [class*='placeholder'], " + VALUE_BOX_SEL, node).length) return true;
     }
     return false;
   }
@@ -1037,7 +1207,7 @@
   }
 
   function cleanLabel(t) {
-    return String(t || "").replace(/\s+/g, " ").replace(/\b(select one|required)\b/ig, "").replace(/\*+/g, "").trim();
+    return String(t || "").replace(/\s+/g, " ").replace(/\b(select one|required)\b/ig, "").replace(/[*\u2731]+/g, "").trim();
   }
   function widgetLabel(el) {
     return cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "");
@@ -1157,13 +1327,30 @@
     }
     return best;
   }
+  // Is the widget still fetching its options (react-select's loading indicator, a "Loading..."
+  // or "Searching..." notice, aria-busy)? A slow location search must not be read as "no match".
+  function loading(el) {
+    const lb = listboxFor(el);
+    if (lb && (/^(loading|searching)/.test(norm(lb.textContent))
+               || qsaSafe("[class*='loading'], [aria-busy='true']", lb).some(boxShown))) return true;
+    let node = el;
+    for (let i = 0; i < 5 && node.parentElement; i++) {
+      node = node.parentElement;
+      if (otherCombo(node, el)) break;
+      if (qsaSafe("[class*='loading-indicator'], [class*='loadingIndicator'], [aria-busy='true']", node).some(boxShown)) return true;
+    }
+    return false;
+  }
   async function waitBest(el, score, ms) {
-    const until = Date.now() + ms;
+    let until = Date.now() + ms;
+    const hard = until + LOADING_MAX_MS;
     let lastN = -1;
     while (Date.now() < until) {
       const opts = optionsFor(el);
       const best = bestOf(opts, score);
-      if (best && (best.score >= 99 || opts.length === lastN)) return best;
+      const busy = loading(el);
+      if (best && !busy && (best.score >= 99 || opts.length === lastN)) return best;
+      if (busy) until = Math.min(hard, Math.max(until, Date.now() + 300));
       lastN = opts.length;
       await sleep(STEP_MS);
     }
@@ -1247,7 +1434,7 @@
   function widgetQuestion(box) {
     const t = ariaLabelledText(box) || box.getAttribute("aria-label") || "";
     if (t) return cleanLabel(t);
-    return groupQuestion(box);
+    return cleanLabel(groupQuestionText(box));
   }
   const rawText = (o) => String(o.textContent || o.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
   async function pickAriaRadio(radios, score) {
@@ -1288,7 +1475,7 @@
       el.setAttribute("data-tailor-widget", "combobox");
       fields.push({ ref, label: label.slice(0, 200), type: "select", widget: "combobox",
                     options: (_comboOptions.get(el) || []).slice(0, 40),
-                    required: el.getAttribute("aria-required") === "true" || /\*\s*$/.test(rawLabel(el)) });
+                    required: el.getAttribute("aria-required") === "true" || REQUIRED_MARK.test(rawLabel(el)) });
     }
     for (const g of ariaRadioGroups()) {
       const q = widgetQuestion(g.box);
@@ -1445,6 +1632,14 @@
       else if (f.type === "checkbox") {
         if (!f.required) continue;
         if (el && (el.checked || el.getAttribute("aria-checked") === "true")) continue;
+        if (el && tagOf(el) === "INPUT") {
+          const peers = checkboxGroup(el);
+          if (peers.some((c) => c.checked)) continue;
+          if (peers.length > 1) {
+            const q = cleanLabel(groupQuestionText(el));
+            if (q) { if (!out.includes(q)) out.push(q); continue; }
+          }
+        }
       }
       const label = cleanLabel(f.label);
       if (label && !out.includes(label)) out.push(label);

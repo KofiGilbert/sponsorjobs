@@ -298,3 +298,197 @@ def test_planned_answer_reaches_a_native_radio_group(tmp_path, fn):
     assert r["values"] == {"edu": "ms", "onsite": "y"}
     assert r["again"]["rep"]["filled"] == 0                    # an answered group is never changed
     assert r["values2"] == r["values"]
+
+
+# ------------------------------------------------------------------ real-page patterns
+# Each fixture below reproduces markup found on a REAL public application page in October 2026
+# (field labels only); the engine was run there, read back, and these are the things it got
+# wrong. See the fixture headers for which system and what pattern.
+EXTRACT = "window.TailorAutofill.extractFormAsync({onlyEmpty: false})"
+FILL_NAMED = ("window.TailorAutofill.fillAsync("
+              + json.dumps(dict(PAYLOAD, fields=dict(PAYLOAD["fields"], name="Kofi Gilbert"))) + ")")
+
+
+def _labels(fields):
+    return {f["label"]: f for f in fields}
+
+
+def test_greenhouse_live_labels_hidden_mirror_and_file_groups(tmp_path):
+    r = run(tmp_path, "greenhouse_live.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "fields", "js": EXTRACT},
+    ], query="?delay=50")
+    by = _labels(r["fields"])
+    # The phone's country picker is labelled by its own label, not the fieldset's "Phone" legend.
+    assert by["Country"]["type"] == "select" and "United States +1" in by["Country"]["options"]
+    # react-select's aria-hidden "required" mirror input is not a field (it showed up as "Phone").
+    assert [f["label"] for f in r["fields"] if f["label"] == "Phone"] == ["Phone"]
+    assert by["Phone"]["type"] == "tel"
+    # A file input whose own label is its "Attach" button takes the group's question.
+    assert by["Resume/CV*"]["type"] == "file" and by["Cover Letter"]["type"] == "file"
+    assert "Attach" not in by and "Enter manually" not in by
+    # One box of a multi-choice question says which question it answers.
+    assert "How did you hear about us?*: LinkedIn" in by
+
+
+def test_greenhouse_slow_location_search_is_waited_for_not_typed(tmp_path):
+    r = run(tmp_path, "greenhouse_live.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "report", "js": FILL},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+    ])                                                         # options arrive after 3.2 s
+    assert r["values"]["location"] == "Chicago, Illinois, United States"
+    assert "Location (City)" not in r["left"]
+    assert r["values"]["first"] == "Kofi" and r["values"]["phone"] == "555-100-2000"
+
+
+def test_greenhouse_location_with_no_match_is_not_counted(tmp_path):
+    # The search finds nothing: the typed text is NOT an answer in a select-style box (react-select
+    # drops it on blur), so it must be left for the person, not counted as filled.
+    r = run(tmp_path, "greenhouse_live.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "report", "js": FILL},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+        {"do": "eval", "as": "shown", "js": "window.TailorAutofill.comboValue(document.getElementById('candidate-location'))"},
+    ], query="?delay=50&empty=1")
+    assert r["values"]["location"] is None and r["shown"] == ""
+    assert r["report"]["widgets"] == 0
+    assert "Location (City)" in r["left"]
+    assert "How did you hear about us?" in r["left"]           # the group once, by its question
+    assert not any(x in ("LinkedIn", "Referral", "Other", "Attach") for x in r["left"])
+
+
+def test_lever_wrapped_labels_and_option_groups(tmp_path):
+    r = run(tmp_path, "lever_apply.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "fields", "js": EXTRACT},
+        {"do": "eval", "as": "report", "js": FILL_NAMED},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+    ])
+    labels = [f["label"] for f in r["fields"]]
+    # Headings only: no hidden status text, no <select> options glued onto the label.
+    assert "Resume/CV ✱" in labels or "Resume/CV✱" in labels
+    assert "What is your location?" in labels
+    assert not any("Couldn't" in l or "No location found" in l or "Afghanistan" in l or "Canada" in l
+                   for l in labels)
+    # Radio groups are named by their question, checkboxes by "question: option".
+    radios = [f for f in r["fields"] if f["type"] == "radio"]
+    assert [f["label"].rstrip("✱ ") for f in radios] == [
+        "Are you legally authorized to work in the United States?", "Are you open to working on site?"]
+    assert radios[0]["options"] == ["yes", "no"]
+    assert "Pronouns: He/him" in labels
+    v = r["values"]
+    assert v["name"] == "Kofi Gilbert" and v["auth"] == "Yes" and v["onsite"] is None
+    # Left for the person: each question once, by its heading (it used to say "Yes" and "No").
+    assert "Have you worked here before?" in r["left"] and "Are you open to working on site?" in r["left"]
+    assert not {"Yes", "No"} & set(r["left"])
+
+
+def test_ashby_radio_question_from_heading_not_first_option(tmp_path):
+    r = run(tmp_path, "ashby_application.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "fields", "js": EXTRACT},
+        {"do": "eval", "as": "report", "js": FILL_NAMED},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+    ])
+    radios = [f for f in r["fields"] if f["type"] == "radio"]
+    assert radios[0]["label"] == "What is your current geographic availability for this role?"
+    assert radios[1]["label"] == "Are you legally authorized to work in the United States?"
+    assert r["values"]["auth"] == "auth-0" and r["values"]["geo"] is None
+    assert r["report"]["screening"] == 1
+    assert r["left"] == ["What is your current geographic availability for this role?"]
+
+
+def test_workable_essay_mentioning_address_is_not_given_the_street(tmp_path):
+    payload = dict(PAYLOAD, fields=dict(PAYLOAD["fields"], address="100 Main St", street="100 Main St"))
+    r = run(tmp_path, "workable_apply.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "report", "js": f"window.TailorAutofill.fillAsync({json.dumps(payload)})"},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "fields", "js": EXTRACT},
+    ])
+    v = r["values"]
+    assert v["first"] == "Kofi" and v["address"] == "100 Main St"
+    assert v["essay"] == ""                                    # "...how did you address them?"
+    labels = [f["label"] for f in r["fields"]]
+    assert "Address" in labels and not any("SVGs not supported" in l for l in labels)
+    photo = next(f for f in r["fields"] if f["type"] == "file")
+    assert photo["label"] == "Photo Choose file"
+
+
+def test_workday_create_account_wall_and_robot_trap(tmp_path):
+    payload = dict(PAYLOAD, fields=dict(PAYLOAD["fields"], website="https://example.com"))
+    fill = f"window.TailorAutofill.fillAsync({json.dumps(payload)})"
+    wall = run(tmp_path, "workday_account.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "blocker", "js": "window.TailorAutofill.pageBlocker()"},
+        {"do": "eval", "as": "report", "js": fill},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+    ])
+    assert wall["blocker"] == "auth"
+    assert wall["report"]["ok"] is False and wall["report"]["reason"] == "blocked"
+    assert wall["values"] == {"email": "", "website": ""}      # nothing behind the wall
+    open_ = run(tmp_path, "workday_account.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "report", "js": fill},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "fields", "js": EXTRACT},
+        {"do": "eval", "as": "left", "js": "window.TailorAutofill.leftover()"},
+    ], query="?open=1")
+    assert open_["values"] == {"email": "kofi@example.com", "website": ""}   # the trap stays empty
+    assert not any("robots" in f["label"] for f in open_["fields"])
+    assert not any("robots" in l for l in open_["left"])
+
+
+def test_shell_says_captcha_when_a_bot_check_replaces_the_form():
+    """SmartRecruiters served headless Chromium a full-page DataDome check instead of the form: no
+    fields, a captcha frame. The shell reports it as a captcha for the person (the UI then says
+    "Solve it, then click Fill this page again"), not as "no form on this page"."""
+    main = (ROOT / "shell-electron" / "main.js").read_text(encoding="utf-8")
+    run_fn = main[main.index("async function runAutoApplyOnPane"):main.index("// ------------------------------------------------------------- multi-page forms")]
+    branch = run_fn[run_fn.index("!fields.length && !left.length"):]
+    assert branch.index('blocker === "captcha"') < branch.index('reason: "no-fields"')
+    app_js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert 'r.blocker === "captcha"' in app_js
+
+
+def test_fields_scrolled_above_the_fold_are_still_filled(tmp_path):
+    """The person scrolled to the bottom, then pressed Fill: the top fields have a negative
+    viewport rect but are on the page, unlike a honeypot parked at left:-9999px."""
+    r = run(tmp_path, "lever_apply.html", [
+        {"do": "eval", "js": "document.body.appendChild(Object.assign(document.createElement('div'), {style: 'height:4000px'})) && 1"},
+        {"do": "eval", "js": "document.body.appendChild(Object.assign(document.createElement('input'), {type: 'text', name: 'email2', placeholder: 'Email', style: 'position:absolute;left:-9999px;top:0'})) && 1"},
+        {"do": "eval", "js": "window.scrollTo(0, 3000) || window.scrollY"},
+        {"do": "inject"},
+        {"do": "eval", "as": "report", "js": FILL_NAMED},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+        {"do": "eval", "as": "email", "js": "document.querySelector('[name=email]').value"},
+        {"do": "eval", "as": "trap", "js": "document.querySelector('[name=email2]').value"},
+        {"do": "eval", "as": "labels", "js": "window.TailorAutofill.extractForm({}).map(f => f.label)"},
+    ])
+    assert r["values"]["name"] == "Kofi Gilbert" and r["email"] == "kofi@example.com"
+    assert r["trap"] == ""
+    assert any(l.startswith("Full name") for l in r["labels"]) and "Email" not in r["labels"]
+
+
+def test_recipe_never_types_into_a_dropdown_search_box(tmp_path):
+    """Greenhouse's recipe lists #candidate-location, which on the current boards is a react-select
+    search box: typing "Chicago, IL" there was counted as filled though nothing was chosen. The
+    widget layer picks the option instead, and only that counts."""
+    recipes = {"version": 1, "systems": [{"id": "greenhouse", "name": "Greenhouse",
+               "url_patterns": ["http://127.0.0.1*"],
+               "fields": {"first_name": ["#first_name"], "location": ["#candidate-location"]}}]}
+    payload = dict(PAYLOAD, recipes=recipes)
+    r = run(tmp_path, "greenhouse_live.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "report", "js": f"window.TailorAutofill.fillAsync({json.dumps(payload)})"},
+        {"do": "eval", "as": "values", "js": "window.fxValues()"},
+    ], query="?delay=50")
+    rep = r["report"]
+    assert rep["system"] == "greenhouse" and rep["via_recipe"] == 1          # first name only
+    assert r["values"]["location"] == "Chicago, Illinois, United States"
+    assert rep["widgets"] == 1
