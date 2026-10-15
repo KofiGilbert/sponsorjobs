@@ -187,8 +187,8 @@ const avatarStart: Handler = async ({ req, env, now, nowMs }) => {
   if (left < INTERVIEW_SECONDS) {
     const active = passActive(state, now);
     return json({
-      error: active ? "this pass's live interviews are used up; buy extra interviews or use your own Tavus key"
-                    : "live interviews come with a Job Hunt Pass or a Season Pass; or use your own Tavus key",
+      error: active ? "this pass's live interviews are used up; buy an extra interview pack"
+                    : "live interviews come with a Job Hunt Pass or a Season Pass",
       reason: active ? "no_interviews" : "pass_required", remaining: left,
     }, 402);
   }

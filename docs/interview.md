@@ -7,9 +7,9 @@ Decision of 2026-10-02 (owner-approved). Interview prep has exactly **two rounds
   time-out (client side), unlimited unscored practice prompts first. Answers are transcribed
   locally and the set is scored; pass at 70.
 - **Round 2: ONE live Tavus CVI interview (15 min)** with an interviewer briefed on the JD and the
-  person's résumé, followed by a scored report. Runs on a pass through the broker first,
-  else on the **person's own Tavus API key** (free tier, 25 min/month) saved in Settings. See
-  "Who pays for Round 2" below.
+  person's resume, followed by a scored report. **Paid only** (owner decision 2026-10-14): it
+  runs on a pass or a prepaid pack, through the broker, on the company Tavus key. Nobody adds
+  their own Tavus key anywhere. See "Who pays for Round 2" below.
 
 Two entry paths: **Full mock** (Round 1, then Round 2 if passed AND Round 2 available) or either
 round on its own (`skip_screen` starts Round 2 without a passed screen).
@@ -26,9 +26,11 @@ until the person deletes the screen. Nothing of the person's is stored by us or 
 ## Python side
 
 - `ui/app.py`: Round 1 (`/api/screens*`), Round 2 (`/api/interview/round2/status`,
-  `/api/interviews/cvi/*`, `/api/interviews/<id>`), `/api/avatar/settings`, readiness.
+  `/api/interviews/cvi/*`, `/api/interviews/<id>`), readiness. (`/api/avatar/settings`, the
+  own-key box, was removed on 2026-10-14.)
 - `backend/tavus_client.py`: the one Tavus CVI client (conversations, PALs, end, transcript),
-  used by the engine (own key) and by `backend/provider_tavus.py` (the broker's company key).
+  used by `backend/provider_tavus.py` (the broker's company key). The engine only uses its
+  `parse_transcript_text` for a pasted transcript.
 - `llm/anthropic_client.py` / `llm/base.py`: `generate_screen_questions(profile, role, company,
   jd, kinds)` asks for exactly N questions with kinds; `score_interview_answer` and
   `score_interview_screen` score both rounds.
@@ -89,22 +91,20 @@ The questions are exactly what the JD-grounded model produced; the fixed essenti
 ### Round 2
 
 `GET /api/interview/round2/status` ->
-`{available: bool, reason: "ok"|"no_key"|"no_minutes", source: "plan"|"own_key"|null,
-minutes_left: int|null, key_set: bool, can_buy: bool, packs: [{id, interviews, seconds,
-price_label}], tier: "free"|"pass30"|"pass90"|null, pass_until: int|null,
-offer: "passes"|"packs"|null}`.
+`{available: bool, reason: "ok"|"no_pass"|"no_minutes"|"unreachable", source: "plan"|null,
+minutes_left: int|null, can_buy: bool, packs: [{id, interviews, seconds, price_label}],
+tier: "free"|"pass30"|"pass90"|null, pass_until: int|null, offer: "passes"|"packs"|null}`.
 
-- `plan` FIRST: when the broker is reachable and its `GET /me/usage` reports
-  `avatar_seconds_left >= 900` (pass remainder + purchased extra interviews cover a full one);
-  `minutes_left` = whole minutes (the UI shows `floor(minutes_left / 15)` interviews).
-- else `own_key` whenever the credential `AVATAR_API_KEY` (the person's Tavus key) is set;
-  `minutes_left` is `null` there (Tavus meters the person's own account).
+- Available (`source: "plan"`) when the broker is reachable and its `GET /me/usage` reports
+  `avatar_seconds_left >= 1200` (pass remainder + purchased extra interviews cover a full one);
+  `minutes_left` = whole minutes (the UI shows `floor(minutes_left / 20)` interviews).
 - Otherwise `no_minutes` when the broker reports an active pass (`tier` pass30/pass90) without a
-  full interview left (`minutes_left` = what is left, `offer: "packs"`), else `no_key` (nothing
-  set up, or the broker is unreachable; `offer: "passes"` when the broker is reachable).
+  full interview left (`minutes_left` = what is left, `offer: "packs"`), `no_pass` when the
+  broker answers but there is no pass (`offer: "passes"`), else `unreachable`.
 - `packs` = the broker's `GET /billing/packs`, cached 5 minutes, and only during a pass (packs
   are not sold otherwise); `[]` when the broker is unreachable or billing is off. `can_buy` = at
   least one pack offered.
+- An `AVATAR_API_KEY` left on disk by an older version is ignored and never sent anywhere.
 
 `POST /api/interview/round2/buy` `{pack}` -> `{url}` (a Stripe Checkout page the app opens in
 its pane, or the system browser via `/api/open`). Proxies the broker's
@@ -112,41 +112,30 @@ its pane, or the system browser via `/api/open`). Proxies the broker's
 pass is active, 503 billing off or unreachable,
 502 other failures.
 
-`GET /api/avatar/settings` -> the status plus `configured` (= `key_set`).
-`POST /api/avatar/settings` `{key}` saves the key, `{key: ""}` revokes it; returns
-`{ok: true, ...status, configured}`. Changing the key also forgets the interviewer PAL created
-under the old key (`AVATAR_PAL_ID`). The `enabled` toggle is gone.
-
 `POST /api/interviews/cvi/start` `{prep_id, screen_id?, skip_screen?}` ->
 
 - `404` unknown prep.
 - `403 {error: "screen_not_passed", gated: true, message}` when `screen_id` is given but that
   screen did not pass (or does not exist), or when no `screen_id` and `skip_screen` is not true.
-- `402 {error: "round2_unavailable", reason, source, can_buy, packs, ...}` when the status is
-  not available.
-  Also used when Tavus rejects the person's key (`reason: "no_key"`) or reports no credit
-  (`reason: "no_minutes"`), and when the broker returns 402 (`reason: "no_minutes"`) and no own
-  key is saved; with an own key saved, a broker 402 falls through to the own key.
+- `402 {error: "round2_unavailable", reason, source, can_buy, packs, offer, ...}` when the status
+  is not available, or when the broker's `/avatar/session/start` answers 402 (`no_minutes` on a
+  pass, else `no_pass`).
 - `503 {error: "service_unavailable"}` when Tavus/the broker cannot be reached;
   `502 {error: "tavus_error"|"service_error", message}` on other upstream failures.
 - `200 {interview_id, join_url, conversation_id, max_minutes: 15, source, role, company,
   disclaimer}`.
 
-With the plan it posts the briefing to the broker's `/avatar/session/start` and returns its
-`session_url`. With the person's own key the engine calls Tavus directly (see below). The
-interview record keeps the `source` it actually started on.
+It posts the briefing to the broker's `/avatar/session/start` and returns its `session_url`.
 
 `POST /api/interviews/cvi/heartbeat` `{seconds, interview_id?}` -> `{remaining, stop, source}`.
-Metered by the interview's own source: on the plan it forwards to the broker's
-`/avatar/heartbeat` (the app sends one every 30 s and the remainder at the end, and ends the
-call on `stop`); on an own key it answers `{remaining: null, stop: false}`. Without an
-`interview_id`, a saved own key means no meter.
+Forwarded to the broker's `/avatar/heartbeat` (the app sends one every 30 s and the remainder
+at the end, and ends the call on `stop`).
 
 `POST /api/interviews/cvi/end` `{interview_id, transcript?, duration_s?}` ->
 
-- own key: `POST /v2/conversations/{id}/end`, then `GET /v2/conversations/{id}?verbose=true` up
-  to three times (2 s apart) for the `application.transcription_ready` event.
-- If Tavus has no transcript (or on the plan path, where this app holds no key), the body's
+- The broker's `/avatar/session/end` ends the conversation and hands the transcript back, asked
+  up to three times (2 s apart).
+- If no transcript comes back, the body's
   `transcript` is scored instead: plain text (one turn per line, optional `Interviewer:` /
   `Me:` prefixes; unprefixed lines alternate starting with the interviewer) or a list of
   `{role: "assistant"|"user"|"interviewer"|"candidate", content}`.
@@ -208,55 +197,41 @@ pricing: docs/bundled-api-backend.md, section 5 "Pricing". No subscription, noth
    (paid) adds the seconds as credits, once per session id (the store records processed
    session ids). Prices come from `STRIPE_PRICE_PACK_1` / `_3` / `_5`; an unset pack is not
    offered.
-3. **The person's own Tavus key** (free users, or anyone whose interviews are used up and who
-   would rather not buy). Tavus meters their own account.
 
-`/api/interview/round2/status` reports `tier`, `pass_until` and `offer`: `"passes"` for a free
-account (the gate shows "See passes" next to the free-key steps) or `"packs"` during a pass
-(the gate lists the extra-interview packs with their prices).
+`/api/interview/round2/status` reports `tier`, `pass_until` and `offer`: `"passes"` for an
+account without a pass (the gate lists the passes on sale from `/api/billing/offers`, with the
+broker's names, prices and interview counts, never hard-coded) or `"packs"` during a pass (the
+gate lists the extra-interview packs with their prices).
 
 | Case | Status | Gate |
 |---|---|---|
 | Pass (or extra interviews), a full interview left | `plan`, available | green room, "N interviews left" |
-| Pass, used up, packs on sale, no key | `no_minutes`, `can_buy`, `offer: "packs"` | "Buy 1 interview, $9", "Buy 3 interviews, $24", "Buy 5 interviews, $35", "Use my own Tavus key", "Finish here" |
-| Pass, used up, own key saved | `own_key`, available | green room on their key |
-| Free, own key | `own_key`, available | green room |
-| Free, no key | `no_key`, `offer: "passes"` | the free-key steps and "See passes" |
-| Broker down | `own_key` if a key is saved, else `no_key`; `packs: []`, `offer: null` | as above |
+| Pass, used up, packs on sale | `no_minutes`, `can_buy`, `offer: "packs"` | one button per pack with its price, "Finish here" |
+| Pass, used up, no packs on sale | `no_minutes`, `offer: "packs"` | "See passes", "Finish here" |
+| No pass | `no_pass`, `offer: "passes"` | one button per pass ("Job Hunt Pass, $29, 3 live interviews"), "See passes", "Finish here" |
+| Broker down | `unreachable`, `offer: null` | "Check again", "Finish here" |
 
-## Tavus (own-key path)
+## Tavus (the broker's company-key calls)
 
 Read from docs.tavus.io on 2026-10-02. Tavus renamed *persona* to **PAL** and *replica* to
 **face**; the body fields are `pal_id` / `face_id` (the older `persona_id` / `replica_id` are not
-listed in the current reference). All calls send `x-api-key: <the person's key>`.
+listed in the current reference). All calls are made by the broker (the Cloudflare Worker in
+`worker/`, `worker/src/tavus.ts`) with `x-api-key: <the company key>`, which never leaves it.
 
 | Step | Call | Notes |
 |---|---|---|
-| Interviewer, once per key | `POST /v2/pals` `{pal_name, system_prompt, default_face_id, pipeline_mode: "full", greeting}` -> `{pal_id}` | id stored locally as `AVATAR_PAL_ID`; the system prompt is the standing interviewer behaviour (one question at a time, follow-ups, 15-minute structure). If creation fails the conversation is minted on the bare face with a `custom_greeting`. |
 | Start | `POST /v2/conversations` `{pal_id` or `face_id, conversation_name, conversational_context, require_auth: true, properties: {max_call_duration: 900, participant_absent_timeout: 300, participant_left_timeout: 90}}` -> `{conversation_id, conversation_url, meeting_token}` | `conversational_context` is the per-interview briefing: hiring-manager persona for this company/role, the structure, the questions to cover (from the prep, with competencies), the JD (2500 chars) and the profile/CV (2500 chars). The join URL gets `?t=<meeting_token>` appended. |
 | End | `POST /v2/conversations/{id}/end` | no body; 200 with no content. |
 | Transcript | `GET /v2/conversations/{id}?verbose=true` -> `events[]` | the `application.transcription_ready` event carries `properties.transcript: [{role: "assistant"\|"user", content, timestamp, seconds_from_start, duration}]`. |
 
-Default face: `r9d30b0e55ac` (a Tavus stock face, "Luna"); override with the credential
-`AVATAR_FACE_ID`.
+Default face: `r9d30b0e55ac` (a Tavus stock face, "Luna"); the broker overrides it with
+`TAVUS_FACE_ID`. The interviewer's standing instructions ride in `conversational_context`
+ahead of the briefing, and its opening line is the `custom_greeting`.
 
 **Unverified (no live key in this session):** that the current Tavus API still accepts the
 older `persona_id`/`replica_id` spellings (we send the documented `pal_id`/`face_id`); that the
 free tier permits PAL creation; how long after `/end` the `transcription_ready` event appears
 (we retry 3 times, 2 s apart, then fall back to a client-supplied transcript); the exact HTTP
-status Tavus returns when a free account is out of minutes (402 and 429 are mapped to
-`no_minutes`). Everything in the table above is covered by offline tests with a fake transport
-(`tests/test_provider_tavus.py`, `tests/test_round2_cvi.py`); the live smoke test is the one
-remaining step.
-
-## Getting a free Tavus key
-
-1. Sign up at <https://platform.tavus.io> (the free plan includes 25 conversational-video
-   minutes per month and the stock faces; no card needed at the time of writing).
-2. In the platform, open **API Keys** and create a key.
-3. In SponsorJobs: Settings -> Live interview -> paste the key. It is stored in the git-ignored
-   local credential store (`AVATAR_API_KEY`) and only ever leaves the machine as the
-   `x-api-key` header on the person's own Tavus calls. Revoke it from the same place.
-
-Round 2 is 15 minutes, so a free key covers about one full mock a month; a pass through the
-broker (`docs/bundled-api-backend.md`) is used first when the person has one.
+status Tavus returns when an account is out of minutes. The broker side is covered by
+`worker/test/avatar.test.ts` and `tests/test_provider_tavus.py`; the engine side by
+`tests/test_round2_cvi.py` (broker stubbed).

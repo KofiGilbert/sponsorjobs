@@ -30,7 +30,7 @@ llm = ["anthropic>=0.40"]
 interview = ["faster-whisper>=1.0"]   # local Whisper (CTranslate2), no cloud STT (MIT)
 # Premium "Live Interviewer" avatar (P4, Fold 2): the ONE deliberate cloud exception, opt-in and
 # key-gated. Only the HTTP client, imported lazily; the free/local tier needs nothing.
-avatar = ["requests>=2.28"]           # Tavus REST (paid, per-minute; user supplies AVATAR_API_KEY)
+avatar = ["requests>=2.28"]           # Tavus REST (paid, per-minute; the broker's company key)
 # Managed-AI billing (P4): Stripe one-time Checkout (passes, packs) + webhooks. SERVER-SIDE ONLY -- lives in the hosted
 # broker (backend/), which holds the secret key; the downloaded app never imports it.
 billing = ["stripe>=15.0"]

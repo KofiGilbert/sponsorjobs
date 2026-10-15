@@ -94,11 +94,11 @@ stays on the app theme. Calm, minimal tone.
 
 **Round 2 is one live interview with the Tavus interviewer (15 minutes)** in the Electron
 video pane (`renderCviStage`, `window.tailorShell.openBrowser`), then "End interview" leads to
-the scored report. It needs the person's own Tavus key: Settings has a "Live interviewer
-(Tavus)" block (key field, save/revoke, a "Get a free key" explainer: 25 minutes a month, no
-card, platform.tavus.io) with a status pill from `GET /api/interview/round2/status`. In the
-full mock, a PASS goes to "Start Round 2" when the status is available; otherwise to a gate
-screen ("Round 2 needs a live interviewer", the free-key steps, "Finish here"). "Round 2 only"
+the scored report. It is PAID ONLY (2026-10-14): a pass or a prepaid pack, on the company
+Tavus key held by the broker; there is no own-key box anywhere. In the full mock, a PASS goes to
+"Start Round 2" when `GET /api/interview/round2/status` is available; otherwise to a gate screen
+("Live interviews come with a pass" with one button per pass on sale, names and prices from the
+broker; or the packs when a pass is used up; "Finish here"). "Round 2 only"
 calls cvi/start with `skip_screen: true`.
 Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platform.tavus.io.
 

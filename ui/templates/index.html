@@ -971,7 +971,8 @@
         </div>
 
         <!-- Round 2: one live interview with the Tavus interviewer, in the app's video pane.
-             Needs the person's own Tavus key (Settings). A practice simulation, not real. -->
+             Paid only: a pass or a pack, on the company key held by the broker. A practice
+             simulation, not real. -->
         <div class="prep-live" id="prepLive" hidden>
           <div class="mock-top">
             <button class="btn btn-ghost btn-sm" id="liveQuit" type="button">Quit</button>
@@ -1270,28 +1271,6 @@
           </div>
           <p class="set-note">Your key is stored on this machine only, in a git-ignored file. You pay
             Anthropic directly for what you use, SponsorJobs never proxies it.</p>
-
-          <!-- Round 2 of interview prep talks to a live interviewer on Tavus, on the person's OWN key.
-               Status comes from /api/interview/round2/status; save and revoke go to /api/avatar/settings. -->
-          <h2 class="set-h set-h-sub" data-i18n="tavus.h">Live interviewer (Tavus)</h2>
-          <div class="set-row">
-            <div class="set-row-t">
-              <div class="set-row-n"><span data-i18n="tavus.n">Tavus key</span> <span class="conn-status" id="tvStatus"></span></div>
-              <div class="set-row-d" id="tvState">Round 2 talks to a live interviewer on Tavus. It needs your own key.</div>
-            </div>
-            <button class="btn btn-ghost" id="tvToggle" type="button">Add key</button>
-          </div>
-          <form class="conn-form" id="tvForm" hidden>
-            <input class="fld" id="tvKey" type="password" placeholder="Tavus API key" data-i18n-ph="tavus.keyPh" autocomplete="off" spellcheck="false">
-            <div class="conn-form-foot">
-              <button class="btn btn-primary btn-sm" id="tvSave" type="submit" data-i18n="tavus.save">Save</button>
-              <button class="btn btn-danger-ghost btn-sm" id="tvRevoke" type="button" data-i18n="tavus.revoke" hidden>Remove key</button>
-              <button class="btn btn-ghost btn-sm" id="tvCancel" type="button" data-i18n="tavus.cancel">Cancel</button>
-            </div>
-            <p class="conn-msg" id="tvMsg" hidden></p>
-            <p class="conn-hint"><span data-i18n="tavus.hint">Create a key at platform.tavus.io (it has a free tier). The key stays on this computer.</span>
-              <a href="https://platform.tavus.io" target="_blank" rel="noopener">platform.tavus.io</a></p>
-          </form>
         </section>
 
         <section class="set-pane" data-pane="lock">

@@ -1,10 +1,10 @@
 """Round 2: ONE live Tavus CVI interview (ui/app.py /api/interviews/cvi/*, /api/interview/round2/*).
 
-Offline: FakeLLM, no network. Tavus is replaced by a fake (method, url, headers, body) transport
-on A._TAVUS_HTTP; the managed broker by monkeypatching _broker_post/_broker_get. We verify the
-gate (must pass Round 1 unless skipped), the two minute sources (own key first, plan second), the
-briefing sent to the interviewer, the end -> transcript -> scored report path, and that the
-retired three-round local simulation is gone.
+Offline: FakeLLM, no network. The managed broker (which holds the company Tavus key) is replaced
+by monkeypatching _broker_post/_broker_get. We verify the gate (must pass Round 1 unless skipped),
+that live interviews are PAID ONLY (a pass or a pack through the broker; no own Tavus key path,
+2026-10-14), the briefing sent to the interviewer, the end -> transcript -> scored report path,
+and that the retired three-round local simulation is gone.
 """
 
 from __future__ import annotations
@@ -63,56 +63,54 @@ _TRANSCRIPT_EVENTS = [
 ]
 
 
-class FakeTavus:
-    """A scripted Tavus: records every call; answers per (method, path suffix)."""
-    def __init__(self, status=200, transcript_events=None, fail_pal=False):
-        self.calls, self.status = [], status
-        self.events = _TRANSCRIPT_EVENTS if transcript_events is None else transcript_events
-        self.fail_pal = fail_pal
-
-    def __call__(self, method, url, headers, body):
-        self.calls.append({"method": method, "url": url, "headers": headers, "body": body})
-        if self.status != 200:
-            return self.status, {"message": "nope"}
-        if url.endswith("/v2/pals"):
-            return (400, {"message": "bad face"}) if self.fail_pal else (200, {"pal_id": "pal_1"})
-        if url.endswith("/v2/conversations"):
-            return 200, {"conversation_id": "c1", "conversation_url": "https://tavus.daily.co/c1",
-                         "meeting_token": "tok"}
-        if url.endswith("/end"):
-            return 200, {}
-        if "verbose=true" in url:
-            return 200, {"status": "ended", "events": self.events}
-        return 404, {"message": "unknown"}
+# The same dialogue as the broker hands it back (interviewer / candidate roles).
+_BROKER_TURNS = [{**t, "role": "interviewer" if t["role"] == "assistant" else "candidate"}
+                 for t in _TRANSCRIPT_EVENTS[1]["properties"]["transcript"]]
 
 
-def _own_key(A, c, fake):
-    A._TAVUS_HTTP = fake
-    c.post("/api/avatar/settings", json={"key": "tvs-own-key"})
+def _on_a_pass(A, monkeypatch, transcript=None, seconds=5400):
+    """A pass with interviews left, and a broker that mints a room and hands back `transcript`
+    (the scripted dialogue by default) on /avatar/session/end. Returns the list of broker calls."""
+    calls = []
+    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass30", "avatar_seconds_left": seconds}))
+
+    def post(path, body):
+        calls.append((path, body))
+        if path == "/avatar/session/start":
+            return 200, {"session_url": "https://tavus.daily.co/c1?t=tok", "provider_session_id": "c1"}
+        if path == "/avatar/session/end":
+            return 200, {"transcript": _BROKER_TURNS if transcript is None else transcript}
+        if path == "/avatar/heartbeat":
+            return 200, {"remaining": 5370, "stop": False}
+        return 404, None
+    monkeypatch.setattr(A, "_broker_post", post)
+    return calls
 
 
-# ---- round2 status: plan (a full interview) > own key > none ----------------------------------------------------------
-def test_round2_status_none_then_own_key(client):
+# ---- round2 status: paid only (a pass or a pack), never an own key ----------------------------------------------------------
+def test_round2_status_is_paid_only_and_the_own_key_routes_are_gone(client, monkeypatch):
     A, c = client
     st = c.get("/api/interview/round2/status").get_json()
-    assert st == {"available": False, "reason": "no_key", "source": None, "minutes_left": None,
-                  "key_set": False, "can_buy": False, "packs": [], "tier": None,
-                  "pass_until": None, "offer": None}
-    saved = c.post("/api/avatar/settings", json={"key": "tvs-own-key"}).get_json()
-    assert saved["ok"] is True and saved["available"] is True and saved["source"] == "own_key"
-    assert saved["key_set"] is True and saved["configured"] is True and "tvs-own-key" not in str(saved)
+    assert st == {"available": False, "reason": "unreachable", "source": None, "minutes_left": None,
+                  "can_buy": False, "packs": [], "tier": None, "pass_until": None, "offer": None}
+    # The Settings key box is gone: nothing can save or read a person's own Tavus key.
+    assert c.post("/api/avatar/settings", json={"key": "tvs-own-key"}).status_code in (404, 405)
+    assert c.get("/api/avatar/settings").status_code == 404
+    for name in ("_TAVUS_HTTP", "_tavus_client", "_ensure_pal", "_start_own_key_conversation"):
+        assert not hasattr(A, name)
+    # An own key left on disk by an older version is ignored: no pass -> not available.
+    monkeypatch.setenv("AVATAR_API_KEY", "tvs-left-over")
+    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "free", "avatar_seconds_left": 0}))
     st = c.get("/api/interview/round2/status").get_json()
-    assert st["available"] is True and st["reason"] == "ok" and st["source"] == "own_key"
-    # revoke -> back to none
-    assert c.post("/api/avatar/settings", json={"key": ""}).get_json()["available"] is False
-    assert c.get("/api/avatar/settings").get_json()["key_set"] is False
+    assert st["available"] is False and st["reason"] == "no_pass" and st["offer"] == "passes"
+    assert "key_set" not in st and "tvs-left-over" not in str(st)
 
 
 def test_round2_status_from_the_plan_and_out_of_minutes(client, monkeypatch):
     A, c = client
     monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass30", "avatar_seconds_left": 1810}))
     st = c.get("/api/interview/round2/status").get_json()
-    assert st == {"available": True, "reason": "ok", "source": "plan", "minutes_left": 30, "key_set": False,
+    assert st == {"available": True, "reason": "ok", "source": "plan", "minutes_left": 30,
                   "can_buy": False, "packs": [], "tier": "pass30", "pass_until": None, "offer": "packs"}
     # 10 minutes left is not a full 15-minute interview: never start one that cannot finish
     monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass30", "avatar_seconds_left": 610}))
@@ -121,10 +119,10 @@ def test_round2_status_from_the_plan_and_out_of_minutes(client, monkeypatch):
     monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass30", "avatar_seconds_left": 0}))
     st = c.get("/api/interview/round2/status").get_json()
     assert st["available"] is False and st["reason"] == "no_minutes" and st["minutes_left"] == 0
-    # a free account with no minutes means 'nothing set up', not 'used up': offer the passes
+    # a free account with no minutes has no pass, not 'used up': offer the passes
     monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "free", "avatar_seconds_left": 0}))
     st = c.get("/api/interview/round2/status").get_json()
-    assert st["reason"] == "no_key" and st["offer"] == "passes" and st["can_buy"] is False
+    assert st["reason"] == "no_pass" and st["offer"] == "passes" and st["can_buy"] is False
 
 
 def test_free_account_is_never_offered_packs(client, monkeypatch):
@@ -134,7 +132,7 @@ def test_free_account_is_never_offered_packs(client, monkeypatch):
     calls = []
     monkeypatch.setattr(A, "_broker_get", _fake_broker({"tier": "free", "avatar_seconds_left": 0}, calls=calls))
     st = c.get("/api/interview/round2/status").get_json()
-    assert st["reason"] == "no_key" and st["offer"] == "passes"
+    assert st["reason"] == "no_pass" and st["offer"] == "passes"
     assert st["packs"] == [] and st["can_buy"] is False and "/billing/packs" not in calls
 
 
@@ -145,27 +143,13 @@ def test_buy_without_a_pass_maps_to_402_with_the_passes_offer(client, monkeypatc
     assert r.status_code == 402 and r.get_json()["offer"] == "passes"
 
 
-def test_the_plan_wins_over_the_own_key_until_it_is_used_up(client, monkeypatch):
-    A, c = client
-    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass90", "avatar_seconds_left": 1200}))
-    c.post("/api/avatar/settings", json={"key": "tvs-own-key"})
-    st = c.get("/api/interview/round2/status").get_json()
-    assert st["source"] == "plan" and st["key_set"] is True and st["minutes_left"] == 20
-    # plan exhausted: the person's own key takes over
-    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "pass90", "avatar_seconds_left": 0}))
-    st = c.get("/api/interview/round2/status").get_json()
-    assert st["available"] is True and st["source"] == "own_key" and st["minutes_left"] is None
-    # broker down: the own key still works
-    monkeypatch.setattr(A, "_broker_reachable", lambda: False)
-    st = c.get("/api/interview/round2/status").get_json()
-    assert st["source"] == "own_key" and st["can_buy"] is False and st["packs"] == []
 
 
-# ---- cvi/start: 403 gate, 402 unavailable, 200 with the person's own key ----------------------------
-def test_cvi_start_is_gated_on_passing_round_one(client):
+# ---- cvi/start: 403 gate, 402 unavailable, 200 through the broker ----------------------------
+def test_cvi_start_is_gated_on_passing_round_one(client, monkeypatch):
     A, c = client
     prep = _prep(c)
-    _own_key(A, c, FakeTavus())
+    _on_a_pass(A, monkeypatch)
     unpassed = c.post("/api/screens", json={"prep_id": prep["id"]}).get_json()["id"]
     r = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "screen_id": unpassed})
     assert r.status_code == 403 and r.get_json()["error"] == "screen_not_passed"
@@ -176,67 +160,20 @@ def test_cvi_start_is_gated_on_passing_round_one(client):
     assert c.post("/api/interviews/cvi/start", json={"prep_id": "nope", "skip_screen": True}).status_code == 404
 
 
-def test_cvi_start_402_when_round2_unavailable(client):
+def test_cvi_start_402_when_round2_unavailable(client, monkeypatch):
     A, c = client
     prep = _prep(c)
+    monkeypatch.setattr(A, "_broker_get", lambda path: (200, {"plan": "free", "avatar_seconds_left": 0}))
     r = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True})
     assert r.status_code == 402
-    assert r.get_json()["error"] == "round2_unavailable" and r.get_json()["reason"] == "no_key"
+    assert r.get_json()["error"] == "round2_unavailable" and r.get_json()["reason"] == "no_pass"
+    assert r.get_json()["offer"] == "passes"
 
 
-def test_cvi_start_with_own_key_calls_tavus_directly_with_a_briefing(client):
-    A, c = client
-    prep = _prep(c)
-    sid = _passed_screen(c, prep)
-    fake = FakeTavus()
-    _own_key(A, c, fake)
-    r = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "screen_id": sid})
-    body = r.get_json()
-    assert r.status_code == 200, body
-    assert body["join_url"] == "https://tavus.daily.co/c1?t=tok" and body["conversation_id"] == "c1"
-    assert body["max_minutes"] == 20 and body["source"] == "own_key" and body["interview_id"]
-    # 1) the interviewer PAL is created once with the person's key, 2) the conversation is minted on it
-    assert [x["url"].rsplit("/v2/", 1)[1] for x in fake.calls] == ["pals", "conversations"]
-    assert all(x["headers"] == {"x-api-key": "tvs-own-key"} for x in fake.calls)
-    pal = fake.calls[0]["body"]
-    assert "one at a time" in pal["system_prompt"].lower() and pal["default_face_id"]
-    conv = fake.calls[1]["body"]
-    assert conv["pal_id"] == "pal_1" and conv["require_auth"] is True
-    assert conv["properties"]["max_call_duration"] == 1260
-    ctx = conv["conversational_context"]
-    assert "Data Analyst" in ctx and "Acme" in ctx and "Tableau" in ctx         # role, company, JD
-    assert "QUESTIONS TO COVER" in ctx and "4 to 6 questions" in ctx           # structure + plan
-    # the PAL id is remembered, so a second interview does not create another
-    r2 = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "screen_id": sid})
-    assert r2.status_code == 200 and len(fake.calls) == 3 and fake.calls[2]["url"].endswith("/conversations")
-    stored = c.get(f"/api/interviews/{body['interview_id']}").get_json()
-    assert stored["report"] is None and stored["interview"]["screen_id"] == sid
-    assert stored["interview"]["skipped_screen"] is False
 
 
-def test_cvi_start_falls_back_to_a_bare_face_when_the_pal_cannot_be_created(client):
-    A, c = client
-    prep = _prep(c)
-    fake = FakeTavus(fail_pal=True)
-    _own_key(A, c, fake)
-    r = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True})
-    assert r.status_code == 200
-    conv = fake.calls[-1]["body"]
-    assert "pal_id" not in conv and conv["face_id"] and conv["custom_greeting"]
-    assert c.get(f"/api/interviews/{r.get_json()['interview_id']}").get_json()["interview"]["skipped_screen"] is True
 
 
-def test_cvi_start_maps_a_rejected_key_and_tavus_quota(client):
-    A, c = client
-    prep = _prep(c)
-    _own_key(A, c, FakeTavus(status=401))
-    r = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True})
-    assert r.status_code == 402 and r.get_json()["reason"] == "no_key"
-    A._TAVUS_HTTP = FakeTavus(status=402)
-    r = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True})
-    assert r.status_code == 402 and r.get_json()["reason"] == "no_minutes"
-    A._TAVUS_HTTP = FakeTavus(status=500)
-    assert c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).status_code == 502
 
 
 def test_cvi_start_via_the_plan_uses_the_broker(client, monkeypatch):
@@ -253,26 +190,27 @@ def test_cvi_start_via_the_plan_uses_the_broker(client, monkeypatch):
     assert r.status_code == 200 and r.get_json()["source"] == "plan"
     assert r.get_json()["join_url"] == "https://tavus/join?t=x" and r.get_json()["conversation_id"] == "c7"
     assert sent["path"] == "/avatar/session/start" and "Data Analyst" in sent["body"]["context"]["prompt"]
+    prompt = sent["body"]["context"]["prompt"]
+    assert "Acme" in prompt and "Tableau" in prompt                             # company, JD
+    assert "QUESTIONS TO COVER" in prompt and "4 to 6 questions" in prompt      # structure + plan
     # broker quota -> 402 round2_unavailable / no_minutes; unreachable -> 503
     monkeypatch.setattr(A, "_broker_post", lambda path, body: (402, {"error": "out"}))
     r = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True})
-    assert r.status_code == 402 and r.get_json()["reason"] == "no_minutes"
+    assert r.status_code == 402 and r.get_json()["reason"] == "no_minutes" and r.get_json()["offer"] == "packs"
     monkeypatch.setattr(A, "_broker_post", lambda path, body: (0, None))
     assert c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).status_code == 503
 
 
-# ---- cvi/end: end on Tavus, fetch the transcript, score the dialogue, store the report -------------
-def test_cvi_end_scores_the_tavus_transcript_into_a_report(client):
+# ---- cvi/end: the broker ends it and hands the transcript back; score it, store the report -------------
+def test_cvi_end_scores_the_tavus_transcript_into_a_report(client, monkeypatch):
     A, c = client
     prep = _prep(c)
-    fake = FakeTavus()
-    _own_key(A, c, fake)
+    calls = _on_a_pass(A, monkeypatch)
     iid = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).get_json()["interview_id"]
     r = c.post("/api/interviews/cvi/end", json={"interview_id": iid})
     assert r.status_code == 200, r.get_json()
     rep = r.get_json()["report"]
-    assert fake.calls[-2]["url"].endswith("/v2/conversations/c1/end")
-    assert fake.calls[-1]["url"].endswith("/v2/conversations/c1?verbose=true")
+    assert calls[-1] == ("/avatar/session/end", {"conversation_id": "c1"})
     assert isinstance(rep["score"], int) and rep["passed"] is True and rep["why"] and rep["improvements"]
     assert rep["disclaimer"] == A.SIMULATION_DISCLAIMER and rep["is_practice"] is True
     assert rep["duration_s"] == 116 and rep["round"] == 2
@@ -288,15 +226,14 @@ def test_cvi_end_scores_the_tavus_transcript_into_a_report(client):
     assert d["live"] == 1 and d["attempts"] == 1
 
 
-def test_cvi_end_falls_back_to_a_supplied_transcript_and_needs_one(client):
+def test_cvi_end_falls_back_to_a_supplied_transcript_and_needs_one(client, monkeypatch):
     A, c = client
     prep = _prep(c)
-    fake = FakeTavus(transcript_events=[])          # Tavus has no transcript
-    _own_key(A, c, fake)
+    calls = _on_a_pass(A, monkeypatch, transcript=[])  # no transcript comes back
     iid = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).get_json()["interview_id"]
     r = c.post("/api/interviews/cvi/end", json={"interview_id": iid})
     assert r.status_code == 400 and r.get_json()["error"] == "no_transcript"
-    assert sum(1 for x in fake.calls if "verbose=true" in x["url"]) == 3      # retried, no sleeping
+    assert sum(1 for p, _ in calls if p == "/avatar/session/end") == 3       # retried, no sleeping
     r = c.post("/api/interviews/cvi/end", json={"interview_id": iid, "duration_s": 300,
                "transcript": f"Interviewer: Why Acme?\nMe: {_GOOD}\nInterviewer: Anything else?\nMe: {_GOOD}"})
     assert r.status_code == 200
@@ -365,22 +302,23 @@ def test_dialogue_pairing_and_competency_tagging_are_pure():
     assert A._pair_dialogue([], plan) == []
 
 
-def test_heartbeat_is_a_noop_with_own_key_and_fails_safe_on_the_plan(client, monkeypatch):
+def test_heartbeat_is_metered_by_the_broker_and_fails_safe(client, monkeypatch):
     A, c = client
     monkeypatch.setattr(A, "_broker_post", lambda path, body: (200, {"remaining": 120, "stop": False}))
-    assert c.post("/api/interviews/cvi/heartbeat", json={"seconds": 30}).get_json()["stop"] is False
+    assert c.post("/api/interviews/cvi/heartbeat", json={"seconds": 30}).get_json() == \
+        {"remaining": 120, "stop": False, "source": "plan"}
     monkeypatch.setattr(A, "_broker_post", lambda path, body: (0, None))
     r = c.post("/api/interviews/cvi/heartbeat", json={"seconds": 30})
     assert r.status_code == 200 and r.get_json()["stop"] is True       # never trapped in a paid session
-    c.post("/api/avatar/settings", json={"key": "tvs-own-key"})
-    assert c.post("/api/interviews/cvi/heartbeat", json={"seconds": 30}).get_json() == \
-        {"remaining": None, "stop": False, "source": "own_key"}
+    # an own key left on disk never turns the meter off
+    monkeypatch.setenv("AVATAR_API_KEY", "tvs-left-over")
+    assert c.post("/api/interviews/cvi/heartbeat", json={"seconds": 30}).get_json()["stop"] is True
 
 
-def test_delete_removes_the_live_record(client):
+def test_delete_removes_the_live_record(client, monkeypatch):
     A, c = client
     prep = _prep(c)
-    _own_key(A, c, FakeTavus())
+    _on_a_pass(A, monkeypatch)
     iid = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).get_json()["interview_id"]
     assert c.post(f"/api/interviews/{iid}/delete").get_json()["ok"] is True
     assert c.get(f"/api/interviews/{iid}").status_code == 404
@@ -404,7 +342,7 @@ def test_removed_local_rounds_routes_are_gone(client):
     assert not hasattr(FakeLLM, "generate_interview_plan")
 
 
-# ---- who pays: plan first, prepaid packs, own key -------------------------------------------------
+# ---- who pays: a pass, then prepaid packs -------------------------------------------------
 _PACKS = [{"id": "pack_1", "interviews": 1, "seconds": 900, "price_label": "$9"},
           {"id": "pack_3", "interviews": 3, "seconds": 2700, "price_label": "$24"}]
 
@@ -465,31 +403,11 @@ def test_buy_proxies_to_the_broker_checkout(client, monkeypatch):
     assert c.post("/api/interview/round2/buy", json={"pack": "pack_1"}).status_code == 503
 
 
-def test_cvi_start_uses_the_plan_even_when_an_own_key_is_saved(client, monkeypatch):
-    A, c = client
-    prep = _prep(c)
-    fake = FakeTavus()
-    _own_key(A, c, fake)
-    monkeypatch.setattr(A, "_broker_get", _fake_broker({"plan": "pass90", "avatar_seconds_left": 5400}))
-    monkeypatch.setattr(A, "_broker_post", lambda path, body: (200, {"session_url": "https://tavus/p", "provider_session_id": "c8"}))
-    r = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True})
-    assert r.status_code == 200 and r.get_json()["source"] == "plan" and r.get_json()["join_url"] == "https://tavus/p"
-    assert fake.calls == []                                            # the person's key was not spent
 
 
-def test_cvi_start_falls_back_to_the_own_key_when_the_broker_refuses(client, monkeypatch):
-    A, c = client
-    prep = _prep(c)
-    fake = FakeTavus()
-    _own_key(A, c, fake)
-    monkeypatch.setattr(A, "_broker_get", _fake_broker({"plan": "pass90", "avatar_seconds_left": 900}))
-    monkeypatch.setattr(A, "_broker_post", lambda path, body: (402, {"error": "out"}))
-    r = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True})
-    assert r.status_code == 200 and r.get_json()["source"] == "own_key"
-    assert r.get_json()["join_url"] == "https://tavus.daily.co/c1?t=tok"
 
 
-def test_cvi_start_without_minutes_or_key_offers_packs(client, monkeypatch):
+def test_cvi_start_without_minutes_offers_packs(client, monkeypatch):
     A, c = client
     prep = _prep(c)
     monkeypatch.setattr(A, "_broker_get", _fake_broker({"plan": "pass30", "avatar_seconds_left": 300}))
@@ -499,10 +417,10 @@ def test_cvi_start_without_minutes_or_key_offers_packs(client, monkeypatch):
     assert [p["id"] for p in body["packs"]] == ["pack_1", "pack_3"]
 
 
-def test_heartbeat_meters_a_plan_interview_even_with_an_own_key_saved(client, monkeypatch):
+def test_heartbeat_meters_a_plan_interview_even_with_an_old_own_key_on_disk(client, monkeypatch):
     A, c = client
     prep = _prep(c)
-    c.post("/api/avatar/settings", json={"key": "tvs-own-key"})
+    monkeypatch.setenv("AVATAR_API_KEY", "tvs-left-over")
     monkeypatch.setattr(A, "_broker_get", _fake_broker({"plan": "pass90", "avatar_seconds_left": 5400}))
     sent = []
 

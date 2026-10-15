@@ -1,5 +1,6 @@
 # Local-first: secrets, data, and build artifacts never enter the repo.
 config/credentials.env
+config/credentials.live.env
 config/secrets*
 # Gmail OAuth: the client secret and the cached token are the person's own — never committed.
 config/gmail_credentials.json

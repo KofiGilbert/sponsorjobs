@@ -244,10 +244,10 @@ class Meter:
         if self.can_start_avatar(user, period):
             return
         if self.pass_active(user):
-            raise QuotaExceeded("this pass's live interviews are used up; buy extra interviews "
-                                "or use your own Tavus key", "no_interviews")
-        raise QuotaExceeded("live interviews come with a Job Hunt Pass or a Season Pass; "
-                            "or use your own Tavus key", "pass_required")
+            raise QuotaExceeded("this pass's live interviews are used up; buy an extra interview "
+                                "pack", "no_interviews")
+        raise QuotaExceeded("live interviews come with a Job Hunt Pass or a Season Pass",
+                            "pass_required")
 
     def consume_avatar(self, user: str, period: str, seconds: int) -> dict:
         """Deduct up to ``seconds`` of interview time, the pass first then purchased credits.

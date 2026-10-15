@@ -7740,11 +7740,12 @@ def screens_delete(sid):
     return jsonify({"ok": True})
 
 
-# ---- Round 2: ONE live Tavus CVI interview (15 min) with an interviewer briefed on the JD and the
-# person's résumé, then a scored report (decision of 2026-10-02). Two sources of minutes: the
-# PERSON'S OWN Tavus API key (free tier: 25 min/month) saved in Settings and called DIRECTLY from
-# this engine, or the paid plan through the managed broker (secondary; the company key stays
-# server-side there). Gated on passing Round 1 unless the person deliberately skips. Practice ONLY,
+# ---- Round 2: ONE live Tavus CVI interview (20 min) with an interviewer briefed on the JD and the
+# person's resume, then a scored report (decision of 2026-10-02). PAID ONLY (Kofi, 2026-10-14): the
+# minutes come from a pass or a prepaid pack, run on the COMPANY Tavus key, which lives only on the
+# managed broker. Nobody adds their own Tavus key anywhere; an old AVATAR_API_KEY left on disk from
+# an earlier version is ignored and never sent. Gated on passing Round 1 unless the person
+# deliberately skips. Practice ONLY,
 # never a hiring decision; never facial analysis. The transcript is scored, the video is never
 # stored by us. ----
 _INTERVIEWS_FILE = _DATA / "interviews.json"
@@ -7779,9 +7780,6 @@ def _cvi_timing() -> dict:
                                                               "think_grace": 10, "answer_grace": 30}[name])
     out["minutes"] = max(1, round(out["total"] / 60))
     return out
-# Test seam for the direct Tavus path: a (method, url, headers, body) -> (status, json) transport.
-# None = the real HTTPS transport in backend.tavus_client.
-_TAVUS_HTTP = None
 # The transcript lands a few seconds after a conversation ends; how long to wait between the
 # (at most three) fetch attempts. Tests set it to 0.
 _TRANSCRIPT_WAIT_S = 2.0
@@ -7836,15 +7834,13 @@ _PASS_TIERS = ("pass30", "pass90")
 
 
 def _round2_status() -> dict:
-    """Whether Round 2 can run right now and from which source. PASS FIRST: when the managed
-    broker is reachable and the person's pass + purchased extra interviews cover a full 15-minute
-    interview ('plan', on the company's Tavus key, which never leaves the broker); otherwise the
-    person's OWN Tavus key ('own_key'); otherwise unavailable with the reason: 'no_key' (a free
-    account with nothing set up; `offer: "passes"`) or 'no_minutes' (an active pass whose
-    interviews are used up; `offer: "packs"`, buyable while the pass lasts). Also reports `tier`,
-    `pass_until` and whether extra interviews can be bought (`can_buy`, `packs`). Never returns
-    the key itself."""
-    key_set = bool(_cred("AVATAR_API_KEY"))
+    """Whether Round 2 can run right now. Live interviews are PAID ONLY: they run through the
+    managed broker on the company's Tavus key (which never leaves the broker), drawing on the
+    person's pass + purchased extra interviews, and only when those cover a full interview.
+    Otherwise unavailable with the reason: 'no_pass' (no active pass; `offer: "passes"`),
+    'no_minutes' (an active pass whose interviews are used up; `offer: "packs"`, buyable while
+    the pass lasts) or 'unreachable' (the broker can't be reached; try again). Also reports
+    `tier`, `pass_until` and whether extra interviews can be bought (`can_buy`, `packs`)."""
     # The cheap 2 s loopback health check first, so a down broker never stalls this status call
     # behind the longer account/usage timeouts.
     reachable = _broker_reachable()
@@ -7859,14 +7855,13 @@ def _round2_status() -> dict:
             secs = 0
     on_pass = tier in _PASS_TIERS
     packs = _round2_packs() if reachable and st == 200 and on_pass else []
-    extra = {"key_set": key_set, "can_buy": bool(packs), "packs": packs, "tier": tier or None,
+    extra = {"can_buy": bool(packs), "packs": packs, "tier": tier or None,
              "pass_until": pass_until if on_pass else None,
              "offer": "packs" if on_pass else ("passes" if st == 200 else None)}
     if secs >= ROUND2_INTERVIEW_SECONDS:
         return {"available": True, "reason": "ok", "source": "plan", "minutes_left": secs // 60, **extra}
-    if key_set:
-        return {"available": True, "reason": "ok", "source": "own_key", "minutes_left": None, **extra}
-    return {"available": False, "reason": "no_minutes" if on_pass else "no_key", "source": None,
+    reason = "no_minutes" if on_pass else ("no_pass" if st == 200 else "unreachable")
+    return {"available": False, "reason": reason, "source": None,
             "minutes_left": secs // 60 if on_pass else None, **extra}
 
 
@@ -7903,31 +7898,7 @@ def interview_round2_buy():
     return jsonify({"url": data["url"]})
 
 
-@app.get("/api/avatar/settings")
-@_guard
-def avatar_settings_get():
-    """Whether the person's own Tavus key is saved (never the key) plus the Round-2 status."""
-    st = _round2_status()
-    return jsonify({**st, "configured": st["key_set"]})
-
-
-@app.post("/api/avatar/settings")
-@_guard
-def avatar_settings_set():
-    """Save ({key: "..."}) or revoke ({key: ""}) the person's OWN Tavus API key, locally and
-    git-ignored. It leaves the machine only as the x-api-key header on their own Tavus calls.
-    A new key drops the interviewer PAL created under the old one. Returns the Round-2 status."""
-    b = request.json or {}
-    if "key" in b:
-        key = str(b.get("key") or "").strip()
-        if key != _cred("AVATAR_API_KEY"):
-            _revoke_cred("AVATAR_PAL_ID")     # a PAL belongs to the account that created it
-        _save_cred("AVATAR_API_KEY", key) if key else _revoke_cred("AVATAR_API_KEY")
-    st = _round2_status()
-    return jsonify({"ok": True, **st, "configured": st["key_set"]})
-
-
-# ---- The managed broker: the FIRST source of Round-2 interviews (the paid plan + prepaid packs) and the account /
+# ---- The managed broker: the ONLY source of Round-2 interviews (the passes + prepaid packs) and the account /
 # billing routes. The broker holds the company Tavus/LLM keys SERVER-SIDE and meters minutes per
 # plan (docs/bundled-api-backend.md); this app never sees a company key. In dev the broker runs
 # locally (TAILOR_BROKER_URL, default 127.0.0.1:57001); in production it is hosted. ----
@@ -8260,9 +8231,9 @@ def billing_checkout():
     return jsonify({"url": data["url"]})
 
 
-# The interviewer PAL's standing instructions (created ONCE per Tavus account, id stored locally
-# as AVATAR_PAL_ID). Everything specific to an interview (company, role, JD, résumé, questions)
-# arrives per conversation as `conversational_context`, so one PAL serves every mock.
+# The interviewer's standing instructions. The broker's company account has no PAL of ours, so they
+# ride in the conversation context with everything specific to the interview (company, role, JD,
+# resume, questions).
 _PAL_SYSTEM_PROMPT = (
     "You are a professional hiring manager running a live mock job interview; the context gives its "
     "length in minutes, and you say that length, never another. The "
@@ -8288,9 +8259,6 @@ _PAL_SYSTEM_PROMPT = (
     "If the candidate is silent for a few seconds after a question, "
     "say 'Take your time' once; if the silence goes on, rephrase the question in one short sentence."
 )
-# Bumped when the instructions change, so an interviewer PAL created on a person's own Tavus
-# account with older instructions is recreated instead of being reused forever.
-_PAL_VERSION = "2026-10-09-timekeeper"
 _PAL_GREETING = ("Hi, thanks for joining. I'll be interviewing you today. To start, could you tell "
                  "me a little about yourself and what drew you to this role?")
 
@@ -8343,30 +8311,6 @@ def _round2_briefing(prep: dict, profile: dict, facts: list[dict] | None = None)
     return "\n\n".join(lines)
 
 
-def _tavus_client(key: str):
-    from backend.tavus_client import TavusClient
-    return TavusClient(key, http=_TAVUS_HTTP)
-
-
-def _ensure_pal(client) -> str:
-    """The interviewer PAL for the person's own Tavus account, created once and remembered locally.
-    Returns '' when it can't be created; the caller then passes the briefing on a bare face."""
-    pid = _cred("AVATAR_PAL_ID")
-    if pid and _cred("AVATAR_PAL_VERSION") == _PAL_VERSION:
-        return pid
-    from backend.tavus_client import DEFAULT_FACE_ID
-    try:
-        pid = client.create_pal(name="Tailor mock interviewer", system_prompt=_PAL_SYSTEM_PROMPT,
-                                face_id=_cred("AVATAR_FACE_ID") or DEFAULT_FACE_ID,
-                                greeting=_PAL_GREETING)
-    except Exception:
-        return ""
-    if pid:
-        _save_cred("AVATAR_PAL_ID", pid)
-        _save_cred("AVATAR_PAL_VERSION", _PAL_VERSION)
-    return pid
-
-
 def _interview_public(iv: dict) -> dict:
     return {"id": iv.get("id"), "prep_id": iv.get("prep_id"), "screen_id": iv.get("screen_id"),
             "skipped_screen": bool(iv.get("skipped_screen")),
@@ -8377,44 +8321,14 @@ def _interview_public(iv: dict) -> dict:
             "report": iv.get("report"), "is_practice": True, "disclaimer": SIMULATION_DISCLAIMER}
 
 
-def _start_own_key_conversation(briefing: str, role: str):
-    """Mint the conversation on the person's OWN Tavus key, directly from this app. Returns
-    (join_url, conversation_id), or a Flask (response, status) to hand straight back."""
-    from backend.tavus_client import DEFAULT_FACE_ID, TavusError
-    client = _tavus_client(_cred("AVATAR_API_KEY"))
-    pal = _ensure_pal(client)
-    try:
-        conv = client.create_conversation(
-            face_id=_cred("AVATAR_FACE_ID") or DEFAULT_FACE_ID, pal_id=pal, context=briefing,
-            name=f"Mock interview: {role}"[:80], max_call_seconds=ROUND2_SAFETY_SECONDS,
-            greeting="" if pal else _PAL_GREETING, require_auth=True)
-    except TavusError as exc:
-        if exc.status in (401, 403):
-            return jsonify({"error": "round2_unavailable", "reason": "no_key", "source": "own_key",
-                            "message": "Tavus rejected that API key. Check it in Settings."}), 402
-        if exc.status in (402, 429):
-            return jsonify({"error": "round2_unavailable", "reason": "no_minutes",
-                            "source": "own_key",
-                            "message": "Your Tavus account is out of conversation minutes."}), 402
-        return jsonify({"error": "tavus_error", "message": str(exc)[:200]}), 502
-    except Exception:
-        return jsonify({"error": "service_unavailable",
-                        "message": "Couldn't reach Tavus right now."}), 503
-    if not conv.get("conversation_url"):
-        return jsonify({"error": "tavus_error", "message": "Tavus returned no join URL."}), 502
-    return conv["conversation_url"], conv["conversation_id"]
-
-
 @app.post("/api/interviews/cvi/start")
 @_guard
 def interviews_cvi_start():
     """Start the ONE live interview for a prep: {prep_id, screen_id?, skip_screen?}.
     403 screen_not_passed unless the given screen passed (or skip_screen with no screen_id);
-    402 round2_unavailable {reason} when neither plan minutes (a full interview's worth) nor the
-    person's own Tavus key are available. PLAN FIRST: the managed broker mints the session on the
-    company key; otherwise, with their own key, Tavus CVI is called DIRECTLY from here (their key,
-    their minutes). Returns the join URL for the app's
-    video pane."""
+    402 round2_unavailable {reason} when the pass + packs don't cover a full interview. The
+    managed broker mints the session on the company key (paid only, never a person's own key).
+    Returns the join URL for the app's video pane."""
     b = request.json or {}
     prep = next((p for p in _load_preps() if p.get("id") == str(b.get("prep_id") or "").strip()), None)
     if not prep:
@@ -8435,30 +8349,23 @@ def interviews_cvi_start():
     facts = _verified_project_facts(prep)
     briefing = _round2_briefing(prep, profile, facts)
     role = prep.get("role", "")
-    source = status["source"]
-    if source == "plan":
-        # The company account has no PAL of ours, so the interviewer's standing instructions ride
-        # in the context with the briefing, and the opening line goes as the custom greeting.
-        st, data = _broker_post("/avatar/session/start", {"context": {
-            "prompt": f"{_PAL_SYSTEM_PROMPT}\n\n{briefing}", "greeting": _PAL_GREETING}})
-        if st == 402 and status.get("key_set"):
-            source = "own_key"               # the plan ran out between status and start: own key
-        elif st == 0:
-            return jsonify({"error": "service_unavailable",
-                            "message": "The interview service isn't reachable right now."}), 503
-        elif st == 402:
-            return jsonify({"error": "round2_unavailable", "reason": "no_minutes", "source": "plan",
-                            "can_buy": status.get("can_buy", False), "packs": status.get("packs", []),
-                            "message": (data or {}).get("error") or "You're out of interview minutes."}), 402
-        elif st != 200 or not data or not data.get("session_url"):
-            return jsonify({"error": "service_error", "message": "Couldn't start the live interview."}), 502
-        else:
-            join_url, conversation_id = data["session_url"], str(data.get("provider_session_id") or "")
-    if source == "own_key":
-        started = _start_own_key_conversation(briefing, role)
-        if not isinstance(started[0], str):
-            return started                   # an error (response, status) to hand straight back
-        join_url, conversation_id = started
+    source = "plan"
+    # The company account has no PAL of ours, so the interviewer's standing instructions ride in
+    # the context with the briefing, and the opening line goes as the custom greeting.
+    st, data = _broker_post("/avatar/session/start", {"context": {
+        "prompt": f"{_PAL_SYSTEM_PROMPT}\n\n{briefing}", "greeting": _PAL_GREETING}})
+    if st == 0:
+        return jsonify({"error": "service_unavailable",
+                        "message": "The interview service isn't reachable right now."}), 503
+    if st == 402:
+        on_pass = (data or {}).get("reason") == "no_interviews" or status.get("tier") in _PASS_TIERS
+        return jsonify({"error": "round2_unavailable", "reason": "no_minutes" if on_pass else "no_pass",
+                        "source": None, "can_buy": status.get("can_buy", False),
+                        "packs": status.get("packs", []), "offer": "packs" if on_pass else "passes",
+                        "message": (data or {}).get("error") or "You're out of live interviews."}), 402
+    if st != 200 or not data or not data.get("session_url"):
+        return jsonify({"error": "service_error", "message": "Couldn't start the live interview."}), 502
+    join_url, conversation_id = data["session_url"], str(data.get("provider_session_id") or "")
     iv = {"id": uuid.uuid4().hex[:12], "prep_id": prep.get("id"), "screen_id": screen_id or None,
           "skipped_screen": not screen_id, "role": role, "company": prep.get("company", ""),
           "source": source, "conversation_id": conversation_id,
@@ -8475,9 +8382,8 @@ def interviews_cvi_start():
 @app.post("/api/interviews/cvi/heartbeat")
 @_guard
 def interviews_cvi_heartbeat():
-    """Plan source only: while the live conversation runs, report elapsed seconds; the broker
-    meters and says when to stop at the plan limit. With the person's own key there is no meter
-    (Tavus enforces its own), so it just answers stop:false."""
+    """While the live conversation runs, report elapsed seconds; the broker meters them against
+    the pass and says when to stop at the limit."""
     b = request.json or {}
     try:
         seconds = int(b.get("seconds") or 0)
@@ -8485,11 +8391,6 @@ def interviews_cvi_heartbeat():
         seconds = 0
     iid = str(b.get("interview_id") or "").strip()
     iv = next((x for x in _load_interviews() if x.get("id") == iid), None) if iid else None
-    # The interview remembers which source it started on (plan first now), so meter by that; a
-    # call without an interview id keeps the old rule (an own key means no meter).
-    source = (iv or {}).get("source") or ("own_key" if _cred("AVATAR_API_KEY") else "plan")
-    if source == "own_key":
-        return jsonify({"remaining": None, "stop": False, "source": "own_key"})
     st, data = _broker_post("/avatar/heartbeat", {"seconds": max(0, seconds),
                                                   "conversation_id": (iv or {}).get("conversation_id") or ""})
     if st != 200 or data is None:
@@ -8612,11 +8513,12 @@ def _score_live_dialogue(iv: dict, turns: list, profile: dict, duration_s: int) 
 @app.post("/api/interviews/cvi/end")
 @_guard
 def interviews_cvi_end():
-    """End the live interview {interview_id, transcript?, duration_s?}: tells Tavus to end the
-    conversation (own key), fetches its transcript, scores the dialogue, stores the report, and
-    returns it. If Tavus has no transcript (yet, or the plan path where this app holds no key), a
-    client-supplied `transcript` (text, or [{role, content}]) is scored instead; with neither it's
-    a 400 so the UI can ask for one."""
+    """End the live interview {interview_id, transcript?, duration_s?}: the broker ends the
+    conversation on the company key and hands its transcript back, which is scored here, stored
+    with the report, and returned. If no transcript comes back (yet), a client-supplied
+    `transcript` (text, or [{role, content}]) is scored instead; with neither it's a 400 so the
+    UI can ask for one. An interview recorded on an own key by an older version is scored only
+    from a supplied transcript."""
     b = request.json or {}
     iid = str(b.get("interview_id") or "").strip()
     interviews = _load_interviews()
@@ -8625,23 +8527,7 @@ def interviews_cvi_end():
         return jsonify({"error": "Interview not found."}), 404
     from backend.tavus_client import parse_transcript_text
     turns: list = []
-    key = _cred("AVATAR_API_KEY")
     cid = iv.get("conversation_id") or ""
-    if iv.get("source") == "own_key" and key and cid:
-        client = _tavus_client(key)
-        try:
-            client.end_conversation(cid)
-        except Exception:
-            pass                         # already ended / timed out: still fetch the transcript
-        for attempt in range(3):
-            try:
-                turns = client.transcript(cid)
-            except Exception:
-                turns = []
-            if turns:
-                break
-            if attempt < 2 and _TRANSCRIPT_WAIT_S:
-                time.sleep(_TRANSCRIPT_WAIT_S)
     if iv.get("source") == "plan" and cid:
         # Plan path: the company key lives on the broker, which ends the conversation and hands
         # the transcript straight back (it keeps nothing). It can lag the end by a few seconds.
