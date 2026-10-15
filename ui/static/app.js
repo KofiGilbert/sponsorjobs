@@ -455,7 +455,7 @@
     TPL_ORIGIN = origin || "cvs";
     const l = $("#tplBackLbl");
     if (l) l.textContent = TPL_ORIGIN === "builder" ? "Back"
-                         : TPL_ORIGIN === "newcv" ? "Dashboard" : "Resumes";
+                         : TPL_ORIGIN === "newcv" ? "Home" : T("nav.cvs", "Resumes");
     loadTemplates(); showView("templates");
   }
   $("#cvsMoreTpl")?.addEventListener("click", () => openTemplates("cvs"));
@@ -575,7 +575,7 @@
     const sync = () => dash.classList.toggle("home-typing", !!box.value.trim());
     const start = () => {
       const text = box.value.trim();
-      if (!text) return;
+      if (!text) { box.focus(); return; }   // the button did nothing at all on an empty box
       openBuilder();
       $("#jdInput").value = text;
       $("#jdStart").click();
@@ -721,8 +721,9 @@
   function openPackage(id) {
     PKG_ORIGIN = document.querySelector(".view.is-active")?.id?.replace("view-", "") || "dashboard";
     const lbl = $("#pkgBackLbl");
-    if (lbl) lbl.textContent = PKG_ORIGIN === "cvs" ? "Saved Resumes"
-      : PKG_ORIGIN === "autoapply" ? T("nav.autoapply", "Auto-apply") : "Dashboard";
+    // The back link names the page it returns to, as the sidebar names it (the rail says Home).
+    if (lbl) lbl.textContent = PKG_ORIGIN === "cvs" ? T("nav.cvs", "Resumes")
+      : PKG_ORIGIN === "autoapply" ? T("nav.autoapply", "Auto-apply") : "Home";
     PKG_ID = id; showView("package"); loadPackage(id);
   }
 
@@ -792,7 +793,7 @@
     const visa = p.visa || [];
     $("#pkgVisaCard").hidden = !visa.length;
     $("#pkgVisa").innerHTML = visa.map(v =>
-      `<span class="vbadge vb-${esc(v.code)}" title="${esc(visaTitle(v))}">${esc(v.code)}</span>`).join("");
+      `<span class="vbadge vb-${esc(v.code)}" title="${esc(visaTitle(v))}">${esc(VISA_LABELS[v.code] || v.code)}</span>`).join("");
 
     $("#pkgCl").value = p.cover_letter || "";
     $("#pkgClMsg").textContent = "";
@@ -1537,6 +1538,11 @@
       </div>
     </div>`;
   }
+  // Any filter beyond the Saved toggle (search, location, facets): the Saved list's empty state
+  // says "nothing saved yet" only when nothing else is narrowing it.
+  function jfNarrowed() {
+    return !!(JF_SEARCH || JF_LOC || JF_REMOTE || JF_LEVEL || JF_DATE || JF_PAY || JF_SPONSORED || VISA_SET.size);
+  }
   // Render the current SERVER page (LAST_JOBS already IS the page; filtering + slicing happen
   // server-side now, so the board can browse tens of thousands with a small payload each time).
   function paintFeed() {
@@ -1548,6 +1554,8 @@
     if (!jobs.length) {
       list.innerHTML = FEED_DL ? feedLoadingHtml(FEED_DL)
         : FEED_FAIL ? feedFailHtml()
+        : FEED_LOADED && JF_SAVED && !jfNarrowed()
+        ? `<div class="empty small">No saved jobs yet. Press Save on a role to keep it here.</div>`
         : FEED_LOADED
         ? `<div class="empty small">No roles match your filters. <button class="link-btn" data-clear="all" type="button">Clear filters</button></div>`
         : jobSkeleton();
@@ -2736,12 +2744,12 @@
   const chat = $("#chatScroll");
   function bubble(role, html) {
     const m = el("div", "msg " + role);
-    m.innerHTML = `<div class="msg-avatar">${role === "agent" ? "T" : "Y"}</div><div class="msg-bubble">${html}</div>`;
+    m.innerHTML = `<div class="msg-avatar">${role === "agent" ? "S" : "Y"}</div><div class="msg-bubble">${html}</div>`;
     chat.appendChild(m); chat.scrollTop = chat.scrollHeight; return m;
   }
   function working(label) {
     const m = el("div", "msg agent");
-    m.innerHTML = `<div class="msg-avatar">T</div><div class="msg-bubble"><span class="spin"></span>${label || "Working…"}</div>`;
+    m.innerHTML = `<div class="msg-avatar">S</div><div class="msg-bubble"><span class="spin"></span>${label || "Working…"}</div>`;
     chat.appendChild(m); chat.scrollTop = chat.scrollHeight; return m;
   }
   async function withWorking(fn, label) {
@@ -3286,7 +3294,7 @@
     if (!rows.length) {
       html = `<p class="prof-note">Nothing here yet, upload your resume and I'll fill it in.</p>`;
     } else if (missing.length) {
-      html += `<p class="prof-note">I'll ask for the rest (${missing.map(k => ID_LABELS[k].toLowerCase()).join(", ")}) if a resume needs it.</p>`;
+      html += `<p class="prof-note">I'll ask for the rest (${missing.map(k => (k === "linkedin" || k === "github") ? ID_LABELS[k] : ID_LABELS[k].toLowerCase()).join(", ")}) if a resume needs it.</p>`;
     }
     $("#idKnown").innerHTML = html;
   }
@@ -7090,6 +7098,8 @@
     // which left this menu entry clicking a selector that matches nothing.
     loadProfile();
     showView("profile");
+    // No nav item owns this page, so none stays lit (the last page's item did).
+    document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("is-active"));
   });
 
   // ---- Language picker (opens from the account menu; uses the client-side i18n layer) ----
@@ -7506,9 +7516,15 @@
       $("#acctMenuPlanName").textContent = onPass
         ? T("acct.planUntil", "{plan} until {date}").replace("{plan}", name).replace("{date}", until)
         : T("upg.freePlan", "Free plan");
-      $("#acctMenuPlanLeft").textContent = onPass
+      // Unknown (no account yet, or the account service can't be reached) says nothing rather
+      // than "0 left", which read as used up on a brand-new install (QA 2026-10-14).
+      const left = $("#acctMenuPlanLeft");
+      const known = onPass || s.packages_left != null;
+      left.hidden = !known;
+      left.textContent = !known ? ""
+        : onPass
         ? T("acct.planLeft", "{i} live interviews and {p} tailored packages left").replace("{i}", String(s.interviews_left ?? 0)).replace("{p}", String(s.packages_left ?? 0))
-        : T("acct.freeLeft", "{p} tailored packages left this month").replace("{p}", String(s.packages_left ?? 0));
+        : T("acct.freeLeft", "{p} tailored packages left this month").replace("{p}", String(s.packages_left));
     }
     const lbl = $("#menuUpgradeLbl"); if (lbl) lbl.textContent = onPass ? T("acct.yourPass", "Your pass") : T("acct.passes", "Get a pass");
     document.querySelectorAll(".upg-plan").forEach(card => {
@@ -7662,10 +7678,10 @@
     out.hidden = false; out.innerHTML = `<div class="empty">Reading it…</div>`;
     let a;
     try { a = (await api("/api/memory/assess", { text })).assessment || {}; }
-    catch (err) { out.innerHTML = `<div class="empty">${esc(err.message || "Couldn't check that.")}</div>`; btn.disabled = false; btn.textContent = "Is this CV-worthy?"; return; }
-    btn.disabled = false; btn.textContent = "Is this CV-worthy?";
+    catch (err) { out.innerHTML = `<div class="empty">${esc(err.message || "Couldn't check that.")}</div>`; btn.disabled = false; btn.textContent = "Is this resume-worthy?"; return; }
+    btn.disabled = false; btn.textContent = "Is this resume-worthy?";
     if (a.worthy) {
-      out.innerHTML = `<div class="mem-assess-yes"><b>Yes, this belongs on your CV.</b> ${esc(a.reason || "")}
+      out.innerHTML = `<div class="mem-assess-yes"><b>Yes, this belongs on your resume.</b> ${esc(a.reason || "")}
         ${a.competency ? `<span class="scr-comp">${esc(a.competency)}</span>` : ""}
         ${a.headline ? `<div class="mem-assess-head">Framed: ${esc(a.headline)}</div>` : ""}
         <button class="btn btn-primary btn-sm" id="memHighlight" type="button">Save as a highlight</button></div>`;
@@ -7676,7 +7692,7 @@
         } catch (err) { toast(err.message || "Couldn't save."); }
       });
     } else {
-      out.innerHTML = `<div class="mem-assess-no">${esc(a.reason || "Not quite CV-worthy yet, add a concrete action and a result.")}</div>`;
+      out.innerHTML = `<div class="mem-assess-no">${esc(a.reason || "Not quite resume-worthy yet, add a concrete action and a result.")}</div>`;
     }
   });
   $("#memAddFile")?.addEventListener("change", async (e) => {
@@ -8513,7 +8529,7 @@
   const ANS = { data: null, country: "US", wa: null, origin: "autoapply", editing: null, adding: false };
   const ANS_CC = { US: "US", UK: "UK", CA: "Canada", AU: "Australia", EU: "EU" };
   const ANS_YN = [["Yes", "ans.yes", "Yes"], ["No", "ans.no", "No"]];
-  const ANS_BACK = { autoapply: ["nav.autoapply", "Auto-apply"], profile: ["ans.backProfile", "Your profile"],
+  const ANS_BACK = { autoapply: ["nav.autoapply", "Auto-apply"], profile: ["acct.myProfile", "My profile"],
                      package: ["ans.backApp", "Application"] };
   function waEntry(cc) {
     const c = (ANS.wa.countries = ANS.wa.countries || {});
@@ -8727,7 +8743,7 @@
     const jobs = r.jobs || [];
     const saved = jobs.filter(j => j.saved).length;
     $("#aaNextCount").textContent = jobs.length
-      ? (saved ? T("aa.nextSaved", "{n}, saved roles first") : T("aa.nextOf", "{n} of {m} matches")).replace("{n}", jobs.length).replace("{m}", fmtN(r.matches))
+      ? (saved ? T("aa.nextSaved", "{n}, saved roles first") : T("aa.nextOf", "{n} of {m} roles")).replace("{n}", jobs.length).replace("{m}", fmtN(r.matches))
       : "";
     if (!jobs.length && r.feed_loading) {
       // The job list is still on its first download: say so and look again when it lands.
@@ -8741,6 +8757,9 @@
     }
     if (!jobs.length) {
       const why = !r.board && !r.matches ? T("aa.nextNoBoard", "No roles on your board yet. Open Jobs to load them.")
+        // Already at the lowest match on offer: "lower the match" would point at nothing.
+        : Number(r.min_fit) <= aaMinFitFloor()
+        ? T("aa.nextNoneMin", "No new roles reach {p}% match. Broaden your focus to see more.").replace("{p}", r.min_fit)
         : T("aa.nextNone", "No new roles reach {p}% match. Lower the match or broaden your focus.").replace("{p}", r.min_fit);
       host.innerHTML = `<div class="aa-empty"><div class="aa-empty-s">${esc(why)}</div>
         <button class="link-btn" type="button" data-next="focus">${esc(T("aa.changeFocus", "Change focus"))}</button></div>`;
@@ -8829,6 +8848,11 @@
   }
   const SW_X = `<button class="sw-x" type="button" data-sw="close" aria-label="${esc(T("aa.why.close", "Close"))}"><svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>`;
   // job: {source_id | record_id, title, company, location, salary}. Called right after a skip.
+  // The lowest "Match N%+" the picker offers.
+  function aaMinFitFloor() {
+    const vals = [...($("#aaMinFit")?.options || [])].map(o => Number(o.value)).filter(n => n > 0);
+    return vals.length ? Math.min(...vals) : 0;
+  }
   function skipWhy(job) {
     const bar = $("#skipWhy");
     if (!bar || !job) return;
@@ -8935,10 +8959,9 @@
         AA.next = null; aaLoadNext();
       } catch (err) { toast(err.message || T("aa.fail", "Couldn't do that, try again.")); }
     }));
-  $("#aaPfVisaChange")?.addEventListener("click", () => {
-    loadProfile(); showView("profile");
-    setTimeout(() => $("#answersCard")?.scrollIntoView({ block: "center" }), 150);
-  });
+  // "Change" goes straight to where the sponsorship answer lives (Your answers), not to the
+  // profile page's card that only links there.
+  $("#aaPfVisaChange")?.addEventListener("click", () => openAnswers("autoapply"));
 
   // An error the person can act on gets the action as a button next to it.
   const AA_ACTIONS = {

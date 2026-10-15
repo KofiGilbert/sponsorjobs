@@ -146,6 +146,22 @@ def looks_us(location: str) -> bool:
     text = (location or "").strip()
     if not text:
         return False
+    # A multi-location posting is US when any one of its places is.
+    return any(_one_place_us(p) for p in _PLACE_SPLIT.split(text) if p.strip())
+
+
+# Separators between the places of a multi-location posting ("New York, US; Pune, India").
+_PLACE_SPLIT = re.compile(r"\s*(?:;|\||\n)\s*")
+
+
+def _one_place_us(text: str) -> bool:
+    text = text.strip()
+    # A place whose last part names a foreign country is abroad, whatever its middle says:
+    # Workday writes "Mumbai, MH,IN, India", where ",IN" read as Indiana (QA 2026-10-14: ~2,800
+    # Indian roles were on the board flagged US).
+    last = text.rsplit(",", 1)[-1].strip()
+    if last and _FOREIGN.fullmatch(last):
+        return False
     if _US_WORDS.search(text) or _US_STATE_TAIL.search(text):
         return True
     # Spelled-out states and well-known US cities count, unless the string also names a
