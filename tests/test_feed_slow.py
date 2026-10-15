@@ -57,6 +57,10 @@ class Origin:
                 pass
 
             def do_GET(self):
+                if self.path.endswith("/manifest.json"):   # an older feed: no parts, single file
+                    self.send_response(404)
+                    self.end_headers()
+                    return
                 origin.requests.append(dict(self.headers.items()))
                 if self.headers.get("If-None-Match") == origin.etag:
                     self.send_response(304)

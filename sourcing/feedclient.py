@@ -25,12 +25,23 @@ an unreachable host costs one short timeout per window instead of one per reques
 requests from several threads: refresh/load run under a per-instance lock, every file lands via a
 uniquely named temp file + os.replace, and a corrupt cached list is deleted and re-downloaded
 rather than failing until the next hourly slot.
+
+PARTS (2026-10-14). The CDN ignores Range, and a flaky link that drops every 1-3 MB restarted the
+~10 MB list from zero every time, so it never landed. When manifest.json lists `parts`, the list is
+downloaded as ~1 MB parts instead (two at a time), each checked against its sha256 and kept under
+`parts/<version>/` in the cache; a dropped connection costs only the part in flight, and the next
+try (or the next attempt, or the next app start) fetches just the parts still missing. When every
+part is present they are joined into jobs.json.gz and swapped in atomically, exactly as a single
+download would land. A new version discards the old version's parts. A manifest with no parts (an
+older feed) or none at all falls back to the single file.
 """
 
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
+import shutil
 import os
 import random
 import tempfile
@@ -42,7 +53,9 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .feedfile import JD_DIR, JOBS_FILE, loads_maybe_gz, shard_for
+from concurrent.futures import ThreadPoolExecutor
+
+from .feedfile import FEED_VERSION, JD_DIR, JOBS_FILE, MANIFEST_FILE, PARTS_DIR, loads_maybe_gz, shard_for
 
 CHECK_EVERY = 3600          # a new list is looked for at most once an hour
 RETRY_AFTER = 300           # a failed download is not retried for 5 min, doubling per failure...
@@ -57,6 +70,9 @@ DOWNLOAD_TRIES = 3          # attempts per background download before it counts 
 RETRY_PAUSE = 5             # seconds between those attempts (doubling)
 REQUEST_WAIT = 0.8          # how long a request waits on a download it just started
 CHUNK = 64 * 1024
+PART_WORKERS = 2            # list parts downloaded at once
+PART_TRIES = 4              # tries per part within one attempt (finished parts are never refetched)
+PART_PAUSE = 2              # seconds between a part's tries (doubling)
 STATE_FILE = "feed_state.json"
 _UA = "resume-agent/1.0 (static feed client)"
 
@@ -144,7 +160,8 @@ class StaticFeed:
 
     def __init__(self, base_url: str, cache_dir, fetch=None, clock=time.time,
                  timeout: float = DEFAULT_TIMEOUT, download=None, wait: float | None = None,
-                 tries: int | None = None, retry_pause: float | None = None):
+                 tries: int | None = None, retry_pause: float | None = None,
+                 parts: bool | None = None, manifest_fetch=None):
         self.base_url = (base_url or "").rstrip("/")
         self.cache_dir = Path(cache_dir)
         self._fetch = fetch or (lambda u, h: _http_fetch(u, h, timeout))
@@ -159,6 +176,12 @@ class StaticFeed:
         # injected one-shot `fetch` is a unit test's fake origin: one try, no pause, so its call
         # counts and back-off assertions see exactly one attempt per refresh.
         fake = fetch is not None and download is None
+        # The parted download reads manifest.json first. A unit test's one-shot fake origin only
+        # serves the single file, so it skips the manifest unless the test opts in.
+        self._manifest_fetch = manifest_fetch or self._fetch
+        self._parts = (not fake or manifest_fetch is not None) if parts is None else bool(parts)
+        self._part_tries = PART_TRIES
+        self._part_pause = 0 if fake else PART_PAUSE
         self._wait = REQUEST_WAIT if wait is None else wait
         self._tries = max(1, int(tries if tries is not None else (1 if fake else DOWNLOAD_TRIES)))
         self._retry_pause = (retry_pause if retry_pause is not None
@@ -170,7 +193,7 @@ class StaticFeed:
         self._dl_done = threading.Event()
         self._dl_done.set()
         self._progress: dict = {"running": False, "bytes": 0, "total": None, "started": None,
-                                "attempt": 0, "error": ""}
+                                "attempt": 0, "error": "", "parts_done": 0, "parts_total": 0}
         # Flask is threaded: /api/jobs and /api/jobs/detail can both find the list due at the same
         # moment. One downloads; the other waits, sees it is no longer due, and serves the cache.
         self._lock = threading.RLock()
@@ -265,7 +288,8 @@ class StaticFeed:
                 return False
             self._dl_done.clear()
             self._progress.update({"running": True, "bytes": 0, "total": None,
-                                   "started": time.time(), "attempt": 0, "error": ""})
+                                   "started": time.time(), "attempt": 0, "error": "",
+                                   "parts_done": 0, "parts_total": 0})
 
             def run():
                 try:
@@ -303,6 +327,7 @@ class StaticFeed:
         return {"configured": bool(self.base_url), "has_cache": has,
                 "downloading": self.downloading(), "bytes": p.get("bytes") or 0,
                 "total": p.get("total"), "attempt": p.get("attempt") or 0,
+                "parts_done": p.get("parts_done") or 0, "parts_total": p.get("parts_total") or 0,
                 "error": "" if self.downloading() else (p.get("error") or ""),
                 "failing": bool(int(self._state.get("fail_count") or 0)),
                 "retry_in": max(0, int(float(self._state.get("last_fail") or 0)
@@ -364,6 +389,178 @@ class StaticFeed:
         self._state.pop("fail_count", None)
 
     def _download(self) -> bool:
+        """One attempt: the parted download when the manifest lists parts, else the single file."""
+        if self._parts:
+            man = self._read_manifest()
+            if man is not None:
+                return self._download_parts(man)
+        return self._download_single()
+
+    def _read_manifest(self) -> dict | None:
+        """The manifest's "parts" block (plus generated_at), or None when the feed has no parts
+        (no manifest, a 404, an older builder). A network error raises: the attempt failed."""
+        try:
+            status, _, body = self._manifest_fetch(f"{self.base_url}/{MANIFEST_FILE}",
+                                                   {"Accept": "application/json",
+                                                    "Cache-Control": "no-cache"})
+        except urllib.error.HTTPError as exc:
+            if 400 <= exc.code < 500:
+                return None
+            raise
+        if status != 200 or not body:
+            return None
+        try:
+            man = loads_maybe_gz(body)
+        except Exception:                                 # noqa: BLE001 - not a manifest
+            return None
+        parts = man.get("parts") if isinstance(man, dict) else None
+        if not (isinstance(parts, dict) and parts.get("version") and isinstance(parts.get("files"), list)
+                and parts["files"] and all(isinstance(f, dict) and f.get("url") and f.get("sha256")
+                                           for f in parts["files"])):
+            return None
+        return {**parts, "generated_at": man.get("generated_at"),
+                "feed_version": man.get("feed_version", FEED_VERSION)}
+
+    @property
+    def parts_root(self) -> Path:
+        return self.cache_dir / PARTS_DIR
+
+    def _part_path(self, version: str, url: str) -> Path:
+        return self.parts_root / _safe(version) / _safe(Path(url).name)
+
+    def _download_parts(self, man: dict) -> bool:
+        """Fetch the parts still missing for this version (two at a time), each verified by sha256,
+        then join them into jobs.json.gz and swap it in. Returns True when a new list landed."""
+        version = str(man["version"])
+        files = man["files"]
+        now = self._clock()
+        with self._lock:
+            if self._state.get("parts_version") == version and self.jobs_path.exists():
+                # The same rows as the cached list: nothing to download. A rebuild with unchanged
+                # rows still moves generated_at, which the board shows as "updated".
+                self._state["last_check"] = now
+                if man.get("generated_at"):
+                    self._state["generated_at"] = man["generated_at"]
+                    if self._header:
+                        self._header["generated_at"] = man["generated_at"]
+                self._clear_failures()
+                self._save_state()
+                return False
+        vdir = self.parts_root / _safe(version)
+        vdir.mkdir(parents=True, exist_ok=True)
+        for old in self.parts_root.iterdir():             # another version's parts are dead weight
+            if old.is_dir() and old.name != vdir.name:
+                shutil.rmtree(old, ignore_errors=True)
+        sizes = [int(f.get("bytes") or 0) for f in files]
+        done = {i for i, f in enumerate(files) if _part_ok(self._part_path(version, f["url"]), f)}
+        inflight: dict[int, int] = {}
+        total = sum(sizes) or None
+
+        def report(i: int | None = None, got: int | None = None, finished: bool = False):
+            # Two part threads report at once: every change to `done` / `inflight` is under the lock.
+            with self._lock:
+                if i is not None:
+                    if finished:
+                        done.add(i)
+                    if got is None or finished:
+                        inflight.pop(i, None)
+                    else:
+                        inflight[i] = got
+                self._progress.update({
+                    "parts_done": len(done), "parts_total": len(files), "total": total,
+                    "bytes": sum(sizes[k] for k in done) + sum(inflight.values())})
+
+        report()
+        todo = [i for i in range(len(files)) if i not in done]
+
+        def fetch_one(i: int) -> None:
+            f = files[i]
+            dest = self._part_path(version, f["url"])
+            last: Exception | None = None
+            for t in range(self._part_tries):
+                fd, tmp = tempfile.mkstemp(dir=str(vdir), prefix=dest.name + ".", suffix=".part")
+                try:
+                    with os.fdopen(fd, "wb") as out:
+                        def prog(got, _total, i=i):
+                            report(i, got)
+                        status, _ = self._stream(f"{self.base_url}/{f['url']}", {}, out, prog)
+                    if status != 200:
+                        raise OSError(f"feed part {f['url']} returned status {status}")
+                    if not _part_ok(Path(tmp), f):
+                        raise OSError(f"feed part {f['url']} failed its sha256 check")
+                    os.replace(tmp, dest)
+                    report(i, finished=True)
+                    return
+                except Exception as exc:                  # noqa: BLE001 - this part is retried
+                    last = exc
+                    report(i)
+                    if isinstance(exc, urllib.error.HTTPError) and exc.code < 500:
+                        # A 404 means the manifest moved on (a new build replaced these parts):
+                        # stop this attempt, so the next one re-reads the manifest.
+                        raise OSError(f"feed part {f['url']} is gone (status {exc.code}); the "
+                                      "feed was rebuilt, so the next try re-reads the manifest") from exc
+                    print(f"[feed] part {i + 1}/{len(files)} try {t + 1}/{self._part_tries} failed: "
+                          f"{type(exc).__name__}: {exc}"[:240], flush=True)
+                    if t + 1 < self._part_tries and self._part_pause:
+                        time.sleep(self._part_pause * 2 ** t)
+                finally:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+            raise last  # type: ignore[misc]
+
+        if todo:
+            with ThreadPoolExecutor(max_workers=PART_WORKERS, thread_name_prefix="feed-part") as pool:
+                errors = []
+                for fut in [pool.submit(fetch_one, i) for i in todo]:
+                    try:
+                        fut.result()
+                    except Exception as exc:              # noqa: BLE001 - raised below
+                        errors.append(exc)
+            if errors:
+                # Kept: every part that did arrive. The next try fetches only the rest.
+                raise errors[0]
+        return self._assemble(man, version, now)
+
+    def _assemble(self, man: dict, version: str, now: float) -> bool:
+        """Join the verified parts in order and swap the list in (under the lock)."""
+        jobs: list = []
+        for f in man["files"]:
+            part = loads_maybe_gz(self._part_path(version, f["url"]).read_bytes())
+            if not isinstance(part, dict) or not isinstance(part.get("jobs"), list) \
+                    or str(part.get("version")) != version:
+                shutil.rmtree(self.parts_root / _safe(version), ignore_errors=True)
+                raise FeedUnavailable(f"feed part {f['url']} has an unexpected shape")
+            jobs.extend(part["jobs"])
+        if man.get("count") is not None and int(man["count"]) != len(jobs):
+            shutil.rmtree(self.parts_root / _safe(version), ignore_errors=True)
+            raise FeedUnavailable(f"feed parts hold {len(jobs)} rows, the manifest says {man['count']}")
+        data = {"feed_version": man.get("feed_version", FEED_VERSION),
+                "generated_at": man.get("generated_at"), "count": len(jobs),
+                "attribution": man.get("attribution") or {}, "jobs": jobs}
+        # Serialized OUTSIDE the lock (a few seconds for ~96k rows): requests keep being served.
+        body = gzip.compress(json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+                             .encode("utf-8"), compresslevel=5, mtime=0)
+        with self._lock:
+            if not jobs and self._cached_rows_exist():    # same guard as the single file
+                self._state.update({"last_check": now, "parts_version": version})
+                self._clear_failures()
+                self._save_state()
+                return False
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            _atomic_write(self.jobs_path, body)
+            del body
+            self._state.update({"last_check": now, "generated_at": data.get("generated_at"),
+                                "parts_version": version})
+            self._state.pop("etag", None)                 # the single file's ETag no longer describes the cache
+            self._clear_failures()
+            self._save_state()
+            self._set(data, self.jobs_path.stat().st_mtime)
+        shutil.rmtree(self.parts_root, ignore_errors=True)  # joined: the parts are no longer needed
+        return True
+
+    def _download_single(self) -> bool:
         """One attempt: stream to a uniquely named temp file (no lock held while bytes flow), then
         validate and publish under the lock by atomic rename."""
         headers = {"Accept": "application/json"}
@@ -471,6 +668,7 @@ class StaticFeed:
         except Exception:                                 # noqa: BLE001 - best effort
             traceback.print_exc()
         self._state.pop("etag", None)                     # a conditional GET would 304 against garbage
+        self._state.pop("parts_version", None)            # ...and the parted path would skip it
         self._state.pop("last_check", None)
         try:
             self._save_state()
@@ -640,6 +838,41 @@ def fill_list_only_detail(job: dict, fetch=None) -> dict:
     except Exception:                                     # noqa: BLE001 - best-effort only
         return {}
     return out
+
+
+def _safe(name: str) -> str:
+    """A manifest-supplied name as one plain path component (never a path out of the cache)."""
+    keep = "".join(c for c in str(name) if c.isalnum() or c in "-_.")
+    return keep.strip(".") or "x"
+
+
+def _sha_ok(path: Path, sha256: str) -> bool:
+    """Does the file at `path` exist with exactly this sha256?"""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+        return h.hexdigest() == str(sha256).lower()
+    except OSError:
+        return False
+
+
+def _part_ok(path: Path, f: dict) -> bool:
+    """Is the file at `path` this part, byte for byte (sha256 of the stored gzip), or, when a CDN
+    re-encoded or inflated it in transit, the same JSON inside (raw_sha256)?"""
+    if _sha_ok(path, f.get("sha256") or ""):
+        return True
+    raw_sha = f.get("raw_sha256")
+    if not raw_sha:
+        return False
+    try:
+        body = path.read_bytes()
+        if body[:2] == b"\x1f\x8b":
+            body = gzip.decompress(body)
+        return hashlib.sha256(body).hexdigest() == str(raw_sha).lower()
+    except Exception:                                     # noqa: BLE001 - unreadable = not this part
+        return False
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
