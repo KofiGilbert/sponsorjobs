@@ -5918,14 +5918,14 @@
     });
   }
   function setStartEnabled(on) { const b = $("#prepStart"); if (b) b.disabled = !on; }
-  // A quiet note on the Live tile when no live interviewer is set up. The tile still works:
-  // after setup it leads to the gate screen with the free-key steps.
+  // A quiet note on the Live tile when no live interview is available. The tile still works: it
+  // leads to the gate screen with the passes (or the packs, when a pass's interviews are used up).
   async function paintRound2Tile() {
     const st = await round2Status();
     const el = $("#tileRound2Note"); if (!el) return;
-    el.hidden = !st || st.available;
+    el.hidden = !st || st.available || st.reason === "unreachable";
     el.textContent = st && st.reason === "no_minutes"
-      ? T("r2.tileNoMinutes", "Interviews used up") : T("r2.tileNoKey", "Needs a pass or a free Tavus key");
+      ? T("r2.tileNoMinutes", "Interviews used up") : T("r2.tileNoPass", "Included with a pass");
   }
   // "Start interview": validate, build a prep for the role, then start the chosen interview. The
   // full mock runs Round 1 first; a pass carries the same prep into Round 2.
@@ -6435,8 +6435,9 @@
   $("#scrQuit")?.addEventListener("click", quitScreen);
 
   // ---------------------------------------------------------------- Round 2: live interview (Tavus)
-  // One 20-minute conversation with the Tavus interviewer, in the app's own video pane. It runs on
-  // the paid plan first (company key, held by the broker), then the person's own Tavus key.
+  // One 20-minute conversation with the Tavus interviewer, in the app's own video pane. Paid only
+  // (Kofi, 2026-10-14): it runs on a pass or a pack, on the company key held by the broker. Nobody
+  // adds their own Tavus key.
   let R2 = null, LIVE_STREAM = null, R2_CTX = null, CVI_CLOCK = null, CVI_PREV_W = "", CVI_UNBILLED = 0;
   async function round2Status() {
     try { return await api("/api/interview/round2/status"); } catch { return null; }
@@ -6452,68 +6453,106 @@
     if (!st || !st.available) { renderR2Gate(st); return; }
     renderR2GreenRoom(st);
   }
-  // The gate: Round 2 needs a live interviewer. The free-key steps, and a way to finish here.
-  // When a paid plan's interviews are used up: buy a prepaid pack, use your own key, or finish.
+  // The gate: live interviews are paid. No pass: the passes on sale (names, prices and interview
+  // counts all from the broker, never hard-coded here). A pass whose interviews are used up: the
+  // extra-interview packs. The broker unreachable: say so and offer to check again.
   function r2PackLabel(p) {
     const n = Number(p.interviews) || 1;
     const label = n === 1 ? T("r2.buyOne", "Buy 1 interview") : T("r2.buyMany", "Buy {n} interviews").replace("{n}", String(n));
     return p.price_label ? `${label}, ${p.price_label}` : label;
   }
+  function r2PassLabel(p) {
+    const name = PASS_NAMES[p.id] ? PASS_NAMES[p.id]() : String(p.id || "");
+    const n = Number(p.interviews) || 0;
+    const ivs = n === 1 ? T("r2.passOneIv", "1 live interview") : T("r2.passNIv", "{n} live interviews").replace("{n}", String(n));
+    return [name, p.price_label, n ? ivs : ""].filter(Boolean).join(", ");
+  }
   function r2GateHtml(st, mode) {
-    const noMin = st && st.reason === "no_minutes";
-    if (noMin) {
+    const wrap = mode === "inline" ? "scr-unlock r2-gate-inline" : "scr-intro r2-gate";
+    const finish = `<button class="btn btn-ghost btn-sm" id="r2Finish" type="button">${esc(T("r2.finishHere", "Finish here"))}</button>`;
+    if (st && st.reason === "no_minutes") {
       const packs = (st.can_buy && Array.isArray(st.packs)) ? st.packs : [];
-      return `<div class="${mode === "inline" ? "scr-unlock r2-gate-inline" : "scr-intro r2-gate"}">
+      return `<div class="${wrap}">
       <div class="r2-gate-main">
         <h3 class="r2-gate-h">${esc(T("r2.usedUpH", "You've used your pass's live interviews."))}</h3>
-        <p class="r2-gate-d">${esc(MANAGED_AI
-          ? (packs.length ? T("r2.usedUpDPaid", "Buy more, they never expire.") : T("r2.usedUpNoBuyPaid", "Add another pass for more live interviews."))
-          : (packs.length ? T("r2.usedUpD", "Buy more, they never expire. Or use your own Tavus key.") : T("r2.usedUpNoBuy", "Add another pass, or use your own Tavus key.")))}</p>
+        <p class="r2-gate-d">${esc(packs.length ? T("r2.usedUpDPaid", "Buy more, they never expire.") : T("r2.usedUpNoBuyPaid", "Add another pass for more live interviews."))}</p>
         <div class="scr-welcome-acts">
           ${packs.map((p, i) => `<button class="btn ${i === 0 ? "btn-primary" : "btn-ghost"} btn-sm r2-buy" data-pack="${esc(p.id)}" type="button">${esc(r2PackLabel(p))}</button>`).join("")}
-          ${MANAGED_AI ? (packs.length ? "" : `<button class="btn btn-primary btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>`) : `<button class="btn btn-ghost btn-sm" id="r2OpenSettings" type="button">${esc(T("r2.useOwnKey", "Use my own Tavus key"))}</button>`}
-          <button class="btn btn-ghost btn-sm" id="r2Finish" type="button">${esc(T("r2.finishHere", "Finish here"))}</button>
+          ${packs.length ? "" : `<button class="btn btn-primary btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>`}
+          ${finish}
         </div>
         <p class="r2-gate-d" id="r2BuyMsg" hidden></p>
       </div></div>`;
     }
-    // Official edition: live interviews come with a pass, on our interviewer. No key homework up
-    // front; a person who already has a Tavus key can still add it in Settings (a quiet link).
-    if (MANAGED_AI) {
-      return `<div class="${mode === "inline" ? "scr-unlock r2-gate-inline" : "scr-intro r2-gate"}">
+    if (!st || st.reason === "unreachable") {
+      return `<div class="${wrap}">
       <div class="r2-gate-main">
-        <h3 class="r2-gate-h">${esc(T("r2.passH", "Live interviews come with a pass"))}</h3>
-        <p class="r2-gate-d">${esc(T("r2.passD", "Twenty minutes with a live interviewer who asks, listens and follows up, then a scored report. A Job Hunt Pass includes 3 live interviews, a Season Pass 9. Paid once, no auto-renew."))}</p>
+        <h3 class="r2-gate-h">${esc(T("r2.offH", "The live interviewer isn't reachable right now"))}</h3>
+        <p class="r2-gate-d">${esc(T("r2.offD", "Live interviews run on our service. Check your connection, then try again."))}</p>
         <div class="scr-welcome-acts">
-          <button class="btn btn-primary btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>
-          <button class="btn btn-ghost btn-sm" id="r2Finish" type="button">${esc(T("r2.finishHere", "Finish here"))}</button>
+          <button class="btn btn-primary btn-sm" id="r2Retry" type="button">${esc(T("r2.checkAgain", "Check again"))}</button>
+          ${finish}
         </div>
       </div></div>`;
     }
-    const steps = `<ol class="r2-steps">
-        <li>${esc(T("r2.step1", "Create an account at platform.tavus.io. It has a free tier; check its minutes and call length there."))}</li>
-        <li>${esc(T("r2.step2", "Create an API key there and copy it."))}</li>
-        <li>${esc(T("r2.step3", "Paste it in Settings, under Live interviewer (Tavus)."))}</li>
-      </ol>`;
-    return `<div class="${mode === "inline" ? "scr-unlock r2-gate-inline" : "scr-intro r2-gate"}">
+    // No pass: the passes that include live interviews, filled in from the broker's offers.
+    return `<div class="${wrap}">
       <div class="r2-gate-main">
-        <h3 class="r2-gate-h">${esc(T("r2.gateH", "Round 2 needs a live interviewer"))}</h3>
-        <p class="r2-gate-d">${esc(noMin ? T("r2.gateNoMinutes", "Your Tavus minutes for this month are used up. They reset monthly.") : T("r2.gateNoKey", "The live interviewer runs on Tavus with your own free key."))}</p>
-        ${noMin ? "" : steps}
-        ${st && st.offer === "passes" ? `<p class="r2-gate-d">${esc(T("r2.passOffer", "Or get a pass: live interviews on our interviewer, paid once, no auto-renew."))}</p>` : ""}
-        <div class="scr-welcome-acts">
-          ${noMin ? "" : `<button class="btn btn-primary btn-sm" id="r2OpenSettings" type="button">${esc(T("r2.openSettings", "Open Settings"))}</button>`}
-          ${st && st.offer === "passes" ? `<button class="btn btn-ghost btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>` : ""}
-          <a class="btn btn-ghost btn-sm" href="https://platform.tavus.io" target="_blank" rel="noopener">${esc(T("r2.getKey", "Get a free key"))}</a>
-          <button class="btn btn-ghost btn-sm" id="r2Finish" type="button">${esc(T("r2.finishHere", "Finish here"))}</button>
+        <h3 class="r2-gate-h">${esc(T("r2.passH", "Live interviews come with a pass"))}</h3>
+        <p class="r2-gate-d">${esc(T("r2.passD", "Twenty minutes with a live interviewer who asks, listens and follows up, then a scored report. Paid once, no auto-renew."))}</p>
+        <div class="scr-welcome-acts" id="r2PassActs">
+          <button class="btn btn-ghost btn-sm" id="r2SeePasses" type="button">${esc(T("r2.seePasses", "See passes"))}</button>
+          ${finish}
         </div>
+        <p class="r2-gate-d" id="r2BuyMsg" hidden></p>
       </div></div>`;
   }
+  // The passes on sale, as buttons ahead of "See passes". Nothing on sale (billing off, or the
+  // broker briefly unreachable): "See passes" alone, which opens the same panel as Upgrade.
+  async function fillR2Passes() {
+    const acts = $("#r2PassActs"); if (!acts) return;
+    let o = null;
+    try { o = await api("/api/billing/offers"); } catch { return; }
+    const passes = ((o && o.passes) || []).filter(p => p && p.id);
+    if (!passes.length || !document.body.contains(acts)) return;
+    acts.insertAdjacentHTML("afterbegin", passes.map((p, i) =>
+      `<button class="btn ${i === 0 ? "btn-primary" : "btn-ghost"} btn-sm r2-pass" data-pass="${esc(p.id)}" type="button">${esc(r2PassLabel(p))}</button>`).join(""));
+    acts.querySelectorAll(".r2-pass").forEach(b => b.addEventListener("click", () => buyR2Pass(b.dataset.pass, b)));
+  }
+  async function buyR2Pass(passId, btn) {
+    if (!ACCT_EMAIL) { openSignin({ kind: "pass", id: passId }); return; }   // sign in first, then Stripe
+    if (btn) btn.disabled = true;
+    try {
+      if (await doCheckout(passId)) r2AfterCheckout();
+    } finally { if (btn) btn.disabled = false; }
+  }
+  // After a checkout opens: say where to finish, and a "Check again" that re-reads the status
+  // without a restart.
+  function r2AfterCheckout() {
+    const msg = $("#r2BuyMsg");
+    const say = (t) => { if (msg) { msg.textContent = t; msg.hidden = false; } };
+    say(T("r2.buyOpened", "Finish paying in the checkout, then check again."));
+    if (!$("#r2Recheck") && msg) {
+      msg.insertAdjacentHTML("afterend", `<div class="scr-welcome-acts"><button class="btn btn-ghost btn-sm" id="r2Recheck" type="button">${esc(T("r2.checkAgain", "Check again"))}</button></div>`);
+      $("#r2Recheck")?.addEventListener("click", async () => {
+        if (window.tailorShell) window.tailorShell.closeBrowser();
+        const st = await round2Status();
+        paintRound2Tile();
+        if (st && st.available) renderR2GreenRoom(st); else say(T("r2.notYet", "Not there yet. It can take a moment after paying."));
+      });
+    }
+  }
   function wireR2Gate(onFinish) {
-    $("#r2OpenSettings")?.addEventListener("click", async () => { await openSettings(); document.querySelector('[data-set="ai"]')?.click(); });
     $("#r2Finish")?.addEventListener("click", onFinish);
     $("#r2SeePasses")?.addEventListener("click", () => openUpgrade());
+    $("#r2Retry")?.addEventListener("click", async () => {
+      const st = await round2Status();
+      paintRound2Tile();
+      if (st && st.available) renderR2GreenRoom(st);
+      else { const g = document.querySelector(".r2-gate, .r2-gate-inline"); if (g) { g.outerHTML = r2GateHtml(st, g.classList.contains("r2-gate-inline") ? "inline" : "page"); wireR2Gate(onFinish); } }
+    });
     document.querySelectorAll(".r2-buy").forEach(b => b.addEventListener("click", () => buyInterviews(b.dataset.pack, b)));
+    fillR2Passes();
   }
   // Buy a prepaid interview pack: the broker mints a Stripe Checkout, we open it, and the
   // credits land once Stripe confirms. "Check again" re-reads the status without a restart.
@@ -6526,16 +6565,7 @@
       const d = await api("/api/interview/round2/buy", { pack });
       if (window.tailorShell) window.tailorShell.openBrowser(d.url);
       else fetch("/api/open?u=" + encodeURIComponent(d.url)).catch(() => window.open(d.url, "_blank"));
-      say(T("r2.buyOpened", "Finish paying in the checkout, then check again."));
-      if (!$("#r2Recheck") && msg) {
-        msg.insertAdjacentHTML("afterend", `<div class="scr-welcome-acts"><button class="btn btn-ghost btn-sm" id="r2Recheck" type="button">${esc(T("r2.checkAgain", "Check again"))}</button></div>`);
-        $("#r2Recheck")?.addEventListener("click", async () => {
-          if (window.tailorShell) window.tailorShell.closeBrowser();
-          const st = await round2Status();
-          paintRound2Tile();
-          if (st && st.available) renderR2GreenRoom(st); else say(T("r2.notYet", "Not there yet. It can take a moment after paying."));
-        });
-      }
+      r2AfterCheckout();
     } catch (err) {
       if (err.reason === "sign_in_required") { if (btn) btn.disabled = false; openSignin({ kind: "pack", id: pack }); return; }
       if (err.data && err.data.offer === "passes") openUpgrade();   // no active pass: show the passes
@@ -6868,55 +6898,11 @@
       </div>`;
   }
 
-  // ---- Settings: Live interviewer (Tavus). Key in, key out, and the status Round 2 reads.
-  // Whole 20-minute interviews from the plan's minutes.
+  // Whole 20-minute interviews from the pass's minutes (one interview is 20 minutes on the broker).
   function r2InterviewsLeft(mins) {
-    const n = Math.floor(Number(mins) / 15);
+    const n = Math.floor(Number(mins) / 20);
     return n === 1 ? T("r2.oneLeft", "1 interview left.") : T("r2.nLeft", "{n} interviews left.").replace("{n}", String(n));
   }
-  async function renderTavusSettings() {
-    const st = await round2Status();
-    const pill = $("#tvStatus"), state = $("#tvState"), btn = $("#tvToggle"), rev = $("#tvRevoke");
-    if (!pill) return;
-    const ok = !!(st && st.available);
-    const keySet = !!(st && st.key_set);
-    const n = st && st.minutes_left != null ? Math.floor(Number(st.minutes_left) / 20) : 0;
-    connPill(pill, ok, T("tavus.ready", "Ready"),
-      st && st.reason === "no_minutes" ? T("tavus.usedUp", "Used up") : T("tavus.noKey", "No key"));
-    if (state) state.textContent = st && st.source === "plan"
-      ? (n === 1 ? T("tavus.usingPlanOne", "Using your plan, 1 interview left.") : T("tavus.usingPlan", "Using your plan, {n} interviews left.").replace("{n}", String(n)))
-      : st && st.source === "own_key"
-        ? T("tavus.usingOwn", "Using your own Tavus key.")
-        : keySet
-          ? T("tavus.stateSet", "Your key is saved on this computer. Round 2 uses your own Tavus minutes.")
-          : T("tavus.stateUnset", "Round 2 talks to a live interviewer on Tavus. It needs your own key.");
-    if (btn) btn.textContent = keySet ? T("tavus.manage", "Manage") : T("tavus.addKey", "Add key");
-    if (rev) rev.hidden = !keySet;
-  }
-  $("#tvToggle")?.addEventListener("click", () => { const f = $("#tvForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { if ($("#tvMsg")) $("#tvMsg").hidden = true; $("#tvKey")?.focus(); } } });
-  $("#tvCancel")?.addEventListener("click", () => { const f = $("#tvForm"); if (f) { f.reset(); f.hidden = true; } });
-  async function saveTavusKey(key) {
-    const r = await fetch("/api/avatar/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok || d.error) throw new Error(d.error || T("tavus.cantSave", "Couldn't save the key."));
-    return d;
-  }
-  $("#tvForm")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const msg = $("#tvMsg"), setMsg = (t, cls) => { if (msg) { msg.textContent = t; msg.className = "conn-msg " + cls; msg.hidden = false; } };
-    const key = $("#tvKey")?.value.trim() || "";
-    if (!key) return setMsg(T("tavus.pasteKey", "Paste your Tavus API key."), "err");
-    try { await saveTavusKey(key); } catch (err) { return setMsg(err.message, "err"); }
-    setMsg(T("tavus.saved", "Saved. Round 2 is ready."), "ok");
-    $("#tvForm").reset(); $("#tvForm").hidden = true;
-    renderTavusSettings(); paintRound2Tile();
-  });
-  $("#tvRevoke")?.addEventListener("click", async () => {
-    try { await saveTavusKey(""); } catch (err) { toast(err.message); return; }
-    const f = $("#tvForm"); if (f) { f.reset(); f.hidden = true; }
-    toast(T("tavus.removed", "Key removed."));
-    renderTavusSettings(); paintRound2Tile();
-  });
 
   /* ---------------------------------------------------------------- Connect your AI (API key) */
   let AI_CONFIGURED = false;
@@ -7205,7 +7191,7 @@
   async function doCheckout(passId) {
     try {
       const r = await api("/api/billing/checkout", { pass: passId });
-      if (r && r.url) { openCheckoutUrl(r.url); watchCheckout(); return; }
+      if (r && r.url) { openCheckoutUrl(r.url); watchCheckout(); return true; }
       toast(T("upg.cantStart", "Couldn't start checkout. Please try again."));
     } catch (e) {
       if (e.reason === "sign_in_required") { closeUpgrade(); openSignin({ kind: "pass", id: passId }); return; }
@@ -7569,7 +7555,6 @@
     renderConnections();
     renderNotify();
     renderMemory();
-    renderTavusSettings();
   }
   function closeSettings() { if (setModal) setModal.hidden = true; ntStopPoll(); }
 

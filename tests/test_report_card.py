@@ -216,11 +216,11 @@ def test_bad_or_absent_seconds_never_break_the_upload(client):
     assert A._measured_seconds("12.26") == 12.3 and A._measured_seconds(0) is None
 
 
-def test_round2_card_takes_seconds_from_the_transcript_timestamps(client):
+def test_round2_card_takes_seconds_from_the_transcript_timestamps(client, monkeypatch):
     A, c = client
-    from tests.test_round2_cvi import FakeTavus, _own_key
+    from tests.test_round2_cvi import _on_a_pass
     prep = _prep(c)
-    _own_key(A, c, FakeTavus())
+    _on_a_pass(A, monkeypatch)
     iid = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).get_json()["interview_id"]
     rep = c.post("/api/interviews/cvi/end", json={"interview_id": iid}).get_json()["report"]
     card = rep["report_card"]
@@ -333,7 +333,7 @@ def test_redrill_starts_a_round1_screen_with_just_those_questions(client):
 
 
 # ---- history per job with the overall-score trend ------------------------------------------------------
-def test_history_lists_both_rounds_for_the_same_job_oldest_first(client):
+def test_history_lists_both_rounds_for_the_same_job_oldest_first(client, monkeypatch):
     A, c = client
     prep = _prep(c)
     empty = c.get(f"/api/interview/history?prep_id={prep['id']}").get_json()
@@ -347,8 +347,8 @@ def test_history_lists_both_rounds_for_the_same_job_oldest_first(client):
     for q in s2["questions"]:
         c.post(f"/api/screens/{s2['id']}/answers/{q['i']}/transcript", json={"transcript": _GOOD})
     c.post(f"/api/screens/{s2['id']}/score")
-    from tests.test_round2_cvi import FakeTavus, _own_key
-    _own_key(A, c, FakeTavus())
+    from tests.test_round2_cvi import _on_a_pass
+    _on_a_pass(A, monkeypatch)
     iid = c.post("/api/interviews/cvi/start", json={"prep_id": prep["id"], "skip_screen": True}).get_json()["interview_id"]
     c.post("/api/interviews/cvi/end", json={"interview_id": iid})
     # an unrelated job's screen never shows up here

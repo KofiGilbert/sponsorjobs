@@ -773,6 +773,11 @@ ipcMain.handle("pane:get-state", () => paneState());
 // broker is a HOSTED service. Best-effort: if it fails to start (e.g. no venv python), the app
 // still runs and the live interview just falls back / shows service-unavailable.
 const BROKER = "http://127.0.0.1:57001";
+function isLocalBroker(url) {
+  if (!url) return true;                                // unset: the engine defaults to the local one
+  try { return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(url).hostname); }
+  catch (e) { return true; }
+}
 function retireStaleBroker() {
   /* Stop a leftover broker that is holding the port while serving a fake model.
    *
@@ -805,6 +810,9 @@ function getJson(url) {
 
 async function ensureBroker() {
   if (app.isPackaged) return;
+  // Dev against a remote broker (TAILOR_LIVE_BROKER=1 in dev-start.sh sets TAILOR_BROKER_URL to
+  // https://api.sponsorjobs.ai): the engine talks to that one, so there is no local broker to run.
+  if (!isLocalBroker(process.env.TAILOR_BROKER_URL)) return;
   // A developer running their own broker on purpose (e.g. with a Telegram bot configured) sets
   // TAILOR_KEEP_BROKER=1 so the shell never retires it as "stale".
   if (process.env.TAILOR_KEEP_BROKER === "1") return;

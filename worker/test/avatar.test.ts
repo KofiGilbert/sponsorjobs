@@ -40,6 +40,21 @@ describe("live interviews", () => {
     const r = await call("/avatar/session/start", { token, body: {}, env: TAVUS });
     expect(r.status).toBe(402);
     expect(r.data.reason).toBe("pass_required");
+    expect(r.data.error).toBe("live interviews come with a Job Hunt Pass or a Season Pass");
+    expect(r.text).not.toMatch(/own Tavus key|your own/i);          // paid only: no bring-your-own key
+    expect(sent).toHaveLength(0);
+  });
+
+  it("a pass whose interviews are used up gets 402 no_interviews pointing at the packs", async () => {
+    const sent = stubTavus(room);
+    const { id, token } = await newAccount();
+    await givePass(id);
+    await env.DB.prepare("UPDATE users SET pass_seconds = 0, credit_seconds = 0 WHERE user = ?").bind(id).run();
+    const r = await call("/avatar/session/start", { token, body: {}, env: TAVUS });
+    expect(r.status).toBe(402);
+    expect(r.data.reason).toBe("no_interviews");
+    expect(r.data.error).toBe("this pass's live interviews are used up; buy an extra interview pack");
+    expect(r.text).not.toMatch(/own Tavus key|your own/i);
     expect(sent).toHaveLength(0);
   });
 

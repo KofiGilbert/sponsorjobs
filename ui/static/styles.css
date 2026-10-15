@@ -2939,12 +2939,9 @@ body.cv-dragging * { cursor: grabbing !important; }
 .r2-gate-inline { display: block; }
 .r2-gate-h { font-size: 17px; font-weight: 650; color: var(--ink); margin: 0 0 6px; }
 .r2-gate-d { font-size: 13px; color: var(--muted); line-height: 1.55; margin: 0 0 12px; max-width: 60ch; }
-.r2-steps { margin: 0 0 16px; padding-left: 20px; font-size: 13px; color: var(--ink-2); line-height: 1.6; max-width: 60ch; }
 .r2-gate .scr-welcome-acts, .r2-gate-inline .scr-welcome-acts { flex-wrap: wrap; }
-/* The Round 2 tile note (no key yet) and the Tavus block in Settings. */
+/* The Round 2 tile note (no pass yet, or interviews used up). */
 .prep-tile-note { margin-top: 8px; font-size: 12px; color: var(--faint); }
-.set-h-sub { margin-top: 28px; }
-.set-row-n .conn-status { margin-left: 8px; }
 
 /* Screening answers the ATS auto-rejects on: marked so the person checks them by hand. */
 .pkg-qa-knockout { border-left: 3px solid #c47a00; padding-left: 10px; }
