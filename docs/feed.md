@@ -26,7 +26,10 @@ off in the repo (Settings -> Pages).
 Pages limits (soft): 1 GB site (the feed is ~10 MB) and 100 GB of downloads a month. GitHub serves
 the `.json.gz` files as plain gzip without `Content-Encoding`; the app checks the gzip magic bytes
 and unpacks either form (`sourcing/feedfile.loads_maybe_gz`, `sourcing/feedclient.py`), so nothing
-breaks. Every file gets GitHub's fixed `Cache-Control: max-age=600`.
+breaks. Every file gets GitHub's fixed `Cache-Control: max-age=600` (the list parts too: Pages
+cannot mark them immutable). A Pages deploy replaces the whole site, so the previous version's
+parts vanish at once; a client mid-download then gets a 404 and re-reads the manifest. On R2 the
+previous version's parts are kept for one more build.
 
 ### Pages set-up, step by step
 
@@ -55,7 +58,9 @@ GitHub Action (every 3h, .github/workflows/feed.yml)
   scripts/build_feed.py   crawl (sourcing.service.refresh_watchlist) -> sponsor-tag + shape
                           (backend.feed.feed_jobs) -> dedupe board vs aggregator (sourcing/dedup.py)
                           -> sourcing/feedfile.write_feed
-  scripts/upload_feed.py  put_object to R2 (S3 API) with Content-Type / Content-Encoding / Cache-Control
+  scripts/upload_feed.py  put_object to R2 (S3 API) with Content-Type / Content-Encoding / Cache-Control;
+                          list parts before the list, manifest last, then deletes parts named by
+                          neither the new manifest nor the one it replaced
 R2 bucket, custom domain  https://<domain>/feed/jobs.json.gz, /feed/jd/{xx}.json.gz, /feed/manifest.json
 Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/main.js sets it)
   sourcing/feedclient.py  download jobs.json.gz hourly (ETag), cache under data/feed_cache/,
@@ -69,7 +74,8 @@ Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/m
 |---|---|---|
 | `jobs.json.gz` | `{feed_version: 1, generated_at, count, attribution, jobs: [...]}`; each row is a board row **without** `jd_text` (~500 bytes instead of ~9 KB): `source_id, source, company, title, location, remote, url, posted_at, first_seen, salary, sponsorship_stated, us, entry_level, visa, nationality_visas, sponsor` | `max-age=600` |
 | `jd/{xx}.json.gz` | `{source_id: jd_text}` for every job whose `sha1(source_id)` starts with `xx` -- 256 fixed shards, so a crawl uploads ~257 objects, not 50,000 | `max-age=86400` |
-| `manifest.json` | tiny, uncompressed: `{generated_at, count, jobs_url, jd_shard_count, jd_url_template}` | `no-cache` |
+| `parts/jobs-{version}-{nnn}.json.gz` | the SAME list split into ~1 MB gzipped parts (~10 for 96k roles), each `{version, part, parts, jobs: [...]}`; joined in order they are exactly `jobs.json.gz`'s rows. `version` is a hash of the rows, so the names are content-addressed and a part never changes | `max-age=31536000, immutable` (R2) |
+| `manifest.json` | tiny, uncompressed: `{generated_at, count, jobs_url, jd_shard_count, jd_url_template, parts: {version, count, total_bytes, attribution, files: [{url, sha256, raw_sha256, bytes, count}]}}` | `no-cache` |
 | `sponsors/{a..z,0..9,_}.json.gz` | the browser extension's sponsor index (`scripts/build_sponsor_index.py`, built in the same workflow run): `{index_version, version, shard, records: {norm_name: [display_name, h1b_approvals, h1b_last_fy, h1b_first_fy, perm_certs, e_verify, cap_exempt, naics2, state, h1b_5y, denial_pct, flags]}}` (the last three are the 2026-10 compact facts: approvals over the newest five fiscal years, denial rate in whole percent, bit set 1 = H-1B dependent / 2 = willful violator; trailing zeros dropped), ~8 MB in all. Lets the extension badge jobs with no app installed, without sending a company name anywhere | `max-age=86400` |
 | `sponsors/manifest.json` | `{index_version, version (content hash), generated_at, employers, stats, shards: {key: {file, bytes, records}}, total_bytes}`; the extension re-checks it at most daily | `no-cache` |
 
@@ -92,6 +98,22 @@ At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
   Every request sends `Accept-Encoding: gzip`: without it Cloudflare inflates the stored gzip on the
   fly and sends the raw JSON (about 18x the bytes, ~180 MB for 96k roles, chunked with no
   Content-Length). The origin ignores `Range`, so a cut-off download restarts from zero.
+- **The list downloads in parts** (2026-10-14). The origin ignores `Range` and a flaky link dropped
+  the ~10 MB file every 1-3 MB, so it restarted from zero and never landed. Each download now reads
+  `manifest.json` first; when it lists `parts`, the client fetches them two at a time into
+  `feed_cache/parts/<version>/`, checks each against its `sha256` (or, if a CDN re-encoded it, the
+  `raw_sha256` of the JSON inside), and retries a dropped part up to 4 times. A drop costs only the
+  part in flight: parts already on disk are never fetched again, across attempts and app restarts.
+  When every part is there they are joined into `jobs.json.gz` and swapped in atomically (then the
+  parts folder is deleted). A manifest whose version matches the cached list downloads nothing
+  (only `generated_at` moves). A new version deletes the old version's parts. A part that 404s
+  means the feed was rebuilt mid-download: the next try re-reads the manifest. No `parts` in the
+  manifest (or no manifest) falls back to the single file above, so an older feed still works, and
+  `jobs.json.gz` is still published for app versions that predate the parts. `feed-status` reports
+  `parts_done` / `parts_total`, and `bytes` / `total` count across all parts.
+  Proven 2026-10-14 against the live 96k-role list on a local origin that cut the connection after
+  every 1-3 MB: the parts landed after 6 drops (12.5 MB sent for 9.4 MB of parts); the single file
+  failed all 3 attempts.
 - While the FIRST download runs (nothing cached yet), `/api/jobs` answers at once with
   `"loading": true` and `"feed": {downloading, bytes, total, ...}`; Home, Jobs and Auto-apply show
   "Downloading today's jobs... 4.2 MB" and poll `GET /api/jobs/feed-status` (memory only, no network)
@@ -521,6 +543,8 @@ Then **Actions -> feed -> Run workflow** once by hand and check the run log ends
    browser page), so this rule only ever serves the website.
 4. Optional but recommended: **Caching -> Cache Rules** for the hostname, "Eligible for cache",
    respect origin TTL -- the `Cache-Control` headers set by the uploader then drive the edge cache.
+   The list parts (`/feed/parts/*`) are content-addressed and sent `immutable`, so a rule that
+   caches just that path is safe even if the rest stays uncached.
 5. Set `TAILOR_FEED_URL` (variable, step 3) to `https://feed.tailor.example` (plus `/feed` if you
    used a prefix), and replace the placeholder in `shell-electron/main.js`:
    `const FEED_URL = process.env.TAILOR_FEED_URL || "https://tailor.example/feed"; // TODO`.

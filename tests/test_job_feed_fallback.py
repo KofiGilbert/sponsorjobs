@@ -39,6 +39,8 @@ def test_job_from_feed_resolves_from_the_static_feed(monkeypatch, tmp_path):
             return out
 
     def _fake_urlopen(req, timeout=30):
+        if req.full_url.endswith("/manifest.json"):
+            return _Resp(b"{}")                 # an older feed: no parts, so the single file
         if req.full_url.endswith("/jobs.json.gz"):
             return _Resp(gzip.compress(json.dumps({"feed_version": 1, "jobs": [row]}).encode()))
         assert req.full_url.endswith(f"/jd/{shard_for(row['source_id'])}.json.gz")

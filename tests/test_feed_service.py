@@ -207,6 +207,8 @@ def test_app_pulls_job_detail_from_central(client, monkeypatch):
     row = {"source_id": "greenhouse:stripe:1", "company": "Stripe", "title": "SWE"}
 
     def urlopen(req, timeout=30):
+        if req.full_url.endswith("/manifest.json"):
+            return _Resp(b"{}")                 # an older feed: no parts, so the single file
         if req.full_url.endswith("/jobs.json.gz"):
             return _Resp(_gz_feed([row]))
         assert req.full_url.endswith(f"/jd/{shard_for('greenhouse:stripe:1')}.json.gz")
