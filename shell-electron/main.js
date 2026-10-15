@@ -753,6 +753,9 @@ async function runAutoApplyOnPane(recordId, opts) {
     const sig = await mainSignature(wc);
     if (!opts.fromWatch) armPageWatch(wc, recordId, page, sig);
     if (!filled && !applied.uploaded && !fields.length && !left.length) {
+      // A whole-page bot check instead of the form (SmartRecruiters' DataDome page): say so, so
+      // the person clears it themselves; we never touch the challenge (CLAUDE.md section 7).
+      if (blocker === "captcha") return { ok: false, reason: "blocked", blocker, page };
       return { ok: false, reason: "no-fields", page };
     }
     if (!filled && !applied.uploaded && planReason) return { ok: false, reason: planReason, page, left };
