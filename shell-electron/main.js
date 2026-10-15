@@ -16,6 +16,8 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
+const frames = require("./frames");
+const { isNewPage, pageMessage, wallMessage } = require("./pagewatch");
 
 const SERVER = "http://127.0.0.1:57000";
 // The STATIC job feed (docs/feed.md): a scheduled GitHub Action crawls and uploads jobs.json.gz
@@ -370,6 +372,7 @@ function armSuccessWatch(wc, startUrl, recordId) {
       const has = await wc.executeJavaScript("!!window.TailorAutofill", true);
       if (!has) await wc.executeJavaScript(autofillCore(), true);
       hit = await wc.executeJavaScript("window.TailorAutofill.detectSuccess()", true);
+      if (!hit) hit = await frameSuccess(wc);              // iCIMS confirms inside its iframe
     } catch (e) { hit = false; }
     if (!hit) return;
     done = true;
@@ -385,6 +388,54 @@ function armSuccessWatch(wc, startUrl, recordId) {
   const onNav = () => setTimeout(check, 1500);
   for (const ev of ["did-navigate", "did-navigate-in-page", "did-finish-load"]) wc.on(ev, onNav);
   _successWatch = { wc, timer, onNav };
+}
+// One CDP attachment shared by everything that needs it (file uploads, the frame fill, the frame
+// success check): attached on first use, detached when the last user is done, and never torn
+// down under another user's feet. If DevTools already holds the debugger, CDP is unavailable
+// and each caller falls back (the person attaches the resume; frames are left to them).
+const _dbgUsers = new WeakMap();      // webContents -> {n, owned}
+function acquireDebugger(wc) {
+  const dbg = wc.debugger;
+  let st = _dbgUsers.get(wc);
+  if (!st || st.n === 0) {
+    st = { n: 0, owned: false };
+    try {
+      if (!dbg.isAttached()) { dbg.attach("1.3"); st.owned = true; }
+    } catch (e) { return null; }
+    _dbgUsers.set(wc, st);
+  }
+  st.n++;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    st.n--;
+    if (st.n === 0 && st.owned) { try { dbg.detach(); } catch (e) { /* gone */ } }
+  };
+}
+
+// The "application received" marker inside a cross-origin frame (read only, nothing is filled).
+async function frameSuccess(wc) {
+  let count = 0;
+  try { count = await wc.executeJavaScript("window.TailorAutofill.crossOriginFrames()", true); } catch (e) { count = 0; }
+  if (!count) return false;
+  const release = acquireDebugger(wc);
+  if (!release) return false;
+  const cdp = frames.electronCdp(wc.debugger);
+  try {
+    for (const ctx of await frames.crossOriginFrames(cdp)) {
+      try {
+        await frames.injectEngine(cdp, ctx, autofillCore());
+        if (await frames.evalIn(cdp, ctx, "window.TailorAutofill.detectSuccess()")) return true;
+      } catch (e) { /* frame gone */ }
+    }
+    return false;
+  } catch (e) {
+    return false;
+  } finally {
+    cdp.dispose();
+    release();
+  }
 }
 function disarmSuccessWatch() {
   if (!_successWatch) return;
@@ -439,9 +490,8 @@ async function armCorrections(wc) {
 async function attachResume(wc, filePath) {
   if (!filePath || !fs.existsSync(filePath)) return false;
   let attached = false;
-  try {
-    wc.debugger.attach("1.3");
-  } catch (e) { /* already attached is fine */ }
+  const release = acquireDebugger(wc);
+  if (!release) return false;
   try {
     const { root } = await wc.debugger.sendCommand("DOM.getDocument", { depth: -1 });
     const { nodeId } = await wc.debugger.sendCommand("DOM.querySelector", {
@@ -453,7 +503,7 @@ async function attachResume(wc, filePath) {
   } catch (e) {
     attached = false;
   } finally {
-    try { wc.debugger.detach(); } catch (e) { /* nothing to detach */ }
+    release();
   }
   return attached;
 }
@@ -521,10 +571,8 @@ function submitScript(click) {
 // Never clicks submit; drops to the person on any captcha/auth wall or a prohibited site (section 7).
 async function cdpUploadFiles(wc, refs, filePath) {
   const dbg = wc.debugger;
-  let attached = false;
-  try {
-    if (!dbg.isAttached()) { dbg.attach("1.3"); attached = true; }
-  } catch (e) { return 0; }              // devtools already attached -> leave the résumé for the person
+  const release = acquireDebugger(wc);
+  if (!release) return 0;                // devtools already attached -> leave the résumé for the person
   let done = 0;
   try {
     await dbg.sendCommand("DOM.enable");
@@ -540,12 +588,70 @@ async function cdpUploadFiles(wc, refs, filePath) {
       } catch (e) { /* skip this one input; the person can still attach it */ }
     }
   } finally {
-    if (attached) { try { dbg.detach(); } catch (e) { /* ignore */ } }
+    release();
   }
   return done;
 }
 
-async function runAutoApplyOnPane(recordId) {
+// The frames of the pane the top page's engine cannot enter (cross-origin: iCIMS and friends),
+// opened through CDP (shell-electron/frames.js). Only frames on hosts the engine's policy lets
+// SponsorJobs fill are returned. Returns null when there are none or the debugger is busy
+// (DevTools open): then the top page alone is filled, as before.
+async function openFrameSession(wc) {
+  let count = 0;
+  try { count = await wc.executeJavaScript("window.TailorAutofill.crossOriginFrames()", true); } catch (e) { count = 0; }
+  if (!count) return null;
+  const release = acquireDebugger(wc);
+  if (!release) return null;
+  const cdp = frames.electronCdp(wc.debugger);
+  const close = () => { cdp.dispose(); release(); };
+  try {
+    const ctxs = [];
+    for (const ctx of await frames.crossOriginFrames(cdp)) {
+      const d = await applyDecision(ctx.url, "");
+      if (!d.fill) continue;                               // a prohibited board's frame: hands off
+      try {
+        await frames.injectEngine(cdp, ctx, autofillCore());
+        await frames.evalIn(cdp, ctx, `(() => { if (document.getElementById("tailor-filled-css")) return;
+          const st = document.createElement("style"); st.id = "tailor-filled-css";
+          st.textContent = ${JSON.stringify(FILLED_CSS)};
+          (document.head || document.documentElement).appendChild(st); })()`);
+        ctxs.push(ctx);
+      } catch (e) { /* the frame navigated away mid-way */ }
+    }
+    if (!ctxs.length) { close(); return null; }
+    return { cdp, ctxs, close,
+             eval: (ctx, expr) => frames.evalIn(cdp, ctx, expr).catch(() => null) };
+  } catch (e) {
+    close();
+    return null;
+  }
+}
+
+// What one fill run did on one page, summed over the top page and its frames.
+function sumPre(list) {
+  const out = { filled: 0, system: "", system_name: "", next_page: false, continue_hint: "",
+                submit_highlighted: false, captcha: false };
+  for (const p of list) {
+    if (!p || !p.ok) continue;
+    out.filled += (p.filled || 0) + (p.screening || 0) + (p.eeo || 0);
+    out.system = out.system || p.system || "";
+    out.system_name = out.system_name || p.system_name || "";
+    out.next_page = out.next_page || !!p.next_page;
+    out.continue_hint = out.continue_hint || p.continue_hint || "";
+    out.submit_highlighted = out.submit_highlighted || !!p.submit_highlighted;
+    out.captcha = out.captcha || !!p.captcha;
+  }
+  return out;
+}
+
+// opts: { page, fromWatch }. Fills the page open in the pane: the top document (with its open
+// shadow roots and same-origin frames) and every cross-origin frame it is allowed to fill; then
+// reports {filled, left:[labels]} for this page, saves that on the application record, and keeps
+// watching for the person's Next so the following page fills itself (never clicking Next or
+// Submit itself).
+async function runAutoApplyOnPane(recordId, opts) {
+  opts = opts || {};
   if (!pane) return { ok: false, reason: "no-page" };
   const wc = pane.webContents;
   const url = wc.getURL() || "";
@@ -554,72 +660,210 @@ async function runAutoApplyOnPane(recordId) {
     if (/(^|\.)linkedin\.com$/i.test(new URL(url).hostname)) return { ok: false, reason: "linkedin" };
   } catch (e) { return { ok: false, reason: "no-page" }; }
 
+  let fr = null;
   try {
     await wc.insertCSS(FILLED_CSS);
     await wc.executeJavaScript(autofillCore(), true);
+    const page = opts.page || pageNumberFor(wc, recordId, await mainSignature(wc));
     const blocker = await wc.executeJavaScript("window.TailorAutofill.pageBlocker()", true);
-    if (blocker === "auth") return { ok: false, reason: "blocked", blocker };  // never fight an auth wall
-    // Order of play: 1. the site's fill recipe, 2. the label patterns (both inside fill()),
-    // 3. the model plan for whatever is STILL empty. Deterministic first, the model last, and
-    // the model only ever sees field structure, never the person's data.
-    const payload = await fetchAutofillPayload();
-    let pre = null;
-    if (payload && payload.loaded !== false) {
-      try {
-        pre = await wc.executeJavaScript(`window.TailorAutofill.fill(${JSON.stringify(payload)})`, true);
-      } catch (e) { pre = null; }
-    }
-    const preFilled = (pre && pre.ok && pre.filled) || 0;
-    const fields = await wc.executeJavaScript("window.TailorAutofill.extractForm({ onlyEmpty: true })", true);
-    if (!fields || !fields.length) {
-      await armCorrections(wc); armSuccessWatch(wc, url, recordId);
-      if (preFilled) return { ok: true, filled: preFilled, uploaded: 0, pending_upload: 0, skipped: 0,
-                              system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
-                              continue_hint: pre.continue_hint, submit_highlighted: pre.submit_highlighted,
-                              captcha: !!pre.captcha };
-      return { ok: false, reason: "no-fields" };
-    }
-
-    let plan = null;
-    try {
-      const resp = await net.fetch(SERVER + "/api/autoapply/plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" },
-        body: JSON.stringify({ url, record_id: recordId, fields }),
-      });
-      plan = resp.ok ? await resp.json() : null;
-    } catch (e) { plan = null; }
-    if (!plan || !plan.ok) {
-      // The AI plan is the LAST step; if it is unavailable, what the recipe already filled stands.
-      if (preFilled) {
-        await armCorrections(wc); armSuccessWatch(wc, url, recordId);
-        return { ok: true, filled: preFilled, uploaded: 0, pending_upload: 0, skipped: 0,
-                 system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
-                 continue_hint: pre.continue_hint, submit_highlighted: pre.submit_highlighted,
-                 captcha: !!pre.captcha };
+    if (blocker === "auth") {                              // never fight an auth wall
+      sendProgress({ record_id: recordId || null, page, wall: "auth", filled: 0, left: [],
+                     message: wallMessage(page) });
+      if (!opts.fromWatch) {
+        armPageWatch(wc, recordId, page - 1, await mainSignature(wc));
+        if (_pageWatch) _pageWatch.wallSaid = true;      // already said above
       }
-      return { ok: false, reason: (plan && plan.reason) || "no-plan" };
+      return { ok: false, reason: "blocked", blocker, page };
+    }
+    // Order of play: 1. the site's fill recipe, 2. the label patterns, 3. custom widgets (all
+    // inside fillAsync), 4. the model plan for whatever is STILL empty. Deterministic first, the
+    // model last, and the model only ever sees field structure, never the person's data.
+    const payload = await fetchAutofillPayload();
+    const havePayload = !!(payload && payload.loaded !== false);
+    const fillExpr = havePayload ? `window.TailorAutofill.fillAsync(${JSON.stringify(payload)})` : "null";
+    const pres = [];
+    if (havePayload) {
+      try { pres.push(await wc.executeJavaScript(fillExpr, true)); } catch (e) { /* fill what we can below */ }
+    }
+    fr = await openFrameSession(wc);
+    const liveFrames = [];
+    for (const ctx of (fr ? fr.ctxs : [])) {
+      const b = await fr.eval(ctx, "window.TailorAutofill.pageBlocker()");
+      if (b === "auth") continue;                          // a sign-in inside the frame: theirs
+      liveFrames.push(ctx);
+      if (havePayload) pres.push(await fr.eval(ctx, fillExpr));
+    }
+    const pre = sumPre(pres);
+
+    const extract = "window.TailorAutofill.extractFormAsync({ onlyEmpty: true })";
+    let fields = (await wc.executeJavaScript(extract, true)) || [];
+    for (const ctx of liveFrames) fields = fields.concat((await fr.eval(ctx, extract)) || []);
+
+    let applied = { filled: 0, uploaded: 0, pending_upload: 0, skipped: 0 };
+    let planReason = "";
+    if (fields.length) {
+      let plan = null;
+      try {
+        const resp = await net.fetch(SERVER + "/api/autoapply/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" },
+          body: JSON.stringify({ url, record_id: recordId, fields }),
+        });
+        plan = resp.ok ? await resp.json() : null;
+      } catch (e) { plan = null; }
+      if (plan && plan.ok) {
+        const ops = plan.ops || [];
+        const routed = frames.routeOps(ops, liveFrames);
+        const resumePath = (ops.find((o) => o.op === "upload") || {}).path || "";
+        const runOps = (list) => `window.TailorAutofill.applyOpsAsync(${JSON.stringify(list)})`;
+        const reports = [];
+        if (routed.main.length) {
+          const rep = await wc.executeJavaScript(runOps(routed.main), true);
+          reports.push(rep);
+          if (rep && (rep.uploads || []).length && resumePath) {
+            applied.uploaded += await cdpUploadFiles(wc, rep.uploads, resumePath);
+          }
+        }
+        for (const [ctx, list] of routed.byFrame) {
+          const rep = await fr.eval(ctx, runOps(list));
+          reports.push(rep);
+          if (rep && (rep.uploads || []).length && resumePath) {
+            applied.uploaded += await frames.uploadInFrame(fr.cdp, ctx, rep.uploads, resumePath);
+          }
+        }
+        for (const rep of reports) {
+          applied.filled += (rep && rep.filled) || 0;
+          applied.skipped += (rep && rep.skipped) || 0;
+          applied.pending_upload += ((rep && rep.uploads) || []).length;
+        }
+        applied.pending_upload = Math.max(0, applied.pending_upload - applied.uploaded);
+      } else {
+        planReason = (plan && plan.reason) || "no-plan";
+      }
     }
 
-    const ops = plan.ops || [];
-    const report = await wc.executeJavaScript(
-      `window.TailorAutofill.applyOps(${JSON.stringify(ops)})`, true);
+    // What is still blank and needs the person, across the page and its frames.
+    let left = (await wc.executeJavaScript("window.TailorAutofill.leftover()", true)) || [];
+    for (const ctx of liveFrames) left = left.concat((await fr.eval(ctx, "window.TailorAutofill.leftover()")) || []);
+    left = [...new Set(left)].slice(0, 60);
+    const filled = pre.filled + applied.filled;
 
-    let uploaded = 0;
-    const resumePath = (ops.find((o) => o.op === "upload") || {}).path || "";
-    if (report && (report.uploads || []).length && resumePath) {
-      uploaded = await cdpUploadFiles(wc, report.uploads, resumePath);
-    }
     await armCorrections(wc); armSuccessWatch(wc, url, recordId);
-    return { ok: true, filled: ((report && report.filled) || 0) + preFilled, uploaded,
-             pending_upload: Math.max(0, ((report && (report.uploads || []).length) || 0) - uploaded),
-             skipped: (report && report.skipped) || 0,
-             system: pre ? pre.system : "", system_name: pre ? pre.system_name : "",
-             next_page: !!(pre && pre.next_page), continue_hint: (pre && pre.continue_hint) || "",
-             submit_highlighted: !!(pre && pre.submit_highlighted), captcha: !!(pre && pre.captcha) };
+    if (fr) { fr.close(); fr = null; }
+    const sig = await mainSignature(wc);
+    if (!opts.fromWatch) armPageWatch(wc, recordId, page, sig);
+    if (!filled && !applied.uploaded && !fields.length && !left.length) {
+      return { ok: false, reason: "no-fields", page };
+    }
+    if (!filled && !applied.uploaded && planReason) return { ok: false, reason: planReason, page, left };
+    const report = { page, url: wc.getURL() || url, filled, left, system: pre.system };
+    recordFillReport(recordId, report);
+    sendProgress(Object.assign({ record_id: recordId || null, message: pageMessage(page, filled, left) }, report));
+    return { ok: true, filled, uploaded: applied.uploaded, pending_upload: applied.pending_upload,
+             skipped: applied.skipped, left, page,
+             system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
+             continue_hint: pre.continue_hint, submit_highlighted: pre.submit_highlighted,
+             captcha: pre.captcha };
   } catch (err) {
     return { ok: false, reason: "inject-failed" };
+  } finally {
+    if (fr) fr.close();
   }
+}
+
+// ------------------------------------------------------------- multi-page forms
+// Workday, SmartRecruiters, Taleo and iCIMS split an application over several pages. After a
+// fill, the shell watches the pane; when the PERSON presses Next/Continue and a new page of
+// questions appears (a URL change, a frame navigating, or the form's fields changing in a
+// single-page app), it fills that page too and says so ("Page 2 filled: 9 fields"). It never
+// presses Next or Submit itself, and at a sign-in / create-account wall it stops and says so;
+// once the person is past it, the next page fills as usual. One watch at a time, 30 minutes max.
+function sendProgress(info) {
+  if (win && !win.isDestroyed()) win.webContents.send("autoapply:progress", info);
+}
+function recordFillReport(recordId, report) {
+  if (recordId === undefined || recordId === null || recordId === "") return;
+  postApp("/api/autoapply/fill-report", Object.assign({ record_id: recordId }, report));
+}
+
+async function mainSignature(wc) {
+  try {
+    const has = await wc.executeJavaScript("!!window.TailorAutofill", true);
+    if (!has) await wc.executeJavaScript(autofillCore(), true);
+    return await wc.executeJavaScript("window.TailorAutofill.pageSignature()", true);
+  } catch (e) { return null; }
+}
+
+
+let _pageWatch = null;
+function pageNumberFor(wc, recordId, sig) {
+  const w = _pageWatch;
+  if (!w || w.wc !== wc || w.recordId !== recordId) return 1;
+  return isNewPage(w.labels, sig) ? w.page + 1 : Math.max(1, w.page);
+}
+
+function armPageWatch(wc, recordId, page, sig) {
+  disarmPageWatch();
+  const st = { wc, recordId, page, labels: new Set((sig && sig.labels) || []),
+               url: wc.getURL() || "", started: Date.now(), busy: false, wallSaid: false,
+               timer: null, debounce: null, handlers: [] };
+  const check = async (reason) => {
+    if (st.busy || _pageWatch !== st || !pane || pane.webContents !== wc || wc.isDestroyed()) return;
+    if (Date.now() - st.started > 30 * 60 * 1000) { disarmPageWatch(); return; }
+    st.busy = true;
+    try {
+      const s = await mainSignature(wc);
+      if (!s) return;
+      if (s.success) { disarmPageWatch(); return; }      // the success watch takes it from here
+      if (s.blocker === "auth") {
+        if (!st.wallSaid) {
+          st.wallSaid = true;
+          sendProgress({ record_id: recordId || null, page: st.page + 1, wall: "auth", filled: 0,
+                         left: [], message: wallMessage(st.page + 1) });
+        }
+        return;
+      }
+      const urlNow = wc.getURL() || "";
+      const framed = reason === "frame" && s.cross_frames > 0;
+      if (!isNewPage(st.labels, s) && !framed) {
+        if (urlNow !== st.url && s.labels.length) { st.url = urlNow; }
+        return;
+      }
+      if (!framed && !s.empty) { st.labels = new Set(s.labels); return; }   // nothing to fill
+      const next = st.page + 1;
+      const res = await runAutoApplyOnPane(recordId, { page: next, fromWatch: true });
+      const after = await mainSignature(wc);
+      if (framed && !(res && res.ok)) return;            // an ad or widget frame reloading
+      st.page = next;
+      st.labels = new Set((after && after.labels) || s.labels);
+      st.url = wc.getURL() || urlNow;
+      st.wallSaid = false;
+    } finally {
+      st.busy = false;
+    }
+  };
+  const soon = (reason) => () => {
+    clearTimeout(st.debounce);
+    st.debounce = setTimeout(() => check(reason), 1200);     // let the new page render first
+  };
+  for (const [ev, reason] of [["did-navigate", "nav"], ["did-navigate-in-page", "nav"],
+                              ["did-finish-load", "nav"], ["did-frame-navigate", "frame"]]) {
+    const h = ev === "did-frame-navigate"
+      ? (_e, _url, _code, _status, isMainFrame) => { if (!isMainFrame) soon(reason)(); }
+      : soon(reason);
+    wc.on(ev, h);
+    st.handlers.push([ev, h]);
+  }
+  st.timer = setInterval(() => check("poll"), 1500);         // single-page apps change no URL
+  _pageWatch = st;
+}
+function disarmPageWatch() {
+  const st = _pageWatch;
+  if (!st) return;
+  _pageWatch = null;
+  clearInterval(st.timer);
+  clearTimeout(st.debounce);
+  try { for (const [ev, h] of st.handlers) st.wc.removeListener(ev, h); } catch (e) { /* pane gone */ }
 }
 
 // ------------------------------------------------------------- the ONE apply path
@@ -726,7 +970,7 @@ ipcMain.handle("autoapply:fill-current", async (_e, recordId) => runAutoApplyOnP
 
 ipcMain.on("pane:set-bounds", (_e, rect) => { paneBounds = rect; layoutPane(); });
 ipcMain.on("pane:open", (_e, url) => openInPane(url));
-ipcMain.on("pane:close", () => { disarmSuccessWatch(); closePane(); });
+ipcMain.on("pane:close", () => { disarmSuccessWatch(); disarmPageWatch(); closePane(); });
 ipcMain.on("pane:back", () => pane && pane.webContents.navigationHistory.goBack());
 ipcMain.on("pane:forward", () => pane && pane.webContents.navigationHistory.goForward());
 ipcMain.on("pane:reload", () => pane && pane.webContents.reload());

@@ -11,7 +11,8 @@ or auth wall, never evading. See CLAUDE.md section 7.
 
 from autoapply.fields import (APPLICANT_KEYS, ConcreteOp, FillAction, FormField,
                               applicant_from_record, resolve_plan)
-from autoapply.planner import build_fill_plan, parse_plan
+from autoapply.planner import KnownContext, build_fill_plan, parse_plan, plan_form, plan_known
 
 __all__ = ["APPLICANT_KEYS", "FormField", "FillAction", "ConcreteOp",
-           "applicant_from_record", "resolve_plan", "build_fill_plan", "parse_plan"]
+           "applicant_from_record", "resolve_plan", "build_fill_plan", "parse_plan",
+           "KnownContext", "plan_form", "plan_known"]

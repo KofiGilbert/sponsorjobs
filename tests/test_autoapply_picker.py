@@ -109,6 +109,8 @@ def _setup(tmp_path, monkeypatch, board):
     monkeypatch.setattr(app, "WORKDIR", tmp_path / "cv")
     monkeypatch.setattr(app, "PALACE_DIR", tmp_path / "palace")
     monkeypatch.setattr(app, "_PREFS_FILE", tmp_path / "prefs.json")
+    monkeypatch.setattr(app, "_LEARN_FILE", tmp_path / "aa_learn.json")   # skip reasons, lists
+    monkeypatch.setattr(app, "_PREFS_PATH", tmp_path / "answers.json")    # the visa answer
     monkeypatch.setattr(app, "_board_rows", lambda: [dict(j) for j in board])
     tailored = []
 

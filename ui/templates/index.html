@@ -397,7 +397,9 @@
             </div>
 
             <div class="pkg-card" id="pkgScrCard" hidden>
-              <div class="pkg-card-h">Screening answers</div>
+              <div class="pkg-card-h"><span data-i18n="aa.screening">Screening answers</span>
+                <span class="pkg-card-tools"><button class="btn btn-ghost btn-sm" id="pkgAnsOpen" type="button" data-i18n="ans.title">Your answers</button></span>
+              </div>
               <div class="pkg-scr" id="pkgScr"></div>
             </div>
           </aside>
@@ -465,34 +467,14 @@
             </form>
           </div>
 
-          <!-- Application answers: the three answers nearly every form asks, saved once and
-               filled into every application for the person to review (CLAUDE.md section 7:
-               it pre-fills from THEIR answer, never guesses). Same store as the extension popup. -->
+          <!-- Application answers: a door to Your answers (work authorization + saved answers),
+               which fill every application for the person to review (CLAUDE.md section 7: it
+               fills from THEIR answer, never guesses). -->
           <div class="prof-card" id="answersCard">
-            <div class="prof-card-h"><span data-i18n="profile.answers.title">Application answers</span></div>
-            <p class="prof-note" data-i18n="profile.answers.sub">Saved once and filled into every application form for you to review. Answer honestly, the form is yours.</p>
-            <div class="prof-grid">
-              <label class="prof-field"><span data-i18n="profile.answers.workAuth">Authorized to work in the US?</span>
-                <select class="fld" id="ansWorkAuth">
-                  <option value="" data-i18n="profile.answers.notSet">Not set</option>
-                  <option value="Yes" data-i18n="profile.answers.yes">Yes</option>
-                  <option value="No" data-i18n="profile.answers.no">No</option>
-                </select></label>
-              <label class="prof-field"><span data-i18n="profile.answers.sponsorship">Will you need visa sponsorship?</span>
-                <select class="fld" id="ansSponsorship">
-                  <option value="" data-i18n="profile.answers.notSet">Not set</option>
-                  <option value="No" data-i18n="profile.answers.no">No</option>
-                  <option value="Yes" data-i18n="profile.answers.sponsorNow">Yes, now</option>
-                  <option value="Future" data-i18n="profile.answers.sponsorFuture">Not now, but in the future</option>
-                </select></label>
-              <label class="prof-field prof-wide prof-check"><span>
-                <input type="checkbox" id="ansEeoDecline" />
-                <span data-i18n="profile.answers.eeo">On EEO and demographic questions, pick "Decline to self-identify"</span></span></label>
+            <div class="prof-card-h"><span data-i18n="profile.answers.title">Application answers</span>
+              <button class="btn btn-ghost btn-sm" id="profAnsOpen" type="button" data-i18n="aa.open">Open</button>
             </div>
-            <div class="prof-card-foot">
-              <button class="btn btn-primary btn-sm" id="ansSave" type="button" data-i18n="profile.answers.save">Save answers</button>
-              <span class="prof-saved" id="ansSaved"></span>
-            </div>
+            <p class="prof-note" id="profAnsSum" data-i18n="ans.sub">Answer once. Every application reuses it.</p>
           </div>
 
           <!-- LinkedIn review: a read-only score of the person's OWN profile page, sent here by
@@ -667,6 +649,7 @@
               </section>
             </div>
 
+            <div class="aa-sidecol">
             <aside class="aa-side" aria-label="Today">
               <h2 class="aa-side-h" data-i18n="aa.today">Today</h2>
               <div class="aa-cap">
@@ -681,6 +664,10 @@
                 <div><div class="aa-set-t" data-i18n="aa.tg">Telegram updates</div><div class="aa-set-s" id="aaTgSub"></div></div>
                 <button class="btn btn-ghost btn-sm" id="aaTgBtn" type="button"></button>
               </div>
+              <div class="aa-set" id="aaAnsRow">
+                <div><div class="aa-set-t" data-i18n="ans.title">Your answers</div><div class="aa-set-s" id="aaAnsSub"></div></div>
+                <button class="btn btn-ghost btn-sm" id="aaAnsBtn" type="button" data-i18n="aa.open">Open</button>
+              </div>
               <div class="aa-set" id="aaInboxRow" hidden>
                 <div><div class="aa-set-t" data-i18n="aa.inbox">Email inbox</div><div class="aa-set-s" id="inboxStatus"></div></div>
                 <button class="btn btn-ghost btn-sm" id="inboxScan" type="button" data-i18n="aa.scan">Scan</button>
@@ -691,6 +678,30 @@
               </div>
               <button class="link-btn aa-see-all" id="aaSeeAll" type="button" hidden></button>
             </aside>
+
+            <!-- Preferences: company lists and what skip reasons taught the picker (each undoable). -->
+            <section class="aa-side aa-prefs" id="aaPrefs" aria-labelledby="aaPrefsH">
+              <h2 class="aa-side-h" id="aaPrefsH" data-i18n="aa.pf.h">Preferences</h2>
+              <div class="aa-pf">
+                <div class="aa-pf-h" data-i18n="aa.pf.never">Never apply to</div>
+                <div class="aa-pf-chips" id="aaPfExclude"></div>
+                <input class="aa-pf-add" id="aaPfExcludeAdd" type="text" autocomplete="off" maxlength="120" placeholder="Add a company" data-i18n-ph="aa.pf.addPh" aria-label="Add a company to never apply to" />
+              </div>
+              <div class="aa-pf">
+                <div class="aa-pf-h" data-i18n="aa.pf.prio">Prioritize</div>
+                <div class="aa-pf-chips" id="aaPfPrio"></div>
+                <input class="aa-pf-add" id="aaPfPrioAdd" type="text" autocomplete="off" maxlength="120" placeholder="Add a company" data-i18n-ph="aa.pf.addPh" aria-label="Add a company to prioritize" />
+              </div>
+              <div class="aa-pf">
+                <div class="aa-pf-h" data-i18n="aa.pf.learned">What I've learned</div>
+                <ul class="aa-pf-learn" id="aaPfLearned"></ul>
+              </div>
+              <div class="aa-pf aa-pf-visa" id="aaPfVisa" hidden>
+                <span id="aaPfVisaText"></span>
+                <button class="link-btn" id="aaPfVisaChange" type="button" data-i18n="aa.pf.change">Change</button>
+              </div>
+            </section>
+            </div>
           </div>
         </div>
 
@@ -701,6 +712,66 @@
           <div class="aa-dr-body" id="aaDrBody"></div>
         </aside>
       </section>
+
+      <!-- ============ YOUR ANSWERS (work authorization + the answer library) =====           Answer once, reused on every form: the structured work authorization the planner
+           answers every visa / sponsorship question from (autoapply/workauth.py), and the saved
+           answers (autoapply/answers.py) the person fixed once. Its own page with a back link
+           to wherever they came from (Auto-apply, Profile, an application). -->
+      <section class="view view-answers" id="view-answers">
+        <header class="page-head">
+          <div>
+            <button class="btn btn-ghost btn-back tpl-back" id="ansBack" type="button">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span id="ansBackLbl" data-i18n="nav.autoapply">Auto-apply</span>
+            </button>
+            <h1 class="page-title" data-i18n="ans.title">Your answers</h1>
+            <p class="page-sub" data-i18n="ans.sub">Answer once. Every application reuses it.</p>
+          </div>
+        </header>
+
+        <div class="ans-wrap">
+          <section class="ans-card" id="ansWaCard" aria-labelledby="ansWaH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="ansWaH" data-i18n="ans.wa">Work authorization</h2>
+              <div class="ans-seg" id="ansCountry" role="group" aria-label="Country"></div>
+            </div>
+            <div class="ans-grid">
+              <label class="ans-field ans-wide"><span data-i18n="ans.status">Current status</span>
+                <select class="fld" id="ansStatus"></select></label>
+              <div class="ans-field"><span data-i18n="ans.authorized">Authorized to work here</span>
+                <div class="ans-seg ans-yn" data-yn="authorized"></div></div>
+              <div class="ans-field"><span data-i18n="ans.sponsorNow">Need sponsorship now</span>
+                <div class="ans-seg ans-yn" data-yn="sponsor_now"></div></div>
+              <div class="ans-field"><span data-i18n="ans.sponsorFuture">Need sponsorship in the future</span>
+                <div class="ans-seg ans-yn" data-yn="sponsor_future"></div></div>
+              <label class="ans-field" id="ansEndWrap" hidden><span data-i18n="ans.authEnd">Work permit ends</span>
+                <input class="fld" id="ansAuthEnd" type="date" /></label>
+              <div class="ans-field"><span data-i18n="ans.relocate">Willing to relocate</span>
+                <div class="ans-seg ans-yn" data-yn="relocate"></div></div>
+            </div>
+            <label class="ans-check"><input type="checkbox" id="ansEeo" />
+              <span data-i18n="profile.answers.eeo">On EEO and demographic questions, pick "Decline to self-identify"</span></label>
+            <div class="ans-foot">
+              <button class="btn btn-primary btn-sm" id="ansWaSave" type="button" data-i18n="ans.save">Save</button>
+              <span class="ans-note" id="ansWaNote" role="status"></span>
+            </div>
+          </section>
+
+          <section class="ans-card" aria-labelledby="ansLibH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="ansLibH"><span data-i18n="ans.saved">Saved answers</span> <span class="ans-count" id="ansCount"></span></h2>
+              <button class="btn btn-ghost btn-sm" id="ansAdd" type="button" data-i18n="ans.add">Add answer</button>
+            </div>
+            <label class="jf-search ans-search">
+              <svg class="jf-ic" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14 14l4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+              <input class="jf-input" id="ansQ" type="search" autocomplete="off" placeholder="Search your answers" data-i18n-ph="ans.search" aria-label="Search your answers" />
+            </label>
+            <div class="ans-list" id="ansList"></div>
+          </section>
+        </div>
+      </section>
+      <!-- Why was this skipped? One tap, optional. Shared by Up next, the drawer and Jobs. -->
+      <div class="skip-why" id="skipWhy" role="region" aria-label="Why did you skip it?" hidden></div>
 
       <!-- ============ PROJECTS (build it, prove you can defend it, then add to CV) ============
            The honesty keystone: a project can't reach the CV until you pass a defense test
@@ -1610,6 +1681,7 @@
         <button class="bb-btn bb-out" id="bbExternal" title="Open this page in your own browser"
                 aria-label="Open in your browser">Open in browser &#8599;</button>
       </div>
+      <div class="bb-fill" id="bbFill" role="status" aria-live="polite" hidden></div>
       <div class="browser-slot" id="browserSlot"></div>
       <div class="pdf-placeholder" id="bbNoShell" hidden>The in-app browser needs the desktop app (shell-electron). Links open in your system browser instead.</div>
     </div>

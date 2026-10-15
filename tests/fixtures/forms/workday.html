@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (Workday-style fixture)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script></head>
+<body>
+<h2>My Information</h2>
+<div id="wd"></div>
+<div class="field"><label for="legalName--firstName">First Name*</label>
+  <input type="text" id="legalName--firstName" data-automation-id="legalNameSection_firstName"></div>
+<button data-automation-id="bottom-navigation-next-button" type="button">Save and Continue</button>
+<script>
+  const W = window.FixtureWidgets, host = document.getElementById("wd");
+  window.fx = {
+    country: W.WorkdayListbox(host, { aid: "countryDropdown", label: "Country",
+      options: ["Afghanistan", "Canada", "India", "United Kingdom", "United States of America"] }),
+    device: W.WorkdayListbox(host, { aid: "phone-device-type", label: "Phone Device Type",
+      options: ["Home", "Mobile", "Work"] }),
+    source: W.WorkdayPrompt(host, { label: "How Did You Hear About Us?",
+      options: ["Company Website", "Indeed", "LinkedIn", "Referral"] }),
+    auth: W.AriaRadioGroup(host, { label: "Are you legally authorized to work in the country in which this job is located?",
+      options: ["Yes", "No"] }),
+    relocate: W.AriaRadioGroup(host, { label: "Are you willing to relocate?", options: ["Yes", "No"] }),
+  };
+  window.fxValues = () => Object.fromEntries(Object.entries(window.fx).map(([k, v]) => [k, v.value]));
+</script>
+</body></html>

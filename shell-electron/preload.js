@@ -44,6 +44,10 @@ contextBridge.exposeInMainWorld("tailorShell", {
   autoApplyRun: (url, recordId) => ipcRenderer.invoke("autoapply:run", url, recordId),
   // AI-fill whatever page is currently open in the pane, for one saved application.
   autoApplyFillCurrent: (recordId) => ipcRenderer.invoke("autoapply:fill-current", recordId),
+  // Fill progress per page of a multi-page form: {record_id, page, filled, left:[labels], message,
+  // wall?}. Sent after every fill, including the pages the shell fills by itself once the person
+  // presses Next on the site (it never presses Next or Submit itself).
+  onAutoApplyProgress: (cb) => ipcRenderer.on("autoapply:progress", (_e, info) => cb(info)),
   // Saved searches: "Open on other boards" hands a list of plain search URLs (LinkedIn, Indeed,
   // Glassdoor, Handshake, Google Jobs) to the person's OWN browser, one tab each. Nothing is
   // loaded in the pane and nothing is clicked or read on those sites; the person browses by hand.
