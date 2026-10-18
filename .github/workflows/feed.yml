@@ -119,7 +119,7 @@ jobs:
     needs: crawl
     if: ${{ always() && !cancelled() && vars.TAILOR_FEED_URL != '' && needs.crawl.result != 'skipped' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60   # the merge + build of ~120k jobs takes ~25 min; 30 cut 7 of 8 runs (Oct 17-18)
     env:
       FEED_DATA_DIR: ${{ github.workspace }}/.feed-data
       # Built under .site/feed so the Pages artifact (.site) serves it at <domain>/feed/...,
