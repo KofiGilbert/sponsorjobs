@@ -80,6 +80,9 @@ _GENERIC = {
     "nashville", "columbus", "pittsburgh", "baltimore", "portland", "minneapolis",
     "canada", "india", "china", "japan", "europe", "european", "asia", "london",
     "usa", "americas",
+    # The bodies a public institution files under ("Regents Of The University Of Michigan", "The
+    # Trustees Of Princeton Univ"): never a brand, and a board named "Regents..." is any school.
+    "univ", "inst", "regents", "trustees", "fellows", "president",
     # legal-entity filler seen on the big sponsors' filing names ("Visa Technology & Operations
     # Llc", "Fedex Corporate Services Inc", "Target Enterprise Inc", "Pwc Advisory Services Llc")
     "operations", "corporate", "enterprise", "advisory", "worldwide", "ventures", "limited",
@@ -288,16 +291,144 @@ ALIASES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 
 def alias_for(display_name: str) -> tuple[list[str], list[str]]:
     """(slugs, brand forms) from ALIASES for this employer, or ([], []). The longest matching
-    key wins, so "ernst and young" is not shadowed by a shorter key."""
+    key wins, so "ernst and young" is not shadowed by a shorter key. With no curated entry, a
+    university / hospital / research institute whose name has no brand word of its own gets its
+    INSTITUTION alias (institution_alias): the whole institution phrase is its brand."""
     norm = normalize_employer(display_name)
     best = ""
     for key in ALIASES:
         if (norm == key or norm.startswith(key + " ")) and len(key) > len(best):
             best = key
     if not best:
-        return [], []
+        return institution_alias(display_name)
     slugs, brands = ALIASES[best]
     return list(slugs), list(brands)
+
+
+# -- cap-exempt institutions (2026-10-18) ------------------------------------------------ #
+# Universities, university hospitals and nonprofit research institutes sponsor H-1B all year,
+# outside the lottery, which is why our users value them. But their names are made of words the
+# brand rules above throw away: "University Of Michigan" is a generic word plus a place, so
+# distinctive_tokens() is empty and discovery never even guessed (half the top 40 cap-exempt
+# sponsors were skipped that way). For them the WHOLE institution phrase is the brand: a board
+# must show "university of michigan" (or a curated short form), which a different school never
+# does ("University of Chicago" is not "Loyola University Chicago", "University of Washington" is
+# not "Washington University in St Louis": the phrase is never reordered).
+
+_INSTITUTION_HEAD = re.compile(
+    r"\b(university|college|institute|hospital|hospitals|clinic|medical center|health system|"
+    r"school of medicine|medical school|cancer center|laboratory|laboratories|polytechnic)\b")
+_INST_EXPAND = {"univ": "university", "inst": "institute", "med": "medical", "ctr": "center",
+                "hosp": "hospital", "coll": "college", "tech": "technology"}
+# Corporate wrappers a public institution files under ("Regents Of The University Of Michigan",
+# "The Trustees Of Princeton Univ", "President And Fellows Of Harvard College").
+_INST_WRAPPERS = ("board of regents of the ", "board of regents of ", "regents of the ",
+                  "regents of ", "trustees of the ", "trustees of ", "the trustees of ",
+                  "president and fellows of ", "the ")
+_INST_STOP = {"of", "the", "and", "at", "in", "for", "a", "s"}
+# Words that describe an institution without naming one: "Childrens Hospital", "Community
+# Medical Center", "State University" name no particular school or hospital, so a phrase made
+# only of these (and head words) is too common to identify anyone and is never used.
+_INST_DESCRIPTORS = {"childrens", "children", "medical", "community", "general", "state",
+                     "memorial", "regional", "public", "research", "national", "health",
+                     "science", "sciences", "technology", "county", "city", "system", "center",
+                     "centre", "school", "medicine", "academic", "affiliated", "teaching",
+                     "womens", "women", "veterans", "methodist", "baptist", "presbyterian",
+                     "catholic", "lutheran", "christian", "saint", "st", "mercy", "university",
+                     "college", "institute", "hospital", "hospitals", "clinic", "laboratory",
+                     "laboratories", "polytechnic"}
+# Short forms the big institutions' career sites use, keyed by the cleaned institution phrase.
+# Slug GUESSES (each still has to show the phrase or the short form on its own board to be
+# accepted), plus the short forms a board may show instead of the phrase. Hand-maintained like
+# ALIASES; add one only when the short form is unambiguous.
+INSTITUTION_SHORT: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "university of michigan": (("umich",), ("umich",)),
+    "university of pennsylvania": (("upenn",), ("upenn",)),
+    "university of pittsburgh": (("pitt",), ()),
+    "university of chicago": (("uchicago",), ("uchicago",)),
+    "university of florida": (("ufl",), ()),
+    "pennsylvania state university": (("psu",), ("penn state",)),
+    "university of minnesota": (("umn",), ()),
+    "indiana university": (("iu",), ()),
+    "texas a and m university": (("tamus", "tamu"), ("texas a and m",)),
+    "university of iowa": (("uiowa",), ()),
+    "university of southern california": (("usc",), ()),
+    "university of virginia": (("uva",), ()),
+    "university of utah": (("utah",), ()),
+    "university of california san diego": (("ucsd",), ("uc san diego",)),
+    "university of texas at austin": (("utaustin", "utexas"), ("ut austin",)),
+    "washington university in st louis": (("wustl",), ("wustl",)),
+    "university of washington": (("uw",), ()),
+    "university of wi system madison": (("wisc",), ("university of wisconsin madison",)),
+    "university of maryland": (("umd",), ()),
+    "ohio state university": (("osu",), ()),
+    "university of rochester": (("rochester",), ()),
+    "university of colorado": (("cu",), ()),
+    "nc state university": (("ncsu",), ("nc state", "north carolina state university")),
+}
+MAX_INSTITUTION_SLUGS = 4
+
+
+def institution_phrase(display_name: str) -> str:
+    """The institution's own name, cleaned: abbreviations spelled out, filing wrappers and a
+    leading "the" removed ("Univ Of Michigan" and "Regents Of The University Of Michigan" ->
+    "university of michigan"). '' when the name is not a university, college, hospital,
+    clinic or research institute."""
+    toks = [_INST_EXPAND.get(t, t) for t in _tokens(display_name)]
+    phrase = " ".join(toks)
+    changed = True
+    while changed:
+        changed = False
+        for w in _INST_WRAPPERS:
+            if phrase.startswith(w) and len(phrase) > len(w):
+                phrase, changed = phrase[len(w):], True
+    if not _INSTITUTION_HEAD.search(phrase):
+        return ""
+    return phrase
+
+
+def generic_institution(display_name: str) -> bool:
+    """A university / hospital name made only of descriptors ("Childrens Hospital", "Community
+    Medical Center"): it names no institution in particular, so no board can confirm it, and a
+    board "Children's Hospital Of Philadelphia" would wrongly pass for it on the brand words."""
+    phrase = institution_phrase(display_name)
+    if not phrase or phrase in INSTITUTION_SHORT:
+        return False
+    words = [t for t in phrase.split() if t not in _INST_STOP]
+    return not [t for t in words if t not in _INST_DESCRIPTORS and len(t) >= 3]
+
+
+def institution_alias(display_name: str) -> tuple[list[str], list[str]]:
+    """(slugs, brand forms) for a cap-exempt-style institution whose name has no brand word of
+    its own; ([], []) for anyone else (a "Yale University" or "Mayo Clinic" already has one, and
+    keeps the ordinary rules). The brand form is the whole institution phrase plus any curated
+    short form; the slugs are the curated short forms, the acronym ("usc", "osu", "ucsd"), "u" +
+    a one-word place ("uiowa"), and the phrase without its head word ("ohiostate")."""
+    phrase = institution_phrase(display_name)
+    if not phrase:
+        return [], []
+    curated = INSTITUTION_SHORT.get(phrase)
+    if curated is None and distinctive_tokens(display_name):
+        return [], []
+    short_slugs, short_brands = curated or ((), ())
+    toks = phrase.split()
+    words = [t for t in toks if t not in _INST_STOP]
+    if generic_institution(display_name):
+        return [], []                       # "Childrens Hospital": names no one in particular
+    slugs: list[str] = list(short_slugs)
+    acro = "".join(t[0] for t in words if t[0].isalpha())
+    if 3 <= len(acro) <= 5:
+        slugs.append(acro)
+    if toks[:2] == ["university", "of"] and len(toks) == 3 and len(toks[2]) <= 12:
+        slugs.append("u" + toks[2])
+    rest = [t for t in words if not _INSTITUTION_HEAD.fullmatch(t)]
+    if rest and len("".join(rest)) >= 6:
+        slugs.append("".join(rest))
+    out: list[str] = []
+    for s in slugs:
+        if s not in out and valid_board_id(s):
+            out.append(s)
+    return out[:MAX_INSTITUTION_SLUGS], [phrase, *short_brands]
 
 
 def has_brand(display_name: str) -> bool:
@@ -307,6 +438,9 @@ def has_brand(display_name: str) -> bool:
 
 
 _TRIM = _FILLER | _GENERIC | _LEGAL
+# Filing-body words that lead an institution's legal name: a board at a slug made of one of them
+# alone ("regents", "trustees") could be any school's, so it is never guessed.
+_INST_FILERS = {"univ", "inst", "regents", "trustees", "fellows", "president"}
 
 
 def core_tokens(display_name: str) -> list[str]:
@@ -375,7 +509,7 @@ def slug_guesses(display_name: str) -> list[SlugGuess]:
     nothing could confirm a hit."""
     dist = distinctive_tokens(display_name)
     alias_slugs, alias_brands = alias_for(display_name)
-    if not dist and not alias_brands:
+    if (not dist and not alias_brands) or generic_institution(display_name):
         return []
     toks = _tokens(display_name)
     multi = min(2, len(dist)) if dist else 1
@@ -395,7 +529,7 @@ def slug_guesses(display_name: str) -> list[SlugGuess]:
         out.append(SlugGuess(slug, kind, need_for(words) if kind != "alias" else multi, blind))
 
     lead = brand_slug(display_name)
-    if lead and dist:
+    if lead and dist and lead not in _INST_FILERS:   # never "univ", "regents", "trustees"...
         add(lead, "brand", [lead])
     for a in alias_slugs:
         add(a, "alias", [])

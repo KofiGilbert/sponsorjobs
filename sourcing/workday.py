@@ -283,6 +283,14 @@ def workday_detail(detail_url: str, fetch=fetch_json, sleep=time.sleep) -> dict:
              for x in (info.get("additionalLocations") or [])]
     if extra:
         loc = "; ".join(x for x in [loc, *extra] if x)
+    # Universities and hospitals name a building or campus ("Franklin Building", "HUP", "Penn
+    # State University Park"), which the feed's US rule cannot place, so half of a university
+    # board's roles were dropped as "not US" (2026-10-18). The posting's own country says where.
+    country = info.get("country") or (info.get("jobRequisitionLocation") or {}).get("country") or {}
+    if isinstance(country, dict) and (country.get("alpha2Code") == "US" or
+                                      country.get("descriptor") == "United States of America"):
+        if not looks_us(loc):
+            loc = f"{loc}, United States" if loc else "United States"
     return {
         "jd_text": html_to_text(str(info.get("jobDescription") or "")),
         "location": loc,
@@ -292,6 +300,11 @@ def workday_detail(detail_url: str, fetch=fetch_json, sleep=time.sleep) -> dict:
         "org": str((data.get("hiringOrganization") or {}).get("name") or ""),
         "time_type": str(info.get("timeType") or ""),
     }
+
+
+def looks_us(location: str) -> bool:
+    from .sponsors import looks_us as _looks_us
+    return _looks_us(location)
 
 
 def fill_details(rows: list[dict], fetch=fetch_json, *, known_ids=(), max_detail: int | None = None,
@@ -316,7 +329,8 @@ def fill_details(rows: list[dict], fetch=fetch_json, *, known_ids=(), max_detail
         if det["jd_text"]:
             row["jd_text"] = det["jd_text"]
         if det["location"] and (not row.get("location") or
-                                re.fullmatch(r"\d+ locations?", row["location"], re.I)):
+                                re.fullmatch(r"\d+ locations?", row["location"], re.I) or
+                                (looks_us(det["location"]) and not looks_us(row["location"]))):
             row["location"] = det["location"]
         if det["remote"]:
             row["remote"] = det["remote"]
@@ -401,9 +415,10 @@ def site_from_redirect(location: str) -> str:
 
 # Sites that are not for outside applicants: staffing agencies, employees, alumni, contingent
 # workers. A tenant's robots.txt lists them next to the real careers site (amgen: Careers +
-# agency), so they are dropped before any site is chosen.
+# agency), so they are dropped before any site is chosen. A university's student-jobs site is
+# for its enrolled students only (live 2026-10-18: uva.wd1/UVAStudentJobs), so it is out too.
 _NOT_FOR_APPLICANTS = re.compile(r"\b(agenc(y|ies)|internal|alumni|contractors?|contingent|vendors?|"
-                                 r"employees?|relief)\b", re.I)
+                                 r"employees?|relief|students?)\b", re.I)
 MAX_SITES = 8                   # sites of one tenant discovery will size up (one request each)
 
 

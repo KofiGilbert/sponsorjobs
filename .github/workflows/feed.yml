@@ -7,12 +7,13 @@ name: feed
 # Either way the app reads the same address (TAILOR_FEED_URL), so switching hosts is a settings
 # change here, never an app release. Replaces the always-on Render "kitchen".
 #
-# The board crawl is split in two (2026-10-13): a matrix of crawl SHARDS runs side by side, each
-# crawling its own half of the board list (scripts/build_feed.py board_shard) into a copy of the
-# saved crawl state, and uploads only what it changed. One MERGE job then folds both shards'
-# changes into the saved state, writes the feed once and publishes it once. Twice the boards per
-# run at no cost (public repo: Actions minutes are free). Shard 0 also runs the career-site lane
-# and the aggregator APIs, so nothing is fetched twice.
+# The board crawl is split in three (two on 2026-10-13, three on 2026-10-18 so the list can grow
+# toward more sponsors): a matrix of crawl SHARDS runs side by side, each crawling its own third
+# of the board list (scripts/build_feed.py board_shard) into a copy of the saved crawl state, and
+# uploads only what it changed. One MERGE job then folds every shard's changes into the saved
+# state, writes the feed once and publishes it once. More boards per run at no cost (public repo:
+# Actions minutes are free). Shard 0 also runs the career-site lane and the aggregator APIs, so
+# nothing is fetched twice. FEED_SHARD_COUNT must equal the number of matrix entries.
 on:
   schedule:
     - cron: "23 */3 * * *"
@@ -44,11 +45,11 @@ jobs:
       # One shard failing must not cancel the other: the merge publishes what succeeded.
       fail-fast: false
       matrix:
-        shard: [0, 1]
+        shard: [0, 1, 2]
     env:
       FEED_DATA_DIR: ${{ github.workspace }}/.feed-data
       FEED_SHARD_INDEX: ${{ matrix.shard }}
-      FEED_SHARD_COUNT: 2
+      FEED_SHARD_COUNT: 3
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +60,7 @@ jobs:
 
       # The crawl's state (jobs DB + sponsor overlay + cursors) persists between runs, so
       # first_seen, the cross-run dedup and the 21-day prune work as they did on the server. The
-      # shards only READ it (restore, never save): the merge job is the one writer, so two shards
+      # shards only READ it (restore, never save): the merge job is the one writer, so the shards
       # can never overwrite each other's state.
       - name: Restore crawl state
         uses: actions/cache/restore@v4
@@ -112,8 +113,8 @@ jobs:
           if-no-files-found: error
 
   build-and-upload:
-    # Runs when at least one shard finished (always() + the check below), so one failed shard
-    # still publishes the other's fresh boards; the failed shard's boards keep the rows the saved
+    # Runs when at least one shard finished (always() + the check below), so a failed shard
+    # still publishes the others' fresh boards; the failed shard's boards keep the rows the saved
     # state already holds and its cursor stays put, so the next run retries them. If NO shard
     # produced output, build_feed.py --merge-dir fails and nothing is published or saved.
     needs: crawl

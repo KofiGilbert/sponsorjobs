@@ -1180,6 +1180,7 @@ Tenstorrent Usa Inc,greenhouse,tenstorrent
 Terumo Medical Corporation,workday,terumo.wd3/External
 Tessera Therapeutics Inc,greenhouse,tesseratherapeutics
 Tetra Pak Inc,greenhouse,tetra
+Texas A&M University,workday,tamus.wd1/TAMU_External
 Teza Technologies Llc,ashby,teza-technologies
 Thales Avionics Inc,smartrecruiters,thales
 The Blackstone Group,workday,blackstone.wd1/Blackstone_Careers
@@ -1197,12 +1198,16 @@ The Mill Group Inc,greenhouse,mill
 The Nature Conservancy,workday,nature.wd108/ExternalCareers
 The Northern Trust Company,workday,ntrs.wd1/northerntrust
 The Ogilvy Group Llc Ogilvy Mather,greenhouse,ogilvy
+The Ohio State University,workday,osu.wd1/OSUCareers
+The Pennsylvania State University,workday,psu.wd1/PSU_Staff
 The Predictive Index Llc,greenhouse,predictiveindex
 The Procter & Gamble Company,workday,pg.wd5/1001
 The Siegfried Group Llp,workday,siegfried.wd103/external
 The Trade Desk Inc,smartrecruiters,tradedesk
 The Travelers Indemnity Company,workday,travelers.wd5/External
+The University Of Chicago,workday,uchicago.wd5/External
 The University Of Memphis,smartrecruiters,universityofmemphis
+The University Of Texas At Austin,workday,utaustin.wd1/UTstaff
 The Vanguard Group,workday,vanguard.wd5/vanguard_external
 Third Wave Automation Inc,greenhouse,thirdwaveautomation
 Thomson Reuters Holdings Inc,workday,thomsonreuters.wd5/External_Career_Site
@@ -1264,10 +1269,14 @@ Unisys Corporation,workday,unisys.wd5/External
 United Talent Agency,ashby,united-talent-agency
 Univ Of California San Francisco,smartrecruiters,ucsf
 Universal Technologies Llc,greenhouse,universal
+University Of Maryland,workday,umd.wd1/UMCP
 University Of Minnesota Physicians,smartrecruiters,universityofminnesotaphysicians
 University Of Nevada Reno,smartrecruiters,universityofnevadareno
+University Of Pennsylvania,workday,upenn.wd1/careers-at-penn
 University Of Rochester,workday,rochester.wd5/UR_Staff
 University Of South Florida,smartrecruiters,universityofsouthflorida
+University Of Southern California,workday,usc.wd5/ExternalUSCCareers
+University Of Washington,workday,uw.wd5/UWHires
 Unqork Inc,greenhouse,unqork
 Unum Group,workday,unum.wd1/External
 Unybrands Llc,greenhouse,unybrands
@@ -1323,6 +1332,7 @@ Walker Consultants Inc,lever,walkerconsultants
 Walt Disney Company,workday,disney.wd5/disneycareer
 Warner Bros. Entertainment Inc,workday,warnerbros.wd5/global
 Wasabi Technologies Llc,greenhouse,wasabi
+Washington University In St Louis,workday,wustl.wd1/External
 Washington Yu Ying Public Charter School,greenhouse,washingtonyuyingpubliccharterschool
 Watershed Technology Inc,greenhouse,watershed
 Wayfair Llc,smartrecruiters,wayfair

@@ -115,16 +115,18 @@ def test_rank_prefers_recent_filers_and_skips_watched_names():
     assert growth.rank_sponsors(rows, limit=1)[0]["display_name"] == "Fresh Hirer LLC"
 
 
-def test_load_sponsor_seed_keeps_only_employers_with_approvals(tmp_path):
+def test_load_sponsor_seed_keeps_employers_with_h1b_approvals_or_perm(tmp_path):
     p = tmp_path / "s.csv.gz"
     with gzip.open(p, "wt", newline="") as f:
         f.write("norm_name,display_name,h1b_approvals,h1b_last_fy,h1b_first_fy,naics,state,"
                 "cap_exempt,e_verify,perm_certs\n"
                 "datadog,Datadog Inc,12,2023,2020,51,NY,0,0,0\n"
-                "perm only,Perm Only LLC,0,0,0,54,CA,0,1,3\n")
+                "perm only,Perm Only LLC,0,0,0,54,CA,0,1,3\n"
+                "everify only,E Verify Only LLC,0,0,0,54,CA,0,1,0\n")
     rows = growth.load_sponsor_seed(p)
-    assert [r["display_name"] for r in rows] == ["Datadog Inc"]
+    assert [r["display_name"] for r in rows] == ["Datadog Inc", "Perm Only LLC"]
     assert rows[0]["h1b_approvals"] == 12 and rows[0]["h1b_last_fy"] == 2023
+    assert rows[1]["perm_certs"] == 3 and rows[1]["naics"] == "54"
 
 
 def test_should_skip_uses_only_the_existing_filters():
