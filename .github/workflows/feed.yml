@@ -99,6 +99,9 @@ jobs:
           # Amazon's own search JSON (sourcing/amazonjobs.py) is a board, so it lands in one shard:
           # newest N per run; stored rows are still capped by JOBS_MAX_PER_COMPANY.
           AMAZON_MAX_JOBS: ${{ vars.AMAZON_MAX_JOBS || 5000 }}
+          # freehire search-by-sponsor pass (sourcing/freehire_sponsors.py, shard 0 only): requests
+          # per run against freehire's keyless API, company look-ups included. 0 switches it off.
+          FREEHIRE_SPONSOR_PASS_REQUESTS: ${{ vars.FREEHIRE_SPONSOR_PASS_REQUESTS || 200 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" \
             --export-delta "${{ github.workspace }}/.shard/shard-${{ matrix.shard }}.db"

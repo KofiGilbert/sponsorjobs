@@ -60,8 +60,6 @@ ATTRIBUTION = {
                  "note": "Link back to the job's Remotive URL and name Remotive as the source."},
     "remoteok": {"name": "Remote OK", "url": "https://remoteok.com",
                  "note": "Link back (follow) to the Remote OK URL and name Remote OK as the source."},
-    "freehire": {"name": "freehire.me", "url": "https://freehire.me",
-                 "note": "Free, open-source job API."},
     "jsearch": {"name": "JSearch by OpenWeb Ninja", "url": "https://www.openwebninja.com",
                 "note": "Licensed API data, redistributed as part of this product."},
 }
