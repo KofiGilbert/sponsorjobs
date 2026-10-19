@@ -217,8 +217,10 @@ def test_each_adapter_fetches_only_its_official_host(monkeypatch):
         (ats.ashby_jobs, "api.ashbyhq.com"),
         (ats.workable_jobs, "apply.workable.com"),
         (ats.recruitee_jobs, "acme.recruitee.com"),
-        (ats.smartrecruiters_jobs, "api.smartrecruiters.com"),
     ]
+    # SmartRecruiters is disabled (ats.DISABLED_ATS): its adapter must make NO request at all.
+    recorded.clear()
+    assert ats.smartrecruiters_jobs("acme", fetch=rec) == [] and recorded == []
     for fn, host in board_cases:
         recorded.clear()
         fn("acme", fetch=rec)

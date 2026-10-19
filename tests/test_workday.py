@@ -808,7 +808,9 @@ def test_a_legacy_miss_owes_workday_and_a_workday_only_run_completes_it(tmp_path
     assert s["new_boards"][0]["board_id"] == BOARD and s["new_boards"][0]["jobs"] == 2
     acme = cp.records["acme"]
     assert acme["status"] == "miss" and acme["probed_ats"] == ["workday"]
-    assert cp.pending(("workday",)) == {} and cp.pending()["acme"] == list(growth.LEGACY_ATS)
+    # A miss owes every ATS discovery still probes (a disabled one, SmartRecruiters, is not owed).
+    assert cp.pending(("workday",)) == {} and cp.pending()["acme"] == [
+        a for a in growth.LEGACY_ATS if a in growth.DISCOVER_ATS]
     assert all(urlsplit(u).hostname.endswith(".myworkdayjobs.com") for u in fake.urls)
 
 

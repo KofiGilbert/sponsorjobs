@@ -764,14 +764,16 @@ def fetch_board_jd(job: dict, fetch=None) -> str:
     """Last resort when a shard lacks a description: ask the company's OWN public board endpoint
     for this one posting (the same GREEN-lane APIs the crawl uses, CLAUDE.md §6), or, for an
     aggregator row, freehire's full-text lookup. Returns plain text, or '' on any failure."""
-    from .ats import (fetch_json, freehire_fulltext, html_to_text, smartrecruiters_detail,
-                      valid_board_id)
+    from .ats import (ats_disabled, fetch_json, freehire_fulltext, html_to_text,
+                      smartrecruiters_detail, valid_board_id)
     fetch = fetch or fetch_json
     sid = str(job.get("source_id") or "")
     parts = sid.split(":", 2)
     if len(parts) != 3:
         return ""
     source, board, jid = parts
+    if ats_disabled(source):
+        return ""                 # e.g. SmartRecruiters: its robots.txt disallows us (DISABLED_ATS)
     try:
         if source in ("greenhouse", "lever", "ashby", "workable", "recruitee", "smartrecruiters"):
             if not (valid_board_id(board) and valid_board_id(jid)):
@@ -816,10 +818,10 @@ def fill_list_only_detail(job: dict, fetch=None) -> dict:
     call this on open, run the accessibility check the row has not had yet, and dismiss a barred
     role rather than show it. Returns the fields read ({"jd_text": ..., "url": ...}; "url" only
     when the detail names one); {} when the posting is gone or the row is not list-only."""
-    from .ats import fetch_json, smartrecruiters_fill
+    from .ats import ats_disabled, fetch_json, smartrecruiters_fill
     from .quality import is_list_only
-    if not is_list_only(job):
-        return {}
+    if not is_list_only(job) or ats_disabled(job.get("source") or ""):
+        return {}                 # a disabled ATS (DISABLED_ATS) gets no request
     fetch = fetch or fetch_json
     out: dict = {}
     try:

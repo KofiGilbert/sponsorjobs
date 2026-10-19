@@ -37,7 +37,7 @@ from __future__ import annotations
 import re
 from concurrent.futures import ThreadPoolExecutor
 
-from .ats import fetch_json, normalize_jobs, valid_board_id
+from .ats import ats_disabled, fetch_json, normalize_jobs, valid_board_id
 from .sponsors import normalize_employer
 
 # The big, keyless, US-heavy ATSs, tried in this order. Each probe is a SINGLE public
@@ -48,7 +48,11 @@ from .sponsors import normalize_employer
 # Workday is last: it is the most expensive probe (a robots.txt GET per slug per instance) and
 # reaches the enterprises none of the others do (NVIDIA, Intel, Cisco, Target, Adobe, Visa...).
 # Its probe lives in sourcing/workday.py; identity is confirmed the same way as the name lane.
-DISCOVER_ATS = ("greenhouse", "lever", "ashby", "workable", "smartrecruiters", "workday")
+# A disabled ATS (ats.DISABLED_ATS) is left out: SmartRecruiters' API robots.txt disallows every
+# user agent but LinkedInBot (checked 2026-10-19), so discovery never probes it -- independent
+# of the per-run robots.txt read in sourcing/growth.py, which reaches the same answer.
+DISCOVER_ATS = tuple(a for a in ("greenhouse", "lever", "ashby", "workable", "smartrecruiters",
+                                 "workday") if not ats_disabled(a))
 
 # ATSs whose public feed also exposes the EMPLOYER's own name, so a guessed slug can be
 # identity-verified. Ashby/Lever expose only department/location, so they can't.
@@ -582,8 +586,8 @@ def probe(ats: str, slug: str, fetch=fetch_json, timeout: int = PROBE_TIMEOUT) -
     Uses the LIGHTEST official endpoint that reveals the count: a guessed slug often lands
     on some other company's huge board, and pulling every description (what the feed
     adapters do) made a single guess time out on a slow link. Same public hosts, less data."""
-    if not valid_board_id(slug):
-        return 0
+    if not valid_board_id(slug) or ats_disabled(ats):
+        return 0                           # a disabled ATS (DISABLED_ATS) gets no request
     f = _bounded(fetch, timeout)
     try:
         if ats == "greenhouse":            # job list without ?content=true (titles only)
@@ -605,6 +609,8 @@ def board_name(ats: str, slug: str, fetch=fetch_json, timeout: int = PROBE_TIMEO
     """The board's own employer name where the ATS exposes one (Greenhouse board meta,
     Workable account, SmartRecruiters posting), else "". Verifies a guessed slug is really
     this employer."""
+    if ats_disabled(ats):
+        return ""                          # a disabled ATS (DISABLED_ATS) gets no request
     f = _bounded(fetch, timeout)
     try:
         if ats == "greenhouse":
@@ -821,6 +827,8 @@ def discover_for_company(display_name: str, atss=DISCOVER_ATS, fetch=fetch_json,
         return None                          # no verifiable brand word -> don't guess
     dist = distinctive_tokens(display_name)
     for ats in atss:
+        if ats_disabled(ats):
+            continue                         # e.g. SmartRecruiters: robots.txt disallows us
         if ats == "workday":
             from .workday import discover_workday       # lazy: workday.py builds on this module
             quiet = sleep or None

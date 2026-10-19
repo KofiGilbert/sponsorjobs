@@ -10,7 +10,7 @@ import re
 import time
 from pathlib import Path
 
-from .ats import ADAPTERS, AGGREGATORS, fetch_json, freehire_bulk, normalize_jobs
+from .ats import ADAPTERS, AGGREGATORS, ats_disabled, fetch_json, freehire_bulk, normalize_jobs
 from .dedup import DedupIndex
 from .quality import LIST_ONLY_SOURCES, is_intl_student_accessible
 from .watchlist import Watchlist
@@ -46,7 +46,9 @@ FIRST_CRAWL_PER_ATS = 10            # boards of each ATS guaranteed a place in t
 # refresh — no heavy discovery crawl needed just to have a board.
 SEED_WATCHLIST = Path(__file__).resolve().parents[1] / "seed" / "watchlist_seed.csv"
 
-SUPPORTED_ATS = tuple(ADAPTERS.keys())
+# The ATSs a person can add a board for. A disabled one (ats.DISABLED_ATS, e.g. SmartRecruiters,
+# whose API robots.txt disallows us) is left out: we would never fetch it.
+SUPPORTED_ATS = tuple(a for a in ADAPTERS if not ats_disabled(a))
 SUPPORTED_AGGREGATORS = tuple(AGGREGATORS.keys())
 # Aggregators are keyword feeds, so they run only when the person has title criteria
 # (otherwise it's the whole firehose). Enabled by default; the person can opt out via
@@ -299,7 +301,11 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
     # check reads the JD, so an unchecked row must never be shown or published as accessible
     # (select_checked_rows).
     known: dict[str, set[str]] = {}
+    disabled = 0
     for w in boards:
+        if ats_disabled(w["ats"]):
+            disabled += 1                             # robots.txt says no (ats.DISABLED_ATS): skip,
+            continue                                  # no request, not counted as crawled
         if time_budget is not None and clock() - started >= time_budget:
             stopped_early = True                      # the cap is the whole point: stop, say so
             break
@@ -424,7 +430,8 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
             "unchecked": unchecked,
             "salary_backfilled": backfilled, "pruned_adzuna": pruned_adzuna, "errors": errors,
             "companies": len(store.companies()),
-            "boards_crawled": crawled, "boards_total": len(boards), "stopped_early": stopped_early}
+            "boards_crawled": crawled, "boards_total": len(boards), "stopped_early": stopped_early,
+            "boards_disabled": disabled}
 
 
 # -- the first-open crawl ------------------------------------------------------------------ #

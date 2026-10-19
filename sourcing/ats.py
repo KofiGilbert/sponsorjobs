@@ -365,6 +365,29 @@ def recruitee_jobs(board_id, company="", fetch=fetch_json):
     return out
 
 
+# ATSs whose API we no longer request AT ALL, with why and when it was checked (CLAUDE.md:
+# obey robots.txt, never evade). Every code path that would call one of these APIs -- the board
+# crawl, the per-posting description, the detail-view fill, discovery -- checks here first and
+# makes no request. The adapters below are kept (dormant) so the decision is reversible: delete
+# the entry once the ATS's robots.txt allows us again, and the boards still on the watchlist
+# (seed/watchlist_seed.csv, kept on purpose; stored inactive by sourcing.watchlist) come back.
+DISABLED_ATS: dict[str, dict[str, str]] = {
+    "smartrecruiters": {
+        "host": "api.smartrecruiters.com",
+        "reason": ("https://api.smartrecruiters.com/robots.txt allows only LinkedInBot (on "
+                   "/v1/companies/) and disallows every other user agent from the whole API "
+                   "('User-agent: * / Disallow: /')"),
+        "checked": "2026-10-19",
+    },
+}
+
+
+def ats_disabled(ats: str) -> str:
+    """Why `ats` is switched off ('' when it is in use). A disabled ATS gets no request."""
+    d = DISABLED_ATS.get((ats or "").strip().lower())
+    return f"{d['reason']} (checked {d['checked']})" if d else ""
+
+
 # SmartRecruiters publishes its Posting API limit as 10 requests a second (developers.
 # smartrecruiters.com/docs/rate-limiting, read 2026-10-01; a 429 past it, with X-RateLimit-*
 # headers). A crawl reading one board's postings in a row stays well under it, and a 429 / 5xx
@@ -374,7 +397,10 @@ SMARTRECRUITERS_REQUEST_GAP = 0.2   # seconds between consecutive detail reads o
 
 def smartrecruiters_detail(board_id, posting_id, fetch=fetch_json, sleep=time.sleep):
     """One posting's PUBLIC url + JD text. The list endpoint omits the description body, so
-    it lives here on a detail endpoint. Returns (public_url, jd_text); ('', '') on error."""
+    it lives here on a detail endpoint. Returns (public_url, jd_text); ('', '') on error, and
+    ('', '') without any request while SmartRecruiters is disabled (DISABLED_ATS)."""
+    if ats_disabled("smartrecruiters"):
+        return "", ""
     try:
         det = fetch_with_backoff(
             fetch, f"https://api.smartrecruiters.com/v1/companies/{board_id}/postings/{posting_id}",
@@ -412,7 +438,10 @@ def smartrecruiters_jobs(board_id, company="", fetch=fetch_json, details=False):
     location but NOT the JD body, so by DEFAULT we build fast, JD-less rows (one request per
     board) and let the detail view pull the description lazily when a role is opened. Pass
     details=True to also fetch each posting's JD + public URL (N+1 requests) — used for a
-    single role, not a wide crawl."""
+    single role, not a wide crawl. Returns [] without any request while SmartRecruiters is
+    disabled (DISABLED_ATS: its robots.txt disallows us)."""
+    if ats_disabled("smartrecruiters"):
+        return []
     data = fetch(f"https://api.smartrecruiters.com/v1/companies/{board_id}/postings?limit=100")
     out = []
     for p in (data or {}).get("content", []):
@@ -897,6 +926,8 @@ def normalize_jobs(ats: str, board_id: str, company: str = "", fetch=fetch_json,
     adapter = ADAPTERS.get(ats)
     if adapter is None:
         raise ValueError(f"unsupported ATS: {ats!r}")
+    if ats_disabled(ats):
+        return []                     # switched off (DISABLED_ATS): no request, no rows
     if not valid_board_id_for(ats, board_id):
         # Hard stop before the value reaches a URL — never fetch an off-platform host.
         raise ValueError(f"invalid board id {board_id!r}: must be a plain board slug "

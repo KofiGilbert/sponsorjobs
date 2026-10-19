@@ -243,12 +243,15 @@ _ROBOTS = [
 def test_an_ats_whose_robots_txt_disallows_its_api_is_left_out_of_the_run():
     rec = Recorder(_ROBOTS)
     pf = _pf(rec, robots=True)
-    ok, denied = pf.allowed_atss(growth.DISCOVER_ATS)
+    # SmartRecruiters is also off in code (ats.DISABLED_ATS) and so not in DISCOVER_ATS; ask about
+    # it explicitly to pin that the robots.txt read alone reaches the same answer.
+    every = ("greenhouse", "lever", "ashby", "workable", "smartrecruiters", "workday")
+    ok, denied = pf.allowed_atss(every)
     assert ok == ["greenhouse", "lever", "ashby", "workable", "workday"]
     assert set(denied) == {"smartrecruiters"} and "disallows" in denied["smartrecruiters"]
     assert pf.delay_for("api.lever.co") >= 1.0       # Crawl-delay honoured
     n = len(rec.urls)
-    pf.allowed_atss(growth.DISCOVER_ATS)             # each robots.txt is read once per run
+    pf.allowed_atss(every)                           # each robots.txt is read once per run
     assert len(rec.urls) == n
     with pytest.raises(growth.HostBlocked):          # and a stray request is never made
         pf("https://api.smartrecruiters.com/v1/companies/acme/postings?limit=1")

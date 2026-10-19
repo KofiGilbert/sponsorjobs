@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from sourcing import ats as ats_mod
 from sourcing.ats import (adzuna_jobs, ashby_jobs, greenhouse_jobs, html_to_text,
                           jsearch_jobs, lever_jobs, recruitee_jobs, remotive_jobs,
                           smartrecruiters_jobs, workable_jobs)
@@ -145,7 +146,8 @@ def test_recruitee_adapter_normalizes():
     assert j["jd_text"] == "Train models." and j["url"].endswith("/ml-engineer")
 
 
-def test_smartrecruiters_adapter_pulls_detail_jd():
+def test_smartrecruiters_adapter_pulls_detail_jd(monkeypatch):
+    monkeypatch.setattr(ats_mod, "DISABLED_ATS", {})   # the dormant adapter, switched back on
     fetch = _dispatch({"postings/p1": SR_DETAIL, "postings": SR_LIST})
     j = smartrecruiters_jobs("acme", "Acme", fetch=fetch, details=True)[0]
     assert j["source_id"] == "smartrecruiters:acme:p1"
@@ -157,7 +159,8 @@ def test_smartrecruiters_adapter_pulls_detail_jd():
     assert "api.smartrecruiters.com" not in j["url"]
 
 
-def test_smartrecruiters_list_only_is_one_request_and_defers_jd():
+def test_smartrecruiters_list_only_is_one_request_and_defers_jd(monkeypatch):
+    monkeypatch.setattr(ats_mod, "DISABLED_ATS", {})   # the dormant adapter, switched back on
     # The DEFAULT (details=False) must not touch the per-posting detail endpoint — that's
     # what keeps a wide crawl fast. JD is empty (fetched lazily later); URL is the public one.
     calls = []

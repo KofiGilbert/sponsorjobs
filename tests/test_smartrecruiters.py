@@ -21,6 +21,15 @@ from sourcing.service import (DEFAULT_MAX_DETAIL, FEED_MAX_DETAIL, feed_detail_b
                               refresh_watchlist, select_checked_rows, select_workday_rows)
 from sourcing.watchlist import Watchlist
 
+@pytest.fixture(autouse=True)
+def _smartrecruiters_switched_back_on(monkeypatch):
+    """SmartRecruiters is DISABLED in production (ats.DISABLED_ATS: its API robots.txt allows
+    only LinkedInBot, checked 2026-10-19), so the app makes no request to it at all
+    (tests/test_smartrecruiters_disabled.py pins that). The adapter is kept dormant so the decision
+    is reversible; these tests switch it back on, against a fake, to keep that code correct."""
+    monkeypatch.setattr(ats, "DISABLED_ATS", {})
+
+
 BOARD = "acme"
 LIST_URL = f"https://api.smartrecruiters.com/v1/companies/{BOARD}/postings"
 
