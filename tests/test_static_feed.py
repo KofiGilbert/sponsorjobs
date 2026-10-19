@@ -60,6 +60,8 @@ def test_aggregator_rows_keep_what_the_via_credit_needs():
         assert feedfile.ATTRIBUTION[key]["name"] == name
         assert "link back" in feedfile.ATTRIBUTION[key]["note"].lower()
     assert "follow" in feedfile.ATTRIBUTION["remoteok"]["note"].lower()
+    # freehire's terms require no attribution and the owner wants it named nowhere (2026-10-18).
+    assert "freehire" not in feedfile.ATTRIBUTION
 
 
 def test_shard_is_two_hex_chars_and_stable():

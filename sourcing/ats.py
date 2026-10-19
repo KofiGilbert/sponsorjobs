@@ -646,7 +646,7 @@ def jsearch_jobs(search="", company="", fetch=fetch_json, pages: int = 1):
     return out
 
 
-def freehire_jobs(search="", company="", fetch=fetch_json):
+def freehire_jobs(search="", company="", fetch=fetch_json, employer_url_only=True):
     """Aggregator feed: freehire.me's FREE, KEYLESS public JSON API. It aggregates 1M+ postings
     across many markets (tech-heavy) and is MINUTE-fresh, so querying it US-only + recent gives
     the sponsorship board fresh, high-volume roles at no cost -- the single biggest free coverage
@@ -670,7 +670,11 @@ def freehire_jobs(search="", company="", fetch=fetch_json):
     data = fetch(f"https://freehire.me/api/v1/agent/jobs/search?{params}") or {}
     out = []
     for j in (data.get("data") or []):
-        out.append(_freehire_row(j))
+        row = _freehire_row(j)
+        # Rows we SHOW must link to the employer's own posting. The full-text lookup below reads
+        # only the JD of a row matched to one we already hold, so it keeps every row.
+        if not employer_url_only or freehire_employer_url_ok(row):
+            out.append(row)
     return out
 
 
@@ -705,7 +709,7 @@ def freehire_fulltext(title: str, company: str = "", fetch=fetch_json) -> str:
     if not title or not want_co:
         return ""                                   # need BOTH to match safely -> else keep snippet
     try:
-        rows = freehire_jobs(f"{title} {company}".strip(), fetch=fetch)
+        rows = freehire_jobs(f"{title} {company}".strip(), fetch=fetch, employer_url_only=False)
     except Exception:                               # noqa: BLE001 - enrichment is best-effort
         return ""
     stop = {"the", "and", "for", "with", "of", "in", "at", "a", "an", "to", "senior", "sr", "jr",
@@ -766,6 +770,17 @@ def _freehire_row(j) -> dict:
     return row
 
 
+def freehire_employer_url_ok(row: dict) -> bool:
+    """Does a freehire row link to the ORIGINAL employer posting? freehire's `url` is documented
+    as the employer's own application URL, and that is the only link we show. A row whose url is
+    missing, not http(s), or points back at freehire.me itself is dropped, never shown."""
+    url = str((row or {}).get("url") or "").strip()
+    if not re.match(r"^https?://", url, re.I):
+        return False
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return bool(host) and host != "freehire.me" and not host.endswith(".freehire.me")
+
+
 def freehire_bulk(search="", company="", fetch=fetch_json, cap=None, visa_sponsorship=False):
     """Bulk-pull the FRESHEST US jobs from freehire.me (newest-first), paginated across all
     fields -- this is the free high-volume feed. freehire carries tens of thousands of US roles
@@ -805,7 +820,9 @@ def freehire_bulk(search="", company="", fetch=fetch_json, cap=None, visa_sponso
             if not key or key in seen:
                 continue
             seen.add(key)
-            out.append(_freehire_row(j))
+            row = _freehire_row(j)
+            if freehire_employer_url_ok(row):            # the employer's own posting, or nothing
+                out.append(row)
         if len(rows) < per:
             break                                        # last page
     return out
