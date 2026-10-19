@@ -23,6 +23,14 @@ What it adds over sourcing/discover.py (which does the per-employer identity-che
     a retry, never a false "no board here".
   * HONESTY — a board is only added when its live feed returned at least one job, and every
     rejected live board is reported with the reason (the identity check that turned it down).
+  * NO EVASION (2026-10-18) — a host that refuses us (401 / 403, or a bot-challenge page where
+    JSON was expected) is marked BLOCKED and not asked again: a Workday tenant for good (the
+    checkpoint remembers it), a shared ATS API for the rest of the run (its ATS is owed, not
+    missed). With robots=True each ATS API's robots.txt is read first and obeyed, Crawl-delay
+    included; an ATS whose robots.txt disallows its API is left out of the run entirely.
+  * CAP-EXEMPT FIRST — universities, university hospitals and nonprofit research institutes
+    sponsor H-1B all year outside the lottery; they rank higher (CAP_EXEMPT_BOOST), and every
+    verified board records whether its employer is one (watchlist_evidence.csv).
 """
 
 from __future__ import annotations
@@ -35,22 +43,36 @@ import time
 import urllib.error
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
 from .ats import fetch_json, valid_board_id_for
+from .careersite import Robots, looks_challenged
 from .discover import DISCOVER_ATS, discover_for_company, slug_candidates
 from .quality import employer_is_clearance_heavy
-from .workday import WD_EXTRA_INSTANCES, WD_INSTANCES
-from .sponsors import normalize_employer
+from .workday import WD_EXTRA_INSTANCES, WD_INSTANCES, parse_board_id
+from .sponsors import looks_cap_exempt, normalize_employer
 
 ROOT = Path(__file__).resolve().parents[1]
 SPONSOR_SEED = ROOT / "seed" / "sponsors_seed.csv.gz"
 WATCHLIST_SEED = ROOT / "seed" / "watchlist_seed.csv"
+# Evidence for every board discovery verified: where it lives, when it was verified, how many
+# jobs it held, and whether the employer is likely cap-exempt. Kept beside (not in) the seed so
+# the seed stays the three columns every reader expects.
+WATCHLIST_EVIDENCE = ROOT / "seed" / "watchlist_evidence.csv"
+EVIDENCE_FIELDS = ["ats", "board_id", "company", "url", "jobs", "verified", "cap_exempt",
+                   "h1b_approvals", "perm_certs"]
 
 # A filing year older than the newest one in the data counts for this much less per year,
 # so 200 approvals last year outrank 300 approvals that stopped four years ago.
 RECENCY_DECAY = 0.6
+# A certified PERM (green card) application counts like one H-1B approval: both say the
+# employer sponsors, and a PERM-only employer (no H-1B row) is still worth a probe.
+PERM_WEIGHT = 1.0
+# Likely cap-exempt employers (universities, university hospitals, nonprofit research) rank as if
+# they had this many times their filings: they sponsor all year, outside the lottery.
+CAP_EXEMPT_BOOST = 3.0
 
 # Politeness defaults. The whole crawl (all threads together) sends at most one request per
 # HOST_DELAY seconds to each ATS host; every request gives up after PROBE_TIMEOUT seconds.
@@ -119,8 +141,16 @@ MAX_REQUEUE = 2               # times one employer is put back after a fully-thr
 
 # -- the ranked sponsor source ------------------------------------------------- #
 
+def _int(v) -> int:
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def load_sponsor_seed(path: str | Path = SPONSOR_SEED) -> list[dict]:
-    """The employers with at least one H-1B approval from the committed sponsor seed."""
+    """The employers with at least one H-1B approval or certified PERM application from the
+    committed sponsor seed, with the seed's industry code and cap-exempt flag."""
     import gzip
     opener = gzip.open if str(path).endswith(".gz") else open
     out: list[dict] = []
@@ -130,13 +160,48 @@ def load_sponsor_seed(path: str | Path = SPONSOR_SEED) -> list[dict]:
                 approvals = int(r.get("h1b_approvals") or 0)
             except ValueError:
                 continue
-            if approvals <= 0:
+            perm = _int(r.get("perm_certs"))
+            if approvals <= 0 and perm <= 0:
                 continue
             out.append({"norm_name": r.get("norm_name") or normalize_employer(r.get("display_name", "")),
                         "display_name": r.get("display_name", ""),
                         "h1b_approvals": approvals,
-                        "h1b_last_fy": int(r.get("h1b_last_fy") or 0)})
+                        "h1b_last_fy": _int(r.get("h1b_last_fy")),
+                        "perm_certs": perm,
+                        "naics": str(r.get("naics") or ""),
+                        "cap_exempt": _int(r.get("cap_exempt"))})
     return out
+
+
+# A for-profit legal form on the filing name. The seed's cap_exempt flag is the MAX over every
+# name variant an employer filed under, so it is set on Microsoft, Meta and Snap (a research
+# entity, a NAICS 61 variant); a corporate legal form overrides it for ranking and evidence.
+_FOR_PROFIT = re.compile(r"\b(inc|llc|l l c|corp|corporation|co|ltd|lp|llp|plc|pllc|pc|na|company)\b")
+# K-12 school districts sponsor H-1B teachers but are NOT cap-exempt (only higher education and
+# its affiliates, and nonprofit / government research organizations are), so they get no boost.
+_K12 = re.compile(r"\b(school district|independent school|public schools?|public sch|isd|"
+                  r"unified school|county schools|board of education)\b")
+_NONPROFIT_WORDS = re.compile(r"\b(institute|inst|clinic|foundation|laborator(y|ies)|research)\b")
+
+
+def cap_exempt_likely(row: dict) -> bool:
+    """Is this sponsor likely cap-exempt (no H-1B lottery)? The name reads as a university,
+    college, hospital, medical center or research institute (sponsors.looks_cap_exempt, the same
+    rule the app's chip uses); or the seed flags it AND the name has no for-profit legal form AND
+    it is in education / health care (NAICS 61 / 62) or names itself an institute, clinic,
+    foundation or laboratory (Mayo Clinic, Battelle Memorial Institute). A heuristic, like the
+    chip: the employer's own HR confirms cap-exempt status."""
+    name = str(row.get("display_name") or "")
+    low = " ".join(re.sub(r"[^a-z0-9]+", " ", name.lower()).split())
+    if _K12.search(low):
+        return False                      # a public school district is not higher education
+    if looks_cap_exempt(name):
+        return True
+    if not _int(row.get("cap_exempt")):
+        return False
+    if _FOR_PROFIT.search(low):
+        return False
+    return str(row.get("naics") or "")[:2] in ("61", "62") or bool(_NONPROFIT_WORDS.search(low))
 
 
 def recency_weight(last_fy: int, newest_fy: int, decay: float = RECENCY_DECAY) -> float:
@@ -146,16 +211,23 @@ def recency_weight(last_fy: int, newest_fy: int, decay: float = RECENCY_DECAY) -
     return decay ** (newest_fy - last_fy)
 
 
-def sponsor_score(row: dict, newest_fy: int) -> float:
-    return int(row.get("h1b_approvals") or 0) * recency_weight(int(row.get("h1b_last_fy") or 0),
-                                                                newest_fy)
+def sponsor_score(row: dict, newest_fy: int, cap_boost: float = CAP_EXEMPT_BOOST) -> float:
+    """H-1B approvals weighted toward recent filing years, plus certified PERM applications,
+    times CAP_EXEMPT_BOOST for a likely cap-exempt employer."""
+    score = (_int(row.get("h1b_approvals")) * recency_weight(_int(row.get("h1b_last_fy")), newest_fy)
+             + PERM_WEIGHT * _int(row.get("perm_certs")))
+    return score * (cap_boost if cap_boost and cap_exempt_likely(row) else 1.0)
 
 
-def rank_sponsors(rows, limit: int | None = None, skip_norms=(), skip_fn=None) -> list[dict]:
-    """Sponsors most worth probing first: approvals weighted toward recent filing years,
-    minus anyone in `skip_norms` (normalized names already watched / already probed) and
-    anyone `skip_fn(display_name)` turns down. Deterministic (ties by name)."""
-    rows = [r for r in rows if int(r.get("h1b_approvals") or 0) > 0]
+def rank_sponsors(rows, limit: int | None = None, skip_norms=(), skip_fn=None,
+                  cap_boost: float = CAP_EXEMPT_BOOST, cap_exempt_only: bool = False) -> list[dict]:
+    """Sponsors most worth probing first: approvals weighted toward recent filing years, plus
+    PERM, cap-exempt employers boosted (`cap_boost`; 1 turns it off, `cap_exempt_only` keeps
+    only them), minus anyone in `skip_norms` (normalized names already watched / already
+    probed) and anyone `skip_fn(display_name)` turns down. Deterministic (ties by name)."""
+    rows = [r for r in rows if _int(r.get("h1b_approvals")) > 0 or _int(r.get("perm_certs")) > 0]
+    if cap_exempt_only:
+        rows = [r for r in rows if cap_exempt_likely(r)]
     newest = max((int(r.get("h1b_last_fy") or 0) for r in rows), default=0)
     skip = set(skip_norms)
     ranked: list[dict] = []
@@ -167,7 +239,8 @@ def rank_sponsors(rows, limit: int | None = None, skip_norms=(), skip_fn=None) -
         if skip_fn and skip_fn(r.get("display_name", "")):
             continue
         seen.add(norm)
-        ranked.append({**r, "norm_name": norm, "score": sponsor_score(r, newest)})
+        ranked.append({**r, "norm_name": norm, "score": sponsor_score(r, newest, cap_boost),
+                       "cap_exempt_likely": cap_exempt_likely(r)})
     ranked.sort(key=lambda r: (-r["score"], r["display_name"]))
     return ranked[:limit] if limit else ranked
 
@@ -178,13 +251,14 @@ def watched_norms(companies) -> set[str]:
 
 
 def candidates(rows, checkpoint: "Checkpoint", watched, limit: int | None,
-               atss=DISCOVER_ATS) -> list[dict]:
+               atss=DISCOVER_ATS, **rank_kw) -> list[dict]:
     """The ranked employers still worth probing: not watched, not finished in the checkpoint.
     An employer whose last probe was cut short by a throttled host comes back with only the
-    ATSs it still owes (`row["atss"]`), so a rerun finishes the job instead of redoing it."""
+    ATSs it still owes (`row["atss"]`), so a rerun finishes the job instead of redoing it.
+    `rank_kw` goes to rank_sponsors (cap_boost, cap_exempt_only)."""
     pending = checkpoint.pending(atss)
     ranked = rank_sponsors(rows, limit=limit,
-                           skip_norms=set(watched) | checkpoint.done_norms(atss))
+                           skip_norms=set(watched) | checkpoint.done_norms(atss), **rank_kw)
     for r in ranked:
         if r["norm_name"] in pending:
             r["atss"] = pending[r["norm_name"]]
@@ -221,6 +295,76 @@ def write_watchlist_seed(path: str | Path, rows) -> list[dict]:
         w.writeheader()
         w.writerows(clean)
     return clean
+
+
+def board_url(ats: str, board_id: str) -> str:
+    """Where a verified board lives: the public endpoint discovery read (or, for Workday, the
+    career site's own page), recorded as evidence."""
+    if ats == "workday":
+        tenant, host, site = parse_board_id(board_id)
+        return f"https://{host}/{site}"
+    return {
+        "greenhouse": f"https://boards-api.greenhouse.io/v1/boards/{board_id}/jobs",
+        "lever": f"https://api.lever.co/v0/postings/{board_id}?mode=json",
+        "ashby": f"https://api.ashbyhq.com/posting-api/job-board/{board_id}",
+        "workable": f"https://apply.workable.com/api/v1/widget/accounts/{board_id}",
+        "smartrecruiters": f"https://api.smartrecruiters.com/v1/companies/{board_id}/postings",
+    }.get(ats, "")
+
+
+def read_evidence(path: str | Path = WATCHLIST_EVIDENCE) -> list[dict]:
+    path = Path(path)
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8", newline="") as f:
+        return [dict(r) for r in csv.DictReader(f) if r.get("ats") and r.get("board_id")]
+
+
+def write_evidence(path: str | Path, rows) -> list[dict]:
+    """Merge evidence rows into the file, keyed on (ats, board_id); a later row for a board
+    replaces an earlier one (a re-verification). Sorted like the seed. Returns what was written."""
+    by_key: dict[tuple[str, str], dict] = {}
+    for r in [*read_evidence(path), *rows]:
+        key = (str(r["ats"]).strip().lower(), str(r["board_id"]).strip())
+        if not valid_board_id_for(key[0], key[1]):
+            continue
+        by_key[key] = {k: ("" if r.get(k) is None else str(r.get(k))) for k in EVIDENCE_FIELDS}
+        by_key[key]["ats"], by_key[key]["board_id"] = key
+    clean = sorted(by_key.values(), key=lambda r: (r["company"], r["ats"], r["board_id"]))
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=EVIDENCE_FIELDS)
+        w.writeheader()
+        w.writerows(clean)
+    return clean
+
+
+def evidence_row(hit: dict, row: dict | None = None, today: str | None = None) -> dict:
+    """One verified board's evidence line from a checkpointed hit (and its sponsor row)."""
+    row = row or {}
+    return {"ats": hit["ats"], "board_id": hit["board_id"],
+            "company": hit.get("company") or hit.get("name") or row.get("display_name", ""),
+            "url": hit.get("url") or board_url(hit["ats"], hit["board_id"]),
+            "jobs": int(hit.get("jobs") or 0),
+            "verified": hit.get("verified") or today or date.today().isoformat(),
+            "cap_exempt": int(bool(hit.get("cap_exempt", cap_exempt_likely(row) if row else False))),
+            "h1b_approvals": hit.get("h1b_approvals", row.get("h1b_approvals", "")),
+            "perm_certs": hit.get("perm_certs", row.get("perm_certs", ""))}
+
+
+def count_us_jobs(ats: str, board_id: str, company: str = "", fetch=fetch_json) -> int | None:
+    """How many of a board's listed jobs sit in the US (sponsors.looks_us, the feed's own rule),
+    from ONE read of its list (Workday: paged to its 2000 ceiling). None when it can't be read.
+    A Workday row listed as "3 Locations" is not counted: the list does not say where."""
+    from .ats import normalize_jobs
+    from .sponsors import looks_us
+    from .workday import LIST_CEILING
+    try:
+        kw = {"max_jobs": LIST_CEILING} if ats == "workday" else {}
+        rows = normalize_jobs(ats, board_id, company, fetch=fetch, **kw)
+    except Exception:                                      # noqa: BLE001
+        return None
+    return sum(1 for r in rows if looks_us(r.get("location") or ""))
 
 
 def per_ats_counts(rows) -> dict[str, int]:
@@ -305,11 +449,29 @@ class Checkpoint:
     def hits(self) -> list[dict]:
         return [r for r in self.records.values() if r.get("status") == "hit"]
 
+    def blocked_hosts(self) -> set[str]:
+        """Every host a probe found refusing us (401 / 403 / a challenge page), across runs:
+        never asked again."""
+        return {h for r in self.records.values() for h in (r.get("blocked_hosts") or ())}
+
 
 # -- polite fetch -------------------------------------------------------------- #
 
 class HostCoolingDown(Exception):
     """Raised instead of a request while a host is in its 429 cooldown."""
+
+
+class HostBlocked(HostCoolingDown):
+    """Raised instead of a request to a host that refused us (401 / 403 / a bot-challenge page),
+    or to a path its robots.txt disallows. We never try to get past either."""
+
+
+# HTTP answers that mean "not you" rather than "not here": the host is blocked, never retried.
+BLOCK_CODES = (401, 403)
+# A shared ATS API host (every employer's probe goes through it) is blocked for the run only
+# after this many refusals, so one odd answer about one slug cannot switch off a whole ATS; a
+# Workday tenant host (one employer's) is blocked on the first.
+SHARED_BLOCK_STRIKES = 2
 
 
 class PoliteFetch:
@@ -324,8 +486,16 @@ class PoliteFetch:
     def __init__(self, fetch=fetch_json, timeout: int = PROBE_TIMEOUT,
                  host_delay: float = HOST_DELAY, host_delays=None,
                  max_retries: int = MAX_429_RETRIES, cooldown: float = COOLDOWN,
-                 max_wait: float = MAX_WAIT, sleep=time.sleep, clock=time.monotonic):
+                 max_wait: float = MAX_WAIT, sleep=time.sleep, clock=time.monotonic,
+                 robots: bool = False, blocked_hosts=()):
         self._fetch = fetch
+        self.robots = robots
+        self._robots: dict[str, Robots] = {}
+        self.robots_denied: dict[str, str] = {}      # lane -> the path its robots.txt disallows
+        # host -> why it is blocked. Seeded from earlier runs (Checkpoint.blocked_hosts).
+        self.blocked_sites: dict[str, str] = {h: "blocked in an earlier run" for h in blocked_hosts}
+        self._strikes: dict[str, int] = {}
+        self.refusals = 0
         self.timeout = timeout
         self._base = {**HOST_DELAYS, **(host_delays or {})}
         self._default_delay = host_delay
@@ -356,6 +526,7 @@ class PoliteFetch:
         made a Workable-only run defer all 3,613 employers in seconds, 2026-10-01)."""
         self._local.blocked = set()
         self._local.attempted = set()
+        self._local.refused = []
         self._local.lanes = lanes_for(atss) if atss is not None else set(ATS_HOSTS)
 
     @property
@@ -370,6 +541,12 @@ class PoliteFetch:
     def attempted_ats(self) -> set[str]:
         """ATSs this employer's probe actually asked (or tried to ask) anything of."""
         return {ATS_HOSTS[h] for h in getattr(self._local, "attempted", set()) if h in ATS_HOSTS}
+
+    @property
+    def refused_hosts(self) -> list[str]:
+        """Hosts that refused THIS employer's probe (401 / 403 / challenge), a Workday tenant's
+        own host included: recorded in its checkpoint line so no later run asks them again."""
+        return list(getattr(self._local, "refused", []))
 
     @property
     def throttled(self) -> bool:
@@ -481,17 +658,103 @@ class PoliteFetch:
         now = self._clock()
         return sorted(h for h, until in self._cooling.items() if until > now)
 
+    # -- blocked hosts and robots.txt ------------------------------------------ #
+    def _refused(self, hostname: str, lane: str, why: str) -> None:
+        """A host answered 401 / 403 or a challenge page. A tenant host is blocked at once; a
+        shared ATS lane after SHARED_BLOCK_STRIKES, and then its ATS is owed for this employer
+        (the refusal says nothing about whether they have a board)."""
+        shared = hostname == lane
+        with self._lock:
+            self.refusals += 1
+            self._strikes[hostname] = self._strikes.get(hostname, 0) + 1
+            if not shared or self._strikes[hostname] >= SHARED_BLOCK_STRIKES:
+                self.blocked_sites.setdefault(hostname, why)
+        if not hasattr(self._local, "refused"):
+            self._local.refused = []
+        if shared:
+            self._block(lane)
+        elif hostname not in self._local.refused:
+            self._local.refused.append(hostname)
+
+    def _robots_for(self, lane: str) -> Robots | None:
+        """The lane's robots.txt, read once per run. A 4xx means there is none (RFC 9309: all
+        allowed; Ashby's API answers 401 here). A 5xx or network error is not cached and counts
+        as "not allowed yet", so the request is owed rather than made blind."""
+        if lane in self._robots:
+            return self._robots[lane]
+        try:
+            text = self._fetch(f"https://{lane}/robots.txt", timeout=self.timeout, raw=True)
+            rules = Robots(text if isinstance(text, str) else "")
+        except urllib.error.HTTPError as exc:
+            if not 400 <= exc.code < 500:
+                return None
+            rules = Robots("")
+        except Exception:                                  # noqa: BLE001 - timeout / DNS
+            return None
+        if rules.delay:
+            with self._lock:
+                self._base[lane] = max(self._base.get(lane, self._default_delay), rules.delay)
+        self._robots[lane] = rules
+        return rules
+
+    def robots_allows(self, url: str) -> bool:
+        """Does the robots.txt of `url`'s shared ATS lane allow it (always True with robots
+        off, and for a Workday tenant, whose own robots.txt discover_workday reads and obeys)?"""
+        hostname = (urlparse(url).hostname or "").lower()
+        lane = host_lane(hostname)
+        if not self.robots or hostname != lane or ATS_HOSTS.get(lane) == "workday" \
+                or urlparse(url).path == "/robots.txt":
+            return True
+        rules = self._robots_for(lane)
+        if rules is None:
+            return False
+        if not rules.can_fetch(url):
+            self.robots_denied.setdefault(lane, urlparse(url).path)
+            return False
+        return True
+
+    def allowed_atss(self, atss, probe_urls=None) -> tuple[list[str], dict[str, str]]:
+        """Split `atss` into those whose API robots.txt allows discovery's requests and those
+        it does not (ats -> why), reading each robots.txt once. A run leaves the second group
+        out entirely instead of asking it employer after employer."""
+        probe_urls = probe_urls or PROBE_URLS
+        ok: list[str] = []
+        denied: dict[str, str] = {}
+        for ats in atss:
+            url = probe_urls.get(ats)
+            if not url or self.robots_allows(url):
+                ok.append(ats)
+            else:
+                lane = host_lane(urlparse(url).hostname or "")
+                denied[ats] = (f"{lane}/robots.txt disallows {urlparse(url).path}"
+                               if lane in self._robots else f"{lane}/robots.txt could not be read")
+        return ok, denied
+
     def __call__(self, url: str, timeout: int | None = None, **kw):
-        host = host_lane(urlparse(url).hostname or url)
+        hostname = (urlparse(url).hostname or url).lower()
+        host = host_lane(hostname)
         if hasattr(self._local, "attempted"):
             self._local.attempted.add(host)
+        if hostname in self.blocked_sites or host in self.blocked_sites:
+            if host in self.blocked_sites:
+                self._block(host)
+            raise HostBlocked(hostname)
+        if not self.robots_allows(url):
+            self._block(host)
+            raise HostBlocked(f"{hostname}: robots.txt")
         for attempt in range(self.max_retries + 1):
             if not self._take_turn(host):
                 self._block(host)
                 raise HostCoolingDown(host)
             try:
                 result = self._fetch(url, timeout=timeout or self.timeout, **kw)
+            except json.JSONDecodeError:             # a 200 that is not JSON: a challenge page
+                self._refused(hostname, host, "answered a non-JSON page (bot challenge?)")
+                raise
             except urllib.error.HTTPError as exc:
+                if exc.code in BLOCK_CODES:          # "not you": blocked, never retried
+                    self._refused(hostname, host, f"HTTP {exc.code}")
+                    raise
                 if 500 <= exc.code < 600:            # the host is struggling: give it room
                     self._on_server_error(host, exc)
                     raise
@@ -505,9 +768,22 @@ class PoliteFetch:
                     self._block(host)
                     raise
                 continue
+            if isinstance(result, str) and looks_challenged(result):
+                self._refused(hostname, host, "answered a bot-challenge page")
+                raise HostBlocked(hostname)
             self._on_clean(host)
             return result
         raise RuntimeError("unreachable")                 # pragma: no cover
+
+
+# One representative request per ATS: what the robots.txt check is asked about.
+PROBE_URLS = {
+    "greenhouse": "https://boards-api.greenhouse.io/v1/boards/example/jobs",
+    "lever": "https://api.lever.co/v0/postings/example?mode=json",
+    "ashby": "https://api.ashbyhq.com/posting-api/job-board/example",
+    "workable": "https://apply.workable.com/api/v1/widget/accounts/example",
+    "smartrecruiters": "https://api.smartrecruiters.com/v1/companies/example/postings?limit=1",
+}
 
 
 def _retry_after(exc) -> float:
@@ -565,7 +841,7 @@ def grow(ranked, checkpoint: Checkpoint, fetch, *, known_boards=(), atss=DISCOVE
     known = set(known_boards)
     summary = {"probed": 0, "skipped": 0, "hits": 0, "new_boards": [], "duplicates": 0,
                "rejected": [], "throttled": 0, "partial": 0, "stopped": "exhausted",
-               "per_ats": {}, "requeued": 0, "waited": 0.0}
+               "per_ats": {}, "requeued": 0, "waited": 0.0, "blocked": [], "cap_exempt_hits": 0}
     rejections: dict[str, list[str]] = {}
     rej_lock = threading.Lock()
     requeue: deque = deque()            # fully-throttled employers, to be asked again
@@ -594,6 +870,7 @@ def grow(ranked, checkpoint: Checkpoint, fetch, *, known_boards=(), atss=DISCOVE
                 rejections[norm] = local
         blocked = [a for a in row_atss if a in getattr(fetch, "blocked_ats", set())]
         attempted = [a for a in row_atss if a in getattr(fetch, "attempted_ats", set())]
+        row["_refused"] = list(getattr(fetch, "refused_hosts", []) or [])
         if hit:
             return row, "hit", hit, None, blocked
         if blocked and len(blocked) == len(attempted):
@@ -602,6 +879,11 @@ def grow(ranked, checkpoint: Checkpoint, fetch, *, known_boards=(), atss=DISCOVE
 
     def finish(fut):
         row, status, hit, why, blocked = fut.result()
+        refused = row.pop("_refused", [])
+        extra = {"blocked_hosts": refused} if refused else {}
+        for h in refused:
+            summary["blocked"].append({"company": row["display_name"], "host": h,
+                                       "why": (getattr(fetch, "blocked_sites", {}) or {}).get(h, "")})
         name, norm = row["display_name"], row["norm_name"]
         rejected_here = rejections.pop(norm, [])
         for r in rejected_here:
@@ -620,24 +902,31 @@ def grow(ranked, checkpoint: Checkpoint, fetch, *, known_boards=(), atss=DISCOVE
                 summary["throttled"] += 1               # left for the next run
         elif status == "skipped":
             summary["skipped"] += 1
-            checkpoint.record(norm, name=name, status="skipped", reason=why)
+            checkpoint.record(norm, name=name, status="skipped", reason=why, **extra)
         elif status == "hit":
             summary["probed"] += 1
             if int(hit.get("jobs") or 0) < 1:           # discover never does this; stay honest
                 summary["rejected"].append({"company": name,
                                             "board": f"{hit['ats']}:{hit['board_id']} — live but 0 jobs"})
-                checkpoint.record(norm, name=name, status="miss", reason="0 jobs")
+                checkpoint.record(norm, name=name, status="miss", reason="0 jobs", **extra)
             else:
                 summary["hits"] += 1
                 key = (hit["ats"], hit["board_id"])
+                cap = cap_exempt_likely(row)
+                summary["cap_exempt_hits"] += int(cap)
+                ev = {"url": board_url(hit["ats"], hit["board_id"]),
+                      "verified": date.today().isoformat(), "cap_exempt": int(cap),
+                      "h1b_approvals": _int(row.get("h1b_approvals")),
+                      "perm_certs": _int(row.get("perm_certs"))}
                 rec = checkpoint.record(norm, name=name, status="hit", ats=hit["ats"],
-                                        board_id=hit["board_id"], jobs=hit["jobs"])
+                                        board_id=hit["board_id"], jobs=hit["jobs"], **ev, **extra)
                 if key in known:
                     summary["duplicates"] += 1
                 else:
                     known.add(key)
                     summary["new_boards"].append({"company": name, "ats": hit["ats"],
-                                                  "board_id": hit["board_id"], "jobs": hit["jobs"]})
+                                                  "board_id": hit["board_id"], "jobs": hit["jobs"],
+                                                  **ev})
                     summary["per_ats"][hit["ats"]] = summary["per_ats"].get(hit["ats"], 0) + 1
                 why = f"{rec['ats']}:{rec['board_id']} ({rec['jobs']} jobs)"
         else:
@@ -647,7 +936,7 @@ def grow(ranked, checkpoint: Checkpoint, fetch, *, known_boards=(), atss=DISCOVE
             done |= set(row.get("atss") or atss) - set(blocked)
             rec = {"name": name, "status": "miss",
                    "reason": "; ".join(rejected_here) or "no live board at any slug",
-                   "probed_ats": [a for a in DISCOVER_ATS if a in done]}
+                   "probed_ats": [a for a in DISCOVER_ATS if a in done], **extra}
             if blocked:
                 summary["partial"] += 1
                 rec["unprobed_ats"] = blocked          # owed to the next run
@@ -712,6 +1001,8 @@ def grow(ranked, checkpoint: Checkpoint, fetch, *, known_boards=(), atss=DISCOVE
     summary["server_errors"] = getattr(fetch, "server_errors", None)
     summary["cooldowns"] = getattr(fetch, "cooldowns", None)
     summary["deferred"] = getattr(fetch, "deferred", None)
+    summary["refusals"] = getattr(fetch, "refusals", None)
+    summary["robots_denied"] = dict(getattr(fetch, "robots_denied", {}) or {})
     return summary
 
 
@@ -731,8 +1022,13 @@ def discover_sponsors(watchlist, checkpoint_path: str | Path, *, budget: int = 3
     checkpoint = Checkpoint(checkpoint_path)
     companies = watchlist.companies(active_only=False)
     known = {(c["ats"], c["board_id"]) for c in companies}
+    if fetch is None:
+        polite = PoliteFetch(sleep=sleep, clock=clock, robots=True,
+                             blocked_hosts=checkpoint.blocked_hosts())
+        atss = tuple(polite.allowed_atss(atss)[0])       # robots.txt says no: not asked at all
+    else:
+        polite = fetch
     ranked = candidates(rows, checkpoint, watched_norms(companies), budget, atss)
-    polite = fetch if fetch is not None else PoliteFetch(sleep=sleep, clock=clock)
     summary = grow(ranked, checkpoint, polite, known_boards=known, atss=atss,
                    workers=workers, max_seconds=max_minutes * 60 if max_minutes else None,
                    clock=clock, sleep=sleep, discover=discover)

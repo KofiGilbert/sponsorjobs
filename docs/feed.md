@@ -272,7 +272,7 @@ allowlist (`submit/allowlist.py`) is unchanged and the person clicks submit.
 
 ### Growing the watchlist (`scripts/grow_watchlist.py`, `sourcing/discover.py`)
 
-Every board on `seed/watchlist_seed.csv` is a proven H-1B sponsor with a live public feed. The list
+Every board on `seed/watchlist_seed.csv` is a proven H-1B (or PERM) sponsor with a live public feed. The list
 grows by probing the sponsors in `seed/sponsors_seed.csv.gz`, biggest recent H-1B filers first, on
 the GREEN-lane ATS APIs, and keeping a board only when its own name (or a Workday posting's hiring
 organization, or failing both its own job descriptions) confirms it is that employer and it lists
@@ -329,6 +329,71 @@ Wipro, Infosys, Deloitte, Meta...): they use their own career sites, which the c
 covers. Reaching ~3,000 boards needs the sponsors past rank 4,000, where the hit rate keeps falling
 (12% in the top 50, ~5% around rank 3,000).
 
+### Growing toward sponsors: PERM, cap-exempt institutions, blocks and robots (2026-10-18)
+
+The same script now grows the list in bounded batches (default `--limit 300`) with four changes:
+
+* **Ranking.** Score = H-1B approvals (recent years weighted, as before) + certified PERM
+  applications (`PERM_WEIGHT` 1.0; PERM-only employers are now candidates too), times
+  `CAP_EXEMPT_BOOST` (3.0) for a likely cap-exempt employer. `--no-cap-boost` turns the boost
+  off; `--cap-exempt-only` probes only those employers.
+* **Cap-exempt employers.** `growth.cap_exempt_likely`: the name reads as a university, college,
+  hospital, medical center or research institute (the app chip's own rule,
+  `sponsors.looks_cap_exempt`), or the seed flags it AND the name has no for-profit legal form AND
+  it is NAICS 61/62 or calls itself an institute, clinic, foundation or laboratory. The seed flag
+  alone is not trusted: it is the MAX over every name variant, so it is set on Microsoft, Meta
+  and Snap. K-12 school districts get no boost (they are not cap-exempt). Universities used to be
+  skipped outright: "University Of Michigan" is a generic word plus a place, so it had no brand
+  word to check a board against. Now `discover.institution_alias` makes the WHOLE institution
+  phrase the brand ("university of michigan", filing wrappers like "Regents Of The" and
+  abbreviations like "Univ" cleaned off), with slug guesses from a curated short-form table
+  (`INSTITUTION_SHORT`: umich, upenn, uchicago, psu, usc, wustl...), the acronym, and "u" + a
+  one-word place. The phrase is never reordered, so "University of Washington" never passes for
+  Washington University in St Louis, nor "Loyola University Chicago" for the University of
+  Chicago. A name made only of descriptors ("Childrens Hospital") names no one and is skipped. A
+  university's student-jobs Workday site is not a board for outside applicants and is skipped.
+* **Blocked hosts.** A host that answers 401 / 403, a bot-challenge page, or non-JSON where JSON
+  was expected is marked blocked and never asked again: a Workday tenant at once and for good
+  (its host is written to the employer's checkpoint line as `blocked_hosts`, and the next run
+  starts with every blocked host from the checkpoint), a shared ATS API after two refusals and
+  for the rest of the run (its ATS is owed by the employer, never recorded as a miss). 429s keep
+  the existing back-off and cooldown. Nothing tries to get past a block.
+* **robots.txt.** Each ATS API's robots.txt is read once per run and obeyed, Crawl-delay
+  included (Lever asks for 1 s). **SmartRecruiters' `api.smartrecruiters.com/robots.txt`
+  disallows everything to everyone but LinkedInBot, so discovery no longer probes
+  SmartRecruiters at all** (the feed's crawl of the 158 SmartRecruiters boards already on the
+  list is unchanged; whether to keep crawling them is an open question for the maintainer).
+  Greenhouse (only `/embed/` disallowed), Lever, Workable allow it; Ashby's API answers 401 for
+  robots.txt, which RFC 9309 reads as "no robots file". A robots.txt that cannot be read (5xx,
+  timeout) owes the request rather than guessing. Workday tenants' own robots.txt was already
+  read and obeyed per tenant.
+* **Evidence.** Every verified board gets a line in `seed/watchlist_evidence.csv` (`ats,
+  board_id, company, url, jobs, verified, cap_exempt, h1b_approvals, perm_certs`), merged by
+  board. The seed itself keeps its three columns. The app needs no new field for the cap-exempt
+  chip: it already derives "Cap-exempt (likely)" per employer at serve time
+  (`SponsorDB.lookup` -> `CAP-EXEMPT` badge, `ui/static/app.js`), so the evidence flag is a
+  record for maintainers, not a second source of truth.
+
+`--count-us` reads each NEW board's list once after the run and counts its US jobs with the
+feed's own `looks_us` rule (a Workday row listed as "3 Locations" is not counted, so it undercounts).
+
+Universities list a building or campus as the location ("Franklin Building", "Penn State University
+Park"), which `looks_us` cannot place, so their roles were dropped as "not US". `workday_detail` now
+reads the posting's own `country` and appends ", United States" when it is the US, and
+`fill_details` lets that replace a location the US rule could not read.
+
+**Sample run, 2026-10-18** (`--limit 50 --cap-exempt-only --count-us`, all ATSs but Workable; 6.2
+minutes, 1,427 requests, 0 x 429): 48 employers probed, 2 skipped (Battelle: clearance-heavy;
+Childrens Hospital: names no one), **11 boards verified, all Workday, all universities**: Maryland,
+Penn, Chicago, Penn State, USC, Virginia, Texas A&M, UT Austin, Washington, Ohio State, WashU. The
+Virginia hit was its student-jobs site, so the rule now skips student sites and it was dropped,
+leaving **10 new boards with 6,275 listed jobs** (3,104 placed in the US from the list alone; most of
+the rest are campus buildings the country fix above places). Turned down correctly: Indiana
+University's tenant "iu" (IU Dortmund GmbH), boards named "Maryland", "Virginia", "Virtual
+Preparatory Academy of Oklahoma", "Lincoln Property Company". Yale and Arizona State run Workday but
+their robots.txt disallows the career sites, so they were left alone. One tenant answered 401
+(nyu.wd503) and is now blocked. SmartRecruiters was left out by its robots.txt.
+
 ### How often each board is crawled
 
 The build crawls boards in watchlist order from a cursor saved under `--data`, stopping at
@@ -354,6 +419,20 @@ before), saves the state and publishes once. If one shard fails, the merge still
 shard's boards keep the rows already saved, and its cursor does not move, so the next run retries
 them. If both fail, the merge refuses to publish and the last feed stays up. Locally nothing
 changes: `FEED_SHARD_INDEX` / `FEED_SHARD_COUNT` default to 0 / 1, the old single build.
+
+**Three crawl shards (2026-10-18).** The 2026-10-18 16:00 run (the last one whose merge finished)
+reached 475 of 698 boards on shard 0 and 354 of 677 on shard 1 in the 140-minute cap: about 830
+boards a run, so the 1,375-board list took ~1.7 runs (~5 hours) per lap. Shard 1 is slower per board
+because Workday detail reads dominate; shard 0 also carries the career-site lane. To absorb the
+discovery growth the matrix is now `[0, 1, 2]` with `FEED_SHARD_COUNT: 3` (a test keeps the two in
+step): ~460 boards a shard, so one run covers about the whole list today, and a list of ~2,500
+boards still laps in ~2 runs. Changing the count moves boards between shards (the hash is taken
+mod the count); each new shard's first run starts from the old single-job cursor
+(`crawl_cursor.json`), and the `s*of2` cursor files are simply no longer read. The merge folds three
+deltas instead of two (shard 0's delta is the big one, ~110k rows, because of the career-site
+lane), well inside its 60 minutes. If the list passes ~3,500 boards, the next step is a fourth
+shard or visiting the high-volume boards every run and rotating the long tail; nothing in the data
+needs priority ordering yet (every watched board is a verified sponsor).
 
 ### List-only boards are checked before they are kept (Workday, SmartRecruiters)
 
