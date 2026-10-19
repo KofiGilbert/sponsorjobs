@@ -1,42 +1,130 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Privacy policy · SponsorJobs</title>
-  <link rel="icon" type="image/svg+xml" href="icon.svg">
-  <link rel="stylesheet" href="styles.css">
-  <style>.legal{max-width:720px;margin:48px auto;padding:0 20px;line-height:1.65} .legal h1{font-size:28px} .legal h2{font-size:18px;margin-top:28px} .legal p,.legal li{font-size:15px}</style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy. SponsorJobs</title>
+<meta name="description" content="Your resume, job history, applications and interview recordings stay on your own computer. What we hold on our servers, which services process data for us, and your choices.">
+<link rel="canonical" href="https://sponsorjobs.ai/privacy.html">
+<meta name="theme-color" content="#F4F1EA">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="SponsorJobs">
+<meta property="og:title" content="SponsorJobs privacy policy">
+<meta property="og:description" content="Your resume, applications and interview recordings stay on your computer. We do not store them, sell them or train on them.">
+<meta property="og:url" content="https://sponsorjobs.ai/privacy.html">
+<meta property="og:image" content="https://sponsorjobs.ai/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/instrument-serif-latin-v5.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
 </head>
-<body>
-<main class="legal">
-<p><a href="/">← SponsorJobs</a></p>
-<h1>Privacy policy</h1>
-<p>Last updated: 11 October 2026. SponsorJobs is made by BlackOrigin, Inc. Contact: <a href="mailto:kofig@blackorigin.org">kofig@blackorigin.org</a>.</p>
-<h2>The short version</h2>
-<p>Your resume, job history, applications and interview recordings stay on your own computer. We do not store them, sell them or use them to train AI models.</p>
-<h2>What we hold on our servers</h2>
-<ul>
-<li><b>Your account:</b> an account id and, if you sign in, your email address.</li>
-<li><b>Usage counts:</b> how many tailored resumes and live interviews your account has used, so plan limits work.</li>
-<li><b>Purchases:</b> which pass or interview pack you bought and when. Card details go to Stripe and never reach us.</li>
-</ul>
-<h2>Services that process data for us</h2>
-<ul>
-<li><b>Anthropic</b> writes tailored text. Only the text needed for that request is sent, and it is not used to train models.</li>
-<li><b>Tavus</b> runs live practice interviews. Video and audio stream between you and Tavus; we receive only the transcript to score it, and it is stored on your computer.</li>
-<li><b>Stripe</b> takes payments and emails receipts.</li>
-<li><b>Resend</b> emails your sign-in codes.</li>
-<li><b>Google</b>, if you choose "Continue with Google", tells us your email address. We ask for nothing else.</li>
-<li><b>Cloudflare</b> hosts our server, website and job feed.</li>
-</ul>
-<h2>The browser extension</h2>
-<p>The extension reads the job page you are looking at to show sponsorship facts. Company names are looked up inside your browser and are not sent to us.</p>
-<h2>Your choices</h2>
-<p>You can use SponsorJobs without signing in. To delete your account, email us and we will remove your email address and usage records within 30 days. Uninstalling the app removes everything it stored on your computer.</p>
-<h2>Children</h2>
-<p>SponsorJobs is not intended for anyone under 16.</p>
+<body class="legal-page">
+<a class="skip" href="#main">Skip to content</a>
 
+<!-- partial:nav -->
+<header class="site-head wrap">
+  <nav class="nav" aria-label="Site">
+    <a class="wordmark" href="index.html">SponsorJobs <span class="dot">for macOS and Windows</span></a>
+    <div class="nav-links">
+      <a class="hide-m" href="index.html#product">Product</a>
+      <a href="pricing.html">Pricing</a>
+      <a class="hide-m" href="open-source.html">Open source</a>
+      <a class="btn btn-accent btn-sm" href="download.html">Download</a>
+    </div>
+  </nav>
+  <div class="rule"></div>
+</header>
+<!-- /partial:nav -->
+
+<main id="main">
+<section class="page-head">
+  <div class="wrap">
+    <span class="mono eyebrow">Legal</span>
+    <h1 class="display h-xl">Privacy policy</h1>
+    <p class="updated small">Last updated: 18 October 2026. SponsorJobs is made by BlackOrigin, Inc. Contact: <a class="link" href="mailto:kofig@blackorigin.org">kofig@blackorigin.org</a>.</p>
+  </div>
+</section>
+
+<section class="section flush">
+  <div class="wrap grid">
+    <nav class="toc" aria-label="On this page">
+      <span class="mono">On this page</span>
+      <ol>
+        <li><a href="#short">The short version</a></li>
+        <li><a href="#servers">What we hold on our servers</a></li>
+        <li><a href="#services">Services that process data for us</a></li>
+        <li><a href="#extension">The browser extension</a></li>
+        <li><a href="#website">This website</a></li>
+        <li><a href="#choices">Your choices</a></li>
+        <li><a href="#children">Children</a></li>
+      </ol>
+    </nav>
+
+    <div class="prose">
+      <h2 id="short">The short version</h2>
+      <p>Your resume, job history, applications and interview recordings stay on your own computer. We do not store them, sell them or use them to train AI models.</p>
+
+      <h2 id="servers">What we hold on our servers</h2>
+      <dl>
+        <div><dt>Your account</dt><dd>An account id and, if you sign in, your email address.</dd></div>
+        <div><dt>Usage counts</dt><dd>How many tailored resumes and live interviews your account has used, so plan limits work.</dd></div>
+        <div><dt>Purchases</dt><dd>Which pass or interview pack you bought and when. Card details go to Stripe and never reach us.</dd></div>
+      </dl>
+
+      <h2 id="services">Services that process data for us</h2>
+      <dl>
+        <div><dt>Anthropic</dt><dd>Writes tailored text. Only the text needed for that request is sent, and it is not used to train models.</dd></div>
+        <div><dt>Tavus</dt><dd>Runs live practice interviews. Video and audio stream between you and Tavus; we receive only the transcript to score it, and it is stored on your computer.</dd></div>
+        <div><dt>Stripe</dt><dd>Takes payments and emails receipts.</dd></div>
+        <div><dt>Resend</dt><dd>Emails your sign-in codes.</dd></div>
+        <div><dt>Google</dt><dd>If you choose "Continue with Google", tells us your email address. We ask for nothing else.</dd></div>
+        <div><dt>Cloudflare</dt><dd>Hosts our server, this website and the job feed.</dd></div>
+      </dl>
+
+      <h2 id="extension">The browser extension</h2>
+      <p>The extension reads the job page you are looking at to show sponsorship facts. Company names are looked up inside your browser and are not sent to us.</p>
+
+      <h2 id="website">This website</h2>
+      <p>This website has no analytics and sets no cookies. It makes three kinds of request from your browser: to our job feed for the live role count and the public sponsor index (the "Check an employer" box downloads a slice of that index and does the lookup inside your browser, so the name you type is not sent anywhere), and to GitHub for release details and repository stats. Our Cloudflare hosting keeps ordinary server logs.</p>
+
+      <h2 id="choices">Your choices</h2>
+      <p>You can use SponsorJobs without signing in. To delete your account, email us and we will remove your email address and usage records within 30 days. Uninstalling the app removes everything it stored on your computer.</p>
+
+      <h2 id="children">Children</h2>
+      <p>SponsorJobs is not intended for anyone under 16.</p>
+    </div>
+  </div>
+</section>
 </main>
+
+<!-- partial:footer -->
+<footer class="footer">
+  <div class="wrap">
+    <div class="grid">
+      <div class="brand">
+        <a class="wordmark" href="index.html">SponsorJobs</a>
+        <p class="small byline">Built by Kofi Gilbert.<br>BlackOrigin Inc., Chicago.</p>
+      </div>
+      <div class="legal">
+        <b>SponsorJobs is not affiliated with USCIS, the Department of Labor, or any employer or job board.</b> Sponsorship marks are derived from public filings, which lag by months and describe employers, not individual roles. Nothing here is immigration or legal advice.
+      </div>
+      <nav class="links" aria-label="Footer">
+        <a href="index.html#product">Product</a>
+        <a href="pricing.html">Pricing</a>
+        <a href="download.html">Download</a>
+        <a href="open-source.html">Open source</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html">Terms</a>
+        <a href="https://github.com/KofiGilbert/sponsorjobs">GitHub</a>
+        <a href="mailto:kofig@blackorigin.org">kofig@blackorigin.org</a>
+      </nav>
+    </div>
+    <div class="colophon">
+      <span class="mono">&copy; 2026 BlackOrigin Inc.</span>
+      <span class="mono">Set in Instrument Serif, Geist and Geist Mono</span>
+    </div>
+  </div>
+</footer>
+<!-- /partial:footer -->
 </body>
 </html>

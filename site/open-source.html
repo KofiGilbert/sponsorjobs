@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open source. SponsorJobs under the AGPL-3.0</title>
+<meta name="description" content="SponsorJobs is free software under the AGPL-3.0. Why that licence, how the community edition differs from the installer, and how to contribute code, templates or a bug report.">
+<link rel="canonical" href="https://sponsorjobs.ai/open-source.html">
+<meta name="theme-color" content="#F4F1EA">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="SponsorJobs">
+<meta property="og:title" content="SponsorJobs is open source">
+<meta property="og:description" content="Free software under the AGPL-3.0. Read every line, run it with your own AI key, send a fix.">
+<meta property="og:url" content="https://sponsorjobs.ai/open-source.html">
+<meta property="og:image" content="https://sponsorjobs.ai/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/instrument-serif-latin-v5.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/instrument-serif-italic-latin-v5.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- partial:nav -->
+<header class="site-head wrap">
+  <nav class="nav" aria-label="Site">
+    <a class="wordmark" href="index.html">SponsorJobs <span class="dot">for macOS and Windows</span></a>
+    <div class="nav-links">
+      <a class="hide-m" href="index.html#product">Product</a>
+      <a href="pricing.html">Pricing</a>
+      <a class="hide-m" href="open-source.html" aria-current="page">Open source</a>
+      <a class="btn btn-accent btn-sm" href="download.html">Download</a>
+    </div>
+  </nav>
+  <div class="rule"></div>
+</header>
+<!-- /partial:nav -->
+
+<main id="main">
+<section class="page-head">
+  <div class="wrap">
+    <span class="mono eyebrow">Open source</span>
+    <h1 class="display h-xl">Read <i>every line.</i></h1>
+    <p class="lede">SponsorJobs is free software under the GNU Affero General Public License, version 3. The community edition is the same engine as the installer, run from source with your own AI key.</p>
+  </div>
+</section>
+
+<section class="section oss-page flush" aria-labelledby="why-h">
+  <div class="wrap grid">
+    <div class="prose">
+      <h2 id="why-h">Why the AGPL</h2>
+      <p>A job hunt means handing over the most personal document most people own. The only way to prove that SponsorJobs keeps your resume on your machine is to let you read the code that handles it. The AGPL guarantees that stays true: anyone who ships a changed version, including as a hosted service, has to publish their changes under the same terms.</p>
+      <p>It also keeps the price honest. The people who need this most, students on F-1 and OPT, often cannot legally earn money yet. With the source public and the community edition free, nobody is locked out, and the paid passes only cover the things that cost us money per use: the bundled AI and the live interviewer.</p>
+
+      <h2>What is in the repository</h2>
+      <ul>
+        <li><b>The engine</b> (Python): sourcing from employer boards, the sponsor-record match, the LaTeX tailoring and self-healing compile loop, drafting, assisted apply, interview practice.</li>
+        <li><b>The desktop shell</b> (Electron): one window, with a browser pane the apply step uses so you can watch every form before anything is sent.</li>
+        <li><b>The browser extension</b>: sponsorship facts on the job page you are reading, looked up inside your browser from a public index, so no company name leaves it.</li>
+        <li><b>The data pipeline</b>: scripts that turn the Department of Labor LCA and PERM disclosure files, the USCIS H-1B Employer Data Hub and the DHS E-Verify list into the sponsor index the app and this website read.</li>
+        <li><b>Sixteen resume templates</b>, each a single column and a single page, that applicant tracking systems can parse.</li>
+      </ul>
+
+      <h2>Run it from source</h2>
+      <p>About ten minutes on macOS, Windows or Linux. You need Python 3.11 or later, a LaTeX distribution and an Anthropic or OpenAI key. The README has the full walk-through; the short version:</p>
+      <pre><code>git clone https://github.com/KofiGilbert/sponsorjobs
+cd sponsorjobs
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -r requirements.txt
+python -m ui.app</code></pre>
+      <p>The first run asks for your AI key and keeps it in a git-ignored file on your computer. Nothing else is set up on a server.</p>
+
+      <h2>How to contribute</h2>
+      <ol>
+        <li><b>Report a problem.</b> Open an <a href="https://github.com/KofiGilbert/sponsorjobs/issues">issue</a> with what you did, what you expected, and what happened. A screenshot of the app helps; please blank out your own details.</li>
+        <li><b>Fix a wrong sponsorship mark.</b> The marks come from public filings and lag by months. If an employer looks wrong, open an issue with the employer's legal name and a link to the filing you are looking at, so the match can be checked against the source data.</li>
+        <li><b>Add an employer board.</b> Jobs come from employers' own career sites and applicant tracking systems. If a sponsoring employer is missing, an issue with the careers URL is enough to start.</li>
+        <li><b>Send code.</b> Fork, branch, run <code>pytest</code>, open a pull request. Keep changes small and say what you tested. Resume templates must stay single-column and single-page, and copy must not use em or en dashes, and says resume rather than the two-letter abbreviation.</li>
+      </ol>
+      <div class="box">
+        <p><b>What we will not merge.</b> Anything that automates a logged-in LinkedIn account, anything built to get around a site's bot detection or captcha, and anything that submits an application on a site whose terms forbid automation. Those limits are the product, not a gap in it.</p>
+      </div>
+    </div>
+
+    <aside class="side-card oss">
+      <div class="card">
+        <div class="top">
+          <span class="repo"><span>github.com/</span>KofiGilbert/sponsorjobs</span>
+          <span class="tag">AGPL-3.0</span>
+        </div>
+        <p class="desc">Desktop app for visa-seeking job hunters in the US. Sponsor data from public filings, a one-page LaTeX resume per job, assisted and sanctioned auto-apply, interview practice.</p>
+        <div class="stats">
+          <div><div class="v v-text" id="gh-stars">On GitHub</div><div class="k mono">Stars, live</div></div>
+          <div><div class="v v-text" id="gh-pushed">On GitHub</div><div class="k mono">Last commit</div></div>
+          <div><div class="v">Python</div><div class="k mono">Language</div></div>
+        </div>
+        <div class="actions">
+          <a class="btn btn-ghost btn-sm" href="https://github.com/KofiGilbert/sponsorjobs">Source on GitHub</a>
+          <a class="btn btn-ghost btn-sm" href="https://github.com/KofiGilbert/sponsorjobs/issues">Report a problem</a>
+          <a class="btn btn-ghost btn-sm" href="https://github.com/KofiGilbert/sponsorjobs/blob/main/LICENSE">Licence text</a>
+        </div>
+      </div>
+    </aside>
+  </div>
+</section>
+</main>
+
+<!-- partial:footer -->
+<footer class="footer">
+  <div class="wrap">
+    <div class="grid">
+      <div class="brand">
+        <a class="wordmark" href="index.html">SponsorJobs</a>
+        <p class="small byline">Built by Kofi Gilbert.<br>BlackOrigin Inc., Chicago.</p>
+      </div>
+      <div class="legal">
+        <b>SponsorJobs is not affiliated with USCIS, the Department of Labor, or any employer or job board.</b> Sponsorship marks are derived from public filings, which lag by months and describe employers, not individual roles. Nothing here is immigration or legal advice.
+      </div>
+      <nav class="links" aria-label="Footer">
+        <a href="index.html#product">Product</a>
+        <a href="pricing.html">Pricing</a>
+        <a href="download.html">Download</a>
+        <a href="open-source.html">Open source</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html">Terms</a>
+        <a href="https://github.com/KofiGilbert/sponsorjobs">GitHub</a>
+        <a href="mailto:kofig@blackorigin.org">kofig@blackorigin.org</a>
+      </nav>
+    </div>
+    <div class="colophon">
+      <span class="mono">&copy; 2026 BlackOrigin Inc.</span>
+      <span class="mono">Set in Instrument Serif, Geist and Geist Mono</span>
+    </div>
+  </div>
+</footer>
+<!-- /partial:footer -->
+
+<script src="script.js" defer></script>
+</body>
+</html>

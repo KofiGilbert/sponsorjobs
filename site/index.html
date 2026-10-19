@@ -1,186 +1,502 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SponsorJobs</title>
-  <meta name="description" content="A free, open-source job-hunt app for international students in the US. Finds employers that sponsor visas, rewrites your resume for each job on one page, drafts the cover letter, and helps you practise the interview. Runs on your own computer.">
-  <meta property="og:title" content="SponsorJobs">
-  <meta property="og:description" content="Free, open-source job hunting for international students. Sponsorship records, a one-page tailored resume for every job, cover letters, interview practice. Your data stays on your computer.">
-  <meta property="og:type" content="website">
-  <meta name="color-scheme" content="dark light">
-  <link rel="icon" type="image/svg+xml" href="icon.svg">
-  <link rel="stylesheet" href="styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SponsorJobs. Stop guessing who sponsors.</title>
+<meta name="description" content="Jobs at employers with real H-1B and green-card records, and a one-page resume tailored to each. Free, open source, on your own computer. For international students and H-1B candidates in the US.">
+<link rel="canonical" href="https://sponsorjobs.ai/">
+<meta name="theme-color" content="#F4F1EA">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="SponsorJobs">
+<meta property="og:title" content="SponsorJobs. Stop guessing who sponsors.">
+<meta property="og:description" content="Jobs at employers with real H-1B and green-card records, and a one-page resume tailored to each. Free, open source, on your own computer.">
+<meta property="og:url" content="https://sponsorjobs.ai/">
+<meta property="og:image" content="https://sponsorjobs.ai/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/instrument-serif-latin-v5.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/instrument-serif-italic-latin-v5.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "SponsorJobs",
+  "operatingSystem": "macOS, Windows",
+  "applicationCategory": "BusinessApplication",
+  "description": "Desktop app for visa-seeking job hunters in the US: jobs at employers with public H-1B and PERM records, a one-page LaTeX resume tailored to each, assisted apply and interview practice.",
+  "url": "https://sponsorjobs.ai/",
+  "downloadUrl": "https://github.com/KofiGilbert/sponsorjobs/releases/latest",
+  "softwareHelp": "https://github.com/KofiGilbert/sponsorjobs#readme",
+  "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+  "author": {"@type": "Organization", "name": "BlackOrigin Inc."},
+  "offers": [
+    {"@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "USD"},
+    {"@type": "Offer", "name": "Job Hunt Pass, 30 days", "price": "29", "priceCurrency": "USD",
+     "description": "One payment for 30 days. Does not renew."},
+    {"@type": "Offer", "name": "Season Pass, 90 days", "price": "69", "priceCurrency": "USD",
+     "description": "One payment for 90 days. Does not renew."}
+  ]
+}
+</script>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 
-<header class="top">
-  <a class="brand" href="#top" aria-label="SponsorJobs">
-    <img class="brand-mark" src="icon.svg" width="22" height="22" alt="">
-    <span class="brand-name">SponsorJobs</span>
-  </a>
-  <nav class="top-nav" aria-label="Page">
-    <a href="#what">What it does</a>
-    <a href="#data">Your data</a>
-    <a href="#pricing">Pricing</a>
-    <a href="#install">Install</a>
-    <a href="https://github.com/KofiGilbert/sponsorjobs" data-link="repo">GitHub</a>
+<!-- partial:nav -->
+<header class="site-head wrap">
+  <nav class="nav" aria-label="Site">
+    <a class="wordmark" href="index.html" aria-current="page">SponsorJobs <span class="dot">for macOS and Windows</span></a>
+    <div class="nav-links">
+      <a class="hide-m" href="index.html#product">Product</a>
+      <a href="pricing.html">Pricing</a>
+      <a class="hide-m" href="open-source.html">Open source</a>
+      <a class="btn btn-accent btn-sm" href="download.html">Download</a>
+    </div>
   </nav>
+  <div class="rule"></div>
 </header>
+<!-- /partial:nav -->
 
-<main id="top">
+<main id="main">
 
-  <!-- Hero: the one-line promise, then the two downloads. -->
-  <section class="hero">
-    <p class="kicker">Free and open source. For international students in the US.</p>
-    <h1>Find employers that sponsor, and send a resume that fits the job.</h1>
-    <p class="lede">
-      SponsorJobs runs on your own computer. It finds jobs at employers with real sponsorship
-      records, rewrites your resume for each one without breaking the one-page layout,
-      drafts the cover letter, and helps you practise the interview.
-    </p>
-    <div class="actions">
-      <a class="btn btn-primary" id="dl-mac" href="https://github.com/KofiGilbert/sponsorjobs/releases/latest" data-link="releases">
-        Download for macOS <span class="btn-sub">Apple Silicon</span>
-      </a>
-      <a class="btn btn-ghost" id="dl-win" href="https://github.com/KofiGilbert/sponsorjobs/releases/latest" data-link="releases">
-        Download for Windows
-      </a>
+<!-- HERO -->
+<section class="hero" aria-labelledby="hero-h">
+  <div class="wrap">
+    <div class="kicker">
+      <span class="mono">Free and open source</span><span class="sep" aria-hidden="true"></span>
+      <span class="mono">Runs on your computer</span><span class="sep" aria-hidden="true"></span>
+      <span class="mono">AGPL-3.0</span>
     </div>
-    <p class="meta">
-      Linux and Intel Macs: <a href="https://github.com/KofiGilbert/sponsorjobs#install" data-link="repo-install">run it from source</a>.
-      You will also need LaTeX and an AI key. <a href="#install">How to install</a>.
-    </p>
-  </section>
-
-  <!-- Live numbers from the shared job list. Filled by script.js; the text below is the
-       fallback when the fetch fails, and it makes no claim it cannot back up. -->
-  <section class="live" aria-live="polite">
-    <p id="live-line" class="live-line">The shared job list is refreshed through the day from public job boards.</p>
-  </section>
-
-  <section id="what" class="section">
-    <h2>What it does</h2>
     <div class="grid">
-      <article class="card">
-        <h3>Finds jobs at employers that sponsor</h3>
-        <p>Pulls postings from official public job boards. Each employer is tagged with its visa record from public US government data: H-1B, green card (PERM), E-Verify for STEM OPT, and cap-exempt status.</p>
-      </article>
-      <article class="card">
-        <h3>Flags "no sponsorship" postings</h3>
-        <p>Postings that say they will not sponsor are marked before you spend time on them.</p>
-      </article>
-      <article class="card">
-        <h3>Tailors your resume to each job, on one page</h3>
-        <p>Rewords your real experience toward the job's own language, keeps the page from overflowing, and shows which of the job's keywords you cover and which you miss. It never adds a skill to a role where you did not use it.</p>
-      </article>
-      <article class="card">
-        <h3>Drafts the cover letter</h3>
-        <p>And answers to screening questions, written from your own history, for you to edit.</p>
-      </article>
-      <article class="card">
-        <h3>Interview practice</h3>
-        <p>A recorded, scored first-round screen, then a simulated interviewer that asks questions from the actual job description.</p>
-      </article>
-      <article class="card">
-        <h3>Assisted apply</h3>
-        <p>Fills application forms for you to review. You click submit. It never automates LinkedIn and never tries to get around a site's bot protection.</p>
-      </article>
+      <div class="lead">
+        <h1 id="hero-h" class="display h-xl">Stop guessing <i>who sponsors.</i></h1>
+        <p class="sub lede">Jobs at employers with real H-1B and green-card records, and a one-page resume tailored to each. Free, open source, on your own computer.</p>
+        <div class="cta">
+          <a class="btn" id="dl-mac" href="download.html">Download for macOS <span class="k">APPLE SILICON</span></a>
+          <a class="btn btn-ghost" id="dl-win" href="download.html">Download for Windows</a>
+          <span class="alt">Linux and Intel Macs: <a href="open-source.html">run it from source</a>.</span>
+        </div>
+      </div>
+
+      <aside class="panel" id="employer" aria-labelledby="emp-label">
+        <div class="label">
+          <span class="mono" id="emp-label">Check an employer</span>
+          <span class="mono">Public filings</span>
+        </div>
+        <form id="emp-form" role="search" aria-label="Check an employer's sponsorship record">
+          <input type="search" id="emp-q" name="q" value="Databricks" autocomplete="organization" spellcheck="false" aria-label="Employer name" placeholder="Employer name">
+          <button class="btn" type="submit">Check</button>
+        </form>
+        <div class="verdict">
+          <h2 id="emp-verdict" class="yes">Sponsors: yes</h2>
+          <span class="for" id="emp-for">Databricks Inc.</span>
+        </div>
+        <p class="since" id="emp-since">H-1B approvals on record FY2020 to FY2023. PERM certifications on record.</p>
+        <dl class="facts">
+          <div><dt>H-1B approvals</dt><dd id="emp-h1b">517</dd></div>
+          <div><dt>Green card (PERM) certifications</dt><dd id="emp-perm">44</dd></div>
+          <div><dt>Last fiscal year on record</dt><dd id="emp-last">FY2023</dd></div>
+          <div><dt>E-Verify (STEM OPT)</dt><dd id="emp-everify">Enrolled</dd></div>
+        </dl>
+        <p class="status" id="emp-status" aria-live="polite">Figures from the public index of 18 Oct 2026.</p>
+        <p class="src">From the Department of Labor LCA and PERM disclosure files and the USCIS H-1B Employer Data Hub. SponsorJobs is not affiliated with USCIS.</p>
+        <p class="try">Try <button type="button" data-emp="Stripe">Stripe</button> <button type="button" data-emp="Epic Systems">Epic Systems</button> <button type="button" data-emp="Mayo Clinic">Mayo Clinic</button></p>
+      </aside>
     </div>
-  </section>
 
-  <!-- DEMO VIDEO (not recorded yet, so hidden): when it exists, add a section here holding a
-       <video controls> or a link to the hosted recording (60 to 90 seconds: find a job, tailor
-       the resume, review the result). The .demo-placeholder styles in styles.css can frame it. -->
+    <figure class="shot">
+      <div class="frame">
+        <picture>
+          <source type="image/avif" srcset="img/jobs-dark-6df557ac.avif">
+          <source type="image/webp" srcset="img/jobs-dark-6df557ac.webp">
+          <img src="img/jobs-dark-6df557ac.png" width="2400" height="1547" fetchpriority="high" decoding="async" alt="The SponsorJobs Jobs screen in dark mode. A search for Data Engineer filtered to H-1B and Green Card sponsors; the selected role shows the employer's marks, pay compared with similar roles, the visa classes it has filed for by nationality, and a fit report listing the must-have skills missing from the resume.">
+        </picture>
+      </div>
+      <figcaption class="caption">
+        <span><b>Fig. 01</b> &nbsp;Jobs, as shipped. A search filtered to employers with H-1B and Green Card filings, with the fit report against the uploaded resume.</span>
+        <span>Dark mode. 1440 px.</span>
+      </figcaption>
+    </figure>
+  </div>
+</section>
 
-  <section id="data" class="section">
-    <h2>Your data</h2>
-    <ul class="plain">
-      <li><strong>Your data stays on your computer.</strong> Your profile, resumes, and applications are stored locally. SponsorJobs has no account system and no server that holds them.</li>
-      <li><strong>Text goes to the AI provider you choose, with your own key.</strong> To write, SponsorJobs sends the relevant text to Anthropic or OpenAI using an API key you create. You pay the provider directly for what you use. SponsorJobs stores none of it.</li>
-      <li><strong>The shared job list contains no personal data.</strong> It is a list of public job postings plus public government sponsorship records. Your profile is never sent to it.</li>
-    </ul>
-  </section>
+<!-- LIVE PROOF STRIP -->
+<section class="proof" aria-label="Live numbers">
+  <div class="wrap">
+    <div class="cells">
+      <div class="cell"><div class="n"><span id="live-roles">119,616</span><span class="u" id="live-roles-note">as of 18 Oct 2026</span></div><div class="l mono">Live roles</div></div>
+      <div class="cell"><div class="n"><span id="live-h1b">104,552</span><span class="u" id="live-h1b-note">index of 18 Oct 2026</span></div><div class="l mono">Employers with H-1B approvals on record</div></div>
+      <div class="cell"><div class="n"><span id="live-refresh">every few hours</span><span class="u" id="live-refresh-note">from 1,375 employer boards</span></div><div class="l mono live">Refreshed</div></div>
+    </div>
+  </div>
+</section>
 
-  <!-- Pricing (owner decision 2026-10-02). One-time passes, nothing auto-renews. Keep these
-       numbers in step with backend/metering.py and the prices set in Stripe. -->
-  <section id="pricing" class="section">
-    <h2>Pricing</h2>
-    <p class="section-lede">Pay once when you are actively applying. <strong>Nothing auto-renews</strong>: when a pass ends you are back on Free, with nothing to cancel.</p>
+<!-- THE RECORD -->
+<section class="section problem" id="product" aria-labelledby="record-h">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="mono">The record</span>
+      <div class="grid">
+        <h2 id="record-h" class="display h-l">Most job boards cannot tell you who sponsors. <i>Public filings can.</i></h2>
+        <p class="lede">Every employer that sponsors a work visa leaves a paper trail with the Department of Labor and USCIS. SponsorJobs reads that trail, matches it to 1,375 employer job boards, and puts the mark next to the job. No survey, no guess, no "visa friendly" badge an employer paid for.</p>
+      </div>
+    </div>
+
+    <div class="legend" role="table" aria-label="What each sponsorship mark means">
+      <div class="row head" role="row">
+        <span class="mono" role="columnheader">Mark</span><span class="mono" role="columnheader">What it means</span><span class="mono" role="columnheader">Why it matters to you</span><span class="mono" role="columnheader">Source</span>
+      </div>
+      <div class="row" role="row">
+        <div class="mark" role="cell"><span class="tag tag-accent">H-1B</span></div>
+        <div class="what" role="cell">The employer has approved H-1B petitions on record in recent fiscal years.</div>
+        <div class="why" role="cell">They have done this before. Their HR and counsel know the process, and they budget for it.</div>
+        <div class="src" role="cell"><b>USCIS</b> H-1B Employer Data Hub, <b>DOL</b> LCA disclosure data</div>
+      </div>
+      <div class="row" role="row">
+        <div class="mark" role="cell"><span class="tag tag-accent">Green Card</span></div>
+        <div class="what" role="cell">The employer has certified PERM labor applications, the first step to an employer-sponsored green card.</div>
+        <div class="why" role="cell">The strongest signal. They have sponsored people all the way to permanent residence.</div>
+        <div class="src" role="cell"><b>DOL</b> PERM disclosure data</div>
+      </div>
+      <div class="row" role="row">
+        <div class="mark" role="cell"><span class="tag tag-accent">STEM OPT</span></div>
+        <div class="what" role="cell">The employer is enrolled in E-Verify.</div>
+        <div class="why" role="cell">Required for the 24-month STEM OPT extension. Without it, your STEM extension cannot be approved at that employer.</div>
+        <div class="src" role="cell"><b>DHS</b> E-Verify participating employer list</div>
+      </div>
+      <div class="row" role="row">
+        <div class="mark" role="cell"><span class="tag tag-accent">Cap-exempt</span></div>
+        <div class="what" role="cell">A university, affiliated nonprofit, or nonprofit or government research organization.</div>
+        <div class="why" role="cell">No lottery. They can file an H-1B for you any day of the year.</div>
+        <div class="src" role="cell">USCIS cap-exempt criteria, read from the employer's name and industry</div>
+      </div>
+      <div class="row" role="row">
+        <div class="mark" role="cell"><span class="tag tag-muted">No record</span></div>
+        <div class="what" role="cell">We found no filings, or the posting itself says the role does not offer sponsorship.</div>
+        <div class="why" role="cell">Shown, not hidden. You decide whether an evening on that application is worth it.</div>
+        <div class="src" role="cell">Posting text, plus the absence of any of the above</div>
+      </div>
+    </div>
+    <p class="legend-note small">Filings lag by a few months and are made per employer, not per team or per job. A mark means the employer has sponsored, not that this manager will. It is still the best public evidence there is.</p>
+  </div>
+</section>
+
+<!-- CHAPTERS -->
+<section class="section chapters" aria-label="How it works">
+  <div class="wrap">
+
+    <article class="chapter grid" id="find">
+      <div class="text">
+        <div class="num"><span class="n">01</span><span class="line" aria-hidden="true"></span><span class="mono">Find</span></div>
+        <h3 class="display h-m">Only roles at employers with a record.</h3>
+        <p class="body">Jobs come straight from 1,375 employer career sites and applicant tracking systems, refreshed every few hours. Each one carries the employer's sponsorship marks, the pay compared with similar roles, and the visa classes that employer has filed for by nationality.</p>
+        <ul class="facts">
+          <li><span class="k">Filter</span><span class="v"><b>Sponsorship</b>, entry level, pay, type, posted date. Save a search and get a daily count of new sponsor roles.</span></li>
+          <li><span class="k">Fit</span><span class="v">Once your resume is in, every posting shows which of its must-have skills you cover and which you do not.</span></li>
+          <li><span class="k">Honest</span><span class="v">Postings that say "no sponsorship" are flagged before you read them.</span></li>
+        </ul>
+      </div>
+      <div class="shot stack">
+        <figure>
+          <div class="frame">
+            <picture>
+              <source type="image/avif" srcset="img/home-dark-708a7f0b.avif">
+              <source type="image/webp" srcset="img/home-dark-708a7f0b.webp">
+              <img src="img/home-dark-708a7f0b.png" width="1600" height="1032" loading="lazy" decoding="async" alt="The Home screen: a box that says What are you applying for, where a job description is pasted to start tailoring, and below it today's fresh best-fit roles at sponsoring employers, each with an H-1B mark.">
+            </picture>
+          </div>
+          <figcaption class="caption"><span><b>Fig. 02</b> &nbsp;Home. Paste any posting, or start from today's best-fit sponsor roles.</span><span>Home</span></figcaption>
+        </figure>
+        <figure>
+          <div class="frame">
+            <picture>
+              <source type="image/avif" srcset="img/fit-dark-428a7da5.avif">
+              <source type="image/webp" srcset="img/fit-dark-428a7da5.webp">
+              <img src="img/fit-dark-428a7da5.png" width="1436" height="902" loading="lazy" decoding="async" alt="A job's detail header: the employer's H-1B and Green Card marks, visa classes by nationality, and the fit report, which names the skills the posting asks for that are not yet on the resume.">
+            </picture>
+          </div>
+          <figcaption class="caption"><span><b>Fig. 03</b> &nbsp;Job detail. Marks, visa classes by nationality, and the fit report before anything is tailored.</span><span>Jobs</span></figcaption>
+        </figure>
+      </div>
+    </article>
+
+    <article class="chapter grid" id="tailor">
+      <div class="text">
+        <div class="num"><span class="n">02</span><span class="line" aria-hidden="true"></span><span class="mono">Tailor</span></div>
+        <h3 class="display h-m">One page. Every time. In the job's own words.</h3>
+        <p class="body">Pick a template, and SponsorJobs rewrites your real experience toward the job description. It uses the posting's vocabulary where your material supports it, keeps the LaTeX layout to one page, and shows which required skills you cover and which you do not. It never adds a skill you do not have.</p>
+        <ul class="facts">
+          <li><span class="k">Layout</span><span class="v">Typeset in LaTeX. If a rewrite would spill to page two, it shortens and recompiles until it fits.</span></li>
+          <li><span class="k">Coverage</span><span class="v">A report per job: what the posting asks for, what is on your resume, and the gap between them.</span></li>
+          <li><span class="k">Templates</span><span class="v">Sixteen single-column templates that applicant tracking systems can parse.</span></li>
+        </ul>
+      </div>
+      <div class="shot stack">
+        <figure>
+          <div class="frame">
+            <picture>
+              <source type="image/avif" srcset="img/resumes-dark-28dbb448.avif">
+              <source type="image/webp" srcset="img/resumes-dark-28dbb448.webp">
+              <img src="img/resumes-dark-28dbb448.png" width="1600" height="401" loading="lazy" decoding="async" alt="The Resumes screen: a row of one-page resume templates named Classic, Software Engineer, Data Scientist, Engineering Co-op, Experienced Professional, Banking and Consulting, above the list of recent resumes.">
+            </picture>
+          </div>
+          <figcaption class="caption"><span><b>Fig. 04</b> &nbsp;Templates. Every one is a single column and a single page.</span><span>Resumes</span></figcaption>
+        </figure>
+        <figure>
+          <div class="frame">
+            <picture>
+              <source type="image/avif" srcset="img/coverage-light-8ce08329.avif">
+              <source type="image/webp" srcset="img/coverage-light-8ce08329.webp">
+              <img src="img/coverage-light-8ce08329.png" width="1436" height="500" loading="lazy" decoding="async" alt="The coverage report in light mode: a Weak fit label, the count of skills covered, an entry-level note, the missing must-have skills as tags, and a legend separating what is on the resume from what the posting asks for.">
+            </picture>
+          </div>
+          <figcaption class="caption"><span><b>Fig. 05</b> &nbsp;Coverage report before tailoring. The honest version, with the missing must-haves named.</span><span>Light mode</span></figcaption>
+        </figure>
+      </div>
+    </article>
+
+    <article class="chapter grid" id="apply">
+      <div class="text">
+        <div class="num"><span class="n">03</span><span class="line" aria-hidden="true"></span><span class="mono">Apply</span></div>
+        <h3 class="display h-m">It fills the form. Who clicks Submit depends on the site.</h3>
+        <p class="body">Each approved job becomes a package: tailored resume, a short cover letter, and screening answers drawn from answers you gave once. Then one of two things happens, and the queue tells you which.</p>
+        <ul class="facts">
+          <li><span class="k">Sent for you</span><span class="v">Only where the site has a verified, keyless application API. Today that is Recruitee. Off by default; you switch it on.</span></li>
+          <li><span class="k">Your click</span><span class="v">Everywhere else, including Greenhouse, Lever, Workday and LinkedIn. We fill the form in the app's own browser pane; you review and press Submit.</span></li>
+          <li><span class="k">Never</span><span class="v">No LinkedIn automation. No captcha tricks, no fake identities, no getting around a site's bot rules. If a site says no, we stop and hand it to you.</span></li>
+        </ul>
+      </div>
+      <div class="shot">
+        <figure>
+          <div class="frame">
+            <picture>
+              <source type="image/avif" srcset="img/autoapply-dark-c9eb9cd3.avif">
+              <source type="image/webp" srcset="img/autoapply-dark-c9eb9cd3.webp">
+              <img src="img/autoapply-dark-c9eb9cd3.png" width="1600" height="1032" loading="lazy" decoding="async" alt="The Auto-apply screen: four tailored packages in To review, each with the employer's sponsor mark and a match percentage, counters for Waiting on you, Submitted and Needs you, and a Today panel showing 0 sent of 40 with Autonomous submit switched off.">
+            </picture>
+          </div>
+          <figcaption class="caption"><span><b>Fig. 06</b> &nbsp;The queue. "Autonomous submit" is off by default, and the daily cap is 40.</span><span>Auto-apply</span></figcaption>
+        </figure>
+      </div>
+    </article>
+
+    <article class="chapter grid" id="practise">
+      <div class="text">
+        <div class="num"><span class="n">04</span><span class="line" aria-hidden="true"></span><span class="mono">Practise</span></div>
+        <h3 class="display h-m">Rehearse the interview for this job, not an interview in general.</h3>
+        <p class="body">Round one is a recorded screen: five timed questions on camera, built from the posting and your resume, scored afterwards. Pass it and round two opens: twenty minutes with a live AI interviewer who has read the same job description you did.</p>
+        <ul class="facts">
+          <li><span class="k">Briefing</span><span class="v">Before you start: likely questions, what to mention, and what the posting says about the team.</span></li>
+          <li><span class="k">Live round</span><span class="v">Works out loud without a camera too. Three live interviews come with a Job Hunt Pass, nine with a Season Pass.</span></li>
+          <li><span class="k">On the day</span><span class="v">Nothing runs during your real interview. This is practice, not a hidden earpiece.</span></li>
+        </ul>
+      </div>
+      <div class="shot">
+        <figure>
+          <div class="frame">
+            <picture>
+              <source type="image/avif" srcset="img/prep-dark-21a5b003.avif">
+              <source type="image/webp" srcset="img/prep-dark-21a5b003.webp">
+              <img src="img/prep-dark-21a5b003.png" width="1600" height="516" loading="lazy" decoding="async" alt="The Interview prep screen: a recommended Full mock interview, round one then round two, and two cards below it, Recorded interview with five timed questions on camera, and Live interview, twenty minutes with a live interviewer.">
+            </picture>
+          </div>
+          <figcaption class="caption"><span><b>Fig. 07</b> &nbsp;Interview prep. The live round opens once the recorded one is passed.</span><span>Interview</span></figcaption>
+        </figure>
+      </div>
+    </article>
+
+  </div>
+</section>
+
+<!-- YOUR DATA -->
+<section class="section data" aria-labelledby="data-h">
+  <div class="wrap">
     <div class="grid">
-      <article class="card">
-        <h3>Free</h3>
-        <p><strong>$0</strong>, no card.</p>
-        <p>Job board with visa badges, the recorded interview, and 3 tailored resume packages a month. Unlimited tailoring with your own AI key.</p>
-      </article>
-      <article class="card">
-        <h3>Job Hunt Pass</h3>
-        <p><strong>$29</strong> once, for 30 days.</p>
-        <p>3 live interviews with an AI interviewer and 60 tailored packages on our best model.</p>
-      </article>
-      <article class="card">
-        <h3>Season Pass</h3>
-        <p><strong>$69</strong> once, for 90 days.</p>
-        <p>9 live interviews and 150 tailored packages. Buying a pass during a pass adds to it.</p>
-      </article>
+      <h2 id="data-h" class="display h-l">Your data <i>stays here.</i></h2>
+      <div class="copy">
+        <p><b>Your profile, resumes and applications live in a folder on your computer.</b> There is no SponsorJobs server that holds them, and we cannot see them.</p>
+        <p><b>Text goes to the AI provider you choose, with your own key, or through our metered broker on a pass.</b> Either way it is used to write, then discarded. We keep a usage count for billing and nothing else.</p>
+        <p><b>The shared job list contains no personal data.</b> It is public postings plus public government records. Your profile is never sent to it.</p>
+      </div>
     </div>
-    <p class="meta">During a pass, extra live interviews are 1 for $9, 3 for $24 or 5 for $35, and they never expire.</p>
-  </section>
+  </div>
+</section>
 
-  <section id="install" class="section">
-    <h2>How to install</h2>
-    <p class="section-lede">
-      Two things first. SponsorJobs typesets your resume with <strong>LaTeX</strong>, so LaTeX must be
-      installed. And it needs an <strong>AI key</strong> from
-      <a href="https://console.anthropic.com/">Anthropic</a> (recommended) or
-      <a href="https://platform.openai.com/">OpenAI</a>; the first-run setup asks for it and
-      keeps it on your computer.
-    </p>
-    <div class="grid two">
-      <article class="card">
-        <h3>macOS (Apple Silicon)</h3>
-        <ol>
-          <li>Install LaTeX. In Terminal: <code>brew install --cask mactex-no-gui</code></li>
-          <li>Download the <code>.dmg</code>, open it, and drag SponsorJobs to Applications.</li>
-          <li>On first open, macOS will say it cannot verify the developer. Open <strong>System Settings &rarr; Privacy &amp; Security</strong> and click <strong>Open Anyway</strong>. Once.</li>
-        </ol>
-        <p class="note">The app is not yet signed with an Apple Developer certificate, which is why macOS asks.</p>
-      </article>
-      <article class="card">
-        <h3>Windows</h3>
-        <ol>
-          <li>Install LaTeX: <a href="https://miktex.org/download">MiKTeX</a>. Let it install missing packages on the fly.</li>
-          <li>Download <code>SponsorJobs-Setup.exe</code> and run it.</li>
-          <li>Windows SmartScreen may warn that the publisher is unknown. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
-        </ol>
-        <p class="note">The installer is not yet code-signed, which is why SmartScreen asks.</p>
-      </article>
+<!-- OPEN SOURCE -->
+<section class="section oss" id="open-source" aria-labelledby="oss-h">
+  <div class="wrap">
+    <div class="grid">
+      <h2 id="oss-h" class="display h-l">Read <i>every line.</i></h2>
+      <p class="lede">SponsorJobs is free software under the AGPL-3.0. The community edition is the same engine with your own AI key. It is free because the people who need it most often cannot legally earn money yet. <a class="link" href="open-source.html">Why the AGPL, and how to contribute.</a></p>
+      <div class="card">
+        <div class="top">
+          <span class="repo"><span>github.com/</span>KofiGilbert/sponsorjobs</span>
+          <span class="tag">AGPL-3.0</span>
+        </div>
+        <p class="desc">Desktop app for visa-seeking job hunters in the US. Sponsor data from public filings, a one-page LaTeX resume per job, assisted and sanctioned auto-apply, interview practice.</p>
+        <div class="stats">
+          <div><div class="v v-text" id="gh-stars">On GitHub</div><div class="k mono">Stars, live</div></div>
+          <div><div class="v v-text" id="gh-pushed">On GitHub</div><div class="k mono">Last commit</div></div>
+          <div><div class="v">Python</div><div class="k mono">Language</div></div>
+        </div>
+        <div class="actions">
+          <a class="btn btn-ghost btn-sm" href="https://github.com/KofiGilbert/sponsorjobs">Source on GitHub</a>
+          <a class="btn btn-ghost btn-sm" href="https://github.com/KofiGilbert/sponsorjobs/issues">Report a problem</a>
+        </div>
+      </div>
     </div>
-    <p class="meta">
-      Linux, Intel Macs, or just prefer source: see the
-      <a href="https://github.com/KofiGilbert/sponsorjobs#install" data-link="repo-install">README</a>.
-    </p>
-  </section>
+  </div>
+</section>
 
-  <section id="source" class="section">
-    <h2>Free and open source</h2>
-    <p class="section-lede">
-      SponsorJobs is free software under the <abbr title="GNU Affero General Public License, version 3">AGPL-3.0</abbr>.
-      You can read every line, change it, and share it. It is free because the students who
-      need it most often cannot legally earn money yet.
-    </p>
-    <div class="actions">
-      <a class="btn btn-ghost" href="https://github.com/KofiGilbert/sponsorjobs" data-link="repo">Source on GitHub</a>
-      <a class="btn btn-ghost" href="https://github.com/KofiGilbert/sponsorjobs/issues" data-link="issues">Report a problem</a>
+<!-- PRICING -->
+<section class="section pricing" id="pricing" aria-labelledby="pricing-h">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="mono">Pricing</span>
+      <div class="grid">
+        <h2 id="pricing-h" class="display h-l">Nothing <i>auto-renews.</i> <span class="stamp">No card to cancel</span></h2>
+        <p class="lede">Pay once while you are actively applying. When a pass ends you are back on Free, with nothing to cancel and no email asking you to come back.</p>
+      </div>
     </div>
-  </section>
+
+    <div class="plans">
+      <article class="plan">
+        <h3 class="name">Free</h3>
+        <div class="price"><span class="amt">$0</span><span class="per">no card</span></div>
+        <div class="math">The whole job board, for as long as you like</div>
+        <ul class="inc">
+          <li><span>Jobs with sponsorship marks</span><span class="q">All</span></li>
+          <li><span>Tailored applications</span><span class="q">3 a month</span></li>
+          <li><span>Recorded interview round</span><span class="q">Included</span></li>
+          <li><span>Live interviews</span><span class="q off">On a pass</span></li>
+          <li><span>Community edition, your own AI key</span><span class="q">Unlimited</span></li>
+        </ul>
+        <a class="btn btn-ghost" href="download.html">Download</a>
+        <p class="foot small">Sign in to the installed app, or run the community edition with your own key.</p>
+      </article>
+      <article class="plan">
+        <h3 class="name">Job Hunt Pass</h3>
+        <div class="price"><span class="amt">$29</span><span class="per">once, for 30 days</span></div>
+        <div class="math">About $0.97 a day</div>
+        <ul class="inc">
+          <li><span>Jobs with sponsorship marks</span><span class="q">All</span></li>
+          <li><span>Tailored applications</span><span class="q">60</span></li>
+          <li><span>Recorded interview round</span><span class="q">Included</span></li>
+          <li><span>Live interviews</span><span class="q">3</span></li>
+          <li><span>AI included, no key needed</span><span class="q">Yes</span></li>
+        </ul>
+        <a class="btn" href="pricing.html">See what is included</a>
+        <p class="foot small">Ends on day 30. Buying another pass during a pass adds to it.</p>
+      </article>
+      <article class="plan">
+        <h3 class="name">Season Pass</h3>
+        <div class="price"><span class="amt">$69</span><span class="per">once, for 90 days</span></div>
+        <div class="math">About $0.77 a day</div>
+        <ul class="inc">
+          <li><span>Jobs with sponsorship marks</span><span class="q">All</span></li>
+          <li><span>Tailored applications</span><span class="q">150</span></li>
+          <li><span>Recorded interview round</span><span class="q">Included</span></li>
+          <li><span>Live interviews</span><span class="q">9</span></li>
+          <li><span>AI included, no key needed</span><span class="q">Yes</span></li>
+        </ul>
+        <a class="btn" href="pricing.html">See what is included</a>
+        <p class="foot small">Ends on day 90. An OPT search usually takes about this long.</p>
+      </article>
+    </div>
+
+    <div class="packs">
+      <span class="lab mono">Extra live interviews, during a pass</span>
+      <div class="vals">
+        <span>1 for $9</span>
+        <span>3 for $24<small>$8 each</small></span>
+        <span>5 for $39<small>$7.80 each</small></span>
+        <span class="muted">They never expire.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INSTALL -->
+<section class="section install" id="install" aria-labelledby="install-h">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="mono">Install</span>
+      <div class="grid">
+        <h2 id="install-h" class="display h-l">Two things first, then <i>three steps.</i></h2>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="req">
+        <span class="lab mono">Before you install</span>
+        <div class="items">
+          <p><b>LaTeX.</b> SponsorJobs typesets your resume with it, so it has to be on the machine. The download page gives the one command for each system.</p>
+          <p><b>An AI key, community edition only.</b> From Anthropic or OpenAI, if you run from source. The installed app needs no key: the AI is included.</p>
+        </div>
+      </div>
+    </div>
+    <div class="os">
+      <div class="col">
+        <h3>macOS <span class="mono">Apple Silicon</span></h3>
+        <ol>
+          <li><span>Install LaTeX. In Terminal: <code>brew install --cask mactex-no-gui</code></span></li>
+          <li><span>Download the <code>.dmg</code>, open it, and drag SponsorJobs to Applications.</span></li>
+          <li><span>On first open, macOS says it cannot verify the developer. Open System Settings, Privacy &amp; Security, and click Open Anyway. Once.</span></li>
+        </ol>
+        <p class="note small">The app is not yet signed with an Apple Developer certificate, which is why macOS asks. The source is public, so you can check what you are opening.</p>
+      </div>
+      <div class="col">
+        <h3>Windows <span class="mono">10 or later, 64-bit</span></h3>
+        <ol>
+          <li><span>Install LaTeX: <a class="link" href="https://miktex.org/download">MiKTeX</a>. Let it install missing packages on the fly.</span></li>
+          <li><span>Download <code>SponsorJobs-Setup.exe</code> and run it.</span></li>
+          <li><span>SmartScreen may warn that the publisher is unknown. Click More info, then Run anyway.</span></li>
+        </ol>
+        <p class="note small">The installer is not yet code-signed, which is why SmartScreen asks.</p>
+      </div>
+    </div>
+    <div class="grid">
+      <p class="alt small"><a class="link" href="download.html">Download page</a>, with version, size and date of the current release. Linux, Intel Macs, or you would rather build it yourself: the <a class="link" href="https://github.com/KofiGilbert/sponsorjobs#readme">README</a> covers it in about ten minutes.</p>
+    </div>
+  </div>
+</section>
 
 </main>
 
-<footer class="foot">
-  <p>Built by <a href="https://github.com/KofiGilbert">Kofi Gilbert</a>. SponsorJobs is not affiliated with any employer, job board, or government agency. <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p>
+<!-- partial:footer -->
+<footer class="footer">
+  <div class="wrap">
+    <div class="grid">
+      <div class="brand">
+        <a class="wordmark" href="index.html">SponsorJobs</a>
+        <p class="small byline">Built by Kofi Gilbert.<br>BlackOrigin Inc., Chicago.</p>
+      </div>
+      <div class="legal">
+        <b>SponsorJobs is not affiliated with USCIS, the Department of Labor, or any employer or job board.</b> Sponsorship marks are derived from public filings, which lag by months and describe employers, not individual roles. Nothing here is immigration or legal advice.
+      </div>
+      <nav class="links" aria-label="Footer">
+        <a href="index.html#product">Product</a>
+        <a href="pricing.html">Pricing</a>
+        <a href="download.html">Download</a>
+        <a href="open-source.html">Open source</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html">Terms</a>
+        <a href="https://github.com/KofiGilbert/sponsorjobs">GitHub</a>
+        <a href="mailto:kofig@blackorigin.org">kofig@blackorigin.org</a>
+      </nav>
+    </div>
+    <div class="colophon">
+      <span class="mono">&copy; 2026 BlackOrigin Inc.</span>
+      <span class="mono">Set in Instrument Serif, Geist and Geist Mono</span>
+    </div>
+  </div>
 </footer>
+<!-- /partial:footer -->
 
+<script src="sponsor_core.js" defer></script>
 <script src="script.js" defer></script>
 </body>
 </html>
