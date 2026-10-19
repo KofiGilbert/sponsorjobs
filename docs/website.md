@@ -1,48 +1,60 @@
 # The website and the release pipeline
 
-The landing page lives in `site/` as plain HTML, CSS and one script. No build step, no
-framework, no analytics. It is deployed by Cloudflare Pages straight from the repository.
+The website lives in `site/` as plain HTML, CSS and one script: `index.html`, `pricing.html`,
+`download.html`, `open-source.html`, `privacy.html`, `terms.html`, `404.html`, plus `robots.txt`,
+`sitemap.xml`, the OG image, self-hosted fonts under `fonts/` (Instrument Serif, Geist, Geist Mono;
+SIL OFL, licences alongside) and the app screenshots under `img/` (AVIF, WebP and PNG, content-hashed
+names so `_headers` can cache them for a year). No framework, no analytics, no runtime font CDN.
+It is served by the Cloudflare Worker in `site-worker/` (`wrangler deploy` from that directory).
 Installers are built by `.github/workflows/release.yml` and attached to a GitHub release;
-the page's download buttons point at `releases/latest`.
+the download page reads version, size and date from the releases API and falls back to the
+`releases/latest` link.
 
-## Placeholders to replace before launch
+## Shared nav and footer
 
-| Where | What | Replace with |
-| --- | --- | --- |
-| `site/script.js`, `FEED_BASE` | `https://tailor.example` | the broker's real host (the one that serves `/feed/manifest.json`) |
-| `site/_headers`, `connect-src` | `https://tailor.example` | the same host, or the browser will block the fetch |
-| `site/script.js`, `REPO_URL` | `https://github.com/KofiGilbert/sponsorjobs` | the public repository URL |
-| `site/index.html`, every `href` to `github.com/KofiGilbert/sponsorjobs` | same | the same URL. These are the no-JavaScript fallback; the script rewrites them from `REPO_URL` at load. |
-| `site/index.html`, the `demo-placeholder` block | dashed box | a `<video controls>` or a link to the recording |
-| `docs/launch/*.md` | `[[TODO]]` markers | real links and numbers |
+The nav and footer live once in `scripts/site_partials/` and are copied into every page between
+`<!-- partial:nav -->` / `<!-- partial:footer -->` markers by `scripts/build_site.py`. After editing a
+partial, run `python scripts/build_site.py` and commit the pages too; `tests/test_site_copy.py`
+fails if a page is out of date. The same test enforces the copy rules (no em or en dashes, no
+exclamation marks, "resume" never "CV", no filler words), that local links resolve, that
+`site/sponsor_core.js` is a verbatim copy of `extension/sponsor_core.js`, and that the prices on the
+pricing page match `worker/src/metering.ts`.
 
-The live-numbers line expects `GET <FEED_BASE>/feed/manifest.json` to return
-`{"generated_at": "<ISO 8601>", "count": <integer>}` with CORS allowing the site's origin.
-The manifest is served by the R2 bucket (see docs/feed.md, custom domain step 3 for the CORS rule). If the request fails or the
-shape is wrong the page keeps its static sentence, which makes no numeric claim.
+## Live numbers and the employer check
 
-## Deploy the page on Cloudflare Pages
+`script.js` replaces the numbers baked into the HTML (each labelled with its "as of" date) with live
+ones from `https://feed.sponsorjobs.ai/feed/manifest.json` (roles, refresh time) and
+`/feed/sponsors/manifest.json` (`stats.h1b`, employers with H-1B approvals on record). The hero's
+"Check an employer" box downloads the one shard of the public sponsor index the typed name lives in
+(`/feed/sponsors/<a-z,0-9,_>.json.gz`, raw gzip inflated with `DecompressionStream` when the edge does
+not), and runs the extension's own `SponsorCore.lookup` in the browser, so no name leaves the page.
+If a fetch fails the page keeps its baked numbers and the box says it could not reach the index.
 
-1. Cloudflare dashboard, **Workers & Pages**, **Create**, **Pages** tab, **Connect to Git**.
-2. Pick the GitHub account and the repository, then **Begin setup**.
-3. Build settings:
-   - Production branch: `main`
-   - Framework preset: **None**
-   - Build command: leave **empty**
-   - Build output directory: `site`
-   - Root directory (under "Path"): `site`
-4. **Save and Deploy**. Cloudflare serves `site/index.html` and applies `site/_headers`.
-   Every push to `main` redeploys; every pull request gets a preview URL.
+**The R2 bucket behind `feed.sponsorjobs.ai` must allow the site's origins in its CORS policy**
+(docs/feed.md, custom domain step 3, with `https://sponsorjobs.ai` and `https://www.sponsorjobs.ai`),
+or every browser fetch above is blocked and the page silently stays on its baked numbers.
+As of 2026-10-18 the bucket returned no `Access-Control-Allow-Origin` header.
 
-### Custom domain
+## Things the site reads at runtime
 
-1. Add the domain to Cloudflare (**Websites**, **Add a domain**) and move its nameservers
-   to the two Cloudflare gives you, if it is not there already.
-2. In the Pages project, **Custom domains**, **Set up a custom domain**, enter the domain
-   (and again for `www.`). Cloudflare creates the CNAME records itself when the zone is on
-   Cloudflare.
-3. Wait for the certificate (minutes). Then update the two `tailor.example` placeholders
-   above and the R2 bucket's CORS rule (docs/feed.md) to the new domain.
+- `GET https://feed.sponsorjobs.ai/feed/manifest.json` returns `{"generated_at": "<ISO 8601>", "count": <integer>, ...}`
+  and `/feed/sponsors/manifest.json` returns `{"generated_at", "employers", "stats": {"h1b", "perm", "e_verify"}, "shards"}`
+  (both written by `scripts/build_feed.py` / `scripts/build_sponsor_index.py`). CORS must allow the site's origin.
+- `GET https://api.github.com/repos/KofiGilbert/sponsorjobs` and `.../releases/latest`: stars, last push,
+  release assets. Unauthenticated, 60 requests an hour per visitor IP; on failure the page keeps its
+  non-numeric fallback text ("On GitHub") and the `releases/latest` link.
+- `site/_headers` `connect-src` lists exactly those two hosts. Add a host there before fetching from it.
+
+## Deploy the site
+
+The site is a static-assets Cloudflare Worker (`site-worker/wrangler.jsonc`, assets directory `../site`,
+custom domains `sponsorjobs.ai` and `www.sponsorjobs.ai`, `404.html` served for unknown paths):
+
+    cd site-worker && npx wrangler deploy
+
+Nothing is built at deploy time; what is in `site/` is what is served, `site/_headers` included.
+Check locally first with `python3 -m http.server -d site 8080`. From a localhost origin the feed fetches
+are blocked by CORS (expected) and the page shows its baked numbers.
 
 ## Cut a release
 

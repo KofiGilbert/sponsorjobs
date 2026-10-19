@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download SponsorJobs for macOS and Windows</title>
+<meta name="description" content="Download SponsorJobs for Apple Silicon Macs or 64-bit Windows. Free and open source. You will need LaTeX installed; the community edition also needs your own AI key.">
+<link rel="canonical" href="https://sponsorjobs.ai/download.html">
+<meta name="theme-color" content="#F4F1EA">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="SponsorJobs">
+<meta property="og:title" content="Download SponsorJobs">
+<meta property="og:description" content="For Apple Silicon Macs and 64-bit Windows. Free and open source. Runs on your own computer.">
+<meta property="og:url" content="https://sponsorjobs.ai/download.html">
+<meta property="og:image" content="https://sponsorjobs.ai/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/instrument-serif-latin-v5.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/instrument-serif-italic-latin-v5.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- partial:nav -->
+<header class="site-head wrap">
+  <nav class="nav" aria-label="Site">
+    <a class="wordmark" href="index.html">SponsorJobs <span class="dot">for macOS and Windows</span></a>
+    <div class="nav-links">
+      <a class="hide-m" href="index.html#product">Product</a>
+      <a href="pricing.html">Pricing</a>
+      <a class="hide-m" href="open-source.html">Open source</a>
+      <a class="btn btn-accent btn-sm" href="download.html" aria-current="page">Download</a>
+    </div>
+  </nav>
+  <div class="rule"></div>
+</header>
+<!-- /partial:nav -->
+
+<main id="main">
+<section class="page-head">
+  <div class="wrap">
+    <span class="mono eyebrow">Download</span>
+    <h1 class="display h-xl">Two things first, then <i>three steps.</i></h1>
+    <p class="lede">SponsorJobs runs on your own computer. The installer is free, needs no account to browse jobs, and includes the bundled AI with three tailored applications a month. <span id="dl-version-line">The buttons point at the latest release on GitHub.</span></p>
+  </div>
+</section>
+
+<section class="section flush" aria-labelledby="dl-h">
+  <div class="wrap">
+    <h2 id="dl-h" class="mono eyebrow eyebrow-tight">Installers</h2>
+    <div class="dl-cards">
+      <article class="dl-card" data-os="mac">
+        <h3 class="os-name">macOS</h3>
+        <p class="os-req">Apple Silicon (M1 and later). Intel Macs: run it from source, below.</p>
+        <p class="meta"><span>Version, size and date load from GitHub</span></p>
+        <a class="btn" href="https://github.com/KofiGilbert/sponsorjobs/releases/latest">Download the <span class="k">.DMG</span></a>
+      </article>
+      <article class="dl-card" data-os="win">
+        <h3 class="os-name">Windows</h3>
+        <p class="os-req">Windows 10 or later, 64-bit.</p>
+        <p class="meta"><span>Version, size and date load from GitHub</span></p>
+        <a class="btn" href="https://github.com/KofiGilbert/sponsorjobs/releases/latest">Download the <span class="k">SETUP .EXE</span></a>
+      </article>
+    </div>
+    <p class="dl-fallback small">Every build, with checksums and release notes, is on the <a class="link" href="https://github.com/KofiGilbert/sponsorjobs/releases">releases page</a>. Linux, Intel Macs, or you would rather build it yourself: the <a class="link" href="https://github.com/KofiGilbert/sponsorjobs#readme">README</a> covers running from source in about ten minutes.</p>
+
+    <div class="grid gap-top-xl">
+      <div class="req">
+        <span class="lab mono">Before you install</span>
+        <div class="items">
+          <p><b>LaTeX.</b> SponsorJobs typesets your resume with it, so it has to be on the machine. The steps below give the one command for each system.</p>
+          <p><b>An AI key, community edition only.</b> If you run from source, the first-run setup asks for an Anthropic or OpenAI key and keeps it on your computer. The installed app needs no key: the AI is included.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="os">
+      <div class="col">
+        <h3>macOS <span class="mono">Apple Silicon</span></h3>
+        <ol>
+          <li><span>Install LaTeX. In Terminal: <code>brew install --cask mactex-no-gui</code></span></li>
+          <li><span>Download the <code>.dmg</code>, open it, and drag SponsorJobs to Applications.</span></li>
+          <li><span>On first open, macOS says it cannot verify the developer. Open System Settings, Privacy &amp; Security, and click Open Anyway. Once.</span></li>
+        </ol>
+        <p class="note small">The app is not yet signed with an Apple Developer certificate, which is why macOS asks. The source is public, so you can check what you are opening.</p>
+      </div>
+      <div class="col">
+        <h3>Windows <span class="mono">10 or later, 64-bit</span></h3>
+        <ol>
+          <li><span>Install LaTeX: <a class="link" href="https://miktex.org/download">MiKTeX</a>. Let it install missing packages on the fly.</span></li>
+          <li><span>Download <code>SponsorJobs-Setup.exe</code> and run it.</span></li>
+          <li><span>SmartScreen may warn that the publisher is unknown. Click More info, then Run anyway.</span></li>
+        </ol>
+        <p class="note small">The installer is not yet code-signed, which is why SmartScreen asks.</p>
+      </div>
+    </div>
+
+    <div class="grid gap-top-l">
+      <div class="req req-last">
+        <span class="lab mono">Which edition is which</span>
+        <div class="items">
+          <p><b>The installer</b> is the SponsorJobs edition: sign in, the AI is included, three tailored applications a month free, passes for more. Your data still lives on your computer.</p>
+          <p><b>From source</b> is the community edition: the same engine under the AGPL-3.0, with your own AI key and no limits. You pay your AI provider directly for what you use.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- partial:footer -->
+<footer class="footer">
+  <div class="wrap">
+    <div class="grid">
+      <div class="brand">
+        <a class="wordmark" href="index.html">SponsorJobs</a>
+        <p class="small byline">Built by Kofi Gilbert.<br>BlackOrigin Inc., Chicago.</p>
+      </div>
+      <div class="legal">
+        <b>SponsorJobs is not affiliated with USCIS, the Department of Labor, or any employer or job board.</b> Sponsorship marks are derived from public filings, which lag by months and describe employers, not individual roles. Nothing here is immigration or legal advice.
+      </div>
+      <nav class="links" aria-label="Footer">
+        <a href="index.html#product">Product</a>
+        <a href="pricing.html">Pricing</a>
+        <a href="download.html">Download</a>
+        <a href="open-source.html">Open source</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html">Terms</a>
+        <a href="https://github.com/KofiGilbert/sponsorjobs">GitHub</a>
+        <a href="mailto:kofig@blackorigin.org">kofig@blackorigin.org</a>
+      </nav>
+    </div>
+    <div class="colophon">
+      <span class="mono">&copy; 2026 BlackOrigin Inc.</span>
+      <span class="mono">Set in Instrument Serif, Geist and Geist Mono</span>
+    </div>
+  </div>
+</footer>
+<!-- /partial:footer -->
+
+<script src="script.js" defer></script>
+</body>
+</html>
