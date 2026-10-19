@@ -181,7 +181,7 @@ Checked 2026-09-30. `FEED_INCLUDE_AGGREGATORS` (a repository *variable*, comma l
 | source | terms | in the public file? |
 |---|---|---|
 | Company boards (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Workday) | public, keyless board APIs published for exactly this (CLAUDE.md §6) | **yes** |
-| **freehire.me** | [Terms](https://freehire.me/terms): "no scraping beyond our documented API, no attempting to bypass rate limits or authentication"; nothing on caching/redistribution; the [API docs](https://freehire.me/docs/api) describe it as free and open-source (MIT, [strelov1/freehire](https://github.com/strelov1/freehire)) | **yes**, but on thin ground: redistribution relies on the terms being SILENT about it, not on a grant. The owner has asked freehire for written permission (2026-10-18); if they say no, drop `freehire` from `PUBLIC_OK_AGGREGATORS` in `scripts/build_feed.py` and set `FREEHIRE_SPONSOR_PASS_REQUESTS=0` |
+| **freehire.me** | [Terms](https://freehire.me/terms): "no scraping beyond our documented API, no attempting to bypass rate limits or authentication". The terms do not require attribution and are silent on caching and redistribution; the [API docs](https://freehire.me/docs/api) describe it as free and open-source (MIT, [strelov1/freehire](https://github.com/strelov1/freehire)). We use only the documented API, within its published rate limits | **yes.** No credit is shown in the UI (none is required); rows link only to the employer's own posting. The search-by-sponsor pass switches off with `FREEHIRE_SPONSOR_PASS_REQUESTS=0` |
 | **Remotive** | the API response's own `0-legal-notice`: "API documentation and access is granted so that developers can share our jobs further. Please do not submit Remotive jobs to third Party websites [job aggregators] ... Please link back to the URL found on Remotive AND mention Remotive as a source" (https://remotive.com/api/remote-jobs) | **yes**, with attribution; the file's `attribution` block carries the credit |
 | **Remote OK** | the API's first array element: "Please link back (with follow, and without nofollow!) to the URL on Remote OK and mention Remote OK as a source ... Please don't use the Remote OK logo" (https://remoteok.com/api) | **yes**, with attribution |
 | **JSearch** (RapidAPI, publisher OpenWeb Ninja) | [OpenWeb Ninja Terms](https://www.openwebninja.com/terms): "we additionally grant you a non-exclusive, non-transferable license to use, reproduce, and commercially exploit such API Data in your own products, services, applications, or business, including for resale or redistribution as part of a broader product offering, provided that you do not resell, sublicense, or redistribute API Data as a standalone data or API product that substantially replicates the Services themselves." RapidAPI's platform policy defers to the provider's terms. | **yes by default** (`jsearch`); our feed is part of the app, not a standalone data product |
@@ -193,9 +193,7 @@ budget. If Remotive objects, `FEED_INCLUDE_AGGREGATORS` is not the lever (Remoti
 it from `PUBLIC_OK_AGGREGATORS` in `scripts/build_feed.py`, or run the crawl less often.
 
 Attribution: `jobs.json.gz` carries an `attribution` map for every aggregator present, and the
-Jobs page prints a muted "via Remotive" / "via Remote OK" / "via freehire.me" on each such row
-(freehire asks for no credit, but the rows are its work; its detail link goes to the listing on
-freehire.me) (a fact on the card, a
+Jobs page prints a muted "via Remotive" / "via Remote OK" on each such row (a fact on the card, a
 plain `rel="noopener"` link to the listing in the detail view, never `nofollow`; `VIA_SOURCES` in
 `ui/static/app.js`).
 
@@ -238,8 +236,11 @@ freehire reaches the feed three ways, all through its documented, keyless API
    - **Rotation.** `freehire_sponsor_cursor.json` remembers the next employer by name; a run
      resumes there, and an employer whose search did not finish is retried first. Both files travel
      in shard 0's delta, so the merge job keeps them.
-   - **Credit.** Rows keep `source: "freehire"`, so cards say "via freehire.me" and the feed's
-     `attribution` block names it.
+   - **Links and source.** A row links only to the ORIGINAL employer posting (freehire's `url`
+     field); a row whose URL is missing or points at freehire.me is dropped (this applies to every
+     freehire path, `ats.freehire_employer_url_ok`). Rows keep `source: "freehire"` internally for
+     dedup and debugging; no freehire credit is shown in the UI (its terms do not require one).
+   - **Switching it off.** `FREEHIRE_SPONSOR_PASS_REQUESTS=0` (a repository variable).
 
    **Short proof run (2026-10-18, 20 requests, against a local copy of the 113,361-row public
    feed):** 6 employers looked up (Cognizant, TCS, Google, Deloitte, Apple, Capgemini), 1,200 rows

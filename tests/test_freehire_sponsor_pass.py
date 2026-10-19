@@ -155,7 +155,7 @@ def test_ranking_skips_covered_and_inactive_employers():
 
 # -- the pass --------------------------------------------------------------------------- #
 
-def test_pass_adds_sponsor_rows_and_credits_freehire(api, tmp_path):
+def test_pass_adds_sponsor_rows_linked_to_the_employer(api, tmp_path):
     api.companies = [{"slug": "zentrix", "name": "Zentrix Analytics", "job_count": 3},
                      {"slug": "zentrix-gmbh-other", "name": "Zentrixx Media", "job_count": 4}]
     api.jobs = {"zentrix": [_raw("z1", "Zentrix Analytics"), _raw("z2", "Zentrix Analytics", title="ML Engineer"),
@@ -165,7 +165,8 @@ def test_pass_adds_sponsor_rows_and_credits_freehire(api, tmp_path):
     s = _run(api, tmp_path, w, _seed(("Zentrix Analytics Inc", 900)))
     got = {j["source_id"]: j for j in w.list_jobs()}
     assert set(got) == {"freehire::z1", "freehire::z2"}          # Berlin dropped, wrong co never asked
-    assert all(j["source"] == "freehire" for j in got.values())  # the card's "via freehire.me"
+    assert all(j["source"] == "freehire" for j in got.values())  # internal only, never shown
+    assert got["freehire::z1"]["url"] == "https://jobs.example/z1"  # the employer's own posting
     assert s["new"] == 2 and s["not_sponsor"] == 1
     searched = [qs for p, qs in api.requests if p.endswith("/agent/jobs/search")]
     assert searched and searched[0]["company_slug"] == ["zentrix"]
@@ -299,3 +300,35 @@ def test_build_runs_the_pass_in_shard_zero_only(monkeypatch, tmp_path):
     assert bf.owns_lanes(0) and not bf.owns_lanes(1)
     # The pass's state files travel with shard 0's delta, so the merge job keeps them.
     assert set(bf.FREEHIRE_SPONSOR_FILES) == {fs.CURSOR_FILE, fs.SLUG_CACHE_FILE}
+
+
+def test_rows_without_an_employer_url_are_dropped(api, tmp_path):
+    api.companies = [{"slug": "zentrix", "name": "Zentrix Analytics", "job_count": 3}]
+    api.jobs = {"zentrix": [_raw("z1", "Zentrix Analytics"),
+                            _raw("z2", "Zentrix Analytics", title="ML Engineer",
+                                 url="https://freehire.me/jobs/z2"),
+                            {**_raw("z3", "Zentrix Analytics", title="Analyst"), "url": ""}]}
+    w = Watchlist(":memory:")
+    s = _run(api, tmp_path, w, _seed(("Zentrix Analytics", 900)))
+    assert {j["source_id"] for j in w.list_jobs()} == {"freehire::z1"}
+    assert s["no_employer_url"] == 2
+
+
+@pytest.mark.parametrize("url,ok", [
+    ("https://boards.greenhouse.io/acme/jobs/1", True),
+    ("http://careers.acme.com/job/2", True),
+    ("https://freehire.me/jobs/abc", False),
+    ("https://www.freehire.me/jobs/abc", False),
+    ("", False),
+    ("/jobs/abc", False),
+])
+def test_only_employer_urls_count(url, ok):
+    from sourcing.ats import freehire_employer_url_ok
+    assert freehire_employer_url_ok({"url": url}) is ok
+
+
+def test_bulk_and_search_drop_rows_without_an_employer_url():
+    from sourcing.ats import freehire_bulk, freehire_jobs
+    data = {"data": [_raw("a", "Acme"), _raw("b", "Acme", url="https://freehire.me/jobs/b")]}
+    assert [r["source_id"] for r in freehire_bulk(fetch=lambda u, **k: data, cap=100)] == ["freehire::a"]
+    assert [r["source_id"] for r in freehire_jobs("x", fetch=lambda u, **k: data)] == ["freehire::a"]

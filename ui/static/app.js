@@ -1311,14 +1311,6 @@
   const VIA_SOURCES = {
     remotive: { name: "Remotive", url: "https://remotive.com" },
     remoteok: { name: "Remote OK", url: "https://remoteok.com" },
-    // freehire.me asks for no credit, but its rows (including the search-by-sponsor pass,
-    // sourcing/freehire_sponsors.py) are its work, so the card names it like the others.
-    // Its listing page (freehire.me/jobs/{public_slug}), since the row's own url is the employer's.
-    freehire: { name: "freehire.me", url: "https://freehire.me",
-                page: (j) => {
-                  const slug = String(j.source_id || "").split("::")[1];
-                  return slug ? `https://freehire.me/jobs/${encodeURIComponent(slug)}` : "";
-                } },
   };
   function viaSource(j) { return VIA_SOURCES[String(j.source || "").toLowerCase()] || null; }
   function viaText(a) { return I18N.t("job.via", "via {source}").replace("{source}", a.name); }
@@ -1329,8 +1321,7 @@
   function viaLink(j) {
     const a = viaSource(j);
     if (!a) return "";
-    const href = (a.page && a.page(j)) || j.url || a.url;
-    return `<div class="fd-via"><a href="${esc(href)}" target="_blank" rel="noopener">${esc(viaText(a))}</a></div>`;
+    return `<div class="fd-via"><a href="${esc(j.url || a.url)}" target="_blank" rel="noopener">${esc(viaText(a))}</a></div>`;
   }
 
   // Category chips like the competitor's ("Data Engineering", "Healthcare"), derived from the

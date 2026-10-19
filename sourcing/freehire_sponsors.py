@@ -27,7 +27,8 @@ Every request counts against one budget per run (env FREEHIRE_SPONSOR_PASS_REQUE
 The API publishes its limits in X-RateLimit-* headers: the pass slows down when the remaining
 budget runs low, honours Retry-After on a 429, and gives up for the run on a second 429 or a run
 of failures. It sends the same identifying User-Agent as the rest of the crawl, and short timeouts.
-Rows keep source "freehire", so cards credit freehire.me exactly as the sponsor slice's rows do.
+Rows keep source "freehire" internally (dedup, debugging); it is never shown. A row links only to
+the ORIGINAL employer posting (freehire's `url`); one without such a URL is dropped.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ import urllib.request
 from datetime import date, timedelta
 from pathlib import Path
 
-from .ats import _UA, _freehire_row
+from .ats import _UA, _freehire_row, freehire_employer_url_ok
 from .dedup import DedupIndex
 from .quality import is_intl_student_accessible, is_sponsor_relevant
 from .sponsors import _ALIASES, _BRAND_PREFIXES, looks_us, normalize_employer
@@ -341,6 +342,7 @@ def run_pass(store, data_dir, tag, *, seed_rows=None, http=http_get, sleep=time.
             budget = DEFAULT_REQUESTS
     summary = {"requests": 0, "employers": 0, "employers_with_slugs": 0, "fetched": 0,
                "kept": 0, "new": 0, "already_held": 0, "duplicates": 0, "not_sponsor": 0,
+               "no_employer_url": 0,
                "rate_limited": 0, "stopped": "", "list_size": 0, "start": 0}
     if budget <= 0:
         summary["stopped"] = "off"
@@ -379,6 +381,9 @@ def run_pass(store, data_dir, tag, *, seed_rows=None, http=http_get, sleep=time.
                 seen.add(key)
                 rows.append(_freehire_row(j))
         summary["fetched"] += len(rows)
+        linked = [r for r in rows if freehire_employer_url_ok(r)]
+        summary["no_employer_url"] += len(rows) - len(linked)
+        rows = linked
         keep = []
         for r in rows:
             if keep_row(r, tag):

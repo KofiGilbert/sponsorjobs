@@ -271,7 +271,7 @@ def freehire_sponsor_pass(w, data_dir, log=print, **kw) -> dict:
     log(f"[build_feed] freehire sponsor pass: requests={s['requests']} employers={s['employers']} "
         f"(with freehire slugs {s['employers_with_slugs']}, list {s['list_size']} from #{s['start']}) "
         f"fetched={s['fetched']} new={s['new']} already_held={s['already_held']} "
-        f"cross_feed_duplicates={s['duplicates']} not_sponsor={s['not_sponsor']} "
+        f"cross_feed_duplicates={s['duplicates']} not_sponsor={s['not_sponsor']} no_employer_url={s['no_employer_url']} "
         f"rate_limited={s['rate_limited']}" + (f" stopped: {s['stopped']}" if s["stopped"] else ""))
     return s
 
