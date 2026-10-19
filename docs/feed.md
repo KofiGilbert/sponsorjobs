@@ -124,7 +124,7 @@ At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
   overlays the person's saved bookmarks. It reports `"source": "central"` and `refreshed_at` =
   the file's `generated_at`.
 - `/api/jobs/detail` reads the role's JD from its shard (cached locally for a day). If the shard lacks
-  it (a Workday or SmartRecruiters row stored list-only before the crawl checked descriptions), it
+  it (a Workday row stored list-only before the crawl checked descriptions), it
   asks the company's **own public board endpoint** for that one posting (`fetch_board_jd`), the same
   GREEN-lane API the crawl uses, and runs the accessibility check on it before showing the role.
 - **Fallback.** If the download fails and nothing is cached, `/api/jobs` serves the local crawl
@@ -153,8 +153,8 @@ done it at once):
    (`JOBS_FIRST_CRAWL_BOARDS`) ranked by the company's H-1B approvals with a few of every ATS, one
    request at a time with per-host spacing from `sourcing/growth.PoliteFetch` (Workable on its slow
    lane, all Workday tenants on one lane, a 429 backs the host off and a cooling host is skipped), a
-   **10-minute** wall-clock cap (`JOBS_FIRST_CRAWL_MINUTES`), and **20** descriptions per Workday /
-   SmartRecruiters board (`JOBS_FIRST_CRAWL_DETAIL`). It runs once per process (retried after a
+   **10-minute** wall-clock cap (`JOBS_FIRST_CRAWL_MINUTES`), and **20** descriptions per Workday
+   board (`JOBS_FIRST_CRAWL_DETAIL`). It runs once per process (retried after a
    back-off if it fails); `JOBS_FIRST_CRAWL=0` switches it off. The in-app auto-updater
    (`RESUME_AGENT_AUTOUPDATE`) is unchanged.
 
@@ -180,7 +180,8 @@ Checked 2026-09-30. `FEED_INCLUDE_AGGREGATORS` (a repository *variable*, comma l
 
 | source | terms | in the public file? |
 |---|---|---|
-| Company boards (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Workday) | public, keyless board APIs published for exactly this (CLAUDE.md §6) | **yes** |
+| Company boards (Greenhouse, Lever, Ashby, Workable, Recruitee, Workday) | public, keyless board APIs published for exactly this (CLAUDE.md §6) | **yes** |
+| **SmartRecruiters** | [`api.smartrecruiters.com/robots.txt`](https://api.smartrecruiters.com/robots.txt) reads `User-agent: LinkedInBot / Allow: /v1/companies/ / User-agent: * / Disallow: /`: every robot but LinkedInBot is disallowed from the whole API (checked 2026-10-19) | **not used.** No code path requests that API (`sourcing.ats.DISABLED_ATS`; pinned by `tests/test_smartrecruiters_disabled.py`). See "SmartRecruiters is switched off" below |
 | **freehire.me** | [Terms](https://freehire.me/terms): "no scraping beyond our documented API, no attempting to bypass rate limits or authentication". The terms do not require attribution and are silent on caching and redistribution; the [API docs](https://freehire.me/docs/api) describe it as free and open-source (MIT, [strelov1/freehire](https://github.com/strelov1/freehire)). We use only the documented API, within its published rate limits | **yes.** No credit is shown in the UI or the feed file's `attribution` block (none is required); rows link only to the employer's own posting. The search-by-sponsor pass switches off with `FREEHIRE_SPONSOR_PASS_REQUESTS=0` |
 | **Remotive** | the API response's own `0-legal-notice`: "API documentation and access is granted so that developers can share our jobs further. Please do not submit Remotive jobs to third Party websites [job aggregators] ... Please link back to the URL found on Remotive AND mention Remotive as a source" (https://remotive.com/api/remote-jobs) | **yes**, with attribution; the file's `attribution` block carries the credit |
 | **Remote OK** | the API's first array element: "Please link back (with follow, and without nofollow!) to the URL on Remote OK and mention Remote OK as a source ... Please don't use the Remote OK logo" (https://remoteok.com/api) | **yes**, with attribution |
@@ -279,10 +280,10 @@ organization, or failing both its own job descriptions) confirms it is that empl
 at least one job:
 
     python scripts/grow_watchlist.py --ipv4 --limit 4000 --max-minutes 180 --workers 16 \
-        --ats greenhouse,lever,ashby,smartrecruiters,workday
+        --ats greenhouse,lever,ashby,workday
 
 It checkpoints every employer to `data/grow_watchlist.jsonl`, so a stopped run continues where it
-left off; `--ipv4` is for networks whose IPv6 is broken (each SmartRecruiters / Ashby call otherwise
+left off; `--ipv4` is for networks whose IPv6 is broken (each Ashby call otherwise
 waits out two timeouts). Workable is left out of the big runs: its edge answers a whole day's
 `Retry-After` once an address has used its budget, and the list holds one Workable board.
 
@@ -361,8 +362,8 @@ The same script now grows the list in bounded batches (default `--limit 300`) wi
 * **robots.txt.** Each ATS API's robots.txt is read once per run and obeyed, Crawl-delay
   included (Lever asks for 1 s). **SmartRecruiters' `api.smartrecruiters.com/robots.txt`
   disallows everything to everyone but LinkedInBot, so discovery no longer probes
-  SmartRecruiters at all** (the feed's crawl of the 158 SmartRecruiters boards already on the
-  list is unchanged; whether to keep crawling them is an open question for the maintainer).
+  SmartRecruiters at all**, and since 2026-10-19 neither does the feed or the app (see
+  "SmartRecruiters is switched off" below).
   Greenhouse (only `/embed/` disallowed), Lever, Workable allow it; Ashby's API answers 401 for
   robots.txt, which RFC 9309 reads as "no robots file". A robots.txt that cannot be read (5xx,
   timeout) owes the request rather than guessing. Workday tenants' own robots.txt was already
@@ -434,7 +435,39 @@ lane), well inside its 60 minutes. If the list passes ~3,500 boards, the next st
 shard or visiting the high-volume boards every run and rotating the long tail; nothing in the data
 needs priority ordering yet (every watched board is a verified sponsor).
 
-### List-only boards are checked before they are kept (Workday, SmartRecruiters)
+### SmartRecruiters is switched off (2026-10-19)
+
+`https://api.smartrecruiters.com/robots.txt` allows only LinkedInBot (on `/v1/companies/`) and
+disallows the whole API to every other user agent, so every automated request we made to it -- the
+feed's board crawl, the per-posting descriptions, the app's detail-view fill (the JD read when a role is opened),
+discovery -- was one the site asks robots not to make. All of them are off:
+
+* `sourcing/ats.py` `DISABLED_ATS` records the ATS, the host, the reason and the date checked;
+  `ats_disabled(ats)` is the one check. The adapter (`smartrecruiters_jobs`), the per-posting detail
+  (`smartrecruiters_detail` / `smartrecruiters_fill`) and `normalize_jobs` return nothing without a
+  request; `refresh_watchlist` skips the board (`boards_disabled` in its summary);
+  `feedclient.fetch_board_jd` / `fill_list_only_detail` return nothing; discovery leaves it out of
+  `DISCOVER_ATS` and its probe / name check make no request; the app's add-a-board endpoint refuses
+  it with the reason.
+* The **158 SmartRecruiters boards stay on the watchlist** (`seed/watchlist_seed.csv`), stored
+  **inactive** (`watchlist.active = 0`; an existing database is switched on open), so nothing crawls
+  them and nothing is lost. To reverse it (if their robots.txt ever allows us), delete the entry from
+  `DISABLED_ATS`: the feed build's `sync_seed` re-activates the boards and the dormant adapter, still
+  tested against a fake (`tests/test_smartrecruiters.py`), takes over.
+* SmartRecruiters rows already in the published feed are not purged; they age out under the normal
+  rules, since no crawl sees them again: a row posted over 45 days ago leaves once it is 7 days unseen
+  (`JOBS_SEEN_DAYS`), and every row is pruned at 21 days unseen (`scheduler.PRUNE_DAYS`). On 2026-10-18 the live feed held **2,430 SmartRecruiters rows of 119,616 (2.0%)**, from
+  136 boards (Domino's 487, AbbVie 294, Turner & Townsend 163, Intuitive Surgical 138, ServiceNow 125,
+  ...). None of those 158 employers has another source in the feed today (no career-site entry in
+  `config/careersites.json` and no board on another ATS), so their roles leave the feed until one is
+  found by other means. `tests/test_smartrecruiters_disabled.py` fails if any new file under
+  `sourcing/`, `ui/`, `backend/`, `scripts/`, `extension/` (and the other app folders) names
+  `api.smartrecruiters.com`.
+* Not affected: assisted apply on the public posting page (`jobs.smartrecruiters.com`) in the
+  person's own browser or the extension, which is the person filling a form, not a robot reading the
+  API.
+
+### List-only boards are checked before they are kept (Workday; SmartRecruiters while it was on)
 
 Two of the ATSs deliver their job list WITHOUT the description: Workday's `cxs` list and
 SmartRecruiters' `GET https://api.smartrecruiters.com/v1/companies/{board}/postings` (the body and

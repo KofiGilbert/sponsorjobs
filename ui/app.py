@@ -3176,6 +3176,11 @@ def watchlist_add():
     b = request.json or {}
     ats = (b.get("ats") or "").strip().lower()
     board = (b.get("board_id") or "").strip()
+    from sourcing.ats import ats_disabled
+    if ats_disabled(ats):
+        # e.g. SmartRecruiters: its API robots.txt disallows us, so we never read its boards.
+        return jsonify({"error": f"We don't read {ats} boards: its robots.txt asks automated "
+                                 "tools not to. Open the company's job page in your browser instead."}), 400
     if ats not in SUPPORTED_ATS:
         return jsonify({"error": f"ATS must be one of {', '.join(SUPPORTED_ATS)}"}), 400
     if not board:

@@ -530,7 +530,11 @@ def test_committed_seed_is_sorted_deduped_and_valid():
     assert len({(r["ats"], r["board_id"]) for r in rows}) == len(rows)
     assert all(growth.valid_board_id_for(r["ats"], r["board_id"]) for r in rows)
     # Discovery finds the ATS boards; "recruitee" and "amazonjobs" rows are curated by hand.
-    assert {r["ats"] for r in rows} <= set(growth.DISCOVER_ATS) | {"recruitee", "amazonjobs"}
+    # A disabled ATS's boards (ats.DISABLED_ATS, SmartRecruiters) stay on the seed on purpose,
+    # stored inactive, so turning it back on is reversible.
+    from sourcing.ats import DISABLED_ATS
+    assert {r["ats"] for r in rows} <= (set(growth.DISCOVER_ATS) | {"recruitee", "amazonjobs"}
+                                        | set(DISABLED_ATS))
 
 
 # -- the in-app weekly pass --------------------------------------------------- #

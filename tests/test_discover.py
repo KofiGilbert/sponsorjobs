@@ -115,7 +115,11 @@ def test_name_lane_rejects_a_squatted_or_mismatched_board():
     assert discover_for_company("Linkedin Corporation", fetch=fetch) is None
 
 
-def test_smartrecruiters_is_a_verified_name_lane():
+def test_smartrecruiters_is_a_verified_name_lane(monkeypatch):
+    # SmartRecruiters is DISABLED (ats.DISABLED_ATS: robots.txt); this keeps the dormant probe
+    # correct so switching it back on is a one-line revert.
+    from sourcing import ats
+    monkeypatch.setattr(ats, "DISABLED_ATS", {})
     # SmartRecruiters exposes the employer name, so it's a NAME_LANE: a single-word brand is
     # probed (list only) and accepted ONLY when the board's company.name confirms it.
     def ok(url, timeout=20):

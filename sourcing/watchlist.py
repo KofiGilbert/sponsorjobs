@@ -93,18 +93,30 @@ class Watchlist(BoardMixin):
         # The tracker board (added later): stage / stage_at / applied_at / follow_up_at / notes on
         # this table, plus the activity + contact side tables. See sourcing/board.py.
         migrate_board(c)
+        # A board on a disabled ATS (ats.DISABLED_ATS: SmartRecruiters, whose API robots.txt
+        # disallows us, 2026-10-19) stays on the watchlist but inactive, so no crawl picks it up.
+        from .ats import DISABLED_ATS
+        # Read first: an UPDATE takes the write lock even when it changes nothing, and a reader
+        # opened while the crawler writes must never wait on it (tests/test_scheduler.py).
+        marks = ",".join("?" * len(DISABLED_ATS))
+        if DISABLED_ATS and c.execute(f"SELECT 1 FROM watchlist WHERE active=1 AND ats IN ({marks}) "
+                                      "LIMIT 1", tuple(DISABLED_ATS)).fetchone():
+            c.execute(f"UPDATE watchlist SET active=0 WHERE active=1 AND ats IN ({marks})",
+                      tuple(DISABLED_ATS))
         c.commit()
 
     # -- watchlist companies -------------------------------------------- #
     def add_company(self, company: str, ats: str, board_id: str) -> None:
-        from .ats import valid_board_id_for
+        from .ats import ats_disabled, valid_board_id_for
         board_id = board_id.strip()
         if not valid_board_id_for(ats, board_id):   # never store a value that could escape the host on fetch
             raise ValueError(f"invalid board id {board_id!r}: must be a plain board slug")
+        # A board on a disabled ATS (ats.DISABLED_ATS) is kept, but stored inactive: no crawl reads it.
+        active = 0 if ats_disabled(ats) else 1
         self._conn.execute(
-            "INSERT INTO watchlist(company, ats, board_id) VALUES(?,?,?) "
-            "ON CONFLICT(ats, board_id) DO UPDATE SET company=excluded.company, active=1",
-            (company.strip(), ats.strip().lower(), board_id.strip()),
+            "INSERT INTO watchlist(company, ats, board_id, active) VALUES(?,?,?,?) "
+            "ON CONFLICT(ats, board_id) DO UPDATE SET company=excluded.company, active=excluded.active",
+            (company.strip(), ats.strip().lower(), board_id.strip(), active),
         )
         self._conn.commit()
 
