@@ -45,6 +45,9 @@ DEFAULT_INCLUDE = "jsearch"
 DEFAULT_CRAWL_MINUTES = 140
 CURSOR_FILE = "crawl_cursor.json"     # where the next run resumes in the board list, under --data
 CAREERSITE_CURSOR_FILE = "careersite_cursor.json"   # the same for the career-site table
+# The freehire search-by-sponsor pass (sourcing/freehire_sponsors.py) keeps its place in the
+# employer list and its company-slug answers here; shard 0 owns both, like the career-site cursor.
+FREEHIRE_SPONSOR_FILES = ("freehire_sponsor_cursor.json", "freehire_sponsor_slugs.json")
 # Crawl shards (2026-10-13): the workflow splits the board list across parallel jobs, each crawling
 # its own slice into a copy of the shared DB, then ONE merge job folds every shard's changes back
 # into the shared DB and publishes. FEED_SHARD_INDEX / FEED_SHARD_COUNT pick the slice; the default
@@ -171,7 +174,8 @@ def export_delta(jobs_db, data_dir, since: str, delta_path, *, index: int = 0, c
             conn.execute("CREATE TABLE d.careersite_skip AS SELECT * FROM main.careersite_skip "
                          "WHERE at >= substr(?, 1, 10)", (since,))
         conn.execute("CREATE TABLE d.delta_meta (k TEXT PRIMARY KEY, v TEXT)")
-        files = [cursor_file_for(index, count)] + ([CAREERSITE_CURSOR_FILE] if owns_lanes(index) else [])
+        files = [cursor_file_for(index, count)] + (
+            [CAREERSITE_CURSOR_FILE, *FREEHIRE_SPONSOR_FILES] if owns_lanes(index) else [])
         for name in files:
             f = Path(data_dir) / name
             if f.exists():
@@ -250,6 +254,26 @@ def aggregators_for_feed(env=None, log=print) -> list[str]:
             else:
                 log(f"[build_feed] ignoring unknown aggregator {name!r}")
     return [*PUBLIC_OK_AGGREGATORS, *keyed]
+
+
+def freehire_sponsor_pass(w, data_dir, log=print, **kw) -> dict:
+    """The freehire search-by-sponsor pass (sourcing/freehire_sponsors.py): at most
+    FREEHIRE_SPONSOR_PASS_REQUESTS requests (default 200, 0 = off) asking freehire for the fresh
+    US roles of H-1B employers our own crawl does not cover. Shard 0 only (owns_lanes), so the
+    API is never asked twice in one run. Best-effort: a failure is logged, never fatal."""
+    import backend.feed as feed
+    from sourcing.freehire_sponsors import run_pass
+    try:
+        s = run_pass(w, data_dir, feed._sponsors(feed._paths()[1]).tag_jobs, log=log, **kw)
+    except Exception as exc:                             # noqa: BLE001 - never kill the build
+        log(f"[build_feed] freehire sponsor pass failed: {exc}")
+        return {}
+    log(f"[build_feed] freehire sponsor pass: requests={s['requests']} employers={s['employers']} "
+        f"(with freehire slugs {s['employers_with_slugs']}, list {s['list_size']} from #{s['start']}) "
+        f"fetched={s['fetched']} new={s['new']} already_held={s['already_held']} "
+        f"cross_feed_duplicates={s['duplicates']} not_sponsor={s['not_sponsor']} "
+        f"rate_limited={s['rate_limited']}" + (f" stopped: {s['stopped']}" if s["stopped"] else ""))
+    return s
 
 
 class _CareerSiteLane:
@@ -347,6 +371,8 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
                     f"boards {summary.get('boards_crawled')}/{len(boards)} from #{start}"
                     + (" (stopped at the time cap; the next run continues)"
                        if summary.get("stopped_early") else ""))
+            if crawler is None and fetch is None and owns_lanes(index):
+                freehire_sponsor_pass(w, data_dir, log=log)
             if lane is not None:
                 lane.join()
                 log(f"[build_feed] careersite: sites={len(lane.summaries)} "

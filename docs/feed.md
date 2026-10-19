@@ -181,7 +181,7 @@ Checked 2026-09-30. `FEED_INCLUDE_AGGREGATORS` (a repository *variable*, comma l
 | source | terms | in the public file? |
 |---|---|---|
 | Company boards (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Workday) | public, keyless board APIs published for exactly this (CLAUDE.md §6) | **yes** |
-| **freehire.me** | [Terms](https://freehire.me/terms): "no scraping beyond our documented API, no attempting to bypass rate limits or authentication"; nothing on caching/redistribution; the [API docs](https://freehire.me/docs/api) describe it as free and open-source | **yes** |
+| **freehire.me** | [Terms](https://freehire.me/terms): "no scraping beyond our documented API, no attempting to bypass rate limits or authentication"; nothing on caching/redistribution; the [API docs](https://freehire.me/docs/api) describe it as free and open-source (MIT, [strelov1/freehire](https://github.com/strelov1/freehire)) | **yes**, but on thin ground: redistribution relies on the terms being SILENT about it, not on a grant. The owner has asked freehire for written permission (2026-10-18); if they say no, drop `freehire` from `PUBLIC_OK_AGGREGATORS` in `scripts/build_feed.py` and set `FREEHIRE_SPONSOR_PASS_REQUESTS=0` |
 | **Remotive** | the API response's own `0-legal-notice`: "API documentation and access is granted so that developers can share our jobs further. Please do not submit Remotive jobs to third Party websites [job aggregators] ... Please link back to the URL found on Remotive AND mention Remotive as a source" (https://remotive.com/api/remote-jobs) | **yes**, with attribution; the file's `attribution` block carries the credit |
 | **Remote OK** | the API's first array element: "Please link back (with follow, and without nofollow!) to the URL on Remote OK and mention Remote OK as a source ... Please don't use the Remote OK logo" (https://remoteok.com/api) | **yes**, with attribution |
 | **JSearch** (RapidAPI, publisher OpenWeb Ninja) | [OpenWeb Ninja Terms](https://www.openwebninja.com/terms): "we additionally grant you a non-exclusive, non-transferable license to use, reproduce, and commercially exploit such API Data in your own products, services, applications, or business, including for resale or redistribution as part of a broader product offering, provided that you do not resell, sublicense, or redistribute API Data as a standalone data or API product that substantially replicates the Services themselves." RapidAPI's platform policy defers to the provider's terms. | **yes by default** (`jsearch`); our feed is part of the app, not a standalone data product |
@@ -193,9 +193,63 @@ budget. If Remotive objects, `FEED_INCLUDE_AGGREGATORS` is not the lever (Remoti
 it from `PUBLIC_OK_AGGREGATORS` in `scripts/build_feed.py`, or run the crawl less often.
 
 Attribution: `jobs.json.gz` carries an `attribution` map for every aggregator present, and the
-Jobs page prints a muted "via Remotive" / "via Remote OK" on each such row (a fact on the card, a
+Jobs page prints a muted "via Remotive" / "via Remote OK" / "via freehire.me" on each such row
+(freehire asks for no credit, but the rows are its work; its detail link goes to the listing on
+freehire.me) (a fact on the card, a
 plain `rel="noopener"` link to the listing in the detail view, never `nofollow`; `VIA_SOURCES` in
 `ui/static/app.js`).
+
+### freehire: search by sponsor (`sourcing/freehire_sponsors.py`)
+
+freehire reaches the feed three ways, all through its documented, keyless API
+(`https://freehire.me/api/v1`, [docs](https://freehire.me/docs/api),
+[OpenAPI](https://freehire.me/openapi.yaml)), US only and posted within `FREEHIRE_MAX_DAYS` (14):
+
+1. **Sponsor slice** (`service.refresh_watchlist` step 3b): the newest `FREEHIRE_SPONSOR_ROWS`
+   (2,000) rows whose posting states sponsorship (`visa_sponsorship=true`).
+2. **General bulk**: off (`FREEHIRE_GENERAL_BULK=1`).
+3. **Search by sponsor** (since 2026-10-18), shard 0 only. Any one freehire query reaches only its
+   newest ~10,000 rows (`offset + limit` may not pass 10,000), and most postings never say whether
+   they sponsor, so slice 1 misses the bulk of roles at real H-1B employers (about 9% of fresh US
+   freehire rows). This pass asks for them by employer:
+   - **Which employers.** The committed sponsor seed, summed per employer, ranked by H-1B approvals,
+     still filing within 2 years of the newest year, top `FREEHIRE_SPONSOR_PASS_EMPLOYERS` (4,000;
+     roughly 50+ approvals). Employers our own crawl covers (a watched board, active or not, or a
+     career site) are skipped: their rows come from the employer directly.
+   - **Matching names.** One company search (`GET /companies?q=`) per employer finds its freehire
+     company slugs; a slug is kept only when its name is the same employer (`names_match`: Inc /
+     LLC / Corp / punctuation / "&" ignored, "JP Morgan" = "JPMorgan", a longer name only extends a
+     shorter one of 2+ words, and a curated brand such as Google or Deloitte spans its entities). A
+     lone generic word never stretches ("Nowhere" is not "Nowhere Partners"). Answers are cached
+     for 30 days in `freehire_sponsor_slugs.json`, so later laps spend requests on jobs.
+   - **Jobs.** `GET /agent/jobs/search` with up to 10 `company_slug` values ORed, `countries=US`,
+     newest first, paged by 100.
+   - **Kept only when** the row is US, has no citizenship / clearance bar
+     (`is_intl_student_accessible`), its ad does not say no (`adstance`), and it carries an
+     employer sponsor badge after `SponsorDB.tag_jobs` (`is_sponsor_relevant`). Then cross-feed
+     dedup (`sourcing/dedup.py`) against everything stored, so a board's own copy always wins.
+   - **Budget and politeness.** At most `FREEHIRE_SPONSOR_PASS_REQUESTS` (200; 0 = off) requests
+     per run, company searches included. The API publishes its limits (300/min for the agent
+     search, 600/min for the rest): the pass waits for `X-RateLimit-Reset` when
+     `X-RateLimit-Remaining` drops to 10, honours `Retry-After` on a 429 and stops for the run on
+     a second 429 or 3 failures in a row. It also stops if the API reports it ignored a parameter
+     (`meta.ignored_params`), since an unknown filter is dropped, which would turn a company query
+     into the whole catalogue. Same identifying User-Agent as the rest of the crawl, 15 s timeouts.
+   - **Rotation.** `freehire_sponsor_cursor.json` remembers the next employer by name; a run
+     resumes there, and an employer whose search did not finish is retried first. Both files travel
+     in shard 0's delta, so the merge job keeps them.
+   - **Credit.** Rows keep `source: "freehire"`, so cards say "via freehire.me" and the feed's
+     `attribution` block names it.
+
+   **Short proof run (2026-10-18, 20 requests, against a local copy of the 113,361-row public
+   feed):** 6 employers looked up (Cognizant, TCS, Google, Deloitte, Apple, Capgemini), 1,200 rows
+   fetched, 77 dropped by the sponsor / ad / clearance rules, 22 already held (5 by the same
+   freehire id, 17 cross-feed duplicates), **1,101 new sponsor rows** (Google 673, Capgemini 264,
+   Apple 163). The top of the list is the densest, so later requests find fewer rows each.
+   Expect the first lap of 4,000 employers to take about 23 runs (~3 days at 8 runs a day: one
+   company search per employer plus ~600 job pages), adding an estimated 20,000-40,000 sponsor
+   roles; after that the slug cache leaves the whole budget for job pages, a lap takes about 4 runs,
+   and each run mostly refreshes known rows and adds that day's new postings.
 
 ### Workday boards (`sourcing/workday.py`)
 
