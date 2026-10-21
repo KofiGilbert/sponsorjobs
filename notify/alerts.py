@@ -154,24 +154,31 @@ class NotifyState:
 
 
 # --------------------------------------------------------------------------- scoring
-def profile_targets(profile: dict) -> dict:
-    """The cheap pre-score's view of the profile: role-title words and skill words."""
-    titles, skills = [], []
+def profile_titles(profile: dict) -> list[str]:
+    """The person's own role titles (every role at every employer, project titles, and any
+    target titles), for title similarity."""
+    titles = []
     for org in (profile or {}).get("experience") or []:
         for role in (org or {}).get("roles") or []:
-            titles.append(role.get("title") or "")
-        if org.get("title"):
+            titles.append((role or {}).get("title") or "")
+        if (org or {}).get("title"):
             titles.append(org.get("title"))
     for p in (profile or {}).get("projects") or []:
         titles.append((p or {}).get("title") or "")
+    for t in (profile or {}).get("target_titles") or []:
+        titles.append(str(t))
+    return [t for t in titles if t]
+
+
+def profile_targets(profile: dict) -> dict:
+    """The cheap pre-score's view of the profile: role-title words and skill words."""
+    titles, skills = profile_titles(profile), []
     sk = (profile or {}).get("skills") or {}
     if isinstance(sk, dict):
         for v in sk.values():
             skills.extend(v if isinstance(v, list) else str(v).split(","))
     elif isinstance(sk, list):
         skills.extend(str(s) for s in sk)
-    for t in (profile or {}).get("target_titles") or []:
-        titles.append(str(t))
     return {"title_words": set(_tokens(" ".join(titles))),
             "skill_words": {w for s in skills for w in _tokens(s)}}
 
@@ -194,14 +201,50 @@ def prescore(row: dict, targets: dict) -> int:
     return int(round(100 * min(1.0, hit / max(1, len(words)))))
 
 
+# Below this many skills named in the ad, keyword coverage alone is too thin to trust: an ad that
+# names two skills the person happens to have scored 100% for a "Cybersecurity Architect" on a
+# product/AI profile. A thin ad leans on title similarity instead (see match_percent).
+THIN_JD_SKILLS = 8
+
+_SENIOR_TITLE = re.compile(r"\b(senior|sr|staff|principal|lead|director|head|architect|vp|chief)\b", re.I)
+
+
+def title_fit(title: str, targets: dict, profile_titles: list[str] | None = None) -> float | None:
+    """0..1: how close this role's TITLE is to the person's own role titles (the cheap prescore),
+    lowered when the role is senior and none of their titles is. None when the profile names no
+    titles, so a missing signal is never read as a mismatch."""
+    if not (targets or {}).get("title_words"):
+        return None
+    fit = prescore({"title": title or ""}, targets) / 100.0
+    if _SENIOR_TITLE.search(title or "") and not any(
+            _SENIOR_TITLE.search(t or "") for t in (profile_titles or [])):
+        fit *= 0.75
+    return round(fit, 3)
+
+
 def match_percent(match: dict | None) -> int | None:
-    """One honest number from ui/app.py's _job_match: must-have coverage weighs most."""
+    """One honest number from ui/app.py's _job_match: must-have coverage weighs most. When the ad
+    names few skills, the score blends toward the title fit (a thin ad cannot vouch for a 100%);
+    with a rich ad the title only trims the score a little."""
     if not match:
         return None
     ratio = float(match.get("ratio") or 0.0)
     req_total = int(match.get("required_total") or 0)
     req = (int(match.get("required_covered") or 0) / req_total) if req_total else ratio
-    return int(round(100 * (0.6 * req + 0.4 * ratio)))
+    base = 0.6 * req + 0.4 * ratio
+    total = int(match.get("total") or 0)
+    tf = match.get("title_fit")
+    if tf is None:
+        if 0 < total < THIN_JD_SKILLS:
+            base = min(base, 1.0 - 0.05 * (THIN_JD_SKILLS - total))
+        return int(round(100 * base))
+    tf = max(0.0, min(1.0, float(tf)))
+    if total >= THIN_JD_SKILLS:
+        score = base * (0.8 + 0.2 * tf)
+    else:
+        conf = total / THIN_JD_SKILLS
+        score = conf * base + (1 - conf) * min(base, tf)
+    return int(round(100 * score))
 
 
 def is_new(row: dict, now: datetime, days: int = LOOKBACK_DAYS) -> bool:

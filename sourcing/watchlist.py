@@ -394,8 +394,12 @@ class Watchlist(BoardMixin):
             "INSERT OR IGNORE INTO sourced_job (source_id, source) VALUES (?, 'dismissed')",
             (source_id,))
         self._conn.execute(
-            "UPDATE sourced_job SET dismissed=1 WHERE source_id=?", (source_id,))
+            "UPDATE sourced_job SET dismissed=1, saved=0 WHERE source_id=?", (source_id,))
         self._conn.commit()
+        # A dismissed role leaves the Tracker too when it was only Saved there, the same rule as
+        # un-saving. A role already past Saved (applied, interviewing...) is history and stays.
+        if self.stage_of(source_id) == "saved":
+            self.untrack(source_id, note="Dismissed on the Jobs page")
 
     def dismissed_ids(self) -> set[str]:
         """The source_ids the person dismissed, to drop from a feed whose rows come from the

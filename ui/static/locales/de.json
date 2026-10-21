@@ -1004,5 +1004,13 @@
   "r2.passNIv": "{n} Live-Interviews",
   "r2.offH": "Der Live-Interviewer ist gerade nicht erreichbar",
   "r2.offD": "Live-Interviews laufen über unseren Dienst. Prüfe deine Verbindung und versuche es dann erneut.",
-  "jobs.updating": "Aktualisierung auf die heutige Liste"
+  "jobs.updating": "Aktualisierung auf die heutige Liste",
+  "set.privacyTitle": "Deine Daten bleiben auf diesem Gerät",
+  "set.privacyBody": "Dein Profil, deine Lebensläufe und Bewerbungen liegen in einem lokalen Ordner. Die Anmeldung mit einem E-Mail-Code ist freiwillig und verknüpft nur deinen Pass. Pässe und die enthaltene KI laufen über unseren Server, der nur Nutzungszahlen für die Abrechnung speichert. Die Community-Edition kann stattdessen deinen eigenen KI-Schlüssel nutzen. Live-Interviews laufen direkt zwischen dir und Tavus.",
+  "r1.leaveAsk": "Interview verlassen? Deine bisherigen Antworten bleiben gespeichert.",
+  "r1.leave": "Verlassen",
+  "r1.keepGoing": "Weitermachen",
+  "prep.passTag": "Pass",
+  "builder.acceptFit": "Auf eine Seite gebracht, prüfen und übernehmen.",
+  "builder.acceptSave": "Sieht gut aus? Übernehmen, um ihn unter Lebensläufe zu speichern."
 }

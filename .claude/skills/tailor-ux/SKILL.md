@@ -223,3 +223,16 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   company's roles stay listed, dimmed with a quiet "Never apply" fact: hiding them would make a
   search for that company look broken. Citizen-only / clearance / will-not-sponsor ads are hidden
   on Jobs and in runs while the person needs sponsorship.
+- 2026-10-20 (design pass 15): Back links (`.tpl-back`) put their chevron flush with the page
+  title's left edge (margin-left: -9px cancels the 8px padding + 1px border; the chip hangs into
+  the gutter) on every page that has one. Every `.view` reserves its scrollbar gutter so a long
+  page (Jobs) and a short one share the same left edge. Resumes has a page title like every view.
+  The Jobs note is muted when quiet and red only after 24 hours with nothing new (never while a newer
+  list downloads); an empty Jobs list hides the detail pane. A Home job card OPENS the role on Jobs
+  (selected), "Tailor & apply" stays the explicit action. The package page never repeats its resume
+  in the side panel. The builder has one download control (the footer's). A recorded interview's
+  Quit asks in the page ("Leave the interview? Your answers so far are kept.") once an answer is
+  recorded. A quiet outlined "Pass" marks the live round (Live tile, Full mock) without a pass. The
+  Tracker's weekly bars are a muted fill on an axis of at least 5. Match scores count stated skills,
+  and an ad naming fewer than 8 skills blends toward title similarity (lowered for a senior title
+  when the person has none), so a thin ad can't read as a 100% fit.

@@ -578,7 +578,7 @@ def test_ideas_gallery_is_a_page_with_a_back_link():
     assert 'class="btn btn-ghost btn-back tpl-back proj-back" id="projIdeasBack"' in html
     assert 'id="projIdeasClose"' not in html and 'id="projIdeasRefresh"' not in html
     css = (root / "ui" / "static" / "styles.css").read_text(encoding="utf-8")
-    assert ".view-projects .proj-back { margin-left: -8px; margin-bottom: 0; }" in css
+    assert ".view-projects .proj-back { margin-bottom: 0; }" in css
     src = (root / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     body = _js_function(src, "renderProjList")
     assert 'projects.ideasPageTitle' in body and "acts.hidden = true" in body

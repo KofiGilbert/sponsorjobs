@@ -1004,5 +1004,13 @@
   "r2.passNIv": "{n} entrevistas ao vivo",
   "r2.offH": "O entrevistador ao vivo não está disponível agora",
   "r2.offD": "As entrevistas ao vivo rodam no nosso serviço. Verifique sua conexão e tente de novo.",
-  "jobs.updating": "atualizando para a lista de hoje"
+  "jobs.updating": "atualizando para a lista de hoje",
+  "set.privacyTitle": "Seus dados ficam neste computador",
+  "set.privacyBody": "Seu perfil, currículos e candidaturas ficam numa pasta local. Entrar com um código por e-mail é opcional e só vincula o seu passe. Os passes e a IA incluída passam pelo nosso servidor, que guarda apenas contagens de uso para cobrança. A edição comunitária pode usar a sua própria chave de IA. As entrevistas ao vivo são transmitidas entre você e a Tavus.",
+  "r1.leaveAsk": "Sair da entrevista? Suas respostas até agora são mantidas.",
+  "r1.leave": "Sair",
+  "r1.keepGoing": "Continuar",
+  "prep.passTag": "Passe",
+  "builder.acceptFit": "Cabe em uma página, revise e aceite.",
+  "builder.acceptSave": "Ficou bom? Aceite para salvar em Currículos."
 }

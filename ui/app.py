@@ -3591,6 +3591,15 @@ def _jd_terms(jd: str) -> list[str]:
     return out[:80]
 
 
+def _match_profile(snap: dict | None = None) -> dict:
+    """The saved profile every job MATCH reads (Jobs fit, Auto-apply fit, alerts, the extension):
+    the built profile (else the intake essentials) plus the skills typed under "Stated skills"."""
+    from tailoring.keywords import with_stated_skills
+    snap = snap if snap is not None else (_memory().load("default") or {})
+    ess = snap.get("essentials") or {}
+    return with_stated_skills(snap.get("profile") or ess or {}, ess)
+
+
 def _job_match(jd: str, title: str = "") -> dict | None:
     """A deterministic (no-model) preview of how the SAVED PROFILE fits this role. Beyond a raw
     keyword %, it separates MUST-HAVE gaps (skills named in the required section) from nice-to-have
@@ -3599,8 +3608,7 @@ def _job_match(jd: str, title: str = "") -> dict | None:
     None when there's no JD or no profile yet (the UI then invites setup)."""
     if not jd:
         return None
-    saved = _memory().load("default") or {}
-    profile = saved.get("profile") or saved.get("essentials") or {}
+    profile = _match_profile()
     if not (profile.get("skills") or profile.get("experience") or profile.get("projects")):
         return None
     # Match on real SKILLS only, skill_terms excludes company names, locations, and
@@ -3626,7 +3634,22 @@ def _job_match(jd: str, title: str = "") -> dict | None:
     verdict = ("strong" if req_ratio >= 0.8 and overall >= 0.55 else
                "good" if req_ratio >= 0.6 else
                "moderate" if (req_ratio >= 0.35 or overall >= 0.5) else "weak")
+    # One score for every surface (Jobs, Auto-apply, alerts): coverage, steadied by how close the
+    # title is to the person's own roles, so an ad that names two skills can't read as a 100% fit.
+    from notify.alerts import (THIN_JD_SKILLS, match_percent, profile_targets, profile_titles,
+                               title_fit)
+    tfit = title_fit(title, profile_targets(profile), profile_titles(profile))
+    m = {"total": len(terms), "ratio": overall, "required_total": req_total,
+         "required_covered": req_covered, "title_fit": tfit}
+    score = match_percent(m) if terms else None
+    if score is not None and len(terms) < THIN_JD_SKILLS:
+        # A thin ad: the verdict follows the steadied score, never the raw keyword hit rate.
+        order = ["weak", "moderate", "good", "strong"]
+        cap = "weak" if score < 40 else "moderate" if score < 60 else "good" if score < 80 else "strong"
+        verdict = order[min(order.index(verdict), order.index(cap))]
     return {
+        "score": score,
+        "title_fit": tfit,
         "total": len(terms),
         "covered": len(supported),
         "ratio": round(overall, 3),
@@ -3949,7 +3972,8 @@ def match_score():
     from tailoring.keywords import (profile_text, skill_terms, split_required_optional,
                                     term_present)
     jd = str((request.json or {}).get("jd") or "").strip()
-    profile = (_memory().load("default") or {}).get("profile") or {}
+    snap = _memory().load("default") or {}
+    profile = _match_profile(snap) if snap.get("profile") else {}
     has_profile = bool(profile.get("experience") or (profile.get("identity") or {}).get("name"))
     if not has_profile:
         return jsonify({"has_profile": False, "score": None, "matched": [], "missing": [],
@@ -9185,8 +9209,7 @@ def _scan_job_alerts(force: bool = False) -> int:
     state = _notify_state()
     if not state.prefs().get("job_alerts"):
         return 0
-    saved = _memory().load("default") or {}
-    profile = saved.get("profile") or saved.get("essentials") or {}
+    profile = _match_profile()
     if not (profile.get("skills") or profile.get("experience")):
         return 0
     rows, marker = _alert_rows()
@@ -10038,8 +10061,7 @@ def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
         j["entry_level"] = is_entry_level(j.get("title", ""))
     board = _board_rows()
     strat = _aa_saved_search()
-    snap = _memory().load("default") or {}
-    profile = snap.get("profile") or snap.get("essentials") or {}
+    profile = _match_profile()
     from autoapply.learning import needs_sponsorship
     needs = needs_sponsorship(_load_prefs())
     skip = tuple(_prefs().get("aa_skip") or [])
@@ -10082,8 +10104,7 @@ def _aa_profile_sig(profile: dict | None = None) -> str:
     was scored against."""
     import hashlib
     if profile is None:
-        snap = _memory().load("default") or {}
-        profile = snap.get("profile") or snap.get("essentials") or {}
+        profile = _match_profile()
     blob = json.dumps(profile or {}, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha1(blob).hexdigest()[:16]
 
