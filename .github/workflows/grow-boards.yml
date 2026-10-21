@@ -1,0 +1,74 @@
+name: grow-boards
+
+# Grows the committed watchlist (seed/watchlist_seed.csv + seed/watchlist_evidence.csv) by
+# probing the public ATS endpoints of the next batch of not-yet-watched H-1B / PERM sponsors,
+# cap-exempt employers first (scripts/grow_boards_ci.py -> scripts/grow_watchlist.py). GREEN lane
+# only: one small public JSON request per probe, robots.txt obeyed, a host that answers
+# 401 / 403 / a challenge is never asked again, per-host spacing and 429 back-off, an honest UA.
+#
+# Bounded and resumable: each run takes the next `limit` employers (300 by default) under a time
+# cap. The checkpoint lives on the `grow-boards-state` branch (not the Actions cache: the feed's
+# 3-hourly ~250 MB caches would evict it between weekly runs), so the next run continues down the
+# ranked list and never re-probes an employer already answered, skipped, or blocked.
+#
+# Output is a pull request from `bot/grow-boards` (opened or updated), never a push to main. It
+# writes only the two seed CSVs, never the feed, so it cannot collide with the feed workflow;
+# after merge the feed build's sync_seed picks the new boards up.
+on:
+  schedule:
+    - cron: "41 7 * * 1"        # Mondays 07:41 UTC
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Employers to probe this run"
+        required: false
+        default: "300"
+      max_minutes:
+        description: "Stop starting new probes after this many minutes"
+        required: false
+        default: "100"
+      cap_exempt_only:
+        description: "Probe only likely cap-exempt employers"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Probe and report only: no checkpoint save, no seed change, no PR"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write        # push the checkpoint branch and the bot/grow-boards PR branch
+  pull-requests: write   # open / update the seed PR
+  actions: write         # dispatch tests.yml + cla.yml on the PR branch (a GITHUB_TOKEN PR starts none)
+
+concurrency:
+  group: grow-boards
+  cancel-in-progress: false
+
+jobs:
+  grow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150     # probes stop at max_minutes (100); US-job counting + PR fit in the rest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Discover the next batch of boards
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIMIT: ${{ inputs.limit || '300' }}
+          MAX_MINUTES: ${{ inputs.max_minutes || '100' }}
+          CAP_EXEMPT_ONLY: ${{ inputs.cap_exempt_only && '--cap-exempt-only' || '' }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python scripts/grow_boards_ci.py --limit "$LIMIT" --max-minutes "$MAX_MINUTES" \
+            --ipv4 $CAP_EXEMPT_ONLY $DRY_RUN

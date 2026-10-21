@@ -48,3 +48,6 @@ dist-data/*
 
 # macOS folder metadata
 .DS_Store
+
+# grow-boards CI checkpoint (kept on the grow-boards-state branch, not here)
+.grow-state/
