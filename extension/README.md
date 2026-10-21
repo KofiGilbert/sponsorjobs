@@ -100,6 +100,17 @@ extension asks the local app instead, as before.
 
 (When published, it installs from the Chrome Web Store in one click.)
 
+## Releases and store upload
+Bump `version` in `manifest.json` (and its pin in `tests/test_extension_fingerprint.py`) for
+every change a user would notice, then build the upload zip from this folder, leaving out this
+README and the source logo (`icons/icon.svg`, inlined in content.js):
+
+    cd extension && zip -r -X ../sponsorjobs-extension-<version>.zip . -x README.md icons/icon.svg '*.DS_Store'
+
+- 0.5.1 (2026-10-21): the cap-exempt badge no longer goes to K-12 school districts or for-profit
+  look-alikes (sponsor_core.js, PR #71).
+- 0.5.0 (2026-10-11): every board is an adapter, each optional board is granted on its own.
+
 ## Compliance
 Per the project rules, this extension is strictly the GREEN lane:
 - It **reads only the job page you chose to open**, that's you browsing by hand.

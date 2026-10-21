@@ -18,6 +18,7 @@ from notify.cvreview import (MSG_DISCARDED, MSG_EDIT_FOOTER, MSG_PDF_WARNING, CV
                              fact_question)
 from notify.hub import NotifyHub
 from ui.records import CVRecords
+from submit.filenames import export_filename
 from tests.conftest import requires_latex
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -254,7 +255,10 @@ def test_send_pdf_warns_once_and_show_changes(env):
     _tap(rv, ch, "pdf")
     _tap(rv, ch, "pdf")
     assert ch.texts().count(MSG_PDF_WARNING) == 1
-    assert len(ch.docs) == 2 and ch.docs[0]["path"].endswith(f"cv-{env['rid']}.pdf")
+    # The person gets the file under the name an employer gets, never the internal cv-<id>.pdf.
+    assert len(ch.docs) == 2
+    assert Path(ch.docs[0]["path"]).name == export_filename(BASE["identity"]["name"], "resume")
+    assert Path(ch.docs[0]["path"]).read_bytes() == b"%PDF-1.4 original"
     assert "48 hours" in MSG_PDF_WARNING and "Telegram's servers" in MSG_PDF_WARNING
     _tap(rv, ch, "chg")
     assert any("E1.2\nBefore: Ran profit reviews" in t for t in ch.texts())

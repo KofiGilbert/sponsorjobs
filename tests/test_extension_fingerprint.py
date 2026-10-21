@@ -69,4 +69,5 @@ def test_nothing_in_the_extension_loads_a_packaged_file_into_the_page():
 
 
 def test_the_version_was_bumped_for_this_change():
-    assert _manifest()["version"] == "0.5.0"
+    # 0.5.1 (2026-10-21): the cap-exempt sponsor rule in sponsor_core.js changed (PR #71).
+    assert _manifest()["version"] == "0.5.1"

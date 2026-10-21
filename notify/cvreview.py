@@ -305,7 +305,26 @@ class CVReview:
         if not self.state.get("pdf_warned"):
             channel.send(MSG_PDF_WARNING)
             self.state.set("pdf_warned", True)
-        channel.send_document(str(pdf), f"{_who(ctx['role'], ctx['company'])}: your tailored CV.")
+        channel.send_document(self.named_pdf(ctx, pdf),
+                              f"{_who(ctx['role'], ctx['company'])}: your tailored CV.")
+
+    def named_pdf(self, ctx: dict, pdf: Path) -> str:
+        """The tailored CV under the same name an employer gets (submit/filenames.py), e.g.
+        "Kofi Gilbert Resume.pdf", not the internal cv-<id>.pdf: a copy in the same per-record
+        uploads folder the in-app fill uses. Telegram shows the file's own name in the chat and
+        keeps it when the person saves or forwards it. Falls back to the stored file when the
+        copy cannot be made."""
+        from submit.filenames import export_filename, upload_copy
+        name = ""
+        for prof in (ctx["data"].get("render_profile"), ctx["doc"].get("profile")):
+            name = str(((prof or {}).get("identity") or {}).get("name") or "").strip()
+            if name:
+                break
+        try:
+            return str(upload_copy(pdf, self.workdir / "uploads" / str(ctx["rid"]),
+                                   export_filename(name, "resume")))
+        except OSError:
+            return str(pdf)
 
     def _submit_line(self, rid) -> tuple:
         """(text, buttons) for what happens next, by the per-site policy (§7)."""
