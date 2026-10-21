@@ -184,7 +184,9 @@ def test_js_port_agrees_with_the_app_on_tricky_names(tmp_path, monkeypatch):
     assert by[("Global Payments Inc.", "")]["profile"]["h1b_approvals"] == 410
     assert by[("The Home Depot", "")]["profile"]["h1b_approvals"] == 147 + 603 + 299 + 39
     assert by[("Meta", "London, UK")]["visa"] == [] and by[("Meta", "London, UK")]["role_in_us"] is False
-    assert [b["code"] for b in by[("Meta", "Remote - US")]["visa"]] == ["H-1B", "GREEN-CARD", "CAP-EXEMPT"]
+    # Meta's stored cap-exempt flag (a research entity among its filings) is not believed on a
+    # "Meta Platforms, Inc." record: a for-profit company is not cap-exempt (2026-10-20).
+    assert [b["code"] for b in by[("Meta", "Remote - US")]["visa"]] == ["H-1B", "GREEN-CARD"]
     assert by[("ProCogia", "")]["matched_name"] == "Procogia"
 
 

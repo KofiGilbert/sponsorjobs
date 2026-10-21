@@ -177,15 +177,6 @@ _SUFFIX = {
     "inc", "incorporated", "llc", "l.l.c", "corp", "corporation", "co", "company",
     "ltd", "limited", "lp", "llp", "plc", "pllc", "pc", "pa", "na", "usa", "us",
 }
-# Higher-ed / research name patterns → cap-exempt-likely (no H-1B lottery).
-_CAP_EXEMPT_RE = re.compile(
-    r"\b(univ|university|college|school district|board of regents|regents of|"
-    r"institute of technology|research institute|medical center|health system|"
-    r"national laboratory|national laboratories|children's hospital|childrens hospital|"
-    r"cancer center|school of medicine|medical school|polytechnic|teaching hospital|"
-    r"seminary)\b",
-    re.I)
-
 # Curated brand → filing-entity aliases: correct corporate facts for well-known names
 # a posting shows as a bare brand but whose H-1B filings sit under a different/longer
 # legal name (verified against the real USCIS data). Never a guess — only exact,
@@ -266,32 +257,126 @@ def normalize_employer_variants(name: str) -> list[str]:
     return [n for n in out if n]
 
 
-def _is_cap_exempt(naics: str, name: str) -> bool:
-    return str(naics or "").strip().startswith("61") or bool(_CAP_EXEMPT_RE.search(name or ""))
+# ---- Cap-exempt (no H-1B lottery), read from an employer's NAME ---------------------------------
+# 8 CFR 214.2(h)(19)(iii): cap-exempt employers are institutions of higher education (20 U.S.C.
+# 1001(a): public or nonprofit), nonprofits related to or affiliated with one (university hospitals
+# and medical centers, research foundations), nonprofit research organizations, and governmental
+# research organizations. A K-12 school district is NOT one: it sponsors H-1B teachers inside the
+# lottery. Neither is a for-profit company that happens to say "Research" or "University".
+#
+# All patterns run on the NORMALIZED, ASCII-only name (normalize_employer), so the extension's
+# port (sponsor_core.js) behaves identically, word boundaries included;
+# tests/test_cap_exempt_rule.py holds the two to the same answers on one table of real names.
+_K12_RE = re.compile(
+    r"\b(school district|school districts|school dist|school distric|sch dist|unified school|"
+    r"unified sch|independent school|isd|public schools|public school|public sch|county schools|"
+    r"city schools|board of education|board of school|school board|dept of education|"
+    r"department of education|charter school|charter schools|elementary|middle school|high school|"
+    r"k 12|academy|academies|kipp)\b")
+# Higher education and its affiliates (accepted with an "Inc", a common nonprofit form).
+_HIGHER_ED_RE = re.compile(
+    r"\b(univ|university|universities|college|colleges|polytechnic|institute of technology|"
+    r"inst of technology|seminary|board of regents|regents of|school of medicine|medical school|"
+    r"health science center|health sciences center|health science ctr|health sciences ctr|"
+    r"medical center|medical centre|hospital|hospitals|health system|cancer center|cancer centre)\b")
+# Research organizations: only in a nonprofit-looking form, and never with a corporate legal form
+# ("Acme Research Inc" is a company, "Acme Research Institute" reads as a nonprofit).
+_RESEARCH_RE = re.compile(
+    r"\b(research institute|research foundation|research laboratory|research laboratories|"
+    r"research center|research centre|national laboratory|national laboratories|national lab|"
+    r"institute (for|of) [a-z ]*research)\b")
+# Well-known nonprofit research organizations whose names carry none of the words above.
+_CAP_EXEMPT_CURATED_RE = re.compile(
+    r"\b(broad institute|salk institute|scripps research|jackson laboratory|"
+    r"cold spring harbor laboratory|howard hughes medical institute|battelle memorial institute|"
+    r"whitehead institute|allen institute|wistar institute|stowers institute|van andel institute|"
+    r"santa fe institute|la jolla institute|mayo clinic|cleveland clinic|memorial sloan kettering|"
+    r"dana farber|fred hutchinson|sri international)\b")
+# For-profit universities: not 20 U.S.C. 1001(a) institutions, so not cap-exempt.
+_FOR_PROFIT_UNIV_RE = re.compile(
+    r"\b(university of phoenix|devry|strayer|capella university|walden university|"
+    r"colorado technical university|full sail|american intercontinental university)\b")
+# Place names and businesses that merely contain "College" or "University".
+_NOT_AN_INSTITUTION_RE = re.compile(
+    r"\b(college park|university park|university place|university heights|college station|"
+    r"college point|college hill|college board|university avenue|college avenue)\b")
+_COMMERCIAL_RE = re.compile(
+    r"\b(credit union|federal credit|bank|pharmacy|bookstore|book store|apartments|realty|hauling|"
+    r"mall)\b")
+# Legal forms, read off the name BEFORE normalization strips them. An LLC/LP/Ltd is never a
+# nonprofit; an Inc or Corp can be (many nonprofit hospitals and colleges are "Inc").
+_LLC_FORMS = {"llc", "lp", "llp", "pllc", "plc", "ltd", "limited"}
+_CORP_FORMS = {"inc", "incorporated", "corp", "corporation", "co", "company"}
+_NONPROFIT_WORDS_RE = re.compile(r"\b(institute|inst|clinic|foundation|laboratory|laboratories|research)\b")
 
 
-# The same idea applied at LOOKUP time to the name on the POSTING, normalized. The flag above is
-# set once, at ingest, from the filing entity's NAICS and name, so it misses an employer whose
-# record came in through E-Verify or PERM only (no H-1B rows, so never derived), a seed built
-# before the word list grew, and a posting that names the employer more fully than its filings
-# do ("Stanford Health Care Hospital" against a "Stanford Health Care" record). Reading the
-# posting's name here closes those gaps for the chip. Runs on the normalized, ASCII-only form so
-# the extension's port (sponsor_core.js looksCapExempt) behaves identically, word boundaries
-# included; tests/test_extension_sponsor_core.py holds the two to the same answers.
-_CAP_EXEMPT_NAME_RE = re.compile(
-    r"\b(univ|university|universities|college|colleges|school of medicine|medical school|"
-    r"medical center|medical centre|hospital|hospitals|health system|research institute|"
-    r"institute of technology|polytechnic|national laboratory|national laboratories|national lab|"
-    r"cancer center|cancer centre|school district|board of regents|regents of|teaching hospital|"
-    r"seminary)\b")
+def _name_tokens(name: str) -> set[str]:
+    """The name's words, lowercased with initials joined ("L.L.C." -> "llc"), legal forms kept."""
+    s = re.sub(r"[^a-z0-9 ]+", " ", (name or "").lower().replace("&", " and "))
+    return set(_join_initials([t for t in s.split() if t]))
+
+
+def looks_k12(company: str) -> bool:
+    """Does the name read as a K-12 school district, public school system or charter school?
+    Those sponsor H-1B teachers but are NOT cap-exempt, whatever the industry code says."""
+    return bool(_K12_RE.search(normalize_employer(company)))
 
 
 def looks_cap_exempt(company: str) -> bool:
-    """Does the employer's NAME read as a university, college, school of medicine, hospital,
-    medical center, research institute or national laboratory, the kinds of employer that
-    file H-1B petitions outside the lottery? A heuristic (the chip says "likely"), applied
-    to the normalized name so spelling and suffixes do not matter."""
-    return bool(_CAP_EXEMPT_NAME_RE.search(normalize_employer(company)))
+    """Does the employer's NAME read as a cap-exempt kind of employer: a university or college,
+    a university hospital or medical center, or a nonprofit / government research organization
+    (8 CFR 214.2(h)(19)(iii))? A heuristic (the chip says "likely"). K-12 school districts,
+    for-profit universities, LLCs, and companies that merely say "Research" are excluded."""
+    n = normalize_employer(company)
+    if not n or _K12_RE.search(n):
+        return False
+    if _CAP_EXEMPT_CURATED_RE.search(n):
+        return True
+    if _FOR_PROFIT_UNIV_RE.search(n):
+        return False
+    n = _NOT_AN_INSTITUTION_RE.sub(" ", n)
+    if _COMMERCIAL_RE.search(n):
+        return False
+    forms = _name_tokens(company)
+    if forms & _LLC_FORMS:
+        return False
+    if _HIGHER_ED_RE.search(n):
+        return True
+    return bool(_RESEARCH_RE.search(n)) and not (forms & _CORP_FORMS)
+
+
+def seed_flag_credible(display_name: str, naics: str) -> bool:
+    """Is a record's stored cap_exempt flag believable? It is set at ingest from NAICS 61 (all of
+    education, K-12 included) or the name, and is the MAX over every name an employer filed under,
+    so it sits on Microsoft and Meta (a research entity) and on school districts. Believed only
+    when the name has no for-profit legal form, is not K-12, and the employer is in education /
+    health care (NAICS 61 / 62) or names itself an institute, clinic, foundation or laboratory."""
+    if looks_k12(display_name):
+        return False
+    if _name_tokens(display_name) & (_LLC_FORMS | _CORP_FORMS):
+        return False
+    return (str(naics or "")[:2] in ("61", "62") or looks_cap_exempt(display_name)
+            or bool(_NONPROFIT_WORDS_RE.search(normalize_employer(display_name))))
+
+
+def cap_exempt_verdict(company: str, display_name: str, naics: str, flag: bool) -> bool:
+    """The one cap-exempt answer for a posting's company matched to a sponsor record: never for a
+    K-12 name (posting or record); yes when the posting's own name reads as cap-exempt; else the
+    record's stored flag, when credible. Used by the app's chip, the history panel and the
+    watchlist ranking boost (growth.cap_exempt_likely), and ported to sponsor_core.js."""
+    if looks_k12(company) or looks_k12(display_name):
+        return False
+    if looks_cap_exempt(company):
+        return True
+    return bool(flag) and seed_flag_credible(display_name, naics)
+
+
+def _is_cap_exempt(naics: str, name: str) -> bool:
+    """The flag stored at ingest: NAICS 61 or a cap-exempt name, never a K-12 name. Read back
+    through cap_exempt_verdict, which drops the NAICS-only flags it cannot believe."""
+    if looks_k12(name):
+        return False
+    return str(naics or "").strip().startswith("61") or looks_cap_exempt(name)
 
 
 # The ONE canonical caveat, surfaced everywhere a badge is shown (job list, package
@@ -918,7 +1003,8 @@ class SponsorDB:
             "fy_span": (f"FY{rows[0]['fy']}" if len(rows) == 1 else
                         f"FY{rows[0]['fy']} to {rows[-1]['fy']}") if rows else "",
             "flags": {"h1b_dependent": bool(flags_row[0]), "willful_violator": bool(flags_row[1]),
-                      "cap_exempt": bool(flags_row[2]) or bool(rec and rec.cap_exempt),
+                      "cap_exempt": (bool(rec.cap_exempt) if rec else
+                                     bool(flags_row[2]) and not looks_k12(company)),
                       "e_verify": bool(flags_row[3]) or bool(rec and rec.e_verify)},
             "has_years": bool(rows),
             "sources": {"h1b": "USCIS H-1B Employer Data Hub", "perm": "DOL PERM disclosure data",
@@ -1205,12 +1291,15 @@ class SponsorDB:
 
     def lookup(self, company: str) -> SponsorRecord | None:
         """The employer's record for a posting's company name (see _lookup_record), with
-        cap_exempt also set when the NAME on the posting reads as a university, hospital,
-        research institute or national lab (looks_cap_exempt). The record itself is cached;
-        the name read is per call and never written back."""
+        cap_exempt decided by cap_exempt_verdict: set when the NAME on the posting reads as a
+        university, hospital, research institute or national lab, cleared for a K-12 name or a
+        stored flag that is not credible. The record itself is cached; the verdict is per call
+        and never written back."""
         rec = self._lookup_record(company)
-        if rec and not rec.cap_exempt and looks_cap_exempt(company):
-            rec = dataclasses.replace(rec, cap_exempt=True)
+        if rec:
+            verdict = cap_exempt_verdict(company, rec.display_name, rec.naics, rec.cap_exempt)
+            if verdict != rec.cap_exempt:
+                rec = dataclasses.replace(rec, cap_exempt=verdict)
         return rec
 
     def _lookup_record(self, company: str) -> SponsorRecord | None:

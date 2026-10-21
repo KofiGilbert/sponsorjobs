@@ -52,7 +52,7 @@ from .careersite import Robots, looks_challenged
 from .discover import DISCOVER_ATS, discover_for_company, slug_candidates
 from .quality import employer_is_clearance_heavy
 from .workday import WD_EXTRA_INSTANCES, WD_INSTANCES, parse_board_id
-from .sponsors import looks_cap_exempt, normalize_employer
+from .sponsors import cap_exempt_verdict, normalize_employer
 
 ROOT = Path(__file__).resolve().parents[1]
 SPONSOR_SEED = ROOT / "seed" / "sponsors_seed.csv.gz"
@@ -173,35 +173,15 @@ def load_sponsor_seed(path: str | Path = SPONSOR_SEED) -> list[dict]:
     return out
 
 
-# A for-profit legal form on the filing name. The seed's cap_exempt flag is the MAX over every
-# name variant an employer filed under, so it is set on Microsoft, Meta and Snap (a research
-# entity, a NAICS 61 variant); a corporate legal form overrides it for ranking and evidence.
-_FOR_PROFIT = re.compile(r"\b(inc|llc|l l c|corp|corporation|co|ltd|lp|llp|plc|pllc|pc|na|company)\b")
-# K-12 school districts sponsor H-1B teachers but are NOT cap-exempt (only higher education and
-# its affiliates, and nonprofit / government research organizations are), so they get no boost.
-_K12 = re.compile(r"\b(school district|independent school|public schools?|public sch|isd|"
-                  r"unified school|county schools|board of education)\b")
-_NONPROFIT_WORDS = re.compile(r"\b(institute|inst|clinic|foundation|laborator(y|ies)|research)\b")
-
-
 def cap_exempt_likely(row: dict) -> bool:
-    """Is this sponsor likely cap-exempt (no H-1B lottery)? The name reads as a university,
-    college, hospital, medical center or research institute (sponsors.looks_cap_exempt, the same
-    rule the app's chip uses); or the seed flags it AND the name has no for-profit legal form AND
-    it is in education / health care (NAICS 61 / 62) or names itself an institute, clinic,
-    foundation or laboratory (Mayo Clinic, Battelle Memorial Institute). A heuristic, like the
-    chip: the employer's own HR confirms cap-exempt status."""
+    """Is this sponsor likely cap-exempt (no H-1B lottery)? The same answer the app's chip gives
+    (sponsors.cap_exempt_verdict): never a K-12 school district; yes when the name reads as a
+    university, college, university hospital or nonprofit research institute; else the seed's flag
+    when the name has no for-profit legal form and the employer is in education / health care
+    (NAICS 61 / 62) or names itself an institute, clinic, foundation or laboratory (Mayo Clinic,
+    Battelle Memorial Institute). A heuristic, like the chip: the employer's own HR confirms."""
     name = str(row.get("display_name") or "")
-    low = " ".join(re.sub(r"[^a-z0-9]+", " ", name.lower()).split())
-    if _K12.search(low):
-        return False                      # a public school district is not higher education
-    if looks_cap_exempt(name):
-        return True
-    if not _int(row.get("cap_exempt")):
-        return False
-    if _FOR_PROFIT.search(low):
-        return False
-    return str(row.get("naics") or "")[:2] in ("61", "62") or bool(_NONPROFIT_WORDS.search(low))
+    return cap_exempt_verdict(name, name, str(row.get("naics") or ""), bool(_int(row.get("cap_exempt"))))
 
 
 def recency_weight(last_fy: int, newest_fy: int, decay: float = RECENCY_DECAY) -> float:
