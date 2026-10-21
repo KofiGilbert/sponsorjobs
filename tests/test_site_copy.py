@@ -137,3 +137,107 @@ def test_prices_agree_with_the_broker():
             assert label in pricing, f"pass price {label} missing from pricing.html"
     for label in re.findall(r'pack_\d: "(\$\d+)"', metering):
         assert label in pricing, f"pack price {label} missing from pricing.html"
+
+
+# ---- the home page stays short and plain ---------------------------------------------------
+HOME_WORD_BUDGET = 180
+
+
+class _HomeWords(HTMLParser):
+    """Words a visitor reads inside <main>, minus the employer panel's live data."""
+
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.words: list[str] = []
+        self._main = 0
+        self._skip = 0
+        self._stack: list[bool] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.VOID:
+            return
+        a = dict(attrs)
+        skip = tag in ("script", "style") or a.get("id") == "employer" or tag == "footer"
+        self._stack.append(skip)
+        if skip:
+            self._skip += 1
+        if tag == "main":
+            self._main += 1
+
+    def handle_endtag(self, tag):
+        if tag in self.VOID or not self._stack:
+            return
+        if self._stack.pop():
+            self._skip -= 1
+        if tag == "main":
+            self._main -= 1
+
+    def handle_data(self, data):
+        if self._main and not self._skip:
+            self.words += re.findall(r"[A-Za-z0-9$][\w$.,'-]*", data)
+
+
+def _home_word_count() -> int:
+    p = _HomeWords()
+    p.feed((SITE / "index.html").read_text(encoding="utf-8"))
+    return len(p.words)
+
+
+def test_home_page_word_budget():
+    n = _home_word_count()
+    assert n < HOME_WORD_BUDGET, f"home page has {n} words of copy; the budget is {HOME_WORD_BUDGET}"
+
+
+def test_only_inter_is_loaded():
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    faces = re.findall(r"@font-face\s*{[^}]*font-family:\s*\"([^\"]+)\"", css)
+    assert set(faces) == {"Inter", "Inter Fallback"}, faces
+    assert not re.search(r"mono", css, re.I), "no monospace face or mono styles on the site"
+    for decl in re.findall(r"font(?:-family)?:\s*([^;]+);", css):
+        if "var(--sans)" in decl or "Inter" in decl:
+            continue
+        assert re.fullmatch(r"\s*(inherit|normal|[\d.]+\w*)\s*", decl), f"unexpected font declaration: {decl}"
+    fonts = sorted(p.name for p in (SITE / "fonts").iterdir())
+    assert all(n.lower().startswith(("inter", "ofl-inter")) for n in fonts), fonts
+    for page in PAGES:
+        html = page.read_text(encoding="utf-8")
+        for href in re.findall(r'rel="preload" href="([^"]+)"', html):
+            assert "inter" in href, f"{page.name} preloads {href}"
+        assert "fonts.googleapis" not in html and "mono" not in html.lower(), page.name
+
+
+def test_no_kicker_labels_or_display_italics():
+    for page in PAGES:
+        html = page.read_text(encoding="utf-8")
+        assert "<i>" not in html and "<em>" not in html, f"{page.name}: italic display text"
+        assert not re.search(r'class="[^"]*\b(eyebrow|kicker|mono)\b', html), page.name
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert "text-transform: uppercase" not in css and "background-clip: text" not in css
+
+
+def test_home_tabs_work_without_script():
+    html = (SITE / "index.html").read_text(encoding="utf-8")
+    panels = re.findall(r'<div class="panel" role="tabpanel" id="(panel-[a-z]+)"[^>]*?( hidden)?>', html)
+    assert [p for p, _ in panels] == ["panel-find", "panel-tailor", "panel-apply", "panel-practise"]
+    assert panels[0][1] == "" and all(h == " hidden" for _, h in panels[1:]), "only the first tab shows without JS"
+
+
+def test_employer_lookup_is_wired():
+    html = (SITE / "index.html").read_text(encoding="utf-8")
+    for el in ("employer", "emp-form", "emp-q", "emp-verdict", "emp-for", "emp-since", "emp-h1b",
+               "emp-perm", "emp-last", "emp-everify", "emp-status"):
+        assert f'id="{el}"' in html, f"index.html lost #{el}, which script.js fills"
+    assert '<script src="sponsor_core.js" defer></script>' in html and '<script src="script.js" defer></script>' in html
+
+
+def test_theme_toggle_has_no_inline_script():
+    for page in PAGES:
+        html = page.read_text(encoding="utf-8")
+        assert '<script src="theme.js"></script>' in html, page.name
+        for body in re.findall(r"<script(?![^>]*\bsrc=)(?![^>]*application/ld\+json)[^>]*>(.*?)</script>", html, re.S):
+            assert not body.strip(), f"{page.name}: inline script breaks the CSP"
+        assert "style=" not in html, f"{page.name}: inline style breaks the CSP"
+    js = (SITE / "theme.js").read_text(encoding="utf-8")
+    assert "localStorage" in js and "try" in js
