@@ -1,44 +1,281 @@
 {
- "probed": 17,
- "skipped": 0,
- "hits": 0,
- "new_boards": [],
- "duplicates": 0,
- "rejected": [
+ "probed": 271,
+ "skipped": 29,
+ "hits": 4,
+ "new_boards": [
   {
-   "company": "Dana Farber Cancer Institute",
-   "board": "workday:danafarber \u2014 danafarber.wd5.myworkdayjobs.com robots.txt disallows its career site(s) ['dana-farber', 'dana-farbernonrecruit']; not crawled"
+   "company": "Cigna Health And Life Insurance Company",
+   "ats": "workday",
+   "board_id": "cigna.wd5/cignacareers",
+   "jobs": 527,
+   "url": "https://cigna.wd5.myworkdayjobs.com/cignacareers",
+   "verified": "2026-10-21",
+   "cap_exempt": 0,
+   "h1b_approvals": 487,
+   "perm_certs": 4
+  },
+  {
+   "company": "Walmart Associates Inc",
+   "ats": "workday",
+   "board_id": "walmart.wd504/WalmartExternal",
+   "jobs": 2000,
+   "url": "https://walmart.wd504.myworkdayjobs.com/WalmartExternal",
+   "verified": "2026-10-21",
+   "cap_exempt": 0,
+   "h1b_approvals": 2,
+   "perm_certs": 416
   }
  ],
- "throttled": 16,
- "partial": 2,
- "stopped": "hosts throttled",
- "per_ats": {},
- "requeued": 16,
- "waited": 0.0,
- "blocked": [],
- "cap_exempt_hits": 0,
- "requests": 133,
- "rate_limited": 1,
- "server_errors": 0,
- "cooldowns": 1,
- "deferred": 9,
- "refusals": 0,
- "robots_denied": {},
- "minutes": 4.9,
- "before": 1385,
- "after": 1388,
- "before_ats": {
-  "amazonjobs": 1,
-  "ashby": 27,
-  "greenhouse": 787,
-  "lever": 45,
-  "recruitee": 1,
-  "smartrecruiters": 158,
-  "workable": 1,
-  "workday": 365
+ "duplicates": 2,
+ "rejected": [
+  {
+   "company": "The Jackson Laboratory",
+   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/Jackson_Careers identifies as 'Jackson Careers Jackson National Life Insurance'; needs 2 of ['jackson', 'laboratory'] to be 'The Jackson Laboratory'"
+  },
+  {
+   "company": "The Jackson Laboratory",
+   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/Jackson_Campus identifies as 'Jackson Campus Jackson National Life Insurance'; needs 2 of ['jackson', 'laboratory'] to be 'The Jackson Laboratory'"
+  },
+  {
+   "company": "The Jackson Laboratory",
+   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/PPMA_Careers identifies as 'PPMA Careers PPM America'; needs 2 of ['jackson', 'laboratory'] to be 'The Jackson Laboratory'"
+  },
+  {
+   "company": "The Jackson Laboratory",
+   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/Jackson_Careers_2 identifies as 'Jackson Careers 2 Jackson National Life Insurance'; needs 2 of ['jackson', 'laboratory'] to be 'The Jackson Laboratory'"
+  },
+  {
+   "company": "Howard Hughes Medical Institute Hhmi",
+   "board": "workday:howard \u2014 howard.wd1.myworkdayjobs.com/HU identifies as 'HU HU101 The Howard University'; needs 2 of ['hughes', 'institute', 'hhmi'] to be 'Howard Hughes Medical Institute Hhmi'"
+  },
+  {
+   "company": "Rochester General Hospital",
+   "board": "workday:rochester \u2014 rochester.wd5.myworkdayjobs.com/UR_Staff identifies as 'UR Staff 001 University of Rochester'; needs 2 of ['rochester', 'hospital'] to be 'Rochester General Hospital'"
+  },
+  {
+   "company": "Rochester General Hospital",
+   "board": "workday:rochester \u2014 rochester.wd5.myworkdayjobs.com/UR_Nursing identifies as 'UR Nursing 001 University of Rochester'; needs 2 of ['rochester', 'hospital'] to be 'Rochester General Hospital'"
+  },
+  {
+   "company": "Howard Hughes Medical Institute",
+   "board": "workday:howard \u2014 howard.wd1.myworkdayjobs.com/HU identifies as 'HU HU101 The Howard University'; needs 2 of ['hughes', 'institute'] to be 'Howard Hughes Medical Institute'"
+  },
+  {
+   "company": "Morgan Stanley Co Llc",
+   "board": "workday:ms \u2014 ms.wd5.myworkdayjobs.com/External identifies as 'External 711 MS Smith Barney, LLC'; needs 1 of [] to be 'Morgan Stanley Co Llc'"
+  },
+  {
+   "company": "Morgan Stanley Co Llc",
+   "board": "workday:ms \u2014 ms.wd5.myworkdayjobs.com/private identifies as 'private 16 MS & Co., LLC / 711 MS Smith Barney, LLC'; needs 1 of [] to be 'Morgan Stanley Co Llc'"
+  },
+  {
+   "company": "Pure Storage Inc",
+   "board": "greenhouse:purestorage \u2014 board is named 'Everpure'; needs 1 of ['pure', 'storage'] to be 'Pure Storage Inc'"
+  },
+  {
+   "company": "Insurance Services Office Inc",
+   "board": "greenhouse:insurance \u2014 board is named 'Alpha FMC - Insurance Consulting'; needs 1 of ['office'] to be 'Insurance Services Office Inc'"
+  },
+  {
+   "company": "Thomas Jefferson University",
+   "board": "workday:jefferson \u2014 jefferson.wd5.myworkdayjobs.com/External identifies as 'External Jefferson County'; needs 1 of ['jefferson'] to be 'Thomas Jefferson University'"
+  },
+  {
+   "company": "The Scripps Research Institute",
+   "board": "workday:scripps \u2014 scripps.wd115.myworkdayjobs.com/Scripps_Careers identifies as 'Scripps Careers ION Media Networks, Inc. / Scripps Media, Inc.'; needs 2 of ['scripps', 'institute'] to be 'The Scripps Research Institute'"
+  },
+  {
+   "company": "The Scripps Research Institute",
+   "board": "workday:scripps \u2014 scripps.wd115.myworkdayjobs.com/Ongoing_Opportunities identifies as 'Ongoing Opportunities Scripps Shared Services Company'; needs 2 of ['scripps', 'institute'] to be 'The Scripps Research Institute'"
+  },
+  {
+   "company": "Yale New Haven Hospital",
+   "board": "workday:yale \u2014 yale.wd1.myworkdayjobs.com robots.txt disallows its career site(s) ['temporary_career_site', 'terminated_layoff_external_career_site', 'external_career_site_postdoc', 'external_career_site']; not crawled"
+  },
+  {
+   "company": "University Of South Carolina",
+   "board": "workday:usc \u2014 usc.wd5.myworkdayjobs.com/ExternalUSCCareers identifies as 'External USC Careers USC University of Southern California / C018 University of Southern California- HS'; needs 1 of [] to be 'University Of South Carolina'"
+  },
+  {
+   "company": "University Of South Carolina",
+   "board": "workday:usc \u2014 usc.wd5.myworkdayjobs.com/ExternalKeckUSCCareers identifies as 'External Keck USC Careers C018 University of Southern California- HS'; needs 1 of [] to be 'University Of South Carolina'"
+  },
+  {
+   "company": "University Of South Carolina",
+   "board": "workday:usc \u2014 usc.wd5.myworkdayjobs.com/ExternalKeckUSCCareersNursing identifies as 'External Keck USC Careers Nursing C018 University of Southern California- HS'; needs 1 of [] to be 'University Of South Carolina'"
+  },
+  {
+   "company": "University Of South Carolina",
+   "board": "workday:usc \u2014 usc.wd5.myworkdayjobs.com/USCAdvancementCareers identifies as 'USC Advancement Careers USC University of Southern California'; needs 1 of [] to be 'University Of South Carolina'"
+  },
+  {
+   "company": "University Of South Carolina",
+   "board": "workday:usc \u2014 usc.wd5.myworkdayjobs.com/ExternalKeckUSCCareersPharmacy identifies as 'External Keck USC Careers Pharmacy C018 University of Southern California- HS / USC University of Southern California'; needs 1 of [] to be 'University Of South Carolina'"
+  },
+  {
+   "company": "Home Depot Product Authority Llc",
+   "board": "workday:homedepot \u2014 homedepot.wd5.myworkdayjobs.com robots.txt disallows its career site(s) ['CareerDepot', 'CareerDepotCanada']; not crawled"
+  },
+  {
+   "company": "American Express Company",
+   "board": "workday:american \u2014 american.wd1.myworkdayjobs.com/AU identifies as 'AU American University'; needs 1 of ['express'] to be 'American Express Company'"
+  },
+  {
+   "company": "Home Depot Management Company Llc",
+   "board": "workday:homedepot \u2014 homedepot.wd5.myworkdayjobs.com robots.txt disallows its career site(s) ['CareerDepot', 'CareerDepotCanada']; not crawled"
+  },
+  {
+   "company": "First Republic Bank",
+   "board": "workday:republic \u2014 republic.wd5.myworkdayjobs.com/Republic identifies as 'Republic REPUBLIC SERVICES OF KENTUCKY, LLC / ALLIED WASTE TRANSPORTATION, INC. / ALLIED WASTE SERVICES OF FORT WORTH, LLC'; needs 2 of ['republic', 'bank'] to be 'First Republic Bank'"
+  },
+  {
+   "company": "First Republic Bank",
+   "board": "workday:republic \u2014 republic.wd5.myworkdayjobs.com/Acquisitions identifies as \"Acquisitions HARLAND'S SANITARY LANDFILL, INC. / BFI WASTE SERVICES, LLC\"; needs 2 of ['republic', 'bank'] to be 'First Republic Bank'"
+  },
+  {
+   "company": "First Republic Bank",
+   "board": "workday:republic \u2014 republic.wd5.myworkdayjobs.com/Stablex identifies as 'Stablex 106 STABLEX CANADA INC.'; needs 2 of ['republic', 'bank'] to be 'First Republic Bank'"
+  },
+  {
+   "company": "Uchicago Argonne Llc",
+   "board": "workday:uchicago \u2014 uchicago.wd5.myworkdayjobs.com/External identifies as 'External University of Chicago'; needs 2 of ['uchicago', 'argonne'] to be 'Uchicago Argonne Llc'"
+  },
+  {
+   "company": "Uchicago Argonne Llc",
+   "board": "workday:uchicago \u2014 uchicago.wd5.myworkdayjobs.com/CASE_External identifies as 'CASE External University of Chicago'; needs 2 of ['uchicago', 'argonne'] to be 'Uchicago Argonne Llc'"
+  },
+  {
+   "company": "East Carolina University",
+   "board": "workday:ecu \u2014 ecu.wd12.myworkdayjobs.com/Everwise_Careers identifies as 'Everwise Careers EVERWISE CREDIT UNION'; needs 1 of [] to be 'East Carolina University'"
+  },
+  {
+   "company": "Rbc Capital Markets Llc",
+   "board": "workday:rbc \u2014 rbc.wd3.myworkdayjobs.com/RBCEARLYTALENT1 identifies as 'RBCEARLYTALENT1'; needs 1 of ['markets'] to be 'Rbc Capital Markets Llc'"
+  },
+  {
+   "company": "Zoom Video Communications Inc",
+   "board": "workday:zoom \u2014 zoom.wd5.myworkdayjobs.com robots.txt disallows its career site(s) ['Zoom', 'cn']; not crawled"
+  },
+  {
+   "company": "General Hosp Corp D/B/A Mass General Hosp",
+   "board": "greenhouse:general \u2014 board is named 'General Interest '; needs 2 of ['hosp', 'mass', 'hosp'] to be 'General Hosp Corp D/B/A Mass General Hosp'"
+  },
+  {
+   "company": "Lsu Health Sciences Center At Shreveport",
+   "board": "workday:lsu \u2014 lsu.wd1.myworkdayjobs.com/LSU identifies as 'LSU Louisiana State University and Agricultural and Mechanical College'; needs 2 of ['center', 'shreveport'] to be 'Lsu Health Sciences Center At Shreveport'"
+  },
+  {
+   "company": "Health Care Service Corporation",
+   "board": "workday:health \u2014 health.wd105.myworkdayjobs.com/External identifies as 'External Ministry of Health'; needs 1 of ['care'] to be 'Health Care Service Corporation'"
+  },
+  {
+   "company": "Health Care Service Corporation",
+   "board": "workday:healthcare \u2014 healthcare.wd1.myworkdayjobs.com/Search identifies as 'Search USA SOLVENTUM US LLC'; needs 1 of ['care'] to be 'Health Care Service Corporation'"
+  },
+  {
+   "company": "Health Care Service Corporation",
+   "board": "workday:healthcare \u2014 healthcare.wd1.myworkdayjobs.com/private identifies as 'private CHE KCI Medical GmbH / AUS KCI Medical Australia Pty Ltd / IND KCI Medical India Private limited'; needs 1 of ['care'] to be 'Health Care Service Corporation'"
+  },
+  {
+   "company": "Health Carousel Llc",
+   "board": "workday:health \u2014 health.wd105.myworkdayjobs.com/External identifies as 'External Ministry of Health'; needs 1 of ['carousel'] to be 'Health Carousel Llc'"
+  },
+  {
+   "company": "New Jersey Institute Of Technology",
+   "board": "greenhouse:new \u2014 board is named 'Sonja Inc.  '; needs 1 of ['institute'] to be 'New Jersey Institute Of Technology'"
+  },
+  {
+   "company": "Fusion Life Sciences Technologies",
+   "board": "workday:fusion \u2014 fusion.wd5.myworkdayjobs.com/Fusion identifies as 'Fusion Fusion Medical Staffing LLC'; needs 1 of ['fusion'] to be 'Fusion Life Sciences Technologies'"
+  }
+ ],
+ "throttled": 0,
+ "partial": 0,
+ "stopped": "exhausted",
+ "per_ats": {
+  "workday": 2
  },
- "after_ats": {
+ "requeued": 0,
+ "waited": 0.0,
+ "blocked": [
+  {
+   "company": "Aecom Technical Services Inc",
+   "host": "aecom.wd115.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "Cyient Inc",
+   "host": "cyient.wd3.myworkdayjobs.com",
+   "why": "HTTP 403"
+  },
+  {
+   "company": "Pure Storage Inc",
+   "host": "purestorage.wd1.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "Informatica Llc",
+   "host": "informatica.wd1.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "Orion Systems Integrators Llc",
+   "host": "orion.wd3.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "The Scripps Research Institute",
+   "host": "scrippsresearch.wd12.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "Bain & Company Inc",
+   "host": "bain.wd5.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "Confluent Inc",
+   "host": "confluent.wd5.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "Two Sigma Investments Lp",
+   "host": "twosigma.wd5.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "Grant Thornton Llp",
+   "host": "grantthornton.wd10.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "Analysis Group Inc",
+   "host": "analysisgroup.wd12.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "Siemens Energy Inc",
+   "host": "siemensenergy.wd3.myworkdayjobs.com",
+   "why": "HTTP 401"
+  },
+  {
+   "company": "Seattle Children S Hospital",
+   "host": "seattle.wd1.myworkdayjobs.com",
+   "why": "HTTP 401"
+  }
+ ],
+ "cap_exempt_hits": 0,
+ "requests": 9144,
+ "rate_limited": 0,
+ "server_errors": 0,
+ "cooldowns": 0,
+ "deferred": 0,
+ "refusals": 13,
+ "robots_denied": {},
+ "minutes": 10.4,
+ "before": 1388,
+ "after": 1390,
+ "before_ats": {
   "amazonjobs": 1,
   "ashby": 27,
   "greenhouse": 787,
@@ -48,57 +285,42 @@
   "workable": 1,
   "workday": 368
  },
- "new_jobs": 1918,
- "left_out": [
-  {
-   "ats": "workday",
-   "board_id": "ebay.wd5/TCGPlayer_External_Career",
-   "company": "Ebay Inc",
-   "url": "https://ebay.wd5.myworkdayjobs.com/TCGPlayer_External_Career",
-   "jobs": 1,
-   "verified": "2026-10-21",
-   "cap_exempt": 0,
-   "h1b_approvals": 2838,
-   "perm_certs": 122,
-   "us_jobs": 0
-  }
- ],
+ "after_ats": {
+  "amazonjobs": 1,
+  "ashby": 27,
+  "greenhouse": 787,
+  "lever": 45,
+  "recruitee": 1,
+  "smartrecruiters": 158,
+  "workable": 1,
+  "workday": 370
+ },
+ "new_jobs": 2527,
+ "left_out": [],
  "evidence": [
   {
    "ats": "workday",
-   "board_id": "statestreet.wd1/Global",
-   "company": "State Street Bank And Trust Company",
-   "url": "https://statestreet.wd1.myworkdayjobs.com/Global",
-   "jobs": 1299,
+   "board_id": "cigna.wd5/cignacareers",
+   "company": "Cigna Health And Life Insurance Company",
+   "url": "https://cigna.wd5.myworkdayjobs.com/cignacareers",
+   "jobs": 527,
    "verified": "2026-10-21",
    "cap_exempt": 0,
-   "h1b_approvals": 1317,
-   "perm_certs": 45,
-   "us_jobs": 312
+   "h1b_approvals": 487,
+   "perm_certs": 4,
+   "us_jobs": 209
   },
   {
    "ats": "workday",
-   "board_id": "waynefarms.wd1/WayneFarms",
-   "company": "Wayne Farms Llc",
-   "url": "https://waynefarms.wd1.myworkdayjobs.com/WayneFarms",
-   "jobs": 246,
+   "board_id": "walmart.wd504/WalmartExternal",
+   "company": "Walmart Associates Inc",
+   "url": "https://walmart.wd504.myworkdayjobs.com/WalmartExternal",
+   "jobs": 2000,
    "verified": "2026-10-21",
    "cap_exempt": 0,
    "h1b_approvals": 2,
-   "perm_certs": 754,
-   "us_jobs": 243
-  },
-  {
-   "ats": "workday",
-   "board_id": "mcw.wd503/ExternalCareers",
-   "company": "Medical College Of Wisconsin Inc",
-   "url": "https://mcw.wd503.myworkdayjobs.com/ExternalCareers",
-   "jobs": 373,
-   "verified": "2026-10-21",
-   "cap_exempt": 1,
-   "h1b_approvals": 203,
-   "perm_certs": 1,
-   "us_jobs": 338
+   "perm_certs": 416,
+   "us_jobs": 1155
   }
  ]
 }
