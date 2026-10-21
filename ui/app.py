@@ -3079,7 +3079,9 @@ def open_external():
 # of a 404 on a miss, so we detect that by size and send a real 404 -> the board falls back to
 # our own clean monogram instead of a foreign placeholder, and (3) an in-process cache means we
 # fetch each domain once. Uses apistemic's keyless logo API (no key, no signup, permissive).
-_LOGO_CACHE: dict[str, tuple] = {}   # domain -> (logo_bytes, mimetype) | (None, None) on a miss
+_LOGO_CACHE: "OrderedDict[str, tuple]" = OrderedDict()   # domain -> (bytes, mimetype) | (None, None), LRU
+_LOGO_CACHE_MAX = 400          # the page caches each logo for a week, so this only spares refetches
+_LOGO_LOCK = threading.Lock()
 _LOGO_MISS_MAX = 1500          # a miss is a ~650B generated avatar; real logos are multi-kB
 _CO_SUFFIX_RE = re.compile(
     r"\b(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|group|holdings?|"
@@ -3141,9 +3143,17 @@ def company_logo():
     domain = _guess_company_domain(request.args.get("company", ""))
     if not domain:
         return ("", 404)
-    if domain not in _LOGO_CACHE:
-        _LOGO_CACHE[domain] = _fetch_logo(domain)     # (bytes, mimetype) or (None, None)
-    data, mime = _LOGO_CACHE[domain] or (None, None)
+    with _LOGO_LOCK:
+        hit = _LOGO_CACHE.get(domain)
+        if hit is not None:
+            _LOGO_CACHE.move_to_end(domain)
+    if hit is None:
+        hit = _fetch_logo(domain)                     # (bytes, mimetype) or (None, None)
+        with _LOGO_LOCK:
+            _LOGO_CACHE[domain] = hit
+            while len(_LOGO_CACHE) > _LOGO_CACHE_MAX:
+                _LOGO_CACHE.popitem(last=False)
+    data, mime = hit or (None, None)
     if not data:
         return ("", 404)
     resp = app.response_class(data, mimetype=mime or "image/webp")
@@ -10093,6 +10103,9 @@ _AA_CAND_CACHE: dict = {}
 _AA_FIT_CACHE: dict = {}         # (db, profile, source_id) -> fit | None, so a role is scored once
 _AA_FIT_MAX = 60000
 _AA_SHARDS: "OrderedDict[Path, tuple]" = OrderedDict()   # JD shards on disk, parsed (LRU)
+# A parsed shard is ~6 MB of text and a fit is scored once then cached (_AA_FIT_CACHE), so a few
+# shards are plenty: 32 of them held ~200 MB (2026-10-21, 8 GB laptops).
+_AA_SHARDS_MAX = 4
 _AA_SHARDS_LOCK = threading.Lock()
 _AA_WARM = {"thread": None, "queue": [], "ver": 0}
 _AA_WARM_LOCK = threading.Lock()
@@ -10133,7 +10146,7 @@ def _aa_jd_on_disk(sid: str) -> str | None:
         hit = (mtime, data if isinstance(data, dict) else {})
         with _AA_SHARDS_LOCK:
             _AA_SHARDS[path] = hit
-            while len(_AA_SHARDS) > 32:
+            while len(_AA_SHARDS) > _AA_SHARDS_MAX:
                 _AA_SHARDS.popitem(last=False)
     jd = hit[1].get(sid)
     return html_to_text(jd).strip() if jd else None

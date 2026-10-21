@@ -55,7 +55,8 @@ from urllib.parse import urlsplit
 
 from concurrent.futures import ThreadPoolExecutor
 
-from .feedfile import FEED_VERSION, JD_DIR, JOBS_FILE, MANIFEST_FILE, PARTS_DIR, loads_maybe_gz, shard_for
+from .feedfile import (FEED_VERSION, JD_DIR, JOBS_FILE, MANIFEST_FILE, PARTS_DIR, RowCompactor,
+                       load_feed_file, loads_maybe_gz, shard_for)
 
 CHECK_EVERY = 3600          # a new list is looked for at most once an hour
 RETRY_AFTER = 300           # a failed download is not retried for 5 min, doubling per failure...
@@ -526,13 +527,16 @@ class StaticFeed:
     def _assemble(self, man: dict, version: str, now: float) -> bool:
         """Join the verified parts in order and swap the list in (under the lock)."""
         jobs: list = []
+        compact = RowCompactor()          # one shared object per repeated value (feedfile.py)
         for f in man["files"]:
             part = loads_maybe_gz(self._part_path(version, f["url"]).read_bytes())
             if not isinstance(part, dict) or not isinstance(part.get("jobs"), list) \
                     or str(part.get("version")) != version:
                 shutil.rmtree(self.parts_root / _safe(version), ignore_errors=True)
                 raise FeedUnavailable(f"feed part {f['url']} has an unexpected shape")
-            jobs.extend(part["jobs"])
+            jobs.extend(compact.rows(part["jobs"]))
+            del part
+        del compact
         if man.get("count") is not None and int(man["count"]) != len(jobs):
             shutil.rmtree(self.parts_root / _safe(version), ignore_errors=True)
             raise FeedUnavailable(f"feed parts hold {len(jobs)} rows, the manifest says {man['count']}")
@@ -540,17 +544,17 @@ class StaticFeed:
                 "generated_at": man.get("generated_at"), "count": len(jobs),
                 "attribution": man.get("attribution") or {}, "jobs": jobs}
         # Serialized OUTSIDE the lock (a few seconds for ~96k rows): requests keep being served.
-        body = gzip.compress(json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-                             .encode("utf-8"), compresslevel=5, mtime=0)
+        # Streamed row by row into a temp file: the whole document as one string was ~280 MB.
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = _write_feed_gz(self.cache_dir, data)
         with self._lock:
             if not jobs and self._cached_rows_exist():    # same guard as the single file
+                _unlink(tmp)
                 self._state.update({"last_check": now, "parts_version": version})
                 self._clear_failures()
                 self._save_state()
                 return False
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-            _atomic_write(self.jobs_path, body)
-            del body
+            os.replace(tmp, self.jobs_path)
             self._state.update({"last_check": now, "generated_at": data.get("generated_at"),
                                 "parts_version": version})
             self._state.pop("etag", None)                 # the single file's ETag no longer describes the cache
@@ -590,8 +594,10 @@ class StaticFeed:
             return False
         if status != 200:
             raise FeedUnavailable(f"feed returned HTTP {status}")
-        body = tmp.read_bytes()
-        data = loads_maybe_gz(body)
+        try:
+            data = load_feed_file(tmp)        # streamed + compacted, never the whole text at once
+        except (ValueError, UnicodeDecodeError, OSError, EOFError) as exc:
+            raise FeedUnavailable(f"feed file is not valid: {exc}") from exc
         if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
             raise FeedUnavailable("feed file has an unexpected shape")
         if not data.get("jobs") and self._cached_rows_exist():
@@ -602,11 +608,12 @@ class StaticFeed:
             self._clear_failures()
             self._save_state()
             return False
-        if body[:2] == b"\x1f\x8b":
+        with open(tmp, "rb") as fh:
+            is_gz = fh.read(2) == b"\x1f\x8b"
+        if is_gz:
             os.replace(tmp, self.jobs_path)               # already the stored gzip: just rename
         else:
-            _atomic_write(self.jobs_path, gzip.compress(body, mtime=0))
-        del body
+            _atomic_write_gz_from(self.jobs_path, tmp)
         etag = next((v for k, v in (hdrs or {}).items() if k.lower() == "etag"), None)
         self._state.update({"last_check": now, "etag": etag,
                             "generated_at": data.get("generated_at")})
@@ -628,7 +635,7 @@ class StaticFeed:
             return True
         try:
             if self.jobs_path.exists():
-                d = loads_maybe_gz(self.jobs_path.read_bytes())
+                d = load_feed_file(self.jobs_path)
                 return bool(isinstance(d, dict) and d.get("jobs"))
         except Exception:                             # noqa: BLE001 - unreadable = no rows
             return False
@@ -651,7 +658,7 @@ class StaticFeed:
             if self._jobs is not None and self._loaded_mtime == mtime:
                 return
             try:
-                data = loads_maybe_gz(self.jobs_path.read_bytes())
+                data = load_feed_file(self.jobs_path)     # streamed + compacted (feedfile.py)
                 ok = isinstance(data, dict) and isinstance(data.get("jobs"), list)
             except Exception:                             # noqa: BLE001 - not even parseable
                 ok = False
@@ -875,6 +882,59 @@ def _part_ok(path: Path, f: dict) -> bool:
         return hashlib.sha256(body).hexdigest() == str(raw_sha).lower()
     except Exception:                                     # noqa: BLE001 - unreadable = not this part
         return False
+
+
+def _unlink(path) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _write_feed_gz(directory: Path, data: dict) -> str:
+    """Write a feed object as gzip to a unique temp file in ``directory`` (returned), one row at a
+    time, so the document never exists as one string. Same JSON as json.dumps(data)."""
+    fd, tmp = tempfile.mkstemp(dir=str(directory), prefix=JOBS_FILE + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as raw, \
+                gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=5, mtime=0) as gz:
+            enc = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
+            items = list(data.items())
+            gz.write(b"{")
+            for n, (k, v) in enumerate(items):
+                gz.write(b"," if n else b"")
+                gz.write((enc.encode(k) + ":").encode("utf-8"))
+                if k == "jobs" and isinstance(v, list):
+                    gz.write(b"[")
+                    buf: list[str] = []
+                    for i, row in enumerate(v):
+                        buf.append(("," if i else "") + enc.encode(row))
+                        if len(buf) >= 2000:
+                            gz.write("".join(buf).encode("utf-8"))
+                            buf = []
+                    if buf:
+                        gz.write("".join(buf).encode("utf-8"))
+                    gz.write(b"]")
+                else:
+                    gz.write(enc.encode(v).encode("utf-8"))
+            gz.write(b"}")
+        return tmp
+    except BaseException:
+        _unlink(tmp)
+        raise
+
+
+def _atomic_write_gz_from(path: Path, src) -> None:
+    """Gzip the file ``src`` into ``path`` atomically, streaming (never the whole body in memory)."""
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as raw, open(src, "rb") as inp, \
+                gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
+            shutil.copyfileobj(inp, gz, 1 << 20)
+        os.replace(tmp, path)
+    except BaseException:
+        _unlink(tmp)
+        raise
 
 
 def _atomic_write(path: Path, data: bytes) -> None:

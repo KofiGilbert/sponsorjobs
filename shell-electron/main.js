@@ -103,6 +103,11 @@ async function ensureServer() {
     env.TAILOR_EDITION = env.TAILOR_EDITION || "official";
     env.TAILOR_BROKER_URL = env.TAILOR_BROKER_URL || "https://api.sponsorjobs.ai";
   }
+  // macOS keeps every large block the engine frees in a per-process cache, and that cache counts
+  // against the app's memory: reading the job descriptions left ~250 MB of freed blocks parked
+  // there (measured 2026-10-21). Off, a freed block goes straight back to the system. Other
+  // platforms ignore the variable.
+  if (process.platform === "darwin" && env.MallocLargeCache === undefined) env.MallocLargeCache = "0";
   delete env.RESUME_AGENT_DEV;                        // real model only (CLAUDE.md 13)
   delete env.RESUME_AGENT_FAKE_LLM;
   if (app.isPackaged) {
@@ -208,6 +213,8 @@ function opensInOwnBrowser(url) {
 function openInPane(url) {
   if (!/^https?:/i.test(url)) return;
   if (opensInOwnBrowser(url)) { shell.openExternal(url); return; }
+  clearTimeout(paneReap);
+  paneReap = null;
   ensurePane();
   paneOpen = true;
   pane.webContents.loadURL(url);
@@ -215,9 +222,31 @@ function openInPane(url) {
   pushPaneState();
 }
 
+// A closed pane is hidden at once, and its page is torn down a minute later: a hidden job site
+// (Workday, iCIMS, ...) kept its whole renderer process, often several hundred MB, alive and
+// running for the rest of the session (2026-10-21, 8 GB laptops). The minute keeps a quick
+// close-and-reopen exactly as before; the next open after that starts a fresh pane.
+const PANE_REAP_MS = 60 * 1000;
+let paneReap = null;
+
 function closePane() {
   paneOpen = false;
   layoutPane();
+  pushPaneState();
+  clearTimeout(paneReap);
+  paneReap = setTimeout(destroyPane, PANE_REAP_MS);
+}
+
+function destroyPane() {
+  clearTimeout(paneReap);
+  paneReap = null;
+  if (!pane || paneOpen) return;
+  disarmSuccessWatch();
+  disarmPageWatch();
+  const p = pane;
+  pane = null;
+  try { if (win && !win.isDestroyed()) win.contentView.removeChildView(p); } catch (e) { /* window gone */ }
+  try { if (!p.webContents.isDestroyed()) p.webContents.close(); } catch (e) { /* already closed */ }
   pushPaneState();
 }
 
