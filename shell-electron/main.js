@@ -18,6 +18,7 @@ const http = require("http");
 const path = require("path");
 const frames = require("./frames");
 const { isNewPage, pageMessage, wallMessage } = require("./pagewatch");
+const { isSupportMailto } = require("./links");
 
 const SERVER = "http://127.0.0.1:57000";
 // The STATIC job feed (docs/feed.md): a scheduled GitHub Action crawls and uploads jobs.json.gz
@@ -312,6 +313,7 @@ async function createWindow() {
 
   // External links from the app page itself also stay in-app.
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSupportMailto(url)) { shell.openExternal(url); return { action: "deny" }; }
     if (/^https?:/i.test(url) && !url.startsWith(SERVER)) {
       openInPane(url);
       return { action: "deny" };
@@ -319,6 +321,7 @@ async function createWindow() {
     return { action: "allow" };
   });
   win.webContents.on("will-navigate", (e, url) => {
+    if (isSupportMailto(url)) { e.preventDefault(); shell.openExternal(url); return; }
     if (!url.startsWith(SERVER)) { e.preventDefault(); openInPane(url); return; }
     // /api/open?u=... is a REROUTE INSTRUCTION, not a page to visit. It is same-origin,
     // so the check above lets it through, the main frame commits the navigation, and the
@@ -1012,6 +1015,13 @@ ipcMain.on("update:open", (_e, url) => {
     shell.openExternal(url);
   }
 });
+// "Help and support" in the account menu: open the person's own mail app, addressed to our
+// support inbox. Exactly mailto:support@sponsorjobs.ai (with an optional subject and body) is
+// accepted; anything else is dropped (links.js).
+ipcMain.on("support:mail", (_e, url) => {
+  if (isSupportMailto(url)) shell.openExternal(url);
+});
+ipcMain.handle("app:version", () => app.getVersion());
 ipcMain.on("pane:external", () => {
   const url = pane && pane.webContents.getURL();
   if (url && /^https?:/i.test(url)) shell.openExternal(url);

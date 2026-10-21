@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // A newer installer is on the releases page: {version, url}. See checkForUpdate in main.js.
   onUpdateAvailable: (cb) => ipcRenderer.on("update:available", (_e, info) => cb(info)),
   openReleasePage: (url) => ipcRenderer.send("update:open", url),
+  // Help and support: open the mail app to support@sponsorjobs.ai (main.js accepts nothing else).
+  openSupportMail: (url) => ipcRenderer.send("support:mail", url),
+  appVersion: () => ipcRenderer.invoke("app:version"),
   setBounds: (rect) => ipcRenderer.send("pane:set-bounds", rect),
   getState: () => ipcRenderer.invoke("pane:get-state"),
   onState: (cb) => ipcRenderer.on("pane:state", (_e, state) => cb(state)),
