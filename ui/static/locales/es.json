@@ -1003,5 +1003,6 @@
   "r2.passOneIv": "1 entrevista en vivo",
   "r2.passNIv": "{n} entrevistas en vivo",
   "r2.offH": "El entrevistador en vivo no está disponible ahora",
-  "r2.offD": "Las entrevistas en vivo funcionan en nuestro servicio. Revisa tu conexión y vuelve a intentarlo."
+  "r2.offD": "Las entrevistas en vivo funcionan en nuestro servicio. Revisa tu conexión y vuelve a intentarlo.",
+  "jobs.updating": "actualizando a la lista de hoy"
 }

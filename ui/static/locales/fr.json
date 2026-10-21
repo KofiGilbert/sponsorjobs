@@ -1003,5 +1003,6 @@
   "r2.passOneIv": "1 entretien en direct",
   "r2.passNIv": "{n} entretiens en direct",
   "r2.offH": "Le recruteur en direct est injoignable pour le moment",
-  "r2.offD": "Les entretiens en direct passent par notre service. Vérifiez votre connexion, puis réessayez."
+  "r2.offD": "Les entretiens en direct passent par notre service. Vérifiez votre connexion, puis réessayez.",
+  "jobs.updating": "mise à jour vers la liste du jour"
 }

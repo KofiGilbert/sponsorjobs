@@ -2208,6 +2208,7 @@
   let FEED_CRAWL_ERROR = "";     // the last first-open crawl failed and nothing is stored yet
   let FEED_CRAWL_TIMER = null;
   let FEED_DL = null;          // the first download's status while the list is still downloading
+  let FEED_UPDATING = null;    // a NEWER list downloading while the cached one is shown (2026-10-20)
   let FEED_FAIL = false;       // that download failed and nothing is cached: show Retry
   let FEED_RETRY = null;       // pending fast-retry timer while the hosted feed is unreachable
   let FEED_RETRY_N = 0;        // retry attempt count, for capped exponential backoff
@@ -2254,6 +2255,7 @@
         return;
       }
       FEED_DL = null;
+      checkFeedUpdate();
       // The download failed (after the engine's retries) and nothing is cached: say so with a
       // Retry, rather than "connecting" forever over an empty board.
       FEED_FAIL = !!(r.degraded && feedFailed(r.feed) && !(r.jobs || []).length);
@@ -2319,6 +2321,18 @@
     if (FEED_RETRY) { clearTimeout(FEED_RETRY); FEED_RETRY = null; }
   }
 
+  // The board is showing the cached list while a newer one downloads (the app was closed for days):
+  // say "updating to today's list" instead of an alarming "no new jobs for 5d", and swap in the
+  // new list on its own when it lands, without a reload (Kofi, 2026-10-20).
+  async function checkFeedUpdate() {
+    if (FEED_UPDATING) return;
+    let st = null;
+    try { st = await (await fetch("/api/jobs/feed-status")).json(); } catch { return; }
+    if (!st || !st.downloading) return;
+    FEED_UPDATING = st; renderNote();
+    watchFeedDownload(() => { FEED_UPDATING = null; loadPage(JOBS_PAGE); });
+  }
+
   function renderNote() {
     const el = $("#jobsNote");
     if (!el) return;
@@ -2340,6 +2354,11 @@
       return;
     }
     el.title = "";
+    if (FEED_UPDATING) {
+      el.classList.remove("feed-note-quiet");
+      el.textContent = `${count} · ${I18N.t("jobs.updating", "updating to today's list")}`;
+      return;
+    }
     if (FEED_CRAWLING) {
       el.textContent = total
         ? `${count} · ${I18N.t("jobs.crawling", "fetching more from the job boards")}`
