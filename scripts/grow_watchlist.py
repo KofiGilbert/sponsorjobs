@@ -82,6 +82,13 @@ def main(argv=None) -> int:
                     help="skip reading the ATS APIs' robots.txt (tests only)")
     ap.add_argument("--count-us", action="store_true",
                     help="after the run, read each NEW board's list once and count its US jobs")
+    ap.add_argument("--owed-only", action="store_true",
+                    help="probe only employers an earlier run left owing an ATS (a throttled or "
+                         "slow host), on just those ATSs; no new employers")
+    ap.add_argument("--min-us-jobs", type=int, default=0,
+                    help="with --count-us: leave out a new board with fewer US jobs than this "
+                         "(a foreign or subsidiary board); its employer is checkpointed as a miss "
+                         "so a later run does not add it back. Unreadable boards are kept.")
     ap.add_argument("--ipv4", action="store_true",
                     help="resolve hosts to IPv4 only: on a network with broken IPv6 every request "
                          "to a dual-stack API (SmartRecruiters, Ashby) first waits out two IPv6 "
@@ -113,9 +120,12 @@ def main(argv=None) -> int:
         atss = tuple(atss_ok)
     rank_kw = {"cap_boost": 1.0 if args.no_cap_boost else growth.CAP_EXEMPT_BOOST,
                "cap_exempt_only": args.cap_exempt_only}
-    ranked = (growth.candidates(sponsors, checkpoint, growth.watched_norms(before), args.limit,
+    ranked = (growth.candidates(sponsors, checkpoint, growth.watched_norms(before),
+                                None if args.owed_only else args.limit,
                                 atss, **rank_kw)
               if args.limit > 0 and atss else [])   # --limit 0: just flush checkpointed hits to the seed
+    if args.owed_only:
+        ranked = [r for r in ranked if r.get("atss")]
     caps = sum(1 for r in ranked if r.get("cap_exempt_likely"))
     owed = sum(1 for r in ranked if r.get("atss"))
     print(f"Watchlist before: {len(before)} boards {before_ats}")
@@ -160,6 +170,7 @@ def main(argv=None) -> int:
     by_norm = {r["norm_name"]: r for r in sponsors}
     new_rows: list[dict] = []
     evidence: list[dict] = []
+    norms: list[str] = []
     for b in [*summary["new_boards"], *checkpoint.hits()]:
         key = (b["ats"], b["board_id"])
         if key not in known:
@@ -167,8 +178,9 @@ def main(argv=None) -> int:
             company = b.get("company") or b["name"]
             new_rows.append({"company": company, "ats": b["ats"],
                              "board_id": b["board_id"], "jobs": int(b.get("jobs") or 0)})
-            sponsor = by_norm.get(b.get("norm") or growth.normalize_employer(company)) or \
-                {"display_name": company}
+            norm = b.get("norm") or growth.normalize_employer(company)
+            norms.append(norm)
+            sponsor = by_norm.get(norm) or {"display_name": company}
             evidence.append(growth.evidence_row({**b, "company": company}, sponsor))
     if args.count_us and evidence:
         print(f"\nCounting US jobs on the {len(evidence)} new boards (one list read each)...",
@@ -177,6 +189,21 @@ def main(argv=None) -> int:
             ev["us_jobs"] = growth.count_us_jobs(ev["ats"], ev["board_id"], ev["company"])
             print(f"  {ev['company']} [{ev['ats']}:{ev['board_id']}] jobs={ev['jobs']} "
                   f"us={ev['us_jobs']}{' cap-exempt' if ev['cap_exempt'] else ''}", flush=True)
+    left_out: list[dict] = []
+    if args.count_us and args.min_us_jobs > 0 and evidence:
+        kept = []
+        for row, ev, norm in zip(new_rows, evidence, norms):
+            if ev.get("us_jobs") is not None and ev["us_jobs"] < args.min_us_jobs:
+                left_out.append(ev)
+                checkpoint.record(norm, name=ev["company"], status="miss",
+                                  reason=f"{ev['ats']}:{ev['board_id']} lists {ev['us_jobs']} US jobs",
+                                  probed_ats=list(DISCOVER_ATS))
+                continue
+            kept.append((row, ev))
+        new_rows, evidence = [r for r, _ in kept], [e for _, e in kept]
+        for ev in left_out:
+            print(f"  left out {ev['company']} [{ev['ats']}:{ev['board_id']}]: "
+                  f"{ev['us_jobs']} US jobs (< {args.min_us_jobs})", flush=True)
     after = before + new_rows
     if not args.dry_run and new_rows:
         after = growth.write_watchlist_seed(args.seed, after)
@@ -210,6 +237,8 @@ def main(argv=None) -> int:
         us = [e["us_jobs"] for e in evidence if e.get("us_jobs") is not None]
         print(f"US jobs on the new boards: {sum(us)} (of {jobs} listed; "
               f"{len(evidence) - len(us)} boards could not be read)")
+    if left_out:
+        print(f"left out {len(left_out)} new boards with fewer than {args.min_us_jobs} US jobs")
     if summary.get("robots_denied"):
         print(f"robots.txt disallowed: {summary['robots_denied']}")
     if summary.get("blocked"):
@@ -227,6 +256,7 @@ def main(argv=None) -> int:
     out.write_text(json.dumps({**summary, "minutes": round(mins, 1), "before": len(before),
                                "after": len(after), "before_ats": before_ats,
                                "after_ats": after_ats, "new_jobs": jobs,
+                               "left_out": left_out,
                                "evidence": evidence}, indent=1))
     print(f"(summary written to {out})")
     return 0
