@@ -1003,5 +1003,6 @@
   "r2.passOneIv": "1 Live-Interview",
   "r2.passNIv": "{n} Live-Interviews",
   "r2.offH": "Der Live-Interviewer ist gerade nicht erreichbar",
-  "r2.offD": "Live-Interviews laufen über unseren Dienst. Prüfe deine Verbindung und versuche es dann erneut."
+  "r2.offD": "Live-Interviews laufen über unseren Dienst. Prüfe deine Verbindung und versuche es dann erneut.",
+  "jobs.updating": "Aktualisierung auf die heutige Liste"
 }

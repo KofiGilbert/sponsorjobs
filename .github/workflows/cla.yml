@@ -7,6 +7,9 @@ on:
     types: [created]
   pull_request_target:
     types: [opened, closed, synchronize]
+  # grow-boards.yml dispatches this on its bot/grow-boards branch: a PR opened with GITHUB_TOKEN
+  # starts no pull_request_target run, so the bot's seed PR would never get its cla check.
+  workflow_dispatch:
 
 permissions:
   actions: write
@@ -27,4 +30,19 @@ jobs:
           path-to-signatures: signatures/cla.json
           path-to-document: https://github.com/${{ github.repository }}/blob/main/CLA.md
           branch: cla-signatures
-          allowlist: KofiGilbert,dependabot[bot]
+          allowlist: KofiGilbert,dependabot[bot],github-actions[bot]
+
+      # Dispatched on a branch (the bot's seed PR): there is no PR to comment on, so check the
+      # branch's own commits instead. Every commit not on main must be by an allowlisted author.
+      - name: Check the branch's commit authors
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Allowlisted authors only
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          bad=$(git log origin/main..HEAD --format='%ae' | sort -u | grep -v -x -E \
+            '41898282\+github-actions\[bot\]@users\.noreply\.github\.com|[0-9]+\+KofiGilbert@users\.noreply\.github\.com' || true)
+          if [ -n "$bad" ]; then echo "commits by authors who have not signed the CLA: $bad"; exit 1; fi
+          echo "every commit on this branch is by an allowlisted author"

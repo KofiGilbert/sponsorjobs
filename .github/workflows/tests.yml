@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The weekly board-discovery PR is opened with GITHUB_TOKEN, which starts no pull_request
+  # workflows; grow-boards.yml dispatches this on its branch so the PR still gets its pytest check.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -44,5 +47,14 @@ jobs:
 
       # Four at a time (pytest-xdist): about 11 minutes became about 2. --dist loadfile keeps each
       # test file on one worker, because several files write a fixed-name helper script.
+      # The suite writes several GB of temp files (rendered resumes, feed shards, SQLite copies);
+      # since 2026-10-20 that overran the runner's temp space ("Disk quota exceeded"). Give pytest
+      # the runner's large scratch disk and drop toolchains this job never uses.
+      - name: Make room for the test temp files
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost || true
+          sudo mkdir -p /mnt/pytest && sudo chown "$USER" /mnt/pytest
+          df -h / /mnt | tail -2
+
       - name: Run tests
-        run: python -m pytest -q -n auto --dist loadfile
+        run: python -m pytest -q -n auto --dist loadfile --basetemp=/mnt/pytest/run

@@ -1003,5 +1003,6 @@
   "r2.passOneIv": "1 live interview",
   "r2.passNIv": "{n} live interviews",
   "r2.offH": "The live interviewer isn't reachable right now",
-  "r2.offD": "Live interviews run on our service. Check your connection, then try again."
+  "r2.offD": "Live interviews run on our service. Check your connection, then try again.",
+  "jobs.updating": "updating to today's list"
 }
