@@ -110,6 +110,162 @@ def loads_maybe_gz(body: bytes):
     return json.loads(body.decode("utf-8"))
 
 
+# -- the compact in-memory list (2026-10-21) ------------------------------------------------ #
+# The desktop app keeps the whole slim list (~150k rows) in memory for filtering. Parsed naively
+# it cost ~670 MB of Python objects, with a ~1.8 GB peak while loading (the gzip bytes, the
+# inflated bytes and the decoded text all alive at once), on laptops with 8 GB of RAM. Most of it
+# was repetition: every row carries its employer's sponsor record and the same two nationality
+# visa lists as fresh copies (~200 MB of JSON for ~3,300 distinct values), and every row had its
+# own copy of each key name and of its company, location and dates. The loader below streams the
+# file row by row and shares one object per distinct value, so the list costs a fraction of that
+# and never needs the whole text in memory. The rows are ordinary dicts with the same keys and
+# values as before; nested values are shared between rows, so they are read-only (nothing
+# mutates a cached row in place: the board copies a page before marking it).
+
+# String fields whose values repeat across rows (shared, one object per distinct value).
+_SHARED_STR_KEYS = frozenset(("source", "company", "location", "remote", "posted_at", "first_seen",
+                              "salary", "ad_stance", "ad_sentence"))
+_CHUNK = 1 << 20
+
+
+class RowCompactor:
+    """Rebuilds rows so equal key names, repeated strings and equal nested values (visa lists,
+    the sponsor record, tags) are ONE shared object. Keep one per load; drop it afterwards."""
+
+    def __init__(self):
+        self._strs: dict = {}
+        self._nested: dict = {}
+
+    def row(self, r: dict) -> dict:
+        strs, nested, out = self._strs, self._nested, {}
+        for k, v in r.items():
+            k = strs.setdefault(k, k)
+            if isinstance(v, str):
+                if k in _SHARED_STR_KEYS:
+                    v = strs.setdefault(v, v)
+            elif isinstance(v, (list, dict)):
+                key = (json.dumps(v, ensure_ascii=False, separators=(",", ":")) if v
+                       else ("[]" if isinstance(v, list) else "{}"))
+                v = nested.setdefault(key, v)
+            out[k] = v
+        return out
+
+    def rows(self, rows) -> list[dict]:
+        return [self.row(r) if isinstance(r, dict) else r for r in rows]
+
+
+def compact_rows(rows) -> list[dict]:
+    """``rows`` with repeated values shared (see RowCompactor). Same keys, same values, same order."""
+    return RowCompactor().rows(rows)
+
+
+def _ws(buf: str, i: int) -> int:
+    n = len(buf)
+    while i < n and buf[i] in " \t\r\n":
+        i += 1
+    return i
+
+
+def load_feed_stream(fh) -> dict:
+    """Parse a feed object ({"...": ..., "jobs": [rows]}) from a TEXT stream without holding the
+    whole document in memory: the rows are decoded one at a time and compacted as they arrive
+    (RowCompactor), so the peak is the finished list plus a ~1 MB window. Any other key is parsed
+    as one value. Raises ValueError on a malformed document."""
+    dec = json.JSONDecoder()
+    buf, pos, eof = "", 0, False
+    compact = RowCompactor()
+
+    def more() -> bool:
+        nonlocal buf, pos, eof
+        if eof:
+            return False
+        chunk = fh.read(_CHUNK)
+        if not chunk:
+            eof = True
+            return False
+        buf = buf[pos:] + chunk
+        pos = 0
+        return True
+
+    def skip() -> None:
+        nonlocal pos
+        while True:
+            pos = _ws(buf, pos)
+            if pos < len(buf) or not more():
+                return
+
+    def value():
+        # A value that ends exactly at the end of the window may be cut short ("12" of "123"), so
+        # it is only accepted once more text follows it or the stream has ended.
+        nonlocal pos
+        while True:
+            try:
+                v, end = dec.raw_decode(buf, pos)
+            except json.JSONDecodeError:
+                if more():
+                    continue
+                raise ValueError("feed file is truncated or malformed")
+            if end >= len(buf) and more():
+                continue
+            pos = end
+            return v
+
+    def expect(ch: str) -> None:
+        nonlocal pos
+        skip()
+        if pos >= len(buf) or buf[pos] != ch:
+            raise ValueError(f"feed file: expected {ch!r}")
+        pos += 1
+
+    out: dict = {}
+    expect("{")
+    skip()
+    if pos < len(buf) and buf[pos] == "}":
+        return out
+    while True:
+        skip()
+        key = value()
+        if not isinstance(key, str):
+            raise ValueError("feed file: object key is not a string")
+        expect(":")
+        skip()
+        if key == "jobs" and pos < len(buf) and buf[pos] == "[":
+            pos += 1
+            rows: list = []
+            skip()
+            if pos < len(buf) and buf[pos] == "]":
+                pos += 1
+            else:
+                while True:
+                    skip()
+                    r = value()
+                    rows.append(compact.row(r) if isinstance(r, dict) else r)
+                    skip()
+                    if pos < len(buf) and buf[pos] == ",":
+                        pos += 1
+                        continue
+                    expect("]")
+                    break
+            out[key] = rows
+        else:
+            out[key] = value()
+        skip()
+        if pos < len(buf) and buf[pos] == ",":
+            pos += 1
+            continue
+        expect("}")
+        return out
+
+
+def load_feed_file(path) -> dict:
+    """The cached jobs.json.gz (or an uncompressed copy) parsed with load_feed_stream."""
+    with open(path, "rb") as raw:
+        gz = raw.read(2) == b"\x1f\x8b"
+    opener = gzip.open if gz else open
+    with opener(path, "rt", encoding="utf-8") as fh:
+        return load_feed_stream(fh)
+
+
 def rows_version(rows: list[dict]) -> str:
     """A content hash of the slim rows: the list's version, unchanged while the rows are."""
     raw = json.dumps(rows, ensure_ascii=False, separators=(",", ":"), sort_keys=True)

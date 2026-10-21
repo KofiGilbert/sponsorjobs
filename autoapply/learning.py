@@ -294,8 +294,9 @@ def shape(rows: list[dict], state: dict | None, *, needs_sponsor: bool = True) -
     is at or under the learned floor. Saved roles keep their place at the front; among the rest,
     prioritized companies come first and down-weighted roles (similar to a "Wrong role", at a
     level past a skipped one, in a skipped place) go last (prioritized ones first among them), each group
-    otherwise in its original order. Each kept row
-    gets ``priority`` / ``down`` flags so the page can say why."""
+    otherwise in its original order. A kept row that is prioritized or down-weighted is a copy
+    with ``priority`` / ``down`` set, so the page can say why; every other row is the input row
+    itself (read-only: annotate a copy, as picker.rank does)."""
     state = state or empty_state()
     rules = learned(state)
     excl = {company_key(c.get("name")) for c in state.get("exclude", [])}
@@ -336,13 +337,14 @@ def shape(rows: list[dict], state: dict | None, *, needs_sponsor: bool = True) -
             pay = salary_value(j.get("salary"))
             if pay and pay <= floor:
                 continue
-        j = dict(j)
+        # Only a row that gains a flag is copied: the rest stay the board's own (shared, read-only)
+        # rows. Copying all of them held a second copy of a ~150k-row board in memory.
         if ck in prio:
-            j["priority"] = True
+            j = {**j, "priority": True}
         if j.get("saved"):
             saved.append(j)
         elif down(j):
-            j["down"] = True
+            j = {**j, "down": True}
             back.append(j)
         elif j.get("priority"):
             top.append(j)

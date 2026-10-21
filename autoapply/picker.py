@@ -220,7 +220,15 @@ def is_sponsor(job: dict) -> bool:
 def _title_words(title: str) -> frozenset[str]:
     """A title's words, cached: the board repeats titles ("Software Engineer" thousands of
     times), and the prefilter reads every title on every Up next request."""
-    return frozenset(_tokens(title))
+    return frozenset(_intern(t) for t in _tokens(title))
+
+
+_WORDS: dict[str, str] = {}
+
+
+def _intern(word: str) -> str:
+    """One shared string per distinct title word, so ~100k cached title sets share their words."""
+    return _WORDS.setdefault(word, word) if len(_WORDS) < 200_000 else word
 
 
 def profile_rank(job: dict, title_words: set[str], skill_words: set[str]) -> float:
@@ -240,7 +248,8 @@ def candidates(board: list[dict], saved: list[dict], *, facets: dict | None = No
     """The roles a run may tailor, best first: the person's saved jobs (in their order), then
     the board ranked by how well each title fits the profile (stable, so the board's recency
     order breaks ties). Each is narrowed by the saved Jobs search (``facets``) and today's
-    focus. Rows are copied, so the caller can annotate them freely.
+    focus. Board rows are the board's own objects (copying a ~150k-row board doubled its memory):
+    treat them as read-only and annotate a copy, as rank() does. Saved rows are copies.
 
     ``learn`` is the person's skip reasons and company lists (autoapply/learning.py): when given,
     "Never apply to" companies and roles closed to a visa holder (when ``needs_sponsor``) are
@@ -272,7 +281,7 @@ def candidates(board: list[dict], saved: list[dict], *, facets: dict | None = No
         if not sid or sid in seen:
             continue
         seen.add(sid)
-        rest.append(j if learn is not None else dict(j))   # shape() copies the rows it keeps
+        rest.append(j)                  # shared, not copied: rank() annotates its own copies
     # The cheap prefilter over the whole board: title fit to the profile, with known sponsors
     # moved up (a person who left "Visa sponsors only" off still sees sponsors first among
     # equals). Stable, so the board's recency order breaks ties.
