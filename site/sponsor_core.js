@@ -229,17 +229,62 @@
     return lookupOne(variants[0], getShard);
   }
 
-  // sourcing/sponsors.py looks_cap_exempt: the posting's employer NAME, normalized, read for the
-  // kinds of employer that file H-1B petitions outside the lottery. On the normalized ASCII
-  // form, so \b means the same here as in Python.
-  const CAP_EXEMPT_NAME = /\b(univ|university|universities|college|colleges|school of medicine|medical school|medical center|medical centre|hospital|hospitals|health system|research institute|institute of technology|polytechnic|national laboratory|national laboratories|national lab|cancer center|cancer centre|school district|board of regents|regents of|teaching hospital|seminary)\b/;
-  const looksCapExempt = (company) => CAP_EXEMPT_NAME.test(normalizeEmployer(company));
+  // ---- Cap-exempt (no H-1B lottery): sourcing/sponsors.py cap_exempt_verdict, ported ----------
+  // 8 CFR 214.2(h)(19)(iii): higher education, its nonprofit affiliates, and nonprofit or
+  // government research organizations. K-12 school districts are NOT cap-exempt. Every pattern
+  // runs on the normalized ASCII name, so \b means the same here as in Python;
+  // tests/test_cap_exempt_rule.py holds the two to the same answers on one table of real names.
+  const K12 = /\b(school district|school districts|school dist|school distric|sch dist|unified school|unified sch|independent school|isd|public schools|public school|public sch|county schools|city schools|board of education|board of school|school board|dept of education|department of education|charter school|charter schools|elementary|middle school|high school|k 12|academy|academies|kipp)\b/;
+  const HIGHER_ED = /\b(univ|university|universities|college|colleges|polytechnic|institute of technology|inst of technology|seminary|board of regents|regents of|school of medicine|medical school|health science center|health sciences center|health science ctr|health sciences ctr|medical center|medical centre|hospital|hospitals|health system|cancer center|cancer centre)\b/;
+  const RESEARCH = /\b(research institute|research foundation|research laboratory|research laboratories|research center|research centre|national laboratory|national laboratories|national lab|institute (for|of) [a-z ]*research)\b/;
+  const CAP_EXEMPT_CURATED = /\b(broad institute|salk institute|scripps research|jackson laboratory|cold spring harbor laboratory|howard hughes medical institute|battelle memorial institute|whitehead institute|allen institute|wistar institute|stowers institute|van andel institute|santa fe institute|la jolla institute|mayo clinic|cleveland clinic|memorial sloan kettering|dana farber|fred hutchinson|sri international)\b/;
+  const FOR_PROFIT_UNIV = /\b(university of phoenix|devry|strayer|capella university|walden university|colorado technical university|full sail|american intercontinental university)\b/;
+  const NOT_AN_INSTITUTION = /\b(college park|university park|university place|university heights|college station|college point|college hill|college board|university avenue|college avenue)\b/g;
+  const COMMERCIAL = /\b(credit union|federal credit|bank|pharmacy|bookstore|book store|apartments|realty|hauling|mall)\b/;
+  const LLC_FORMS = new Set(["llc", "lp", "llp", "pllc", "plc", "ltd", "limited"]);
+  const CORP_FORMS = new Set(["inc", "incorporated", "corp", "corporation", "co", "company"]);
+  const NONPROFIT_WORDS = /\b(institute|inst|clinic|foundation|laboratory|laboratories|research)\b/;
 
-  // SponsorDB.lookup: the record, with cap_exempt also set when the posting's name says so.
+  function nameTokens(name) {
+    const s = String(name || "").toLowerCase().split("&").join(" and ").replace(/[^a-z0-9 ]+/g, " ");
+    return new Set(joinInitials(s.split(" ").filter(Boolean)));
+  }
+  const hasAny = (set, forms) => [...set].some((t) => forms.has(t));
+  const looksK12 = (company) => K12.test(normalizeEmployer(company));
+
+  function looksCapExempt(company) {
+    let n = normalizeEmployer(company);
+    if (!n || K12.test(n)) return false;
+    if (CAP_EXEMPT_CURATED.test(n)) return true;
+    if (FOR_PROFIT_UNIV.test(n)) return false;
+    n = n.replace(NOT_AN_INSTITUTION, " ");
+    if (COMMERCIAL.test(n)) return false;
+    const forms = nameTokens(company);
+    if (hasAny(forms, LLC_FORMS)) return false;
+    if (HIGHER_ED.test(n)) return true;
+    return RESEARCH.test(n) && !hasAny(forms, CORP_FORMS);
+  }
+
+  function seedFlagCredible(displayName, naics) {
+    if (looksK12(displayName)) return false;
+    const forms = nameTokens(displayName);
+    if (hasAny(forms, LLC_FORMS) || hasAny(forms, CORP_FORMS)) return false;
+    return ["61", "62"].includes(String(naics || "").slice(0, 2)) || looksCapExempt(displayName) ||
+      NONPROFIT_WORDS.test(normalizeEmployer(displayName));
+  }
+
+  function capExemptVerdict(company, displayName, naics, flag) {
+    if (looksK12(company) || looksK12(displayName)) return false;
+    if (looksCapExempt(company)) return true;
+    return !!flag && seedFlagCredible(displayName, naics);
+  }
+
+  // SponsorDB.lookup: the record, with cap_exempt decided by capExemptVerdict.
   function lookup(company, getShard) {
     const rec = lookupRecord(company, getShard);
-    if (rec && !rec.cap_exempt && looksCapExempt(company)) return { ...rec, cap_exempt: true };
-    return rec;
+    if (!rec) return rec;
+    const verdict = capExemptVerdict(company, rec.display_name, rec.naics, rec.cap_exempt);
+    return verdict === rec.cap_exempt ? rec : { ...rec, cap_exempt: verdict };
   }
 
   // ---- SponsorRecord / the endpoint's response ---------------------------------------------
@@ -308,7 +353,7 @@
 
   const api = {
     normalizeEmployer, normalizeEmployerVariants, looksUs, naicsIndustry, shardOf, shardsFor,
-    titleKey, prepareShard, lookup, looksCapExempt, badges, profile, lookupResponse,
+    titleKey, prepareShard, lookup, looksCapExempt, looksK12, capExemptVerdict, badges, profile, lookupResponse,
   };
   G.SponsorCore = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
