@@ -248,7 +248,7 @@ def _workflow(name):
 def test_grow_boards_workflow_inputs_permissions_and_time_caps():
     wf, on = _workflow("grow-boards.yml")
     inputs = on["workflow_dispatch"]["inputs"]
-    assert inputs["limit"]["default"] == "300"
+    assert inputs["limit"]["default"] == "1500"
     assert inputs["dry_run"]["type"] == "boolean" and inputs["dry_run"]["default"] is False
     assert set(inputs) >= {"limit", "max_minutes", "cap_exempt_only", "dry_run", "skip_ats"}
     assert inputs["skip_ats"]["default"] == "workable"

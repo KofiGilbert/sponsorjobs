@@ -6,7 +6,7 @@ name: grow-boards
 # only: one small public JSON request per probe, robots.txt obeyed, a host that answers
 # 401 / 403 / a challenge is never asked again, per-host spacing and 429 back-off, an honest UA.
 #
-# Bounded and resumable: each run takes the next `limit` employers (300 by default) under a time
+# Bounded and resumable: each run takes the next `limit` employers (1,500 by default; a 300 batch took ~10 min with no rate limiting) under a time
 # cap. The checkpoint lives on the `grow-boards-state` branch (not the Actions cache: the feed's
 # 3-hourly ~250 MB caches would evict it between weekly runs), so the next run continues down the
 # ranked list and never re-probes an employer already answered, skipped, or blocked.
@@ -22,7 +22,7 @@ on:
       limit:
         description: "Employers to probe this run"
         required: false
-        default: "300"
+        default: "1500"
       max_minutes:
         description: "Stop starting new probes after this many minutes"
         required: false
@@ -67,7 +67,7 @@ jobs:
       - name: Discover the next batch of boards
         env:
           GH_TOKEN: ${{ github.token }}
-          LIMIT: ${{ inputs.limit || '300' }}
+          LIMIT: ${{ inputs.limit || '1500' }}
           MAX_MINUTES: ${{ inputs.max_minutes || '100' }}
           CAP_EXEMPT_ONLY: ${{ inputs.cap_exempt_only && '--cap-exempt-only' || '' }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
