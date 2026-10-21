@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SponsorJobs: Visa Sponsor Badges",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "See H-1B / green-card / STEM-OPT sponsor badges on job postings, no account or app needed. With the SponsorJobs app, also pre-fill application forms from your saved profile. Nothing is auto-submitted.",
   "permissions": [
     "storage"

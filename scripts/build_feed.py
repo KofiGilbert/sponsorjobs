@@ -424,11 +424,14 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
         jd_by_id = w.get_jd_texts([r["source_id"] for r in rows])
     finally:
         w.close()
+    from sourcing.feedfile import read_workers
+    log(f"[build_feed] writing: reading {len(rows)} ads in {read_workers(len(rows))} process(es)")
+    tw = time.time()
     manifest = write_feed(out_dir, rows, jd_by_id, jobs_url=jobs_url)
     parts = manifest.get("parts") or {}
     log(f"[build_feed] wrote {manifest['count']} jobs ({len(parts.get('files') or [])} list parts, "
         f"version {parts.get('version')}) + {manifest['jd_shard_count']} JD shards to "
-        f"{out_dir} ({time.time() - t0:.0f}s total)")
+        f"{out_dir} in {time.time() - tw:.0f}s ({time.time() - t0:.0f}s total)")
     return manifest
 
 

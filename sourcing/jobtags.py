@@ -72,6 +72,98 @@ TAGS: tuple[tuple[str, str], ...] = (
 # "Product Manager" and "manufacturing", so the match may run on into the rest of the word.
 _COMPILED = tuple((tag, re.compile(r"(?<![a-z])(?:" + pat + r")", re.I)) for tag, pat in TAGS)
 
+
+def _alternatives(pat: str) -> list[str]:
+    """The top-level `a|b|c` branches of a pattern (a `|` inside a group or class is not one)."""
+    out, depth, cls, cur, i = [], 0, False, "", 0
+    while i < len(pat):
+        c = pat[i]
+        if c == "\\":
+            cur += pat[i:i + 2]
+            i += 2
+            continue
+        if cls:
+            cls = c != "]"
+        elif c == "[":
+            cls = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == "|" and depth == 0:
+            out.append(cur)
+            cur, i = "", i + 1
+            continue
+        cur += c
+        i += 1
+    out.append(cur)
+    return out
+
+
+def _leading_literal(alt: str) -> str:
+    """The plain text every match of one branch starts with (lowercase), or "" when the branch
+    starts with regex syntax. A character followed by a quantifier is optional, so it ends the run."""
+    while alt.startswith("\\b"):
+        alt = alt[2:]
+    lit = ""
+    for i, c in enumerate(alt):
+        if not (c.isalnum() or c in " &/-"):
+            break
+        if i + 1 < len(alt) and alt[i + 1] in "?*{":
+            break
+        lit += c
+    return lit.lower()
+
+
+def _needles(pat: str) -> tuple[str, ...] | None:
+    """Substrings one of which every match of `pat` must contain, or None when some branch has no
+    literal start (then the pattern always runs)."""
+    lits = [_leading_literal(a) for a in _alternatives(pat)]
+    return None if not all(lits) else tuple(sorted(set(lits)))
+
+
+# Speed-up (2026-10-21): the feed build tags ~150k descriptions, and 49 case-insensitive scans
+# of each one took ~20 minutes, because a scan tries every pattern at every character. A match can
+# only START where one of its branch's leading words starts, so `_count` finds those spots with
+# str.find (C speed) and tries the pattern only there, in order, skipping past each match exactly
+# as findall does. The text is lowercased once and matched with a case-sensitive copy of each
+# pattern. Same counts as findall, about five times faster.
+_NEEDLES = tuple(_needles(pat) for _, pat in TAGS)
+_LOWER = tuple(re.compile(r"(?<![a-z])(?:" + pat + r")") for _, pat in TAGS)
+# Characters that break "lowercase, then match case-sensitively": a case-insensitive ASCII
+# pattern matches long s and dotless i, which do not lowercase to ASCII, and dotted capital I
+# lowercases to two characters. Text holding one takes the original findall path.
+_FOLD_ODD = ("\u017f", "\u0131", "\u0130")
+
+
+def _lowered(text: str) -> str | None:
+    return None if any(c in text for c in _FOLD_ODD) else text.lower()
+
+
+def _count(order: int, text: str, low: str | None) -> int:
+    """How many times tag `order`'s pattern matches `text` (len(findall), non-overlapping).
+    `low` is text.lower(), or None to use the plain findall."""
+    needles = _NEEDLES[order]
+    if low is None or needles is None:
+        return len(_COMPILED[order][1].findall(text))
+    starts = set()
+    for n in needles:
+        i = low.find(n)
+        while i != -1:
+            starts.add(i)
+            i = low.find(n, i + 1)
+    if not starts:
+        return 0
+    pat, count, end = _LOWER[order], 0, 0
+    for i in sorted(starts):
+        if i < end:
+            continue
+        m = pat.match(low, i)       # the lookbehind still sees the character before i
+        if m:
+            count, end = count + 1, m.end()
+    return count
+
+
 TITLE_WEIGHT = 5
 MAX_TAGS = 9
 # Functions whose words are everyday English in any ad ("operations", "research", "training"):
@@ -87,10 +179,11 @@ def job_tags(title: str, description: str = "", limit: int = MAX_TAGS) -> list[s
     mentions. Capped at `limit` (Migrate Mate shows about nine)."""
     title = title or ""
     body = description or ""
+    low_title, low_body = _lowered(title), _lowered(body)
     scored = []
-    for order, (tag, pat) in enumerate(_COMPILED):
-        in_title = len(pat.findall(title))
-        in_body = len(pat.findall(body))
+    for order, (tag, _) in enumerate(_COMPILED):
+        in_title = _count(order, title, low_title)
+        in_body = _count(order, body, low_body)
         need = 3 if tag in COMMON else 2
         if not in_title and in_body < need:
             continue

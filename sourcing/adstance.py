@@ -98,6 +98,25 @@ _YES = (
 )
 
 
+# Words every RESTRICTED_RE branch contains (citizen, green card, permanent resident, clearance,
+# secret, ts/sci, polygraph). Keep in step with RESTRICTED_SRC: a new branch needs its word here,
+# or _maybe_restricted would wave its ads through (tests/test_adstance.py checks the phrasings).
+_RESTRICTED_WORDS = ("citizen", "green", "permanent", "clearance", "secret", "ts/sci", "polygraph")
+# Characters a case-insensitive pattern matches as an ASCII letter that lower() does not turn into
+# one (long s, dotless i, dotted capital I): text holding one gets the full regex.
+_FOLD_ODD = ("\u017f", "\u0131", "\u0130")
+
+
+def _maybe_restricted(text: str) -> bool:
+    """Whether RESTRICTED_RE matches somewhere in `text`, without scanning it when none of the
+    words it needs is present (a cheap substring test instead of a slow regex pass)."""
+    if not any(c in text for c in _FOLD_ODD):
+        low = text.lower()
+        if not any(w in low for w in _RESTRICTED_WORDS):
+            return False
+    return RESTRICTED_RE.search(text) is not None
+
+
 def _sentences(text: str):
     for m in _SENT.finditer(text or ""):
         s = " ".join(m.group(0).split())
@@ -114,6 +133,12 @@ def ad_stance(text: str) -> dict:
     "no sponsorship": it is the more specific fact, and the role is closed either way. The
     sentence returned is the first one that decided the winning stance.
     """
+    # Fast exit (2026-10-21; the feed build reads ~150k ads, and splitting each into sentences and
+    # scanning them was minutes of work): every sentence is a piece of the text with its
+    # whitespace runs collapsed, and RESTRICTED_RE / _ABOUT spell whitespace only as \s, so a
+    # sentence can match one of them only if the whole text does. Most ads match neither.
+    if not text or (_ABOUT.search(text) is None and not _maybe_restricted(text)):
+        return {"stance": UNKNOWN, "sentence": ""}
     no_sent = yes_sent = None
     for s in _sentences(text):
         if RESTRICTED_RE.search(s):

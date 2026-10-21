@@ -157,6 +157,64 @@ def write_parts(out_dir, slim: list[dict], whole_gz_bytes: int, *,
             "files": files}
 
 
+# Reading every ad (its sponsorship stance and function tags) is the slow part of a feed build:
+# ~150k descriptions took ~17 minutes in one process (2026-10-21). Rows are independent, so a
+# large build reads them in worker processes forked from this one (they inherit the rows, no
+# copying); the answers come back in row order, so the file is the same as a one-process build.
+# Linux only (the CI runner): fork is the safe default there. FEED_READ_WORKERS=1 turns it off.
+PARALLEL_MIN_ROWS = 2000
+_ADS: tuple = ((), {})      # (rows, jd_by_id) for the forked workers to read
+
+
+def _read_one(r: dict, jd_by_id: dict):
+    from sourcing.adstance import UNKNOWN, ad_stance
+    from sourcing.jobtags import job_tags
+    jd = (jd_by_id or {}).get(r.get("source_id")) or r.get("jd_text") or ""
+    st = ad_stance(jd) if jd else {"stance": UNKNOWN, "sentence": ""}
+    return st, job_tags(r.get("title") or "", jd)
+
+
+def _read_span(span: tuple[int, int]) -> list:
+    rows, jd_by_id = _ADS
+    return [_read_one(r, jd_by_id) for r in rows[span[0]:span[1]]]
+
+
+def read_workers(n_rows: int, env=None, threads: int | None = None) -> int:
+    """How many processes read the ads: FEED_READ_WORKERS when set; else 1 for a small build,
+    off Linux, or when another thread is running (forking a threaded process can deadlock the
+    child on a lock that thread held); else the CPU count, capped at 8. The CI merge job runs
+    no other thread by the time it writes."""
+    import os
+    import sys
+    import threading
+    env = os.environ if env is None else env
+    raw = (env.get("FEED_READ_WORKERS") or "").strip()
+    if raw:
+        return max(1, int(raw))
+    threads = threading.active_count() if threads is None else threads
+    if n_rows < PARALLEL_MIN_ROWS or not sys.platform.startswith("linux") or threads > 1:
+        return 1
+    return max(1, min(8, os.cpu_count() or 1))
+
+
+def _read_ads(rows: list[dict], jd_by_id: dict) -> list:
+    """[(stance dict, tags)] for each row, in row order."""
+    global _ADS
+    workers = read_workers(len(rows))
+    if workers <= 1:
+        return [_read_one(r, jd_by_id) for r in rows]
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    step = max(1, -(-len(rows) // (workers * 8)))    # small spans keep the workers evenly busy
+    spans = [(i, min(i + step, len(rows))) for i in range(0, len(rows), step)]
+    _ADS = (rows, jd_by_id)
+    try:
+        with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("fork")) as pool:
+            return [x for part in pool.map(_read_span, spans) for x in part]
+    finally:
+        _ADS = ((), {})
+
+
 def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
                generated_at: str | None = None, part_bytes: int | None = None) -> dict:
     """Write jobs.json.gz + jd/*.json.gz + manifest.json into `out_dir`. Returns the manifest.
@@ -167,18 +225,15 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
     # What each ad SAYS about sponsorship, read from its own text (sourcing/adstance.py): the
     # aggregator's yes/no flag was wrong for most flagged ads, and a third of ads that mention
     # sponsorship say they will NOT sponsor, which the student needs to see (2026-10-08).
-    from sourcing.adstance import UNKNOWN, ad_stance
-    from sourcing.jobtags import job_tags
+    from sourcing.adstance import UNKNOWN
     slim = []
-    for r in rows:
+    for r, (st, tags) in zip(rows, _read_ads(rows, jd_by_id)):
         row = slim_row(r)
-        jd = (jd_by_id or {}).get(r.get("source_id")) or r.get("jd_text") or ""
-        st = ad_stance(jd) if jd else {"stance": UNKNOWN, "sentence": ""}
         if st["stance"] != UNKNOWN:
             row["ad_stance"], row["ad_sentence"] = st["stance"], st["sentence"]
         # Function tags from title + description (sourcing/jobtags.py), so the card can show
         # several specific areas the way Migrate Mate does, instead of one title-only bucket.
-        row["tags"] = job_tags(r.get("title") or "", jd)
+        row["tags"] = tags
         slim.append(row)
     sources = {r.get("source") for r in slim}
     header = {"feed_version": FEED_VERSION, "generated_at": generated_at, "count": len(slim),
