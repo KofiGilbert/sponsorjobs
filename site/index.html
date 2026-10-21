@@ -6,7 +6,7 @@
 <title>SponsorJobs. Stop guessing who sponsors.</title>
 <meta name="description" content="Jobs at employers with real H-1B and green-card records, and a one-page resume tailored to each. Free, open source, on your own computer. For international students and H-1B candidates in the US.">
 <link rel="canonical" href="https://sponsorjobs.ai/">
-<meta name="theme-color" content="#F4F1EA">
+<meta name="theme-color" content="#0B0B0F">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="SponsorJobs">
 <meta property="og:title" content="SponsorJobs. Stop guessing who sponsors.">
@@ -17,8 +17,7 @@
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="preload" href="fonts/instrument-serif-latin-v5.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="fonts/instrument-serif-italic-latin-v5.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/inter-latin-wght-v4.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 <script type="application/ld+json">
 {
@@ -65,23 +64,49 @@
 
 <!-- HERO -->
 <section class="hero" aria-labelledby="hero-h">
-  <div class="wrap">
-    <div class="kicker">
+  <div class="wrap hero-text">
+    <p class="kicker">
       <span class="mono">Free and open source</span><span class="sep" aria-hidden="true"></span>
       <span class="mono">Runs on your computer</span><span class="sep" aria-hidden="true"></span>
       <span class="mono">AGPL-3.0</span>
+    </p>
+    <h1 id="hero-h" class="display h-xl">Stop guessing <i>who sponsors.</i></h1>
+    <p class="sub lede">Jobs at employers with real H-1B and green-card records, and a one-page resume tailored to each. Free, open source, on your own computer.</p>
+    <div class="cta">
+      <a class="btn" id="dl-mac" href="download.html">Download for macOS <span class="k">Apple Silicon</span></a>
+      <a class="btn btn-ghost" id="dl-win" href="download.html">Download for Windows</a>
     </div>
-    <div class="grid">
-      <div class="lead">
-        <h1 id="hero-h" class="display h-xl">Stop guessing <i>who sponsors.</i></h1>
-        <p class="sub lede">Jobs at employers with real H-1B and green-card records, and a one-page resume tailored to each. Free, open source, on your own computer.</p>
-        <div class="cta">
-          <a class="btn" id="dl-mac" href="download.html">Download for macOS <span class="k">APPLE SILICON</span></a>
-          <a class="btn btn-ghost" id="dl-win" href="download.html">Download for Windows</a>
-          <span class="alt">Linux and Intel Macs: <a href="open-source.html">run it from source</a>.</span>
-        </div>
-      </div>
+    <p class="alt">Linux and Intel Macs: <a href="open-source.html">run it from source</a>.</p>
+  </div>
 
+  <div class="band band-a">
+    <div class="band-in">
+      <h2 class="band-title">Every job, with the employer's record beside it.</h2>
+      <figure class="shot">
+        <div class="frame">
+          <picture>
+            <source type="image/avif" srcset="img/jobs-window-dark-655870be.avif">
+            <source type="image/webp" srcset="img/jobs-window-dark-655870be.webp">
+            <img src="img/jobs-window-dark-655870be.png" width="2464" height="1540" fetchpriority="high" decoding="async" alt="The SponsorJobs Jobs screen in dark mode. A search for Data Engineer filtered to H-1B and Green Card sponsors; the selected role shows the employer's marks, the visa classes it has filed for by nationality, and a fit report listing the must-have skills missing from the resume.">
+          </picture>
+        </div>
+        <figcaption class="caption">
+          <span><b>Fig. 01</b> Jobs, as shipped. A search filtered to employers with H-1B and Green Card filings, with the fit report against the uploaded resume.</span>
+          <span>Dark mode. 1440 px.</span>
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- CHECK AN EMPLOYER -->
+<section class="check" aria-labelledby="check-h">
+  <div class="band band-b">
+    <div class="band-in check-grid">
+      <div class="check-text">
+        <h2 id="check-h" class="band-title">Check an employer before you spend an evening on the application.</h2>
+        <p>Type a name. The lookup runs inside your browser against the public sponsor index, so the name you type is not sent anywhere.</p>
+      </div>
       <aside class="panel" id="employer" aria-labelledby="emp-label">
         <div class="label">
           <span class="mono" id="emp-label">Check an employer</span>
@@ -107,20 +132,6 @@
         <p class="try">Try <button type="button" data-emp="Stripe">Stripe</button> <button type="button" data-emp="Epic Systems">Epic Systems</button> <button type="button" data-emp="Mayo Clinic">Mayo Clinic</button></p>
       </aside>
     </div>
-
-    <figure class="shot">
-      <div class="frame">
-        <picture>
-          <source type="image/avif" srcset="img/jobs-dark-6df557ac.avif">
-          <source type="image/webp" srcset="img/jobs-dark-6df557ac.webp">
-          <img src="img/jobs-dark-6df557ac.png" width="2400" height="1547" fetchpriority="high" decoding="async" alt="The SponsorJobs Jobs screen in dark mode. A search for Data Engineer filtered to H-1B and Green Card sponsors; the selected role shows the employer's marks, pay compared with similar roles, the visa classes it has filed for by nationality, and a fit report listing the must-have skills missing from the resume.">
-        </picture>
-      </div>
-      <figcaption class="caption">
-        <span><b>Fig. 01</b> &nbsp;Jobs, as shipped. A search filtered to employers with H-1B and Green Card filings, with the fit report against the uploaded resume.</span>
-        <span>Dark mode. 1440 px.</span>
-      </figcaption>
-    </figure>
   </div>
 </section>
 
@@ -490,7 +501,7 @@
     </div>
     <div class="colophon">
       <span class="mono">&copy; 2026 BlackOrigin Inc.</span>
-      <span class="mono">Set in Instrument Serif, Geist and Geist Mono</span>
+      <span class="mono">Set in Inter and JetBrains Mono</span>
     </div>
   </div>
 </footer>
