@@ -270,3 +270,61 @@ def test_the_required_checks_can_be_dispatched_on_the_bot_branch():
     steps = cla["jobs"]["cla"]["steps"]
     assert "github-actions[bot]" in steps[0]["with"]["allowlist"]
     assert any("origin/main..HEAD" in s.get("run", "") for s in steps)
+
+
+def test_owed_slow_lane_probes_are_finished_first_on_just_that_ats(tmp_path, monkeypatch):
+    state = json.dumps({"norm": "acme", "name": "Acme", "status": "miss",
+                        "probed_ats": ["greenhouse", "lever", "ashby", "workday"],
+                        "unprobed_ats": ["workable"]}) + "\n"
+    git = FakeGit(state=state, seed_dirty=False)
+    ci, calls = _driver(monkeypatch, tmp_path, git)
+    assert ci.main(["--limit", "300", "--max-minutes", "100",
+                    "--state-dir", str(tmp_path / "st")]) == 0
+    owed, batch = calls
+    assert "--owed-only" in owed and owed[owed.index("--ats") + 1] == "workable"
+    assert "--dry-run" in owed and "--count-us" not in owed          # probes only; batch writes
+    assert float(owed[owed.index("--max-minutes") + 1]) == 40
+    assert "--owed-only" not in batch and "--count-us" in batch
+    assert batch[batch.index("--min-us-jobs") + 1] == "1"
+
+
+def test_a_refused_pr_create_says_how_to_fix_it(tmp_path, monkeypatch):
+    import subprocess
+
+    class Refusing(FakeGit):
+        def __call__(self, cmd, check=True, input=None):
+            if cmd[:3] == ["gh", "pr", "create"]:
+                self.cmds.append(cmd)
+                return subprocess.CompletedProcess(cmd, 1, "", "not permitted to create PRs")
+            return super().__call__(cmd, check, input)
+    git = Refusing(state="")
+    ci, _ = _driver(monkeypatch, tmp_path, git)
+    with pytest.raises(SystemExit, match="Allow GitHub Actions to create"):
+        ci.main(["--state-dir", str(tmp_path / "st")])
+    assert git.ran("git", "push", "--force")                # the rows are on the branch
+    assert not git.ran("gh", "workflow")
+
+
+def test_a_new_board_with_no_us_jobs_is_left_out_and_not_added_back(tmp_path, monkeypatch):
+    sponsors = _sponsors(tmp_path, ["Datadog Inc", "Stripe Inc"])
+    seed = tmp_path / "watchlist.csv"
+    seed.write_text("company,ats,board_id\n")
+    ats = GreenhouseOnly({"datadog": "Datadog", "stripe": "Stripe"})
+    real = growth.PoliteFetch
+    monkeypatch.setattr(growth, "PoliteFetch",
+                        lambda **kw: real(fetch=ats, sleep=lambda s: None,
+                                          **{k: v for k, v in kw.items() if k != "fetch"}))
+    monkeypatch.setattr(growth, "count_us_jobs",
+                        lambda a, b, c="": 0 if b == "stripe" else 5)
+    script = _load("grow_watchlist")
+    cp = tmp_path / "cp.jsonl"
+    argv = ["--sponsors", str(sponsors), "--seed", str(seed), "--checkpoint", str(cp),
+            "--workers", "1", "--no-robots", "--ats", "greenhouse", "--limit", "5",
+            "--count-us", "--min-us-jobs", "1"]
+    assert script.main(argv) == 0
+    assert [r["board_id"] for r in growth.read_watchlist_seed(seed)] == ["datadog"]
+    summary = json.loads(cp.with_suffix(".summary.json").read_text())
+    assert [e["board_id"] for e in summary["left_out"]] == ["stripe"]
+    assert growth.Checkpoint(cp).records["stripe"]["status"] == "miss"
+    assert script.main(argv) == 0                          # the checkpointed hit stays out
+    assert [r["board_id"] for r in growth.read_watchlist_seed(seed)] == ["datadog"]

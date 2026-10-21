@@ -7,11 +7,16 @@ hand (with --dry-run it changes nothing outside the working tree). One run:
      `grow-boards-state` branch, so the batch continues down the ranked sponsor list instead of
      re-probing its top: employers already probed, skipped, or found on a blocked host are not
      asked again (sourcing/growth.py Checkpoint);
-  2. runs scripts/grow_watchlist.py for the next --limit employers under a time cap (robots.txt
-     obeyed, blocked hosts never re-asked, per-host spacing and 429 back-off as always);
-  3. saves the grown checkpoint back to that branch, even when the batch failed part-way,
+  2. first finishes what earlier runs left owing: an employer whose probe on a slow lane
+     (Workable's 4-second spacing) was deferred is asked on just that ATS, as a single-lane
+     pass that waits its turn instead of deferring again (--owed-only, up to --owed-share of
+     the time cap). Without this the owed employers would fill every later batch;
+  3. runs scripts/grow_watchlist.py for the next --limit employers under the rest of the time
+     cap (robots.txt obeyed, blocked hosts never re-asked, per-host spacing and 429 back-off as
+     always), counting each new board's US jobs and leaving out boards with none;
+  4. saves the grown checkpoint back to that branch, even when the batch failed part-way,
      so the next run resumes where this one stopped;
-  4. if seed/watchlist_seed.csv or seed/watchlist_evidence.csv changed, force-pushes them to the
+  5. if seed/watchlist_seed.csv or seed/watchlist_evidence.csv changed, force-pushes them to the
      `bot/grow-boards` branch and opens (or updates) one pull request with a table of the new
      boards. A PR opened with the workflow's GITHUB_TOKEN starts no workflows by itself, so this
      then dispatches the required checks (tests.yml, cla.yml) on that branch.
@@ -32,6 +37,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +93,21 @@ def save_state(checkpoint: Path, summary: Path, remote: str = "origin",
     return commit
 
 
+def owed_atss(checkpoint: Path) -> tuple[list[str], int]:
+    """The ATSs earlier runs left owing, and how many employers owe one."""
+    from sourcing import growth
+    from sourcing.discover import DISCOVER_ATS
+    if not checkpoint.exists():
+        return [], 0
+    pending = growth.Checkpoint(checkpoint).pending(DISCOVER_ATS)
+    # Only what a run was cut short on (unprobed_ats), not an ATS a record predates.
+    owed = {a for r in growth.Checkpoint(checkpoint).records.values()
+            if r.get("norm") in pending for a in (r.get("unprobed_ats") or ())}
+    return [a for a in DISCOVER_ATS if a in owed], sum(
+        1 for n, r in growth.Checkpoint(checkpoint).records.items()
+        if n in pending and set(r.get("unprobed_ats") or ()) & owed)
+
+
 def checkpoint_totals(checkpoint: Path) -> dict[str, int]:
     from sourcing import growth
     if not checkpoint.exists():
@@ -97,7 +118,7 @@ def checkpoint_totals(checkpoint: Path) -> dict[str, int]:
     return out
 
 
-def report(summary: dict, totals: dict[str, int], limit: int) -> str:
+def report(summary: dict, totals: dict[str, int], limit: int, owed: dict | None = None) -> str:
     """The PR body / job summary: what this batch did and every board it adds."""
     ev = summary.get("evidence") or []
     us = [int(e["us_jobs"]) for e in ev if e.get("us_jobs") not in (None, "")]
@@ -117,6 +138,12 @@ def report(summary: dict, totals: dict[str, int], limit: int) -> str:
         f"stopped: {summary.get('stopped')}; {summary.get('minutes', 0)} min",
         f"- New boards in this PR: {len(ev)} with {summary.get('new_jobs', 0)} listed jobs"
         + (f", {sum(us)} of them in the US" if us else ""),
+        *([f"- Owed probes finished first: {owed.get('probed', 0)} employers on "
+            f"{', '.join(owed.get('atss') or [])} ({owed.get('requests', 0)} requests, "
+            f"stopped: {owed.get('stopped')})"] if owed else []),
+        *([f"- Left out (no US jobs): " + ", ".join(
+            f"{e['company']} ({e['ats']}:{e['board_id']})" for e in summary['left_out'])]
+          if summary.get("left_out") else []),
         f"- Watchlist: {summary.get('before', 0)} -> {summary.get('after', 0)} boards",
         f"- Blocked hosts (401 / 403 / challenge, never asked again): {len(blocked)}",
         f"- robots.txt left out: {summary.get('robots_denied') or 'nothing'}",
@@ -153,8 +180,19 @@ def open_or_update_pr(body: str, remote: str = "origin", branch: str = PR_BRANCH
         sh(["gh", "pr", "edit", found, "--title", PR_TITLE, "--body-file", f.name])
         url = sh(["gh", "pr", "view", found, "--json", "url", "--jq", ".url"]).stdout.strip()
     else:
-        url = sh(["gh", "pr", "create", "--head", branch, "--base", base, "--title", PR_TITLE,
-                  "--body-file", f.name]).stdout.strip()
+        made = sh(["gh", "pr", "create", "--head", branch, "--base", base, "--title", PR_TITLE,
+                   "--body-file", f.name], check=False)
+        if made.returncode:
+            # Usually the repository setting "Allow GitHub Actions to create and approve pull
+            # requests" (Settings > Actions > General > Workflow permissions) is off. The branch
+            # is pushed and the checkpoint saved, so nothing is lost: open the PR by hand, or
+            # turn the setting on and the next run opens it.
+            raise SystemExit(
+                f"could not open the pull request ({made.stderr.strip()}).\n"
+                f"The new rows are on the {branch} branch. Open a PR from it by hand, or turn on "
+                "Settings > Actions > General > 'Allow GitHub Actions to create and approve pull "
+                "requests' so the next run opens it.")
+        url = made.stdout.strip()
     # A PR opened with GITHUB_TOKEN triggers no workflows; dispatch the required checks on the
     # branch so its head commit gets them (workflow_dispatch is the documented exception).
     for wf in CHECK_WORKFLOWS:
@@ -177,6 +215,10 @@ def main(argv=None) -> int:
     ap.add_argument("--no-restore", action="store_true",
                     help="start from an empty checkpoint (or whatever is in --state-dir)")
     ap.add_argument("--ipv4", action="store_true")
+    ap.add_argument("--owed-share", type=float, default=0.4,
+                    help="share of --max-minutes the owed-probe pass may use (default 0.4)")
+    ap.add_argument("--min-us-jobs", type=int, default=1,
+                    help="leave out new boards with fewer US jobs than this (default 1)")
     args = ap.parse_args(argv)
 
     checkpoint = Path(args.state_dir) / STATE_FILE
@@ -186,24 +228,37 @@ def main(argv=None) -> int:
         print(f"restored {n} checkpoint records from {STATE_BRANCH}")
 
     import grow_watchlist  # scripts/ is on sys.path when this file runs as a script
-    grow_argv = ["--limit", str(args.limit), "--max-minutes", str(args.max_minutes),
-                 "--workers", str(args.workers), "--checkpoint", str(checkpoint), "--count-us"]
+    common = ["--workers", str(args.workers), "--checkpoint", str(checkpoint)]
+    if args.ipv4:
+        common.append("--ipv4")
+    if args.dry_run:
+        common.append("--dry-run")
+    grow_argv = ["--limit", str(args.limit), "--count-us", "--min-us-jobs", str(args.min_us_jobs),
+                 *common]
     if args.cap_exempt_only:
         grow_argv.append("--cap-exempt-only")
-    if args.ipv4:
-        grow_argv.append("--ipv4")
-    if args.dry_run:
-        grow_argv.append("--dry-run")
-    rc = 1
+    rc, owed_summary = 1, None
+    t0 = time.monotonic()
     try:
-        rc = grow_watchlist.main(grow_argv)
+        atss, n_owed = owed_atss(checkpoint)
+        if atss and n_owed:
+            print(f"finishing {n_owed} employers that still owe {', '.join(atss)} first", flush=True)
+            rc = grow_watchlist.main(["--owed-only", "--ats", ",".join(atss), "--limit", str(n_owed),
+                                      "--max-minutes", f"{args.max_minutes * args.owed_share:g}",
+                                      "--dry-run", *[c for c in common if c != "--dry-run"]])
+            if summary_path.exists():
+                s = json.loads(summary_path.read_text())
+                owed_summary = {"atss": atss, "probed": s.get("probed"),
+                                "requests": s.get("requests"), "stopped": s.get("stopped")}
+        left = max(args.max_minutes - (time.monotonic() - t0) / 60, 5)
+        rc = grow_watchlist.main([*grow_argv, "--max-minutes", f"{left:.0f}"])
     finally:
         # Progress is saved even when the batch dies part-way: the next run resumes from it.
         if not args.dry_run:
             save_state(checkpoint, summary_path, args.remote,
                        message=f"Discovery checkpoint after a batch of {args.limit}")
     summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}
-    body = report(summary, checkpoint_totals(checkpoint), args.limit)
+    body = report(summary, checkpoint_totals(checkpoint), args.limit, owed_summary)
     step = os.environ.get("GITHUB_STEP_SUMMARY")
     if step:
         with open(step, "a", encoding="utf-8") as f:
