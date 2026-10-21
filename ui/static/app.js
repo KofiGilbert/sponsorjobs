@@ -7943,6 +7943,19 @@
   $("#extHelp")?.addEventListener("click", () => { const d = $("#extDetail"); if (d) d.hidden = !d.hidden; });
   $("#gmHelp")?.addEventListener("click", () => { const d = $("#gmDetail"); if (d) d.hidden = !d.hidden; });
   $("#menuSettings")?.addEventListener("click", openSettings);
+  // Help and support: a plain email to our support inbox, in the person's own mail app. The draft
+  // carries only the app version, never profile data. The desktop shell accepts exactly this
+  // address (shell-electron/links.js); a plain browser opens the mailto link itself.
+  $("#menuHelp")?.addEventListener("click", async () => {
+    closeAcctMenu();
+    const shell = window.tailorShell;
+    let version = "web";
+    try { if (shell?.appVersion) version = (await shell.appVersion()) || version; } catch (e) { /* keep "web" */ }
+    const url = "mailto:support@sponsorjobs.ai?subject=" + encodeURIComponent("SponsorJobs help")
+      + "&body=" + encodeURIComponent("\n\nApp version: " + version);
+    if (shell?.openSupportMail) shell.openSupportMail(url);
+    else window.location.href = url;
+  });
   $("#setClose")?.addEventListener("click", closeSettings);
   setModal?.addEventListener("click", (e) => { if (e.target === setModal) closeSettings(); });
   document.addEventListener("keydown", (e) => {
