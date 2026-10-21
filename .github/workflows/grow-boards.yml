@@ -31,6 +31,10 @@ on:
         description: "Probe only likely cap-exempt employers"
         type: boolean
         default: false
+      skip_ats:
+        description: "ATSs to leave out (comma list; 'none' probes all). Workable throttles hard"
+        required: false
+        default: "workable"
       dry_run:
         description: "Probe and report only: no checkpoint save, no seed change, no PR"
         type: boolean
@@ -67,8 +71,9 @@ jobs:
           MAX_MINUTES: ${{ inputs.max_minutes || '100' }}
           CAP_EXEMPT_ONLY: ${{ inputs.cap_exempt_only && '--cap-exempt-only' || '' }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+          SKIP_ATS: ${{ inputs.skip_ats || 'workable' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           python scripts/grow_boards_ci.py --limit "$LIMIT" --max-minutes "$MAX_MINUTES" \
-            --ipv4 $CAP_EXEMPT_ONLY $DRY_RUN
+            --skip-ats "$SKIP_ATS" --ipv4 $CAP_EXEMPT_ONLY $DRY_RUN

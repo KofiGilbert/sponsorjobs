@@ -250,7 +250,8 @@ def test_grow_boards_workflow_inputs_permissions_and_time_caps():
     inputs = on["workflow_dispatch"]["inputs"]
     assert inputs["limit"]["default"] == "300"
     assert inputs["dry_run"]["type"] == "boolean" and inputs["dry_run"]["default"] is False
-    assert set(inputs) >= {"limit", "max_minutes", "cap_exempt_only", "dry_run"}
+    assert set(inputs) >= {"limit", "max_minutes", "cap_exempt_only", "dry_run", "skip_ats"}
+    assert inputs["skip_ats"]["default"] == "workable"
     assert on["schedule"][0]["cron"]
     assert wf["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write"}
     assert wf["concurrency"]["group"] == "grow-boards"
@@ -272,15 +273,28 @@ def test_the_required_checks_can_be_dispatched_on_the_bot_branch():
     assert any("origin/main..HEAD" in s.get("run", "") for s in steps)
 
 
+def test_ci_batches_leave_out_workable_by_default_so_its_owed_probes_stop_stalling(tmp_path, monkeypatch):
+    state = json.dumps({"norm": "acme", "name": "Acme", "status": "miss",
+                        "probed_ats": ["greenhouse", "lever", "ashby", "workday"],
+                        "unprobed_ats": ["workable"]}) + "\n"
+    git = FakeGit(state=state, seed_dirty=False)
+    ci, calls = _driver(monkeypatch, tmp_path, git)
+    assert ci.main(["--state-dir", str(tmp_path / "st")]) == 0
+    (batch,) = calls                                        # no owed pass: workable is skipped
+    assert "workable" not in batch[batch.index("--ats") + 1].split(",")
+    assert "greenhouse" in batch[batch.index("--ats") + 1].split(",")
+
+
 def test_owed_slow_lane_probes_are_finished_first_on_just_that_ats(tmp_path, monkeypatch):
     state = json.dumps({"norm": "acme", "name": "Acme", "status": "miss",
                         "probed_ats": ["greenhouse", "lever", "ashby", "workday"],
                         "unprobed_ats": ["workable"]}) + "\n"
     git = FakeGit(state=state, seed_dirty=False)
     ci, calls = _driver(monkeypatch, tmp_path, git)
-    assert ci.main(["--limit", "300", "--max-minutes", "100",
+    assert ci.main(["--limit", "300", "--max-minutes", "100", "--skip-ats", "none",
                     "--state-dir", str(tmp_path / "st")]) == 0
     owed, batch = calls
+    assert owed.count("--ats") == 1
     assert "--owed-only" in owed and owed[owed.index("--ats") + 1] == "workable"
     assert "--dry-run" in owed and "--count-us" not in owed          # probes only; batch writes
     assert float(owed[owed.index("--max-minutes") + 1]) == 40

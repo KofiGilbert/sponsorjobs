@@ -93,17 +93,18 @@ def save_state(checkpoint: Path, summary: Path, remote: str = "origin",
     return commit
 
 
-def owed_atss(checkpoint: Path) -> tuple[list[str], int]:
-    """The ATSs earlier runs left owing, and how many employers owe one."""
+def owed_atss(checkpoint: Path, atss=None) -> tuple[list[str], int]:
+    """The ATSs (among `atss`) earlier runs left owing, and how many employers owe one."""
     from sourcing import growth
     from sourcing.discover import DISCOVER_ATS
+    atss = tuple(atss or DISCOVER_ATS)
     if not checkpoint.exists():
         return [], 0
-    pending = growth.Checkpoint(checkpoint).pending(DISCOVER_ATS)
+    pending = growth.Checkpoint(checkpoint).pending(atss)
     # Only what a run was cut short on (unprobed_ats), not an ATS a record predates.
     owed = {a for r in growth.Checkpoint(checkpoint).records.values()
             if r.get("norm") in pending for a in (r.get("unprobed_ats") or ())}
-    return [a for a in DISCOVER_ATS if a in owed], sum(
+    return [a for a in atss if a in owed], sum(
         1 for n, r in growth.Checkpoint(checkpoint).records.items()
         if n in pending and set(r.get("unprobed_ats") or ()) & owed)
 
@@ -217,6 +218,11 @@ def main(argv=None) -> int:
     ap.add_argument("--ipv4", action="store_true")
     ap.add_argument("--owed-share", type=float, default=0.4,
                     help="share of --max-minutes the owed-probe pass may use (default 0.4)")
+    ap.add_argument("--skip-ats", default="workable",
+                    help="comma list of ATSs CI batches leave out ('none' = probe all). Default "
+                         "workable: its API answered 429 after ~2 employers a minute even at 4 s "
+                         "spacing (run 39528717978: 86 employers in 50 minutes), it holds 1 of the "
+                         "1,385 watched boards, and its owed probes stalled the whole list")
     ap.add_argument("--min-us-jobs", type=int, default=1,
                     help="leave out new boards with fewer US jobs than this (default 1)")
     args = ap.parse_args(argv)
@@ -237,15 +243,22 @@ def main(argv=None) -> int:
                  *common]
     if args.cap_exempt_only:
         grow_argv.append("--cap-exempt-only")
+    from sourcing.discover import DISCOVER_ATS
+    skip = {a.strip().lower() for a in args.skip_ats.split(",")} - {"none", ""}
+    run_atss = [a for a in DISCOVER_ATS if a not in skip]
+    common += ["--ats", ",".join(run_atss)]
+    grow_argv += ["--ats", ",".join(run_atss)]
     rc, owed_summary = 1, None
     t0 = time.monotonic()
     try:
-        atss, n_owed = owed_atss(checkpoint)
+        atss, n_owed = owed_atss(checkpoint, run_atss)
         if atss and n_owed:
             print(f"finishing {n_owed} employers that still owe {', '.join(atss)} first", flush=True)
+            rest = [c for c in common if c != "--dry-run"]
+            rest = rest[:rest.index("--ats")] + rest[rest.index("--ats") + 2:]
             rc = grow_watchlist.main(["--owed-only", "--ats", ",".join(atss), "--limit", str(n_owed),
                                       "--max-minutes", f"{args.max_minutes * args.owed_share:g}",
-                                      "--dry-run", *[c for c in common if c != "--dry-run"]])
+                                      "--dry-run", *rest])
             if summary_path.exists():
                 s = json.loads(summary_path.read_text())
                 owed_summary = {"atss": atss, "probed": s.get("probed"),
