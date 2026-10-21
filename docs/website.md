@@ -2,7 +2,7 @@
 
 The website lives in `site/` as plain HTML, CSS and one script: `index.html`, `pricing.html`,
 `download.html`, `open-source.html`, `privacy.html`, `terms.html`, `404.html`, plus `robots.txt`,
-`sitemap.xml`, the OG image, self-hosted fonts under `fonts/` (Instrument Serif, Geist, Geist Mono;
+`sitemap.xml`, the OG image, self-hosted fonts under `fonts/` (Inter and JetBrains Mono;
 SIL OFL, licences alongside) and the app screenshots under `img/` (AVIF, WebP and PNG, content-hashed
 names so `_headers` can cache them for a year). No framework, no analytics, no runtime font CDN.
 It is served by the Cloudflare Worker in `site-worker/` (`wrangler deploy` from that directory).
