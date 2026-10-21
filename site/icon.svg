@@ -1,6 +1,6 @@
 <!-- SponsorJobs' app icon: the sidebar brand mark (a page + a needle), standalone.
 
-     This is the app's IDENTITY, not decoration. In an --app window Chrome puts the
+     This is the app's IDENTITY, not decoration. In an app-mode window Chrome puts the
      favicon in the title bar, the taskbar and alt-tab, so with no icon it fell back to
      its generic globe and the window announced itself as "a website". Cursor shows its
      own mark there; ours showed Chrome's.
