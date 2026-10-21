@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The weekly board-discovery PR is opened with GITHUB_TOKEN, which starts no pull_request
+  # workflows; grow-boards.yml dispatches this on its branch so the PR still gets its pytest check.
+  workflow_dispatch:
 
 permissions:
   contents: read
