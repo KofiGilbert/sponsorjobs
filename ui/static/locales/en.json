@@ -1004,5 +1004,13 @@
   "r2.passNIv": "{n} live interviews",
   "r2.offH": "The live interviewer isn't reachable right now",
   "r2.offD": "Live interviews run on our service. Check your connection, then try again.",
-  "jobs.updating": "updating to today's list"
+  "jobs.updating": "updating to today's list",
+  "set.privacyTitle": "Your data stays on this machine",
+  "set.privacyBody": "Your profile, resumes and applications live in a local folder. Signing in with an email code is optional and only links your pass. Passes and the included AI run through our server, which keeps only usage counts for billing. The community edition can use your own AI key instead. Live interviews stream between you and Tavus.",
+  "r1.leaveAsk": "Leave the interview? Your answers so far are kept.",
+  "r1.leave": "Leave",
+  "r1.keepGoing": "Keep going",
+  "prep.passTag": "Pass",
+  "builder.acceptFit": "Fit to one page, review and accept.",
+  "builder.acceptSave": "Looks good? Accept to save it to Resumes."
 }

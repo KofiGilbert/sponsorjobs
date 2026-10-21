@@ -110,16 +110,18 @@
       </section>
 
       <!-- ============ SAVED CVS (folders, rename, drag to reorder) ============ -->
-      <!-- Laid out like Word's start screen (Kofi, 2026-10-09): no page title; a Templates row
+      <!-- Laid out like Word's start screen (Kofi, 2026-10-09), with the page title every view
+           has (2026-10-20); a Templates row
            with a blue "More templates" link; a borderless Search at the top right; then a
            Recents tab over a Name / Last-opened table whose rows alternate dark and light grey. -->
       <section class="view view-cvs" id="view-cvs">
-        <div class="cvs-topbar">
+        <header class="page-head cvs-topbar">
+          <h1 class="page-title" data-i18n="nav.cvs">Resumes</h1>
           <label class="cvs-search-w">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
             <input class="cvs-search" id="cvsSearch" type="search" placeholder="Search" data-i18n-ph="cvs.search" aria-label="Search your resumes" />
           </label>
-        </div>
+        </header>
         <section class="cvs-block cvs-templates">
           <div class="cvs-sec-head">
             <h2 class="cvs-h2"><svg class="cvs-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="cvs.fromTemplate">Templates</span></h2>
@@ -925,7 +927,7 @@
                live round. The tiles below run either round on its own. -->
           <button class="prep-guided" id="prepFullMock" type="button">
             <span class="prep-guided-main">
-              <span class="prep-guided-badge" data-i18n="prep.recommended">Recommended</span>
+              <span class="prep-guided-tags"><span class="prep-guided-badge" data-i18n="prep.recommended">Recommended</span><span class="prep-pass-tag" data-pass-tag hidden data-i18n="prep.passTag" title="Round 2 comes with a pass">Pass</span></span>
               <span class="prep-guided-t" data-i18n="prep.fullMock">Full mock interview</span>
               <span class="prep-guided-d" data-i18n="prep.fullMockD">Round 1, then Round 2. Pass the recorded round to unlock the live one.</span>
             </span>
@@ -940,7 +942,7 @@
               <span class="prep-tile-foot"><span class="prep-tile-name" data-i18n="prep.tile1Name">Recorded interview</span><span class="prep-tile-cta">Start &rarr;</span></span>
             </button>
             <button class="prep-tile" id="tileRound2" type="button">
-              <span class="prep-tile-top"><span class="prep-tile-idx">02</span><span class="prep-tile-status is-live"><span class="prep-tile-dot"></span><span data-i18n="prep.tile2Status">Round 2 only</span></span></span>
+              <span class="prep-tile-top"><span class="prep-tile-idx">02</span><span class="prep-tile-status is-live"><span class="prep-pass-tag" data-pass-tag hidden data-i18n="prep.passTag" title="Live interviews come with a pass">Pass</span><span class="prep-tile-dot"></span><span data-i18n="prep.tile2Status">Round 2 only</span></span></span>
               <span class="prep-tile-d" data-i18n="prep.tile2D">Twenty minutes with a live interviewer.</span>
               <span class="prep-tile-note" id="tileRound2Note" hidden></span>
               <span class="prep-tile-foot"><span class="prep-tile-name" data-i18n="prep.tile2Name">Live interview</span><span class="prep-tile-cta">Start &rarr;</span></span>
@@ -966,6 +968,14 @@
             <button class="btn btn-ghost btn-sm" id="scrQuit" type="button">Quit</button>
             <span class="mock-count" id="scrCount"></span>
             <span class="mock-timer" id="scrTimer" hidden></span>
+          </div>
+          <!-- Quit after an answer is recorded asks first, in the page (never window.confirm). -->
+          <div class="scr-leave" id="scrLeave" role="alertdialog" aria-labelledby="scrLeaveT" hidden>
+            <span class="scr-leave-t" id="scrLeaveT" data-i18n="r1.leaveAsk">Leave the interview? Your answers so far are kept.</span>
+            <span class="scr-leave-acts">
+              <button class="btn btn-ghost btn-sm" id="scrLeaveGo" type="button" data-i18n="r1.leave">Leave</button>
+              <button class="btn btn-primary btn-sm" id="scrLeaveStay" type="button" data-i18n="r1.keepGoing">Keep going</button>
+            </span>
           </div>
           <div class="scr-stage" id="scrStage"><!-- consent / question / report injected --></div>
         </div>
@@ -1463,9 +1473,8 @@
           <h2 class="set-h">Data &amp; privacy</h2>
           <div class="set-row">
             <div class="set-row-t">
-              <div class="set-row-n">Everything stays on this machine</div>
-              <div class="set-row-d">Your profile, resumes and job data live in a local folder. There is no
-                account. To write text, only what is needed goes to your AI provider on your own key.</div>
+              <div class="set-row-n" data-i18n="set.privacyTitle">Your data stays on this machine</div>
+              <div class="set-row-d" data-i18n="set.privacyBody">Your profile, resumes and applications live in a local folder. Signing in with an email code is optional and only links your pass. Passes and the included AI run through our server, which keeps only usage counts for billing. The community edition can use your own AI key instead. Live interviews stream between you and Tavus.</div>
             </div>
           </div>
           <div class="set-row">

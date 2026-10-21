@@ -366,6 +366,35 @@ def profile_text(profile: dict) -> str:
     return "\n".join(parts)
 
 
+def with_stated_skills(profile: dict | None, essentials: dict | None) -> dict:
+    """The profile to MATCH jobs against: the saved profile plus the skills the person typed under
+    "Stated skills" (essentials.skills_input) and their certifications. Those live in the intake
+    essentials, not in profile.skills, so without this a profile with only stated skills scored
+    "0 of 15 skills" everywhere. Returns a new dict; the inputs are never changed."""
+    base = dict(profile or {})
+    ess = essentials or {}
+    stated: list[str] = []
+    for k in ("skills_input", "certifications"):
+        for s in ess.get(k) or []:
+            s = str(s).strip()
+            if s and s.lower() not in {x.lower() for x in stated}:
+                stated.append(s)
+    if not stated:
+        return base
+    sk = base.get("skills")
+    if isinstance(sk, dict):
+        sk = dict(sk)
+        sk["Stated"] = stated
+    elif isinstance(sk, list):
+        sk = list(sk) + stated
+    elif isinstance(sk, str) and sk.strip():
+        sk = {"Skills": sk, "Stated": stated}
+    else:
+        sk = {"Stated": stated}
+    base["skills"] = sk
+    return base
+
+
 def term_present(term: str, haystack: str) -> bool:
     """Whole-token, case-insensitive membership test for a term in text."""
     n = _norm(term)

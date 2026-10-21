@@ -1016,7 +1016,8 @@ button { font-family: inherit; cursor: pointer; }
 .feed-note { max-width: 1320px; margin: 0 auto 10px; font-size: 12.5px; color: var(--muted); }
 /* No new job in 6h+. Louder than muted grey on purpose: a frozen board that looks normal is the
    failure this label exists to expose. */
-.feed-note.feed-note-quiet { color: var(--danger, #d9534f); }
+.feed-note.feed-note-quiet { color: var(--muted); }
+.feed-note.feed-note-stale { color: var(--danger, #d9534f); }
 /* One-line board notices in the same family (the H-1B data vintage after a refresh), with a quiet
    dismiss. A real download failure takes the flag colour; years USCIS never published do not. */
 .feed-notice { display: flex; align-items: baseline; gap: 8px; }
@@ -1035,6 +1036,8 @@ button { font-family: inherit; cursor: pointer; }
    like the competitor's long tiles, while the detail pane still gets the majority of the width. */
 .feed { max-width: 1320px; margin: 0 auto; display: grid; grid-template-columns: minmax(400px, 460px) 1fr; gap: 18px;
   height: calc(100vh - 210px); min-height: 420px; }
+.feed.is-empty { grid-template-columns: 1fr; }
+.feed.is-empty .feed-detail { display: none; }
 .feed-list { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; padding-right: 4px; }
 /* Pagination footer, sticky at the bottom of the list so it's always reachable. */
 .feed-pager { position: sticky; bottom: 0; margin-top: 8px; padding: 10px 4px calc(4px + env(safe-area-inset-bottom));
@@ -2002,6 +2005,9 @@ body.panel-open .app { margin-right: calc(var(--panel-w) + 42px); }
 .side-panel .paper-stage { flex: 1; min-height: 0; }
 .side-panel .pdf-frame { width: 100%; height: 100%; }
 /* A finished application: no Accept, no edit, no duplicate coverage in the panel. */
+/* One download control in the builder: the footer's "Download PDF". The header's copy only
+   serves the package context, where the footer is hidden. */
+.side-panel:not(.ctx-package) #spDownload { display: none; }
 .side-panel.ctx-package .accept-bar,
 .side-panel.ctx-package #editToggle,
 .side-panel.ctx-package .coverage,
@@ -2069,9 +2075,9 @@ body.panel-open .app {
   white-space: nowrap; flex: 0 0 auto;
 }
 .pkg-actionbar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* The hint wraps to a second line rather than cutting off mid-word ("on the employe..."). */
 .pkg-actionbar .pkg-hint {
-  flex: 1 1 auto; min-width: 0; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap;
+  flex: 1 1 auto; min-width: 0; max-width: none; white-space: normal; line-height: 1.4;
 }
 .pkg-actions { display: flex; gap: 10px; flex: 0 0 auto; }
 .pkg-status { white-space: nowrap; flex: 0 0 auto; }
@@ -2089,6 +2095,10 @@ body.panel-open .app {
 
 /* Ultra-wide: reading columns stay centered and capped, they never smear. */
 .view { max-width: 1680px; margin: 0 auto; width: 100%; }
+/* Every view keeps room for its scrollbar whether or not it scrolls, so a long page (Jobs) and a
+   short one (Tracker) center their 1320px column on the same left edge. Without it Jobs sat
+   ~5px left of the others wherever the system shows scrollbars (2026-10-20). */
+.view { scrollbar-gutter: stable; }
 
 /* ---------------- prompt-first Home (Devin-style) ---------------- */
 .home-head { border: 0; padding-bottom: 0; }
@@ -2487,7 +2497,11 @@ body.cv-dragging * { cursor: grabbing !important; }
 
 /* ---------------- CVs tab: search box + gallery back button ---------------- */
 .cvs-search { width: 240px; max-width: 44%; height: 30px; font-size: 12.5px; }
-.tpl-back { margin-bottom: 10px; }
+/* Every back link's chevron sits flush with the page title's left edge below it: the
+   negative margin cancels the button's 8px padding + 1px border, so the hover chip hangs
+   into the gutter and the glyph lines up (Templates, Project ideas, Interview setup,
+   Your answers; measured at 1893x1183, 2026-10-20). */
+.tpl-back { margin-bottom: 10px; margin-left: -9px; }
 
 /* The grid tracks size the cards uniformly and responsively; each card just fills its
    cell. No fixed width / flex-basis / max-width cap, which is what made the strip snap
@@ -2714,6 +2728,11 @@ body.cv-dragging * { cursor: grabbing !important; }
 .prep-fb-h { font-size: 11.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 4px; }
 
 .mock-top { display: flex; align-items: center; gap: 14px; padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+.scr-leave { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: -6px 0 18px;
+  padding: 12px 16px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-lg); }
+.scr-leave[hidden] { display: none; }
+.scr-leave-t { flex: 1 1 auto; font-size: 14px; color: var(--ink); }
+.scr-leave-acts { display: flex; gap: 8px; }
 .mock-count { font-size: 12px; font-weight: 600; color: var(--muted); }
 .mock-timer { margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--faint);
   border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
@@ -2731,7 +2750,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* Share the landing's centered 1040 column so the header and cards line up at any width,
    then cap the inner content at 720 (its tuned width for the recording grid). */
 .prep-screen { max-width: 1040px; margin: 0 auto; }
-.prep-screen > .mock-top, .prep-screen > .scr-stage { max-width: 880px; }
+.prep-screen > .mock-top, .prep-screen > .scr-stage, .prep-screen > .scr-leave { max-width: 880px; }
 /* Recorded-interview intro: framed as a card, matching the landing's card system. */
 .scr-intro { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 30px 32px; }
 /* Round 1 landing and notice: minimal, one action. */
@@ -2775,7 +2794,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* Center the entry in the same 1040px column as .page-head so heading and content line up. */
 #prepList { max-width: 1040px; margin: 0 auto; }
 /* The setup page's back link: the Templates one, so its text sits on the title's left edge. */
-.view-prep .prep-back { margin-left: -8px; margin-bottom: 0; }
+.view-prep .prep-back { margin-bottom: 0; }
 
 /* Setup page: one card with the role, the job description and the resume, then Start interview. */
 .prep-setup { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 30px 32px; }
@@ -2827,6 +2846,11 @@ body.cv-dragging * { cursor: grabbing !important; }
 .prep-guided-main { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .prep-guided-badge { align-self: flex-start; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
   color: var(--accent-ink); background: var(--accent); border-radius: 999px; padding: 3px 9px; }
+.prep-guided-tags { display: flex; align-items: center; gap: 8px; }
+/* "Pass": a quiet outlined marker on what needs one (the live round), never a second accent. */
+.prep-pass-tag { font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; line-height: 1;
+  color: var(--muted); border: 1px solid var(--border-strong); border-radius: 999px; padding: 3px 8px; margin: -4px 4px -4px 0; }
+.prep-pass-tag[hidden] { display: none; }
 .prep-guided-t { font-size: 18px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); margin-top: 3px; }
 .prep-guided-d { font-size: 13px; color: var(--muted); line-height: 1.5; max-width: 62ch; }
 .prep-guided-go { flex: none; font-size: 14px; font-weight: 600; color: var(--ink-2); white-space: nowrap;
@@ -3055,9 +3079,8 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* ============================================================================
    Resumes page, laid out like Word's start screen (Kofi, 2026-10-09).
    ========================================================================== */
-.view-cvs { padding-top: 10px; }
 .cvs-block { max-width: 1320px; }
-.cvs-topbar { max-width: 1320px; margin: 0 auto 6px; display: flex; justify-content: flex-end; }
+.cvs-topbar { max-width: 1320px; margin: 0 auto 14px; align-items: center; }
 .cvs-search-w { display: flex; align-items: center; gap: 8px; color: var(--muted); padding: 4px 6px; border-radius: var(--r-sm); }
 .cvs-search-w svg { width: 18px; height: 18px; flex: none; }
 .cvs-search-w:focus-within { color: var(--ink); background: var(--surface-2); }
@@ -3109,9 +3132,9 @@ body.cv-dragging * { cursor: grabbing !important; }
 /* The More-templates page runs the same 1320px column as its groups, so the back button
    starts where the group headings start (it sat indented, Kofi, 2026-10-09). */
 .view-templates .page-head { max-width: 1320px; margin-bottom: 10px; }
-.view-templates .tpl-back { margin-left: -8px; margin-bottom: 0; }
-/* The ideas gallery's back link: the Templates one, so its text sits on the title's left edge. */
-.view-projects .proj-back { margin-left: -8px; margin-bottom: 0; }
+.view-templates .tpl-back { margin-bottom: 0; }
+/* The ideas gallery's back link: the Templates one (shared .tpl-back offset above). */
+.view-projects .proj-back { margin-bottom: 0; }
 
 /* The job title stays put while the description scrolls under it (LinkedIn does the same).
    A zero-height sticky anchor at the top of the pane carries a compact bar that is shown only
@@ -3238,8 +3261,8 @@ body.cv-dragging * { cursor: grabbing !important; }
 .trk-tile-chart { grid-column: 1 / -1; }
 .trk-bars { display: flex; align-items: flex-end; gap: 6px; height: 64px; margin-top: 10px; }
 .trk-bar { flex: 1; height: 100%; display: flex; align-items: flex-end; background: color-mix(in srgb, var(--ink) 3%, transparent); border-radius: 3px; }
-.trk-bar-fill { width: 100%; min-height: 2px; background: var(--ink-2); border-radius: 3px; }
-.trk-bar.is-now .trk-bar-fill { background: var(--accent); }
+.trk-bar-fill { width: 100%; min-height: 2px; background: color-mix(in srgb, var(--ink) 22%, transparent); border-radius: 3px; }
+.trk-bar.is-now .trk-bar-fill { background: color-mix(in srgb, var(--ink) 42%, transparent); }
 .trk-bars-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); margin-top: 6px; }
 .trk-goal { margin-top: 8px; }
 .trk-goal-bar { height: 5px; background: color-mix(in srgb, var(--ink) 8%, transparent); border-radius: 3px; overflow: hidden; }

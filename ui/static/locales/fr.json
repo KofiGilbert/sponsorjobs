@@ -1004,5 +1004,13 @@
   "r2.passNIv": "{n} entretiens en direct",
   "r2.offH": "Le recruteur en direct est injoignable pour le moment",
   "r2.offD": "Les entretiens en direct passent par notre service. Vérifiez votre connexion, puis réessayez.",
-  "jobs.updating": "mise à jour vers la liste du jour"
+  "jobs.updating": "mise à jour vers la liste du jour",
+  "set.privacyTitle": "Vos données restent sur cet ordinateur",
+  "set.privacyBody": "Votre profil, vos CV et vos candidatures sont dans un dossier local. La connexion par code e-mail est facultative et sert seulement à lier votre pass. Les pass et l'IA incluse passent par notre serveur, qui ne garde que des compteurs d'usage pour la facturation. L'édition communautaire peut utiliser votre propre clé d'IA. Les entretiens en direct circulent entre vous et Tavus.",
+  "r1.leaveAsk": "Quitter l'entretien ? Vos réponses jusqu'ici sont conservées.",
+  "r1.leave": "Quitter",
+  "r1.keepGoing": "Continuer",
+  "prep.passTag": "Pass",
+  "builder.acceptFit": "Tient sur une page, relisez et acceptez.",
+  "builder.acceptSave": "Ça vous va ? Acceptez pour l'enregistrer dans CV."
 }

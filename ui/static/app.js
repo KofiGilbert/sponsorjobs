@@ -707,8 +707,10 @@
           </div>
         </button>`;
       }).join("");
+      // A card OPENS the role (Jobs, with it selected in the detail pane), where "Tailor & apply"
+      // is the explicit action. It used to start tailoring on the click (2026-10-20).
       el.querySelectorAll("[data-sid]").forEach(b =>
-        b.addEventListener("click", () => tailorJob(b.dataset.sid)));
+        b.addEventListener("click", () => openJobOnBoard(jobs.find(j => j.source_id === b.dataset.sid))));
     } catch { el.innerHTML = ""; }
   }
 
@@ -725,6 +727,14 @@
     if (lbl) lbl.textContent = PKG_ORIGIN === "cvs" ? T("nav.cvs", "Resumes")
       : PKG_ORIGIN === "autoapply" ? T("nav.autoapply", "Auto-apply") : "Home";
     PKG_ID = id; showView("package"); loadPackage(id);
+  }
+
+  // The package page IS the resume preview, so the side panel never shows it a second time: the
+  // panel drops its document, and closes if it was open on the resume tab (from a build earlier).
+  function pkgQuietPanel() {
+    if (!window.Panel) return;
+    Panel.setCv("", { context: "package" });
+    if (Panel.isOpen("cv")) Panel.close();
   }
 
   function setPkgStatus(status) {
@@ -778,12 +788,12 @@
       // ATS-friendly Word export of the same tailored CV, built on the fly from the record.
       const dx = $("#pkgDownloadDocx");
       if (dx && PKG_ID) { dx.href = "/api/cv.docx?rid=" + PKG_ID; dx.hidden = false; }
-      window.Panel && Panel.setCv(src, { download: p.pdf, context: "package" });
+      pkgQuietPanel();
     } else {
       $("#pkgPdf").hidden = true; $("#pkgNoPdf").hidden = false;
       $("#pkgDownload").hidden = true;
       if ($("#pkgDownloadDocx")) $("#pkgDownloadDocx").hidden = true;
-      window.Panel && Panel.setCv("", { context: "package" });
+      pkgQuietPanel();
     }
 
     const cov = p.coverage || {};
@@ -1410,6 +1420,15 @@
   }
 
   let SELECTED_SID = null;
+  // A role opened from elsewhere (a Home card): Jobs shows it selected, at the top of the list when
+  // it is not on the current page, until the person picks another role or changes the search.
+  let JOB_FOCUS = null;
+  function openJobOnBoard(job) {
+    if (!job) return;
+    JOB_FOCUS = job;
+    SELECTED_SID = job.source_id;
+    navTo("jobs");
+  }
 
   // Freshness from the EMPLOYER'S real posting time, like LinkedIn/Indeed. < 24h = new / early
   // applicant (72% of offers go to first-5-day applicants), < 48h = still early. Honest per-job
@@ -1549,8 +1568,12 @@
     const jobs = LAST_JOBS;
     const list = $("#feedList");
     if (!list) return;
+    if (JOB_FOCUS && !jobs.some(j => j.source_id === JOB_FOCUS.source_id)) jobs.unshift(JOB_FOCUS);
     renderActiveFilters();
     renderNote();
+    // No roles (no results, an empty Saved list): no detail pane to fill, so the message gets
+    // the full width instead of sitting beside a large empty "pick a role" box.
+    $("#feed")?.classList.toggle("is-empty", !jobs.length);
     if (!jobs.length) {
       list.innerHTML = FEED_DL ? feedLoadingHtml(FEED_DL)
         : FEED_FAIL ? feedFailHtml()
@@ -1560,7 +1583,7 @@
         ? `<div class="empty small">No roles match your filters. <button class="link-btn" data-clear="all" type="button">Clear filters</button></div>`
         : jobSkeleton();
       wireFeedRetry(list, () => { FEED_FAIL = false; FEED_DL = {}; paintFeed(); loadPage(JOBS_PAGE); });
-      $("#feedDetail").innerHTML = `<div class="fd-empty">Pick a role on the left to read the full description here.</div>`;
+      $("#feedDetail").innerHTML = "";
       list.querySelector("[data-clear]")?.addEventListener("click", () => clearFilter("all"));
       return;
     }
@@ -1595,15 +1618,17 @@
       </button>`;
     }).join("") + pagerHtml();
     list.querySelectorAll("[data-sid]").forEach(b =>
-      b.addEventListener("click", () => selectJob(b.dataset.sid)));
+      b.addEventListener("click", () => { if (JOB_FOCUS && b.dataset.sid !== JOB_FOCUS.source_id) JOB_FOCUS = null; selectJob(b.dataset.sid); }));
     list.querySelectorAll(".feed-pager [data-page]").forEach(b =>
       b.addEventListener("click", () => {
         const p = Number(b.dataset.page);
         const pages = Math.max(1, Math.ceil(FEED_TOTAL / JOBS_PER_PAGE));
         if (p >= 1 && p <= pages) { loadPage(p); list.scrollTop = 0; }
       }));
-    const stillThere = jobs.some(j => j.source_id === SELECTED_SID);
-    selectJob(stillThere ? SELECTED_SID : jobs[0].source_id);
+    const want = JOB_FOCUS ? JOB_FOCUS.source_id : SELECTED_SID;
+    const stillThere = jobs.some(j => j.source_id === want);
+    selectJob(stillThere ? want : jobs[0].source_id);
+    if (JOB_FOCUS) list.querySelector(".feed-row.is-active")?.scrollIntoView({ block: "nearest" });
   }
 
   function wireDetailStick(det) {
@@ -2200,6 +2225,7 @@
   // builds and polls carry on regardless, so "updated 2m ago" sat over a month of no new postings
   // in August 2026.
   let FEED_NEWEST = null;
+  const STALE_AFTER_MS = 24 * 3600000; // nothing new for a day: the only time the note turns red
   const QUIET_AFTER_MS = 6 * 3600000; // the feed rebuilds every 3h; two empty builds is a fault
   let FEED_REQ = 0;           // request counter, to ignore out-of-order responses
   let FEED_OK = false;         // have we ever loaded a trustworthy (non-degraded) board?
@@ -2336,6 +2362,7 @@
   function renderNote() {
     const el = $("#jobsNote");
     if (!el) return;
+    el.classList.remove("feed-note-quiet", "feed-note-stale");   // only the age line below sets them
     const total = FEED_ALLTOTAL, shown = FEED_TOTAL;
     const count = shown === total
       ? `${total.toLocaleString()} live role${total === 1 ? "" : "s"}`
@@ -2355,7 +2382,6 @@
     }
     el.title = "";
     if (FEED_UPDATING) {
-      el.classList.remove("feed-note-quiet");
       el.textContent = `${count} · ${I18N.t("jobs.updating", "updating to today's list")}`;
       return;
     }
@@ -2370,7 +2396,10 @@
     const newest = tsUTC(FEED_NEWEST);
     const quiet = newest == null ? null : Math.max(0, Date.now() - newest);
     const isQuiet = quiet != null && quiet > QUIET_AFTER_MS;
+    // Quiet is a muted fact; only a board with nothing new for a whole day (and no newer list
+    // downloading, handled above) is worth the red.
     el.classList.toggle("feed-note-quiet", isQuiet);
+    el.classList.toggle("feed-note-stale", quiet != null && quiet > STALE_AFTER_MS);
     if (quiet == null) el.textContent = `${count} · updates on its own`;
     else if (isQuiet) el.textContent = `${count} · no new jobs for ${spanShort(quiet / 1000)}`;
     else el.textContent = `${count} · newest job ${relAgo(quiet / 1000)} · updates on its own`;
@@ -2498,7 +2527,7 @@
   // Faceted filters. Every change jumps back to page 1 (a new server query) so you're never
   // stranded on a page that no longer exists. Text inputs are debounced so we fetch once the
   // person pauses typing, not on every keystroke.
-  const applyFilters = () => loadPage(1);
+  const applyFilters = () => { JOB_FOCUS = null; loadPage(1); };
   let FILTER_DEBOUNCE = null;
   const applyFiltersDebounced = () => {
     clearTimeout(FILTER_DEBOUNCE);
@@ -2877,8 +2906,8 @@
         });
       } else {
         $("#acceptNote").textContent = st.one_page === false
-          ? "Fit to one page, review and accept."
-          : "Looks good? Accept to save it to your dashboard.";
+          ? I18N.t("builder.acceptFit", "Fit to one page, review and accept.")
+          : I18N.t("builder.acceptSave", "Looks good? Accept to save it to Resumes.");
       }
     }
   }
@@ -3990,7 +4019,8 @@
     if (!m) { host.innerHTML = ""; return; }
     const goal = m.goal || { target: 0, done: 0, pct: 0 };
     const weeks = m.weeks || [];
-    const peak = Math.max(1, ...weeks.map(w => w.count));
+    // The axis tops out at 5 at least, so one application is a small bar, not a full black column.
+    const peak = Math.max(5, ...weeks.map(w => w.count));
     const bars = weeks.map((w, i) => `<div class="trk-bar${i === weeks.length - 1 ? " is-now" : ""}" title="${esc(trkT("tracker.weekOf", "Week of"))} ${esc(trkDay(w.week))}: ${w.count}"><div class="trk-bar-fill" style="height:${Math.round(w.count / peak * 100)}%"></div></div>`).join("");
     const median = m.median_days_to_interview == null ? trkT("tracker.none", "n/a") : m.median_days_to_interview;
     host.innerHTML = `
@@ -6372,6 +6402,7 @@
   // Screen 7: the report. Back on the app theme.
   function renderR1Report(r) {
     r = r || {};
+    SCR_PHASE = "report"; scrLeaveAsk(false);
     const passed = !!r.passed, cls = passed ? "ok" : "no";
     const answers = r.answers || [];
     scrHead(T("r1.reportCount", "Round 1 report"), "");
@@ -6513,13 +6544,27 @@
   }
   function stopScrStream() { stopMicMeter(); if (SCR_STREAM) { SCR_STREAM.getTracks().forEach(t => t.stop()); SCR_STREAM = null; } }
   function quitScreen() {
+    scrLeaveAsk(false);
     stopPrepClock(); stopAnswerClock(); if (SCR_COUNT) { clearInterval(SCR_COUNT); SCR_COUNT = null; }
     if (SCR_REC && SCR_REC.state === "recording") { SCR_REC.onstop = null; try { SCR_REC.stop(); } catch {} }
     SCR_PHASE = "idle"; stopScrStream();
     $("#prepScreen").hidden = true; $("#prepList").hidden = false;
     loadPreps();
   }
-  $("#scrQuit")?.addEventListener("click", quitScreen);
+  // Quit right after recording an answer used to leave at once. Once any answer is recorded (or
+  // one is recording) it asks first; before that, and on the report, Quit just leaves.
+  function scrHasAnswers() {
+    return SCR_PHASE !== "report" && (SCR_PHASE === "recording" || Object.keys(SCR_UPLOADS).length > 0);
+  }
+  function scrLeaveAsk(on) {
+    const bar = $("#scrLeave"); if (!bar) return;
+    bar.hidden = !on;
+    if (on) $("#scrLeaveStay")?.focus();
+  }
+  $("#scrQuit")?.addEventListener("click", () => { if (scrHasAnswers()) scrLeaveAsk(true); else quitScreen(); });
+  $("#scrLeaveGo")?.addEventListener("click", () => { scrLeaveAsk(false); quitScreen(); });
+  $("#scrLeaveStay")?.addEventListener("click", () => { scrLeaveAsk(false); $("#scrQuit")?.focus(); });
+  $("#scrLeave")?.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); scrLeaveAsk(false); } });
 
   // ---------------------------------------------------------------- Round 2: live interview (Tavus)
   // One 20-minute conversation with the Tavus interviewer, in the app's own video pane. Paid only
@@ -7527,6 +7572,9 @@
     const until = onPass ? fmtDate(s.pass_until) : "";
     const el = $("#acctPlan"); if (el) el.textContent = name;
     const dot = $("#acctPassDot"); if (dot) dot.hidden = !onPass;
+    // The live round is paid: a quiet "Pass" on the Live tile and the Full mock (which includes
+    // it) for anyone without one, gone once they have a pass.
+    document.querySelectorAll("[data-pass-tag]").forEach(t => { t.hidden = onPass; });
     const btn = $("#acctBtn"); if (btn) btn.title = onPass ? `${name} until ${until}` : T("upg.freePlan", "Free plan");
     const box = $("#acctMenuPlan");
     if (box) {
@@ -9457,6 +9505,7 @@
 
   window.Panel = {
     open, close, setTab,
+    isOpen(name) { return body.classList.contains("panel-open") && (!name || tab === name); },
     setContext(ctx) { panel.classList.toggle("ctx-package", ctx === "package"); },
     // Point the workspace at a PDF (package flow), or clear it.
     setCv(src, { reveal = false, download = "", context = "" } = {}) {
