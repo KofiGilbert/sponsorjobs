@@ -18,8 +18,12 @@ filters it locally with sourcing/filters.py, and fetches one small JD shard when
                     and may be cached forever. Each part: {"version", "part", "parts", "jobs": [...]}.
   manifest.json     tiny, uncompressed, never cached: {"generated_at", "count", "jobs_url", ...,
                     "parts": {"version", "count", "total_bytes", "attribution", "files":
-                    [{"url", "sha256", "bytes", "count"}, ...]}}. jobs.json.gz is still written for
-                    app versions that predate the parts.
+                    [{"url", "sha256", "bytes", "count"}, ...]}, "stable": {...}}. jobs.json.gz is
+                    still written for app versions that predate the parts.
+  parts/s-{sha}.json.gz, parts/d-{sha}.json.gz
+                    THE SAME LIST again in the "stable" layout (2026-10-23, see write_stable): parts
+                    named by their own content and grouped by the week a row was first seen, so a
+                    rebuild re-sends only the parts that changed, plus a small file of removed rows.
 
 Public job postings only. No personal data ever touches this file (CLAUDE.md §5).
 """
@@ -29,6 +33,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -313,6 +318,244 @@ def write_parts(out_dir, slim: list[dict], whole_gz_bytes: int, *,
             "files": files}
 
 
+# -- stable parts (2026-10-23) --------------------------------------------------------------- #
+# The parts above are named by a hash of the WHOLE list and cut by recency, so every 3-hourly
+# rebuild renamed every part and an open app re-downloaded all ~15 MB each time. The "stable"
+# layout fixes that, for app versions that read the manifest's "stable" block:
+#
+#   * Rows are laid out by the week they were first seen (oldest first, sorted by first_seen then
+#     source_id inside), cut into ~1 MB parts. A row's first_seen never moves, so new roles land in
+#     new parts at the end and old weeks age out together.
+#   * A part is named by the hash of ITS OWN bytes (parts/s-<sha>.json.gz), so a part whose rows
+#     did not change keeps its name and the client already has it.
+#   * The builder starts from the previous build's parts. A row that left the list, or changed,
+#     is not rewritten into its old part: the part is kept as it is and the row is listed in a
+#     small "removed" file (parts/d-<sha>.json.gz, {"removed": {part url: [row indexes]}}). A
+#     changed row is written again, with the new rows, into a new part. Without this, the ~1% of
+#     roles that close between two builds are spread over every week and would touch every part.
+#   * A kept part is rewritten once more than STABLE_MAX_DEAD of its rows are dead, or when it is
+#     under STABLE_MIN_FILL of the target size (the newest, still-filling part), so the dead
+#     weight and the number of parts stay bounded.
+#
+# The client keeps the parts it has (by content hash), fetches only the parts it lacks plus the
+# removed file, joins them minus the removed rows, and sorts them by recency (recency_key), the
+# order jobs.json.gz has. The "parts" block and jobs.json.gz are still written for older apps.
+STABLE_FORMAT = 1
+STABLE_PREFIX = "s-"
+REMOVED_PREFIX = "d-"
+STABLE_MAX_DEAD = 0.2          # rewrite a kept part once this share of its rows is dead
+STABLE_MIN_FILL = 0.5          # rewrite a kept part smaller than this share of the target size
+STABLE_STATE_DIR = "feed-prev"  # under the build's data dir: the last build's stable parts
+
+
+def canon(row: dict) -> str:
+    """A row as canonical JSON (sorted keys): how stable parts store it and how rows are compared."""
+    return json.dumps(row, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def recency_key(row: dict) -> tuple:
+    """The board's order, newest first with reverse=True: dated rows by posting date, then first
+    seen; undated rows last (scripts/build_feed.py's order="recent"). Ties break on source_id, so
+    the joined list has one order whatever order its parts came in."""
+    posted = row.get("posted_at") or ""
+    return (bool(posted), str(posted), str(row.get("first_seen") or ""),
+            str(row.get("source_id") or ""))
+
+
+def week_of(first_seen) -> str:
+    """The ISO week ("2026-W43") a row was first seen in, or "" when it has no readable date."""
+    s = str(first_seen or "")[:10]
+    try:
+        y, w, _ = datetime.strptime(s, "%Y-%m-%d").isocalendar()
+    except ValueError:
+        return ""
+    return f"{y}-W{w:02d}"
+
+
+def _sha(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()
+
+
+def _stable_file(out: Path, prefix: str, raw: bytes, **extra) -> dict:
+    body = gzip.compress(raw, mtime=0)
+    sha = _sha(body)
+    name = f"{PARTS_DIR}/{prefix}{sha[:20]}.json.gz"
+    path = out / name
+    if not path.exists():
+        path.write_bytes(body)
+    return {"url": name, "sha256": sha, "raw_sha256": _sha(raw), "bytes": len(body), **extra}
+
+
+def stable_block_ok(block) -> bool:
+    """Is `block` a usable manifest "stable" block (as written by write_stable)?"""
+    def ok(f):
+        return (isinstance(f, dict) and isinstance(f.get("url"), str) and f["url"]
+                and f.get("sha256"))
+    return (isinstance(block, dict) and block.get("format") == STABLE_FORMAT
+            and bool(block.get("version")) and isinstance(block.get("files"), list)
+            and bool(block["files"]) and all(ok(f) for f in block["files"])
+            and (block.get("removed") is None or ok(block["removed"])))
+
+
+def read_removed(body: bytes) -> dict[str, set[int]]:
+    """{part url: {row indexes}} from a removed file's bytes."""
+    data = loads_maybe_gz(body)
+    rem = data.get("removed") if isinstance(data, dict) else None
+    if not isinstance(rem, dict):
+        raise ValueError("removed file has an unexpected shape")
+    return {str(k): {int(i) for i in v} for k, v in rem.items()}
+
+
+def load_stable_state(state_dir) -> tuple | None:
+    """The previous build's stable layout from `state_dir` (manifest.json + parts/): (block,
+    {part url: [canonical rows]}, {part url: {removed indexes}}, state_dir), or None when it is missing,
+    from another format, or any file fails its sha256 (the builder then lays out afresh)."""
+    d = Path(state_dir)
+    try:
+        man = json.loads((d / MANIFEST_FILE).read_text(encoding="utf-8"))
+        block = man.get("stable")
+        if not stable_block_ok(block):
+            return None
+        parts: dict[str, list[str]] = {}
+        for f in block["files"]:
+            body = (d / f["url"]).read_bytes()
+            if _sha(body) != f["sha256"]:
+                return None
+            data = loads_maybe_gz(body)
+            parts[f["url"]] = [canon(r) for r in data["jobs"]]
+        removed: dict[str, set[int]] = {}
+        if block.get("removed"):
+            body = (d / block["removed"]["url"]).read_bytes()
+            if _sha(body) != block["removed"]["sha256"]:
+                return None
+            removed = read_removed(body)
+        return block, parts, removed, d
+    except Exception:                                     # noqa: BLE001 - no usable previous state
+        return None
+
+
+def _chunks(rows: list[tuple[str, str]], target_raw: int) -> list[list[tuple[str, str]]]:
+    """Cut (week, canonical row) pairs, already in layout order, into runs of ~target_raw bytes.
+    A run also ends at a week boundary once it is at least half full, so old weeks age out
+    together instead of sharing a part with the next week."""
+    out, cur, size = [], [], 0
+    for w, c in rows:
+        if cur and (size >= target_raw or (size >= target_raw // 2 and w != cur[-1][0])):
+            out.append(cur)
+            cur, size = [], 0
+        cur.append((w, c))
+        size += len(c.encode("utf-8")) + 1
+    if cur:
+        out.append(cur)
+    return out
+
+
+def write_stable(out_dir, slim: list[dict], *, prev=None, target_bytes: int = PART_TARGET_BYTES,
+                 max_dead: float = STABLE_MAX_DEAD, min_fill: float = STABLE_MIN_FILL) -> dict:
+    """Write the stable layout of `slim` under `out_dir/parts/` and return the manifest's "stable"
+    block. `prev` is load_stable_state() of the previous build (None: lay everything out afresh).
+    Kept parts are copied from the previous build's bytes, so the output dir holds every file the
+    block names (GitHub Pages replaces the whole site on each deploy)."""
+    from collections import Counter
+    out = Path(out_dir)
+    (out / PARTS_DIR).mkdir(parents=True, exist_ok=True)
+    canon_rows = [canon(r) for r in slim]
+    need = Counter(canon_rows)
+    files: list[dict] = []
+    removed: dict[str, list[int]] = {}
+    if prev is not None:
+        block, prev_parts, prev_removed, prev_dir = prev
+        for f in block["files"]:
+            rows = prev_parts.get(f["url"]) or []
+            dead_before = prev_removed.get(f["url"], set())
+            live, dead = [], []
+            for i, c in enumerate(rows):
+                if i not in dead_before and need[c] > 0:
+                    need[c] -= 1
+                    live.append(c)
+                else:
+                    dead.append(i)
+            keep = (rows and len(dead) <= max_dead * len(rows)
+                    and int(f.get("bytes") or 0) >= min_fill * target_bytes)
+            if not keep:
+                for c in live:                            # these rows are laid out again below
+                    need[c] += 1
+                continue
+            dest = out / f["url"]
+            if not dest.exists():
+                shutil.copyfile(Path(prev_dir) / f["url"], dest)
+            files.append({k: f[k] for k in ("url", "sha256", "raw_sha256", "bytes", "count", "bucket")
+                          if k in f})
+            if dead:
+                removed[f["url"]] = dead
+    kept_urls = {f["url"] for f in files}
+    loose: list[tuple[str, str]] = []
+    for r, c in zip(slim, canon_rows):
+        if need[c] > 0:
+            need[c] -= 1
+            loose.append((week_of(r.get("first_seen")), str(r.get("first_seen") or ""),
+                          str(r.get("source_id") or ""), c))
+    loose.sort()
+    pairs = [(w, c) for w, _, _, c in loose]
+    del loose
+    # Bytes of JSON per gzipped byte, measured on a sample, so a part lands near target_bytes.
+    sample = "\n".join(c for _, c in pairs[:3000]).encode("utf-8")
+    ratio = (len(sample) / max(1, len(gzip.compress(sample, mtime=0)))) if sample else 8.0
+    for chunk in _chunks(pairs, max(1, int(target_bytes * ratio))):
+        weeks = sorted({w for w, _ in chunk})
+        bucket = weeks[0] if len(weeks) == 1 else f"{weeks[0]}..{weeks[-1]}"
+        raw = ('{"bucket":' + json.dumps(bucket) + ',"jobs":['
+               + ",".join(c for _, c in chunk) + "]}").encode("utf-8")
+        files.append(_stable_file(out, STABLE_PREFIX, raw, count=len(chunk), bucket=bucket))
+    # Layout order: oldest bucket first (kept parts and new parts interleave by week).
+    files.sort(key=lambda f: (str(f.get("bucket") or "").split("..")[0], f["url"] not in kept_urls,
+                              f["url"]))
+    rem_file = None
+    if removed:
+        raw = json.dumps({"removed": {k: removed[k] for k in sorted(removed)}},
+                         separators=(",", ":")).encode("utf-8")
+        rem_file = _stable_file(out, REMOVED_PREFIX, raw,
+                                count=sum(len(v) for v in removed.values()))
+    names = [f["url"] for f in files] + ([rem_file["url"]] if rem_file else [])
+    version = _sha("\n".join(f"{f['url']}" for f in files).encode("utf-8")
+                   + b"|" + (rem_file["sha256"].encode() if rem_file else b""))[:16]
+    count = sum(int(f.get("count") or 0) for f in files) - (rem_file["count"] if rem_file else 0)
+    if count != len(slim):                                # cannot happen; never publish a wrong list
+        raise RuntimeError(f"stable layout holds {count} rows, the list has {len(slim)}")
+    block = {"format": STABLE_FORMAT, "version": version, "count": len(slim), "order": "recent",
+             "total_bytes": sum(f["bytes"] for f in files) + (rem_file["bytes"] if rem_file else 0),
+             "files": files}
+    if rem_file:
+        block["removed"] = rem_file
+    keep = {Path(n).name for n in names}
+    for p in (out / PARTS_DIR).glob("*.json.gz"):
+        if p.name.startswith((STABLE_PREFIX, REMOVED_PREFIX)) and p.name not in keep:
+            p.unlink()
+    return block
+
+
+def save_stable_state(out_dir, state_dir) -> None:
+    """Keep this build's manifest and stable files in `state_dir` (the crawl's data dir, cached
+    between workflow runs) for the next build to start from. Replaced whole, never half-written."""
+    out, d = Path(out_dir), Path(state_dir)
+    man = json.loads((out / MANIFEST_FILE).read_text(encoding="utf-8"))
+    block = man.get("stable")
+    if not stable_block_ok(block):
+        return
+    tmp = d.with_name(d.name + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    (tmp / PARTS_DIR).mkdir(parents=True)
+    for f in block["files"] + ([block["removed"]] if block.get("removed") else []):
+        shutil.copyfile(out / f["url"], tmp / f["url"])
+    (tmp / MANIFEST_FILE).write_text(json.dumps({"stable": block}) + "\n", encoding="utf-8")
+    old = d.with_name(d.name + ".old")
+    shutil.rmtree(old, ignore_errors=True)
+    if d.exists():
+        d.rename(old)
+    tmp.rename(d)
+    shutil.rmtree(old, ignore_errors=True)
+
+
 # Reading every ad (its sponsorship stance and function tags) is the slow part of a feed build:
 # ~150k descriptions took ~17 minutes in one process (2026-10-21). Rows are independent, so a
 # large build reads them in worker processes forked from this one (they inherit the rows, no
@@ -372,9 +615,11 @@ def _read_ads(rows: list[dict], jd_by_id: dict) -> list:
 
 
 def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
-               generated_at: str | None = None, part_bytes: int | None = None) -> dict:
+               generated_at: str | None = None, part_bytes: int | None = None,
+               prev_dir=None) -> dict:
     """Write jobs.json.gz + jd/*.json.gz + manifest.json into `out_dir`. Returns the manifest.
-    All 256 shards are written (empty ones too), so a shard fetch is never a 404."""
+    All 256 shards are written (empty ones too), so a shard fetch is never a 404. `prev_dir` holds
+    the previous build's stable layout (save_stable_state); unchanged stable parts are reused."""
     out = Path(out_dir)
     (out / JD_DIR).mkdir(parents=True, exist_ok=True)
     generated_at = generated_at or utc_now_iso()
@@ -400,6 +645,9 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
     parts = write_parts(out, slim, len(whole), target_bytes=part_bytes or PART_TARGET_BYTES)
     parts["attribution"] = header["attribution"]
     del whole
+    prev = load_stable_state(prev_dir) if prev_dir else None
+    stable = write_stable(out, slim, prev=prev, target_bytes=part_bytes or PART_TARGET_BYTES)
+    stable["attribution"] = header["attribution"]
     shards: dict[str, dict] = {s: {} for s in all_shards()}
     for r in rows:
         sid = r.get("source_id")
@@ -410,6 +658,6 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
         (out / JD_DIR / f"{s}.json.gz").write_bytes(dumps_gz(m))
     manifest = {"feed_version": FEED_VERSION, "generated_at": generated_at, "count": len(slim),
                 "jobs_url": jobs_url or JOBS_FILE, "jd_shard_count": JD_SHARDS,
-                "jd_url_template": f"{JD_DIR}/{{shard}}.json.gz", "parts": parts}
+                "jd_url_template": f"{JD_DIR}/{{shard}}.json.gz", "parts": parts, "stable": stable}
     (out / MANIFEST_FILE).write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     return manifest

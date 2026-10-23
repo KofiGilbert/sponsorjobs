@@ -34,6 +34,13 @@ try (or the next attempt, or the next app start) fetches just the parts still mi
 part is present they are joined into jobs.json.gz and swapped in atomically, exactly as a single
 download would land. A new version discards the old version's parts. A manifest with no parts (an
 older feed) or none at all falls back to the single file.
+
+STABLE PARTS (2026-10-23). The "parts" above are renamed by every rebuild, so an open app fetched
+the whole ~15 MB list every 3 hours. When the manifest has a "stable" block, its parts are named by
+their own content and grouped by the week a role was first seen (sourcing/feedfile.write_stable);
+the client keeps them in parts/store/ after joining, fetches only the parts it lacks plus a small
+file naming removed rows, joins them minus those rows, sorts by recency, and deletes the parts the
+manifest no longer names.
 """
 
 from __future__ import annotations
@@ -56,7 +63,8 @@ from urllib.parse import urlsplit
 from concurrent.futures import ThreadPoolExecutor
 
 from .feedfile import (FEED_VERSION, JD_DIR, JOBS_FILE, MANIFEST_FILE, PARTS_DIR, RowCompactor,
-                       load_feed_file, loads_maybe_gz, shard_for)
+                       load_feed_file, loads_maybe_gz, read_removed, recency_key, shard_for,
+                       stable_block_ok)
 
 CHECK_EVERY = 3600          # a new list is looked for at most once an hour
 RETRY_AFTER = 300           # a failed download is not retried for 5 min, doubling per failure...
@@ -71,6 +79,7 @@ DOWNLOAD_TRIES = 3          # attempts per background download before it counts 
 RETRY_PAUSE = 5             # seconds between those attempts (doubling)
 REQUEST_WAIT = 0.8          # how long a request waits on a download it just started
 CHUNK = 64 * 1024
+STORE_DIR = "store"         # feed_cache/parts/store/: stable parts, kept across rebuilds
 PART_WORKERS = 2            # list parts downloaded at once
 PART_TRIES = 4              # tries per part within one attempt (finished parts are never refetched)
 PART_PAUSE = 2              # seconds between a part's tries (doubling)
@@ -162,7 +171,7 @@ class StaticFeed:
     def __init__(self, base_url: str, cache_dir, fetch=None, clock=time.time,
                  timeout: float = DEFAULT_TIMEOUT, download=None, wait: float | None = None,
                  tries: int | None = None, retry_pause: float | None = None,
-                 parts: bool | None = None, manifest_fetch=None):
+                 parts: bool | None = None, manifest_fetch=None, legacy_parts: bool = False):
         self.base_url = (base_url or "").rstrip("/")
         self.cache_dir = Path(cache_dir)
         self._fetch = fetch or (lambda u, h: _http_fetch(u, h, timeout))
@@ -181,6 +190,7 @@ class StaticFeed:
         # serves the single file, so it skips the manifest unless the test opts in.
         self._manifest_fetch = manifest_fetch or self._fetch
         self._parts = (not fake or manifest_fetch is not None) if parts is None else bool(parts)
+        self._legacy_parts = bool(legacy_parts)     # tests: ignore the "stable" block
         self._part_tries = PART_TRIES
         self._part_pause = 0 if fake else PART_PAUSE
         self._wait = REQUEST_WAIT if wait is None else wait
@@ -398,8 +408,10 @@ class StaticFeed:
         return self._download_single()
 
     def _read_manifest(self) -> dict | None:
-        """The manifest's "parts" block (plus generated_at), or None when the feed has no parts
-        (no manifest, a 404, an older builder). A network error raises: the attempt failed."""
+        """What the manifest offers, or None when the feed has no parts (no manifest, a 404, an
+        older builder). The "stable" block (2026-10-23) wins over the per-version "parts" block;
+        the result carries "kind" ("stable" or "parts"). A network error raises: the attempt
+        failed."""
         try:
             status, _, body = self._manifest_fetch(f"{self.base_url}/{MANIFEST_FILE}",
                                                    {"Accept": "application/json",
@@ -414,29 +426,47 @@ class StaticFeed:
             man = loads_maybe_gz(body)
         except Exception:                                 # noqa: BLE001 - not a manifest
             return None
-        parts = man.get("parts") if isinstance(man, dict) else None
+        if not isinstance(man, dict):
+            return None
+        top = {"generated_at": man.get("generated_at"),
+               "feed_version": man.get("feed_version", FEED_VERSION)}
+        stable = man.get("stable")
+        if stable_block_ok(stable) and not self._legacy_parts:
+            return {**stable, **top, "kind": "stable"}
+        parts = man.get("parts")
         if not (isinstance(parts, dict) and parts.get("version") and isinstance(parts.get("files"), list)
                 and parts["files"] and all(isinstance(f, dict) and f.get("url") and f.get("sha256")
                                            for f in parts["files"])):
             return None
-        return {**parts, "generated_at": man.get("generated_at"),
-                "feed_version": man.get("feed_version", FEED_VERSION)}
+        return {**parts, **top, "kind": "parts"}
 
     @property
     def parts_root(self) -> Path:
         return self.cache_dir / PARTS_DIR
 
+    @property
+    def store_dir(self) -> Path:
+        """Stable parts, kept across rebuilds by their content-addressed names."""
+        return self.parts_root / STORE_DIR
+
     def _part_path(self, version: str, url: str) -> Path:
         return self.parts_root / _safe(version) / _safe(Path(url).name)
 
     def _download_parts(self, man: dict) -> bool:
-        """Fetch the parts still missing for this version (two at a time), each verified by sha256,
-        then join them into jobs.json.gz and swap it in. Returns True when a new list landed."""
+        """Fetch the parts still missing (two at a time), each verified by sha256, then join them
+        into jobs.json.gz and swap it in. Returns True when a new list landed.
+
+        "stable" layout: parts live in feed_cache/parts/store/ under their own content-addressed
+        names and are KEPT after joining, so the next rebuild fetches only the parts it does not
+        have (plus the small removed-rows file). "parts" layout (older feeds): parts live under
+        parts/<version>/ and are deleted once joined."""
+        stable = man.get("kind") == "stable"
         version = str(man["version"])
-        files = man["files"]
+        vkey = "stable_version" if stable else "parts_version"
+        files = list(man["files"]) + ([man["removed"]] if stable and man.get("removed") else [])
         now = self._clock()
         with self._lock:
-            if self._state.get("parts_version") == version and self.jobs_path.exists():
+            if self._state.get(vkey) == version and self.jobs_path.exists():
                 # The same rows as the cached list: nothing to download. A rebuild with unchanged
                 # rows still moves generated_at, which the board shows as "updated".
                 self._state["last_check"] = now
@@ -447,13 +477,17 @@ class StaticFeed:
                 self._clear_failures()
                 self._save_state()
                 return False
-        vdir = self.parts_root / _safe(version)
+        vdir = self.store_dir if stable else self.parts_root / _safe(version)
         vdir.mkdir(parents=True, exist_ok=True)
         for old in self.parts_root.iterdir():             # another version's parts are dead weight
             if old.is_dir() and old.name != vdir.name:
                 shutil.rmtree(old, ignore_errors=True)
+
+        def path_of(f: dict) -> Path:
+            return vdir / _safe(Path(f["url"]).name)
+
         sizes = [int(f.get("bytes") or 0) for f in files]
-        done = {i for i, f in enumerate(files) if _part_ok(self._part_path(version, f["url"]), f)}
+        done = {i for i, f in enumerate(files) if _part_ok(path_of(f), f)}
         inflight: dict[int, int] = {}
         total = sum(sizes) or None
 
@@ -476,7 +510,7 @@ class StaticFeed:
 
         def fetch_one(i: int) -> None:
             f = files[i]
-            dest = self._part_path(version, f["url"])
+            dest = path_of(f)
             last: Exception | None = None
             for t in range(self._part_tries):
                 fd, tmp = tempfile.mkstemp(dir=str(vdir), prefix=dest.name + ".", suffix=".part")
@@ -522,7 +556,46 @@ class StaticFeed:
             if errors:
                 # Kept: every part that did arrive. The next try fetches only the rest.
                 raise errors[0]
+        if stable:
+            return self._assemble_stable(man, version, now, path_of)
         return self._assemble(man, version, now)
+
+    def _assemble_stable(self, man: dict, version: str, now: float, path_of) -> bool:
+        """Join the stable parts minus the removed rows, in recency order, and swap the list in.
+        The parts stay in the store for the next rebuild; files this manifest no longer names are
+        deleted."""
+        removed: dict[str, set[int]] = {}
+        if man.get("removed"):
+            try:
+                removed = read_removed(path_of(man["removed"]).read_bytes())
+            except Exception as exc:                      # noqa: BLE001 - refetched next try
+                _unlink(path_of(man["removed"]))
+                raise FeedUnavailable(f"feed removed-rows file is not valid: {exc}") from exc
+        jobs: list = []
+        compact = RowCompactor()          # one shared object per repeated value (feedfile.py)
+        for f in man["files"]:
+            try:
+                part = loads_maybe_gz(path_of(f).read_bytes())
+                ok = isinstance(part, dict) and isinstance(part.get("jobs"), list)
+            except Exception:                             # noqa: BLE001 - treated as bad shape
+                ok = False
+            if not ok:
+                _unlink(path_of(f))
+                raise FeedUnavailable(f"feed part {f['url']} has an unexpected shape")
+            drop = removed.get(f["url"]) or ()
+            jobs.extend(compact.row(r) for i, r in enumerate(part["jobs"])
+                        if i not in drop and isinstance(r, dict))
+            del part
+        del compact
+        if man.get("count") is not None and int(man["count"]) != len(jobs):
+            raise FeedUnavailable(f"feed parts hold {len(jobs)} rows, the manifest says {man['count']}")
+        jobs.sort(key=recency_key, reverse=True)         # the board's order (jobs.json.gz's)
+        ok = self._land(man, jobs, now, "stable_version", version)
+        keep = {path_of(f).name for f in list(man["files"]) + ([man["removed"]] if man.get("removed") else [])}
+        for p in self.store_dir.iterdir():
+            if p.name not in keep:
+                _unlink(p)
+        return ok
 
     def _assemble(self, man: dict, version: str, now: float) -> bool:
         """Join the verified parts in order and swap the list in (under the lock)."""
@@ -540,9 +613,16 @@ class StaticFeed:
         if man.get("count") is not None and int(man["count"]) != len(jobs):
             shutil.rmtree(self.parts_root / _safe(version), ignore_errors=True)
             raise FeedUnavailable(f"feed parts hold {len(jobs)} rows, the manifest says {man['count']}")
+        ok = self._land(man, jobs, now, "parts_version", version)
+        shutil.rmtree(self.parts_root, ignore_errors=True)  # joined: the parts are no longer needed
+        return ok
+
+    def _land(self, man: dict, jobs: list, now: float, vkey: str, version: str) -> bool:
+        """Write the joined rows as jobs.json.gz and swap them in (under the lock)."""
         data = {"feed_version": man.get("feed_version", FEED_VERSION),
                 "generated_at": man.get("generated_at"), "count": len(jobs),
                 "attribution": man.get("attribution") or {}, "jobs": jobs}
+        other = "parts_version" if vkey == "stable_version" else "stable_version"
         # Serialized OUTSIDE the lock (a few seconds for ~96k rows): requests keep being served.
         # Streamed row by row into a temp file: the whole document as one string was ~280 MB.
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -550,18 +630,19 @@ class StaticFeed:
         with self._lock:
             if not jobs and self._cached_rows_exist():    # same guard as the single file
                 _unlink(tmp)
-                self._state.update({"last_check": now, "parts_version": version})
+                self._state.update({"last_check": now, vkey: version})
+                self._state.pop(other, None)
                 self._clear_failures()
                 self._save_state()
                 return False
             os.replace(tmp, self.jobs_path)
             self._state.update({"last_check": now, "generated_at": data.get("generated_at"),
-                                "parts_version": version})
+                                vkey: version})
+            self._state.pop(other, None)
             self._state.pop("etag", None)                 # the single file's ETag no longer describes the cache
             self._clear_failures()
             self._save_state()
             self._set(data, self.jobs_path.stat().st_mtime)
-        shutil.rmtree(self.parts_root, ignore_errors=True)  # joined: the parts are no longer needed
         return True
 
     def _download_single(self) -> bool:
@@ -676,6 +757,7 @@ class StaticFeed:
             traceback.print_exc()
         self._state.pop("etag", None)                     # a conditional GET would 304 against garbage
         self._state.pop("parts_version", None)            # ...and the parted path would skip it
+        self._state.pop("stable_version", None)
         self._state.pop("last_check", None)
         try:
             self._save_state()

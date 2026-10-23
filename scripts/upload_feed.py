@@ -9,11 +9,13 @@ Order matters: JD shards first, then the list parts, then jobs.json.gz, then man
 so a client that reads the manifest never points at data that isn't there yet. Headers per object:
   jobs.json.gz   Content-Type application/json, Content-Encoding gzip, Cache-Control max-age=600
   jd/*.json.gz   same, Cache-Control max-age=86400
-  parts/jobs-<version>-<nnn>.json.gz
+  parts/jobs-<version>-<nnn>.json.gz, parts/s-<sha>.json.gz, parts/d-<sha>.json.gz
                  same, Cache-Control max-age=31536000, immutable: the name carries the content hash,
-                 so a part never changes. After the manifest is up, parts named by neither the new
-                 manifest nor the one it replaced are deleted (the previous version is kept so a
-                 client mid-download when the manifest flips can still finish).
+                 so a part never changes, and a part already in the bucket is not sent again (the
+                 stable layout keeps most parts across rebuilds). After the manifest is up, the
+                 parts it names are added to manifest-history.json (the last KEEP_MANIFESTS
+                 manifests' parts, no-cache), and parts none of those manifests name are deleted,
+                 so a client mid-download when the manifest flips can still finish.
   manifest.json  Content-Type application/json, Cache-Control no-cache
   sponsors/*.json.gz      the extension's sponsor index (scripts/build_sponsor_index.py), when
                           built: like the JD shards; sponsors/manifest.json after them, no-cache
@@ -42,12 +44,14 @@ CACHE_LIST = "public, max-age=600"
 CACHE_SHARD = "public, max-age=86400"
 CACHE_MANIFEST = "no-cache"
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
+HISTORY_FILE = "manifest-history.json"
+KEEP_MANIFESTS = 3                  # parts named by any of the last 3 manifests stay in the bucket
 
 
 def object_headers(rel_path: str) -> dict:
     """The S3 metadata for one published path (keys as put_object expects them)."""
     rel = rel_path.replace(os.sep, "/")
-    if rel == MANIFEST_FILE:
+    if rel in (MANIFEST_FILE, HISTORY_FILE):
         return {"ContentType": "application/json", "CacheControl": CACHE_MANIFEST}
     if rel == JOBS_FILE:
         return {"ContentType": "application/json", "ContentEncoding": "gzip", "CacheControl": CACHE_LIST}
@@ -84,13 +88,51 @@ def plan(out_dir) -> list[tuple[Path, str]]:
 
 
 def _manifest_parts(body: bytes) -> list[str]:
-    """The list-part paths a manifest names ([] for a manifest from before the parts)."""
+    """The list-part paths a manifest names: the per-version parts, then the stable parts and the
+    stable layout's removed-rows file ([] for a manifest from before the parts)."""
     try:
         man = json.loads(body.decode("utf-8"))
-        files = (man.get("parts") or {}).get("files") or []
-        return [str(f["url"]) for f in files if str(f.get("url", "")).startswith(PARTS_DIR + "/")]
+        files = list((man.get("parts") or {}).get("files") or [])
+        stable = man.get("stable") or {}
+        files += list(stable.get("files") or [])
+        if stable.get("removed"):
+            files.append(stable["removed"])
+        out: list[str] = []
+        for f in files:
+            url = str(f.get("url", ""))
+            if url.startswith(PARTS_DIR + "/") and url not in out:
+                out.append(url)
+        return out
     except Exception:                                       # noqa: BLE001 - unreadable = none
         return []
+
+
+def _history(client, bucket: str, base: str) -> list[list[str]]:
+    """The part lists of the last manifests, oldest first. With no history yet (the first upload
+    after this was added), the live manifest's parts stand in for it."""
+    try:
+        h = json.loads(client.get_object(Bucket=bucket, Key=f"{base}{HISTORY_FILE}")["Body"].read())
+        lists = [[str(u) for u in m] for m in h.get("manifests") or [] if isinstance(m, list)]
+        if lists:
+            return lists
+    except Exception:                                       # noqa: BLE001 - none yet
+        pass
+    prev = _previous_parts(client, bucket, f"{base}{MANIFEST_FILE}")
+    return [prev] if prev else []
+
+
+def _existing_parts(client, bucket: str, base: str) -> set[str]:
+    """Relative paths of the list parts already in the bucket."""
+    found, token = set(), None
+    while True:
+        kw = {"Bucket": bucket, "Prefix": f"{base}{PARTS_DIR}/"}
+        if token:
+            kw["ContinuationToken"] = token
+        page = client.list_objects_v2(**kw)
+        found.update(o["Key"][len(base):] for o in page.get("Contents") or [])
+        if not page.get("IsTruncated"):
+            return found
+        token = page.get("NextContinuationToken")
 
 
 def _previous_parts(client, bucket: str, key: str) -> list[str]:
@@ -127,18 +169,30 @@ def prune_parts(client, bucket: str, prefix: str, keep: set[str], log=print) -> 
 def upload(out_dir, client, bucket: str, prefix: str = "", log=print) -> list[str]:
     """Put every feed object with its headers. Returns the object keys in upload order."""
     prefix = prefix.strip("/")
-    keys = []
+    base = f"{prefix}/" if prefix else ""
+    keys, skipped = [], 0
     steps = plan(out_dir)
-    man_key = f"{prefix}/{MANIFEST_FILE}" if prefix else MANIFEST_FILE
-    keep = set(_previous_parts(client, bucket, man_key))
+    history = _history(client, bucket, base)
+    try:
+        present = _existing_parts(client, bucket, base)
+    except Exception:                                       # noqa: BLE001 - then send them all
+        present = set()
     for path, rel in steps:
-        key = f"{prefix}/{rel}" if prefix else rel
+        key = f"{base}{rel}"
+        if rel.startswith(PARTS_DIR + "/") and rel in present:
+            skipped += 1                                    # content-addressed: already there
+            continue
         client.put_object(Bucket=bucket, Key=key, Body=path.read_bytes(), **object_headers(rel))
         keys.append(key)
-        if rel.startswith(PARTS_DIR + "/"):
-            keep.add(rel)
-    log(f"[upload_feed] uploaded {len(keys)} objects to {bucket}/{prefix or ''}".rstrip("/"))
+    log(f"[upload_feed] uploaded {len(keys)} objects to {bucket}/{prefix or ''}".rstrip("/")
+        + (f" ({skipped} list parts already there)" if skipped else ""))
+    current = _manifest_parts((Path(out_dir) / MANIFEST_FILE).read_bytes())
+    history = (history + [current])[-KEEP_MANIFESTS:]
+    keep = {u for m in history for u in m}
     try:
+        client.put_object(Bucket=bucket, Key=f"{base}{HISTORY_FILE}",
+                          Body=json.dumps({"manifests": history}).encode("utf-8"),
+                          **object_headers(HISTORY_FILE))
         prune_parts(client, bucket, prefix, keep, log=log)
     except Exception as exc:                                # noqa: BLE001 - tidy-up only
         log(f"[upload_feed] could not prune old list parts: {exc}")
