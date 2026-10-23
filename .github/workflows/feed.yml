@@ -158,7 +158,7 @@ jobs:
       - name: Merge the shards and build the feed
         env:
           TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
-          JOBS_FEED_LIMIT: ${{ vars.JOBS_FEED_LIMIT || 150000 }}
+          JOBS_FEED_LIMIT: ${{ vars.JOBS_FEED_LIMIT || 1000000 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
             --merge-dir .shards \

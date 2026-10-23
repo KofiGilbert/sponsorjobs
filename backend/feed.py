@@ -37,11 +37,12 @@ FEED_SEEN_DAYS = int(os.environ.get("JOBS_SEEN_DAYS", "7"))       # ...unless th
 # How many rows the cached full list HOLDS (for server-side filtering + pagination). The response
 # only ever sends ONE page, so this can be large without bloating any single payload -- it just
 # sets how deep the browsable board goes and the max "N jobs" total we can report.
-FEED_LIMIT = int(os.environ.get("JOBS_FEED_LIMIT", "150000"))          # rows PUBLISHED
+FEED_LIMIT = int(os.environ.get("JOBS_FEED_LIMIT", "1000000"))         # rows PUBLISHED (2026-10-23: no practical cap;
+                                                                    # the board shows every job that passes the checks)
 # Rows READ from the database before the US / ad-stance / relevance filters run. This must be far
 # above FEED_LIMIT: the filters drop about half of what they see, and the database passed 74,000
 # rows on 2026-10-12, so a 50,000-row read was cutting live jobs before any filter saw them.
-FEED_SCAN_LIMIT = int(os.environ.get("JOBS_FEED_SCAN_LIMIT", "400000"))
+FEED_SCAN_LIMIT = int(os.environ.get("JOBS_FEED_SCAN_LIMIT", "2000000"))
 FUNNEL: dict = {}
 FUNNEL_SAMPLES: dict = {}
 FEED_TTL = int(os.environ.get("JOBS_FEED_TTL", "120"))            # seconds a built feed is reused
