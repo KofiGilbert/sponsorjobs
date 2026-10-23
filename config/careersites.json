@@ -236,18 +236,6 @@
       "sponsor": "Epam Systems Inc",
       "h1b_approvals": 1128
     },
-    "careers.equifax.com": {
-      "company": "Equifax",
-      "platform": "other",
-      "sitemaps": [
-        "https://careers.equifax.com/sitemap.xml"
-      ],
-      "job_url": "^https://careers\\.equifax\\.com/en/jobs/",
-      "verified": "2026-10-12",
-      "jobs_seen": 220,
-      "sponsor": "Equifax Inc",
-      "h1b_approvals": 758
-    },
     "careers.equinix.com": {
       "company": "Equinix",
       "platform": "other",
@@ -548,18 +536,6 @@
       "sponsor": "Ericsson Inc",
       "h1b_approvals": 773
     },
-    "jobs.gartner.com": {
-      "company": "Gartner",
-      "platform": "other",
-      "sitemaps": [
-        "https://jobs.gartner.com/sitemap.xml"
-      ],
-      "job_url": "^https://jobs\\.gartner\\.com/jobs/",
-      "verified": "2026-10-12",
-      "jobs_seen": 763,
-      "sponsor": "Gartner Inc",
-      "h1b_approvals": 306
-    },
     "jobs.intuit.com": {
       "company": "Intuit",
       "platform": "radancy",
@@ -595,18 +571,6 @@
       "jobs_seen": 799,
       "sponsor": "Rbc Capital Markets Llc",
       "h1b_approvals": 322
-    },
-    "jobs.sap.com": {
-      "company": "SAP",
-      "platform": "other",
-      "sitemaps": [
-        "https://jobs.sap.com/sitemap.xml"
-      ],
-      "job_url": "^https://jobs\\.sap\\.com/en/jobs/",
-      "verified": "2026-10-12",
-      "jobs_seen": 161,
-      "sponsor": "Sap America Inc",
-      "h1b_approvals": 1122
     },
     "jobs.thecignagroup.com": {
       "company": "The Cigna Group",
@@ -799,6 +763,150 @@
       "jobs_seen": 3681,
       "sponsor": "Iqvia Rds Inc",
       "h1b_approvals": 199
+    },
+    "careers.alexion.com": {
+      "company": "Alexion Pharmaceuticals",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://careers.alexion.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.alexion\\.com/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 141,
+      "sponsor": "Alexion Pharmaceuticals Inc",
+      "h1b_approvals": 98
+    },
+    "careers.corning.com": {
+      "company": "Corning Incorporated",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.corning.com/us/en/sitemap_index.xml"
+      ],
+      "job_url": "^https://careers\\.corning\\.com/us/en/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 988,
+      "sponsor": "Corning Incorporated",
+      "h1b_approvals": 116
+    },
+    "careers.icf.com": {
+      "company": "ICF",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.icf.com/us/en/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.icf\\.com/us/en/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 424,
+      "sponsor": "Icf Incorporated Llc",
+      "h1b_approvals": 98
+    },
+    "careers.incyte.com": {
+      "company": "Incyte",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.incyte.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.incyte\\.com/jobs/",
+      "verified": "2026-10-23",
+      "jobs_seen": 134,
+      "sponsor": "Incyte Corporation",
+      "h1b_approvals": 101
+    },
+    "careers.molinahealthcare.com": {
+      "company": "Molina Healthcare",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://careers.molinahealthcare.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.molinahealthcare\\.com/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 391,
+      "sponsor": "Molina Healthcare Inc",
+      "h1b_approvals": 113
+    },
+    "careers.msci.com": {
+      "company": "MSCI",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.msci.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.msci\\.com/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 114,
+      "sponsor": "Msci Inc",
+      "h1b_approvals": 125
+    },
+    "careers.thorntontomasetti.com": {
+      "company": "Thornton Tomasetti",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.thorntontomasetti.com/gb/en/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.thorntontomasetti\\.com/gb/en/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 171,
+      "sponsor": "Thornton Tomasetti Inc",
+      "h1b_approvals": 117
+    },
+    "careers.thumbtack.com": {
+      "company": "Thumbtack",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.thumbtack.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.thumbtack\\.com/jobs/",
+      "verified": "2026-10-23",
+      "jobs_seen": 514,
+      "sponsor": "Thumbtack Inc",
+      "h1b_approvals": 114
+    },
+    "eaton.eightfold.ai": {
+      "company": "Eaton",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://eaton.eightfold.ai/careers/sitemap_index.xml?domain=eaton.com"
+      ],
+      "job_url": "^https://eaton\\.eightfold\\.ai/careers/job/\\d+",
+      "verified": "2026-10-23",
+      "jobs_seen": 2348,
+      "sponsor": "Eaton Corporation",
+      "h1b_approvals": 165
+    },
+    "jobs.dolby.com": {
+      "company": "Dolby Laboratories",
+      "platform": "eightfold",
+      "sitemaps": [
+        "https://jobs.dolby.com/careers/sitemap_index.xml?domain=dolby.com"
+      ],
+      "job_url": "^https://jobs\\.dolby\\.com/careers/job/\\d+",
+      "verified": "2026-10-23",
+      "jobs_seen": 89,
+      "sponsor": "Dolby Laboratories Inc",
+      "h1b_approvals": 98
+    },
+    "jobs.medallia.com": {
+      "company": "Medallia",
+      "platform": "other",
+      "sitemaps": [
+        "https://jobs.medallia.com/sitemap.xml"
+      ],
+      "job_url": "^https://jobs\\.medallia\\.com/jobs/",
+      "verified": "2026-10-23",
+      "jobs_seen": 68,
+      "sponsor": "Medallia Inc",
+      "h1b_approvals": 121
+    },
+    "www.novartis.com": {
+      "company": "Novartis",
+      "platform": "other",
+      "sitemaps": [
+        "https://www.novartis.com/sitemap.xml"
+      ],
+      "job_url": "^https://www\\.novartis\\.com/careers/[^/]+/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 895,
+      "sponsor": "Novartis Institutes For Biomedical",
+      "h1b_approvals": 180
     }
   }
 }

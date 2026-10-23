@@ -220,10 +220,10 @@ def test_merge_refuses_to_publish_when_no_shard_produced_output(fake_world):
 
 def test_the_workflow_matrix_matches_its_shard_count():
     # A matrix entry without a matching FEED_SHARD_COUNT would crawl some boards twice and others
-    # never (2 shards 2026-10-13, 3 since 2026-10-18).
+    # never (2 shards 2026-10-13, 3 on 2026-10-18, 4 since 2026-10-23).
     import re
     from pathlib import Path
     wf = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "feed.yml").read_text()
     shards = [int(x) for x in re.search(r"shard:\s*\[([\d,\s]+)\]", wf).group(1).split(",")]
     count = int(re.search(r"FEED_SHARD_COUNT:\s*(\d+)", wf).group(1))
-    assert shards == list(range(count)) and count >= 3
+    assert shards == list(range(count)) and count >= 4
