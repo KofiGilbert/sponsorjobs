@@ -6765,7 +6765,7 @@
   // interviewer over the call's data channel (Tavus Interactions Protocol). Nobody is cut off
   // mid-sentence by a timer: at the answer budget the interviewer moves on at the next pause, and
   // only if no pause comes does it step in politely, the way a person would.
-  let CVI_CALL = null, CVI_TK = null;
+  let CVI_CALL = null, CVI_TK = null, CVI_HEARD = false;
   function cviSend(eventType, props) {
     if (!CVI_CALL || !R2) return;
     try {
@@ -6785,33 +6785,55 @@
     const t = s.timing || { total: 1200, answer_nudge: 180, answer_step_in: 240, pause_wait: 15,
                             last_question: 930, candidate_questions: 1110, close_wait: 20, hard_end: 1230,
                             think_grace: 10, answer_grace: 60, minutes: 20 };
-    stopLiveStream();   // Tavus runs its own camera/mic; free the green-room preview stream
+    stopLiveStream();   // the call takes the camera and mic itself; free the green-room preview
+    // Our own call screen, not Daily's ready-made page in a box: that page brought its own
+    // "Are you ready to join?" lobby (a second green room, scrolling inside the frame), and the
+    // minutes a person spent in it could outlive the room's short-lived entry token, so their
+    // Join was refused and the interview ended (Kofi, 2026-10-23). The call object joins the
+    // moment our Join is clicked, and we draw the interviewer to fill the stage.
+    $("#prepLive").classList.add("in-call");
     $("#liveStage").innerHTML =
-      `<div class="zoom-cvi">
-        <div class="zoom-topbar">
-          <span class="zoom-title">${esc(T("r2.title", "Round 2, live interview"))}</span>
+      `<div class="zoom-call" id="cviCall">
+        <video class="zoom-call-remote" id="cviRemote" autoplay playsinline></video>
+        <audio id="cviAudio" autoplay></audio>
+        <div class="zoom-call-wait" id="cviWait"><span class="zoom-call-spin"></span>${esc(T("r2.connecting", "Connecting to your interviewer..."))}</div>
+        <div class="zoom-call-top">
           <span class="zoom-live"><i></i> LIVE</span>
-          <span class="zoom-meta">${esc(T("r2.keepsTime", "Your interviewer keeps the time, like a real one"))}</span>
-        </div>
-        <div class="cvi-frame" id="cviFrame"></div>
-        <div class="zoom-controls zoom-cvi-controls">
+          <span class="zoom-title">${esc(T("r2.title", "Round 2, live interview"))}</span>
           <span class="zoom-mins" id="cviClockWrap">${esc(T("r2.timeLeft", "Time left"))}: <b id="cviMins">${fmtClock(t.total)}</b></span>
+        </div>
+        <video class="zoom-call-self" id="cviSelf" autoplay muted playsinline></video>
+        <div class="zoom-call-bar">
+          <button class="zoom-ctrl" id="cviMic" type="button">${esc(T("r2.mute", "Mute"))}</button>
+          <button class="zoom-ctrl" id="cviCam" type="button">${esc(T("r2.camOff", "Stop video"))}</button>
           <button class="zoom-ctrl zoom-leave" id="cviEnd" type="button">${esc(T("r2.end", "End interview"))}</button>
         </div>
       </div>`;
+    fitCviCall();
     $("#cviEnd")?.addEventListener("click", () => endCvi());
-    const box = $("#cviFrame");
-    if (window.Daily && box) {
-      CVI_CALL = window.Daily.createFrame(box, {
-        showLeaveButton: false, showFullscreenButton: true,
-        iframeStyle: { width: "100%", height: "100%", border: "0", borderRadius: "10px" },
-      });
+    if (window.Daily) {
+      CVI_HEARD = false;
+      CVI_CALL = window.Daily.createCallObject({ subscribeToTracksAutomatically: true });
       CVI_TK = startTimekeeper(t);
       CVI_CALL.on("app-message", (e) => { if (CVI_TK) CVI_TK.onEvent(e && e.data); });
-      CVI_CALL.on("left-meeting", () => { if (R2) endCvi(); });
-      CVI_CALL.join({ url: s.join_url }).catch(() => {
-        toast(T("r2.cantJoin", "Couldn't join the interview room. Check your connection and try again."));
+      CVI_CALL.on("track-started", cviTrack);
+      CVI_CALL.on("track-stopped", cviTrack);
+      CVI_CALL.on("error", (e) => cviDropped((e && e.errorMsg) || "error"));
+      CVI_CALL.on("left-meeting", () => cviDropped("left"));
+      $("#cviMic")?.addEventListener("click", (ev) => {
+        const on = !CVI_CALL.localAudio(); CVI_CALL.setLocalAudio(on);
+        ev.currentTarget.classList.toggle("off", !on);
+        ev.currentTarget.textContent = on ? T("r2.mute", "Mute") : T("r2.unmute", "Unmute");
       });
+      $("#cviCam")?.addEventListener("click", (ev) => {
+        const on = !CVI_CALL.localVideo(); CVI_CALL.setLocalVideo(on);
+        ev.currentTarget.classList.toggle("off", !on);
+        ev.currentTarget.textContent = on ? T("r2.camOff", "Stop video") : T("r2.camOn", "Start video");
+      });
+      // The broker hands a room URL with the meeting token in ?t=; the call object takes it apart.
+      let url = s.join_url, token;
+      try { const u = new URL(s.join_url); token = u.searchParams.get("t") || undefined; u.searchParams.delete("t"); url = u.toString(); } catch (e) {}
+      CVI_CALL.join({ url, token }).catch((e) => cviDropped((e && e.message) || "join"));
     } else if (window.tailorShell) {
       window.tailorShell.openBrowser(s.join_url);          // fallback: the old side-pane call, no timekeeper
     } else {
@@ -6837,8 +6859,45 @@
       }
     }, 1000);
   }
+  // The call fills the window below the page header, so nothing on the page scrolls.
+  function fitCviCall() {
+    const el = $("#cviCall"); if (!el) return;
+    el.style.height = Math.max(380, window.innerHeight - el.getBoundingClientRect().top - 20) + "px";
+    // The view's own bottom padding and footer sit below the call: take back whatever still spills.
+    const view = el.closest(".view");
+    const spill = view ? view.scrollHeight - view.clientHeight : 0;
+    if (spill > 0) el.style.height = Math.max(380, el.offsetHeight - spill) + "px";
+  }
+  window.addEventListener("resize", fitCviCall);
+  // Each track goes to its own element: the interviewer fills the stage, you sit in the corner.
+  function cviTrack(e) {
+    if (!CVI_CALL || !e || !e.participant) return;
+    const p = e.participant, local = !!p.local;
+    const tr = p.tracks || {};
+    const v = (tr.video && tr.video.state === "playable") ? tr.video.persistentTrack : null;
+    const a = (tr.audio && tr.audio.state === "playable") ? tr.audio.persistentTrack : null;
+    if (local) {
+      const self = $("#cviSelf");
+      if (self) { self.srcObject = v ? new MediaStream([v]) : null; self.hidden = !v; }
+      return;
+    }
+    const remote = $("#cviRemote"), audio = $("#cviAudio");
+    if (remote) remote.srcObject = v ? new MediaStream([v]) : null;
+    if (audio) audio.srcObject = a ? new MediaStream([a]) : null;
+    if (v) { CVI_HEARD = true; const w = $("#cviWait"); if (w) w.hidden = true; }
+  }
+  // The call closed without our End button. Once the interviewer has been on screen this is the
+  // interview ending (Tavus's own time limit, a drop that never came back): score what was said.
+  // Before that, there is nothing to score: say so plainly and offer to try again.
+  function cviDropped(why) {
+    if (!R2 || !CVI_CALL) return;
+    if (CVI_HEARD) { endCvi(); return; }
+    console.warn("live interview: call closed before the interviewer appeared:", why);
+    endCvi({ early: why });
+  }
   function teardownCvi() {                                 // idempotent: safe to call from any exit path
     if (CVI_CLOCK) { clearInterval(CVI_CLOCK); CVI_CLOCK = null; }
+    $("#prepLive")?.classList.remove("in-call");
     CVI_TK = null;
     if (CVI_CALL) { const c = CVI_CALL; CVI_CALL = null; c.leave().catch(() => {}).finally(() => { try { c.destroy(); } catch (e) {} }); }
     if (window.tailorShell) window.tailorShell.closeBrowser();
@@ -6849,7 +6908,7 @@
     }
   }
   // "End interview": close the pane, then score the conversation into the report.
-  async function endCvi() {
+  async function endCvi(opt) {
     teardownCvi();
     const id = R2 && R2.interview_id;
     if (id && R2.source === "plan" && CVI_UNBILLED > 0) {   // meter the last few seconds too
@@ -6861,7 +6920,23 @@
     if (!id) { quitLive(); return; }
     $("#liveStage").innerHTML = `<div class="scr-intro"><div class="scr-welcome"><h2 class="scr-ready-h">${esc(T("r2.ended", "Interview ended"))}</h2><p class="scr-ready-sub">${esc(T("r2.scoring", "Scoring your interview..."))}</p></div></div>`;
     try { const d = await api("/api/interviews/cvi/end", { interview_id: id }); renderR2Report((d && d.report) || {}, id); }
-    catch (err) { toast(err.message || T("r2.cantScore", "Couldn't score the interview.")); quitLive(); }
+    catch (err) {
+      if ((err.data && err.data.error === "no_transcript") || (opt && opt.early)) { renderCviNoStart(); return; }
+      toast(err.message || T("r2.cantScore", "Couldn't score the interview.")); quitLive();
+    }
+  }
+  // Nothing was said, so there is no report. Never drop the person back on the prep list in
+  // silence: tell them what happened and let them go straight back in.
+  function renderCviNoStart() {
+    $("#liveStage").innerHTML = `<div class="scr-intro"><div class="scr-welcome">
+      <h2 class="scr-ready-h">${esc(T("r2.noStartH", "The call closed before your interview began"))}</h2>
+      <p class="scr-ready-sub">${esc(T("r2.noStartSub", "Nothing was said, so there is nothing to score. You can join again now."))}</p>
+      <div class="zoom-gr-acts" style="justify-content:center;margin-top:16px">
+        <button class="btn btn-primary" id="cviRetry" type="button">${esc(T("r2.tryAgain", "Join again"))}</button>
+        <button class="btn btn-ghost" id="cviBack" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>
+      </div></div></div>`;
+    $("#cviRetry")?.addEventListener("click", async () => renderR2GreenRoom(await round2Status()));
+    $("#cviBack")?.addEventListener("click", quitLive);
   }
   function renderR2Report(rep, interviewId) {
     const passed = !!rep.passed, cls = passed ? "ok" : "no";

@@ -1013,5 +1013,13 @@
   "r1.keepGoing": "Keep going",
   "prep.passTag": "Pass",
   "builder.acceptFit": "Fit to one page, review and accept.",
-  "builder.acceptSave": "Looks good? Accept to save it to Resumes."
+  "builder.acceptSave": "Looks good? Accept to save it to Resumes.",
+  "r2.connecting": "Connecting to your interviewer...",
+  "r2.mute": "Mute",
+  "r2.unmute": "Unmute",
+  "r2.camOff": "Stop video",
+  "r2.camOn": "Start video",
+  "r2.noStartH": "The call closed before your interview began",
+  "r2.noStartSub": "Nothing was said, so there is nothing to score. You can join again now.",
+  "r2.tryAgain": "Join again"
 }

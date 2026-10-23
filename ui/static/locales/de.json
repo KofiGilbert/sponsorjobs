@@ -1013,5 +1013,13 @@
   "r1.keepGoing": "Weitermachen",
   "prep.passTag": "Pass",
   "builder.acceptFit": "Auf eine Seite gebracht, prüfen und übernehmen.",
-  "builder.acceptSave": "Sieht gut aus? Übernehmen, um ihn unter Lebensläufe zu speichern."
+  "builder.acceptSave": "Sieht gut aus? Übernehmen, um ihn unter Lebensläufe zu speichern.",
+  "r2.connecting": "Verbindung zu deinem Interviewer...",
+  "r2.mute": "Stumm",
+  "r2.unmute": "Ton an",
+  "r2.camOff": "Video aus",
+  "r2.camOn": "Video an",
+  "r2.noStartH": "Der Anruf wurde vor Beginn des Interviews beendet",
+  "r2.noStartSub": "Es wurde nichts gesagt, also gibt es nichts zu bewerten. Du kannst jetzt erneut beitreten.",
+  "r2.tryAgain": "Erneut beitreten"
 }

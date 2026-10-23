@@ -3151,9 +3151,25 @@ body.cv-dragging * { cursor: grabbing !important; }
 .fd-stick-c { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fd-stick-in .btn { flex: none; }
 
-/* The live interview runs in Daily's frame inside our own page (so the timekeeper can talk to
-   the interviewer). A 16:9 stage that fills the column. */
-.cvi-frame { width: 100%; aspect-ratio: 16 / 9; max-height: 70vh; background: #0d0f12; }
+/* The live call: our own screen, not Daily's page in a box. The interviewer fills the stage, you
+   sit in the corner, the controls float at the bottom, and fitCviCall() sizes it to the window
+   so nothing scrolls. In a call the page drops the prep column limit and the Quit bar. */
+.prep-live.in-call, .prep-live.in-call > .live-stage { max-width: none; }
+.prep-live.in-call > .mock-top { display: none; }
+.zoom-call { position: relative; height: 70vh; min-height: 380px; background: #0d0f12; border-radius: var(--r-lg, 14px); overflow: hidden; }
+.zoom-call-remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.zoom-call-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; color: #cfd3da; font-size: 14px; }
+.zoom-call-wait[hidden] { display: none; }
+.zoom-call-spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.18); border-top-color: #e7e9ee; animation: zoomspin .8s linear infinite; }
+@keyframes zoomspin { to { transform: rotate(360deg); } }
+.zoom-call-top { position: absolute; top: 14px; left: 16px; right: 16px; display: flex; align-items: center; gap: 12px; color: #e7e9ee; font-size: 12.5px; }
+.zoom-call-top .zoom-mins { margin-left: auto; padding: 5px 10px; border-radius: 8px; background: rgba(0,0,0,.45); }
+.zoom-call-self { position: absolute; right: 16px; bottom: 76px; width: clamp(140px, 18%, 260px); aspect-ratio: 16 / 9; object-fit: cover; transform: scaleX(-1);
+  border-radius: 10px; border: 1px solid rgba(255,255,255,.18); background: #1b1e24; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+.zoom-call-self[hidden] { display: none; }
+.zoom-call-bar { position: absolute; left: 0; right: 0; bottom: 16px; display: flex; justify-content: center; gap: 10px; }
+.zoom-call-bar .zoom-ctrl { background: rgba(20,22,26,.72); }
+.zoom-call-bar .zoom-ctrl.off, .zoom-call-bar .zoom-ctrl.zoom-leave { background: #f04438; }
 
 /* Official app: own-key options belong to the open-source edition and never show here. */
 .is-managed .byok-only { display: none !important; }

@@ -1013,5 +1013,13 @@
   "r1.keepGoing": "Continuer",
   "prep.passTag": "Pass",
   "builder.acceptFit": "Tient sur une page, relisez et acceptez.",
-  "builder.acceptSave": "Ça vous va ? Acceptez pour l'enregistrer dans CV."
+  "builder.acceptSave": "Ça vous va ? Acceptez pour l'enregistrer dans CV.",
+  "r2.connecting": "Connexion à ton recruteur...",
+  "r2.mute": "Couper le micro",
+  "r2.unmute": "Activer le micro",
+  "r2.camOff": "Arrêter la vidéo",
+  "r2.camOn": "Démarrer la vidéo",
+  "r2.noStartH": "L'appel s'est fermé avant le début de l'entretien",
+  "r2.noStartSub": "Rien n'a été dit, il n'y a donc rien à noter. Tu peux rejoindre à nouveau.",
+  "r2.tryAgain": "Rejoindre"
 }
