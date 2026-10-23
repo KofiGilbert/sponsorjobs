@@ -7317,10 +7317,14 @@
   }
 
   function openCheckoutUrl(url) {
-    // Desktop: the side pane, so the app stays put and the shell reports the result when it
-    // closes. Web build: the same tab; Stripe returns to ?checkout=.
-    if (window.tailorShell) window.tailorShell.openBrowser(url);
-    else window.location.href = url;
+    // Desktop: Stripe opens in the person's own browser (the shell routes checkout.stripe.com
+    // out), so close the Passes window and say where to finish; watchCheckout() notices the pass
+    // and confirms it here. Web build: the same tab; Stripe returns to ?checkout=.
+    if (window.tailorShell) {
+      window.tailorShell.openBrowser(url);
+      closeUpgrade();
+      toast(T("upg.finishInBrowser", "Finish paying in your browser. Your pass shows up here on its own."));
+    } else window.location.href = url;
   }
   async function doCheckout(passId) {
     try {

@@ -1013,5 +1013,6 @@
   "r1.keepGoing": "Continuar",
   "prep.passTag": "Passe",
   "builder.acceptFit": "Cabe em uma página, revise e aceite.",
-  "builder.acceptSave": "Ficou bom? Aceite para salvar em Currículos."
+  "builder.acceptSave": "Ficou bom? Aceite para salvar em Currículos.",
+  "upg.finishInBrowser": "Conclua o pagamento no seu navegador. Seu passe aparece aqui automaticamente."
 }

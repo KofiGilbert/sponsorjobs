@@ -1013,5 +1013,6 @@
   "r1.keepGoing": "Weitermachen",
   "prep.passTag": "Pass",
   "builder.acceptFit": "Auf eine Seite gebracht, prüfen und übernehmen.",
-  "builder.acceptSave": "Sieht gut aus? Übernehmen, um ihn unter Lebensläufe zu speichern."
+  "builder.acceptSave": "Sieht gut aus? Übernehmen, um ihn unter Lebensläufe zu speichern.",
+  "upg.finishInBrowser": "Schließe die Zahlung in deinem Browser ab. Dein Pass erscheint hier automatisch."
 }

@@ -1013,5 +1013,6 @@
   "r1.keepGoing": "Keep going",
   "prep.passTag": "Pass",
   "builder.acceptFit": "Fit to one page, review and accept.",
-  "builder.acceptSave": "Looks good? Accept to save it to Resumes."
+  "builder.acceptSave": "Looks good? Accept to save it to Resumes.",
+  "upg.finishInBrowser": "Finish paying in your browser. Your pass shows up here on its own."
 }
