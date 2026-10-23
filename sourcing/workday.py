@@ -53,7 +53,10 @@ MAX_EXTRA_SLUGS = 1
 MAX_WD_SLUGS = 5                # tenant guesses per employer (each costs one robots.txt per instance)
 # Site names asked when a live tenant's robots.txt names no site and gives no redirect: the
 # ones the watched tenants use most. Never asked when robots.txt disallows them.
-COMMON_SITES = ("External", "Careers", "External_Careers", "careers", "jobs")
+# Extended 2026-10-23 from the 369 watched sites: External 35, Careers 17, careers 8,
+# External_Careers 7, External_Career_Site 5, ExternalCareers 4, jobs 4 (then Search, Jobs, EXT 3).
+COMMON_SITES = ("External", "Careers", "External_Careers", "careers", "External_Career_Site",
+                "ExternalCareers", "jobs")
 PAGE = 20                       # Workday's maximum page size
 LIST_CEILING = 2000             # the list endpoint never pages past this
 DEFAULT_MAX_JOBS = 1000         # rows per board per refresh (env WORKDAY_MAX_JOBS)
@@ -68,6 +71,40 @@ MAX_BACKOFF = 60.0
 DISCOVERY_MAX_BACKOFF = 15.0
 
 LIST_BODY = {"appliedFacets": {}, "limit": PAGE, "offset": 0, "searchText": ""}
+
+# The country facet's US value, as tenants spell it. Most name the facet `locationCountry`
+# (also `Location_Country`, `LocationCountry`, `Country`, a custom `CF_..._Country_...`); NVIDIA
+# uses `locationHierarchy1`, whose top level is the country. A facet such as `locations`
+# can hold a single office called "United States" and is NOT a country filter.
+US_COUNTRY_VALUES = {"united states of america", "united states", "usa"}
+_LOCATION_ROWS = re.compile(r"^\d+\s+Locations?$", re.I)
+
+
+def _is_country_param(param: str) -> bool:
+    p = (param or "").lower()
+    return "country" in p or p == "locationhierarchy1"
+
+
+def us_country_facet(facets) -> tuple[str, str, int] | None:
+    """(facetParameter, value id, count) of a list response's US country value, or None. Walks
+    nested facet groups (`locationMainGroup` -> `locationCountry`). Probed 2026-10-23 on 50
+    watched boards: 27 offer one; on a global board it is often under half the list (Salesforce
+    529 of 1,586, Amgen 612 of 1,647), so filtering on it fills the per-board cap with US roles."""
+    for f in facets or []:
+        if not isinstance(f, dict):
+            continue
+        param = str(f.get("facetParameter") or "")
+        for v in f.get("values") or []:
+            if not isinstance(v, dict):
+                continue
+            if "facetParameter" in v:                      # a nested group
+                hit = us_country_facet([v])
+                if hit:
+                    return hit
+            elif (_is_country_param(param) and v.get("id")
+                  and str(v.get("descriptor") or "").strip().lower() in US_COUNTRY_VALUES):
+                return param, str(v["id"]), int(v.get("count") or 0)
+    return None
 
 
 def _env_int(name: str, default: int) -> int:
@@ -197,11 +234,18 @@ def _bounded(fetch, timeout: int):
 # -- the board adapter ------------------------------------------------------------ #
 
 def list_postings(tenant: str, site: str, host: str, fetch=fetch_json, *, max_jobs: int | None = None,
-                  sleep=time.sleep) -> tuple[int, list[dict]]:
+                  sleep=time.sleep, us_only: bool = False) -> tuple[int, list[dict]]:
     """Page through a site's postings (20 a page) up to `max_jobs` (env WORKDAY_MAX_JOBS,
     default 1000) and Workday's own 2000 ceiling. Returns (total_reported, postings). Stops
     on an empty or short page, and on the first repeated posting -- an offset past the end
-    wraps to page one. `total` is only a hint (it is capped at 2000 and sometimes 0)."""
+    wraps to page one. `total` is only a hint (it is capped at 2000 and sometimes 0).
+
+    `us_only`: when the first page offers a US country facet (`us_country_facet`) that covers
+    fewer rows than the whole list, the list is read again filtered on it, so the cap and the
+    description budget go to US roles (the feed publishes only those). Each posting read that
+    way (or from a board whose US value already covers the whole list) is marked `_us_facet`:
+    the board's own country field puts it in the US. A board with no such facet is read
+    unfiltered, as before."""
     cap = DEFAULT_MAX_JOBS if max_jobs is None else max_jobs
     cap = min(max(cap, 0) or 0, LIST_CEILING)
     url = cxs_base(tenant, host, site) + "/jobs"
@@ -209,9 +253,23 @@ def list_postings(tenant: str, site: str, host: str, fetch=fetch_json, *, max_jo
     out: list[dict] = []
     total = 0
     offset = 0
+    facets: dict = {}
+    all_us = False                                        # the US facet already covers every row
     while offset < cap:
-        data = _request(fetch, url, sleep, data={**LIST_BODY, "offset": offset,
+        data = _request(fetch, url, sleep, data={**LIST_BODY, "appliedFacets": facets, "offset": offset,
                                                 "limit": min(PAGE, cap - offset)}) or {}
+        if us_only and offset == 0 and not facets:
+            hit = us_country_facet(data.get("facets"))
+            whole = int(data.get("total") or 0)
+            if hit and 0 < hit[2] < whole:
+                facets = {hit[0]: [hit[1]]}
+                sleep(REQUEST_GAP)
+                continue                                  # page one again, US only
+            all_us = bool(hit) and hit[2] >= whole > 0
+        if facets or all_us:
+            for p in data.get("jobPostings") or []:
+                if isinstance(p, dict):
+                    p["_us_facet"] = True
         page = data.get("jobPostings") or []
         total = max(total, int(data.get("total") or 0))
         fresh = 0
@@ -241,7 +299,8 @@ def workday_jobs(tenant: str, site: str, host: str, company: str = "", fetch=fet
     board_id = board_id_for(tenant, host, site)
     if max_jobs is None:
         max_jobs = _env_int("WORKDAY_MAX_JOBS", DEFAULT_MAX_JOBS)
-    _, postings = list_postings(tenant, site, host, fetch, max_jobs=max_jobs, sleep=sleep)
+    us_only = os.environ.get("WORKDAY_US_ONLY", "1") != "0"
+    _, postings = list_postings(tenant, site, host, fetch, max_jobs=max_jobs, sleep=sleep, us_only=us_only)
     out: list[dict] = []
     seen: set[str] = set()
     for p in postings:
@@ -250,6 +309,8 @@ def workday_jobs(tenant: str, site: str, host: str, company: str = "", fetch=fet
         if not rid or not path.startswith("/"):
             continue
         loc = str(p.get("locationsText") or "").strip()
+        if p.get("_us_facet"):
+            loc = place_in_us(loc)
         row = _job("workday", board_id, rid, company or tenant, p.get("title", ""), loc,
                    _remote(loc), job_page_url(host, site, path), "",
                    posted_on_to_date(p.get("postedOn", ""), today))
@@ -305,6 +366,22 @@ def workday_detail(detail_url: str, fetch=fetch_json, sleep=time.sleep) -> dict:
 def looks_us(location: str) -> bool:
     from .sponsors import looks_us as _looks_us
     return _looks_us(location)
+
+
+def place_in_us(loc: str) -> str:
+    """A list row's location when the board's own US country filter returned it: a campus,
+    plant or city the US rule cannot read ("Springfield", "MN-Champlin", "New Bedford", "101
+    Corsair Hall") gets ", United States", so it is not dropped as abroad. Left alone: a
+    location that already reads as US, one that names a foreign place (a multi-country posting
+    can match the filter through its other office), and "3 Locations" (the description read
+    fills in the real list)."""
+    from .sponsors import names_foreign
+    loc = (loc or "").strip()
+    if not loc:
+        return "United States"
+    if looks_us(loc) or names_foreign(loc) or _LOCATION_ROWS.match(loc):
+        return loc
+    return f"{loc}, United States"
 
 
 def fill_details(rows: list[dict], fetch=fetch_json, *, known_ids=(), max_detail: int | None = None,

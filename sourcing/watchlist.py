@@ -182,7 +182,7 @@ class Watchlist(BoardMixin):
         for j in jobs:
             spon = _spon_int(j.get("sponsorship_stated"))
             exists = self._conn.execute(
-                "SELECT 1 FROM sourced_job WHERE source_id=?", (j["source_id"],)
+                "SELECT location FROM sourced_job WHERE source_id=?", (j["source_id"],)
             ).fetchone()
             if exists:
                 # refresh volatile fields + stamp last_seen (still live), keep first_seen /
@@ -192,6 +192,16 @@ class Watchlist(BoardMixin):
                 # Workday) re-ingest rows without the body their detail fetch already filled.
                 jd = j.get("jd_text") or ""
                 if is_list_only(j) and not jd.strip():
+                    # ...except a stored location the US rule cannot place ("Springfield", stored
+                    # before the Workday country fix) gives way to a list location that it can
+                    # ("Springfield, United States", from the board's own US country filter).
+                    stored = exists[0] or ""
+                    loc = j["location"] or ""
+                    if stored and loc and loc != stored:
+                        from .sponsors import looks_us
+                        if not looks_us(stored) and looks_us(loc):
+                            self._conn.execute("UPDATE sourced_job SET location=? WHERE source_id=?",
+                                               (loc, j["source_id"]))
                     # A list-only row WITHOUT a body is the bare list entry. Its url (the
                     # synthetic jobs.smartrecruiters.com/{board}/{id}), location ("3 Locations")
                     # and posted_at (the "30+ Days Ago" floor) are weaker than what the detail

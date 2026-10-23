@@ -727,6 +727,78 @@
       "jobs_seen": 19,
       "sponsor": "Yelp Inc",
       "h1b_approvals": 242
+    },
+    "careers.citynational.com": {
+      "company": "City National Bank",
+      "platform": "radancy",
+      "sitemaps": [
+        "https://careers.citynational.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.citynational\\.com/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 78,
+      "sponsor": "City National Bank",
+      "h1b_approvals": 196
+    },
+    "careers.eliassen.com": {
+      "company": "Eliassen",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.eliassen.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.eliassen\\.com/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 273,
+      "sponsor": "Eliassen Group Llc",
+      "h1b_approvals": 184
+    },
+    "careers.pruitthealth.com": {
+      "company": "PruittHealth",
+      "platform": "phenom",
+      "sitemaps": [
+        "https://careers.pruitthealth.com/us/en/sitemap_index.xml"
+      ],
+      "job_url": "^https://careers\\.pruitthealth\\.com/us/en/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 1385,
+      "sponsor": "Pruitthealth",
+      "h1b_approvals": 0
+    },
+    "careers.veeva.com": {
+      "company": "Veeva Systems",
+      "platform": "other",
+      "sitemaps": [
+        "https://careers.veeva.com/sitemap.xml"
+      ],
+      "job_url": "^https://careers\\.veeva\\.com/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 898,
+      "sponsor": "Veeva Systems Inc",
+      "h1b_approvals": 176
+    },
+    "herecareers.com": {
+      "company": "HERE Technologies",
+      "platform": "other",
+      "sitemaps": [
+        "https://herecareers.com/sitemap_index.xml"
+      ],
+      "job_url": "^https://herecareers\\.com/job/",
+      "verified": "2026-10-23",
+      "jobs_seen": 10,
+      "sponsor": "Here North America Llc",
+      "h1b_approvals": 224
+    },
+    "jobs.iqvia.com": {
+      "company": "IQVIA",
+      "platform": "other",
+      "sitemaps": [
+        "https://jobs.iqvia.com/en/sitemap.xml"
+      ],
+      "job_url": "^https://jobs\\.iqvia\\.com/en/jobs/",
+      "verified": "2026-10-23",
+      "jobs_seen": 3681,
+      "sponsor": "Iqvia Rds Inc",
+      "h1b_approvals": 199
     }
   }
 }

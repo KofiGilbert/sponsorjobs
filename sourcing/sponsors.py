@@ -150,6 +150,13 @@ def looks_us(location: str) -> bool:
     return any(_one_place_us(p) for p in _PLACE_SPLIT.split(text) if p.strip())
 
 
+def names_foreign(location: str) -> bool:
+    """True when the location text names a foreign country, province or city (the same word
+    list `looks_us` uses to keep "Cambridge, UK" abroad). Used to keep a clearly foreign row
+    from being treated as US, and to read such rows last when a description budget is short."""
+    return bool(_FOREIGN.search(location or ""))
+
+
 # Separators between the places of a multi-location posting ("New York, US; Pune, India").
 _PLACE_SPLIT = re.compile(r"\s*(?:;|\||\n)\s*")
 

@@ -37,11 +37,16 @@ FEED_SEEN_DAYS = int(os.environ.get("JOBS_SEEN_DAYS", "7"))       # ...unless th
 # How many rows the cached full list HOLDS (for server-side filtering + pagination). The response
 # only ever sends ONE page, so this can be large without bloating any single payload -- it just
 # sets how deep the browsable board goes and the max "N jobs" total we can report.
-FEED_LIMIT = int(os.environ.get("JOBS_FEED_LIMIT", "150000"))          # rows PUBLISHED
+# Raised 150,000 -> 250,000 on 2026-10-23: the 11:51 build kept 162,384 rows after dedup and
+# published only 150,000, so 12,384 checked US sponsor roles were cut by this cap alone. The
+# desktop app holds ~1 KB of memory per row (140 MB for 149k) and downloads ~1 MB gz per 10k, so
+# past ~250-300k rows the list should move to server-side search (docs/feed.md, "Growing past 250k").
+FEED_LIMIT = int(os.environ.get("JOBS_FEED_LIMIT", "250000"))          # rows PUBLISHED
 # Rows READ from the database before the US / ad-stance / relevance filters run. This must be far
 # above FEED_LIMIT: the filters drop about half of what they see, and the database passed 74,000
 # rows on 2026-10-12, so a 50,000-row read was cutting live jobs before any filter saw them.
-FEED_SCAN_LIMIT = int(os.environ.get("JOBS_FEED_SCAN_LIMIT", "400000"))
+# 312,510 rows on 2026-10-23, so 400,000 was one discovery wave from cutting rows unseen: 600,000.
+FEED_SCAN_LIMIT = int(os.environ.get("JOBS_FEED_SCAN_LIMIT", "600000"))
 FUNNEL: dict = {}
 FUNNEL_SAMPLES: dict = {}
 FEED_TTL = int(os.environ.get("JOBS_FEED_TTL", "120"))            # seconds a built feed is reused

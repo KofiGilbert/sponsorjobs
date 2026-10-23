@@ -32,11 +32,13 @@ to continue; nothing is probed twice.
 
     python scripts/discover_careersites.py --limit 600 --minutes 60 [--workers 8] [--write] [--ipv4]
     python scripts/discover_careersites.py --report          # what the checkpoint holds
+    python scripts/discover_careersites.py --start 600 --limit 300 --minutes 30   # the next ranks
 """
 
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import re
 import sys
@@ -258,6 +260,8 @@ def http_get(url: str, timeout: int = TIMEOUT) -> tuple[int, str, str]:
             loc = ""
     except urllib.error.HTTPError as exc:
         return exc.code, "", exc.headers.get("Location", "") if exc.headers else ""
+    except http.client.HTTPException as exc:          # a cut-off chunked body (IncompleteRead):
+        raise OSError(f"broken response: {exc!r:.80}") from exc   # a network error, not a crash
     if body[:2] == b"\x1f\x8b":
         import gzip
         body = gzip.decompress(body)
@@ -596,6 +600,9 @@ def report(cp: Checkpoint, log=print) -> None:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--limit", type=int, default=600, help="top sponsors to consider (default 600)")
+    ap.add_argument("--start", type=int, default=0,
+                    help="skip this many uncovered sponsors first (a fresh checkpoint continues past ranks "
+                         "an earlier run already probed, e.g. --start 600 after the 2026-10-12 run)")
     ap.add_argument("--minutes", type=float, default=60.0, help="stop after this long (0 = no cap)")
     ap.add_argument("--workers", type=int, default=8, help="employers probed at once (default 8)")
     ap.add_argument("--gap", type=float, default=1.0, help="seconds between requests to one domain (min 1)")
@@ -612,7 +619,7 @@ def main(argv=None) -> int:
         return 0
     from sourcing.growth import load_sponsor_seed, read_watchlist_seed
     sites = load_sites()
-    employers = pick_employers(load_sponsor_seed(), read_watchlist_seed(), sites, a.limit)
+    employers = pick_employers(load_sponsor_seed(), read_watchlist_seed(), sites, a.start + a.limit)[a.start:]
     todo = [e for e in employers if e["key"] not in cp.employers]
     print(f"{len(employers)} uncovered top sponsors; {len(todo)} still to probe "
           f"(checkpoint {a.checkpoint})")

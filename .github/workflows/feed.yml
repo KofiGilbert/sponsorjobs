@@ -86,6 +86,10 @@ jobs:
           # (2000) let 18 boards eat a whole 20-minute run; 200 lets a run reach many boards, and
           # descriptions already stored are never re-read, so big boards still fill in over runs.
           WORKDAY_MAX_DETAIL_FEED: ${{ vars.WORKDAY_MAX_DETAIL_FEED || 600 }}
+          # Rows LISTED per Workday board (Workday's own list ceiling is 2000). The code default
+          # (1000) cut the biggest sponsors' boards in half; the list is US-only where the board
+          # offers a country facet (sourcing/workday.py), so these are US rows.
+          WORKDAY_MAX_JOBS: ${{ vars.WORKDAY_MAX_JOBS || 2000 }}
           SMARTRECRUITERS_MAX_DETAIL_FEED: ${{ vars.SMARTRECRUITERS_MAX_DETAIL_FEED || 200 }}
           # The career-site lane (sourcing/careersite.py) runs beside shard 0's board pass: its own
           # wall-clock cap, job pages read per site per run, and hosts crawled at once (each host
@@ -158,7 +162,7 @@ jobs:
       - name: Merge the shards and build the feed
         env:
           TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
-          JOBS_FEED_LIMIT: ${{ vars.JOBS_FEED_LIMIT || 150000 }}
+          JOBS_FEED_LIMIT: ${{ vars.JOBS_FEED_LIMIT || 250000 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
             --merge-dir .shards \
