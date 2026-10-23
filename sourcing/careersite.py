@@ -609,8 +609,8 @@ def crawl_site(store, host_name: str, cfg: dict, *, text_fetch=fetch_page, sleep
                     raise Blocked(f"{host_name}: {summary['errors']} unreadable pages ({exc!s:.60})") from exc
                 continue
             posting = extract_jobposting(page)
-            if posting is None and cfg.get("reader"):              # framework JSON, no JSON-LD
-                posting = readers.read_page(cfg["reader"], page, url)
+            if posting is None and readers.reader_for(cfg):        # framework JSON, no JSON-LD
+                posting = readers.read_page(readers.reader_for(cfg), page, url)
             if posting is not None and skip is not None and not readers.keep_by_page(cfg, posting):
                 summary["dropped"] += 1                            # an hourly / store role
                 skip.remember(host_name, url, str(posting.get("title") or ""))

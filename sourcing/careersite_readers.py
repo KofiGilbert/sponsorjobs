@@ -385,7 +385,56 @@ def read_nextdata(page_html: str, url: str = "") -> dict | None:
     return _generic(doc) if known is _NOT_THIS_SHAPE else known
 
 
-READERS = {"nextdata": read_nextdata}
+_PH_DDO = re.compile(r"phApp\.ddo\s*=\s*")
+
+
+def read_phenom(page_html: str, url: str = "") -> dict | None:
+    """A JobPosting-shaped dict from a Phenom page's `phApp.ddo` object, or None.
+
+    Phenom sites (State Street, Merck, Thermo Fisher, GE HealthCare, Xoriant...) embed the
+    posting as JSON-LD on most pages, but on many the JSON-LD script is EMPTY and the posting
+    lives only in the page's own `phApp.ddo = {"jobDetail": {"status": 200, "data": {"job":
+    {...}}}}` (checked 2026-10-23: 4 of 5 State Street pages; the feed build logged ~1,200
+    "no posting" pages a run across the Phenom sites). Fields used: title, description,
+    companyName, city / state / country (or cityStateCountry), postedDate, jobId / reqId,
+    type / positionType, category. A status other than 200 or a job without a title is None."""
+    m = _PH_DDO.search(page_html or "")
+    if not m:
+        return None
+    start = page_html.find("{", m.end() - 1)
+    try:
+        doc, _ = json.JSONDecoder(strict=False).raw_decode(page_html, start)
+    except ValueError:
+        return None
+    jd = doc.get("jobDetail") if isinstance(doc, dict) else None
+    if not isinstance(jd, dict) or jd.get("status") not in (200, "200", None):
+        return None
+    job = (jd.get("data") or {}).get("job") if isinstance(jd.get("data"), dict) else None
+    if not isinstance(job, dict):
+        return None
+    title = _text(job.get("title"))
+    desc = job.get("description") or ""
+    if not title or not isinstance(desc, str):
+        return None
+    city, state, country = _text(job.get("city")), _text(job.get("state")), _text(job.get("country"))
+    if city or state or country:
+        places = [{"address": {"addressLocality": city, "addressRegion": state, "addressCountry": country}}]
+    else:
+        loc = _first(job, ("cityStateCountry", "location", "locationName"))
+        places = [{"address": {"name": loc}}] if loc else []
+    return _posting(title, desc, _text(job.get("companyName")), places,
+                    _iso(_first(job, ("postedDate", "dateCreated"))), "",
+                    _first(job, ("positionType", "type")), _first(job, ("jobId", "reqId", "jobSeqNo")),
+                    _first(job, ("category", "jobFamily")))
+
+
+READERS = {"nextdata": read_nextdata, "phenom": read_phenom}
+
+
+def reader_for(cfg: dict) -> str:
+    """The reader a site entry gets: its own `reader`, else the platform's (every Phenom site
+    gets `phenom`), else none."""
+    return str(cfg.get("reader") or ("phenom" if cfg.get("platform") == "phenom" else ""))
 
 
 def read_page(reader: str, page_html: str, url: str = "") -> dict | None:

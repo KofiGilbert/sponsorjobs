@@ -79,7 +79,7 @@ Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/m
 | `sponsors/{a..z,0..9,_}.json.gz` | the browser extension's sponsor index (`scripts/build_sponsor_index.py`, built in the same workflow run): `{index_version, version, shard, records: {norm_name: [display_name, h1b_approvals, h1b_last_fy, h1b_first_fy, perm_certs, e_verify, cap_exempt, naics2, state, h1b_5y, denial_pct, flags]}}` (the last three are the 2026-10 compact facts: approvals over the newest five fiscal years, denial rate in whole percent, bit set 1 = H-1B dependent / 2 = willful violator; trailing zeros dropped), ~8 MB in all. Lets the extension badge jobs with no app installed, without sending a company name anywhere | `max-age=86400` |
 | `sponsors/manifest.json` | `{index_version, version (content hash), generated_at, employers, stats, shards: {key: {file, bytes, records}}, total_bytes}`; the extension re-checks it at most daily | `no-cache` |
 
-The list holds up to **50,000** rows (`JOBS_FEED_LIMIT`, default raised from 10,000), dated rows older
+The list holds every row that passes the checks (`JOBS_FEED_LIMIT`, 1,000,000 since 2026-10-23), dated rows older
 than **45 days** are dropped (`JOBS_FRESH_DAYS`), and rows unseen by a crawl for 21 days are pruned.
 At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
 
@@ -643,6 +643,104 @@ Checked and left OUT on 2026-10-12: Goldman Sachs (`higher.gs.com` robots.txt di
 everything), Wells Fargo and Cognizant (robots.txt allows and the sitemaps list 1,402 and 2,126
 jobs, but every job page answers a Cloudflare challenge), Target (a Workday tenant, `sourcing/workday.py`);
 Salesforce (`careers.salesforce.com` answers a redirect; not followed further). None of the candidates needed the `nextdata` reader besides Walmart.
+
+### Growing toward 500k jobs (2026-10-23)
+
+Starting point, the 2026-10-23 11:51 build: `in_db=312,510`, `not_us=124,568`, `ad_says_no=13,939`,
+`kept=167,472`, 5,088 cross-feed duplicates, **150,000 written**. Same quality rules throughout (US
+only, fresh or still listed, not "no sponsorship", sponsor-relevant); only the reach changed.
+
+**1. The publish cap was cutting checked rows.** 162,384 rows survived every filter and the dedup,
+and `JOBS_FEED_LIMIT` (150,000) cut 12,384 of them. PR #86 (same day) lifted the cap to 1,000,000
+and the scan to 2,000,000. Gain: **+12,384 at once.**
+
+**2. `too_old` is not a drop.** The funnel's `too_old_still_seen_7d` (66,097) counts rows posted over
+45 days ago that a board still listed in the last 7 days; those are KEPT (`fresh_recent` = 305,983
+of 312,510, so only 6,527 rows left for age). Every board is crawled every run (3 shards, 422 / 401
+/ 409 boards in ~7,000 s of the 8,400 s cap), so the 7-day rule does not drop live jobs. Nothing to fix.
+
+**3. `not_us` is mostly right.** A sample of 1,367 rows from 37 random Greenhouse / Lever / Ashby
+boards: 304 not US, of which ~280 are plainly abroad (Budapest, Toronto, Pune, London...) and ~24
+are ambiguous ("Remote", "Hybrid", "Global", "SFHQ"; left alone: a bare "Remote" on a global board
+is not a US promise). The real misreads were on **Workday**: campus, plant and city names with no
+state ("Springfield", "MN-Champlin", "New Bedford", "East Hanover", "101 Corsair Hall"), stored
+before the 2026-10-18 country fix and never re-read, because a stored row's description is not
+fetched again. Fixed below, through the board's own country field.
+
+**4. Workday: list US roles only, and up to the ceiling** (`sourcing/workday.py`).
+
+* `us_country_facet` finds the board's US country value in the first list response
+  (`locationCountry`, `Location_Country`, `LocationCountry`, `Country`, a custom
+  `CF_..._Country_...`, NVIDIA's `locationHierarchy1`; nested groups too; a `locations` facet
+  holding one office called "United States" is not a country filter). When it covers fewer rows
+  than the whole list, page one is read again with it applied, so the per-board cap and the
+  description budget go to US roles. `WORKDAY_US_ONLY=0` switches it off.
+* A row the board's US filter returned gets ", United States" when its location reads as nothing
+  (`place_in_us`); a foreign-named one ("Tokyo, Japan", matched through another office) and
+  "N Locations" (the description read fills it) are left alone. `Watchlist.upsert_jobs` lets such
+  a list location replace a stored one the US rule cannot place, so the old rows are mended too.
+* Boards without the facet: `select_checked_rows` reads descriptions for US-readable rows before
+  clearly foreign ones (`sponsors.names_foreign`), so a short budget is not spent on Pune.
+* `WORKDAY_MAX_JOBS` is **2000** in the feed (Workday's own list ceiling; the code default 1000
+  stays for desktop refreshes).
+* Discovery's fallback site names gained `External_Career_Site` and `ExternalCareers` (the 3rd and
+  4th most used of the 369 watched sites).
+
+Probe 2026-10-23 (one list request per board, 50 random watched boards): 27 offer a US country
+facet; the boards were already listing ~7,800 US rows and would list ~9,800 (**+2,000 per 50
+boards, about +14,800 across 369**, before the ~8% that say "no sponsorship"). Measured end to end on
+five boards (list only, US-readable rows before -> after): Salesforce 105 -> 166 (529 US roles; the
+rest are "N Locations" until their description is read), Amgen 406 -> 489, Cardinal Health 357 ->
+635, Santander 86 -> 193, Ochsner 979 -> 1,741 (no facet; the 1,000 cap). **+1,291 on five boards.**
+
+**5. Phenom pages with an empty JSON-LD block** (`careersite_readers.read_phenom`). Many Phenom job
+pages ship `<script type="application/ld+json"></script>` and keep the posting in the page's own
+`phApp.ddo` object, so the lane logged ~1,200 "no posting" pages a run on the Phenom sites (State
+Street 234, Thermo Fisher 171, GE HealthCare 140, Xoriant 129, Merck 110...) and re-read them every
+run. Every `platform: phenom` entry now gets the reader (`reader_for`); an explicit `reader` wins.
+Capped probe, 12 pages each: State Street 12 of 12 kept (was 1 of 5), Merck 12 of 12 (8 US).
+
+**6. New career sites.** `discover_careersites.py --start 500 --limit 300` (sponsor ranks 500-800;
+`--start` added so a fresh checkpoint does not re-probe the first run's hosts; a cut-off chunked
+body no longer kills the run). 300 employers, 2,351 hosts, 35 minutes: 6 new sites verified and
+added (sitemap + JobPosting JSON-LD, robots allows):
+
+| Site | Job URLs | 12-page probe |
+|---|---|---|
+| IQVIA (`jobs.iqvia.com`) | 3,681 | 12 kept; global (first 8 all Europe) |
+| PruittHealth (`careers.pruitthealth.com`, Phenom; PERM filer) | 1,385 | 12 kept, all US |
+| Veeva Systems (`careers.veeva.com`) | 898 | 12 kept, about half US |
+| Eliassen Group (`careers.eliassen.com`) | 273 | 12 kept, 7 of 8 US |
+| City National Bank (`careers.citynational.com`, Radancy) | 78 | not probed |
+| HERE Technologies (`herecareers.com`) | 10 | not probed |
+
+Walmart was already in the table (2026-10-12, `nextdata` reader): 15,551 job URLs but a 6% keep
+rate by design (store, club and DC roles drop), so it adds ~1,000 roles in all, not 15,000.
+
+Blocked on contact 2026-10-23 (403; left alone, do not re-probe): Verizon (`mycareer.verizon.com`
+job pages), Progressive (`careers.progressive.com`), Kearney (`careers.atkearney.com`), Hallmark,
+Cohesity, Shutterfly (again). In the 2026-10-23 feed run the lane itself was refused by Gartner
+(`jobs.gartner.com`), SAP (`jobs.sap.com`) and Equifax (`careers.equifax.com`), all 403: the lane
+stops that host for the run, as designed; if they keep refusing, take them out of the table.
+
+**Projection.**
+
+| Source | Rows gained (published) | How sure |
+|---|---|---|
+| Publish cap lifted (PR #86) | +12,400 | certain (next build) |
+| Workday US facet + 2000 list cap + location mending | +12,000 to +15,000 | probe of 50 + 5 boards; fills over ~3 runs (600 descriptions per board per run) |
+| New career sites (6) | +2,500 to +3,500 | IQVIA's US share unknown |
+| Phenom reader | +400 to +800 | 12-page probes |
+| **Total** | **~+27k to +32k: ~190k to 195k published** | |
+
+Reaching 500k honestly needs about 2.5x the sources, not looser filters: the watchlist at ~3,000
+boards (the daily discovery adds ~100-300 a week at a falling hit rate past rank 4,000), Workday
+boards over 2,000 US roles split by `jobFamilyGroup` facet (CVS lists 19,562; today
+`JOBS_MAX_PER_COMPANY` 2,000 caps every employer), ~100 more career sites, and a fourth crawl
+shard once the list passes ~3,500 boards. **Client size:** the app holds ~1 KB per row in memory
+(140 MB for 149k) and downloads ~1 MB gzipped per 10k rows, so 250k is ~25 MB to download and
+~240 MB in memory. Past ~250-300k rows the Jobs page should move to server-side search (the
+client asks a search endpoint for one page; see `docs/server-search-plan.md`).
 
 ## Set-up, step by step
 

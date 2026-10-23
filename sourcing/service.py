@@ -164,8 +164,13 @@ def select_checked_rows(ats: str, jobs: list[dict], criteria: dict, fetch=fetch_
     known = set(known_ids or ())
     kept: list[dict] = []
     fetched = unchecked = 0
-    # Stable sort: newest posting date first, undated last, board order within a date.
+    # Stable sort: newest posting date first, undated last, board order within a date; then a
+    # row whose location names a foreign place moves behind every other one, so a short budget
+    # is spent on roles the US-only feed can publish (a global Workday board without a country
+    # facet lists London and Pune beside Austin). Foreign rows are still read when budget is left.
+    from .sponsors import looks_us, names_foreign
     ordered = sorted(jobs, key=lambda j: j.get("posted_at") or "", reverse=True)
+    ordered.sort(key=lambda j: names_foreign(j.get("location") or "") and not looks_us(j.get("location") or ""))
     for j in ordered:
         if not matches_criteria(j, criteria):
             continue
