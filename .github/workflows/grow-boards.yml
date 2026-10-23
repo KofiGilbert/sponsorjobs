@@ -16,7 +16,7 @@ name: grow-boards
 # after merge the feed build's sync_seed picks the new boards up.
 on:
   schedule:
-    - cron: "41 7 * * 1"        # Mondays 07:41 UTC
+    - cron: "41 7 * * *"        # daily 07:41 UTC (was Mondays; owner 2026-10-23)
   workflow_dispatch:
     inputs:
       limit:
