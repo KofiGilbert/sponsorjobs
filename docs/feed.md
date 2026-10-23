@@ -28,8 +28,9 @@ the `.json.gz` files as plain gzip without `Content-Encoding`; the app checks th
 and unpacks either form (`sourcing/feedfile.loads_maybe_gz`, `sourcing/feedclient.py`), so nothing
 breaks. Every file gets GitHub's fixed `Cache-Control: max-age=600` (the list parts too: Pages
 cannot mark them immutable). A Pages deploy replaces the whole site, so the previous version's
-parts vanish at once; a client mid-download then gets a 404 and re-reads the manifest. On R2 the
-previous version's parts are kept for one more build.
+parts vanish at once; a client mid-download then gets a 404 and re-reads the manifest (stable parts
+that did not change survive the deploy, so this is rarer). On R2 the parts named by the last three
+manifests are kept.
 
 ### Pages set-up, step by step
 
@@ -59,8 +60,8 @@ GitHub Action (every 3h, .github/workflows/feed.yml)
                           (backend.feed.feed_jobs) -> dedupe board vs aggregator (sourcing/dedup.py)
                           -> sourcing/feedfile.write_feed
   scripts/upload_feed.py  put_object to R2 (S3 API) with Content-Type / Content-Encoding / Cache-Control;
-                          list parts before the list, manifest last, then deletes parts named by
-                          neither the new manifest nor the one it replaced
+                          list parts before the list (skipping parts the bucket already has),
+                          manifest last, then deletes parts none of the last 3 manifests name
 R2 bucket, custom domain  https://<domain>/feed/jobs.json.gz, /feed/jd/{xx}.json.gz, /feed/manifest.json
 Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/main.js sets it)
   sourcing/feedclient.py  download jobs.json.gz hourly (ETag), cache under data/feed_cache/,
@@ -75,7 +76,10 @@ Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/m
 | `jobs.json.gz` | `{feed_version: 1, generated_at, count, attribution, jobs: [...]}`; each row is a board row **without** `jd_text` (~500 bytes instead of ~9 KB): `source_id, source, company, title, location, remote, url, posted_at, first_seen, salary, sponsorship_stated, us, entry_level, visa, nationality_visas, sponsor` | `max-age=600` |
 | `jd/{xx}.json.gz` | `{source_id: jd_text}` for every job whose `sha1(source_id)` starts with `xx` -- 256 fixed shards, so a crawl uploads ~257 objects, not 50,000 | `max-age=86400` |
 | `parts/jobs-{version}-{nnn}.json.gz` | the SAME list split into ~1 MB gzipped parts (~10 for 96k roles), each `{version, part, parts, jobs: [...]}`; joined in order they are exactly `jobs.json.gz`'s rows. `version` is a hash of the rows, so the names are content-addressed and a part never changes | `max-age=31536000, immutable` (R2) |
-| `manifest.json` | tiny, uncompressed: `{generated_at, count, jobs_url, jd_shard_count, jd_url_template, parts: {version, count, total_bytes, attribution, files: [{url, sha256, raw_sha256, bytes, count}]}}` | `no-cache` |
+| `parts/s-{sha}.json.gz` | the SAME list again in the **stable layout** (2026-10-23): rows grouped by the ISO week they were first seen (oldest first; inside a week by `first_seen`, then `source_id`), cut into ~1 MB parts, each `{bucket, jobs: [...]}` with rows as sorted-key JSON. The name is the hash of the part's own bytes, so a part whose rows did not change keeps its name across rebuilds | `max-age=31536000, immutable` (R2) |
+| `parts/d-{sha}.json.gz` | the stable layout's removed rows: `{removed: {part url: [row indexes]}}`, the rows of kept parts that left the list or changed since that part was written | same |
+| `manifest.json` | tiny, uncompressed: `{generated_at, count, jobs_url, jd_shard_count, jd_url_template, parts: {version, count, total_bytes, attribution, files: [{url, sha256, raw_sha256, bytes, count}]}, stable: {format: 1, version, count, order: "recent", total_bytes, attribution, files: [{url, sha256, raw_sha256, bytes, count, bucket}], removed: {url, sha256, raw_sha256, bytes, count}}}` (`removed` only when rows were removed) | `no-cache` |
+| `manifest-history.json` | R2 only, written by the uploader: the part lists of the last 3 manifests, `{manifests: [[url, ...], ...]}`; parts none of them name are deleted | `no-cache` |
 | `sponsors/{a..z,0..9,_}.json.gz` | the browser extension's sponsor index (`scripts/build_sponsor_index.py`, built in the same workflow run): `{index_version, version, shard, records: {norm_name: [display_name, h1b_approvals, h1b_last_fy, h1b_first_fy, perm_certs, e_verify, cap_exempt, naics2, state, h1b_5y, denial_pct, flags]}}` (the last three are the 2026-10 compact facts: approvals over the newest five fiscal years, denial rate in whole percent, bit set 1 = H-1B dependent / 2 = willful violator; trailing zeros dropped), ~8 MB in all. Lets the extension badge jobs with no app installed, without sending a company name anywhere | `max-age=86400` |
 | `sponsors/manifest.json` | `{index_version, version (content hash), generated_at, employers, stats, shards: {key: {file, bytes, records}}, total_bytes}`; the extension re-checks it at most daily | `no-cache` |
 
@@ -111,6 +115,38 @@ At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
   manifest (or no manifest) falls back to the single file above, so an older feed still works, and
   `jobs.json.gz` is still published for app versions that predate the parts. `feed-status` reports
   `parts_done` / `parts_total`, and `bytes` / `total` count across all parts.
+- **Only the parts that changed are downloaded** (2026-10-23). The per-version parts above carry a
+  hash of the whole list in their names and are cut by recency, so every 3-hourly rebuild renamed
+  all of them and an open app fetched the whole list again (~15 MB at 150k roles, ~60 MB a day).
+  When `manifest.json` has a `stable` block the app uses it instead: it keeps the stable parts in
+  `feed_cache/parts/store/` after joining them (they are not deleted), fetches only the files the
+  manifest names that it does not have, joins the parts minus the rows the `removed` file lists,
+  sorts them newest first (`feedfile.recency_key`: posting date, then first seen, then
+  `source_id`, undated last; the order `jobs.json.gz` has), checks the total against `count`, and
+  deletes the store files the manifest no longer names. Resume, sha256 checks, the 404 re-read and
+  the same-version short cut work as for the per-version parts (the state key is
+  `stable_version`). Apps from before this read the `parts` block or `jobs.json.gz`, which are
+  still written, so nothing changes for them.
+- **How the builder keeps parts stable** (`feedfile.write_stable`). The build starts from the
+  previous build's stable parts, saved in the crawl's data dir (`.feed-data/feed-prev/`, which the
+  workflow already caches between runs). A previous part is kept as it is (same name, copied into
+  the output, since a Pages deploy replaces the whole site) when at most 20% of its rows are dead
+  and it is at least half the target size. Its rows that left the list or changed are listed in the
+  `removed` file. Changed rows, new rows and the rows of parts that were not kept are laid out by
+  first-seen week into new parts. Without the `removed` file, the ~1% of roles that close between
+  two builds, spread over every week, would touch every part. With no saved state (the first run,
+  a cache miss, a file failing its sha256) the build lays everything out afresh: correct, just a
+  full download once. The uploader does not resend a part the bucket already has.
+- **Measured** (2026-10-23, the live 150k-role list, a rebuild simulated with 1% of rows added,
+  1% removed and 1% changed): the per-version parts make a client fetch the whole
+  list on every rebuild (13.1 MB for the 130k rows of the 13 parts that downloaded intact); the
+  stable layout fetched **0.39 MB** on the first rebuild (2 of 16 files: one new part and the
+  removed file). Over 32 simulated rebuilds in a row (4 days) it averaged **1.25 MB** a rebuild
+  against 14.4 MB (8.7%), including the rebuilds that rewrite parts past 20% dead (up to 5.7 MB
+  once). The removals were spread at random, the worst case; real closures lean to older weeks.
+  The stable files also compress smaller (10.2 MB against 13.0 MB fresh) and grow to ~16 MB with
+  dead rows before compaction. For an app open 12 h (4 rebuilds) that is ~5 MB a day instead of
+  ~60 MB.
   Proven 2026-10-14 against the live 96k-role list on a local origin that cut the connection after
   every 1-3 MB: the parts landed after 6 drops (12.5 MB sent for 9.4 MB of parts); the single file
   failed all 3 attempts.

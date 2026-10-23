@@ -427,7 +427,15 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
     from sourcing.feedfile import read_workers
     log(f"[build_feed] writing: reading {len(rows)} ads in {read_workers(len(rows))} process(es)")
     tw = time.time()
-    manifest = write_feed(out_dir, rows, jd_by_id, jobs_url=jobs_url)
+    # The last build's stable parts live in the data dir (cached between runs), so this build
+    # re-sends only the parts whose rows changed (sourcing/feedfile.write_stable).
+    from sourcing.feedfile import STABLE_STATE_DIR, save_stable_state
+    prev_dir = Path(data_dir) / STABLE_STATE_DIR
+    manifest = write_feed(out_dir, rows, jd_by_id, jobs_url=jobs_url, prev_dir=prev_dir)
+    save_stable_state(out_dir, prev_dir)
+    st = manifest.get("stable") or {}
+    log(f"[build_feed] stable layout: {len(st.get('files') or [])} parts, "
+        f"{(st.get('removed') or {}).get('count', 0)} removed rows, version {st.get('version')}")
     parts = manifest.get("parts") or {}
     log(f"[build_feed] wrote {manifest['count']} jobs ({len(parts.get('files') or [])} list parts, "
         f"version {parts.get('version')}) + {manifest['jd_shard_count']} JD shards to "

@@ -135,6 +135,12 @@ def test_build_feed_from_a_fake_crawl(tmp_path, monkeypatch):
     parts = m["parts"]["files"]
     joined = [j for f in parts for j in loads_maybe_gz((tmp_path / "out" / f["url"]).read_bytes())["jobs"]]
     assert joined == head["jobs"] and m["parts"]["count"] == len(ids)
+    # ...and in the stable layout, saved in the data dir for the next build to start from
+    # (tests/test_feed_stable.py).
+    st = m["stable"]
+    assert st["count"] == len(ids) and all((tmp_path / "out" / f["url"]).exists() for f in st["files"])
+    saved = json.loads((tmp_path / "data" / "feed-prev" / "manifest.json").read_text())
+    assert saved["stable"]["version"] == st["version"]
     sh = loads_maybe_gz((tmp_path / "out" / "jd" / f"{shard_for('greenhouse:dropbox:11')}.json.gz").read_bytes())
     assert "Build sync." in sh["greenhouse:dropbox:11"]
 
@@ -253,8 +259,9 @@ def test_uploader_sets_headers_and_orders_manifest_last(tmp_path):
     write_feed(tmp_path, [_row("greenhouse:acme:1")], {"greenhouse:acme:1": "jd"})
     c = _FakeS3()
     keys = upload_feed.upload(tmp_path, c, "bucket", prefix="/feed/", log=lambda *a: None)
-    assert len(keys) == 259 and keys[-1] == "feed/manifest.json" and keys[-2] == "feed/jobs.json.gz"
-    assert keys[-3].startswith("feed/parts/jobs-")              # the list parts before the list
+    assert len(keys) == 260 and keys[-1] == "feed/manifest.json" and keys[-2] == "feed/jobs.json.gz"
+    assert keys[-4].startswith("feed/parts/jobs-")              # the list parts before the list
+    assert keys[-3].startswith("feed/parts/s-")                 # ...the stable layout's too
     assert keys[0].startswith("feed/jd/")
     by_key = {p["Key"]: p for p in c.puts}
     lst = by_key["feed/jobs.json.gz"]

@@ -22,7 +22,8 @@ Engine memory is ~0.22 GB at 150k after PR #83. A full-board filter on a 25k cac
 | 1M | 100 MB | 28 min | 20 s | ~1.5 GB | ~1.9 s | ~400 MB |
 
 \* The feed rebuilds every 3 h, and a part's name is a hash of all rows, so each rebuild means a
-full re-download (4 rebuilds in 12 h).
+full re-download (4 rebuilds in 12 h). Phase 1 (stable parts, 2026-10-23) cuts this to the parts that
+changed; see docs/feed.md for the measured figure.
 
 **Switch point: 250k roles** (~25 MB, ~7 min on the hotspot, ~0.37 GB). Past that the first launch on
 a slow link is a long wait, a laptop with 8 GB of RAM feels it, and the daily download costs real
@@ -172,9 +173,11 @@ so they run locally.
 
 ### Migration phases
 
-1. **Quick win (now).** Hold `JOBS_FEED_LIMIT` at ≤250k. Make the list parts stable: bucket rows by
-   `first_seen` week so a rebuild re-sends only the parts that changed. This cuts the 3-hourly full
-   re-download. *Test:* two builds that share most rows share most part names.
+1. **Quick win (now). Built 2026-10-23** (`feedfile.write_stable`, docs/feed.md). Hold
+   `JOBS_FEED_LIMIT` at ≤250k. Make the list parts stable: bucket rows by `first_seen` week so a
+   rebuild re-sends only the parts that changed, with a small removed-rows file so roles closing
+   across all weeks do not touch every part. This cuts the 3-hourly full re-download. *Test:* two
+   builds that share most rows share most part names (tests/test_feed_stable.py).
 2. **Index + API (no client change).** Add the D1 schema and FTS5 migration in `worker/migrations`.
    Add a diff loader step to `feed.yml`, run after `build_feed.py` (D1 HTTP API, a scoped token in an
    Actions secret). Add `/v1/jobs/search` and `/v1/jobs/candidates`. *Tests:* vitest for parameter

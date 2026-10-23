@@ -79,7 +79,7 @@ def test_the_version_follows_the_rows_not_the_build_time(tmp_path):
     # New rows: a new version, and the old version's parts leave the output dir.
     c = _build(tmp_path / "a", _rows(51))["parts"]
     assert c["version"] != a["version"]
-    names = sorted(p.name for p in (tmp_path / "a" / PARTS_DIR).iterdir())
+    names = sorted(p.name for p in (tmp_path / "a" / PARTS_DIR).glob("jobs-*"))
     assert names == sorted(Path(f["url"]).name for f in c["files"])
 
 
@@ -121,22 +121,45 @@ class _S3:
 def test_the_uploader_sends_parts_immutable_before_the_list_and_prunes_old_versions(tmp_path):
     from scripts import upload_feed
     s3 = _S3()
-    v1 = _build(tmp_path / "v1", _rows(300))["parts"]
+
+    def refs(m):
+        st = m["stable"]
+        return ([f"feed/{f['url']}" for f in m["parts"]["files"] + st["files"]]
+                + ([f"feed/{st['removed']['url']}"] if st.get("removed") else []))
+    m1 = _build(tmp_path / "v1", _rows(300))
     keys = upload_feed.upload(tmp_path / "v1", s3, "b", prefix="feed", log=lambda *a: None)
-    part_keys = [f"feed/{f['url']}" for f in v1["files"]]
+    part_keys = refs(m1)
     assert keys[-2:] == ["feed/jobs.json.gz", "feed/manifest.json"]
     assert keys[-2 - len(part_keys):-2] == part_keys                 # parts land before the list
     hdr = {p["Key"]: p for p in s3.puts}[part_keys[0]]
     assert hdr["CacheControl"] == "public, max-age=31536000, immutable"
     assert hdr["ContentEncoding"] == "gzip" and hdr["ContentType"] == "application/json"
-    v2 = _build(tmp_path / "v2", _rows(301))["parts"]
-    upload_feed.upload(tmp_path / "v2", s3, "b", prefix="feed", log=lambda *a: None)
-    assert not s3.deleted                                            # v1 kept one more version
-    v3 = _build(tmp_path / "v3", _rows(302))["parts"]
-    upload_feed.upload(tmp_path / "v3", s3, "b", prefix="feed", log=lambda *a: None)
-    assert sorted(s3.deleted) == sorted(part_keys)                   # v1 gone, v2 + v3 stay
+    # The parts of the last KEEP_MANIFESTS (3) manifests stay; older ones go.
+    ms = [m1] + [_build(tmp_path / f"v{i}", _rows(300 + i)) for i in (2, 3, 4)]
+    for i in (2, 3):
+        upload_feed.upload(tmp_path / f"v{i}", s3, "b", prefix="feed", log=lambda *a: None)
+    assert not s3.deleted
+    upload_feed.upload(tmp_path / "v4", s3, "b", prefix="feed", log=lambda *a: None)
+    assert sorted(s3.deleted) == sorted(refs(m1))
     left = {k for k in s3.objects if k.startswith("feed/parts/")}
-    assert left == {f"feed/{f['url']}" for f in v2["files"] + v3["files"]}
+    assert left == {k for m in ms[1:] for k in refs(m)}
+    hist = json.loads(s3.objects["feed/manifest-history.json"])["manifests"]
+    assert [sorted(h) for h in hist] == [sorted(k[len("feed/"):] for k in refs(m)) for m in ms[1:]]
+
+
+def test_the_uploader_does_not_resend_a_part_the_bucket_already_has(tmp_path):
+    from scripts import upload_feed
+    s3 = _S3()
+    rows = _rows(300)
+    _build(tmp_path / "v1", rows)
+    upload_feed.upload(tmp_path / "v1", s3, "b", log=lambda *a: None)
+    s3.puts.clear()
+    m2 = _build(tmp_path / "v2", rows, generated="2026-10-14T15:00:00+00:00")
+    upload_feed.upload(tmp_path / "v2", s3, "b", log=lambda *a: None)
+    put = [p["Key"] for p in s3.puts]
+    assert not any(k.startswith("parts/") for k in put)              # same rows: same parts
+    assert "manifest.json" in put and not s3.deleted
+    assert all(f"{f['url']}" in s3.objects for f in m2["stable"]["files"])
 
 
 # -- the client ------------------------------------------------------------------------------ #
@@ -225,7 +248,9 @@ def origin(tmp_path, monkeypatch):
 
 
 def _feed(o, cache, **kw):
-    return StaticFeed(o.url, cache, retry_pause=0, **kw)
+    # These tests cover the per-version "parts" block, which app versions from before the stable
+    # layout read (tests/test_feed_stable.py covers the "stable" block).
+    return StaticFeed(o.url, cache, retry_pause=0, legacy_parts=True, **kw)
 
 
 def test_parts_download_assemble_and_never_touch_the_single_file(tmp_path, origin):
@@ -372,13 +397,16 @@ def test_the_loading_state_counts_parts_and_bytes(tmp_path, origin):
     o = origin(_rows(800), pause=0.01)                              # ~1 KB per 10 ms per part
     total = o.manifest["parts"]["total_bytes"]
     n = len(o.manifest["parts"]["files"])
-    sf = StaticFeed(o.url, tmp_path / "cache", wait=0.05, retry_pause=0)
+    sf = StaticFeed(o.url, tmp_path / "cache", wait=0.05, retry_pause=0, legacy_parts=True)
     with pytest.raises(FeedLoading):
         sf.jobs()
     seen = []
     deadline = time.monotonic() + 15
     while sf.downloading() and time.monotonic() < deadline:
         st = sf.status()
+        if not st["parts_total"]:            # still reading the (trickled) manifest
+            time.sleep(0.02)
+            continue
         seen.append((st["parts_done"], st["bytes"]))
         assert st["parts_total"] == n and st["total"] == total and st["bytes"] <= total
         time.sleep(0.02)
