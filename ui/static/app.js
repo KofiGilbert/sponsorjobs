@@ -6765,7 +6765,7 @@
   // interviewer over the call's data channel (Tavus Interactions Protocol). Nobody is cut off
   // mid-sentence by a timer: at the answer budget the interviewer moves on at the next pause, and
   // only if no pause comes does it step in politely, the way a person would.
-  let CVI_CALL = null, CVI_TK = null, CVI_HEARD = false;
+  let CVI_CALL = null, CVI_TK = null, CVI_HEARD = false, CVI_T = null, CVI_WAIT = null;
   function cviSend(eventType, props) {
     if (!CVI_CALL || !R2) return;
     try {
@@ -6812,9 +6812,11 @@
     fitCviCall();
     $("#cviEnd")?.addEventListener("click", () => endCvi());
     if (window.Daily) {
-      CVI_HEARD = false;
+      // Nothing counts until the interviewer is on screen: not the clock, not the timekeeper, and
+      // not the pass. Joining, connecting, or a call that never gets going costs the person nothing.
+      CVI_HEARD = false; CVI_T = t;
       CVI_CALL = window.Daily.createCallObject({ subscribeToTracksAutomatically: true });
-      CVI_TK = startTimekeeper(t);
+      CVI_WAIT = setTimeout(() => cviDropped("no interviewer"), 90000);
       CVI_CALL.on("app-message", (e) => { if (CVI_TK) CVI_TK.onEvent(e && e.data); });
       CVI_CALL.on("track-started", cviTrack);
       CVI_CALL.on("track-stopped", cviTrack);
@@ -6842,6 +6844,7 @@
     CVI_UNBILLED = 0;
     const t0 = Date.now();
     CVI_CLOCK = setInterval(() => {
+      if (CVI_CALL && !CVI_HEARD) return;                  // still connecting: free
       const now = CVI_TK ? CVI_TK.tick() : (Date.now() - t0) / 1000;
       const left = Math.max(0, Math.round(t.total - now));
       const wrap = $("#cviClockWrap");
@@ -6884,7 +6887,11 @@
     const remote = $("#cviRemote"), audio = $("#cviAudio");
     if (remote) remote.srcObject = v ? new MediaStream([v]) : null;
     if (audio) audio.srcObject = a ? new MediaStream([a]) : null;
-    if (v) { CVI_HEARD = true; const w = $("#cviWait"); if (w) w.hidden = true; }
+    if (v && !CVI_HEARD) {                                 // the interviewer is here: the interview starts now
+      CVI_HEARD = true; clearTimeout(CVI_WAIT);
+      CVI_TK = startTimekeeper(CVI_T);
+      const w = $("#cviWait"); if (w) w.hidden = true;
+    }
   }
   // The call closed without our End button. Once the interviewer has been on screen this is the
   // interview ending (Tavus's own time limit, a drop that never came back): score what was said.
@@ -6898,6 +6905,7 @@
   function teardownCvi() {                                 // idempotent: safe to call from any exit path
     if (CVI_CLOCK) { clearInterval(CVI_CLOCK); CVI_CLOCK = null; }
     $("#prepLive")?.classList.remove("in-call");
+    clearTimeout(CVI_WAIT);
     CVI_TK = null;
     if (CVI_CALL) { const c = CVI_CALL; CVI_CALL = null; c.leave().catch(() => {}).finally(() => { try { c.destroy(); } catch (e) {} }); }
     if (window.tailorShell) window.tailorShell.closeBrowser();
