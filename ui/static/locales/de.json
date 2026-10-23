@@ -1021,5 +1021,6 @@
   "r2.camOn": "Video an",
   "r2.noStartH": "Der Anruf wurde vor Beginn des Interviews beendet",
   "r2.noStartSub": "Es wurde nichts gesagt, also gibt es nichts zu bewerten. Du kannst jetzt erneut beitreten.",
-  "r2.tryAgain": "Erneut beitreten"
+  "r2.tryAgain": "Erneut beitreten",
+  "r2.connectingSub": "Du musst nichts klicken. Dein Interviewer begrüßt dich gleich, und erst dann läuft deine Zeit."
 }

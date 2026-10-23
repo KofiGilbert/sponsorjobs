@@ -1021,5 +1021,6 @@
   "r2.camOn": "Start video",
   "r2.noStartH": "The call closed before your interview began",
   "r2.noStartSub": "Nothing was said, so there is nothing to score. You can join again now.",
-  "r2.tryAgain": "Join again"
+  "r2.tryAgain": "Join again",
+  "r2.connectingSub": "Nothing to click. They will greet you in a moment, and your time starts then."
 }

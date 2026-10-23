@@ -6796,7 +6796,7 @@
       `<div class="zoom-call" id="cviCall">
         <video class="zoom-call-remote" id="cviRemote" autoplay playsinline></video>
         <audio id="cviAudio" autoplay></audio>
-        <div class="zoom-call-wait" id="cviWait"><span class="zoom-call-spin"></span>${esc(T("r2.connecting", "Connecting to your interviewer..."))}</div>
+        <div class="zoom-call-wait" id="cviWait"><div class="zoom-call-wait-row"><span class="zoom-call-spin"></span>${esc(T("r2.connecting", "Connecting to your interviewer..."))}</div><div class="zoom-call-wait-sub">${esc(T("r2.connectingSub", "Nothing to click. They will greet you in a moment, and your time starts then."))}</div></div>
         <div class="zoom-call-top">
           <span class="zoom-live"><i></i> LIVE</span>
           <span class="zoom-title">${esc(T("r2.title", "Round 2, live interview"))}</span>

@@ -1021,5 +1021,6 @@
   "r2.camOn": "Iniciar vídeo",
   "r2.noStartH": "A chamada fechou antes de a entrevista começar",
   "r2.noStartSub": "Nada foi dito, então não há o que avaliar. Você pode entrar de novo agora.",
-  "r2.tryAgain": "Entrar de novo"
+  "r2.tryAgain": "Entrar de novo",
+  "r2.connectingSub": "Não precisa clicar em nada. Seu entrevistador vai cumprimentar você em instantes, e seu tempo começa aí."
 }

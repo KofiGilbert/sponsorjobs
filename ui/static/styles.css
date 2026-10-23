@@ -3158,8 +3158,10 @@ body.cv-dragging * { cursor: grabbing !important; }
 .prep-live.in-call > .mock-top { display: none; }
 .zoom-call { position: relative; height: 70vh; min-height: 380px; background: #0d0f12; border-radius: var(--r-lg, 14px); overflow: hidden; }
 .zoom-call-remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
-.zoom-call-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; color: #cfd3da; font-size: 14px; }
+.zoom-call-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #cfd3da; font-size: 14px; }
 .zoom-call-wait[hidden] { display: none; }
+.zoom-call-wait-row { display: flex; align-items: center; gap: 10px; }
+.zoom-call-wait-sub { color: #9aa2ad; font-size: 12.5px; }
 .zoom-call-spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.18); border-top-color: #e7e9ee; animation: zoomspin .8s linear infinite; }
 @keyframes zoomspin { to { transform: rotate(360deg); } }
 .zoom-call-top { position: absolute; top: 14px; left: 16px; right: 16px; display: flex; align-items: center; gap: 12px; color: #e7e9ee; font-size: 12.5px; }
