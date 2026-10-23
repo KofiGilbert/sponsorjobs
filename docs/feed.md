@@ -79,7 +79,7 @@ Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/m
 | `sponsors/{a..z,0..9,_}.json.gz` | the browser extension's sponsor index (`scripts/build_sponsor_index.py`, built in the same workflow run): `{index_version, version, shard, records: {norm_name: [display_name, h1b_approvals, h1b_last_fy, h1b_first_fy, perm_certs, e_verify, cap_exempt, naics2, state, h1b_5y, denial_pct, flags]}}` (the last three are the 2026-10 compact facts: approvals over the newest five fiscal years, denial rate in whole percent, bit set 1 = H-1B dependent / 2 = willful violator; trailing zeros dropped), ~8 MB in all. Lets the extension badge jobs with no app installed, without sending a company name anywhere | `max-age=86400` |
 | `sponsors/manifest.json` | `{index_version, version (content hash), generated_at, employers, stats, shards: {key: {file, bytes, records}}, total_bytes}`; the extension re-checks it at most daily | `no-cache` |
 
-The list holds up to **250,000** rows (`JOBS_FEED_LIMIT`; 10,000 -> 50,000 -> 150,000 -> 250,000 on 2026-10-23), dated rows older
+The list holds every row that passes the checks (`JOBS_FEED_LIMIT`, 1,000,000 since 2026-10-23), dated rows older
 than **45 days** are dropped (`JOBS_FRESH_DAYS`), and rows unseen by a crawl for 21 days are pruned.
 At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
 
@@ -651,9 +651,8 @@ Starting point, the 2026-10-23 11:51 build: `in_db=312,510`, `not_us=124,568`, `
 only, fresh or still listed, not "no sponsorship", sponsor-relevant); only the reach changed.
 
 **1. The publish cap was cutting checked rows.** 162,384 rows survived every filter and the dedup,
-and `JOBS_FEED_LIMIT` (150,000) cut 12,384 of them. It is now **250,000** (`backend/feed.py` and
-`feed.yml`), and the database read before the filters (`JOBS_FEED_SCAN_LIMIT`) is **600,000** (the
-DB is at 312k; 400k was one discovery wave from cutting rows unseen). Gain: **+12,384 at once.**
+and `JOBS_FEED_LIMIT` (150,000) cut 12,384 of them. PR #86 (same day) lifted the cap to 1,000,000
+and the scan to 2,000,000. Gain: **+12,384 at once.**
 
 **2. `too_old` is not a drop.** The funnel's `too_old_still_seen_7d` (66,097) counts rows posted over
 45 days ago that a board still listed in the last 7 days; those are KEPT (`fresh_recent` = 305,983
@@ -728,7 +727,7 @@ stops that host for the run, as designed; if they keep refusing, take them out o
 
 | Source | Rows gained (published) | How sure |
 |---|---|---|
-| Publish cap 150k -> 250k | +12,400 | certain (next build) |
+| Publish cap lifted (PR #86) | +12,400 | certain (next build) |
 | Workday US facet + 2000 list cap + location mending | +12,000 to +15,000 | probe of 50 + 5 boards; fills over ~3 runs (600 descriptions per board per run) |
 | New career sites (6) | +2,500 to +3,500 | IQVIA's US share unknown |
 | Phenom reader | +400 to +800 | 12-page probes |
@@ -741,7 +740,7 @@ boards over 2,000 US roles split by `jobFamilyGroup` facet (CVS lists 19,562; to
 shard once the list passes ~3,500 boards. **Client size:** the app holds ~1 KB per row in memory
 (140 MB for 149k) and downloads ~1 MB gzipped per 10k rows, so 250k is ~25 MB to download and
 ~240 MB in memory. Past ~250-300k rows the Jobs page should move to server-side search (the
-client asks a search endpoint for one page; the full list stops shipping to every install).
+client asks a search endpoint for one page; see `docs/server-search-plan.md`).
 
 ## Set-up, step by step
 

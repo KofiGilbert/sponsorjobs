@@ -9,7 +9,7 @@ read, under the same quality rules. Pinned here, all offline (fakes and trimmed 
   country filter returned get ", United States" when their campus / city name reads as nothing.
 * A stored location the US rule cannot place gives way to a list location it can.
 * A short Workday description budget is spent on US-readable rows before clearly foreign ones.
-* The feed publishes up to 250,000 rows and scans 600,000 (the 150,000 cap cut 12,384 kept rows).
+* The feed lists Workday boards up to Workday's 2000-row ceiling.
 * Career-site discovery can continue past the ranks an earlier run probed (`--start`).
 """
 
@@ -213,12 +213,9 @@ def test_short_budget_reads_us_rows_before_foreign_ones():
 # feed size and discovery
 # --------------------------------------------------------------------------------------------- #
 
-def test_feed_publishes_250k_and_scans_600k_by_default():
-    src = (ROOT / "backend" / "feed.py").read_text()
-    assert 'os.environ.get("JOBS_FEED_LIMIT", "250000")' in src
-    assert 'os.environ.get("JOBS_FEED_SCAN_LIMIT", "600000")' in src
+def test_feed_lists_workday_boards_to_the_ceiling():
     wf = (ROOT / ".github" / "workflows" / "feed.yml").read_text()
-    assert "vars.JOBS_FEED_LIMIT || 250000" in wf and "vars.WORKDAY_MAX_JOBS || 2000" in wf
+    assert "vars.WORKDAY_MAX_JOBS || 2000" in wf
 
 
 def test_discovery_start_skips_the_ranks_already_probed(monkeypatch, tmp_path):

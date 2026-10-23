@@ -443,7 +443,7 @@ def main(argv=None) -> int:
                     help="where to write jobs.json.gz, parts/, jd/, manifest.json")
     ap.add_argument("--jobs-url", default=os.environ.get("FEED_JOBS_URL", ""),
                     help="absolute URL of jobs.json.gz, recorded in manifest.json")
-    ap.add_argument("--limit", type=int, default=None, help="cap rows (default JOBS_FEED_LIMIT, 250000)")
+    ap.add_argument("--limit", type=int, default=None, help="cap rows (default JOBS_FEED_LIMIT, 1000000)")
     ap.add_argument("--no-crawl", action="store_true", help="skip the crawl; publish what the DB holds")
     ap.add_argument("--crawl-minutes", type=float,
                     default=float(os.environ.get("FEED_CRAWL_MINUTES", DEFAULT_CRAWL_MINUTES)),
