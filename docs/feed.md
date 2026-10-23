@@ -263,8 +263,10 @@ No login, no key, no proxy, no browser pretence: the crawl identifies as `resume
 the tenant's `robots.txt` (which names the career site and is how discovery finds it) and leaves a
 site alone when that file disallows it. Requests to one tenant are spaced, 429/5xx back off and
 honour `Retry-After`, every request has a hard timeout, and each board is capped per refresh
-(`WORKDAY_MAX_JOBS`, default 1000 rows; `WORKDAY_MAX_DETAIL`, default 200 descriptions per board
-on a desktop refresh, `WORKDAY_MAX_DETAIL_FEED`, default 2000, for the central build). A
+(`WORKDAY_MAX_JOBS`, default 1000 rows, 25,000 in the feed, where a board past Workday's 2,000-row
+list ceiling is split by its own facets, see "Giant Workday boards" below; `WORKDAY_MAX_DETAIL`,
+default 200 descriptions per board on a desktop refresh, `WORKDAY_MAX_DETAIL_FEED`, default 2000,
+600 in the feed workflow, for the central build). A
 board is `company,workday,{tenant}.wd{n}/{site}` in the watchlist, e.g.
 `nvidia.wd5/NVIDIAExternalCareerSite`; discovery adds one only after the site's own hiring
 organization or site name confirms the sponsor's brand word and the list returns at least one job.
@@ -434,6 +436,16 @@ deltas instead of two (shard 0's delta is the big one, ~110k rows, because of th
 lane), well inside its 60 minutes. If the list passes ~3,500 boards, the next step is a fourth
 shard or visiting the high-volume boards every run and rotating the long tail; nothing in the data
 needs priority ordering yet (every watched board is a verified sponsor).
+
+**Four crawl shards (2026-10-23).** The 2026-10-23 11:51 run finished every board on all three
+shards, but close to the 140-minute cap: shard 0 422 boards in 7,671 s (128 min, with the
+career-site lane and the freehire pass), shard 1 401 in 6,669 s, shard 2 409 in 7,220 s; the merge
+took 12 minutes. The split Workday listing below adds up to 10 minutes per giant board, so the
+matrix is now `[0, 1, 2, 3]` with `FEED_SHARD_COUNT: 4` (~310 boards a shard, about 95 minutes of
+board pass at today's pace). The career-site lane and the freehire pass stay on shard 0 only (the
+lane has its own 130-minute cap and runs beside the board pass, so the shortened board pass does
+not make shard 0 longer than today). As at the last change, each shard's first run starts from
+`crawl_cursor.json`; the `s*of3` cursor files are no longer read.
 
 ### SmartRecruiters is switched off (2026-10-19)
 
@@ -742,6 +754,77 @@ shard once the list passes ~3,500 boards. **Client size:** the app holds ~1 KB p
 ~240 MB in memory. Past ~250-300k rows the Jobs page should move to server-side search (the
 client asks a search endpoint for one page; see `docs/server-search-plan.md`).
 
+### Giant Workday boards, more career sites, a fourth shard (2026-10-23, part 2)
+
+**Giant Workday boards** (`sourcing/workday.py`: `split_plan`, `list_postings`). One Workday list
+query never pages past 2,000 rows, and `JOBS_MAX_PER_COMPANY` (2,000) cut every employer there too.
+A one-request size probe of all 370 watched Workday boards (8 did not answer) found **15 boards
+over 2,000 US-or-unfiltered rows, 98,078 rows in all, 68,078 past the old cap**: CVS Health 19,545,
+Walmart 15,463 (US facet), Target 14,117 (US), TJX 11,363, Trinity Health 6,717, Sanford Health
+3,980 (US), Petco 3,976 (US), PwC 3,899, Dick's 3,810, Micron 3,120, Bridgestone 3,088 (US),
+Mass General Brigham 2,455, GE Vernova 2,256, Genpact 2,172, Tapestry 2,117.
+
+* The board's own facets partition its list: counts are conditional on the facets applied, and
+  several ids of one facet are OR-ed. `split_plan` picks the facet that leaves the fewest rows in
+  values still over 2,000 (then the fewest queries), packs the small values into OR-groups of at
+  most 2,000 rows and 100 ids, and splits an oversized value once more by a second facet (CVS:
+  "Retail Store & Pharmacy" 12,720 -> part time 7,206 / full time 5,512). Past two facets a query
+  reads its first 2,000 rows. The US country filter stays applied; country facets are never keys.
+* Facets with more than 60 values are never used: CVS's `locations` has 5,145 values, 400 OR-ed
+  ids answer HTTP 500, and every page of a location query still carries the whole 450 KB facet
+  list (two minutes a page, live).
+* Some tenants cap `total` itself at 2,000 (Bridgestone: total 2000, US value 3,088), so a board
+  at the ceiling is sized by its largest facet count.
+* Split queries run for at most `WORKDAY_SPLIT_SECONDS` (600) per board per run and start at a
+  query chosen by the 3-hour tick, so a board too big for one run is covered over the next ones.
+  A timeout or 5xx mid-split keeps the rows already listed. Rows are deduplicated by posting.
+* The feed workflow raises `WORKDAY_MAX_JOBS` and `JOBS_MAX_PER_COMPANY` to 25,000. Unchanged: a
+  row is stored only once its description is read and checked (`WORKDAY_MAX_DETAIL_FEED`, 600 per
+  board per run, newest first); stored rows cost nothing to keep. So a giant board fills by ~600
+  checked rows a run (CVS: about 4 days), and the desktop refresh (1,000 rows) never splits.
+
+Capped live probes (split budget 300 s; list rows before -> after): **Micron 2,000 -> 3,120** (all;
+256 requests, 355 s), **GE Vernova 2,000 -> 2,255** (all; 213 requests, 384 s), **Sanford Health
+2,000 -> 3,019** of 3,975 US rows (251 requests, 441 s; the rest on the next runs). CVS, TJX and
+Trinity Health timed out from this Mac (CVS pages took 6-50 s each); in the crawl a failed split
+keeps the base 2,000.
+
+**Career sites.** `discover_careersites.py --start 800 --limit 900` (uncovered sponsor ranks
+800-1,700): 909 employers, 7,454 requests, 45 minutes, 15 hosts verified. Robots.txt read by hand
+for each; 3 dropped for identity (careers.achieve.com is Achieve the fintech, not the sponsor
+Achieve Beyond; jobs.empower.com is Empower retirement, not Empower Professionals; EBSCO Industries'
+iCIMS site for the sponsor EBSCO Publishing, 11 jobs). **12 added** (job URLs in the sitemap):
+Eaton (`eaton.eightfold.ai`, 2,348), Corning (Phenom, 988), Novartis (`www.novartis.com/careers`,
+895), Thumbtack (514), ICF (Phenom, 424), Molina Healthcare (Radancy, 391), Thornton Tomasetti
+(Phenom, 171), Alexion (Radancy, 141), Incyte (134), MSCI (114), Dolby (Eightfold, 89), Medallia
+(68): 6,277 job URLs. The hit rate past rank 800 is ~1.7%, so ~100 more sites would need ~6,000
+more employers probed; most large hospitals, universities and retailers run Workday and belong on
+the watchlist instead.
+
+Removed from the table: Gartner (`jobs.gartner.com`), SAP (`jobs.sap.com`) and Equifax
+(`careers.equifax.com`) answered the lane 403 in consecutive runs (2026-10-22 and 10-23; Applied
+Materials once). They and the 2026-10-23 refusals are in the script's `SKIP_BRANDS`.
+
+Blocked on contact 2026-10-23 (403 / 401 on robots.txt, a sitemap or a job page; left alone, do
+not re-probe): Blizzard, UBS, Better, Rocket, National Grid, Fidelity (`jobs.fidelity.com` job
+pages), ADP (`jobs.adp.com` job pages), Cox Enterprises (`jobs.coxenterprises.com` job pages),
+Prudential (`jobs.prudential.com`), McDonald's, Ampere Computing, Credit One Bank, Egencia,
+United Wholesale Mortgage, American Eagle (sitemap), Bentley (`www.bentleycareers.com`), Saint
+Francis (`www.saintfranciscareers.com`).
+
+**Projection.**
+
+| Source | Rows gained (published) | How sure |
+|---|---|---|
+| Part 1 (publish cap, US facet, 6 sites, Phenom) | ~+27k to +32k -> ~190k to 195k | see above |
+| Giant Workday boards split, 25,000 cap | +35,000 to +50,000 | 68k more US-or-unfiltered rows listed; less abroad (Micron, PwC, Genpact are global), "no sponsorship" ads (~8%), and fills at 600 checked rows per board per run over ~4 days |
+| 12 new career sites | +2,500 to +3,500 | 6,277 job URLs, Corning / Novartis / Eaton global |
+| Gartner, SAP, Equifax out | ~0 | already refused every run |
+| **Total** | **~230k to 250k published** | |
+
+500k still needs about twice the sources: the watchlist growing past ~3,000 boards, and the
+career-site lane reaching the retail and hospital giants that are not on Workday.
+
 ## Set-up, step by step
 
 ### 1. Create the bucket (Cloudflare dashboard)
@@ -784,7 +867,7 @@ Variables (**Variables** tab -> **New repository variable**), all optional:
 | `FEED_INCLUDE_AGGREGATORS` | default `jsearch`; `off` for boards + keyless feeds only |
 | `JOBS_SYNC_SEED` | `1` loads the bundled H-1B seed on the calling thread (tests, CLI); unset, a background thread loads it while the app serves |
 | `JOBS_FIRST_CRAWL` | `0` disables the first-open crawl; a failed crawl retries after 10 min, doubling to an hour |
-| `JOBS_MAX_PER_COMPANY` | rows kept per board per crawl; the workflow defaults to 500 (the desktop app keeps 60) |
+| `JOBS_MAX_PER_COMPANY` | rows kept per board per crawl; the workflow defaults to 25,000 (the desktop app keeps 60) |
 
 Then **Actions -> feed -> Run workflow** once by hand and check the run log ends with
 `[upload_feed] uploaded 258 objects`.

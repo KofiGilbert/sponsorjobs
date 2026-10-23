@@ -72,6 +72,20 @@ DISCOVERY_MAX_BACKOFF = 15.0
 
 LIST_BODY = {"appliedFacets": {}, "limit": PAGE, "offset": 0, "searchText": ""}
 
+# Splitting a board past the 2,000-row ceiling (2026-10-23). A board's own facets partition its
+# list (CVS Health: 19,541 jobs; `jobFamilyGroup` "Retail Store & Pharmacy" 12,720, "Clinical
+# Services" 1,964, ...), the counts are conditional on the facets already applied, and several ids
+# of one facet are OR-ed. So a giant board is read as several queries of at most 2,000 rows each,
+# deduplicated by posting. Limits found live on CVS: 200 OR-ed location ids answer, 400 answer
+# 500; a 5,145-value `locations` facet is useless as a key (every page still carries the whole
+# 450 KB facet list, two minutes a page), so only facets with few values split a board.
+SPLIT_MAX_VALUES = 60           # a facet with more values than this is not used to split
+GROUP_MAX_IDS = 100             # facet ids OR-ed in one query
+SPLIT_MAX_DEPTH = 2             # facets stacked on top of each other (family, then full/part time)
+DEFAULT_SPLIT_SECONDS = 600     # wall clock a board may spend on split queries per refresh
+#                                 (env WORKDAY_SPLIT_SECONDS); the queries rotate between
+#                                 refreshes, so a board too big for one run is covered over several
+
 # The country facet's US value, as tenants spell it. Most name the facet `locationCountry`
 # (also `Location_Country`, `LocationCountry`, `Country`, a custom `CF_..._Country_...`); NVIDIA
 # uses `locationHierarchy1`, whose top level is the country. A facet such as `locations`
@@ -233,59 +247,209 @@ def _bounded(fetch, timeout: int):
 
 # -- the board adapter ------------------------------------------------------------ #
 
+def _leaf_facets(facets) -> list[dict]:
+    """The facets of a list response that can be applied, nested groups flattened
+    (`locationMainGroup` -> `locations`)."""
+    out: list[dict] = []
+    for f in facets or []:
+        if not isinstance(f, dict):
+            continue
+        vals = [v for v in f.get("values") or [] if isinstance(v, dict)]
+        if any("facetParameter" in v for v in vals):
+            out.extend(_leaf_facets([v for v in vals if "facetParameter" in v]))
+        elif f.get("facetParameter"):
+            out.append(f)
+    return out
+
+
+def _facet_values(f: dict) -> list[tuple[str, int]]:
+    return [(str(v["id"]), int(v.get("count") or 0)) for v in f.get("values") or []
+            if isinstance(v, dict) and v.get("id") and int(v.get("count") or 0) > 0]
+
+
+def pick_split_facet(facets, applied: dict, total: int, ceiling: int = LIST_CEILING):
+    """The facet that best splits a list of `total` rows into queries under `ceiling`, or None:
+    one not applied yet and not a country facet (the US filter stays as it is), with 2 to
+    SPLIT_MAX_VALUES values. Best = the fewest rows left in values still over the ceiling, then
+    the fewest queries. A facet whose values cover under half the list is not a partition."""
+    best = None
+    for f in _leaf_facets(facets):
+        param = str(f.get("facetParameter"))
+        vals = _facet_values(f)
+        if param in applied or _is_country_param(param) or not 2 <= len(vals) <= SPLIT_MAX_VALUES:
+            continue
+        covered = sum(c for _, c in vals)
+        if covered * 2 < total:
+            continue
+        over = sum(c for _, c in vals if c > ceiling)
+        groups = len(pack_values([v for v in vals if v[1] <= ceiling], ceiling)) + sum(1 for _, c in vals if c > ceiling)
+        key = (over, groups)
+        if best is None or key < best[0]:
+            best = (key, param, vals)
+    return (best[1], best[2]) if best else None
+
+
+def pack_values(vals: list[tuple[str, int]], ceiling: int = LIST_CEILING) -> list[list[str]]:
+    """Facet values (id, count) packed into OR-groups of at most `ceiling` rows and
+    GROUP_MAX_IDS ids, largest first (first-fit decreasing). A posting can carry two values,
+    so a group's real size is at most its sum: the ceiling still holds."""
+    groups: list[tuple[int, list[str]]] = []
+    for vid, n in sorted(vals, key=lambda v: -v[1]):
+        for i, (size, ids) in enumerate(groups):
+            if size + n <= ceiling and len(ids) < GROUP_MAX_IDS:
+                groups[i] = (size + n, ids + [vid])
+                break
+        else:
+            groups.append((n, [vid]))
+    return [ids for _, ids in groups]
+
+
+def split_plan(applied: dict, total: int, facets, probe, *, depth: int = 0,
+               ceiling: int = LIST_CEILING) -> list[dict]:
+    """The appliedFacets of the queries that together list a board of `total` rows (already
+    filtered by `applied`, whose response offered `facets`), each at most `ceiling` rows where
+    the board's facets allow it. A value still over the ceiling is split again by another facet
+    (`probe(applied) -> list response` reads its first page for the conditional counts), up to
+    SPLIT_MAX_DEPTH facets deep; past that, or with no usable facet, the query is kept as it is
+    and reads its first 2,000 rows."""
+    if total <= ceiling:
+        return [applied]
+    pick = pick_split_facet(facets, applied, total, ceiling)
+    if not pick:
+        return [applied]
+    param, vals = pick
+    plan = [{**applied, param: ids} for ids in pack_values([v for v in vals if v[1] <= ceiling], ceiling)]
+    for vid, n in vals:
+        if n <= ceiling:
+            continue
+        sub = {**applied, param: [vid]}
+        if depth + 1 >= SPLIT_MAX_DEPTH:
+            plan.append(sub)
+            continue
+        try:
+            data = probe(sub) or {}
+        except Exception:                             # noqa: BLE001 - keep the coarser query
+            plan.append(sub)
+            continue
+        plan.extend(split_plan(sub, int(data.get("total") or n), data.get("facets"), probe,
+                               depth=depth + 1, ceiling=ceiling))
+    return plan
+
+
+def _page_through(fetch, url: str, facets: dict, cap: int, seen: set, out: list, sleep, *,
+                  mark_us: bool, first: dict | None = None, deadline=None, clock=time.monotonic) -> int:
+    """Read one query's pages (20 a page, Workday's 2,000 ceiling) into `out` until `out` holds
+    `cap` postings; `first` is its already-read first page. Stops on an empty or short page, on
+    a page with nothing new (an offset past the end wraps to page one) and at `deadline`.
+    Returns the query's reported total."""
+    total = offset = 0
+    head: list[str] = []                                  # this query's first page, to spot a wrap
+    while len(out) < cap and offset < LIST_CEILING:
+        if deadline is not None and clock() >= deadline:
+            break
+        if offset == 0 and first is not None:
+            data = first
+        else:
+            data = _request(fetch, url, sleep, data={**LIST_BODY, "appliedFacets": facets, "offset": offset,
+                                                    "limit": min(PAGE, cap - len(out))}) or {}
+        page = [p for p in data.get("jobPostings") or [] if isinstance(p, dict)]
+        total = max(total, int(data.get("total") or 0))
+        keys = [str(p.get("externalPath") or p.get("title") or "") for p in page]
+        if offset == 0:
+            head = keys
+        elif keys and keys == head[:len(keys)]:
+            break                                         # wrapped to page one: the query is done
+        for p, key in zip(page, keys):
+            if not key or key in seen:
+                continue
+            if mark_us:
+                p["_us_facet"] = True
+            seen.add(key)
+            out.append(p)
+            if len(out) >= cap:
+                break
+        if not page or len(page) < PAGE:
+            break
+        offset += len(page)
+        if total and offset >= total:
+            break
+        sleep(REQUEST_GAP)
+    return total
+
+
 def list_postings(tenant: str, site: str, host: str, fetch=fetch_json, *, max_jobs: int | None = None,
-                  sleep=time.sleep, us_only: bool = False) -> tuple[int, list[dict]]:
+                  sleep=time.sleep, us_only: bool = False, split_seconds: float | None = None,
+                  rotation: int | None = None, clock=time.monotonic) -> tuple[int, list[dict]]:
     """Page through a site's postings (20 a page) up to `max_jobs` (env WORKDAY_MAX_JOBS,
-    default 1000) and Workday's own 2000 ceiling. Returns (total_reported, postings). Stops
-    on an empty or short page, and on the first repeated posting -- an offset past the end
-    wraps to page one. `total` is only a hint (it is capped at 2000 and sometimes 0).
+    default 1000). Returns (total_reported, postings). One query stops at Workday's 2,000-row
+    ceiling, on an empty or short page, and on a page with nothing new -- an offset past the
+    end wraps to page one.
 
     `us_only`: when the first page offers a US country facet (`us_country_facet`) that covers
     fewer rows than the whole list, the list is read again filtered on it, so the cap and the
     description budget go to US roles (the feed publishes only those). Each posting read that
     way (or from a board whose US value already covers the whole list) is marked `_us_facet`:
     the board's own country field puts it in the US. A board with no such facet is read
-    unfiltered, as before."""
+    unfiltered, as before.
+
+    Past the ceiling: when `max_jobs` is over 2,000 and the (US) list reports more rows than one
+    query can read, the board is split by its own facets (`split_plan`) and every split query is
+    read too, deduplicated by posting, for at most `split_seconds` (env WORKDAY_SPLIT_SECONDS,
+    default 600). The split queries start at `rotation` (default: the 3-hour feed tick), so a
+    board too big for one refresh is covered over the next ones."""
     cap = DEFAULT_MAX_JOBS if max_jobs is None else max_jobs
-    cap = min(max(cap, 0) or 0, LIST_CEILING)
+    cap = max(cap, 0) or 0
     url = cxs_base(tenant, host, site) + "/jobs"
     seen: set[str] = set()
     out: list[dict] = []
-    total = 0
-    offset = 0
+    if cap <= 0:
+        return 0, out
     facets: dict = {}
+    first = _request(fetch, url, sleep, data={**LIST_BODY, "limit": min(PAGE, cap)}) or {}
     all_us = False                                        # the US facet already covers every row
-    while offset < cap:
-        data = _request(fetch, url, sleep, data={**LIST_BODY, "appliedFacets": facets, "offset": offset,
-                                                "limit": min(PAGE, cap - offset)}) or {}
-        if us_only and offset == 0 and not facets:
-            hit = us_country_facet(data.get("facets"))
-            whole = int(data.get("total") or 0)
-            if hit and 0 < hit[2] < whole:
-                facets = {hit[0]: [hit[1]]}
-                sleep(REQUEST_GAP)
-                continue                                  # page one again, US only
-            all_us = bool(hit) and hit[2] >= whole > 0
-        if facets or all_us:
-            for p in data.get("jobPostings") or []:
-                if isinstance(p, dict):
-                    p["_us_facet"] = True
-        page = data.get("jobPostings") or []
-        total = max(total, int(data.get("total") or 0))
-        fresh = 0
-        for p in page:
-            key = str(p.get("externalPath") or p.get("title") or "")
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            out.append(p)
-            fresh += 1
-        if not page or fresh == 0 or len(page) < PAGE:
-            break
-        offset += len(page)
-        if total and offset >= total:
+    if us_only:
+        hit = us_country_facet(first.get("facets"))
+        whole = int(first.get("total") or 0)
+        if hit and 0 < hit[2] < whole:
+            facets = {hit[0]: [hit[1]]}
+            sleep(REQUEST_GAP)
+            first = _request(fetch, url, sleep, data={**LIST_BODY, "appliedFacets": facets,
+                                                      "limit": min(PAGE, cap)}) or {}
+        all_us = bool(hit) and hit[2] >= whole > 0
+    mark = bool(facets) or all_us
+    base_cap = min(cap, LIST_CEILING)
+    total = _page_through(fetch, url, facets, base_cap, seen, out, sleep, mark_us=mark, first=first)
+    if total >= LIST_CEILING:
+        # Some tenants cap `total` itself at 2,000 (Bridgestone: total 2000, its US country value
+        # 3,088); the facet counts are not capped, so the largest one is the better size.
+        total = max([total] + [sum(c for _, c in _facet_values(f)) for f in _leaf_facets(first.get("facets"))
+                               if len(_facet_values(f)) <= SPLIT_MAX_VALUES])
+    if cap <= LIST_CEILING or total <= len(out) or len(out) < base_cap:
+        return max(total, len(out)), out
+    # A giant board: split it by its own facets, and read every split query (rotated).
+    if split_seconds is None:
+        split_seconds = _env_int("WORKDAY_SPLIT_SECONDS", DEFAULT_SPLIT_SECONDS)
+    deadline = clock() + split_seconds
+
+    def probe(applied: dict) -> dict:
+        sleep(REQUEST_GAP)
+        return _request(fetch, url, sleep, data={**LIST_BODY, "appliedFacets": applied}) or {}
+
+    plan = [q for q in split_plan(facets, total, first.get("facets"), probe, ceiling=LIST_CEILING)
+            if q != facets]
+    if not plan:
+        return max(total, len(out)), out
+    if rotation is None:
+        rotation = int(time.time() // (3 * 3600))
+    k = rotation % len(plan)
+    for q in plan[k:] + plan[:k]:
+        if len(out) >= cap or clock() >= deadline:
             break
         sleep(REQUEST_GAP)
+        try:
+            _page_through(fetch, url, q, cap, seen, out, sleep, mark_us=mark, deadline=deadline, clock=clock)
+        except Exception:                             # noqa: BLE001 - a timeout or 5xx mid-split
+            break                                     # keeps what was listed; the next run goes on
     return max(total, len(out)), out
 
 

@@ -215,7 +215,7 @@ def test_short_budget_reads_us_rows_before_foreign_ones():
 
 def test_feed_lists_workday_boards_to_the_ceiling():
     wf = (ROOT / ".github" / "workflows" / "feed.yml").read_text()
-    assert "vars.WORKDAY_MAX_JOBS || 2000" in wf
+    assert "vars.WORKDAY_MAX_JOBS || 25000" in wf and "vars.JOBS_MAX_PER_COMPANY || 25000" in wf
 
 
 def test_discovery_start_skips_the_ranks_already_probed(monkeypatch, tmp_path):

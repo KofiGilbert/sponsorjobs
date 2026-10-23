@@ -76,6 +76,9 @@ SKIP_BRANDS = {
     "jpmorgan", "jpmorganchase", "chase", "oracle", "ibm", "deloitte", "infosys", "tesla", "meta",
     "metaplatforms", "facebook", "apple", "google", "alphabet",
     "amazon", "microsoft", "qualcomm", "capitalone", "cisco", "walmart",
+    # 403 on contact 2026-10-23 (discovery or the lane itself): left alone, never re-probed.
+    "verizon", "progressive", "kearney", "atkearney", "hallmark", "cohesity", "shutterfly",
+    "gartner", "sap", "equifax",
 }
 
 # Name words that say nothing about the brand when they END a filing name.
