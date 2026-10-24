@@ -1006,6 +1006,7 @@
   "r2.offH": "Der Live-Interviewer ist gerade nicht erreichbar",
   "r2.offD": "Live-Interviews laufen über unseren Dienst. Prüfe deine Verbindung und versuche es dann erneut.",
   "jobs.updating": "Aktualisierung auf die heutige Liste",
+  "jobs.offlineSlice": "Neueste Stellen werden angezeigt. Durchsuche alle Jobs, sobald du wieder online bist.",
   "set.privacyTitle": "Deine Daten bleiben auf diesem Gerät",
   "set.privacyBody": "Dein Profil, deine Lebensläufe und Bewerbungen liegen in einem lokalen Ordner. Die Anmeldung mit einem E-Mail-Code ist freiwillig und verknüpft nur deinen Pass. Pässe und die enthaltene KI laufen über unseren Server, der nur Nutzungszahlen für die Abrechnung speichert. Die Community-Edition kann stattdessen deinen eigenen KI-Schlüssel nutzen. Live-Interviews laufen direkt zwischen dir und Tavus.",
   "r1.leaveAsk": "Interview verlassen? Deine bisherigen Antworten bleiben gespeichert.",

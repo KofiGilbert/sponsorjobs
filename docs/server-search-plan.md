@@ -184,7 +184,7 @@ so they run locally.
    validation, FTS syntax escaping (quotes, `NEAR`, `*`), cursors, and the 409 on a stale cursor. A
    **parity test** runs ~50 facet combinations through `apply_facets` and the Worker (miniflare) on
    the same fixture rows and expects the same IDs in the same order.
-3. **Client behind a flag.** Add `sourcing/remotesearch.py` and the slice in the `feedclient`
+3. **Client behind a flag. Built 2026-10-24** (off by default; `tests/test_remote_search.py`). Add `sourcing/remotesearch.py` and the slice in the `feedclient`
    manifest (`slice` next to `parts`), switched on with `JOBS_SEARCH=server`. *Tests:* pytest with a
    fake fetch covering slice-first answers, server merge, short-page refill, offline fallback, the
    stale-cursor restart, and the **privacy allowlist guard**.

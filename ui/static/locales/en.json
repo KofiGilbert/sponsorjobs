@@ -1006,6 +1006,7 @@
   "r2.offH": "The live interviewer isn't reachable right now",
   "r2.offD": "Live interviews run on our service. Check your connection, then try again.",
   "jobs.updating": "updating to today's list",
+  "jobs.offlineSlice": "Showing recent roles. Search all jobs when you're back online.",
   "set.privacyTitle": "Your data stays on this machine",
   "set.privacyBody": "Your profile, resumes and applications live in a local folder. Signing in with an email code is optional and only links your pass. Passes and the included AI run through our server, which keeps only usage counts for billing. The community edition can use your own AI key instead. Live interviews stream between you and Tavus.",
   "r1.leaveAsk": "Leave the interview? Your answers so far are kept.",

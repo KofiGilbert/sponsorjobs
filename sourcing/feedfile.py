@@ -24,6 +24,11 @@ filters it locally with sourcing/filters.py, and fetches one small JD shard when
                     THE SAME LIST again in the "stable" layout (2026-10-23, see write_stable): parts
                     named by their own content and grouped by the week a row was first seen, so a
                     rebuild re-sends only the parts that changed, plus a small file of removed rows.
+  parts/r-{sha}.json.gz, parts/x-{sha}.json.gz
+                    THE SLICE (2026-10-23, see write_slice): roles first seen in the last SLICE_DAYS
+                    days, at most SLICE_MAX_ROWS, in the same stable layout, listed in the manifest
+                    as "slice" next to "parts". An app with server search on (JOBS_SEARCH=server,
+                    sourcing/remotesearch.py) downloads only this; older apps ignore the block.
 
 Public job postings only. No personal data ever touches this file (CLAUDE.md §5).
 """
@@ -34,7 +39,7 @@ import gzip
 import hashlib
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .ats import ADAPTERS
@@ -346,6 +351,10 @@ REMOVED_PREFIX = "d-"
 STABLE_MAX_DEAD = 0.2          # rewrite a kept part once this share of its rows is dead
 STABLE_MIN_FILL = 0.5          # rewrite a kept part smaller than this share of the target size
 STABLE_STATE_DIR = "feed-prev"  # under the build's data dir: the last build's stable parts
+SLICE_PREFIX = "r-"            # the slice's parts ("recent")...
+SLICE_REMOVED_PREFIX = "x-"    # ...and its removed-rows file, so neither layout prunes the other's
+SLICE_DAYS = 7                 # the slice: roles first seen in the last 7 days...
+SLICE_MAX_ROWS = 40_000        # ...at most this many (the newest first seen win), ~4 MB gzipped
 
 
 def canon(row: dict) -> str:
@@ -406,14 +415,15 @@ def read_removed(body: bytes) -> dict[str, set[int]]:
     return {str(k): {int(i) for i in v} for k, v in rem.items()}
 
 
-def load_stable_state(state_dir) -> tuple | None:
+def load_stable_state(state_dir, key: str = "stable") -> tuple | None:
     """The previous build's stable layout from `state_dir` (manifest.json + parts/): (block,
     {part url: [canonical rows]}, {part url: {removed indexes}}, state_dir), or None when it is missing,
-    from another format, or any file fails its sha256 (the builder then lays out afresh)."""
+    from another format, or any file fails its sha256 (the builder then lays out afresh). `key` is
+    the manifest block to read: "stable" (the whole list) or "slice"."""
     d = Path(state_dir)
     try:
         man = json.loads((d / MANIFEST_FILE).read_text(encoding="utf-8"))
-        block = man.get("stable")
+        block = man.get(key)
         if not stable_block_ok(block):
             return None
         parts: dict[str, list[str]] = {}
@@ -451,11 +461,14 @@ def _chunks(rows: list[tuple[str, str]], target_raw: int) -> list[list[tuple[str
 
 
 def write_stable(out_dir, slim: list[dict], *, prev=None, target_bytes: int = PART_TARGET_BYTES,
-                 max_dead: float = STABLE_MAX_DEAD, min_fill: float = STABLE_MIN_FILL) -> dict:
+                 max_dead: float = STABLE_MAX_DEAD, min_fill: float = STABLE_MIN_FILL,
+                 prefix: str = STABLE_PREFIX, removed_prefix: str = REMOVED_PREFIX) -> dict:
     """Write the stable layout of `slim` under `out_dir/parts/` and return the manifest's "stable"
     block. `prev` is load_stable_state() of the previous build (None: lay everything out afresh).
     Kept parts are copied from the previous build's bytes, so the output dir holds every file the
-    block names (GitHub Pages replaces the whole site on each deploy)."""
+    block names (GitHub Pages replaces the whole site on each deploy). `prefix` / `removed_prefix`
+    name the files (the slice uses its own, see write_slice); only files with these prefixes that
+    the block does not name are deleted."""
     from collections import Counter
     out = Path(out_dir)
     (out / PARTS_DIR).mkdir(parents=True, exist_ok=True)
@@ -506,7 +519,7 @@ def write_stable(out_dir, slim: list[dict], *, prev=None, target_bytes: int = PA
         bucket = weeks[0] if len(weeks) == 1 else f"{weeks[0]}..{weeks[-1]}"
         raw = ('{"bucket":' + json.dumps(bucket) + ',"jobs":['
                + ",".join(c for _, c in chunk) + "]}").encode("utf-8")
-        files.append(_stable_file(out, STABLE_PREFIX, raw, count=len(chunk), bucket=bucket))
+        files.append(_stable_file(out, prefix, raw, count=len(chunk), bucket=bucket))
     # Layout order: oldest bucket first (kept parts and new parts interleave by week).
     files.sort(key=lambda f: (str(f.get("bucket") or "").split("..")[0], f["url"] not in kept_urls,
                               f["url"]))
@@ -514,7 +527,7 @@ def write_stable(out_dir, slim: list[dict], *, prev=None, target_bytes: int = PA
     if removed:
         raw = json.dumps({"removed": {k: removed[k] for k in sorted(removed)}},
                          separators=(",", ":")).encode("utf-8")
-        rem_file = _stable_file(out, REMOVED_PREFIX, raw,
+        rem_file = _stable_file(out, removed_prefix, raw,
                                 count=sum(len(v) for v in removed.values()))
     names = [f["url"] for f in files] + ([rem_file["url"]] if rem_file else [])
     version = _sha("\n".join(f"{f['url']}" for f in files).encode("utf-8")
@@ -529,25 +542,92 @@ def write_stable(out_dir, slim: list[dict], *, prev=None, target_bytes: int = PA
         block["removed"] = rem_file
     keep = {Path(n).name for n in names}
     for p in (out / PARTS_DIR).glob("*.json.gz"):
-        if p.name.startswith((STABLE_PREFIX, REMOVED_PREFIX)) and p.name not in keep:
+        if p.name.startswith((prefix, removed_prefix)) and p.name not in keep:
             p.unlink()
     return block
 
 
+# -- the slice (2026-10-23) ------------------------------------------------------------------- #
+# With server search on (docs/server-search-plan.md, "(d) hybrid"), the app keeps only a small list
+# of RECENT roles: it answers the first board page and the job alerts from it instantly and offline,
+# and asks the search API for everything else. The slice uses the stable layout above with its own
+# file prefixes and its own saved state, so a role that ages out of the window costs one entry in
+# the removed file, not a rewrite of its week. Older apps never read the "slice" block.
+
+def _naive_utc(s) -> datetime | None:
+    s = str(s or "").strip().replace("T", " ")
+    if s.endswith("Z"):
+        s = s[:-1]
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        try:
+            dt = datetime.strptime(s[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def slice_rows(slim: list[dict], generated_at: str, *, days: int = SLICE_DAYS,
+               max_rows: int = SLICE_MAX_ROWS) -> list[dict]:
+    """The rows first seen in the `days` before `generated_at`, at most `max_rows` of them (the
+    most recently first seen win), in the list's own order. A row with no readable first_seen is
+    left out."""
+    now = _naive_utc(generated_at)
+    if now is None:
+        return []
+    since = now - timedelta(days=days)
+    fresh = []
+    for i, r in enumerate(slim):
+        dt = _naive_utc(r.get("first_seen"))
+        if dt is not None and dt >= since:
+            fresh.append((dt, str(r.get("source_id") or ""), i))
+    if len(fresh) > max_rows:
+        fresh.sort(reverse=True)
+        fresh = fresh[:max_rows]
+    return [slim[i] for _, _, i in sorted(fresh, key=lambda x: x[2])]
+
+
+def write_slice(out_dir, slim: list[dict], generated_at: str, *, prev=None,
+                target_bytes: int = PART_TARGET_BYTES, days: int = SLICE_DAYS,
+                max_rows: int = SLICE_MAX_ROWS) -> dict | None:
+    """Write the slice of `slim` (slice_rows) in the stable layout under its own prefixes and
+    return the manifest's "slice" block, or None when no row is recent enough (no block is then
+    published; an app with server search on falls back to the whole list). `prev` is
+    load_stable_state(state_dir, "slice") of the previous build."""
+    rows = slice_rows(slim, generated_at, days=days, max_rows=max_rows)
+    if not rows:
+        for p in (Path(out_dir) / PARTS_DIR).glob("*.json.gz"):
+            if p.name.startswith((SLICE_PREFIX, SLICE_REMOVED_PREFIX)):
+                p.unlink()
+        return None
+    block = write_stable(out_dir, rows, prev=prev, target_bytes=target_bytes,
+                         prefix=SLICE_PREFIX, removed_prefix=SLICE_REMOVED_PREFIX)
+    block.update({"days": days, "max_rows": max_rows})
+    return block
+
+
 def save_stable_state(out_dir, state_dir) -> None:
-    """Keep this build's manifest and stable files in `state_dir` (the crawl's data dir, cached
-    between workflow runs) for the next build to start from. Replaced whole, never half-written."""
+    """Keep this build's manifest and stable files (the whole list's, and the slice's when there
+    is one) in `state_dir` (the crawl's data dir, cached between workflow runs) for the next build
+    to start from. Replaced whole, never half-written."""
     out, d = Path(out_dir), Path(state_dir)
     man = json.loads((out / MANIFEST_FILE).read_text(encoding="utf-8"))
     block = man.get("stable")
     if not stable_block_ok(block):
         return
+    saved = {"stable": block}
+    if stable_block_ok(man.get("slice")):
+        saved["slice"] = man["slice"]
     tmp = d.with_name(d.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
     (tmp / PARTS_DIR).mkdir(parents=True)
-    for f in block["files"] + ([block["removed"]] if block.get("removed") else []):
-        shutil.copyfile(out / f["url"], tmp / f["url"])
-    (tmp / MANIFEST_FILE).write_text(json.dumps({"stable": block}) + "\n", encoding="utf-8")
+    for b in saved.values():
+        for f in b["files"] + ([b["removed"]] if b.get("removed") else []):
+            shutil.copyfile(out / f["url"], tmp / f["url"])
+    (tmp / MANIFEST_FILE).write_text(json.dumps(saved) + "\n", encoding="utf-8")
     old = d.with_name(d.name + ".old")
     shutil.rmtree(old, ignore_errors=True)
     if d.exists():
@@ -648,6 +728,13 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
     prev = load_stable_state(prev_dir) if prev_dir else None
     stable = write_stable(out, slim, prev=prev, target_bytes=part_bytes or PART_TARGET_BYTES)
     stable["attribution"] = header["attribution"]
+    del prev
+    prev_slice = load_stable_state(prev_dir, "slice") if prev_dir else None
+    recent = write_slice(out, slim, generated_at, prev=prev_slice,
+                         target_bytes=part_bytes or PART_TARGET_BYTES)
+    del prev_slice
+    if recent is not None:
+        recent["attribution"] = header["attribution"]
     shards: dict[str, dict] = {s: {} for s in all_shards()}
     for r in rows:
         sid = r.get("source_id")
@@ -659,5 +746,7 @@ def write_feed(out_dir, rows: list[dict], jd_by_id: dict, *, jobs_url: str = "",
     manifest = {"feed_version": FEED_VERSION, "generated_at": generated_at, "count": len(slim),
                 "jobs_url": jobs_url or JOBS_FILE, "jd_shard_count": JD_SHARDS,
                 "jd_url_template": f"{JD_DIR}/{{shard}}.json.gz", "parts": parts, "stable": stable}
+    if recent is not None:
+        manifest["slice"] = recent
     (out / MANIFEST_FILE).write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     return manifest

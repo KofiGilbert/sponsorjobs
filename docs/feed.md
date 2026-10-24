@@ -79,6 +79,7 @@ Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/m
 | `parts/s-{sha}.json.gz` | the SAME list again in the **stable layout** (2026-10-23): rows grouped by the ISO week they were first seen (oldest first; inside a week by `first_seen`, then `source_id`), cut into ~1 MB parts, each `{bucket, jobs: [...]}` with rows as sorted-key JSON. The name is the hash of the part's own bytes, so a part whose rows did not change keeps its name across rebuilds | `max-age=31536000, immutable` (R2) |
 | `parts/d-{sha}.json.gz` | the stable layout's removed rows: `{removed: {part url: [row indexes]}}`, the rows of kept parts that left the list or changed since that part was written | same |
 | `manifest.json` | tiny, uncompressed: `{generated_at, count, jobs_url, jd_shard_count, jd_url_template, parts: {version, count, total_bytes, attribution, files: [{url, sha256, raw_sha256, bytes, count}]}, stable: {format: 1, version, count, order: "recent", total_bytes, attribution, files: [{url, sha256, raw_sha256, bytes, count, bucket}], removed: {url, sha256, raw_sha256, bytes, count}}}` (`removed` only when rows were removed) | `no-cache` |
+| `parts/r-{sha}.json.gz`, `parts/x-{sha}.json.gz` | the **slice** (2026-10-23, `feedfile.write_slice`): roles first seen in the 7 days before `generated_at`, at most 40,000 (the most recently first seen win), in the stable layout with its own prefixes and saved state. Listed in the manifest as `slice` (the stable block's shape plus `days`, `max_rows`), next to `parts`; left out when no role is that recent. Only an app with server search on (`JOBS_SEARCH=server`) reads it; older apps ignore the block. Measured on the live 184,552-row list (2026-10-24): 72,606 roles first seen in 7 days, so the cap applies: 40,000 rows, 4 parts, 3.3 MB gzipped, ~40 MB in memory | `max-age=31536000, immutable` (R2) |
 | `manifest-history.json` | R2 only, written by the uploader: the part lists of the last 3 manifests, `{manifests: [[url, ...], ...]}`; parts none of them name are deleted | `no-cache` |
 | `sponsors/{a..z,0..9,_}.json.gz` | the browser extension's sponsor index (`scripts/build_sponsor_index.py`, built in the same workflow run): `{index_version, version, shard, records: {norm_name: [display_name, h1b_approvals, h1b_last_fy, h1b_first_fy, perm_certs, e_verify, cap_exempt, naics2, state, h1b_5y, denial_pct, flags]}}` (the last three are the 2026-10 compact facts: approvals over the newest five fiscal years, denial rate in whole percent, bit set 1 = H-1B dependent / 2 = willful violator; trailing zeros dropped), ~8 MB in all. Lets the extension badge jobs with no app installed, without sending a company name anywhere | `max-age=86400` |
 | `sponsors/manifest.json` | `{index_version, version (content hash), generated_at, employers, stats, shards: {key: {file, bytes, records}}, total_bytes}`; the extension re-checks it at most daily | `no-cache` |
@@ -88,6 +89,12 @@ than **45 days** are dropped (`JOBS_FRESH_DAYS`), and rows unseen by a crawl for
 At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
 
 ### The app side (`ui/app.py`, `sourcing/feedclient.py`)
+
+Server search (`JOBS_SEARCH=server`, off by default; docs/server-search-plan.md phase 3): the app
+downloads only the `slice` into `<data dir>/feed_slice/` (same parts, sha256 checks, progress and
+back-off as below) and `sourcing/remotesearch.py` asks `/v1/jobs/search` and `/v1/jobs/candidates`
+(on `JOBS_SEARCH_URL`, else `TAILOR_BROKER_URL`) for keyword searches, deeper pages and the
+Auto-apply pool. Everything below describes the default, switch-off behaviour.
 
 - `JOBS_FEED_URL` is the **base URL** of the feed (e.g. `https://tailor.example/feed`).
 - `jobs.json.gz` is downloaded into `<data dir>/feed_cache/` **at most once an hour**, at a

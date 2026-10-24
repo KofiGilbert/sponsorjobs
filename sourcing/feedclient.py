@@ -41,6 +41,13 @@ their own content and grouped by the week a role was first seen (sourcing/feedfi
 the client keeps them in parts/store/ after joining, fetches only the parts it lacks plus a small
 file naming removed rows, joins them minus those rows, sorts by recency, and deletes the parts the
 manifest no longer names.
+
+THE SLICE (2026-10-23). With server search on (JOBS_SEARCH=server, sourcing/remotesearch.py) the app
+is built with `slice_only=True` over its own cache dir and downloads ONLY the manifest's "slice"
+block: roles first seen in the last 7 days, in the same stable layout, fetched, verified, cached and
+reported exactly as above. The header then carries "board_count", the whole list's size. A feed
+with no slice yet is read whole, as before. Rows the search API returned are remembered (a bounded
+map, `remember`), so opening one resolves through `get` like a cached row.
 """
 
 from __future__ import annotations
@@ -60,6 +67,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from .feedfile import (FEED_VERSION, JD_DIR, JOBS_FILE, MANIFEST_FILE, PARTS_DIR, RowCompactor,
@@ -84,6 +92,7 @@ PART_WORKERS = 2            # list parts downloaded at once
 PART_TRIES = 4              # tries per part within one attempt (finished parts are never refetched)
 PART_PAUSE = 2              # seconds between a part's tries (doubling)
 STATE_FILE = "feed_state.json"
+REMEMBER_MAX = 3000         # search-API rows kept for get() in slice mode
 _UA = "resume-agent/1.0 (static feed client)"
 
 
@@ -171,7 +180,8 @@ class StaticFeed:
     def __init__(self, base_url: str, cache_dir, fetch=None, clock=time.time,
                  timeout: float = DEFAULT_TIMEOUT, download=None, wait: float | None = None,
                  tries: int | None = None, retry_pause: float | None = None,
-                 parts: bool | None = None, manifest_fetch=None, legacy_parts: bool = False):
+                 parts: bool | None = None, manifest_fetch=None, legacy_parts: bool = False,
+                 slice_only: bool = False):
         self.base_url = (base_url or "").rstrip("/")
         self.cache_dir = Path(cache_dir)
         self._fetch = fetch or (lambda u, h: _http_fetch(u, h, timeout))
@@ -191,6 +201,8 @@ class StaticFeed:
         self._manifest_fetch = manifest_fetch or self._fetch
         self._parts = (not fake or manifest_fetch is not None) if parts is None else bool(parts)
         self._legacy_parts = bool(legacy_parts)     # tests: ignore the "stable" block
+        self._slice_only = bool(slice_only)          # server search on: the "slice" block only
+        self._remembered: OrderedDict = OrderedDict()
         self._part_tries = PART_TRIES
         self._part_pause = 0 if fake else PART_PAUSE
         self._wait = REQUEST_WAIT if wait is None else wait
@@ -430,6 +442,8 @@ class StaticFeed:
             return None
         top = {"generated_at": man.get("generated_at"),
                "feed_version": man.get("feed_version", FEED_VERSION)}
+        if self._slice_only and stable_block_ok(man.get("slice")):
+            return {**man["slice"], **top, "kind": "stable", "board_count": man.get("count")}
         stable = man.get("stable")
         if stable_block_ok(stable) and not self._legacy_parts:
             return {**stable, **top, "kind": "stable"}
@@ -622,6 +636,9 @@ class StaticFeed:
         data = {"feed_version": man.get("feed_version", FEED_VERSION),
                 "generated_at": man.get("generated_at"), "count": len(jobs),
                 "attribution": man.get("attribution") or {}, "jobs": jobs}
+        if man.get("board_count") is not None:          # the slice: the whole list's size
+            data = {**{k: v for k, v in data.items() if k != "jobs"},
+                    "board_count": man["board_count"], "jobs": jobs}
         other = "parts_version" if vkey == "stable_version" else "stable_version"
         # Serialized OUTSIDE the lock (a few seconds for ~96k rows): requests keep being served.
         # Streamed row by row into a temp file: the whole document as one string was ~280 MB.
@@ -800,13 +817,27 @@ class StaticFeed:
         try:
             self.jobs()                     # outside the lock: it may wait briefly on a download
         except FeedUnavailable:
-            return None
+            with self._lock:
+                return self._remembered.get(source_id)
         with self._lock:
             if self._jobs is None:
-                return None
+                return self._remembered.get(source_id)
             if self._by_id is None or self._by_id[0] != self._loaded_mtime:
                 self._by_id = (self._loaded_mtime, {j.get("source_id"): j for j in self._jobs})
-            return self._by_id[1].get(source_id)
+            row = self._by_id[1].get(source_id)
+            return row if row is not None else self._remembered.get(source_id)
+
+    def remember(self, rows) -> None:
+        """Keep rows the search API returned (slice mode), newest last, so a role opened from a
+        server page resolves through get(). Bounded: the oldest are forgotten first."""
+        with self._lock:
+            for r in rows or []:
+                sid = r.get("source_id") if isinstance(r, dict) else None
+                if sid:
+                    self._remembered[sid] = r
+                    self._remembered.move_to_end(sid)
+            while len(self._remembered) > REMEMBER_MAX:
+                self._remembered.popitem(last=False)
 
     def benchmarks(self) -> dict:
         """Board-wide pay medians per role family over the cached list (for pay_insight), computed

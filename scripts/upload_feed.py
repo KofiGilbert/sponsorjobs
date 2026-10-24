@@ -9,7 +9,8 @@ Order matters: JD shards first, then the list parts, then jobs.json.gz, then man
 so a client that reads the manifest never points at data that isn't there yet. Headers per object:
   jobs.json.gz   Content-Type application/json, Content-Encoding gzip, Cache-Control max-age=600
   jd/*.json.gz   same, Cache-Control max-age=86400
-  parts/jobs-<version>-<nnn>.json.gz, parts/s-<sha>.json.gz, parts/d-<sha>.json.gz
+  parts/jobs-<version>-<nnn>.json.gz, parts/s-<sha>.json.gz, parts/d-<sha>.json.gz,
+  parts/r-<sha>.json.gz, parts/x-<sha>.json.gz (the slice)
                  same, Cache-Control max-age=31536000, immutable: the name carries the content hash,
                  so a part never changes, and a part already in the bucket is not sent again (the
                  stable layout keeps most parts across rebuilds). After the manifest is up, the
@@ -89,14 +90,15 @@ def plan(out_dir) -> list[tuple[Path, str]]:
 
 def _manifest_parts(body: bytes) -> list[str]:
     """The list-part paths a manifest names: the per-version parts, then the stable parts and the
-    stable layout's removed-rows file ([] for a manifest from before the parts)."""
+    stable layout's removed-rows file, then the slice's ([] for a manifest from before the parts)."""
     try:
         man = json.loads(body.decode("utf-8"))
         files = list((man.get("parts") or {}).get("files") or [])
-        stable = man.get("stable") or {}
-        files += list(stable.get("files") or [])
-        if stable.get("removed"):
-            files.append(stable["removed"])
+        for key in ("stable", "slice"):                    # the slice: sourcing/feedfile.write_slice
+            block = man.get(key) or {}
+            files += list(block.get("files") or [])
+            if block.get("removed"):
+                files.append(block["removed"])
         out: list[str] = []
         for f in files:
             url = str(f.get("url", ""))
