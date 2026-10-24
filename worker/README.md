@@ -30,6 +30,7 @@ implementation; it does not replace or change anything in `backend/`.
 | `GET /billing/offers`, `GET /billing/packs` | passes and packs on sale (packs only while a pass is active) and where the caller stands |
 | `POST /billing/passes/<id>/checkout`, `POST /billing/packs/<id>/checkout` | a one-time Stripe Checkout Session, `{url}` (`402 pass_required` for a pack without a pass) |
 | `POST /billing/webhook` | Stripe's `checkout.session.completed`: grants the pass or pack once per session (signature-checked) |
+| `GET /v1/jobs/search`, `GET /v1/jobs/candidates` | server-side job search over the D1 index (`src/search.ts`, docs/server-search-plan.md): the board's facets, keyset cursors, at most 50 / 500 rows a page and 1,000 deep; `503 no_index` until `scripts/load_search_index.py` has loaded it. Reads its own D1 database (`SEARCH_DB`, `migrations-search/`), not the broker's |
 
 Billing is off until the Stripe secrets are set (`STRIPE_SECRET_KEY` and at least one pass price;
 see `docs/stripe-setup.md`). While off, the billing routes answer exactly as the Python broker does
@@ -42,6 +43,17 @@ pack needs a signed-in account (`401 sign_in_required` otherwise), and the e-mai
 Stripe Checkout. Each sign-in method stays `503 ... not configured` until its secrets are set
 (`docs/sign-in-setup.md`). The Python broker's password routes (`/account/signup|login|claim`) and
 Telegram answer `503 ... not configured`.
+
+### The search database (owner, before the next deploy)
+
+`wrangler.jsonc` binds `SEARCH_DB` with a **placeholder** id, so a deploy fails until it is real:
+
+1. `npx wrangler d1 create sponsorjobs-search` and paste the `database_id` it prints into the
+   `SEARCH_DB` entry of `wrangler.jsonc`.
+2. `npx wrangler d1 migrations apply SEARCH_DB --remote`.
+3. GitHub: secret `SEARCH_D1_TOKEN` (a Cloudflare API token with D1 Edit), variables
+   `SEARCH_D1_ACCOUNT_ID` and `SEARCH_D1_DATABASE_ID` (the id from step 1). The feed workflow then
+   loads the index after each build. Optional: `npx wrangler secret put SEARCH_CURSOR_SECRET`.
 
 ## Run it locally
 

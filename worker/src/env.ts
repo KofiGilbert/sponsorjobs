@@ -47,6 +47,15 @@ export interface Env {
   ACCESS_AUD?: string;              // the Access application's Audience (AUD) tag
   ADMIN_EMAILS?: string;            // optional extra lock: comma-separated e-mails allowed in
   ADMIN_HOST?: string;              // default "admin.sponsorjobs.ai"
+  // Job search (src/search.ts). The rate limiters are `ratelimits` bindings in wrangler.jsonc; a
+  // runtime without them has no per-token / per-network limit. The cursor secret is optional
+  // (`wrangler secret put SEARCH_CURSOR_SECRET`): without it cursors are signed with a public key.
+  // The search index lives in its OWN D1 database (migrations-search/): a D1 database runs one
+  // query at a time, and search traffic must not queue behind billing and sign-ins on DB.
+  SEARCH_DB: D1Database;
+  SEARCH_TOKEN_LIMITER?: RateLimit;
+  SEARCH_IP_LIMITER?: RateLimit;
+  SEARCH_CURSOR_SECRET?: string;
 }
 
 /** A numeric var with a fallback, so a missing or mistyped value never turns into NaN limits. */

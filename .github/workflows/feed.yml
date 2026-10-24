@@ -174,6 +174,31 @@ jobs:
             --merge-dir .shards \
             --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"
 
+      # Server-side search (docs/server-search-plan.md, phase 2): write the rows that changed to
+      # the D1 index the Worker's /v1/jobs/search reads. Off until the SEARCH_D1_TOKEN secret is
+      # added (a Cloudflare API token with D1 Edit), with the SEARCH_D1_ACCOUNT_ID and
+      # SEARCH_D1_DATABASE_ID variables (the id of the SEARCH database, sponsorjobs-search, from
+      # worker/wrangler.jsonc once created; never the broker's database). Runs before the state save so its own state file
+      # (search-index-state.json.gz, next to the crawl state) is cached with it. A failed load
+      # never blocks publishing the feed; the next run finishes it.
+      - name: Is the search index configured?
+        id: search-index
+        env:
+          SEARCH_D1_TOKEN: ${{ secrets.SEARCH_D1_TOKEN }}
+        run: if [ -n "$SEARCH_D1_TOKEN" ]; then echo "on=1" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Load the search index (D1, changed rows only)
+        if: ${{ steps.search-index.outputs.on == '1' }}
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          SEARCH_D1_TOKEN: ${{ secrets.SEARCH_D1_TOKEN }}
+          SEARCH_D1_ACCOUNT_ID: ${{ vars.SEARCH_D1_ACCOUNT_ID }}
+          SEARCH_D1_DATABASE_ID: ${{ vars.SEARCH_D1_DATABASE_ID }}
+        run: |
+          python scripts/load_search_index.py --feed "$FEED_OUT_DIR/jobs.json.gz" \
+            --state "$FEED_DATA_DIR/search-index-state.json.gz"
+
       # The merged state is saved ONLY after a successful merge, under a new per-run key (the
       # next run's prefix restore picks the newest), so a failed run never replaces good state.
       - name: Save crawl state
