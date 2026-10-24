@@ -4351,3 +4351,36 @@ body.cv-dragging * { cursor: grabbing !important; }
 .prep-side-foot { font-size: 12px; color: var(--faint); line-height: 1.55; margin: 24px 0 0; padding-top: 16px; border-top: 1px solid var(--border); }
 @media (max-width: 900px) { .prep-setup { grid-template-columns: 1fr; min-height: 0; } .prep-setup-side { grid-column: 1; grid-row: auto;
   border-left: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--r-lg) var(--r-lg); } }
+
+/* Projects home: the one Continue line above the ideas (same line as Interview prep's Last interview). */
+.prep-last.proj-continue { margin: 0 0 18px; }
+.prep-last.proj-continue[hidden] { display: none; }
+#projMine[hidden] { display: none; }
+
+/* ============ Tracker (2026-10-23): the board is the page ============
+   One slim numbers strip, then a board that fills the window; each column scrolls on its own. */
+#view-tracker .trk-metrics { display: flex; align-items: stretch; gap: 0; padding: 0; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg, 14px); overflow: hidden; grid-template-columns: none; margin-bottom: 14px; }
+.trk-st { display: flex; align-items: center; gap: 6px; padding: 11px 20px; border-left: 1px solid var(--border); font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.trk-st:first-child { border-left: 0; }
+.trk-st b { color: var(--ink); font-size: 19px; font-weight: 650; margin-right: 2px; }
+.trk-st-f { color: var(--faint); }
+.trk-st-goal .trk-goal-lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.trk-st-goal .trk-goal-in { width: 54px; padding: 3px 6px; font-size: 12.5px; }
+.trk-st-goal .trk-goal-bar { display: inline-block; width: 70px; height: 5px; border-radius: 9px; background: var(--surface-2); overflow: hidden; margin-left: 4px; }
+.trk-st-goal .trk-goal-fill { display: block; height: 100%; background: var(--ink-2); border-radius: 9px; }
+.trk-st-spark { margin-left: auto; gap: 10px; }
+.trk-st-hint { color: var(--faint); }
+.trk-spark { display: inline-flex; align-items: flex-end; gap: 3px; height: 28px; }
+.trk-spark i { width: 7px; border-radius: 2px; background: var(--ink-2); opacity: .5; }
+.trk-spark i.is-now { opacity: 1; }
+@media (max-width: 1100px) { #view-tracker .trk-metrics { flex-wrap: wrap; } .trk-st-spark { margin-left: 0; } }
+#view-tracker .trk-board { position: relative; grid-template-columns: repeat(var(--trk-cols, 5), minmax(0, 1fr)); align-items: stretch; }
+#view-tracker .trk-col { display: flex; flex-direction: column; min-height: 0; }
+#view-tracker .trk-col-cards { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.trk-col-hint { border: 1px dashed var(--border-strong); border-radius: var(--r); padding: 16px 12px; font-size: 12.5px; color: var(--faint); text-align: center; }
+.trk-welcome { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); width: min(440px, 90%); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: 16px; padding: 30px 32px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.trk-welcome-h { font-size: 20px; font-weight: 650; color: var(--ink); }
+.trk-welcome-p { font-size: 13.5px; color: var(--muted); line-height: 1.6; margin: 10px 0 20px; }
+.trk-welcome-acts { display: flex; gap: 8px; justify-content: center; }

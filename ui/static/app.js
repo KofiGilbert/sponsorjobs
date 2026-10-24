@@ -3918,11 +3918,10 @@
     const board = $("#trkBoard"), table = $("#trkTable"), empty = $("#trkEmpty");
     if (!board || !table) return;
     const none = !TRK_CARDS.length;
-    if (empty) empty.hidden = !none;
-    board.hidden = none || TRK_VIEW !== "board";
+    if (empty) empty.hidden = true;                // an empty tracker shows the board, with hints
+    board.hidden = !none && TRK_VIEW !== "board";
     table.hidden = none || TRK_VIEW !== "table";
-    if (none) return;
-    if (TRK_VIEW === "board") renderTrackerBoard(); else renderTrackerTable();
+    if (none || TRK_VIEW === "board") renderTrackerBoard(); else renderTrackerTable();
   }
 
   // Sponsorship chips, quiet when there is nothing to say (a card has no room for "no record").
@@ -3955,15 +3954,43 @@
     </div>`;
   }
 
+  // The board's columns (2026-10-23, after Huntr's Wishlist / Applied / Interview / Offer /
+  // Rejected): Saved, Applied, Interviewing, Offer, Closed. "Ready to apply" (approved for
+  // auto-apply) shows only while something waits there; Closed holds rejected and archived jobs.
+  const TRK_COLS = [
+    { key: "saved", stages: ["saved"], hint: ["tracker.hintSaved", "Jobs you save from the Jobs page"] },
+    { key: "approved", stages: ["approved"], optional: true, hint: ["tracker.hintApproved", "Approved for auto-apply"] },
+    { key: "applied", stages: ["applied"], hint: ["tracker.hintApplied", "Moves here when you apply"] },
+    { key: "interviewing", stages: ["interviewing"], hint: ["tracker.hintInterview", "Drag a card here when they call"] },
+    { key: "offer", stages: ["offer"], hint: ["tracker.hintOffer", "The goal"] },
+    { key: "rejected", stages: ["rejected", "archived"], name: ["tracker.closed", "Closed"], hint: ["tracker.hintClosed", "Rejections and jobs you pass on"] },
+  ];
+  function trkFitBoard() {
+    const host = $("#trkBoard"); if (!host || host.hidden || !host.offsetParent) return;
+    host.style.height = Math.max(360, window.innerHeight - host.getBoundingClientRect().top - 44) + "px";
+    const view = host.closest(".view"), spill = view ? view.scrollHeight - view.clientHeight : 0;
+    if (spill > 0) host.style.height = Math.max(360, host.offsetHeight - spill) + "px";   // never scroll the page
+  }
+  window.addEventListener("resize", trkFitBoard);
   function renderTrackerBoard() {
     const host = $("#trkBoard");
-    host.innerHTML = TRK_STAGES.map(s => {
-      const cards = TRK_CARDS.filter(c => c.stage === s);
-      return `<div class="trk-col" data-stage="${s}">
-        <div class="trk-col-h"><span>${esc(trkStageName(s))}</span><span class="trk-col-n">${cards.length}</span></div>
-        <div class="trk-col-cards">${cards.map(trkCardHtml).join("")}</div>
+    const none = !TRK_CARDS.length;
+    const cols = TRK_COLS.filter(c => !c.optional || TRK_CARDS.some(x => c.stages.includes(x.stage)));
+    host.style.setProperty("--trk-cols", cols.length);
+    host.innerHTML = cols.map(col => {
+      const cards = TRK_CARDS.filter(c => col.stages.includes(c.stage));
+      const name = col.name ? trkT(col.name[0], col.name[1]) : trkStageName(col.key);
+      return `<div class="trk-col" data-stage="${col.key}">
+        <div class="trk-col-h"><span>${esc(name)}</span><span class="trk-col-n">${cards.length}</span></div>
+        <div class="trk-col-cards">${cards.length ? cards.map(trkCardHtml).join("") : `<div class="trk-col-hint">${esc(trkT(col.hint[0], col.hint[1]))}</div>`}</div>
       </div>`;
-    }).join("");
+    }).join("") + (none ? `<div class="trk-welcome">
+        <div class="trk-welcome-h">${esc(trkT("tracker.welcomeH", "Every application, in one place"))}</div>
+        <p class="trk-welcome-p">${esc(trkT("tracker.welcomeP", "Save a job or tailor a resume and it lands in Saved. Drag it along as you hear back."))}</p>
+        <div class="trk-welcome-acts"><button class="btn btn-primary" type="button" data-go="jobs">${esc(trkT("tracker.findJobs", "Find jobs"))}</button>
+          <button class="btn btn-ghost" type="button" data-go="autoapply">${esc(trkT("tracker.seeAuto", "See auto-apply"))}</button></div></div>` : "");
+    host.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => document.querySelector(`[data-nav="${b.dataset.go}"]`)?.click()));
+    requestAnimationFrame(trkFitBoard);
     host.querySelectorAll(".trk-card").forEach(card => {
       card.addEventListener("click", (e) => { if (e.target.closest("a")) return; openTrackerPanel(card.dataset.sid); });
       card.addEventListener("keydown", (e) => {
@@ -3982,7 +4009,9 @@
       col.addEventListener("drop", (e) => {
         e.preventDefault(); col.classList.remove("is-over");
         const sid = e.dataTransfer.getData("text/plain");
-        if (sid) trkMove(sid, col.dataset.stage);
+        const c = TRK_CARDS.find(x => x.source_id === sid);
+        // Closed holds rejected AND archived: an archived card dropped back there stays archived.
+        if (sid && !(c && col.dataset.stage === "rejected" && c.stage === "archived")) trkMove(sid, col.dataset.stage);
       });
     });
   }
@@ -4012,6 +4041,9 @@
     host.querySelectorAll("[data-stage-for]").forEach(s => s.addEventListener("change", () => trkMove(s.dataset.stageFor, s.value)));
   }
 
+  // The numbers as ONE slim strip above the board (2026-10-23): the board is the page, so the
+  // funnel and the 12-week chart (now a small bar row on the right) take one line, not half the
+  // screen. Same numbers as before, same weekly goal you can edit in place.
   function renderTrackerMetrics() {
     const host = $("#trkMetrics");
     if (!host) return;
@@ -4019,28 +4051,20 @@
     if (!m) { host.innerHTML = ""; return; }
     const goal = m.goal || { target: 0, done: 0, pct: 0 };
     const weeks = m.weeks || [];
-    // The axis tops out at 5 at least, so one application is a small bar, not a full black column.
     const peak = Math.max(5, ...weeks.map(w => w.count));
-    const bars = weeks.map((w, i) => `<div class="trk-bar${i === weeks.length - 1 ? " is-now" : ""}" title="${esc(trkT("tracker.weekOf", "Week of"))} ${esc(trkDay(w.week))}: ${w.count}"><div class="trk-bar-fill" style="height:${Math.round(w.count / peak * 100)}%"></div></div>`).join("");
-    const median = m.median_days_to_interview == null ? trkT("tracker.none", "n/a") : m.median_days_to_interview;
+    const any = (m.applied_total || 0) > 0;
+    const bars = weeks.map((w, i) => `<i class="${i === weeks.length - 1 ? "is-now" : ""}" title="${esc(trkT("tracker.weekOf", "Week of"))} ${esc(trkDay(w.week))}: ${w.count}" style="height:${Math.max(2, Math.round(w.count / peak * 28))}px"></i>`).join("");
+    const median = m.median_days_to_interview;
     host.innerHTML = `
-      <div class="trk-tile">
-        <div class="trk-tile-l">${esc(trkT("tracker.thisWeek", "This week"))}</div>
-        <div class="trk-tile-n">${m.applied_week}</div>
-        <div class="trk-goal">
-          <div class="trk-goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${goal.target ? goal.pct : 0}"><div class="trk-goal-fill" style="width:${goal.target ? goal.pct : 0}%"></div></div>
-          <label class="trk-goal-lbl">${esc(trkT("tracker.goal", "Weekly goal"))} <input class="fld trk-goal-in" id="trkGoal" type="number" min="0" max="500" value="${goal.target}"></label>
-        </div>
-      </div>
-      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.applied", "Applied"))}</div><div class="trk-tile-n">${m.applied_total}</div><div class="trk-tile-s">${esc(trkT("tracker.total", "total"))}</div></div>
-      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.interviews", "Interviews"))}</div><div class="trk-tile-n">${m.interviews}</div><div class="trk-tile-s">${m.pct_interview}% ${esc(trkT("tracker.ofApplied", "of applied"))}</div></div>
-      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.offers", "Offers"))}</div><div class="trk-tile-n">${m.offers}</div><div class="trk-tile-s">${m.pct_offer}% ${esc(trkT("tracker.ofInterviews", "of interviews"))}</div></div>
-      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.daysToInterview", "Days to first interview"))}</div><div class="trk-tile-n">${esc(String(median))}</div><div class="trk-tile-s">${esc(trkT("tracker.median", "median"))}</div></div>
-      <div class="trk-tile trk-tile-chart">
-        <div class="trk-tile-l">${esc(trkT("tracker.perWeek", "Applications per week, last 12 weeks"))}</div>
-        <div class="trk-bars">${bars}</div>
-        <div class="trk-bars-axis"><span>${esc(trkDay(weeks[0] && weeks[0].week))}</span><span>${esc(trkDay(weeks.length && weeks[weeks.length - 1].week))}</span></div>
-      </div>`;
+      <div class="trk-st trk-st-goal"><b class="num">${m.applied_week}</b>
+        <label class="trk-goal-lbl">${esc(trkT("tracker.ofGoal", "of"))} <input class="fld trk-goal-in" id="trkGoal" type="number" min="0" max="500" value="${goal.target}" aria-label="${esc(trkT("tracker.goal", "Weekly goal"))}"> ${esc(trkT("tracker.thisWeekShort", "this week"))}</label>
+        <span class="trk-goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${goal.target ? goal.pct : 0}"><span class="trk-goal-fill" style="width:${goal.target ? goal.pct : 0}%"></span></span></div>
+      <div class="trk-st"><b class="num">${m.applied_total}</b>${esc(trkT("tracker.appliedLow", "applied"))}</div>
+      <div class="trk-st"><b class="num">${m.interviews}</b>${esc(m.interviews === 1 ? trkT("tracker.interviewLow", "interview") : trkT("tracker.interviewsLow", "interviews"))}${any ? ` <span class="trk-st-f">${m.pct_interview}%</span>` : ""}</div>
+      <div class="trk-st"><b class="num">${m.offers}</b>${esc(m.offers === 1 ? trkT("tracker.offerLow", "offer") : trkT("tracker.offersLow", "offers"))}</div>
+      ${median != null ? `<div class="trk-st"><b class="num">${esc(String(median))}</b>${esc(trkT("tracker.daysToFirst", "days to first interview"))}</div>` : ""}
+      ${any ? `<div class="trk-st trk-st-spark">${esc(trkT("tracker.weeks12", "12 weeks"))}<span class="trk-spark">${bars}</span></div>`
+            : `<div class="trk-st trk-st-spark trk-st-hint">${esc(trkT("tracker.fillsIn", "Your weekly numbers fill in as you apply"))}</div>`}`;
     $("#trkGoal")?.addEventListener("change", async (e) => {
       const target = Math.max(0, parseInt(e.target.value, 10) || 0);
       try {
@@ -4370,8 +4394,42 @@
     projSplit(false);
     if ($("#projList")) $("#projList").hidden = false;
     try { const d = await api("/api/projects"); PROJECTS = d.projects || []; } catch { PROJECTS = []; }
-    renderProjList();
+    if (MYPROJ) { if ($("#projIdeas")) $("#projIdeas").hidden = true; renderProjList(); }
+    else openIdeas();                          // Projects opens on the ideas
   }
+  // false: the Projects home (the ideas). true: the Your projects page (the list, drafts, verified).
+  let MYPROJ = false;
+  // The newest project still in progress, for the one Continue line on the ideas page.
+  function projInProgress() {
+    const going = PROJECTS.filter(p => (p.origin === "ai" ? p.stage !== "verified" : p.status !== "verified"));
+    const t = (p) => Number(p.updated || p.updated_at || p.created || p.created_at || 0) || 0;
+    return going.sort((a, b) => t(b) - t(a))[0] || null;
+  }
+  function paintProjContinue() {
+    const box = $("#projContinue"); if (!box) return;
+    const p = projInProgress();
+    box.hidden = !p; if (!p) return;
+    let what = "", note = "";
+    if (p.origin === "ai") {
+      const b = p.build || {}, lr = p.learn || {}, d = p.defense || {};
+      if (p.stage === "building") { what = PT("projects.sBuilding", "Building"); note = (BUILD_LABEL[b.state] || BUILD_LABEL.queued)(b); }
+      else if (p.stage === "failed") what = PT("projects.sStopped", "Build stopped");
+      else if (p.stage === "learn") { what = PT("projects.sLearn", "Learn it"); if (lr.total) note = PT("projects.nLearned", "{n} of {m} learned").replace("{n}", lr.learned || 0).replace("{m}", lr.total); }
+      else if (p.stage === "defend") { what = PT("projects.sDefend", "Defend it"); if (d.tried) note = PT("projects.lastQuiz", "Last try {s} of {m}. Pass is {p}.").replace("{s}", d.score).replace("{m}", d.total).replace("{p}", d.pass_mark); }
+    } else what = PT("projects.draft", "Draft");
+    box.innerHTML = `<span class="prep-last-k">${esc(PT("projects.inProgress", "In progress"))}</span>
+      <span class="prep-last-role">${esc(p.title)}</span>
+      <span class="prep-last-meta">${esc(what)}${note ? ` &middot; ${esc(note)}` : ""}</span>
+      <span class="prep-last-score"></span>
+      <span class="prep-last-go">${esc(PT("projects.continueLearn", "Continue"))} &rarr;</span>`;
+    box.onclick = () => {
+      if (p.origin === "ai" && p.stage === "learn") return startLearn(p);
+      if (p.origin === "ai" && p.stage === "defend") return startQuiz(p);
+      if (p.origin !== "ai") return startBuildGuide(p);
+      showMyProjects();                        // building or stopped: its card shows the state
+    };
+  }
+  function showMyProjects() { MYPROJ = true; if ($("#projIdeas")) $("#projIdeas").hidden = true; renderProjList(); }
   // Monochrome inline glyphs for the Projects screen (no assets, no colour).
   // <tech-logo> (2026-10-13). The idea tile is the Jobs logo tile: white, with the real logo of
   // the idea's main technology in its own brand colour (Simple Icons, vendored in
@@ -5225,10 +5283,15 @@
     const acts = $("#projHeadActs");
     // The ideas gallery is its own page: "Project ideas" under a back link, no header buttons.
     const ideasOpen = !$("#projIdeas")?.hidden;
-    const back = $("#projIdeasBack"); if (back) back.hidden = !ideasOpen;
+    // The ideas are the Projects home: "Projects", no back link, a "Your projects N" button and
+    // New project in the header. The list is its own page: "Your projects" under a back link.
+    const back = $("#projIdeasBack"); if (back) back.hidden = ideasOpen;
     const pt = $("#projPageTitle");
-    if (pt) pt.textContent = ideasOpen ? PT("projects.ideasPageTitle", "Project ideas") : PT("projects.title", "Projects");
-    if (ideasOpen) { if (acts) acts.hidden = true; root.innerHTML = ""; return; }
+    if (pt) pt.textContent = ideasOpen ? PT("projects.title", "Projects") : PT("projects.mine", "Your projects");
+    const mine = $("#projMine"); if (mine) mine.hidden = !ideasOpen || !PROJECTS.length;
+    if ($("#projMineN")) $("#projMineN").textContent = String(PROJECTS.length);
+    if (ideasOpen) { if (acts) acts.hidden = false; projHeadAccent(true);   // the ideas own the accent (Start)
+      root.innerHTML = ""; paintProjContinue(); return; }
     if (!PROJECTS.length) {
       // The header buttons repeat the card's actions, so they step aside while it shows:
       // one primary action per screen.
@@ -5236,7 +5299,7 @@
       projHeadAccent(formOpen);
       root.innerHTML = formOpen ? "" : projEmptyHTML();
       $("#projEmptyAdd")?.addEventListener("click", () => openProjForm("#projForm", "#projTitle"));
-      $("#projEmptySuggest")?.addEventListener("click", () => openIdeas());
+      $("#projEmptySuggest")?.addEventListener("click", () => { MYPROJ = false; openIdeas(); });
       return;
     }
     if (acts) acts.hidden = false;
@@ -5290,7 +5353,7 @@
     renderProjList();
     $(focusSel)?.focus();
   }
-  $("#projNew")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { $("#projIdeas") && ($("#projIdeas").hidden = true); $("#projTitle")?.focus(); } renderProjList(); } });
+  $("#projNew")?.addEventListener("click", () => { MYPROJ = true; const f = $("#projForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { $("#projIdeas") && ($("#projIdeas").hidden = true); $("#projTitle")?.focus(); } renderProjList(); } });
   $("#projCancel")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.reset(); f.hidden = true; } renderProjList(); });
   $("#projForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -5766,24 +5829,29 @@
       toast(d.project?.target === "github" ? PT("projects.buildingRepo", "Building it. It goes to a private repo on GitHub.")
         : PT("projects.buildingLocal", "Building it here. Download the files any time."));
       const box = $("#projIdeas"); if (box) box.hidden = true;
-      loadProjects();
+      MYPROJ = true; loadProjects();            // the new project, building, on Your projects
     } catch (err) {
       toast(err.message || PT("projects.startFailed", "Couldn't start the project."));
       if (btn) { btn.disabled = false; btn.textContent = label; }
     }
   }
   $("#projSuggestBtn")?.addEventListener("click", () => { const box = $("#projIdeas"); if (box && !box.hidden) closeIdeas(); else openIdeas(); });
-  $("#projIdeasBack")?.addEventListener("click", () => { if (QUIZ) leaveQuiz(); else if (LEARN) leaveLearn(); else closeIdeas(); });
+  $("#projIdeasBack")?.addEventListener("click", () => {
+    if (QUIZ) leaveQuiz(); else if (LEARN) leaveLearn();
+    else { MYPROJ = false; const f = $("#projForm"); if (f) { f.reset(); f.hidden = true; } openIdeas(); }   // the list goes back to the ideas
+  });
+  $("#projMine")?.addEventListener("click", showMyProjects);
   // Esc goes back too, unless a field inside the gallery (the Target chip, an inline ask) took it.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || e.defaultPrevented) return;
     if (LEARN && !$("#projLearn")?.hidden && $("#view-projects")?.classList.contains("is-active")
         && !typing(e.target)) { e.preventDefault(); leaveLearn(); return; }
     if (QUIZ && !$("#projQuiz")?.hidden && $("#view-projects")?.classList.contains("is-active")) { e.preventDefault(); leaveQuiz(); return; }
-    const box = $("#projIdeas");
-    if (!box || box.hidden || !$("#view-projects")?.classList.contains("is-active")) return;
+    // The ideas are the Projects home, so Esc there does nothing; on Your projects it goes home.
+    if (!MYPROJ || !$("#view-projects")?.classList.contains("is-active") || typing(e.target)) return;
+    if (!$("#projList") || $("#projList").hidden) return;
     if (document.querySelector(".modal:not([hidden]), dialog[open]")) return;
-    e.preventDefault(); closeIdeas();
+    e.preventDefault(); $("#projIdeasBack")?.click();
   });
   $("#projIdeasMore")?.addEventListener("click", loadMoreIdeas);
   $("#projIdeasSearch")?.addEventListener("submit", (e) => {
