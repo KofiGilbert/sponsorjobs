@@ -84,7 +84,9 @@ Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/m
 | `sponsors/manifest.json` | `{index_version, version (content hash), generated_at, employers, stats, shards: {key: {file, bytes, records}}, total_bytes}`; the extension re-checks it at most daily | `no-cache` |
 
 The list holds every row that passes the checks (`JOBS_FEED_LIMIT`, 1,000,000 since 2026-10-23), dated rows older
-than **45 days** are dropped (`JOBS_FRESH_DAYS`), and rows unseen by a crawl for 21 days are pruned.
+than **45 days** are dropped (`JOBS_FRESH_DAYS`, unless a crawl saw them in the last 7 days,
+`JOBS_SEEN_DAYS`), and rows a crawl no longer sees are pruned: after 7 days unseen when their board
+was read in full since, after 21 days unseen otherwise (see "When a row leaves the database" below).
 At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
 
 ### The app side (`ui/app.py`, `sourcing/feedclient.py`)
@@ -483,6 +485,49 @@ lane has its own 130-minute cap and runs beside the board pass, so the shortened
 not make shard 0 longer than today). As at the last change, each shard's first run starts from
 `crawl_cursor.json`; the `s*of3` cursor files are no longer read.
 
+### When a row leaves the database (pruning, 2026-10-24)
+
+Three rules decide when a stored row stops being published or is deleted. They are applied in the
+merge job after the shard deltas are folded in (`scripts/build_feed.py` `prune_rows`), and the
+build log shows how many rows each removed (`pruned unlisted=... stale=...`). The first rule is a
+publish filter, the other two delete rows:
+
+1. **Posting age** (`backend/feed.py`, `JOBS_FRESH_DAYS` = 45, `JOBS_SEEN_DAYS` = 7): a dated row
+   posted over 45 days ago is left out of the feed unless a crawl saw it listed in the last 7 days.
+   The row stays in the DB and comes back if a crawl sees it again. Unchanged by the rules below.
+2. **Unlisted** (`Watchlist.prune_unlisted`, `scheduler.FAST_PRUNE_DAYS`, env `JOBS_FAST_PRUNE_DAYS`,
+   default 7): a row is deleted once it has been unseen for 7 days AND its board had a **full,
+   successful read after the row was last seen**. That read answered and did not list the job, so
+   the employer took it down. The read is recorded per board in the `board_crawl` table
+   (`ats, board_id, last_ok, last_partial, last_error, error, consecutive_errors, updated_at`),
+   stamped by `refresh_watchlist` for every board it attempts, after the board's rows are
+   upserted: `last_ok` when the read succeeded and listed the whole board, `last_partial` when it
+   succeeded but stopped at a cap, `last_error` when it raised (its message in `error`, the streak
+   in `consecutive_errors`; a success clears the streak). Each shard exports the rows it stamped
+   in its delta and the merge keeps the newer timestamp per column, so the rule works across the
+   four shards. Only `last_ok` counts. A board that raised, that the time cap did not reach, or
+   that was read partially stamps no `last_ok`, so its rows are untouched by this rule: a live job
+   is never dropped because its board was down. "Partial" (`service.listing_complete`) means the
+   adapter's own cap was reached: Amazon returns the newest `AMAZON_MAX_JOBS`, a Workday board that
+   listed `WORKDAY_MAX_JOBS` or Workday's 2,000-row ceiling (so a giant, split Workday board stays
+   on the 21-day rule), or `JOBS_MAX_PER_COMPANY` rows were kept. A **collapsed listing** is
+   partial too (`service.listing_collapsed`): a 200 that lists no rows at all, or fewer than a
+   fifth of what the board's last full read listed when that was 20 or more (`board_crawl.rows`,
+   or the stored rows before any read was recorded), is a broken or changed API answer more
+   often than an emptied board, so it is stamped `last_partial` with `error` = "listing
+   collapsed: 0 of 480" and the rows keep the 21-day rule. A normal shrink (480 to 410) is a
+   full read. The trade-off: a board an employer genuinely emptied keeps its rows the full 21
+   days, as before this rule; the fast rule only ever speeds up rows on boards that still list
+   something. Rows whose `source_id` does not start with a watched board's `ats:board_id:` (the
+   aggregators, the career-site lane) have no board row and are left to rule 3.
+3. **Stale** (`Watchlist.prune_stale`, `scheduler.PRUNE_DAYS`, env `JOBS_PRUNE_DAYS`, default 21):
+   every row unseen for 21 days is deleted, whatever its board did. The safety net, as before.
+
+Neither delete rule ever touches a saved, dismissed or tracked row (the person's own records).
+Before rule 2 (2026-10-24) a job the employer quietly removed could linger in the feed for up to
+21 days; with every board crawled every run, it now leaves about 7 days after it was taken down,
+and only when we know the board was read fine.
+
 ### SmartRecruiters is switched off (2026-10-19)
 
 `https://api.smartrecruiters.com/robots.txt` allows only LinkedInBot (on `/v1/companies/`) and
@@ -504,7 +549,8 @@ discovery -- was one the site asks robots not to make. All of them are off:
   tested against a fake (`tests/test_smartrecruiters.py`), takes over.
 * SmartRecruiters rows already in the published feed are not purged; they age out under the normal
   rules, since no crawl sees them again: a row posted over 45 days ago leaves once it is 7 days unseen
-  (`JOBS_SEEN_DAYS`), and every row is pruned at 21 days unseen (`scheduler.PRUNE_DAYS`). On 2026-10-18 the live feed held **2,430 SmartRecruiters rows of 119,616 (2.0%)**, from
+  (`JOBS_SEEN_DAYS`), and every row is pruned at 21 days unseen (`scheduler.PRUNE_DAYS`; the 7-day
+  fast prune below never applies, because an inactive board is never read). On 2026-10-18 the live feed held **2,430 SmartRecruiters rows of 119,616 (2.0%)**, from
   136 boards (Domino's 487, AbbVie 294, Turner & Townsend 163, Intuitive Surgical 138, ServiceNow 125,
   ...). None of those 158 employers has another source in the feed today (no career-site entry in
   `config/careersites.json` and no board on another ATS), so their roles leave the feed until one is

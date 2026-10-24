@@ -173,6 +173,11 @@ def export_delta(jobs_db, data_dir, since: str, delta_path, *, index: int = 0, c
         if _has_table(conn, "main", "careersite_skip"):
             conn.execute("CREATE TABLE d.careersite_skip AS SELECT * FROM main.careersite_skip "
                          "WHERE at >= substr(?, 1, 10)", (since,))
+        if _has_table(conn, "main", "board_crawl"):
+            # The outcome of every board this shard read (Watchlist.record_crawl), so the merge's
+            # fast prune knows which boards answered in full this run.
+            conn.execute("CREATE TABLE d.board_crawl AS SELECT * FROM main.board_crawl "
+                         "WHERE updated_at >= datetime(?, ?)", (since, DELTA_SINCE_SLACK))
         conn.execute("CREATE TABLE d.delta_meta (k TEXT PRIMARY KEY, v TEXT)")
         files = [cursor_file_for(index, count)] + (
             [CAREERSITE_CURSOR_FILE, *FREEHIRE_SPONSOR_FILES] if owns_lanes(index) else [])
@@ -222,6 +227,27 @@ def merge_delta(jobs_db, data_dir, delta_path, log=print) -> dict:
                          "url TEXT PRIMARY KEY, host TEXT, reason TEXT, at TEXT)")
             conn.execute("INSERT OR REPLACE INTO main.careersite_skip (url, host, reason, at) "
                          "SELECT url, host, reason, at FROM d.careersite_skip")
+        if _has_table(conn, "d", "board_crawl"):
+            # Newer wins, per column: each timestamp keeps the later of the two, and the error
+            # text and streak come from the copy stamped last. Idempotent and order-free, like
+            # the rows above. A delta from a build before the table existed simply has none.
+            # `rows` (the last full read's count) follows the later last_ok. Columns a delta
+            # from an older build lacks are left as they are.
+            bcols = [r[1] for r in conn.execute("PRAGMA d.table_info(board_crawl)")]
+            later = "excluded.updated_at >= coalesce(board_crawl.updated_at, '')"
+            later_ok = "coalesce(excluded.last_ok, '') >= coalesce(board_crawl.last_ok, '')"
+            sets = [f"{c}=nullif(max(coalesce(board_crawl.{c}, ''), coalesce(excluded.{c}, '')), '')"
+                    for c in ("last_ok", "last_partial", "last_error", "updated_at")]
+            sets += [f"error=CASE WHEN {later} THEN excluded.error ELSE board_crawl.error END",
+                     f"consecutive_errors=CASE WHEN {later} THEN excluded.consecutive_errors "
+                     "ELSE board_crawl.consecutive_errors END"]
+            if "rows" in bcols:
+                sets.append(f"rows=CASE WHEN {later_ok} THEN excluded.rows ELSE board_crawl.rows END")
+            cl = ", ".join(c for c in ("ats", "board_id", "last_ok", "last_partial", "last_error", "error",
+                                       "consecutive_errors", "updated_at", "rows") if c in bcols)
+            conn.execute(
+                f"INSERT INTO main.board_crawl ({cl}) SELECT {cl} FROM d.board_crawl WHERE true "
+                "ON CONFLICT(ats, board_id) DO UPDATE SET " + ", ".join(sets))
         meta = dict(conn.execute("SELECT k, v FROM d.delta_meta").fetchall()) \
             if _has_table(conn, "d", "delta_meta") else {}
         conn.commit()
@@ -235,6 +261,20 @@ def merge_delta(jobs_db, data_dir, delta_path, log=print) -> dict:
                 (Path(data_dir) / name).write_text(v)
     log(f"[build_feed] merged shard {meta.get('shard', '?')}: {rows} rows from {delta_path}")
     return {"rows": rows, "shard": meta.get("shard")}
+
+
+def prune_rows(w, log=print, where: str = "crawl") -> tuple[int, int]:
+    """Both prune rules, the fast one first, with one log line so each run shows their effect:
+    a row unseen FAST_PRUNE_DAYS whose board was read in full since goes (Watchlist.prune_unlisted:
+    the board answered and did not list it), then every row unseen PRUNE_DAYS goes
+    (prune_stale, the safety net for boards that failed to load and for sources with no board).
+    Returns (unlisted, stale)."""
+    from sourcing.scheduler import FAST_PRUNE_DAYS, PRUNE_DAYS
+    unlisted = w.prune_unlisted(FAST_PRUNE_DAYS)
+    stale = w.prune_stale(PRUNE_DAYS)
+    log(f"[build_feed] {where}: pruned unlisted={unlisted} (unseen {FAST_PRUNE_DAYS} days on a board "
+        f"read in full since) stale={stale} (unseen {PRUNE_DAYS} days)")
+    return unlisted, stale
 
 
 def aggregators_for_feed(env=None, log=print) -> list[str]:
@@ -313,7 +353,6 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
     os.environ["JOBS_DATA_DIR"] = str(data_dir)         # backend.feed derives its DB paths from this
     import backend.feed as feed
     from sourcing.feedfile import dedupe_rows, write_feed
-    from sourcing.scheduler import PRUNE_DAYS
     from sourcing.service import feed_detail_budgets, refresh_watchlist, seed_if_empty, sync_seed
     from sourcing.watchlist import Watchlist
 
@@ -380,7 +419,7 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
                     f"known={sum(x['known'] for x in lane.summaries)} "
                     f"fetched={sum(x['fetched'] for x in lane.summaries)} "
                     f"blocked={[x['host'] for x in lane.summaries if x['blocked']]}")
-            pruned = w.prune_stale(PRUNE_DAYS)
+            pruned = sum(prune_rows(w, log, "crawl"))
             log(f"[build_feed] crawl: fetched={summary.get('fetched')} matched={summary.get('matched')} "
                 f"new={summary.get('new')} duplicates={summary.get('duplicates')} pruned={pruned} "
                 f"unchecked={summary.get('unchecked')} "
@@ -399,7 +438,7 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
             merge_delta(jobs_db, data_dir, p, log=log)
         w = Watchlist(jobs_db)
         try:
-            log(f"[build_feed] merge: pruned={w.prune_stale(PRUNE_DAYS)} stale rows")
+            prune_rows(w, log, "merge")
         finally:
             w.close()
 

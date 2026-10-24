@@ -93,6 +93,21 @@ class Watchlist(BoardMixin):
         # The tracker board (added later): stage / stage_at / applied_at / follow_up_at / notes on
         # this table, plus the activity + contact side tables. See sourcing/board.py.
         migrate_board(c)
+        # `board_crawl` (added 2026-10-24): how the last reads of each watched board went, stamped
+        # by service.refresh_watchlist for every board it attempts. `last_ok` is the last read that
+        # succeeded AND listed the whole board; `last_partial` one that succeeded but stopped at a
+        # cap (the board may hold live rows it did not list); `last_error` the last read that
+        # raised, `error` its message, `consecutive_errors` how many raised in a row. The fast
+        # prune (prune_unlisted) trusts `last_ok` only: a row its board did not list on a full read
+        # is gone from the board, while a board that failed to load says nothing about its rows.
+        # `rows` is how many postings the last FULL read listed, so the next read can tell a board
+        # that collapsed (a 200 with no rows, or a fifth of last time) from one that was read fine.
+        c.execute("""CREATE TABLE IF NOT EXISTS board_crawl (
+            ats TEXT NOT NULL, board_id TEXT NOT NULL, last_ok TEXT, last_partial TEXT,
+            last_error TEXT, error TEXT DEFAULT '', consecutive_errors INTEGER DEFAULT 0,
+            updated_at TEXT, rows INTEGER, PRIMARY KEY(ats, board_id))""")
+        if "rows" not in {r[1] for r in c.execute("PRAGMA table_info(board_crawl)")}:
+            c.execute("ALTER TABLE board_crawl ADD COLUMN rows INTEGER")
         # A board on a disabled ATS (ats.DISABLED_ATS: SmartRecruiters, whose API robots.txt
         # disallows us, 2026-10-19) stays on the watchlist but inactive, so no crawl picks it up.
         from .ats import DISABLED_ATS
@@ -264,11 +279,87 @@ class Watchlist(BoardMixin):
         self._conn.commit()
         return n
 
+    # -- board crawl outcomes ------------------------------------------- #
+    def record_crawl(self, ats: str, board_id: str, ok: bool, *, complete: bool = True,
+                     error: str = "", rows: int | None = None) -> None:
+        """Note how one read of a board went, AFTER its rows were upserted (so a `last_ok` is
+        never older than the last_seen it stamped). ok and complete: the whole board was listed
+        (`last_ok`, and `rows` postings were listed, kept for the next read's collapse check);
+        ok but not complete: the read stopped at a cap or collapsed, so rows it did not list may
+        still be live (`last_partial`, with `error` saying why); not ok: the read raised
+        (`last_error`, `error`), nothing was seen. A success clears the error streak."""
+        if ok and complete:
+            self._conn.execute(
+                "INSERT INTO board_crawl(ats, board_id, last_ok, error, consecutive_errors, updated_at, rows) "
+                "VALUES(?,?,CURRENT_TIMESTAMP,'',0,CURRENT_TIMESTAMP,?) "
+                "ON CONFLICT(ats, board_id) DO UPDATE SET last_ok=CURRENT_TIMESTAMP, error='', "
+                "consecutive_errors=0, updated_at=CURRENT_TIMESTAMP, "
+                "rows=COALESCE(excluded.rows, board_crawl.rows)", (ats, board_id, rows))
+        elif ok:
+            self._conn.execute(
+                "INSERT INTO board_crawl(ats, board_id, last_partial, error, consecutive_errors, updated_at) "
+                "VALUES(?,?,CURRENT_TIMESTAMP,?,0,CURRENT_TIMESTAMP) "
+                "ON CONFLICT(ats, board_id) DO UPDATE SET last_partial=CURRENT_TIMESTAMP, "
+                "error=excluded.error, consecutive_errors=0, updated_at=CURRENT_TIMESTAMP",
+                (ats, board_id, str(error or "")[:500]))
+        else:
+            self._conn.execute(
+                "INSERT INTO board_crawl(ats, board_id, last_error, error, consecutive_errors, updated_at) "
+                "VALUES(?,?,CURRENT_TIMESTAMP,?,1,CURRENT_TIMESTAMP) "
+                "ON CONFLICT(ats, board_id) DO UPDATE SET last_error=CURRENT_TIMESTAMP, "
+                "error=excluded.error, consecutive_errors=board_crawl.consecutive_errors+1, "
+                "updated_at=CURRENT_TIMESTAMP", (ats, board_id, str(error or "")[:500]))
+        self._conn.commit()
+
+    def board_crawls(self) -> list[dict]:
+        """Every board's recorded crawl outcome (see record_crawl)."""
+        return [dict(r) for r in self._conn.execute(
+            "SELECT * FROM board_crawl ORDER BY ats, board_id").fetchall()]
+
+    def last_full_count(self, ats: str, board_id: str) -> int:
+        """How many postings the board's last full read listed (board_crawl.rows), or, before any
+        read was recorded, how many of its rows are stored: the size a new read is compared with
+        to spot a collapsed listing (service.listing_collapsed). Call it BEFORE the upsert."""
+        r = self._conn.execute("SELECT rows FROM board_crawl WHERE ats=? AND board_id=?",
+                               (ats, board_id)).fetchone()
+        if r and r[0] is not None:
+            return int(r[0])
+        prefix = f"{ats}:{board_id}:"                       # the board's primary-key range, as in prune_unlisted
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM sourced_job WHERE source=? AND source_id >= ? AND source_id < ?",
+            (ats, prefix, prefix[:-1] + ";")).fetchone()[0]
+
+    def prune_unlisted(self, days: int = 7) -> int:
+        """The fast prune: delete a row its board no longer lists. A row goes once it has been
+        unseen for `days` days AND its board had a full, successful read after the row was last
+        seen (board_crawl.last_ok): the board answered, and the job was not on it, so it is filled
+        or closed. A board that failed to load, was not reached, or stopped at a cap stamps no
+        last_ok, so its rows wait for prune_stale's longer window: a live job is never dropped
+        because its board was down. Rows of a source with no board row (the aggregators, the
+        career sites) are left to prune_stale too. Saved, dismissed and tracked rows are never
+        pruned, as in prune_stale. Returns how many rows were removed."""
+        n = 0
+        boards = self._conn.execute(
+            "SELECT ats, board_id, last_ok FROM board_crawl WHERE last_ok IS NOT NULL").fetchall()
+        for ats, board_id, last_ok in boards:
+            # source_id is "{ats}:{board_id}:{job_id}" (ats._job), so a board's rows are one range
+            # of the primary key: everything from "ats:board:" up to "ats:board;" (';' follows ':').
+            prefix = f"{ats}:{board_id}:"
+            n += self._conn.execute(
+                "DELETE FROM sourced_job WHERE source=? AND source_id >= ? AND source_id < ? "
+                "AND last_seen < datetime('now', ?) AND last_seen < ? "
+                "AND saved=0 AND dismissed=0 AND (stage IS NULL OR stage='')",
+                (ats, prefix, prefix[:-1] + ";", f"-{int(days)} days", last_ok)).rowcount
+        self._conn.commit()
+        return n
+
     def prune_stale(self, days: int = 21) -> int:
         """Delete jobs not seen by a refresh in `days` days: a role that has vanished from
         its board is filled or closed, so keeping it would feed people dead links. Uses
         last_seen (stamped on every refresh that re-sees a job). Conservative window so a
-        single missed refresh never drops a live role. Returns how many were pruned."""
+        single missed refresh never drops a live role: the safety net under prune_unlisted,
+        which drops a row sooner when its board was read in full and did not list it.
+        Returns how many were pruned."""
         # A bookmarked or tracked row is the person's own record (Saved list, tracker board), not
         # a feed entry that can age out, so it is never pruned. Nor is a dismissal: pruning it
         # would bring a role the person hid back onto their board.
