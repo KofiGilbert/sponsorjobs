@@ -910,6 +910,7 @@
             <h1 class="page-title" id="prepSetupTitle" hidden></h1>
             <p class="page-sub" id="prepSub" data-i18n="prep.sub">Practice for a real interview, built from the job you applied to.</p>
           </div>
+          <button class="prep-past-link" id="prepPastLink" type="button" hidden><span data-i18n="prep.past">Past interviews</span> <b id="prepPastN"></b> &rarr;</button>
         </header>
 
         <!-- Guided-flow progress: shown only during a Full mock (Round 1, then Round 2). -->
@@ -948,7 +949,10 @@
               <span class="prep-tile-foot"><span class="prep-tile-name" data-i18n="prep.tile2Name">Live interview</span><span class="prep-tile-cta">Start &rarr;</span></span>
             </button>
           </div>
+          <!-- The newest report, one click away; the full list is its own page (header button). -->
+          <button class="prep-last" id="prepLast" type="button" hidden></button>
         </div>
+        <div class="prep-past-page" id="prepPastPage" hidden></div>
 
         <!-- Setup for the chosen interview: role + JD required, resume optional. Pre-filled from the
              newest tailored resume or Tracker job, so most people just click Start interview. -->

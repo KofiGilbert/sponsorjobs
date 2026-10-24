@@ -5950,6 +5950,7 @@
     if (!(PREP_APP && PREP_APP.typed)) PREP_APP = null;
     showPrepChoices();
     paintRound2Tile();         // the Live tile says when a live interviewer key is missing
+    paintPastReports();
     try { const d = await api("/api/preps"); PREPS = d.preps || []; } catch { PREPS = []; }
   }
   // The page head: "Interview prep" on the landing (and during a round), the choice's own title
@@ -5958,6 +5959,7 @@
     full: ["prep.setupFull", "Set up your full mock interview"],
     rec: ["prep.setupRec", "Set up your recorded interview"],
     live: ["prep.setupLive", "Set up your live interview"],
+    past: ["prep.past", "Past interviews"],
   };
   function paintPrepHead(mode) {
     const setup = !!mode;
@@ -5966,11 +5968,104 @@
     if ($("#prepSub")) $("#prepSub").hidden = setup;
     const st = $("#prepSetupTitle");
     if (st) { st.hidden = !setup; st.textContent = setup ? T(SETUP_TITLE[mode][0], SETUP_TITLE[mode][1]) : ""; }
+    if ($("#prepPastLink")) $("#prepPastLink").hidden = setup || !PAST_CARDS.length;
+  }
+  // Past interviews (Kofi, 2026-10-23): a report is never lost once the person leaves it, and the
+  // landing stays three big choices. It carries only ONE line for the newest report (one click to
+  // "how did I do?"); the whole list lives on its own page behind the header button, so a long
+  // history never crowds the choices. Search and filters appear once the list is long.
+  let PAST_CARDS = [], PAST_KIND = "all", PAST_Q = "";
+  const pastWhen = (t) => t ? new Date(t * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+  const pastKind = (c) => c.round === 2 ? T("prep.pastLive", "Live") : T("prep.pastRec", "Recorded");
+  async function paintPastReports() {
+    try { PAST_CARDS = (await api("/api/interview/reports")).cards || []; } catch { PAST_CARDS = []; }
+    const n = PAST_CARDS.length, link = $("#prepPastLink"), last = $("#prepLast");
+    if ($("#prepPastN")) $("#prepPastN").textContent = String(n);
+    if (link) link.hidden = !n || !!PREP_MODE;
+    if (last) {
+      const c = PAST_CARDS[0];
+      last.hidden = !c;
+      if (c) {
+        last.innerHTML = `<span class="prep-last-k">${esc(T("prep.lastInterview", "Last interview"))}</span>
+          <span class="prep-last-role">${esc(c.role || T("prep.pastRole", "Interview"))}</span>
+          <span class="prep-last-meta">${esc(pastKind(c))} &middot; ${esc(pastWhen(c.created))}</span>
+          <span class="prep-last-score">${c.score}<span>/100</span></span>
+          <span class="prep-last-go">${esc(T("prep.openReport", "Open report"))} &rarr;</span>`;
+        last.onclick = () => openPastReport(c);
+      }
+    }
+    fitPrepTiles();
+  }
+  // The two round tiles grow to fill the window, so the landing uses the screen without scrolling.
+  function fitPrepTiles() {
+    const tiles = [...document.querySelectorAll("#prepTiles .prep-tile")], view = $("#view-prep");
+    const ch = $("#prepChoices");
+    if (!tiles.length || !view || !ch || ch.hidden || view.hidden || !view.offsetParent) return;
+    tiles.forEach(t => { t.style.height = ""; });
+    const below = ch.getBoundingClientRect().bottom - tiles[0].getBoundingClientRect().bottom;
+    const want = window.innerHeight - tiles[0].getBoundingClientRect().top - below - 96;
+    tiles.forEach(t => { t.style.height = Math.max(t.offsetHeight, Math.min(620, want)) + "px"; });
+    const spill = view.scrollHeight - view.clientHeight;
+    if (spill > 0) tiles.forEach(t => { t.style.height = Math.max(240, t.offsetHeight - spill) + "px"; });
+  }
+  window.addEventListener("resize", () => fitPrepTiles());
+  function showPastPage() {
+    PREP_MODE = "past"; paintPrepHead("past");
+    if ($("#prepChoices")) $("#prepChoices").hidden = true;
+    if ($("#prepSetup")) $("#prepSetup").hidden = true;
+    const page = $("#prepPastPage"); if (!page) return;
+    page.hidden = false;
+    const long = PAST_CARDS.length > 8;
+    page.innerHTML = `${long ? `<div class="prep-past-tools">
+        <input class="input prep-past-q" id="prepPastQ" type="search" placeholder="${esc(T("prep.pastSearch", "Search by role or company"))}" value="${esc(PAST_Q)}">
+        <div class="prep-past-chips">${[["all", T("prep.pastAllKinds", "All")], ["live", T("prep.pastLive", "Live")], ["rec", T("prep.pastRec", "Recorded")]]
+          .map(([k, l]) => `<button class="rv-chip${PAST_KIND === k ? " is-on" : ""}" type="button" data-kind="${k}">${esc(l)}</button>`).join("")}</div>
+      </div>` : ""}
+      <div class="prep-past-list" id="prepPastList"></div>`;
+    const paint = () => {
+      const q = PAST_Q.trim().toLowerCase();
+      const rows = PAST_CARDS.filter(c => (PAST_KIND === "all" || (PAST_KIND === "live") === (c.round === 2))
+        && (!q || `${c.role} ${c.company}`.toLowerCase().includes(q)));
+      const list = $("#prepPastList");
+      list.innerHTML = rows.length ? rows.map((c, k) => `
+        <button class="prep-past-row" type="button" data-past="${k}">
+          <span class="prep-past-kind">${esc(pastKind(c))}</span>
+          <span class="prep-past-role">${esc(c.role || T("prep.pastRole", "Interview"))}${c.company ? ` <span class="prep-past-co">${esc(c.company)}</span>` : ""}</span>
+          <span class="prep-past-date">${esc(pastWhen(c.created))}</span>
+          <span class="prep-past-score ${c.passed ? "ok" : "no"}">${c.score}<span>/100</span></span>
+          <span class="prep-past-go">&rarr;</span>
+        </button>`).join("") : `<p class="prep-past-none">${esc(T("prep.pastNone", "No interviews match."))}</p>`;
+      list.querySelectorAll("[data-past]").forEach(b => b.addEventListener("click", () => openPastReport(rows[+b.dataset.past])));
+    };
+    $("#prepPastQ")?.addEventListener("input", (e) => { PAST_Q = e.target.value; paint(); });
+    page.querySelectorAll("[data-kind]").forEach(b => b.addEventListener("click", () => {
+      PAST_KIND = b.dataset.kind; page.querySelectorAll("[data-kind]").forEach(x => x.classList.toggle("is-on", x === b)); paint(); }));
+    paint();
+  }
+  $("#prepPastLink")?.addEventListener("click", showPastPage);
+  async function openPastReport(c) {
+    if (!c) return;
+    try {
+      if (c.round === 2) {
+        const d = await api(`/api/interviews/${encodeURIComponent(c.id)}`);
+        R2_CTX = { prep_id: c.prep_id || (d.interview || {}).prep_id };
+        $("#prepList").hidden = true; $("#prepLive").hidden = false;
+        $("#liveCount").textContent = T("r2.title", "Round 2, live interview"); $("#liveTier").textContent = "";
+        renderR2Report(d.report || {}, c.id);
+      } else {
+        const d = await api(`/api/screens/${encodeURIComponent(c.id)}`);
+        SCREEN = d.screen || d; SCR_PREP = { id: c.prep_id || SCREEN.prep_id };
+        $("#prepList").hidden = true; $("#prepScreen").hidden = false;
+        renderR1Report(SCREEN.result || {});
+      }
+    } catch (err) { toast(err.message || T("prep.pastFail", "Couldn't open that report.")); }
   }
   function showPrepChoices() {
     PREP_MODE = null; paintPrepHead(null);
     if ($("#prepChoices")) $("#prepChoices").hidden = false;
     if ($("#prepSetup")) $("#prepSetup").hidden = true;
+    if ($("#prepPastPage")) $("#prepPastPage").hidden = true;
+    fitPrepTiles();
   }
   // The newest job the person touched (tailored resume or Tracker move), to pre-fill the setup.
   async function prepPrefill() {
@@ -5979,6 +6074,7 @@
   async function openPrepSetup(mode) {
     PREP_MODE = mode; paintPrepHead(mode);
     if ($("#prepChoices")) $("#prepChoices").hidden = true;
+    if ($("#prepPastPage")) $("#prepPastPage").hidden = true;
     if ($("#prepSetup")) $("#prepSetup").hidden = false;
     const msg = $("#prepSetupMsg"); if (msg) msg.hidden = true;
     setStartEnabled(true);
@@ -6124,12 +6220,11 @@
           <button class="btn btn-primary" id="scrBegin" type="button">${esc(T("r1.getStarted", "Get started"))}</button>
           <button class="btn btn-ghost" id="scrBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
         </div>
-        ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : `<div class="rc-goals" id="prepGoals" hidden></div>`}
+        ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : ""}
         <p class="scr-disclaimer">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>
       </div></div>`;
     $("#scrBegin")?.addEventListener("click", renderR1Notice);
     $("#scrBail")?.addEventListener("click", quitScreen);
-    if (!SCR_DRILL) loadPrepGoals(p && p.id, $("#prepGoals"));   // report card: the prep checklist
   }
   // Screen 2: the notice. Where recordings go, how to delete them, no facial analysis, and the
   // extra-time option (doubles the clocks), which replaced the old Realistic/Relaxed switch.
@@ -6425,6 +6520,7 @@
             <button class="btn btn-ghost btn-sm scr-coach-btn" data-coach="${i}" type="button">${esc(T("r1.stronger", "See a stronger version"))}</button>
             <div class="scr-coach" id="scrCoach${i}" hidden></div></div>`; }).join("")}</div>
         <p class="scr-disclaimer">${esc(r.disclaimer || T("r1.reportDisclaimer", "Practice feedback, not a hiring decision."))}</p>
+        <div class="rc-goals" id="repGoals" hidden></div>
         <div id="r1Gate"></div>
         <div class="mock-next">
           <button class="btn btn-ghost btn-sm" id="scrReport" type="button">${esc(T("r1.docx", "Download report (.docx)"))}</button>
@@ -6436,6 +6532,7 @@
       btn.addEventListener("click", () => coachScreenAnswer(SCREEN.id, btn.dataset.coach, btn)));
     wireReportCard(r.report_card, { prepId: SCR_PREP && SCR_PREP.id, currentId: SCREEN && SCREEN.id,
       leave: () => { stopPrepClock(); stopAnswerClock(); stopScrStream(); SCR_PHASE = "idle"; } });
+    if (!(SCREEN && SCREEN.drill)) loadPrepGoals(SCR_PREP && SCR_PREP.id, $("#repGoals"));
     $("#scrReport")?.addEventListener("click", () => { window.location = `/api/screens/${SCREEN.id}/report.docx`; });
     $("#scrDone")?.addEventListener("click", quitScreen);
     $("#scrDelete")?.addEventListener("click", async () => {
@@ -6729,11 +6826,9 @@
             <button class="btn btn-ghost" id="liveBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
           </div>
         </div>
-      </div>
-      <div class="rc-goals rc-goals-r2" id="prepGoalsR2" hidden></div>`;
+      </div>`;
     $("#liveBegin")?.addEventListener("click", beginLive);
     $("#liveBail")?.addEventListener("click", quitLive);
-    loadPrepGoals(R2_CTX && R2_CTX.prep_id, $("#prepGoalsR2"));   // report card: the prep checklist
     (async () => {
       try {
         LIVE_STREAM = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -6765,7 +6860,7 @@
   // interviewer over the call's data channel (Tavus Interactions Protocol). Nobody is cut off
   // mid-sentence by a timer: at the answer budget the interviewer moves on at the next pause, and
   // only if no pause comes does it step in politely, the way a person would.
-  let CVI_CALL = null, CVI_TK = null;
+  let CVI_CALL = null, CVI_TK = null, CVI_HEARD = false, CVI_T = null, CVI_WAIT = null;
   function cviSend(eventType, props) {
     if (!CVI_CALL || !R2) return;
     try {
@@ -6785,33 +6880,57 @@
     const t = s.timing || { total: 1200, answer_nudge: 180, answer_step_in: 240, pause_wait: 15,
                             last_question: 930, candidate_questions: 1110, close_wait: 20, hard_end: 1230,
                             think_grace: 10, answer_grace: 60, minutes: 20 };
-    stopLiveStream();   // Tavus runs its own camera/mic; free the green-room preview stream
+    stopLiveStream();   // the call takes the camera and mic itself; free the green-room preview
+    // Our own call screen, not Daily's ready-made page in a box: that page brought its own
+    // "Are you ready to join?" lobby (a second green room, scrolling inside the frame), and the
+    // minutes a person spent in it could outlive the room's short-lived entry token, so their
+    // Join was refused and the interview ended (Kofi, 2026-10-23). The call object joins the
+    // moment our Join is clicked, and we draw the interviewer to fill the stage.
+    $("#prepLive").classList.add("in-call");
     $("#liveStage").innerHTML =
-      `<div class="zoom-cvi">
-        <div class="zoom-topbar">
-          <span class="zoom-title">${esc(T("r2.title", "Round 2, live interview"))}</span>
+      `<div class="zoom-call" id="cviCall">
+        <video class="zoom-call-remote" id="cviRemote" autoplay playsinline></video>
+        <audio id="cviAudio" autoplay></audio>
+        <div class="zoom-call-wait" id="cviWait"><div class="zoom-call-wait-row"><span class="zoom-call-spin"></span>${esc(T("r2.connecting", "Connecting to your interviewer..."))}</div><div class="zoom-call-wait-sub">${esc(T("r2.connectingSub", "Nothing to click. They will greet you in a moment, and your time starts then."))}</div></div>
+        <div class="zoom-call-top">
           <span class="zoom-live"><i></i> LIVE</span>
-          <span class="zoom-meta">${esc(T("r2.keepsTime", "Your interviewer keeps the time, like a real one"))}</span>
-        </div>
-        <div class="cvi-frame" id="cviFrame"></div>
-        <div class="zoom-controls zoom-cvi-controls">
+          <span class="zoom-title">${esc(T("r2.title", "Round 2, live interview"))}</span>
           <span class="zoom-mins" id="cviClockWrap">${esc(T("r2.timeLeft", "Time left"))}: <b id="cviMins">${fmtClock(t.total)}</b></span>
+        </div>
+        <video class="zoom-call-self" id="cviSelf" autoplay muted playsinline></video>
+        <div class="zoom-call-bar">
+          <button class="zoom-ctrl" id="cviMic" type="button">${esc(T("r2.mute", "Mute"))}</button>
+          <button class="zoom-ctrl" id="cviCam" type="button">${esc(T("r2.camOff", "Stop video"))}</button>
           <button class="zoom-ctrl zoom-leave" id="cviEnd" type="button">${esc(T("r2.end", "End interview"))}</button>
         </div>
       </div>`;
+    fitCviCall();
     $("#cviEnd")?.addEventListener("click", () => endCvi());
-    const box = $("#cviFrame");
-    if (window.Daily && box) {
-      CVI_CALL = window.Daily.createFrame(box, {
-        showLeaveButton: false, showFullscreenButton: true,
-        iframeStyle: { width: "100%", height: "100%", border: "0", borderRadius: "10px" },
-      });
-      CVI_TK = startTimekeeper(t);
+    if (window.Daily) {
+      // Nothing counts until the interviewer is on screen: not the clock, not the timekeeper, and
+      // not the pass. Joining, connecting, or a call that never gets going costs the person nothing.
+      CVI_HEARD = false; CVI_T = t;
+      CVI_CALL = window.Daily.createCallObject({ subscribeToTracksAutomatically: true });
+      CVI_WAIT = setTimeout(() => cviDropped("no interviewer"), 90000);
       CVI_CALL.on("app-message", (e) => { if (CVI_TK) CVI_TK.onEvent(e && e.data); });
-      CVI_CALL.on("left-meeting", () => { if (R2) endCvi(); });
-      CVI_CALL.join({ url: s.join_url }).catch(() => {
-        toast(T("r2.cantJoin", "Couldn't join the interview room. Check your connection and try again."));
+      CVI_CALL.on("track-started", cviTrack);
+      CVI_CALL.on("track-stopped", cviTrack);
+      CVI_CALL.on("error", (e) => cviDropped((e && e.errorMsg) || "error"));
+      CVI_CALL.on("left-meeting", () => cviDropped("left"));
+      $("#cviMic")?.addEventListener("click", (ev) => {
+        const on = !CVI_CALL.localAudio(); CVI_CALL.setLocalAudio(on);
+        ev.currentTarget.classList.toggle("off", !on);
+        ev.currentTarget.textContent = on ? T("r2.mute", "Mute") : T("r2.unmute", "Unmute");
       });
+      $("#cviCam")?.addEventListener("click", (ev) => {
+        const on = !CVI_CALL.localVideo(); CVI_CALL.setLocalVideo(on);
+        ev.currentTarget.classList.toggle("off", !on);
+        ev.currentTarget.textContent = on ? T("r2.camOff", "Stop video") : T("r2.camOn", "Start video");
+      });
+      // The broker hands a room URL with the meeting token in ?t=; the call object takes it apart.
+      let url = s.join_url, token;
+      try { const u = new URL(s.join_url); token = u.searchParams.get("t") || undefined; u.searchParams.delete("t"); url = u.toString(); } catch (e) {}
+      CVI_CALL.join({ url, token }).catch((e) => cviDropped((e && e.message) || "join"));
     } else if (window.tailorShell) {
       window.tailorShell.openBrowser(s.join_url);          // fallback: the old side-pane call, no timekeeper
     } else {
@@ -6820,6 +6939,7 @@
     CVI_UNBILLED = 0;
     const t0 = Date.now();
     CVI_CLOCK = setInterval(() => {
+      if (CVI_CALL && !CVI_HEARD) return;                  // still connecting: free
       const now = CVI_TK ? CVI_TK.tick() : (Date.now() - t0) / 1000;
       const left = Math.max(0, Math.round(t.total - now));
       const wrap = $("#cviClockWrap");
@@ -6837,8 +6957,50 @@
       }
     }, 1000);
   }
+  // The call fills the window below the page header, so nothing on the page scrolls.
+  function fitCviCall() {
+    const el = $("#cviCall"); if (!el) return;
+    el.style.height = Math.max(380, window.innerHeight - el.getBoundingClientRect().top - 20) + "px";
+    // The view's own bottom padding and footer sit below the call: take back whatever still spills.
+    const view = el.closest(".view");
+    const spill = view ? view.scrollHeight - view.clientHeight : 0;
+    if (spill > 0) el.style.height = Math.max(380, el.offsetHeight - spill) + "px";
+  }
+  window.addEventListener("resize", fitCviCall);
+  // Each track goes to its own element: the interviewer fills the stage, you sit in the corner.
+  function cviTrack(e) {
+    if (!CVI_CALL || !e || !e.participant) return;
+    const p = e.participant, local = !!p.local;
+    const tr = p.tracks || {};
+    const v = (tr.video && tr.video.state === "playable") ? tr.video.persistentTrack : null;
+    const a = (tr.audio && tr.audio.state === "playable") ? tr.audio.persistentTrack : null;
+    if (local) {
+      const self = $("#cviSelf");
+      if (self) { self.srcObject = v ? new MediaStream([v]) : null; self.hidden = !v; }
+      return;
+    }
+    const remote = $("#cviRemote"), audio = $("#cviAudio");
+    if (remote) remote.srcObject = v ? new MediaStream([v]) : null;
+    if (audio) audio.srcObject = a ? new MediaStream([a]) : null;
+    if (v && !CVI_HEARD) {                                 // the interviewer is here: the interview starts now
+      CVI_HEARD = true; clearTimeout(CVI_WAIT);
+      CVI_TK = startTimekeeper(CVI_T);
+      const w = $("#cviWait"); if (w) w.hidden = true;
+    }
+  }
+  // The call closed without our End button. Once the interviewer has been on screen this is the
+  // interview ending (Tavus's own time limit, a drop that never came back): score what was said.
+  // Before that, there is nothing to score: say so plainly and offer to try again.
+  function cviDropped(why) {
+    if (!R2 || !CVI_CALL) return;
+    if (CVI_HEARD) { endCvi(); return; }
+    console.warn("live interview: call closed before the interviewer appeared:", why);
+    endCvi({ early: why });
+  }
   function teardownCvi() {                                 // idempotent: safe to call from any exit path
     if (CVI_CLOCK) { clearInterval(CVI_CLOCK); CVI_CLOCK = null; }
+    $("#prepLive")?.classList.remove("in-call");
+    clearTimeout(CVI_WAIT);
     CVI_TK = null;
     if (CVI_CALL) { const c = CVI_CALL; CVI_CALL = null; c.leave().catch(() => {}).finally(() => { try { c.destroy(); } catch (e) {} }); }
     if (window.tailorShell) window.tailorShell.closeBrowser();
@@ -6849,7 +7011,7 @@
     }
   }
   // "End interview": close the pane, then score the conversation into the report.
-  async function endCvi() {
+  async function endCvi(opt) {
     teardownCvi();
     const id = R2 && R2.interview_id;
     if (id && R2.source === "plan" && CVI_UNBILLED > 0) {   // meter the last few seconds too
@@ -6861,7 +7023,23 @@
     if (!id) { quitLive(); return; }
     $("#liveStage").innerHTML = `<div class="scr-intro"><div class="scr-welcome"><h2 class="scr-ready-h">${esc(T("r2.ended", "Interview ended"))}</h2><p class="scr-ready-sub">${esc(T("r2.scoring", "Scoring your interview..."))}</p></div></div>`;
     try { const d = await api("/api/interviews/cvi/end", { interview_id: id }); renderR2Report((d && d.report) || {}, id); }
-    catch (err) { toast(err.message || T("r2.cantScore", "Couldn't score the interview.")); quitLive(); }
+    catch (err) {
+      if ((err.data && err.data.error === "no_transcript") || (opt && opt.early)) { renderCviNoStart(); return; }
+      toast(err.message || T("r2.cantScore", "Couldn't score the interview.")); quitLive();
+    }
+  }
+  // Nothing was said, so there is no report. Never drop the person back on the prep list in
+  // silence: tell them what happened and let them go straight back in.
+  function renderCviNoStart() {
+    $("#liveStage").innerHTML = `<div class="scr-intro"><div class="scr-welcome">
+      <h2 class="scr-ready-h">${esc(T("r2.noStartH", "The call closed before your interview began"))}</h2>
+      <p class="scr-ready-sub">${esc(T("r2.noStartSub", "Nothing was said, so there is nothing to score. You can join again now."))}</p>
+      <div class="zoom-gr-acts" style="justify-content:center;margin-top:16px">
+        <button class="btn btn-primary" id="cviRetry" type="button">${esc(T("r2.tryAgain", "Join again"))}</button>
+        <button class="btn btn-ghost" id="cviBack" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>
+      </div></div></div>`;
+    $("#cviRetry")?.addEventListener("click", async () => renderR2GreenRoom(await round2Status()));
+    $("#cviBack")?.addEventListener("click", quitLive);
   }
   function renderR2Report(rep, interviewId) {
     const passed = !!rep.passed, cls = passed ? "ok" : "no";
@@ -6876,12 +7054,14 @@
         ${(rep.competencies || []).length ? `<div class="scr-comps"><div class="prep-fb-h">${esc(T("r1.byCompetency", "By competency"))}</div>${rep.competencies.map(cb => `<div class="scr-comp-row"><span class="scr-comp-name">${esc(cb.name)}</span><span class="scr-comp-bar"><i class="scr-comp-fill ${cb.score < 60 ? "low" : cb.score < 75 ? "mid" : "high"}" style="width:${Math.max(4, Math.min(100, Number(cb.score) || 0))}%"></i></span><span class="scr-comp-val">${cb.score}</span></div>`).join("")}</div>` : ""}
         ${reportCardHtml(rep.report_card)}
         ${rep.transcript ? `<details class="scr-tr"><summary>${esc(T("r2.transcript", "Transcript"))}</summary><p class="scr-tr-body">${r2TranscriptHtml(rep.transcript)}</p></details>` : ""}
+        <div class="rc-goals" id="repGoals" hidden></div>
         <p class="scr-disclaimer">${esc(rep.disclaimer || T("r1.reportDisclaimer", "Practice feedback, not a hiring decision."))}</p>
         <div class="mock-next">
           <button class="btn btn-primary btn-sm" id="liveDone" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>
         </div>
       </div>`;
     $("#liveDone")?.addEventListener("click", quitLive);
+    loadPrepGoals(R2_CTX && R2_CTX.prep_id, $("#repGoals"));
     wireReportCard(rep.report_card, { prepId: R2_CTX && R2_CTX.prep_id, currentId: interviewId,
       leave: () => { teardownCvi(); R2 = null; stopLiveStream(); $("#prepLive").hidden = true; } });
   }
@@ -7013,16 +7193,20 @@
     box.hidden = false;
   }
   // The prep checklist on the start screen: likely questions, what to mention, company facts.
+  // The prep checklist (likely questions, what to mention, the company facts). It shows AFTER an
+  // interview, in the report, never before: a real interview hands you no answer sheet, so the
+  // practice one doesn't either (Kofi, 2026-10-23).
   async function loadPrepGoals(prepId, box) {
     if (!box || !prepId) return;
+    const TITLE = T("goals.afterTitle", "What to cover next time");
     box.hidden = false;
-    box.innerHTML = `<div class="rc-goals-h">${esc(T("goals.title", "Before you start"))}</div><p class="rc-goals-loading">${esc(T("goals.loading", "Building your prep checklist..."))}</p>`;
+    box.innerHTML = `<div class="rc-goals-h">${esc(TITLE)}</div><p class="rc-goals-loading">${esc(T("goals.loading", "Building your prep checklist..."))}</p>`;
     let g;
     try { g = (await api(`/api/preps/${encodeURIComponent(prepId)}/goals`)).goals; }
-    catch { box.innerHTML = `<div class="rc-goals-h">${esc(T("goals.title", "Before you start"))}</div><p class="rc-goals-loading">${esc(T("goals.failed", "Couldn't build the checklist right now."))}</p>`; return; }
+    catch { box.innerHTML = `<div class="rc-goals-h">${esc(TITLE)}</div><p class="rc-goals-loading">${esc(T("goals.failed", "Couldn't build the checklist right now."))}</p>`; return; }
     if (!g) { box.hidden = true; return; }
     const col = (h, items, empty) => `<div class="rc-goals-col"><div class="prep-fb-h">${esc(h)}</div>${(items || []).length ? `<ol class="rc-goals-list">${items.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : `<p class="rc-note">${esc(empty)}</p>`}</div>`;
-    box.innerHTML = `<div class="rc-goals-h">${esc(T("goals.title", "Before you start"))}</div>
+    box.innerHTML = `<div class="rc-goals-h">${esc(TITLE)}</div>
       <div class="rc-goals-grid">
         ${col(T("goals.questions", "Likely questions"), g.questions, "")}
         ${col(T("goals.mentions", "Make sure to mention"), g.mentions, "")}

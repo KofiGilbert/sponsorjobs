@@ -3151,9 +3151,27 @@ body.cv-dragging * { cursor: grabbing !important; }
 .fd-stick-c { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fd-stick-in .btn { flex: none; }
 
-/* The live interview runs in Daily's frame inside our own page (so the timekeeper can talk to
-   the interviewer). A 16:9 stage that fills the column. */
-.cvi-frame { width: 100%; aspect-ratio: 16 / 9; max-height: 70vh; background: #0d0f12; }
+/* The live call: our own screen, not Daily's page in a box. The interviewer fills the stage, you
+   sit in the corner, the controls float at the bottom, and fitCviCall() sizes it to the window
+   so nothing scrolls. In a call the page drops the prep column limit and the Quit bar. */
+.prep-live.in-call, .prep-live.in-call > .live-stage { max-width: none; }
+.prep-live.in-call > .mock-top { display: none; }
+.zoom-call { position: relative; height: 70vh; min-height: 380px; background: #0d0f12; border-radius: var(--r-lg, 14px); overflow: hidden; }
+.zoom-call-remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.zoom-call-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #cfd3da; font-size: 14px; }
+.zoom-call-wait[hidden] { display: none; }
+.zoom-call-wait-row { display: flex; align-items: center; gap: 10px; }
+.zoom-call-wait-sub { color: #9aa2ad; font-size: 12.5px; }
+.zoom-call-spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,.18); border-top-color: #e7e9ee; animation: zoomspin .8s linear infinite; }
+@keyframes zoomspin { to { transform: rotate(360deg); } }
+.zoom-call-top { position: absolute; top: 14px; left: 16px; right: 16px; display: flex; align-items: center; gap: 12px; color: #e7e9ee; font-size: 12.5px; }
+.zoom-call-top .zoom-mins { margin-left: auto; padding: 5px 10px; border-radius: 8px; background: rgba(0,0,0,.45); }
+.zoom-call-self { position: absolute; right: 16px; bottom: 76px; width: clamp(140px, 18%, 260px); aspect-ratio: 16 / 9; object-fit: cover; transform: scaleX(-1);
+  border-radius: 10px; border: 1px solid rgba(255,255,255,.18); background: #1b1e24; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+.zoom-call-self[hidden] { display: none; }
+.zoom-call-bar { position: absolute; left: 0; right: 0; bottom: 16px; display: flex; justify-content: center; gap: 10px; }
+.zoom-call-bar .zoom-ctrl { background: rgba(20,22,26,.72); }
+.zoom-call-bar .zoom-ctrl.off, .zoom-call-bar .zoom-ctrl.zoom-leave { background: #f04438; }
 
 /* Official app: own-key options belong to the open-source edition and never show here. */
 .is-managed .byok-only { display: none !important; }
@@ -4212,3 +4230,40 @@ body.cv-dragging * { cursor: grabbing !important; }
 .pkg-qa-acts { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .pkg-a-edit { width: 100%; margin-top: 6px; font-size: 13px; line-height: 1.5; resize: vertical; }
 .pkg-qa-acts .link-btn { padding: 0; font-size: 12.5px; }
+
+/* Interview prep landing (choice B, 2026-10-23): as wide as Jobs, the tiles fill the window, one
+   "Last interview" line, and the full history on its own page behind the header button. */
+#view-prep:has(#prepList:not([hidden])) .page-head, #view-prep #prepList { max-width: 1320px; }
+#view-prep .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.prep-past-link { flex: none; font: inherit; font-size: 13px; color: var(--muted); background: none; border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 14px; cursor: pointer; }
+.prep-past-link:hover { color: var(--ink); background: var(--surface-2); }
+.prep-past-link b { color: var(--ink); font-weight: 600; margin-left: 2px; }
+.prep-last { display: flex; align-items: center; gap: 14px; width: 100%; margin-top: 20px; padding: 14px 18px; font: inherit; font-size: 13px;
+  color: var(--muted); text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg, 14px); cursor: pointer; }
+.prep-last:hover { background: var(--surface-2); }
+.prep-last-k { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; flex: none; }
+.prep-last-role { color: var(--ink); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prep-last-meta { flex: none; }
+.prep-last-score { margin-left: auto; flex: none; color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+.prep-last-score span { font-weight: 400; color: var(--faint); font-size: 11.5px; }
+.prep-last-go { flex: none; padding-left: 14px; border-left: 1px solid var(--border); }
+.prep-past-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.prep-past-q { flex: 1; min-width: 220px; max-width: 420px; }
+.prep-past-chips { display: flex; gap: 6px; }
+.prep-past-none { color: var(--muted); font-size: 13px; padding: 16px 18px; margin: 0; }
+
+/* Past interviews list rows (the Past interviews page): one quiet row per report, score on the right. */
+.prep-past-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-lg, 14px); background: var(--surface); overflow: hidden; }
+.prep-past-row { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto 72px 16px; align-items: center; gap: 14px; padding: 12px 18px;
+  background: none; border: 0; border-top: 1px solid var(--border); color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.prep-past-row:first-child { border-top: 0; }
+.prep-past-row:hover { background: var(--surface-2); }
+.prep-past-kind { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.prep-past-role { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prep-past-co { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.prep-past-date { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.prep-past-score { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.prep-past-score span { font-weight: 400; color: var(--faint); font-size: 11.5px; }
+.prep-past-score.no { color: var(--muted); }
+.prep-past-go { color: var(--faint); }
