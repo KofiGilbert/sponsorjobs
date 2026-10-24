@@ -1088,5 +1088,8 @@
   "prep.stFull3": "Tour 2, en direct",
   "prep.stFull3d": "Environ 20 minutes avec un recruteur en direct.",
   "prep.ftRec": "Les enregistrements restent sur cet ordinateur. Tu peux les supprimer quand tu veux.",
-  "prep.ftLive": "Rien n'est décompté de ton pass avant que le recruteur soit à l'écran."
+  "prep.ftLive": "Rien n'est décompté de ton pass avant que le recruteur soit à l'écran.",
+  "projects.mine": "Tes projets",
+  "projects.inProgress": "En cours",
+  "projects.draft": "Brouillon"
 }

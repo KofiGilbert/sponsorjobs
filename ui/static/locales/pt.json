@@ -1088,5 +1088,8 @@
   "prep.stFull3": "Rodada 2, ao vivo",
   "prep.stFull3d": "Cerca de 20 minutos com um entrevistador ao vivo.",
   "prep.ftRec": "As gravações ficam neste computador. Você pode apagá-las quando quiser.",
-  "prep.ftLive": "Nada do seu passe é usado até o entrevistador aparecer na tela."
+  "prep.ftLive": "Nada do seu passe é usado até o entrevistador aparecer na tela.",
+  "projects.mine": "Seus projetos",
+  "projects.inProgress": "Em andamento",
+  "projects.draft": "Rascunho"
 }

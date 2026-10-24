@@ -569,9 +569,10 @@ def test_start_without_github_asks_on_the_card_first():
     assert "data-gh" in ask and "data-nogh" in ask and "startIdea(s, btn, true)" in ask and "openGitHubSettings()" in ask
 
 
-def test_ideas_gallery_is_a_page_with_a_back_link():
-    """The gallery has the Templates back link above the title, no close or refresh icons, and
-    Esc goes back; while it is open the title reads Project ideas and the header buttons hide."""
+def test_projects_opens_on_the_ideas_and_the_list_is_its_own_page():
+    """Projects opens on the ideas (Kofi, 2026-10-23): title "Projects", no back link, a "Your
+    projects N" button and one Continue line for the newest project in progress. The list is its
+    own page, "Your projects" under the Templates back link; Esc there goes back to the ideas."""
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     html = (root / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
@@ -581,8 +582,11 @@ def test_ideas_gallery_is_a_page_with_a_back_link():
     assert ".view-projects .proj-back { margin-bottom: 0; }" in css
     src = (root / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     body = _js_function(src, "renderProjList")
-    assert 'projects.ideasPageTitle' in body and "acts.hidden = true" in body
-    assert 'e.key !== "Escape"' in src and "closeIdeas();" in src
+    assert 'projects.mine' in body and "paintProjContinue()" in body and "back.hidden = ideasOpen" in body
+    assert 'id="projMine"' in html and 'id="projContinue"' in html
+    load = _js_function(src, "loadProjects")
+    assert "openIdeas()" in load                 # the home is the ideas
+    assert 'e.key !== "Escape"' in src
 
 
 def test_no_repeated_titles_and_defend_it_is_a_page_of_its_own():

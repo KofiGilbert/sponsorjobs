@@ -1088,5 +1088,8 @@
   "prep.stFull3": "Ronda 2, en vivo",
   "prep.stFull3d": "Unos 20 minutos con un entrevistador en vivo.",
   "prep.ftRec": "Las grabaciones se quedan en este equipo. Puedes borrarlas cuando quieras.",
-  "prep.ftLive": "No se usa nada de tu pase hasta que el entrevistador aparece en pantalla."
+  "prep.ftLive": "No se usa nada de tu pase hasta que el entrevistador aparece en pantalla.",
+  "projects.mine": "Tus proyectos",
+  "projects.inProgress": "En curso",
+  "projects.draft": "Borrador"
 }

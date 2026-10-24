@@ -4351,3 +4351,8 @@ body.cv-dragging * { cursor: grabbing !important; }
 .prep-side-foot { font-size: 12px; color: var(--faint); line-height: 1.55; margin: 24px 0 0; padding-top: 16px; border-top: 1px solid var(--border); }
 @media (max-width: 900px) { .prep-setup { grid-template-columns: 1fr; min-height: 0; } .prep-setup-side { grid-column: 1; grid-row: auto;
   border-left: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--r-lg) var(--r-lg); } }
+
+/* Projects home: the one Continue line above the ideas (same line as Interview prep's Last interview). */
+.prep-last.proj-continue { margin: 0 0 18px; }
+.prep-last.proj-continue[hidden] { display: none; }
+#projMine[hidden] { display: none; }

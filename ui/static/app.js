@@ -4370,8 +4370,42 @@
     projSplit(false);
     if ($("#projList")) $("#projList").hidden = false;
     try { const d = await api("/api/projects"); PROJECTS = d.projects || []; } catch { PROJECTS = []; }
-    renderProjList();
+    if (MYPROJ) { if ($("#projIdeas")) $("#projIdeas").hidden = true; renderProjList(); }
+    else openIdeas();                          // Projects opens on the ideas
   }
+  // false: the Projects home (the ideas). true: the Your projects page (the list, drafts, verified).
+  let MYPROJ = false;
+  // The newest project still in progress, for the one Continue line on the ideas page.
+  function projInProgress() {
+    const going = PROJECTS.filter(p => (p.origin === "ai" ? p.stage !== "verified" : p.status !== "verified"));
+    const t = (p) => Number(p.updated || p.updated_at || p.created || p.created_at || 0) || 0;
+    return going.sort((a, b) => t(b) - t(a))[0] || null;
+  }
+  function paintProjContinue() {
+    const box = $("#projContinue"); if (!box) return;
+    const p = projInProgress();
+    box.hidden = !p; if (!p) return;
+    let what = "", note = "";
+    if (p.origin === "ai") {
+      const b = p.build || {}, lr = p.learn || {}, d = p.defense || {};
+      if (p.stage === "building") { what = PT("projects.sBuilding", "Building"); note = (BUILD_LABEL[b.state] || BUILD_LABEL.queued)(b); }
+      else if (p.stage === "failed") what = PT("projects.sStopped", "Build stopped");
+      else if (p.stage === "learn") { what = PT("projects.sLearn", "Learn it"); if (lr.total) note = PT("projects.nLearned", "{n} of {m} learned").replace("{n}", lr.learned || 0).replace("{m}", lr.total); }
+      else if (p.stage === "defend") { what = PT("projects.sDefend", "Defend it"); if (d.tried) note = PT("projects.lastQuiz", "Last try {s} of {m}. Pass is {p}.").replace("{s}", d.score).replace("{m}", d.total).replace("{p}", d.pass_mark); }
+    } else what = PT("projects.draft", "Draft");
+    box.innerHTML = `<span class="prep-last-k">${esc(PT("projects.inProgress", "In progress"))}</span>
+      <span class="prep-last-role">${esc(p.title)}</span>
+      <span class="prep-last-meta">${esc(what)}${note ? ` &middot; ${esc(note)}` : ""}</span>
+      <span class="prep-last-score"></span>
+      <span class="prep-last-go">${esc(PT("projects.continueLearn", "Continue"))} &rarr;</span>`;
+    box.onclick = () => {
+      if (p.origin === "ai" && p.stage === "learn") return startLearn(p);
+      if (p.origin === "ai" && p.stage === "defend") return startQuiz(p);
+      if (p.origin !== "ai") return startBuildGuide(p);
+      showMyProjects();                        // building or stopped: its card shows the state
+    };
+  }
+  function showMyProjects() { MYPROJ = true; if ($("#projIdeas")) $("#projIdeas").hidden = true; renderProjList(); }
   // Monochrome inline glyphs for the Projects screen (no assets, no colour).
   // <tech-logo> (2026-10-13). The idea tile is the Jobs logo tile: white, with the real logo of
   // the idea's main technology in its own brand colour (Simple Icons, vendored in
@@ -5225,10 +5259,15 @@
     const acts = $("#projHeadActs");
     // The ideas gallery is its own page: "Project ideas" under a back link, no header buttons.
     const ideasOpen = !$("#projIdeas")?.hidden;
-    const back = $("#projIdeasBack"); if (back) back.hidden = !ideasOpen;
+    // The ideas are the Projects home: "Projects", no back link, a "Your projects N" button and
+    // New project in the header. The list is its own page: "Your projects" under a back link.
+    const back = $("#projIdeasBack"); if (back) back.hidden = ideasOpen;
     const pt = $("#projPageTitle");
-    if (pt) pt.textContent = ideasOpen ? PT("projects.ideasPageTitle", "Project ideas") : PT("projects.title", "Projects");
-    if (ideasOpen) { if (acts) acts.hidden = true; root.innerHTML = ""; return; }
+    if (pt) pt.textContent = ideasOpen ? PT("projects.title", "Projects") : PT("projects.mine", "Your projects");
+    const mine = $("#projMine"); if (mine) mine.hidden = !ideasOpen || !PROJECTS.length;
+    if ($("#projMineN")) $("#projMineN").textContent = String(PROJECTS.length);
+    if (ideasOpen) { if (acts) acts.hidden = false; projHeadAccent(true);   // the ideas own the accent (Start)
+      root.innerHTML = ""; paintProjContinue(); return; }
     if (!PROJECTS.length) {
       // The header buttons repeat the card's actions, so they step aside while it shows:
       // one primary action per screen.
@@ -5236,7 +5275,7 @@
       projHeadAccent(formOpen);
       root.innerHTML = formOpen ? "" : projEmptyHTML();
       $("#projEmptyAdd")?.addEventListener("click", () => openProjForm("#projForm", "#projTitle"));
-      $("#projEmptySuggest")?.addEventListener("click", () => openIdeas());
+      $("#projEmptySuggest")?.addEventListener("click", () => { MYPROJ = false; openIdeas(); });
       return;
     }
     if (acts) acts.hidden = false;
@@ -5290,7 +5329,7 @@
     renderProjList();
     $(focusSel)?.focus();
   }
-  $("#projNew")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { $("#projIdeas") && ($("#projIdeas").hidden = true); $("#projTitle")?.focus(); } renderProjList(); } });
+  $("#projNew")?.addEventListener("click", () => { MYPROJ = true; const f = $("#projForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { $("#projIdeas") && ($("#projIdeas").hidden = true); $("#projTitle")?.focus(); } renderProjList(); } });
   $("#projCancel")?.addEventListener("click", () => { const f = $("#projForm"); if (f) { f.reset(); f.hidden = true; } renderProjList(); });
   $("#projForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -5766,24 +5805,29 @@
       toast(d.project?.target === "github" ? PT("projects.buildingRepo", "Building it. It goes to a private repo on GitHub.")
         : PT("projects.buildingLocal", "Building it here. Download the files any time."));
       const box = $("#projIdeas"); if (box) box.hidden = true;
-      loadProjects();
+      MYPROJ = true; loadProjects();            // the new project, building, on Your projects
     } catch (err) {
       toast(err.message || PT("projects.startFailed", "Couldn't start the project."));
       if (btn) { btn.disabled = false; btn.textContent = label; }
     }
   }
   $("#projSuggestBtn")?.addEventListener("click", () => { const box = $("#projIdeas"); if (box && !box.hidden) closeIdeas(); else openIdeas(); });
-  $("#projIdeasBack")?.addEventListener("click", () => { if (QUIZ) leaveQuiz(); else if (LEARN) leaveLearn(); else closeIdeas(); });
+  $("#projIdeasBack")?.addEventListener("click", () => {
+    if (QUIZ) leaveQuiz(); else if (LEARN) leaveLearn();
+    else { MYPROJ = false; const f = $("#projForm"); if (f) { f.reset(); f.hidden = true; } openIdeas(); }   // the list goes back to the ideas
+  });
+  $("#projMine")?.addEventListener("click", showMyProjects);
   // Esc goes back too, unless a field inside the gallery (the Target chip, an inline ask) took it.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || e.defaultPrevented) return;
     if (LEARN && !$("#projLearn")?.hidden && $("#view-projects")?.classList.contains("is-active")
         && !typing(e.target)) { e.preventDefault(); leaveLearn(); return; }
     if (QUIZ && !$("#projQuiz")?.hidden && $("#view-projects")?.classList.contains("is-active")) { e.preventDefault(); leaveQuiz(); return; }
-    const box = $("#projIdeas");
-    if (!box || box.hidden || !$("#view-projects")?.classList.contains("is-active")) return;
+    // The ideas are the Projects home, so Esc there does nothing; on Your projects it goes home.
+    if (!MYPROJ || !$("#view-projects")?.classList.contains("is-active") || typing(e.target)) return;
+    if (!$("#projList") || $("#projList").hidden) return;
     if (document.querySelector(".modal:not([hidden]), dialog[open]")) return;
-    e.preventDefault(); closeIdeas();
+    e.preventDefault(); $("#projIdeasBack")?.click();
   });
   $("#projIdeasMore")?.addEventListener("click", loadMoreIdeas);
   $("#projIdeasSearch")?.addEventListener("submit", (e) => {

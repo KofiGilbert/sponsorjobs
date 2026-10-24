@@ -791,7 +791,9 @@
           <!-- Learn it and Defend it put their progress here, right of the title row. -->
           <div class="sx-prog" id="projProg" hidden></div>
           <div class="page-head-actions" id="projHeadActs">
-            <button class="btn btn-ghost" id="projSuggestBtn" type="button">
+            <!-- Projects opens on the ideas (Kofi, 2026-10-23); your own projects are one page away. -->
+            <button class="prep-past-link" id="projMine" type="button" hidden><span data-i18n="projects.mine">Your projects</span> <b id="projMineN"></b> &rarr;</button>
+            <button class="btn btn-ghost" id="projSuggestBtn" type="button" hidden>
               <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.8a4.2 4.2 0 0 0-2.5 7.6c.5.4.8.9.8 1.5v.3h3.4v-.3c0-.6.3-1.1.8-1.5A4.2 4.2 0 0 0 8 1.8Z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/><path d="M6.6 13.6h2.8M7 15h2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
               Suggest a project
             </button>
@@ -820,6 +822,8 @@
              app already knows, each with real example repos from GitHub search. Start creates the
              draft here and, when GitHub is connected, a private repo. The defend gate still applies. -->
         <section class="proj-ideas" id="projIdeas" hidden aria-labelledby="projPageTitle">
+          <!-- The newest project in progress, one click back into it. Never more than one line. -->
+          <button class="prep-last proj-continue" id="projContinue" type="button" hidden></button>
           <!-- Row 1: the Target chip (the page title already says "Project ideas", so no eyebrow). Row 2: one toolbar on the Jobs filter grammar
                (search, the category select, GitHub). No labelled chip rows. No close or refresh: the
                back link above the title leaves, and Search and More ideas bring new ideas. -->

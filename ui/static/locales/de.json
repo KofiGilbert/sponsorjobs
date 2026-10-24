@@ -1088,5 +1088,8 @@
   "prep.stFull3": "Runde 2, live",
   "prep.stFull3d": "Etwa 20 Minuten mit einem Live-Interviewer.",
   "prep.ftRec": "Aufnahmen bleiben auf diesem Computer. Du kannst sie jederzeit löschen.",
-  "prep.ftLive": "Von deinem Pass wird nichts verbraucht, bis der Interviewer zu sehen ist."
+  "prep.ftLive": "Von deinem Pass wird nichts verbraucht, bis der Interviewer zu sehen ist.",
+  "projects.mine": "Deine Projekte",
+  "projects.inProgress": "In Arbeit",
+  "projects.draft": "Entwurf"
 }
