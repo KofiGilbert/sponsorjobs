@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS job_extras (
 CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(rkey);
 CREATE INDEX IF NOT EXISTS jobs_pay ON jobs(pay, rkey);
 CREATE INDEX IF NOT EXISTS jobs_remote ON jobs(remote_l, rkey);
+CREATE INDEX IF NOT EXISTS jobs_remote_pay ON jobs(remote_l, pay, rkey);
 CREATE INDEX IF NOT EXISTS jobs_entry ON jobs(entry, rkey);
 -- No index on posted_ts: the date facet keeps undated rows ("IS NULL OR >="), and an index made
 -- the planner gather every match before the LIMIT (152k rows read at 184k); the ordered walk

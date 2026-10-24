@@ -321,6 +321,8 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client: D1 | None =
             client.query(s)
         if sqls or not version:
             client.query(meta_statement(new_version or "v0", generated_at, len(new_state)))
+        if sqls:
+            client.query("PRAGMA optimize")      # refresh the planner's statistics (cheap)
     except Exception:
         state_path.unlink(missing_ok=True)       # next run rebuilds from D1 and finishes the job
         raise

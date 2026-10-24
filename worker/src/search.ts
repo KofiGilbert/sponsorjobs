@@ -256,11 +256,12 @@ async function indexVersion(env: Env, nowMs: number): Promise<IndexInfo> {
   return versionCache;
 }
 
-/** The FTS plan reads every match (then sorts them); the ordered walk reads rows until it has
- * COUNT_CAP + 1 matches. With N rows and M matches the walk reads about COUNT_CAP * N / M, so the
- * FTS plan wins below M = sqrt(COUNT_CAP * N / 2): ~9.6k matches at 184k rows, ~16k at 500k.
- * Either way the worst case stays near 2 * that, not N. */
-export const ftsThreshold = (rows: number) => Math.max(2000, Math.round(Math.sqrt((COUNT_CAP * rows) / 2)));
+/** The FTS plan reads every match about 3-5 times (the probe, the page's index scan and row
+ * lookups, and the count's when other facets apply); the ordered walk reads about
+ * (COUNT_CAP + page) * N / M rows to fill the page and the capped count. They cross near
+ * M = sqrt(COUNT_CAP * N / 4): ~6.8k matches at 184k rows, ~11k at 500k, which bounds the worst
+ * case near 4 * M instead of N. Measured figures: docs/server-search-plan.md. */
+export const ftsThreshold = (rows: number) => Math.max(2000, Math.round(Math.sqrt((COUNT_CAP * rows) / 4)));
 
 /** Tests load a new index and need the next request to see it at once. */
 export function forgetIndexVersion(): void { versionCache = null; }
@@ -284,6 +285,7 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
   const take = Math.min(limit, DEPTH_MAX - served);
   let probeRead = 0;
   let useFts = false;
+  let probeCount: number | null = null;
   const match = buildQuery(f, nowMs).match;
   if (match) {
     if (opts.plan) useFts = opts.plan === "fts";
@@ -296,6 +298,12 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
         .bind(match, t).all<{ n: number }>();
       probeRead = r.meta?.rows_read ?? 0;
       useFts = (r.results[0]?.n ?? 0) < t;
+      // A phrase on title/company or location matches exactly the rows instr() keeps, so with
+      // no other facet the probe IS the count and the count query is skipped.
+      const onlyText = !f.titles.length && !f.remote && f.level !== "entry" && !f.visa.length
+        && !f.sponsored && !(f.days > 0) && !(f.pay > 0) && f.loc !== "remote"
+        && (!f.q || chars(f.q) >= 3) && (!f.loc || chars(f.loc) >= 3);
+      if (useFts && onlyText) probeCount = r.results[0]?.n ?? 0;
     }
   }
   const q = buildQuery(f, nowMs, useFts);
@@ -311,7 +319,7 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
                    LEFT JOIN job_extras x ON x.h = j.xh AND j.xh != ''
                    ${w} ORDER BY ${order} LIMIT ?`;
   const stmts = [env.DB.prepare(pageSql).bind(...binds, take + 1)];
-  if (!after) {
+  if (!after && probeCount === null) {
     const cw = q.where.length ? `WHERE ${q.where.join(" AND ")}` : "";
     stmts.push(env.DB.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM jobs j ${cw} LIMIT ?)`)
       .bind(...q.binds, COUNT_CAP + 1));
@@ -319,7 +327,7 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
   const res = await env.DB.batch(stmts);
   const got = res[0]!.results as Array<{ row: string; pay: number; rkey: string; extra: string | null }>;
   let count = after?.c ?? 0;
-  if (!after) count = (res[1]!.results[0] as { n: number }).n;
+  if (!after) count = probeCount ?? (res[1]!.results[0] as { n: number }).n;
   const capped = count > COUNT_CAP;
   const rows = got.slice(0, take);
   const last = rows[rows.length - 1];
