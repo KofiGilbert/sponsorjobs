@@ -3918,11 +3918,10 @@
     const board = $("#trkBoard"), table = $("#trkTable"), empty = $("#trkEmpty");
     if (!board || !table) return;
     const none = !TRK_CARDS.length;
-    if (empty) empty.hidden = !none;
-    board.hidden = none || TRK_VIEW !== "board";
+    if (empty) empty.hidden = true;                // an empty tracker shows the board, with hints
+    board.hidden = !none && TRK_VIEW !== "board";
     table.hidden = none || TRK_VIEW !== "table";
-    if (none) return;
-    if (TRK_VIEW === "board") renderTrackerBoard(); else renderTrackerTable();
+    if (none || TRK_VIEW === "board") renderTrackerBoard(); else renderTrackerTable();
   }
 
   // Sponsorship chips, quiet when there is nothing to say (a card has no room for "no record").
@@ -3955,15 +3954,41 @@
     </div>`;
   }
 
+  // The board's columns (2026-10-23, after Huntr's Wishlist / Applied / Interview / Offer /
+  // Rejected): Saved, Applied, Interviewing, Offer, Closed. "Ready to apply" (approved for
+  // auto-apply) shows only while something waits there; Closed holds rejected and archived jobs.
+  const TRK_COLS = [
+    { key: "saved", stages: ["saved"], hint: ["tracker.hintSaved", "Jobs you save from the Jobs page"] },
+    { key: "approved", stages: ["approved"], optional: true, hint: ["tracker.hintApproved", "Approved for auto-apply"] },
+    { key: "applied", stages: ["applied"], hint: ["tracker.hintApplied", "Moves here when you apply"] },
+    { key: "interviewing", stages: ["interviewing"], hint: ["tracker.hintInterview", "Drag a card here when they call"] },
+    { key: "offer", stages: ["offer"], hint: ["tracker.hintOffer", "The goal"] },
+    { key: "rejected", stages: ["rejected", "archived"], name: ["tracker.closed", "Closed"], hint: ["tracker.hintClosed", "Rejections and jobs you pass on"] },
+  ];
+  function trkFitBoard() {
+    const host = $("#trkBoard"); if (!host || host.hidden || !host.offsetParent) return;
+    host.style.height = Math.max(360, window.innerHeight - host.getBoundingClientRect().top - 44) + "px";
+  }
+  window.addEventListener("resize", trkFitBoard);
   function renderTrackerBoard() {
     const host = $("#trkBoard");
-    host.innerHTML = TRK_STAGES.map(s => {
-      const cards = TRK_CARDS.filter(c => c.stage === s);
-      return `<div class="trk-col" data-stage="${s}">
-        <div class="trk-col-h"><span>${esc(trkStageName(s))}</span><span class="trk-col-n">${cards.length}</span></div>
-        <div class="trk-col-cards">${cards.map(trkCardHtml).join("")}</div>
+    const none = !TRK_CARDS.length;
+    const cols = TRK_COLS.filter(c => !c.optional || TRK_CARDS.some(x => c.stages.includes(x.stage)));
+    host.style.setProperty("--trk-cols", cols.length);
+    host.innerHTML = cols.map(col => {
+      const cards = TRK_CARDS.filter(c => col.stages.includes(c.stage));
+      const name = col.name ? trkT(col.name[0], col.name[1]) : trkStageName(col.key);
+      return `<div class="trk-col" data-stage="${col.key}">
+        <div class="trk-col-h"><span>${esc(name)}</span><span class="trk-col-n">${cards.length}</span></div>
+        <div class="trk-col-cards">${cards.length ? cards.map(trkCardHtml).join("") : `<div class="trk-col-hint">${esc(trkT(col.hint[0], col.hint[1]))}</div>`}</div>
       </div>`;
-    }).join("");
+    }).join("") + (none ? `<div class="trk-welcome">
+        <div class="trk-welcome-h">${esc(trkT("tracker.welcomeH", "Every application, in one place"))}</div>
+        <p class="trk-welcome-p">${esc(trkT("tracker.welcomeP", "Save a job or tailor a resume and it lands in Saved. Drag it along as you hear back."))}</p>
+        <div class="trk-welcome-acts"><button class="btn btn-primary" type="button" data-go="jobs">${esc(trkT("tracker.findJobs", "Find jobs"))}</button>
+          <button class="btn btn-ghost" type="button" data-go="autoapply">${esc(trkT("tracker.seeAuto", "See auto-apply"))}</button></div></div>` : "");
+    host.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => document.querySelector(`[data-nav="${b.dataset.go}"]`)?.click()));
+    requestAnimationFrame(trkFitBoard);
     host.querySelectorAll(".trk-card").forEach(card => {
       card.addEventListener("click", (e) => { if (e.target.closest("a")) return; openTrackerPanel(card.dataset.sid); });
       card.addEventListener("keydown", (e) => {
@@ -3982,7 +4007,9 @@
       col.addEventListener("drop", (e) => {
         e.preventDefault(); col.classList.remove("is-over");
         const sid = e.dataTransfer.getData("text/plain");
-        if (sid) trkMove(sid, col.dataset.stage);
+        const c = TRK_CARDS.find(x => x.source_id === sid);
+        // Closed holds rejected AND archived: an archived card dropped back there stays archived.
+        if (sid && !(c && col.dataset.stage === "rejected" && c.stage === "archived")) trkMove(sid, col.dataset.stage);
       });
     });
   }
@@ -4012,6 +4039,9 @@
     host.querySelectorAll("[data-stage-for]").forEach(s => s.addEventListener("change", () => trkMove(s.dataset.stageFor, s.value)));
   }
 
+  // The numbers as ONE slim strip above the board (2026-10-23): the board is the page, so the
+  // funnel and the 12-week chart (now a small bar row on the right) take one line, not half the
+  // screen. Same numbers as before, same weekly goal you can edit in place.
   function renderTrackerMetrics() {
     const host = $("#trkMetrics");
     if (!host) return;
@@ -4019,28 +4049,20 @@
     if (!m) { host.innerHTML = ""; return; }
     const goal = m.goal || { target: 0, done: 0, pct: 0 };
     const weeks = m.weeks || [];
-    // The axis tops out at 5 at least, so one application is a small bar, not a full black column.
     const peak = Math.max(5, ...weeks.map(w => w.count));
-    const bars = weeks.map((w, i) => `<div class="trk-bar${i === weeks.length - 1 ? " is-now" : ""}" title="${esc(trkT("tracker.weekOf", "Week of"))} ${esc(trkDay(w.week))}: ${w.count}"><div class="trk-bar-fill" style="height:${Math.round(w.count / peak * 100)}%"></div></div>`).join("");
-    const median = m.median_days_to_interview == null ? trkT("tracker.none", "n/a") : m.median_days_to_interview;
+    const any = (m.applied_total || 0) > 0;
+    const bars = weeks.map((w, i) => `<i class="${i === weeks.length - 1 ? "is-now" : ""}" title="${esc(trkT("tracker.weekOf", "Week of"))} ${esc(trkDay(w.week))}: ${w.count}" style="height:${Math.max(2, Math.round(w.count / peak * 28))}px"></i>`).join("");
+    const median = m.median_days_to_interview;
     host.innerHTML = `
-      <div class="trk-tile">
-        <div class="trk-tile-l">${esc(trkT("tracker.thisWeek", "This week"))}</div>
-        <div class="trk-tile-n">${m.applied_week}</div>
-        <div class="trk-goal">
-          <div class="trk-goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${goal.target ? goal.pct : 0}"><div class="trk-goal-fill" style="width:${goal.target ? goal.pct : 0}%"></div></div>
-          <label class="trk-goal-lbl">${esc(trkT("tracker.goal", "Weekly goal"))} <input class="fld trk-goal-in" id="trkGoal" type="number" min="0" max="500" value="${goal.target}"></label>
-        </div>
-      </div>
-      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.applied", "Applied"))}</div><div class="trk-tile-n">${m.applied_total}</div><div class="trk-tile-s">${esc(trkT("tracker.total", "total"))}</div></div>
-      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.interviews", "Interviews"))}</div><div class="trk-tile-n">${m.interviews}</div><div class="trk-tile-s">${m.pct_interview}% ${esc(trkT("tracker.ofApplied", "of applied"))}</div></div>
-      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.offers", "Offers"))}</div><div class="trk-tile-n">${m.offers}</div><div class="trk-tile-s">${m.pct_offer}% ${esc(trkT("tracker.ofInterviews", "of interviews"))}</div></div>
-      <div class="trk-tile"><div class="trk-tile-l">${esc(trkT("tracker.daysToInterview", "Days to first interview"))}</div><div class="trk-tile-n">${esc(String(median))}</div><div class="trk-tile-s">${esc(trkT("tracker.median", "median"))}</div></div>
-      <div class="trk-tile trk-tile-chart">
-        <div class="trk-tile-l">${esc(trkT("tracker.perWeek", "Applications per week, last 12 weeks"))}</div>
-        <div class="trk-bars">${bars}</div>
-        <div class="trk-bars-axis"><span>${esc(trkDay(weeks[0] && weeks[0].week))}</span><span>${esc(trkDay(weeks.length && weeks[weeks.length - 1].week))}</span></div>
-      </div>`;
+      <div class="trk-st trk-st-goal"><b class="num">${m.applied_week}</b>
+        <label class="trk-goal-lbl">${esc(trkT("tracker.ofGoal", "of"))} <input class="fld trk-goal-in" id="trkGoal" type="number" min="0" max="500" value="${goal.target}" aria-label="${esc(trkT("tracker.goal", "Weekly goal"))}"> ${esc(trkT("tracker.thisWeekShort", "this week"))}</label>
+        <span class="trk-goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${goal.target ? goal.pct : 0}"><span class="trk-goal-fill" style="width:${goal.target ? goal.pct : 0}%"></span></span></div>
+      <div class="trk-st"><b class="num">${m.applied_total}</b>${esc(trkT("tracker.appliedLow", "applied"))}</div>
+      <div class="trk-st"><b class="num">${m.interviews}</b>${esc(trkT("tracker.interviewsLow", "interviews"))}${any ? ` <span class="trk-st-f">${m.pct_interview}%</span>` : ""}</div>
+      <div class="trk-st"><b class="num">${m.offers}</b>${esc(trkT("tracker.offersLow", "offers"))}</div>
+      ${median != null ? `<div class="trk-st"><b class="num">${esc(String(median))}</b>${esc(trkT("tracker.daysToFirst", "days to first interview"))}</div>` : ""}
+      ${any ? `<div class="trk-st trk-st-spark">${esc(trkT("tracker.weeks12", "12 weeks"))}<span class="trk-spark">${bars}</span></div>`
+            : `<div class="trk-st trk-st-spark trk-st-hint">${esc(trkT("tracker.fillsIn", "Your weekly numbers fill in as you apply"))}</div>`}`;
     $("#trkGoal")?.addEventListener("change", async (e) => {
       const target = Math.max(0, parseInt(e.target.value, 10) || 0);
       try {
