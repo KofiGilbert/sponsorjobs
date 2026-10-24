@@ -200,9 +200,9 @@ def statements(upserts: list[dict], removed: list[str], *,
 SWEEP_EXTRAS = "DELETE FROM job_extras WHERE h NOT IN (SELECT xh FROM jobs)"
 
 
-def meta_statement(index_version: str, generated_at: str) -> str:
+def meta_statement(index_version: str, generated_at: str, rows: int = 0) -> str:
     return ("INSERT INTO search_meta (k, v) VALUES ('index_version', " + lit(index_version)
-            + "), ('generated_at', " + lit(generated_at or "") + ") "
+            + "), ('generated_at', " + lit(generated_at or "") + "), ('rows', " + lit(str(rows)) + ") "
             "ON CONFLICT(k) DO UPDATE SET v = excluded.v")
 
 
@@ -310,7 +310,7 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client: D1 | None =
                                .encode()).hexdigest()[:12] if sqls else (version or "")
     if emit_sql:
         with open(emit_sql, "w", encoding="utf-8") as fh:
-            for s in sqls + [meta_statement(new_version or "v0", generated_at)]:
+            for s in sqls + [meta_statement(new_version or "v0", generated_at, len(new_state))]:
                 fh.write(s + ";\n")
     print("[search-index] " + " ".join(f"{k}={v}" for k, v in report.items())
           + (f" ({note})" if note else "") + (" DRY RUN" if dry_run else ""), file=out)
@@ -320,7 +320,7 @@ def run(feed_path: Path, state_path: Path, *, dry_run: bool, client: D1 | None =
         for s in sqls:
             client.query(s)
         if sqls or not version:
-            client.query(meta_statement(new_version or "v0", generated_at))
+            client.query(meta_statement(new_version or "v0", generated_at, len(new_state)))
     except Exception:
         state_path.unlink(missing_ok=True)       # next run rebuilds from D1 and finishes the job
         raise

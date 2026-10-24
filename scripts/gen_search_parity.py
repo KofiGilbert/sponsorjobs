@@ -154,7 +154,7 @@ class _FixedNow(datetime):
 def build() -> dict:
     rs = rows()
     upserts, removed, _ = diff(rs, {})
-    sqls = statements(upserts, removed) + [meta_statement(INDEX_VERSION, NOW.isoformat())]
+    sqls = statements(upserts, removed) + [meta_statement(INDEX_VERSION, NOW.isoformat(), len(rs))]
     cases = []
     with mock.patch.object(filters, "datetime", _FixedNow):
         for mode, group, fn in (("search", SEARCH_CASES, _search_expected),

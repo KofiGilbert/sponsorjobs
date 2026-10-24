@@ -134,7 +134,7 @@ const chars = (s: string) => [...s].length;   // code points, as the trigram tok
 
 export interface Query { where: string[]; binds: unknown[]; match: string | null }
 
-export function buildQuery(f: Facets, nowMs: number): Query {
+export function buildQuery(f: Facets, nowMs: number, useFts = true): Query {
   const where: string[] = [];
   const binds: unknown[] = [];
   const fts: string[] = [];
@@ -181,7 +181,7 @@ export function buildQuery(f: Facets, nowMs: number): Query {
   }
   if (f.pay > 0) { where.push("j.pay >= ?"); binds.push(f.pay); }
   const match = fts.length ? fts.join(" AND ") : null;
-  if (match) {
+  if (match && useFts) {
     where.unshift("j.id IN (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ?)");
     binds.unshift(match);
   }
@@ -196,6 +196,7 @@ interface CursorBody {
   n: number;            // results already served (the depth so far)
   c: number;            // the count reported on page 1
   k: [number, string];  // keyset: (pay, rkey) of the last row served; pay is 0 for sort=recent
+  p?: number;           // 1 when page 1 chose the FTS plan, so later pages need no probe
 }
 
 const enc = new TextEncoder();
@@ -241,17 +242,25 @@ async function fingerprint(f: Facets): Promise<string> {
 
 // ---- index version ------------------------------------------------------------------------ //
 
-let versionCache: { at: number; v: string | null; g: string } | null = null;
+interface IndexInfo { v: string | null; g: string; rows: number }
+let versionCache: (IndexInfo & { at: number }) | null = null;
 
-/** The loaded index's version and feed time, re-read at most every 30 s per isolate. */
-async function indexVersion(env: Env, nowMs: number): Promise<{ v: string | null; g: string }> {
+/** The loaded index's version, feed time and size, re-read at most every 30 s per isolate. */
+async function indexVersion(env: Env, nowMs: number): Promise<IndexInfo> {
   if (versionCache && nowMs - versionCache.at < VERSION_TTL_MS) return versionCache;
-  const rows = await env.DB.prepare("SELECT k, v FROM search_meta WHERE k IN ('index_version', 'generated_at')")
+  const rows = await env.DB.prepare("SELECT k, v FROM search_meta WHERE k IN ('index_version', 'generated_at', 'rows')")
     .all<{ k: string; v: string }>();
   const m = Object.fromEntries(rows.results.map((r) => [r.k, r.v]));
-  versionCache = { at: nowMs, v: m.index_version ?? null, g: m.generated_at ?? "" };
+  versionCache = { at: nowMs, v: m.index_version ?? null, g: m.generated_at ?? "",
+                   rows: Number.parseInt(m.rows ?? "0", 10) || 0 };
   return versionCache;
 }
+
+/** The FTS plan reads every match (then sorts them); the ordered walk reads rows until it has
+ * COUNT_CAP + 1 matches. With N rows and M matches the walk reads about COUNT_CAP * N / M, so the
+ * FTS plan wins below M = sqrt(COUNT_CAP * N / 2): ~9.6k matches at 184k rows, ~16k at 500k.
+ * Either way the worst case stays near 2 * that, not N. */
+export const ftsThreshold = (rows: number) => Math.max(2000, Math.round(Math.sqrt((COUNT_CAP * rows) / 2)));
 
 /** Tests load a new index and need the next request to see it at once. */
 export function forgetIndexVersion(): void { versionCache = null; }
@@ -266,12 +275,30 @@ export interface Page {
   stats?: { rows_read: number };
 }
 
-/** One page of results for parsed facets. `after` is a decoded, already-checked cursor. */
+/** One page of results for parsed facets. `after` is a decoded, already-checked cursor. `plan`
+ * forces the FTS or the ordered-walk plan (tests: both must answer the same rows). */
 export async function searchPage(env: Env, f: Facets, limit: number, after: CursorBody | null,
-                                 version: string, nowMs: number): Promise<Page> {
+                                 version: string, nowMs: number,
+                                 opts: { rows?: number; plan?: "fts" | "scan" } = {}): Promise<Page> {
   const served = after?.n ?? 0;
   const take = Math.min(limit, DEPTH_MAX - served);
-  const q = buildQuery(f, nowMs);
+  let probeRead = 0;
+  let useFts = false;
+  const match = buildQuery(f, nowMs).match;
+  if (match) {
+    if (opts.plan) useFts = opts.plan === "fts";
+    else if (after) useFts = after.p === 1;
+    else {
+      // How many rows the index matches, counted only up to the threshold (a cheap probe: the
+      // FTS doclists, not the rows). Few matches: use them. Many: walk the ordered index.
+      const t = ftsThreshold(opts.rows ?? 0);
+      const r = await env.DB.prepare("SELECT count(*) AS n FROM (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ? LIMIT ?)")
+        .bind(match, t).all<{ n: number }>();
+      probeRead = r.meta?.rows_read ?? 0;
+      useFts = (r.results[0]?.n ?? 0) < t;
+    }
+  }
+  const q = buildQuery(f, nowMs, useFts);
   const order = f.sort === "pay" ? "j.pay DESC, j.rkey DESC" : "j.rkey DESC";
   const where = [...q.where];
   const binds = [...q.binds];
@@ -302,8 +329,9 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
     count: Math.min(count, COUNT_CAP),
     count_capped: capped,
     next: more && last ? { v: version, f: await fingerprint(f), n: served + rows.length,
-                           c: count, k: [f.sort === "pay" ? last.pay : 0, last.rkey] } : null,
-    stats: { rows_read: res.reduce((s, r) => s + (r.meta?.rows_read ?? 0), 0) },
+                           c: count, k: [f.sort === "pay" ? last.pay : 0, last.rkey],
+                           ...(useFts ? { p: 1 } : {}) } : null,
+    stats: { rows_read: probeRead + res.reduce((s, r) => s + (r.meta?.rows_read ?? 0), 0) },
   };
 }
 
@@ -338,7 +366,7 @@ export async function handleSearch(req: Request, env: Env, mode: Mode, nowMs: nu
     if (e instanceof BadParam) return reply({ error: e.message, param: e.param }, 400);
     throw e;
   }
-  const { v: version, g: generatedAt } = await indexVersion(env, nowMs);
+  const { v: version, g: generatedAt, rows: indexRows } = await indexVersion(env, nowMs);
   if (!version) return reply({ error: "the search index is not loaded yet", reason: "no_index" }, 503);
 
   let after: CursorBody | null = null;
@@ -370,7 +398,7 @@ export async function handleSearch(req: Request, env: Env, mode: Mode, nowMs: nu
     const hit = await cache.match(key);
     if (hit) return hit;
   }
-  const page = await searchPage(env, p.facets, p.limit, after, version, nowMs);
+  const page = await searchPage(env, p.facets, p.limit, after, version, nowMs, { rows: indexRows });
   const body = `{"jobs":[${page.rows.join(",")}],"count":${page.count},"count_capped":${page.count_capped},`
     + `"next_cursor":${page.next ? JSON.stringify(await encodeCursor(env, page.next)) : "null"},`
     + `"index_version":${JSON.stringify(version)},"generated_at":${JSON.stringify(generatedAt)}}`;

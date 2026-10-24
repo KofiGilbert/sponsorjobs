@@ -40,7 +40,9 @@ CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(rkey);
 CREATE INDEX IF NOT EXISTS jobs_pay ON jobs(pay, rkey);
 CREATE INDEX IF NOT EXISTS jobs_remote ON jobs(remote_l, rkey);
 CREATE INDEX IF NOT EXISTS jobs_entry ON jobs(entry, rkey);
-CREATE INDEX IF NOT EXISTS jobs_posted ON jobs(posted_ts);
+-- No index on posted_ts: the date facet keeps undated rows ("IS NULL OR >="), and an index made
+-- the planner gather every match before the LIMIT (152k rows read at 184k); the ordered walk
+-- stops at the page instead.
 -- Under 1% of rows state sponsorship, so a partial index keeps that facet a short walk.
 CREATE INDEX IF NOT EXISTS jobs_sponsored ON jobs(rkey) WHERE sponsored = 1;
 
@@ -79,7 +81,8 @@ WHEN old.title_l IS NOT new.title_l OR old.company_l IS NOT new.company_l
 END;
 
 -- index_version changes whenever the loader applies a diff; it keys the edge cache and makes a
--- cursor from an older index answer 409. generated_at is the feed build the index holds.
+-- cursor from an older index answer 409. generated_at is the feed build the index holds, and rows
+-- its row count (src/search.ts sizes its plan choice by it).
 CREATE TABLE IF NOT EXISTS search_meta (
     k TEXT PRIMARY KEY,
     v TEXT NOT NULL
