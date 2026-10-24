@@ -9,7 +9,7 @@
 // compares values. worker/test/search-parity.test.ts checks the two agree on ~50 facet mixes.
 //
 // Privacy: the request carries only the query, the facets and a cursor; nothing here logs them,
-// and the install token (X-Install) is used only as a rate-limit key, never stored or logged.
+// and the install token (X-Install-Token) is used only as a rate-limit key, never stored or logged.
 // Abuse: 60 requests a minute per install token and 300 per network (the Workers rate-limit
 // binding), at most 1,000 results deep per query, and counts capped at 1,000.
 
@@ -101,7 +101,7 @@ export function parseParams(a: URLSearchParams, mode: Mode): Parsed {
     limit, cursor,
     facets: {
       q: pyStrip(text(a, "q", 200)).toLowerCase(),
-      loc: pyStrip(text(a, "loc", 100)).toLowerCase(),
+      loc: pyStrip(text(a, "loc", 200)).toLowerCase(),
       days: pyIntParam("days", text(a, "days", 12)),
       remote: pyStrip(text(a, "remote", 20)).toLowerCase(),
       visa: [...new Set(visa)].sort(),        // OR within the facet: the order does not matter
@@ -355,7 +355,7 @@ const reply = (data: unknown, status: number, extra: Record<string, string> = {}
 /** Rate limits from the Workers rate-limit binding. A deployment (or test) without the binding
  * simply has no limit here; the Cloudflare WAF rule is the backstop either way. */
 async function limited(req: Request, env: Env): Promise<boolean> {
-  const token = req.headers.get("X-Install") ?? "";
+  const token = req.headers.get("X-Install-Token") ?? "";
   if (env.SEARCH_TOKEN_LIMITER && /^[A-Za-z0-9_-]{8,128}$/.test(token)) {
     if (!(await env.SEARCH_TOKEN_LIMITER.limit({ key: `t:${token}` })).success) return true;
   }

@@ -43,7 +43,7 @@ describe("parameters", () => {
     ["limit=0", "limit"], ["limit=51", "limit"], ["limit=abc", "limit"], ["limit=-3", "limit"],
     ["sort=price", "sort"], ["level=senior", "level"], ["days=7.5", "days"], ["days=week", "days"],
     ["pay=lots", "pay"], ["visa=H 1B", "visa"], ["visa=" + Array(11).fill("A").join(","), "visa"],
-    ["q=" + "x".repeat(201), "q"], ["q=a%00b", "q"], ["titles=Data", "titles"],
+    ["q=" + "x".repeat(201), "q"], ["loc=" + "x".repeat(201), "loc"], ["q=a%00b", "q"], ["titles=Data", "titles"],
     ["cursor=nonsense", "cursor"], ["cursor=" + "x".repeat(2049), "cursor"],
   ])("search rejects %s", async (qs, param) => {
     const r = await get(`/v1/jobs/search?${qs}`);
@@ -197,9 +197,16 @@ describe("rate limits", () => {
   it("60 a minute per install token", async () => {
     const token = "install-" + crypto.randomUUID();
     let last = 0;
-    for (let i = 0; i < 61; i++) last = (await get("/v1/jobs/search?limit=1", { "X-Install": token })).status;
+    for (let i = 0; i < 61; i++) last = (await get("/v1/jobs/search?limit=1", { "X-Install-Token": token })).status;
     expect(last).toBe(429);
-    expect((await get("/v1/jobs/search?limit=1", { "X-Install": "install-" + crypto.randomUUID() })).status).toBe(200);
+    expect((await get("/v1/jobs/search?limit=1", { "X-Install-Token": "install-" + crypto.randomUUID() })).status).toBe(200);
+  });
+
+  it("reads the client's X-Install-Token header (sourcing/remotesearch.py), not another name", async () => {
+    const token = "0123456789abcdef0123456789abcdef".replace(/./g, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]);
+    for (let i = 0; i < 60; i++) await get("/v1/jobs/search?limit=1", { "X-Install-Token": token });
+    expect((await get("/v1/jobs/search?limit=1", { "X-Install-Token": token })).status).toBe(429);
+    expect((await get("/v1/jobs/search?limit=1", { "X-Install": token })).status).toBe(200);
   });
 
   it("300 a minute per network", async () => {
