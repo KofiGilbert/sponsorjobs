@@ -21,3 +21,12 @@ def test_no_prep_checklist_before_an_interview():
     js = (pathlib.Path(__file__).resolve().parents[1] / "ui/static/app.js").read_text()
     assert 'id="prepGoalsR2"' not in js and 'id="prepGoals"' not in js
     assert js.count('id="repGoals"') == 2
+
+
+def test_landing_keeps_one_line_and_the_list_has_its_own_page():
+    """The landing shows only the newest report; the full list is a separate page (choice B)."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    html = (root / "ui/templates/index.html").read_text()
+    assert 'id="prepLast"' in html and 'id="prepPastPage"' in html and 'id="prepPastLink"' in html
+    assert 'id="prepPast"' not in html

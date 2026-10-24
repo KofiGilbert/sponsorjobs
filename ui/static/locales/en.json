@@ -1028,6 +1028,10 @@
   "prep.pastLive": "Live",
   "prep.pastRec": "Recorded",
   "prep.pastRole": "Interview",
-  "prep.pastAll": "Show all {n}",
-  "prep.pastFail": "Couldn't open that report."
+  "prep.pastFail": "Couldn't open that report.",
+  "prep.lastInterview": "Last interview",
+  "prep.openReport": "Open report",
+  "prep.pastSearch": "Search by role or company",
+  "prep.pastAllKinds": "All",
+  "prep.pastNone": "No interviews match."
 }

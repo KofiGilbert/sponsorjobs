@@ -5959,6 +5959,7 @@
     full: ["prep.setupFull", "Set up your full mock interview"],
     rec: ["prep.setupRec", "Set up your recorded interview"],
     live: ["prep.setupLive", "Set up your live interview"],
+    past: ["prep.past", "Past interviews"],
   };
   function paintPrepHead(mode) {
     const setup = !!mode;
@@ -5967,31 +5968,81 @@
     if ($("#prepSub")) $("#prepSub").hidden = setup;
     const st = $("#prepSetupTitle");
     if (st) { st.hidden = !setup; st.textContent = setup ? T(SETUP_TITLE[mode][0], SETUP_TITLE[mode][1]) : ""; }
+    if ($("#prepPastLink")) $("#prepPastLink").hidden = setup || !PAST_CARDS.length;
   }
-  // Past interviews: every scored report, newest first, so a report is never lost once the person
-  // leaves it. A row reopens the full report (Kofi, 2026-10-23).
-  let PAST_ALL = false;
+  // Past interviews (Kofi, 2026-10-23): a report is never lost once the person leaves it, and the
+  // landing stays three big choices. It carries only ONE line for the newest report (one click to
+  // "how did I do?"); the whole list lives on its own page behind the header button, so a long
+  // history never crowds the choices. Search and filters appear once the list is long.
+  let PAST_CARDS = [], PAST_KIND = "all", PAST_Q = "";
+  const pastWhen = (t) => t ? new Date(t * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+  const pastKind = (c) => c.round === 2 ? T("prep.pastLive", "Live") : T("prep.pastRec", "Recorded");
   async function paintPastReports() {
-    const box = $("#prepPast"); if (!box) return;
-    let cards = [];
-    try { cards = (await api("/api/interview/reports")).cards || []; } catch { cards = []; }
-    if (!cards.length) { box.hidden = true; return; }
-    const shown = PAST_ALL ? cards : cards.slice(0, 5);
-    const when = (t) => t ? new Date(t * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
-    box.hidden = false;
-    box.innerHTML = `<div class="prep-tiles-lab">${esc(T("prep.past", "Past interviews"))}</div>
-      <div class="prep-past-list">${shown.map((c, k) => `
+    try { PAST_CARDS = (await api("/api/interview/reports")).cards || []; } catch { PAST_CARDS = []; }
+    const n = PAST_CARDS.length, link = $("#prepPastLink"), last = $("#prepLast");
+    if ($("#prepPastN")) $("#prepPastN").textContent = String(n);
+    if (link) link.hidden = !n || !!PREP_MODE;
+    if (last) {
+      const c = PAST_CARDS[0];
+      last.hidden = !c;
+      if (c) {
+        last.innerHTML = `<span class="prep-last-k">${esc(T("prep.lastInterview", "Last interview"))}</span>
+          <span class="prep-last-role">${esc(c.role || T("prep.pastRole", "Interview"))}</span>
+          <span class="prep-last-meta">${esc(pastKind(c))} &middot; ${esc(pastWhen(c.created))}</span>
+          <span class="prep-last-score">${c.score}<span>/100</span></span>
+          <span class="prep-last-go">${esc(T("prep.openReport", "Open report"))} &rarr;</span>`;
+        last.onclick = () => openPastReport(c);
+      }
+    }
+    fitPrepTiles();
+  }
+  // The two round tiles grow to fill the window, so the landing uses the screen without scrolling.
+  function fitPrepTiles() {
+    const tiles = [...document.querySelectorAll("#prepTiles .prep-tile")], view = $("#view-prep");
+    const ch = $("#prepChoices");
+    if (!tiles.length || !view || !ch || ch.hidden || view.hidden || !view.offsetParent) return;
+    tiles.forEach(t => { t.style.height = ""; });
+    const below = ch.getBoundingClientRect().bottom - tiles[0].getBoundingClientRect().bottom;
+    const want = window.innerHeight - tiles[0].getBoundingClientRect().top - below - 96;
+    tiles.forEach(t => { t.style.height = Math.max(t.offsetHeight, Math.min(620, want)) + "px"; });
+    const spill = view.scrollHeight - view.clientHeight;
+    if (spill > 0) tiles.forEach(t => { t.style.height = Math.max(240, t.offsetHeight - spill) + "px"; });
+  }
+  window.addEventListener("resize", () => fitPrepTiles());
+  function showPastPage() {
+    PREP_MODE = "past"; paintPrepHead("past");
+    if ($("#prepChoices")) $("#prepChoices").hidden = true;
+    if ($("#prepSetup")) $("#prepSetup").hidden = true;
+    const page = $("#prepPastPage"); if (!page) return;
+    page.hidden = false;
+    const long = PAST_CARDS.length > 8;
+    page.innerHTML = `${long ? `<div class="prep-past-tools">
+        <input class="input prep-past-q" id="prepPastQ" type="search" placeholder="${esc(T("prep.pastSearch", "Search by role or company"))}" value="${esc(PAST_Q)}">
+        <div class="prep-past-chips">${[["all", T("prep.pastAllKinds", "All")], ["live", T("prep.pastLive", "Live")], ["rec", T("prep.pastRec", "Recorded")]]
+          .map(([k, l]) => `<button class="rv-chip${PAST_KIND === k ? " is-on" : ""}" type="button" data-kind="${k}">${esc(l)}</button>`).join("")}</div>
+      </div>` : ""}
+      <div class="prep-past-list" id="prepPastList"></div>`;
+    const paint = () => {
+      const q = PAST_Q.trim().toLowerCase();
+      const rows = PAST_CARDS.filter(c => (PAST_KIND === "all" || (PAST_KIND === "live") === (c.round === 2))
+        && (!q || `${c.role} ${c.company}`.toLowerCase().includes(q)));
+      const list = $("#prepPastList");
+      list.innerHTML = rows.length ? rows.map((c, k) => `
         <button class="prep-past-row" type="button" data-past="${k}">
-          <span class="prep-past-kind">${esc(c.round === 2 ? T("prep.pastLive", "Live") : T("prep.pastRec", "Recorded"))}</span>
+          <span class="prep-past-kind">${esc(pastKind(c))}</span>
           <span class="prep-past-role">${esc(c.role || T("prep.pastRole", "Interview"))}${c.company ? ` <span class="prep-past-co">${esc(c.company)}</span>` : ""}</span>
-          <span class="prep-past-date">${esc(when(c.created))}</span>
+          <span class="prep-past-date">${esc(pastWhen(c.created))}</span>
           <span class="prep-past-score ${c.passed ? "ok" : "no"}">${c.score}<span>/100</span></span>
           <span class="prep-past-go">&rarr;</span>
-        </button>`).join("")}</div>
-      ${cards.length > shown.length ? `<button class="btn btn-ghost btn-sm prep-past-more" id="prepPastMore" type="button">${esc(T("prep.pastAll", "Show all {n}").replace("{n}", String(cards.length)))}</button>` : ""}`;
-    box.querySelectorAll("[data-past]").forEach(b => b.addEventListener("click", () => openPastReport(shown[+b.dataset.past])));
-    $("#prepPastMore")?.addEventListener("click", () => { PAST_ALL = true; paintPastReports(); });
+        </button>`).join("") : `<p class="prep-past-none">${esc(T("prep.pastNone", "No interviews match."))}</p>`;
+      list.querySelectorAll("[data-past]").forEach(b => b.addEventListener("click", () => openPastReport(rows[+b.dataset.past])));
+    };
+    $("#prepPastQ")?.addEventListener("input", (e) => { PAST_Q = e.target.value; paint(); });
+    page.querySelectorAll("[data-kind]").forEach(b => b.addEventListener("click", () => {
+      PAST_KIND = b.dataset.kind; page.querySelectorAll("[data-kind]").forEach(x => x.classList.toggle("is-on", x === b)); paint(); }));
+    paint();
   }
+  $("#prepPastLink")?.addEventListener("click", showPastPage);
   async function openPastReport(c) {
     if (!c) return;
     try {
@@ -6013,6 +6064,8 @@
     PREP_MODE = null; paintPrepHead(null);
     if ($("#prepChoices")) $("#prepChoices").hidden = false;
     if ($("#prepSetup")) $("#prepSetup").hidden = true;
+    if ($("#prepPastPage")) $("#prepPastPage").hidden = true;
+    fitPrepTiles();
   }
   // The newest job the person touched (tailored resume or Tracker move), to pre-fill the setup.
   async function prepPrefill() {
@@ -6021,6 +6074,7 @@
   async function openPrepSetup(mode) {
     PREP_MODE = mode; paintPrepHead(mode);
     if ($("#prepChoices")) $("#prepChoices").hidden = true;
+    if ($("#prepPastPage")) $("#prepPastPage").hidden = true;
     if ($("#prepSetup")) $("#prepSetup").hidden = false;
     const msg = $("#prepSetupMsg"); if (msg) msg.hidden = true;
     setStartEnabled(true);

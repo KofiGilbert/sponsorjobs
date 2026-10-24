@@ -1028,6 +1028,10 @@
   "prep.pastLive": "Ao vivo",
   "prep.pastRec": "Gravada",
   "prep.pastRole": "Entrevista",
-  "prep.pastAll": "Ver todas as {n}",
-  "prep.pastFail": "Não foi possível abrir esse relatório."
+  "prep.pastFail": "Não foi possível abrir esse relatório.",
+  "prep.lastInterview": "Última entrevista",
+  "prep.openReport": "Abrir relatório",
+  "prep.pastSearch": "Buscar por cargo ou empresa",
+  "prep.pastAllKinds": "Todas",
+  "prep.pastNone": "Nenhuma entrevista encontrada."
 }

@@ -1028,6 +1028,10 @@
   "prep.pastLive": "En direct",
   "prep.pastRec": "Enregistré",
   "prep.pastRole": "Entretien",
-  "prep.pastAll": "Tout afficher ({n})",
-  "prep.pastFail": "Impossible d'ouvrir ce rapport."
+  "prep.pastFail": "Impossible d'ouvrir ce rapport.",
+  "prep.lastInterview": "Dernier entretien",
+  "prep.openReport": "Ouvrir le rapport",
+  "prep.pastSearch": "Rechercher par poste ou entreprise",
+  "prep.pastAllKinds": "Tous",
+  "prep.pastNone": "Aucun entretien ne correspond."
 }
