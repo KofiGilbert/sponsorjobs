@@ -331,6 +331,35 @@ def test_client_downloads_once_an_hour_at_its_offset_with_etag(tmp_path):
     assert len(srv.calls) == 2                                  # ...and the slot is consumed
 
 
+def test_download_thread_parses_the_new_list_so_the_next_request_finds_it_in_memory(tmp_path):
+    """The first search after every refresh used to pay the parse of the whole list (1.3 s at
+    190k rows). The download thread now parses what it lands, so jobs() finds the rows loaded."""
+    srv = _Server([_row("greenhouse:acme:1")])
+    now = [1_700_000_000.0]
+    sf = StaticFeed("https://f.example.com/feed", tmp_path, fetch=srv, clock=lambda: now[0])
+    assert sf.start_refresh()                                   # background download
+    sf._dl_thread.join(5)
+    assert sf._jobs is not None and len(sf._jobs) == 1          # parsed off the request path
+    mtime = sf._loaded_mtime
+    jobs, _ = sf.jobs()
+    assert len(jobs) == 1 and sf._loaded_mtime == mtime         # no second parse
+
+
+def test_warm_parses_the_cached_list_at_launch_and_is_a_no_op_without_a_cache(tmp_path):
+    srv = _Server([_row("greenhouse:acme:1"), _row("greenhouse:acme:2", url="https://acme.example/jobs/2")])
+    now = [1_700_000_000.0]
+    sf = StaticFeed("https://f.example.com/feed", tmp_path, fetch=srv, clock=lambda: now[0])
+    assert sf.warm() is None                                    # nothing cached yet: nothing to do
+    sf.jobs()                                                   # lands and caches the list
+    sf2 = StaticFeed("https://f.example.com/feed", tmp_path, fetch=srv, clock=lambda: now[0])
+    assert sf2._jobs is None                                    # a fresh process: not loaded yet
+    t = sf2.warm()
+    assert t is not None
+    t.join(5)
+    assert sf2._jobs is not None and len(sf2._jobs) == 2        # parsed in the background
+    assert len(srv.calls) == 1                                  # warm never touches the network
+
+
 def test_client_serves_cache_when_origin_is_down_and_raises_when_nothing_cached(tmp_path):
     srv = _Server([_row("greenhouse:acme:1")])
     srv.down = True
