@@ -476,7 +476,9 @@ def _start_feed_download() -> None:
     if not _feed_base_url():
         return
     try:
-        _static_feed().start_refresh()
+        sf = _static_feed()
+        sf.start_refresh()
+        sf.warm()            # and the cached copy is parsed now, so the first search is instant
     except Exception:                                # noqa: BLE001 - the board still asks later
         traceback.print_exc()
 

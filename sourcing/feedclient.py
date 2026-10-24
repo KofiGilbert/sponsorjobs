@@ -307,8 +307,11 @@ class StaticFeed:
                     with self._dl_lock:
                         with self._lock:
                             still = force or self.due()
-                        if still:
-                            self._run_download()
+                        if still and self._run_download():
+                            # Parse the new list HERE, on the download thread, so the next request
+                            # finds it in memory. Left to the request, a 190k-row list cost the
+                            # first search after every refresh about 1.3 s (measured 2026-10-24).
+                            self._load_cached()
                 except Exception:                     # noqa: BLE001 - recorded in state + status
                     traceback.print_exc()
                 finally:
@@ -320,6 +323,23 @@ class StaticFeed:
             self._dl_thread = t
             t.start()
             return True
+
+    def warm(self) -> threading.Thread | None:
+        """Parse the cached list into memory on a background thread, so the first request after
+        launch answers at once instead of paying the parse (1.3 to 3.8 s for 190k rows). Nothing
+        cached: nothing to do (the download thread parses what it lands). Never raises."""
+        if not self.jobs_path.exists():
+            return None
+
+        def run():
+            try:
+                self._load_cached()
+            except Exception:                         # noqa: BLE001 - the request path reloads
+                traceback.print_exc()
+
+        t = threading.Thread(target=run, name="feed-warm", daemon=True)
+        t.start()
+        return t
 
     def downloading(self) -> bool:
         t = self._dl_thread
