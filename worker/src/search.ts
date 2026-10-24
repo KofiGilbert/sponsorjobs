@@ -256,10 +256,14 @@ async function indexVersion(env: Env, nowMs: number): Promise<IndexInfo> {
   return versionCache;
 }
 
-/** How many rows the ordered walk may read before the FTS index takes over. A common term finds
- * its page and the capped count well inside it (`engineer`: ~700 rows); a rare one runs out and
- * the index answers, reading about twice its matches. Measured: docs/server-search-plan.md. */
-export const WALK_BUDGET = 3000;
+/** Plan sizes, from the row count N. The FTS plan reads each match about twice (the index, then
+ * the rows it sorts); a walk down the ordered index reads about page * N / M rows to fill a page
+ * of a term with M matches. They cost the same near M = sqrt(15.5 * N): ~1.7k matches at 184k
+ * rows, ~2.8k at 500k. Below that the index answers; above it the walk does, and a probe that
+ * stops counting there costs at most that many rows. Measured: docs/server-search-plan.md. */
+export const ftsLimit = (rows: number) => Math.max(COUNT_CAP + 1, Math.round(Math.sqrt(15.5 * Math.max(rows, 1))));
+/** How far a walk with no keyword reads looking for the capped count before going exact. */
+export const walkBudget = (rows: number) => Math.max(2000, Math.round(Math.sqrt(402 * Math.max(rows, 1))));
 
 /** Tests load a new index and need the next request to see it at once. */
 export function forgetIndexVersion(): void { versionCache = null; }
@@ -277,78 +281,114 @@ export interface Page {
 type Plan = "fts" | "scan" | "walk";
 interface Key { id: number; pay: number; rkey: string }
 
+/** A keyword / location phrase on the index matches exactly the rows instr() keeps, so with no
+ * other facet the FTS match count IS the result count. */
+function textOnly(f: Facets): boolean {
+  return !f.titles.length && !f.remote && f.level !== "entry" && !f.visa.length && !f.sponsored
+    && !(f.days > 0) && !(f.pay > 0) && f.loc !== "remote"
+    && (!f.q || chars(f.q) >= 3) && (!f.loc || chars(f.loc) >= 3) && Boolean(f.q || f.loc);
+}
+
 /** One page of results for parsed facets. `after` is a decoded, already-checked cursor.
  *
  * Plans, all answering the same rows (search-parity.test.ts runs each):
- *   walk  the ordered index, reading at most `budget` rows; when that is not enough to fill the
- *         page and the count, the FTS plan (a keyword or location) or the full walk takes over
- *   fts   the trigram index finds the matches, which are then sorted
+ *   fts   the trigram index finds the matches, which are then sorted: for terms with few matches
+ *   walk  the ordered index, filtered as it goes; `budget` caps how far it may read looking for
+ *         the capped count before the exact plan takes over (a keyword-only search needs no
+ *         count from the walk: the probe gave it)
  *   scan  the ordered index with no budget (sponsored: its partial index is tiny)
- * Keys and the count come from ONE query (LIMIT count cap + 1 on page 1), then the page's rows
- * are read by id, so no plan reads its matches twice. */
+ * Page 1 of a keyword search first counts the index's matches up to ftsLimit (a cheap probe).
+ * Keys and the count come from one query, then the page's rows are read by id. */
 export async function searchPage(env: Env, f: Facets, limit: number, after: CursorBody | null,
                                  version: string, nowMs: number,
                                  opts: { rows?: number; plan?: Plan; budget?: number } = {}): Promise<Page> {
   const db = env.SEARCH_DB;
+  const n = opts.rows ?? 0;
   const served = after?.n ?? 0;
   const take = Math.min(limit, DEPTH_MAX - served);
-  const want = after ? take + 1 : Math.max(take + 1, COUNT_CAP + 1);
   const desc = f.sort === "pay" ? "pay DESC, rkey DESC" : "rkey DESC";
+  const jdesc = desc.replace(/(pay|rkey)/g, "j.$1");
   const keyset = !after ? null
     : f.sort === "pay" ? { sql: "(pay, rkey) < (?, ?)", binds: [after.k[0], after.k[1]] }
     : { sql: "rkey < ?", binds: [after.k[1]] };
-  const hasText = buildQuery(f, nowMs).match !== null;
+  const match = buildQuery(f, nowMs).match;
   let read = 0;
 
-  const run = async (sql: string, binds: unknown[]) => {
-    const r = await db.prepare(sql).bind(...binds).all<Key>();
+  const run = async <T>(sql: string, binds: unknown[]) => {
+    const r = await db.prepare(sql).bind(...binds).all<T>();
     read += r.meta?.rows_read ?? 0;
     return r.results;
   };
-  const keysFull = (useFts: boolean) => {
+  const keysFull = (useFts: boolean, want: number) => {
     const q = buildQuery(f, nowMs, useFts);
     const where = [...q.where, ...(keyset ? [keyset.sql.replace(/\b(pay|rkey)\b/g, "j.$1")] : [])];
-    return run(`SELECT j.id, j.pay, j.rkey FROM jobs j ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-                ORDER BY ${desc.replace(/(pay|rkey)/g, "j.$1")} LIMIT ?`,
-               [...q.binds, ...(keyset?.binds ?? []), want]);
+    return run<Key>(`SELECT j.id, j.pay, j.rkey FROM jobs j ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+                     ORDER BY ${jdesc} LIMIT ?`, [...q.binds, ...(keyset?.binds ?? []), want]);
   };
-  const keysWalk = (budget: number) => {
+  const keysWalk = (budget: number, want: number) => {
     const q = buildQuery(f, nowMs, false);
     const inner = `SELECT * FROM jobs ${keyset ? `WHERE ${keyset.sql}` : ""} ORDER BY ${desc} LIMIT ?`;
-    return run(`SELECT j.id, j.pay, j.rkey FROM (${inner}) j ${q.where.length ? `WHERE ${q.where.join(" AND ")}` : ""}
-                ORDER BY ${desc.replace(/(pay|rkey)/g, "j.$1")} LIMIT ?`,
-               [...(keyset?.binds ?? []), budget, ...q.binds, want]);
+    return run<Key>(`SELECT j.id, j.pay, j.rkey FROM (${inner}) j ${q.where.length ? `WHERE ${q.where.join(" AND ")}` : ""}
+                     ORDER BY ${jdesc} LIMIT ?`, [...(keyset?.binds ?? []), budget, ...q.binds, want]);
   };
 
-  let plan: Plan = opts.plan ?? (after?.p === 1 ? "fts" : f.sponsored ? "scan" : "walk");
-  if (plan === "fts" && !hasText) plan = "scan";
+  let plan: Plan;
   let keys: Key[];
-  if (plan === "walk") {
-    keys = await keysWalk(opts.budget ?? WALK_BUDGET);
-    // Fewer than wanted: the budget ran out (or the list ended). The exact plan answers instead.
-    if (keys.length < want) {
-      plan = hasText ? "fts" : "scan";
-      keys = await keysFull(plan === "fts");
-    }
+  let count: number;
+  if (after) {
+    // Later pages need no count: the plan page 1 chose, with no budget.
+    plan = opts.plan ?? (after.p === 1 && match ? "fts" : "scan");
+    keys = await keysFull(plan === "fts", take + 1);
+    count = after.c;
   } else {
-    keys = await keysFull(plan === "fts");
+    const want = Math.max(take + 1, COUNT_CAP + 1);
+    let probe: number | null = null;
+    if (match && !opts.plan && !f.sponsored) {
+      const lim = ftsLimit(n);
+      probe = (await run<{ n: number }>(
+        "SELECT count(*) AS n FROM (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ? LIMIT ?)", [match, lim]))[0]?.n ?? 0;
+      if (probe < lim) plan = "fts";
+      else plan = "walk";
+    } else {
+      plan = opts.plan ?? (f.sponsored ? "scan" : "walk");
+      if (plan === "fts" && !match) plan = "scan";
+    }
+    if (plan === "walk" && probe !== null && textOnly(f)) {
+      // Many matches and nothing else to filter on: the probe already proved "200+", so the
+      // walk only fills the page.
+      keys = await keysFull(false, take + 1);
+      count = probe;
+      plan = "scan";
+    } else if (plan === "walk") {
+      const budget = opts.budget ?? walkBudget(n);
+      keys = await keysWalk(budget, want);
+      if (keys.length < want) {                 // the budget ran out, or the list ended
+        // A common keyword (the probe found more than ftsLimit) with a facet that has its own
+        // ordered index (entry level, work type): walking that index is cheaper than reading
+        // every match of the keyword twice. Otherwise the keyword's index answers.
+        const ownIndex = f.level === "entry" || Boolean(f.remote);
+        plan = match && (probe === null || probe < ftsLimit(n) || !ownIndex) ? "fts" : "scan";
+        keys = await keysFull(plan === "fts", want);
+      }
+      count = keys.length;
+    } else {
+      keys = await keysFull(plan === "fts", want);
+      count = keys.length;
+    }
   }
 
   const page = keys.slice(0, take);
   let rows: string[] = [];
   if (page.length) {
-    const r = await db.prepare(`SELECT j.id, j.row, x.v AS extra FROM jobs j
-                                LEFT JOIN job_extras x ON x.h = j.xh AND j.xh != ''
-                                WHERE j.id IN (SELECT value FROM json_each(?))`)
-      .bind(JSON.stringify(page.map((k) => k.id))).all<{ id: number; row: string; extra: string | null }>();
-    read += r.meta?.rows_read ?? 0;
-    const byId = new Map(r.results.map((x) => [x.id, x]));
+    const got = await run<{ id: number; row: string; extra: string | null }>(
+      `SELECT j.id, j.row, x.v AS extra FROM jobs j LEFT JOIN job_extras x ON x.h = j.xh AND j.xh != ''
+       WHERE j.id IN (SELECT value FROM json_each(?))`, [JSON.stringify(page.map((k) => k.id))]);
+    const byId = new Map(got.map((x) => [x.id, x]));
     rows = page.map((k) => {
       const x = byId.get(k.id)!;
       return x.extra ? JSON.stringify({ ...JSON.parse(x.row), ...JSON.parse(x.extra) }) : x.row;
     });
   }
-  const count = after ? after.c : keys.length;
   const last = page[page.length - 1];
   const more = keys.length > take && served + page.length < DEPTH_MAX;
   return {
