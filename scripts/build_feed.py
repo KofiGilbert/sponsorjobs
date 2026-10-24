@@ -436,6 +436,10 @@ def build(out_dir, data_dir, *, crawl: bool = True, fetch=None, jobs_url: str = 
     st = manifest.get("stable") or {}
     log(f"[build_feed] stable layout: {len(st.get('files') or [])} parts, "
         f"{(st.get('removed') or {}).get('count', 0)} removed rows, version {st.get('version')}")
+    sl = manifest.get("slice") or {}
+    log(f"[build_feed] slice: {sl.get('count', 0)} roles first seen in the last "
+        f"{sl.get('days', 0)} days, {len(sl.get('files') or [])} parts, "
+        f"{sl.get('total_bytes', 0)} bytes")
     parts = manifest.get("parts") or {}
     log(f"[build_feed] wrote {manifest['count']} jobs ({len(parts.get('files') or [])} list parts, "
         f"version {parts.get('version')}) + {manifest['jd_shard_count']} JD shards to "

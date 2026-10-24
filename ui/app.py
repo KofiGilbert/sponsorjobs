@@ -459,8 +459,17 @@ def _static_feed():
     """This install's reader for the static feed, cached under the data dir (docs/feed.md). It
     downloads jobs.json.gz at most hourly (ETag-conditional, per-install minute offset) and the JD
     shards on demand; all filtering happens here, locally. With no feed configured it never
-    downloads anything."""
+    downloads anything. With server search on (_search_server) it downloads only the feed's
+    recent SLICE, into its own cache dir, and the search API answers the rest."""
     from sourcing.feedclient import StaticFeed
+    if _search_server():
+        key = (_feed_base_url(), str(_DATA), "slice")
+        with _STATIC_FEEDS_LOCK:
+            sf = _STATIC_FEEDS.get(key)
+            if sf is None:
+                sf = StaticFeed(key[0], _DATA / "feed_slice", slice_only=True)
+                _STATIC_FEEDS[key] = sf
+        return sf
     key = (_feed_base_url(), str(_DATA))
     with _STATIC_FEEDS_LOCK:
         sf = _STATIC_FEEDS.get(key)
@@ -468,6 +477,35 @@ def _static_feed():
             sf = StaticFeed(key[0], _DATA / "feed_cache")
             _STATIC_FEEDS[key] = sf
     return sf
+
+
+# -- server-side search (docs/server-search-plan.md, phase 3) --------------------------------- #
+# OFF unless JOBS_SEARCH=server. Then the app keeps only the feed's slice (roles first seen in the
+# last 7 days) and asks the search API (/v1/jobs/search, /v1/jobs/candidates on the broker) for
+# keyword searches, deeper pages and the Auto-apply pool. Only the query, the facets, a cursor and
+# typed titles leave the machine (sourcing/remotesearch.py); every personal layer runs here.
+_REMOTE_SEARCH: dict = {}
+OFFLINE_SLICE_NOTE = "Showing recent roles. Search all jobs when you're back online."
+
+
+def _search_server() -> bool:
+    """Is server search switched on (JOBS_SEARCH=server, with a feed configured)?"""
+    return ((os.environ.get("JOBS_SEARCH") or "").strip().lower() == "server"
+            and bool(_feed_base_url()))
+
+
+def _remote_search():
+    """This install's search client: JOBS_SEARCH_URL, else the broker (TAILOR_BROKER_URL)."""
+    from sourcing.remotesearch import RemoteSearch
+    base = ((os.environ.get("JOBS_SEARCH_URL") or "").strip()
+            or os.environ.get("TAILOR_BROKER_URL", "http://127.0.0.1:57001")).rstrip("/")
+    key = (base, str(_DATA))
+    with _STATIC_FEEDS_LOCK:
+        rs = _REMOTE_SEARCH.get(key)
+        if rs is None:
+            rs = RemoteSearch(base, _DATA)
+            _REMOTE_SEARCH[key] = rs
+    return rs
 
 
 def _start_feed_download() -> None:
@@ -3348,6 +3386,8 @@ def jobs_list():
             # like an unreachable one, so the local path below runs with `degraded` set and the
             # first-open crawl can engage once the emptiness has lasted (see _FEED_EMPTY).
             _note_feed_empty(not jobs)
+            if jobs and _search_server():
+                return _jobs_search_view(jobs, header)
             if jobs:
                 a = request.args
                 facets = _facets(a)
@@ -3446,6 +3486,70 @@ def jobs_list():
                         "feed": _feed_status() if feed_url else None})
     finally:
         w.close()
+
+
+def _jobs_search_view(jobs: list[dict], header: dict):
+    """/api/jobs with server search on (same response shape, plus optional `count_label`, `note`,
+    `count_pending`, `search`). No keyword on page 1: the slice answers at once, and page 1 of the
+    same query is fetched from the server in the background for its count (`count_pending` asks
+    the board to poll once more). A keyword or a deeper page: the search API, through the same
+    local layers as the full list (personal, dismissed, company marks, saved). Offline or server
+    down: the slice, with OFFLINE_SLICE_NOTE."""
+    from autoapply.learning import closed_to_visa, needs_sponsorship
+    from sourcing.filters import apply_facets, paginate
+    from sourcing.remotesearch import SearchUnavailable, count_label
+    a = request.args
+    facets = _facets(a)
+    _, _, page, per_page = paginate([], a.get("page", 1), a.get("per_page", 30))
+    hidden = _dismissed_ids()                        # the person's own Dismiss, kept locally
+    needs = needs_sponsorship(_load_prefs())
+
+    def keep(j: dict) -> bool:                       # _jobs_personal + dismissed, one row at a time
+        return j.get("source_id") not in hidden and not (needs and closed_to_visa(j))
+
+    rs = _remote_search()
+    extra: dict = {"search": "slice"}
+    server = None
+    if facets["q"].strip() or page > 1:
+        try:
+            server = rs.board_page(facets, page, per_page, keep=keep)
+        except SearchUnavailable:
+            extra["note"] = OFFLINE_SLICE_NOTE
+    if server is not None:
+        page_jobs = server["jobs"]
+        _static_feed().remember(page_jobs)
+        if server["end"]:                            # the last page: the count is exact
+            count = (page - 1) * per_page + len(page_jobs)
+        else:
+            count = max(server["count"], page * per_page + 1)
+            extra["count_label"] = count_label(server["count"], server["count_capped"])
+        extra["search"] = "server"
+    else:
+        filtered = [j for j in apply_facets(jobs, **facets) if keep(j)]
+        page_jobs, count, page, per_page = paginate(filtered, page, per_page)
+        if "note" not in extra and page == 1:
+            first = rs.cached(facets, limit=per_page)
+            if first is not None:                    # the whole board's count for this query
+                n = int(first.get("count") or 0)
+                if n > count:
+                    count = n
+                    extra["count_label"] = count_label(n, bool(first.get("count_capped")))
+            elif rs.down():
+                extra["note"] = OFFLINE_SLICE_NOTE
+            elif rs.prefetch(facets, limit=per_page):
+                extra["count_pending"] = True
+    page_jobs = _jobs_mark([dict(j) for j in page_jobs])   # never mutate the cached rows
+    saved = _saved_ids()                             # overlay the user's bookmarks
+    if saved:
+        for j in page_jobs:
+            j["saved"] = j.get("source_id") in saved
+    refreshed = header.get("generated_at")
+    return jsonify({"jobs": page_jobs, "count": count,
+                    "total": int(header.get("board_count") or len(jobs)),
+                    "page": page, "per_page": per_page, "refreshed_at": refreshed,
+                    "newest_at": _newest_arrival(jobs),
+                    "stale": _is_stale(refreshed, hours=12) if refreshed else False,
+                    "source": "central", **extra})
 
 
 @app.get("/api/jobs/detail")
@@ -10109,6 +10213,8 @@ def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
         j["entry_level"] = is_entry_level(j.get("title", ""))
     board = _board_rows()
     strat = _aa_saved_search()
+    if _search_server():
+        board = _aa_server_board(board, (strat or {}).get("filters") or {}, titles)
     profile = _match_profile()
     from autoapply.learning import needs_sponsorship
     needs = needs_sponsorship(_load_prefs())
@@ -10137,6 +10243,28 @@ def _aa_candidates(focus: dict) -> tuple[list[dict], dict]:
     return rows, meta
 
 
+def _aa_server_board(board: list[dict], filters: dict, titles: list[str]) -> list[dict]:
+    """Server search on: the slice (`board`) plus the search API's candidate pool for the saved
+    search's filters and the titles the person TYPED into today's focus. Nothing from the resume
+    or profile is sent; the ranking stays on the device (autoapply/picker.candidates). Slice rows
+    come first (the board's recency order), then pool rows the slice lacks. Offline: the slice.
+    The merged list is kept while neither input changes, so the picker's own cache still hits."""
+    from sourcing.remotesearch import SearchUnavailable
+    try:
+        pool = _remote_search().candidates(filters, titles)
+    except SearchUnavailable:
+        return board
+    hit = _AA_SERVER_BOARD.get("v")
+    if hit and hit[0] is board and hit[1] is pool:
+        return hit[2]
+    have = {j.get("source_id") for j in board}
+    merged = board + [j for j in pool["jobs"] if j.get("source_id") not in have]
+    _static_feed().remember(pool["jobs"])
+    _AA_SERVER_BOARD["v"] = (board, pool, merged)
+    return merged
+
+
+_AA_SERVER_BOARD: dict = {}
 _AA_CAND_CACHE: dict = {}
 _AA_FIT_CACHE: dict = {}         # (db, profile, source_id) -> fit | None, so a role is scored once
 _AA_FIT_MAX = 60000

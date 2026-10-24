@@ -1006,6 +1006,7 @@
   "r2.offH": "Le recruteur en direct est injoignable pour le moment",
   "r2.offD": "Les entretiens en direct passent par notre service. Vérifiez votre connexion, puis réessayez.",
   "jobs.updating": "mise à jour vers la liste du jour",
+  "jobs.offlineSlice": "Offres récentes affichées. Recherchez parmi toutes les offres une fois de retour en ligne.",
   "set.privacyTitle": "Vos données restent sur cet ordinateur",
   "set.privacyBody": "Votre profil, vos CV et vos candidatures sont dans un dossier local. La connexion par code e-mail est facultative et sert seulement à lier votre pass. Les pass et l'IA incluse passent par notre serveur, qui ne garde que des compteurs d'usage pour la facturation. L'édition communautaire peut utiliser votre propre clé d'IA. Les entretiens en direct circulent entre vous et Tavus.",
   "r1.leaveAsk": "Quitter l'entretien ? Vos réponses jusqu'ici sont conservées.",
