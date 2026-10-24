@@ -1022,5 +1022,12 @@
   "r2.noStartH": "The call closed before your interview began",
   "r2.noStartSub": "Nothing was said, so there is nothing to score. You can join again now.",
   "r2.tryAgain": "Join again",
-  "r2.connectingSub": "Nothing to click. They will greet you in a moment, and your time starts then."
+  "r2.connectingSub": "Nothing to click. They will greet you in a moment, and your time starts then.",
+  "goals.afterTitle": "What to cover next time",
+  "prep.past": "Past interviews",
+  "prep.pastLive": "Live",
+  "prep.pastRec": "Recorded",
+  "prep.pastRole": "Interview",
+  "prep.pastAll": "Show all {n}",
+  "prep.pastFail": "Couldn't open that report."
 }

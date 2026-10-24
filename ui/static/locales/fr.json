@@ -1022,5 +1022,12 @@
   "r2.noStartH": "L'appel s'est fermé avant le début de l'entretien",
   "r2.noStartSub": "Rien n'a été dit, il n'y a donc rien à noter. Tu peux rejoindre à nouveau.",
   "r2.tryAgain": "Rejoindre",
-  "r2.connectingSub": "Rien à cliquer. Ton recruteur va te saluer dans un instant, et ton temps commence à ce moment-là."
+  "r2.connectingSub": "Rien à cliquer. Ton recruteur va te saluer dans un instant, et ton temps commence à ce moment-là.",
+  "goals.afterTitle": "À aborder la prochaine fois",
+  "prep.past": "Entretiens passés",
+  "prep.pastLive": "En direct",
+  "prep.pastRec": "Enregistré",
+  "prep.pastRole": "Entretien",
+  "prep.pastAll": "Tout afficher ({n})",
+  "prep.pastFail": "Impossible d'ouvrir ce rapport."
 }

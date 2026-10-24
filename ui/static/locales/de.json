@@ -1022,5 +1022,12 @@
   "r2.noStartH": "Der Anruf wurde vor Beginn des Interviews beendet",
   "r2.noStartSub": "Es wurde nichts gesagt, also gibt es nichts zu bewerten. Du kannst jetzt erneut beitreten.",
   "r2.tryAgain": "Erneut beitreten",
-  "r2.connectingSub": "Du musst nichts klicken. Dein Interviewer begrüßt dich gleich, und erst dann läuft deine Zeit."
+  "r2.connectingSub": "Du musst nichts klicken. Dein Interviewer begrüßt dich gleich, und erst dann läuft deine Zeit.",
+  "goals.afterTitle": "Was du nächstes Mal ansprechen solltest",
+  "prep.past": "Frühere Interviews",
+  "prep.pastLive": "Live",
+  "prep.pastRec": "Aufgezeichnet",
+  "prep.pastRole": "Interview",
+  "prep.pastAll": "Alle {n} anzeigen",
+  "prep.pastFail": "Dieser Bericht konnte nicht geöffnet werden."
 }

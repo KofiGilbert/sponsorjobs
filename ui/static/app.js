@@ -5950,6 +5950,7 @@
     if (!(PREP_APP && PREP_APP.typed)) PREP_APP = null;
     showPrepChoices();
     paintRound2Tile();         // the Live tile says when a live interviewer key is missing
+    paintPastReports();
     try { const d = await api("/api/preps"); PREPS = d.preps || []; } catch { PREPS = []; }
   }
   // The page head: "Interview prep" on the landing (and during a round), the choice's own title
@@ -5966,6 +5967,47 @@
     if ($("#prepSub")) $("#prepSub").hidden = setup;
     const st = $("#prepSetupTitle");
     if (st) { st.hidden = !setup; st.textContent = setup ? T(SETUP_TITLE[mode][0], SETUP_TITLE[mode][1]) : ""; }
+  }
+  // Past interviews: every scored report, newest first, so a report is never lost once the person
+  // leaves it. A row reopens the full report (Kofi, 2026-10-23).
+  let PAST_ALL = false;
+  async function paintPastReports() {
+    const box = $("#prepPast"); if (!box) return;
+    let cards = [];
+    try { cards = (await api("/api/interview/reports")).cards || []; } catch { cards = []; }
+    if (!cards.length) { box.hidden = true; return; }
+    const shown = PAST_ALL ? cards : cards.slice(0, 5);
+    const when = (t) => t ? new Date(t * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+    box.hidden = false;
+    box.innerHTML = `<div class="prep-tiles-lab">${esc(T("prep.past", "Past interviews"))}</div>
+      <div class="prep-past-list">${shown.map((c, k) => `
+        <button class="prep-past-row" type="button" data-past="${k}">
+          <span class="prep-past-kind">${esc(c.round === 2 ? T("prep.pastLive", "Live") : T("prep.pastRec", "Recorded"))}</span>
+          <span class="prep-past-role">${esc(c.role || T("prep.pastRole", "Interview"))}${c.company ? ` <span class="prep-past-co">${esc(c.company)}</span>` : ""}</span>
+          <span class="prep-past-date">${esc(when(c.created))}</span>
+          <span class="prep-past-score ${c.passed ? "ok" : "no"}">${c.score}<span>/100</span></span>
+          <span class="prep-past-go">&rarr;</span>
+        </button>`).join("")}</div>
+      ${cards.length > shown.length ? `<button class="btn btn-ghost btn-sm prep-past-more" id="prepPastMore" type="button">${esc(T("prep.pastAll", "Show all {n}").replace("{n}", String(cards.length)))}</button>` : ""}`;
+    box.querySelectorAll("[data-past]").forEach(b => b.addEventListener("click", () => openPastReport(shown[+b.dataset.past])));
+    $("#prepPastMore")?.addEventListener("click", () => { PAST_ALL = true; paintPastReports(); });
+  }
+  async function openPastReport(c) {
+    if (!c) return;
+    try {
+      if (c.round === 2) {
+        const d = await api(`/api/interviews/${encodeURIComponent(c.id)}`);
+        R2_CTX = { prep_id: c.prep_id || (d.interview || {}).prep_id };
+        $("#prepList").hidden = true; $("#prepLive").hidden = false;
+        $("#liveCount").textContent = T("r2.title", "Round 2, live interview"); $("#liveTier").textContent = "";
+        renderR2Report(d.report || {}, c.id);
+      } else {
+        const d = await api(`/api/screens/${encodeURIComponent(c.id)}`);
+        SCREEN = d.screen || d; SCR_PREP = { id: c.prep_id || SCREEN.prep_id };
+        $("#prepList").hidden = true; $("#prepScreen").hidden = false;
+        renderR1Report(SCREEN.result || {});
+      }
+    } catch (err) { toast(err.message || T("prep.pastFail", "Couldn't open that report.")); }
   }
   function showPrepChoices() {
     PREP_MODE = null; paintPrepHead(null);
@@ -6124,12 +6166,11 @@
           <button class="btn btn-primary" id="scrBegin" type="button">${esc(T("r1.getStarted", "Get started"))}</button>
           <button class="btn btn-ghost" id="scrBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
         </div>
-        ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : `<div class="rc-goals" id="prepGoals" hidden></div>`}
+        ${SCR_DRILL ? `<ol class="rc-goals-list rc-drill-list">${SCR_DRILL.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol>` : ""}
         <p class="scr-disclaimer">${esc(T("r1.disclaimer", "Practice for a HireVue-style one-way video interview. Not affiliated with HireVue, Inc."))}</p>
       </div></div>`;
     $("#scrBegin")?.addEventListener("click", renderR1Notice);
     $("#scrBail")?.addEventListener("click", quitScreen);
-    if (!SCR_DRILL) loadPrepGoals(p && p.id, $("#prepGoals"));   // report card: the prep checklist
   }
   // Screen 2: the notice. Where recordings go, how to delete them, no facial analysis, and the
   // extra-time option (doubles the clocks), which replaced the old Realistic/Relaxed switch.
@@ -6425,6 +6466,7 @@
             <button class="btn btn-ghost btn-sm scr-coach-btn" data-coach="${i}" type="button">${esc(T("r1.stronger", "See a stronger version"))}</button>
             <div class="scr-coach" id="scrCoach${i}" hidden></div></div>`; }).join("")}</div>
         <p class="scr-disclaimer">${esc(r.disclaimer || T("r1.reportDisclaimer", "Practice feedback, not a hiring decision."))}</p>
+        <div class="rc-goals" id="repGoals" hidden></div>
         <div id="r1Gate"></div>
         <div class="mock-next">
           <button class="btn btn-ghost btn-sm" id="scrReport" type="button">${esc(T("r1.docx", "Download report (.docx)"))}</button>
@@ -6436,6 +6478,7 @@
       btn.addEventListener("click", () => coachScreenAnswer(SCREEN.id, btn.dataset.coach, btn)));
     wireReportCard(r.report_card, { prepId: SCR_PREP && SCR_PREP.id, currentId: SCREEN && SCREEN.id,
       leave: () => { stopPrepClock(); stopAnswerClock(); stopScrStream(); SCR_PHASE = "idle"; } });
+    if (!(SCREEN && SCREEN.drill)) loadPrepGoals(SCR_PREP && SCR_PREP.id, $("#repGoals"));
     $("#scrReport")?.addEventListener("click", () => { window.location = `/api/screens/${SCREEN.id}/report.docx`; });
     $("#scrDone")?.addEventListener("click", quitScreen);
     $("#scrDelete")?.addEventListener("click", async () => {
@@ -6729,11 +6772,9 @@
             <button class="btn btn-ghost" id="liveBail" type="button">${esc(T("r1.notNow", "Not now"))}</button>
           </div>
         </div>
-      </div>
-      <div class="rc-goals rc-goals-r2" id="prepGoalsR2" hidden></div>`;
+      </div>`;
     $("#liveBegin")?.addEventListener("click", beginLive);
     $("#liveBail")?.addEventListener("click", quitLive);
-    loadPrepGoals(R2_CTX && R2_CTX.prep_id, $("#prepGoalsR2"));   // report card: the prep checklist
     (async () => {
       try {
         LIVE_STREAM = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -6959,12 +7000,14 @@
         ${(rep.competencies || []).length ? `<div class="scr-comps"><div class="prep-fb-h">${esc(T("r1.byCompetency", "By competency"))}</div>${rep.competencies.map(cb => `<div class="scr-comp-row"><span class="scr-comp-name">${esc(cb.name)}</span><span class="scr-comp-bar"><i class="scr-comp-fill ${cb.score < 60 ? "low" : cb.score < 75 ? "mid" : "high"}" style="width:${Math.max(4, Math.min(100, Number(cb.score) || 0))}%"></i></span><span class="scr-comp-val">${cb.score}</span></div>`).join("")}</div>` : ""}
         ${reportCardHtml(rep.report_card)}
         ${rep.transcript ? `<details class="scr-tr"><summary>${esc(T("r2.transcript", "Transcript"))}</summary><p class="scr-tr-body">${r2TranscriptHtml(rep.transcript)}</p></details>` : ""}
+        <div class="rc-goals" id="repGoals" hidden></div>
         <p class="scr-disclaimer">${esc(rep.disclaimer || T("r1.reportDisclaimer", "Practice feedback, not a hiring decision."))}</p>
         <div class="mock-next">
           <button class="btn btn-primary btn-sm" id="liveDone" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>
         </div>
       </div>`;
     $("#liveDone")?.addEventListener("click", quitLive);
+    loadPrepGoals(R2_CTX && R2_CTX.prep_id, $("#repGoals"));
     wireReportCard(rep.report_card, { prepId: R2_CTX && R2_CTX.prep_id, currentId: interviewId,
       leave: () => { teardownCvi(); R2 = null; stopLiveStream(); $("#prepLive").hidden = true; } });
   }
@@ -7096,16 +7139,20 @@
     box.hidden = false;
   }
   // The prep checklist on the start screen: likely questions, what to mention, company facts.
+  // The prep checklist (likely questions, what to mention, the company facts). It shows AFTER an
+  // interview, in the report, never before: a real interview hands you no answer sheet, so the
+  // practice one doesn't either (Kofi, 2026-10-23).
   async function loadPrepGoals(prepId, box) {
     if (!box || !prepId) return;
+    const TITLE = T("goals.afterTitle", "What to cover next time");
     box.hidden = false;
-    box.innerHTML = `<div class="rc-goals-h">${esc(T("goals.title", "Before you start"))}</div><p class="rc-goals-loading">${esc(T("goals.loading", "Building your prep checklist..."))}</p>`;
+    box.innerHTML = `<div class="rc-goals-h">${esc(TITLE)}</div><p class="rc-goals-loading">${esc(T("goals.loading", "Building your prep checklist..."))}</p>`;
     let g;
     try { g = (await api(`/api/preps/${encodeURIComponent(prepId)}/goals`)).goals; }
-    catch { box.innerHTML = `<div class="rc-goals-h">${esc(T("goals.title", "Before you start"))}</div><p class="rc-goals-loading">${esc(T("goals.failed", "Couldn't build the checklist right now."))}</p>`; return; }
+    catch { box.innerHTML = `<div class="rc-goals-h">${esc(TITLE)}</div><p class="rc-goals-loading">${esc(T("goals.failed", "Couldn't build the checklist right now."))}</p>`; return; }
     if (!g) { box.hidden = true; return; }
     const col = (h, items, empty) => `<div class="rc-goals-col"><div class="prep-fb-h">${esc(h)}</div>${(items || []).length ? `<ol class="rc-goals-list">${items.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : `<p class="rc-note">${esc(empty)}</p>`}</div>`;
-    box.innerHTML = `<div class="rc-goals-h">${esc(T("goals.title", "Before you start"))}</div>
+    box.innerHTML = `<div class="rc-goals-h">${esc(TITLE)}</div>
       <div class="rc-goals-grid">
         ${col(T("goals.questions", "Likely questions"), g.questions, "")}
         ${col(T("goals.mentions", "Make sure to mention"), g.mentions, "")}

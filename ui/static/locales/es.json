@@ -1022,5 +1022,12 @@
   "r2.noStartH": "La llamada se cerró antes de empezar la entrevista",
   "r2.noStartSub": "No se dijo nada, así que no hay nada que calificar. Puedes volver a entrar ahora.",
   "r2.tryAgain": "Volver a entrar",
-  "r2.connectingSub": "No tienes que hacer clic en nada. Te saludará en un momento, y tu tiempo empieza entonces."
+  "r2.connectingSub": "No tienes que hacer clic en nada. Te saludará en un momento, y tu tiempo empieza entonces.",
+  "goals.afterTitle": "Qué cubrir la próxima vez",
+  "prep.past": "Entrevistas anteriores",
+  "prep.pastLive": "En vivo",
+  "prep.pastRec": "Grabada",
+  "prep.pastRole": "Entrevista",
+  "prep.pastAll": "Ver las {n}",
+  "prep.pastFail": "No se pudo abrir ese informe."
 }

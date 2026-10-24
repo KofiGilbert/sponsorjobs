@@ -7147,6 +7147,39 @@ def _history_for(prep: dict, screens: list, interviews: list, preps: list) -> di
             "cards": cards, "trend": score_trend([c["score"] for c in cards])}
 
 
+def _all_reports(screens: list, interviews: list, preps: list) -> list:
+    """Every scored interview across all jobs (Round 1 screens and Round 2 live interviews), newest
+    first, for the Past interviews list on the prep landing. Pure, so it is testable."""
+    by_id = {p.get("id"): p for p in preps}
+    cards = []
+    for s in screens:
+        res = s.get("result")
+        if isinstance(res, dict) and res.get("score") is not None:
+            p = by_id.get(s.get("prep_id")) or {}
+            cards.append({"id": s.get("id"), "round": 1, "prep_id": s.get("prep_id"),
+                          "created": int(s.get("created") or 0), "score": int(res.get("score") or 0),
+                          "passed": bool(res.get("passed")), "drill": bool(s.get("drill")),
+                          "role": p.get("role", ""), "company": p.get("company", "")})
+    for iv in interviews:
+        rep = iv.get("report")
+        if isinstance(rep, dict) and rep.get("score") is not None:
+            p = by_id.get(iv.get("prep_id")) or {}
+            cards.append({"id": iv.get("id"), "round": 2, "prep_id": iv.get("prep_id"),
+                          "created": int(iv.get("ended") or iv.get("started") or 0),
+                          "score": int(rep.get("score") or 0), "passed": bool(rep.get("passed")),
+                          "drill": False, "role": iv.get("role") or p.get("role", ""),
+                          "company": iv.get("company") or p.get("company", "")})
+    cards.sort(key=lambda c: c["created"], reverse=True)
+    return cards
+
+
+@app.get("/api/interview/reports")
+@_guard
+def interview_reports():
+    """The Past interviews list: every scored report, newest first."""
+    return jsonify({"cards": _all_reports(_load_screens(), _load_interviews(), _load_preps())})
+
+
 @app.get("/api/interview/history")
 @_guard
 def interview_history():
