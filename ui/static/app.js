@@ -3968,6 +3968,8 @@
   function trkFitBoard() {
     const host = $("#trkBoard"); if (!host || host.hidden || !host.offsetParent) return;
     host.style.height = Math.max(360, window.innerHeight - host.getBoundingClientRect().top - 44) + "px";
+    const view = host.closest(".view"), spill = view ? view.scrollHeight - view.clientHeight : 0;
+    if (spill > 0) host.style.height = Math.max(360, host.offsetHeight - spill) + "px";   // never scroll the page
   }
   window.addEventListener("resize", trkFitBoard);
   function renderTrackerBoard() {
