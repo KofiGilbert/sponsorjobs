@@ -4304,7 +4304,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 .a2-skill > span:last-child { text-align: right; }
 .a2-bar { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .a2-bar b { display: block; height: 100%; border-radius: 999px; background: currentColor; }
-.a2-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 30px 0 16px; overflow-x: auto; }
+.a2-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 30px 0 16px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .a2-tab { font: inherit; font-size: 13px; padding: 10px 14px; color: var(--muted); background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
 .a2-tab span { color: var(--faint); margin-left: 3px; }
 .a2-tab:hover { color: var(--ink); } .a2-tab.is-on { color: var(--ink); border-bottom-color: var(--ink); }
