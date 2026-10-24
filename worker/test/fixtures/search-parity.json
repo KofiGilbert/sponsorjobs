@@ -7211,5 +7211,44 @@
     "gh:hool:0146"
    ]
   }
- ]
+ ],
+ "sample": {
+  "source_id": "gh:and/:0137",
+  "source": "greenhouse",
+  "company": "AND/OR Partners",
+  "title": "Senior Data Analyst",
+  "location": "Seattle, WA",
+  "remote": "onsite",
+  "url": "https://jobs.example/137",
+  "salary": "competitive",
+  "us": true,
+  "entry_level": true,
+  "tags": [
+   "Engineering"
+  ],
+  "posted_at": "yesterday",
+  "first_seen": "2026-10-19 12:00:00",
+  "visa": [
+   {
+    "code": "H-1B",
+    "label": "H-1B sponsor",
+    "basis": "AND/OR Partners record H-1B"
+   },
+   {
+    "code": "GREEN-CARD",
+    "label": "Green card",
+    "basis": "AND/OR Partners record GREEN-CARD"
+   }
+  ],
+  "nationality_visas": [
+   {
+    "code": "TN",
+    "label": "TN"
+   }
+  ],
+  "sponsor": {
+   "matched_name": "AND/OR Partners",
+   "h1b_approvals": 192
+  }
+ }
 }

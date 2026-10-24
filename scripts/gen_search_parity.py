@@ -163,7 +163,9 @@ def build() -> dict:
                 got = fn(rs, params)
                 cases.append({"mode": mode, "params": params, "ids": [j["source_id"] for j in got]})
     return {"now_ms": int(NOW.timestamp() * 1000), "index_version": INDEX_VERSION,
-            "row_count": len(rs), "statements": sqls, "cases": cases}
+            "row_count": len(rs), "statements": sqls, "cases": cases,
+            # One whole row with employer fields: the Worker must hand it back unchanged.
+            "sample": next(r for r in rs if r.get("visa") and r.get("nationality_visas"))}
 
 
 def render() -> str:
