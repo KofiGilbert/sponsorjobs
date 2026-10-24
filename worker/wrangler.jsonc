@@ -39,6 +39,17 @@
       "database_name": "sponsorjobs-broker",
       "database_id": "e1bb6376-c3c6-489d-aa32-a10eed4fdb96",
       "migrations_dir": "migrations"
+    },
+    // The job search index (src/search.ts, docs/server-search-plan.md), written only by
+    // scripts/load_search_index.py. Its own database so search never queues behind the broker.
+    // PLACEHOLDER id: before the next deploy the owner runs `npx wrangler d1 create
+    // sponsorjobs-search`, pastes the id it prints here, and applies its migrations with
+    // `npx wrangler d1 migrations apply SEARCH_DB --remote`. A deploy with this placeholder fails.
+    {
+      "binding": "SEARCH_DB",
+      "database_name": "sponsorjobs-search",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations-search"
     }
   ],
 

@@ -177,7 +177,8 @@ jobs:
       # Server-side search (docs/server-search-plan.md, phase 2): write the rows that changed to
       # the D1 index the Worker's /v1/jobs/search reads. Off until the SEARCH_D1_TOKEN secret is
       # added (a Cloudflare API token with D1 Edit), with the SEARCH_D1_ACCOUNT_ID and
-      # SEARCH_D1_DATABASE_ID variables. Runs before the state save so its own state file
+      # SEARCH_D1_DATABASE_ID variables (the id of the SEARCH database, sponsorjobs-search, from
+      # worker/wrangler.jsonc once created; never the broker's database). Runs before the state save so its own state file
       # (search-index-state.json.gz, next to the crawl state) is cached with it. A failed load
       # never blocks publishing the feed; the next run finishes it.
       - name: Is the search index configured?

@@ -18,7 +18,7 @@ from scripts import load_search_index as L
 from sourcing.feedfile import recency_key
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "worker" / "migrations" / "0006_job_search.sql"
+MIGRATION = ROOT / "worker" / "migrations-search" / "0001_job_search.sql"
 
 
 def _row(i, **kw):

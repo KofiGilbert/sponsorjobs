@@ -13,8 +13,8 @@ const free = { ...env, SEARCH_IP_LIMITER: undefined, SEARCH_TOKEN_LIMITER: undef
 interface Case { mode: "search" | "candidates"; params: Record<string, string>; ids: string[] }
 
 export async function loadFixture() {
-  await env.DB.exec("DELETE FROM jobs; DELETE FROM job_extras; DELETE FROM search_meta;");
-  for (const sql of fixture.statements) await env.DB.prepare(sql).run();
+  await env.SEARCH_DB.exec("DELETE FROM jobs; DELETE FROM job_extras; DELETE FROM search_meta;");
+  for (const sql of fixture.statements) await env.SEARCH_DB.prepare(sql).run();
   forgetIndexVersion();
 }
 

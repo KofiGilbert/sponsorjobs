@@ -9,25 +9,25 @@ const N = 1200;   // more than the depth limit and the count cap
 
 /** N plain rows: "Engineer 0000".."Engineer 1199", newest first by id, pay = id * 100. */
 async function seed(version = "v1") {
-  await env.DB.exec("DELETE FROM jobs; DELETE FROM job_extras; DELETE FROM search_meta;");
+  await env.SEARCH_DB.exec("DELETE FROM jobs; DELETE FROM job_extras; DELETE FROM search_meta;");
   const stmts = [];
   for (let i = 0; i < N; i++) {
     const id = `t:${String(i).padStart(4, "0")}`;
     const day = `2026-10-${String(1 + (i % 20)).padStart(2, "0")}`;
     const title = i % 3 === 0 ? `Data Engineer ${i}` : `Nurse ${i}`;
     const row = JSON.stringify({ source_id: id, title, company: "Acme", location: "Austin, TX", posted_at: day });
-    stmts.push(env.DB.prepare(
+    stmts.push(env.SEARCH_DB.prepare(
       `INSERT INTO jobs (source_id, h, rkey, pay, posted_ts, remote_l, entry, sponsored, visa_any, visa_codes,
                          title_l, company_l, location_l, xh, row)
        VALUES (?, 'h', ?, ?, NULL, '', 0, 0, 0, '', ?, 'acme', 'austin, tx', '', ?)`)
       .bind(id, `1${day}\x01\x01${id}`, i * 100, title.toLowerCase(), row));
   }
-  for (let i = 0; i < stmts.length; i += 200) await env.DB.batch(stmts.slice(i, i + 200));
+  for (let i = 0; i < stmts.length; i += 200) await env.SEARCH_DB.batch(stmts.slice(i, i + 200));
   await setVersion(version);
 }
 
 async function setVersion(v: string) {
-  await env.DB.prepare("INSERT INTO search_meta (k, v) VALUES ('index_version', ?), ('generated_at', 'g') "
+  await env.SEARCH_DB.prepare("INSERT INTO search_meta (k, v) VALUES ('index_version', ?), ('generated_at', 'g') "
                        + "ON CONFLICT(k) DO UPDATE SET v = excluded.v").bind(v).run();
   forgetIndexVersion();
 }
@@ -76,7 +76,7 @@ describe("parameters", () => {
   });
 
   it("answers 503 until an index is loaded", async () => {
-    await env.DB.exec("DELETE FROM search_meta;");
+    await env.SEARCH_DB.exec("DELETE FROM search_meta;");
     forgetIndexVersion();
     expect((await get("/v1/jobs/search")).status).toBe(503);
   });
@@ -104,7 +104,7 @@ describe("FTS escaping: user text is plain terms", () => {
     for (const j of r.data.jobs) {
       expect(j.title.toLowerCase().includes(lq) || j.company.toLowerCase().includes(lq)).toBe(true);
     }
-    expect((await env.DB.prepare("SELECT count(*) AS n FROM jobs").first())?.n).toBe(N);
+    expect((await env.SEARCH_DB.prepare("SELECT count(*) AS n FROM jobs").first())?.n).toBe(N);
   });
 
   it("a phrase operator is matched literally, not obeyed", async () => {
@@ -203,7 +203,7 @@ describe("rate limits", () => {
   });
 
   it("reads the client's X-Install-Token header (sourcing/remotesearch.py), not another name", async () => {
-    const token = "0123456789abcdef0123456789abcdef".replace(/./g, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]);
+    const token = crypto.randomUUID().replace(/-/g, "");      // 32 hex, as secrets.token_hex(16)
     for (let i = 0; i < 60; i++) await get("/v1/jobs/search?limit=1", { "X-Install-Token": token });
     expect((await get("/v1/jobs/search?limit=1", { "X-Install-Token": token })).status).toBe(429);
     expect((await get("/v1/jobs/search?limit=1", { "X-Install": token })).status).toBe(200);

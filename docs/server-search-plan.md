@@ -214,7 +214,7 @@ so they run locally.
 Not deployed. Nothing runs until the owner says yes (Workers Paid, section 4) and adds the loader's
 token.
 
-- **Schema** (`worker/migrations/0006_job_search.sql`, in the broker's D1): `jobs` (the slim row as
+- **Schema** (`worker/migrations-search/0001_job_search.sql`, in its own D1 database `sponsorjobs-search`, binding `SEARCH_DB`, so search never queues behind the broker's billing and sign-ins): `jobs` (the slim row as
   JSON plus columns the loader precomputes in Python: recency key, annual pay, posting time, lowered
   title / company / location, visa codes, flags), `job_extras` (the per-employer `sponsor`, `visa`,
   `nationality_visas` fields stored once and joined back: they were ~1.3 KB of a ~2 KB row),

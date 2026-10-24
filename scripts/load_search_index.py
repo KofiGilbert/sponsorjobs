@@ -6,6 +6,9 @@
             --state .feed-data/search-index-state.json.gz
     python scripts/load_search_index.py --feed ... --state ... --dry-run   # counts only, no network
 
+SEARCH_D1_DATABASE_ID is the search database (`sponsorjobs-search`, the Worker's SEARCH_DB binding),
+never the broker's: the token needs D1 Edit, ideally on an account used for nothing else sensitive.
+
 docs/server-search-plan.md (phase 2). The feed rebuilds every 3 hours and most rows do not change,
 so rewriting the whole index each time would cost ~120M D1 row writes a month at 500k rows (plus
 the FTS writes). Instead the loader keeps the last loaded state (source_id -> row hash) next to the
@@ -13,7 +16,7 @@ crawl state, compares the new feed with it, and sends only:
 
   DELETE  the rows that left the feed
   UPSERT  the rows that are new or changed (INSERT ... ON CONFLICT DO UPDATE, so the FTS triggers
-          in worker/migrations/0006_job_search.sql keep the index in step)
+          in worker/migrations-search/0001_job_search.sql keep the index in step)
 
 then sets index_version, which retires old cursors (409) and old edge-cache entries.
 

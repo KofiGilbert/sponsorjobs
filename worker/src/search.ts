@@ -248,7 +248,7 @@ let versionCache: (IndexInfo & { at: number }) | null = null;
 /** The loaded index's version, feed time and size, re-read at most every 30 s per isolate. */
 async function indexVersion(env: Env, nowMs: number): Promise<IndexInfo> {
   if (versionCache && nowMs - versionCache.at < VERSION_TTL_MS) return versionCache;
-  const rows = await env.DB.prepare("SELECT k, v FROM search_meta WHERE k IN ('index_version', 'generated_at', 'rows')")
+  const rows = await env.SEARCH_DB.prepare("SELECT k, v FROM search_meta WHERE k IN ('index_version', 'generated_at', 'rows')")
     .all<{ k: string; v: string }>();
   const m = Object.fromEntries(rows.results.map((r) => [r.k, r.v]));
   versionCache = { at: nowMs, v: m.index_version ?? null, g: m.generated_at ?? "",
@@ -297,7 +297,7 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
       // How many rows the index matches, counted only up to the threshold (a cheap probe: the
       // FTS doclists, not the rows). Few matches: use them. Many: walk the ordered index.
       const t = ftsThreshold(opts.rows ?? 0);
-      const r = await env.DB.prepare("SELECT count(*) AS n FROM (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ? LIMIT ?)")
+      const r = await env.SEARCH_DB.prepare("SELECT count(*) AS n FROM (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ? LIMIT ?)")
         .bind(match, t).all<{ n: number }>();
       probeRead = r.meta?.rows_read ?? 0;
       useFts = (r.results[0]?.n ?? 0) < t;
@@ -321,13 +321,13 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
   const pageSql = `SELECT j.row, j.pay, j.rkey, x.v AS extra FROM jobs j
                    LEFT JOIN job_extras x ON x.h = j.xh AND j.xh != ''
                    ${w} ORDER BY ${order} LIMIT ?`;
-  const stmts = [env.DB.prepare(pageSql).bind(...binds, take + 1)];
+  const stmts = [env.SEARCH_DB.prepare(pageSql).bind(...binds, take + 1)];
   if (!after && probeCount === null) {
     const cw = q.where.length ? `WHERE ${q.where.join(" AND ")}` : "";
-    stmts.push(env.DB.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM jobs j ${cw} LIMIT ?)`)
+    stmts.push(env.SEARCH_DB.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM jobs j ${cw} LIMIT ?)`)
       .bind(...q.binds, COUNT_CAP + 1));
   }
-  const res = await env.DB.batch(stmts);
+  const res = await env.SEARCH_DB.batch(stmts);
   const got = res[0]!.results as Array<{ row: string; pay: number; rkey: string; extra: string | null }>;
   let count = after?.c ?? 0;
   if (!after) count = probeCount ?? (res[1]!.results[0] as { n: number }).n;
