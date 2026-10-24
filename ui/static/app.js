@@ -5941,6 +5941,7 @@
   let PREPS = [], PREP_APP = null, GUIDED = false, PREP_MODE = null, PREP_FILL = null;
   const blankPrepApp = () => ({ role: "", jd: "", cv: "", cvName: "", recordId: null, company: "" });
   async function loadPreps() {
+    $("#prepLive")?.classList.remove("is-report"); $("#prepScreen")?.classList.remove("is-report");
     if ($("#prepScreen")) $("#prepScreen").hidden = true;
     if ($("#prepLive")) $("#prepLive").hidden = true;
     if ($("#prepList")) $("#prepList").hidden = false;
@@ -6045,6 +6046,7 @@
   $("#prepPastLink")?.addEventListener("click", showPastPage);
   async function openPastReport(c) {
     if (!c) return;
+    REPORT_FROM_PAST = PREP_MODE === "past"; REPORT_WHEN = c.created || null; REPORT_ROLE = c.role || "";
     try {
       if (c.round === 2) {
         const d = await api(`/api/interviews/${encodeURIComponent(c.id)}`);
@@ -6054,7 +6056,7 @@
         renderR2Report(d.report || {}, c.id);
       } else {
         const d = await api(`/api/screens/${encodeURIComponent(c.id)}`);
-        SCREEN = d.screen || d; SCR_PREP = { id: c.prep_id || SCREEN.prep_id };
+        SCREEN = d.screen || d; SCR_PREP = { id: c.prep_id || SCREEN.prep_id, role: c.role || "", company: c.company || "" };
         $("#prepList").hidden = true; $("#prepScreen").hidden = false;
         renderR1Report(SCREEN.result || {});
       }
@@ -6498,43 +6500,27 @@
   function renderR1Report(r) {
     r = r || {};
     SCR_PHASE = "report"; scrLeaveAsk(false);
-    const passed = !!r.passed, cls = passed ? "ok" : "no";
-    const answers = r.answers || [];
-    scrHead(T("r1.reportCount", "Round 1 report"), "");
-    $("#scrStage").innerHTML = `
-      <div class="scr-report">
-        <div class="scr-score ${cls}">${r.score ?? 0}<span>/100</span></div>
-        <div class="mock-ready ${cls}">${esc(passed ? T("r1.passed", "Passed, the bar is 70") : T("r1.failed", "Below the bar of 70"))}</div>
-        ${r.why ? `<p class="mock-ready-sum">${esc(r.why)}</p>` : ""}
-        ${(r.improvements || []).length ? `<div class="mock-col"><div class="prep-fb-h">${esc(T("r1.doNext", "Do this next"))}</div><ul>${r.improvements.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
-        ${(r.competencies || []).length ? `<div class="scr-comps"><div class="prep-fb-h">${esc(T("r1.byCompetency", "By competency"))}</div>
-          ${r.competencies.map(cb => `<div class="scr-comp-row"><span class="scr-comp-name">${esc(cb.name)}</span><span class="scr-comp-bar"><i class="scr-comp-fill ${cb.score < 60 ? "low" : cb.score < 75 ? "mid" : "high"}" style="width:${Math.max(4, Math.min(100, Number(cb.score) || 0))}%"></i></span><span class="scr-comp-val">${cb.score}</span></div>`).join("")}</div>` : ""}
-        ${reportCardHtml(r.report_card)}
-        <div class="scr-per">${answers.map((a, k) => {
-          const i = a.i ?? k, fb = a.feedback || (a.per_answer_feedback || {}).feedback || "", sc = a.score ?? (a.per_answer_feedback || {}).score;
-          const qtext = a.text || a.q || a.question || ((SCREEN.questions || [])[i] || {}).text || "";
-          return `<div class="scr-per-item"><div class="scr-per-hd"><span class="scr-per-q">${k + 1}. ${esc(qtext)}</span>${sc != null ? `<span class="scr-per-score">${sc}/100</span>` : ""}</div>
-            ${fb ? `<p>${esc(fb)}</p>` : ""}
-            ${deliveryReadout(a.delivery_metrics || a.delivery)}
-            ${a.transcript ? `<details class="scr-tr"><summary>${esc(T("r1.transcriptSum", "Your answer, with filler and hedging highlighted"))}</summary><p class="scr-tr-body">${highlightDisfluencies(a.transcript)}</p></details>` : ""}
-            <button class="btn btn-ghost btn-sm scr-coach-btn" data-coach="${i}" type="button">${esc(T("r1.stronger", "See a stronger version"))}</button>
-            <div class="scr-coach" id="scrCoach${i}" hidden></div></div>`; }).join("")}</div>
-        <p class="scr-disclaimer">${esc(r.disclaimer || T("r1.reportDisclaimer", "Practice feedback, not a hiring decision."))}</p>
-        <div class="rc-goals" id="repGoals" hidden></div>
-        <div id="r1Gate"></div>
-        <div class="mock-next">
-          <button class="btn btn-ghost btn-sm" id="scrReport" type="button">${esc(T("r1.docx", "Download report (.docx)"))}</button>
-          <button class="btn btn-ghost btn-sm" id="scrDone" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>
-          <button class="btn btn-danger-ghost btn-sm" id="scrDelete" type="button">${esc(T("r1.deleteRec", "Delete recordings"))}</button>
-        </div>
-      </div>`;
-    $("#scrStage").querySelectorAll(".scr-coach-btn").forEach(btn =>
-      btn.addEventListener("click", () => coachScreenAnswer(SCREEN.id, btn.dataset.coach, btn)));
-    wireReportCard(r.report_card, { prepId: SCR_PREP && SCR_PREP.id, currentId: SCREEN && SCREEN.id,
-      leave: () => { stopPrepClock(); stopAnswerClock(); stopScrStream(); SCR_PHASE = "idle"; } });
-    if (!(SCREEN && SCREEN.drill)) loadPrepGoals(SCR_PREP && SCR_PREP.id, $("#repGoals"));
+    const passed = !!r.passed;
+    const items = (r.answers || []).map((a, k) => {
+      const i = a.i ?? k, paf = a.per_answer_feedback || {};
+      return { i, q: a.text || a.q || a.question || ((SCREEN.questions || [])[i] || {}).text || "",
+        said: a.transcript ? highlightDisfluencies(a.transcript) : "", competency: a.competency || "",
+        score: a.score ?? paf.score, feedback: a.feedback || paf.feedback || "",
+        extra: deliveryReadout(a.delivery_metrics || a.delivery), coach: true };
+    });
+    $("#prepScreen").classList.add("is-report");
+    $("#scrStage").innerHTML = reportA2Html(r, {
+      kind: T("rep.kindRec", "Recorded interview"), role: (SCR_PREP && prepRole(SCR_PREP)) || "", company: (SCR_PREP && SCR_PREP.company) || "",
+      when: REPORT_WHEN || (SCREEN && SCREEN.created), items, round: 1,
+      actions: `<button class="btn btn-ghost btn-sm" id="scrReport" type="button">${esc(T("r1.docx", "Download report (.docx)"))}</button>
+        <button class="btn btn-danger-ghost btn-sm" id="scrDelete" type="button">${esc(T("r1.deleteRec", "Delete recordings"))}</button>`,
+      gate: true });
+    REPORT_WHEN = null;
+    wireReportA2(r, { prepId: SCR_PREP && SCR_PREP.id, currentId: SCREEN && SCREEN.id,
+      leave: () => { stopPrepClock(); stopAnswerClock(); stopScrStream(); SCR_PHASE = "idle"; $("#prepScreen").classList.remove("is-report"); },
+      back: quitScreen, again: async () => { const p = await prepById(SCR_PREP && SCR_PREP.id); $("#prepScreen").classList.remove("is-report"); startScreen(p); },
+      coach: (i, btn) => coachScreenAnswer(SCREEN.id, i, btn) });
     $("#scrReport")?.addEventListener("click", () => { window.location = `/api/screens/${SCREEN.id}/report.docx`; });
-    $("#scrDone")?.addEventListener("click", quitScreen);
     $("#scrDelete")?.addEventListener("click", async () => {
       if (!confirm(T("r1.deleteConfirm", "Delete this interview and its recordings? This can't be undone."))) return;
       try { await fetch(`/api/screens/${SCREEN.id}/delete`, { method: "POST" }); } catch {}
@@ -7022,7 +7008,7 @@
     R2 = null;
     if (!id) { quitLive(); return; }
     $("#liveStage").innerHTML = `<div class="scr-intro"><div class="scr-welcome"><h2 class="scr-ready-h">${esc(T("r2.ended", "Interview ended"))}</h2><p class="scr-ready-sub">${esc(T("r2.scoring", "Scoring your interview..."))}</p></div></div>`;
-    try { const d = await api("/api/interviews/cvi/end", { interview_id: id }); renderR2Report((d && d.report) || {}, id); }
+    try { const d = await api("/api/interviews/cvi/end", { interview_id: id }); REPORT_ROLE = ((d && d.interview) || {}).role || ""; renderR2Report((d && d.report) || {}, id); }
     catch (err) {
       if ((err.data && err.data.error === "no_transcript") || (opt && opt.early)) { renderCviNoStart(); return; }
       toast(err.message || T("r2.cantScore", "Couldn't score the interview.")); quitLive();
@@ -7042,28 +7028,19 @@
     $("#cviBack")?.addEventListener("click", quitLive);
   }
   function renderR2Report(rep, interviewId) {
-    const passed = !!rep.passed, cls = passed ? "ok" : "no";
-    const mins = rep.duration_s ? fmtClock(Math.round(rep.duration_s)) : "";
+    rep = rep || {};
     if (GUIDED) showGuidedProgress(3);                       // both rounds done
-    $("#liveStage").innerHTML = `
-      <div class="scr-report">
-        <div class="scr-score ${cls}">${rep.score ?? 0}<span>/100</span></div>
-        <div class="mock-ready ${cls}">${esc(passed ? T("r2.passed", "Passed") : T("r2.failed", "Below the bar"))}${mins ? ` <span class="scr-per-score">${mins}</span>` : ""}</div>
-        ${rep.why ? `<p class="mock-ready-sum">${esc(rep.why)}</p>` : ""}
-        ${(rep.improvements || []).length ? `<div class="mock-col"><div class="prep-fb-h">${esc(T("r1.doNext", "Do this next"))}</div><ul>${rep.improvements.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
-        ${(rep.competencies || []).length ? `<div class="scr-comps"><div class="prep-fb-h">${esc(T("r1.byCompetency", "By competency"))}</div>${rep.competencies.map(cb => `<div class="scr-comp-row"><span class="scr-comp-name">${esc(cb.name)}</span><span class="scr-comp-bar"><i class="scr-comp-fill ${cb.score < 60 ? "low" : cb.score < 75 ? "mid" : "high"}" style="width:${Math.max(4, Math.min(100, Number(cb.score) || 0))}%"></i></span><span class="scr-comp-val">${cb.score}</span></div>`).join("")}</div>` : ""}
-        ${reportCardHtml(rep.report_card)}
-        ${rep.transcript ? `<details class="scr-tr"><summary>${esc(T("r2.transcript", "Transcript"))}</summary><p class="scr-tr-body">${r2TranscriptHtml(rep.transcript)}</p></details>` : ""}
-        <div class="rc-goals" id="repGoals" hidden></div>
-        <p class="scr-disclaimer">${esc(rep.disclaimer || T("r1.reportDisclaimer", "Practice feedback, not a hiring decision."))}</p>
-        <div class="mock-next">
-          <button class="btn btn-primary btn-sm" id="liveDone" type="button">${esc(T("r1.backToPrep", "Back to prep"))}</button>
-        </div>
-      </div>`;
-    $("#liveDone")?.addEventListener("click", quitLive);
-    loadPrepGoals(R2_CTX && R2_CTX.prep_id, $("#repGoals"));
-    wireReportCard(rep.report_card, { prepId: R2_CTX && R2_CTX.prep_id, currentId: interviewId,
-      leave: () => { teardownCvi(); R2 = null; stopLiveStream(); $("#prepLive").hidden = true; } });
+    const items = (rep.answers || []).map((a, k) => ({ i: k, q: a.q || "", said: a.transcript ? highlightDisfluencies(a.transcript) : "",
+      competency: a.competency || "", score: a.score, feedback: a.feedback || "", extra: "", coach: false }));
+    $("#prepLive").classList.add("is-report");
+    $("#liveStage").innerHTML = reportA2Html(rep, {
+      kind: T("rep.kindLive", "Live interview"), role: (R2_CTX && R2_CTX.role) || REPORT_ROLE || "", company: "",
+      when: REPORT_WHEN || Date.now() / 1000, items, round: 2,
+      transcript: rep.transcript ? r2TranscriptHtml(rep.transcript) : "", actions: "" });
+    REPORT_WHEN = null; REPORT_ROLE = "";
+    wireReportA2(rep, { prepId: R2_CTX && R2_CTX.prep_id, currentId: interviewId,
+      leave: () => { teardownCvi(); R2 = null; stopLiveStream(); $("#prepLive").hidden = true; $("#prepLive").classList.remove("is-report"); },
+      back: quitLive, again: () => { $("#prepLive").classList.remove("is-report"); startRound2(R2_CTX && R2_CTX.prep_id, "", true); } });
   }
   // The live transcript is a list of turns; show it as a dialogue, fillers highlighted.
   function r2TranscriptHtml(tr) {
@@ -7099,6 +7076,92 @@
   function rcCoverage(c) {
     if (c == null) return `<span class="rc-cov na">${esc(T("rc.notRated", "not rated"))}</span>`;
     return `<span class="rc-cov c${c}">${esc(T("rc.coverageOf", "{n} of 3").replace("{n}", String(c)))}</span>`;
+  }
+  // ---- The interview report (design A2, Kofi 2026-10-23) ---------------------------------------
+  // Numbers first, then what to fix, then the detail in tabs. The page stays grey like the rest of
+  // the app; the only colour is status, and every colour comes with a word ("Needs work", "Too
+  // fast"), never colour alone, so it reads the same to someone who is colour-blind.
+  let REPORT_WHEN = null, REPORT_ROLE = "", REPORT_FROM_PAST = false;
+  function a2Level(n) {
+    n = Number(n) || 0;
+    return n >= 70 ? ["good", T("rep.strong", "Strong")] : n >= 50 ? ["mid", T("rep.gettingThere", "Getting there")] : ["flag", T("rep.needsWork", "Needs work")];
+  }
+  const a2First = (s) => { const m = String(s || "").match(/^(.+?[.:])\s/); return m ? m[1] : String(s || ""); };
+  function reportA2Html(rep, o) {
+    const card = rep.report_card || {}, d = card.delivery || {}, rca = {};
+    (card.answers || []).forEach(a => { rca[a.i] = a; });
+    const [lvl, lvlWord] = a2Level(rep.score);
+    const mins = Math.max(1, Math.round((Number(rep.duration_s) || Number(d.total_seconds) || 0) / 60));
+    const when = o.when ? new Date(o.when * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
+    const pace = d.pace === "fast" ? `<b class="a2-flag">${esc(T("rep.tooFast", "Too fast."))}</b> `
+      : d.pace === "slow" ? `<b class="a2-flag">${esc(T("rep.tooSlow", "A little slow."))}</b> `
+      : d.pace === "normal" ? `<b class="a2-good">${esc(T("rep.goodPace", "Good pace."))}</b> ` : "";
+    const fpm = Number(d.fillers_per_minute) || 0;
+    const full = (card.answers || []).filter(a => a.star && a.star.situation && a.star.task && a.star.action && a.star.result).length;
+    const stat = (k, v, unit, note) => `<div class="a2-stat"><div class="a2-eyebrow">${esc(k)}</div><div class="a2-stat-v">${v}<small>${unit}</small></div><div class="a2-stat-n">${note}</div></div>`;
+    const stars = (st) => st ? `<span class="a2-star">${[["situation", "S"], ["task", "T"], ["action", "A"], ["result", "R"]].map(([k, l]) => `<i class="${st[k] ? "on" : ""}" title="${esc(k)}">${l}</i>`).join("")}</span>` : "";
+    const fix = (rep.improvements || []).slice(0, 3).map(x => { const f = a2First(x); return `<li><div class="a2-fix-h">${esc(f)}</div>${x.length > f.length ? `<div class="a2-fix-d">${esc(x.slice(f.length).trim())}</div>` : ""}</li>`; }).join("");
+    const skills = (rep.competencies || []).map(c => { const [l] = a2Level(c.score);
+      return `<div class="a2-skill"><span>${esc(c.name)}</span><span class="a2-bar"><b class="a2-${l}" style="width:${Math.max(4, Math.min(100, Number(c.score) || 0))}%"></b></span><span class="a2-${l} num">${c.score}</span></div>`; }).join("");
+    const qs = o.items.map((it, k) => { const [l, w] = a2Level(it.score); const rc = rca[it.i] || rca[k] || {};
+      return `<div class="a2-q${k === 0 ? " is-open" : ""}" data-q="${k}">
+        <button class="a2-q-row" type="button"><span class="a2-qn num">${String(k + 1).padStart(2, "0")}</span><span class="a2-qt">${esc(it.q)}</span>
+          <span class="a2-qc">${esc(it.competency)}</span>
+          <span class="a2-qs">${it.score != null ? `<i class="a2-dot a2-${l}"></i><span class="a2-${l} a2-qw">${esc(w)}</span><b class="num">${it.score}</b><small>/100</small>` : ""}</span>
+          <span class="a2-chev" aria-hidden="true"></span></button>
+        <div class="a2-q-body"><div><div class="a2-eyebrow">${esc(T("rep.youSaid", "What you said"))}</div><p class="a2-said">${it.said || ""}</p>${stars(rc.star)}${it.extra || ""}</div>
+          <div><div class="a2-eyebrow">${esc(T("rep.feedback", "Feedback"))}</div><p class="a2-fb">${esc(it.feedback || rc.evidence || "")}</p>
+          ${it.coach ? `<button class="btn btn-ghost btn-sm" data-coach="${it.i}" type="button">${esc(T("r1.stronger", "See a stronger version"))}</button><div class="scr-coach" id="scrCoach${it.i}" hidden></div>` : ""}</div></div>
+      </div>`; }).join("");
+    const nWeak = (card.weakest || []).length;
+    const tabs = [["q", `${esc(T("rep.tabQuestions", "Questions"))} <span>${o.items.length}</span>`], o.transcript ? ["t", esc(T("r2.transcript", "Transcript"))] : null,
+      ["g", esc(T("goals.afterTitle", "What to cover next time"))], ["h", esc(T("rep.tabProgress", "Progress"))]].filter(Boolean);
+    return `<div class="a2">
+      <button class="btn btn-ghost btn-back a2-back" id="a2Back" type="button">&lsaquo; ${esc(REPORT_FROM_PAST ? T("prep.past", "Past interviews") : T("prep.title", "Interview prep"))}</button>
+      <div class="a2-head"><div><div class="a2-eyebrow">${esc(o.kind)}${when ? ` &middot; ${esc(when)}` : ""} &middot; ${mins} ${esc(T("rep.min", "min"))}</div>
+        <h2 class="a2-title">${esc(o.role || T("prep.pastRole", "Interview"))}${o.company ? ` <span>${esc(o.company)}</span>` : ""}</h2></div>
+        <span class="a2-pill a2-pill-${rep.passed ? "good" : "flag"}">${esc(rep.passed ? T("rep.passed", "Passed") : T("rep.below", "Below the bar"))}</span></div>
+      <div class="a2-stats">
+        ${stat(T("rep.overall", "Overall"), `<span class="num">${rep.score ?? 0}</span>`, "/100", `<b class="a2-${lvl}">${esc(lvlWord)}.</b> ${esc(T("rep.barIs", "The bar is {n}").replace("{n}", String(rep.threshold || 70)))}`)}
+        ${stat(T("rep.pace", "Pace"), `<span class="num">${Math.round(Number(d.avg_wpm) || 0)}</span>`, ` ${esc(T("rep.wpm", "wpm"))}`, `${pace}${esc(T("rep.aim", "Aim for 140 to 160"))}${d.any_estimated ? " *" : ""}`)}
+        ${stat(T("rep.fillers", "Fillers"), `<span class="num">${fpm}</span>`, `/${esc(T("rep.min", "min"))}`, `${fpm > 6 ? `<b class="a2-flag">${esc(T("rep.manyFillers", "Many."))}</b> ` : ""}${esc(T("rep.fillersTotal", "{n} in {m} minutes").replace("{n}", String(d.total_fillers || 0)).replace("{m}", String(mins)))}`)}
+        ${stat(T("rep.stories", "Complete stories"), `<span class="num">${full}</span>`, ` ${esc(T("rep.of", "of"))} ${o.items.length}`, esc(T("rep.starFull", "Situation, Task, Action, Result")))}
+      </div>
+      ${rep.why ? `<p class="a2-why">${esc(rep.why)}</p>` : ""}
+      <div class="a2-two">
+        ${fix ? `<div class="a2-card"><div class="a2-lab">${esc(T("rep.fixFirst", "Fix these first"))}</div><ol class="a2-fix">${fix}</ol></div>` : ""}
+        ${skills ? `<div class="a2-card"><div class="a2-lab">${esc(T("rep.bySkill", "By skill"))}</div>${skills}</div>` : ""}
+      </div>
+      <div class="a2-tabs" role="tablist">${tabs.map(([k, l], i) => `<button class="a2-tab${i === 0 ? " is-on" : ""}" type="button" data-tab="${k}">${l}</button>`).join("")}</div>
+      <div class="a2-pane" data-pane="q"><div class="a2-card a2-qs-list">${qs}</div></div>
+      ${o.transcript ? `<div class="a2-pane" data-pane="t" hidden><div class="a2-card a2-tr">${o.transcript}</div></div>` : ""}
+      <div class="a2-pane" data-pane="g" hidden><div class="rc-goals" id="repGoals" hidden></div></div>
+      <div class="a2-pane" data-pane="h" hidden><div class="rc-sec rc-hist" id="rcHistory" hidden></div><p class="a2-none" id="a2NoHist">${esc(T("rep.noHistory", "Your first report for this job. Practice again to see your progress here."))}</p></div>
+      ${o.gate ? `<div id="r1Gate"></div>` : ""}
+      <div class="a2-acts">
+        ${nWeak ? `<button class="btn btn-primary btn-sm" id="rcRedrill" type="button">${esc(nWeak === 1 ? T("rc.redrillOne", "Re-drill this question") : T("rep.redrillWeakest", "Practice the weakest {n} again").replace("{n}", String(nWeak)))}</button>` : ""}
+        <button class="btn btn-ghost btn-sm" id="a2Again" type="button">${esc(T("rep.practiceAgain", "Practice again"))}</button>
+        ${o.actions || ""}
+        <span class="prep-step1-msg" id="rcRedrillMsg" hidden></span>
+      </div>
+      <p class="scr-disclaimer">${esc(rep.disclaimer || T("r1.reportDisclaimer", "Practice feedback, not a hiring decision."))}${d.any_estimated ? ` * ${esc(T("rc.estimated", "Estimated from the words, not timed."))}` : ""}</p>
+    </div>`;
+  }
+  function wireReportA2(rep, ctx) {
+    const root = document.querySelector(".a2"); if (!root) return;
+    root.querySelectorAll(".a2-q-row").forEach(b => b.addEventListener("click", () => b.parentElement.classList.toggle("is-open")));
+    root.querySelectorAll(".a2-tab").forEach(b => b.addEventListener("click", () => {
+      root.querySelectorAll(".a2-tab").forEach(x => x.classList.toggle("is-on", x === b));
+      root.querySelectorAll(".a2-pane").forEach(p => { p.hidden = p.dataset.pane !== b.dataset.tab; });
+    }));
+    if (ctx.coach) root.querySelectorAll("[data-coach]").forEach(b => b.addEventListener("click", () => ctx.coach(b.dataset.coach, b)));
+    $("#a2Back")?.addEventListener("click", () => { const past = REPORT_FROM_PAST; REPORT_FROM_PAST = false; ctx.back(); if (past) showPastPage(); });
+    $("#a2Again")?.addEventListener("click", () => { REPORT_FROM_PAST = false; ctx.again(); });
+    loadPrepGoals(ctx.prepId, $("#repGoals"));
+    wireReportCard(rep.report_card, ctx);
+    // The Progress tab: the job's score history, when there is more than this one report.
+    const hist = $("#rcHistory");
+    if (hist) new MutationObserver(() => { const n = $("#a2NoHist"); if (n) n.hidden = !hist.hidden; }).observe(hist, { attributes: true, attributeFilter: ["hidden"] });
   }
   function reportCardHtml(card) {
     if (!card || !Array.isArray(card.answers) || !card.answers.length) return "";

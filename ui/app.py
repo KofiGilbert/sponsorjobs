@@ -8550,6 +8550,11 @@ def _pair_dialogue(turns: list, plan: list, min_words: int = 8) -> list[dict]:
             # "Take your time", "No problem, I was asking...", "Let me rephrase": the SAME question
             # again, not a new one. The answer is everything said to it, so a false start ("U.S.
             # companies have, you know...") is not scored on its own (Kofi's test, 2026-10-10).
+            # "That's", "Right", "Mm-hm": a few words cut off by the person talking over them are the
+            # interviewer reacting, not a new question. The answer carries on under the same one.
+            if cur is not None and cur["transcript"] and len(content.split()) < 4 and "?" not in content:
+                cur["transcript"] += " "
+                continue
             if cur is not None and cur["transcript"] and _REPROMPT.match(content):
                 cur["transcript"] += " "
                 continue
