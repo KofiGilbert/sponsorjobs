@@ -11,14 +11,14 @@
 // Privacy: the request carries only the query, the facets and a cursor; nothing here logs them,
 // and the install token (X-Install-Token) is used only as a rate-limit key, never stored or logged.
 // Abuse: 60 requests a minute per install token and 300 per network (the Workers rate-limit
-// binding), at most 1,000 results deep per query, and counts capped at 1,000.
+// binding), at most 1,000 results deep per query, and counts capped at 200 ("200+").
 
 import type { Env } from "./env";
 
 export const SEARCH_MAX = 50;
 export const CANDIDATES_MAX = 500;
 export const DEPTH_MAX = 1000;          // refine to see more; the API is not a bulk export
-export const COUNT_CAP = 1000;          // "1,000+"
+export const COUNT_CAP = 200;           // "200+": counting further was most of a keyword search's cost
 const CACHE_SECONDS = 600;              // an index_version lives ~3 h; the cache at most 10 min
 const VERSION_TTL_MS = 30_000;          // how long an isolate trusts the index_version it read
 
@@ -256,12 +256,10 @@ async function indexVersion(env: Env, nowMs: number): Promise<IndexInfo> {
   return versionCache;
 }
 
-/** The FTS plan reads every match about 3-5 times (the probe, the page's index scan and row
- * lookups, and the count's when other facets apply); the ordered walk reads about
- * (COUNT_CAP + page) * N / M rows to fill the page and the capped count. They cross near
- * M = sqrt(COUNT_CAP * N / 4): ~6.8k matches at 184k rows, ~11k at 500k, which bounds the worst
- * case near 4 * M instead of N. Measured figures: docs/server-search-plan.md. */
-export const ftsThreshold = (rows: number) => Math.max(2000, Math.round(Math.sqrt((COUNT_CAP * rows) / 4)));
+/** How many rows the ordered walk may read before the FTS index takes over. A common term finds
+ * its page and the capped count well inside it (`engineer`: ~700 rows); a rare one runs out and
+ * the index answers, reading about twice its matches. Measured: docs/server-search-plan.md. */
+export const WALK_BUDGET = 3000;
 
 /** Tests load a new index and need the next request to see it at once. */
 export function forgetIndexVersion(): void { versionCache = null; }
@@ -273,76 +271,94 @@ export interface Page {
   count: number;
   count_capped: boolean;
   next: CursorBody | null;
-  stats?: { rows_read: number };
+  stats?: { rows_read: number; plan: string };
 }
 
-/** One page of results for parsed facets. `after` is a decoded, already-checked cursor. `plan`
- * forces the FTS or the ordered-walk plan (tests: both must answer the same rows). */
+type Plan = "fts" | "scan" | "walk";
+interface Key { id: number; pay: number; rkey: string }
+
+/** One page of results for parsed facets. `after` is a decoded, already-checked cursor.
+ *
+ * Plans, all answering the same rows (search-parity.test.ts runs each):
+ *   walk  the ordered index, reading at most `budget` rows; when that is not enough to fill the
+ *         page and the count, the FTS plan (a keyword or location) or the full walk takes over
+ *   fts   the trigram index finds the matches, which are then sorted
+ *   scan  the ordered index with no budget (sponsored: its partial index is tiny)
+ * Keys and the count come from ONE query (LIMIT count cap + 1 on page 1), then the page's rows
+ * are read by id, so no plan reads its matches twice. */
 export async function searchPage(env: Env, f: Facets, limit: number, after: CursorBody | null,
                                  version: string, nowMs: number,
-                                 opts: { rows?: number; plan?: "fts" | "scan" } = {}): Promise<Page> {
+                                 opts: { rows?: number; plan?: Plan; budget?: number } = {}): Promise<Page> {
+  const db = env.SEARCH_DB;
   const served = after?.n ?? 0;
   const take = Math.min(limit, DEPTH_MAX - served);
-  let probeRead = 0;
-  let useFts = false;
-  let probeCount: number | null = null;
-  const match = buildQuery(f, nowMs).match;
-  if (match) {
-    if (opts.plan) useFts = opts.plan === "fts";
-    else if (after) useFts = after.p === 1;
-    // Under 1% of rows state sponsorship and a partial index walks just those: cheaper than
-    // reading any trigram's doclists, so no probe.
-    else if (f.sponsored) useFts = false;
-    else {
-      // How many rows the index matches, counted only up to the threshold (a cheap probe: the
-      // FTS doclists, not the rows). Few matches: use them. Many: walk the ordered index.
-      const t = ftsThreshold(opts.rows ?? 0);
-      const r = await env.SEARCH_DB.prepare("SELECT count(*) AS n FROM (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ? LIMIT ?)")
-        .bind(match, t).all<{ n: number }>();
-      probeRead = r.meta?.rows_read ?? 0;
-      useFts = (r.results[0]?.n ?? 0) < t;
-      // A phrase on title/company or location matches exactly the rows instr() keeps, so with
-      // no other facet the probe IS the count and the count query is skipped.
-      const onlyText = !f.titles.length && !f.remote && f.level !== "entry" && !f.visa.length
-        && !f.sponsored && !(f.days > 0) && !(f.pay > 0) && f.loc !== "remote"
-        && (!f.q || chars(f.q) >= 3) && (!f.loc || chars(f.loc) >= 3);
-      if (useFts && onlyText) probeCount = r.results[0]?.n ?? 0;
+  const want = after ? take + 1 : Math.max(take + 1, COUNT_CAP + 1);
+  const desc = f.sort === "pay" ? "pay DESC, rkey DESC" : "rkey DESC";
+  const keyset = !after ? null
+    : f.sort === "pay" ? { sql: "(pay, rkey) < (?, ?)", binds: [after.k[0], after.k[1]] }
+    : { sql: "rkey < ?", binds: [after.k[1]] };
+  const hasText = buildQuery(f, nowMs).match !== null;
+  let read = 0;
+
+  const run = async (sql: string, binds: unknown[]) => {
+    const r = await db.prepare(sql).bind(...binds).all<Key>();
+    read += r.meta?.rows_read ?? 0;
+    return r.results;
+  };
+  const keysFull = (useFts: boolean) => {
+    const q = buildQuery(f, nowMs, useFts);
+    const where = [...q.where, ...(keyset ? [keyset.sql.replace(/\b(pay|rkey)\b/g, "j.$1")] : [])];
+    return run(`SELECT j.id, j.pay, j.rkey FROM jobs j ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+                ORDER BY ${desc.replace(/(pay|rkey)/g, "j.$1")} LIMIT ?`,
+               [...q.binds, ...(keyset?.binds ?? []), want]);
+  };
+  const keysWalk = (budget: number) => {
+    const q = buildQuery(f, nowMs, false);
+    const inner = `SELECT * FROM jobs ${keyset ? `WHERE ${keyset.sql}` : ""} ORDER BY ${desc} LIMIT ?`;
+    return run(`SELECT j.id, j.pay, j.rkey FROM (${inner}) j ${q.where.length ? `WHERE ${q.where.join(" AND ")}` : ""}
+                ORDER BY ${desc.replace(/(pay|rkey)/g, "j.$1")} LIMIT ?`,
+               [...(keyset?.binds ?? []), budget, ...q.binds, want]);
+  };
+
+  let plan: Plan = opts.plan ?? (after?.p === 1 ? "fts" : f.sponsored ? "scan" : "walk");
+  if (plan === "fts" && !hasText) plan = "scan";
+  let keys: Key[];
+  if (plan === "walk") {
+    keys = await keysWalk(opts.budget ?? WALK_BUDGET);
+    // Fewer than wanted: the budget ran out (or the list ended). The exact plan answers instead.
+    if (keys.length < want) {
+      plan = hasText ? "fts" : "scan";
+      keys = await keysFull(plan === "fts");
     }
+  } else {
+    keys = await keysFull(plan === "fts");
   }
-  const q = buildQuery(f, nowMs, useFts);
-  const order = f.sort === "pay" ? "j.pay DESC, j.rkey DESC" : "j.rkey DESC";
-  const where = [...q.where];
-  const binds = [...q.binds];
-  if (after) {
-    if (f.sort === "pay") { where.push("(j.pay, j.rkey) < (?, ?)"); binds.push(after.k[0], after.k[1]); }
-    else { where.push("j.rkey < ?"); binds.push(after.k[1]); }
+
+  const page = keys.slice(0, take);
+  let rows: string[] = [];
+  if (page.length) {
+    const r = await db.prepare(`SELECT j.id, j.row, x.v AS extra FROM jobs j
+                                LEFT JOIN job_extras x ON x.h = j.xh AND j.xh != ''
+                                WHERE j.id IN (SELECT value FROM json_each(?))`)
+      .bind(JSON.stringify(page.map((k) => k.id))).all<{ id: number; row: string; extra: string | null }>();
+    read += r.meta?.rows_read ?? 0;
+    const byId = new Map(r.results.map((x) => [x.id, x]));
+    rows = page.map((k) => {
+      const x = byId.get(k.id)!;
+      return x.extra ? JSON.stringify({ ...JSON.parse(x.row), ...JSON.parse(x.extra) }) : x.row;
+    });
   }
-  const w = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const pageSql = `SELECT j.row, j.pay, j.rkey, x.v AS extra FROM jobs j
-                   LEFT JOIN job_extras x ON x.h = j.xh AND j.xh != ''
-                   ${w} ORDER BY ${order} LIMIT ?`;
-  const stmts = [env.SEARCH_DB.prepare(pageSql).bind(...binds, take + 1)];
-  if (!after && probeCount === null) {
-    const cw = q.where.length ? `WHERE ${q.where.join(" AND ")}` : "";
-    stmts.push(env.SEARCH_DB.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM jobs j ${cw} LIMIT ?)`)
-      .bind(...q.binds, COUNT_CAP + 1));
-  }
-  const res = await env.SEARCH_DB.batch(stmts);
-  const got = res[0]!.results as Array<{ row: string; pay: number; rkey: string; extra: string | null }>;
-  let count = after?.c ?? 0;
-  if (!after) count = probeCount ?? (res[1]!.results[0] as { n: number }).n;
-  const capped = count > COUNT_CAP;
-  const rows = got.slice(0, take);
-  const last = rows[rows.length - 1];
-  const more = got.length > take && served + rows.length < DEPTH_MAX;
+  const count = after ? after.c : keys.length;
+  const last = page[page.length - 1];
+  const more = keys.length > take && served + page.length < DEPTH_MAX;
   return {
-    rows: rows.map((r) => (r.extra ? JSON.stringify({ ...JSON.parse(r.row), ...JSON.parse(r.extra) }) : r.row)),
+    rows,
     count: Math.min(count, COUNT_CAP),
-    count_capped: capped,
-    next: more && last ? { v: version, f: await fingerprint(f), n: served + rows.length,
-                           c: count, k: [f.sort === "pay" ? last.pay : 0, last.rkey],
-                           ...(useFts ? { p: 1 } : {}) } : null,
-    stats: { rows_read: probeRead + res.reduce((s, r) => s + (r.meta?.rows_read ?? 0), 0) },
+    count_capped: count > COUNT_CAP,
+    next: more && last ? { v: version, f: await fingerprint(f), n: served + page.length, c: count,
+                           k: [f.sort === "pay" ? last.pay : 0, last.rkey],
+                           ...(plan === "fts" ? { p: 1 } : {}) } : null,
+    stats: { rows_read: read, plan },
   };
 }
 

@@ -3,7 +3,7 @@
 // picker's title focus) answer for ~50 facet mixes, in order. The Worker must answer the same IDs
 // in the same order, walking every page through its cursors, with the same clock.
 import { beforeAll, describe, expect, it } from "vitest";
-import { forgetIndexVersion, handleSearch, parseParams, searchPage } from "../src/search";
+import { COUNT_CAP, forgetIndexVersion, handleSearch, parseParams, searchPage } from "../src/search";
 import fixture from "./fixtures/search-parity.json";
 import { env } from "./helpers";
 
@@ -22,30 +22,31 @@ async function walk(c: Case, limit: number) {
   const ids: string[] = [];
   let cursor = "";
   let count = -1;
+  let capped = false;
   for (let page = 0; page < 100; page++) {
     const qs = new URLSearchParams({ ...c.params, limit: String(limit), ...(cursor ? { cursor } : {}) });
     const res = await handleSearch(new Request(`https://api.test/v1/jobs/${c.mode}?${qs}`), free,
                                    c.mode, fixture.now_ms);
     expect(res.status).toBe(200);
     const data: any = await res.json();
-    if (count < 0) count = data.count;
+    if (count < 0) { count = data.count; capped = data.count_capped; }
     expect(data.count).toBe(count);                 // page 1's count rides along in the cursor
     ids.push(...data.jobs.map((j: any) => j.source_id));
     if (!data.next_cursor) break;
     cursor = data.next_cursor;
   }
-  return { ids, count };
+  return { ids, count, capped };
 }
 
 /** The same walk straight through searchPage with one plan forced: the small fixture always takes
  * the FTS plan through the route, and the ordered walk (what a broad term takes at 184k rows)
  * must answer the same rows. */
-async function walkPlan(c: Case, plan: "fts" | "scan") {
+async function walkPlan(c: Case, plan: "fts" | "scan" | "walk", budget?: number) {
   const { facets } = parseParams(new URLSearchParams(c.params), c.mode);
   const ids: string[] = [];
   let after = null;
   for (let page = 0; page < 100; page++) {
-    const r = await searchPage(free, facets, 11, after, fixture.index_version, fixture.now_ms, { plan });
+    const r = await searchPage(free, facets, 11, after, fixture.index_version, fixture.now_ms, { plan, budget });
     ids.push(...r.rows.map((row) => JSON.parse(row).source_id));
     if (!r.next) break;
     after = r.next;
@@ -62,16 +63,21 @@ describe("parity with sourcing/filters.apply_facets", () => {
 
   for (const c of fixture.cases as Case[]) {
     it(`${c.mode} ${JSON.stringify(c.params)}`, async () => {
-      const { ids, count } = await walk(c, c.mode === "search" ? 13 : 37);
+      const { ids, count, capped } = await walk(c, c.mode === "search" ? 13 : 37);
       expect(ids).toEqual(c.ids);
-      expect(count).toBe(c.ids.length);
+      // The count is exact up to the cap, then "200+".
+      expect(count).toBe(Math.min(c.ids.length, COUNT_CAP));
+      expect(capped).toBe(c.ids.length > COUNT_CAP);
     });
   }
 
-  for (const c of (fixture.cases as Case[]).filter((x) => x.params.q || x.params.loc || x.params.titles)) {
-    it(`both plans: ${c.mode} ${JSON.stringify(c.params)}`, async () => {
+  for (const c of fixture.cases as Case[]) {
+    it(`every plan: ${c.mode} ${JSON.stringify(c.params)}`, async () => {
       expect(await walkPlan(c, "scan")).toEqual(c.ids);
       expect(await walkPlan(c, "fts")).toEqual(c.ids);
+      // A tiny walk budget makes most pages fall back mid-walk; a large one never does.
+      expect(await walkPlan(c, "walk", 15)).toEqual(c.ids);
+      expect(await walkPlan(c, "walk", 100_000)).toEqual(c.ids);
     });
   }
 

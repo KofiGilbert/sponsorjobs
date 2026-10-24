@@ -109,7 +109,7 @@ describe("FTS escaping: user text is plain terms", () => {
 
   it("a phrase operator is matched literally, not obeyed", async () => {
     expect((await get("/v1/jobs/search?q=data%20OR%20nurse")).data.count).toBe(0);
-    expect((await get("/v1/jobs/search?q=engineer")).data.count).toBe(400);
+    expect((await get("/v1/jobs/search?q=engineer")).data).toMatchObject({ count: 200, count_capped: true });
   });
 });
 
@@ -161,7 +161,7 @@ describe("cursors", () => {
 });
 
 describe("depth and count", () => {
-  it("stops at 1,000 results and caps the count", async () => {
+  it("stops at 1,000 results and caps the count at 200", async () => {
     let cursor = "";
     let total = 0;
     let pages = 0;
@@ -176,13 +176,19 @@ describe("depth and count", () => {
     }
     expect(total).toBe(1000);
     expect(pages + 1).toBe(20);
-    expect(first.count).toBe(1000);
+    expect(first.count).toBe(200);
     expect(first.count_capped).toBe(true);
   });
 
-  it("an exact count below the cap", async () => {
-    const r = await get("/v1/jobs/search?q=engineer");
-    expect(r.data).toMatchObject({ count: 400, count_capped: false });
+  it("an exact count below the cap, and exactly at it", async () => {
+    let want = 0;
+    for (let i = 0; i < N; i += 3) if (`data engineer ${i}`.includes("engineer 3")) want++;
+    expect(want).toBeLessThan(200);
+    expect((await get("/v1/jobs/search?q=engineer%203")).data).toMatchObject({ count: want, count_capped: false });
+    // Exactly 200 matches is not "200+".
+    await env.SEARCH_DB.exec("DELETE FROM jobs WHERE id IN (SELECT id FROM jobs WHERE title_l LIKE 'data engineer%' LIMIT 200)");
+    await setVersion("v-exact");             // a new index: the edge cache holds the old answer
+    expect((await get("/v1/jobs/search?q=engineer")).data).toMatchObject({ count: 200, count_capped: false });
   });
 
   it("candidates stop at the same depth", async () => {
