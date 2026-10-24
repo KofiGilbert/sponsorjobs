@@ -124,7 +124,7 @@ GET /v1/jobs/search?q=&loc=&days=&remote=&visa=H1B,OPT&level=&pay=&sort=recent|p
   "jobs": [ <the same slim row the feed carries: source_id, source, company, title, location,
             remote, url, posted_at, first_seen, salary, sponsorship_stated, us, entry_level,
             visa, nationality_visas, sponsor, ad_stance> ],
-  "count": 812, "count_capped": false,        // capped at 1000 -> "1,000+"
+  "count": 112, "count_capped": false,        // exact up to 200, then 200 + true -> "200+"
   "next_cursor": "...",                       // keyset on (sort key, source_id); null at the end
   "index_version": "...", "generated_at": "..."
 }
@@ -214,6 +214,9 @@ so they run locally.
 Not deployed. Nothing runs until the owner says yes (Workers Paid, section 4) and adds the loader's
 token.
 
+- **Database**: its own D1 database, `sponsorjobs-search` (binding `SEARCH_DB`,
+  `worker/migrations-search/`), so search never queues behind billing and sign-ins in the broker's
+  database. `wrangler.jsonc` holds a placeholder id until the owner creates it (worker/README.md).
 - **Schema** (`worker/migrations-search/0001_job_search.sql`, in its own D1 database `sponsorjobs-search`, binding `SEARCH_DB`, so search never queues behind the broker's billing and sign-ins): `jobs` (the slim row as
   JSON plus columns the loader precomputes in Python: recency key, annual pay, posting time, lowered
   title / company / location, visa codes, flags), `job_extras` (the per-employer `sponsor`, `visa`,
@@ -225,8 +228,13 @@ token.
   parameter, 503 until an index is loaded, 409 `stale_cursor`, 429 `rate_limited`. The cursor is
   signed (HMAC); set `SEARCH_CURSOR_SECRET` before launch or a caller could forge one past the
   depth limit. Rate limits use the `ratelimits` binding in `wrangler.jsonc` (no resource to
-  create). Plan choice: a capped probe counts the FTS matches; few matches use the index, many
-  walk the ordered index (a common term in the index costs more than walking).
+  create); the install token is read from `X-Install-Token`, the header the client sends.
+  **Counts stop at 200** ("200+", 2026-10-24): counting to 1,000 was most of a keyword search's
+  cost. Plan choice: page 1 of a keyword search counts the index's matches up to
+  `ftsLimit = sqrt(15.5 * N)` (~1.7k at 184k rows, ~2.8k at 500k). Fewer: the index answers
+  exactly. More: the ordered index is walked, and for a keyword-only search the probe is the
+  count. Searches with no keyword walk the ordered index within a row budget. Keys and the count
+  come from one query; the page's rows are then read by id.
 - **Loader** (`scripts/load_search_index.py`, `feed.yml` step after the build, only when the
   `SEARCH_D1_TOKEN` secret is set, with `SEARCH_D1_ACCOUNT_ID` / `SEARCH_D1_DATABASE_ID`
   variables): diffs the feed against the last loaded state and sends deletes and upserts as SQL
@@ -240,19 +248,51 @@ token.
 
 ### Measured sizes and costs (local D1 in miniflare, the live 184,552-row list on 2026-10-24)
 
-| | 184k rows | 500k rows (list x2.7) |
+The 500k column loads that list 2.7 times over (new IDs, same text), so a term matches 2.7 times
+as many rows.
+
+| | 184k rows | 500k rows |
 |---|---|---|
 | storage | 326 MB (jobs 173, FTS 64, indexes ~80) | ~0.9-1.0 GB |
 | first load | 1,848 requests, 165 MB of SQL, 1.48M rows written | 5,043 requests, 4.0M rows written |
 | a 3-hourly diff (1% new, 1% changed, 1% removed) | 54 requests, ~26k rows written | ~70k rows written |
 | rows written a month (8 loads a day) | ~6M (included: 50M) | ~17M |
-| browse (no keyword, any of visa / days / level / sponsored / pay sort) | ~1.1k rows read | ~1.1k |
-| keyword, page 1 | 2k-45k (`engineer` 19k, `nurse` 34k, `software engineer` 35k) | 2k-60k |
-| keyword, later pages | 100-3k (more when the FTS plan was chosen) | similar |
 
-**Cost warning.** Section 2(a) assumed ~3k rows read a query. Keyword searches measure ~15-25k on
-average, and in the hybrid design (d) the server mostly sees keyword searches. At 10k MAU
-(~2.5M uncached searches) that is ~50B rows, **~$25/month** over the 25B included. At 100k MAU
-and 500k rows it is ~$450-600/month, not $20-70. The capped count drives most of it (the walk reads
-until it has 1,001 matches). Options for the owner: cap the count at 200 ("200+") or show "about N"
-from the probe, which cuts the common case roughly 5x; or accept the cost.
+Rows read by page 1 (later pages in brackets), counts capped at 200:
+
+| query | 184k | 500k |
+|---|---|---|
+| no keyword (default, `sort=pay`, `days=7`, `sponsored=1`, `pay=150000&sort=pay`) | 321 (150) | 321 (150) |
+| `visa=H-1B` / `level=entry` / `loc=remote` | 402 / 2,033 / 2,460 | 513 / 2,925 / 1,152 |
+| `q=engineer` | 1,953 (256) | 3,138 (247) |
+| `q=software engineer` | 2,523 (1,231) | 3,495 (640) |
+| `q=nurse` | 2,248 (929) | 3,789 (508) |
+| `q=data analyst&sort=pay` | 1,495 (1,190) | 3,785 (3,022) |
+| `loc=new york` | 2,093 (436) | 3,258 (265) |
+| `q=accountant&sort=pay` | 1,760 (1,402) | 4,540 (3,626) |
+| `q=engineer&visa=H-1B` / `q=engineer&days=7` | 3,633 / 2,988 | 4,274 / 3,752 |
+| `q=nurse&days=30` | 5,019 (929) | 6,692 (508) |
+| `q=analyst&loc=new york` | 2,930 (2,338) | 7,685 (6,142) |
+| `q=data scientist&remote=remote` | 2,919 (2,215) | 7,524 (5,709) |
+| `q=zzqx` (no match) | 2 | 2 |
+| expensive: a common keyword plus a rare facet mix (`q=engineer&level=entry`, `q=engineer&days=7&level=entry`, `q=product manager&visa=H-1B&days=14`) | 16k-28k | 22k-37k |
+
+A typical keyword search reads ~2-4k rows (184k) and ~3-8k (500k). Weighting 60% plain keyword,
+30% keyword plus a common facet and 10% of the expensive mixes gives an average of ~5k rows a
+keyword search at 184k and ~7k at 500k; searches with no keyword read under ~2.5k.
+
+**Monthly cost** (the plan's 500 searches per user a month, half answered by the edge cache, and
+assuming every search that reaches D1 is a keyword search, the worst case for design (d)):
+
+| | 10k MAU | 100k MAU |
+|---|---|---|
+| Worker requests (10M included, then $0.30/M) | 5M: $0 | 50M: ~$12 |
+| D1 queries | 2.5M | 25M |
+| rows read (25B included, then $0.001/M) | 12-18B: $0 | 125-175B: ~$100-150 |
+| rows written, storage | included | included |
+| **total** | **$5 (the Workers Paid plan)** | **~$115-165** |
+
+That is above the $20-70 first estimated in section 2(a) (which assumed ~3k rows a query at
+100k MAU), and well below the ~$450-600 that counting to 1,000 measured. Further cuts, if needed:
+the slice in phase 3 answers page 1 with no keyword on the device, and the expensive mixes could
+be answered from the FTS plan with a count of "about N".
