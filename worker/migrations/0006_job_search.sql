@@ -21,8 +21,17 @@ CREATE TABLE IF NOT EXISTS jobs (
     title_l     TEXT NOT NULL,             -- Python-lowered title, company, location: what q, loc
     company_l   TEXT NOT NULL,             -- and titles match against, exactly as apply_facets
     location_l  TEXT NOT NULL,             -- and picker._matches_focus lower them
-    row         TEXT NOT NULL              -- the slim row as canonical JSON, returned verbatim
+    xh          TEXT NOT NULL,             -- job_extras.h of the row's employer fields ("" = none)
+    row         TEXT NOT NULL              -- the slim row as canonical JSON, minus those fields
 );
+
+-- The employer fields (sponsor, visa, nationality_visas) are ~1.3 KB of a ~2 KB row and the same
+-- for every role at a company, so they are stored once per distinct value and joined back on read.
+-- This keeps the index (and the first load's request count) about a third of the size.
+CREATE TABLE IF NOT EXISTS job_extras (
+    h TEXT PRIMARY KEY,                    -- hash of v
+    v TEXT NOT NULL                        -- canonical JSON of the fields the row carries
+) WITHOUT ROWID;
 
 -- rkey is feedfile.recency_key folded into one string: "1" or "0" (dated or not), posting date,
 -- first seen and source_id joined by \x01, which sorts below every character the fields hold. So
