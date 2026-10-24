@@ -290,6 +290,9 @@ export async function searchPage(env: Env, f: Facets, limit: number, after: Curs
   if (match) {
     if (opts.plan) useFts = opts.plan === "fts";
     else if (after) useFts = after.p === 1;
+    // Under 1% of rows state sponsorship and a partial index walks just those: cheaper than
+    // reading any trigram's doclists, so no probe.
+    else if (f.sponsored) useFts = false;
     else {
       // How many rows the index matches, counted only up to the threshold (a cheap probe: the
       // FTS doclists, not the rows). Few matches: use them. Many: walk the ordered index.
