@@ -1958,7 +1958,8 @@ class AnthropicLLM:
             "0 = did not answer it, 1 = touched it, 2 = answered most of it, 3 = answered it fully "
             "and specifically.\n"
             "- evidence: ONE short sentence quoting or pointing at the part of the answer that "
-            "decided the coverage rating.\n"
+            "decided the coverage rating. Address the candidate directly as \"you\" (\"You said...\"), "
+            "never \"he\", \"she\" or \"they\": the person reads this about themselves.\n"
             "Return ONLY JSON: {\"star\":{\"situation\":bool,\"task\":bool,\"action\":bool,"
             "\"result\":bool},\"coverage\":int,\"evidence\":\"...\"}."
         )

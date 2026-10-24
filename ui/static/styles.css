@@ -4267,3 +4267,87 @@ body.cv-dragging * { cursor: grabbing !important; }
 .prep-past-score span { font-weight: 400; color: var(--faint); font-size: 11.5px; }
 .prep-past-score.no { color: var(--muted); }
 .prep-past-go { color: var(--faint); }
+
+/* ============ The interview report (design A2, 2026-10-23) ============
+   Grey like the rest of the app. Colour only for status (--good / --flag), always with a word. */
+.prep-live.is-report, .prep-live.is-report > .live-stage, .prep-screen.is-report, .prep-screen.is-report > .scr-stage { max-width: 1320px; }
+.prep-live.is-report > .mock-top, .prep-screen.is-report > .mock-top { display: none; }
+#view-prep:has(.is-report:not([hidden])) .page-head, #view-prep:has(.is-report:not([hidden])) .prep-progress { display: none; }
+.a2 { padding-bottom: 24px; }
+.a2 .num { font-variant-numeric: tabular-nums; }
+.a2-good { color: var(--good); } .a2-flag { color: var(--flag); } .a2-mid { color: var(--ink-2); }
+.a2-back { margin-bottom: 18px; }
+.a2-eyebrow, .a2-lab { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.a2-lab { margin-bottom: 14px; }
+.a2-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+.a2-title { font-size: 26px; font-weight: 650; color: var(--ink); margin: 8px 0 0; text-wrap: balance; }
+.a2-title span { font-weight: 400; color: var(--muted); font-size: 18px; }
+.a2-pill { flex: none; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px; }
+.a2-pill-flag { background: var(--flag-soft); color: var(--flag); } .a2-pill-good { background: var(--good-soft); color: var(--good); }
+.a2-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 900px) { .a2-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.a2-stat, .a2-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg, 14px); }
+.a2-stat { padding: 18px 20px; }
+.a2-stat-v { font-size: 30px; font-weight: 650; color: var(--ink); margin-top: 8px; }
+.a2-stat-v small { font-size: 14px; font-weight: 400; color: var(--faint); }
+.a2-stat-n { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.a2-stat-n b { font-weight: 600; }
+.a2-why { font-size: 14px; line-height: 1.65; color: var(--ink-2); max-width: 82ch; margin: 24px 0 0; }
+.a2-two { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; margin-top: 22px; }
+@media (max-width: 900px) { .a2-two { grid-template-columns: 1fr; } }
+.a2-two .a2-card { padding: 22px 24px; }
+.a2-fix { margin: 0; padding-left: 18px; }
+.a2-fix li { margin: 0 0 14px; } .a2-fix li:last-child { margin-bottom: 0; }
+.a2-fix-h { font-weight: 600; font-size: 13.5px; color: var(--ink); line-height: 1.5; }
+.a2-fix-d { font-size: 12.5px; color: var(--muted); line-height: 1.55; margin-top: 3px; }
+.a2-skill { display: grid; grid-template-columns: minmax(0, 150px) 1fr 30px; gap: 12px; align-items: center; margin: 0 0 12px; font-size: 13px; color: var(--ink); }
+.a2-skill > span:last-child { text-align: right; }
+.a2-bar { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.a2-bar b { display: block; height: 100%; border-radius: 999px; background: currentColor; }
+.a2-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 30px 0 16px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.a2-tab { font: inherit; font-size: 13px; padding: 10px 14px; color: var(--muted); background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.a2-tab span { color: var(--faint); margin-left: 3px; }
+.a2-tab:hover { color: var(--ink); } .a2-tab.is-on { color: var(--ink); border-bottom-color: var(--ink); }
+.a2-q { border-top: 1px solid var(--border); } .a2-q:first-child { border-top: 0; }
+.a2-q-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 150px 170px 14px; gap: 14px; align-items: center; width: 100%; padding: 16px 20px;
+  background: none; border: 0; text-align: left; font: inherit; font-size: 13.5px; color: var(--ink); }
+.a2-q-row:hover { background: var(--surface-2); }
+.a2-qn { color: var(--faint); font-size: 12px; } .a2-qt { font-weight: 500; line-height: 1.5; } .a2-qc { color: var(--muted); font-size: 12px; }
+.a2-qs { display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap; }
+.a2-qs b { font-weight: 700; } .a2-qs small { color: var(--faint); font-size: 11px; }
+.a2-qw { font-size: 11.5px; font-weight: 600; margin-right: 4px; }
+.a2-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
+.a2-chev { width: 8px; height: 8px; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); transform: rotate(-45deg); transition: transform .15s; }
+.a2-q.is-open .a2-chev { transform: rotate(45deg); }
+.a2-q-body { display: none; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; padding: 0 20px 20px 62px; }
+.a2-q.is-open .a2-q-body { display: grid; }
+@media (max-width: 900px) { .a2-q-body { grid-template-columns: 1fr; padding-left: 20px; } .a2-q-row { grid-template-columns: 24px minmax(0, 1fr) auto 14px; } .a2-qc { display: none; } }
+.a2-said { font-size: 13px; line-height: 1.6; color: var(--ink-2); border-left: 2px solid var(--border-strong); padding-left: 12px; margin: 8px 0 12px; }
+.a2-fb { font-size: 13px; line-height: 1.6; color: var(--ink-2); margin: 8px 0 12px; }
+.a2-star { display: inline-flex; gap: 4px; }
+.a2-star i { font-style: normal; width: 22px; height: 22px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
+  border: 1px solid var(--border-strong); color: var(--faint); }
+.a2-star i.on { background: var(--accent-soft); color: var(--ink); }
+.a2-tr { padding: 20px 24px; font-size: 13px; line-height: 1.7; color: var(--ink-2); }
+.a2-none { color: var(--muted); font-size: 13px; }
+.a2-pane .rc-goals { margin-top: 0; }
+.a2-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--border); }
+
+/* Interview setup (choice B, 2026-10-23): the form fills the screen, the job description grows
+   into the space, Start sits right under the resume, and a quiet side panel says what happens. */
+.prep-setup { display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: 1fr auto; padding: 0;
+  min-height: calc(100vh - 210px); }
+.prep-setup[hidden] { display: none; }
+.prep-setup > .prep-open { grid-column: 1; padding: 30px 32px 0; }
+.prep-setup > .prep-setup-acts { grid-column: 1; padding: 0 32px 30px; }
+.prep-setup > .prep-open #prepOpenJd { flex: 1; min-height: 220px; resize: none; }
+.prep-setup-side { grid-column: 2; grid-row: 1 / span 2; padding: 30px 28px; background: var(--surface-2); border-left: 1px solid var(--border);
+  border-radius: 0 var(--r-lg) var(--r-lg) 0; }
+.prep-side-h { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-bottom: 20px; }
+.prep-side-step { display: grid; grid-template-columns: 26px 1fr; gap: 14px; margin-bottom: 20px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.prep-side-step b { display: block; color: var(--ink); font-weight: 600; }
+.prep-side-step i { font-style: normal; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--border-strong); display: flex;
+  align-items: center; justify-content: center; font-size: 12px; color: var(--muted); }
+.prep-side-foot { font-size: 12px; color: var(--faint); line-height: 1.55; margin: 24px 0 0; padding-top: 16px; border-top: 1px solid var(--border); }
+@media (max-width: 900px) { .prep-setup { grid-template-columns: 1fr; min-height: 0; } .prep-setup-side { grid-column: 1; grid-row: auto;
+  border-left: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--r-lg) var(--r-lg); } }

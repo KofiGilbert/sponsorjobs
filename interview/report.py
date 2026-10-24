@@ -63,6 +63,12 @@ def answer_metrics(transcript: str, seconds: float | None = None) -> dict:
     text = (transcript or "").strip()
     words = _word_count(text)
     measured = seconds is not None and float(seconds) > 0
+    # A live transcript's timestamps can be wrong for one turn (57 words in 1.4 s, 2,443 words a
+    # minute). Nobody speaks faster than 300 words a minute, so such a time is not a measurement:
+    # estimate it from the word count instead, and say so, rather than report an impossible pace.
+    # (Slow is real: a long pause to think counts, so there is no lower limit.)
+    if measured and words and words / (float(seconds) / 60.0) > 300:
+        measured = False
     secs = round(float(seconds), 1) if measured else round(words / _ESTIMATE_WPM * 60, 1)
     fill = count_fillers(text)
     minutes = secs / 60.0 if secs else 0
