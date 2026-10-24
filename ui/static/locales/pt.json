@@ -1110,5 +1110,7 @@
   "tracker.welcomeH": "Todas as candidaturas em um só lugar",
   "tracker.welcomeP": "Salve uma vaga ou adapte um currículo e ela chega em Salvas. Mova conforme tiver retorno.",
   "tracker.findJobs": "Encontrar vagas",
-  "tracker.seeAuto": "Ver candidatura automática"
+  "tracker.seeAuto": "Ver candidatura automática",
+  "tracker.interviewLow": "entrevista",
+  "tracker.offerLow": "oferta"
 }

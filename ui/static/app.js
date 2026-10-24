@@ -4060,8 +4060,8 @@
         <label class="trk-goal-lbl">${esc(trkT("tracker.ofGoal", "of"))} <input class="fld trk-goal-in" id="trkGoal" type="number" min="0" max="500" value="${goal.target}" aria-label="${esc(trkT("tracker.goal", "Weekly goal"))}"> ${esc(trkT("tracker.thisWeekShort", "this week"))}</label>
         <span class="trk-goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${goal.target ? goal.pct : 0}"><span class="trk-goal-fill" style="width:${goal.target ? goal.pct : 0}%"></span></span></div>
       <div class="trk-st"><b class="num">${m.applied_total}</b>${esc(trkT("tracker.appliedLow", "applied"))}</div>
-      <div class="trk-st"><b class="num">${m.interviews}</b>${esc(trkT("tracker.interviewsLow", "interviews"))}${any ? ` <span class="trk-st-f">${m.pct_interview}%</span>` : ""}</div>
-      <div class="trk-st"><b class="num">${m.offers}</b>${esc(trkT("tracker.offersLow", "offers"))}</div>
+      <div class="trk-st"><b class="num">${m.interviews}</b>${esc(m.interviews === 1 ? trkT("tracker.interviewLow", "interview") : trkT("tracker.interviewsLow", "interviews"))}${any ? ` <span class="trk-st-f">${m.pct_interview}%</span>` : ""}</div>
+      <div class="trk-st"><b class="num">${m.offers}</b>${esc(m.offers === 1 ? trkT("tracker.offerLow", "offer") : trkT("tracker.offersLow", "offers"))}</div>
       ${median != null ? `<div class="trk-st"><b class="num">${esc(String(median))}</b>${esc(trkT("tracker.daysToFirst", "days to first interview"))}</div>` : ""}
       ${any ? `<div class="trk-st trk-st-spark">${esc(trkT("tracker.weeks12", "12 weeks"))}<span class="trk-spark">${bars}</span></div>`
             : `<div class="trk-st trk-st-spark trk-st-hint">${esc(trkT("tracker.fillsIn", "Your weekly numbers fill in as you apply"))}</div>`}`;

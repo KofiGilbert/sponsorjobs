@@ -1110,5 +1110,7 @@
   "tracker.welcomeH": "Every application, in one place",
   "tracker.welcomeP": "Save a job or tailor a resume and it lands in Saved. Drag it along as you hear back.",
   "tracker.findJobs": "Find jobs",
-  "tracker.seeAuto": "See auto-apply"
+  "tracker.seeAuto": "See auto-apply",
+  "tracker.interviewLow": "interview",
+  "tracker.offerLow": "offer"
 }

@@ -1110,5 +1110,7 @@
   "tracker.welcomeH": "Toutes tes candidatures, au même endroit",
   "tracker.welcomeP": "Enregistre une offre ou adapte un CV, elle arrive dans Enregistrées. Fais-la avancer au fil des réponses.",
   "tracker.findJobs": "Trouver des offres",
-  "tracker.seeAuto": "Voir la candidature auto"
+  "tracker.seeAuto": "Voir la candidature auto",
+  "tracker.interviewLow": "entretien",
+  "tracker.offerLow": "offre"
 }

@@ -1110,5 +1110,7 @@
   "tracker.welcomeH": "Cada postulación, en un solo lugar",
   "tracker.welcomeP": "Guarda un empleo o adapta un currículum y llega a Guardados. Muévelo según te respondan.",
   "tracker.findJobs": "Buscar empleos",
-  "tracker.seeAuto": "Ver postulación automática"
+  "tracker.seeAuto": "Ver postulación automática",
+  "tracker.interviewLow": "entrevista",
+  "tracker.offerLow": "oferta"
 }

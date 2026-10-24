@@ -1110,5 +1110,7 @@
   "tracker.welcomeH": "Alle Bewerbungen an einem Ort",
   "tracker.welcomeP": "Speichere eine Stelle oder passe einen Lebenslauf an, dann landet sie unter Gespeichert. Schieb sie weiter, sobald du etwas hörst.",
   "tracker.findJobs": "Jobs finden",
-  "tracker.seeAuto": "Auto-Bewerbung ansehen"
+  "tracker.seeAuto": "Auto-Bewerbung ansehen",
+  "tracker.interviewLow": "Interview",
+  "tracker.offerLow": "Angebot"
 }
