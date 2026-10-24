@@ -1014,6 +1014,7 @@
   "prep.passTag": "Pass",
   "builder.acceptFit": "Auf eine Seite gebracht, prüfen und übernehmen.",
   "builder.acceptSave": "Sieht gut aus? Übernehmen, um ihn unter Lebensläufe zu speichern.",
+  "upg.finishInBrowser": "Schließe die Zahlung in deinem Browser ab. Dein Pass erscheint hier automatisch.",
   "r2.connecting": "Verbindung zu deinem Interviewer...",
   "r2.mute": "Stumm",
   "r2.unmute": "Ton an",

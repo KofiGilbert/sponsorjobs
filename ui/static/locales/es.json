@@ -1014,6 +1014,7 @@
   "prep.passTag": "Pase",
   "builder.acceptFit": "Ajustado a una página, revisa y acepta.",
   "builder.acceptSave": "¿Se ve bien? Acepta para guardarlo en CV.",
+  "upg.finishInBrowser": "Termina el pago en tu navegador. Tu pase aparecerá aquí automáticamente.",
   "r2.connecting": "Conectando con tu entrevistador...",
   "r2.mute": "Silenciar",
   "r2.unmute": "Activar audio",

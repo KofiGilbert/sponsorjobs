@@ -202,6 +202,9 @@ const OWN_BROWSER_HOSTS = [
   "platform.openai.com", "auth.openai.com",
   "platform.tavus.io",
   "accounts.google.com", "appleid.apple.com", "login.microsoftonline.com", "login.live.com",
+  // Payment pages open in the person's own browser (saved cards, password managers, a real
+  // address bar), never in the in-app pane behind the Passes window (Kofi, 2026-10-23).
+  "checkout.stripe.com", "billing.stripe.com",
 ];
 
 function opensInOwnBrowser(url) {
