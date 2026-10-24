@@ -4332,3 +4332,22 @@ body.cv-dragging * { cursor: grabbing !important; }
 .a2-none { color: var(--muted); font-size: 13px; }
 .a2-pane .rc-goals { margin-top: 0; }
 .a2-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--border); }
+
+/* Interview setup (choice B, 2026-10-23): the form fills the screen, the job description grows
+   into the space, Start sits right under the resume, and a quiet side panel says what happens. */
+.prep-setup { display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: 1fr auto; padding: 0;
+  min-height: calc(100vh - 210px); }
+.prep-setup[hidden] { display: none; }
+.prep-setup > .prep-open { grid-column: 1; padding: 30px 32px 0; }
+.prep-setup > .prep-setup-acts { grid-column: 1; padding: 0 32px 30px; }
+.prep-setup > .prep-open #prepOpenJd { flex: 1; min-height: 220px; resize: none; }
+.prep-setup-side { grid-column: 2; grid-row: 1 / span 2; padding: 30px 28px; background: var(--surface-2); border-left: 1px solid var(--border);
+  border-radius: 0 var(--r-lg) var(--r-lg) 0; }
+.prep-side-h { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-bottom: 20px; }
+.prep-side-step { display: grid; grid-template-columns: 26px 1fr; gap: 14px; margin-bottom: 20px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.prep-side-step b { display: block; color: var(--ink); font-weight: 600; }
+.prep-side-step i { font-style: normal; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--border-strong); display: flex;
+  align-items: center; justify-content: center; font-size: 12px; color: var(--muted); }
+.prep-side-foot { font-size: 12px; color: var(--faint); line-height: 1.55; margin: 24px 0 0; padding-top: 16px; border-top: 1px solid var(--border); }
+@media (max-width: 900px) { .prep-setup { grid-template-columns: 1fr; min-height: 0; } .prep-setup-side { grid-column: 1; grid-row: auto;
+  border-left: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--r-lg) var(--r-lg); } }

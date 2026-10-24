@@ -6073,8 +6073,34 @@
   async function prepPrefill() {
     try { return await api("/api/preps/prefill"); } catch { return null; }
   }
+  // The setup page's side panel: the steps this interview will take, in its own words.
+  const SETUP_STEPS = {
+    rec: [["prep.stRec1", "Camera and mic check", "prep.stRec1d", "See and hear yourself first."],
+          ["prep.stRec2", "One practice question", "prep.stRec2d", "Not scored. Settle in."],
+          ["prep.stRec3", "Five questions from this job", "prep.stRec3d", "30 seconds to think, 2 minutes to answer, one retake each."],
+          ["prep.stRep", "Your report", "prep.stRepd", "A score, what to fix first, and every answer reviewed."]],
+    live: [["prep.stLive1", "Camera and mic check", "prep.stLive1d", "See yourself before you join."],
+           ["prep.stLive2", "Join", "prep.stLive2d", "One click. The interviewer greets you, and your time starts then."],
+           ["prep.stLive3", "About 20 minutes", "prep.stLive3d", "Questions from this job, with follow-ups like a real interviewer."],
+           ["prep.stRep", "Your report", "prep.stRepd", "A score, what to fix first, and every answer reviewed."]],
+    full: [["prep.stFull1", "Round 1, recorded", "prep.stFull1d", "Five timed questions on camera."],
+           ["prep.stFull2", "Score 70 to go on", "prep.stFull2d", "Passing Round 1 opens the live round."],
+           ["prep.stFull3", "Round 2, live", "prep.stFull3d", "About 20 minutes with a live interviewer."],
+           ["prep.stRep", "Your report", "prep.stRepd", "A score, what to fix first, and every answer reviewed."]],
+  };
+  const SETUP_FOOT = {
+    rec: ["prep.ftRec", "Recordings stay on this computer. You can delete them any time."],
+    live: ["prep.ftLive", "Nothing is used from your pass until the interviewer is on screen."],
+    full: ["prep.ftRec", "Recordings stay on this computer. You can delete them any time."],
+  };
+  function paintSetupSide(mode) {
+    const box = $("#prepSetupSide"); if (!box || !SETUP_STEPS[mode]) return;
+    box.innerHTML = `<div class="prep-side-h">${esc(T("prep.whatHappens", "What happens"))}</div>
+      ${SETUP_STEPS[mode].map(([k, t, kd, d], i) => `<div class="prep-side-step"><i>${i + 1}</i><div><b>${esc(T(k, t))}</b>${esc(T(kd, d))}</div></div>`).join("")}
+      <p class="prep-side-foot">${esc(T(SETUP_FOOT[mode][0], SETUP_FOOT[mode][1]))}</p>`;
+  }
   async function openPrepSetup(mode) {
-    PREP_MODE = mode; paintPrepHead(mode);
+    PREP_MODE = mode; paintPrepHead(mode); paintSetupSide(mode);
     if ($("#prepChoices")) $("#prepChoices").hidden = true;
     if ($("#prepPastPage")) $("#prepPastPage").hidden = true;
     if ($("#prepSetup")) $("#prepSetup").hidden = false;
