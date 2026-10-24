@@ -42,6 +42,14 @@
     }
   ],
 
+  // Job search rate limits (src/search.ts): 60 a minute per install token, 300 per network. The
+  // namespace ids are our own labels (any number unique in the account), not created resources.
+  // Approximate and per Cloudflare location; a WAF rate-limit rule is the backstop.
+  "ratelimits": [
+    { "name": "SEARCH_TOKEN_LIMITER", "namespace_id": "7101", "simple": { "limit": 60, "period": 60 } },
+    { "name": "SEARCH_IP_LIMITER", "namespace_id": "7102", "simple": { "limit": 300, "period": 60 } }
+  ],
+
   // Defaults matching backend/broker.py and backend/metering.py. Override per deployment here or
   // in the dashboard; they are plain settings, not secrets.
   "vars": {

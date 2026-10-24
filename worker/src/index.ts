@@ -28,6 +28,7 @@ import {
   recordAvatarSession, recordLlm, takeFreePackage, takePassPackage,
 } from "./store";
 import { emailStart, emailVerify, googleCallback, googleStart } from "./signin";
+import { handleSearch } from "./search";
 import { createConversation, endConversation, transcript } from "./tavus";
 
 const json = (data: unknown, status = 200): Response =>
@@ -55,7 +56,10 @@ function pyInt(v: unknown): number {
   throw new TypeError("max_tokens is not an integer");
 }
 
-interface Ctx { req: Request; env: Env; now: number /* unix seconds */; nowMs: number }
+interface Ctx {
+  req: Request; env: Env; now: number /* unix seconds */; nowMs: number;
+  exec?: { waitUntil(p: Promise<unknown>): void };
+}
 type Handler = (c: Ctx) => Promise<Response> | Response;
 
 // ---- phase 1 ---------------------------------------------------------------------------------- //
@@ -403,10 +407,13 @@ const ROUTES: Route[] = [
   ["GET", /^\/notify\/telegram\/(status|inbox)$/, off("telegram_not_configured")],
   ["POST", /^\/notify\/telegram\/(link|unlink|send|send_media|edit)$/, off("telegram_not_configured")],
   ["POST", /^\/telegram\/webhook$/, off("telegram_not_configured")],
+  // Server-side job search (src/search.ts, docs/server-search-plan.md). Public postings only.
+  ["GET", /^\/v1\/jobs\/search$/, ({ req, env, nowMs, exec }) => handleSearch(req, env, "search", nowMs, exec)],
+  ["GET", /^\/v1\/jobs\/candidates$/, ({ req, env, nowMs, exec }) => handleSearch(req, env, "candidates", nowMs, exec)],
 ];
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, exec?: ExecutionContext): Promise<Response> {
     const path = new URL(req.url).pathname;
     const nowMs = Date.now();
     // The admin host serves ONLY the read-only dashboard, and only behind a verified Cloudflare
@@ -426,7 +433,7 @@ export default {
     const route = matches.find(([m]) => m === method);
     if (!route) return json({ error: "method not allowed" }, 405);
     try {
-      return await route[2]({ req, env, now: Math.floor(nowMs / 1000), nowMs });
+      return await route[2]({ req, env, now: Math.floor(nowMs / 1000), nowMs, exec });
     } catch (err) {
       // A bug or a D1 hiccup: answer JSON the app can read, never a stack trace.
       console.error(`${req.method} ${path} failed:`, err instanceof Error ? err.stack ?? err.message : err);
