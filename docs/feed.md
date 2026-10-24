@@ -510,9 +510,16 @@ publish filter, the other two delete rows:
    is never dropped because its board was down. "Partial" (`service.listing_complete`) means the
    adapter's own cap was reached: Amazon returns the newest `AMAZON_MAX_JOBS`, a Workday board that
    listed `WORKDAY_MAX_JOBS` or Workday's 2,000-row ceiling (so a giant, split Workday board stays
-   on the 21-day rule), or `JOBS_MAX_PER_COMPANY` rows were kept. Rows whose `source_id` does not
-   start with a watched board's `ats:board_id:` (the aggregators, the career-site lane) have no
-   board row and are left to rule 3.
+   on the 21-day rule), or `JOBS_MAX_PER_COMPANY` rows were kept. A **collapsed listing** is
+   partial too (`service.listing_collapsed`): a 200 that lists no rows at all, or fewer than a
+   fifth of what the board's last full read listed when that was 20 or more (`board_crawl.rows`,
+   or the stored rows before any read was recorded), is a broken or changed API answer more
+   often than an emptied board, so it is stamped `last_partial` with `error` = "listing
+   collapsed: 0 of 480" and the rows keep the 21-day rule. A normal shrink (480 to 410) is a
+   full read. The trade-off: a board an employer genuinely emptied keeps its rows the full 21
+   days, as before this rule; the fast rule only ever speeds up rows on boards that still list
+   something. Rows whose `source_id` does not start with a watched board's `ats:board_id:` (the
+   aggregators, the career-site lane) have no board row and are left to rule 3.
 3. **Stale** (`Watchlist.prune_stale`, `scheduler.PRUNE_DAYS`, env `JOBS_PRUNE_DAYS`, default 21):
    every row unseen for 21 days is deleted, whatever its board did. The safety net, as before.
 

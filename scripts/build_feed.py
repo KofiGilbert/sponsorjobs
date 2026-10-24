@@ -231,17 +231,23 @@ def merge_delta(jobs_db, data_dir, delta_path, log=print) -> dict:
             # Newer wins, per column: each timestamp keeps the later of the two, and the error
             # text and streak come from the copy stamped last. Idempotent and order-free, like
             # the rows above. A delta from a build before the table existed simply has none.
+            # `rows` (the last full read's count) follows the later last_ok. Columns a delta
+            # from an older build lacks are left as they are.
+            bcols = [r[1] for r in conn.execute("PRAGMA d.table_info(board_crawl)")]
             later = "excluded.updated_at >= coalesce(board_crawl.updated_at, '')"
+            later_ok = "coalesce(excluded.last_ok, '') >= coalesce(board_crawl.last_ok, '')"
+            sets = [f"{c}=nullif(max(coalesce(board_crawl.{c}, ''), coalesce(excluded.{c}, '')), '')"
+                    for c in ("last_ok", "last_partial", "last_error", "updated_at")]
+            sets += [f"error=CASE WHEN {later} THEN excluded.error ELSE board_crawl.error END",
+                     f"consecutive_errors=CASE WHEN {later} THEN excluded.consecutive_errors "
+                     "ELSE board_crawl.consecutive_errors END"]
+            if "rows" in bcols:
+                sets.append(f"rows=CASE WHEN {later_ok} THEN excluded.rows ELSE board_crawl.rows END")
+            cl = ", ".join(c for c in ("ats", "board_id", "last_ok", "last_partial", "last_error", "error",
+                                       "consecutive_errors", "updated_at", "rows") if c in bcols)
             conn.execute(
-                "INSERT INTO main.board_crawl (ats, board_id, last_ok, last_partial, last_error, error, "
-                "consecutive_errors, updated_at) SELECT ats, board_id, last_ok, last_partial, "
-                "last_error, error, consecutive_errors, updated_at FROM d.board_crawl WHERE true "
-                "ON CONFLICT(ats, board_id) DO UPDATE SET "
-                + ", ".join(f"{c}=nullif(max(coalesce(board_crawl.{c}, ''), coalesce(excluded.{c}, '')), '')"
-                            for c in ("last_ok", "last_partial", "last_error", "updated_at"))
-                + f", error=CASE WHEN {later} THEN excluded.error ELSE board_crawl.error END"
-                f", consecutive_errors=CASE WHEN {later} THEN excluded.consecutive_errors "
-                "ELSE board_crawl.consecutive_errors END")
+                f"INSERT INTO main.board_crawl ({cl}) SELECT {cl} FROM d.board_crawl WHERE true "
+                "ON CONFLICT(ats, board_id) DO UPDATE SET " + ", ".join(sets))
         meta = dict(conn.execute("SELECT k, v FROM d.delta_meta").fetchall()) \
             if _has_table(conn, "d", "delta_meta") else {}
         conn.commit()

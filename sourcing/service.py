@@ -119,6 +119,23 @@ def listing_complete(ats: str, jobs: list) -> bool:
     return True
 
 
+COLLAPSE_MIN_ROWS = 20          # a board this big that shrinks below COLLAPSE_FRACTION has collapsed
+COLLAPSE_FRACTION = 0.2
+
+
+def listing_collapsed(listed: int, previous: int) -> bool:
+    """Whether a successful read that listed `listed` postings, on a board whose last full read
+    (or stored rows) numbered `previous`, is a collapsed listing rather than the board: a 200
+    with no rows, or under a fifth of last time on a board of 20 or more. A collapse is recorded
+    as a partial read, so the fast prune does not act on it and the 21-day rule protects the
+    rows. The price: a board an employer genuinely emptied keeps its rows the full 21 days."""
+    if previous <= 0:
+        return False
+    if listed == 0:
+        return True
+    return previous >= COLLAPSE_MIN_ROWS and listed < previous * COLLAPSE_FRACTION
+
+
 def max_detail_for(ats: str) -> int:
     """The per-board detail budget of a list-only ATS for a DESKTOP refresh (env
     WORKDAY_MAX_DETAIL / SMARTRECRUITERS_MAX_DETAIL, default 200)."""
@@ -338,6 +355,12 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
             # own, or MAX_PER_COMPANY below) may have left live rows unlisted, so it is recorded
             # as partial and the fast prune (store.prune_unlisted) leaves its rows alone.
             full = listing_complete(w["ats"], jobs)
+            listed = len(jobs)
+            # A 200 with no rows, or a fraction of what the board listed last time, is a broken
+            # or changed listing more often than an emptied board; it counts as partial too, so
+            # the rows keep the long rule (listing_collapsed). Measured before the upsert.
+            previous = store.last_full_count(w["ats"], w["board_id"])
+            collapsed = listing_collapsed(listed, previous)
             if w["ats"] in DETAIL_BUDGET_ENV:
                 if w["ats"] not in known:
                     known[w["ats"]] = store.source_ids_with_jd(w["ats"])
@@ -358,7 +381,13 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
         matched += len(keep)
         n, _ = store.upsert_jobs(keep)
         new_total += n
-        store.record_crawl(w["ats"], w["board_id"], True, complete=full)   # after the upsert
+        if collapsed:                                     # after the upsert, like the two below
+            store.record_crawl(w["ats"], w["board_id"], True, complete=False,
+                               error=f"listing collapsed: {listed} of {previous}")
+        elif full:
+            store.record_crawl(w["ats"], w["board_id"], True, rows=listed)
+        else:
+            store.record_crawl(w["ats"], w["board_id"], True, complete=False, error="stopped at a cap")
 
     # 2) Aggregator keyword feeds (Remotive, ...). Keyless, remote-only, GREEN lane.
     # Run one search per title term (bounded) so we never pull the whole firehose, and

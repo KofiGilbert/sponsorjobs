@@ -366,3 +366,118 @@ def test_a_dismissed_row_survives_the_fast_prune_so_it_does_not_come_back(tmp_pa
     w.record_crawl("greenhouse", "acme", True)
     assert w.prune_unlisted(7) == 0 and sid in w.dismissed_ids()
     w.close()
+
+
+# -- a collapsed listing is not a full read ---------------------------------------------------- #
+
+def _watch(tmp_path, monkeypatch, board="acme"):
+    import sourcing.service as service
+    monkeypatch.setattr(service, "MAX_PER_COMPANY", 25000)  # the feed's cap, not the desktop's 60
+    w = Watchlist(tmp_path / "wl.db")
+    w.add_company(board.title(), "greenhouse", board)
+    w.set_criteria({"titles": [], "locations": [], "remote": "any", "aggregators": []})
+    boards = {board: list(range(1, 481))}                    # 480 postings last time
+
+    def fetch(url, timeout=20):
+        b = url.split("/boards/")[1].split("/")[0]
+        return _gh(b, boards[b])
+
+    service.refresh_watchlist(w, fetch=fetch, include_aggregators=False)
+    assert _crawl(w, "greenhouse", board)["rows"] == 480     # the full count is remembered
+    for i in range(1, 481):
+        _age(w, f"greenhouse:{board}:{i}", 10)
+    w._conn.execute("UPDATE board_crawl SET last_ok=datetime('now','-10 days'), "
+                    "updated_at=datetime('now','-10 days')")
+    w._conn.commit()
+    return w, boards, fetch, service
+
+
+def test_listing_collapsed_rule():
+    from sourcing.service import listing_collapsed
+    assert listing_collapsed(0, 480) and listing_collapsed(0, 1)
+    assert listing_collapsed(95, 480) and not listing_collapsed(96, 480)   # under a fifth
+    assert not listing_collapsed(410, 480)                   # a normal shrink
+    assert not listing_collapsed(2, 5)                       # small boards: only zero rows count
+    assert not listing_collapsed(0, 0) and not listing_collapsed(5, 0)     # nothing to compare
+
+
+def test_an_empty_200_does_not_stamp_last_ok_and_the_rows_keep_the_21_day_rule(tmp_path, monkeypatch):
+    w, boards, fetch, service = _watch(tmp_path, monkeypatch)
+    boards["acme"] = []                                      # 200, zero rows
+    service.refresh_watchlist(w, fetch=fetch, include_aggregators=False)
+    r = _crawl(w, "greenhouse", "acme")
+    assert r["last_partial"] and r["last_ok"] < r["last_partial"]
+    assert r["error"] == "listing collapsed: 0 of 480" and r["rows"] == 480
+    assert w.prune_unlisted(7) == 0                          # protected
+    for i in range(1, 481):
+        _age(w, f"greenhouse:acme:{i}", 22)
+    assert w.prune_stale(21) == 480                          # the 21-day rule still applies
+    w.close()
+
+
+def test_a_collapse_below_a_fifth_does_not_stamp_last_ok(tmp_path, monkeypatch):
+    w, boards, fetch, service = _watch(tmp_path, monkeypatch)
+    boards["acme"] = list(range(1, 51))                      # 50 of 480
+    service.refresh_watchlist(w, fetch=fetch, include_aggregators=False)
+    r = _crawl(w, "greenhouse", "acme")
+    assert r["last_partial"] and r["error"] == "listing collapsed: 50 of 480" and r["rows"] == 480
+    assert w.prune_unlisted(7) == 0
+    w.close()
+
+
+def test_a_normal_shrink_is_a_full_read_and_prunes_the_missing_rows(tmp_path, monkeypatch):
+    w, boards, fetch, service = _watch(tmp_path, monkeypatch)
+    boards["acme"] = list(range(1, 411))                     # 410 of 480
+    service.refresh_watchlist(w, fetch=fetch, include_aggregators=False)
+    r = _crawl(w, "greenhouse", "acme")
+    assert r["last_ok"] == r["updated_at"] and not r["last_partial"] and r["rows"] == 410
+    assert w.prune_unlisted(7) == 70                         # the 70 taken down go
+    w.close()
+
+
+def test_a_genuinely_emptied_board_waits_the_full_21_days(tmp_path, monkeypatch):
+    """The trade-off: an employer that removed every posting looks the same as a broken API."""
+    w, boards, fetch, service = _watch(tmp_path, monkeypatch)
+    boards["acme"] = []
+    for _ in range(3):                                       # run after run, still empty
+        service.refresh_watchlist(w, fetch=fetch, include_aggregators=False)
+    assert w.prune_unlisted(7) == 0
+    assert w._conn.execute("SELECT COUNT(*) FROM sourced_job").fetchone()[0] == 480
+    w.close()
+
+
+def test_before_any_read_the_stored_rows_are_the_comparison(tmp_path):
+    w = Watchlist(tmp_path / "wl.db")
+    w.upsert_jobs([_job(f"greenhouse:acme:{i}") for i in range(30)])
+    assert w.last_full_count("greenhouse", "acme") == 30
+    assert w.last_full_count("greenhouse", "other") == 0
+    w.record_crawl("greenhouse", "acme", True, rows=25)
+    assert w.last_full_count("greenhouse", "acme") == 25     # the recorded count takes over
+    w.record_crawl("greenhouse", "acme", True, complete=False, error="stopped at a cap")
+    assert w.last_full_count("greenhouse", "acme") == 25     # a partial read does not change it
+    w.close()
+
+
+def test_the_merge_carries_rows_with_the_later_full_read(tmp_path):
+    from scripts import build_feed
+    base = tmp_path / "base"
+    base.mkdir()
+    db = base / "resume_agent.db"
+    w = Watchlist(db)
+    w.record_crawl("greenhouse", "acme", True, rows=480)
+    w._conn.execute("UPDATE board_crawl SET last_ok=datetime('now','-1 day'), updated_at=datetime('now','-1 day')")
+    w._conn.commit()
+    w.close()
+    since = sqlite3.connect(db).execute("SELECT CURRENT_TIMESTAMP").fetchone()[0]
+    d = tmp_path / "a"
+    d.mkdir()
+    _copy_db(db, d / "resume_agent.db")
+    s = Watchlist(d / "resume_agent.db")
+    s.record_crawl("greenhouse", "acme", True, rows=410)
+    s.close()
+    build_feed.export_delta(d / "resume_agent.db", d, since, tmp_path / "a.db")
+    for _ in range(2):
+        build_feed.merge_delta(db, base, tmp_path / "a.db", log=lambda *a: None)
+        w = Watchlist(db)
+        assert _crawl(w, "greenhouse", "acme")["rows"] == 410
+        w.close()
