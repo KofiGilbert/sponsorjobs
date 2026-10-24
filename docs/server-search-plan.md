@@ -1,6 +1,7 @@
 # Server-side job search: when and how
 
-**Status: plan (2026-10-23). Nothing here is built.** Prices were read from Cloudflare's and the
+**Status: phase 1 built 2026-10-23; phase 2 (index + API) built 2026-10-24 and not deployed; see
+"Phase 2 as built" at the end.** Prices were read from Cloudflare's and the
 vendors' pages on 2026-10-23: **verify before buying.**
 
 Today every install downloads the whole slim list (`sourcing/feedclient.py`, ~1 MB gzipped per 10k
@@ -207,3 +208,51 @@ so they run locally.
    public, so the risk does not rise much, but the depth limit and rate limits should ship from day one.
 7. **Hosting:** Pages' 100 GB/month soft limit cannot carry today's full-list model past a few
    hundred users. Keep the feed on R2 (free egress) whatever is decided here.
+
+## Phase 2 as built (2026-10-24)
+
+Not deployed. Nothing runs until the owner says yes (Workers Paid, section 4) and adds the loader's
+token.
+
+- **Schema** (`worker/migrations/0006_job_search.sql`, in the broker's D1): `jobs` (the slim row as
+  JSON plus columns the loader precomputes in Python: recency key, annual pay, posting time, lowered
+  title / company / location, visa codes, flags), `job_extras` (the per-employer `sponsor`, `visa`,
+  `nationality_visas` fields stored once and joined back: they were ~1.3 KB of a ~2 KB row),
+  `jobs_fts` (FTS5, **trigram** tokenizer, external content, over title, company and location) and
+  `search_meta` (`index_version`, `generated_at`, `rows`). Trigram, not a word tokenizer, because
+  `q` and `loc` are substring matches in `apply_facets` ("eng" finds "Engineer").
+- **API** (`worker/src/search.ts`): the routes and response shape of section 3. 400 on a malformed
+  parameter, 503 until an index is loaded, 409 `stale_cursor`, 429 `rate_limited`. The cursor is
+  signed (HMAC); set `SEARCH_CURSOR_SECRET` before launch or a caller could forge one past the
+  depth limit. Rate limits use the `ratelimits` binding in `wrangler.jsonc` (no resource to
+  create). Plan choice: a capped probe counts the FTS matches; few matches use the index, many
+  walk the ordered index (a common term in the index costs more than walking).
+- **Loader** (`scripts/load_search_index.py`, `feed.yml` step after the build, only when the
+  `SEARCH_D1_TOKEN` secret is set, with `SEARCH_D1_ACCOUNT_ID` / `SEARCH_D1_DATABASE_ID`
+  variables): diffs the feed against the last loaded state and sends deletes and upserts as SQL
+  literals (~90 KB statements; D1 allows 100 bound parameters a query). `--dry-run` prints the
+  counts. A failed load deletes its state; the next run rebuilds it from D1 and finishes.
+- **Parity**: `worker/test/search-parity.test.ts` runs 57 facet mixes (50 search, 7 candidates)
+  through the Worker on 420 synthetic rows and gets `apply_facets`' IDs in the same order, through
+  both query plans. No semantic difference was needed. Known edges, not exercised by real data:
+  JS and Python can lowercase a few rare Unicode characters differently, and the loader drops NUL
+  characters from text.
+
+### Measured sizes and costs (local D1 in miniflare, the live 184,552-row list on 2026-10-24)
+
+| | 184k rows | 500k rows (list x2.7) |
+|---|---|---|
+| storage | 326 MB (jobs 173, FTS 64, indexes ~80) | ~0.9-1.0 GB |
+| first load | 1,848 requests, 165 MB of SQL, 1.48M rows written | 5,043 requests, 4.0M rows written |
+| a 3-hourly diff (1% new, 1% changed, 1% removed) | 54 requests, ~26k rows written | ~70k rows written |
+| rows written a month (8 loads a day) | ~6M (included: 50M) | ~17M |
+| browse (no keyword, any of visa / days / level / sponsored / pay sort) | ~1.1k rows read | ~1.1k |
+| keyword, page 1 | 2k-45k (`engineer` 19k, `nurse` 34k, `software engineer` 35k) | 2k-60k |
+| keyword, later pages | 100-3k (more when the FTS plan was chosen) | similar |
+
+**Cost warning.** Section 2(a) assumed ~3k rows read a query. Keyword searches measure ~15-25k on
+average, and in the hybrid design (d) the server mostly sees keyword searches. At 10k MAU
+(~2.5M uncached searches) that is ~50B rows, **~$25/month** over the 25B included. At 100k MAU
+and 500k rows it is ~$450-600/month, not $20-70. The capped count drives most of it (the walk reads
+until it has 1,001 matches). Options for the owner: cap the count at 200 ("200+") or show "about N"
+from the probe, which cuts the common case roughly 5x; or accept the cost.

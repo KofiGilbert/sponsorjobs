@@ -30,6 +30,7 @@ implementation; it does not replace or change anything in `backend/`.
 | `GET /billing/offers`, `GET /billing/packs` | passes and packs on sale (packs only while a pass is active) and where the caller stands |
 | `POST /billing/passes/<id>/checkout`, `POST /billing/packs/<id>/checkout` | a one-time Stripe Checkout Session, `{url}` (`402 pass_required` for a pack without a pass) |
 | `POST /billing/webhook` | Stripe's `checkout.session.completed`: grants the pass or pack once per session (signature-checked) |
+| `GET /v1/jobs/search`, `GET /v1/jobs/candidates` | server-side job search over the D1 index (`src/search.ts`, docs/server-search-plan.md): the board's facets, keyset cursors, at most 50 / 500 rows a page and 1,000 deep; `503 no_index` until `scripts/load_search_index.py` has loaded it |
 
 Billing is off until the Stripe secrets are set (`STRIPE_SECRET_KEY` and at least one pass price;
 see `docs/stripe-setup.md`). While off, the billing routes answer exactly as the Python broker does
