@@ -32,7 +32,13 @@ REFRESH_EVERY = int(float(os.environ.get("JOBS_REFRESH_HOURS", "6")) * 3600)
 # both fresh and a polite client. Env-tunable (JOBS_FAST_REFRESH_MIN); 0 disables the fast loop.
 FAST_REFRESH_EVERY = int(float(os.environ.get("JOBS_FAST_REFRESH_MIN", "10")) * 60)
 DISCOVER_EVERY = 7 * 24 * 3600    # look for brand-new sponsor boards weekly
-PRUNE_DAYS = 21                   # drop roles unseen for 3 weeks (filled/closed)
+# Drop roles unseen for 3 weeks (filled/closed): the safety net that needs no knowledge of why a
+# row was not seen. Env-tunable (JOBS_PRUNE_DAYS) like the cadences above.
+PRUNE_DAYS = int(os.environ.get("JOBS_PRUNE_DAYS", "21"))
+# The fast prune (Watchlist.prune_unlisted, used by the feed build): a role unseen this long whose
+# board has since been read in full was not on the board, so it goes now instead of waiting out
+# PRUNE_DAYS. A board that failed to load keeps its rows for the full PRUNE_DAYS. (JOBS_FAST_PRUNE_DAYS)
+FAST_PRUNE_DAYS = int(os.environ.get("JOBS_FAST_PRUNE_DAYS", "7"))
 
 
 class AutoUpdater:

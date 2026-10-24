@@ -84,7 +84,9 @@ Desktop app               JOBS_FEED_URL=https://<domain>/feed  (shell-electron/m
 | `sponsors/manifest.json` | `{index_version, version (content hash), generated_at, employers, stats, shards: {key: {file, bytes, records}}, total_bytes}`; the extension re-checks it at most daily | `no-cache` |
 
 The list holds every row that passes the checks (`JOBS_FEED_LIMIT`, 1,000,000 since 2026-10-23), dated rows older
-than **45 days** are dropped (`JOBS_FRESH_DAYS`), and rows unseen by a crawl for 21 days are pruned.
+than **45 days** are dropped (`JOBS_FRESH_DAYS`, unless a crawl saw them in the last 7 days,
+`JOBS_SEEN_DAYS`), and rows a crawl no longer sees are pruned: after 7 days unseen when their board
+was read in full since, after 21 days unseen otherwise (see "When a row leaves the database" below).
 At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
 
 ### The app side (`ui/app.py`, `sourcing/feedclient.py`)

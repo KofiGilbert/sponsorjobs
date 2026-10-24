@@ -169,6 +169,10 @@ jobs:
         env:
           TAILOR_FEED_URL: ${{ vars.TAILOR_FEED_URL }}
           JOBS_FEED_LIMIT: ${{ vars.JOBS_FEED_LIMIT || 1000000 }}
+          # Pruning (docs/feed.md, "When a row leaves"): a row unseen JOBS_FAST_PRUNE_DAYS days on a
+          # board that was read in full since goes; every row goes at JOBS_PRUNE_DAYS days unseen.
+          JOBS_FAST_PRUNE_DAYS: ${{ vars.JOBS_FAST_PRUNE_DAYS || 7 }}
+          JOBS_PRUNE_DAYS: ${{ vars.JOBS_PRUNE_DAYS || 21 }}
         run: |
           python scripts/build_feed.py --data "$FEED_DATA_DIR" --out "$FEED_OUT_DIR" \
             --merge-dir .shards \

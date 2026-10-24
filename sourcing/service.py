@@ -103,6 +103,22 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def listing_complete(ats: str, jobs: list) -> bool:
+    """Whether one read of a board listed the whole board. Most adapters return every posting
+    in one response. Two stop short: Amazon returns the newest AMAZON_MAX_JOBS rows, and a
+    Workday query ends at the board's WORKDAY_MAX_JOBS cap or at Workday's 2,000-row ceiling
+    (past it the board is split by facets and read over several runs). A result that reached
+    its cap may be missing live rows, so it does not count as a full read, and the fast prune
+    (Watchlist.prune_unlisted) does not act on it; a result under the cap ran to the end."""
+    if ats == "amazonjobs":
+        from .amazonjobs import DEFAULT_MAX_JOBS
+        return len(jobs) < _env_int("AMAZON_MAX_JOBS", DEFAULT_MAX_JOBS)
+    if ats == "workday":
+        from .workday import DEFAULT_MAX_JOBS, LIST_CEILING
+        return len(jobs) < min(_env_int("WORKDAY_MAX_JOBS", DEFAULT_MAX_JOBS), LIST_CEILING)
+    return True
+
+
 def max_detail_for(ats: str) -> int:
     """The per-board detail budget of a list-only ATS for a DESKTOP refresh (env
     WORKDAY_MAX_DETAIL / SMARTRECRUITERS_MAX_DETAIL, default 200)."""
@@ -318,6 +334,10 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
         try:
             jobs = normalize_jobs(w["ats"], w["board_id"], w["company"], fetch=fetch)
             fetched += len(jobs)
+            # Did this read list the whole board? A read that stopped at a cap (the adapter's
+            # own, or MAX_PER_COMPANY below) may have left live rows unlisted, so it is recorded
+            # as partial and the fast prune (store.prune_unlisted) leaves its rows alone.
+            full = listing_complete(w["ats"], jobs)
             if w["ats"] in DETAIL_BUDGET_ENV:
                 if w["ats"] not in known:
                     known[w["ats"]] = store.source_ids_with_jd(w["ats"])
@@ -325,16 +345,20 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
                                                     known[w["ats"]], budgets.get(w["ats"]),
                                                     sleep=sleep)
                 unchecked[w["ats"]] += left
+                full = full and len(jobs) < MAX_PER_COMPANY   # it stops once `cap` rows are kept
         except Exception as exc:  # a bad board id / network blip shouldn't kill the run
             errors.append({"company": w["company"], "error": str(exc)})
+            store.record_crawl(w["ats"], w["board_id"], False, error=str(exc))
             continue
         keep = [j for j in jobs if matches_criteria(j, criteria)
-                and is_intl_student_accessible(j)][:MAX_PER_COMPANY]
-        keep, dup = index.filter(keep)
+                and is_intl_student_accessible(j)]
+        full = full and len(keep) <= MAX_PER_COMPANY
+        keep, dup = index.filter(keep[:MAX_PER_COMPANY])
         duplicates += dup
         matched += len(keep)
         n, _ = store.upsert_jobs(keep)
         new_total += n
+        store.record_crawl(w["ats"], w["board_id"], True, complete=full)   # after the upsert
 
     # 2) Aggregator keyword feeds (Remotive, ...). Keyless, remote-only, GREEN lane.
     # Run one search per title term (bounded) so we never pull the whole firehose, and
