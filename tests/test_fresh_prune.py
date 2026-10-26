@@ -220,10 +220,11 @@ def test_refresh_then_prune_end_to_end(tmp_path):
         return _gh(board, boards[board])
 
     service.refresh_watchlist(w, fetch=fetch, include_aggregators=False)   # last week's crawl
-    for sid in ("greenhouse:acme:1", "greenhouse:acme:2", "greenhouse:beta:1"):
-        _age(w, sid, 8)
-    w._conn.execute("UPDATE board_crawl SET last_ok=datetime('now','-8 days'), "
-                    "updated_at=datetime('now','-8 days')")
+    # One instant for the rows and the boards (see _watch): beta's read fails this week, so
+    # beta:1 stays only while last_ok is not after its last_seen.
+    stamp = w._conn.execute("SELECT datetime('now','-8 days')").fetchone()[0]
+    w._conn.execute("UPDATE sourced_job SET last_seen=?", (stamp,))
+    w._conn.execute("UPDATE board_crawl SET last_ok=?, updated_at=?", (stamp, stamp))
     w._conn.commit()
     boards["acme"] = [1]                                     # the employer took acme:2 down
     del boards["beta"]                                       # and beta's board is down this week
@@ -384,10 +385,14 @@ def _watch(tmp_path, monkeypatch, board="acme"):
 
     service.refresh_watchlist(w, fetch=fetch, include_aggregators=False)
     assert _crawl(w, "greenhouse", board)["rows"] == 480     # the full count is remembered
-    for i in range(1, 481):
-        _age(w, f"greenhouse:{board}:{i}", 10)
-    w._conn.execute("UPDATE board_crawl SET last_ok=datetime('now','-10 days'), "
-                    "updated_at=datetime('now','-10 days')")
+    # The rows' last_seen and the board's last_ok must be the SAME instant: prune_unlisted drops a
+    # row only when last_ok is after last_seen. Stamping each with its own datetime('now') let the
+    # clock tick a second between the two under a loaded suite, and last_ok then sat 1 s after
+    # last_seen, so "a genuinely emptied board" lost all 480 rows (flaked 2026-10-26).
+    stamp = w._conn.execute("SELECT datetime('now','-10 days')").fetchone()[0]
+    w._conn.execute("UPDATE sourced_job SET last_seen=? WHERE source_id >= ? AND source_id < ?",
+                    (stamp, f"greenhouse:{board}:", f"greenhouse:{board};"))
+    w._conn.execute("UPDATE board_crawl SET last_ok=?, updated_at=?", (stamp, stamp))
     w._conn.commit()
     return w, boards, fetch, service
 
