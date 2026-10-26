@@ -9517,20 +9517,20 @@
   function openResumeBox() { $("#wizCvMsg").hidden = true; showWizPanel("resume"); }
   function closeResumeBox() { $("#wizard").hidden = true; }
 
-  /* The details step: one input per critical field the saved profile lacks, in the gate's own
-     words ("the dates for your project Gate Check"), saved by /api/profile/details. Shown right
+  /* The details step: one input per field the saved profile lacks, in the gate's own words
+     ("the dates for your project Gate Check"), saved by /api/profile/details. Shown right
      after an import that left gaps, and by "Add the details" on Auto-apply: ONE place to
-     complete the profile. "I don't have this" only where the gate allows it (a personal
-     project needs no location or dates). */
+     complete the profile. HARD fields first; SOFT ones (a project's dates or location) are
+     marked Optional with a Skip that is remembered, so they are asked once. */
   let WIZ_SLOTS = [];
   const WIZ_HINT = { dates: "Jan 2024 - Mar 2024", date: "May 2024", location: "City, ST",
                      contact: "you@example.com", name: "Your name" };
   function renderDetailsStep(slots) {
     WIZ_SLOTS = slots;
     $("#wizDetails").innerHTML = slots.map((s, i) => `<div class="wiz-det">
-        <label for="wizDet${i}">${esc(s.q.charAt(0).toUpperCase() + s.q.slice(1))}</label>
+        <label for="wizDet${i}">${esc(s.q.charAt(0).toUpperCase() + s.q.slice(1))}${s.soft ? ` <span class="wiz-det-opt">${esc(T("wiz.details.optional", "Optional"))}</span>` : ""}</label>
         <input class="fld" id="wizDet${i}" data-slot="${i}" placeholder="${esc(WIZ_HINT[s.key] || "")}" spellcheck="false" autocomplete="off">
-        ${s.decline === "personal" ? `<label class="wiz-det-none"><input type="checkbox" data-none="${i}"> ${esc(T("wiz.details.none", "I don't have this"))}</label>` : ""}
+        ${s.soft && s.decline ? `<label class="wiz-det-none"><input type="checkbox" data-none="${i}"> ${esc(T("wiz.details.skip", "Skip"))}</label>` : ""}
       </div>`).join("");
     $("#wizDetails input[data-slot]")?.focus();
   }
@@ -9546,7 +9546,7 @@
     const answers = [], declines = [];
     WIZ_SLOTS.forEach((s, i) => {
       const v = ($(`#wizDetails [data-slot="${i}"]`)?.value || "").trim();
-      if ($(`#wizDetails [data-none="${i}"]`)?.checked) declines.push({ sec: s.sec, match: s.match });
+      if ($(`#wizDetails [data-none="${i}"]`)?.checked) declines.push({ sec: s.sec, match: s.match, decline: s.decline });
       else if (v) answers.push({ sec: s.sec, key: s.key, match: s.match, value: v });
     });
     if (!answers.length && !declines.length) {

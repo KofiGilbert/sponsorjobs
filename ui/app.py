@@ -4277,6 +4277,7 @@ def profile_view():
 
 _DECLINABLE = ("github", "blog", "linkedin", "projects", "courses", "address",
                "extracurricular", "interests")
+_SOFT_SKIPS = ("project_dates:", "project_location:")   # per-project Skips from the details step
 
 
 def _prof_rows(rows, keys, bullet_key="bullets"):
@@ -4324,6 +4325,8 @@ def profile_sections_save():
     interests = str(b.get("interests") or "").strip()
     skills_input = [str(s).strip() for s in (b.get("skills_input") or []) if str(s).strip()]
     declined = [d for d in (b.get("declined") or []) if d in _DECLINABLE]
+    # The editor shows only the section-level skips; keep the details step's per-project ones.
+    declined += [d for d in (ess.get("declined") or []) if str(d).startswith(_SOFT_SKIPS)]
 
     for bag in (profile, ess):
         bag["education"] = [dict(e) for e in edu]
@@ -4346,11 +4349,25 @@ def profile_sections_save():
     return profile_view()
 
 
-def _profile_missing_slots() -> list[dict]:
-    """The template-critical slots the saved profile still lacks (ui/session._missing_slots),
-    loaded exactly as a WebIntake session loads "default" (normalize_profile, _flatten_profile,
-    the declined list). One source for the onboarding step, "Add the details" on Auto-apply,
-    and the run's pre-flight. Empty without a profile: that is "add your resume"'s job."""
+def _template_shows_projects(name: str | None = None) -> bool:
+    """Whether the template a build uses renders a Projects section (and so each project's
+    dates): its manifest's ``sections``. Unreadable manifest: assume it does."""
+    import json as _json
+    name = (name or "").strip() or _DEFAULT_TEMPLATE
+    try:
+        m = _json.loads((ROOT / "config" / "templates" / f"{name}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return "projects" in (m.get("sections") or ["projects"])
+
+
+def _profile_missing_slots(include_soft: bool = True) -> list[dict]:
+    """The slots the saved profile still lacks (ui/session._missing_slots), loaded exactly as a
+    WebIntake session loads "default" (normalize_profile, _flatten_profile, the declined list):
+    the HARD ones, plus the SOFT ones (a project's dates and location) when ``include_soft``
+    and the template shows projects. One source for the onboarding step, "Add the details" on
+    Auto-apply, and the run's pre-flight (HARD only). Empty without a profile: that is "add
+    your resume"'s job."""
     from tailoring.assembler import normalize_profile
     from ui.session import _essentials_from, _flatten_profile, _missing_slots
     saved = _memory().load("default") or {}
@@ -4358,14 +4375,40 @@ def _profile_missing_slots() -> list[dict]:
     if not profile.get("experience"):
         return []
     ess = _essentials_from(saved.get("essentials") or {}, profile)
+    soft = include_soft and _template_shows_projects(_load_template(None)[1])
     return [x for x in _missing_slots(*_flatten_profile(normalize_profile(profile)),
-                                      declined=ess.get("declined") or []) if x["crit"]]
+                                      declined=ess.get("declined") or [])
+            if x["crit"] or (soft and x["soft"])]
+
+
+def _autofill_saved_project_dates() -> list[str]:
+    """Fill the saved profile's undated projects from their GitHub repos (ui/github_dates.py),
+    before anyone is asked for them. Returns the projects filled; never raises (offline-safe)."""
+    try:
+        from ui.github_dates import fill_project_dates
+        mem = _memory()
+        saved = mem.load("default") or {}
+        profile = saved.get("profile") or {}
+        ess = saved.get("essentials") or {}
+        gh = str((profile.get("identity") or {}).get("github") or "")
+        cache = _DATA / "github_repo_dates.json"
+        filled = fill_project_dates(profile.get("projects") or [], gh, cache, _cred("GITHUB_TOKEN"))
+        if ess.get("projects"):
+            filled += fill_project_dates(ess["projects"], gh, cache, _cred("GITHUB_TOKEN"))
+        if filled:
+            mem.save("default", profile, ess, saved.get("history") or [])
+        return filled
+    except Exception:   # noqa: BLE001 - a lookup never stops the person
+        traceback.print_exc()
+        return []
 
 
 @app.get("/api/profile/missing")
 @_guard
 def profile_missing():
-    """The details step's questions: one slot per missing critical field, in the gate's words."""
+    """The details step's questions, in the gate's words: one slot per missing HARD field, and
+    per SOFT one (a project's dates, after GitHub has filled what it can) the template shows."""
+    _autofill_saved_project_dates()
     return jsonify({"ok": True, "missing": _profile_missing_slots()})
 
 
@@ -4401,9 +4444,9 @@ def _detail_targets(bag: dict, sec: str, match: dict) -> list[dict]:
 
 def _apply_profile_details(profile: dict, ess: dict, answers: list, declines: list) -> None:
     """Land each answer on the entry its slot names, in BOTH saved bags, filling the first
-    matching entry whose field is still empty (the one the gate asked about). A decline on
-    a project marks it personal: the gate never asks a personal project for a location or
-    dates (ui/session._missing_slots)."""
+    matching entry whose field is still empty (the one the gate asked about). A Skip on a
+    SOFT slot records its key ("project_dates:<name>") in the declined list, so it is never
+    asked again; a HARD slot has no Skip."""
     for a in answers:
         if not isinstance(a, dict):
             continue
@@ -4424,12 +4467,10 @@ def _apply_profile_details(profile: dict, ess: dict, answers: list, declines: li
                 if key in t and not str(t[key].get(key) or "").strip():
                     t[key][key] = val
                     break
-    for d in declines:
-        if not isinstance(d, dict) or d.get("sec") != "projects":
-            continue
-        for bag in (profile, ess):
-            for t in _detail_targets(bag, "projects", d.get("match") or {}):
-                t["personal"]["personal"] = True
+    skips = [str(d.get("decline") or "") for d in declines if isinstance(d, dict)]
+    skips = [k for k in skips if k.startswith(_SOFT_SKIPS)]
+    if skips:
+        ess["declined"] = sorted(set(ess.get("declined") or []) | set(skips))
 
 
 @app.post("/api/profile/details")
@@ -4492,6 +4533,8 @@ def profile_from_cv():
     if existing.get("experience") or (existing.get("identity") or {}).get("name"):
         profile = _merge_profiles(existing, profile)
     _memory().save("default", profile, _essentials_from_profile(profile), saved.get("history") or [])
+    _autofill_saved_project_dates()     # a linked repo's dates, before asking for them
+    profile = (_memory().load("default") or {}).get("profile") or profile
     ident = profile.get("identity") or {}
     # What the gate would still ask for: the wizard turns it into the details step right
     # away, so an unattended build never stalls later on a date the import could not read.
@@ -9240,6 +9283,7 @@ class _JobAlertActions:
         missing = _aa_missing_details()      # the same wall the run pre-flights: say what is missing
         if missing:
             return {"ok": False, "reason": _aa_missing_reason(missing)}
+        _autofill_saved_project_dates()
         tex, tname = _load_template(None)
         scratch = "_tgalert_" + uuid.uuid4().hex[:8]
         try:
@@ -10501,13 +10545,14 @@ _AA_NO_PROFILE = {"error": "Add your resume first, then SponsorJobs can build th
 
 
 def _aa_missing_details() -> list[str]:
-    """The template-critical details the saved profile still lacks, worded as the questions
-    build_from_saved would ask (ui/session._missing_skeleton, critical tier). An unattended
+    """The HARD details the saved profile still lacks, worded as the questions
+    build_from_saved would ask (ui/session._missing_skeleton, critical tier). A project's
+    dates and location are SOFT and never stop a run: they build as undated. An unattended
     build has no one to answer them, so without this check every role came back "needs a
     detail we don't have" and the run queued nothing while the page blamed the fit floor
     (measured 2026-10-26: two undated projects, 0 queued, 284 "below your fit floor").
     Checked BEFORE any role is counted."""
-    return [x["q"] for x in _profile_missing_slots()]
+    return [x["q"] for x in _profile_missing_slots(include_soft=False)]
 
 
 def _aa_missing_error(missing: list[str]) -> dict:
@@ -10565,6 +10610,7 @@ def autoapply_run():
     missing = _aa_missing_details()
     if missing:
         return jsonify(_aa_missing_error(missing)), 400
+    _autofill_saved_project_dates()     # soft gaps: fill what GitHub knows, build the rest undated
     min_fit = _aa_min_fit(body)
     if not _AA_RUN_LOCK.acquire(blocking=False):
         return jsonify({"error": "A run is already tailoring. Wait for it to finish, then try "
@@ -10804,6 +10850,7 @@ def _autopilot_tick() -> dict:
         st["paused"] = None
         _autopilot_save(st)
     _notify_state().set("autopilot_missing_told", False)
+    _autofill_saved_project_dates()
     per_day = clamp_per_day(p.get("autopilot_per_day"))
     remaining = per_day - int(st.get("count") or 0)
     if remaining <= 0:

@@ -67,12 +67,13 @@ def test_import_with_undated_projects_hands_the_wizard_the_step(tmp_path, monkey
     d = _import(client, cv)
     qs = [s["q"] for s in d["missing"]]
     assert qs == ['the dates for your project "Gate Check"', 'the dates for your project "Ledger"']
-    assert all(s["sec"] == "projects" and s["key"] == "dates" and s["decline"] == "personal"
-               for s in d["missing"])
+    assert all(s["sec"] == "projects" and s["key"] == "dates" and s["soft"] and not s["crit"]
+               for s in d["missing"])                 # SOFT: optional, with a Skip
+    assert [s["decline"] for s in d["missing"]] == ["project_dates:gate check", "project_dates:ledger"]
     assert d["missing"][0]["match"] == {"name": "Gate Check"}
     # The same slots on demand, for "Add the details" on Auto-apply.
     assert client.get("/api/profile/missing").get_json()["missing"] == d["missing"]
-    assert _gaps() == qs                              # the gate agrees, before the save
+    assert _gaps() == [] and app._aa_missing_details() == []   # soft: nothing is blocked
 
 
 def test_the_save_lands_in_both_bags_and_clears_the_gate(tmp_path, monkeypatch):
@@ -100,17 +101,40 @@ def test_a_partial_save_asks_only_for_the_rest(tmp_path, monkeypatch):
     assert [s["q"] for s in r["missing"]] == ['the dates for your project "Ledger"']
 
 
-def test_i_dont_have_this_marks_the_project_personal(tmp_path, monkeypatch):
+def test_a_skip_is_remembered_and_never_asked_again(tmp_path, monkeypatch):
     client, cv = _isolate(tmp_path, monkeypatch)
     slots = _import(client, cv)["missing"]
     r = client.post("/api/profile/details", json={
         "answers": [{**{k: slots[1][k] for k in ("sec", "key", "match")}, "value": "2023"}],
-        "declines": [{"sec": "projects", "match": slots[0]["match"]}]}).get_json()
+        "declines": [{"sec": "projects", "match": slots[0]["match"],
+                      "decline": slots[0]["decline"]}]}).get_json()
     assert r["missing"] == []
     saved = app._memory().load("default")
     gate = next(p for p in saved["profile"]["projects"] if p["title"] == "Gate Check")
-    assert gate.get("personal") is True and not gate.get("dates")   # kept, no date demanded
-    assert _gaps() == []
+    assert not gate.get("dates") and not gate.get("personal")          # kept as it is, undated
+    assert "project_dates:gate check" in saved["essentials"]["declined"]
+    assert client.get("/api/profile/missing").get_json()["missing"] == []
+    # Saving the profile editor (which shows only section skips) keeps the per-project skip.
+    p = client.get("/api/profile").get_json()
+    client.post("/api/profile/sections", json={k: p[k] for k in (
+        "education", "projects", "extracurricular", "summary", "interests", "skills_input", "declined")}
+        | {"experience": [{"org": "Acme Corp", "title": "Software Engineer", "dates": "2020 - 2024",
+                           "location": "Remote"}]})
+    assert "project_dates:gate check" in app._memory().load("default")["essentials"]["declined"]
+
+
+def test_a_skip_on_a_hard_detail_is_ignored(tmp_path, monkeypatch):
+    client, cv = _isolate(tmp_path, monkeypatch)
+    _import(client, cv)
+    client.post("/api/profile/details", json={"declines": [{"sec": "identity", "decline": "name"}]})
+    assert "name" not in (app._memory().load("default")["essentials"].get("declined") or [])
+
+
+def test_a_template_without_projects_never_asks_for_project_dates(tmp_path, monkeypatch):
+    client, cv = _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(app, "_DEFAULT_TEMPLATE", "accounting")       # no Projects section
+    assert _import(client, cv)["missing"] == []
+    assert client.get("/api/profile/missing").get_json()["missing"] == []
 
 
 def test_identity_and_role_answers_land_where_they_belong(tmp_path, monkeypatch):
@@ -158,7 +182,7 @@ def test_the_wizard_has_the_step_and_auto_apply_opens_it():
     html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
     js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     assert 'data-panel="details"' in html and "A few details to finish your profile" in html
-    assert 'T("wiz.details.none", "I don\'t have this")' in js
+    assert 'T("wiz.details.skip", "Skip")' in js and 'T("wiz.details.optional", "Optional")' in js
     assert 'if ((r.missing || []).length) openProfileDetails(r.missing);' in js   # after an import
     assert '() => openProfileDetails()]' in js                                    # Add the details
     assert 'api("/api/profile/details", { answers, declines })' in js

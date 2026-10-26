@@ -78,10 +78,18 @@ def test_flatten_preserves_personal_project_flags_so_gate_exempts_them():
     assert not any("location for" in m or "dates for" in m for m in missing), missing
 
 
-def test_a_non_personal_project_still_requires_location_and_dates():
+def test_a_projects_location_and_dates_never_block_a_build():
+    # Owner decision 2026-10-26: a project's dates and location are SOFT. The details step may
+    # ask for them (ui/session._missing_slots), the build gate never does.
+    from ui.session import _missing_slots
     profile = {"projects": [{"org": "Client Work", "location": "", "dates": ""}]}
-    missing = _missing_skeleton(*_flatten_profile(profile), critical_only=True)
-    assert any("location for" in m for m in missing) and any("dates for" in m for m in missing)
+    for crit in (True, False):
+        missing = _missing_skeleton(*_flatten_profile(profile), critical_only=crit)
+        assert not any("for your project" in m for m in missing)
+    soft = [x for x in _missing_slots(*_flatten_profile(profile)) if x["soft"]]
+    assert [x["q"] for x in soft] == ['the location for your project "Client Work"',
+                                      'the dates for your project "Client Work"']
+    assert soft[1]["decline"] == "project_dates:client work"
 
 
 # ============================ intent detectors: no false positives on prose ============================

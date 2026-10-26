@@ -1604,6 +1604,7 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .wiz-details { max-height: 52vh; overflow: auto; }
 .wiz-det { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .wiz-det > label { font-size: 13px; color: var(--ink-2); }
+.wiz-det-opt { font-size: 11.5px; color: var(--faint); margin-left: 4px; }
 .wiz-det-none { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
 .ai-msg.working { color: var(--accent); background: var(--accent-soft); }
 

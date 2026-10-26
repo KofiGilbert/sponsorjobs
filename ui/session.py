@@ -267,21 +267,24 @@ def _most_recent(education: list) -> dict:
 def _missing_slots(identity: dict, education: list, experience: list,
                    projects: list | None = None, declined=None, identity_fields=None) -> list[dict]:
     """Every template element still missing (or not yet declined), as a slot an editor can
-    fill: ``{q, crit, sec, key, match, decline}``. ``q`` is the question's wording (what
-    _missing_skeleton returns), ``crit`` its tier, ``sec``/``key`` where the answer lands,
-    ``match`` the saved entry's own names (org and title, school and degree, a project's
-    name) so the save finds it again, and ``decline`` what "I don't have this" may set: a
-    personal project needs no location or dates, the optional slots have their decline key,
-    and None where the template needs the value.
+    fill: ``{q, crit, soft, sec, key, match, decline}``. ``q`` is the question's wording (what
+    _missing_skeleton returns), ``crit``/``soft`` its tier, ``sec``/``key`` where the answer
+    lands, ``match`` the saved entry's own names (org and title, school and degree, a
+    project's name) so the save finds it again, and ``decline`` the key a Skip records in the
+    declined list (None where the template needs the value).
 
-    Two tiers. TEMPLATE-CRITICAL: fields whose absence breaks the template's form, name, a
-    contact, and the location+dates of every experience/project entry, plus each education
-    entry's school/degree/date. OPTIONAL (only in the full gate): address, links, courses,
-    and the "do you have any …" prompts.
+    Three tiers (owner decision 2026-10-26). HARD (``crit``, blocks a build and every
+    unattended run): name, a contact, the org/title/dates/location of every experience entry,
+    and each education entry's school/degree/date. SOFT (``soft``, never blocks anything, so
+    _missing_skeleton leaves it out): a project's dates and location, asked only in the
+    details step and only where the template renders projects, with Skip remembered per
+    project. OPTIONAL (only in the full gate): address, links, courses, and the "do you have
+    any …" prompts.
     """
     projects = projects or []
     dec = set(declined or [])
-    crit: list[dict] = []    # template-critical, asked first
+    crit: list[dict] = []    # template-critical (HARD), asked first
+    soft: list[dict] = []    # never blocks: a project's dates and location
     opt: list[dict] = []     # optional, full gate only, asked last
 
     def slot(q, sec, key, match=None, decline=None):
@@ -319,19 +322,19 @@ def _missing_slots(identity: dict, education: list, experience: list,
             crit.append(slot(f"the graduation month and year for {whose}", "education", "date", m))
 
     if "projects" not in dec:
-        for p in projects:   # every EXISTING project needs location+dates (critical)
+        for p in projects:   # a project's location+dates are SOFT: asked, never required
             # A personal / portfolio project (has a repo link or is flagged personal) is
             # not employment, it legitimately has no company location or work dates, so
-            # we never demand them (that was forcing friction on real GitHub projects).
+            # we never ask (a linked repo's dates come from GitHub instead, ui/github_dates.py).
             if p.get("link") or p.get("url") or p.get("personal"):
                 continue
             nm = str(p.get("title") or p.get("org") or "").strip()
             label = f'your project "{nm}"' if nm else "your project"
             m = {"name": nm}
-            if not str(p.get("location") or "").strip():
-                crit.append(slot(f"the location for {label}", "projects", "location", m, "personal"))
-            if not str(p.get("dates") or "").strip():
-                crit.append(slot(f"the dates for {label}", "projects", "dates", m, "personal"))
+            for key, q in (("location", f"the location for {label}"), ("dates", f"the dates for {label}")):
+                skip = f"project_{key}:{nm.lower()}"     # a Skip, remembered per project
+                if not str(p.get(key) or "").strip() and skip not in dec:
+                    soft.append(slot(q, "projects", key, m, skip))
 
     # Optional / structural prompts (full gate only, after the critical fields).
     if not experience:
@@ -366,11 +369,13 @@ def _missing_slots(identity: dict, education: list, experience: list,
                         "to add)", "projects", "org", decline="projects"))
 
     for x in crit:
-        x["crit"] = True
+        x["crit"], x["soft"] = True, False
+    for x in soft:
+        x["crit"], x["soft"] = False, True
     for x in opt:
-        x["crit"] = False
+        x["crit"], x["soft"] = False, False
     seen, out = set(), []
-    for x in crit + opt:             # de-dupe on the wording, keep order
+    for x in crit + soft + opt:      # de-dupe on the wording, keep order
         if x["q"] not in seen:
             seen.add(x["q"])
             out.append(x)
@@ -381,11 +386,12 @@ def _missing_skeleton(identity: dict, education: list, experience: list,
                       projects: list | None = None, declined=None,
                       critical_only: bool = False, identity_fields=None) -> list[str]:
     """Human-readable list of template elements still missing (or not yet declined): the
-    questions of _missing_slots. ``critical_only=True`` (an explicit build override, and
-    the unattended auto-apply pre-flight) keeps the template-critical tier only."""
+    questions of _missing_slots, without the SOFT tier (a project's dates and location never
+    block a build). ``critical_only=True`` (an explicit build override, and the unattended
+    auto-apply pre-flight) keeps the HARD tier only."""
     return [s["q"] for s in _missing_slots(identity, education, experience, projects,
                                            declined, identity_fields)
-            if s["crit"] or not critical_only]
+            if not s["soft"] and (s["crit"] or not critical_only)]
 
 
 _DECLINE_TARGETS = {
@@ -2083,6 +2089,24 @@ class WebIntake:
             self._append("agent", note)
         return extra
 
+    def undated_projects_note(self) -> str:
+        """One honest line when this template shows project dates and a rendered project has
+        none (project dates are SOFT, so the build went ahead): "Without dates, X reads as
+        undated; recruiters may weigh it less." Empty when every shown project is dated."""
+        if self.sections and "projects" not in self.sections:
+            return ""
+        used = getattr(self.assembled, "profile_used", None) or self.profile or {}
+        names = [str(p.get("title") or p.get("org") or "").strip()
+                 for p in (used.get("projects") or []) if isinstance(p, dict)
+                 and not str(p.get("dates") or "").strip()]
+        names = [n for n in names if n]
+        if not names:
+            return ""
+        who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        if len(names) == 1:
+            return f"Without dates, {who} reads as undated; recruiters may weigh it less."
+        return f"Without dates, {who} read as undated; recruiters may weigh them less."
+
     def build_from_saved(self):
         """Build directly from the saved profile, tailored to this job, the
         response to "use what you already know about me"."""
@@ -2139,6 +2163,9 @@ class WebIntake:
                 note = self._date_flag_note(date_flags)
                 msgs.append(note)
                 self._append("agent", note)
+            undated = self.undated_projects_note()
+            if undated:
+                msgs.append(undated)
             extra = self._post_build_invite(msgs)
             return self._state(msgs, extra=extra)
         if self.essentials.get("experience"):
