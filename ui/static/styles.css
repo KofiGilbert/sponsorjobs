@@ -2403,7 +2403,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 .tpl-modal-paper { flex: none; height: min(78vh, 760px); aspect-ratio: 8.5 / 11; max-width: 100%;
   background: #fff; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
   box-shadow: var(--shadow-md); }
-.tpl-modal-frame { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
+.tpl-modal-frame { width: 100%; height: 100%; border: 0; background: #fff; display: block; object-fit: contain; }
 .tpl-arrow { flex: none; width: 38px; height: 38px; display: grid; place-items: center;
   border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
   border-radius: 50%; box-shadow: var(--shadow-sm);
@@ -2484,7 +2484,7 @@ body.cv-dragging * { cursor: grabbing !important; }
 }
 .tpl-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
 .tpl-prev { aspect-ratio: 8.5 / 11; background: var(--paper); border-bottom: 1px solid var(--border); overflow: hidden; }
-.tpl-preview { width: 100%; height: 100%; border: 0; display: block; pointer-events: none; aspect-ratio: auto; }
+.tpl-preview { width: 100%; height: 100%; border: 0; display: block; pointer-events: none; aspect-ratio: auto; object-fit: cover; object-position: top; }
 .tpl-name {
   padding: 8px 10px 9px; font-size: 12.5px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

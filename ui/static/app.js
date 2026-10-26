@@ -3203,10 +3203,16 @@
     const t = CV_TEMPLATES[TPL_IDX];
     if (!t) return;
     $("#tplModalName").textContent = t.display_name || t.name;
-    const src = t.preview_url + "#toolbar=0&navpanes=0&view=FitH";
-    // Load after the frame has been laid out at its real size (two frames: unhide, then layout).
+    // The sample is an IMAGE rendered by the engine, not the PDF in Chromium's viewer: inside a
+    // frame that viewer ignored every fit option (FitH, Fit, page-width all drew the page at
+    // three quarters of the frame in a sea of grey) and only honoured a zoom percentage, which
+    // differs per screen. Asked at about twice the paper's width, so it is sharp on Retina.
+    // Two frames after unhiding, so the paper has its real size to measure.
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (!$("#tplModal").hidden && CV_TEMPLATES[TPL_IDX] === t) $("#tplModalFrame").src = src;
+      const img = $("#tplModalFrame");
+      if ($("#tplModal").hidden || CV_TEMPLATES[TPL_IDX] !== t || !img) return;
+      const w = Math.ceil((img.clientWidth || 600) * Math.min(2, window.devicePixelRatio || 1) / 100) * 100;
+      img.src = `/api/templates/${encodeURIComponent(t.name)}/thumb.png?w=${w}`;
     }));
     $("#tplModalPos").textContent = CV_TEMPLATES.length > 1
       ? `${TPL_IDX + 1} of ${CV_TEMPLATES.length}` : "";
@@ -3247,8 +3253,8 @@
   // (progressive disclosure: it stays available in "Open preview"). best_for earns its
   // place because it says who the template is for, which the preview cannot show.
   const tplCard = (t) => `<div class="tpl-card" role="button" tabindex="0" data-use="${esc(t.name)}" title="${esc(t.best_for || t.display_name)}">
-      <div class="tpl-prev"><iframe class="tpl-preview" tabindex="-1" loading="lazy"
-        title="${esc(t.display_name)} layout" src="${t.preview_url}#toolbar=0&navpanes=0&view=FitH"></iframe></div>
+      <div class="tpl-prev"><img class="tpl-preview" loading="lazy" draggable="false"
+        alt="${esc(t.display_name)} layout" src="/api/templates/${encodeURIComponent(t.name)}/thumb.png?w=600"></div>
       <div class="tpl-name">${esc(t.display_name)}</div>
     </div>`;
 

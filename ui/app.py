@@ -2621,19 +2621,32 @@ def template_preview(name):
     return _nostore(send_file(out_pdf, mimetype="application/pdf"))
 
 
+def _thumb_width(raw) -> int:
+    """The `w` query of a template thumbnail: 440 (the picker card) unless asked, 200 to 2000.
+    The preview window asks for about twice its paper width, so it is sharp on a Retina screen."""
+    try:
+        w = int(raw)
+    except (TypeError, ValueError):
+        return 440
+    return max(200, min(2000, w))
+
+
 @app.get("/api/templates/<name>/thumb.png")
 @_guard
 def template_thumb(name):
-    """First-page PNG of the template preview, so the picker cards fill edge-to-edge
-    (an image has no PDF-viewer grey gutter). Cached alongside the preview PDF."""
+    """First-page PNG of the template preview, so the picker cards, the Resumes strip and the
+    preview window fill edge-to-edge (an image has no PDF-viewer grey gutter, and Chromium's
+    viewer ignored every fit option inside a frame, 2026-10-26). `?w=` picks the width; each
+    width is cached alongside the preview PDF."""
     out_pdf = _template_preview_pdf(name)
     if not out_pdf:
         return ("", 404)
-    png = out_pdf.with_suffix(".png")
+    w = _thumb_width(request.args.get("w"))
+    png = out_pdf.with_suffix(".png") if w == 440 else out_pdf.with_name(f"{out_pdf.stem}-{w}.png")
     try:
         if not (png.exists() and png.stat().st_mtime >= out_pdf.stat().st_mtime):
             from tailoring.preview import render_thumbnail_png
-            render_thumbnail_png(out_pdf, png, width=440, dpi=220)
+            render_thumbnail_png(out_pdf, png, width=w, dpi=220 if w <= 1600 else 300)
     except Exception:
         return ("", 404)
     if not png.exists():
