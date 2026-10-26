@@ -38,6 +38,7 @@ Adient Us Llc,workday,adient.wd3/External
 Adobe Inc,workday,adobe.wd5/external_experienced
 Advantage It Inc,smartrecruiters,advantageit
 Advantis Global Inc,smartrecruiters,advantisglobal
+Adventist Healthcare Inc,workday,adventisthealthcare.wd1/AdventistHealthCareCareers
 Advertising Specialty Institute,greenhouse,advertisingspecialtyinstitute
 Adyen Inc,greenhouse,adyen
 Aegis Therapies Inc,workday,aegistherapies.wd1/AegisCareers
@@ -82,6 +83,7 @@ Amadeus North America Inc,workday,amadeus.wd502/jobs
 Amazon.com Services LLC,amazonjobs,USA
 Ambarella Corp,workday,ambarella.wd108/Ambarella
 American Institutes For Research,greenhouse,americaninstitutesforresearch
+American University,workday,american.wd1/AU
 Ameriprise Financial Inc,workday,ameriprise.wd5/Ameriprise
 Ameya Global Inc,smartrecruiters,ameyaglobal
 Amgen Inc,workday,amgen.wd1/Careers
@@ -153,6 +155,7 @@ Axon Enterprise Inc,greenhouse,axon
 Aya Healthcare Inc,greenhouse,ayahealthcare
 Backblaze Inc,greenhouse,backblaze
 Baidu Usa Llc,greenhouse,baidu
+Bain Capital Lp,workday,baincapital.wd1/External_Private
 Baker Hughes Company,workday,bakerhughes.wd5/BakerHughes
 Baker Tilly Us Llp,workday,bakertilly.wd5/BTCareers
 Balsam Brands Inc,greenhouse,balsambrands
@@ -278,6 +281,7 @@ Chaparral Medical Group Inc,greenhouse,chaparralmedicalgroup
 Chargepoint Inc,greenhouse,chargepoint
 Checkr Inc,greenhouse,checkr
 Chefman,greenhouse,chefman
+Chenmed Llc,workday,chenmed.wd1/ChenMed
 Chevron U S A Inc,workday,chevron.wd5/jobs
 Childrens Place Services Company Llc,workday,childrensplace.wd1/TCP02
 Chime Financial Inc,greenhouse,chime
@@ -318,6 +322,8 @@ Coherus Biosciences Inc,greenhouse,coherusbiosciences
 Coinbase Inc,greenhouse,coinbase
 Colby College,workday,colby.wd5/ColbyCareers
 Collectivehealth Inc,greenhouse,collectivehealth
+College Board,workday,collegeboard.wd1/Careers
+College Of The Holy Cross,workday,holycross.wd12/Careers
 Collibra Inc,greenhouse,collibra
 Color Health Inc,ashby,color-health
 Colorado School Of Mines,workday,mines.wd1/Mines_Careers
@@ -582,6 +588,7 @@ Haven Technologies,greenhouse,haven
 Hd Supply Inc,workday,hdsupply.wd1/External
 Health Catalyst Inc,workday,healthcatalyst.wd5/healthcatalystcareers
 Health Research Inc Roswell Park D,workday,roswellpark.wd5/ExternalCareers
+Healthfirst,workday,healthfirst.wd1/healthfirst
 Healthpartners Inc,smartrecruiters,healthpartners
 Hellofresh,greenhouse,hellofresh
 Help Systems Llc,greenhouse,help
@@ -723,6 +730,7 @@ Level Access Inc,greenhouse,levelaccess
 Levio Consulting Inc,greenhouse,levio
 Lg Electronics Usa Inc,greenhouse,lgelectronics
 Liaison International Llc,greenhouse,liaisoninternational
+Liberty University,workday,liberty.wd5/lu_job_board_staff
 Life360 Inc,greenhouse,life360
 Lifescience Dynamics Usa Llc,greenhouse,lifesciencedynamics
 Lighthouse Technology Services Inc,greenhouse,lighthouse
@@ -740,6 +748,7 @@ Logicmonitor Inc,greenhouse,logicmonitor
 Logitech Inc,workday,logitech.wd5/Logitech
 Lone Star Circle Of Care,greenhouse,lonestarcircleofcare
 Lonza Biologics Inc,smartrecruiters,lonza
+Lonza Houston Inc,workday,lonza.wd3/Lonza_Careers
 Lookout Inc,greenhouse,lookout
 Loyola University Chicago,workday,loyola.wd5/External
 Lsu Health Sciences Center,workday,lsu.wd1/LSU
@@ -791,6 +800,7 @@ Menlo Security Inc,ashby,menlosecurity
 Mercari Inc,greenhouse,mercari
 Mercer University,workday,merceruniversity.wd1/external
 Mercury Systems Inc,greenhouse,mercury
+Merit American Technologies Inc,workday,merit.wd503/Merit
 Metropolis Technologies Inc,greenhouse,metropolis
 Mettel,greenhouse,mettel
 Microchip Technology Inc,smartrecruiters,microchip
@@ -815,6 +825,7 @@ Montclair State University,workday,montclair.wd1/JobOpportunities
 Montefiore Medical Center,workday,montefiore.wd12/MMC
 Morgan Stanley Smith Barney Llc,workday,ms.wd5/External
 Morningstar Inc,workday,morningstar.wd5/Americas
+Mosaic Health System,workday,mosaic.wd5/mosaic
 Motional Ad Inc,greenhouse,motional
 Motive Technologies Inc,greenhouse,motive
 Motorola Solutions Inc,workday,motorolasolutions.wd5/Careers
@@ -849,6 +860,7 @@ Neuropace Inc,greenhouse,neuropace
 New Relic Inc,greenhouse,newrelic
 Newsela Inc,greenhouse,newsela
 Nexamp Inc,greenhouse,nexamp
+Next Gen Software Solutions Llc,workday,nextgen.wd5/NextGen_Careers
 Nextdoor Inc,greenhouse,nextdoor
 Nextiva Inc,greenhouse,nextiva
 Nexus It Inc,greenhouse,nexus
@@ -864,6 +876,7 @@ Noah Medical Corporation,greenhouse,noahmedical
 Noble Systems Corporation,greenhouse,noble
 Nordstrom Inc,workday,nordstrom.wd501/nordstrom_careers
 Northeastern University,workday,northeastern.wd1/careers
+Northwestern Mutual Life Insur Co,workday,northwesternmutual.wd5/CORPORATE-CAREERS
 Northwestern Mutual Life Insurance Company,smartrecruiters,northwesternmutual
 Nova Credit Inc,greenhouse,novacredit
 Novartis Pharmaceuticals Corporation,workday,novartis.wd3/Novartis_Careers
@@ -945,6 +958,7 @@ Pitchbook Data Inc,greenhouse,pitchbookdata
 Pitney Bowes Inc,workday,pitneybowes.wd1/PBCareers
 Placer Labs Inc,greenhouse,placerlabs
 Planet Labs Inc,greenhouse,planetlabs
+Planet Logistics Inc.,workday,planet.wd3/Planet
 Platform Science Inc,greenhouse,platformscience
 Plative Incorporated,greenhouse,plative
 Plus Power Llc,greenhouse,pluspower
@@ -1016,6 +1030,7 @@ Rent The Runway Inc,greenhouse,renttherunway
 Republic Services Inc,workday,republic.wd5/Republic
 Reputation.Com Inc,workday,reputation.wd1/External
 Resilience Us Inc,greenhouse,resilience
+Resmed Digital Health Inc,workday,resmed.wd3/ResMed_External_Careers
 Resolve Tech Solutions Llc,workday,resolvetech.wd1/RTS
 Resolve To Save Lives,greenhouse,resolvetosavelives
 Retail Business Services Llc,smartrecruiters,retailbusinessservices
@@ -1126,6 +1141,7 @@ Sonatus Inc,greenhouse,sonatus
 Sonicwall Inc,greenhouse,sonicwall
 Sonos Inc,workday,sonos.wd1/Sonos
 Sony Music Entertainment,greenhouse,sonymusicentertainment
+Southern New Hampshire University,workday,snhu.wd503/External_Career_Site
 Sovrn Holdings Inc,greenhouse,sovrn
 Spin,greenhouse,spin
 Spins Llc,greenhouse,spins
@@ -1233,6 +1249,7 @@ The Trade Desk Inc,smartrecruiters,tradedesk
 The Travelers Indemnity Company,workday,travelers.wd5/External
 The University Of Chicago,workday,uchicago.wd5/External
 The University Of Memphis,smartrecruiters,universityofmemphis
+The University Of Tampa,workday,utampa.wd1/Faculty
 The University Of Texas At Austin,workday,utaustin.wd1/UTstaff
 The Vanguard Group,workday,vanguard.wd5/vanguard_external
 Third Wave Automation Inc,greenhouse,thirdwaveautomation

@@ -1,27 +1,43 @@
 ats,board_id,company,url,jobs,verified,cap_exempt,h1b_approvals,perm_certs
 workday,abercrombie.wd108/anf,Abercrombie & Fitch Management Co,https://abercrombie.wd108.myworkdayjobs.com/anf,2619,2026-10-24,0,94,0
+workday,adventisthealthcare.wd1/AdventistHealthCareCareers,Adventist Healthcare Inc,https://adventisthealthcare.wd1.myworkdayjobs.com/AdventistHealthCareCareers,451,2026-10-26,0,43,2
 workday,allina.wd5/External,Allina Health System,https://allina.wd5.myworkdayjobs.com/External,811,2026-10-25,1,23,0
 workday,altru.wd503/careers,Altru Health System,https://altru.wd503.myworkdayjobs.com/careers,143,2026-10-24,1,26,2
+workday,american.wd1/AU,American University,https://american.wd1.myworkdayjobs.com/AU,97,2026-10-26,1,19,0
 workday,athene.wd5/athene_careers,Athene Annuity And Life Company,https://athene.wd5.myworkdayjobs.com/athene_careers,28,2026-10-25,0,57,6
+workday,baincapital.wd1/External_Private,Bain Capital Lp,https://baincapital.wd1.myworkdayjobs.com/External_Private,40,2026-10-26,0,37,9
 workday,bentley.wd503/faculty,Bentley University,https://bentley.wd503.myworkdayjobs.com/faculty,30,2026-10-24,1,35,4
+workday,chenmed.wd1/ChenMed,Chenmed Llc,https://chenmed.wd1.myworkdayjobs.com/ChenMed,431,2026-10-26,0,44,2
 workday,cigna.wd5/cignacareers,Cigna Health And Life Insurance Company,https://cigna.wd5.myworkdayjobs.com/cignacareers,527,2026-10-21,0,487,4
 workday,clark.wd503/ClarkExternal,Clark University,https://clark.wd503.myworkdayjobs.com/ClarkExternal,506,2026-10-24,1,31,1
+workday,collegeboard.wd1/Careers,College Board,https://collegeboard.wd1.myworkdayjobs.com/Careers,52,2026-10-26,1,19,1
+workday,holycross.wd12/Careers,College Of The Holy Cross,https://holycross.wd12.myworkdayjobs.com/Careers,44,2026-10-26,1,19,1
 workday,deckers.wd5/Deckers,Deckers Outdoor Corporation,https://deckers.wd5.myworkdayjobs.com/Deckers,378,2026-10-25,0,79,3
 workday,dickinson.wd108/Jobs,Dickinson College,https://dickinson.wd108.myworkdayjobs.com/Jobs,19,2026-10-25,1,20,2
 workday,draftkings.wd1/DraftKings,Draftkings Inc,https://draftkings.wd1.myworkdayjobs.com/DraftKings,77,2026-10-24,0,109,3
 workday,drake.wd108/DrakeCareers,Drake University,https://drake.wd108.myworkdayjobs.com/DrakeCareers,26,2026-10-25,1,22,2
 workday,geisinger.wd5/GeisingerExternal,Geisinger Clinic,https://geisinger.wd5.myworkdayjobs.com/GeisingerExternal,1389,2026-10-24,0,168,11
+workday,healthfirst.wd1/healthfirst,Healthfirst,https://healthfirst.wd1.myworkdayjobs.com/healthfirst,81,2026-10-26,0,57,0
 workday,hitachi.wd1/hitachi,Hitachi Consulting Corporation,https://hitachi.wd1.myworkdayjobs.com/hitachi,2000,2026-10-25,0,206,0
 workday,howard.wd1/HU,Howard University,https://howard.wd1.myworkdayjobs.com/HU,171,2026-10-24,1,68,1
 workday,isu.wd1/IowaStateJobs,Iowa State University,https://isu.wd1.myworkdayjobs.com/IowaStateJobs,102,2026-10-25,1,106,4
 workday,ivytech.wd1/Ivy_Tech_Careers,Ivy Tech Community College,https://ivytech.wd1.myworkdayjobs.com/Ivy_Tech_Careers,512,2026-10-24,1,30,2
+workday,liberty.wd5/lu_job_board_staff,Liberty University,https://liberty.wd5.myworkdayjobs.com/lu_job_board_staff,63,2026-10-26,1,20,0
+workday,lonza.wd3/Lonza_Careers,Lonza Houston Inc,https://lonza.wd3.myworkdayjobs.com/Lonza_Careers,571,2026-10-26,0,40,0
 workday,mcw.wd503/ExternalCareers,Medical College Of Wisconsin Inc,https://mcw.wd503.myworkdayjobs.com/ExternalCareers,373,2026-10-21,1,203,1
 workday,merceruniversity.wd1/external,Mercer University,https://merceruniversity.wd1.myworkdayjobs.com/external,107,2026-10-25,1,27,0
+workday,merit.wd503/Merit,Merit American Technologies Inc,https://merit.wd503.myworkdayjobs.com/Merit,102,2026-10-26,0,47,0
 workday,montclair.wd1/JobOpportunities,Montclair State University,https://montclair.wd1.myworkdayjobs.com/JobOpportunities,37,2026-10-24,1,30,0
+workday,mosaic.wd5/mosaic,Mosaic Health System,https://mosaic.wd5.myworkdayjobs.com/mosaic,92,2026-10-26,1,13,0
 workday,multicare.wd1/multicare,Multicare Health System,https://multicare.wd1.myworkdayjobs.com/multicare,1398,2026-10-25,1,24,3
+workday,nextgen.wd5/NextGen_Careers,Next Gen Software Solutions Llc,https://nextgen.wd5.myworkdayjobs.com/NextGen_Careers,33,2026-10-26,0,36,4
+workday,northwesternmutual.wd5/CORPORATE-CAREERS,Northwestern Mutual Life Insur Co,https://northwesternmutual.wd5.myworkdayjobs.com/CORPORATE-CAREERS,76,2026-10-26,0,122,0
 workday,philips.wd3/jobs-and-careers,Philips North America Llc,https://philips.wd3.myworkdayjobs.com/jobs-and-careers,788,2026-10-24,0,221,8
+workday,planet.wd3/Planet,Planet Logistics Inc.,https://planet.wd3.myworkdayjobs.com/Planet,67,2026-10-26,0,0,55
+workday,resmed.wd3/ResMed_External_Careers,Resmed Digital Health Inc,https://resmed.wd3.myworkdayjobs.com/ResMed_External_Careers,263,2026-10-26,0,37,3
 workday,rockymountain.wd1/RMI,Rocky Mountain Institute,https://rockymountain.wd1.myworkdayjobs.com/RMI,2,2026-10-24,0,98,2
 workday,spu.wd12/SPU,Seattle Pacific University,https://spu.wd12.myworkdayjobs.com/SPU,28,2026-10-25,1,25,3
+workday,snhu.wd503/External_Career_Site,Southern New Hampshire University,https://snhu.wd503.myworkdayjobs.com/External_Career_Site,72,2026-10-26,1,18,0
 workday,statestreet.wd1/Global,State Street Bank And Trust Company,https://statestreet.wd1.myworkdayjobs.com/Global,1299,2026-10-21,0,1317,45
 workday,suffolk.wd1/External,Suffolk University,https://suffolk.wd1.myworkdayjobs.com/External,23,2026-10-25,1,26,0
 workday,tamus.wd1/TAMU_External,Texas A&M University,https://tamus.wd1.myworkdayjobs.com/TAMU_External,117,2026-10-18,1,606,0
@@ -29,6 +45,7 @@ workday,newschool.wd1/External,The New School,https://newschool.wd1.myworkdayjob
 workday,osu.wd1/OSUCareers,The Ohio State University,https://osu.wd1.myworkdayjobs.com/OSUCareers,1052,2026-10-18,1,514,4
 workday,psu.wd1/PSU_Staff,The Pennsylvania State University,https://psu.wd1.myworkdayjobs.com/PSU_Staff,1468,2026-10-18,1,676,26
 workday,uchicago.wd5/External,The University Of Chicago,https://uchicago.wd5.myworkdayjobs.com/External,384,2026-10-18,1,756,10
+workday,utampa.wd1/Faculty,The University Of Tampa,https://utampa.wd1.myworkdayjobs.com/Faculty,94,2026-10-26,1,19,0
 workday,utaustin.wd1/UTstaff,The University Of Texas At Austin,https://utaustin.wd1.myworkdayjobs.com/UTstaff,626,2026-10-18,1,549,5
 workday,unioncollege.wd5/UnionCollegeCareers,Union College,https://unioncollege.wd5.myworkdayjobs.com/UnionCollegeCareers,37,2026-10-25,1,28,0
 workday,umd.wd1/UMCP,University Of Maryland,https://umd.wd1.myworkdayjobs.com/UMCP,202,2026-10-18,1,963,3
