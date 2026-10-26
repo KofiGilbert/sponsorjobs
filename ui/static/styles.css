@@ -1640,6 +1640,8 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .view-autoapply .aa-msg.err { color: var(--flag); border-color: color-mix(in srgb, var(--flag) 40%, var(--border)); background: var(--flag-soft); }
 .view-autoapply .aa-msg.has-act { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .view-autoapply .aa-msg-sub { color: var(--muted); }
+.view-autoapply .aa-msg-list { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+.view-autoapply .aa-msg-list li { margin: 2px 0; }
 .view-autoapply .aa-msg .btn { flex: none; }
 
 /* four stage tiles */

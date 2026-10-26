@@ -7511,15 +7511,22 @@
     if (acctMenu && !acctMenu.hidden && !acctMenu.contains(e.target)
         && !(langMenu && langMenu.contains(e.target))) closeAcctMenu();
   });
-  $("#menuProfile")?.addEventListener("click", () => {
-    closeAcctMenu();
-    // Direct open: the profile nav-item was removed on purpose (one door policy),
-    // which left this menu entry clicking a selector that matches nothing.
-    loadProfile();
+  // Direct open: the profile nav-item was removed on purpose (one door policy), so the
+  // account menu and Auto-apply's "Add the details" both come through here.
+  async function openProfilePage(focusMissing) {
+    const load = loadProfile();
     showView("profile");
     // No nav item owns this page, so none stays lit (the last page's item did).
     document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("is-active"));
-  });
+    if (!focusMissing) return;
+    await load;
+    // Land on the first empty slot the editor has (a project's dates, a role's location),
+    // so the person types the detail Auto-apply asked for instead of hunting for the row.
+    const empty = [...document.querySelectorAll("#profSections .pe-in")].find(el => !el.value.trim()
+      && ["dates", "date", "location", "org", "title", "school", "degree"].includes(el.dataset.k));
+    if (empty) { empty.scrollIntoView({ block: "center" }); empty.focus(); }
+  }
+  $("#menuProfile")?.addEventListener("click", () => { closeAcctMenu(); openProfilePage(); });
 
   // ---- Language picker (opens from the account menu; uses the client-side i18n layer) ----
   const langMenu = $("#langMenu"), langList = $("#langList");
@@ -9406,16 +9413,38 @@
   const AA_ACTIONS = {
     add_resume: [() => T("aa.addResume", "Add your resume"), () => openResumeBox()],
     open_jobs: [() => T("aa.openJobs", "Open Jobs"), () => navTo("jobs")],
+    complete_profile: [() => T("aa.addDetails", "Add the details"), () => openProfilePage(true)],
   };
   function aaError(msg, e) {
     const d = (e && e.data) || {};
     const act = AA_ACTIONS[d.action];
+    const missing = Array.isArray(d.missing) ? d.missing : [];
     msg.hidden = false;
     msg.className = "aa-msg err" + (act ? " has-act" : "");
-    msg.innerHTML = `<span>${esc(e.message || T("aa.runFail", "Couldn't run auto-apply."))}`
-      + (d.summary ? ` <span class="aa-msg-sub">${esc(T("aa.skippedSum", "Skipped {s}.").replace("{s}", d.summary))}</span>` : "") + `</span>`
+    // Missing profile details: the count, then the engine's own questions as a list (they
+    // already read "the dates for your project X"), and the button that opens the editor.
+    const head = missing.length
+      ? T("aa.missing", "Auto-apply needs {n} details first.").replace("{n}", missing.length)
+      : (e.message || T("aa.runFail", "Couldn't run auto-apply."));
+    msg.innerHTML = `<span>${esc(head)}`
+      + (d.summary ? ` <span class="aa-msg-sub">${esc(T("aa.skippedSum", "Skipped {s}.").replace("{s}", d.summary))}</span>` : "")
+      + (missing.length ? `<ul class="aa-msg-list">${missing.map(q => `<li>${esc(q)}</li>`).join("")}</ul>` : "") + `</span>`
       + (act ? `<button class="btn btn-ghost btn-sm" id="aaErrAct" type="button">${esc(act[0]())}</button>` : "");
     if (act) $("#aaErrAct").addEventListener("click", act[1]);
+  }
+  // Why the run tailored fewer roles than it considered: the ranking summary (below the fit
+  // floor, no description) plus the per-role tailoring skips, grouped by reason.
+  function aaRunReasons(r) {
+    const parts = [];
+    if (r.summary) parts.push(T("aa.skippedSum", "Skipped {s}.").replace("{s}", r.summary));
+    const by = new Map();
+    (r.skipped || []).forEach(s => by.set(s.reason || "", (by.get(s.reason || "") || 0) + 1));
+    if (by.size) {
+      const s = [...by].map(([reason, n]) =>
+        `${n} ${n === 1 ? T("aa.role", "role") : T("aa.roles", "roles")}: ${reason}`).join("; ");
+      parts.push(T("aa.notTailored", "Not tailored: {s}.").replace("{s}", s));
+    }
+    return parts.length ? ` <span class="aa-msg-sub">${esc(parts.join(" "))}</span>` : "";
   }
   $("#aaRun")?.addEventListener("click", async () => {
     const btn = $("#aaRun"), count = aaCount();
@@ -9426,9 +9455,11 @@
     msg.textContent = T("aa.working", "Tailoring your {n} best matches. This can take a few minutes.").replace("{n}", count);
     try {
       const r = await api("/api/autoapply/run", { count, focus, min_fit });
-      msg.className = "aa-msg ok";
-      msg.innerHTML = esc(T("aa.queued", "Queued {n}. They are in To review.").replace("{n}", r.queued))
-        + (r.summary ? ` <span class="aa-msg-sub">${esc(T("aa.skippedSum", "Skipped {s}.").replace("{s}", r.summary))}</span>` : "");
+      // Zero is told as zero, with every reason; "They are in To review" is only true for 1+.
+      msg.className = r.queued ? "aa-msg ok" : "aa-msg err";
+      msg.innerHTML = esc(r.queued ? T("aa.queued", "Queued {n}. They are in To review.").replace("{n}", r.queued)
+                                   : T("aa.nothingQueued", "Nothing queued."))
+        + aaRunReasons(r);
       AA_WANT = "review"; AA.next = null;
       loadAutoApply();
     } catch (e) { aaError(msg, e); }
