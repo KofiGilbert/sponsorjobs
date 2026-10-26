@@ -321,6 +321,48 @@ message goes out 10 minutes after the last activity, outside quiet hours:
 
 If the person comes back first, the digest is skipped.
 
+### Autopilot (`_autopilot_tick` in `ui/app.py`)
+
+A scheduled, capped, hands-off Auto-apply run. OFF by default; the person turns it on from
+the Auto-apply page's Today panel (the "Autopilot" row under Autonomous submit, with the
+per-day number typed in place, 1 to 10, default 2). Settings: `autopilot` and
+`autopilot_per_day` in `review_prefs.json`, through `GET/POST /api/submit/settings`.
+
+Rules:
+
+* **When it runs.** On the notify loop's scan tick (every 5 minutes while the app runs),
+  whether or not Telegram is connected, on its own thread. It runs only when ALL hold:
+  Autopilot is on; a saved profile exists; today is not paused; today's count is under the
+  per-day number; the broker does not report zero packages left (when it knows, and the
+  person has no key of their own); and no other run holds the lock (a manual Tailor & queue
+  and the Autopilot never tailor at the same time; the manual run answers 409 while the
+  Autopilot is tailoring).
+* **What it tailors.** The SAME run as Tailor & queue (`_aa_run`): the same ranking as
+  Up next, the fit floor, the page's focus fields (kept in `aa_focus`), the saved search,
+  the skips, and never a role that already has a package. Up to today's remaining allowance
+  per run. Packages land in To review exactly as a manual run's do. It never submits anything
+  by itself.
+* **Backoff until tomorrow**, with the reason shown in the row's subtitle: the AI is not
+  reachable (no key, offline, no account, no credit), the broker reports no packages left
+  (or a run hits the pass's limit), or 3 runs in a row tailored nothing because of errors.
+  "No new matches" is not a failure; it just tries again at the next tick. The day state is
+  `notify_state.json` under `autopilot`: `{date, count, ids, failures, paused, batches}`.
+* **Alerts.** A role the Autopilot (or any run) tailored is marked in the alert engine's sent
+  list and dropped from the alert queue, so no job-match alert asks to tailor it again.
+* **One Telegram message per run** that tailored at least one role, only when a channel is
+  active:
+  `I found {n} roles you are qualified for and tailored your resume for each. {a} can be sent for you ({companies}). {b} are ready and waiting for your click ({companies}). {done} of {per_day} for today. {packages_left} packages left on your pass.`
+  The "can be sent" sentence is left out when `a` is 0 (counted with the app's own gate:
+  the verified allowlist AND autonomous submission on, so with today's allowlist it is
+  usually 0); the "waiting" sentence when `b` is 0; the packages sentence when the broker
+  does not know. Buttons: `[Approve all] [Review] [Skip]` (`ap:approveall|review|skip:{batch}`).
+  * **Approve all**: the sanctioned batch approve. Items on the verified allowlist with
+    autonomous submission on go through the existing rate-limited submit path; everything
+    else is marked approved and waits for the person's click. Nothing else is ever submitted.
+  * **Review**: the batch's items one by one with the usual Approve / Skip buttons.
+  * **Skip**: the items are marked skipped, as the in-app Skip does.
+  A batch is handled once; a second tap says so.
+
 ### Settings and state
 
 Settings, Notifications: Connect Telegram (official: a t.me link button plus a QR code drawn
