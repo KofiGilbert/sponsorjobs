@@ -108,6 +108,15 @@ def test_run_proceeds_once_the_details_exist(tmp_path, monkeypatch):
     assert d.get("action") != "complete_profile" and "missing" not in d
 
 
+def test_telegram_tailor_button_says_what_is_missing(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    app._memory().save("default", UNDATED, {}, [])
+    out = app._JobAlertActions()._tailor({"sid": "gh:1", "title": "Analyst", "company": "Acme"})
+    assert out["ok"] is False
+    assert out["reason"] == ('your profile is missing 2 details (the dates for your project '
+                             '"Ledger", the dates for your project "Mapper"). Add them in SponsorJobs')
+
+
 @pytest.mark.parametrize("needle", [
     'complete_profile: [() => T("aa.addDetails", "Add the details")',   # the action button
     'T("aa.missing", "Auto-apply needs {n} details first.")',           # the one-line head

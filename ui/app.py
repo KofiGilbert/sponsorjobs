@@ -9111,6 +9111,9 @@ class _JobAlertActions:
         snap = _memory().load("default") or {}
         if not (snap.get("profile") or {}).get("experience"):
             return {"ok": False, "reason": "Add your profile in SponsorJobs first, then I can build these."}
+        missing = _aa_missing_details()      # the same wall the run pre-flights: say what is missing
+        if missing:
+            return {"ok": False, "reason": _aa_missing_reason(missing)}
         tex, tname = _load_template(None)
         scratch = "_tgalert_" + uuid.uuid4().hex[:8]
         try:
@@ -10386,6 +10389,14 @@ def _aa_missing_error(missing: list[str]) -> dict:
     n = len(missing)
     return {"error": f"Auto-apply needs {n} detail{'' if n == 1 else 's'} first.",
             "missing": list(missing), "action": "complete_profile"}
+
+
+def _aa_missing_reason(missing: list[str]) -> str:
+    """The same cause in one Telegram-sized line, for the alert buttons (and a paused
+    autopilot): "your profile is missing 2 details (the dates for ...). Add them in SponsorJobs"."""
+    n = len(missing)
+    return (f"your profile is missing {n} detail{'' if n == 1 else 's'} ({', '.join(missing)}). "
+            "Add them in SponsorJobs")
 
 
 @app.get("/api/autoapply/preview")
