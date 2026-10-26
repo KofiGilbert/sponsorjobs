@@ -2129,6 +2129,18 @@ body.panel-open .app {
   min-height: 88px;
 }
 .home-prompt-foot { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
+/* Home: the "Try" row under the box, three requests the box understands (2026-10-26). */
+.home-try { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: -12px; }
+.home-try-l { font-size: 12.5px; color: var(--faint); margin-right: 2px; }
+.home-pill {
+  font: inherit; font-size: 12.5px; color: var(--muted); background: transparent;
+  border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; cursor: pointer;
+  text-align: left;
+}
+.home-pill:hover { color: var(--ink); border-color: var(--border-strong); }
+/* The chat in assistant mode: a reply's buttons sit under the bubble, like the autobuild action. */
+.agent-acts { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 10px 44px; }
+@media (max-width: 560px) { .agent-acts { margin-left: 0; } }
 .home-fade { transition: opacity .25s ease; }
 /* Home: the heading and prompt stay fixed; only the role list scrolls beneath them. */
 #view-dashboard.is-active { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }

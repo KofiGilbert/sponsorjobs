@@ -87,10 +87,17 @@
 
           <div class="home-promptbox">
             <textarea id="homePrompt" rows="4" spellcheck="false" aria-label="Job description or request"
-              placeholder="Paste the job description here…" data-i18n-ph="home.placeholder"></textarea>
+              placeholder="Paste a job description, or tell me what to do..." data-i18n-ph="home.placeholder"></textarea>
             <div class="home-prompt-foot">
               <button class="btn btn-primary btn-sm" id="homeGo" type="button" data-i18n="home.start">Start tailoring</button>
             </div>
+          </div>
+          <!-- Three things the box understands besides a posting; a pill fills the box and sends it. -->
+          <div class="home-try home-fade" id="homeTry">
+            <span class="home-try-l" data-i18n="home.try">Try</span>
+            <button class="home-pill" type="button" data-i18n="home.try1">Find 5 data analytics roles and apply for me</button>
+            <button class="home-pill" type="button" data-i18n="home.try2">I am away for 3 hours: tailor 10 business analyst roles and message me on Telegram</button>
+            <button class="home-pill" type="button" data-i18n="home.try3">What is waiting on me?</button>
           </div>
 
           <!-- The prompt stays put; only the roles scroll under it (Kofi, 2026-10-14). -->

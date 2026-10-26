@@ -565,21 +565,31 @@
     });
   }
 
-  // The old Home hero/prompt wiring: typing fades the page furniture; Enter (or the
-  // button) starts a tailoring session with the text as the opening message, reusing
-  // the exact JD-gate path New CV uses. Esc clears and brings the landing back.
+  // The Home box: typing fades the page furniture; Enter (or the button) sends the text.
+  // A pasted posting or a link starts a tailoring session, the exact JD-gate path New
+  // Resume uses; anything else is a request for the assistant (agentAsk below), which
+  // states a plan first. The server decides (agent/home.py); the client only guesses the
+  // obvious cases so a posting never waits on a parse. Esc clears and brings the landing back.
+  const looksLikeJd = (t) => /^(https?:\/\/|www\.)\S+$/i.test(t) || t.length > 1500 ||
+    (t.split("\n").filter(l => l.trim()).length >= 3 && /responsibilit|requirement|qualification/i.test(t));
   (function () {
     const box = $("#homePrompt");
     if (!box) return;
     const dash = $("#view-dashboard");
     const sync = () => dash.classList.toggle("home-typing", !!box.value.trim());
-    const start = () => {
-      const text = box.value.trim();
-      if (!text) { box.focus(); return; }   // the button did nothing at all on an empty box
+    const tailor = (text) => {
       openBuilder();
       $("#jdInput").value = text;
       $("#jdStart").click();
+    };
+    const start = async () => {
+      const text = box.value.trim();
+      if (!text) { box.focus(); return; }   // the button did nothing at all on an empty box
       box.value = ""; sync();
+      if (looksLikeJd(text)) { tailor(text); return; }
+      openAgent();
+      const r = await agentAsk(text);
+      if (r && r.kind !== "agent") { tailor(text); return; }   // the server read it as a posting
     };
     box.addEventListener("input", sync);
     box.addEventListener("keydown", (e) => {
@@ -587,6 +597,10 @@
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); start(); }
     });
     $("#homeGo")?.addEventListener("click", start);
+    // A Try pill fills the box with its (translated) text and sends it.
+    document.querySelectorAll("#homeTry .home-pill").forEach(b => b.addEventListener("click", () => {
+      box.value = b.textContent.trim(); sync(); start();
+    }));
   })();
 
   // (The old next-best-action hero card is gone: the prompt IS the home now.)
@@ -3113,6 +3127,7 @@
   // has to guess which of the two the person meant.
   function openBuilder(template) {
     if (typeof template === "string") SELECTED_TEMPLATE = template;
+    if (AGENT.on) setAgentMode(false);   // the builder's own header and composer are back
     resetBuilder();
     showView("builder");
     $("#jdInput").value = "";
@@ -3121,6 +3136,7 @@
   }
 
   async function resumeBuilder() {
+    if (AGENT.on) setAgentMode(false);
     showView("builder");
     if (!(await restoreSession())) openBuilder();
   }
@@ -3132,7 +3148,10 @@
   // "change" goes to the picker, where "Use this template" comes straight back here.
   $("#builderTplChange")?.addEventListener("click", () => openTemplates("builder"));
   $("#jdCancel").addEventListener("click", () => showView("dashboard"));
-  $("#backBtn").addEventListener("click", () => { loadDashboard(); showView("dashboard"); });
+  $("#backBtn").addEventListener("click", () => {
+    if (AGENT.on) setAgentMode(false);   // Back from the assistant returns Home too
+    loadDashboard(); showView("dashboard");
+  });
 
   $("#jdStart").addEventListener("click", async () => {
     const jd = $("#jdInput").value.trim();
@@ -3286,8 +3305,97 @@
     const val = composerInput.value.trim();
     if (!val) return;
     composerInput.value = ""; autoGrow();
+    if (AGENT.on) { agentAsk(val); return; }       // assistant mode: not a resume-session turn
     sendTurn(val, esc(val).replace(/\n/g, "<br>"));
   });
+
+  /* ---------------------------------------------------------------- assistant (Home agent)
+     The same chat surface as the resume builder, with the header and composer relabelled.
+     Nothing here touches the resume session: a reply is a bubble plus buttons, and Go ahead
+     runs the one guarded Auto-apply run on the server. Back returns Home and restores the
+     builder's own header (openBuilder/resumeBuilder call setAgentMode(false) first). */
+  const AGENT = { on: false, change: false, busy: false };
+  const agentT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  // The builder's own words, kept from the page so leaving assistant mode restores them exactly.
+  const BUILDER_WORDS = {
+    kicker: $("#view-builder .builder-kicker")?.textContent || "New Resume",
+    sub: $("#view-builder .chat-head-sub")?.textContent || "",
+    placeholder: composerInput.placeholder,
+  };
+  function setAgentMode(on) {
+    AGENT.on = on; AGENT.change = false;
+    const view = $("#view-builder");
+    view.classList.toggle("agent-mode", on);
+    const kicker = view.querySelector(".builder-kicker");
+    if (kicker) kicker.textContent = on ? agentT("agent.kicker", "Assistant") : BUILDER_WORDS.kicker;
+    $("#builderRole").textContent = on ? "" : "New Resume";
+    $("#steps").hidden = on;
+    $("#builderTpl").hidden = true;
+    const sub = view.querySelector(".chat-head-sub");
+    if (sub) sub.textContent = on ? agentT("agent.sub", "Your assistant. Ask for a search, a resume, or an update.")
+                                  : BUILDER_WORDS.sub;
+    composerInput.placeholder = on ? agentT("agent.placeholder", "Ask for a search, a resume, or an update.")
+                                   : BUILDER_WORDS.placeholder;
+    $("#uploadBtn").hidden = on;
+  }
+  function openAgent() {
+    resetBuilder();
+    setAgentMode(true);
+    $("#jdGate").hidden = true;
+    showView("builder");
+    composerInput.focus();
+  }
+  // A reply: the text as a bubble (plain text, escaped), then its buttons underneath.
+  function agentReply(r) {
+    bubble("agent", chatText(r.text || ""));
+    const acts = (r.buttons || []).filter(b => b && b.id);
+    if (!acts.length) return;
+    const wrap = el("div", "agent-acts");
+    const labels = { go: agentT("agent.go", "Go ahead"), change: agentT("agent.change", "Change"),
+                     open_autoapply: agentT("agent.open", "Open Auto-apply"),
+                     find: agentT("agent.find", "Find matching roles"),
+                     add_resume: agentT("agent.addResume", "Add my resume") };
+    acts.forEach(b => {
+      const btn = el("button", "btn btn-sm " + (b.id === "go" ? "btn-primary" : "btn-ghost"));
+      btn.type = "button"; btn.textContent = labels[b.id] || b.label || b.id;
+      btn.addEventListener("click", () => { wrap.remove(); agentAct(b.id, r); });
+      wrap.appendChild(btn);
+    });
+    chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
+  }
+  async function agentAct(id, r) {
+    if (id === "go") {
+      bubble("user", esc(agentT("agent.go", "Go ahead")));
+      await withWorking(async () => agentReply(await api("/api/agent/go", {})),
+                        agentT("agent.tailoring", "Tailoring. This takes a few minutes."));
+    } else if (id === "change") {
+      bubble("agent", esc(agentT("agent.changeQ", "What should I change? The titles, how many, or where.")));
+      AGENT.change = true; composerInput.focus();
+    } else if (id === "open_autoapply") {
+      document.querySelector('[data-nav="autoapply"]')?.click();
+    } else if (id === "add_resume") {
+      document.querySelector('[data-nav="cvs"]')?.click();
+    } else if (id === "find") {
+      const titles = ((r && r.intent && r.intent.titles) || []).join(", ");
+      agentAsk(titles ? `Find ${titles} roles for me` : "Find roles for me");
+    }
+  }
+  // One turn: the person's words, a working bubble, the reply. Returns the server answer so
+  // the Home box can fall back to a tailoring session when the server read a posting.
+  async function agentAsk(text) {
+    if (AGENT.busy || !text) return null;
+    AGENT.busy = true;
+    bubble("user", esc(text).replace(/\n/g, "<br>"));
+    const change = AGENT.change; AGENT.change = false;
+    let out = null;
+    try {
+      await withWorking(async () => {
+        out = await api("/api/agent/ask", { text, change });
+        if (out.kind === "agent") agentReply(out);
+      }, agentT("agent.thinking", "Thinking..."));
+    } finally { AGENT.busy = false; }
+    return out;
+  }
 
   /* ONE upload button, any document (CV, transcript, or certificate). Local
      extraction + OCR; the server reads it and figures out what it is. */
