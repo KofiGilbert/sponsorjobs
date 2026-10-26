@@ -4277,6 +4277,7 @@ def profile_view():
 
 _DECLINABLE = ("github", "blog", "linkedin", "projects", "courses", "address",
                "extracurricular", "interests")
+_SOFT_SKIPS = ("project_dates:", "project_location:")   # per-project Skips from the details step
 
 
 def _prof_rows(rows, keys, bullet_key="bullets"):
@@ -4324,6 +4325,8 @@ def profile_sections_save():
     interests = str(b.get("interests") or "").strip()
     skills_input = [str(s).strip() for s in (b.get("skills_input") or []) if str(s).strip()]
     declined = [d for d in (b.get("declined") or []) if d in _DECLINABLE]
+    # The editor shows only the section-level skips; keep the details step's per-project ones.
+    declined += [d for d in (ess.get("declined") or []) if str(d).startswith(_SOFT_SKIPS)]
 
     for bag in (profile, ess):
         bag["education"] = [dict(e) for e in edu]
@@ -4344,6 +4347,150 @@ def profile_sections_save():
 
     mem.save("default", profile, ess, saved.get("history") or [])
     return profile_view()
+
+
+def _template_shows_projects(name: str | None = None) -> bool:
+    """Whether the template a build uses renders a Projects section (and so each project's
+    dates): its manifest's ``sections``. Unreadable manifest: assume it does."""
+    import json as _json
+    name = (name or "").strip() or _DEFAULT_TEMPLATE
+    try:
+        m = _json.loads((ROOT / "config" / "templates" / f"{name}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return "projects" in (m.get("sections") or ["projects"])
+
+
+def _profile_missing_slots(include_soft: bool = True) -> list[dict]:
+    """The slots the saved profile still lacks (ui/session._missing_slots), loaded exactly as a
+    WebIntake session loads "default" (normalize_profile, _flatten_profile, the declined list):
+    the HARD ones, plus the SOFT ones (a project's dates and location) when ``include_soft``
+    and the template shows projects. One source for the onboarding step, "Add the details" on
+    Auto-apply, and the run's pre-flight (HARD only). Empty without a profile: that is "add
+    your resume"'s job."""
+    from tailoring.assembler import normalize_profile
+    from ui.session import _essentials_from, _flatten_profile, _missing_slots
+    saved = _memory().load("default") or {}
+    profile = saved.get("profile") or {}
+    if not profile.get("experience"):
+        return []
+    ess = _essentials_from(saved.get("essentials") or {}, profile)
+    soft = include_soft and _template_shows_projects(_load_template(None)[1])
+    return [x for x in _missing_slots(*_flatten_profile(normalize_profile(profile)),
+                                      declined=ess.get("declined") or [])
+            if x["crit"] or (soft and x["soft"])]
+
+
+def _autofill_saved_project_dates() -> list[str]:
+    """Fill the saved profile's undated projects from their GitHub repos (ui/github_dates.py),
+    before anyone is asked for them. Returns the projects filled; never raises (offline-safe)."""
+    try:
+        from ui.github_dates import fill_project_dates
+        mem = _memory()
+        saved = mem.load("default") or {}
+        profile = saved.get("profile") or {}
+        ess = saved.get("essentials") or {}
+        gh = str((profile.get("identity") or {}).get("github") or "")
+        cache = _DATA / "github_repo_dates.json"
+        filled = fill_project_dates(profile.get("projects") or [], gh, cache, _cred("GITHUB_TOKEN"))
+        if ess.get("projects"):
+            filled += fill_project_dates(ess["projects"], gh, cache, _cred("GITHUB_TOKEN"))
+        if filled:
+            mem.save("default", profile, ess, saved.get("history") or [])
+        return filled
+    except Exception:   # noqa: BLE001 - a lookup never stops the person
+        traceback.print_exc()
+        return []
+
+
+@app.get("/api/profile/missing")
+@_guard
+def profile_missing():
+    """The details step's questions, in the gate's words: one slot per missing HARD field, and
+    per SOFT one (a project's dates, after GitHub has filled what it can) the template shows."""
+    _autofill_saved_project_dates()
+    return jsonify({"ok": True, "missing": _profile_missing_slots()})
+
+
+def _same(a, b) -> bool:
+    return str(a or "").strip().lower() == str(b or "").strip().lower()
+
+
+def _detail_targets(bag: dict, sec: str, match: dict) -> list[dict]:
+    """The saved entries (and the dict the key lives on) a slot's ``match`` names, in both
+    profile shapes: a grouped experience entry yields its matching roles, with the entry's
+    own dict for the location; flat essentials rows stand for themselves."""
+    out = []
+    if sec == "experience":
+        for e in bag.get("experience") or []:
+            if not isinstance(e, dict) or not _same(e.get("org"), match.get("org")):
+                continue
+            for r in (e.get("roles") or [e]):
+                if isinstance(r, dict) and _same(r.get("title"), match.get("title")):
+                    out.append({"dates": r, "title": r, "org": e, "location": e})
+    elif sec == "education":
+        for d in bag.get("education") or []:
+            if isinstance(d, dict) and _same(d.get("school"), match.get("school")) \
+                    and _same(d.get("degree"), match.get("degree")):
+                out.append({k: d for k in ("school", "degree", "date", "courses")})
+    elif sec == "projects":
+        for p in bag.get("projects") or []:
+            # The gate names a project by its org or its title (ui/session._flatten_profile
+            # keeps one of them), so either name finds it here.
+            if isinstance(p, dict) and any(_same(p.get(k), match.get("name")) for k in ("title", "org")):
+                out.append({k: p for k in ("location", "dates", "personal")})
+    return out
+
+
+def _apply_profile_details(profile: dict, ess: dict, answers: list, declines: list) -> None:
+    """Land each answer on the entry its slot names, in BOTH saved bags, filling the first
+    matching entry whose field is still empty (the one the gate asked about). A Skip on a
+    SOFT slot records its key ("project_dates:<name>") in the declined list, so it is never
+    asked again; a HARD slot has no Skip."""
+    for a in answers:
+        if not isinstance(a, dict):
+            continue
+        sec, key, match = str(a.get("sec") or ""), str(a.get("key") or ""), a.get("match") or {}
+        val = str(a.get("value") or "").strip()
+        if not val:
+            continue
+        if sec == "identity":
+            if key == "contact":         # "an email or phone number": file it where it belongs
+                key = "email" if "@" in val else "phone"
+            if key not in IDENTITY_KEYS:
+                continue
+            for bag in (profile, ess):
+                bag.setdefault("identity", {})[key] = val
+            continue
+        for bag in (profile, ess):
+            for t in _detail_targets(bag, sec, match):
+                if key in t and not str(t[key].get(key) or "").strip():
+                    t[key][key] = val
+                    break
+    skips = [str(d.get("decline") or "") for d in declines if isinstance(d, dict)]
+    skips = [k for k in skips if k.startswith(_SOFT_SKIPS)]
+    if skips:
+        ess["declined"] = sorted(set(ess.get("declined") or []) | set(skips))
+
+
+@app.post("/api/profile/details")
+@_guard
+def profile_details_save():
+    """Save the details step: {answers: [{sec, key, match, value}], declines: [{sec, match}]},
+    each from a slot /api/profile/missing (or the import) handed out. Returns what is still
+    missing, so the step re-asks only that. Refused while a resume session is open, like
+    /api/profile/sections: its autosave would overwrite the edit."""
+    if _SESSION.get("s") is not None:
+        return jsonify({"error": "Finish or close the resume you're building first, "
+                                 "its autosave would overwrite these edits."}), 409
+    b = request.json or {}
+    mem = _memory()
+    saved = mem.load("default") or {}
+    profile = saved.get("profile") or {}
+    ess = saved.get("essentials") or {}
+    _apply_profile_details(profile, ess, list(b.get("answers") or []), list(b.get("declines") or []))
+    mem.save("default", profile, ess, saved.get("history") or [])
+    return jsonify({"ok": True, "missing": _profile_missing_slots()})
 
 
 @app.post("/api/profile/from_cv")
@@ -4386,8 +4533,12 @@ def profile_from_cv():
     if existing.get("experience") or (existing.get("identity") or {}).get("name"):
         profile = _merge_profiles(existing, profile)
     _memory().save("default", profile, _essentials_from_profile(profile), saved.get("history") or [])
+    _autofill_saved_project_dates()     # a linked repo's dates, before asking for them
+    profile = (_memory().load("default") or {}).get("profile") or profile
     ident = profile.get("identity") or {}
-    return jsonify({"ok": True, "profile": profile, "summary": {
+    # What the gate would still ask for: the wizard turns it into the details step right
+    # away, so an unattended build never stalls later on a date the import could not read.
+    return jsonify({"ok": True, "profile": profile, "missing": _profile_missing_slots(), "summary": {
         "name": ident.get("name", ""),
         "roles": sum(len(e.get("roles") or [e]) for e in profile.get("experience") or []),
         "skills": len(profile.get("skills") or {}),
@@ -9129,6 +9280,10 @@ class _JobAlertActions:
         snap = _memory().load("default") or {}
         if not (snap.get("profile") or {}).get("experience"):
             return {"ok": False, "reason": "Add your profile in SponsorJobs first, then I can build these."}
+        missing = _aa_missing_details()      # the same wall the run pre-flights: say what is missing
+        if missing:
+            return {"ok": False, "reason": _aa_missing_reason(missing)}
+        _autofill_saved_project_dates()
         tex, tname = _load_template(None)
         scratch = "_tgalert_" + uuid.uuid4().hex[:8]
         try:
@@ -10389,6 +10544,33 @@ _AA_NO_PROFILE = {"error": "Add your resume first, then SponsorJobs can build th
                   "action": "add_resume"}
 
 
+def _aa_missing_details() -> list[str]:
+    """The HARD details the saved profile still lacks, worded as the questions
+    build_from_saved would ask (ui/session._missing_skeleton, critical tier). A project's
+    dates and location are SOFT and never stop a run: they build as undated. An unattended
+    build has no one to answer them, so without this check every role came back "needs a
+    detail we don't have" and the run queued nothing while the page blamed the fit floor
+    (measured 2026-10-26: two undated projects, 0 queued, 284 "below your fit floor").
+    Checked BEFORE any role is counted."""
+    return [x["q"] for x in _profile_missing_slots(include_soft=False)]
+
+
+def _aa_missing_error(missing: list[str]) -> dict:
+    """The 400 body for a run or preview the saved profile cannot support yet: the plain
+    questions, and the action the page turns into an "Add the details" button."""
+    n = len(missing)
+    return {"error": f"Auto-apply needs {n} detail{'' if n == 1 else 's'} first.",
+            "missing": list(missing), "action": "complete_profile"}
+
+
+def _aa_missing_reason(missing: list[str]) -> str:
+    """The same cause in one Telegram-sized line, for the alert buttons (and a paused
+    autopilot): "your profile is missing 2 details (the dates for ...). Add them in SponsorJobs"."""
+    n = len(missing)
+    return (f"your profile is missing {n} detail{'' if n == 1 else 's'} ({', '.join(missing)}). "
+            "Add them in SponsorJobs")
+
+
 @app.get("/api/autoapply/preview")
 @_guard
 def autoapply_preview():
@@ -10400,6 +10582,9 @@ def autoapply_preview():
     a = request.args
     focus = {"titles": _split(a.get("titles")), "locations": _split(a.get("locations")),
              "sponsor_only": a.get("sponsor_only") in ("1", "true", "on")}
+    missing = _aa_missing_details()         # a run would stall on these, say so now
+    if missing:
+        return jsonify(_aa_missing_error(missing)), 400
     rows, meta = _aa_candidates(focus)
     idx = taken_index(_aa_records())
     fresh = [j for j in rows if taken_status(j, idx) is None]
@@ -10420,6 +10605,12 @@ def autoapply_run():
     count = max(1, min(int(body.get("count") or 5), 10))
     if not _aa_has_profile():
         return jsonify(_AA_NO_PROFILE), 400
+    # Pre-flight the saved profile before ranking, counting, or tailoring a single role: an
+    # unattended build cannot ask for a missing date, so the run would queue nothing.
+    missing = _aa_missing_details()
+    if missing:
+        return jsonify(_aa_missing_error(missing)), 400
+    _autofill_saved_project_dates()     # soft gaps: fill what GitHub knows, build the rest undated
     min_fit = _aa_min_fit(body)
     if not _AA_RUN_LOCK.acquire(blocking=False):
         return jsonify({"error": "A run is already tailoring. Wait for it to finish, then try "
@@ -10609,6 +10800,25 @@ def _autopilot_kick() -> None:
     th.start()
 
 
+def _autopilot_tell_missing(missing: list[str]) -> bool:
+    """One Telegram line per missing-details pause (not one per tick): sent when a channel is
+    active and this pause has not been told yet. The flag lives outside the day state, so a new
+    day does not repeat it; it clears when the tick finds the profile complete."""
+    ns = _notify_state()
+    if ns.get("autopilot_missing_told"):
+        return False
+    ch = _active_channel()
+    if ch is None:
+        return False
+    try:
+        ch.send(f"Autopilot is paused: {_aa_missing_reason(missing)} and it resumes on its own.")
+    except Exception:   # noqa: BLE001 - the pause shows on the page either way
+        traceback.print_exc()
+        return False
+    ns.set("autopilot_missing_told", True)
+    return True
+
+
 def _autopilot_tick() -> dict:
     """One scheduled check. Runs only when ALL hold: Autopilot is on, a profile exists, today's
     pause is not set, today's count is under the per-day number, the pass has packages left
@@ -10624,8 +10834,23 @@ def _autopilot_tick() -> dict:
         return {"ran": False, "why": "no_profile"}
     _ts, today = _now_ts_today()
     st = _autopilot_state(today)
-    if st.get("paused"):
+    if st.get("paused") and st["paused"].get("code") != "missing_details":
         return {"ran": False, "why": "paused", "paused": st["paused"]}
+    # The profile lacks a detail an unattended build cannot ask for: pause (never a failure,
+    # never a retry), say so once on Telegram, and resume on the first tick after it is added.
+    missing = _aa_missing_details()
+    if missing:
+        n = len(missing)
+        st["paused"] = {"code": "missing_details", "n": n,
+                        "text": f"Paused: {n} detail{'' if n == 1 else 's'} missing in your profile."}
+        _autopilot_save(st)
+        return {"ran": False, "why": "paused", "paused": st["paused"],
+                "told": _autopilot_tell_missing(missing)}
+    if st.get("paused"):                  # the details are in: resume now
+        st["paused"] = None
+        _autopilot_save(st)
+    _notify_state().set("autopilot_missing_told", False)
+    _autofill_saved_project_dates()
     per_day = clamp_per_day(p.get("autopilot_per_day"))
     remaining = per_day - int(st.get("count") or 0)
     if remaining <= 0:
@@ -10835,6 +11060,17 @@ def _agent_focus(intent: dict) -> dict:
             "sponsor_only": bool(intent.get("sponsors_only"))}
 
 
+def _agent_missing_reply(missing: list[str]) -> dict:
+    """The plan's answer when the saved profile lacks a HARD detail an unattended build cannot
+    ask for: the questions, and "Add the details", which opens the same details step as the
+    Auto-apply page. No plan is kept, so Go ahead cannot run into the same wall."""
+    n = len(missing)
+    _AGENT["plan"] = None
+    return {"text": f"Before I can tailor, your profile needs {n} detail{'' if n == 1 else 's'}:\n"
+                    + "\n".join(f"- {q}" for q in missing),
+            "buttons": [{"id": "add_details", "label": "Add the details"}], "missing": list(missing)}
+
+
 def _agent_plan(intent: dict) -> dict:
     """find_and_apply, step one: the plan, from the same ranking Up next shows, with nothing
     tailored and no package spent. Keeps the plan for /api/agent/go."""
@@ -10843,6 +11079,9 @@ def _agent_plan(intent: dict) -> dict:
     if not _aa_has_profile():
         return {"text": _AA_NO_PROFILE["error"], "buttons": [{"id": "add_resume",
                                                              "label": "Add my resume"}]}
+    missing = _aa_missing_details()     # HARD only: an undated project never stops the plan
+    if missing:
+        return _agent_missing_reply(missing)
     focus = _agent_focus(intent)
     rows, meta = _aa_candidates(focus)
     titles, location = focus["titles"], intent.get("location")

@@ -1560,6 +1560,19 @@
           <button class="btn btn-ghost" data-wiz="close" type="button">Not now</button>
         </div>
       </div>
+      <!-- The details step: one input per critical field the import could not read (the gate's
+           own questions), so an unattended build never stalls on it later. Also what "Add the
+           details" on Auto-apply opens: one place to complete the profile. -->
+      <div class="wiz-panel" data-panel="details" hidden>
+        <h2 class="wiz-h" data-i18n="wiz.details.h">A few details to finish your profile</h2>
+        <p class="wiz-p" data-i18n="wiz.details.p">Resumes and Auto-apply need these.</p>
+        <div class="wiz-details" id="wizDetails"><!-- one input per missing detail --></div>
+        <div class="ai-msg" id="wizDetMsg" hidden></div>
+        <div class="wiz-foot">
+          <button class="btn btn-ghost" data-wiz="close" type="button" data-i18n="wiz.details.later">Not now</button>
+          <button class="btn btn-primary" id="wizDetSave" type="button" data-i18n="wiz.details.save">Save</button>
+        </div>
+      </div>
     </div>
   </div>
 

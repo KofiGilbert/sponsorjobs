@@ -264,68 +264,83 @@ def _most_recent(education: list) -> dict:
     return max(education, key=lambda d: _year(d.get("date")), default={}) if education else {}
 
 
-def _missing_skeleton(identity: dict, education: list, experience: list,
-                      projects: list | None = None, declined=None,
-                      critical_only: bool = False, identity_fields=None) -> list[str]:
-    """Human-readable list of template elements still missing (or not yet declined).
+def _missing_slots(identity: dict, education: list, experience: list,
+                   projects: list | None = None, declined=None, identity_fields=None) -> list[dict]:
+    """Every template element still missing (or not yet declined), as a slot an editor can
+    fill: ``{q, crit, soft, sec, key, match, decline}``. ``q`` is the question's wording (what
+    _missing_skeleton returns), ``crit``/``soft`` its tier, ``sec``/``key`` where the answer
+    lands, ``match`` the saved entry's own names (org and title, school and degree, a
+    project's name) so the save finds it again, and ``decline`` the key a Skip records in the
+    declined list (None where the template needs the value).
 
-    Two tiers. TEMPLATE-CRITICAL (returned even when ``critical_only``): fields whose
-    absence breaks the template's form, name, a contact, and the location+dates of
-    every experience/project entry, plus each education entry's school/degree/date.
-    OPTIONAL (only in the full gate): address, links, courses, and the "do you have
-    any …" prompts. ``critical_only=True`` is used under an explicit build override.
+    Three tiers (owner decision 2026-10-26). HARD (``crit``, blocks a build and every
+    unattended run): name, a contact, the org/title/dates/location of every experience entry,
+    and each education entry's school/degree/date. SOFT (``soft``, never blocks anything, so
+    _missing_skeleton leaves it out): a project's dates and location, asked only in the
+    details step and only where the template renders projects, with Skip remembered per
+    project. OPTIONAL (only in the full gate): address, links, courses, and the "do you have
+    any …" prompts.
     """
     projects = projects or []
     dec = set(declined or [])
-    crit: list[str] = []    # template-critical, asked first
-    opt: list[str] = []     # optional, full gate only, asked last
+    crit: list[dict] = []    # template-critical (HARD), asked first
+    soft: list[dict] = []    # never blocks: a project's dates and location
+    opt: list[dict] = []     # optional, full gate only, asked last
+
+    def slot(q, sec, key, match=None, decline=None):
+        return {"q": q, "sec": sec, "key": key, "match": dict(match or {}), "decline": decline}
 
     if not str(identity.get("name") or "").strip():
-        crit.append("your full name")
+        crit.append(slot("your full name", "identity", "name"))
     if not str(identity.get("email") or identity.get("phone") or "").strip():
-        crit.append("an email or phone number")
+        crit.append(slot("an email or phone number", "identity", "contact"))
 
     for j in experience:   # every EXISTING role needs its full skeleton (critical)
         org, title = str(j.get("org") or "").strip(), str(j.get("title") or "").strip()
         where = f"your role at {org}" if org else (f"your {title} role" if title else "a role you listed")
+        m = {"org": org, "title": title}
         if not org:
-            crit.append("the company for " + (f"your {title} role" if title else "a role you listed"))
+            crit.append(slot("the company for " + (f"your {title} role" if title else "a role you listed"),
+                             "experience", "org", m))
         if not title:
-            crit.append(f"your job title at {org or 'that company'}")
+            crit.append(slot(f"your job title at {org or 'that company'}", "experience", "title", m))
         if not str(j.get("dates") or "").strip():
-            crit.append(f"the employment dates for {where}")
+            crit.append(slot(f"the employment dates for {where}", "experience", "dates", m))
         if not str(j.get("location") or "").strip():
-            crit.append(f"the location (city, state) for {where}")
+            crit.append(slot(f"the location (city, state) for {where}", "experience", "location", m))
 
     for d in education:    # every EXISTING degree needs school/degree/date (critical)
         sch, deg = str(d.get("school") or "").strip(), str(d.get("degree") or "").strip()
         whose = f"your {deg}" if deg else (f"your degree at {sch}" if sch else "your degree")
+        m = {"school": sch, "degree": deg}
         if not sch:
-            crit.append("the school for " + (f"your {deg}" if deg else "your degree"))
+            crit.append(slot("the school for " + (f"your {deg}" if deg else "your degree"),
+                             "education", "school", m))
         if not deg:
-            crit.append(f"the degree you earned at {sch or 'your school'}")
+            crit.append(slot(f"the degree you earned at {sch or 'your school'}", "education", "degree", m))
         if not str(d.get("date") or "").strip():
-            crit.append(f"the graduation month and year for {whose}")
+            crit.append(slot(f"the graduation month and year for {whose}", "education", "date", m))
 
     if "projects" not in dec:
-        for p in projects:   # every EXISTING project needs location+dates (critical)
+        for p in projects:   # a project's location+dates are SOFT: asked, never required
             # A personal / portfolio project (has a repo link or is flagged personal) is
             # not employment, it legitimately has no company location or work dates, so
-            # we never demand them (that was forcing friction on real GitHub projects).
+            # we never ask (a linked repo's dates come from GitHub instead, ui/github_dates.py).
             if p.get("link") or p.get("url") or p.get("personal"):
                 continue
             nm = str(p.get("title") or p.get("org") or "").strip()
             label = f'your project "{nm}"' if nm else "your project"
-            if not str(p.get("location") or "").strip():
-                crit.append(f"the location for {label}")
-            if not str(p.get("dates") or "").strip():
-                crit.append(f"the dates for {label}")
+            m = {"name": nm}
+            for key, q in (("location", f"the location for {label}"), ("dates", f"the dates for {label}")):
+                skip = f"project_{key}:{nm.lower()}"     # a Skip, remembered per project
+                if not str(p.get(key) or "").strip() and skip not in dec:
+                    soft.append(slot(q, "projects", key, m, skip))
 
     # Optional / structural prompts (full gate only, after the critical fields).
     if not experience:
-        opt.append("at least one company and job title")
+        opt.append(slot("at least one company and job title", "experience", "org"))
     if not education:
-        opt.append("your school and degree")
+        opt.append(slot("your school and degree", "education", "school"))
     # Only ask for the identity slots THIS template actually shows (manifest identity_fields),
     # so a template without a blog slot never asks for a blog, etc.
     id_fields = set(identity_fields or ("name", "address", "phone", "email",
@@ -333,25 +348,50 @@ def _missing_skeleton(identity: dict, education: list, experience: list,
     # The template header shows a FULL mailing address, so a bare "City, ST" doesn't
     # satisfy the slot, ask for the whole thing (street, city, state, ZIP).
     if "address" in id_fields and "address" not in dec and not is_full_address(identity.get("address")):
-        opt.append("your full mailing address, street, city, state, and ZIP (or tell "
-                   "me you'd rather leave it off)")
+        opt.append(slot("your full mailing address, street, city, state, and ZIP (or tell "
+                        "me you'd rather leave it off)", "identity", "address", decline="address"))
     if "github" in id_fields and "github" not in dec and not str(identity.get("github") or "").strip():
-        opt.append("your GitHub link (a GitHub with real projects makes a much stronger "
-                   "resume, or tell me you don't have one)")
+        opt.append(slot("your GitHub link (a GitHub with real projects makes a much stronger "
+                        "resume, or tell me you don't have one)", "identity", "github", decline="github"))
     if "linkedin" in id_fields and "linkedin" not in dec and not str(identity.get("linkedin") or "").strip():
-        opt.append("your LinkedIn URL (or tell me you don't have one)")
+        opt.append(slot("your LinkedIn URL (or tell me you don't have one)", "identity", "linkedin",
+                        decline="linkedin"))
     if "blog" in id_fields and "blog" not in dec and not str(identity.get("blog") or "").strip():
-        opt.append("a blog/portfolio link (or tell me you don't have one)")
+        opt.append(slot("a blog/portfolio link (or tell me you don't have one)", "identity", "blog",
+                        decline="blog"))
     recent = _most_recent(education)
     if education and "courses" not in dec and not str(recent.get("courses") or "").strip():
-        opt.append("the courses for your most recent degree (list them, or upload your "
-                   "transcript, or tell me you'd rather skip the courses line)")
+        opt.append(slot("the courses for your most recent degree (list them, or upload your "
+                        "transcript, or tell me you'd rather skip the courses line)", "education",
+                        "courses", {"school": str(recent.get("school") or "").strip()}, "courses"))
     if "projects" not in dec and not projects:
-        opt.append("any projects you'd like to include (or tell me you don't have projects "
-                   "to add)")
+        opt.append(slot("any projects you'd like to include (or tell me you don't have projects "
+                        "to add)", "projects", "org", decline="projects"))
 
-    result = crit if critical_only else (crit + opt)
-    return list(dict.fromkeys(result))   # de-dupe, keep order
+    for x in crit:
+        x["crit"], x["soft"] = True, False
+    for x in soft:
+        x["crit"], x["soft"] = False, True
+    for x in opt:
+        x["crit"], x["soft"] = False, False
+    seen, out = set(), []
+    for x in crit + soft + opt:      # de-dupe on the wording, keep order
+        if x["q"] not in seen:
+            seen.add(x["q"])
+            out.append(x)
+    return out
+
+
+def _missing_skeleton(identity: dict, education: list, experience: list,
+                      projects: list | None = None, declined=None,
+                      critical_only: bool = False, identity_fields=None) -> list[str]:
+    """Human-readable list of template elements still missing (or not yet declined): the
+    questions of _missing_slots, without the SOFT tier (a project's dates and location never
+    block a build). ``critical_only=True`` (an explicit build override, and the unattended
+    auto-apply pre-flight) keeps the HARD tier only."""
+    return [s["q"] for s in _missing_slots(identity, education, experience, projects,
+                                           declined, identity_fields)
+            if not s["soft"] and (s["crit"] or not critical_only)]
 
 
 _DECLINE_TARGETS = {
@@ -2049,6 +2089,24 @@ class WebIntake:
             self._append("agent", note)
         return extra
 
+    def undated_projects_note(self) -> str:
+        """One honest line when this template shows project dates and a rendered project has
+        none (project dates are SOFT, so the build went ahead): "Without dates, X reads as
+        undated; recruiters may weigh it less." Empty when every shown project is dated."""
+        if self.sections and "projects" not in self.sections:
+            return ""
+        used = getattr(self.assembled, "profile_used", None) or self.profile or {}
+        names = [str(p.get("title") or p.get("org") or "").strip()
+                 for p in (used.get("projects") or []) if isinstance(p, dict)
+                 and not str(p.get("dates") or "").strip()]
+        names = [n for n in names if n]
+        if not names:
+            return ""
+        who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        if len(names) == 1:
+            return f"Without dates, {who} reads as undated; recruiters may weigh it less."
+        return f"Without dates, {who} read as undated; recruiters may weigh them less."
+
     def build_from_saved(self):
         """Build directly from the saved profile, tailored to this job, the
         response to "use what you already know about me"."""
@@ -2105,6 +2163,9 @@ class WebIntake:
                 note = self._date_flag_note(date_flags)
                 msgs.append(note)
                 self._append("agent", note)
+            undated = self.undated_projects_note()
+            if undated:
+                msgs.append(undated)
             extra = self._post_build_invite(msgs)
             return self._state(msgs, extra=extra)
         if self.essentials.get("experience"):

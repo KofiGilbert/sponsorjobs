@@ -472,8 +472,11 @@ def test_app_poll_uses_official_channel_and_queue_path(tmp_path, monkeypatch):
                 "coverage": 77.0}
     monkeypatch.setattr(app, "_tailor_job_unattended", fake_tailor)
     monkeypatch.setattr(app, "_make_llm", lambda: object())
-    monkeypatch.setattr(app._memory().__class__, "load",
-                        lambda self, name: {"profile": {"experience": [{"org": "A"}]}})
+    monkeypatch.setattr(app._memory().__class__, "load",      # complete: the pre-flight passes
+                        lambda self, name: {"profile": {
+                            "identity": {"name": "Sam", "email": "sam@example.com"},
+                            "experience": [{"org": "A", "title": "Analyst", "dates": "2022 - 2024",
+                                            "location": "Austin, TX"}]}})
     b.push("button", data=f"job:queue:{short_id('gh:1')}")
     b.push("command", data="list")
     d = app.app.test_client().post("/api/notify/poll").get_json()

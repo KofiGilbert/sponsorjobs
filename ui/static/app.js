@@ -3354,7 +3354,8 @@
     const labels = { go: agentT("agent.go", "Go ahead"), change: agentT("agent.change", "Change"),
                      open_autoapply: agentT("agent.open", "Open Auto-apply"),
                      find: agentT("agent.find", "Find matching roles"),
-                     add_resume: agentT("agent.addResume", "Add my resume") };
+                     add_resume: agentT("agent.addResume", "Add my resume"),
+                     add_details: agentT("agent.addDetails", "Add the details") };
     acts.forEach(b => {
       const btn = el("button", "btn btn-sm " + (b.id === "go" ? "btn-primary" : "btn-ghost"));
       btn.type = "button"; btn.textContent = labels[b.id] || b.label || b.id;
@@ -3375,6 +3376,8 @@
       document.querySelector('[data-nav="autoapply"]')?.click();
     } else if (id === "add_resume") {
       document.querySelector('[data-nav="cvs"]')?.click();
+    } else if (id === "add_details") {
+      openProfileDetails();   // the same details step as Auto-apply's "Add the details"
     } else if (id === "find") {
       const titles = ((r && r.intent && r.intent.titles) || []).join(", ");
       agentAsk(titles ? `Find ${titles} roles for me` : "Find roles for me");
@@ -3848,6 +3851,7 @@
       await loadProfile();
       invalidateJobDetail();   // match now reflects the freshly-imported profile
       if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
+      if ((r.missing || []).length) openProfileDetails(r.missing);   // the same step as the wizard
     } catch (err) {
       msg.className = "prof-import-msg err";
       msg.textContent = "Couldn't build your profile, " + err.message;
@@ -7619,15 +7623,15 @@
     if (acctMenu && !acctMenu.hidden && !acctMenu.contains(e.target)
         && !(langMenu && langMenu.contains(e.target))) closeAcctMenu();
   });
-  $("#menuProfile")?.addEventListener("click", () => {
-    closeAcctMenu();
-    // Direct open: the profile nav-item was removed on purpose (one door policy),
-    // which left this menu entry clicking a selector that matches nothing.
+  // Direct open: the profile nav-item was removed on purpose (one door policy), so the
+  // account menu and Auto-apply's "Add the details" both come through here.
+  function openProfilePage() {
     loadProfile();
     showView("profile");
     // No nav item owns this page, so none stays lit (the last page's item did).
     document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("is-active"));
-  });
+  }
+  $("#menuProfile")?.addEventListener("click", () => { closeAcctMenu(); openProfilePage(); });
 
   // ---- Language picker (opens from the account menu; uses the client-side i18n layer) ----
   const langMenu = $("#langMenu"), langList = $("#langList");
@@ -8781,7 +8785,9 @@
     sw.setAttribute("aria-checked", String(!!ap.on));
     const paused = ap.on && ap.paused && ap.paused.code;
     if (paused) {
-      sub.textContent = T("aa.apPaused." + ap.paused.code, ap.paused.text || "Paused.");
+      const one = ap.paused.code === "missing_details" && ap.paused.n === 1;   // "1 detail", not "1 details"
+      sub.textContent = T("aa.apPaused." + ap.paused.code + (one ? "_one" : ""), ap.paused.text || "Paused.")
+        .replace("{n}", String(ap.paused.n || ""));
       return;
     }
     const n = Math.max(1, Math.min(10, Number(ap.per_day) || 2));
@@ -9555,16 +9561,38 @@
   const AA_ACTIONS = {
     add_resume: [() => T("aa.addResume", "Add your resume"), () => openResumeBox()],
     open_jobs: [() => T("aa.openJobs", "Open Jobs"), () => navTo("jobs")],
+    complete_profile: [() => T("aa.addDetails", "Add the details"), () => openProfileDetails()],
   };
   function aaError(msg, e) {
     const d = (e && e.data) || {};
     const act = AA_ACTIONS[d.action];
+    const missing = Array.isArray(d.missing) ? d.missing : [];
     msg.hidden = false;
     msg.className = "aa-msg err" + (act ? " has-act" : "");
-    msg.innerHTML = `<span>${esc(e.message || T("aa.runFail", "Couldn't run auto-apply."))}`
-      + (d.summary ? ` <span class="aa-msg-sub">${esc(T("aa.skippedSum", "Skipped {s}.").replace("{s}", d.summary))}</span>` : "") + `</span>`
+    // Missing profile details: the count, then the engine's own questions as a list (they
+    // already read "the dates for your project X"), and the button that opens the editor.
+    const head = missing.length
+      ? T("aa.missing", "Auto-apply needs {n} details first.").replace("{n}", missing.length)
+      : (e.message || T("aa.runFail", "Couldn't run auto-apply."));
+    msg.innerHTML = `<span>${esc(head)}`
+      + (d.summary ? ` <span class="aa-msg-sub">${esc(T("aa.skippedSum", "Skipped {s}.").replace("{s}", d.summary))}</span>` : "")
+      + (missing.length ? `<ul class="aa-msg-list">${missing.map(q => `<li>${esc(q)}</li>`).join("")}</ul>` : "") + `</span>`
       + (act ? `<button class="btn btn-ghost btn-sm" id="aaErrAct" type="button">${esc(act[0]())}</button>` : "");
     if (act) $("#aaErrAct").addEventListener("click", act[1]);
+  }
+  // Why the run tailored fewer roles than it considered: the ranking summary (below the fit
+  // floor, no description) plus the per-role tailoring skips, grouped by reason.
+  function aaRunReasons(r) {
+    const parts = [];
+    if (r.summary) parts.push(T("aa.skippedSum", "Skipped {s}.").replace("{s}", r.summary));
+    const by = new Map();
+    (r.skipped || []).forEach(s => by.set(s.reason || "", (by.get(s.reason || "") || 0) + 1));
+    if (by.size) {
+      const s = [...by].map(([reason, n]) =>
+        `${n} ${n === 1 ? T("aa.role", "role") : T("aa.roles", "roles")}: ${reason}`).join("; ");
+      parts.push(T("aa.notTailored", "Not tailored: {s}.").replace("{s}", s));
+    }
+    return parts.length ? ` <span class="aa-msg-sub">${esc(parts.join(" "))}</span>` : "";
   }
   $("#aaRun")?.addEventListener("click", async () => {
     const btn = $("#aaRun"), count = aaCount();
@@ -9575,9 +9603,11 @@
     msg.textContent = T("aa.working", "Tailoring your {n} best matches. This can take a few minutes.").replace("{n}", count);
     try {
       const r = await api("/api/autoapply/run", { count, focus, min_fit });
-      msg.className = "aa-msg ok";
-      msg.innerHTML = esc(T("aa.queued", "Queued {n}. They are in To review.").replace("{n}", r.queued))
-        + (r.summary ? ` <span class="aa-msg-sub">${esc(T("aa.skippedSum", "Skipped {s}.").replace("{s}", r.summary))}</span>` : "");
+      // Zero is told as zero, with every reason; "They are in To review" is only true for 1+.
+      msg.className = r.queued ? "aa-msg ok" : "aa-msg err";
+      msg.innerHTML = esc(r.queued ? T("aa.queued", "Queued {n}. They are in To review.").replace("{n}", r.queued)
+                                   : T("aa.nothingQueued", "Nothing queued."))
+        + aaRunReasons(r);
       AA_WANT = "review"; AA.next = null;
       loadAutoApply();
     } catch (e) { aaError(msg, e); }
@@ -9591,8 +9621,64 @@
   const BANNER_OFF = "sj_first_banner_off";
   const wizDone = { resume: false };
   function wizMsg(el, text, cls) { el.hidden = false; el.className = "ai-msg " + cls; el.textContent = text; }
-  function openResumeBox() { $("#wizCvMsg").hidden = true; $("#wizard").hidden = false; }
+  function showWizPanel(name) {
+    document.querySelectorAll("#wizard .wiz-panel").forEach(p => { p.hidden = p.dataset.panel !== name; });
+    $("#wizard").hidden = false;
+  }
+  function openResumeBox() { $("#wizCvMsg").hidden = true; showWizPanel("resume"); }
   function closeResumeBox() { $("#wizard").hidden = true; }
+
+  /* The details step: one input per field the saved profile lacks, in the gate's own words
+     ("the dates for your project Gate Check"), saved by /api/profile/details. Shown right
+     after an import that left gaps, and by "Add the details" on Auto-apply: ONE place to
+     complete the profile. HARD fields first; SOFT ones (a project's dates or location) are
+     marked Optional with a Skip that is remembered, so they are asked once. */
+  let WIZ_SLOTS = [];
+  const WIZ_HINT = { dates: "Jan 2024 - Mar 2024", date: "May 2024", location: "City, ST",
+                     contact: "you@example.com", name: "Your name" };
+  function renderDetailsStep(slots) {
+    WIZ_SLOTS = slots;
+    $("#wizDetails").innerHTML = slots.map((s, i) => `<div class="wiz-det">
+        <label for="wizDet${i}">${esc(s.q.charAt(0).toUpperCase() + s.q.slice(1))}${s.soft ? ` <span class="wiz-det-opt">${esc(T("wiz.details.optional", "Optional"))}</span>` : ""}</label>
+        <input class="fld" id="wizDet${i}" data-slot="${i}" placeholder="${esc(WIZ_HINT[s.key] || "")}" spellcheck="false" autocomplete="off">
+        ${s.soft && s.decline ? `<label class="wiz-det-none"><input type="checkbox" data-none="${i}"> ${esc(T("wiz.details.skip", "Skip"))}</label>` : ""}
+      </div>`).join("");
+    $("#wizDetails input[data-slot]")?.focus();
+  }
+  async function openProfileDetails(slots) {
+    if (!slots) { try { slots = (await api("/api/profile/missing")).missing || []; } catch { slots = []; } }
+    if (!slots.length) { openProfilePage(); return; }   // nothing left to ask: the full editor
+    $("#wizDetMsg").hidden = true;
+    renderDetailsStep(slots);
+    showWizPanel("details");
+  }
+  $("#wizDetSave")?.addEventListener("click", async () => {
+    const msg = $("#wizDetMsg"), btn = $("#wizDetSave");
+    const answers = [], declines = [];
+    WIZ_SLOTS.forEach((s, i) => {
+      const v = ($(`#wizDetails [data-slot="${i}"]`)?.value || "").trim();
+      if ($(`#wizDetails [data-none="${i}"]`)?.checked) declines.push({ sec: s.sec, match: s.match, decline: s.decline });
+      else if (v) answers.push({ sec: s.sec, key: s.key, match: s.match, value: v });
+    });
+    if (!answers.length && !declines.length) {
+      wizMsg(msg, T("wiz.details.empty", "Fill in at least one detail, or Not now."), "err"); return;
+    }
+    btn.disabled = true;
+    try {
+      const r = await api("/api/profile/details", { answers, declines });
+      if ((r.missing || []).length) {
+        renderDetailsStep(r.missing);
+        wizMsg(msg, T("wiz.details.more", "Saved. {n} to go.").replace("{n}", r.missing.length), "ok");
+      } else {
+        wizMsg(msg, T("wiz.details.done", "Saved. Your profile is complete."), "ok");
+        await loadProfile();
+        invalidateJobDetail();
+        if ($("#view-autoapply")?.classList.contains("is-active")) { $("#aaMsg").hidden = true; loadAutoApply(); }
+        setTimeout(closeResumeBox, 900);
+      }
+    } catch (err) { wizMsg(msg, err.message, "err"); }
+    finally { btn.disabled = false; }
+  });
   function hideFirstBanner(forever) {
     $("#firstBanner").hidden = true;
     if (forever) try { localStorage.setItem(BANNER_OFF, "1"); } catch { /* private window */ }
@@ -9615,7 +9701,9 @@
       invalidateJobDetail();   // match now reflects the freshly-imported profile
       if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
       hideFirstBanner(true);
-      setTimeout(closeResumeBox, 900);
+      // Gaps the import could not read (a project's dates) are asked now, not at the first build.
+      if ((r.missing || []).length) openProfileDetails(r.missing);
+      else setTimeout(closeResumeBox, 900);
     } catch (err) { wizMsg(msg, "Couldn't read that file, " + err.message, "err"); }
     finally { e.target.value = ""; }
   });

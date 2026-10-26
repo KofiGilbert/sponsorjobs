@@ -51,8 +51,9 @@ def test_autoapply_needs_a_profile(tmp_path, monkeypatch):
 def test_autoapply_focus_that_matches_nothing_returns_a_clear_message(tmp_path, monkeypatch):
     db = _isolate(tmp_path, monkeypatch)
     app._memory().save("default",
-                       {"experience": [{"org": "Acme", "title": "Engineer",
-                                        "bullets": ["did things"]}]}, {}, [])
+                       {"identity": {"name": "Sam", "email": "sam@example.com"},
+                        "experience": [{"org": "Acme", "title": "Engineer", "dates": "2021 - 2024",
+                                        "location": "Austin, TX", "bullets": ["did things"]}]}, {}, [])
     monkeypatch.setattr(app, "_board_rows", lambda: [dict(JOB)])   # title: "Senior Software Engineer"
     r = app.app.test_client().post("/api/autoapply/run",
                                    json={"count": 1, "focus": {"titles": ["nursing"]}})
