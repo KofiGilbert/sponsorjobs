@@ -45,6 +45,17 @@ def clamp_min_fit(value, default: int = DEFAULT_MIN_FIT) -> int:
     return max(MIN_FIT_RANGE[0], min(MIN_FIT_RANGE[1], v))
 
 
+PER_DAY_RANGE = (1, 10)   # Autopilot: packages a day the scheduler may tailor unattended
+
+
+def clamp_per_day(value, default: int = 2) -> int:
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(PER_DAY_RANGE[0], min(PER_DAY_RANGE[1], v))
+
+
 # --------------------------------------------------------------------------- what is taken
 _LEGAL = frozenset("inc incorporated llc ltd plc co corp corporation company group holdings "
                    "systems technologies technology the".split())

@@ -1728,6 +1728,7 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .view-autoapply .aa-switch[aria-checked="true"] { background: var(--ink-2); }
 .view-autoapply .aa-switch[aria-checked="true"]::after { transform: translateX(14px); }
 .view-autoapply .aa-switch:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+.view-autoapply .aa-ap-in { width: 40px; padding: 1px 4px; font-size: 12px; text-align: center; margin: 0 1px; }
 .view-autoapply .aa-recent { padding: 12px 0 6px; border-top: 1px solid var(--border); }
 .view-autoapply .aa-recent-h { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
 .view-autoapply .aa-rec { display: flex; align-items: center; gap: 10px; padding: 7px 0; width: 100%; text-align: left; background: none; border: 0; font: inherit; color: inherit; cursor: pointer; }
