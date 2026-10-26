@@ -10362,6 +10362,32 @@ _AA_NO_PROFILE = {"error": "Add your resume first, then SponsorJobs can build th
                   "action": "add_resume"}
 
 
+def _aa_missing_details() -> list[str]:
+    """The template-critical details the saved profile still lacks, worded as the questions
+    build_from_saved would ask (ui/session._missing_skeleton, critical tier), loaded exactly
+    as a WebIntake session loads "default". An unattended build has no one to answer them,
+    so without this check every role came back "needs a detail we don't have" and the run
+    queued nothing while the page blamed the fit floor (measured 2026-10-26: two undated
+    projects, 0 queued, 284 "below your fit floor"). Checked BEFORE any role is counted."""
+    from tailoring.assembler import normalize_profile
+    from ui.session import _essentials_from, _flatten_profile, _missing_skeleton
+    saved = _memory().load("default") or {}
+    profile = saved.get("profile") or {}
+    if not profile.get("experience"):
+        return []                       # no profile at all is _AA_NO_PROFILE's job
+    ess = _essentials_from(saved.get("essentials") or {}, profile)
+    return _missing_skeleton(*_flatten_profile(normalize_profile(profile)),
+                             declined=ess.get("declined") or [], critical_only=True)
+
+
+def _aa_missing_error(missing: list[str]) -> dict:
+    """The 400 body for a run or preview the saved profile cannot support yet: the plain
+    questions, and the action the page turns into an "Add the details" button."""
+    n = len(missing)
+    return {"error": f"Auto-apply needs {n} detail{'' if n == 1 else 's'} first.",
+            "missing": list(missing), "action": "complete_profile"}
+
+
 @app.get("/api/autoapply/preview")
 @_guard
 def autoapply_preview():
@@ -10373,6 +10399,9 @@ def autoapply_preview():
     a = request.args
     focus = {"titles": _split(a.get("titles")), "locations": _split(a.get("locations")),
              "sponsor_only": a.get("sponsor_only") in ("1", "true", "on")}
+    missing = _aa_missing_details()         # a run would stall on these, say so now
+    if missing:
+        return jsonify(_aa_missing_error(missing)), 400
     rows, meta = _aa_candidates(focus)
     idx = taken_index(_aa_records())
     fresh = [j for j in rows if taken_status(j, idx) is None]
@@ -10395,6 +10424,11 @@ def autoapply_run():
     count = max(1, min(int(body.get("count") or 5), 10))
     if not _aa_has_profile():
         return jsonify(_AA_NO_PROFILE), 400
+    # Pre-flight the saved profile before ranking, counting, or tailoring a single role: an
+    # unattended build cannot ask for a missing date, so the run would queue nothing.
+    missing = _aa_missing_details()
+    if missing:
+        return jsonify(_aa_missing_error(missing)), 400
     min_fit = _aa_min_fit(body)
 
     rows, meta = _aa_candidates(body.get("focus") or {})
