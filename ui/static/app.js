@@ -3354,7 +3354,8 @@
     const labels = { go: agentT("agent.go", "Go ahead"), change: agentT("agent.change", "Change"),
                      open_autoapply: agentT("agent.open", "Open Auto-apply"),
                      find: agentT("agent.find", "Find matching roles"),
-                     add_resume: agentT("agent.addResume", "Add my resume") };
+                     add_resume: agentT("agent.addResume", "Add my resume"),
+                     add_details: agentT("agent.addDetails", "Add the details") };
     acts.forEach(b => {
       const btn = el("button", "btn btn-sm " + (b.id === "go" ? "btn-primary" : "btn-ghost"));
       btn.type = "button"; btn.textContent = labels[b.id] || b.label || b.id;
@@ -3375,6 +3376,8 @@
       document.querySelector('[data-nav="autoapply"]')?.click();
     } else if (id === "add_resume") {
       document.querySelector('[data-nav="cvs"]')?.click();
+    } else if (id === "add_details") {
+      openProfileDetails();   // the same details step as Auto-apply's "Add the details"
     } else if (id === "find") {
       const titles = ((r && r.intent && r.intent.titles) || []).join(", ");
       agentAsk(titles ? `Find ${titles} roles for me` : "Find roles for me");

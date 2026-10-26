@@ -21,6 +21,7 @@
   "agent.open": "Ouvrir Candidature automatique",
   "agent.find": "Trouver des postes adaptés",
   "agent.addResume": "Ajouter mon CV",
+  "agent.addDetails": "Ajouter les informations",
   "agent.changeQ": "Que dois-je changer ? Les intitulés, le nombre, ou le lieu.",
   "home.newcv": "Nouveau CV",
   "home.today": "Aujourd'hui · nouveaux postes les plus adaptés",

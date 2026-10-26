@@ -11060,6 +11060,17 @@ def _agent_focus(intent: dict) -> dict:
             "sponsor_only": bool(intent.get("sponsors_only"))}
 
 
+def _agent_missing_reply(missing: list[str]) -> dict:
+    """The plan's answer when the saved profile lacks a HARD detail an unattended build cannot
+    ask for: the questions, and "Add the details", which opens the same details step as the
+    Auto-apply page. No plan is kept, so Go ahead cannot run into the same wall."""
+    n = len(missing)
+    _AGENT["plan"] = None
+    return {"text": f"Before I can tailor, your profile needs {n} detail{'' if n == 1 else 's'}:\n"
+                    + "\n".join(f"- {q}" for q in missing),
+            "buttons": [{"id": "add_details", "label": "Add the details"}], "missing": list(missing)}
+
+
 def _agent_plan(intent: dict) -> dict:
     """find_and_apply, step one: the plan, from the same ranking Up next shows, with nothing
     tailored and no package spent. Keeps the plan for /api/agent/go."""
@@ -11068,6 +11079,9 @@ def _agent_plan(intent: dict) -> dict:
     if not _aa_has_profile():
         return {"text": _AA_NO_PROFILE["error"], "buttons": [{"id": "add_resume",
                                                              "label": "Add my resume"}]}
+    missing = _aa_missing_details()     # HARD only: an undated project never stops the plan
+    if missing:
+        return _agent_missing_reply(missing)
     focus = _agent_focus(intent)
     rows, meta = _aa_candidates(focus)
     titles, location = focus["titles"], intent.get("location")

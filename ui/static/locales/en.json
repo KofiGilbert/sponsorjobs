@@ -21,6 +21,7 @@
   "agent.open": "Open Auto-apply",
   "agent.find": "Find matching roles",
   "agent.addResume": "Add my resume",
+  "agent.addDetails": "Add the details",
   "agent.changeQ": "What should I change? The titles, how many, or where.",
   "home.newcv": "New Resume",
   "home.today": "Today · fresh best-fit roles",

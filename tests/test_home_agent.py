@@ -416,3 +416,28 @@ def test_ui_source_has_the_box_the_pills_and_the_strings():
             assert d.get(k), f"{p.name} lacks {k}"
     assert d.get("home.placeholder") != "Paste the job description here…"
     assert "### The Home agent" in (ROOT / "docs" / "notify.md").read_text(encoding="utf-8")
+
+
+# --- missing HARD details: the questions, not a plan ------------------------------------------
+
+def test_plan_asks_for_missing_hard_details_and_soft_gaps_never_stop_it(ag, monkeypatch):
+    real = app._aa_missing_details
+    monkeypatch.setattr(app, "_aa_missing_details",
+                        lambda: ["the employment dates for your role at Acme"])
+    d = app._agent_plan({"titles": ["data analyst"], "count": 2})
+    assert d["text"] == ("Before I can tailor, your profile needs 1 detail:\n"
+                         "- the employment dates for your role at Acme")
+    assert d["buttons"] == [{"id": "add_details", "label": "Add the details"}]
+    assert app._AGENT["plan"] is None and ag["tailored"] == []           # no plan, nothing spent
+    # A soft gap (an undated project) is not in the real HARD pre-flight: the plan goes ahead.
+    monkeypatch.setattr(app, "_aa_missing_details", real)
+    app._memory().save("default", {
+        "identity": {"name": "Sam", "email": "s@example.com"},
+        "experience": [{"org": "Acme", "location": "Austin, TX",
+                        "roles": [{"title": "Analyst", "dates": "2021 - 2024", "bullets": ["x"]}]}],
+        "projects": [{"org": "Ledger", "bullets": ["Undated, no location"]}]}, {}, [])
+    assert app._aa_missing_details() == []
+    assert [b["id"] for b in app._agent_plan({"titles": ["data analyst"], "count": 2})["buttons"]] \
+        == ["go", "change"]
+    js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert 'id === "add_details"' in js and "openProfileDetails();" in js
