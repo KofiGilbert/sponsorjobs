@@ -10803,6 +10803,204 @@ def _autopilot_act(data: str) -> dict:
     return {"ok": True, "message": msg}
 
 
+# ----------------------------------------------------------------------------- Home agent
+# The Home box takes a pasted job description or a link (today's path: a tailoring session) or
+# a plain request ("Find 5 data analytics roles and apply for me", "What is waiting on me?").
+# A request is parsed into one intent (agent/home.py) and drives the features that already
+# exist: the plan ranks with the same functions Up next and /api/autoapply/run use, Go ahead is
+# one _aa_run under the same lock as a manual run or the Autopilot, and anything sent goes
+# through the same guarded approve as Approve all (verified allowlist AND autonomous on). The
+# plan is stated first and spends no package; the "can be sent" number is computed, never
+# assumed. The pending plan lives here, server side, so Go ahead runs what was shown.
+_AGENT: dict = {"plan": None, "intent": None}
+
+
+def _agent_parse(text: str) -> dict:
+    """The intent of a short request: the model when it answers, the rules otherwise (no key,
+    offline). A tiny prompt on the app's usual backend; never counted as a package."""
+    from agent.home import parse_request, parse_request_rules
+    try:
+        llm = _make_llm()
+    except Exception:                 # noqa: BLE001 - no model: the rules still answer
+        return parse_request_rules(text)
+    try:
+        return parse_request(llm, text)
+    except Exception:                 # noqa: BLE001
+        return parse_request_rules(text)
+
+
+def _agent_focus(intent: dict) -> dict:
+    return {"titles": list(intent.get("titles") or []),
+            "locations": [intent["location"]] if intent.get("location") else [],
+            "sponsor_only": bool(intent.get("sponsors_only"))}
+
+
+def _agent_plan(intent: dict) -> dict:
+    """find_and_apply, step one: the plan, from the same ranking Up next shows, with nothing
+    tailored and no package spent. Keeps the plan for /api/agent/go."""
+    from agent.home import cap_count, no_match_text, plan_text
+    from autoapply.picker import rank
+    if not _aa_has_profile():
+        return {"text": _AA_NO_PROFILE["error"], "buttons": [{"id": "add_resume",
+                                                             "label": "Add my resume"}]}
+    focus = _agent_focus(intent)
+    rows, meta = _aa_candidates(focus)
+    titles, location = focus["titles"], intent.get("location")
+    if (not meta["board"] and not meta["saved"]) or not rows:
+        return {"text": no_match_text(titles, location), "buttons": []}
+    left = _autopilot_packages_left()
+    n, note = cap_count(intent.get("count"), left)
+    if n <= 0:
+        return {"text": "No packages left on your pass, so I cannot tailor right now. Add a "
+                        "pass, or your own AI key, under Auto-apply.", "buttons": []}
+    min_fit = _aa_min_fit()
+    score = _aa_scorer(rows, deadline=time.monotonic() + UPNEXT_BUDGET_S)
+    res = rank(rows, records=_aa_records(), score_fn=score, count=n, min_fit=min_fit)
+    jobs = res["jobs"]
+    if not jobs and not res["pending"]:
+        if not res["available"]:
+            return {"text": "Every matching role already has a package. Try broader titles or "
+                            "another location.", "buttons": []}
+        return {"text": f"None of the {res['scored']} best-fit roles reach your fit floor of "
+                        f"{min_fit}%. Lower the floor in Auto-apply, or broaden the titles.",
+                "buttons": []}
+    auto = [j for j in jobs if _can_auto_apply(j)]
+    reason = ("sending for you is off in Auto-apply" if not _autonomous_on()
+              else "none of these sites allows it")
+    telegram = bool(intent.get("telegram"))
+    connected = _active_channel() is not None
+    text = plan_text(n=n, titles=titles, min_fit=min_fit, auto=len(auto),
+                     auto_companies=_companies(auto), auto_reason=reason, telegram=telegram,
+                     telegram_connected=connected, packages_left=left, note=note)
+    _AGENT["plan"] = {"focus": focus, "count": n, "min_fit": min_fit, "telegram": telegram,
+                      "titles": titles}
+    return {"text": text, "buttons": [{"id": "go", "label": "Go ahead"},
+                                      {"id": "change", "label": "Change"}],
+            "plan": {"count": n, "focus": focus, "auto": len(auto), "min_fit": min_fit}}
+
+
+def _agent_status() -> dict:
+    """status: one bubble from the records, the same tiles the Auto-apply page counts."""
+    from agent.home import status_text
+    from submit.stages import tile_of
+    _ts, today = _now_ts_today()
+    recs = _records()
+    try:
+        rows = recs.list(limit=10000)
+    finally:
+        recs.close()
+    counts = {"review": 0, "waiting": 0, "needs": 0, "submitted_today": 0}
+    newest: list[tuple[str, str]] = []
+    for r in rows:
+        data = _record_data(r)
+        tile = tile_of(data)
+        if tile in ("review", "waiting", "needs"):
+            counts[tile] += 1
+            role = (r.get("jd_label") or r.get("role") or "a role").split(" · ")[0]
+            name = f"{role} at {r['company']}" if r.get("company") else role
+            newest.append((_aa_when(data, r), name))
+        elif tile == "submitted":
+            sub = data.get("submission") if isinstance(data.get("submission"), dict) else {}
+            if str(data.get("applied_at") or sub.get("at") or "")[:10] == today:
+                counts["submitted_today"] += 1
+    newest.sort(key=lambda x: x[0], reverse=True)
+    return {"text": status_text(counts, [n for _w, n in newest]),
+            "buttons": [{"id": "open_autoapply", "label": "Open Auto-apply"}],
+            "counts": counts}
+
+
+@app.post("/api/agent/ask")
+@_guard
+def agent_ask():
+    """One turn of the Home box. {text, change?}. Answers {kind: "jd" | "url"} when the text is
+    a posting or a link (the client opens a tailoring session as before), else {kind: "agent",
+    intent, text, buttons}. ``change`` merges the text into the last plan's intent and re-plans."""
+    from agent.home import empty_intent, other_text, route, tailor_one_text
+    body = request.json or {}
+    text = str(body.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Tell me what to do, or paste a job description."}), 400
+    kind = route(text)
+    if kind in ("jd", "url"):
+        return jsonify({"ok": True, "kind": kind})
+    intent = _agent_parse(text)
+    if body.get("change") and _AGENT.get("intent"):
+        prev = _AGENT["intent"]
+        merged = dict(prev)
+        for key in ("titles", "count", "location", "sponsors_only"):
+            if intent.get(key):
+                merged[key] = intent[key]
+        merged["telegram"] = prev.get("telegram") or intent.get("telegram")
+        intent = {**merged, "intent": "find_and_apply"}
+    if intent["intent"] == "find_and_apply":
+        _AGENT["intent"] = intent
+        out = _agent_plan(intent)
+    elif intent["intent"] == "status":
+        out = _agent_status()
+    elif intent["intent"] == "tailor_one":
+        _AGENT["intent"] = {**empty_intent("find_and_apply"), "titles": intent.get("titles") or []}
+        out = {"text": tailor_one_text(intent),
+               "buttons": [{"id": "find", "label": "Find matching roles"}]}
+    else:
+        out = {"text": other_text(), "buttons": []}
+    return jsonify({"ok": True, "kind": "agent", "intent": intent, **out})
+
+
+@app.post("/api/agent/go")
+@_guard
+def agent_go():
+    """Go ahead: run the plan that was shown, exactly as Tailor & queue does, under the one
+    run lock. Then send only what the app's own gate allows (verified allowlist AND autonomous
+    on) through the same approve as Approve all; everything else waits in To review. With
+    Telegram asked for and connected, one message with the Autopilot batch buttons."""
+    from agent.home import batch_message, result_text
+    plan = _AGENT.get("plan")
+    if not plan:
+        return jsonify({"error": "There is no plan to run. Tell me what to find first."}), 400
+    if not _AA_RUN_LOCK.acquire(blocking=False):
+        return jsonify({"error": "A run is already tailoring. Wait for it to finish, then try "
+                                 "again.", "busy": True}), 409
+    try:
+        payload, status = _aa_run(plan["count"], plan["min_fit"], plan["focus"])
+    finally:
+        _AA_RUN_LOCK.release()
+    if status != 200:
+        return jsonify(payload), status
+    _AGENT["plan"] = None
+    tailored = payload.get("tailored") or []
+    sent, failed = [], []
+    actions = _BatchActions()
+    for it in tailored:
+        if not _record_can_auto_apply(it["id"]):
+            continue
+        try:
+            res = actions.approve(it["id"])
+        except Exception:               # noqa: BLE001 - it stays in To review, under Needs you
+            res = {}
+        (sent if res.get("stage") == "submitted" else failed).append(it)
+    text = result_text(len(tailored), len(sent))
+    out = {"ok": True, "text": text, "buttons": [{"id": "open_autoapply",
+                                                 "label": "Open Auto-apply"}],
+           "tailored": len(tailored), "sent": len(sent), "skipped": payload.get("skipped") or [],
+           "telegram": False}
+    ch = _active_channel() if plan.get("telegram") else None
+    if ch is not None and tailored:
+        _ts, today = _now_ts_today()
+        st = _autopilot_state(today)
+        bid = uuid.uuid4().hex[:6]
+        rest = [it["id"] for it in tailored if it not in sent]
+        st["batches"][bid] = {"ids": rest or [it["id"] for it in tailored], "at": _now_iso()}
+        if len(st["batches"]) > 20:
+            st["batches"] = dict(list(st["batches"].items())[-20:])
+        _autopilot_save(st)
+        try:
+            ch.send(batch_message(tailored, sent, _companies), autopilot_buttons(bid))
+            out["telegram"] = True
+        except Exception:               # noqa: BLE001 - the packages are queued either way
+            traceback.print_exc()
+    return jsonify(out)
+
+
 def _aa_keep_fit(rid, fit) -> None:
     """Keep the run's fit percent on the record, so the page shows the same match the run used."""
     if fit is None:
