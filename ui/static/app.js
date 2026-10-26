@@ -3316,20 +3316,26 @@
      builder's own header (openBuilder/resumeBuilder call setAgentMode(false) first). */
   const AGENT = { on: false, change: false, busy: false };
   const agentT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  // The builder's own words, kept from the page so leaving assistant mode restores them exactly.
+  const BUILDER_WORDS = {
+    kicker: $("#view-builder .builder-kicker")?.textContent || "New Resume",
+    sub: $("#view-builder .chat-head-sub")?.textContent || "",
+    placeholder: composerInput.placeholder,
+  };
   function setAgentMode(on) {
     AGENT.on = on; AGENT.change = false;
     const view = $("#view-builder");
     view.classList.toggle("agent-mode", on);
     const kicker = view.querySelector(".builder-kicker");
-    if (kicker) kicker.textContent = on ? agentT("agent.kicker", "Assistant") : "New Resume";
+    if (kicker) kicker.textContent = on ? agentT("agent.kicker", "Assistant") : BUILDER_WORDS.kicker;
     $("#builderRole").textContent = on ? "" : "New Resume";
     $("#steps").hidden = on;
     $("#builderTpl").hidden = true;
     const sub = view.querySelector(".chat-head-sub");
     if (sub) sub.textContent = on ? agentT("agent.sub", "Your assistant. Ask for a search, a resume, or an update.")
-                                  : "Building your Resume, answer as you go";
+                                  : BUILDER_WORDS.sub;
     composerInput.placeholder = on ? agentT("agent.placeholder", "Ask for a search, a resume, or an update.")
-      : "Type your answer…  (or upload a resume, transcript, or certificate with the ↑ button)";
+                                   : BUILDER_WORDS.placeholder;
     $("#uploadBtn").hidden = on;
   }
   function openAgent() {
