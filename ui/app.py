@@ -4328,6 +4328,110 @@ def profile_sections_save():
     return profile_view()
 
 
+def _profile_missing_slots() -> list[dict]:
+    """The template-critical slots the saved profile still lacks (ui/session._missing_slots),
+    loaded exactly as a WebIntake session loads "default" (normalize_profile, _flatten_profile,
+    the declined list). One source for the onboarding step, "Add the details" on Auto-apply,
+    and the run's pre-flight. Empty without a profile: that is "add your resume"'s job."""
+    from tailoring.assembler import normalize_profile
+    from ui.session import _essentials_from, _flatten_profile, _missing_slots
+    saved = _memory().load("default") or {}
+    profile = saved.get("profile") or {}
+    if not profile.get("experience"):
+        return []
+    ess = _essentials_from(saved.get("essentials") or {}, profile)
+    return [x for x in _missing_slots(*_flatten_profile(normalize_profile(profile)),
+                                      declined=ess.get("declined") or []) if x["crit"]]
+
+
+@app.get("/api/profile/missing")
+@_guard
+def profile_missing():
+    """The details step's questions: one slot per missing critical field, in the gate's words."""
+    return jsonify({"ok": True, "missing": _profile_missing_slots()})
+
+
+def _same(a, b) -> bool:
+    return str(a or "").strip().lower() == str(b or "").strip().lower()
+
+
+def _detail_targets(bag: dict, sec: str, match: dict) -> list[dict]:
+    """The saved entries (and the dict the key lives on) a slot's ``match`` names, in both
+    profile shapes: a grouped experience entry yields its matching roles, with the entry's
+    own dict for the location; flat essentials rows stand for themselves."""
+    out = []
+    if sec == "experience":
+        for e in bag.get("experience") or []:
+            if not isinstance(e, dict) or not _same(e.get("org"), match.get("org")):
+                continue
+            for r in (e.get("roles") or [e]):
+                if isinstance(r, dict) and _same(r.get("title"), match.get("title")):
+                    out.append({"dates": r, "title": r, "org": e, "location": e})
+    elif sec == "education":
+        for d in bag.get("education") or []:
+            if isinstance(d, dict) and _same(d.get("school"), match.get("school")) \
+                    and _same(d.get("degree"), match.get("degree")):
+                out.append({k: d for k in ("school", "degree", "date", "courses")})
+    elif sec == "projects":
+        for p in bag.get("projects") or []:
+            if isinstance(p, dict) and _same(p.get("title") or p.get("org"), match.get("name")):
+                out.append({k: p for k in ("location", "dates", "personal")})
+    return out
+
+
+def _apply_profile_details(profile: dict, ess: dict, answers: list, declines: list) -> None:
+    """Land each answer on the entry its slot names, in BOTH saved bags, filling the first
+    matching entry whose field is still empty (the one the gate asked about). A decline on
+    a project marks it personal: the gate never asks a personal project for a location or
+    dates (ui/session._missing_slots)."""
+    for a in answers:
+        if not isinstance(a, dict):
+            continue
+        sec, key, match = str(a.get("sec") or ""), str(a.get("key") or ""), a.get("match") or {}
+        val = str(a.get("value") or "").strip()
+        if not val:
+            continue
+        if sec == "identity":
+            if key == "contact":         # "an email or phone number": file it where it belongs
+                key = "email" if "@" in val else "phone"
+            if key not in IDENTITY_KEYS:
+                continue
+            for bag in (profile, ess):
+                bag.setdefault("identity", {})[key] = val
+            continue
+        for bag in (profile, ess):
+            for t in _detail_targets(bag, sec, match):
+                if key in t and not str(t[key].get(key) or "").strip():
+                    t[key][key] = val
+                    break
+    for d in declines:
+        if not isinstance(d, dict) or d.get("sec") != "projects":
+            continue
+        for bag in (profile, ess):
+            for t in _detail_targets(bag, "projects", d.get("match") or {}):
+                t["personal"]["personal"] = True
+
+
+@app.post("/api/profile/details")
+@_guard
+def profile_details_save():
+    """Save the details step: {answers: [{sec, key, match, value}], declines: [{sec, match}]},
+    each from a slot /api/profile/missing (or the import) handed out. Returns what is still
+    missing, so the step re-asks only that. Refused while a resume session is open, like
+    /api/profile/sections: its autosave would overwrite the edit."""
+    if _SESSION.get("s") is not None:
+        return jsonify({"error": "Finish or close the resume you're building first, "
+                                 "its autosave would overwrite these edits."}), 409
+    b = request.json or {}
+    mem = _memory()
+    saved = mem.load("default") or {}
+    profile = saved.get("profile") or {}
+    ess = saved.get("essentials") or {}
+    _apply_profile_details(profile, ess, list(b.get("answers") or []), list(b.get("declines") or []))
+    mem.save("default", profile, ess, saved.get("history") or [])
+    return jsonify({"ok": True, "missing": _profile_missing_slots()})
+
+
 @app.post("/api/profile/from_cv")
 @_guard
 def profile_from_cv():
@@ -4369,7 +4473,9 @@ def profile_from_cv():
         profile = _merge_profiles(existing, profile)
     _memory().save("default", profile, _essentials_from_profile(profile), saved.get("history") or [])
     ident = profile.get("identity") or {}
-    return jsonify({"ok": True, "profile": profile, "summary": {
+    # What the gate would still ask for: the wizard turns it into the details step right
+    # away, so an unattended build never stalls later on a date the import could not read.
+    return jsonify({"ok": True, "profile": profile, "missing": _profile_missing_slots(), "summary": {
         "name": ident.get("name", ""),
         "roles": sum(len(e.get("roles") or [e]) for e in profile.get("experience") or []),
         "skills": len(profile.get("skills") or {}),
@@ -10367,20 +10473,12 @@ _AA_NO_PROFILE = {"error": "Add your resume first, then SponsorJobs can build th
 
 def _aa_missing_details() -> list[str]:
     """The template-critical details the saved profile still lacks, worded as the questions
-    build_from_saved would ask (ui/session._missing_skeleton, critical tier), loaded exactly
-    as a WebIntake session loads "default". An unattended build has no one to answer them,
-    so without this check every role came back "needs a detail we don't have" and the run
-    queued nothing while the page blamed the fit floor (measured 2026-10-26: two undated
-    projects, 0 queued, 284 "below your fit floor"). Checked BEFORE any role is counted."""
-    from tailoring.assembler import normalize_profile
-    from ui.session import _essentials_from, _flatten_profile, _missing_skeleton
-    saved = _memory().load("default") or {}
-    profile = saved.get("profile") or {}
-    if not profile.get("experience"):
-        return []                       # no profile at all is _AA_NO_PROFILE's job
-    ess = _essentials_from(saved.get("essentials") or {}, profile)
-    return _missing_skeleton(*_flatten_profile(normalize_profile(profile)),
-                             declined=ess.get("declined") or [], critical_only=True)
+    build_from_saved would ask (ui/session._missing_skeleton, critical tier). An unattended
+    build has no one to answer them, so without this check every role came back "needs a
+    detail we don't have" and the run queued nothing while the page blamed the fit floor
+    (measured 2026-10-26: two undated projects, 0 queued, 284 "below your fit floor").
+    Checked BEFORE any role is counted."""
+    return [x["q"] for x in _profile_missing_slots()]
 
 
 def _aa_missing_error(missing: list[str]) -> dict:

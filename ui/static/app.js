@@ -3740,6 +3740,7 @@
       await loadProfile();
       invalidateJobDetail();   // match now reflects the freshly-imported profile
       if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
+      if ((r.missing || []).length) openProfileDetails(r.missing);   // the same step as the wizard
     } catch (err) {
       msg.className = "prof-import-msg err";
       msg.textContent = "Couldn't build your profile, " + err.message;
@@ -7513,18 +7514,11 @@
   });
   // Direct open: the profile nav-item was removed on purpose (one door policy), so the
   // account menu and Auto-apply's "Add the details" both come through here.
-  async function openProfilePage(focusMissing) {
-    const load = loadProfile();
+  function openProfilePage() {
+    loadProfile();
     showView("profile");
     // No nav item owns this page, so none stays lit (the last page's item did).
     document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("is-active"));
-    if (!focusMissing) return;
-    await load;
-    // Land on the first empty slot the editor has (a project's dates, a role's location),
-    // so the person types the detail Auto-apply asked for instead of hunting for the row.
-    const empty = [...document.querySelectorAll("#profSections .pe-in")].find(el => !el.value.trim()
-      && ["dates", "date", "location", "org", "title", "school", "degree"].includes(el.dataset.k));
-    if (empty) { empty.scrollIntoView({ block: "center" }); empty.focus(); }
   }
   $("#menuProfile")?.addEventListener("click", () => { closeAcctMenu(); openProfilePage(); });
 
@@ -9413,7 +9407,7 @@
   const AA_ACTIONS = {
     add_resume: [() => T("aa.addResume", "Add your resume"), () => openResumeBox()],
     open_jobs: [() => T("aa.openJobs", "Open Jobs"), () => navTo("jobs")],
-    complete_profile: [() => T("aa.addDetails", "Add the details"), () => openProfilePage(true)],
+    complete_profile: [() => T("aa.addDetails", "Add the details"), () => openProfileDetails()],
   };
   function aaError(msg, e) {
     const d = (e && e.data) || {};
@@ -9473,8 +9467,64 @@
   const BANNER_OFF = "sj_first_banner_off";
   const wizDone = { resume: false };
   function wizMsg(el, text, cls) { el.hidden = false; el.className = "ai-msg " + cls; el.textContent = text; }
-  function openResumeBox() { $("#wizCvMsg").hidden = true; $("#wizard").hidden = false; }
+  function showWizPanel(name) {
+    document.querySelectorAll("#wizard .wiz-panel").forEach(p => { p.hidden = p.dataset.panel !== name; });
+    $("#wizard").hidden = false;
+  }
+  function openResumeBox() { $("#wizCvMsg").hidden = true; showWizPanel("resume"); }
   function closeResumeBox() { $("#wizard").hidden = true; }
+
+  /* The details step: one input per critical field the saved profile lacks, in the gate's own
+     words ("the dates for your project Gate Check"), saved by /api/profile/details. Shown right
+     after an import that left gaps, and by "Add the details" on Auto-apply: ONE place to
+     complete the profile. "I don't have this" only where the gate allows it (a personal
+     project needs no location or dates). */
+  let WIZ_SLOTS = [];
+  const WIZ_HINT = { dates: "Jan 2024 - Mar 2024", date: "May 2024", location: "City, ST",
+                     contact: "you@example.com", name: "Your name" };
+  function renderDetailsStep(slots) {
+    WIZ_SLOTS = slots;
+    $("#wizDetails").innerHTML = slots.map((s, i) => `<div class="wiz-det">
+        <label for="wizDet${i}">${esc(s.q.charAt(0).toUpperCase() + s.q.slice(1))}</label>
+        <input class="fld" id="wizDet${i}" data-slot="${i}" placeholder="${esc(WIZ_HINT[s.key] || "")}" spellcheck="false" autocomplete="off">
+        ${s.decline === "personal" ? `<label class="wiz-det-none"><input type="checkbox" data-none="${i}"> ${esc(T("wiz.details.none", "I don't have this"))}</label>` : ""}
+      </div>`).join("");
+    $("#wizDetails input[data-slot]")?.focus();
+  }
+  async function openProfileDetails(slots) {
+    if (!slots) { try { slots = (await api("/api/profile/missing")).missing || []; } catch { slots = []; } }
+    if (!slots.length) { openProfilePage(); return; }   // nothing left to ask: the full editor
+    $("#wizDetMsg").hidden = true;
+    renderDetailsStep(slots);
+    showWizPanel("details");
+  }
+  $("#wizDetSave")?.addEventListener("click", async () => {
+    const msg = $("#wizDetMsg"), btn = $("#wizDetSave");
+    const answers = [], declines = [];
+    WIZ_SLOTS.forEach((s, i) => {
+      const v = ($(`#wizDetails [data-slot="${i}"]`)?.value || "").trim();
+      if ($(`#wizDetails [data-none="${i}"]`)?.checked) declines.push({ sec: s.sec, match: s.match });
+      else if (v) answers.push({ sec: s.sec, key: s.key, match: s.match, value: v });
+    });
+    if (!answers.length && !declines.length) {
+      wizMsg(msg, T("wiz.details.empty", "Fill in at least one detail, or Not now."), "err"); return;
+    }
+    btn.disabled = true;
+    try {
+      const r = await api("/api/profile/details", { answers, declines });
+      if ((r.missing || []).length) {
+        renderDetailsStep(r.missing);
+        wizMsg(msg, T("wiz.details.more", "Saved. {n} to go.").replace("{n}", r.missing.length), "ok");
+      } else {
+        wizMsg(msg, T("wiz.details.done", "Saved. Your profile is complete."), "ok");
+        await loadProfile();
+        invalidateJobDetail();
+        if ($("#view-autoapply")?.classList.contains("is-active")) { $("#aaMsg").hidden = true; loadAutoApply(); }
+        setTimeout(closeResumeBox, 900);
+      }
+    } catch (err) { wizMsg(msg, err.message, "err"); }
+    finally { btn.disabled = false; }
+  });
   function hideFirstBanner(forever) {
     $("#firstBanner").hidden = true;
     if (forever) try { localStorage.setItem(BANNER_OFF, "1"); } catch { /* private window */ }
@@ -9497,7 +9547,9 @@
       invalidateJobDetail();   // match now reflects the freshly-imported profile
       if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
       hideFirstBanner(true);
-      setTimeout(closeResumeBox, 900);
+      // Gaps the import could not read (a project's dates) are asked now, not at the first build.
+      if ((r.missing || []).length) openProfileDetails(r.missing);
+      else setTimeout(closeResumeBox, 900);
     } catch (err) { wizMsg(msg, "Couldn't read that file, " + err.message, "err"); }
     finally { e.target.value = ""; }
   });
