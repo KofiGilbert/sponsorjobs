@@ -29,13 +29,36 @@ jobs:
       # page every template preview reaches. Installed fresh each run: caching the packages
       # (tried 2026-10-10) restored the files but not the pdflatex program, and 66 resume tests
       # quietly skipped.
+      # The LaTeX toolchain is ~1 GB of packages. Downloading it from the Ubuntu mirror normally
+      # takes 2 to 3 minutes but took 55 on 2026-10-26, which ran the job out of time (shown as
+      # "cancelled"). The .deb files are cached between runs, so a slow mirror only costs the first
+      # run after the package list changes, and a stalled download is retried once on a fresh mirror
+      # instead of eating the whole job.
+      - name: Cache the LaTeX packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-cache
+          key: latex-debs-${{ runner.os }}-v1
+
       - name: Install LaTeX
+        timeout-minutes: 25
         run: |
+          set -euo pipefail
+          PKGS="texlive-latex-base texlive-latex-recommended texlive-latex-extra \
+            texlive-fonts-recommended texlive-fonts-extra cm-super poppler-utils"
+          mkdir -p ~/apt-cache
+          sudo cp ~/apt-cache/*.deb /var/cache/apt/archives/ 2>/dev/null || true
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            texlive-latex-base texlive-latex-recommended texlive-latex-extra \
-            texlive-fonts-recommended texlive-fonts-extra cm-super \
-            poppler-utils
+          for attempt in 1 2; do
+            if timeout 600 sudo apt-get install -y --no-install-recommends \
+                 -o Acquire::Retries=3 -o Acquire::http::Timeout=30 $PKGS; then
+              break
+            fi
+            [ "$attempt" = 2 ] && exit 1
+            echo "apt install stalled or failed, retrying once"
+            sudo apt-get update
+          done
+          cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
 
       # Fail loudly, never skip quietly: without these the resume tests skip and the run still
       # looks green.
