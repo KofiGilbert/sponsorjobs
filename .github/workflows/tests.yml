@@ -14,7 +14,7 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60     # the suite takes 25 to 30 min on the runner; at 30 it timed out 3 times in 2 days (shown as cancelled)
     steps:
       - uses: actions/checkout@v4
 

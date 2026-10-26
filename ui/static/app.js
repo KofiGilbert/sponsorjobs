@@ -8497,11 +8497,15 @@
     $("#aaSponsorOnly")?.setAttribute("aria-pressed", f.sponsor ? "true" : "false");
     if ($("#aaCount") && f.count) $("#aaCount").value = String(f.count);
   })();
+  let AA_FOCUS_T = null;
   function aaSaveFocus() {
     try {
       localStorage.setItem(AA_PREF_KEY, JSON.stringify({ titles: $("#aaFocus").value, locations: $("#aaLocation").value,
         sponsor: aaSponsor(), count: aaCount() }));
     } catch { /* private window */ }
+    // The engine keeps the same focus too, so the Autopilot tailors the list this page shows.
+    clearTimeout(AA_FOCUS_T);
+    AA_FOCUS_T = setTimeout(() => api("/api/submit/settings", { aa_focus: aaFocus() }).catch(() => {}), 800);
   }
   function aaRunLabel() {
     const b = $("#aaRun");
@@ -8647,6 +8651,7 @@
     $("#aaMeter").style.width = cap ? Math.min(100, Math.round(sent / cap * 100)) + "%" : "0%";
     const sw = $("#aaAutonomous");
     sw.setAttribute("aria-checked", String(!!d.autonomous));
+    aaRenderAutopilot(b.autopilot || {});
     $("#aaTgSub").textContent = b.telegram ? T("aa.tgOn", "Connected") : T("aa.tgOff", "Approve from your phone");
     $("#aaTgBtn").textContent = b.telegram ? T("aa.tgSettings", "Settings") : T("aa.tgConnect", "Connect");
     const rec = b.recent || [];
@@ -8659,6 +8664,42 @@
     all.hidden = !b.counts.submitted || AA.tile === "submitted";
     all.innerHTML = esc(T("aa.seeAll", "See all {n} submitted").replace("{n}", fmtN(b.counts.submitted))) + " &rarr;";
   }
+
+  // The Autopilot row: the switch, the per-day number typed in place (like the Tracker's weekly
+  // goal), the packages left from the account (left out when unknown), or the pause reason.
+  let AA_PKG_LEFT = null;
+  function aaRenderAutopilot(ap) {
+    const sw = $("#aaAutopilot"), sub = $("#aaApSub");
+    if (!sw || !sub) return;
+    sw.setAttribute("aria-checked", String(!!ap.on));
+    const paused = ap.on && ap.paused && ap.paused.code;
+    if (paused) {
+      sub.textContent = T("aa.apPaused." + ap.paused.code, ap.paused.text || "Paused.");
+      return;
+    }
+    const n = Math.max(1, Math.min(10, Number(ap.per_day) || 2));
+    const [before, after] = T("aa.apSub", "Tailors new matches while you are away, up to {n} a day.").split("{n}");
+    let html = esc(before) + `<input class="fld aa-ap-in" id="aaApPerDay" type="number" min="1" max="10" value="${n}" aria-label="${esc(T("aa.ap", "Autopilot"))}">` + esc(after || "");
+    if (AA_PKG_LEFT != null) html += " " + esc(T("aa.apLeft", "{p} packages left on your pass.").replace("{p}", String(AA_PKG_LEFT)));
+    sub.innerHTML = html;
+    $("#aaApPerDay")?.addEventListener("change", async e => {
+      const v = Math.max(1, Math.min(10, parseInt(e.target.value, 10) || n));
+      e.target.value = String(v);
+      try { await api("/api/submit/settings", { autopilot_per_day: v }); if (AA.board && AA.board.autopilot) AA.board.autopilot.per_day = v; }
+      catch { toast(T("tracker.saveFail", "Couldn't save that, try again.")); }
+    });
+    if (AA_PKG_LEFT == null) {
+      api("/api/account/status").then(s => {
+        if (s && s.packages_left != null) { AA_PKG_LEFT = Number(s.packages_left); if (AA.board) aaRenderAutopilot(AA.board.autopilot || {}); }
+      }).catch(() => {});
+    }
+  }
+  $("#aaAutopilot")?.addEventListener("click", async e => {
+    const sw = e.currentTarget, on = sw.getAttribute("aria-checked") !== "true";
+    sw.setAttribute("aria-checked", String(on));
+    try { await api("/api/submit/settings", { autopilot: on }); if (AA.board && AA.board.autopilot) { AA.board.autopilot.on = on; aaRenderAutopilot(AA.board.autopilot); } }
+    catch { sw.setAttribute("aria-checked", String(!on)); }
+  });
 
   function aaSelectTile(t) {
     if (!AA.board) return;

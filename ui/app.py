@@ -1916,7 +1916,10 @@ _RATE_FILE = _DATA / "submit_rate.json"
 _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
                   "inbox_auto_verify": False, "folders": [], "tracker_weekly_goal": 10,
                   "aa_min_fit": 60,   # Auto-apply's fit floor (autoapply/picker.py)
-                  "aa_skip": []}      # roles the person took out of the next Auto-apply run
+                  "aa_skip": [],      # roles the person took out of the next Auto-apply run
+                  "aa_focus": {},     # the page's focus fields (titles, locations, sponsor_only)
+                  "autopilot": False, # tailor new matches on a schedule while the person is away
+                  "autopilot_per_day": 2}   # at most this many packages a day (1..10)
 
 
 def _prefs() -> dict:
@@ -1946,6 +1949,17 @@ def _set_prefs(patch: dict) -> dict:
     if "aa_min_fit" in patch:                # Auto-apply's fit floor, a match percent
         from autoapply.picker import clamp_min_fit
         cur["aa_min_fit"] = clamp_min_fit(patch["aa_min_fit"], cur.get("aa_min_fit", 60))
+    if "aa_focus" in patch:                  # the focus fields, so Autopilot tailors the same list
+        f = patch["aa_focus"] if isinstance(patch["aa_focus"], dict) else {}
+        cur["aa_focus"] = {"titles": _split(f.get("titles"))[:20],
+                           "locations": _split(f.get("locations"))[:20],
+                           "sponsor_only": bool(f.get("sponsor_only"))}
+    if "autopilot" in patch:                 # OFF by default; the person turns it on
+        cur["autopilot"] = bool(patch["autopilot"])
+    if "autopilot_per_day" in patch:
+        from autoapply.picker import clamp_per_day
+        cur["autopilot_per_day"] = clamp_per_day(patch["autopilot_per_day"],
+                                                 cur.get("autopilot_per_day", 2))
     _PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
     _PREFS_FILE.write_text(_json_prefs.dumps(cur), encoding="utf-8")
     return cur
@@ -1968,6 +1982,7 @@ def _now_ts_today():
 def submit_settings():
     """Autonomous-submit flag, review prefs (approve-all opt-in, daily cap, spacing), and
     whether Telegram is configured. Also the current day's submission count vs the cap."""
+    from autoapply.picker import clamp_per_day
     p = _prefs()
     ts, today = _now_ts_today()
     return jsonify({
@@ -1976,6 +1991,8 @@ def submit_settings():
         "daily_cap": p["daily_cap"],
         "min_gap": p["min_gap"],
         "inbox_auto_verify": bool(p.get("inbox_auto_verify")),
+        "autopilot": bool(p.get("autopilot")),
+        "autopilot_per_day": clamp_per_day(p.get("autopilot_per_day")),
         "telegram_configured": _active_channel() is not None,
         "rate": _rate_limiter().status(ts, today),
     })
@@ -1994,8 +2011,9 @@ def submit_decision():
 @app.post("/api/submit/settings")
 @_guard
 def submit_settings_set():
-    """Update settings. Body may set {autonomous, approve_all, daily_cap, min_gap}. Both
-    autonomous and approve_all default OFF and must be turned on deliberately."""
+    """Update settings. Body may set {autonomous, approve_all, daily_cap, min_gap, autopilot,
+    autopilot_per_day}. autonomous, approve_all and autopilot default OFF and must be turned on
+    deliberately."""
     body = request.json or {}
     if "autonomous" in body:
         _set_autonomous(bool(body["autonomous"]))
@@ -9281,9 +9299,13 @@ def _notify_hub():
     from notify.service import NotifyService
     state = _notify_state()
     batch = BatchReview(None, _BatchActions(), approve_all_enabled=_prefs()["approve_all"])
+
+    def act(data: str) -> dict:
+        # The Autopilot's batch buttons (ap:...) and the batch review's (approve:/skip:/approveall).
+        return _autopilot_act(data) if str(data or "").startswith("ap:") else batch.act(data)
     return NotifyHub(state, AlertEngine(state, match_fn=_alert_match_score),
                      NotifyService(None, _RecordActions()),
-                     batch_callback=batch.act, job_actions=_JobAlertActions(),
+                     batch_callback=act, job_actions=_JobAlertActions(),
                      review=_cv_review(state))
 
 
@@ -9436,6 +9458,11 @@ def start_notify_loop():
                 _notify_tick(scan=(n % NOTIFY_SCAN_EVERY == 0))
             except Exception:   # noqa: BLE001 - the loop must outlive any one failure
                 traceback.print_exc()
+            if n % NOTIFY_SCAN_EVERY == 0:
+                try:
+                    _autopilot_kick()     # whether or not Telegram is connected
+                except Exception:   # noqa: BLE001
+                    traceback.print_exc()
             n += 1
             time.sleep(NOTIFY_INTERVAL)
 
@@ -10529,8 +10556,6 @@ def autoapply_run():
     queue each package for review. Skips roles that already have a package and roles below the
     person's fit floor. Submission stays on the existing guarded path (verified allowlist +
     opt-in), so this run never submits on its own; it fills the review queue."""
-    from autoapply.picker import TIME_BUDGET_S, rank, reach, skip_summary
-    from submit.policy import submission_policy
     body = request.json or {}
     count = max(1, min(int(body.get("count") or 5), 10))
     if not _aa_has_profile():
@@ -10541,16 +10566,37 @@ def autoapply_run():
     if missing:
         return jsonify(_aa_missing_error(missing)), 400
     min_fit = _aa_min_fit(body)
+    if not _AA_RUN_LOCK.acquire(blocking=False):
+        return jsonify({"error": "A run is already tailoring. Wait for it to finish, then try "
+                                 "again.", "busy": True}), 409
+    try:
+        payload, status = _aa_run(count, min_fit, body.get("focus") or {})
+    finally:
+        _AA_RUN_LOCK.release()
+    return jsonify(payload), status
 
-    rows, meta = _aa_candidates(body.get("focus") or {})
+
+# One run at a time: a manual Tailor & queue and the Autopilot never tailor side by side (they
+# would pick the same Up next roles and double the packages). Held for the whole run.
+_AA_RUN_LOCK = threading.Lock()
+
+
+def _aa_run(count: int, min_fit: int, focus: dict, *, ctrl=None) -> tuple[dict, int]:
+    """The Auto-apply run itself, shared by the route and the Autopilot scheduler: the same
+    ranking Up next shows, the same fit floor, focus and skips, never a role that already has a
+    package. Returns (payload, http_status); an error payload carries "error". The caller holds
+    _AA_RUN_LOCK."""
+    from autoapply.picker import TIME_BUDGET_S, rank, reach, skip_summary
+    from submit.policy import submission_policy
+    rows, meta = _aa_candidates(focus)
     focus_meta = {"titles": meta["titles"], "locations": meta["locations"],
                   "sponsor_only": meta["sponsor_only"]}
     if not meta["board"] and not meta["saved"]:
-        return jsonify({"error": "The job board is still loading. Open Jobs, wait for roles to "
-                                 "appear, then try again.", "action": "open_jobs"}), 400
+        return {"error": "The job board is still loading. Open Jobs, wait for roles to "
+                         "appear, then try again.", "action": "open_jobs"}, 400
     if not rows:
-        return jsonify({"error": "No roles match today's focus or your saved search. Broaden "
-                                 "or clear it.", "focus": focus_meta}), 400
+        return {"error": "No roles match today's focus or your saved search. Broaden "
+                         "or clear it.", "focus": focus_meta}, 400
     # The same ranking Up next shows (picker.rank), so the run tailors the roles listed there;
     # a role Up next could not score yet is fetched and scored now, within the time budget.
     score = _aa_scorer(rows, deadline=time.monotonic() + TIME_BUDGET_S, network=True)
@@ -10567,8 +10613,8 @@ def autoapply_run():
         else:
             err = (f"None of the {res['scored']} best-fit roles we checked reach your fit floor "
                    f"of {min_fit}%. Lower the floor or broaden your focus.")
-        return jsonify({"error": err, "summary": summary, "passed": passed, "min_fit": min_fit,
-                        "focus": focus_meta}), 400
+        return {"error": err, "summary": summary, "passed": passed, "min_fit": min_fit,
+                "focus": focus_meta, "nothing": True}, 400
 
     llm = _make_llm()   # real model; clear error if the key/connectivity is missing
     tex, tname = _load_template(None)
@@ -10578,8 +10624,8 @@ def autoapply_run():
     # wrong-role profile. The scratch row (and its palace turns) are deleted at the end.
     scratch = "_autoapply_" + uuid.uuid4().hex[:8]
     tailored, skipped = [], []
-    ctrl = _control()          # P3: the person can stop/skip this run from Telegram while it runs
-    halted = False
+    ctrl = ctrl or _control()  # P3: the person can stop/skip this run from Telegram while it runs
+    halted = upgrade = False
     for job in jobs:
         # Cooperate with Telegram control between items: /stop halts the run gracefully after the
         # current one; /skip (no id) drops just the next item. Checked fresh each iteration.
@@ -10597,29 +10643,310 @@ def autoapply_run():
         if out.get("ok"):
             item = {k: out[k] for k in ("id", "role", "company", "coverage")}
             item["fit"] = job.get("fit")
+            item["source_id"] = str(job.get("source_id") or "")
+            item["url"] = job.get("url") or ""
             _aa_keep_fit(out["id"], job.get("fit"))
             item["lane"] = submission_policy(job.get("url") or "")
             tailored.append(item)
         else:
             skipped.append({"role": out.get("role") or job.get("title", "a role"),
                             "reason": out.get("reason") or "held for your review"})
+            if out.get("upgrade"):          # the pass is used up: every next role would be too
+                upgrade = True
+                break
     try:
         _memory().delete(scratch)   # drop the throwaway row; "default" was never written
     except Exception:
         pass
-    return jsonify({"ok": True, "queued": len(tailored), "tailored": tailored,
-                    "skipped": skipped, "considered": len(jobs), "halted": halted,
-                    "matched": res["available"], "min_fit": min_fit,
-                    "passed": passed, "summary": summary,
-                    "reach": reach([j for j in rows], submission_policy),
-                    "search": meta["search"], "focus": focus_meta})
+    # A role with a package never needs a job-match alert as well (the same role twice).
+    _alerts_mark_tailored([it["source_id"] for it in tailored if it.get("source_id")])
+    return {"ok": True, "queued": len(tailored), "tailored": tailored,
+            "skipped": skipped, "considered": len(jobs), "halted": halted, "upgrade": upgrade,
+            "matched": res["available"], "min_fit": min_fit,
+            "passed": passed, "summary": summary,
+            "reach": reach([j for j in rows], submission_policy),
+            "search": meta["search"], "focus": focus_meta}, 200
 
 
-# ============================================================================ Auto-apply page
-# One page for the whole loop (tailor-ux 2026-10): four stage tiles (To review, Waiting on you,
-# Submitted, Needs you) from submit/stages.py, a row list per tile, an Up next preview of the
-# next run, a Today panel, and a detail drawer per application. The old Review page folded in
-# here; its endpoints (/api/review/*) stay and this page calls them.
+def _alerts_mark_tailored(sids: list[str]) -> None:
+    """Keep a tailored role out of the job-match alerts (notify/alerts.py): it has a package
+    now, so an alert asking to tailor it would be a duplicate. Best-effort."""
+    if not sids:
+        return
+    try:
+        from notify.alerts import AlertEngine
+        AlertEngine(_notify_state()).mark_tailored(sids)
+    except Exception:   # noqa: BLE001 - the packages are saved; the alert list is a nicety
+        pass
+
+
+# ----------------------------------------------------------------------------- Autopilot
+# A scheduled, capped, hands-off Auto-apply run (CLAUDE.md §4c): while the app runs, every scan
+# tick of the notify loop (5 minutes) tailors up to N new matches a day into To review, exactly
+# as a manual Tailor & queue does, and never submits anything by itself. OFF by default. One
+# Telegram message per run with [Approve all] [Review] [Skip]; Approve all goes through the
+# same guarded batch approve (verified allowlist + autonomous on submits; the rest is marked
+# approved for the person's click). Day state lives in notify_state.json under "autopilot":
+# {date, count, ids, failures, paused: {code, text} | None, batches: {id: {ids, at}}}.
+AUTOPILOT_PAUSE_TEXT = {
+    "no_packages": "Paused: no packages left on your pass.",
+    "no_ai": "Paused: the AI is not reachable. Check your connection or key.",
+    "failures": "Paused after 3 failed runs. It tries again tomorrow.",
+}
+AUTOPILOT_MAX_FAILURES = 3
+_AUTOPILOT_THREAD: dict = {"thread": None}
+
+
+def _autopilot_state(today: str) -> dict:
+    """Today's Autopilot state, started fresh on a new day (the count, the ids and any pause
+    are per day: a backoff lasts until tomorrow)."""
+    st = _notify_state().get("autopilot") or {}
+    if st.get("date") != today:
+        st = {"date": today, "count": 0, "ids": [], "failures": 0, "paused": None,
+              "batches": {}}
+    st.setdefault("batches", {})
+    return st
+
+
+def _autopilot_save(st: dict) -> None:
+    _notify_state().set("autopilot", st)
+
+
+def _autopilot_packages_left():
+    """Tailored packages left on the pass, from the broker, or None when unknown: the broker
+    is unreachable or not signed in, or the person runs on their own key (never counted)."""
+    if _ai_provider() == "openai":
+        return None
+    if os.environ.get("TAILOR_OWN_KEY") == "1" and _cred("ANTHROPIC_API_KEY"):
+        return None
+    if not _broker_reachable():
+        return None
+    st, usage = _broker_get("/me/usage")
+    if st != 200 or not isinstance(usage, dict) or usage.get("packages_left") is None:
+        return None
+    try:
+        return max(0, int(usage.get("packages_left")))
+    except (TypeError, ValueError):
+        return None
+
+
+def _autopilot_status() -> dict:
+    """What the Auto-apply page shows for the Autopilot row: on/off, the per-day number,
+    today's count and the pause reason (code + text) when it backed off."""
+    from autoapply.picker import clamp_per_day
+    p = _prefs()
+    _ts, today = _now_ts_today()
+    st = _autopilot_state(today)
+    return {"on": bool(p.get("autopilot")), "per_day": clamp_per_day(p.get("autopilot_per_day")),
+            "done": int(st.get("count") or 0), "paused": st.get("paused")}
+
+
+def _autopilot_kick() -> None:
+    """The notify loop's scan tick: run the Autopilot on its own thread so a multi-minute
+    tailoring never holds up taps and alerts. One thread at a time."""
+    th = _AUTOPILOT_THREAD["thread"]
+    if th is not None and th.is_alive():
+        return
+    if not _prefs().get("autopilot"):
+        return
+    th = threading.Thread(target=_autopilot_tick, name="autopilot", daemon=True)
+    _AUTOPILOT_THREAD["thread"] = th
+    th.start()
+
+
+def _autopilot_tick() -> dict:
+    """One scheduled check. Runs only when ALL hold: Autopilot is on, a profile exists, today's
+    pause is not set, today's count is under the per-day number, the pass has packages left
+    (when the broker knows), and no other run holds the lock. Then it tailors up to the
+    remaining allowance through _aa_run (the manual run's code) and messages Telegram when a
+    channel is active. Backs off until tomorrow on: no AI (key or connectivity), no packages
+    left, or AUTOPILOT_MAX_FAILURES runs in a row that tailored nothing because of errors."""
+    from autoapply.picker import clamp_per_day
+    p = _prefs()
+    if not p.get("autopilot"):
+        return {"ran": False, "why": "off"}
+    if not _aa_has_profile():
+        return {"ran": False, "why": "no_profile"}
+    _ts, today = _now_ts_today()
+    st = _autopilot_state(today)
+    if st.get("paused"):
+        return {"ran": False, "why": "paused", "paused": st["paused"]}
+    per_day = clamp_per_day(p.get("autopilot_per_day"))
+    remaining = per_day - int(st.get("count") or 0)
+    if remaining <= 0:
+        return {"ran": False, "why": "done"}
+    left = _autopilot_packages_left()
+    if left == 0 and not _cred("ANTHROPIC_API_KEY"):
+        st["paused"] = {"code": "no_packages", "text": AUTOPILOT_PAUSE_TEXT["no_packages"]}
+        _autopilot_save(st)
+        return {"ran": False, "why": "paused", "paused": st["paused"]}
+    if not _AA_RUN_LOCK.acquire(blocking=False):
+        return {"ran": False, "why": "busy"}
+    try:
+        try:
+            payload, status = _aa_run(remaining, _aa_min_fit(), p.get("aa_focus") or {})
+        except Unavailable as exc:
+            payload, status = {"error": str(exc), "reason": exc.reason}, 503
+        except Exception as exc:   # noqa: BLE001 - say why, never crash the loop
+            traceback.print_exc()
+            payload, status = {"error": str(exc)[:200], "crashed": True}, 500
+    finally:
+        _AA_RUN_LOCK.release()
+    st = _autopilot_state(today)          # re-read: a tap may have changed it meanwhile
+    out = {"ran": True, "tailored": 0, "status": status}
+    if status != 200:
+        if payload.get("nothing") or payload.get("action") == "open_jobs":
+            return {**out, "why": "nothing"}       # no new matches: not a failure, try later
+        if payload.get("reason") in ("no_key", "offline", "no_account", "no_credit"):
+            st["paused"] = {"code": "no_ai", "text": AUTOPILOT_PAUSE_TEXT["no_ai"]}
+        else:
+            st["failures"] = int(st.get("failures") or 0) + 1
+            if st["failures"] >= AUTOPILOT_MAX_FAILURES:
+                st["paused"] = {"code": "failures", "text": AUTOPILOT_PAUSE_TEXT["failures"]}
+        _autopilot_save(st)
+        return {**out, "why": "error", "error": payload.get("error"), "paused": st["paused"]}
+    tailored = payload.get("tailored") or []
+    st["count"] = int(st.get("count") or 0) + len(tailored)
+    st["ids"] = (st.get("ids") or []) + [it["id"] for it in tailored]
+    if tailored:
+        st["failures"] = 0
+    elif payload.get("upgrade"):
+        st["paused"] = {"code": "no_packages", "text": AUTOPILOT_PAUSE_TEXT["no_packages"]}
+    elif payload.get("skipped"):
+        st["failures"] = int(st.get("failures") or 0) + 1
+        if st["failures"] >= AUTOPILOT_MAX_FAILURES:
+            st["paused"] = {"code": "failures", "text": AUTOPILOT_PAUSE_TEXT["failures"]}
+    out.update(tailored=len(tailored), done=st["count"], paused=st["paused"])
+    if tailored:
+        bid = uuid.uuid4().hex[:6]
+        st["batches"][bid] = {"ids": [it["id"] for it in tailored], "at": _now_iso()}
+        if len(st["batches"]) > 20:
+            st["batches"] = dict(list(st["batches"].items())[-20:])
+        _autopilot_save(st)
+        out["batch"] = bid
+        ch = _active_channel()
+        if ch is not None:
+            try:
+                ch.send(autopilot_message(tailored, _can_auto_apply, st["count"], per_day,
+                                          _autopilot_packages_left()),
+                        autopilot_buttons(bid))
+                out["sent"] = True
+            except Exception:   # noqa: BLE001 - the packages are queued either way
+                traceback.print_exc()
+                out["sent"] = False
+    else:
+        _autopilot_save(st)
+    return out
+
+
+def _companies(items: list[dict]) -> str:
+    seen, names = set(), []
+    for it in items:
+        c = (it.get("company") or "").strip()
+        if c and c.lower() not in seen:
+            seen.add(c.lower())
+            names.append(c)
+    return ", ".join(names)
+
+
+def autopilot_message(tailored: list[dict], can_send_fn, done: int, per_day: int,
+                      packages_left=None) -> str:
+    """The one Telegram message after an Autopilot run. ``can_send_fn(item)`` is the app's own
+    gate (verified allowlist AND autonomous on), so "can be sent for you" is honest: with
+    today's allowlist that is usually none, and the line is left out when it is. The packages
+    clause is left out when the broker does not know."""
+    n = len(tailored)
+    auto = [it for it in tailored if can_send_fn({"url": it.get("url") or ""})]
+    rest = [it for it in tailored if it not in auto]
+    parts = [f"I found {n} role{'s' if n != 1 else ''} you are qualified for and tailored your "
+             f"resume for each." if n != 1 else
+             "I found 1 role you are qualified for and tailored your resume for it."]
+    if auto:
+        parts.append(f"{len(auto)} can be sent for you ({_companies(auto)}).")
+    if rest:
+        verb = "are" if len(rest) != 1 else "is"
+        parts.append(f"{len(rest)} {verb} ready and waiting for your click ({_companies(rest)}).")
+    parts.append(f"{done} of {per_day} for today.")
+    if packages_left is not None:
+        parts.append(f"{packages_left} package{'s' if packages_left != 1 else ''} left on your "
+                     "pass.")
+    return " ".join(parts)
+
+
+def autopilot_buttons(bid: str) -> list:
+    return [[{"id": f"ap:approveall:{bid}", "label": "Approve all"},
+             {"id": f"ap:review:{bid}", "label": "Review"},
+             {"id": f"ap:skip:{bid}", "label": "Skip"}]]
+
+
+def _autopilot_act(data: str) -> dict:
+    """An Autopilot batch button: ``ap:<approveall|review|skip>:<batch>``. Approve all sends
+    ONLY what the app's own gate allows (verified allowlist AND autonomous on), through the same
+    rate-limited batch approve; everything else is marked approved for the person's click.
+    Review sends the batch's items one by one with the usual Approve / Skip buttons. Skip marks
+    them skipped, as the in-app Skip does. A batch is handled once."""
+    from submit.stages import approved_patch
+    parts = (data or "").split(":")
+    if len(parts) != 3 or parts[0] != "ap":
+        return {"message": "Unrecognized action."}
+    _, cmd, bid = parts
+    _ts, today = _now_ts_today()
+    state = _notify_state()
+    st = state.get("autopilot") or {}
+    batch = (st.get("batches") or {}).get(bid)
+    if not batch:
+        return {"message": "That batch was handled already, or has expired. Open SponsorJobs "
+                           "to see To review."}
+    ids = [int(x) for x in batch.get("ids") or []]
+    pending = {r["id"]: r for r in _pending_records() if r["id"] in ids}
+    actions = _BatchActions()
+    if cmd == "approveall":
+        sent, waiting, failed = [], [], []
+        recs = _records()
+        try:
+            for rid in ids:
+                rec = pending.get(rid)
+                if not rec:
+                    continue
+                if _record_can_auto_apply(rid):
+                    res = actions.approve(rid)
+                    (sent if res.get("stage") == "submitted" else
+                     waiting if res.get("ok") else failed).append(rec)
+                else:
+                    recs.merge_data(rid, {**approved_patch(), "approved_at": _now_iso()})
+                    waiting.append(rec)
+        finally:
+            recs.close()
+        bits = []
+        if sent:
+            bits.append(f"Sent {len(sent)} for you ({_companies(sent)}).")
+        if waiting:
+            bits.append(f"{len(waiting)} approved and waiting for your click "
+                        f"({_companies(waiting)}). Open SponsorJobs to finish them.")
+        if failed:
+            bits.append(f"{len(failed)} could not be sent ({_companies(failed)}); it is under "
+                        "Needs you.")
+        msg = " ".join(bits) or "Nothing left to approve in that batch."
+    elif cmd == "review":
+        items = [_review_item(pending[rid]) for rid in ids if rid in pending]
+        if not items:
+            msg = "Nothing left to review in that batch."
+        else:
+            _batch_review().send(items)
+            msg = f"Here are the {len(items)}, one by one." if len(items) != 1 else "Here it is."
+    elif cmd == "skip":
+        n = sum(1 for rid in ids if rid in pending and actions.skip(rid).get("ok"))
+        msg = f"Skipped {n}. They stay in SponsorJobs, marked skipped."
+    else:
+        return {"message": "Unrecognized action."}
+
+    def fn(d):
+        ap = d.get("autopilot") or {}
+        (ap.get("batches") or {}).pop(bid, None)
+        d["autopilot"] = ap
+    state.update(fn)
+    return {"ok": True, "message": msg}
+
 
 def _aa_keep_fit(rid, fit) -> None:
     """Keep the run's fit percent on the record, so the page shows the same match the run used."""
@@ -10777,6 +11104,7 @@ def autoapply_board():
         "telegram": _active_channel() is not None,
         "approve_all": bool(p.get("approve_all")),
         "min_fit": _aa_min_fit(),
+        "autopilot": _autopilot_status(),
     })
 
 

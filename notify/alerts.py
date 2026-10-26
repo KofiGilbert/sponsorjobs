@@ -442,6 +442,20 @@ class AlertEngine:
             d["shorts"] = shorts
         self.state.update(fn)
 
+    def mark_tailored(self, sids) -> None:
+        """These roles have a package now (the Autopilot or a run tailored them): never alert
+        about them, and drop any alert still waiting in the queue."""
+        sids = [str(s) for s in sids if s]
+        if not sids:
+            return
+
+        def fn(d):
+            have = set(d.get("sent") or [])
+            sent = list(d.get("sent") or []) + [s for s in sids if s not in have]
+            d["sent"] = sent[-_MAX_SENT:]
+            d["queue"] = [x for x in (d.get("queue") or []) if x["sid"] not in set(sids)]
+        self.state.update(fn)
+
     # -- button taps ---------------------------------------------------------- #
     def handle_button(self, data: str, actions) -> str:
         """``job:<action>:<short>`` -> do it, return the reply text. ``actions`` supplies
