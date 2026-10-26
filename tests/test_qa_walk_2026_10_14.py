@@ -142,6 +142,7 @@ def test_profile_summary_box_is_full_width():
 
 
 def test_my_profile_unlights_the_nav_and_visa_change_opens_your_answers():
-    i = APP_JS.index('$("#menuProfile")?.addEventListener')
-    assert 'classList.remove("is-active")' in APP_JS[i:i + 600]
+    assert '$("#menuProfile")?.addEventListener("click", () => { closeAcctMenu(); openProfilePage(); });' in APP_JS
+    i = APP_JS.index("function openProfilePage()")       # the one door the menu goes through
+    assert 'classList.remove("is-active")' in APP_JS[i:i + 400]
     assert '$("#aaPfVisaChange")?.addEventListener("click", () => openAnswers("autoapply"));' in APP_JS
