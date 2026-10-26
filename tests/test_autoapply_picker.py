@@ -94,9 +94,12 @@ def test_clamp_min_fit():
 
 
 # --------------------------------------------------------------------------- endpoints
-PROFILE = {"identity": {"name": "Sam Rivera"},
-           "experience": [{"org": "Acme", "roles": [{"title": "Backend Engineer",
-                                                     "bullets": ["Built Python APIs on AWS with SQL"]}]}],
+# Complete (dates, location, a contact): the run pre-flights the saved profile and stops on a
+# missing critical detail before it ranks anything (tests/test_autoapply_missing.py).
+PROFILE = {"identity": {"name": "Sam Rivera", "email": "sam@example.com"},
+           "experience": [{"org": "Acme", "location": "Austin, TX",
+                           "roles": [{"title": "Backend Engineer", "dates": "2021 - 2024",
+                                      "bullets": ["Built Python APIs on AWS with SQL"]}]}],
            "skills": {"Languages": ["Python", "SQL"], "Cloud": ["AWS"]}}
 GOOD_JD = "Backend Engineer. Requirements: Python, SQL and AWS. You build REST APIs."
 POOR_JD = "Requirements: Java, Kubernetes, Go, Rust, Scala, Terraform and C++."
