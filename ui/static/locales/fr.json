@@ -742,6 +742,8 @@
   "aa.apPaused.no_packages": "En pause : plus de dossiers sur votre pass.",
   "aa.apPaused.no_ai": "En pause : l'IA est injoignable. Vérifiez votre connexion ou votre clé.",
   "aa.apPaused.failures": "En pause après 3 échecs. Nouvel essai demain.",
+  "aa.apPaused.missing_details": "En pause : {n} informations manquent dans votre profil.",
+  "aa.apPaused.missing_details_one": "En pause : 1 information manque dans votre profil.",
   "aa.tg": "Mises à jour Telegram",
   "aa.inbox": "Boîte mail",
   "aa.scan": "Analyser",

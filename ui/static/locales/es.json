@@ -742,6 +742,8 @@
   "aa.apPaused.no_packages": "En pausa: no quedan paquetes en tu pase.",
   "aa.apPaused.no_ai": "En pausa: la IA no responde. Revisa tu conexión o tu clave.",
   "aa.apPaused.failures": "En pausa tras 3 fallos. Lo intenta de nuevo mañana.",
+  "aa.apPaused.missing_details": "En pausa: faltan {n} datos en tu perfil.",
+  "aa.apPaused.missing_details_one": "En pausa: falta 1 dato en tu perfil.",
   "aa.tg": "Novedades por Telegram",
   "aa.inbox": "Bandeja de correo",
   "aa.scan": "Revisar",

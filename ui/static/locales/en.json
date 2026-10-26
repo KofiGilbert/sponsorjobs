@@ -742,6 +742,8 @@
   "aa.apPaused.no_packages": "Paused: no packages left on your pass.",
   "aa.apPaused.no_ai": "Paused: the AI is not reachable. Check your connection or key.",
   "aa.apPaused.failures": "Paused after 3 failed runs. It tries again tomorrow.",
+  "aa.apPaused.missing_details": "Paused: {n} details missing in your profile.",
+  "aa.apPaused.missing_details_one": "Paused: 1 detail missing in your profile.",
   "aa.tg": "Telegram updates",
   "aa.inbox": "Email inbox",
   "aa.scan": "Scan",

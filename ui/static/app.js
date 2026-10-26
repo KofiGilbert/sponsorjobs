@@ -8674,7 +8674,9 @@
     sw.setAttribute("aria-checked", String(!!ap.on));
     const paused = ap.on && ap.paused && ap.paused.code;
     if (paused) {
-      sub.textContent = T("aa.apPaused." + ap.paused.code, ap.paused.text || "Paused.");
+      const one = ap.paused.code === "missing_details" && ap.paused.n === 1;   // "1 detail", not "1 details"
+      sub.textContent = T("aa.apPaused." + ap.paused.code + (one ? "_one" : ""), ap.paused.text || "Paused.")
+        .replace("{n}", String(ap.paused.n || ""));
       return;
     }
     const n = Math.max(1, Math.min(10, Number(ap.per_day) || 2));

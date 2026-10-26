@@ -10754,6 +10754,25 @@ def _autopilot_kick() -> None:
     th.start()
 
 
+def _autopilot_tell_missing(missing: list[str]) -> bool:
+    """One Telegram line per missing-details pause (not one per tick): sent when a channel is
+    active and this pause has not been told yet. The flag lives outside the day state, so a new
+    day does not repeat it; it clears when the tick finds the profile complete."""
+    ns = _notify_state()
+    if ns.get("autopilot_missing_told"):
+        return False
+    ch = _active_channel()
+    if ch is None:
+        return False
+    try:
+        ch.send(f"Autopilot is paused: {_aa_missing_reason(missing)} and it resumes on its own.")
+    except Exception:   # noqa: BLE001 - the pause shows on the page either way
+        traceback.print_exc()
+        return False
+    ns.set("autopilot_missing_told", True)
+    return True
+
+
 def _autopilot_tick() -> dict:
     """One scheduled check. Runs only when ALL hold: Autopilot is on, a profile exists, today's
     pause is not set, today's count is under the per-day number, the pass has packages left
@@ -10769,8 +10788,22 @@ def _autopilot_tick() -> dict:
         return {"ran": False, "why": "no_profile"}
     _ts, today = _now_ts_today()
     st = _autopilot_state(today)
-    if st.get("paused"):
+    if st.get("paused") and st["paused"].get("code") != "missing_details":
         return {"ran": False, "why": "paused", "paused": st["paused"]}
+    # The profile lacks a detail an unattended build cannot ask for: pause (never a failure,
+    # never a retry), say so once on Telegram, and resume on the first tick after it is added.
+    missing = _aa_missing_details()
+    if missing:
+        n = len(missing)
+        st["paused"] = {"code": "missing_details", "n": n,
+                        "text": f"Paused: {n} detail{'' if n == 1 else 's'} missing in your profile."}
+        _autopilot_save(st)
+        return {"ran": False, "why": "paused", "paused": st["paused"],
+                "told": _autopilot_tell_missing(missing)}
+    if st.get("paused"):                  # the details are in: resume now
+        st["paused"] = None
+        _autopilot_save(st)
+    _notify_state().set("autopilot_missing_told", False)
     per_day = clamp_per_day(p.get("autopilot_per_day"))
     remaining = per_day - int(st.get("count") or 0)
     if remaining <= 0:

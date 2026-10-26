@@ -472,3 +472,54 @@ def test_ui_source_has_the_row_and_the_strings():
     assert set(app.AUTOPILOT_PAUSE_TEXT) == {"no_packages", "no_ai", "failures"}
     assert "resume" in (ROOT / "docs" / "notify.md").read_text(encoding="utf-8")
     assert "### Autopilot" in (ROOT / "docs" / "notify.md").read_text(encoding="utf-8")
+
+
+# --- missing profile details: pause, no retry, resume, one Telegram line ----------------------
+
+def test_missing_details_pause_without_failures_and_resume_on_their_own(ap, monkeypatch):
+    missing = ['the dates for your project "Gate Check"', 'the dates for your project "Ledger"']
+    monkeypatch.setattr(app, "_aa_missing_details", lambda: list(missing))
+    ap["channel"] = FakeChannel()
+    for _ in range(3):                                   # three ticks: paused, not retried
+        out = app._autopilot_tick()
+        assert out["why"] == "paused" and out["paused"]["code"] == "missing_details"
+    assert ap["tailored"] == []                          # nothing counted or tailored
+    st = app._autopilot_state(DAY1)
+    assert st["failures"] == 0                           # a pause, never a failure
+    assert app._autopilot_status()["paused"]["text"] == "Paused: 2 details missing in your profile."
+    assert [m["text"] for m in ap["channel"].sent] == [   # told once, not every tick
+        'Autopilot is paused: your profile is missing 2 details (the dates for your project '
+        '"Gate Check", the dates for your project "Ledger"). Add them in SponsorJobs and it '
+        'resumes on its own.']
+    ap["day"] = DAY2                                     # a new day does not repeat it
+    assert app._autopilot_tick()["paused"]["code"] == "missing_details"
+    assert len(ap["channel"].sent) == 1
+
+    missing.clear()                                      # the person adds the details
+    out = app._autopilot_tick()
+    assert out["ran"] is True and out["tailored"] == 2 and not out["paused"]
+    assert app._autopilot_status()["paused"] is None
+
+
+def test_missing_details_without_a_channel_sends_nothing_and_tells_later(ap, monkeypatch):
+    monkeypatch.setattr(app, "_aa_missing_details", lambda: ["your full name"])
+    out = app._autopilot_tick()
+    assert out["paused"]["text"] == "Paused: 1 detail missing in your profile." and out["told"] is False
+    ap["channel"] = FakeChannel()                        # connected later, still paused: one line
+    app._autopilot_tick()
+    app._autopilot_tick()
+    assert len(ap["channel"].sent) == 1 and "missing 1 detail (your full name)" in ap["channel"].sent[0]["text"]
+
+
+def test_another_pause_is_not_replaced_by_missing_details(ap, monkeypatch):
+    ap["left"] = 0
+    assert app._autopilot_tick()["paused"]["code"] == "no_packages"
+    monkeypatch.setattr(app, "_aa_missing_details", lambda: ["your full name"])
+    assert app._autopilot_tick()["paused"]["code"] == "no_packages"
+
+
+def test_the_page_shows_the_missing_details_pause():
+    js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert 'ap.paused.code === "missing_details" && ap.paused.n === 1' in js
+    en = json.loads((ROOT / "ui" / "static" / "locales" / "en.json").read_text(encoding="utf-8"))
+    assert en["aa.apPaused.missing_details"] == "Paused: {n} details missing in your profile."

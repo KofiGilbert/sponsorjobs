@@ -742,6 +742,8 @@
   "aa.apPaused.no_packages": "Pausado: não há pacotes no seu passe.",
   "aa.apPaused.no_ai": "Pausado: a IA não responde. Verifique sua conexão ou chave.",
   "aa.apPaused.failures": "Pausado após 3 falhas. Tenta de novo amanhã.",
+  "aa.apPaused.missing_details": "Pausado: faltam {n} detalhes no seu perfil.",
+  "aa.apPaused.missing_details_one": "Pausado: falta 1 detalhe no seu perfil.",
   "aa.tg": "Atualizações no Telegram",
   "aa.inbox": "Caixa de e-mail",
   "aa.scan": "Verificar",
