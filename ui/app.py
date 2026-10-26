@@ -4374,7 +4374,9 @@ def _detail_targets(bag: dict, sec: str, match: dict) -> list[dict]:
                 out.append({k: d for k in ("school", "degree", "date", "courses")})
     elif sec == "projects":
         for p in bag.get("projects") or []:
-            if isinstance(p, dict) and _same(p.get("title") or p.get("org"), match.get("name")):
+            # The gate names a project by its org or its title (ui/session._flatten_profile
+            # keeps one of them), so either name finds it here.
+            if isinstance(p, dict) and any(_same(p.get(k), match.get("name")) for k in ("title", "org")):
                 out.append({k: p for k in ("location", "dates", "personal")})
     return out
 
