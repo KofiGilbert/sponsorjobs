@@ -10864,6 +10864,11 @@ def _agent_plan(intent: dict) -> dict:
         return {"text": f"None of the {res['scored']} best-fit roles reach your fit floor of "
                         f"{min_fit}%. Lower the floor in Auto-apply, or broaden the titles.",
                 "buttons": []}
+    if not res["pending"] and len(jobs) < n:
+        # Every candidate is scored and fewer than asked pass: say the true number, never
+        # promise five when four exist. With roles still to score, the run may find more.
+        n = len(jobs)
+        note = f"Only {n} {'matches' if n == 1 else 'match'} right now, so I will do {n}."
     auto = [j for j in jobs if _can_auto_apply(j)]
     reason = ("sending for you is off in Auto-apply" if not _autonomous_on()
               else "none of these sites allows it")

@@ -363,6 +363,35 @@ Rules:
   * **Skip**: the items are marked skipped, as the in-app Skip does.
   A batch is handled once; a second tap says so.
 
+### The Home agent (`agent/home.py`, `/api/agent/*` in `ui/app.py`)
+
+The Home box takes a pasted posting or a link (a tailoring session, as before) or a plain
+request: "Find 5 data analytics roles and apply for me", "I am away for 3 hours: tailor 10
+business analyst roles and message me on Telegram", "What is waiting on me?". One box, no
+mode switch; three Try pills under it fill and send those examples.
+
+* **Routing.** A URL, or long multi-line text with posting words (responsibilities,
+  requirements, qualifications...), or anything over 1500 characters is a posting. Short
+  text is a request: a tiny model prompt (low effort, ~200 tokens) returns one JSON intent
+  `{intent: find_and_apply | status | tailor_one | other, titles, count, location, telegram,
+  away_hours, sponsors_only}`; with no model (no key, offline) keyword rules answer instead.
+* **find_and_apply states a plan first and spends no package.** It ranks with the same
+  functions Up next and `/api/autoapply/run` use (`_aa_candidates`, `_aa_scorer`,
+  `picker.rank`, the fit floor from prefs), caps at the route's 10 a run, at the packages
+  left and at what matches, and says so. "{a} can be sent for you" is counted with the app's
+  own gate (verified allowlist AND autonomous on), never assumed. Telegram asked for but not
+  connected: the plan says it will show the results here. Away hours are read, not scheduled
+  (Autopilot covers that). `[Go ahead]` runs one `_aa_run` under the same lock as a manual run
+  or the Autopilot, then sends only what the gate allows through the same approve as Approve
+  all; the rest waits in To review. The reply: "Done. Tailored {t}. {a} sent for you. {b}
+  ready for your click in Auto-apply." With Telegram asked for and connected, one message
+  with the Autopilot batch buttons, so Approve all / Review / Skip work from the phone.
+  `[Change]` asks what to change (titles, how many, where) and re-plans from the merged intent.
+* **status** answers from the records: To review / Waiting on you / Needs you / Submitted
+  today, the newest items by name, and an Open Auto-apply button.
+* **tailor_one** (a role or company named, no posting) asks for the job description or a link
+  and offers to find matching roles instead. **other** says what the box can do.
+
 ### Settings and state
 
 Settings, Notifications: Connect Telegram (official: a t.me link button plus a QR code drawn

@@ -136,13 +136,14 @@ def parse_request_rules(text: str) -> dict:
     out["titles"] = titles
     if _STATUS.search(low):
         out["intent"] = "status"
-    elif _AT_COMPANY.search(t) and _TAILOR_ONE.search(t) and not re.search(r"\bfind\b", low):
+        return out
+    # "tailor 10 business analyst roles": the number is how many, never the away hours. Read
+    # for every request so a Change turn ("make it 3", "only 2") carries its number.
+    out["count"] = _count_in(_AWAY.sub(" ", t))
+    if _AT_COMPANY.search(t) and _TAILOR_ONE.search(t) and not re.search(r"\bfind\b", low):
         out["intent"] = "tailor_one"
     elif _FIND.search(low) and (titles or re.search(r"\b(roles?|jobs?|positions?)\b", low)):
         out["intent"] = "find_and_apply"
-        # "tailor 10 business analyst roles": the number is how many, never a year or an hour
-        body = _AWAY.sub(" ", t)
-        out["count"] = _count_in(body)
     return out
 
 
