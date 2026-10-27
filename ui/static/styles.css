@@ -1860,17 +1860,22 @@ mark.jd-gap { text-decoration-color: var(--flag); }
   display: flex; align-items: center; gap: 7px; }
 .view-autoapply .aa-dr-foot svg { width: 14px; height: 14px; flex: none; }
 
-@media (max-width: 1500px) {
+/* Sized by the page's OWN width (the .main container), not the window's: with the in-app
+   browser open the window is still wide but the page gets half of it, and window-width rules
+   kept the two-column layout there and clipped the role names and Fill buttons (Kofi, 10-27).
+   The thresholds are the old window widths less the sidebar and rail (146px). */
+@container (max-width: 1354px) {
   .view-autoapply .aa-body { grid-template-columns: minmax(0, 1fr) 300px; }
   .view-autoapply .aa-row { grid-template-columns: 36px minmax(0, 1fr) 168px 76px 132px; gap: 12px; }
 }
-@media (max-width: 1180px) {
+@container (max-width: 1034px) {
   .view-autoapply .aa-body { grid-template-columns: minmax(0, 1fr); }
   .view-autoapply .aa-bar { flex-wrap: wrap; }
 }
-@media (max-width: 900px) {
+@container (max-width: 754px) {
   .view-autoapply .aa-pipe { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .view-autoapply .aa-row { grid-template-columns: 36px minmax(0, 1fr) auto; }
+  /* Stage and tag go; the four that stay (logo, role, match, action) keep one line. */
+  .view-autoapply .aa-row { grid-template-columns: 36px minmax(0, 1fr) auto auto; gap: 12px; }
   .view-autoapply .aa-row .aa-stage, .view-autoapply .aa-row .aa-tag { display: none; }
   .view-autoapply .aa-dr-cols { grid-template-columns: minmax(0, 1fr); }
   .view-autoapply .aa-dr-side { border-left: 0; padding-left: 0; }
@@ -4426,6 +4431,14 @@ body.cv-dragging * { cursor: grabbing !important; }
 @media (max-width: 1100px) { #view-tracker .trk-metrics { flex-wrap: wrap; } .trk-st-spark { margin-left: 0; } }
 #view-tracker .trk-board { position: relative; grid-template-columns: repeat(var(--trk-cols, 5), minmax(0, 1fr)); align-items: stretch; }
 #view-tracker .trk-col { display: flex; flex-direction: column; min-height: 0; }
+/* Not enough room for every column (the in-app browser is open, or a small window): the
+   columns keep a readable width and the board scrolls sideways, the way Trello and Linear
+   boards do, instead of squeezing six columns until the names wrap letter by letter. */
+@container (max-width: 1100px) {
+  #view-tracker .trk-board { grid-template-columns: repeat(var(--trk-cols, 5), minmax(200px, 1fr));
+    overflow-x: auto; scrollbar-width: thin; padding-bottom: 6px; }
+  #view-tracker .trk-metrics { flex-wrap: wrap; }
+}
 #view-tracker .trk-col-cards { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .trk-col-hint { border: 1px dashed var(--border-strong); border-radius: var(--r); padding: 16px 12px; font-size: 12.5px; color: var(--faint); text-align: center; }
 .trk-welcome { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); width: min(440px, 90%); background: var(--surface);

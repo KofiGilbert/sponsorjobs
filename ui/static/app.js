@@ -8904,7 +8904,11 @@
     const here = !!(opts && opts.here);
     if (!here && !/^https?:\/\//i.test(it.apply_url || "")) { aaNote(id, T("aa.noLink", "This application has no link. Open the package to add one.")); return; }
     if (!window.tailorShell) { window.open(it.apply_url, "_blank", "noopener"); return; }
-    const btn = opts && opts.btn;
+    // The drawer is a modal, and the in-app browser hides under any modal: filling from the
+    // drawer loaded and filled the site out of sight, so it looked like nothing happened
+    // (Kofi, 10-27). Step out of the way first; the result goes on the bar above the page.
+    if (AA.open === id) aaClose();
+    const btn = opts && opts.btn && document.contains(opts.btn) && opts.btn.offsetParent ? opts.btn : null;
     if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = T("aa.filling", "Filling…"); }
     const auto = it.lane === "auto" && !!(AA.board && AA.board.today && AA.board.today.autonomous);
     const r = await applyInPane({ url: it.apply_url, recordId: id, resumePath: it.cv_path || "", submit: auto, here });
@@ -8915,11 +8919,18 @@
       loadAutoApply();
     }
   }
-  // Say what the fill did: in the drawer when it is open on this application, else a toast.
+  // Say what the fill did: in the drawer when it is open on this application; else on the bar
+  // right above the page in the in-app browser, where the person is looking (a toast is gone
+  // in under three seconds, too fast for "click Apply now first"); else a toast.
   function aaNote(id, msg, again) {
     if (AA.open === id && $("#aaDrNote")) {
       $("#aaDrNote").textContent = msg; $("#aaDrNote").hidden = !msg;
       const a = $("#aaDrAgain"); if (a && again && window.tailorShell) a.hidden = false;
+      return;
+    }
+    const bar = $("#bbFill");
+    if (msg && bar && window.Panel && window.Panel.isOpen("browser")) {
+      bar.textContent = msg; bar.classList.remove("is-wall"); bar.hidden = false;
       return;
     }
     if (msg) toast(msg);
