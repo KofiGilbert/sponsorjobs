@@ -460,8 +460,11 @@ def test_home_box_has_a_suggestion_list_not_try_pills():
     block = block[:block.index("}")]
     assert "position: absolute" in block and "z-index" in block
     assert "var(--border-strong)" in block and "border-radius: 12px" in block
-    # Only the link sits between the box and the roles heading.
-    between = html[html.index('id="homeExamples"'):html.index('data-i18n="home.today"')]
+    # "See examples" sits inside the box footer, opposite Start tailoring (under the box it
+    # stacked on top of "See all jobs"), and nothing clickable sits between the box and the roles.
+    foot = html[html.index('class="home-prompt-foot"'):html.index('id="homeGo"')]
+    assert 'id="homeExamples"' in foot
+    between = html[html.index('id="homeSuggest"'):html.index('data-i18n="home.today"')]
     assert "<button" not in between
 
 
