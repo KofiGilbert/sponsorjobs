@@ -45,6 +45,11 @@ contextBridge.exposeInMainWorld("tailorShell", {
   // AI autonomous apply: open the application page and AI-fill it for one saved application
   // (record id). The person's data never reaches the model; the submit click stays human.
   autoApplyRun: (url, recordId) => ipcRenderer.invoke("autoapply:run", url, recordId),
+  // The apply agent (docs/apply-agent.md): run one application, press Send, stop.
+  agentRun: (opts) => ipcRenderer.invoke("agent:run", opts || {}),
+  agentSend: (recordId) => ipcRenderer.invoke("agent:send", recordId),
+  agentStop: () => ipcRenderer.invoke("agent:stop"),
+  agentReady: (recordId) => ipcRenderer.invoke("agent:ready", recordId),
   // AI-fill whatever page is currently open in the pane, for one saved application.
   autoApplyFillCurrent: (recordId) => ipcRenderer.invoke("autoapply:fill-current", recordId),
   // Fill progress per page of a multi-page form: {record_id, page, filled, left:[labels], message,

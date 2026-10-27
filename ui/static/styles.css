@@ -1913,6 +1913,11 @@ mark.jd-gap { text-decoration-color: var(--flag); }
   color: #b7e4c7; font-size: 12.5px; line-height: 1.4;
 }
 .bb-fill.is-wall { background: #241c10; color: #f5d08a; }
+/* the apply agent's status line: the message, then Send or Stop at the right */
+.bb-fill { display: flex; align-items: center; gap: 10px; }
+.bb-fill .bb-fill-text { flex: 1 1 auto; min-width: 0; }
+.bb-fill.is-ready { background: #15231c; color: #d6f5e3; }
+.bb-fill .btn { flex: 0 0 auto; padding: 3px 12px; }
 
 /* ---------------- profile section editor ---------------- */
 .pe-card .prof-card-h { display: flex; align-items: center; justify-content: space-between; }

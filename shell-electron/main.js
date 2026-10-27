@@ -19,6 +19,7 @@ const http = require("http");
 const path = require("path");
 const frames = require("./frames");
 const { isNewPage, pageMessage, wallMessage } = require("./pagewatch");
+const { createAgent } = require("./agent");
 const { isSupportMailto } = require("./links");
 
 const SERVER = "http://127.0.0.1:57000";
@@ -371,6 +372,23 @@ function autofillCore() {
     : path.join(__dirname, "..", "extension", "autofill_core.js");
   _coreSource = fs.readFileSync(p, "utf8");
   return _coreSource;
+}
+
+// The apply agent's page serializer and in-page actions (extension/agent_view.js), injected
+// into the pane the same way as the fill engine.
+let _agentViewSource = null;
+function agentViewSource() {
+  if (_agentViewSource) return _agentViewSource;
+  const p = app.isPackaged
+    ? path.join(process.resourcesPath, "agent_view.js")
+    : path.join(__dirname, "..", "extension", "agent_view.js");
+  _agentViewSource = fs.readFileSync(p, "utf8");
+  return _agentViewSource;
+}
+
+function getApp(path) {
+  return net.fetch(SERVER + path, { headers: { "X-Tailor-Extension": "1" } })
+    .then((r) => (r.ok ? r.json() : null)).catch(() => null);
 }
 
 function fetchAutofillPayload() {
@@ -809,7 +827,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     if (!filled && !applied.uploaded && planReason) return { ok: false, reason: planReason, page, left };
     const report = { page, url: wc.getURL() || url, filled, left, system: pre.system };
     recordFillReport(recordId, report);
-    sendProgress(Object.assign({ record_id: recordId || null, message: pageMessage(page, filled, left) }, report));
+    if (!opts.quiet) sendProgress(Object.assign({ record_id: recordId || null, message: pageMessage(page, filled, left) }, report));
     return { ok: true, filled, uploaded: applied.uploaded, pending_upload: applied.pending_upload,
              skipped: applied.skipped, left, page,
              system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
@@ -1015,6 +1033,23 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
   await new Promise((r) => setTimeout(r, 900));   // let SPA forms hydrate
   return runAutoApplyOnPane(recordId);
 });
+
+// ------------------------------------------------------------- the apply agent
+// "Apply for me" (docs/apply-agent.md): the agent drives the pane itself, from the job page to
+// the review page, and stops at Submit; Send presses it (auto-submit sites with Autonomous on
+// are pressed without asking). One run at a time.
+const agent = createAgent({
+  getPane: () => pane, openInPane, waitPaneLoad, autofillCore, agentViewSource,
+  runAutoApplyOnPane, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
+  isNewPage,
+});
+ipcMain.handle("agent:run", async (_e, opts) => {
+  const o = opts || {};
+  return agent.run(o.recordId, { url: o.url, resumePath: o.resumePath, lane: o.lane, autonomous: !!o.autonomous });
+});
+ipcMain.handle("agent:send", async (_e, recordId) => agent.send(recordId));
+ipcMain.handle("agent:stop", async () => { agent.stop(); return { ok: true }; });
+ipcMain.handle("agent:ready", async (_e, recordId) => ({ ready: agent.isReady(recordId) }));
 
 // AI-fill whatever page is CURRENTLY open in the pane (after the person navigated / signed in).
 ipcMain.handle("autoapply:fill-current", async (_e, recordId) => runAutoApplyOnPane(recordId));

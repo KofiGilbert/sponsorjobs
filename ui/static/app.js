@@ -1104,6 +1104,13 @@
   if (window.tailorShell && window.tailorShell.onAutoApplyProgress) {
     window.tailorShell.onAutoApplyProgress((info) => {
       if (!info || !info.message) return;
+      if (info.agent) {
+        aaAgentBar(info);
+        if (info.state === "ready" || info.state === "submitted" || info.state === "stopped") {
+          if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
+        }
+        return;
+      }
       const bar = $("#bbFill");
       if (bar) {
         let text = info.message;
@@ -8647,9 +8654,14 @@
   const AA_TILE_NAME = { review: ["aa.tile.review", "To review"], waiting: ["aa.tile.waiting", "Waiting on you"],
     submitted: ["aa.tile.submitted", "Submitted"], needs: ["aa.tile.needs", "Needs you"] };
   const aaTileName = t => T(...(AA_TILE_NAME[t] || AA_TILE_NAME.review));
+  // With the desktop agent (docs/apply-agent.md) one button applies: it opens the job, clicks
+  // Apply, signs in or creates the account, fills every page and stops at Submit.
+  const AA_HAS_AGENT = () => !!(window.tailorShell && window.tailorShell.agentRun);
   const AA_ACT = { review: ["aa.act.review", "Review"], fill: ["aa.act.fill", "Fill application"],
     signin: ["aa.act.signin", "Sign in and fill"], finish: ["aa.act.finish", "Open and finish"], view: ["aa.act.view", "View"] };
-  const aaActName = a => T(...(AA_ACT[a] || AA_ACT.view));
+  const AA_AGENT_ACT = { fill: ["aa.act.apply", "Apply for me"], signin: ["aa.act.apply", "Apply for me"],
+    finish: ["aa.act.finish", "Open and finish"] };
+  const aaActName = a => T(...((AA_HAS_AGENT() && AA_AGENT_ACT[a]) || AA_ACT[a] || AA_ACT.view));
   const AA_REASON = { needs_signin: ["aa.reason.signin", "Needs your sign-in"],
     form_blocker: ["aa.reason.form", "A form question needs you"],
     site_error: ["aa.reason.site", "The site had an error"],
@@ -8911,6 +8923,16 @@
     const btn = opts && opts.btn && document.contains(opts.btn) && opts.btn.offsetParent ? opts.btn : null;
     if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = T("aa.filling", "Filling…"); }
     const auto = it.lane === "auto" && !!(AA.board && AA.board.today && AA.board.today.autonomous);
+    if (AA_HAS_AGENT() && !here) {
+      if (btn) btn.textContent = T("aa.applying", "Applying\u2026");
+      const r = await aaAgentRun(id, it, auto);
+      if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; }
+      if (r && r.submitted) {
+        await api(`/api/record/${id}/status`, { status: "applied" }).catch(() => {});
+        loadAutoApply();
+      }
+      return;
+    }
     const r = await applyInPane({ url: it.apply_url, recordId: id, resumePath: it.cv_path || "", submit: auto, here });
     if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; }
     aaNote(id, applyMessage(r), r && r.ok !== false && !r.submitted);
@@ -8919,6 +8941,60 @@
       loadAutoApply();
     }
   }
+  // The agent applies by itself; its progress lands on the bar above the page (aaAgentBar).
+  // Problems it cannot clear (captcha, a verification email) stop it and say so there.
+  let AA_AGENT = null;                                  // { id } while a run is going
+  async function aaAgentRun(id, it, auto) {
+    if (AA_AGENT) { toast(T("aa.agentBusy", "One application at a time. Stop the current one first.")); return null; }
+    AA_AGENT = { id };
+    if (window.Panel && !window.Panel.isOpen("browser")) window.Panel.open("browser");
+    aaAgentBar({ state: "running", message: T("aa.agent.start", "Opening the job") });
+    let r = null;
+    try {
+      r = await window.tailorShell.agentRun({ recordId: id, url: it.apply_url, resumePath: it.cv_path || "",
+                                             lane: it.lane || "assisted", autonomous: !!auto });
+    } catch { r = null; }
+    AA_AGENT = null;
+    if (!r) aaAgentBar({ state: "stopped", message: T("aa.agent.failed", "Could not run this one. Open it and apply by hand.") });
+    else if (r.ok === false && !r.steps) aaAgentBar({ state: "stopped", message: applyMessage(r) });
+    return r;
+  }
+  function aaAgentBar(info) {
+    const bar = $("#bbFill");
+    if (!bar) return;
+    bar.innerHTML = "";
+    const text = document.createElement("span");
+    text.className = "bb-fill-text";
+    text.textContent = info.message || "";
+    bar.appendChild(text);
+    const btn = (label, cls, fn) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "btn btn-sm " + cls; b.textContent = label;
+      b.addEventListener("click", fn); bar.appendChild(b); return b;
+    };
+    if (info.state === "ready" && info.record_id != null) {
+      btn(T("aa.send", "Send"), "btn-primary bb-send", async (e) => {
+        e.target.disabled = true;
+        let r = null;
+        try { r = await window.tailorShell.agentSend(info.record_id); } catch { r = null; }
+        if (!r || r.ok === false) {
+          e.target.disabled = false;
+          aaAgentBar({ state: "ready", record_id: info.record_id,
+                       message: r && r.reason === "captcha" ? T("aa.agent.captcha", "The submit hit a captcha. Solve it on the page, then press Send again.")
+                              : T("aa.agent.nosend", "Could not find the Submit button. Press it on the page.") });
+        } else {
+          await api(`/api/record/${info.record_id}/status`, { status: "applied" }).catch(() => {});
+          loadAutoApply();
+        }
+      });
+    } else if (info.state === "running") {
+      btn(T("aa.stop", "Stop"), "btn-ghost bb-stop", () => { try { window.tailorShell.agentStop(); } catch {} });
+    }
+    bar.classList.toggle("is-wall", info.state === "stopped");
+    bar.classList.toggle("is-ready", info.state === "ready");
+    bar.hidden = false;
+  }
+
   // Say what the fill did: in the drawer when it is open on this application; else on the bar
   // right above the page in the in-app browser, where the person is looking (a toast is gone
   // in under three seconds, too fast for "click Apply now first"); else a toast.

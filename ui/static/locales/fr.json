@@ -795,7 +795,7 @@
   "aa.st.waiting": "Approuvée, prête à remplir",
   "aa.st.forYou": "Envoyée pour vous",
   "aa.st.byYou": "Envoyée par vous",
-  "aa.role": "Poste",
+  "aa.role": "offre",
   "aa.match": "correspondance",
   "aa.approveAll": "Tout approuver ({n})",
   "aa.empty.noResume": "Ajoutez votre CV pour commencer",
@@ -897,7 +897,6 @@
   "aa.notTailored": "Non adaptées : {s}.",
   "aa.missing": "La candidature automatique a d'abord besoin de {n} informations.",
   "aa.addDetails": "Ajouter les informations",
-  "aa.role": "offre",
   "aa.roles": "offres",
   "wiz.details.h": "Quelques informations pour finir votre profil",
   "wiz.details.p": "Les CV et la candidature automatique en ont besoin.",
@@ -1152,5 +1151,14 @@
   "tracker.findJobs": "Trouver des offres",
   "tracker.seeAuto": "Voir la candidature auto",
   "tracker.interviewLow": "entretien",
-  "tracker.offerLow": "offre"
+  "tracker.offerLow": "offre",
+  "aa.act.apply": "Postuler pour moi",
+  "aa.applying": "Candidature en cours…",
+  "aa.agentBusy": "Une candidature à la fois. Arrêtez la candidature en cours d'abord.",
+  "aa.agent.start": "Ouverture de l'offre",
+  "aa.agent.failed": "Impossible de lancer celle-ci. Ouvrez-la et postulez à la main.",
+  "aa.agent.captcha": "L'envoi a rencontré un captcha. Résolvez-le sur la page, puis appuyez de nouveau sur Envoyer.",
+  "aa.agent.nosend": "Bouton Envoyer introuvable. Appuyez dessus sur la page.",
+  "aa.send": "Envoyer",
+  "aa.stop": "Arrêter"
 }

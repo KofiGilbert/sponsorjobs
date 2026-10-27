@@ -795,7 +795,7 @@
   "aa.st.waiting": "Approved, ready to fill",
   "aa.st.forYou": "Sent for you",
   "aa.st.byYou": "You sent it",
-  "aa.role": "Role",
+  "aa.role": "role",
   "aa.match": "match",
   "aa.approveAll": "Approve all {n}",
   "aa.empty.noResume": "Add your resume to start",
@@ -897,7 +897,6 @@
   "aa.notTailored": "Not tailored: {s}.",
   "aa.missing": "Auto-apply needs {n} details first.",
   "aa.addDetails": "Add the details",
-  "aa.role": "role",
   "aa.roles": "roles",
   "wiz.details.h": "A few details to finish your profile",
   "wiz.details.p": "Resumes and Auto-apply need these.",
@@ -1152,5 +1151,14 @@
   "tracker.findJobs": "Find jobs",
   "tracker.seeAuto": "See auto-apply",
   "tracker.interviewLow": "interview",
-  "tracker.offerLow": "offer"
+  "tracker.offerLow": "offer",
+  "aa.act.apply": "Apply for me",
+  "aa.applying": "Applying…",
+  "aa.agentBusy": "One application at a time. Stop the current one first.",
+  "aa.agent.start": "Opening the job",
+  "aa.agent.failed": "Could not run this one. Open it and apply by hand.",
+  "aa.agent.captcha": "The submit hit a captcha. Solve it on the page, then press Send again.",
+  "aa.agent.nosend": "Could not find the Submit button. Press it on the page.",
+  "aa.send": "Send",
+  "aa.stop": "Stop"
 }

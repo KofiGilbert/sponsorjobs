@@ -795,7 +795,7 @@
   "aa.st.waiting": "Aprobada, lista para rellenar",
   "aa.st.forYou": "Enviada por ti",
   "aa.st.byYou": "La enviaste tú",
-  "aa.role": "Puesto",
+  "aa.role": "oferta",
   "aa.match": "coincidencia",
   "aa.approveAll": "Aprobar las {n}",
   "aa.empty.noResume": "Añade tu CV para empezar",
@@ -897,7 +897,6 @@
   "aa.notTailored": "No adaptadas: {s}.",
   "aa.missing": "La postulación automática necesita antes {n} datos.",
   "aa.addDetails": "Añadir los datos",
-  "aa.role": "oferta",
   "aa.roles": "ofertas",
   "wiz.details.h": "Unos datos para terminar tu perfil",
   "wiz.details.p": "Los currículums y la postulación automática los necesitan.",
@@ -1152,5 +1151,14 @@
   "tracker.findJobs": "Buscar empleos",
   "tracker.seeAuto": "Ver postulación automática",
   "tracker.interviewLow": "entrevista",
-  "tracker.offerLow": "oferta"
+  "tracker.offerLow": "oferta",
+  "aa.act.apply": "Postular por mí",
+  "aa.applying": "Postulando…",
+  "aa.agentBusy": "Una postulación a la vez. Detén la actual primero.",
+  "aa.agent.start": "Abriendo la oferta",
+  "aa.agent.failed": "No se pudo ejecutar. Ábrela y postula a mano.",
+  "aa.agent.captcha": "El envío encontró un captcha. Resuélvelo en la página y pulsa Enviar de nuevo.",
+  "aa.agent.nosend": "No se encontró el botón Enviar. Púlsalo en la página.",
+  "aa.send": "Enviar",
+  "aa.stop": "Detener"
 }
