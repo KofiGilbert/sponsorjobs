@@ -236,7 +236,7 @@
     const opts = CV_STAGES.map(([v, lbl]) =>
       `<option value="${v}"${v === stage ? " selected" : ""}>${lbl}</option>`).join("");
     const nudge = c.follow_up_is_due ? `<span class="cv-followup" title="It has been a few days, a short follow-up helps">Follow up due</span>` : "";
-    const sub = [esc(c.company || ""), esc(c.template_label || ""), c.coverage ? `${c.coverage}% match` : ""].filter(Boolean).join("  \u00b7  ");
+    const sub = [esc(c.company || ""), esc(c.template_label || ""), c.match != null ? `${c.match}% match` : ""].filter(Boolean).join("  \u00b7  ");
     return `<article class="cv-card cv-row" tabindex="0" role="button" data-id="${c.id}" title="${esc(c.role)}">
       <span class="cv-row-ic"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M9 1.5v3h3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M6 8.2h4M6 10.6h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg></span>
       <div class="cv-row-main">

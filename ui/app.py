@@ -1627,6 +1627,7 @@ def records_list():
         out.append({
             "id": r["id"], "role": r.get("role") or "", "company": r.get("company") or "",
             "coverage": round(r.get("coverage") or 0),
+            "match": _record_fit(r, data),
             "when": _local_day(r.get("created_at")),
             "status": data.get("status") or "ready",
             "stage": effective_stage(data),               # the funnel: saved..rejected
@@ -11245,6 +11246,30 @@ def agent_go():
     return jsonify(out)
 
 
+def _record_fit(rec: dict, data: dict) -> int | None:
+    """The ONE match number a saved application shows everywhere: how well the person fits the
+    job (the Jobs page and Auto-apply number), not how many of the ad's phrases made it onto the
+    one-page resume (that is "Keywords", in the editor). Kept on the record once worked out, so
+    the list doesn't re-read every ad on each load and every page agrees."""
+    fit = data.get("fit")
+    if isinstance(fit, (int, float)):
+        return int(round(fit))
+    jd = (data.get("jd_text") or "").strip()
+    if not jd:
+        return None
+    from notify.alerts import match_percent
+    try:
+        m = _job_match(jd, rec.get("role") or "")
+    except Exception:   # noqa: BLE001 - a missing number, never a broken list
+        return None
+    if not m or not m.get("total"):
+        return None
+    pct = match_percent(m)
+    if pct is not None:
+        _aa_keep_fit(rec["id"], pct)
+    return pct
+
+
 def _aa_keep_fit(rid, fit) -> None:
     """Keep the run's fit percent on the record, so the page shows the same match the run used."""
     if fit is None:
@@ -11326,10 +11351,7 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         if a["stance"] != UNKNOWN:
             stance = {"ad_stance": a["stance"], "ad_sentence": a["sentence"]}
     sub = data.get("submission") if isinstance(data.get("submission"), dict) else {}
-    cov = data.get("coverage") or {}
-    fit = data.get("fit")
-    match = fit if isinstance(fit, (int, float)) else (
-        cov.get("ratio") if cov.get("ratio") is not None else round(rec.get("coverage") or 0))
+    match = _record_fit(rec, data)
     url = (sj.get("url") or job.get("url") or "")
     plan = classify_record(data)
     return {
