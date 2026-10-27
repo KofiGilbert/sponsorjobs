@@ -426,10 +426,58 @@
     return true;
   }
 
+  // The SITE's own search box (a careers page's "Search jobs" and "City, state" pair), not a
+  // question on an application. On a job description page these are often the only inputs, and
+  // a fill once typed the person's city into Amazon's job search. Never filled, never planned.
+  const SITE_SEARCH_RE = /search (for )?jobs|job search|keyword|search by (title|keyword)|find (your next )?jobs?\b/i;
+  function siteSearch(el) {
+    if (!el || !el.closest) return false;
+    if (el.closest('[role="search"], search, header, nav')) return true;
+    const form = el.form || el.closest("form");
+    if (form) {
+      const bits = [form.getAttribute("action"), form.getAttribute("role"), form.getAttribute("name"),
+                    form.getAttribute("aria-label"), form.id, String(form.className || "")];
+      if (/search/i.test(bits.filter(Boolean).join(" "))) return true;
+    }
+    const own = [el.getAttribute("name"), el.id, el.getAttribute("placeholder"), el.getAttribute("aria-label")];
+    return SITE_SEARCH_RE.test(own.filter(Boolean).join(" "));
+  }
+
+  // Is the page open an application form, or a job page whose only boxes are the site's own
+  // search? A form asks for the person (an email or phone, a name, a resume upload) or asks
+  // questions (radios, dropdowns, an essay box), or the page is a known application system. A page with none of those is not filled at all; the
+  // person is told to press the site's Apply button first.
+  const PERSON_FIELD_RE = /e-?mail|phone|mobile|first name|last name|full name|legal name|\bname\b|resume|\bcv\b/i;
+  function applicationForm() {
+    return withRoots(() => {
+      if (recipeFor()) return true;
+      if (hasResumeUpload()) return true;
+      // The page footer (a "get job alerts" email box, the site's language picker) is not an
+      // application. Amazon's footer is a div, so match the footer by role, id and class too.
+      const fields = extractForm({}).filter((f) => {
+        const el = elByRef(f.ref);
+        if (el && el.closest && el.closest('footer, [role="contentinfo"], [id*="footer" i], [class*="footer" i]')) return false;
+        return !/alert|newsletter|subscribe|^\s*(language|english)\s*$/i.test(f.label || "");
+      });
+      if (fields.some((f) => f.type === "email" || f.type === "tel" || PERSON_FIELD_RE.test(f.label || ""))) return true;
+      // A page of screening questions (radios, dropdowns, an essay box) is a form too.
+      if (fields.some((f) => ["radio", "select", "textarea", "file"].includes(f.type))) return true;
+      return fields.filter((f) => f.type !== "checkbox").length >= 2;
+    });
+  }
+  // The site's own button to start the application, for the "press Apply first" message.
+  function applyButtonLabel() {
+    const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const el = [...document.querySelectorAll('a, button, [role="button"], input[type="submit"]')]
+      .find((e) => vis(e) && /^(apply|apply now|apply for (this )?job|apply online|start (your )?application|i'?m interested)$/i
+        .test(String(e.innerText || e.value || "").replace(/\s+/g, " ").trim()));
+    return el ? String(el.innerText || el.value).replace(/\s+/g, " ").trim().slice(0, 40) : "";
+  }
+
   function candidates() {
     const out = [];
     qsaDeep("input, textarea, select").forEach((el) => {
-      if (!shown(el) || honeypot(el)) return;
+      if (!shown(el) || honeypot(el) || siteSearch(el)) return;
       const tag = el.tagName.toLowerCase();
       if (tag === "input") {
         const t = (el.type || "text").toLowerCase();
@@ -1002,6 +1050,7 @@
       const raw = el.tagName.toLowerCase() === "input" ? (el.type || "text").toLowerCase() : el.tagName.toLowerCase();
       if (["radio", "hidden", "submit", "button", "reset", "password", "image"].includes(raw)) return;
       if (isWidgetInput(el)) return;                                         // listed below as a widget
+      if (siteSearch(el)) return;                                            // the site's job search
       if (onlyEmpty && raw !== "file" && raw !== "checkbox" && String(el.value || "").trim()
           && !/^(select|choose|--|please)/i.test(String(el.value))) return;
       const rect = el.getBoundingClientRect();
@@ -1164,6 +1213,7 @@
       const tag = tagOf(el);
       if (tag === "SELECT" || out.includes(el)) continue;
       if (el.getAttribute("aria-disabled") === "true" || el.disabled) continue;
+      if (siteSearch(el)) continue;                        // a typeahead job search, not a question
       // ARIA 1.1: a wrapper says role=combobox and holds the real text input. Use the input.
       if (tag !== "INPUT" && tag !== "BUTTON" && qsaSafe("input", el).some((i) => String(i.type || "text") !== "hidden")) continue;
       if (!boxShown(el) && !boxShown(controlOf(el))) continue;
@@ -1660,7 +1710,7 @@
   }
 
   window.TailorAutofill = {
-    fill, pageBlocker, planFill, applyFill, fillScreening, fillTextAnswers, answerKeyForLabel,
+    fill, pageBlocker, applicationForm, applyButtonLabel, siteSearch, planFill, applyFill, fillScreening, fillTextAnswers, answerKeyForLabel,
     fillEeo, hasResumeUpload, candidates, categorize, signature, setNativeValue, markFilled,
     rawLabel, answerableTextareas, pageJobContext, screeningAnswer,
     extractForm, applyOps, fieldRef,                                         // AI-planned autoapply

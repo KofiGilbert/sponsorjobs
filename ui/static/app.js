@@ -1023,6 +1023,11 @@
           : "This site wants you to sign in first. Sign in in the Browser tab, then click Fill this page again.";
       }
       if (why === "no-page") return "Nothing is open in the Browser tab yet.";
+      if (why === "not-a-form") {
+        // The job page, not the application: nothing was typed (a search box is never filled).
+        const btn = r.apply ? `\u201c${r.apply}\u201d` : "Apply";
+        return `This is the job page, not the application. Click ${btn} on the page first, then click Fill this page again.`;
+      }
       if (why === "no-fields") return "No form on this page yet. Open the application form, then click Fill this page again.";
       if (why === "bad-url") return "This application has no link. Paste the application link first.";
       return "Couldn't fill this page. It's open in the Browser tab, fill it by hand.";

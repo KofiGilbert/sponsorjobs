@@ -492,3 +492,30 @@ def test_recipe_never_types_into_a_dropdown_search_box(tmp_path):
     assert rep["system"] == "greenhouse" and rep["via_recipe"] == 1          # first name only
     assert r["values"]["location"] == "Chicago, Illinois, United States"
     assert rep["widgets"] == 1
+
+
+# ------------------------------------------------------------------ a job page is not a form
+def test_job_page_search_boxes_are_never_filled(tmp_path):
+    """Fill on a job description page (amazon.jobs, before Apply) once typed the person's city
+    into the site's job search. The search boxes are never filled, the page is not an
+    application form, and the site's own Apply button is named for the message."""
+    r = run(tmp_path, "job_page.html", [
+        {"do": "inject"},
+        {"do": "eval", "as": "form", "js": "window.TailorAutofill.applicationForm()"},
+        {"do": "eval", "as": "apply", "js": "window.TailorAutofill.applyButtonLabel()"},
+        {"do": "eval", "as": "fill", "js": FILL},
+        {"do": "eval", "as": "fields", "js": "window.TailorAutofill.extractForm({}).map(f => f.label)"},
+        {"do": "eval", "as": "values", "js": "[...document.querySelectorAll('header input')].map(i => i.value)"},
+    ])
+    assert r["form"] is False
+    assert r["apply"] == "Apply now"
+    assert r["values"] == ["", ""]
+    assert not any("search" in (l or "").lower() or "city" in (l or "").lower() for l in r["fields"])
+
+
+def test_real_application_forms_still_count_as_forms(tmp_path):
+    for page in ("lever_apply.html", "react_select.html", "workday.html", "ashby_application.html",
+                 "greenhouse_live.html", "workable_apply.html", "multipage.html", "native_radio.html"):
+        r = run(tmp_path, page, [{"do": "inject"},
+                                 {"do": "eval", "as": "form", "js": "window.TailorAutofill.applicationForm()"}])
+        assert r["form"] is True, page

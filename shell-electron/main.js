@@ -711,6 +711,18 @@ async function runAutoApplyOnPane(recordId, opts) {
       }
       return { ok: false, reason: "blocked", blocker, page };
     }
+    // A job description page is not a form: its only boxes are the site's own job search,
+    // and a fill once typed the person's city into Amazon's. Checked on the first page only
+    // (later pages of a form are reached through it), and only when no cross-origin frame
+    // could be holding the real form (iCIMS), which the top page can't see into.
+    if (!opts.fromWatch) {
+      const form = await wc.executeJavaScript(
+        "window.TailorAutofill.applicationForm() || window.TailorAutofill.crossOriginFrames() > 0", true);
+      if (!form) {
+        const apply = await wc.executeJavaScript("window.TailorAutofill.applyButtonLabel()", true);
+        return { ok: false, reason: "not-a-form", apply, page };
+      }
+    }
     // Order of play: 1. the site's fill recipe, 2. the label patterns, 3. custom widgets (all
     // inside fillAsync), 4. the model plan for whatever is STILL empty. Deterministic first, the
     // model last, and the model only ever sees field structure, never the person's data.
