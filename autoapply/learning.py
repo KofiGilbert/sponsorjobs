@@ -276,11 +276,41 @@ def needs_sponsorship(answers: dict | None) -> bool:
     return str(answers.get("needs_sponsorship") or "").strip().lower() != "no"
 
 
-def closed_to_visa(job: dict) -> bool:
+# Staffing-agency titles that close the role in the title itself, in shorthand the ad's own
+# sentence rules (sourcing/adstance.RESTRICTED_RE) never see: "USC & GC only", "GC/USC",
+# "US citizens only", "Citizenship required", "Clearance required", "TS/SCI". A bare "USC" or
+# "GC" is not enough ("USC Research Associate" is a university, "GC Chemist" a lab method): it
+# must be paired ("USC & GC") or barred ("USC only", "GC holders only").
+_TITLE_CLOSED_RE = re.compile(
+    r"\b(usc|gc|u\.?s\.?\s*citizens?|citizens?)\s*(holders?\s*)?(only|required|must)\b"
+    r"|\b(usc|gc)\s*(&|and|/|or|,|\+)\s*(usc|gc)\b"
+    r"|\b(citizenship|clearance)\s+(is\s+)?(required|only|needed|must)\b"
+    r"|\b(cleared|clearance)\s*(candidates?\s*)?only\b"
+    r"|\bno\s+(h-?1b|visas?|sponsorship)\b",
+    re.I)
+
+
+def title_closed_to_visa(title: str) -> bool:
+    """The job TITLE itself says the role is for US citizens / green card holders / cleared
+    people only, or that there is no sponsorship. Reads the same restricted phrasings the ad
+    text rules use, plus staffing-agency shorthand (see _TITLE_CLOSED_RE)."""
+    t = title or ""
+    if not t:
+        return False
+    from sourcing.adstance import _maybe_restricted
+    return bool(_TITLE_CLOSED_RE.search(t) or _maybe_restricted(t))
+
+
+def closed_to_visa(job: dict, *, title: bool = False) -> bool:
     """The ad requires US citizenship, a green card or a clearance, or says it will not sponsor
     now or in the future; or the employer is a clearance-heavy defense prime. The same rules the
-    feed build uses for its 'ad_says_no' and 'clearance_employer' funnel steps."""
+    feed build uses for its 'ad_says_no' and 'clearance_employer' funnel steps.
+
+    ``title=True`` also reads the job title ("USC & GC only W2 Role"), for surfaces that promise
+    a visa holder only roles they can take (Home's "fresh best-fit roles")."""
     if job.get("ad_stance") in CLOSED_STANCES:
+        return True
+    if title and title_closed_to_visa(job.get("title") or ""):
         return True
     return _clearance_heavy(job.get("company") or "")
 

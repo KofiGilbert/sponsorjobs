@@ -3384,7 +3384,7 @@ def jobs_list():
             if jobs:
                 a = request.args
                 facets = _facets(a)
-                filtered = _jobs_personal(apply_facets(jobs, **facets))
+                filtered = _jobs_personal(apply_facets(jobs, **facets), home=a.get("home") == "1")
                 hidden = _dismissed_ids()                    # the person's own Dismiss, kept locally
                 if hidden:
                     filtered = [j for j in filtered if j.get("source_id") not in hidden]
@@ -3451,7 +3451,7 @@ def jobs_list():
                                        if j.get("source_id") not in seen]
             except Exception:                            # noqa: BLE001 - search still returns the local matches
                 pass
-        filtered = _jobs_personal(filtered)
+        filtered = _jobs_personal(filtered, home=a.get("home") == "1")
         page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1), a.get("per_page", 30))
         page_jobs = _jobs_mark([dict(j) for j in page_jobs])
         refreshed = _sponsors().get_meta("jobs_refreshed_at")
@@ -11631,15 +11631,19 @@ def autoapply_forget():
     return jsonify(_learn_view(st))
 
 
-def _jobs_personal(rows: list[dict]) -> list[dict]:
+def _jobs_personal(rows: list[dict], *, home: bool = False) -> list[dict]:
     """The Jobs board through the person's own settings: a role whose ad requires citizenship or
     a clearance, or says it will not sponsor, is hidden while they need sponsorship (the feed
     already drops most of these; this catches local and on-demand rows). Company lists only mark
-    rows (see _jobs_mark), they never hide them."""
+    rows (see _jobs_mark), they never hide them.
+
+    ``home`` (Home's "fresh best-fit roles", ``/api/jobs?home=1``) also reads the title, so a
+    "USC & GC only" posting never leads Home for a visa holder. The same engine rule Auto-apply
+    uses (autoapply.learning.closed_to_visa); the Jobs page's default results are unchanged."""
     from autoapply.learning import closed_to_visa, needs_sponsorship
     if not needs_sponsorship(_load_prefs()):
         return rows
-    return [j for j in rows if not closed_to_visa(j)]
+    return [j for j in rows if not closed_to_visa(j, title=home)]
 
 
 def _jobs_mark(page_rows: list[dict]) -> list[dict]:
