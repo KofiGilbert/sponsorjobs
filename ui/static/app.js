@@ -10037,6 +10037,8 @@
     sentBounds = key;
     shell.setBounds(rect);
   }
+  // A zoom change (View > Zoom In/Out) resizes the page in CSS pixels: re-send the slot.
+  window.addEventListener("resize", () => requestAnimationFrame(sendBounds));
   let boundsQueued = false;
   new MutationObserver(() => {
     if (boundsQueued) return;

@@ -37,3 +37,14 @@ Notes:
 - Installed user data lives in %LOCALAPPDATA%\SponsorJobs, separate from any dev profile.
 - Dev terminals that set ELECTRON_RUN_AS_NODE must unset it or the exe runs as
   plain node and exits instantly.
+
+## Before every release
+
+Run the real-window checks with the app closed (two copies cannot run at once):
+
+```
+npm run test:e2e-pane     # the in-app browser lands exactly on its slot at 67%, 76%, 100%, 125%, 150% zoom
+```
+
+The pane geometry is also pinned in CI by `tests/test_pane_geometry.py`. Any change to
+`layoutPane`, `panegeom.js`, `preload.js` or the panel layout must pass both.

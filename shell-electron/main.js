@@ -11,6 +11,7 @@
  *    the app window is never carried away -- and the pane is CDP-debuggable, which is
  *    the assisted-apply takeover hook (agent fills, the person watches and clicks).
  */
+const { paneRect } = require("./panegeom");
 const { app, BrowserWindow, WebContentsView, dialog, ipcMain, session, net, nativeTheme, shell, Notification } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
@@ -153,9 +154,8 @@ function layoutPane() {
     pane.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     return;
   }
-  const b = paneBounds;
-  pane.setBounds({ x: Math.round(b.x), y: Math.round(b.y),
-                   width: Math.round(b.width), height: Math.round(b.height) });
+  // CSS pixels from the page, scaled to window points by the app's zoom (panegeom.js).
+  pane.setBounds(paneRect(paneBounds, win.webContents.getZoomFactor()));
 }
 
 function ensurePane() {
@@ -350,6 +350,7 @@ async function createWindow() {
   });
 
   win.on("resize", layoutPane);
+  win.webContents.on("zoom-changed", () => setTimeout(layoutPane, 50));
   await win.loadURL(SERVER + "/");
 }
 
