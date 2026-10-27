@@ -2856,6 +2856,12 @@ body.cv-dragging * { cursor: grabbing !important; }
   border-radius: var(--r-lg); overflow: hidden;
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease); }
 .prep-tile:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); transform: translateY(-2px); }
+/* The quiet line drawing in each round's empty middle: very low contrast, brightens a little on
+   hover. It fills the space between the description and the title, never pushes them. */
+.prep-tile-art { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0;
+  color: var(--ink); opacity: .08; pointer-events: none; transition: opacity var(--dur) var(--ease); }
+.prep-tile-art svg { width: min(46%, 280px); height: auto; max-height: 100%; }
+.prep-tile:hover .prep-tile-art { opacity: .16; }
 .prep-tile:disabled, .prep-tile.is-disabled { opacity: .45; cursor: not-allowed; box-shadow: none; transform: none; }
 .prep-tile-top { display: flex; align-items: center; justify-content: space-between;
   padding-bottom: 14px; border-bottom: 1px solid var(--border); }
