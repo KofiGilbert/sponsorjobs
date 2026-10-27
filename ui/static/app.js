@@ -284,10 +284,10 @@
     const root = $("#cvManager");
     const more = $("#cvsMoreCvs");
     if (!CV_RECS.length) {
-      // Fresh install: three faint example rows show what this list becomes, with one card on
-      // top that names it and offers the single next step. Kofi picked this over a quiet line
-      // (10-09) once the empty page read as blank (10-27). The examples are hidden from screen
-      // readers and can't be clicked, so nobody mistakes them for real resumes.
+      // Fresh install: three faint example rows show what this list becomes, and under
+      // them a plain line with the single next step, no card or headline (Kofi, 10-27; it
+      // replaced the quiet line from 10-09 once the empty page read as blank). The examples are
+      // hidden from screen readers and can't be clicked, so nobody mistakes them for real resumes.
       const ex = [["Data Analyst", "Stripe", 88], ["Business Intelligence Analyst", "Capital One", 81],
         ["Product Analyst", "Spotify", 76]];
       const rows = ex.map(([role, co, pct]) => `<div class="cv-card cv-row cvs-ex-row">
@@ -297,9 +297,8 @@
         </div>`).join("");
       root.innerHTML = `<div class="cvs-empty-ex">
         <div class="cvs-ex-rows" aria-hidden="true">${rows}</div>
-        <div class="cvs-ex-card">
-          <div><div class="cvs-ex-t">Your tailored resumes land here</div>
-          <div class="cvs-ex-s">One per job, each matched to its description.</div></div>
+        <div class="cvs-ex-foot">
+          <div class="cvs-ex-s">One per job, each matched to its description.</div>
           <button class="btn btn-primary btn-sm" id="cvsFirstTailor" type="button">Tailor your first resume</button>
         </div>
       </div>`;

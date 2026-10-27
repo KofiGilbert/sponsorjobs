@@ -3152,19 +3152,13 @@ body.cv-dragging * { cursor: grabbing !important; }
 .cvs-empty { flex-direction: column; gap: 4px; padding: 56px 12px; background: none; }
 .cvs-empty-t { font-size: 15px; color: var(--ink-2); }
 .cvs-empty-s { font-size: 13px; color: var(--muted); }
-/* Fresh-install empty state: faint example rows under one centred card. */
-.cvs-empty-ex { position: relative; }
+/* Fresh-install empty state: faint example rows, then one plain line and the button. */
 .cvs-ex-rows { opacity: .38; pointer-events: none; user-select: none; }
 .cvs-ex-tag { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
   border: 1px dashed var(--border); border-radius: 6px; padding: 2px 8px; margin-right: 40px; }
-.cvs-ex-card { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  display: flex; align-items: center; gap: 20px; padding: 18px 22px; max-width: calc(100% - 32px);
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .25); }
-.cvs-ex-t { font-size: 15px; font-weight: 600; color: var(--ink); }
-.cvs-ex-s { font-size: 13px; color: var(--muted); margin-top: 3px; }
-.cvs-ex-card .btn { white-space: nowrap; }
-@media (max-width: 640px) { .cvs-ex-card { flex-direction: column; align-items: flex-start; } }
+.cvs-ex-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 18px; padding: 28px 12px 8px; }
+.cvs-ex-s { font-size: 13.5px; color: var(--muted); }
+.cvs-ex-foot .btn { white-space: nowrap; }
 .cvs-more-cvs { margin-top: 14px; }
 
 /* Inside the desktop shell there is no title bar: the traffic lights float over the top of
