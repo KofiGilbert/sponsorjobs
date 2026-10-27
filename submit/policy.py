@@ -19,7 +19,20 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from submit.allowlist import ATS_HOSTS, PROHIBITED_HOSTS, auto_hosts
+from submit.allowlist import PROHIBITED_HOSTS, auto_hosts
+
+
+# Where an application is allowed to NAVIGATE while the apply agent runs (docs/apply-agent.md
+# section 7): the sourcing ATSs plus the big employer portals a careers page hands off to. A
+# run that lands anywhere outside the apply URL's own domain and these stops ("left-site").
+# This is a navigation fence only; it says nothing about auto-submit (the allowlist does, and
+# this list deliberately lives outside it).
+ATS_HOSTS: tuple[str, ...] = (
+    "greenhouse.io", "lever.co", "ashbyhq.com", "workable.com", "recruitee.com",
+    "smartrecruiters.com",
+    "myworkdayjobs.com", "icims.com", "taleo.net", "successfactors.com", "jobvite.com",
+    "bamboohr.com", "paylocity.com", "ultipro.com", "adp.com",
+)
 
 
 def _host(url: str) -> str:
