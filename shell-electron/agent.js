@@ -139,10 +139,17 @@ function createAgent(deps) {
     } catch (e) { close(); return null; }
   }
 
+  const indicesIn = (text) => {
+    const out = [];
+    const re = /^\*?\[(\d+)\]</gm;
+    let m;
+    while ((m = re.exec(text))) out.push(Number(m[1]));
+    return out;
+  };
   async function view(wc, fr) {
     const main = await wc.executeJavaScript("window.TailorAgent.view({ indexBase: 1 })", true);
     let text = (main && main.text) || "";
-    const indices = new Set((main && main.indices) || []);
+    const indices = new Set(indicesIn(text));
     const frameOf = new Map();                              // index -> ctx
     for (let i = 0; i < ((fr && fr.ctxs) || []).length; i++) {
       const ctx = fr.ctxs[i];
@@ -150,10 +157,28 @@ function createAgent(deps) {
       const v = await fr.eval(ctx, `window.TailorAgent.view({ indexBase: ${base} })`);
       if (!v || !v.text) continue;
       text += "\n--- embedded frame " + (i + 1) + " ---\n" + v.text;
-      for (const n of v.indices || []) { indices.add(n); frameOf.set(n, ctx); }
+      for (const n of indicesIn(v.text)) { indices.add(n); frameOf.set(n, ctx); }
     }
     return { text: text.slice(0, 14000), indices, frameOf };
   }
+
+  // The element's own words (to refuse a Submit click here as well as in the page) and the
+  // file input an upload should land in: the element itself, a descendant, a sibling, or one
+  // up to three ancestors away, else the page's first file input.
+  const TEXT_JS = (i) => `(() => { const el = window.TailorAgent.element(${i});
+    return el ? String(el.innerText || el.value || el.getAttribute("aria-label") || "").trim().slice(0, 80) : ""; })()`;
+  const FILE_JS = (i) => `(() => {
+    const isFile = (x) => x && x.tagName === "INPUT" && (x.type || "").toLowerCase() === "file";
+    const el = window.TailorAgent.element(${i});
+    if (!el) return null;
+    if (isFile(el)) return el;
+    const inside = el.querySelector && el.querySelector('input[type="file"]'); if (inside) return inside;
+    let node = el;
+    for (let up = 0; node && up < 3; up++) {
+      node = node.parentElement; if (!node) break;
+      const f = node.querySelector && node.querySelector('input[type="file"]'); if (f) return f;
+    }
+    return document.querySelector('input[type="file"]') || null; })()`;
 
   // ---- actions -----------------------------------------------------------------------------
   // Routed by index range to the main frame or the embedded frame it came from. Upload goes
@@ -164,8 +189,8 @@ function createAgent(deps) {
     const ctx = v.frameOf.get(a.index);
     if (a.op === "upload") return upload(wc, fr, ctx, a.index, resumePath);
     if (a.op === "click") {
-      const label = await (ctx ? fr.eval(ctx, `window.TailorAgent.text(${a.index})`)
-                               : wc.executeJavaScript(`window.TailorAgent.text(${a.index})`, true).catch(() => ""));
+      const label = await (ctx ? fr.eval(ctx, TEXT_JS(a.index))
+                               : wc.executeJavaScript(TEXT_JS(a.index), true).catch(() => ""));
       if (SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
     }
     const run = ctx ? fr.eval(ctx, expr) : wc.executeJavaScript(expr, true);
@@ -175,7 +200,7 @@ function createAgent(deps) {
 
   async function upload(wc, fr, ctx, index, resumePath) {
     if (!resumePath) return { ok: false, note: "no resume file" };
-    const finder = `(() => { const el = window.TailorAgent.fileInput(${index}); return el || null; })()`;
+    const finder = FILE_JS(index);
     if (ctx) {
       try {
         const r = await fr.cdp.send("Runtime.evaluate", { expression: finder, contextId: ctx.contextId }, ctx.sessionId);
