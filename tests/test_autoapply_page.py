@@ -90,7 +90,7 @@ def _add(A, role="Data Engineer", company="Acme", data=None, url=GH):
 
 
 def test_board_counts_each_tile_from_the_records(A):
-    _add(A, "Analyst")                                              # to review
+    _add(A, "Analyst", data={"fit": 82})                            # to review
     _add(A, "Engineer", data={"status": "approved"})                # waiting on you
     _add(A, "Scientist", data={"status": "approved",
                                "submission": {"status": "failed", "reason": "needs_signin"}})
@@ -188,3 +188,14 @@ def test_page_has_the_four_tiles_and_one_primary():
     for t in ("review", "waiting", "submitted", "needs"):
         assert f'data-aa-tile="{t}"' in view
     assert view.count("btn-primary") == 1
+
+
+def test_match_is_the_fit_never_the_keyword_share(A):
+    """One "match" number everywhere: the person's fit for the job (Jobs, Auto-apply), never the
+    share of the ad's phrases on the resume (that is "Keywords" in the editor). With no fit to
+    show, the row shows no number rather than the keyword share under the same name."""
+    _add(A, "Analyst")                                   # keyword share 82, no fit, no ad text
+    b = A.app.test_client().get("/api/autoapply/board").get_json()
+    assert b["tiles"]["review"][0]["match"] is None
+    rows = A.app.test_client().get("/api/records").get_json()["records"]
+    assert rows[0]["match"] is None and rows[0]["coverage"] == 70
