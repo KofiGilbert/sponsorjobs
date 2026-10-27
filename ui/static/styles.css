@@ -1873,7 +1873,8 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 }
 @container (max-width: 754px) {
   .view-autoapply .aa-pipe { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .view-autoapply .aa-row { grid-template-columns: 36px minmax(0, 1fr) auto; }
+  /* Stage and tag go; the four that stay (logo, role, match, action) keep one line. */
+  .view-autoapply .aa-row { grid-template-columns: 36px minmax(0, 1fr) auto auto; gap: 12px; }
   .view-autoapply .aa-row .aa-stage, .view-autoapply .aa-row .aa-tag { display: none; }
   .view-autoapply .aa-dr-cols { grid-template-columns: minmax(0, 1fr); }
   .view-autoapply .aa-dr-side { border-left: 0; padding-left: 0; }
