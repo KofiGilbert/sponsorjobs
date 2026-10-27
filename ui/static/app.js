@@ -284,14 +284,30 @@
     const root = $("#cvManager");
     const more = $("#cvsMoreCvs");
     if (!CV_RECS.length) {
-      // A framed empty state with the one action, not a sentence floating in a void: on a fresh
-      // install this half of the page was blank and read as broken (Kofi, 2026-10-08).
-      // Word's start screen keeps this quiet: a line of grey text under the table header and
-      // nothing to click; the templates above are the way to start (Kofi, 2026-10-09).
-      root.innerHTML = `<div class="cvs-empty">
-        <div class="cvs-empty-t">No recent resumes</div>
-        <div class="cvs-empty-s">Resumes you build will show up here.</div>
+      // Fresh install: three faint example rows show what this list becomes, with one card on
+      // top that names it and offers the single next step. Kofi picked this over a quiet line
+      // (10-09) once the empty page read as blank (10-27). The examples are hidden from screen
+      // readers and can't be clicked, so nobody mistakes them for real resumes.
+      const ex = [["Data Analyst", "Stripe", 88], ["Business Intelligence Analyst", "Capital One", 81],
+        ["Product Analyst", "Spotify", 76]];
+      const rows = ex.map(([role, co, pct]) => `<div class="cv-card cv-row cvs-ex-row">
+          <span class="cv-row-ic"><svg viewBox="0 0 16 16"><path d="M4 1.5h5l3 3v10H4z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M9 1.5v3h3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M6 8.2h4M6 10.6h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg></span>
+          <div class="cv-row-main"><div class="cv-row-name">${role}</div><div class="cv-row-sub">${co}  \u00b7  Classic  \u00b7  ${pct}% match</div></div>
+          <span class="cvs-ex-tag">Example</span><span class="cv-row-date">Today</span>
+        </div>`).join("");
+      root.innerHTML = `<div class="cvs-empty-ex">
+        <div class="cvs-ex-rows" aria-hidden="true">${rows}</div>
+        <div class="cvs-ex-card">
+          <div><div class="cvs-ex-t">Your tailored resumes land here</div>
+          <div class="cvs-ex-s">One per job, each matched to its description.</div></div>
+          <button class="btn btn-primary btn-sm" id="cvsFirstTailor" type="button">Tailor your first resume</button>
+        </div>
       </div>`;
+      // Same path as a template click: preview the first template, then "Use this template".
+      $("#cvsFirstTailor").addEventListener("click", () => {
+        const t = CV_TEMPLATES.find(x => x.featured) || CV_TEMPLATES[0];
+        t ? openTplPreview(t.name) : openTemplates("cvs");
+      });
       if (more) more.hidden = true;
       return;
     }
