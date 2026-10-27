@@ -11632,18 +11632,17 @@ def autoapply_forget():
 
 
 def _jobs_personal(rows: list[dict], *, home: bool = False) -> list[dict]:
-    """The Jobs board through the person's own settings: a role whose ad requires citizenship or
-    a clearance, or says it will not sponsor, is hidden while they need sponsorship (the feed
-    already drops most of these; this catches local and on-demand rows). Company lists only mark
-    rows (see _jobs_mark), they never hide them.
-
-    ``home`` (Home's "fresh best-fit roles", ``/api/jobs?home=1``) also reads the title, so a
-    "USC & GC only" posting never leads Home for a visa holder. The same engine rule Auto-apply
-    uses (autoapply.learning.closed_to_visa); the Jobs page's default results are unchanged."""
+    """The Jobs board through the person's own settings: a role whose ad or TITLE requires
+    citizenship or a clearance ("USC & GC only", "Top Secret"), or says it will not sponsor, is
+    hidden while they need sponsorship. Home, the Jobs page and Auto-apply all use this one rule
+    (autoapply.learning.closed_to_visa, title=True; Kofi, 2026-10-27). Nothing is deleted: the
+    board count is unchanged and a citizen sees every role. Measured on 215,733 roles: the title
+    check hides 23. Company lists only mark rows (see _jobs_mark), they never hide them.
+    ``home`` is kept for the Home request's URL and is no longer different."""
     from autoapply.learning import closed_to_visa, needs_sponsorship
     if not needs_sponsorship(_load_prefs()):
         return rows
-    return [j for j in rows if not closed_to_visa(j, title=home)]
+    return [j for j in rows if not closed_to_visa(j, title=True)]
 
 
 def _jobs_mark(page_rows: list[dict]) -> list[dict]:

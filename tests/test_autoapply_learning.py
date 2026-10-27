@@ -325,9 +325,9 @@ def test_home_hides_roles_closed_to_a_visa_holder_and_jobs_default_is_unchanged(
                  company="SVATS Inc"),
             _job("no", title="Data Engineer", company="Hooli", ad_stance="not_offered")]
     ids = _home_board(A, monkeypatch, rows)
-    # A visa holder (the default answer): Home drops both; Jobs keeps today's rule (ad stance only).
+    # A visa holder (the default answer): Home AND the Jobs page drop both (one rule everywhere).
     assert ids("?home=1") == ["ok"]
-    assert ids("") == ["ok", "usc"]
+    assert ids("") == ["ok"]
     # A citizen: nothing is hidden anywhere.
     A._merge_prefs({"needs_sponsorship": "No"})
     assert ids("?home=1") == ["no", "ok", "usc"]
@@ -339,3 +339,12 @@ def test_home_requests_the_filtered_board():
     js = (Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     seg = js[js.index("async function loadHomeToday"):]
     assert 'api("/api/jobs?home=1")' in seg[:400]
+
+
+def test_auto_apply_never_picks_a_title_closed_to_a_visa_holder():
+    """shape() is what Auto-apply and Autopilot pick from: a "USC & GC only" title is dropped for a
+    visa holder (it would spend a package on a role they cannot take) and kept for a citizen."""
+    rows = [_job("ok", title="Data Analyst"), _job("usc", title="Data Analyst USC & GC only")]
+    keep = lambda needs: [j["source_id"] for j in L.shape(rows, L.empty_state(), needs_sponsor=needs)]
+    assert keep(True) == ["ok"]
+    assert sorted(keep(False)) == ["ok", "usc"]
