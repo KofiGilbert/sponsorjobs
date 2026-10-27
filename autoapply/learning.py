@@ -361,7 +361,7 @@ def shape(rows: list[dict], state: dict | None, *, needs_sponsor: bool = True) -
         ck = company_key(j.get("company"))
         if ck and ck in excl:
             continue
-        if needs_sponsor and closed_to_visa(j):
+        if needs_sponsor and closed_to_visa(j, title=True):   # title too: "USC & GC only" (2026-10-27)
             continue
         if floor:
             pay = salary_value(j.get("salary"))
