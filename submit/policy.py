@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from submit.allowlist import PROHIBITED_HOSTS, auto_hosts
+from submit.allowlist import ATS_HOSTS, PROHIBITED_HOSTS, auto_hosts
 
 
 def _host(url: str) -> str:
@@ -33,6 +33,34 @@ def _host(url: str) -> str:
 def _matches(host: str, suffixes) -> bool:
     """True if host equals a suffix or is a sub-domain of it (foo.recruitee.com ~ recruitee.com)."""
     return any(host == s or host.endswith("." + s) for s in suffixes)
+
+
+# Country suffixes that take a third label (acme.co.uk, not co.uk). Enough for the career
+# sites we meet; a miss only narrows the fence to the full host, never widens it.
+_TWO_PART_SUFFIXES = frozenset((
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp",
+    "co.in", "com.br", "com.mx", "co.za", "com.sg", "com.hk", "co.kr", "com.tr",
+))
+
+
+def registrable_domain(host: str) -> str:
+    """acme.wd5.myworkdayjobs.com -> myworkdayjobs.com, careers.acme.co.uk -> acme.co.uk."""
+    labels = [p for p in (host or "").lower().split(".") if p]
+    if len(labels) <= 2:
+        return ".".join(labels)
+    n = 3 if ".".join(labels[-2:]) in _TWO_PART_SUFFIXES else 2
+    return ".".join(labels[-n:])
+
+
+def run_allowed_hosts(apply_url: str) -> set[str]:
+    """The hosts an apply-agent run may navigate to: the apply URL's host, its registrable
+    domain, and the known ATS hosts (sub-domains included by the shell). Empty for a prohibited
+    or unparseable URL, and a prohibited host is never in the set however it got there."""
+    host = _host(apply_url)
+    if not host or _matches(host, PROHIBITED_HOSTS):
+        return set()
+    hosts = {host, registrable_domain(host), *ATS_HOSTS}
+    return {h for h in hosts if h and not _matches(h, PROHIBITED_HOSTS)}
 
 
 def submission_policy(url: str) -> str:

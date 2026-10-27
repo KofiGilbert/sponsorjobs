@@ -54,6 +54,18 @@ PROHIBITED_HOSTS: tuple[str, ...] = (
 )
 
 
+# Where an application is allowed to NAVIGATE while the apply agent runs (docs/apply-agent.md
+# section 7): the sourcing ATSs plus the big employer portals a careers page hands off to. A
+# run that lands anywhere outside the apply URL's own domain and these stops ("left-site").
+# This is a navigation fence only; it says nothing about auto-submit (REGISTRY does).
+ATS_HOSTS: tuple[str, ...] = (
+    "greenhouse.io", "lever.co", "ashbyhq.com", "workable.com", "recruitee.com",
+    "smartrecruiters.com",
+    "myworkdayjobs.com", "icims.com", "taleo.net", "successfactors.com", "jobvite.com",
+    "bamboohr.com", "paylocity.com", "ultipro.com", "adp.com",
+)
+
+
 # P5 re-review (2026-07-19): grew ASSISTED reach and GREEN sourcing volume, but added ZERO new
 # AUTO entries. No additional ATS/portal in our set was found to expose a keyless, candidate-facing
 # submission API in its official docs, so promoting any would violate §7. Everything below stays as

@@ -1920,7 +1920,8 @@ _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
                   "aa_skip": [],      # roles the person took out of the next Auto-apply run
                   "aa_focus": {},     # the page's focus fields (titles, locations, sponsor_only)
                   "autopilot": False, # tailor new matches on a schedule while the person is away
-                  "autopilot_per_day": 2}   # at most this many packages a day (1..10)
+                  "autopilot_per_day": 2,   # at most this many packages a day (1..10)
+                  "portal_accounts": True}  # the apply agent may create employer portal accounts
 
 
 def _prefs() -> dict:
@@ -1961,6 +1962,8 @@ def _set_prefs(patch: dict) -> dict:
         from autoapply.picker import clamp_per_day
         cur["autopilot_per_day"] = clamp_per_day(patch["autopilot_per_day"],
                                                  cur.get("autopilot_per_day", 2))
+    if "portal_accounts" in patch:           # "Create portal accounts for me" (docs/apply-agent.md 4)
+        cur["portal_accounts"] = bool(patch["portal_accounts"])
     _PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
     _PREFS_FILE.write_text(_json_prefs.dumps(cur), encoding="utf-8")
     return cur
@@ -1994,6 +1997,7 @@ def submit_settings():
         "inbox_auto_verify": bool(p.get("inbox_auto_verify")),
         "autopilot": bool(p.get("autopilot")),
         "autopilot_per_day": clamp_per_day(p.get("autopilot_per_day")),
+        "portal_accounts": bool(p.get("portal_accounts", True)),
         "telegram_configured": _active_channel() is not None,
         "rate": _rate_limiter().status(ts, today),
     })
@@ -10220,6 +10224,152 @@ def _job_country(data: dict) -> str:
     return cc or "US"
 
 
+# ---- the apply agent (docs/apply-agent.md): the brain, portal accounts, the host fence --------
+# The shell drives the pane; these routes decide the next click, keep the per-employer portal
+# accounts (password never leaves this process except into the pane), and name the hosts a run
+# may visit. Same honest gate as /api/autoapply/plan: never on a bot-prohibited board.
+
+def _portal_cred_name(host: str) -> str:
+    """PORTAL_<host with dots as underscores, uppercased>: one credential per employer portal."""
+    return "PORTAL_" + re.sub(r"[^a-z0-9]", "_", str(host or "").lower()).upper()
+
+
+def _portal_account(host: str) -> dict | None:
+    """{host, email, password} for a portal account the agent created, or None."""
+    host = str(host or "").strip().lower()
+    if not host:
+        return None
+    raw = _cred(_portal_cred_name(host))
+    if not raw or "|" not in raw:
+        return None
+    email, _, password = raw.partition("|")
+    if not (email.strip() and password):
+        return None
+    return {"host": host, "email": email.strip(), "password": password}
+
+
+def _portal_password() -> str:
+    """16 characters: letters and digits plus two symbols from a set every portal accepts."""
+    import secrets
+    import string
+    alphabet = string.ascii_letters + string.digits
+    chars = [secrets.choice(alphabet) for _ in range(14)] + [secrets.choice("!@#$%&*?") for _ in range(2)]
+    secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
+
+
+def _agent_placeholders(applicant: dict, prof: dict, portal: dict | None) -> tuple[list[str], dict]:
+    """The placeholder NAMES the model may type, and the values they resolve to (local only):
+    the contact keys the profile has, the school for a typeahead, the portal account if any."""
+    from autoapply.fields import APPLICANT_KEYS
+    values = {k: v for k, v in (applicant or {}).items() if k in APPLICANT_KEYS and str(v).strip()}
+    edu = prof.get("education") if isinstance(prof.get("education"), list) else []
+    school = next((str(e.get("school") or "").strip() for e in edu
+                   if isinstance(e, dict) and str(e.get("school") or "").strip()), "")
+    if school:
+        values["school"] = school
+    names = [k for k in APPLICANT_KEYS if k in values] + (["school"] if school else [])
+    if portal:
+        names += ["portal_email", "portal_password"]
+    return names, values
+
+
+@app.post("/api/autoapply/agent/step")
+@_guard
+def autoapply_agent_step():
+    """One step of the apply agent's brain (autoapply/brain.py). Body: {record_id, step,
+    max_steps, url, lane, view, filled_this_step, left, history}. Reply: {ok, memory, evaluation,
+    actions, done, notes}. The actions carry real values for the pane (resolved here, marked
+    sensitive, never logged); the model only ever saw placeholder names and a redacted view."""
+    from autoapply import applicant_from_record, brain
+    from submit.policy import _host, fill_permitted
+    b = request.json or {}
+    url = str(b.get("url") or "").strip()
+    if not fill_permitted(url):
+        return jsonify({"ok": False, "reason": "fill-by-hand",
+                        "message": "This site is fill-by-hand only. Open it and apply yourself."})
+    view = str(b.get("view") or "")
+    if not view.strip():
+        return jsonify({"ok": False, "reason": "no-view", "message": "The page view is empty."})
+    rec = _get_record(b.get("record_id")) if b.get("record_id") not in (None, "") else None
+    data = _record_data(rec) if rec else {}
+    prof = data.get("render_profile") or data.get("profile") or {}
+    if not (prof.get("identity") or {}).get("name"):
+        prof = _saved_full_profile() or prof             # fall back to the saved profile's identity
+    applicant = applicant_from_record({"profile": prof})
+    portal = _portal_account(_host(url))
+    placeholders, values = _agent_placeholders(applicant, prof, portal)
+    left = []
+    for x in (b.get("left") or [])[:40]:
+        left.append(str(x.get("label") or x.get("ref") or "") if isinstance(x, dict) else str(x))
+    req = {
+        "step": b.get("step") or 1, "max_steps": b.get("max_steps") or 40,
+        "url": url, "lane": b.get("lane") or "assisted", "view": view[:14000],
+        "left": [x for x in left if x.strip()],
+        "history": [h for h in (b.get("history") or [])[-brain.HISTORY_STEPS:] if isinstance(h, dict)],
+        "job": {"role": (rec.get("role") if rec else "") or "", "company": (rec.get("company") if rec else "") or ""},
+    }
+    resume = _resume_upload_path(rec) if rec else ""
+    out = brain.step(req, _make_llm(), values, portal, placeholders=placeholders, resume_path=resume)
+    out["placeholders"] = placeholders
+    return jsonify(out)
+
+
+@app.get("/api/autoapply/agent/portal-account")
+@_guard
+def autoapply_agent_portal_account():
+    """Does a portal account exist for this host? {exists, email}. The password never comes
+    out of this route: the step route resolves {{portal_password}} itself."""
+    from submit.policy import _host
+    if request.args.get("include_secret"):
+        return jsonify({"error": "The password is never returned. The agent types it itself."}), 400
+    host = _host(request.args.get("host") or request.args.get("url") or "")
+    acct = _portal_account(host)
+    return jsonify({"ok": True, "host": host, "exists": acct is not None,
+                    "email": acct["email"] if acct else ""})
+
+
+@app.post("/api/autoapply/agent/portal-account")
+@_guard
+def autoapply_agent_portal_account_create():
+    """Create (or reuse) the portal account for a host: body {host, email?, create: true}. The
+    email is the person's own (recruiters reply to it); the password is generated here and
+    stored under PORTAL_<host> in the credential store (App Lock custody when on). Refused when
+    "Create portal accounts for me" is off. Returns {ok, email, created}; never the password."""
+    from submit.policy import _host, fill_permitted
+    b = request.json or {}
+    host = _host(str(b.get("host") or b.get("url") or ""))
+    if not host or not fill_permitted(host):
+        return jsonify({"ok": False, "reason": "fill-by-hand",
+                        "message": "No portal account on this site."})
+    if not b.get("create"):
+        return jsonify({"ok": False, "reason": "no-create", "message": "Send create: true."})
+    if not _prefs().get("portal_accounts", True):
+        return jsonify({"ok": False, "reason": "portal_accounts_off",
+                        "message": "Creating portal accounts is turned off in Auto-apply settings."})
+    existing = _portal_account(host)
+    if existing:
+        return jsonify({"ok": True, "host": host, "email": existing["email"], "created": False})
+    email = str(b.get("email") or "").strip()
+    if not email:
+        prof = _saved_full_profile() or {}
+        email = str((prof.get("identity") or {}).get("email") or "").strip()
+    if not email or "@" not in email:
+        return jsonify({"ok": False, "reason": "no-email",
+                        "message": "Add your email to your profile first."})
+    _save_cred(_portal_cred_name(host), f"{email}|{_portal_password()}")
+    return jsonify({"ok": True, "host": host, "email": email, "created": True})
+
+
+@app.get("/api/autoapply/agent/allowed-hosts")
+@_guard
+def autoapply_agent_allowed_hosts():
+    """The hosts an apply-agent run may navigate to for this apply URL (submit.policy
+    .run_allowed_hosts); the shell stops the run anywhere else. Empty on a prohibited site."""
+    from submit.policy import run_allowed_hosts
+    return jsonify({"ok": True, "hosts": sorted(run_allowed_hosts(request.args.get("url") or ""))})
+
+
 def _tailor_job_unattended(job: dict, llm, tex: str, tname: str, scratch: str) -> dict:
     """Tailor ONE role from the SAVED profile with no one present, into the review queue.
     Shared by the autopilot (/api/autoapply/run) and the Telegram [Tailor and queue] button.
@@ -11585,7 +11735,8 @@ def _learn_view(state: dict | None = None) -> dict:
     rules = [{k: r[k] for k in ("id", "kind", "value", "count")} for r in learned(st)]
     return {"ok": True, "exclude": names("exclude"), "prioritize": names("prioritize"),
             "learned": rules, "skips": sum(1 for s in st.get("skips", []) if s.get("reason")),
-            "needs_sponsorship": needs_sponsorship(_load_prefs())}
+            "needs_sponsorship": needs_sponsorship(_load_prefs()),
+            "portal_accounts": bool(_prefs().get("portal_accounts", True))}
 
 
 @app.get("/api/autoapply/prefs")
