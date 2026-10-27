@@ -14,7 +14,7 @@
  *  3. a ?captcha=1 job stops at the review page with the captcha message and nothing submitted.
  */
 import { _electron as electron } from "playwright";
-import { spawnSync } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import http from "http";
 import fs from "fs";
 import os from "os";
@@ -78,7 +78,23 @@ if (seed.status !== 0) { console.error(seed.stderr); process.exit(1); }
 const [RID, RID_CAPTCHA] = JSON.parse(seed.stdout.trim().split("\n").pop());
 check("seeded two queued jobs", RID > 0 && RID_CAPTCHA > 0, `ids ${RID}, ${RID_CAPTCHA}`);
 
-// ---- 3. the real app, on the test model -----------------------------------------------------
+// ---- 3. the engine on the test model, then the real app ---------------------------------
+// The shell strips the test-model flags from any engine it spawns (real model only, CLAUDE.md
+// section 13), so the test starts the engine itself and the shell reuses it on :57000.
+const engineEnv = { ...process.env, RESUME_AGENT_DATA_DIR: DATA, RESUME_AGENT_DEV: "1", RESUME_AGENT_FAKE_LLM: "1",
+                    RESUME_AGENT_CRED_FILE: path.join(DATA, "credentials.env"), TAILOR_SERVER_ONLY: "1" };
+const engine = spawn(PY, ["-m", "ui.app"], { cwd: REPO, env: engineEnv, stdio: ["ignore", "ignore", "pipe"] });
+let engineErr = "";
+engine.stderr.on("data", (d) => { engineErr += d.toString(); });
+let up = false;
+for (let i = 0; i < 60 && !up; i++) {
+  try { up = (await fetch("http://127.0.0.1:57000/api/health").catch(() => null))?.ok || (await fetch("http://127.0.0.1:57000/").catch(() => null))?.ok; } catch { up = false; }
+  if (!up) await sleep(1000);
+}
+check("engine up on the test model", up, up ? "" : engineErr.slice(-400));
+const stopEngine = () => { try { engine.kill(); } catch {} };
+process.on("exit", stopEngine);
+
 const app = await electron.launch({
   args: [HERE],
   cwd: HERE,
@@ -87,6 +103,7 @@ const app = await electron.launch({
          RESUME_AGENT_CRED_FILE: path.join(DATA, "credentials.env") },
 });
 const win = await app.firstWindow();
+win.on("console", (m) => { if (/apply agent|agent/i.test(m.text())) console.log("  [app]", m.text().slice(0, 300)); });
 await win.waitForLoadState("domcontentloaded");
 await win.waitForFunction(() => !!document.querySelector(".sidebar"), null, { timeout: 90_000 });
 check("app window opens", true, await win.title());
@@ -150,6 +167,7 @@ check("nothing submitted on the captcha run", !log3.includes("submitted"), JSON.
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
 await app.close();
+stopEngine();
 server.close();
 fs.rmSync(DATA, { recursive: true, force: true });
 process.exit(failed.length ? 1 : 0);

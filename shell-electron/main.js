@@ -1041,7 +1041,7 @@ ipcMain.handle("autoapply:run", async (_e, url, recordId) => {
 const agent = createAgent({
   getPane: () => pane, openInPane, waitPaneLoad, autofillCore, agentViewSource,
   runAutoApplyOnPane, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
-  isNewPage,
+  isNewPage, attachResume,
 });
 ipcMain.handle("agent:run", async (_e, opts) => {
   const o = opts || {};

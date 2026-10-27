@@ -8955,8 +8955,13 @@
                                              lane: it.lane || "assisted", autonomous: !!auto });
     } catch { r = null; }
     AA_AGENT = null;
+    console.warn("apply agent:", JSON.stringify(r));
+    // A run that never started has no status line of its own; one that stopped already said why.
     if (!r) aaAgentBar({ state: "stopped", message: T("aa.agent.failed", "Could not run this one. Open it and apply by hand.") });
-    else if (r.ok === false && !r.steps) aaAgentBar({ state: "stopped", message: applyMessage(r) });
+    else if (r.ok === false && /^(bad-url|linkedin|fill-by-hand|busy|no-page)$/.test(r.reason || "")) {
+      aaAgentBar({ state: "stopped", message: r.reason === "busy"
+        ? T("aa.agentBusy", "One application at a time. Stop the current one first.") : applyMessage(r) });
+    }
     return r;
   }
   function aaAgentBar(info) {

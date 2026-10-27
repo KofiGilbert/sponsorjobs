@@ -29,6 +29,15 @@ const ATS_HOSTS = ["greenhouse.io", "lever.co", "ashbyhq.com", "workable.com", "
   "bamboohr.com", "paylocity.com", "ultipro.com", "adp.com"];
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+// SJ_AGENT_DEBUG=1 writes each step's view and reply to <tmp>/sj-agent.log (the e2e reads it).
+const DEBUG = process.env.SJ_AGENT_DEBUG === "1";
+const dlog = (what, obj) => {
+  if (!DEBUG) return;
+  try {
+    require("fs").appendFileSync(require("path").join(require("os").tmpdir(), "sj-agent.log"),
+      new Date().toISOString() + " " + what + " " + (typeof obj === "string" ? obj : JSON.stringify(obj)) + "\n");
+  } catch (e) { /* debugging only */ }
+};
 const hostOf = (url) => { try { return (new URL(url).hostname || "").toLowerCase().replace(/^www\./, ""); } catch (e) { return ""; } };
 const withTimeout = (p, ms, what) => Promise.race([p, delay(ms).then(() => { throw new Error(what + " timed out"); })]);
 
@@ -293,8 +302,16 @@ function createAgent(deps) {
           }
         } else {
           const rep = await deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true });
+          dlog("step " + step + " fill:", rep);
           if (rep && rep.ok) { filled = rep.filled || 0; left = rep.left || []; }
           if (rep && rep.uploaded) filled += 1;
+          else if (opts.resumePath) {
+            // The page has a resume box the plan did not reach (a hidden input behind an
+            // Upload button): attach the file to it directly, as assisted apply does.
+            let wants = false;
+            try { wants = await wc.executeJavaScript("window.TailorAutofill.hasResumeUpload()", true); } catch (e) { wants = false; }
+            if (wants && await deps.attachResume(wc, opts.resumePath)) filled += 1;
+          }
         }
         if (st.stop) return stopped("stopped", "Stopped.");
 
@@ -302,6 +319,7 @@ function createAgent(deps) {
         if (fr) { fr.close(); fr = null; }
         fr = await openFrames(wc);
         const v = await view(wc, fr);
+        dlog("step " + step + " url=" + url + " blocker=" + (sig.blocker || "") + " filled=" + filled + " view:", v.text.slice(0, 600));
         const pageHash = hostOf(url) + "|" + String(v.text.length) + "|" + v.text.slice(0, 400);
         pageHashes.push(pageHash);
         if (pageHashes.length >= 4 && pageHashes.slice(-4).every((h) => h === pageHash) && !filled) {
@@ -325,6 +343,7 @@ function createAgent(deps) {
             history: history.slice(-12),
           }), STEP_BRAIN_MS, "brain");
         } catch (e) { reply = null; }
+        dlog("step " + step + " reply:", reply);
         if (!reply || reply.ok === false) {
           if (reply && reply.reason === "fill-by-hand") return stopped("fill-by-hand", "This site does not allow automated filling.");
           failed++;
@@ -355,6 +374,7 @@ function createAgent(deps) {
           const before = wc.getURL() || "";
           const r = await act(wc, fr, v, a, opts.resumePath || "");
           results.push(r && r.ok ? (r.note ? "ok, " + r.note : "ok") : "failed: " + ((r && r.note) || "?"));
+          dlog("step " + step + " act " + h + " ->", r);
           if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") return handOver(recordId, wc, url, opts, step); continue; }
           if (a.op === "click" || a.op === "wait") {
             const why = await settle(wc, before);
@@ -372,6 +392,7 @@ function createAgent(deps) {
       }
       return stopped("stuck", "I ran out of steps on this one. Have a look at it.", {});
     } catch (e) {
+      console.error("apply agent:", e && e.stack || e);
       return stopped("error", "Something went wrong: " + String(e && e.message || e).slice(0, 100));
     }
   }
