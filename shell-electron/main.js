@@ -153,9 +153,13 @@ function layoutPane() {
     pane.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     return;
   }
+  // The renderer measures the slot in CSS pixels; setBounds takes window points. They match only
+  // at 100% zoom: zoomed out to 75% (View > Zoom Out), the pane landed too far right and too
+  // wide, cut off past the window edge (Kofi, 2026-10-27). Scale by the app page's zoom.
+  const z = win.webContents.getZoomFactor() || 1;
   const b = paneBounds;
-  pane.setBounds({ x: Math.round(b.x), y: Math.round(b.y),
-                   width: Math.round(b.width), height: Math.round(b.height) });
+  pane.setBounds({ x: Math.round(b.x * z), y: Math.round(b.y * z),
+                   width: Math.round(b.width * z), height: Math.round(b.height * z) });
 }
 
 function ensurePane() {
@@ -350,6 +354,7 @@ async function createWindow() {
   });
 
   win.on("resize", layoutPane);
+  win.webContents.on("zoom-changed", () => setTimeout(layoutPane, 50));
   await win.loadURL(SERVER + "/");
 }
 
