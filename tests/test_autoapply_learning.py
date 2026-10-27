@@ -292,3 +292,50 @@ def test_priority_still_leads_among_down_weighted_roles():
     rows = [_job("1", title="Senior Data Engineer", company="Acme"),
             _job("2", title="Senior Data Engineer", company="Globex")]
     assert [j["source_id"] for j in L.shape(rows, st)] == ["2", "1"]
+
+
+# --- Home's "fresh best-fit roles": the same rule, plus the title (2026-10-27) ---------------------
+
+def test_title_rule_reads_staffing_shorthand_but_not_lookalikes():
+    for t in ("Mobile developer (iOS/Android ...) USC & GC only W2 Role", "Java Dev GC/USC",
+              "Data Analyst (US Citizens only)", "Engineer, citizenship required",
+              "Analyst, Security Clearance", "SWE TS/SCI", "No H1B Data Engineer"):
+        assert L.title_closed_to_visa(t), t
+    for t in ("USC Research Associate", "GC Chemist", "Senior iOS Engineer",
+              "Clearance Sales Associate", ""):
+        assert not L.title_closed_to_visa(t), t
+    j = _job("x", title="iOS Developer USC & GC only")
+    assert L.closed_to_visa(j, title=True) and not L.closed_to_visa(j)
+
+
+def _home_board(A, monkeypatch, rows):
+    class _Feed:
+        def jobs(self):
+            return rows, {"generated_at": None}
+    monkeypatch.setattr(A, "_feed_base_url", lambda: "https://feed.example")
+    monkeypatch.setattr(A, "_static_feed", lambda: _Feed())
+    c = A.app.test_client()
+    ids = lambda q: sorted(j["source_id"] for j in c.get("/api/jobs" + q).get_json()["jobs"])
+    return ids
+
+
+def test_home_hides_roles_closed_to_a_visa_holder_and_jobs_default_is_unchanged(A, monkeypatch):
+    rows = [_job("ok", title="iOS Developer"),
+            _job("usc", title="Mobile developer (iOS/Android) USC & GC only W2 Role",
+                 company="SVATS Inc"),
+            _job("no", title="Data Engineer", company="Hooli", ad_stance="not_offered")]
+    ids = _home_board(A, monkeypatch, rows)
+    # A visa holder (the default answer): Home drops both; Jobs keeps today's rule (ad stance only).
+    assert ids("?home=1") == ["ok"]
+    assert ids("") == ["ok", "usc"]
+    # A citizen: nothing is hidden anywhere.
+    A._merge_prefs({"needs_sponsorship": "No"})
+    assert ids("?home=1") == ["no", "ok", "usc"]
+    assert ids("") == ["no", "ok", "usc"]
+
+
+def test_home_requests_the_filtered_board():
+    from pathlib import Path
+    js = (Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    seg = js[js.index("async function loadHomeToday"):]
+    assert 'api("/api/jobs?home=1")' in seg[:400]

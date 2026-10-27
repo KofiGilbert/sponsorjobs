@@ -85,19 +85,24 @@
             <p class="home-hip" data-i18n="home.sub">Paste a job description or a link, or just tell me about the role. I'll tailor your resume from your saved profile.</p>
           </div>
 
-          <div class="home-promptbox">
-            <textarea id="homePrompt" rows="4" spellcheck="false" aria-label="Job description or request"
-              placeholder="Paste a job description, or tell me what to do..." data-i18n-ph="home.placeholder"></textarea>
-            <div class="home-prompt-foot">
-              <button class="btn btn-primary btn-sm" id="homeGo" type="button" data-i18n="home.start">Start tailoring</button>
+          <!-- The box, and under it the requests it understands. The list opens only on focus while
+               the box is empty, and overlays the roles (no example text inside the box, 2026-10-27). -->
+          <div class="home-ask">
+            <div class="home-promptbox">
+              <textarea id="homePrompt" rows="4" spellcheck="false" aria-label="Job description or request"
+                role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="homeSuggest"
+                placeholder="Paste a job description, or tell me what to do..." data-i18n-ph="home.placeholder"></textarea>
+              <div class="home-prompt-foot">
+                <button class="home-examples" id="homeExamples" type="button" data-i18n="home.seeExamples">See examples</button>
+                <button class="btn btn-primary btn-sm" id="homeGo" type="button" data-i18n="home.start">Start tailoring</button>
+              </div>
             </div>
-          </div>
-          <!-- Three things the box understands besides a posting; a pill fills the box and sends it. -->
-          <div class="home-try home-fade" id="homeTry">
-            <span class="home-try-l" data-i18n="home.try">Try</span>
-            <button class="home-pill" type="button" data-i18n="home.try1">Find 5 data analytics roles and apply for me</button>
-            <button class="home-pill" type="button" data-i18n="home.try2">I am away for 3 hours: tailor 10 business analyst roles and message me on Telegram</button>
-            <button class="home-pill" type="button" data-i18n="home.try3">What is waiting on me?</button>
+            <div class="home-suggest" id="homeSuggest" role="listbox" aria-labelledby="homeSuggestL" hidden>
+              <div class="home-suggest-l" id="homeSuggestL" data-i18n="home.askMeTo">Ask me to</div>
+              <div class="home-suggest-row" id="homeSug1" role="option" aria-selected="false" data-i18n="home.try1">Find 5 data analytics roles and apply for me</div>
+              <div class="home-suggest-row" id="homeSug2" role="option" aria-selected="false" data-i18n="home.try2">I am away for 3 hours: tailor 10 business analyst roles and message me on Telegram</div>
+              <div class="home-suggest-row" id="homeSug3" role="option" aria-selected="false" data-i18n="home.try3">What is waiting on me?</div>
+            </div>
           </div>
 
           <!-- The prompt stays put; only the roles scroll under it (Kofi, 2026-10-14). -->

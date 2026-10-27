@@ -591,16 +591,53 @@
       const r = await agentAsk(text);
       if (r && r.kind !== "agent") { tailor(text); return; }   // the server read it as a posting
     };
-    box.addEventListener("input", sync);
+    // The suggestion list (a combobox listbox): it opens under the box when the box is focused
+    // AND empty, and closes on typing, blur, or Escape. Arrows move the active row; Enter or a
+    // click fills the box with that row's (translated) text and sends it. "See examples" focuses
+    // the box and opens the same list. No example text ever sits inside the box itself.
+    const list = $("#homeSuggest");
+    const rows = list ? [...list.querySelectorAll(".home-suggest-row")] : [];
+    let active = -1;
+    const setActive = (i) => {
+      active = i;
+      rows.forEach((r, k) => { r.classList.toggle("is-active", k === i); r.setAttribute("aria-selected", k === i ? "true" : "false"); });
+      if (i >= 0) box.setAttribute("aria-activedescendant", rows[i].id);
+      else box.removeAttribute("aria-activedescendant");
+    };
+    const isOpen = () => !!list && !list.hidden;
+    const openList = () => {
+      if (!list || box.value) return;
+      list.hidden = false; box.setAttribute("aria-expanded", "true"); setActive(-1);
+    };
+    const closeList = () => {
+      if (!list) return;
+      list.hidden = true; box.setAttribute("aria-expanded", "false"); setActive(-1);
+    };
+    const pick = (i) => { box.value = rows[i].textContent.trim(); closeList(); sync(); start(); };
+    rows.forEach((r, i) => {
+      r.addEventListener("mousedown", (e) => e.preventDefault());   // keep focus, so blur does not close it first
+      r.addEventListener("mouseenter", () => setActive(i));
+      r.addEventListener("click", () => pick(i));
+    });
+    box.addEventListener("focus", openList);
+    box.addEventListener("blur", closeList);
+    box.addEventListener("input", () => { sync(); if (box.value) closeList(); else openList(); });
     box.addEventListener("keydown", (e) => {
+      if (isOpen()) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          const n = rows.length, d = e.key === "ArrowDown" ? 1 : -1;
+          setActive(active < 0 ? (d > 0 ? 0 : n - 1) : (active + d + n) % n);
+          return;
+        }
+        if (e.key === "Escape") { e.preventDefault(); closeList(); return; }
+        if (e.key === "Enter" && !e.shiftKey && active >= 0) { e.preventDefault(); pick(active); return; }
+      }
       if (e.key === "Escape") { box.value = ""; sync(); box.blur(); return; }
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); start(); }
     });
     $("#homeGo")?.addEventListener("click", start);
-    // A Try pill fills the box with its (translated) text and sends it.
-    document.querySelectorAll("#homeTry .home-pill").forEach(b => b.addEventListener("click", () => {
-      box.value = b.textContent.trim(); sync(); start();
-    }));
+    $("#homeExamples")?.addEventListener("click", () => { box.focus(); openList(); });
   })();
 
   // (The old next-best-action hero card is gone: the prompt IS the home now.)
@@ -684,7 +721,7 @@
     const el = $("#homeToday");
     if (!el) return;
     try {
-      const r = await api("/api/jobs");
+      const r = await api("/api/jobs?home=1");   // server leaves out roles closed to a visa holder
       const foot = $(".home-roles-foot");
       if (r.loading) { if (foot) foot.hidden = true; el.innerHTML = feedLoadingHtml(r.feed); watchFeedDownload(loadHomeToday); return; }
       // The list scrolls under the fixed prompt, so it can hold more than a peek.
