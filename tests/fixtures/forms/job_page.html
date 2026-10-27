@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Job page (careers site fixture)</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- A careers site's job DESCRIPTION page, before the person presses Apply: the only boxes are
+     the site's own job search (keyword + location typeahead, as on amazon.jobs) and a job-alerts
+     email in the footer. Nothing here is an application, so nothing may be typed. -->
+<header>
+  <form action="/en/search" method="get" class="search-form">
+    <input type="text" name="base_query" id="search_typeahead-homepage" placeholder="Search for jobs by title or keyword">
+    <input type="text" name="loc_query" id="location-typeahead" role="combobox" aria-expanded="false" placeholder="City, state, or country">
+    <button type="submit">Search jobs</button>
+  </form>
+</header>
+<main>
+  <h1>Data Analyst</h1>
+  <p>Chicago, IL. Help us measure what matters.</p>
+  <a class="btn apply" href="#apply">Apply now</a>
+</main>
+<footer>
+  <form onsubmit="return false"><label for="alerts">Email for job alerts</label>
+    <input type="email" id="alerts" name="alerts"></form>
+</footer>
+</body></html>
