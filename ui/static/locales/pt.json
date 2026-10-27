@@ -795,7 +795,7 @@
   "aa.st.waiting": "Aprovada, pronta para preencher",
   "aa.st.forYou": "Enviada por você",
   "aa.st.byYou": "Você enviou",
-  "aa.role": "Vaga",
+  "aa.role": "vaga",
   "aa.match": "compatível",
   "aa.approveAll": "Aprovar todas as {n}",
   "aa.empty.noResume": "Adicione seu currículo para começar",
@@ -897,7 +897,6 @@
   "aa.notTailored": "Não adaptadas: {s}.",
   "aa.missing": "A candidatura automática precisa antes de {n} detalhes.",
   "aa.addDetails": "Adicionar os detalhes",
-  "aa.role": "vaga",
   "aa.roles": "vagas",
   "wiz.details.h": "Alguns detalhes para concluir seu perfil",
   "wiz.details.p": "Currículos e a candidatura automática precisam deles.",
@@ -1152,5 +1151,14 @@
   "tracker.findJobs": "Encontrar vagas",
   "tracker.seeAuto": "Ver candidatura automática",
   "tracker.interviewLow": "entrevista",
-  "tracker.offerLow": "oferta"
+  "tracker.offerLow": "oferta",
+  "aa.act.apply": "Candidatar por mim",
+  "aa.applying": "Candidatando…",
+  "aa.agentBusy": "Uma candidatura de cada vez. Pare a atual primeiro.",
+  "aa.agent.start": "Abrindo a vaga",
+  "aa.agent.failed": "Não foi possível executar esta. Abra e candidate-se manualmente.",
+  "aa.agent.captcha": "O envio encontrou um captcha. Resolva na página e pressione Enviar novamente.",
+  "aa.agent.nosend": "Botão Enviar não encontrado. Pressione-o na página.",
+  "aa.send": "Enviar",
+  "aa.stop": "Parar"
 }

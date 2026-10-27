@@ -897,7 +897,6 @@
   "aa.notTailored": "Nicht angepasst: {s}.",
   "aa.missing": "Die Auto-Bewerbung braucht zuerst {n} Angaben.",
   "aa.addDetails": "Angaben ergänzen",
-  "aa.role": "Stelle",
   "aa.roles": "Stellen",
   "wiz.details.h": "Ein paar Angaben, um dein Profil fertigzustellen",
   "wiz.details.p": "Lebensläufe und die Auto-Bewerbung brauchen sie.",
@@ -1152,5 +1151,14 @@
   "tracker.findJobs": "Jobs finden",
   "tracker.seeAuto": "Auto-Bewerbung ansehen",
   "tracker.interviewLow": "Interview",
-  "tracker.offerLow": "Angebot"
+  "tracker.offerLow": "Angebot",
+  "aa.act.apply": "Für mich bewerben",
+  "aa.applying": "Bewerbung läuft…",
+  "aa.agentBusy": "Eine Bewerbung nach der anderen. Stoppe zuerst die laufende.",
+  "aa.agent.start": "Stelle wird geöffnet",
+  "aa.agent.failed": "Konnte diese nicht ausführen. Öffne sie und bewirb dich von Hand.",
+  "aa.agent.captcha": "Beim Absenden kam ein Captcha. Löse es auf der Seite und drücke erneut Senden.",
+  "aa.agent.nosend": "Senden-Button nicht gefunden. Drücke ihn auf der Seite.",
+  "aa.send": "Senden",
+  "aa.stop": "Stopp"
 }

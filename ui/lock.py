@@ -214,8 +214,10 @@ class Lock:
         return ""
 
     def custodies(self, name: str) -> bool:
-        """Does App Lock (when enabled) own this credential, vs the plaintext creds file?"""
-        return name in _CRED_NAMES
+        """Does App Lock (when enabled) own this credential, vs the plaintext creds file?
+        A portal account the apply agent created (PORTAL_<host>, email|password) is one too:
+        the name is per host, so it is matched by prefix rather than listed."""
+        return name in _CRED_NAMES or name.startswith("PORTAL_")
 
     def custody_names(self) -> tuple[str, ...]:
         """Every credential App Lock takes into encrypted custody when enabled — so callers
