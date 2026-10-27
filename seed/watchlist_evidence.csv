@@ -1,45 +1,108 @@
 ats,board_id,company,url,jobs,verified,cap_exempt,h1b_approvals,perm_certs
+workday,abbott.wd5/abbottcareers,Abbott Diabetes Care Inc An Abbott Laboratories Company,https://abbott.wd5.myworkdayjobs.com/abbottcareers,2000,2026-10-27,0,37,0
 workday,abercrombie.wd108/anf,Abercrombie & Fitch Management Co,https://abercrombie.wd108.myworkdayjobs.com/anf,2619,2026-10-24,0,94,0
+workday,accuray.wd5/External,Accuray Incorporated,https://accuray.wd5.myworkdayjobs.com/External,26,2026-10-27,0,26,3
 workday,adventisthealthcare.wd1/AdventistHealthCareCareers,Adventist Healthcare Inc,https://adventisthealthcare.wd1.myworkdayjobs.com/AdventistHealthCareCareers,451,2026-10-26,0,43,2
 workday,allina.wd5/External,Allina Health System,https://allina.wd5.myworkdayjobs.com/External,811,2026-10-25,1,23,0
 workday,altru.wd503/careers,Altru Health System,https://altru.wd503.myworkdayjobs.com/careers,143,2026-10-24,1,26,2
 workday,american.wd1/AU,American University,https://american.wd1.myworkdayjobs.com/AU,97,2026-10-26,1,19,0
+workday,arlo.wd12/External_Careers,Arlo Technologies Inc,https://arlo.wd12.myworkdayjobs.com/External_Careers,19,2026-10-27,0,33,2
+workday,arrowstreetcapital.wd5/Arrowstreet,Arrowstreet Capital Limited Partnership,https://arrowstreetcapital.wd5.myworkdayjobs.com/Arrowstreet,16,2026-10-27,0,30,4
 workday,athene.wd5/athene_careers,Athene Annuity And Life Company,https://athene.wd5.myworkdayjobs.com/athene_careers,28,2026-10-25,0,57,6
+greenhouse,attentive,Attentive Mobile Inc,https://boards-api.greenhouse.io/v1/boards/attentive/jobs,29,2026-10-27,0,28,0
+workday,avaap.wd501/AvaapCareers,Avaap Usa Llc,https://avaap.wd501.myworkdayjobs.com/AvaapCareers,5,2026-10-27,0,34,0
 workday,baincapital.wd1/External_Private,Bain Capital Lp,https://baincapital.wd1.myworkdayjobs.com/External_Private,40,2026-10-26,0,37,9
+workday,barings.wd1/Barings,Barings Llc,https://barings.wd1.myworkdayjobs.com/Barings,37,2026-10-27,0,26,4
 workday,bentley.wd503/faculty,Bentley University,https://bentley.wd503.myworkdayjobs.com/faculty,30,2026-10-24,1,35,4
+workday,beyondmeat.wd1/External_Careers,Beyond Meat Inc,https://beyondmeat.wd1.myworkdayjobs.com/External_Careers,13,2026-10-27,0,34,1
+workday,blueowl.wd1/blueowl,Blueowl Llc,https://blueowl.wd1.myworkdayjobs.com/blueowl,45,2026-10-27,0,33,2
+workday,bullhorn.wd1/BullhornCareers,Bullhorn Inc,https://bullhorn.wd1.myworkdayjobs.com/BullhornCareers,10,2026-10-27,0,28,1
+workday,campbellsville.wd1/CU,Campbellsville University Inc,https://campbellsville.wd1.myworkdayjobs.com/CU,26,2026-10-27,1,10,1
+workday,cars.wd12/cars,Cars Com,https://cars.wd12.myworkdayjobs.com/cars,26,2026-10-27,0,28,0
+workday,cboe.wd1/External_Career_CBOE,Cboe Global Markets Inc,https://cboe.wd1.myworkdayjobs.com/External_Career_CBOE,112,2026-10-27,0,34,0
 workday,chenmed.wd1/ChenMed,Chenmed Llc,https://chenmed.wd1.myworkdayjobs.com/ChenMed,431,2026-10-26,0,44,2
 workday,cigna.wd5/cignacareers,Cigna Health And Life Insurance Company,https://cigna.wd5.myworkdayjobs.com/cignacareers,527,2026-10-21,0,487,4
 workday,clark.wd503/ClarkExternal,Clark University,https://clark.wd503.myworkdayjobs.com/ClarkExternal,506,2026-10-24,1,31,1
+greenhouse,clearstreet,Clear Street Management Llc,https://boards-api.greenhouse.io/v1/boards/clearstreet/jobs,44,2026-10-27,0,27,5
 workday,collegeboard.wd1/Careers,College Board,https://collegeboard.wd1.myworkdayjobs.com/Careers,52,2026-10-26,1,19,1
 workday,holycross.wd12/Careers,College Of The Holy Cross,https://holycross.wd12.myworkdayjobs.com/Careers,44,2026-10-26,1,19,1
+workday,covestro.wd3/cov_external,Covestro Llc,https://covestro.wd3.myworkdayjobs.com/cov_external,175,2026-10-27,0,29,4
+workday,covetrus.wd5/CovetrusCareers,Covetrus Inc,https://covetrus.wd5.myworkdayjobs.com/CovetrusCareers,70,2026-10-27,0,26,3
 workday,deckers.wd5/Deckers,Deckers Outdoor Corporation,https://deckers.wd5.myworkdayjobs.com/Deckers,378,2026-10-25,0,79,3
+workday,denisonuniversity.wd12/DU,Denison University,https://denisonuniversity.wd12.myworkdayjobs.com/DU,8,2026-10-27,1,18,0
+workday,depauw.wd5/DePauw_University,Depauw University,https://depauw.wd5.myworkdayjobs.com/DePauw_University,6,2026-10-27,1,17,1
 workday,dickinson.wd108/Jobs,Dickinson College,https://dickinson.wd108.myworkdayjobs.com/Jobs,19,2026-10-25,1,20,2
+workday,dlapiper.wd1/dlapiper,Dla Piper Llp Us,https://dlapiper.wd1.myworkdayjobs.com/dlapiper,137,2026-10-27,0,35,0
 workday,draftkings.wd1/DraftKings,Draftkings Inc,https://draftkings.wd1.myworkdayjobs.com/DraftKings,77,2026-10-24,0,109,3
 workday,drake.wd108/DrakeCareers,Drake University,https://drake.wd108.myworkdayjobs.com/DrakeCareers,26,2026-10-25,1,22,2
+workday,driscoll.wd1/DHS,Driscoll Children S Hospital,https://driscoll.wd1.myworkdayjobs.com/DHS,109,2026-10-27,1,18,0
+workday,elekta.wd3/Elekta_Careers,Elekta Inc,https://elekta.wd3.myworkdayjobs.com/Elekta_Careers,93,2026-10-27,0,32,5
+workday,emerson.wd5/Emerson_College_Staff,Emerson College,https://emerson.wd5.myworkdayjobs.com/Emerson_College_Staff,37,2026-10-27,1,10,0
+workday,enovix.wd12/External,Enovix Corporation,https://enovix.wd12.myworkdayjobs.com/External,31,2026-10-27,0,31,3
+workday,envista.wd1/envistacareers,Envista Llc,https://envista.wd1.myworkdayjobs.com/envistacareers,276,2026-10-27,0,32,0
+workday,finastra.wd3/FINC,Finastra Financial Technology Corporation,https://finastra.wd3.myworkdayjobs.com/FINC,119,2026-10-27,0,34,0
+workday,fivebelow.wd1/fivebelowcareers,Five Below Inc,https://fivebelow.wd1.myworkdayjobs.com/fivebelowcareers,2000,2026-10-27,0,32,3
+workday,freemanhealth.wd1/jointeamfreeman,Freeman Health System,https://freemanhealth.wd1.myworkdayjobs.com/jointeamfreeman,503,2026-10-27,1,10,0
 workday,geisinger.wd5/GeisingerExternal,Geisinger Clinic,https://geisinger.wd5.myworkdayjobs.com/GeisingerExternal,1389,2026-10-24,0,168,11
+workday,generac.wd5/External,Generac Power Systems,https://generac.wd5.myworkdayjobs.com/External,474,2026-10-27,0,34,1
+greenhouse,gibsondunn,Gibson Dunn & Crutcher Llp,https://boards-api.greenhouse.io/v1/boards/gibsondunn/jobs,115,2026-10-27,0,35,0
+workday,globusmedical.wd5/GMED_Careers,Globus Medical Inc,https://globusmedical.wd5.myworkdayjobs.com/GMED_Careers,345,2026-10-27,0,35,1
+workday,guggenheim.wd1/Guggenheim_Careers,Guggenheim Securities Llc,https://guggenheim.wd1.myworkdayjobs.com/Guggenheim_Careers,34,2026-10-27,0,33,2
+workday,harris.wd108/HarrisCompanyCareers,Harris Health System,https://harris.wd108.myworkdayjobs.com/HarrisCompanyCareers,135,2026-10-27,1,10,0
 workday,healthfirst.wd1/healthfirst,Healthfirst,https://healthfirst.wd1.myworkdayjobs.com/healthfirst,81,2026-10-26,0,57,0
 workday,hitachi.wd1/hitachi,Hitachi Consulting Corporation,https://hitachi.wd1.myworkdayjobs.com/hitachi,2000,2026-10-25,0,206,0
+workday,horizonmedia.wd1/CareerOpportunities,Horizon Media Inc,https://horizonmedia.wd1.myworkdayjobs.com/CareerOpportunities,85,2026-10-27,0,45,3
 workday,howard.wd1/HU,Howard University,https://howard.wd1.myworkdayjobs.com/HU,171,2026-10-24,1,68,1
+workday,humana.wd5/CenterWell_External_Career_Site,Humana Insurance Company,https://humana.wd5.myworkdayjobs.com/CenterWell_External_Career_Site,1798,2026-10-27,0,83,0
+workday,icon.wd3/broadbean_external,Icon Clinical Research Llc,https://icon.wd3.myworkdayjobs.com/broadbean_external,852,2026-10-27,0,31,1
+workday,iheartmedia.wd5/External_iHM,Iheartmedia Entertainment Inc,https://iheartmedia.wd5.myworkdayjobs.com/External_iHM,301,2026-10-27,0,29,0
+workday,imeg.wd1/Imeg_Careers,Imeg Corp,https://imeg.wd1.myworkdayjobs.com/Imeg_Careers,337,2026-10-27,0,35,1
+greenhouse,inmarket,Inmarket Media Llc,https://boards-api.greenhouse.io/v1/boards/inmarket/jobs,15,2026-10-27,0,36,0
+greenhouse,instacart,Instacart,https://boards-api.greenhouse.io/v1/boards/instacart/jobs,100,2026-10-27,0,0,31
+workday,intuitive.wd1/irtc_careers,Intuitive Surgical Inc,https://intuitive.wd1.myworkdayjobs.com/irtc_careers,32,2026-10-27,0,30,4
 workday,isu.wd1/IowaStateJobs,Iowa State University,https://isu.wd1.myworkdayjobs.com/IowaStateJobs,102,2026-10-25,1,106,4
+workday,ironmountain.wd5/iron-mountain-jobs,Iron Mountain Information Management Llc,https://ironmountain.wd5.myworkdayjobs.com/iron-mountain-jobs,353,2026-10-27,0,35,2
 workday,ivytech.wd1/Ivy_Tech_Careers,Ivy Tech Community College,https://ivytech.wd1.myworkdayjobs.com/Ivy_Tech_Careers,512,2026-10-24,1,30,2
+workday,landolakes.wd1/LandOLakes,Land O Lakes Inc,https://landolakes.wd1.myworkdayjobs.com/LandOLakes,170,2026-10-27,0,28,0
 workday,liberty.wd5/lu_job_board_staff,Liberty University,https://liberty.wd5.myworkdayjobs.com/lu_job_board_staff,63,2026-10-26,1,20,0
+workday,linklaters.wd3/Linklaters,Linklaters Llp,https://linklaters.wd3.myworkdayjobs.com/Linklaters,210,2026-10-27,0,30,0
 workday,lonza.wd3/Lonza_Careers,Lonza Houston Inc,https://lonza.wd3.myworkdayjobs.com/Lonza_Careers,571,2026-10-26,0,40,0
 workday,mcw.wd503/ExternalCareers,Medical College Of Wisconsin Inc,https://mcw.wd503.myworkdayjobs.com/ExternalCareers,373,2026-10-21,1,203,1
 workday,merceruniversity.wd1/external,Mercer University,https://merceruniversity.wd1.myworkdayjobs.com/external,107,2026-10-25,1,27,0
 workday,merit.wd503/Merit,Merit American Technologies Inc,https://merit.wd503.myworkdayjobs.com/Merit,102,2026-10-26,0,47,0
+workday,moelis.wd1/Experienced-Hires,Moelis Company Group Lp,https://moelis.wd1.myworkdayjobs.com/Experienced-Hires,36,2026-10-27,0,31,2
 workday,montclair.wd1/JobOpportunities,Montclair State University,https://montclair.wd1.myworkdayjobs.com/JobOpportunities,37,2026-10-24,1,30,0
+workday,ms.wd5/private,Morgan Stanley Bank Na,https://ms.wd5.myworkdayjobs.com/private,394,2026-10-27,0,31,1
 workday,mosaic.wd5/mosaic,Mosaic Health System,https://mosaic.wd5.myworkdayjobs.com/mosaic,92,2026-10-26,1,13,0
 workday,multicare.wd1/multicare,Multicare Health System,https://multicare.wd1.myworkdayjobs.com/multicare,1398,2026-10-25,1,24,3
+greenhouse,nasdaq,Nasdaq Inc,https://boards-api.greenhouse.io/v1/boards/nasdaq/jobs,2,2026-10-27,0,31,1
+workday,newrez.wd1/NRZ,Newrez Llc,https://newrez.wd1.myworkdayjobs.com/NRZ,103,2026-10-27,0,32,0
 workday,nextgen.wd5/NextGen_Careers,Next Gen Software Solutions Llc,https://nextgen.wd5.myworkdayjobs.com/NextGen_Careers,33,2026-10-26,0,36,4
+greenhouse,nextroll,Nextroll Inc,https://boards-api.greenhouse.io/v1/boards/nextroll/jobs,4,2026-10-27,0,35,1
+workday,nidec.wd1/Nidec,Nidec Mobility America Corporation,https://nidec.wd1.myworkdayjobs.com/Nidec,371,2026-10-27,0,32,2
 workday,northwesternmutual.wd5/CORPORATE-CAREERS,Northwestern Mutual Life Insur Co,https://northwesternmutual.wd5.myworkdayjobs.com/CORPORATE-CAREERS,76,2026-10-26,0,122,0
+workday,paulhastings.wd1/PH-Staff,Paul Hastings Llp,https://paulhastings.wd1.myworkdayjobs.com/PH-Staff,24,2026-10-27,0,33,0
 workday,philips.wd3/jobs-and-careers,Philips North America Llc,https://philips.wd3.myworkdayjobs.com/jobs-and-careers,788,2026-10-24,0,221,8
+workday,pinnacle.wd1/Pinnacle,Pinnacle Health Medical Services,https://pinnacle.wd1.myworkdayjobs.com/Pinnacle,10,2026-10-27,0,37,1
 workday,planet.wd3/Planet,Planet Logistics Inc.,https://planet.wd3.myworkdayjobs.com/Planet,67,2026-10-26,0,0,55
+workday,purple.wd1/purplecareers,Purple Web Inc,https://purple.wd1.myworkdayjobs.com/purplecareers,103,2026-10-27,0,37,1
+workday,rakuten.wd1/RakutenRewards,Rakuten Rewards,https://rakuten.wd1.myworkdayjobs.com/RakutenRewards,10,2026-10-27,0,32,0
+workday,reed.wd3/reed_in_partnership_careers,Reed College,https://reed.wd3.myworkdayjobs.com/reed_in_partnership_careers,144,2026-10-27,1,14,2
 workday,resmed.wd3/ResMed_External_Careers,Resmed Digital Health Inc,https://resmed.wd3.myworkdayjobs.com/ResMed_External_Careers,263,2026-10-26,0,37,3
+greenhouse,revance,Revance Therapeutics Inc,https://boards-api.greenhouse.io/v1/boards/revance/jobs,43,2026-10-27,0,31,6
+workday,rhodes.wd5/Rhodes_Careers,Rhodes College,https://rhodes.wd5.myworkdayjobs.com/Rhodes_Careers,11,2026-10-27,1,11,0
 workday,rockymountain.wd1/RMI,Rocky Mountain Institute,https://rockymountain.wd1.myworkdayjobs.com/RMI,2,2026-10-24,0,98,2
+workday,scholastic.wd5/External,Scholastic Inc,https://scholastic.wd5.myworkdayjobs.com/External,73,2026-10-27,0,30,2
 workday,spu.wd12/SPU,Seattle Pacific University,https://spu.wd12.myworkdayjobs.com/SPU,28,2026-10-25,1,25,3
+workday,skadden.wd5/Skadden_Careers,Skadden Arps Slate Meagher Flom,https://skadden.wd5.myworkdayjobs.com/Skadden_Careers,65,2026-10-27,0,57,0
+workday,snapfinance.wd1/Snap_External_Careers,Snap Finance,https://snapfinance.wd1.myworkdayjobs.com/Snap_External_Careers,18,2026-10-27,0,32,5
 workday,snhu.wd503/External_Career_Site,Southern New Hampshire University,https://snhu.wd503.myworkdayjobs.com/External_Career_Site,72,2026-10-26,1,18,0
 workday,statestreet.wd1/Global,State Street Bank And Trust Company,https://statestreet.wd1.myworkdayjobs.com/Global,1299,2026-10-21,0,1317,45
+workday,stoneridge.wd5/Careers,Stoneridge Inc,https://stoneridge.wd5.myworkdayjobs.com/Careers,65,2026-10-27,0,31,0
 workday,suffolk.wd1/External,Suffolk University,https://suffolk.wd1.myworkdayjobs.com/External,23,2026-10-25,1,26,0
+greenhouse,taketwo,Take Two Interactive Software Inc,https://boards-api.greenhouse.io/v1/boards/taketwo/jobs,37,2026-10-27,0,32,0
+workday,tarkett.wd3/Tarkett_Careers,Tarkett Usa Inc,https://tarkett.wd3.myworkdayjobs.com/Tarkett_Careers,91,2026-10-27,0,10,26
+workday,terminix.wd1/terminix,Terminix International Company Lp,https://terminix.wd1.myworkdayjobs.com/terminix,452,2026-10-27,0,29,5
 workday,tamus.wd1/TAMU_External,Texas A&M University,https://tamus.wd1.myworkdayjobs.com/TAMU_External,117,2026-10-18,1,606,0
 workday,newschool.wd1/External,The New School,https://newschool.wd1.myworkdayjobs.com/External,184,2026-10-24,1,31,0
 workday,osu.wd1/OSUCareers,The Ohio State University,https://osu.wd1.myworkdayjobs.com/OSUCareers,1052,2026-10-18,1,514,4
@@ -47,6 +110,7 @@ workday,psu.wd1/PSU_Staff,The Pennsylvania State University,https://psu.wd1.mywo
 workday,uchicago.wd5/External,The University Of Chicago,https://uchicago.wd5.myworkdayjobs.com/External,384,2026-10-18,1,756,10
 workday,utampa.wd1/Faculty,The University Of Tampa,https://utampa.wd1.myworkdayjobs.com/Faculty,94,2026-10-26,1,19,0
 workday,utaustin.wd1/UTstaff,The University Of Texas At Austin,https://utaustin.wd1.myworkdayjobs.com/UTstaff,626,2026-10-18,1,549,5
+workday,toryburch.wd1/toryburchcareers,Tory Burch Llc,https://toryburch.wd1.myworkdayjobs.com/toryburchcareers,557,2026-10-27,0,36,3
 workday,unioncollege.wd5/UnionCollegeCareers,Union College,https://unioncollege.wd5.myworkdayjobs.com/UnionCollegeCareers,37,2026-10-25,1,28,0
 workday,umd.wd1/UMCP,University Of Maryland,https://umd.wd1.myworkdayjobs.com/UMCP,202,2026-10-18,1,963,3
 workday,unf.wd5/unfjobs,University Of North Florida,https://unf.wd5.myworkdayjobs.com/unfjobs,103,2026-10-25,1,31,0
@@ -54,9 +118,16 @@ workday,upenn.wd1/careers-at-penn,University Of Pennsylvania,https://upenn.wd1.m
 workday,usc.wd5/ExternalUSCCareers,University Of Southern California,https://usc.wd5.myworkdayjobs.com/ExternalUSCCareers,694,2026-10-18,1,603,14
 workday,uw.wd5/UWHires,University Of Washington,https://uw.wd5.myworkdayjobs.com/UWHires,583,2026-10-18,1,526,14
 workday,usaa.wd1/USAAJOBSWD,Usaa Federal Savings Bank,https://usaa.wd1.myworkdayjobs.com/USAAJOBSWD,208,2026-10-24,0,122,16
+workday,vareximaging.wd103/External_Career_Site,Varex Imaging Corporation,https://vareximaging.wd103.myworkdayjobs.com/External_Career_Site,34,2026-10-27,0,30,3
+workday,vassar.wd1/Vassar-External,Vassar College,https://vassar.wd1.myworkdayjobs.com/Vassar-External,23,2026-10-27,1,12,0
+workday,veritiv.wd5/VeritivCareers,Veritiv Operating Company,https://veritiv.wd5.myworkdayjobs.com/VeritivCareers,162,2026-10-27,0,29,1
+workday,vibrant.wd5/VEH_EXTERNAL_CAREER_SITE,Vibrant Inc,https://vibrant.wd5.myworkdayjobs.com/VEH_EXTERNAL_CAREER_SITE,23,2026-10-27,0,29,1
 workday,walmart.wd504/WalmartExternal,Walmart Associates Inc,https://walmart.wd504.myworkdayjobs.com/WalmartExternal,2000,2026-10-21,0,2,416
+workday,wlu.wd5/WLUCareers,Washington & Lee University,https://wlu.wd5.myworkdayjobs.com/WLUCareers,19,2026-10-27,1,13,2
 workday,wustl.wd1/External,Washington University In St Louis,https://wustl.wd1.myworkdayjobs.com/External,667,2026-10-18,1,538,15
 workday,waynefarms.wd1/WayneFarms,Wayne Farms Llc,https://waynefarms.wd1.myworkdayjobs.com/WayneFarms,246,2026-10-21,0,2,754
 workday,weber.wd115/WB,Weber State University,https://weber.wd115.myworkdayjobs.com/WB,28,2026-10-24,1,29,7
 workday,wesleyan.wd5/careers,Wesleyan University,https://wesleyan.wd5.myworkdayjobs.com/careers,18,2026-10-25,1,29,0
 workday,williams.wd5/External,Williams College,https://williams.wd5.myworkdayjobs.com/External,107,2026-10-25,1,32,0
+workday,xavier.wd108/XavierCareers,Xavier University,https://xavier.wd108.myworkdayjobs.com/XavierCareers,53,2026-10-27,1,10,2
+workday,zelis.wd115/ZelisCareers,Zelis Healthcare Llc,https://zelis.wd115.myworkdayjobs.com/ZelisCareers,69,2026-10-27,0,33,3
