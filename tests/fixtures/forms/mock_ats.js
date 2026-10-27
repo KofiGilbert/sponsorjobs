@@ -76,7 +76,7 @@
         + '<div class="field"><label for="vet">Veteran status</label><select id="vet"><option value="">Select...</option>'
         + '<option>I am a protected veteran</option><option>I am not a protected veteran</option><option>I do not wish to self-identify</option></select></div>'
         + '<div class="field"><label><input type="checkbox" id="agree"> I agree to the terms and conditions</label></div>'
-        + btn("next", "Review"));
+        + btn("next", "Save and Continue"));
       $("next").onclick = () => { log.push("disclosures"); pages.review(); };
     },
     review() {
