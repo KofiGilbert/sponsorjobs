@@ -191,6 +191,11 @@ class LLMBackend(Protocol):
         person edits and sends it themselves.
         """
 
+    def agent_step(self, system: str, user: str) -> str:
+        """One step of the apply agent (autoapply/brain.py): the cached system prompt plus
+        the single state message, answered with the raw JSON text the brain validates. The
+        message carries the page view, placeholder NAMES and history only, never a value."""
+
 
 # --------------------------------------------------------------------------- #
 # Deterministic fake used by the acceptance tests.
@@ -1481,6 +1486,62 @@ class FakeLLM:
                 op = "select" if typ in ("select", "radio") else "fill"
                 actions.append({"ref": ref, "op": op, "source": key})
         return {"actions": actions}
+
+    def agent_step(self, system: str, user: str) -> str:
+        # A scripted brain for the apply agent, decided from the page view alone (the same
+        # input the real model gets): click Apply, sign in with the portal placeholders, open
+        # Create account, press Next, stop at a submit button, stop on a captcha. Returns the
+        # JSON text the real model would, so autoapply/brain.py is exercised end to end.
+        import json as _json
+
+        def _block(tag):
+            m = re.search(rf"<{tag}>\n(.*?)\n</{tag}>", user, re.S)
+            return m.group(1) if m else ""
+        view = _block("view")
+        placeholders = _block("placeholders")
+        lines = []                                   # (index, tag, attrs, text)
+        for raw in view.splitlines():
+            m = re.match(r"^\*?\[(\d+)\]<(\w+)([^>]*)>(.*)$", raw.strip())
+            if m:
+                lines.append((int(m.group(1)), m.group(2).lower(), m.group(3),
+                              re.sub(r"</\w+>\s*$", "", m.group(4)).strip()))
+
+        def _find(rx, tags=("button", "a")):
+            for idx, tag, _attrs, text in lines:
+                if tag in tags and re.fullmatch(rx, text, re.I):
+                    return idx
+            return None
+
+        def _input(kind):
+            for idx, tag, attrs, _text in lines:
+                if tag == "input" and (f"type={kind}" in attrs or re.search(rf'label="[^"]*{kind}', attrs, re.I)):
+                    return idx
+            return None
+
+        def _reply(actions=None, done=None, memory="", evaluation=""):
+            return _json.dumps({"memory": memory, "evaluation": evaluation,
+                                "actions": actions or [], "done": done})
+        if re.search(r"i'?m not a robot|verify (that )?you are human|captcha", view, re.I):
+            return _reply(done={"outcome": "blocked", "reason": "captcha"}, memory="captcha wall")
+        apply_idx = _find(r"apply manually|autofill with resume") or _find(r"apply( now)?")
+        if apply_idx is not None:
+            return _reply([{"op": "click", "index": apply_idx}], memory="job page", evaluation="opening the form")
+        email, pwd = _input("email"), _input("password")
+        signin = _find(r"sign ?in|log ?in")
+        if email is not None and pwd is not None and signin is not None and "portal_email" in placeholders:
+            return _reply([{"op": "type", "index": email, "text": "{{portal_email}}"},
+                           {"op": "type", "index": pwd, "text": "{{portal_password}}"},
+                           {"op": "click", "index": signin}], memory="signing in")
+        create = _find(r"create (an )?account|sign up|register")
+        if create is not None and "portal_email" not in placeholders:
+            return _reply([{"op": "click", "index": create}], memory="no portal account yet")
+        nxt = _find(r"next|continue|save and continue")
+        if nxt is not None:
+            return _reply([{"op": "click", "index": nxt}], memory="page filled", evaluation="moving on")
+        if _find(r"submit( application)?|send( application)?|review and submit|complete application") is not None:
+            return _reply(done={"outcome": "ready_to_submit", "reason": "at the submit button"},
+                          memory="review page")
+        return _reply(done={"outcome": "blocked", "reason": "needs-person"}, memory="nothing I can do")
 
     def draft_sponsorship_answer(self, profile: dict, status: str = "", future_need: str = "",
                                  role: str = "", company: str = "") -> str:

@@ -47,6 +47,7 @@ COPY_MODULES = [
     "submit/service.py", "submit/drivers.py", "submit/policy.py", "submit/allowlist.py",
     "sourcing/sponsors.py", "sourcing/ats.py", "sourcing/watchlist.py", "sourcing/service.py",
     "interview/transcribe.py", "backend/tavus_client.py",
+    "autoapply/brain.py",   # the apply agent's prompt: the model copies what it sees
 ]
 
 
