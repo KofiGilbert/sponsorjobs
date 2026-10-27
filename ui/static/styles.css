@@ -2129,15 +2129,30 @@ body.panel-open .app {
   min-height: 88px;
 }
 .home-prompt-foot { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
-/* Home: the "Try" row under the box, three requests the box understands (2026-10-26). */
-.home-try { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: -12px; }
-.home-try-l { font-size: 12.5px; color: var(--faint); margin-right: 2px; }
-.home-pill {
-  font: inherit; font-size: 12.5px; color: var(--muted); background: transparent;
-  border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; cursor: pointer;
-  text-align: left;
+/* Home: the requests the box understands, listed under it on focus while it is empty
+   (2026-10-27). The list and the "See examples" link sit in the gap above the roles, so
+   the roles heading stays where it was; the list overlays the roles, it never pushes them. */
+.home-ask { position: relative; z-index: 5; }
+.home-examples {
+  position: absolute; top: calc(100% + 5px); right: 2px;
+  font: inherit; font-size: 12.5px; color: var(--muted); background: none;
+  border: 0; padding: 0; cursor: pointer;
 }
-.home-pill:hover { color: var(--ink); border-color: var(--border-strong); }
+.home-examples:hover { color: var(--ink-2); }
+.home-suggest {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 6;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .22); padding: 6px;
+}
+.home-suggest[hidden] { display: none; }
+.home-suggest-l {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--faint); padding: 6px 10px 4px;
+}
+.home-suggest-row {
+  font-size: 13.5px; color: var(--ink-2); padding: 8px 10px; border-radius: 8px; cursor: pointer;
+}
+.home-suggest-row.is-active { background: var(--surface-2); color: var(--ink); }
 /* The chat in assistant mode: a reply's buttons sit under the bubble, like the autobuild action. */
 .agent-acts { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 10px 44px; }
 @media (max-width: 560px) { .agent-acts { margin-left: 0; } }

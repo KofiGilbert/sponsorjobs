@@ -401,17 +401,16 @@ def test_ui_source_has_the_box_the_pills_and_the_strings():
     js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     css = (ROOT / "ui" / "static" / "styles.css").read_text(encoding="utf-8")
     assert 'placeholder="Paste a job description, or tell me what to do..."' in html
-    assert html.count('class="home-pill"') == 3
+    assert html.count('class="home-suggest-row"') == 3
     for ex in home.EXAMPLES:
         assert ex in html
-    assert 'data-i18n="home.try"' in html and 'id="homeTry"' in html
-    assert "border-radius: 999px" in css and ".home-pill" in css
+    assert 'id="homeSuggest"' in html and ".home-suggest-row" in css
     assert "/api/agent/ask" in js and "/api/agent/go" in js
     assert "Your assistant. Ask for a search, a resume, or an update." in js
     assert "function openAgent" in js and "setAgentMode(false)" in js
     for p in sorted((ROOT / "ui" / "static" / "locales").glob("*.json")):
         d = json.loads(p.read_text(encoding="utf-8"))
-        for k in ("home.try", "home.try1", "home.try2", "home.try3", "agent.sub", "agent.go",
+        for k in ("home.askMeTo", "home.seeExamples", "home.try1", "home.try2", "home.try3", "agent.sub", "agent.go",
                   "agent.change", "agent.open", "agent.changeQ"):
             assert d.get(k), f"{p.name} lacks {k}"
     assert d.get("home.placeholder") != "Paste the job description here…"
@@ -441,3 +440,42 @@ def test_plan_asks_for_missing_hard_details_and_soft_gaps_never_stop_it(ag, monk
         == ["go", "change"]
     js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     assert 'id === "add_details"' in js and "openProfileDetails();" in js
+
+
+# --- the suggestion list under the Home box (replaced the Try pills, 2026-10-27) ----------------
+
+def test_home_box_has_a_suggestion_list_not_try_pills():
+    html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
+    css = (ROOT / "ui" / "static" / "styles.css").read_text(encoding="utf-8")
+    assert 'id="homeTry"' not in html and "home-pill" not in html
+    assert ".home-pill" not in css and ".home-try" not in css
+    # The box keeps its plain hint; no example text inside it.
+    assert 'placeholder="Paste a job description, or tell me what to do..."' in html
+    assert 'role="listbox"' in html and html.count('role="option"') >= 3
+    assert 'aria-controls="homeSuggest"' in html and 'role="combobox"' in html
+    assert 'data-i18n="home.askMeTo">Ask me to<' in html
+    assert 'id="homeExamples"' in html and ">See examples<" in html
+    # The list overlays the roles (absolute), it never pushes them down.
+    block = css[css.index(".home-suggest {"):]
+    block = block[:block.index("}")]
+    assert "position: absolute" in block and "z-index" in block
+    assert "var(--border-strong)" in block and "border-radius: 12px" in block
+    # Only the link sits between the box and the roles heading.
+    between = html[html.index('id="homeExamples"'):html.index('data-i18n="home.today"')]
+    assert "<button" not in between
+
+
+def test_home_suggestion_list_is_wired_for_focus_empty_keys_and_escape():
+    js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    seg = js[js.index('const list = $("#homeSuggest")'):js.index('$("#homeExamples")')]
+    assert 'box.addEventListener("focus", openList)' in seg
+    assert 'box.addEventListener("blur", closeList)' in seg
+    assert "if (box.value) closeList(); else openList();" in seg   # typing closes, emptying reopens
+    assert "if (!list || box.value) return;" in seg                # opens only when empty
+    assert '"ArrowDown"' in seg and '"ArrowUp"' in seg
+    assert 'e.key === "Escape") { e.preventDefault(); closeList()' in seg
+    assert "pick(active)" in seg and "start();" in seg
+    assert 'setAttribute("aria-activedescendant"' in seg
+    assert '"mousedown", (e) => e.preventDefault()' in seg
+    assert '$("#homeExamples")?.addEventListener("click", () => { box.focus(); openList(); });' in js
+    assert "#homeTry" not in js
