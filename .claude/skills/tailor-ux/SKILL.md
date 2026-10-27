@@ -236,3 +236,8 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   Tracker's weekly bars are a muted fill on an axis of at least 5. Match scores count stated skills,
   and an ad naming fewer than 8 skills blends toward title similarity (lowered for a senior title
   when the person has none), so a thin ad can't read as a 100% fit.
+- **2026-10-27 Home suggestions, not example text.** The Home box keeps a plain hint; example text
+  inside a box (or rotating placeholders) is an anti-pattern. The requests it understands open as a
+  list under the box on focus while it is empty ("Ask me to", arrows/Enter/Escape, overlays the
+  roles), plus one quiet right-aligned "See examples" link. Home's roles leave out ones closed to a
+  visa holder by title too ("USC & GC only"), via `/api/jobs?home=1`.
