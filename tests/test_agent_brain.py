@@ -458,3 +458,12 @@ def test_an_answer_given_on_the_bar_answers_the_same_question_next_time(A):
     known = A._known_answers_for(["Are you legally authorized to work in the United States?", "Favourite colour?"],
                                  None, {}, {"first_name": "K"})
     assert known == {"Are you legally authorized to work in the United States?": "Yes"}
+
+
+def test_the_work_auth_note_is_one_honest_sentence_from_the_profile():
+    from autoapply import workauth as w
+    wa = {"countries": {"US": {"status": "f1_opt", "authorized": "Yes", "sponsor_now": "No", "sponsor_future": "Yes"}}}
+    assert w.note(wa) == "I am currently on F-1 OPT and authorized to work without sponsorship at this time. I will need sponsorship in the future."
+    assert w.note({"countries": {}}) == ""
+    assert w.note({"countries": {"US": {"status": "us_citizen", "authorized": "Yes", "sponsor_now": "No", "sponsor_future": "No"}}}) \
+        == "I am a u.s. citizen and authorized to work without sponsorship at this time. I will not need sponsorship."

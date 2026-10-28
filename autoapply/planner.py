@@ -206,8 +206,16 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                                 job_country=ctx.job_country)
             if v:
                 out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="workauth", sensitive=True))
+                continue
+            # The profile does not say, but the person answered this exact question before (on
+            # the agent's bar, or in Your answers): their own words, not a guess.
+            hit = ctx.library.lookup(label) if ctx.library is not None else None
+            v = _literal(f, hit["answer"]) if hit else None
+            if v:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True))
+                out.used_library.append(hit["key"])
             else:
-                out.left.append(f)                         # the profile does not say: theirs to answer
+                out.left.append(f)                         # theirs to answer
             continue
 
         # 2. the answer library

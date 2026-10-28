@@ -244,7 +244,11 @@ function createAgent(deps) {
         await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
         await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
       }
-      const now = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); return el ? String(el.value != null ? el.value : el.textContent || "") : ""; })()`, true);
+      // Leave the box the way a person does (Tab away): Workday commits a textarea on blur.
+      const now = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); if (!el) return "";
+        const val = String(el.value != null ? el.value : el.textContent || "");
+        if (!/combobox/i.test(el.getAttribute("role") || "") && !el.getAttribute("aria-autocomplete")) { try { el.blur(); } catch (e) {} }
+        return val; })()`, true);
       return { ok: true, note: String(now || "") === String(text) ? "" : "value differs" };
     } catch (e) { return null; }
     finally { release(); }
@@ -266,7 +270,7 @@ function createAgent(deps) {
         if (real) return real;
       }
     }
-    if (!ctx && a.op === "type" && typeof a.text === "string" && /<combobox\b|aria-autocomplete|search=true/.test(line)) {
+    if (!ctx && a.op === "type" && typeof a.text === "string" && /<combobox\b|<textarea\b|aria-autocomplete|search=true/.test(line)) {
       const real = await realType(wc, a.index, a.text);
       if (real) return real;
     }
@@ -337,9 +341,22 @@ function createAgent(deps) {
   // field X is required"), else empty required boxes in the view. Labels only, never values.
   function questionsFor(viewText, left, includeFilled) {
     const out = [];
-    const add = (q) => { q = String(q || "").trim(); if (q && !out.includes(q)) out.push(q); };
-    for (const x of left || []) add(typeof x === "string" ? x : (x && x.label) || "");
     const text = String(viewText || "");
+    const add = (q) => { q = String(q || "").trim(); if (q && !out.includes(q)) out.push(q); };
+    // A person is asked only about a REQUIRED question: an optional box (LinkedIn URL, skills,
+    // a cover letter) is left alone, and a file box is an upload, never a question.
+    const lineFor = (label) => {
+      const esc = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const mm = new RegExp('^\\*?\\[\\d+\\]<[^\\n]*label="' + esc + '"[^\\n]*$', "m").exec(text);
+      return mm ? mm[0] : "";
+    };
+    for (const x of left || []) {
+      const q = typeof x === "string" ? x : (x && x.label) || "";
+      const ln = lineFor(q);
+      if (/^\*?\[\d+\]<file\b/.test(ln)) continue;
+      if (ln && !/\brequired\b/.test(ln)) continue;
+      add(q);
+    }
     let m;
     const errRe = /Error: "(?:The field )?(.+?) (?:is required|must have a value|is a required field|cannot be blank)/g;
     while ((m = errRe.exec(text))) add(m[1].replace(/^"|"$/g, ""));
@@ -353,6 +370,26 @@ function createAgent(deps) {
       return new RegExp('label="' + esc + '"[^\n]*(value="\\(filled\\)"|checked=true)').test(text);
     };
     return (includeFilled ? out : out.filter((q) => !filled(q))).slice(0, 3);
+  }
+
+  // The question just above this one on the page, with its answer when shown: a box called
+  // "Please provide more information" only makes sense under "Will you need sponsorship? Yes".
+  function contextFor(viewText, label) {
+    const lines = String(viewText || "").split("\n");
+    const want = String(label || "").trim().toLowerCase();
+    let at = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const m = /label="([^"]*)"/.exec(lines[i]);
+      if (m && m[1].trim().toLowerCase() === want) { at = i; break; }
+    }
+    for (let i = at - 1; i >= 0 && at > 0; i--) {
+      const m = /label="([^"]*)"/.exec(lines[i]);
+      if (!m || m[1].trim().toLowerCase() === want) continue;
+      const val = /value="([^"]*)"/.exec(lines[i]);
+      const v = val && val[1] && val[1] !== "(filled)" ? val[1] : "";
+      return m[1].slice(0, 90) + (v ? ": " + v : "");
+    }
+    return "";
   }
 
   // The choices a page offers for a field, read off the view: a select's first options or the
@@ -509,6 +546,13 @@ function createAgent(deps) {
           return finish({ ok: true, submitted: true, steps: step });
         }
         const asks = (done && done.outcome === "blocked" && done.reason === "needs-answers") ? questionsFor(v.text, left) : [];
+        if (done && done.outcome === "blocked" && done.reason === "needs-answers" && !asks.length) {
+          // Nothing required is actually open (an optional box, or a stale error over a box that
+          // has since been filled): say so and let the brain continue instead of stopping.
+          history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                         actions: ["(no required question is open)"], results: ["continue with the page's Next or Continue; leave optional boxes empty"] });
+          continue;
+        }
         if (asks.length) {
           // Ask the person, on the bar and on Telegram, and carry on with the answer (saved for
           // every later application). Up to three questions, five minutes each.
@@ -517,9 +561,11 @@ function createAgent(deps) {
           for (const q of qs) {
             if (st.stop) return stopped("stopped", "Stopped.");
             const options = optionsFor(v.text, q);
-            progress(recordId, "ask", "The application asks: " + q, { step, ask: { question: q, options } });
+            const prev = contextFor(v.text, q);
+            const shown = (prev ? "After \u201c" + prev + "\u201d, the application asks: " : "The application asks: ") + q;
+            progress(recordId, "ask", shown, { step, ask: { question: q, options } });
             const r = await withTimeout(deps.postApp("/api/autoapply/agent/ask", {
-              question: q, options, timeout_s: 300, record_id: recordId }), 320000, "ask").catch(() => null);
+              question: q, options, context: prev, timeout_s: 300, record_id: recordId }), 320000, "ask").catch(() => null);
             dlog("step " + step + " ask ->", r && { ok: r.ok, reason: r.reason });
             if (r && r.ok) answered++;
             else break;

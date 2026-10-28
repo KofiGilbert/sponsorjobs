@@ -98,7 +98,7 @@
     },
     questions() {
       page('<h2>Application Questions</h2><p class="muted">Step 2 of 3</p><div id="w"></div>'
-        + '<div class="field"><label for="yrs">How many years of experience do you have?</label><input type="text" id="yrs"></div>'
+        + '<div class="field"><label for="yrs">How many years of experience do you have?</label><input type="text" id="yrs"' + (mustAnswer ? ' required' : '') + '></div>'
         + '<p id="err" class="error" hidden></p>'
         + btn("back", "Back") + ' ' + btn("next", "Save and Continue"));
       const host = $("w");
