@@ -5446,13 +5446,32 @@ def inbox_status():
         libs = False
     creds = g._CREDS_PATH.exists()
     token = g.token_present()   # sees a lock-held token too, not just the plaintext file
+    # What the apply agent will read from: imap (app password), gmail (OAuth), fake (dev).
+    from inbox.mailbox import mask_email
+    box = _current_mailbox()
+    method = getattr(box, "method", "") if box is not None else ""
+    address = _cred("IMAP_EMAIL") if method == "imap" else getattr(box, "email", "")
     return jsonify({
         "libs": libs, "creds": creds, "token": token,
-        "configured": libs and token,
+        "configured": (libs and token) or method in ("imap", "fake"),
         "creds_path": str(g._CREDS_PATH),
         "auto_verify": bool(_prefs().get("inbox_auto_verify")),
         "query": g.DEFAULT_QUERY,
+        "method": method,
+        "email": mask_email(address or ""),
+        "imap_host": _cred("IMAP_HOST") if method == "imap" else "",
     })
+
+
+def _fake_mailbox_on() -> bool:
+    """The in-memory mailbox, for tests and the shell e2e only; never in a shipped build."""
+    return os.environ.get("RESUME_AGENT_FAKE_MAILBOX") == "1" and _under_test_or_dev()
+
+
+def _current_mailbox():
+    """The mailbox the apply agent reads (inbox/mailbox.pick_mailbox), or None."""
+    from inbox.mailbox import pick_mailbox
+    return pick_mailbox(_cred, fake=_fake_mailbox_on())
 
 
 # ---- Telegram: connect from the UI (Connections settings), not by hand-editing creds. ----
@@ -8962,6 +8981,128 @@ def inbox_scan():
     # so a rescan never re-asks about mail the person already settled.
     result["suggestions"] = _store_inbox_suggestions(messages, llm)
     return _nostore(jsonify({"ok": True, **result}))
+
+
+# ---- the apply agent's mailbox (docs/apply-agent.md milestone 3) -----------------------------
+# A portal that just got a new account sends a verification link, a one-time code, or a
+# password reset. These routes let the run wait for THAT mail in the person's own inbox,
+# read-only, and nothing else: every search result is gated by detect.about_site before it
+# is read any further (CLAUDE.md section 5). Nothing here logs a subject or a body.
+
+_AWAIT_POLL_S = 4
+
+
+@app.post("/api/inbox/connect-imap")
+@_guard
+def inbox_connect_imap():
+    """Body {email, app_password, host?}. Signs in once to prove the credentials, then keeps
+    them locally (App Lock custody when on). Returns {ok, email, host}; the password never
+    comes back. On failure {ok: false, error: <one plain sentence>}."""
+    from inbox.mailbox import ImapMailbox, guess_imap_host
+    b = request.json or {}
+    address = str(b.get("email") or "").strip()
+    # Google shows an app password as four groups of four; the spaces are not part of it.
+    password = str(b.get("app_password") or b.get("password") or "").replace(" ", "")
+    host = str(b.get("host") or "").strip().lower() or guess_imap_host(address)
+    if "@" not in address or "." not in address.rpartition("@")[2]:
+        return jsonify({"ok": False, "error": "Enter the email address of the mailbox."}), 400
+    if len(password) < 8:
+        return jsonify({"ok": False, "error": "Enter the app password (16 characters for a "
+                                              "Google account)."}), 400
+    check = ImapMailbox(address, password, host=host).test_login()
+    if not check.get("ok"):
+        return jsonify({"ok": False, "error": check.get("error") or "Sign-in failed."}), 400
+    _save_cred("IMAP_EMAIL", address)
+    _save_cred("IMAP_PASSWORD", password)
+    _save_cred("IMAP_HOST", host)
+    return _nostore(jsonify({"ok": True, "email": address, "host": host}))
+
+
+@app.post("/api/inbox/disconnect-imap")
+@_guard
+def inbox_disconnect_imap():
+    """Forget the IMAP credentials entirely (lock copy and plaintext line)."""
+    for name in ("IMAP_EMAIL", "IMAP_PASSWORD", "IMAP_HOST"):
+        _revoke_cred(name)
+    return jsonify({"ok": True})
+
+
+def _await_match(messages: list[dict], kind: str, host: str, company: str) -> dict | None:
+    """The first message about this site that is the kind the run waits for, as the reply."""
+    from inbox import detect
+    for msg in messages:
+        if not detect.about_site(msg, host, company):
+            continue            # not this employer's mail: never read any further
+        found = detect.kind_of(msg)
+        if not found or (kind != "any" and found != kind):
+            continue
+        out = {"ok": True, "kind": found, "subject": msg.get("subject", ""),
+               "message_id": msg.get("id", "")}
+        if found == "verify":
+            out["link"] = detect.verification_link(msg)
+        elif found == "reset":
+            out["link"] = detect.password_reset_link(msg)
+        elif found == "code":
+            out["code"] = detect.otp_code(msg)
+        return out
+    return None
+
+
+@app.post("/api/inbox/await")
+@_guard
+def inbox_await():
+    """Long-poll the person's mailbox for the mail an unattended apply run is waiting on.
+    Body {kind: verify|code|reset|any, host, company?, since (epoch seconds), timeout_s}.
+    Returns {ok: true, kind, link?, code?, subject, message_id}; {ok: false, reason:
+    "not-connected"} at once when no mailbox is set up; {ok: false, reason: "timeout"} after
+    timeout_s (default 120, at most 240). Blocks the request; the server is threaded."""
+    b = request.json or {}
+    kind = str(b.get("kind") or "any").strip().lower()
+    if kind not in ("verify", "code", "reset", "any"):
+        return jsonify({"ok": False, "error": "kind must be verify, code, reset or any."}), 400
+    from submit.policy import _host
+    host = _host(str(b.get("host") or b.get("url") or ""))
+    company = str(b.get("company") or "").strip()
+    if not host and not company:
+        return jsonify({"ok": False, "error": "Say which site (host) the mail is from."}), 400
+    try:
+        since = float(b.get("since") or time.time())
+    except (TypeError, ValueError):
+        since = time.time()
+    try:
+        timeout_s = int(b.get("timeout_s") or 120)
+    except (TypeError, ValueError):
+        timeout_s = 120
+    timeout_s = max(1, min(timeout_s, 240))
+    mailbox = _current_mailbox()
+    if mailbox is None:
+        return jsonify({"ok": False, "reason": "not-connected"})
+    poll = 3 if _under_test_or_dev() else _AWAIT_POLL_S
+    deadline = time.time() + timeout_s
+    while True:
+        try:
+            messages = mailbox.search(since)
+        except Exception as exc:     # the mailbox itself failed (server down, token stale)
+            return jsonify({"ok": False, "reason": "mailbox-error", "error": str(exc)})
+        hit = _await_match(messages, kind, host, company)
+        if hit:
+            return _nostore(jsonify(hit))
+        if time.time() + poll > deadline:
+            return jsonify({"ok": False, "reason": "timeout"})
+        time.sleep(poll)
+
+
+@app.post("/api/inbox/dev/deliver")
+def inbox_dev_deliver():
+    """Put a message in the FakeMailbox (shell e2e). 404 unless RESUME_AGENT_FAKE_MAILBOX=1 in
+    a dev or test session: this does not exist in a shipped build."""
+    if not _fake_mailbox_on():
+        return jsonify({"error": "Not found."}), 404
+    from inbox.mailbox import fake_mailbox
+    b = request.json or {}
+    stored = fake_mailbox().deliver({"from": b.get("from", ""), "subject": b.get("subject", ""),
+                                     "body": b.get("body", ""), "id": b.get("id", "")})
+    return jsonify({"ok": True, "id": stored["id"]})
 
 
 _SUGGESTIONS_FILE = _DATA / "inbox_suggestions.json"
