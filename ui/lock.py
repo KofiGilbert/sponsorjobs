@@ -59,6 +59,8 @@ _CRED_NAMES = (
     # The Gmail OAuth token (JSON) — mailbox read access. Stored via the app's Gmail token
     # store (inbox/gmail.set_token_store), not the creds file, but custodied all the same.
     "GMAIL_TOKEN",
+    # IMAP fallback for the same mailbox read: the app password opens the whole inbox.
+    "IMAP_EMAIL", "IMAP_PASSWORD", "IMAP_HOST",
 )
 
 # In-memory session state. Deliberately not persisted: "is the app unlocked right now" is a
@@ -217,7 +219,7 @@ class Lock:
         """Does App Lock (when enabled) own this credential, vs the plaintext creds file?
         A portal account the apply agent created (PORTAL_<host>, email|password) is one too:
         the name is per host, so it is matched by prefix rather than listed."""
-        return name in _CRED_NAMES or name.startswith("PORTAL_")
+        return name in _CRED_NAMES or name.startswith("PORTAL_") or name.startswith("IMAP_")
 
     def custody_names(self) -> tuple[str, ...]:
         """Every credential App Lock takes into encrypted custody when enabled — so callers
