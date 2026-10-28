@@ -177,3 +177,142 @@ def _verdict(kind: str, phrase: str, subject: str) -> dict:
     short = " ".join(phrase.split())[:80]
     return {"kind": kind, "stage": STAGE_FOR.get(kind, ""), "phrase": short,
             "reason": f'{where} says "{short}"'}
+
+
+# ---------------------------------------------------------------------- what the apply agent waits for
+#
+# An unattended run (docs/apply-agent.md milestone 3) waits on three kinds of mail: the link
+# that verifies a new portal account, a one-time code, and a password-reset link. Pure rules
+# over one message dict; the route filters by ``about_site`` BEFORE any of these run, so
+# mail about anything else is never inspected (CLAUDE.md section 5).
+
+# Words that sit next to a one-time code. "verif" covers verify/verification.
+_CODE_CUE_RE = re.compile(
+    r"\bcode\b|verif|one[- ]time|\bpin\b|passcode|\botp\b|confirm|security|authenticat", re.I)
+# Digit runs that are not a code: a phone number, a zip after a state, an order/ticket
+# number, a year. They are blanked before the scan so they never win.
+_PHONE_RE = re.compile(r"(?:\+?\d{1,3}[\s.-])?\(?\d{3}\)?[\s.-]\d{3}[\s.-]?\d{4}\b")
+_ZIP_RE = re.compile(r",\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b")
+_REFERENCE_RE = re.compile(
+    r"\b(?:order|ticket|case|invoice|tracking|account|reference|ref|req(?:uisition)?|job|"
+    r"application)\s*(?:number|no\.?|id|#)?\s*[:#]?\s*#?\s*\d{4,8}\b", re.I)
+_YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+_CODE_RE = re.compile(r"(?<![\d-])(\d{4,8})(?![\d-])")
+_WINDOW = 70
+
+
+def _blank_non_codes(text: str) -> str:
+    for pat in (_PHONE_RE, _ZIP_RE, _REFERENCE_RE, _YEAR_RE):
+        text = pat.sub(lambda m: " " * len(m.group(0)), text)
+    return text
+
+
+def _code_in(text: str) -> str:
+    """The first 4 to 8 digit run with a code cue within ``_WINDOW`` characters of it."""
+    clean = _blank_non_codes(text or "")
+    for m in _CODE_RE.finditer(clean):
+        around = clean[max(0, m.start() - _WINDOW): m.end() + _WINDOW]
+        if _CODE_CUE_RE.search(around):
+            return m.group(1)
+    return ""
+
+
+def otp_code(msg: dict) -> str:
+    """The one-time code a message carries, or "". The subject wins when it has one
+    ("482913 is your verification code"); the body is scanned only then."""
+    return _code_in(str(msg.get("subject") or "")) or _code_in(str(msg.get("body") or ""))
+
+
+_RESET_WORDS_RE = re.compile(
+    r"reset|forgot|forgotten|new password|change (your )?password|recover(y)? (your )?(account|password)",
+    re.I)
+_RESET_LINK_RE = re.compile(r"reset|forgot|password|passwd|recover", re.I)
+
+
+def password_reset_link(msg: dict) -> str:
+    """The link to a password reset, or "": its URL says reset/forgot/password, or the words
+    around it do."""
+    body = str(msg.get("body") or "")
+    links = list(_LINK_RE.finditer(body))
+    for m in links:
+        if _RESET_LINK_RE.search(m.group(0)):
+            return m.group(0).rstrip(".,)")
+    for m in links:
+        around = body[max(0, m.start() - 120): m.start()] + body[m.end(): m.end() + 60]
+        if _RESET_WORDS_RE.search(around):
+            return m.group(0).rstrip(".,)")
+    return ""
+
+
+# Second-level labels under a two-letter country code that are registries, not sites:
+# jobs.acme.co.uk is acme.co.uk, not co.uk.
+_REGISTRY_SLDS = {"co", "com", "org", "net", "ac", "gov", "edu", "or", "ne"}
+# ATS families whose mail comes from a different domain than the career site: the host
+# suffixes a site may use, and the sender domains that family mails from.
+_ATS_FAMILIES = (
+    (("myworkdayjobs.com", "myworkday.com", "workday.com"),
+     ("myworkday.com", "myworkdayjobs.com", "workday.com")),
+    (("greenhouse.io",), ("greenhouse.io", "greenhouse-mail.io")),
+    (("lever.co",), ("lever.co", "hire.lever.co")),
+    (("ashbyhq.com",), ("ashbyhq.com",)),
+    (("icims.com",), ("icims.com",)),
+    (("smartrecruiters.com",), ("smartrecruiters.com",)),
+    (("workable.com",), ("workable.com", "workablemail.com")),
+    (("taleo.net",), ("taleo.net",)),
+    (("successfactors.com", "successfactors.eu"), ("successfactors.com", "successfactors.eu", "sap.com")),
+    (("jobvite.com",), ("jobvite.com",)),
+)
+
+
+def registrable_domain(host: str) -> str:
+    """acme.wd5.myworkdayjobs.com -> myworkdayjobs.com; jobs.acme.co.uk -> acme.co.uk."""
+    labels = [p for p in str(host or "").lower().strip().strip(".").split(".") if p]
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _REGISTRY_SLDS:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def sender_domain(msg: dict) -> str:
+    m = re.search(r"[\w.+-]+@([\w.-]+)", str(msg.get("from") or ""))
+    return m.group(1).lower().rstrip(".") if m else ""
+
+
+def _under(domain: str, suffixes) -> bool:
+    return any(domain == s or domain.endswith("." + s) for s in suffixes)
+
+
+def about_site(msg: dict, host: str, company: str = "") -> bool:
+    """Is this message from the site (or employer) the agent is applying on? True when the
+    sender's registrable domain is the host's, when the company name appears in the From or
+    the subject, or when the sender is the ATS family that host belongs to. The gate every
+    search result passes before it is read any further."""
+    host = str(host or "").lower().strip()
+    if host.startswith("http"):
+        host = re.sub(r"^https?://", "", host).split("/")[0]
+    if host.startswith("www."):
+        host = host[4:]
+    sender = sender_domain(msg)
+    if host and sender and registrable_domain(sender) == registrable_domain(host):
+        return True
+    name = str(company or "").strip().lower()
+    if len(name) >= 2:
+        haystack = f"{msg.get('from') or ''}\n{msg.get('subject') or ''}".lower()
+        if name in haystack:
+            return True
+    if host and sender:
+        for hosts, senders in _ATS_FAMILIES:
+            if _under(host, hosts) and _under(sender, senders):
+                return True
+    return False
+
+
+def kind_of(msg: dict) -> str:
+    """"verify" | "code" | "reset" | "" for one message the agent may be waiting on."""
+    text = f"{msg.get('subject') or ''}\n{msg.get('body') or ''}"
+    if _RESET_WORDS_RE.search(text) and password_reset_link(msg):
+        return "reset"
+    if otp_code(msg):
+        return "code"
+    if _VERIFY_RE.search(text) and _LINK_RE.search(text):
+        return "verify"
+    return ""
