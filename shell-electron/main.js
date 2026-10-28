@@ -1042,6 +1042,7 @@ const agent = createAgent({
   getPane: () => pane, openInPane, waitPaneLoad, autofillCore, agentViewSource,
   runAutoApplyOnPane, postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision,
   isNewPage, attachResume,
+  sign: (req) => postApp("/api/autoapply/agent/sign", req),
 });
 ipcMain.handle("agent:run", async (_e, opts) => {
   const o = opts || {};

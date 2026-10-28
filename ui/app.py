@@ -10554,6 +10554,30 @@ def autoapply_agent_step():
     return jsonify(out)
 
 
+@app.post("/api/autoapply/agent/sign")
+@_guard
+def autoapply_agent_sign():
+    """Web Bot Auth headers for one page request the agent makes (docs/apply-agent.md 7): the
+    broker holds the signing key and signs {method, authority, path} for this account; the shell
+    adds the three headers. {ok:false} when there is no account or the broker declines, and the
+    request goes out unsigned, never blocked."""
+    from inbox.relay import urllib_fetch
+    b = request.json or {}
+    authority = str(b.get("authority") or "").strip().lower()[:253]
+    if not authority or "/" in authority:
+        return jsonify({"ok": False, "reason": "bad-authority"})
+    tok = _account_token()
+    if not tok:
+        return jsonify({"ok": False, "reason": "no-account"})
+    out = urllib_fetch(BROKER_URL, tok, timeout=3.0)("POST", "/agent/sign", {
+        "method": str(b.get("method") or "GET")[:10], "authority": authority,
+        "path": str(b.get("path") or "/")[:2048]}) or {}
+    if out.get("error") or not out.get("signature"):
+        return jsonify({"ok": False, "reason": str(out.get("error") or "unsigned")})
+    return jsonify({"ok": True, "signature_input": out.get("signature_input"), "signature": out.get("signature"),
+                    "signature_agent": out.get("signature_agent") or '"https://sponsorjobs.ai"'})
+
+
 @app.get("/api/autoapply/agent/portal-account")
 @_guard
 def autoapply_agent_portal_account():
