@@ -200,18 +200,90 @@ function createAgent(deps) {
   // Routed by index range to the main frame or the embedded frame it came from. Upload goes
   // through CDP (script cannot set a file input). The in-page act() refuses Submit-like buttons
   // on its own; this side refuses them too (belt and braces, docs section 6).
+  function viewLine(viewText, index) {
+    const re = new RegExp("^\\*?\\[" + Number(index) + "\\]<.*$", "m");
+    const m = re.exec(String(viewText || ""));
+    return m ? m[0] : "";
+  }
+
+  // A real pointer and keyboard for the main frame, through CDP: Workday's prompt widgets and
+  // other React controls ignore a programmatic value and a synthetic click, and honour what a
+  // person's mouse and keys do. The in-page act() stays the fallback (and the frame path).
+  async function realClick(wc, index) {
+    const release = deps.acquireDebugger(wc);
+    if (!release) return null;
+    try {
+      const r = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); if (!el) return null;
+        el.scrollIntoView({ block: "center", inline: "nearest" }); const b = el.getBoundingClientRect();
+        return { x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width, h: b.height }; })()`, true);
+      if (!r || !(r.w > 0 && r.h > 0)) return null;
+      const dbg = wc.debugger;
+      await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: r.x, y: r.y });
+      await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: r.x, y: r.y, button: "left", clickCount: 1 });
+      await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: r.x, y: r.y, button: "left", clickCount: 1 });
+      return { ok: true, note: "" };
+    } catch (e) { return null; }
+    finally { release(); }
+  }
+  async function realType(wc, index, text) {
+    const release = deps.acquireDebugger(wc);
+    if (!release) return null;
+    try {
+      const focused = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); if (!el) return false;
+        el.scrollIntoView({ block: "center", inline: "nearest" }); el.focus();
+        if (typeof el.select === "function") { try { el.select(); } catch (e) {} }
+        return document.activeElement === el || el.contains(document.activeElement); })()`, true);
+      if (!focused) return null;
+      const dbg = wc.debugger;
+      // Replace whatever is there, then type for real: every key raises the events a person's would.
+      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: process.platform === "darwin" ? 4 : 2, commands: ["selectAll"] });
+      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA" });
+      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
+      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
+      for (const ch of String(text)) {
+        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
+        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
+      }
+      const now = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); return el ? String(el.value != null ? el.value : el.textContent || "") : ""; })()`, true);
+      return { ok: true, note: String(now || "") === String(text) ? "" : "value differs" };
+    } catch (e) { return null; }
+    finally { release(); }
+  }
+
   async function act(wc, fr, v, a, resumePath) {
     const expr = `window.TailorAgent.act(${JSON.stringify(a)})`;
     const ctx = v.frameOf.get(a.index);
     if (a.op === "upload") return upload(wc, fr, ctx, a.index, resumePath);
+    // Where a person's real pointer and keys matter: typeahead boxes (type for real so the
+    // list opens) and the options they show (click for real). Plain fields and buttons keep
+    // the in-page path, which is faster and already proven on the mock and live forms.
+    const line = viewLine(v.text, a.index);
+    if (!ctx && a.op === "click") {
+      const label = await wc.executeJavaScript(TEXT_JS(a.index), true).catch(() => "");
+      if (SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
+      if (/^\*?\[\d+\]<(option|menuitem|li|div|span)\b/.test(line) || /role=(option|menuitem)/.test(line)) {
+        const real = await realClick(wc, a.index);
+        if (real) return real;
+      }
+    }
+    if (!ctx && a.op === "type" && typeof a.text === "string" && /<combobox\b|aria-autocomplete|search=true/.test(line)) {
+      const real = await realType(wc, a.index, a.text);
+      if (real) return real;
+    }
     if (a.op === "click") {
       const label = await (ctx ? fr.eval(ctx, TEXT_JS(a.index))
                                : wc.executeJavaScript(TEXT_JS(a.index), true).catch(() => ""));
       if (SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
     }
     const run = ctx ? fr.eval(ctx, expr) : wc.executeJavaScript(expr, true);
-    try { return (await withTimeout(run, ACTION_MS, a.op)) || { ok: false, note: "no result" }; }
-    catch (e) { return { ok: false, note: String(e && e.message || e).slice(0, 120) }; }
+    let out;
+    try { out = (await withTimeout(run, ACTION_MS, a.op)) || { ok: false, note: "no result" }; }
+    catch (e) { out = { ok: false, note: String(e && e.message || e).slice(0, 120) }; }
+    if (!ctx && a.op === "click" && out && /covered/.test(out.note || "")) {
+      const real = await realClick(wc, a.index);              // the pointer lands where the eye does
+      if (real) return real;
+    }
+    return out;
   }
 
   async function upload(wc, fr, ctx, index, resumePath) {
@@ -263,7 +335,7 @@ function createAgent(deps) {
 
   // What to ask: the engine's open fields, else the fields the page's own errors name ("The
   // field X is required"), else empty required boxes in the view. Labels only, never values.
-  function questionsFor(viewText, left) {
+  function questionsFor(viewText, left, includeFilled) {
     const out = [];
     const add = (q) => { q = String(q || "").trim(); if (q && !out.includes(q)) out.push(q); };
     for (const x of left || []) add(typeof x === "string" ? x : (x && x.label) || "");
@@ -280,7 +352,7 @@ function createAgent(deps) {
       const esc = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return new RegExp('label="' + esc + '"[^\n]*(value="\\(filled\\)"|checked=true)').test(text);
     };
-    return out.filter((q) => !filled(q)).slice(0, 3);
+    return (includeFilled ? out : out.filter((q) => !filled(q))).slice(0, 3);
   }
 
   // The choices a page offers for a field, read off the view: a select's first options or the
@@ -397,6 +469,10 @@ function createAgent(deps) {
         if (pageHashes.length >= 4 && pageHashes.slice(-4).every((h) => h === pageHash) && !filled) {
           return stopped("stuck", "I could not get past this page. Have a look at it.", { url });
         }
+
+        // The engine's open list, plus the fields the page's own errors name: a value the engine
+        // typed into a widget that ignored it reads as filled, while the site still says empty.
+        for (const q of questionsFor(v.text, [], true)) if (!left.includes(q)) left.push(q);
 
         // 3. the brain
         const nudges = [];
