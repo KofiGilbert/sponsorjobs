@@ -200,6 +200,27 @@ test("a file input at opacity 0 (the upload button pattern) is still listed; cli
   await page.close();
 });
 
+test("a styled checkbox (the real input at opacity 0 inside a drawn box) is listed and clicks", async ({ open }) => {
+  // Workday's "I consent to the terms" box, 2026-10-28: the agent could not see it and gave up.
+  const page = await open("mock_ats.html");
+  await page.evaluate(AGENT);
+  await page.evaluate(() => {
+    const wrap = document.createElement("div");
+    wrap.innerHTML = '<div class="box" style="position:relative;width:24px;height:24px;border:1px solid #333">'
+      + '<input id="consent" type="checkbox" style="opacity:0;position:absolute;width:24px;height:24px;margin:0"></div>'
+      + '<label for="consent">Yes, I have read and consent to the terms and conditions.</label>';
+    document.getElementById("step").appendChild(wrap);
+  });
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const box = indices(v.text).find((i) => line(v.text, i).includes("<checkbox"));
+  assert.ok(box, v.text);
+  assert.ok(line(v.text, box).includes('label="Yes, I have read and consent to the terms and conditions." checked=false'), line(v.text, box));
+  const c = await page.evaluate(`window.TailorAgent.act({op: "click", index: ${box}})`);
+  assert.ok(c.ok, JSON.stringify(c));
+  assert.strictEqual(await page.evaluate("document.getElementById('consent').checked"), true);
+  await page.close();
+});
+
 test("the submit guard refuses Submit; submitButton() still finds it for the shell", async ({ open }) => {
   const page = await open("react_select.html");
   await page.evaluate(AGENT);
