@@ -249,6 +249,8 @@ function createAgent(deps) {
     const hosts = await allowedHosts(applyUrl);
     const history = [];
     const portals = new Set();           // hosts whose portal account was ensured this run
+    const startedAt = Date.now() / 1000; // mail older than the run is never used
+    let emailCode = "";                  // a code the mailbox handed over, for the next step only
     const hashes = [];
     const pageHashes = [];
     let failed = 0;
@@ -340,7 +342,7 @@ function createAgent(deps) {
           reply = await withTimeout(deps.postApp("/api/autoapply/agent/step", {
             record_id: recordId, step, max_steps: MAX_STEPS, url, lane: opts.lane || "assisted",
             view: v.text, filled_this_step: filled, left, nudges, blocker: sig.blocker || "",
-            history: history.slice(-12),
+            history: history.slice(-12), email_code: emailCode,
           }), STEP_BRAIN_MS, "brain");
         } catch (e) { reply = null; }
         dlog("step " + step + " reply:", reply);
@@ -361,6 +363,33 @@ function createAgent(deps) {
           return finish({ ok: true, submitted: true, steps: step });
         }
         if (done && done.outcome === "blocked") return stopped(done.reason || "needs-person", blockedMessage(done.reason), { url });
+        if (done && done.outcome === "await_email") {
+          // The site emailed a code or a link. With a mailbox connected the engine watches the
+          // person's own inbox for THIS site's message (inbox/await, read-only, consent given in
+          // Settings); without one the run stops and says what to connect.
+          progress(recordId, "running", "Waiting for the site's email", { step });
+          const got = await deps.postApp("/api/inbox/await", {
+            kind: "any", host: hostOf(url), company: opts.company || "", since: startedAt, timeout_s: 180 });
+          dlog("step " + step + " await ->", got && { ok: got.ok, kind: got.kind, reason: got.reason, link: !!got.link, code: !!got.code });
+          if (!got || got.ok === false) {
+            if (got && got.reason === "not-connected") {
+              return stopped("verify-email", "The site emailed you a " + (done.reason === "code" ? "code" : "link")
+                + ". Connect your email in Settings so this finishes by itself, or do that step yourself and press Apply for me again.", { url });
+            }
+            return stopped("verify-email", "The site's email did not arrive in 3 minutes. Check your inbox, then press Apply for me again.", { url });
+          }
+          if (got.code) { emailCode = String(got.code); history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["await email"], results: ["got the code"] }); continue; }
+          if (got.link) {
+            const before = wc.getURL() || "";
+            hosts.add(hostOf(got.link));                   // the link belongs to this site's mail
+            deps.openInPane(got.link);
+            await delay(400);
+            await settle(wc, before);
+            history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["await email"], results: ["opened the emailed link"] });
+            continue;
+          }
+          return stopped("verify-email", "The site's email had no link or code I could use.", { url });
+        }
 
         // 5. the actions, in order; the queue stops when the page changes
         const results = [];
@@ -373,6 +402,7 @@ function createAgent(deps) {
           names.push(a.op + " " + (a.index || "") + (a.sensitive ? " (secret)" : a.text ? " " + JSON.stringify(a.text).slice(0, 40) : a.option ? " " + a.option : ""));
           const before = wc.getURL() || "";
           const r = await act(wc, fr, v, a, opts.resumePath || "");
+          if (a.placeholder === "email_code" && r && r.ok) emailCode = "";
           results.push(r && r.ok ? (r.note ? "ok, " + r.note : "ok") : "failed: " + ((r && r.note) || "?"));
           dlog("step " + step + " act " + h + " ->", r);
           if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") return handOver(recordId, wc, url, opts, step); continue; }

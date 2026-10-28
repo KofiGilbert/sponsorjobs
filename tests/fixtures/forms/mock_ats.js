@@ -8,6 +8,9 @@
   const q = new URLSearchParams(location.search);
   const captcha = q.get("captcha") === "1";
   const signinFails = q.get("signin") === "fail";
+  const verify = q.get("verify") === "1";             // a 6-digit code is emailed after sign-in
+  const resetToken = q.get("reset") || "";             // the emailed reset link lands here
+  const CODE = "482913";
   const log = [];                                      // what happened, read by the test
   window.fxLog = () => log.slice();
   window.fx = {};
@@ -28,14 +31,45 @@
         + '<div class="field"><label for="ae">Email Address</label><input type="email" id="ae"></div>'
         + '<div class="field"><label for="pw">Password</label><input type="password" id="pw"></div>'
         + '<p id="err" class="error" hidden></p>'
-        + btn("signin", "Sign in") + ' ' + btn("create", "Create account"));
+        + btn("signin", "Sign in") + ' ' + btn("create", "Create account") + ' <a href="#forgot" id="forgot">Forgot password?</a>');
       $("signin").onclick = () => {
         signinTries++;
         if (!$("ae").value || !$("pw").value) { $("err").textContent = "Email and password are required."; $("err").hidden = false; return; }
         if (signinFails && signinTries === 1) { $("err").textContent = "We could not find an account with that email."; $("err").hidden = false; log.push("signin-failed"); return; }
-        log.push("signin"); pages.contact();
+        log.push("signin");
+        if (verify) pages.code(); else pages.contact();
       };
       $("create").onclick = () => { log.push("create-account-page"); pages.create(); };
+      $("forgot").onclick = () => { log.push("forgot"); pages.reset(); };
+    },
+    code() {
+      page('<h2>Check your email</h2><p>Enter the 6-digit code we sent to your email address.</p>'
+        + '<div class="field"><label for="otp">Verification code</label><input type="text" id="otp" inputmode="numeric"></div>'
+        + '<p id="err" class="error" hidden></p>' + btn("verify", "Verify"));
+      $("verify").onclick = () => {
+        if ($("otp").value.trim() !== CODE) { $("err").textContent = "That code is not right."; $("err").hidden = false; log.push("code-wrong"); return; }
+        log.push("code-ok"); pages.contact();
+      };
+    },
+    reset() {
+      page('<h2>Reset your password</h2><p>Enter your email and we will send you a link to reset it.</p>'
+        + '<div class="field"><label for="re">Email Address</label><input type="email" id="re"></div>'
+        + btn("sendreset", "Send reset link"));
+      $("sendreset").onclick = () => {
+        if (!$("re").value) return;
+        log.push("reset-requested");
+        page('<h2>Check your email</h2><p>We emailed you a link to reset your password. Click the link in the email to continue.</p>');
+      };
+    },
+    newpw() {
+      page('<h2>Choose a new password</h2>'
+        + '<div class="field"><label for="np">New Password</label><input type="password" id="np"></div>'
+        + '<div class="field"><label for="np2">Confirm New Password</label><input type="password" id="np2"></div>'
+        + '<p id="err" class="error" hidden></p>' + btn("savepw", "Save password"));
+      $("savepw").onclick = () => {
+        if (!$("np").value || $("np").value !== $("np2").value) { $("err").textContent = "Passwords do not match."; $("err").hidden = false; return; }
+        log.push("password-reset"); pages.contact();
+      };
     },
     create() {
       page('<h2>Create your account</h2>'
@@ -94,4 +128,4 @@
     },
   };
   function $(id) { return document.getElementById(id); }
-  pages.job();
+  if (resetToken) { log.push("reset-link-opened"); pages.newpw(); } else pages.job();

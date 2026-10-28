@@ -1045,7 +1045,8 @@ const agent = createAgent({
 });
 ipcMain.handle("agent:run", async (_e, opts) => {
   const o = opts || {};
-  return agent.run(o.recordId, { url: o.url, resumePath: o.resumePath, lane: o.lane, autonomous: !!o.autonomous });
+  return agent.run(o.recordId, { url: o.url, resumePath: o.resumePath, lane: o.lane, autonomous: !!o.autonomous,
+                                 company: o.company || "" });
 });
 ipcMain.handle("agent:send", async (_e, recordId) => agent.send(recordId));
 ipcMain.handle("agent:stop", async () => { agent.stop(); return { ok: true }; });

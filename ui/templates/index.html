@@ -1362,15 +1362,31 @@
           </div>
           <p class="conn-detail" id="extDetail" hidden></p>
 
-          <!-- Gmail: status now; full in-app OAuth connect is a follow-up. -->
+          <!-- Email: the apply agent reads ONLY this site's verification codes, links and
+               recruiter replies from the person's own mailbox (CLAUDE.md section 5). Gmail app
+               password over IMAP today; Google sign-in once the app is verified. -->
           <div class="conn-row">
             <div class="conn-hd">
-              <div class="conn-name">Gmail <span class="conn-status" id="gmStatus"></span></div>
-              <div class="conn-desc">Complete application email verifications and surface recruiter replies. Read-first, on your consent.</div>
+              <div class="conn-name">Email <span class="conn-status" id="gmStatus"></span></div>
+              <div class="conn-desc">So applications finish on their own: verification codes and links, and recruiter replies. Read-only, your inbox, your consent.</div>
             </div>
-            <button class="btn btn-ghost" id="gmHelp" type="button">Set up</button>
+            <button class="btn btn-ghost" id="gmHelp" type="button">Connect</button>
           </div>
           <p class="conn-detail" id="gmDetail" hidden></p>
+          <form class="conn-form" id="gmForm" hidden autocomplete="off">
+            <ol class="nt-steps">
+              <li>Turn on 2-Step Verification in your Google account.</li>
+              <li>Open <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">App passwords</a>, name it SponsorJobs, and copy the 16-character password.</li>
+              <li>Paste it here. It is kept on this computer only.</li>
+            </ol>
+            <input class="fld" id="gmEmail" type="email" placeholder="you@gmail.com" spellcheck="false" required>
+            <input class="fld" id="gmPass" type="password" placeholder="App password" autocomplete="off" required>
+            <div class="conn-form-foot">
+              <button class="btn btn-primary btn-sm" type="submit">Connect</button>
+              <button class="btn btn-ghost btn-sm" id="gmCancel" type="button">Cancel</button>
+            </div>
+            <p class="conn-msg" id="gmMsg" hidden></p>
+          </form>
 
           <!-- GitHub: connect the person's own account so they can publish a verified project. -->
           <div class="conn-row">
