@@ -20,7 +20,11 @@ def A(tmp_path, monkeypatch):
     app_mod._RELAY["box"] = None
     monkeypatch.setattr(app_mod, "_account_token", lambda: "tok-1")
     monkeypatch.setattr(app_mod, "_saved_identity", lambda: {"name": "Kofi Test", "email": "kofi@example.com"})
-    return app_mod
+    yield app_mod
+    # The module stays reloaded for later tests in this worker; leave no address behind, or a
+    # profile test reads the alias as the person's e-mail (CI, 2026-10-28).
+    app_mod._set_prefs({"mail_alias": "", "apply_with_alias": True})
+    app_mod._RELAY["box"] = None
 
 
 class FakeBroker:
