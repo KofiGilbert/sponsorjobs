@@ -7,7 +7,8 @@
 // configured, so the app degrades the same way. Live interviews (Tavus), Stripe billing and
 // passwordless sign-in (e-mail code, Google; src/signin.ts) are built, and each stays
 // "not configured" until its secrets are set. Mail aliases for the apply agent (src/mail.ts) are
-// new here: the Python broker has no e-mail receiver.
+// new here: the Python broker has no e-mail receiver, and so is request signing for the apply
+// agent (src/botauth.ts): the private key lives only in this Worker.
 //
 // Privacy, as in the Python broker: nothing here stores prompts, resumes or replies. D1 holds
 // only account ids, token hashes, usage counts, and (for 30 minutes) the code or link a job
@@ -20,6 +21,7 @@ import {
   type Billing, billingFor, billingFrom, grantFor, offeredPacks, offeredPasses, packCheckoutUrl, packPrice, passCheckoutUrl,
   UnknownProduct, verifySignature,
 } from "./billing";
+import { agentSign, directory, DIRECTORY_PATH } from "./botauth";
 import { type Env, intVar } from "./env";
 import { aliasCreate, aliasDelete, aliasGet, inboxRead, receiveMail } from "./mail";
 import {
@@ -408,6 +410,10 @@ const ROUTES: Route[] = [
   ["GET", /^\/mail\/alias$/, ({ req, env }) => aliasGet(req, env)],
   ["DELETE", /^\/mail\/alias$/, ({ req, env }) => aliasDelete(req, env)],
   ["GET", /^\/mail\/inbox$/, ({ req, env, now }) => inboxRead(req, env, now)],
+  // Web Bot Auth for the apply agent (src/botauth.ts, docs/signed-agent.md): sign one page request,
+  // and publish the key. The directory is also routed here from sponsorjobs.ai (wrangler.jsonc).
+  ["POST", /^\/agent\/sign$/, ({ req, env, now }) => agentSign(req, env, now)],
+  ["GET", new RegExp(`^${DIRECTORY_PATH.replace(/[.]/g, "\\.")}$`), ({ req, env, now }) => directory(req, env, now)],
   ["GET", /^\/notify\/telegram\/(status|inbox)$/, off("telegram_not_configured")],
   ["POST", /^\/notify\/telegram\/(link|unlink|send|send_media|edit)$/, off("telegram_not_configured")],
   ["POST", /^\/telegram\/webhook$/, off("telegram_not_configured")],

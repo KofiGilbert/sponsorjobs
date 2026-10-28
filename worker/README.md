@@ -33,6 +33,8 @@ implementation; it does not replace or change anything in `backend/`.
 | `POST /mail/alias` `{name?}` | the caller's `first.last@sponsorjobs.ai` alias for the apply agent, `{alias, forward_to}` (idempotent; `409 sign_in_first` without a verified e-mail) |
 | `GET /mail/alias`, `DELETE /mail/alias` | read or release the alias (`{alias, forward_to}`, both null when there is none) |
 | `GET /mail/inbox?after=<cursor>` | codes and links mailed to the alias in the last 30 minutes, `{events: [{cursor, kind, code, link, subject, sender, at}], cursor}`; `after` acknowledges |
+| `POST /agent/sign` `{method, authority, path}` | Web Bot Auth headers for one page request the apply agent makes: `{signature_input, signature, signature_agent, expires}` (60 s; 120 per account per minute, `429 rate_limited`; `503 not_configured` without `AGENT_SIGNING_KEY`) |
+| `GET /.well-known/http-message-signatures-directory` | the agent's public key (a signed JWKS); routed here from sponsorjobs.ai as well, the registered Signature-Agent |
 
 Billing is off until the Stripe secrets are set (`STRIPE_SECRET_KEY` and at least one pass price;
 see `docs/stripe-setup.md`). While off, the billing routes answer exactly as the Python broker does
@@ -50,6 +52,11 @@ Mail aliases (`src/mail.ts`, `docs/mail-alias.md`): each student gets `first.las
 to give job portals. Email Routing's catch-all delivers to this Worker's `email` handler, which
 keeps only the one-time code or verification link for 30 minutes (so the apply agent can poll it)
 and forwards the whole message to the student's verified e-mail through Resend.
+
+Request signing for the apply agent (`src/botauth.ts`, `docs/signed-agent.md`): the agent identifies
+itself to job sites with RFC 9421 signatures in Cloudflare's Web Bot Auth shape. The Ed25519 key is
+the `AGENT_SIGNING_KEY` secret, only in this Worker; its public half is published at
+`https://sponsorjobs.ai/.well-known/http-message-signatures-directory` (a route on this Worker).
 
 ## Run it locally
 
@@ -90,6 +97,8 @@ The tests never touch the network: every call to Anthropic is stubbed.
 6. Custom domain: in the Cloudflare dashboard, Workers & Pages, `sponsorjobs-broker`, Settings,
    Domains & Routes, add `api.sponsorjobs.ai` (the sponsorjobs.ai zone must be on the same account).
 7. Point the official app build at `https://api.sponsorjobs.ai` (`TAILOR_BROKER_URL`).
+8. Request signing for the apply agent: the key, the extra route and the Cloudflare registration
+   are in `docs/signed-agent.md`.
 
 Moving existing accounts from Render: the D1 tables use the same names and columns as the Python
 broker's SQLite file (`users`, `usage`, `accounts`, `tokens`), so existing tokens keep working
