@@ -176,7 +176,7 @@ def test_learn_from_corrections_updates_identity_and_answers(client):
     }).get_json()
     assert r["ok"] is True and set(r["learned"]) >= {"phone", "name", "linkedin", "needs_sponsorship"}
     d = c.get("/api/profile/autofill", headers=EXT).get_json()
-    assert d["fields"]["phone"] == "555-999-0000"
+    assert d["fields"]["phone"] == "5559990000"      # the autofill payload carries digits (Workday, 2026-10-28)
     assert d["fields"]["last_name"] == "Gilbert-Mensah" and d["fields"]["first_name"] == "Kofi"
     assert d["fields"]["linkedin"] == "https://linkedin.com/in/kofi"
     assert d["screening"]["needs_sponsorship"] == "No"
