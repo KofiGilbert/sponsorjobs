@@ -544,3 +544,34 @@ def answer(question: str, wa: dict | None, *, options=(), field_type: str = "tex
             picked = pick_status(st, opts, country) if st else None
         return picked
     return "Yes" if val else "No"
+
+
+def note(wa: dict | None, job_country: str = "US") -> str:
+    """One honest sentence about the person's status for the "please explain / provide more
+    information" box many forms show after a sponsorship question. Built only from the saved
+    profile; "" when it holds nothing for that country."""
+    wa = wa or {}
+    cc = (job_country or "US").upper()
+    ent = (wa.get("countries") or {}).get(cc) or {}
+    if not ent:
+        return ""
+    label = dict(STATUSES.get(cc, [])).get(str(ent.get("status") or ""), "")
+    parts = []
+    if label:
+        parts.append(f"I am currently on {label}" if cc == "US" and label not in ("U.S. citizen", "Green card holder (permanent resident)")
+                     else f"I am a {label.lower()}" if label == "U.S. citizen" else f"I am a {label.lower()}" if label.startswith("Green card") else f"My status is {label}")
+    auth = str(ent.get("authorized") or "")
+    now, fut = str(ent.get("sponsor_now") or ""), str(ent.get("sponsor_future") or "")
+    if auth == "Yes" and now == "No":
+        parts.append("authorized to work without sponsorship at this time")
+    elif auth == "Yes":
+        parts.append("authorized to work")
+    elif auth == "No":
+        parts.append("not yet authorized to work")
+    first = " and ".join(parts) + "." if parts else ""
+    second = ""
+    if fut == "Yes":
+        second = " I will need sponsorship in the future."
+    elif fut == "No" and now == "No":
+        second = " I will not need sponsorship."
+    return (first + second).strip()

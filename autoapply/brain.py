@@ -43,6 +43,7 @@ Rules:
 11. A page that is not a job application (a 404, a closed posting, a generic careers home): report blocked with the reason not-a-job.
 12. When you are done or stuck, done goes alone: no actions with it.
 15. <left> lists fields the engine left open. Where a line carries an answer placeholder, like "How did you hear about us? (type {{answer_1}})", the person has answered it: fill it yourself with that placeholder (for a list or combobox: type it, wait a step, click the matching suggestion). A resume or CV file box: use upload on it. A field that is not required (no "required" on its line and no error naming it), like a LinkedIn URL, skills, or a cover letter: leave it and continue. Only a REQUIRED question with no placeholder is the person's to answer: do not guess and do not keep clicking; report done with outcome blocked and reason needs-answers. The person is asked, and the run resumes with the answer.
+17. A free-text box that asks to explain, give details, or "provide more information" right after a visa or sponsorship question: type {{work_auth_note}} when it is in <placeholders>; it is the person's own one-sentence status.
 16. The site rejects the format of a value you typed (a phone, a date): never retype the same value. Try the other form once (digits only for a phone), then if it still fails report blocked with reason needs-person.
 
 Reply with JSON only, no prose, exactly this shape:

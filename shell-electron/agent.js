@@ -368,6 +368,26 @@ function createAgent(deps) {
     return (includeFilled ? out : out.filter((q) => !filled(q))).slice(0, 3);
   }
 
+  // The question just above this one on the page, with its answer when shown: a box called
+  // "Please provide more information" only makes sense under "Will you need sponsorship? Yes".
+  function contextFor(viewText, label) {
+    const lines = String(viewText || "").split("\n");
+    const want = String(label || "").trim().toLowerCase();
+    let at = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const m = /label="([^"]*)"/.exec(lines[i]);
+      if (m && m[1].trim().toLowerCase() === want) { at = i; break; }
+    }
+    for (let i = at - 1; i >= 0 && at > 0; i--) {
+      const m = /label="([^"]*)"/.exec(lines[i]);
+      if (!m || m[1].trim().toLowerCase() === want) continue;
+      const val = /value="([^"]*)"/.exec(lines[i]);
+      const v = val && val[1] && val[1] !== "(filled)" ? val[1] : "";
+      return m[1].slice(0, 90) + (v ? ": " + v : "");
+    }
+    return "";
+  }
+
   // The choices a page offers for a field, read off the view: a select's first options or the
   // radio options that share the label. Empty when the field is free text or a typeahead.
   function optionsFor(viewText, label) {
@@ -537,9 +557,11 @@ function createAgent(deps) {
           for (const q of qs) {
             if (st.stop) return stopped("stopped", "Stopped.");
             const options = optionsFor(v.text, q);
-            progress(recordId, "ask", "The application asks: " + q, { step, ask: { question: q, options } });
+            const prev = contextFor(v.text, q);
+            const shown = (prev ? "After \u201c" + prev + "\u201d, the application asks: " : "The application asks: ") + q;
+            progress(recordId, "ask", shown, { step, ask: { question: q, options } });
             const r = await withTimeout(deps.postApp("/api/autoapply/agent/ask", {
-              question: q, options, timeout_s: 300, record_id: recordId }), 320000, "ask").catch(() => null);
+              question: q, options, context: prev, timeout_s: 300, record_id: recordId }), 320000, "ask").catch(() => null);
             dlog("step " + step + " ask ->", r && { ok: r.ok, reason: r.reason });
             if (r && r.ok) answered++;
             else break;

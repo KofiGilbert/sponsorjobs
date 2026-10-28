@@ -10508,6 +10508,12 @@ def _agent_placeholders(applicant: dict, prof: dict, portal: dict | None) -> tup
     names = [k for k in APPLICANT_KEYS if k in values] + (["school"] if school else [])
     if portal:
         names += ["portal_email", "portal_password"]
+    # The "please explain" box after a sponsorship question: one sentence from the saved profile.
+    from autoapply import workauth as _wa
+    wnote = _wa.note(_work_auth())
+    if wnote:
+        values["work_auth_note"] = wnote
+        names.append("work_auth_note")
     return names, values
 
 
@@ -10607,7 +10613,9 @@ def autoapply_agent_ask():
     try:
         ch = _active_channel()
         if ch is not None:
-            text = f"The application asks: {q}" + ("" if options else "\nReply with your answer and I will carry on.")
+            ctx = " ".join(str(b.get("context") or "").split())[:120]
+            text = (f"After \u201c{ctx}\u201d, the application asks: {q}" if ctx else f"The application asks: {q}") \
+                + ("" if options else "\nReply with your answer and I will carry on.")
             buttons = [[(o, f"ask:{aid}:{i}")] for i, o in enumerate(options)] if options else None
             ch.send(text, buttons)
     except Exception:          # noqa: BLE001 - no Telegram is fine; the bar still asks
