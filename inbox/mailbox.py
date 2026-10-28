@@ -252,12 +252,16 @@ def guess_imap_host(address: str) -> str:
     return known.get(domain) or (f"imap.{domain}" if domain else "imap.gmail.com")
 
 
-def pick_mailbox(cred, fake: bool = False):
+def pick_mailbox(cred, fake: bool = False, relay=None):
     """The mailbox to read, by what is connected: the FakeMailbox in a dev session that asked
-    for it, else IMAP when its credentials are saved, else the Gmail API when its token
-    exists, else None. ``cred(name)`` is the app's credential reader."""
+    for it, else the SponsorJobs alias through the broker (``relay``, an inbox.relay.RelayMailbox
+    the app builds when the person took an address), else IMAP when its credentials are saved,
+    else the Gmail API when its token exists, else None. ``cred(name)`` is the app's credential
+    reader."""
     if fake:
         return fake_mailbox()
+    if relay is not None:
+        return relay
     address, password = cred("IMAP_EMAIL"), cred("IMAP_PASSWORD")
     if address and password:
         return ImapMailbox(address, password, host=cred("IMAP_HOST") or guess_imap_host(address))
