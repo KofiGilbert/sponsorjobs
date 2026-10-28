@@ -9,8 +9,9 @@
 //   STRIPE_PRICE_PACK_1, STRIPE_PRICE_PACK_3, STRIPE_PRICE_PACK_5
 //                       Stripe billing (docs/stripe-setup.md); without the key and a pass price
 //                       every /billing/* route answers "billing is not configured".
-//   RESEND_API_KEY      e-mail sign-in codes (docs/sign-in-setup.md); without it
-//                       /account/email/* answers "email sign-in is not configured".
+//   RESEND_API_KEY      e-mail sign-in codes (docs/sign-in-setup.md) and mail forwarded from a
+//                       student's alias (docs/mail-alias.md); without it /account/email/*
+//                       answers "email sign-in is not configured" and aliases are not forwarded.
 //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 //                       "Continue with Google"; without both /account/google/* answers
 //                       "google sign-in is not configured".
@@ -27,6 +28,9 @@
     { "pattern": "api.sponsorjobs.ai", "custom_domain": true },
     { "pattern": "admin.sponsorjobs.ai", "custom_domain": true }
   ],
+  // Incoming mail needs no binding here: the sponsorjobs.ai Email Routing catch-all rule (set in the
+  // dashboard, docs/mail-alias.md) sends every message for the domain to this Worker's `email`
+  // handler (src/mail.ts).
   // 2026-08-22 is the newest date the test runtime (pinned by @cloudflare/vitest-pool-workers)
   // supports; keeping production on the same date means the tests exercise the same runtime
   // behaviour that ships. Nothing here needs a newer flag.

@@ -323,7 +323,7 @@ ${tile("Interview cost (estimate)", usd(m.interviews.cost_usd), `at ${usd(s.assu
 <div class="meter${f.percent >= 80 ? " hot" : ""}"><span style="width:${Math.min(100, f.percent)}%"></span></div>
 <div class="sub" style="margin-top:6px">Past the cap, free requests get "busy, try tomorrow"; pass holders are unaffected.</div></div>
 
-<h2>Sign-in code e-mails (${esc(e.day)})</h2>
+<h2>E-mails sent (sign-in codes and forwarded alias mail, ${esc(e.day)})</h2>
 <div class="card ${e.level}"><div class="label">${num(e.today)} of ${num(e.daily_cap)} today · ${num(e.month)} of ${num(e.monthly_cap)} this month</div>
 <div class="meter"><span style="width:${ePct}%"></span></div>
 <div class="sub" style="margin-top:6px">${e.level === "ok" ? "" : `<strong class="flag">${e.level === "red" ? "Nearly full." : "Filling up."}</strong> `}${esc(e.advice)}</div></div>
