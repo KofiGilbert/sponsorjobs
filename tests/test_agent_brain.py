@@ -367,3 +367,12 @@ def test_fake_brain_runs_the_forgot_password_path():
     r = json.loads(llm.agent_step(SYSTEM_PROMPT, build_user_message({"view": newpw}, ["portal_email", "portal_password"], [])))
     assert r["actions"] == [{"op": "type", "index": 3, "text": "{{portal_password}}"},
                             {"op": "type", "index": 4, "text": "{{portal_password}}"}, {"op": "click", "index": 5}]
+
+
+def test_needs_answers_is_a_blocked_reason_and_phone_is_digits():
+    from autoapply.brain import parse_reply
+    from autoapply.fields import applicant_from_record, phone_digits
+    r = parse_reply('{"memory":"m","evaluation":"e","actions":[],"done":{"outcome":"blocked","reason":"needs-answers"}}', {3})
+    assert r["done"] == {"outcome": "blocked", "reason": "needs-answers"}
+    assert phone_digits("+1 (630) 205-1184") == "6302051184"          # Workday refused the formatted form
+    assert applicant_from_record({"profile": {"identity": {"name": "K", "phone": "+1 (630) 205-1184"}}})["phone"] == "6302051184"

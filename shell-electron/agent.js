@@ -392,7 +392,9 @@ function createAgent(deps) {
           await deps.postApp("/api/autofill/applied", { url: applyUrl, page_url: url, record_id: recordId });
           return finish({ ok: true, submitted: true, steps: step });
         }
-        if (done && done.outcome === "blocked") return stopped(done.reason || "needs-person", blockedMessage(done.reason), { url });
+        if (done && done.outcome === "blocked") {
+          return stopped(done.reason || "needs-person", blockedMessage(done.reason, left), { url, left });
+        }
         if (done && done.outcome === "await_email") {
           // The site emailed a code or a link. With a mailbox connected the engine watches the
           // person's own inbox for THIS site's message (inbox/await, read-only, consent given in
@@ -521,8 +523,14 @@ function createAgent(deps) {
   return { run, send, stop, isReady, MAX_STEPS };
 }
 
-function blockedMessage(reason) {
+function blockedMessage(reason, left) {
   switch (reason) {
+    case "needs-answers": {
+      const qs = (left || []).map((x) => (typeof x === "string" ? x : (x && x.label) || "")).filter(Boolean).slice(0, 3);
+      const list = qs.length ? " " + qs.map((q) => "\u201c" + q.slice(0, 90) + "\u201d").join(", ") + "." : "";
+      return "This application needs " + (qs.length === 1 ? "an answer" : "answers") + " only you can give:" + list
+        + " Add " + (qs.length === 1 ? "it" : "them") + " under Settings, Applying, Your answers, then press Apply for me again.";
+    }
     case "captcha": return "This page has a captcha. Solve it, then press Apply for me again.";
     case "verify-email": return "The site sent you a verification email. Click its link, then press Apply for me again.";
     case "phone-code": return "The site wants a code from your phone. Enter it, then press Apply for me again.";
