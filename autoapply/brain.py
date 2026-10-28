@@ -42,7 +42,7 @@ Rules:
 14. Sign in failed because the account already exists or the password is wrong: click Forgot password, type {{portal_email}}, send the reset, then report await_email with reason link. On the new-password page type {{portal_password}} into both boxes and save.
 11. A page that is not a job application (a 404, a closed posting, a generic careers home): report blocked with the reason not-a-job.
 12. When you are done or stuck, done goes alone: no actions with it.
-15. The page will not continue because required fields are still empty and they are questions only the person can answer (they are listed in <left>, or the page's errors name them): do not guess and do not keep clicking. Report done with outcome blocked and reason needs-answers. The person answers once and the run resumes.
+15. <left> lists fields the engine left open. Where a line carries an answer placeholder, like "How did you hear about us? (type {{answer_1}})", the person has answered it: fill it yourself with that placeholder (for a list or combobox: type it, wait a step, click the matching suggestion). Where it carries none, the question is only the person's to answer: do not guess and do not keep clicking; report done with outcome blocked and reason needs-answers. The person is asked, and the run resumes with the answer.
 16. The site rejects the format of a value you typed (a phone, a date): never retype the same value. Try the other form once (digits only for a phone), then if it still fails report blocked with reason needs-person.
 
 Reply with JSON only, no prose, exactly this shape:

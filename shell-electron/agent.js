@@ -261,6 +261,44 @@ function createAgent(deps) {
     return () => { try { ses.webRequest.onBeforeSendHeaders(null); } catch (e) { /* gone */ } };
   }
 
+  // What to ask: the engine's open fields, else the fields the page's own errors name ("The
+  // field X is required"), else empty required boxes in the view. Labels only, never values.
+  function questionsFor(viewText, left) {
+    const out = [];
+    const add = (q) => { q = String(q || "").trim(); if (q && !out.includes(q)) out.push(q); };
+    for (const x of left || []) add(typeof x === "string" ? x : (x && x.label) || "");
+    const text = String(viewText || "");
+    let m;
+    const errRe = /Error: "(?:The field )?(.+?) (?:is required|must have a value|is a required field|cannot be blank)/g;
+    while ((m = errRe.exec(text))) add(m[1].replace(/^"|"$/g, ""));
+    if (!out.length) {
+      const reqRe = /<(?:input|combobox|select|textarea)[^>]*label="([^"]*)"[^>]*value=""[^>]*required>/g;
+      while ((m = reqRe.exec(text))) add(m[1]);
+    }
+    // Never re-ask what is already in its box: a stale "is required" error can outlive the fill.
+    const filled = (label) => {
+      const esc = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp('label="' + esc + '"[^\n]*(value="\\(filled\\)"|checked=true)').test(text);
+    };
+    return out.filter((q) => !filled(q)).slice(0, 3);
+  }
+
+  // The choices a page offers for a field, read off the view: a select's first options or the
+  // radio options that share the label. Empty when the field is free text or a typeahead.
+  function optionsFor(viewText, label) {
+    const want = String(label || "").trim().toLowerCase();
+    const out = [];
+    for (const line of String(viewText || "").split("\n")) {
+      const m = /label="([^"]*)"/.exec(line);
+      if (!m || m[1].trim().toLowerCase() !== want) continue;
+      const first = /first="([^"]*)"/.exec(line);
+      if (first) { for (const o of first[1].split("|")) if (o && !/^select/i.test(o)) out.push(o); }
+      const opt = /<radio [^>]*option="([^"]*)"/.exec(line);
+      if (opt && !out.includes(opt[1])) out.push(opt[1]);
+    }
+    return out.slice(0, 8);
+  }
+
   // ---- the run -----------------------------------------------------------------------------
   // opts: { url, resumePath, lane, autonomous }
   async function run(recordId, opts) {
@@ -335,7 +373,9 @@ function createAgent(deps) {
         } else {
           const rep = await deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true });
           dlog("step " + step + " fill:", rep);
-          if (rep && rep.ok) { filled = rep.filled || 0; left = rep.left || []; }
+          // "Could not plan this form" still names what is open: keep its left list either way.
+          if (rep && rep.ok) filled = rep.filled || 0;
+          left = (rep && rep.left) || [];
           if (rep && rep.uploaded) filled += 1;
           else if (opts.resumePath) {
             // The page has a resume box the plan did not reach (a hidden input behind an
@@ -391,6 +431,28 @@ function createAgent(deps) {
           progress(recordId, "submitted", "Submitted.", { steps: step });
           await deps.postApp("/api/autofill/applied", { url: applyUrl, page_url: url, record_id: recordId });
           return finish({ ok: true, submitted: true, steps: step });
+        }
+        const asks = (done && done.outcome === "blocked" && done.reason === "needs-answers") ? questionsFor(v.text, left) : [];
+        if (asks.length) {
+          // Ask the person, on the bar and on Telegram, and carry on with the answer (saved for
+          // every later application). Up to three questions, five minutes each.
+          const qs = asks;
+          let answered = 0;
+          for (const q of qs) {
+            if (st.stop) return stopped("stopped", "Stopped.");
+            const options = optionsFor(v.text, q);
+            progress(recordId, "ask", "The application asks: " + q, { step, ask: { question: q, options } });
+            const r = await withTimeout(deps.postApp("/api/autoapply/agent/ask", {
+              question: q, options, timeout_s: 300, record_id: recordId }), 320000, "ask").catch(() => null);
+            dlog("step " + step + " ask ->", r && { ok: r.ok, reason: r.reason });
+            if (r && r.ok) answered++;
+            else break;
+          }
+          if (!answered) return stopped("needs-answers", blockedMessage("needs-answers", left), { url, left });
+          history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                         actions: ["asked the person"], results: [answered + " answered"] });
+          progress(recordId, "running", "Thanks. Carrying on", { step });
+          continue;
         }
         if (done && done.outcome === "blocked") {
           return stopped(done.reason || "needs-person", blockedMessage(done.reason, left), { url, left });

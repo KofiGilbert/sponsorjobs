@@ -64,7 +64,8 @@ ids = []
 for role, url in [("Business Intelligence Analyst", ${JSON.stringify(JOB)}),
                   ("Analyst (captcha)", ${JSON.stringify(JOB + "?captcha=1")}),
                   ("Analyst (emailed code)", ${JSON.stringify(JOB + "?verify=1")}),
-                  ("Analyst (existing account)", ${JSON.stringify(JOB + "?signin=fail")})]:
+                  ("Analyst (existing account)", ${JSON.stringify(JOB + "?signin=fail")}),
+                  ("Analyst (asks a question)", ${JSON.stringify(JOB + "?mustanswer=1")})]:
     rid = recs.add(role, "Acme Corp", 70, "", jd_label=role,
                    data={"status": "approved", "fit": 85, "render_profile": prof,
                          "source_job": {"url": url, "source_id": "mock:" + role, "location": "Bloomington, IL"},
@@ -77,8 +78,8 @@ recs.close()
 print(json.dumps(ids))
 `], { encoding: "utf8" });
 if (seed.status !== 0) { console.error(seed.stderr); process.exit(1); }
-const [RID, RID_CAPTCHA, RID_CODE, RID_RESET] = JSON.parse(seed.stdout.trim().split("\n").pop());
-check("seeded four queued jobs", RID > 0 && RID_RESET > 0, `ids ${RID}..${RID_RESET}`);
+const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK] = JSON.parse(seed.stdout.trim().split("\n").pop());
+check("seeded five queued jobs", RID > 0 && RID_ASK > 0, `ids ${RID}..${RID_ASK}`);
 
 // ---- 3. the engine on the test model, then the real app ---------------------------------
 // The shell strips the test-model flags from any engine it spawns (real model only, CLAUDE.md
@@ -144,7 +145,7 @@ check("the agent clicked Apply itself", l1.includes("apply"), log1);
 check("the agent got past the sign-in wall", l1.includes("signin") || l1.includes("account-created"), log1);
 const contact = l1.find((x) => String(x).startsWith("contact:")) || "";
 check("the contact page was filled and the resume attached", /contact:4:cv/.test(contact), contact || "no contact line");
-check("every page was walked to Review", l1.includes("questions") && l1.includes("disclosures"), log1);
+check("every page was walked to Review", l1.some((x) => String(x).startsWith("questions")) && l1.includes("disclosures"), log1);
 check("nothing was submitted by the agent", !l1.includes("submitted"), log1);
 const onReview = await paneEval("!!document.getElementById('submit')");
 check("the pane shows the review page with the mock's Submit", onReview === true);
@@ -196,6 +197,39 @@ const resetDone = await waitBar(/ready to send|stopped|have a look|did not arriv
 check("the run reset the password and reached Ready to send", /ready to send/i.test(resetDone), resetDone);
 const log5 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
 check("the mock saw the reset link opened and the password saved", log5.includes("reset-link-opened") && log5.includes("password-reset"), JSON.stringify(log5));
+
+// ---- 9. a required question nobody answered: the agent asks on the bar, carries on, remembers --
+await win.waitForSelector(`.aa-row[data-id="${RID_ASK}"]`, { timeout: 30_000 });
+await win.click(`.aa-row[data-id="${RID_ASK}"] [data-act]`);
+// The empty test profile means the agent may ask work authorization and sponsorship too;
+// answer whatever comes, up to four questions, the way a person on the bar would.
+let asked = await waitBar(/the application asks|ready to send|stopped|have a look|needs/i, 120_000);
+check("the agent asks a question on the bar", /the application asks:/i.test(asked), asked);
+let askedYears = false;
+for (let i = 0; i < 4 && /the application asks:/i.test(asked); i++) {
+  if (/how many years/i.test(asked)) askedYears = true;
+  const hasBox = await win.locator("#bbFill .bb-answer").count();
+  if (hasBox) {
+    await win.fill("#bbFill .bb-answer", /how many years/i.test(asked) ? "5" : "Yes");
+    await win.click("#bbFill .bb-send");
+  } else {
+    const first = win.locator("#bbFill .bb-opt").first();
+    const label = (await first.textContent()) || "";
+    if (/sponsorship/i.test(asked)) { const no = win.locator("#bbFill .bb-opt", { hasText: /^No$/ }); if (await no.count()) await no.first().click(); else await first.click(); }
+    else await first.click();
+    void label;
+  }
+  await sleep(1500);
+  asked = await waitBar(/the application asks|ready to send|stopped|have a look|needs/i, 120_000);
+}
+check("the years question was among them", askedYears, asked);
+const askDone = asked;
+check("the run carries on with the answer and reaches Ready to send", /ready to send/i.test(askDone), askDone);
+const log6 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+check("the mock saw the answer typed in", log6.includes("questions:5"), JSON.stringify(log6));
+const lib = await win.evaluate(() => fetch("/api/answers").then((r) => r.json()));
+const saved = JSON.stringify(lib).includes("5");
+check("the answer is saved for next time", saved, JSON.stringify(lib).slice(0, 200));
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

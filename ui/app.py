@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import secrets
 import threading
 import time
 import traceback
@@ -9589,7 +9590,7 @@ def _notify_hub():
     return NotifyHub(state, AlertEngine(state, match_fn=_alert_match_score),
                      NotifyService(None, _RecordActions()),
                      batch_callback=act, job_actions=_JobAlertActions(),
-                     review=_cv_review(state))
+                     review=_cv_review(state), ask_callback=_agent_ask_event)
 
 
 def _cv_review(state=None):
@@ -10510,6 +10511,141 @@ def _agent_placeholders(applicant: dict, prof: dict, portal: dict | None) -> tup
     return names, values
 
 
+def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
+    """{label: answer} for the open fields the person's own material already answers, through
+    the same planner the fill route uses (work authorization, the answer library, this record's
+    drafted answers, the profile). Nothing is invented: a field nothing answers stays out."""
+    from autoapply import KnownContext, plan_known, resolve_plan
+    from autoapply.fields import FormField
+    if not labels:
+        return {}
+    fields = [FormField(ref=f"l{i}", label=lab, type="text") for i, lab in enumerate(labels)]
+    lib = _answer_lib()
+    try:
+        ctx = KnownContext(work_auth=_work_auth(), library=lib,
+                           drafted=[x for x in ((data or {}).get("screening") or []) if isinstance(x, dict)],
+                           cover_letter="", applicant=applicant, resume_path="",
+                           job_country=_job_country(data or {}), company=(rec.get("company") if rec else "") or "",
+                           eeo_decline=bool(_load_prefs().get("eeo_decline")))
+        res = plan_known(fields, ctx)
+        ops = resolve_plan([a for a in res.actions if a.op in ("fill", "select", "check")], applicant)
+    except Exception:          # noqa: BLE001 - a planner hiccup never blocks the step
+        return {}
+    finally:
+        lib.close()
+    by_ref = {f.ref: f.label for f in fields}
+    out = {}
+    for o in ops:
+        if o.text and o.ref in by_ref:
+            out[by_ref[o.ref]] = str(o.text)
+    # The person's own answer to this exact question (an earlier "ask") wins for anything the
+    # planner left: a work-authorization question answered on the bar is answered, even when
+    # the structured work-auth profile is still empty.
+    lib = _answer_lib()
+    try:
+        for lab in labels:
+            if lab in out:
+                continue
+            hit = lib.lookup(lab)
+            if hit and str(hit.get("answer") or "").strip():
+                out[lab] = str(hit["answer"]).strip()
+    finally:
+        lib.close()
+    return out
+
+
+# ---- "Ask the person": a question the agent cannot answer goes to the bar and to Telegram, the
+# run waits for the answer (up to the caller's timeout), the answer is saved for every later
+# application, and the run goes on. One registry, answered from either side first.
+_ASKS: dict = {}
+_ASKS_LOCK = threading.Lock()
+
+
+def _agent_ask_event(kind: str, payload: str):
+    """The notify hub's hook: an "ask:<id>:<n>" button tap, or a text reply while a question is
+    open. Returns the reply text when the event answered a question, else None."""
+    with _ASKS_LOCK:
+        open_asks = [a for a in _ASKS.values() if a.get("answer") is None]
+        if kind == "button":
+            parts = str(payload).split(":")
+            if parts[0] != "ask" or len(parts) < 3:
+                return None
+            ask = _ASKS.get(parts[1])
+            if not ask or ask.get("answer") is not None:
+                return "That question was already answered."
+            try:
+                ask["answer"] = str(ask["options"][int(parts[2])])
+            except (ValueError, IndexError):
+                return None
+            return f"Got it: {ask['answer']}."
+        if not open_asks:
+            return None
+        ask = open_asks[-1]
+        ask["answer"] = str(payload).strip()[:300]
+        return f"Got it: {ask['answer']}."
+
+
+@app.post("/api/autoapply/agent/ask")
+@_guard
+def autoapply_agent_ask():
+    """Body {question, options?: [..], timeout_s?: <=600, record_id?}. Sends the question to
+    Telegram when a channel is connected (buttons for the options, else "reply with your answer"),
+    then waits for an answer from Telegram or from the bar (/api/autoapply/agent/answer). The
+    answer is saved to the person's answer library and returned: {ok, answer} or
+    {ok:false, reason:"timeout"}."""
+    b = request.json or {}
+    q = " ".join(str(b.get("question") or "").split())[:300]
+    if not q:
+        return jsonify({"ok": False, "reason": "no-question"}), 400
+    options = [str(o).strip()[:80] for o in (b.get("options") or []) if str(o).strip()][:8]
+    timeout = max(5, min(600, int(b.get("timeout_s") or 300)))
+    aid = secrets.token_hex(4)
+    with _ASKS_LOCK:
+        _ASKS[aid] = {"id": aid, "question": q, "options": options, "answer": None, "at": time.time()}
+        for k in [k for k, a in _ASKS.items() if time.time() - a["at"] > 3600]:
+            _ASKS.pop(k, None)
+    try:
+        ch = _active_channel()
+        if ch is not None:
+            text = f"The application asks: {q}" + ("" if options else "\nReply with your answer and I will carry on.")
+            buttons = [[(o, f"ask:{aid}:{i}")] for i, o in enumerate(options)] if options else None
+            ch.send(text, buttons)
+    except Exception:          # noqa: BLE001 - no Telegram is fine; the bar still asks
+        pass
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with _ASKS_LOCK:
+            ans = _ASKS.get(aid, {}).get("answer")
+        if ans:
+            lib = _answer_lib()
+            try:
+                lib.save(q, ans, "you")
+            finally:
+                lib.close()
+            return jsonify({"ok": True, "id": aid, "answer": ans})
+        time.sleep(1.0)
+    return jsonify({"ok": False, "id": aid, "reason": "timeout"})
+
+
+@app.post("/api/autoapply/agent/answer")
+@_guard
+def autoapply_agent_answer():
+    """The bar's answer to an open question: {id, answer}."""
+    b = request.json or {}
+    aid, ans = str(b.get("id") or ""), str(b.get("answer") or "").strip()[:300]
+    q = " ".join(str(b.get("question") or "").split())[:300]
+    if not ans:
+        return jsonify({"ok": False, "error": "Write an answer first."}), 400
+    with _ASKS_LOCK:
+        ask = _ASKS.get(aid)
+        if not ask and q:                          # the bar knows the question, not the id
+            ask = next((a for a in _ASKS.values() if a["question"] == q and a.get("answer") is None), None)
+        if not ask:
+            return jsonify({"ok": False, "error": "That question is no longer open."}), 404
+        ask["answer"] = ans
+    return jsonify({"ok": True, "id": ask["id"]})
+
+
 @app.post("/api/autoapply/agent/step")
 @_guard
 def autoapply_agent_step():
@@ -10546,6 +10682,16 @@ def autoapply_agent_step():
     left = []
     for x in (b.get("left") or [])[:40]:
         left.append(str(x.get("label") or x.get("ref") or "") if isinstance(x, dict) else str(x))
+    # A field the engine left open but the person HAS answered (the answer library, work
+    # authorization, a drafted screening answer): the brain gets the value as a placeholder
+    # next to the field and fills it itself. Workday's "How did you hear about us" is a widget
+    # the engine cannot drive but the model can: type, wait, click the suggestion.
+    known = _known_answers_for([x for x in left if x.strip()], rec, data, applicant)
+    for n, (label, value) in enumerate(known.items(), start=1):
+        key = f"answer_{n}"
+        values[key] = value
+        placeholders = placeholders + [key]
+        left = [f"{x} (type {{{{{key}}}}})" if x == label else x for x in left]
     req = {
         "step": b.get("step") or 1, "max_steps": b.get("max_steps") or 40,
         "url": url, "lane": b.get("lane") or "assisted", "view": view[:14000],

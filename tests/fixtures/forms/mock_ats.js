@@ -10,6 +10,7 @@
   const signinFails = q.get("signin") === "fail";
   const verify = q.get("verify") === "1";             // a 6-digit code is emailed after sign-in
   const resetToken = q.get("reset") || "";             // the emailed reset link lands here
+  const mustAnswer = q.get("mustanswer") === "1";      // years of experience is required
   const CODE = "482913";
   const log = [];                                      // what happened, read by the test
   window.fxLog = () => log.slice();
@@ -98,12 +99,16 @@
     questions() {
       page('<h2>Application Questions</h2><p class="muted">Step 2 of 3</p><div id="w"></div>'
         + '<div class="field"><label for="yrs">How many years of experience do you have?</label><input type="text" id="yrs"></div>'
+        + '<p id="err" class="error" hidden></p>'
         + btn("back", "Back") + ' ' + btn("next", "Save and Continue"));
       const host = $("w");
       window.fx.auth = W.ReactSelect(host, { id: "q-auth", label: "Are you legally authorized to work in the United States?", options: ["Yes", "No"] });
       window.fx.sponsor = W.AriaRadioGroup(host, { label: "Will you now or in the future require visa sponsorship?", options: ["Yes", "No"] });
       $("back").onclick = () => pages.contact();
-      $("next").onclick = () => { log.push("questions"); pages.disclosures(); };
+      $("next").onclick = () => {
+        if (mustAnswer && !$("yrs").value.trim()) { $("err").textContent = "The field How many years of experience do you have? is required and must have a value."; $("err").hidden = false; log.push("years-required"); return; }
+        log.push("questions:" + ($("yrs").value.trim() || "-")); pages.disclosures();
+      };
     },
     disclosures() {
       page('<h2>Voluntary Disclosures</h2><p class="muted">Step 3 of 3</p>'

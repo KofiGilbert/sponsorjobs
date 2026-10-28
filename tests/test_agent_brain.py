@@ -376,3 +376,85 @@ def test_needs_answers_is_a_blocked_reason_and_phone_is_digits():
     assert r["done"] == {"outcome": "blocked", "reason": "needs-answers"}
     assert phone_digits("+1 (630) 205-1184") == "6302051184"          # Workday refused the formatted form
     assert applicant_from_record({"profile": {"identity": {"name": "K", "phone": "+1 (630) 205-1184"}}})["phone"] == "6302051184"
+
+
+# ---- ask the person (docs/apply-agent.md): the bar or Telegram answers, the library remembers ----
+
+def test_ask_route_returns_the_bars_answer_and_saves_it(A):
+    import threading, time as _t
+    A, _c, _rid, _tmp = A
+    c = A.app.test_client()
+    out = {}
+
+    def ask():
+        out["r"] = c.post("/api/autoapply/agent/ask", json={"question": "How many years of experience do you have?",
+                                                          "options": [], "timeout_s": 10},
+                          headers={"X-Tailor-Extension": "1"}).get_json()
+    th = threading.Thread(target=ask); th.start()
+    _t.sleep(1.2)
+    r = c.post("/api/autoapply/agent/answer", json={"question": "How many years of experience do you have?", "answer": "5"},
+               headers={"X-Tailor-Extension": "1"})
+    assert r.status_code == 200, r.get_json()
+    th.join(15)
+    assert out["r"]["ok"] and out["r"]["answer"] == "5"
+    lib = A._answer_lib()
+    try:
+        assert lib.lookup("How many years of experience do you have?")["answer"] == "5"
+    finally:
+        lib.close()
+
+
+def test_ask_route_times_out_without_an_answer(A):
+    A, _c, _rid, _tmp = A
+    c = A.app.test_client()
+    r = c.post("/api/autoapply/agent/ask", json={"question": "Favourite colour?", "timeout_s": 5},
+               headers={"X-Tailor-Extension": "1"}).get_json()
+    assert r == {"ok": False, "id": r["id"], "reason": "timeout"}
+
+
+def test_telegram_button_and_text_answer_an_open_question(A):
+    A, _c, _rid, _tmp = A
+    with A._ASKS_LOCK:
+        A._ASKS.clear()
+        A._ASKS["ab12"] = {"id": "ab12", "question": "How did you hear about us?", "options": ["Job board", "Referral"],
+                           "answer": None, "at": __import__("time").time()}
+    assert A._agent_ask_event("button", "ask:ab12:1") == "Got it: Referral."
+    assert A._ASKS["ab12"]["answer"] == "Referral"
+    assert A._agent_ask_event("button", "ask:ab12:0") == "That question was already answered."
+    with A._ASKS_LOCK:
+        A._ASKS["cd34"] = {"id": "cd34", "question": "Years of experience?", "options": [], "answer": None,
+                           "at": __import__("time").time()}
+    assert A._agent_ask_event("text", "about 5") == "Got it: about 5."
+    assert A._agent_ask_event("text", "hello") is None           # nothing open: the usual routing takes it
+    assert A._agent_ask_event("button", "job:queue:x") is None
+
+
+def test_known_answers_reach_the_brain_as_placeholders(A):
+    A, _c, _rid, _tmp = A
+    lib = A._answer_lib()
+    try:
+        lib.save("How did you hear about us?", "Job board", "you")
+    finally:
+        lib.close()
+    c = A.app.test_client()
+    view = ("URL: https://acme.test/apply\nTitle: Apply\n[Start of page]\n"
+            "[3]<combobox label=\"How Did You Hear About Us?\" value=\"\" expanded=false>\n"
+            "[4]<button>Save and Continue</button>\n[End of page]")
+    r = c.post("/api/autoapply/agent/step", json={"record_id": None, "step": 2, "max_steps": 40, "url": "https://acme.test/apply",
+                                                  "view": view, "left": ["How Did You Hear About Us?"], "history": []},
+               headers={"X-Tailor-Extension": "1"}).get_json()
+    assert "answer_1" in r["placeholders"], r
+    typed = [a for a in r["actions"] if a.get("op") == "type"]
+    assert typed and typed[0]["text"] == "Job board" and typed[0]["placeholder"] == "answer_1", r
+
+
+def test_an_answer_given_on_the_bar_answers_the_same_question_next_time(A):
+    A, _c, _rid, _tmp = A
+    lib = A._answer_lib()
+    try:
+        lib.save("Are you legally authorized to work in the United States?", "Yes", "you")
+    finally:
+        lib.close()
+    known = A._known_answers_for(["Are you legally authorized to work in the United States?", "Favourite colour?"],
+                                 None, {}, {"first_name": "K"})
+    assert known == {"Are you legally authorized to work in the United States?": "Yes"}
