@@ -9022,7 +9022,30 @@
       b.type = "button"; b.className = "btn btn-sm " + cls; b.textContent = label;
       b.addEventListener("click", fn); bar.appendChild(b); return b;
     };
-    if (info.state === "ready" && info.record_id != null) {
+    if (info.state === "ask" && info.ask) {
+      // The agent needs one answer: buttons for the page's options, else a box. Saved for next time.
+      const ask = info.ask;
+      const answer = async (value) => {
+        const r = await fetch("/api/autoapply/agent/answer", { method: "POST", headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ id: ask.id || "", answer: value }) }).catch(() => null);
+        if (!r || !r.ok) {
+          // The engine assigns the id when it registers the question; find the open one by text.
+          await fetch("/api/autoapply/agent/answer", { method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ question: ask.question, answer: value }) }).catch(() => null);
+        }
+        aaAgentBar({ state: "running", message: T("aa.agent.thanks", "Thanks. Carrying on") });
+      };
+      if ((ask.options || []).length) {
+        for (const o of ask.options) btn(o, "btn-ghost bb-opt", () => answer(o));
+      } else {
+        const inp = document.createElement("input");
+        inp.className = "fld bb-answer"; inp.type = "text"; inp.placeholder = T("aa.agent.answer", "Your answer");
+        inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && inp.value.trim()) answer(inp.value.trim()); });
+        bar.appendChild(inp);
+        btn(T("aa.agent.sendAnswer", "Answer"), "btn-primary bb-send", () => { if (inp.value.trim()) answer(inp.value.trim()); });
+        setTimeout(() => inp.focus(), 50);
+      }
+    } else if (info.state === "ready" && info.record_id != null) {
       btn(T("aa.send", "Send"), "btn-primary bb-send", async (e) => {
         e.target.disabled = true;
         let r = null;
@@ -9041,7 +9064,7 @@
       btn(T("aa.stop", "Stop"), "btn-ghost bb-stop", () => { try { window.tailorShell.agentStop(); } catch {} });
     }
     bar.classList.toggle("is-wall", info.state === "stopped");
-    bar.classList.toggle("is-ready", info.state === "ready");
+    bar.classList.toggle("is-ready", info.state === "ready" || info.state === "ask");
     bar.hidden = false;
   }
 

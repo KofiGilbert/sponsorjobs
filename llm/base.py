@@ -1568,6 +1568,27 @@ class FakeLLM:
         create = _find(r"create (an )?account|sign up|register")
         if create is not None and "portal_email" not in placeholders:
             return _reply([{"op": "click", "index": create}], memory="no portal account yet")
+        # An open field the person has answered: <left> says "Label (type {{answer_n}})".
+        left = _block("left")
+        acts = []
+        for m in re.finditer(r"^(.*?) \(type (\{\{answer_\d+\}\})\)$", left, re.M):
+            label, ph = m.group(1).strip().lower(), m.group(2)
+            for idx, tag, attrs, _t in lines:
+                lm = re.search(r'label="([^"]*)"', attrs)
+                if tag in ("input", "combobox", "textarea") and lm and lm.group(1).strip().lower() == label \
+                        and 'value="(filled)"' not in attrs:
+                    acts.append({"op": "type", "index": idx, "text": ph})
+                    break
+        if acts:
+            nxt_after = _find(r"next|continue|save and continue")
+            if nxt_after is not None:
+                acts.append({"op": "click", "index": nxt_after})   # page-changing action last
+            return _reply(acts[:5], memory="typing the person's saved answers")
+        # An open field nobody has answered, and the page says it must have a value: ask.
+        unanswered = [l for l in left.splitlines() if l.strip() and l.strip() != "(nothing)" and "{{answer_" not in l]
+        if re.search(r"^Error: .*(is required|must have a value|required field)", words, re.M) or \
+                (unanswered and re.search(r"^Error: ", words, re.M)):
+            return _reply(done={"outcome": "blocked", "reason": "needs-answers"}, memory="the page needs the person's answer")
         nxt = _find(r"next|continue|save and continue")
         if nxt is not None:
             return _reply([{"op": "click", "index": nxt}], memory="page filled", evaluation="moving on")

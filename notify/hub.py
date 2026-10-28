@@ -22,8 +22,12 @@ from .channel import ChannelError
 
 class NotifyHub:
     def __init__(self, state, engine, commands, batch_callback=None, job_actions=None,
-                 review=None):
+                 review=None, ask_callback=None):
         self.state = state
+        # The apply agent's questions (docs/apply-agent.md, "ask the person"): fn(kind, payload)
+        # -> a reply when it consumed the event (an "ask:" button tap, or a text reply while a
+        # question is open), else None so the event goes on to the usual routing.
+        self.ask_callback = ask_callback
         self.review = review                      # notify/cvreview.CVReview: preview + chat edits
         self.engine = engine
         self.commands = commands                  # has handle_command(text) -> str
@@ -33,6 +37,15 @@ class NotifyHub:
     # -- inbound ----------------------------------------------------------------- #
     def handle_event(self, channel, ev: dict) -> str:
         kind = ev.get("type")
+        if self.ask_callback is not None:
+            payload = (ev.get("data") or "") if kind == "button" else (ev.get("text") or "")
+            if payload and (kind != "button" or payload.startswith("ask:")):
+                reply = self.ask_callback("button" if kind == "button" else "text", payload)
+                if reply is not None:
+                    channel.ack(ev, reply)
+                    if reply:
+                        channel.send(reply)
+                    return reply
         if kind == "button":
             data = ev.get("data") or ""
             if data.startswith("cv:") and self.review is not None:
