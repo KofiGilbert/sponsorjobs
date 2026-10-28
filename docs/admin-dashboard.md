@@ -28,8 +28,8 @@ The page never shows tokens, token hashes or sign-in code hashes, and it cannot 
 - **This month:** active accounts, tailored packages, AI tokens with an estimated cost, live
   interviews and minutes with an estimated Tavus cost ($0.35 a minute).
 - **Free AI pool today:** tokens used against the daily cap (`FREE_POOL_DAILY_TOKENS`).
-- **Sign-in code e-mails:** today against Resend's free 100 a day, and the month against 3,000.
-  Amber at 70 a day, red at 90.
+- **E-mails sent:** sign-in codes and mail forwarded from students' aliases (`docs/mail-alias.md`),
+  today against Resend's free 100 a day, and the month against 3,000. Amber at 70 a day, red at 90.
 - **Recent sign-ins:** the last 20 accounts with an e-mail, their plan and dates.
 - The same numbers as JSON at `https://admin.sponsorjobs.ai/admin/api/stats`.
 

@@ -30,6 +30,9 @@ implementation; it does not replace or change anything in `backend/`.
 | `GET /billing/offers`, `GET /billing/packs` | passes and packs on sale (packs only while a pass is active) and where the caller stands |
 | `POST /billing/passes/<id>/checkout`, `POST /billing/packs/<id>/checkout` | a one-time Stripe Checkout Session, `{url}` (`402 pass_required` for a pack without a pass) |
 | `POST /billing/webhook` | Stripe's `checkout.session.completed`: grants the pass or pack once per session (signature-checked) |
+| `POST /mail/alias` `{name?}` | the caller's `first.last@sponsorjobs.ai` alias for the apply agent, `{alias, forward_to}` (idempotent; `409 sign_in_first` without a verified e-mail) |
+| `GET /mail/alias`, `DELETE /mail/alias` | read or release the alias (`{alias, forward_to}`, both null when there is none) |
+| `GET /mail/inbox?after=<cursor>` | codes and links mailed to the alias in the last 30 minutes, `{events: [{cursor, kind, code, link, subject, sender, at}], cursor}`; `after` acknowledges |
 
 Billing is off until the Stripe secrets are set (`STRIPE_SECRET_KEY` and at least one pass price;
 see `docs/stripe-setup.md`). While off, the billing routes answer exactly as the Python broker does
@@ -42,6 +45,11 @@ pack needs a signed-in account (`401 sign_in_required` otherwise), and the e-mai
 Stripe Checkout. Each sign-in method stays `503 ... not configured` until its secrets are set
 (`docs/sign-in-setup.md`). The Python broker's password routes (`/account/signup|login|claim`) and
 Telegram answer `503 ... not configured`.
+
+Mail aliases (`src/mail.ts`, `docs/mail-alias.md`): each student gets `first.last@sponsorjobs.ai`
+to give job portals. Email Routing's catch-all delivers to this Worker's `email` handler, which
+keeps only the one-time code or verification link for 30 minutes (so the apply agent can poll it)
+and forwards the whole message to the student's verified e-mail through Resend.
 
 ## Run it locally
 

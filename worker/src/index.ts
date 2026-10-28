@@ -6,10 +6,12 @@
 // may call (password sign-in, Telegram) answer like the Python broker does when that feature is not
 // configured, so the app degrades the same way. Live interviews (Tavus), Stripe billing and
 // passwordless sign-in (e-mail code, Google; src/signin.ts) are built, and each stays
-// "not configured" until its secrets are set.
+// "not configured" until its secrets are set. Mail aliases for the apply agent (src/mail.ts) are
+// new here: the Python broker has no e-mail receiver.
 //
 // Privacy, as in the Python broker: nothing here stores prompts, resumes or replies. D1 holds
-// only account ids, token hashes and usage counts.
+// only account ids, token hashes, usage counts, and (for 30 minutes) the code or link a job
+// portal mailed to a student's alias.
 
 import { allowRegistration, emailOf, identify, register } from "./accounts";
 import { handleAdmin, isAdminHost } from "./admin";
@@ -19,6 +21,7 @@ import {
   UnknownProduct, verifySignature,
 } from "./billing";
 import { type Env, intVar } from "./env";
+import { aliasCreate, aliasDelete, aliasGet, inboxRead, receiveMail } from "./mail";
 import {
   avatarSecondsLeft, CALL_SAFETY_SECONDS, dayOf, INTERVIEW_SECONDS, isPass, modelFor, packagesLeft, passActive, periodOf,
   planFor, QuotaExceeded, requireLlm, status, tierFor,
@@ -400,6 +403,11 @@ const ROUTES: Route[] = [
   ["POST", /^\/avatar\/session\/start$/, avatarStart],
   ["POST", /^\/avatar\/heartbeat$/, avatarHeartbeat],
   ["POST", /^\/avatar\/session\/end$/, avatarEnd],
+  // Mail aliases for the apply agent (src/mail.ts, docs/mail-alias.md).
+  ["POST", /^\/mail\/alias$/, ({ req, env, now }) => aliasCreate(req, env, now)],
+  ["GET", /^\/mail\/alias$/, ({ req, env }) => aliasGet(req, env)],
+  ["DELETE", /^\/mail\/alias$/, ({ req, env }) => aliasDelete(req, env)],
+  ["GET", /^\/mail\/inbox$/, ({ req, env, now }) => inboxRead(req, env, now)],
   ["GET", /^\/notify\/telegram\/(status|inbox)$/, off("telegram_not_configured")],
   ["POST", /^\/notify\/telegram\/(link|unlink|send|send_media|edit)$/, off("telegram_not_configured")],
   ["POST", /^\/telegram\/webhook$/, off("telegram_not_configured")],
@@ -432,5 +440,12 @@ export default {
       console.error(`${req.method} ${path} failed:`, err instanceof Error ? err.stack ?? err.message : err);
       return json({ error: "internal error" }, 500);
     }
+  },
+
+  /** Cloudflare Email Routing's catch-all for sponsorjobs.ai delivers here (docs/mail-alias.md).
+   * A thrown error would make Cloudflare report a temporary failure and the sender retry, which is
+   * right for a D1 hiccup; a message to no alias is rejected inside receiveMail instead. */
+  async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
+    await receiveMail(message, env, Math.floor(Date.now() / 1000));
   },
 } satisfies ExportedHandler<Env>;
