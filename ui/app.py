@@ -4973,6 +4973,11 @@ def autoapply_fill_report():
     return _nostore(jsonify({"ok": True, "fill_report": report}))
 
 
+def _phone_digits(phone) -> str:
+    from autoapply.fields import phone_digits
+    return phone_digits(phone)
+
+
 @app.get("/api/profile/autofill")
 @_guard
 @_extension_only
@@ -4991,7 +4996,7 @@ def profile_autofill():
     fields = {
         "name": name, "first_name": first, "last_name": last,
         "email": _application_email(),
-        "phone": str(ident.get("phone") or "").strip(),
+        "phone": _phone_digits(ident.get("phone")),
         "address": str(ident.get("address") or "").strip(),
         "street": addr["street"], "city": addr["city"],
         "state": addr["state"], "zip": addr["zip"],

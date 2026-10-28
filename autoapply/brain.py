@@ -42,6 +42,8 @@ Rules:
 14. Sign in failed because the account already exists or the password is wrong: click Forgot password, type {{portal_email}}, send the reset, then report await_email with reason link. On the new-password page type {{portal_password}} into both boxes and save.
 11. A page that is not a job application (a 404, a closed posting, a generic careers home): report blocked with the reason not-a-job.
 12. When you are done or stuck, done goes alone: no actions with it.
+15. The page will not continue because required fields are still empty and they are questions only the person can answer (they are listed in <left>, or the page's errors name them): do not guess and do not keep clicking. Report done with outcome blocked and reason needs-answers. The person answers once and the run resumes.
+16. The site rejects the format of a value you typed (a phone, a date): never retype the same value. Try the other form once (digits only for a phone), then if it still fails report blocked with reason needs-person.
 
 Reply with JSON only, no prose, exactly this shape:
 {"memory": "what you know so far, under 40 words",
@@ -54,12 +56,12 @@ Reply with JSON only, no prose, exactly this shape:
              {"op": "wait", "seconds": 2}],
  "done": null}
 or, to finish: "done": {"outcome": "ready_to_submit" | "blocked" | "await_email", "reason": "short reason"}
-with actions empty. blocked reasons: captcha, phone-code, needs-person, not-a-job, left-site. await_email reasons: code, link.
+with actions empty. blocked reasons: captcha, phone-code, needs-person, needs-answers, not-a-job, left-site. await_email reasons: code, link.
 At most 5 actions per step. Use only indices shown in the current view."""
 
 ALLOWED_OPS = ("click", "type", "select", "upload", "scroll", "wait")
 OUTCOMES = ("ready_to_submit", "submitted", "blocked", "await_email")
-BLOCKED_REASONS = ("captcha", "verify-email", "phone-code", "needs-person", "not-a-job", "left-site")
+BLOCKED_REASONS = ("captcha", "verify-email", "phone-code", "needs-person", "needs-answers", "not-a-job", "left-site")
 AWAIT_REASONS = ("code", "link")       # what the mailbox should hand back before the run goes on
 MAX_ACTIONS = 5
 HISTORY_STEPS = 12          # how many past steps the prompt carries

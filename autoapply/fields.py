@@ -11,6 +11,8 @@ Pure and deterministic: no browser, no network, so it is fully unit-testable.
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 
 # The personal-data keys the planner may reference. Real values live only on this machine and are
@@ -65,6 +67,16 @@ class ConcreteOp:
     origin: str = "ai"                           # which step of the planner decided it
 
 
+def phone_digits(phone: str) -> str:
+    """The phone as the digits a form takes: "+1 (630) 205-1184" -> "6302051184". A US number's
+    leading 1 is dropped; anything else keeps its digits as given (Workday refused the formatted
+    form on the first live run, 2026-10-28, and every ATS accepts plain digits)."""
+    digits = re.sub(r"\D", "", str(phone or ""))
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits
+
+
 def applicant_from_record(record_data: dict) -> dict:
     """Build the real personal-data map from a saved application record / profile. Stays local; only
     its KEYS (APPLICANT_KEYS) are ever exposed to the model. Missing values are simply absent."""
@@ -76,7 +88,7 @@ def applicant_from_record(record_data: dict) -> dict:
         "first_name": first.strip(),
         "last_name": last.strip(),
         "email": str(identity.get("email") or "").strip(),
-        "phone": str(identity.get("phone") or "").strip(),
+        "phone": phone_digits(identity.get("phone")),
         "address": str(identity.get("address") or "").strip(),
         "city": str(identity.get("city") or "").strip(),
         "state": str(identity.get("state") or "").strip(),
