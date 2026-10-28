@@ -41,6 +41,10 @@ export interface Env {
   GOOGLE_CLIENT_SECRET?: string;
   // Optional: the callback registered with Google. Defaults to <this host>/account/google/callback.
   GOOGLE_REDIRECT_URI?: string;
+  // The apply agent's request-signing key (src/botauth.ts, docs/signed-agent.md): an Ed25519
+  // private key's 32-byte seed, base64url, set with `wrangler secret put`. Without it /agent/sign
+  // and the key directory answer 503 not_configured and the agent's requests go out unsigned.
+  AGENT_SIGNING_KEY?: string;
   // The founder's admin dashboard (src/admin.ts, docs/admin-dashboard.md). Plain vars. Without both
   // ACCESS_* values every request to the admin host answers 403.
   ACCESS_TEAM_DOMAIN?: string;      // the Cloudflare Zero Trust team, e.g. "sponsorjobs" (.cloudflareaccess.com)

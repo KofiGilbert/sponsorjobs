@@ -15,6 +15,14 @@
 //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 //                       "Continue with Google"; without both /account/google/* answers
 //                       "google sign-in is not configured".
+//   AGENT_SIGNING_KEY   the apply agent's Web Bot Auth key (src/botauth.ts, docs/signed-agent.md):
+//                       an Ed25519 private key's 32-byte seed as base64url. Make one with
+//                         node -e 'const k=require("crypto").generateKeyPairSync("ed25519");
+//                                  console.log(k.privateKey.export({format:"jwk"}).d)'
+//                       (the JWK `d` member IS the seed, already base64url), or with OpenSSL:
+//                         openssl genpkey -algorithm ed25519 -outform DER | tail -c 32 | basenc --base64url -w0
+//                       Without it /agent/sign and the key directory answer 503 not_configured and
+//                       the agent's page requests simply go out unsigned.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sponsorjobs-broker",
@@ -24,9 +32,16 @@
   // admin.sponsorjobs.ai is the founder's read-only dashboard (src/admin.ts). It must sit behind a
   // Cloudflare Access application (docs/admin-dashboard.md); without ACCESS_TEAM_DOMAIN and
   // ACCESS_AUD below it answers 403 to everyone.
+  // The Web Bot Auth key directory must be served from the origin the agent names as its
+  // Signature-Agent, https://sponsorjobs.ai, and the site there is the separate sponsorjobs-site
+  // Worker (site-worker/wrangler.jsonc, a custom domain). A route on one exact path runs before a
+  // custom domain's Worker, so this one path comes here and the site Worker is untouched: the key
+  // and the signing stay in this one Worker, and sponsorjobs-site never needs to proxy or to know
+  // anything about keys. api.sponsorjobs.ai serves the same directory for testing.
   "routes": [
     { "pattern": "api.sponsorjobs.ai", "custom_domain": true },
-    { "pattern": "admin.sponsorjobs.ai", "custom_domain": true }
+    { "pattern": "admin.sponsorjobs.ai", "custom_domain": true },
+    { "pattern": "sponsorjobs.ai/.well-known/http-message-signatures-directory", "zone_name": "sponsorjobs.ai" }
   ],
   // Incoming mail needs no binding here: the sponsorjobs.ai Email Routing catch-all rule (set in the
   // dashboard, docs/mail-alias.md) sends every message for the domain to this Worker's `email`
