@@ -8334,13 +8334,16 @@
     } catch { /* leave */ }
     try {
       const g = await fetch("/api/inbox/status").then(r => r.json());
+      const alias = g.alias || "";
       const on = !!(g.configured || g.method);
-      connPill($("#gmStatus"), on, g.email ? `Connected, ${g.email}` : "Connected", "Not connected");
-      if ($("#gmHelp")) $("#gmHelp").textContent = on ? "Disconnect" : "Connect";
-      if ($("#gmDetail")) { $("#gmDetail").textContent = on
-        ? "SponsorJobs reads only your applications' verification codes, links and recruiter replies. It never sends mail."
-        : ""; $("#gmDetail").hidden = !on; }
-      $("#gmHelp").dataset.on = on ? "1" : "";
+      connPill($("#gmStatus"), on, alias ? alias : (g.email ? `Connected, ${g.email}` : "Connected"), "Not connected");
+      if ($("#gmAlias")) { $("#gmAlias").textContent = alias ? "Stop using it" : "Get an address"; $("#gmAlias").dataset.on = alias ? "1" : ""; }
+      const imapOn = g.method === "imap";
+      if ($("#gmHelp")) { $("#gmHelp").textContent = imapOn ? "Disconnect your own inbox" : "Advanced: use your own inbox instead"; $("#gmHelp").dataset.on = imapOn ? "1" : ""; }
+      if ($("#gmDetail")) { $("#gmDetail").textContent = alias
+        ? "Applications use this address. Codes and links reach the agent; the full emails and recruiter replies land in your real inbox."
+        : (imapOn ? "SponsorJobs reads only your applications' verification codes, links and recruiter replies. It never sends mail." : "");
+        $("#gmDetail").hidden = !(alias || imapOn); }
     } catch { /* leave */ }
     try {
       const gh = await fetch("/api/github/status").then(r => r.json());
@@ -8349,9 +8352,25 @@
       if ($("#ghToggle")) $("#ghToggle").textContent = gh.configured ? "Manage" : "Connect";
     } catch { /* leave */ }
   }
-  // Email over IMAP with a Gmail app password: no Google verification needed, nothing leaves
-  // this machine. Connect shows the form; Disconnect forgets the saved password.
-  $("#gmHelp")?.addEventListener("click", async () => {
+  // The SponsorJobs address (docs/mail-alias.md): one click to take it, one to stop using it.
+  $("#gmAlias")?.addEventListener("click", async () => {
+    const b = $("#gmAlias"); b.disabled = true;
+    try {
+      if (b.dataset.on) {
+        await fetch("/api/inbox/alias", { method: "DELETE" }).catch(() => {});
+      } else {
+        const r = await fetch("/api/inbox/alias", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.ok === false) toast(d.error || "Could not create the address.");
+      }
+    } finally { b.disabled = false; }
+    renderConnections();
+  });
+  // Email over IMAP with a Gmail app password: the advanced path for people who want their own
+  // inbox read directly. Nothing leaves this machine. The link shows the form; Disconnect
+  // forgets the saved password.
+  $("#gmHelp")?.addEventListener("click", async (e) => {
+    e.preventDefault();
     if ($("#gmHelp").dataset.on) {
       await fetch("/api/inbox/disconnect-imap", { method: "POST" }).catch(() => {});
       renderConnections(); return;

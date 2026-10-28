@@ -1921,7 +1921,9 @@ _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
                   "aa_focus": {},     # the page's focus fields (titles, locations, sponsor_only)
                   "autopilot": False, # tailor new matches on a schedule while the person is away
                   "autopilot_per_day": 2,   # at most this many packages a day (1..10)
-                  "portal_accounts": True}  # the apply agent may create employer portal accounts
+                  "portal_accounts": True,  # the apply agent may create employer portal accounts
+                  "mail_alias": "",         # the person's SponsorJobs address (docs/mail-alias.md)
+                  "apply_with_alias": True} # apply with it, so codes and links reach the agent
 
 
 def _prefs() -> dict:
@@ -1964,6 +1966,10 @@ def _set_prefs(patch: dict) -> dict:
                                                  cur.get("autopilot_per_day", 2))
     if "portal_accounts" in patch:           # "Create portal accounts for me" (docs/apply-agent.md 4)
         cur["portal_accounts"] = bool(patch["portal_accounts"])
+    if "mail_alias" in patch:
+        cur["mail_alias"] = str(patch["mail_alias"] or "").strip()[:120]
+    if "apply_with_alias" in patch:
+        cur["apply_with_alias"] = bool(patch["apply_with_alias"])
     _PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
     _PREFS_FILE.write_text(_json_prefs.dumps(cur), encoding="utf-8")
     return cur
@@ -4984,7 +4990,7 @@ def profile_autofill():
     addr = _parse_address(str(ident.get("address") or ""))
     fields = {
         "name": name, "first_name": first, "last_name": last,
-        "email": str(ident.get("email") or "").strip(),
+        "email": _application_email(),
         "phone": str(ident.get("phone") or "").strip(),
         "address": str(ident.get("address") or "").strip(),
         "street": addr["street"], "city": addr["city"],
@@ -5451,14 +5457,17 @@ def inbox_status():
     box = _current_mailbox()
     method = getattr(box, "method", "") if box is not None else ""
     address = _cred("IMAP_EMAIL") if method == "imap" else getattr(box, "email", "")
+    if box is not None and getattr(box, "name", "") == "alias":
+        method, address = "alias", getattr(box, "alias", "")
     return jsonify({
         "libs": libs, "creds": creds, "token": token,
-        "configured": (libs and token) or method in ("imap", "fake"),
+        "configured": (libs and token) or method in ("imap", "fake", "alias"),
         "creds_path": str(g._CREDS_PATH),
         "auto_verify": bool(_prefs().get("inbox_auto_verify")),
         "query": g.DEFAULT_QUERY,
         "method": method,
-        "email": mask_email(address or ""),
+        "email": address if method == "alias" else mask_email(address or ""),
+        "alias": _mail_alias() or None,
         "imap_host": _cred("IMAP_HOST") if method == "imap" else "",
     })
 
@@ -5468,10 +5477,89 @@ def _fake_mailbox_on() -> bool:
     return os.environ.get("RESUME_AGENT_FAKE_MAILBOX") == "1" and _under_test_or_dev()
 
 
+def _mail_alias() -> str:
+    """The person's SponsorJobs address (first.last@sponsorjobs.ai), cached locally once taken."""
+    return str(_prefs().get("mail_alias") or "").strip()
+
+
+def _application_email() -> str:
+    """The e-mail the agent applies WITH: the SponsorJobs alias when the person took one and left
+    "apply with it" on (docs/mail-alias.md: the site's codes and links reach the agent, recruiters'
+    replies reach the real inbox), else the profile's own address."""
+    alias = _mail_alias()
+    if alias and _prefs().get("apply_with_alias", True):
+        return alias
+    return str((_saved_identity() or {}).get("email") or "").strip()
+
+
+_RELAY = {"box": None, "alias": ""}      # one RelayMailbox per alias, so its cursor persists
+
+
+def _relay_mailbox():
+    """The alias read through the broker, or None when no alias is taken (or no account yet)."""
+    alias = _mail_alias()
+    if not alias:
+        return None
+    if _RELAY["box"] is not None and _RELAY["alias"] == alias:
+        return _RELAY["box"]
+    from inbox.relay import RelayMailbox, urllib_fetch
+    tok = _account_token()
+    if not tok:
+        return None
+    _RELAY["box"], _RELAY["alias"] = RelayMailbox(urllib_fetch(BROKER_URL, tok), alias), alias
+    return _RELAY["box"]
+
+
 def _current_mailbox():
     """The mailbox the apply agent reads (inbox/mailbox.pick_mailbox), or None."""
     from inbox.mailbox import pick_mailbox
-    return pick_mailbox(_cred, fake=_fake_mailbox_on())
+    return pick_mailbox(_cred, fake=_fake_mailbox_on(), relay=_relay_mailbox())
+
+
+# ---- The SponsorJobs address: taken, shown, released through the broker (inbox/relay.py). ----
+def _relay_fetch():
+    from inbox.relay import urllib_fetch
+    tok = _account_token()
+    return urllib_fetch(BROKER_URL, tok) if tok else None
+
+
+@app.get("/api/inbox/alias")
+@_guard
+def inbox_alias_get():
+    return jsonify({"alias": _mail_alias() or None, "apply_with_alias": bool(_prefs().get("apply_with_alias", True))})
+
+
+@app.post("/api/inbox/alias")
+@_guard
+def inbox_alias_take():
+    """Take the address (idempotent). The broker needs a signed-in account whose e-mail is
+    verified: that is where the forwarded mail goes, and it is never typed here."""
+    from inbox.relay import claim_alias
+    fetch = _relay_fetch()
+    if fetch is None:
+        return jsonify({"ok": False, "error": "The SponsorJobs service is not reachable right now."}), 503
+    name = str((_saved_identity() or {}).get("name") or "").strip()
+    r = claim_alias(fetch, name)
+    if not r.get("ok"):
+        why = str(r.get("error") or "")
+        msg = ("Sign in to SponsorJobs first (Settings > Account), so replies have somewhere to go."
+               if "sign_in" in why else "Could not create the address. Try again in a moment.")
+        return jsonify({"ok": False, "error": msg, "reason": why}), 400
+    _set_prefs({"mail_alias": r["alias"], "apply_with_alias": True})
+    _RELAY["box"] = None
+    return jsonify({"ok": True, "alias": r["alias"], "forward_to": r.get("forward_to")})
+
+
+@app.delete("/api/inbox/alias")
+@_guard
+def inbox_alias_release():
+    from inbox.relay import release_alias
+    fetch = _relay_fetch()
+    if fetch is not None:
+        release_alias(fetch)
+    _set_prefs({"mail_alias": "", "apply_with_alias": True})
+    _RELAY["box"] = None
+    return jsonify({"ok": True})
 
 
 # ---- Telegram: connect from the UI (Connections settings), not by hand-editing creds. ----
@@ -10316,6 +10404,8 @@ def autoapply_plan():
     if not (prof.get("identity") or {}).get("name"):
         prof = _saved_full_profile() or prof             # fall back to the saved profile's identity
     applicant = applicant_from_record({"profile": prof})
+    if _application_email():
+        applicant["email"] = _application_email()       # the alias, when the person took one
     resume = _resume_upload_path(rec) if rec else ""   # named after the person, not cv-<id>.pdf
     # The person's own answers first (work authorization, the answer library, this record's
     # drafted screening answers, the cover letter, contact fields); the model only for what is
@@ -10438,6 +10528,8 @@ def autoapply_agent_step():
     if not (prof.get("identity") or {}).get("name"):
         prof = _saved_full_profile() or prof             # fall back to the saved profile's identity
     applicant = applicant_from_record({"profile": prof})
+    if _application_email():
+        applicant["email"] = _application_email()       # the alias, when the person took one
     portal = _portal_account(_host(url))
     placeholders, values = _agent_placeholders(applicant, prof, portal)
     # A one-time code the shell took from the person's own mailbox (inbox/await): typed by the
@@ -10497,7 +10589,7 @@ def autoapply_agent_portal_account_create():
     existing = _portal_account(host)
     if existing:
         return jsonify({"ok": True, "host": host, "email": existing["email"], "created": False})
-    email = str(b.get("email") or "").strip()
+    email = str(b.get("email") or "").strip() or _application_email()
     if not email:
         prof = _saved_full_profile() or {}
         email = str((prof.get("identity") or {}).get("email") or "").strip()
