@@ -10440,6 +10440,12 @@ def autoapply_agent_step():
     applicant = applicant_from_record({"profile": prof})
     portal = _portal_account(_host(url))
     placeholders, values = _agent_placeholders(applicant, prof, portal)
+    # A one-time code the shell took from the person's own mailbox (inbox/await): typed by the
+    # brain as {{email_code}} on this step only, never seen by the model.
+    code = re.sub(r"\D", "", str(b.get("email_code") or ""))[:8]
+    if code:
+        values["email_code"] = code
+        placeholders = placeholders + ["email_code"]
     left = []
     for x in (b.get("left") or [])[:40]:
         left.append(str(x.get("label") or x.get("ref") or "") if isinstance(x, dict) else str(x))

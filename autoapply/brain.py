@@ -37,7 +37,9 @@ Rules:
 7. Never invent a value. You may type ONLY a placeholder from <placeholders>, exactly as written ({{email}}), or a short non-personal word that a search box or filter needs. Nothing else.
 8. If the same action failed twice, do something different, or report blocked with the reason.
 9. Ignore lines marked search=true (the site's own job search box). Do not type the person's data there.
-10. A captcha, a phone code, or an email verification that must happen before the form continues: stop and report blocked with the reason captcha, phone-code or verify-email. Never work around one.
+10. A captcha or a phone code: stop and report blocked with the reason captcha or phone-code. Never work around one.
+13. Email checks are handled for you. A page that says a code or a link was emailed: if {{email_code}} is in <placeholders>, type it into the code box and click Verify or Continue; otherwise report done with outcome await_email and reason code (a code box is shown) or link (it says to click the link in the email). After that the run continues on its own.
+14. Sign in failed because the account already exists or the password is wrong: click Forgot password, type {{portal_email}}, send the reset, then report await_email with reason link. On the new-password page type {{portal_password}} into both boxes and save.
 11. A page that is not a job application (a 404, a closed posting, a generic careers home): report blocked with the reason not-a-job.
 12. When you are done or stuck, done goes alone: no actions with it.
 
@@ -51,13 +53,14 @@ Reply with JSON only, no prose, exactly this shape:
              {"op": "scroll", "direction": "down"},
              {"op": "wait", "seconds": 2}],
  "done": null}
-or, to finish: "done": {"outcome": "ready_to_submit" | "blocked", "reason": "short reason"}
-with actions empty. blocked reasons: captcha, verify-email, phone-code, needs-person, not-a-job, left-site.
+or, to finish: "done": {"outcome": "ready_to_submit" | "blocked" | "await_email", "reason": "short reason"}
+with actions empty. blocked reasons: captcha, phone-code, needs-person, not-a-job, left-site. await_email reasons: code, link.
 At most 5 actions per step. Use only indices shown in the current view."""
 
 ALLOWED_OPS = ("click", "type", "select", "upload", "scroll", "wait")
-OUTCOMES = ("ready_to_submit", "submitted", "blocked")
+OUTCOMES = ("ready_to_submit", "submitted", "blocked", "await_email")
 BLOCKED_REASONS = ("captcha", "verify-email", "phone-code", "needs-person", "not-a-job", "left-site")
+AWAIT_REASONS = ("code", "link")       # what the mailbox should hand back before the run goes on
 MAX_ACTIONS = 5
 HISTORY_STEPS = 12          # how many past steps the prompt carries
 LOOP_WINDOW = 12            # the loop detector's window, in actions
@@ -202,6 +205,10 @@ def _clean_done(d) -> dict | None:
         # the shell keys its message on the reason, so an unknown one becomes "needs a person"
         if reason not in BLOCKED_REASONS:
             reason = "needs-person"
+    if outcome == "await_email":
+        reason = reason.lower()
+        if reason not in AWAIT_REASONS:
+            reason = "link" if "link" in reason else "code"
     return {"outcome": outcome, "reason": reason}
 
 

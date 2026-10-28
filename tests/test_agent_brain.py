@@ -312,3 +312,58 @@ def test_step_route_refuses_linkedin_and_runs_the_fake_brain(A):
     assert len(d["actions"][1]["text"]) == 16 and d["actions"][1]["sensitive"] is True
     assert {"email", "phone", "school", "portal_email", "portal_password"} <= set(d["placeholders"])
     assert "first_name" in d["placeholders"] and "linkedin" not in d["placeholders"]   # only what the profile has
+
+
+# ---- milestone 3: the mailbox hand-over (docs/apply-agent.md section 4) ----------------------
+
+def test_await_email_is_a_valid_outcome_with_a_normalised_reason():
+    from autoapply.brain import parse_reply
+    r = parse_reply('{"memory":"m","evaluation":"e","actions":[],"done":{"outcome":"await_email","reason":"code"}}', {3})
+    assert r["done"] == {"outcome": "await_email", "reason": "code"}
+    r = parse_reply('{"memory":"m","evaluation":"e","actions":[],"done":{"outcome":"await_email","reason":"click the LINK"}}', {3})
+    assert r["done"]["reason"] == "link"
+
+
+def test_the_emailed_code_is_a_placeholder_the_brain_types_once():
+    from autoapply.brain import resolve_actions
+    out = resolve_actions([{"op": "type", "index": 4, "text": "{{email_code}}"}], {"email_code": "482913"}, None,
+                          {4: "Verification code"}, [])
+    assert out == [{"op": "type", "index": 4, "text": "482913", "sensitive": True, "placeholder": "email_code"}]
+
+
+def test_fake_brain_types_the_code_when_offered_else_waits_for_the_mail():
+    from llm.base import FakeLLM
+    from autoapply.brain import SYSTEM_PROMPT, build_user_message
+    view = ("URL: https://x.test/apply\nTitle: Verify\n[Start of page]\nCheck your email\n"
+            "[3]<input type=text label=\"Verification code\" value=\"\">\n[4]<button>Verify</button>\n[End of page]")
+    llm = FakeLLM()
+    req = {"view": view, "step": 2, "max_steps": 40}
+    waiting = json.loads(llm.agent_step(SYSTEM_PROMPT, build_user_message(req, ["email"], [])))
+    assert waiting["done"] == {"outcome": "await_email", "reason": "code"}
+    typing = json.loads(llm.agent_step(SYSTEM_PROMPT, build_user_message(req, ["email", "email_code"], [])))
+    assert typing["actions"][0] == {"op": "type", "index": 3, "text": "{{email_code}}"}
+    assert typing["actions"][1] == {"op": "click", "index": 4}
+
+
+def test_fake_brain_runs_the_forgot_password_path():
+    from llm.base import FakeLLM
+    from autoapply.brain import SYSTEM_PROMPT, build_user_message
+    llm = FakeLLM()
+    signin = ("URL: https://x.test/signin\nTitle: Sign in\n[Start of page]\n"
+              "[3]<input type=email label=\"Email Address\" value=\"(filled)\">\n[4]<input type=password label=\"Password\" value=\"\">\n"
+              "Error: \"We could not find an account with that email.\"\n[5]<button>Sign in</button>\n[6]<a>Forgot password?</a>\n[End of page]")
+    r = json.loads(llm.agent_step(SYSTEM_PROMPT, build_user_message({"view": signin}, ["portal_email", "portal_password"], [])))
+    assert r["actions"] == [{"op": "click", "index": 6}]
+    reset = ("URL: https://x.test/reset\nTitle: Reset\n[Start of page]\nReset your password\n"
+             "[3]<input type=email label=\"Email Address\" value=\"\">\n[4]<button>Send reset link</button>\n[End of page]")
+    r = json.loads(llm.agent_step(SYSTEM_PROMPT, build_user_message({"view": reset}, ["portal_email", "portal_password"], [])))
+    assert r["actions"] == [{"op": "type", "index": 3, "text": "{{portal_email}}"}, {"op": "click", "index": 4}]
+    sent = "URL: https://x.test/reset\nTitle: Reset\n[Start of page]\nCheck your email\nWe emailed you a link to reset your password.\n[End of page]"
+    r = json.loads(llm.agent_step(SYSTEM_PROMPT, build_user_message({"view": sent}, ["portal_email"], [])))
+    assert r["done"] == {"outcome": "await_email", "reason": "link"}
+    newpw = ("URL: https://x.test/reset?t=1\nTitle: New password\n[Start of page]\nChoose a new password\n"
+             "[3]<input type=password label=\"New Password\" value=\"\">\n[4]<input type=password label=\"Confirm New Password\" value=\"\">\n"
+             "[5]<button>Save password</button>\n[End of page]")
+    r = json.loads(llm.agent_step(SYSTEM_PROMPT, build_user_message({"view": newpw}, ["portal_email", "portal_password"], [])))
+    assert r["actions"] == [{"op": "type", "index": 3, "text": "{{portal_password}}"},
+                            {"op": "type", "index": 4, "text": "{{portal_password}}"}, {"op": "click", "index": 5}]

@@ -8334,11 +8334,13 @@
     } catch { /* leave */ }
     try {
       const g = await fetch("/api/inbox/status").then(r => r.json());
-      connPill($("#gmStatus"), g.configured, "Connected", "Not connected");
-      if ($("#gmDetail")) $("#gmDetail").textContent = g.configured
-        ? "Gmail is connected. SponsorJobs watches only for your applications' verification links and recruiter replies."
-        : (g.libs ? `Add your Google OAuth client file, then authorize. SponsorJobs looks for it at: ${g.creds_path}`
-                  : "Gmail needs a one-time Google authorization. In-app connect is coming; for now it's a manual setup.");
+      const on = !!(g.configured || g.method);
+      connPill($("#gmStatus"), on, g.email ? `Connected, ${g.email}` : "Connected", "Not connected");
+      if ($("#gmHelp")) $("#gmHelp").textContent = on ? "Disconnect" : "Connect";
+      if ($("#gmDetail")) { $("#gmDetail").textContent = on
+        ? "SponsorJobs reads only your applications' verification codes, links and recruiter replies. It never sends mail."
+        : ""; $("#gmDetail").hidden = !on; }
+      $("#gmHelp").dataset.on = on ? "1" : "";
     } catch { /* leave */ }
     try {
       const gh = await fetch("/api/github/status").then(r => r.json());
@@ -8347,6 +8349,30 @@
       if ($("#ghToggle")) $("#ghToggle").textContent = gh.configured ? "Manage" : "Connect";
     } catch { /* leave */ }
   }
+  // Email over IMAP with a Gmail app password: no Google verification needed, nothing leaves
+  // this machine. Connect shows the form; Disconnect forgets the saved password.
+  $("#gmHelp")?.addEventListener("click", async () => {
+    if ($("#gmHelp").dataset.on) {
+      await fetch("/api/inbox/disconnect-imap", { method: "POST" }).catch(() => {});
+      renderConnections(); return;
+    }
+    const f = $("#gmForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) $("#gmEmail")?.focus(); }
+  });
+  $("#gmCancel")?.addEventListener("click", () => { const f = $("#gmForm"); if (f) { f.reset(); f.hidden = true; } });
+  $("#gmForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = $("#gmMsg"), setMsg = (t, cls) => { if (msg) { msg.textContent = t; msg.className = "conn-msg " + cls; msg.hidden = false; } };
+    const email = $("#gmEmail")?.value.trim() || "", pass = ($("#gmPass")?.value || "").replace(/\s+/g, "");
+    if (!email || !pass) return setMsg("Enter your email and the app password.", "err");
+    setMsg("Checking\u2026", "");
+    const r = await fetch("/api/inbox/connect-imap", { method: "POST", headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ email, app_password: pass }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) return setMsg(d.error || "Could not connect. Check the app password and that IMAP is on.", "err");
+    setMsg("Connected.", "ok");
+    $("#gmForm").reset(); $("#gmForm").hidden = true;
+    renderConnections();
+  });
   $("#tgCancel")?.addEventListener("click", () => { const f = $("#tgForm"); if (f) { f.reset(); f.hidden = true; } });
   $("#tgForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -8952,7 +8978,7 @@
     let r = null;
     try {
       r = await window.tailorShell.agentRun({ recordId: id, url: it.apply_url, resumePath: it.cv_path || "",
-                                             lane: it.lane || "assisted", autonomous: !!auto });
+                                             lane: it.lane || "assisted", autonomous: !!auto, company: it.company || "" });
     } catch { r = null; }
     AA_AGENT = null;
     console.warn("apply agent:", JSON.stringify(r));

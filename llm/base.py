@@ -1499,6 +1499,8 @@ class FakeLLM:
             return m.group(1) if m else ""
         view = _block("view")
         placeholders = _block("placeholders")
+        # Page words only: the URL line may carry ?reset= long after the reset page is gone.
+        words = "\n".join(l for l in view.splitlines() if not l.startswith(("URL:", "Title:")))
         lines = []                                   # (index, tag, attrs, text)
         for raw in view.splitlines():
             m = re.match(r"^\*?\[(\d+)\]<(\w+)([^>]*)>(.*)$", raw.strip())
@@ -1521,12 +1523,43 @@ class FakeLLM:
         def _reply(actions=None, done=None, memory="", evaluation=""):
             return _json.dumps({"memory": memory, "evaluation": evaluation,
                                 "actions": actions or [], "done": done})
-        if re.search(r"i'?m not a robot|verify (that )?you are human|captcha", view, re.I):
+        if re.search(r"i'?m not a robot|verify (that )?you are human|captcha", words, re.I):
             return _reply(done={"outcome": "blocked", "reason": "captcha"}, memory="captcha wall")
         apply_idx = _find(r"apply manually|autofill with resume") or _find(r"apply( now)?")
         if apply_idx is not None:
             return _reply([{"op": "click", "index": apply_idx}], memory="job page", evaluation="opening the form")
+        def _inputs(kind):
+            return [idx for idx, tag, attrs, _t in lines
+                    if tag == "input" and (f"type={kind}" in attrs or re.search(rf'label="[^"]*{kind}', attrs, re.I))]
+        # Email checks (docs/apply-agent.md milestone 3): a code box is typed from {{email_code}}
+        # once the mailbox handed it over, else the brain asks the shell to wait for the mail.
+        code = _input("code")
+        if code is not None:
+            if "email_code" in placeholders:
+                go = _find(r"verify( code)?|confirm|continue|submit code") or code
+                return _reply([{"op": "type", "index": code, "text": "{{email_code}}"},
+                               {"op": "click", "index": go}], memory="typing the emailed code")
+            return _reply(done={"outcome": "await_email", "reason": "code"}, memory="a code was emailed")
+        if re.search(r"check your (e-?mail|inbox)|we('ve| have)? (sent|e-?mailed)|link (we|was) (sent|emailed)", words, re.I) \
+                and not _inputs("password"):
+            return _reply(done={"outcome": "await_email", "reason": "link"}, memory="a link was emailed")
+        forgot = _find(r"forgot( your)? password\??|reset( your)? password")
+        if forgot is not None and re.search(r"could not find|already (registered|exists|in use)|incorrect|wrong password|invalid", words, re.I):
+            return _reply([{"op": "click", "index": forgot}], memory="the account exists; resetting the password")
+        pwds = _inputs("password")
+        if len(pwds) >= 2 and _input("email") is None:
+            save = _find(r"save( new)? password|reset password|change password|set password|save|update|continue")
+            acts = [{"op": "type", "index": i, "text": "{{portal_password}}"} for i in pwds[:2]]
+            if save is not None:
+                acts.append({"op": "click", "index": save})
+            return _reply(acts, memory="setting the new password")
         email, pwd = _input("email"), _input("password")
+        if email is not None and pwd is None and re.search(r"reset|forgot", words, re.I):
+            send = _find(r"send( me)?( a)?( reset)?( link| e-?mail)?|reset( password)?|continue|submit")
+            acts = [{"op": "type", "index": email, "text": "{{portal_email}}"}]
+            if send is not None:
+                acts.append({"op": "click", "index": send})
+            return _reply(acts, memory="asking for a reset link")
         signin = _find(r"sign ?in|log ?in")
         if email is not None and pwd is not None and signin is not None and "portal_email" in placeholders:
             return _reply([{"op": "type", "index": email, "text": "{{portal_email}}"},
