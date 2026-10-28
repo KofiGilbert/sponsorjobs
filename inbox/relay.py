@@ -27,7 +27,11 @@ def urllib_fetch(broker_url: str, token: str, timeout: float = 15.0):
 
     def fetch(method: str, path: str, body: dict | None = None) -> dict:
         data = json.dumps(body).encode() if body is not None else None
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        # The same User-Agent the LLM client sends: Cloudflare's edge rules answer 403 to the
+        # default Python agent, which showed up as "could not create the address" (2026-10-28).
+        from llm.broker_client import BROKER_USER_AGENT
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                   "User-Agent": BROKER_USER_AGENT}
         req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:   # nosec - our broker
