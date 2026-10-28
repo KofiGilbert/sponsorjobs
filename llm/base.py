@@ -1585,9 +1585,16 @@ class FakeLLM:
                 acts.append({"op": "click", "index": nxt_after})   # page-changing action last
             return _reply(acts[:5], memory="typing the person's saved answers")
         # An open field nobody has answered, and the page says it must have a value: ask.
-        unanswered = [l for l in left.splitlines() if l.strip() and l.strip() != "(nothing)" and "{{answer_" not in l]
-        if re.search(r"^Error: .*(is required|must have a value|required field)", words, re.M) or \
-                (unanswered and re.search(r"^Error: ", words, re.M)):
+        # Ask only when the page's error names a REQUIRED box that is still empty; a stale error
+        # over a box that has since been filled, or an optional box, is no reason to stop.
+        def _empty_required(label):
+            for _i, tag, attrs, _t in lines:
+                lm = re.search(r'label="([^"]*)"', attrs)
+                if lm and lm.group(1).strip().lower() == label.strip().lower():
+                    return "required" in attrs and 'value=""' in attrs
+            return False
+        named = re.findall(r'^Error: "?(?:The field )?(.+?) (?:is required|must have a value|is a required field)', words, re.M)
+        if any(_empty_required(n) for n in named):
             return _reply(done={"outcome": "blocked", "reason": "needs-answers"}, memory="the page needs the person's answer")
         nxt = _find(r"next|continue|save and continue")
         if nxt is not None:

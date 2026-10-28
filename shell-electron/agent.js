@@ -337,9 +337,22 @@ function createAgent(deps) {
   // field X is required"), else empty required boxes in the view. Labels only, never values.
   function questionsFor(viewText, left, includeFilled) {
     const out = [];
-    const add = (q) => { q = String(q || "").trim(); if (q && !out.includes(q)) out.push(q); };
-    for (const x of left || []) add(typeof x === "string" ? x : (x && x.label) || "");
     const text = String(viewText || "");
+    const add = (q) => { q = String(q || "").trim(); if (q && !out.includes(q)) out.push(q); };
+    // A person is asked only about a REQUIRED question: an optional box (LinkedIn URL, skills,
+    // a cover letter) is left alone, and a file box is an upload, never a question.
+    const lineFor = (label) => {
+      const esc = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const mm = new RegExp('^\\*?\\[\\d+\\]<[^\\n]*label="' + esc + '"[^\\n]*$', "m").exec(text);
+      return mm ? mm[0] : "";
+    };
+    for (const x of left || []) {
+      const q = typeof x === "string" ? x : (x && x.label) || "";
+      const ln = lineFor(q);
+      if (/^\*?\[\d+\]<file\b/.test(ln)) continue;
+      if (ln && !/\brequired\b/.test(ln)) continue;
+      add(q);
+    }
     let m;
     const errRe = /Error: "(?:The field )?(.+?) (?:is required|must have a value|is a required field|cannot be blank)/g;
     while ((m = errRe.exec(text))) add(m[1].replace(/^"|"$/g, ""));
@@ -509,6 +522,13 @@ function createAgent(deps) {
           return finish({ ok: true, submitted: true, steps: step });
         }
         const asks = (done && done.outcome === "blocked" && done.reason === "needs-answers") ? questionsFor(v.text, left) : [];
+        if (done && done.outcome === "blocked" && done.reason === "needs-answers" && !asks.length) {
+          // Nothing required is actually open (an optional box, or a stale error over a box that
+          // has since been filled): say so and let the brain continue instead of stopping.
+          history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                         actions: ["(no required question is open)"], results: ["continue with the page's Next or Continue; leave optional boxes empty"] });
+          continue;
+        }
         if (asks.length) {
           // Ask the person, on the bar and on Telegram, and carry on with the answer (saved for
           // every later application). Up to three questions, five minutes each.
