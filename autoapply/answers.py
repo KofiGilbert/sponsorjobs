@@ -63,9 +63,14 @@ _CANON: list[tuple[str, re.Pattern]] = [
     ("preferred_name", re.compile(r"^(preferred|chosen) (first )?name$|what (name|should we call)")),
     ("linkedin", re.compile(r"^linkedin( profile)?( url| link)?$")),
     ("portfolio", re.compile(r"^(portfolio|personal website|website)( url| link)?$")),
+    # Workday words it "were you previously an employee, contractor or intern of <company>, <its
+    # affiliates...>" (Country Financial, 2026-10-28); the company names are not the question.
     ("previously_worked", re.compile(r"(have you )?(ever )?(previously )?(worked|been employed) "
                                      r"(for|at|by) (us|this company|our company) before"
-                                     r"|previously (worked|been employed) (for|at|by) (us|this company)")),
+                                     r"|previously (worked|been employed) (for|at|by) (us|this company)"
+                                     r"|previously (an? )?(employee|contractor|intern|employed|worked)\b"
+                                     r"|(former|past|prior) (employee|employment|contractor|intern)\b"
+                                     r"|(ever )?(worked|interned|been employed) (for|at|by|with) (us|this|our|the company)")),
 ]
 
 # Never saved: their answer belongs to ONE application.
