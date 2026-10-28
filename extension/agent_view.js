@@ -93,13 +93,16 @@
     if (cs && (cs.display === "none" || cs.visibility === "hidden")) return true;
     return false;
   }
-  function boxShown(el) {
+  // A checkbox or radio is often the same trick: the real input sits at opacity 0 inside a
+  // styled box the person sees (Workday's "I consent" box, 2026-10-28). It keeps its own
+  // size, so it stays listed when it has a box, opacity or not; the click lands on the input.
+  function boxShown(el, ignoreOpacity) {
     const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
     if (!r || (!r.width && !r.height)) return false;
     const v = viewOf(el);
     if (r.right + Number(v.scrollX || 0) <= 0) return false;    // parked at left:-9999px
     const cs = styleOf(el);
-    if (cs && cs.opacity === "0") return false;
+    if (!ignoreOpacity && cs && cs.opacity === "0") return false;
     return true;
   }
   function inlineDisplay(el) {
@@ -110,6 +113,7 @@
 
   // ------------------------------------------------------------------ what an element is
   function isFileInput(el) { return tagOf(el) === "INPUT" && String(el.type || "").toLowerCase() === "file"; }
+  function isToggleInput(el) { return tagOf(el) === "INPUT" && /^(checkbox|radio)$/.test(String(el.type || "").toLowerCase()); }
   function isContentEditable(el) {
     const ce = attrOf(el, "contenteditable");
     return ce !== null && ce !== "false" && tagOf(el) !== "INPUT" && tagOf(el) !== "TEXTAREA";
@@ -466,7 +470,7 @@
       if (!file && selfHidden(el)) return;
       const kind = kindOf(el);
       if (kind) {
-        if (file || boxShown(el)) { pushEl(el, kind); return; }
+        if (file || boxShown(el, isToggleInput(el))) { pushEl(el, kind); return; }
         if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") return;
         // An empty-box role element (a wrapper that only sizes its children): walk on.
       }
