@@ -244,7 +244,11 @@ function createAgent(deps) {
         await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
         await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
       }
-      const now = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); return el ? String(el.value != null ? el.value : el.textContent || "") : ""; })()`, true);
+      // Leave the box the way a person does (Tab away): Workday commits a textarea on blur.
+      const now = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); if (!el) return "";
+        const val = String(el.value != null ? el.value : el.textContent || "");
+        if (!/combobox/i.test(el.getAttribute("role") || "") && !el.getAttribute("aria-autocomplete")) { try { el.blur(); } catch (e) {} }
+        return val; })()`, true);
       return { ok: true, note: String(now || "") === String(text) ? "" : "value differs" };
     } catch (e) { return null; }
     finally { release(); }
@@ -266,7 +270,7 @@ function createAgent(deps) {
         if (real) return real;
       }
     }
-    if (!ctx && a.op === "type" && typeof a.text === "string" && /<combobox\b|aria-autocomplete|search=true/.test(line)) {
+    if (!ctx && a.op === "type" && typeof a.text === "string" && /<combobox\b|<textarea\b|aria-autocomplete|search=true/.test(line)) {
       const real = await realType(wc, a.index, a.text);
       if (real) return real;
     }
