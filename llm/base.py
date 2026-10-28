@@ -1499,6 +1499,8 @@ class FakeLLM:
             return m.group(1) if m else ""
         view = _block("view")
         placeholders = _block("placeholders")
+        # Page words only: the URL line may carry ?reset= long after the reset page is gone.
+        words = "\n".join(l for l in view.splitlines() if not l.startswith(("URL:", "Title:")))
         lines = []                                   # (index, tag, attrs, text)
         for raw in view.splitlines():
             m = re.match(r"^\*?\[(\d+)\]<(\w+)([^>]*)>(.*)$", raw.strip())
@@ -1521,7 +1523,7 @@ class FakeLLM:
         def _reply(actions=None, done=None, memory="", evaluation=""):
             return _json.dumps({"memory": memory, "evaluation": evaluation,
                                 "actions": actions or [], "done": done})
-        if re.search(r"i'?m not a robot|verify (that )?you are human|captcha", view, re.I):
+        if re.search(r"i'?m not a robot|verify (that )?you are human|captcha", words, re.I):
             return _reply(done={"outcome": "blocked", "reason": "captcha"}, memory="captcha wall")
         apply_idx = _find(r"apply manually|autofill with resume") or _find(r"apply( now)?")
         if apply_idx is not None:
@@ -1538,11 +1540,11 @@ class FakeLLM:
                 return _reply([{"op": "type", "index": code, "text": "{{email_code}}"},
                                {"op": "click", "index": go}], memory="typing the emailed code")
             return _reply(done={"outcome": "await_email", "reason": "code"}, memory="a code was emailed")
-        if re.search(r"check your (e-?mail|inbox)|we('ve| have)? (sent|e-?mailed)|link (we|was) (sent|emailed)", view, re.I) \
+        if re.search(r"check your (e-?mail|inbox)|we('ve| have)? (sent|e-?mailed)|link (we|was) (sent|emailed)", words, re.I) \
                 and not _inputs("password"):
             return _reply(done={"outcome": "await_email", "reason": "link"}, memory="a link was emailed")
         forgot = _find(r"forgot( your)? password\??|reset( your)? password")
-        if forgot is not None and re.search(r"could not find|already (registered|exists|in use)|incorrect|wrong password|invalid", view, re.I):
+        if forgot is not None and re.search(r"could not find|already (registered|exists|in use)|incorrect|wrong password|invalid", words, re.I):
             return _reply([{"op": "click", "index": forgot}], memory="the account exists; resetting the password")
         pwds = _inputs("password")
         if len(pwds) >= 2 and _input("email") is None:
@@ -1552,7 +1554,7 @@ class FakeLLM:
                 acts.append({"op": "click", "index": save})
             return _reply(acts, memory="setting the new password")
         email, pwd = _input("email"), _input("password")
-        if email is not None and pwd is None and re.search(r"reset|forgot", view, re.I):
+        if email is not None and pwd is None and re.search(r"reset|forgot", words, re.I):
             send = _find(r"send( me)?( a)?( reset)?( link| e-?mail)?|reset( password)?|continue|submit")
             acts = [{"op": "type", "index": email, "text": "{{portal_email}}"}]
             if send is not None:
