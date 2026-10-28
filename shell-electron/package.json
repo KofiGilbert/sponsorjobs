@@ -14,7 +14,7 @@
     "test:e2e-agent": "node e2e-agent.mjs"
   },
   "devDependencies": {
-    "electron": "^44.9.0",
+    "electron": "^45.0.0",
     "electron-builder": "^26.15.3",
     "playwright": "^1.62.1"
   },
