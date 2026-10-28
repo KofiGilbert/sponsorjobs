@@ -104,3 +104,23 @@ def test_portal_accounts_are_created_with_the_alias(A, monkeypatch):
     r = c.post("/api/autoapply/agent/portal-account", json={"host": "acme.myworkdayjobs.com", "create": True},
                headers={"X-Tailor-Extension": "1"})
     assert r.get_json()["ok"] and r.get_json()["email"] == "kofi.test@sponsorjobs.ai"
+
+
+def test_sign_proxy_returns_the_three_headers_or_fails_open(A, monkeypatch):
+    seen = {}
+
+    def broker(method, path, body=None):
+        seen["req"] = (method, path, body)
+        return {"signature_input": 'sig2=("@authority" "signature-agent");created=1;expires=61;keyid="k";alg="ed25519";tag="web-bot-auth"',
+                "signature": "sig2=:AAAA:", "signature_agent": '"https://sponsorjobs.ai"'}
+    import inbox.relay as relay
+    monkeypatch.setattr(relay, "urllib_fetch", lambda url, tok, timeout=15.0: broker)
+    c = A.app.test_client()
+    r = c.post("/api/autoapply/agent/sign", json={"method": "GET", "authority": "Acme.MyWorkdayJobs.com", "path": "/en-US/x?y=1"},
+               headers={"X-Tailor-Extension": "1"}).get_json()
+    assert r["ok"] and r["signature"] == "sig2=:AAAA:" and "web-bot-auth" in r["signature_input"]
+    assert seen["req"] == ("POST", "/agent/sign", {"method": "GET", "authority": "acme.myworkdayjobs.com", "path": "/en-US/x?y=1"})
+    monkeypatch.setattr(relay, "urllib_fetch", lambda url, tok, timeout=15.0: (lambda m, p, b=None: {"error": "not_configured", "status": 503}))
+    r = c.post("/api/autoapply/agent/sign", json={"method": "GET", "authority": "acme.com", "path": "/"},
+               headers={"X-Tailor-Extension": "1"}).get_json()
+    assert r["ok"] is False and r["reason"] == "not_configured"     # unsigned, never blocked

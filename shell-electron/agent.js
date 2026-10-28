@@ -24,6 +24,13 @@ const SETTLE_CAP_MS = 8000;
 const LOOP_WINDOW = 12;
 const SUBMIT_RE = /^(submit( application)?|send( application)?|review and submit|complete application)$/i;
 // Enough to keep running when the engine's allowed-hosts route is unreachable.
+// Web Bot Auth (docs/apply-agent.md section 7, Cloudflare signed agents): while a run is on, the
+// page requests the agent makes to the job site carry a signature that says "this is the
+// SponsorJobs agent, acting for a signed-in person". The private key lives in the broker; the
+// shell asks the engine for the three headers per document request and goes on unsigned when
+// that is slow or unavailable. Honest identification, never evasion.
+const SIGN_MS = 1500;
+const SIGNED_TYPES = new Set(["mainFrame", "subFrame"]);
 const ATS_HOSTS = ["greenhouse.io", "lever.co", "ashbyhq.com", "workable.com", "smartrecruiters.com",
   "recruitee.com", "myworkdayjobs.com", "icims.com", "taleo.net", "successfactors.com", "jobvite.com",
   "bamboohr.com", "paylocity.com", "ultipro.com", "adp.com"];
@@ -233,6 +240,27 @@ function createAgent(deps) {
     finally { release(); }
   }
 
+  // ---- request signing ---------------------------------------------------------------------
+  function armSigning(wc, hosts) {
+    if (!deps.sign) return () => {};
+    const ses = wc.session;
+    ses.webRequest.onBeforeSendHeaders({ urls: ["https://*/*"] }, (details, callback) => {
+      if (!SIGNED_TYPES.has(details.resourceType) || !onSite(hosts, details.url)) { callback({}); return; }
+      let u;
+      try { u = new URL(details.url); } catch (e) { callback({}); return; }
+      const req = { method: details.method || "GET", authority: u.host, path: u.pathname + (u.search || "") };
+      withTimeout(deps.sign(req), SIGN_MS, "sign").then((h) => {
+        if (!h || !h.signature || !h.signature_input) { callback({}); return; }
+        const requestHeaders = Object.assign({}, details.requestHeaders, {
+          "Signature-Input": h.signature_input, "Signature": h.signature,
+          "Signature-Agent": h.signature_agent || '"https://sponsorjobs.ai"',
+        });
+        callback({ requestHeaders });
+      }).catch(() => callback({}));
+    });
+    return () => { try { ses.webRequest.onBeforeSendHeaders(null); } catch (e) { /* gone */ } };
+  }
+
   // ---- the run -----------------------------------------------------------------------------
   // opts: { url, resumePath, lane, autonomous }
   async function run(recordId, opts) {
@@ -244,7 +272,7 @@ function createAgent(deps) {
     const decision = await deps.applyDecision(applyUrl, "");
     if (!decision.fill) { deps.openInPane(applyUrl); return { ok: false, reason: "fill-by-hand" }; }
 
-    const st = { recordId, stop: false };
+    const st = { recordId, stop: false, disarmSigning: () => {} };
     current = st;
     const hosts = await allowedHosts(applyUrl);
     const history = [];
@@ -256,7 +284,8 @@ function createAgent(deps) {
     let failed = 0;
     let page = 1;
     let fr = null;
-    const finish = (res) => { if (fr) { fr.close(); fr = null; } current = null; return res; };
+    let disarmSigning = () => {};
+    const finish = (res) => { if (fr) { fr.close(); fr = null; } disarmSigning(); current = null; return res; };
     const stopped = (reason, message, extra) => {
       progress(recordId, "stopped", message, Object.assign({ reason, steps: history.length }, extra));
       return finish({ ok: false, reason, steps: history.length });
@@ -265,6 +294,7 @@ function createAgent(deps) {
     try {
       progress(recordId, "running", "Opening the job");
       deps.openInPane(applyUrl);
+      { const p0 = deps.getPane(); if (p0) { disarmSigning = armSigning(p0.webContents, hosts); st.disarmSigning = disarmSigning; } }
       await delay(400);
       await deps.waitPaneLoad();
       const pane = deps.getPane();
@@ -429,6 +459,7 @@ function createAgent(deps) {
 
   // ---- Submit: the shell's decision, never the model's --------------------------------------
   async function handOver(recordId, wc, url, opts, step) {
+    if (current && current.disarmSigning) current.disarmSigning();
     const now = await deps.applyDecision(opts.url || url, url);
     const auto = !!opts.autonomous && now.click_submit === true;
     ready.set(recordId, { url, lane: auto ? "auto" : "assisted" });
