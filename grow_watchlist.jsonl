@@ -7831,3 +7831,7 @@
 {"name": "Nv Energy", "norm": "nv energy", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793199600}
 {"name": "Northwestern College", "norm": "northwestern college", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793199607}
 {"name": "Optiver Services Us Llc", "norm": "optiver services", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793199609}
+{"name": "Picarro Inc", "norm": "picarro", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793284721}
+{"ats": "workday", "board_id": "planet.wd3/Planet", "cap_exempt": 0, "h1b_approvals": 24, "jobs": 63, "name": "Planet P Inc", "norm": "planet p", "perm_certs": 0, "status": "hit", "ts": 1793284730, "url": "https://planet.wd3.myworkdayjobs.com/Planet", "verified": "2026-10-29"}
+{"name": "Premier Inc", "norm": "premier", "reason": "no distinctive brand word to verify a board against", "status": "skipped", "ts": 1793284730}
+{"name": "Pinwheel Solutions Inc", "norm": "pinwheel solutions", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793284730}
