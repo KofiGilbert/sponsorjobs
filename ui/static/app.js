@@ -8965,6 +8965,10 @@
     // drawer loaded and filled the site out of sight, so it looked like nothing happened
     // (Kofi, 10-27). Step out of the way first; the result goes on the bar above the page.
     if (AA.open === id) aaClose();
+    // Once per session, before the agent's first run: the answers every form asks, if some are
+    // missing (aaBasicsGate). "Apply anyway" comes back here and runs as before.
+    if (AA_HAS_AGENT() && !here && !AA_AGENT && !(opts && opts.basicsDone)
+        && await aaBasicsGate(() => aaFill(id, Object.assign({}, opts, { basicsDone: true })))) return;
     const btn = opts && opts.btn && document.contains(opts.btn) && opts.btn.offsetParent ? opts.btn : null;
     if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = T("aa.filling", "Filling…"); }
     const auto = it.lane === "auto" && !!(AA.board && AA.board.today && AA.board.today.autonomous);
@@ -8986,6 +8990,32 @@
       loadAutoApply();
     }
   }
+  // Before the agent's first run of an app session: when some of the answers every form asks
+  // are missing (the five self-identification ones count as answered while the person declines
+  // them all), the bar says so once, with "Answer them" (Your answers, at that card; its back
+  // link returns here) and "Apply anyway" (``go``, the run as before). Shown at most once per
+  // session whatever the choice; never sent to Telegram. True when the prompt is showing.
+  const BAS_ASKED_KEY = "sj_basics_asked";
+  function basAsked() {
+    if (BAS.asked) return true;
+    try { return sessionStorage.getItem(BAS_ASKED_KEY) === "1"; } catch { return false; }
+  }
+  async function aaBasicsGate(go) {
+    if (basAsked()) return false;
+    let d = null;
+    try { d = await api("/api/answers/basics"); } catch { return false; }
+    const n = (d && d.missing && d.missing.length) || 0;
+    if (!n) return false;
+    BAS.asked = true;
+    try { sessionStorage.setItem(BAS_ASKED_KEY, "1"); } catch { /* private window: this page only */ }
+    const opened = !!(window.Panel && !window.Panel.isOpen("browser"));
+    if (opened) window.Panel.open("browser");
+    aaAgentBar({ state: "basics", missing: n, go, opened,
+                 message: (n === 1 ? T("aa.basics.ask1", "Before I apply: 1 question every form asks.")
+                                   : T("aa.basics.ask", "Before I apply: {n} questions every form asks.")).replace("{n}", n) });
+    return true;
+  }
+
   // The agent applies by itself; its progress lands on the bar above the page (aaAgentBar).
   // Problems it cannot clear (captcha, a verification email) stop it and say so there.
   let AA_AGENT = null;                                  // { id } while a run is going
@@ -9080,11 +9110,21 @@
           loadAutoApply();
         }
       });
+    } else if (info.state === "basics") {
+      const answer = btn(T(info.missing === 1 ? "aa.basics.answer1" : "aa.basics.answer", info.missing === 1 ? "Answer it" : "Answer them"),
+          "btn-primary bb-send", () => {
+            bar.hidden = true;
+            if (info.opened && window.Panel) window.Panel.close();
+            openAnswers("autoapply", { focus: "basics" });
+          });
+      btn(T("aa.basics.anyway", "Apply anyway"), "btn-ghost", () => { bar.hidden = true; info.go(); });
+      // The choice takes the keyboard: a second Enter on the row must not skip it.
+      setTimeout(() => answer.focus(), 50);
     } else if (info.state === "running") {
       btn(T("aa.stop", "Stop"), "btn-ghost bb-stop", () => { try { window.tailorShell.agentStop(); } catch {} });
     }
     bar.classList.toggle("is-wall", info.state === "stopped");
-    bar.classList.toggle("is-ready", info.state === "ready" || info.state === "ask");
+    bar.classList.toggle("is-ready", info.state === "ready" || info.state === "ask" || info.state === "basics");
     bar.hidden = false;
   }
 
@@ -9371,9 +9411,17 @@
     const st = c && c.statuses.find(x => x.code === code);
     return st ? T("ans.st." + code, st.label) : "";
   }
+  // The Today panel's "Your answers" row: how many of the answers every form asks are saved
+  // ("6 of 7 form answers saved"), else the older summary when that count is not to be had.
   async function aaPaintAnswers() {
     const sub = $("#aaAnsSub");
     if (!sub) return;
+    let b = null;
+    try { b = await api("/api/answers/basics"); } catch { b = null; }
+    if (b && b.total) {
+      sub.textContent = T("ans.basicsSub", "{n} of {m} form answers saved").replace("{n}", b.answered).replace("{m}", b.total);
+      return;
+    }
     let d;
     try { d = await api("/api/answers"); } catch { return; }
     ANS.data = d;
@@ -9385,7 +9433,8 @@
   }
   $("#aaAnsBtn")?.addEventListener("click", () => openAnswers("autoapply"));
 
-  async function openAnswers(origin) {
+  // opts.focus "basics": straight to the answers every form asks (the agent's pre-run prompt).
+  async function openAnswers(origin, opts) {
     ANS.origin = origin || "autoapply";
     const [k, f] = ANS_BACK[ANS.origin] || ANS_BACK.autoapply;
     $("#ansBackLbl").textContent = T(k, f);
@@ -9394,6 +9443,12 @@
     showView("answers");
     window.scrollTo(0, 0);
     await ansLoad();
+    if (opts && opts.focus === "basics") {
+      $("#ansBasicsCard")?.scrollIntoView({ block: "start" });
+      // After the next frame: the button that opened this page was just hidden, and the
+      // browser moves focus off a hidden button when it next renders.
+      requestAnimationFrame(() => requestAnimationFrame(basFocusFirstOpen));
+    }
   }
   $("#ansBack")?.addEventListener("click", () => {
     if (ANS.origin === "profile") { loadProfile(); showView("profile"); }
@@ -9409,10 +9464,10 @@
     // Open on the first country they have answered, US otherwise.
     const have = Object.keys(ANS.wa.countries || {});
     ANS.country = have.includes(ANS.country) ? ANS.country : (have[0] || "US");
-    $("#ansEeo").checked = !!d.eeo_decline;
     $("#ansWaNote").textContent = "";
     paintWa();
     paintAnsList(d.answers || [], d.total || 0);
+    await basLoad();
   }
   function paintWa() {
     const d = ANS.data, cc = ANS.country, e = waEntry(cc);
@@ -9465,7 +9520,7 @@
     const btn = $("#ansWaSave"), note = $("#ansWaNote");
     btn.disabled = true;
     try {
-      const r = await api("/api/answers/workauth", { work_auth: ANS.wa, eeo_decline: $("#ansEeo").checked });
+      const r = await api("/api/answers/workauth", { work_auth: ANS.wa });
       ANS.wa = JSON.parse(JSON.stringify(r.work_auth));
       ANS.data.work_auth = r.work_auth;
       paintWa();
@@ -9473,6 +9528,143 @@
     } catch (err) { note.textContent = err.message || T("profile.answers.failed", "Couldn't save."); }
     btn.disabled = false;
     setTimeout(() => { note.textContent = ""; }, 4000);
+  });
+
+  /* ---- Answers every form asks (autoapply/basics.py): country of citizenship, desired salary
+     and the five self-identification questions, saved once as the person's own (POST
+     /api/answers/basics) so the apply agent never asks them again. Only the fields the person
+     changed are sent ("" clears one). The decline choice folds the five rows away. Nothing here
+     reaches a model or Telegram. */
+  const BAS = { data: null, val: {}, orig: {}, two: false, asked: false, noteT: 0 };
+  const BAS_SEG = ["gender", "hispanic", "disability"];
+  const BAS_SEL = { race: "#ansRace", veteran: "#ansVet" };
+  const BAS_SHARED = { yes: ["ans.yes", "Yes"], no: ["ans.no", "No"], decline: ["ans.ch.decline", "Prefer not to say"] };
+  const basWord = c => T(...(BAS_SHARED[c.code] || ["ans.ch." + c.code, c.label]));
+  const basNotSet = () => `<option value="">${esc(T("profile.answers.notSet", "Not set"))}</option>`;
+  async function basLoad() {
+    let d;
+    try { d = await api("/api/answers/basics"); }
+    catch (e) { $("#ansBasicsNote").textContent = e.message || ""; return; }
+    basTake(d);
+  }
+  function basTake(d) {
+    BAS.data = d;
+    BAS.val = Object.assign({}, d.values || {});
+    BAS.orig = Object.assign({}, d.values || {});
+    BAS.two = !!BAS.val.citizenship2;
+    $("#ansEeo").checked = !!d.eeo_decline;
+    $("#ansSalary").value = BAS.val.salary || "";
+    basPaint();
+  }
+  // The card again after Saved answers changed below it: fields the person has not touched take
+  // the saved values; one they are editing keeps their edit (and Save compares it with the new
+  // saved value, so it is sent).
+  async function basRefresh() {
+    let d;
+    try { d = await api("/api/answers/basics"); } catch { return; }
+    if (!BAS.data) return basTake(d);
+    const nv = d.values || {};
+    for (const k of Object.keys(Object.assign({}, BAS.orig, nv))) {
+      if ((BAS.val[k] || "") === (BAS.orig[k] || "")) BAS.val[k] = nv[k] || "";
+    }
+    if ($("#ansSalary").value.trim() === (BAS.orig.salary || "")) $("#ansSalary").value = nv.salary || "";
+    BAS.orig = Object.assign({}, nv);
+    BAS.data = d;
+    BAS.two = BAS.two || !!BAS.val.citizenship2;
+    basPaint();
+  }
+  function basPaint() {
+    const d = BAS.data;
+    if (!d) return;
+    const ch = d.choices || {}, names = d.countries || [];
+    // A saved answer outside the card's choices (words an older form offered) shows as it is.
+    const countryOpts = cur => basNotSet() + names.concat(cur && !names.includes(cur) ? [cur] : [])
+      .map(n => `<option value="${esc(n)}"${n === cur ? " selected" : ""}>${esc(n)}</option>`).join("");
+    $("#ansCit").innerHTML = countryOpts(BAS.val.citizenship || "");
+    $("#ansCit2").innerHTML = countryOpts(BAS.val.citizenship2 || "");
+    $("#ansCit2").hidden = !BAS.two;
+    $("#ansCitAdd").hidden = BAS.two;
+    const seg = (v, label, on) => `<button type="button" class="ans-seg-b${on ? " is-on" : ""}" data-v="${esc(v)}" aria-pressed="${on}"${label.length > 28 ? ` title="${esc(label)}"` : ""}>${esc(label.length > 28 ? label.slice(0, 27) + "…" : label)}</button>`;
+    for (const f of BAS_SEG) {
+      const g = document.querySelector(`#ansBasicsCard [data-basic="${f}"]`);
+      const cur = BAS.val[f] || "", list = ch[f] || [];
+      g.innerHTML = list.map(c => seg(c.code, basWord(c), cur === c.code)).join("")
+        + (cur && !list.some(c => c.code === cur) ? seg(cur, cur, true) : "");
+    }
+    for (const [f, sel] of Object.entries(BAS_SEL)) {
+      const cur = BAS.val[f] || "", list = ch[f] || [];
+      $(sel).innerHTML = basNotSet() + list.map(c => `<option value="${esc(c.code)}"${c.code === cur ? " selected" : ""}>${esc(basWord(c))}</option>`).join("")
+        + (cur && !list.some(c => c.code === cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : "");
+    }
+    // The rows fold away, and the note says they will be declined, only once the choice is saved.
+    const dec = !!d.eeo_decline;
+    $("#ansEeoRows").hidden = dec;
+    $("#ansEeoNote").hidden = !dec;
+    $("#ansBasicsCount").textContent = d.total ? T("ans.basicsCount", "{n} of {m}").replace("{n}", d.answered).replace("{m}", d.total) : "";
+  }
+  // The first field still open, so "Answer them" lands where typing starts.
+  function basFocusFirstOpen() {
+    const dec = !!(BAS.data && BAS.data.eeo_decline);
+    if (!BAS.val.citizenship) return $("#ansCit")?.focus({ preventScroll: true });
+    if (!BAS.val.salary) return $("#ansSalary")?.focus({ preventScroll: true });
+    if (dec) return;
+    for (const f of ["gender", "hispanic", "race", "veteran", "disability"]) {
+      if (BAS.val[f]) continue;
+      const el = BAS_SEL[f] ? $(BAS_SEL[f]) : document.querySelector(`#ansBasicsCard [data-basic="${f}"] .ans-seg-b`);
+      return el?.focus({ preventScroll: true });
+    }
+  }
+  $("#ansBasicsCard")?.addEventListener("click", e => {
+    const b = e.target.closest("[data-basic] [data-v]");
+    if (!b) return;
+    const f = b.closest("[data-basic]").dataset.basic;
+    BAS.val[f] = BAS.val[f] === b.dataset.v ? "" : b.dataset.v;          // click again to clear
+    basPaint();
+    document.querySelector(`#ansBasicsCard [data-basic="${f}"] [data-v="${CSS.escape(b.dataset.v)}"]`)?.focus();
+  });
+  for (const [f, sel] of Object.entries(BAS_SEL)) $(sel)?.addEventListener("change", e => { BAS.val[f] = e.target.value; });
+  $("#ansCit")?.addEventListener("change", e => { BAS.val.citizenship = e.target.value; });
+  $("#ansCit2")?.addEventListener("change", e => { BAS.val.citizenship2 = e.target.value; });
+  $("#ansSalary")?.addEventListener("input", e => { BAS.val.salary = e.target.value.trim(); });
+  $("#ansCitAdd")?.addEventListener("click", () => { BAS.two = true; basPaint(); $("#ansCit2").focus(); });
+  // The decline choice is saved the moment it changes: the note under it promises what every
+  // form will get, so it never shows for a choice that is not saved yet.
+  $("#ansEeo")?.addEventListener("change", async e => {
+    const box = e.target, note = $("#ansBasicsNote"), want = box.checked;
+    box.disabled = true;
+    clearTimeout(BAS.noteT);
+    try {
+      const r = await api("/api/answers/basics", { fields: {}, eeo_decline: want });
+      BAS.data = r;
+      if (ANS.data) ANS.data.eeo_decline = !!r.eeo_decline;
+      box.checked = !!r.eeo_decline;
+      basPaint();
+      note.textContent = T("aa.saved", "Saved");
+    } catch (err) {
+      box.checked = !want;
+      note.textContent = err.message || T("profile.answers.failed", "Couldn't save.");
+    }
+    box.disabled = false;
+    BAS.noteT = setTimeout(() => { note.textContent = ""; }, 4000);
+  });
+  $("#ansBasicsSave")?.addEventListener("click", async () => {
+    const btn = $("#ansBasicsSave"), note = $("#ansBasicsNote");
+    const fields = {};
+    for (const k of Object.keys(Object.assign({}, BAS.orig, BAS.val))) {
+      if ((BAS.val[k] || "") !== (BAS.orig[k] || "")) fields[k] = BAS.val[k] || "";
+    }
+    btn.disabled = true;
+    note.textContent = "";                       // never an earlier "Saved" while this one is on its way
+    clearTimeout(BAS.noteT);
+    try {
+      const r = await api("/api/answers/basics", { fields, eeo_decline: $("#ansEeo").checked });
+      basTake(r);
+      if (ANS.data) ANS.data.eeo_decline = !!r.eeo_decline;
+      await ansRefresh({ keepEditor: true });    // the rows below show the same answers first
+      note.textContent = T("aa.saved", "Saved");
+    } catch (err) { note.textContent = err.message || T("profile.answers.failed", "Couldn't save."); }
+    btn.disabled = false;
+    BAS.noteT = setTimeout(() => { note.textContent = ""; }, 4000);
   });
 
   function ansWhen(ts) {
@@ -9509,10 +9701,13 @@
           <button class="btn btn-ghost btn-sm ans-del" type="button" data-ans="delete" aria-label="${esc(T("ans.delete", "Delete"))}">${esc(T("ans.delete", "Delete"))}</button></div>
       </div>`).join("");
   }
-  async function ansRefresh() {
+  // ``keepEditor``: an answer being added or edited in the list stays open as typed (the card's
+  // Save refreshes the list under it); the list repaints when that editor closes.
+  async function ansRefresh(opts) {
     let d;
     try { d = await api("/api/answers?q=" + encodeURIComponent($("#ansQ").value.trim())); } catch { return; }
     ANS.data.answers = d.answers; ANS.data.total = d.total;
+    if (opts && opts.keepEditor && (ANS.adding || ANS.editing)) { $("#ansCount").textContent = d.total ? String(d.total) : ""; return; }
     paintAnsList(d.answers || [], d.total || 0);
   }
   let ANS_T = 0;
@@ -9537,6 +9732,7 @@
       b.disabled = true;
       try { await api("/api/answers/delete", { key }); toast(T("ans.deleted", "Deleted.")); } catch (err) { b.disabled = false; toast(err.message); return; }
       await ansRefresh();
+      await basRefresh();                        // the card above shows the same answers
       return;
     }
     if (act === "save") {
@@ -9548,6 +9744,7 @@
       catch (err) { b.disabled = false; note.textContent = err.message; return; }
       ANS.editing = null; ANS.adding = false;
       await ansRefresh();
+      await basRefresh();
     }
   });
 

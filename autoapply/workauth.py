@@ -271,6 +271,18 @@ _CC_RX = [
 ]
 
 
+# A sanctions or embargo screen. Not "export" alone: an ITAR "U.S. person (citizen or lawful
+# permanent resident)" question is the citizen_or_pr question, answered from the profile.
+_SCREENING = re.compile(r"embargo|sanction", re.I)
+
+
+def _other_country(question: str) -> bool:
+    """True when the question names a country the work-authorization profile has no entry for
+    (Cuba, India...): the answer is not about the job's country, so never the profile's."""
+    from autoapply.countries import named_in
+    return any(question_country(n, "?") == "?" for n in named_in(question))
+
+
 def question_country(question: str, job_country: str = "US") -> str:
     """The country a question asks about: the one it names, else the job's country."""
     q = str(question or "")
@@ -290,6 +302,12 @@ def classify(question: str) -> str | None:
         return None
     if _NATIONALITY.search(q):
         return None                               # nationality is not in the profile
+    if _SCREENING.search(q) or _other_country(q):
+        # An export-control or sanctions screen ("Are you a citizen of Cuba, Iran, North Korea,
+        # Syria...?", "a national of a country subject to U.S. embargo"): it asks about THOSE
+        # countries, never the job's. The profile cannot say; the person's countries of
+        # citizenship can (planner.listed_citizenship).
+        return None
     if _END.search(q) and re.search(r"opt|stem|ead|permit|authori[sz]ation|visa", q, re.I) \
             and re.search(r"date|when|expir|until|through", q, re.I):
         return "auth_end"

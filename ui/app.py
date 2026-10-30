@@ -5214,6 +5214,66 @@ def answers_delete():
     return jsonify({"ok": ok})
 
 
+def _basics_payload(prefs: dict | None = None) -> dict:
+    """The "Answers every form asks" card: each answer as the card shows it, the countries it
+    offers, and how many of the seven are answered (the five self-identification ones count as
+    answered while the person declines them all)."""
+    from autoapply import basics, countries
+    p = prefs if prefs is not None else _load_prefs()
+    lib = _answer_lib()
+    try:
+        d = basics.read(lib, eeo_decline=bool(p.get("eeo_decline")), salary_fallback=p.get("desired_salary") or "")
+    finally:
+        lib.close()
+    return {"ok": True, **d, "eeo_decline": bool(p.get("eeo_decline")),
+            "countries": list(countries.NAMES),
+            "choices": {f: [{"code": c, "label": w} for c, w in ch] for f, ch in basics.CHOICES.items()}}
+
+
+@app.get("/api/answers/basics")
+@_guard
+def answers_basics():
+    """The answers every form asks (country of citizenship, desired salary, gender, Hispanic or
+    Latino, race, veteran status, disability) as Your answers shows them. Local only."""
+    return _nostore(jsonify(_basics_payload()))
+
+
+@app.post("/api/answers/basics")
+@_guard
+def answers_basics_save():
+    """Save the card {fields: {field: value}, eeo_decline?}: only the fields the person changed,
+    "" clearing one. Saved in the answer library under the canonical keys as the person's own,
+    the salary in the prefs store too (desired_salary) so the browser extension fills the same
+    number. Nothing here reaches a model, the broker, Telegram or a log."""
+    from autoapply import basics
+    b = request.json or {}
+    fields = b.get("fields") if isinstance(b.get("fields"), dict) else {}
+    pref_salary = str(_load_prefs().get("desired_salary") or "").strip()
+    lib = _answer_lib()
+    try:
+        # A salary only the prefs store holds (the extension's) is the card's salary too: saved
+        # in the library with the rest, unless the person cleared or changed it here.
+        if "salary" not in fields and not basics.read(lib)["values"].get("salary") and basics.parse_salary(pref_salary):
+            fields = dict(fields, salary=pref_salary)
+        got = basics.write(lib, fields)
+        now = basics.parse_salary(basics.read(lib)["values"].get("salary") or "")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    finally:
+        lib.close()
+    patch: dict = {}
+    if got["salary"] is not None:
+        patch["desired_salary"] = got["salary"]
+    elif now and str(now) != pref_salary:
+        # The card's salary (the newest saved one) is what the extension fills too, even when
+        # this save changed another field: the two never disagree after a Save.
+        patch["desired_salary"] = str(now)
+    if "eeo_decline" in b:
+        patch["eeo_decline"] = bool(b.get("eeo_decline"))
+    prefs = _merge_prefs(patch) if patch else _load_prefs()
+    return jsonify(_basics_payload(prefs))
+
+
 @app.post("/api/record/<int:rid>/screening")
 @_guard
 def record_screening_save(rid: int):
@@ -10520,9 +10580,17 @@ def _agent_placeholders(applicant: dict, prof: dict, portal: dict | None) -> tup
 def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
     """{label: answer} for the open fields the person's own material already answers, through
     the same planner the fill route uses (work authorization, the answer library, this record's
-    drafted answers, the profile). Nothing is invented: a field nothing answers stays out."""
+    drafted answers, the profile). Nothing is invented: a field nothing answers stays out.
+
+    Never a self-identification field (gender, race, Hispanic or Latino, veteran, disability):
+    these fields reach the brain as text with no choices, where a saved "No" or "Asian" is only
+    half an answer and the standing decline cannot be honored. They go to the agent's ask
+    instead, which reads the page's own choices and picks the matching one, or the decline."""
     from autoapply import KnownContext, plan_known, resolve_plan
+    from autoapply.asks import is_eeo
     from autoapply.fields import FormField
+    from autoapply.planner import residence_withheld
+    labels = [lab for lab in labels if not is_eeo(lab)]
     if not labels:
         return {}
     fields = [FormField(ref=f"l{i}", label=lab, type="text") for i, lab in enumerate(labels)]
@@ -10548,9 +10616,10 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
     # planner left: a work-authorization question answered on the bar is answered, even when
     # the structured work-auth profile is still empty.
     lib = _answer_lib()
+    wa = _work_auth()
     try:
         for lab in labels:
-            if lab in out:
+            if lab in out or residence_withheld(lab, wa):
                 continue
             hit = lib.lookup(lab)
             if hit and str(hit.get("answer") or "").strip():
@@ -10931,10 +11000,14 @@ def autoapply_agent_step():
     # the engine cannot drive but the model can: type, wait, click the suggestion.
     known = _known_answers_for([x for x in left if x.strip()], rec, data, applicant)
     # What the person answered on the bar or Telegram during THIS run (or the decline choice the
-    # ask route picked), by the question's exact words: theirs, so it wins.
+    # ask route picked), by the question's words: theirs, so it wins. The engine's label can
+    # still carry the page's error round the question ("Error: The field ... is required"),
+    # the asked question never does, so both are compared without it.
+    from autoapply.answers import clean_label
     given = b.get("answers") if isinstance(b.get("answers"), dict) else {}
+    by_clean = {clean_label(k).lower(): v for k, v in given.items() if clean_label(k)}
     for label in [x for x in left if x.strip()]:
-        v = " ".join(str(given.get(label) or "").split())[:300]
+        v = " ".join(str(given.get(label) or by_clean.get(clean_label(label).lower()) or "").split())[:300]
         if v:
             known[label] = v
     for n, (label, value) in enumerate(known.items(), start=1):

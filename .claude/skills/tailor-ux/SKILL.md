@@ -241,3 +241,20 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   list under the box on focus while it is empty ("Ask me to", arrows/Enter/Escape, overlays the
   roles), plus one quiet right-aligned "See examples" link. Home's roles leave out ones closed to a
   visa holder by title too ("USC & GC only"), via `/api/jobs?home=1`.
+- **2026-10-30 Answers every form asks.** Your answers has a third card between Work authorization
+  and Saved answers, in the Work authorization card's grammar (`.ans-card`, the 3-column `.ans-grid`,
+  `.ans-field`, `.ans-seg`, `select.fld`): country of citizenship (a select; "Add another" reveals a
+  second one), desired annual salary (USD), then the "Decline to self-identify" checkbox, moved here
+  from Work authorization because it governs these rows and placed ABOVE them so the box never moves
+  under the pointer when ticked, then Gender (segmented, spans two columns so it stays one row),
+  Hispanic or Latino and Disability (segmented), Race and Veteran status (selects: long labels). With
+  the decline on, the five rows fold into one muted line aligned with the checkbox text. One accent
+  per page: Work authorization keeps the primary Save; this card's Save is outline and confirms
+  "Saved" only after the list below has refreshed. The title carries "n of 7"; Auto-apply's Today row
+  says "n of 7 form answers saved". Before the agent's first run of a session with answers missing,
+  the agent bar says "Before I apply: n questions every form asks." with Answer them (Your answers at
+  this card, focus on the first open answer, back returns to Auto-apply) and Apply anyway; never sent
+  to Telegram. The bar sits on the browser chrome, dark in both themes, so `.bb-fill` carries the dark
+  tokens (the light theme's near-black primary had vanished into it). Measured at 1893x1183@2x and
+  2490x1556@1.52 (76% zoom), dark and light: card left = title left, no sideways scroll, bar contrast
+  over 7:1. Screens: docs/design/answers/.

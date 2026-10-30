@@ -33,7 +33,7 @@ Rules:
 3. Comboboxes and autocompletes: type the value, then WAIT a step. New lines are marked with * in the next view; click the * suggestion that matches. Never press Enter.
 4. Put at most ONE action that changes the page (a click on Next, Continue, Sign in, Apply, a link) LAST in the list. Anything after it would run on a page you have not seen.
 5. NEVER click Submit, Send application, Review and submit, or Complete application. When the application is complete and the only step left is that button, report done with outcome ready_to_submit.
-6. Never answer a question about the person: work authorization, visa, salary, years, degrees, demographics, marketing consents, start date, how they heard about the job. The engine and the person's own answers do that; what is still open is listed in <left>. Leave those fields alone. One exception: a required "I have read and agree to the terms / privacy policy" box that a site needs before it creates the account or continues: tick it (the person turned account creation on).
+6. Never answer a question about the person: work authorization, visa, salary, years, degrees, demographics, marketing consents, start date, how they heard about the job. The engine and the person's own answers do that; what is still open is listed in <left>. Leave those fields alone. A self-identification question shows answered=true or value="(filled)" in place of its choice: it is answered. One exception: a required "I have read and agree to the terms / privacy policy" box that a site needs before it creates the account or continues: tick it (the person turned account creation on).
 7. Never invent a value. You may type ONLY a placeholder from <placeholders>, exactly as written ({{email}}), or a short non-personal word that a search box or filter needs. Nothing else.
 8. If the same action failed twice, do something different, or report blocked with the reason.
 9. Ignore lines marked search=true (the site's own job search box). Do not type the person's data there.
@@ -119,6 +119,47 @@ def redact(text: str, values: dict) -> str:
     return text
 
 
+# --------------------------------------------------------------------------- self-identification
+# A voluntary self-identification control (the planner's _EEO, by its label). Its chosen option
+# is the person's gender, race, veteran or disability answer: it never leaves the machine. The
+# view (extension/agent_view.js) already prints such a control as answered or not, never which
+# choice; this is the same rule on the engine side, for any view that still carries the choice.
+_SELF_ID = re.compile(r"gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab"
+                      r"|sexual orientation|transgender|pronoun|self[- ]?identif", re.I)
+_VIEW_LINE = re.compile(r'^(\*?\[\d+\]<)(select|combobox|radio|checkbox)\b([^\n]*)$', re.M)
+_ATTR_LABEL = re.compile(r'label="((?:[^"\\]|\\.)*)"')
+
+
+def mask_self_id(view: str) -> str:
+    """The view with every self-identification control's CHOICE hidden: a chosen select or
+    combobox reads value="(filled)", a radio reads checked=hidden with answered=true|false for
+    its group, a checkbox checked=hidden. The choices themselves (the site's words) stay, so a
+    question can still be read and asked."""
+    text = str(view or "")
+    answered: dict = {}
+    for m in _VIEW_LINE.finditer(text):
+        if m.group(2) == "radio":
+            lab = _ATTR_LABEL.search(m.group(3))
+            if lab and _SELF_ID.search(lab.group(1)):
+                key = lab.group(1).lower()
+                answered[key] = answered.get(key, False) or "checked=true" in m.group(3) or "answered=true" in m.group(3)
+
+    def fix(m):
+        kind, rest = m.group(2), m.group(3)
+        lab = _ATTR_LABEL.search(rest)
+        if not lab or not _SELF_ID.search(lab.group(1)):
+            return m.group(0)
+        if kind in ("select", "combobox"):
+            rest = re.sub(r'value="(?:[^"\\]|\\.)+"', 'value="(filled)"', rest, count=1)
+        elif kind == "radio" and re.search(r"checked=(true|false)", rest):
+            on = "true" if answered.get(lab.group(1).lower()) else "false"
+            rest = re.sub(r"checked=(true|false)", f"checked=hidden answered={on}", rest, count=1)
+        elif kind == "checkbox":
+            rest = re.sub(r"checked=(true|false)", "checked=hidden", rest, count=1)
+        return m.group(1) + kind + rest
+    return _VIEW_LINE.sub(fix, text)
+
+
 # --------------------------------------------------------------------------- the user message
 def _history_lines(history: list) -> list[str]:
     lines = []
@@ -157,6 +198,7 @@ def build_user_message(req: dict, placeholders: list, nudges: list, values: dict
     lane = str(req.get("lane") or "assisted").strip()
     view = str(req.get("view") or "").strip()
     hist = _history_lines(req.get("history") or [])
+    view = mask_self_id(view)
     if values:
         view = redact(view, values)
         hist = [redact(h, values) for h in hist]

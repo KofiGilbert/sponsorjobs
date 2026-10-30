@@ -40,9 +40,13 @@
   // A dropdown's prompt entry ("Select...", "-- Choose one --", "Please select"), never a choice.
   // Only a pure prompt: "Choose not to disclose" (a decline) and "Search engine" are real choices.
   // The same rule as autoapply/asks.py, autofill_core.js and the shell's orderOptions.
-  const DECLINE_RE = /decline|prefer not|do not wish|don['’]?t wish|not wish to|(?:do not|don['’]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)/i;
+  const DECLINE_RE = /decline|prefer not|do not wish|don['’]?t wish|not wish to|(?:do not|don['’]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)|not declared/i;
   const PROMPT_RE = /^[\s\-_*.\u2013\u2014]*(?:(?:please )?(?:select|choose)\b|please (?:enter|type|pick)\b|make a selection\b)|^-{2,}|^(?:none selected|no selection|nothing selected)\W*$|^(?:search|start typing|type to search)(?:\W*$|\s*(?:\.{3}|\u2026)|\s+(?:for|by|here)\b)/i;
   const isPlaceholder = (t) => { const s = norm(t); return !!s && PROMPT_RE.test(s) && !DECLINE_RE.test(s); };
+  // A voluntary self-identification question (the planner's _EEO; autoapply/brain.py _SELF_ID).
+  // Its chosen option is the person's gender, race, veteran or disability answer, and it never
+  // leaves the machine: the view says such a control is answered, never which choice it holds.
+  const SELF_ID_RE = /gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun|self[- ]?identif/i;
   const TEXT_TYPES = new Set(["text", "email", "tel", "url", "search", "password", "number", "date", "datetime-local",
                               "month", "week", "time", "color", "range", ""]);
   const BUTTON_TYPES = new Set(["submit", "button", "reset", "image"]);
@@ -303,6 +307,36 @@
     return !!(el.disabled || attrOf(el, "aria-disabled") === "true");
   }
 
+  // Is any radio of this radio's group chosen? (the group by its name, else its radiogroup)
+  function groupAnswered(el) {
+    try {
+      if (tagOf(el) === "INPUT" && el.name) {
+        const scope = el.form || rootOf(el);
+        return Array.from(scope.querySelectorAll("input[type=radio]")).some((o) => o.name === el.name && o.checked);
+      }
+      const g = el.closest && el.closest("[role='radiogroup']");
+      if (g) return !!g.querySelector("[role='radio'][aria-checked='true'], input[type=radio]:checked");
+    } catch (e) { /* fall through to the box itself */ }
+    return tagOf(el) === "INPUT" ? !!el.checked : attrOf(el, "aria-checked") === "true";
+  }
+  // Is any box of this checkbox's group ticked? null when the box has no group of two or more
+  // (then "answered" would say which choice it holds).
+  function boxGroupAnswered(el) {
+    try {
+      const isOn = (o) => (tagOf(o) === "INPUT" ? !!o.checked : attrOf(o, "aria-checked") === "true");
+      let boxes = [];
+      if (tagOf(el) === "INPUT" && el.name) {
+        const scope = el.form || rootOf(el);
+        boxes = Array.from(scope.querySelectorAll("input[type=checkbox]")).filter((o) => o.name === el.name);
+      }
+      if (boxes.length < 2) {
+        const g = el.closest && el.closest("fieldset, [role='group']");
+        if (g) boxes = Array.from(g.querySelectorAll("input[type=checkbox], [role='checkbox']"));
+      }
+      return boxes.length >= 2 ? boxes.some(isOn) : null;
+    } catch (e) { return null; }
+  }
+
   // One line of the view for an interactive element (without the index).
   function describe(el, kind) {
     const flags = [];
@@ -329,21 +363,28 @@
     if (kind === "select") {
       const opts = Array.from(el.options || []);
       const first = opts.slice(0, 4).map((o) => cleanText(o.textContent).slice(0, 40)).join("|");
-      return `<select label=${q(labelOf(el))} value=${q(selectValue(el))} options=${opts.length} first=${q(first)}${tail}>`;
+      const label = labelOf(el), v = selectValue(el);
+      return `<select label=${q(label)} value=${q(v && SELF_ID_RE.test(label) ? "(filled)" : v)} options=${opts.length} first=${q(first)}${tail}>`;
     }
     if (kind === "combobox") {
       const expanded = attrOf(el, "aria-expanded") === "true";
       const search = isSiteSearch(el) ? " search=true" : "";
-      return `<combobox label=${q(labelOf(el))} value=${q(comboValue(el))} expanded=${expanded}${search}${tail}>`;
+      const label = labelOf(el), v = comboValue(el);
+      return `<combobox label=${q(label)} value=${q(v && SELF_ID_RE.test(label) ? "(filled)" : v)} expanded=${expanded}${search}${tail}>`;
     }
     if (kind === "checkbox") {
       const on = tagOf(el) === "INPUT" ? !!el.checked : attrOf(el, "aria-checked") === "true";
       const label = (tagOf(el) === "INPUT" ? ownLabel(el) : "") || labelOf(el);
-      return `<checkbox label=${q(cleanLabel(label).slice(0, MAX_LABEL))} checked=${on}${tail}>`;
+      const selfId = SELF_ID_RE.test(label) || SELF_ID_RE.test(groupLabel(el));
+      const ans = selfId ? boxGroupAnswered(el) : null;
+      const state = selfId ? "hidden" + (ans === null ? "" : ` answered=${ans}`) : on;
+      return `<checkbox label=${q(cleanLabel(label).slice(0, MAX_LABEL))} checked=${state}${tail}>`;
     }
     if (kind === "radio") {
       const on = tagOf(el) === "INPUT" ? !!el.checked : attrOf(el, "aria-checked") === "true";
-      return `<radio label=${q(groupLabel(el))} option=${q(optionLabel(el))} checked=${on}${tail}>`;
+      const group = groupLabel(el);
+      const state = SELF_ID_RE.test(group) ? `checked=hidden answered=${groupAnswered(el)}` : `checked=${on}`;
+      return `<radio label=${q(group)} option=${q(optionLabel(el))} ${state}${tail}>`;
     }
     if (kind === "file") {
       const chosen = el.files && el.files.length ? "chosen" : "none";
