@@ -23,6 +23,10 @@
 //                         openssl genpkey -algorithm ed25519 -outform DER | tail -c 32 | basenc --base64url -w0
 //                       Without it /agent/sign and the key directory answer 503 not_configured and
 //                       the agent's page requests simply go out unsigned.
+//   TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET
+//                       the official Telegram bot (src/telegram.ts, docs/notify.md). Set all three
+//                       with ./scripts/telegram-setup.sh (it also sets Telegram's webhook); until
+//                       then /notify/telegram/* and /telegram/webhook answer 503.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sponsorjobs-broker",

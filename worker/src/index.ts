@@ -3,16 +3,17 @@
 // A parallel implementation of backend/broker.py for the routes the app needs to run on the
 // bundled AI: anonymous accounts, metered completions, packages and usage. The Python broker
 // stays the reference (dev + tests); where this file differs it says why. Phase-2 routes the app
-// may call (password sign-in, Telegram) answer like the Python broker does when that feature is not
-// configured, so the app degrades the same way. Live interviews (Tavus), Stripe billing and
-// passwordless sign-in (e-mail code, Google; src/signin.ts) are built, and each stays
-// "not configured" until its secrets are set. Mail aliases for the apply agent (src/mail.ts) are
+// may call (password sign-in) answer like the Python broker does when that feature is not
+// configured, so the app degrades the same way. Live interviews (Tavus), Stripe billing,
+// passwordless sign-in (e-mail code, Google; src/signin.ts) and the official Telegram bot relay
+// (src/telegram.ts) are built, and each stays "not configured" until its secrets are set. Mail aliases for the apply agent (src/mail.ts) are
 // new here: the Python broker has no e-mail receiver, and so is request signing for the apply
 // agent (src/botauth.ts): the private key lives only in this Worker.
 //
 // Privacy, as in the Python broker: nothing here stores prompts, resumes or replies. D1 holds
 // only account ids, token hashes, usage counts, and (for 30 minutes) the code or link a job
-// portal mailed to a student's alias.
+// portal mailed to a student's alias, plus the Telegram bot's chat bindings and queued button taps
+// (migrations/0008_telegram.sql).
 
 import { allowRegistration, emailOf, identify, register } from "./accounts";
 import { handleAdmin, isAdminHost } from "./admin";
@@ -33,6 +34,7 @@ import {
   recordAvatarSession, recordLlm, takeFreePackage, takePassPackage,
 } from "./store";
 import { emailStart, emailVerify, googleCallback, googleStart } from "./signin";
+import * as tg from "./telegram";
 import { createConversation, endConversation, transcript } from "./tavus";
 
 const json = (data: unknown, status = 200): Response =>
@@ -414,9 +416,16 @@ const ROUTES: Route[] = [
   // and publish the key. The directory is also routed here from sponsorjobs.ai (wrangler.jsonc).
   ["POST", /^\/agent\/sign$/, ({ req, env, now }) => agentSign(req, env, now)],
   ["GET", new RegExp(`^${DIRECTORY_PATH.replace(/[.]/g, "\\.")}$`), ({ req, env, now }) => directory(req, env, now)],
-  ["GET", /^\/notify\/telegram\/(status|inbox)$/, off("telegram_not_configured")],
-  ["POST", /^\/notify\/telegram\/(link|unlink|send|send_media|edit)$/, off("telegram_not_configured")],
-  ["POST", /^\/telegram\/webhook$/, off("telegram_not_configured")],
+  // The official Telegram bot (src/telegram.ts, docs/notify.md). Every route answers 503
+  // telegram_not_configured until the three TELEGRAM_* secrets are set.
+  ["POST", /^\/notify\/telegram\/link$/, tg.link],
+  ["GET", /^\/notify\/telegram\/status$/, tg.status],
+  ["POST", /^\/notify\/telegram\/unlink$/, tg.unlink],
+  ["POST", /^\/notify\/telegram\/send$/, tg.send],
+  ["POST", /^\/notify\/telegram\/send_media$/, tg.sendMedia],
+  ["POST", /^\/notify\/telegram\/edit$/, tg.edit],
+  ["GET", /^\/notify\/telegram\/inbox$/, tg.inbox],
+  ["POST", /^\/telegram\/webhook$/, tg.webhook],
 ];
 
 export default {

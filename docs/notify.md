@@ -13,16 +13,22 @@ never written to disk or a table, and only its size is logged. Every photo and d
 with `protect_content: true` (Telegram blocks forwarding and saving); the app cannot turn that
 off. Telegram bot chats are cloud chats, not end to end encrypted, and a bot can delete its
 messages only within 48 hours, which is why previews cover the contact line by default and the
-first "Send PDF" warns the person. The broker keeps exactly three tables in its SQLite DB
-(`backend/store_sqlite.py`):
+first "Send PDF" warns the person. The broker is the Cloudflare Worker at
+`https://api.sponsorjobs.ai` (`worker/src/telegram.ts`); it keeps four tables in its D1 database
+(`worker/migrations/0008_telegram.sql`):
 
 | table | what | lifetime |
 |---|---|---|
-| `telegram_links(code, account, expires_at)` | sha256 of a one-time link code | 15 minutes, deleted on use |
+| `telegram_links(code_hash, account, expires_at)` | sha256 of a one-time link code | 15 minutes, deleted on use |
 | `telegram_chats(account, chat_id, username, paused, linked_at)` | the account to chat binding | until unlink (or the person blocks the bot) |
 | `telegram_events(id, account, type, data, text, at)` | button taps / replies waiting for the app | deleted once acknowledged, or after 7 days |
+| `telegram_sends(account, kind, at)` | one timestamp per message sent or edited, for the rate limit | 24 hours |
 
-Send rate-limit counters are kept in memory only (the broker runs one worker process).
+A Worker runs in many places at once, so the send rate-limit counters live in D1 (`telegram_sends`)
+rather than in memory; one guarded insert checks and takes a slot, so parallel sends cannot slip
+past the limit. Expired links, old events and old counters are swept on the requests that touch
+them. The old Python broker (`backend/telegram_relay.py`, SQLite in `backend/store_sqlite.py`,
+in-memory counters) answers the same contract and stays the reference for local development.
 
 ## Contract
 
@@ -43,7 +49,7 @@ not configured every route, including the webhook, answers `503 {"error": "teleg
   - `400 {error}` for a bad body; `409 {"error": "not_linked"}` with no chat;
     `409 {"error": "paused"}` after the person sent /stop;
     `429 {"error": "rate_limited", retry_after}` (also a `Retry-After` header) past 1 message per
-    3 seconds or 30 per rolling 24 hours per account; `502 {"error": "telegram_unavailable"}` when
+    3 seconds or 100 per rolling 24 hours per account; `502 {"error": "telegram_unavailable"}` when
     Telegram fails.
 - `POST /notify/telegram/send_media` (multipart/form-data) -> `{ok: true, message_id}`.
   - fields: `kind` `"photo"` or `"document"`; `file` (a photo at most 10 MB, a document at most
@@ -92,17 +98,19 @@ not configured every route, including the webhook, answers `503 {"error": "teleg
 - If Telegram answers 403 to a send (the person blocked the bot or deleted the chat), the broker
   drops the binding and returns `409 not_linked`, so the app shows "connect" again.
 - Group / channel chats are ignored; the bot works only in a private chat.
-- The relay turns on only when all three env vars below are set; a half configuration stays off
-  (503) and prints a warning at boot.
+- The relay turns on only when all three secrets below are set; a half configuration stays off
+  (503).
 
-## Environment (broker host only, never in the app or git)
+## Environment (Worker secrets only, never in the app or git)
 
-| var | value |
+| secret | value |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | the token @BotFather gives you, e.g. `123456:ABC...` |
 | `TELEGRAM_BOT_USERNAME` | the bot's username, e.g. `SponsorJobsBot` (a leading `@` is fine) |
-| `TELEGRAM_WEBHOOK_SECRET` | a random string you make up, 1 to 256 chars of `A-Z a-z 0-9 _ -` (e.g. `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`) |
-| `BROKER_PUBLIC_URL` | only for the setup helper: the broker's https URL, e.g. `https://tailor-broker.onrender.com` (on Render, `RENDER_EXTERNAL_URL` is used if this is unset) |
+| `TELEGRAM_WEBHOOK_SECRET` | a random string Telegram sends back in `X-Telegram-Bot-Api-Secret-Token`; the setup script makes one |
+
+All three are Worker secrets (`worker/src/env.ts`), set by the setup script below. Until all three
+are set, every route answers `503 telegram_not_configured`.
 
 ## Owner setup (once)
 
@@ -110,22 +118,32 @@ not configured every route, including the webhook, answers `503 {"error": "teleg
    `SponsorJobsBot` (must end in `bot`; pick another if it is taken). Copy the token.
 2. Optional, in @BotFather: `/setdescription`, `/setabouttext` and `/setuserpic` so the bot looks
    official.
-3. On the broker host (Render: service, Environment) set `TELEGRAM_BOT_TOKEN`,
-   `TELEGRAM_BOT_USERNAME` and `TELEGRAM_WEBHOOK_SECRET`. Save (Render redeploys).
-4. Point Telegram at the broker. From the Render **Shell** tab (or any machine with the same env):
+3. Make sure the Worker with the Telegram routes is deployed and its tables exist. In Terminal:
 
    ```
-   python -m backend.telegram_setup
+   cd ~/sponsorjobs/worker
+   npx wrangler d1 migrations apply DB --remote
+   npx wrangler deploy
    ```
 
-   It calls `setWebhook` for `<BROKER_PUBLIC_URL>/telegram/webhook` with the secret, registers the
-   `/help /stop /resume /show /versions` commands, and prints `getWebhookInfo`. Check `url` is right and
-   `last_error_message` is absent. Re-run it any time the URL or the secret changes.
+4. Run the setup script from the same folder:
+
+   ```
+   ./scripts/telegram-setup.sh
+   ```
+
+   It asks for the token (hidden while you type) and the bot username, checks the token with
+   Telegram, makes a webhook secret, stores the three secrets with `npx wrangler secret put` (never
+   printed or written to a file), calls `setWebhook` for
+   `https://api.sponsorjobs.ai/telegram/webhook` with the secret (message and callback_query
+   updates only), registers the `/help /stop /resume /show /versions` commands, and prints the
+   webhook's `url` and `last_error_message`. Check the url is right and the error says `(none)`.
+   Re-run it any time the token changes; it makes a new secret each time.
 5. Test: in the app, Settings, Notifications, Connect Telegram; tap the link; press Start. The bot
    replies "Connected." and `GET /notify/telegram/status` shows `linked: true`.
 
-Rotating the token: `/revoke` in @BotFather, set the new `TELEGRAM_BOT_TOKEN`, redeploy, re-run the
-setup helper. Existing links survive (chat ids do not change).
+Rotating the token: `/revoke` in @BotFather, then re-run `./scripts/telegram-setup.sh` with the new
+token. Existing links survive (chat ids do not change).
 
 ## Desktop side
 
