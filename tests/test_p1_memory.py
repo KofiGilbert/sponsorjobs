@@ -5,8 +5,8 @@ Free-form turns are conversational AND remembered; the LLM distills structured f
 mention X") is honored by the tailoring selection; the person can export and erase everything;
 and the runtime NEVER uses FakeLLM (it's a test double only).
 
-All offline: FakeLLM (deterministic) + RESUME_AGENT_PALACE_INDEX=0 (transcript layer only, no
-embedder/network). The real backend does the real work in production.
+All offline: FakeLLM (deterministic) + the chat diary (no model, no network). The real backend
+does the real work in production.
 """
 
 from __future__ import annotations
@@ -22,12 +22,6 @@ from ui.records import CVRecords
 from ui.session import WebIntake
 
 JD = "Data Analyst at a fintech. SQL, dashboards, forecasting."
-
-
-@pytest.fixture(autouse=True)
-def _offline(monkeypatch):
-    # Transcript layer only: no embedder, no network. The real backend is used in production.
-    monkeypatch.setenv("RESUME_AGENT_PALACE_INDEX", "0")
 
 
 def _session(tmp_path, db=None):
@@ -47,7 +41,7 @@ def test_freeform_turn_is_conversational_and_persists_across_restart(tmp_path):
     assert out["messages"] and out["phase"] == "chatting"
     assert s.assembled is None   # a free-form turn did not force a build
 
-    # Simulate a full restart: a fresh session reloads the entire history from the palace.
+    # Simulate a full restart: a fresh session reloads the entire history from the diary.
     s2 = _session(tmp_path, db)
     joined = " ".join(t["content"] for t in s2.prior_history)
     assert "targeting fintech" in joined.lower(), "the free-form turn was not remembered"

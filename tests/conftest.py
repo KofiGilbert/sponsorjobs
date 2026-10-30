@@ -7,7 +7,6 @@ network is involved (CLAUDE.md §12).
 
 from __future__ import annotations
 
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -23,27 +22,6 @@ from llm.base import FakeLLM  # noqa: E402
 from tailoring.compiler import find_pdflatex  # noqa: E402
 
 TEMPLATE_PATH = ROOT / "config" / "resume_shetty.tex"
-
-# The offline suite keeps MemPalace's durable verbatim layer but skips semantic
-# indexing/recall by default, so it stays fast and needs no embedding model.
-# Tests that exercise real recall set RESUME_AGENT_PALACE_INDEX=1 themselves.
-os.environ.setdefault("RESUME_AGENT_PALACE_INDEX", "0")
-
-
-def _palace_available() -> bool:
-    try:
-        import mempalace  # noqa: F401
-        return True
-    except Exception:
-        return False
-
-
-# Tests that exercise MemPalace semantic recall are skipped (not failed) where the
-# package/embedder isn't available, mirroring `requires_latex`.
-requires_palace = pytest.mark.skipif(
-    not _palace_available(),
-    reason="mempalace not installed (semantic recall layer unavailable)",
-)
 
 
 def _ocr_available() -> bool:

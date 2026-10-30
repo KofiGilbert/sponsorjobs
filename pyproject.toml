@@ -5,17 +5,15 @@ description = "SponsorJobs: a free, local-first job-hunt agent for international
 license = "AGPL-3.0-only"
 readme = "README.md"
 requires-python = ">=3.11"
-# Durable verbatim + semantic memory layer. Base install only (audited 3.5.0);
-# NO extras — pgvector/extract/gpu/dev are excluded on purpose (see NOTICES.md).
-# Uses the minilm (Apache-2.0) embedder, local-only; no Gemma, no network features.
+# The chat diary (intake/diary.py) is our own standard-library code: MemPalace and ChromaDB were
+# removed in the applicant brain's Phase 2 (docs/applicant-brain.md, section 12).
 dependencies = [
-    "mempalace==3.5.0",
     # CV upload/extraction — all local, all permissive (see NOTICES.md):
     "python-docx>=1.2.0",        # Word .docx (MIT)
     "pypdf>=6.14.0",             # PDF text (BSD-3)
     "python-pptx>=1.0.2",        # PowerPoint .pptx (MIT)
     "pypdfium2>=5.11.0",         # rasterize scanned PDFs (Apache-2.0/BSD; bundles PDFium)
-    "rapidocr-onnxruntime>=1.4.4",  # OCR (Apache-2.0 code + Apache-2.0 PP-OCR models; onnxruntime already shipped)
+    "rapidocr-onnxruntime>=1.4.4",  # OCR (Apache-2.0 code + Apache-2.0 PP-OCR models; brings onnxruntime, MIT)
     "openpyxl>=3.1",             # read official DOL PERM / E-Verify .xlsx disclosure files (MIT)
     # Local desktop app runtime (imported by ui/):
     "flask>=3.0",                # local web UI + JSON API server, ui/app.py (BSD-3)

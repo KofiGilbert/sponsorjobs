@@ -95,11 +95,11 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     # Nothing here is used by the app and each drags in a large dependency tree. numpy is NOT
-    # here: OCR needs it. MemPalace and ChromaDB are, so the semantic memory layer (being phased
-    # out) cannot start in the installed app: it would add RAM and an 80 MB model download now
-    # that numpy imports. The verbatim transcript layer needs neither (intake/palace_memory.py),
-    # and packaging/launcher.py also sets RESUME_AGENT_PALACE_INDEX=0. Leaving them out drops
-    # their own trees too (grpc, opentelemetry, kubernetes, tokenizers, huggingface_hub).
+    # here: OCR needs it. MemPalace and ChromaDB are no longer dependencies and nothing imports
+    # them (the chat diary, intake/diary.py, is our own code; tests/test_diary_recall.py checks
+    # the source tree). They stay listed as a guard for a build venv that still has them
+    # installed, so neither they nor their trees (grpc, opentelemetry, kubernetes, tokenizers,
+    # huggingface_hub) can ever be pulled in.
     # numpy's build and test tools are left out; OCR uses none of them.
     excludes=["tkinter", "matplotlib", "pandas", "PyQt5", "PySide6", "pytest",
               "chromadb", "mempalace",

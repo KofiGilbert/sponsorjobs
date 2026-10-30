@@ -33,7 +33,7 @@ from sourcing.sponsors import (SponsorDB, download_h1b_rows,  # noqa: E402
                                h1b_default_fiscal_years, sync_h1b_snapshot,
                                looks_us, naics_industry, parse_perm_xlsx, parse_tabular_file)
 from sourcing.watchlist import Watchlist  # noqa: E402
-from intake.palace_memory import PalaceMemory  # noqa: E402
+from intake.diary import Diary, erase_all as _erase_diary  # noqa: E402
 from ui.lock import Lock  # noqa: E402
 from ui.records import CVRecords  # noqa: E402
 from ui.session import WebIntake  # noqa: E402
@@ -64,7 +64,7 @@ def _no_store(resp):
 _DATA = Path(os.environ.get("RESUME_AGENT_DATA_DIR") or (ROOT / "data")).resolve()
 DB_PATH = str(_DATA / "resume_agent.db")
 WORKDIR = _DATA / "cv_build"
-PALACE_DIR = _DATA / "palace"   # durable verbatim + semantic memory (git-ignored)
+PALACE_DIR = _DATA / "palace"   # the chat diary, transcripts/<person>.jsonl (git-ignored)
 UPLOADS_DIR = _DATA / "uploads"  # raw uploaded CVs, kept as a backup, not indexed
 TEMPLATE = (ROOT / "config" / "resume_shetty.tex").read_text(encoding="utf-8")
 _DEFAULT_TEMPLATE = "shetty"
@@ -5909,19 +5909,21 @@ def github_disconnect():
 
 
 # ---- Memory (P1): the person owns their local memory, view / export / erase it (CLAUDE.md §5).
-# Three layers: the SQLite conversation row + distilled facts, and the palace transcript. ----
-def _palace(person: str = "default") -> PalaceMemory:
-    return PalaceMemory(PALACE_DIR, person=person)
+# Three layers: the SQLite conversation row + distilled facts, and the chat diary. ----
+def _palace(person: str = "default") -> Diary:
+    """The chat diary (intake/diary.py) for ``person``. Named for the folder it lives in."""
+    return Diary(PALACE_DIR, person=person)
 
 
 def _career_highlights_for_job(role: str, company: str, jd: str,
-                               min_similarity: float = 0.3, limit: int = 4) -> list:
+                               min_similarity: float = 0.5, limit: int = 4) -> list:
     """The diary memories most relevant to THIS job, kept only when the match is STRONG and on-point,
     so tailoring can autonomously draw on the person's real past accomplishments without asking them
     anything, and without dredging up noise. Grounded: these are their own captured statements, never
-    invented. Returns [{text, similarity}]; empty when nothing is relevant or the semantic layer is
-    off (verified 2026-08-03: on-point hits score ~0.46-0.57, off-topic ~0.1, so 0.3 separates them
-    cleanly). This is the shared retrieval engine for the autonomous CV path + conversational surfacing."""
+    invented. Returns [{text, similarity}]; empty when nothing is relevant. Recall is the diary's
+    keyword search (intake/diary.py): ``similarity`` 0.5 means at least two of the job's words are
+    in the line (or every word of a one-word query), so a single shared word is not enough. This
+    is the shared retrieval engine for the autonomous resume path + conversational surfacing."""
     query = " ".join(x for x in (role or "", company or "", (jd or "")[:200]) if x).strip()
     if not query:
         return []
@@ -5980,7 +5982,7 @@ def memory_delete_fact(fact_id):
 @_guard
 def memory_ingest():
     """Add something to the person's durable CAREER MEMORY (the lifelong diary): a note or event they
-    type, or a document they upload. Stored locally + indexed so it can be recalled later for CVs,
+    type, or a document they upload. Kept locally in the diary so it can be recalled later for CVs,
     cover letters, and 'tell me about a time' answers. Typed text is stored as-is; an uploaded
     document's text is extracted LOCALLY (best-effort; the file never leaves the machine and is not
     kept). Body: JSON {text, source} OR a multipart file."""
@@ -6189,14 +6191,14 @@ def _erase_brain_and_answers() -> list:
 @app.post("/api/memory/erase")
 @_guard
 def memory_erase():
-    """Erase everything remembered: distilled facts, the SQLite conversation row, the palace
-    transcript + semantic index, the applicant brain, the answer library, the prefs answers,
-    the interview files, the skip list and the migration backups. Local and irreversible; the
-    person chose it. Resumes and applications stay."""
+    """Erase everything remembered: distilled facts, the SQLite conversation row, every chat
+    diary file and the old MemPalace store folder, the applicant brain, the answer library, the
+    prefs answers, the interview files, the skip list and the migration backups. Local and
+    irreversible; the person chose it. Resumes and applications stay."""
     mem = _memory()
     mem.erase_facts("default")
     mem.delete("default")
-    _palace().erase()
+    _erase_diary(PALACE_DIR)
     _SESSION.pop("s", None)   # drop any live in-memory session so it can't re-save the old state
     gone = _erase_brain_and_answers()
     return jsonify({"ok": True, "erased": len(gone)})

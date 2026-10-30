@@ -2,7 +2,7 @@
 natural interview that draws out EVERY template slot — including Extracurricular
 and Additional Information (Interests) — via indirect leading questions, never a
 robotic "list your extracurriculars". The question bank is template config; the
-person's answers live in essentials/MemPalace.
+person's answers live in essentials and the chat diary.
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ into a form (2026-08-03).
 Everything the person tells the app goes to memory; the identity / roles / dates / education a resume
 needs are then DERIVED from that memory by replaying it through the same grounded extractor the live
 intake uses (invents nothing). This proves the derivation before the profile page is retired.
-Offline: FakeLLM + verbatim-only memory (no embedder/network).
+Offline: FakeLLM + the chat diary (no model, no network).
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("RESUME_AGENT_CRED_FILE", str(tmp_path / "credentials.env"))
     monkeypatch.setenv("RESUME_AGENT_DEV", "1")
     monkeypatch.setenv("RESUME_AGENT_FAKE_LLM", "1")
-    monkeypatch.setenv("RESUME_AGENT_PALACE_INDEX", "0")
     import ui.app as A
     importlib.reload(A)
     return A, A.app.test_client()

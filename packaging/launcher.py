@@ -97,17 +97,14 @@ def _engine_env(data: Path, env=None) -> None:
     """The packaged engine's settings, each only when not already set (a person or a test can
     still override any of them):
 
-    * the person's writable data dir and their credentials file;
-    * MemPalace's semantic index OFF. The installed app ships numpy for photo and scanned-PDF
-      reading (OCR), and with numpy present the semantic memory layer could start: ChromaDB in
-      RAM plus an 80 MB embedding model download on first use. That layer is being phased out,
-      the verbatim transcript keeps every turn without it, and the build leaves chromadb and
-      mempalace out anyway (packaging/tailor.spec); this keeps it off even if one is present.
+    * the person's writable data dir and their credentials file.
+
+    (The old RESUME_AGENT_PALACE_INDEX switch is gone: MemPalace was removed and the chat diary,
+    intake/diary.py, has no index to turn off. A leftover value in the environment does nothing.)
     """
     env = os.environ if env is None else env
     env.setdefault("RESUME_AGENT_DATA_DIR", str(data))
     env.setdefault("RESUME_AGENT_CRED_FILE", str(data / "credentials.env"))
-    env.setdefault("RESUME_AGENT_PALACE_INDEX", "0")
 
 
 def main() -> None:

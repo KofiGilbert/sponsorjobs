@@ -2,9 +2,8 @@
 
 A person can add anything about their career to a durable, recallable memory, a note/event they
 type now, or (best-effort, when the optional extractor is present) a document. This is the first
-brick of the MemPalace "career diary" direction. Offline: the semantic index is disabled
-(RESUME_AGENT_PALACE_INDEX=0) so these tests are model-free and never touch the network; the
-verbatim transcript is the thing we assert on.
+brick of the "career diary" direction. The diary (intake/diary.py) is model-free and never
+touches the network; the verbatim diary is the thing we assert on.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("RESUME_AGENT_CRED_FILE", str(tmp_path / "credentials.env"))
     monkeypatch.setenv("RESUME_AGENT_DEV", "1")
     monkeypatch.setenv("RESUME_AGENT_FAKE_LLM", "1")
-    monkeypatch.setenv("RESUME_AGENT_PALACE_INDEX", "0")   # verbatim only, no embedder/network
     import ui.app as A
     importlib.reload(A)
     return A, A.app.test_client()
@@ -41,23 +39,19 @@ def test_empty_ingest_is_rejected(client):
     assert c.post("/api/memory/ingest", json={"text": "   "}).status_code == 400
 
 
-def test_a_long_note_is_split_into_searchable_chunks():
+def test_a_long_note_is_split_into_searchable_chunks(tmp_path):
     """Each stored memory should be a coherent, searchable unit, not one giant blob."""
-    import tempfile
-    from intake.palace_memory import PalaceMemory
-    pm = PalaceMemory(tempfile.mkdtemp())
-    pm.index = False                                    # verbatim only, no embedder
+    from intake.diary import Diary
+    pm = Diary(tmp_path / "palace")
     long_text = "\n\n".join(f"Paragraph {i} about a real project I shipped." * 6 for i in range(40))
     n = pm.ingest_note(long_text, source="note")
     assert n >= 2                                       # chunked, not one blob
     assert len(pm.load_history()) == n                  # every chunk persisted
 
 
-def test_source_is_tagged_so_documents_are_attributable():
-    import tempfile
-    from intake.palace_memory import PalaceMemory
-    pm = PalaceMemory(tempfile.mkdtemp())
-    pm.index = False
+def test_source_is_tagged_so_documents_are_attributable(tmp_path):
+    from intake.diary import Diary
+    pm = Diary(tmp_path / "palace")
     pm.ingest_note("Exceeded target by 30 percent this year.", source="2024-review.pdf")
     hist = pm.load_history()
     assert hist and "[2024-review.pdf]" in hist[0]["content"]   # attributable to its source

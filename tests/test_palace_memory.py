@@ -1,24 +1,22 @@
-"""Acceptance tests for the MemPalace-backed durable memory layer (CLAUDE.md §4b, §5).
+"""Acceptance tests for the durable memory layer, the chat diary (intake/diary.py; CLAUDE.md
+§4b, §5; docs/applicant-brain.md section 12).
 
 Covers the guarantee that nothing the person told us is ever lost:
   * every conversation turn is persisted verbatim the moment it happens, inside
-    submit() — NOT only on Accept,
-  * a server restart mid-conversation loses nothing (the palace transcript is the
-    source of truth, independent of the SQLite profile store and of Accept),
-  * a returning user is recalled from the palace on BOTH entry points — New CV and
-    Tailor-from-job.
-
-The verbatim-layer tests are model-free and run everywhere. The semantic-recall
-test is marked `requires_palace` and turns on real indexing itself.
+    submit(), NOT only on Accept,
+  * a server restart mid-conversation loses nothing (the diary is the source of truth,
+    independent of the SQLite profile store and of Accept),
+  * a returning user is recalled from the diary on BOTH entry points, New resume and
+    Tailor-from-job, by plain keyword recall (no model, no network, runs everywhere).
 """
 
 from __future__ import annotations
 
 from intake.memory import ConversationMemory
+from intake.diary import Diary
 from intake.palace_memory import PalaceMemory
 from ui.records import CVRecords
 from ui.session import WebIntake
-from conftest import requires_palace
 
 JD = ("AI Architect - Synechron - Chicago. Generative AI, RAG, MLOps, Azure, "
       "governance, machine learning.")
@@ -64,44 +62,54 @@ def test_restart_midconversation_loses_nothing(template_source, fake_llm, tmp_pa
     assert s2.returning is False
 
 
-def test_palace_memory_verbatim_roundtrip(tmp_path, monkeypatch):
-    """The wrapper stores turns verbatim and reads them back for the same person
-    (name-slugged), and recall degrades to [] — never crashes — when disabled."""
-    monkeypatch.setenv("RESUME_AGENT_PALACE_INDEX", "0")   # verbatim only, no model
-    p = PalaceMemory(tmp_path / "palace", person="Maya Rodriguez")
-    p.remember_turn("user", "I work at Continental Trust Bank.")
-    p.remember_turn("agent", "Got it.")
+def test_diary_verbatim_roundtrip(tmp_path):
+    """The diary stores turns verbatim and reads them back for the same person (name-slugged),
+    and each write returns its diary line ref."""
+    p = Diary(tmp_path / "palace", person="Maya Rodriguez")
+    assert p.remember_turn("user", "I work at Continental Trust Bank.") == "diary:maya_rodriguez.jsonl:1"
+    assert p.remember_turn("agent", "Got it.") == "diary:maya_rodriguez.jsonl:2"
+    assert p.remember_turn("user", "   ") == ""          # nothing to keep, no line
 
-    p2 = PalaceMemory(tmp_path / "palace", person="Maya Rodriguez")   # fresh instance, same person
+    p2 = Diary(tmp_path / "palace", person="Maya Rodriguez")   # fresh instance, same person
     assert [(t["role"], t["content"]) for t in p2.load_history()] == [
         ("user", "I work at Continental Trust Bank."), ("agent", "Got it.")]
-    assert p2.enabled is False
-    assert p2.recall("where do they work") == []   # no semantic layer -> empty, no error
+    assert p2.remember_turn("note", "Prefers remote roles.") == "diary:maya_rodriguez.jsonl:3"
+    assert p2.recall("Continental bank")[0]["text"] == "I work at Continental Trust Bank."
 
 
-# -- semantic recall on both entry points (needs the embedder) ---------- #
+def test_palace_memory_is_the_diary_for_one_release():
+    """Old imports keep working (docs/applicant-brain.md section 12); removed in Phase 7."""
+    assert PalaceMemory is Diary
 
-@requires_palace
-def test_returning_user_recalled_on_both_entry_points(template_source, fake_llm, tmp_path, monkeypatch):
-    monkeypatch.setenv("RESUME_AGENT_PALACE_INDEX", "1")   # turn on real indexing + recall
+
+# -- keyword recall on both entry points (model-free) -------------------- #
+
+def test_returning_user_recalled_on_both_entry_points(template_source, fake_llm, tmp_path):
     palace = tmp_path / "palace"
 
-    # The person told us where they work in an earlier session.
+    # The person told us about their work in an earlier session.
     seed = _mk(template_source, fake_llm, tmp_path / "seed", palace)
     seed.palace.remember_turn(
-        "user", "I'm Maya Rodriguez, Principal Engineer at Continental Trust Bank since 2021.")
+        "user", "I'm Maya Rodriguez. At Continental Trust Bank I built a RAG assistant on Azure "
+                "with an MLOps pipeline.")
+    seed.palace.remember_turn(
+        "user", "I ran SQL and Python experimentation for the bank's mobile app.")
+    seed.palace.remember_turn("user", "I organized the campus chess club.")
 
     def recalled(sess):
         return " ".join(h["text"] for h in sess.recalled)
 
-    # Entry point 1 — New CV (plain JD).
+    # Entry point 1: New resume (plain JD).
     s_new = _mk(template_source, fake_llm, tmp_path / "new", palace)
     s_new.start()
     assert "Continental Trust Bank" in recalled(s_new)
+    assert s_new.recalled[0]["text"].startswith("I'm Maya Rodriguez")   # the best match first
+    assert "chess" not in recalled(s_new)
 
-    # Entry point 2 — Tailor-from-job (same construction, job company/role set).
+    # Entry point 2: Tailor-from-job (same construction, job company/role set).
     s_job = _mk(template_source, fake_llm, tmp_path / "job", palace,
                 jd="Analytics Engineer at Spotify. SQL, Python, experimentation.")
     s_job.company, s_job.role = "Spotify", "Analytics Engineer"
     s_job.start()
-    assert "Continental Trust Bank" in recalled(s_job)
+    assert s_job.recalled[0]["text"].startswith("I ran SQL and Python experimentation")
+    assert "chess" not in recalled(s_job)

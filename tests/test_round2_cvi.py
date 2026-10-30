@@ -22,7 +22,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("RESUME_AGENT_CRED_FILE", str(tmp_path / "credentials.env"))
     monkeypatch.setenv("RESUME_AGENT_DEV", "1")
     monkeypatch.setenv("RESUME_AGENT_FAKE_LLM", "1")
-    monkeypatch.setenv("RESUME_AGENT_PALACE_INDEX", "0")
     monkeypatch.setenv("RESUME_AGENT_DISABLE_STT", "1")
     monkeypatch.delenv("AVATAR_API_KEY", raising=False)
     import ui.app as A
