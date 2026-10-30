@@ -397,19 +397,42 @@ test("a captcha iframe is never entered", async ({ open }) => {
   await page.close();
 });
 
-test("popupOptions reads an open custom dropdown's choices (aria-controls, or the visible list); closePopup shuts it", async ({ open }) => {
+// ------------------------------------------------------------------ choices for an ask
+// The shell's real order (shell-electron/agent.js dropdownOptions / closeDropdown): mark what is
+// on screen, a TRUSTED click, read the popup, then ONE real Escape only while it is open, and
+// closePopup("blur") only when the widget ignored that Escape. Returns what was read, how many
+// Escapes went out, and whether the popup is still open.
+async function readLikeShell(page, idx, click) {
+  const was = await page.evaluate(`window.TailorAgent.popupOpen(${idx})`);
+  await page.evaluate(`window.TailorAgent.markPopups(${idx}, ${!was})`);
+  if (!was) await click();
+  await page.waitForTimeout(150);
+  const read = await page.evaluate(`window.TailorAgent.popupOptions(${idx})`);
+  let escapes = 0;
+  if (await page.evaluate(`window.TailorAgent.popupOpen(${idx})`)) {
+    await page.keyboard.press("Escape"); escapes++;
+    await page.waitForTimeout(50);
+    if (await page.evaluate(`window.TailorAgent.popupOpen(${idx})`)) await page.evaluate(`window.TailorAgent.closePopup(${idx}, "blur")`);
+  }
+  return { read, escapes, open: await page.evaluate(`window.TailorAgent.popupOpen(${idx})`) };
+}
+const indexOf = (text, re) => indices(text).find((i) => re.test(line(text, i)));
+
+test("popupOptions reads the popup the click opened (aria-controls, a portal); closed means no Escape at all", async ({ open }) => {
   const page = await open("job_page.html");
   await page.evaluate(() => {
     const m = document.querySelector("main") || document.body;
     m.insertAdjacentHTML("beforeend", `
-      <label id="gl">Gender</label>
+      <div class="field"><label id="gl">Gender</label>
       <button id="g" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="gl" aria-controls="glist">Select</button>
       <ul id="glist" role="listbox" hidden>
-        <li role="option">Male</li><li role="option">Female</li><li role="option">I don't wish to answer</li>
-      </ul>
-      <label for="e">Ethnicity</label>
-      <input id="e" role="combobox" aria-expanded="false" aria-autocomplete="list">
+        <li role="option">Select...</li><li role="option">Male</li><li role="option">Female</li><li role="option">I don't wish to answer</li>
+      </ul></div>
+      <div class="field"><label for="e">Ethnicity</label>
+      <input id="e" role="combobox" aria-expanded="false" aria-autocomplete="list"></div>
       <div id="portal"></div>`);
+    window.escapes = 0;
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") window.escapes++; }, true);
     const g = document.getElementById("g"), gl = document.getElementById("glist");
     const set = (on) => { gl.hidden = !on; g.setAttribute("aria-expanded", on ? "true" : "false"); };
     g.addEventListener("click", () => set(gl.hidden));
@@ -424,19 +447,223 @@ test("popupOptions reads an open custom dropdown's choices (aria-controls, or th
   });
   await page.evaluate(AGENT);
   const v = await page.evaluate("window.TailorAgent.view()");
-  const gi = indices(v.text).find((i) => /<combobox label="Gender"/.test(line(v.text, i)));
-  const ei = indices(v.text).find((i) => /<combobox label="Ethnicity"/.test(line(v.text, i)));
+  const gi = indexOf(v.text, /<combobox label="Gender"/), ei = indexOf(v.text, /<combobox label="Ethnicity"/);
   assert.ok(gi && ei, v.text);
-  await page.click("#g");
-  assert.deepStrictEqual(await page.evaluate(`window.TailorAgent.popupOptions(${gi})`), ["Male", "Female", "I don't wish to answer"]);
-  await page.focus("#g");
-  assert.strictEqual(await page.evaluate(`window.TailorAgent.closePopup(${gi})`), true);
-  assert.strictEqual(await page.evaluate(() => document.getElementById("glist").hidden), true);
-  await page.click("#e");
-  assert.deepStrictEqual(await page.evaluate(`window.TailorAgent.popupOptions(${ei})`), ["Asian", "White", "Decline to self-identify"]);
-  await page.focus("#e");
-  await page.evaluate(`window.TailorAgent.closePopup(${ei})`);
-  assert.strictEqual(await page.evaluate(() => document.getElementById("portal").innerHTML), "");
+  let r = await readLikeShell(page, gi, () => page.click("#g"));
+  assert.deepStrictEqual(r.read.options, ["Male", "Female", "I don't wish to answer"]);
+  assert.strictEqual(r.read.partial, false);
+  assert.ok(r.escapes === 1 && !r.open && await page.evaluate(() => document.getElementById("glist").hidden));
+  r = await readLikeShell(page, ei, () => page.click("#e"));
+  assert.deepStrictEqual(r.read.options, ["Asian", "White", "Decline to self-identify"]);
+  assert.ok(r.escapes === 1 && !r.open && await page.evaluate(() => document.getElementById("portal").innerHTML === ""));
+  // Once closed, closePopup sends nothing (an Escape there can close the dialog holding the form)
+  const before = await page.evaluate("window.escapes");
+  assert.strictEqual(await page.evaluate(`window.TailorAgent.closePopup(${gi}, "escape")`), true);
+  assert.strictEqual(await page.evaluate(`window.TailorAgent.closePopup(${ei})`), true);
+  assert.strictEqual(await page.evaluate("window.escapes"), before);
+  // A detached control reads nothing
+  await page.evaluate(() => document.getElementById("g").remove());
+  assert.deepStrictEqual((await page.evaluate(`window.TailorAgent.popupOptions(${gi})`)).options, []);
+  await page.close();
+});
+
+test("the fixture widgets: a Workday listbox and react-select keep a 'Choose not to ...' decline, and a chosen one reads as answered", async ({ open }) => {
+  for (const withEngine of [false, true]) {
+    const page = await open("workday.html");
+    if (withEngine) await page.evaluate(CORE);
+    await page.evaluate(() => {
+      window.FixtureWidgets.WorkdayListbox(document.getElementById("wd"), { aid: "gender", label: "Gender",
+        options: ["Male", "Female", "Choose not to disclose"] });
+      window.FixtureWidgets.WorkdayPrompt(document.getElementById("wd"), { label: "Ethnicity",
+        options: ["Asian", "Hispanic or Latino", "Choose not to self-identify"] });
+    });
+    await page.evaluate(AGENT);
+    let v = await page.evaluate("window.TailorAgent.view()");
+    const gi = indexOf(v.text, /<combobox label="Gender"/);
+    assert.ok(gi, v.text);
+    let r = await readLikeShell(page, gi, () => page.click("[data-automation-id='gender']"));
+    assert.deepStrictEqual(r.read.options, ["Male", "Female", "Choose not to disclose"], "engine=" + withEngine);
+    assert.ok(r.escapes === 1 && !r.open);
+    const pi = indexOf(v.text, /label="Ethnicity"/);
+    assert.ok(pi, v.text);
+    r = await readLikeShell(page, pi, () => page.click("input[placeholder='Search'] >> nth=-1"));
+    assert.deepStrictEqual(r.read.options, ["Asian", "Hispanic or Latino", "Choose not to self-identify"]);
+    assert.ok(!r.open);
+    // the person's decline, once chosen, is a value: the field no longer looks unanswered
+    await page.click("[data-automation-id='gender']");
+    await page.click("text=Choose not to disclose");
+    v = await page.evaluate("window.TailorAgent.view()");
+    assert.ok(/<combobox label="Gender" value="choose not to disclose"/i.test(v.text), v.text);
+    await page.close();
+  }
+  const page = await open("react_select.html");
+  await page.evaluate(() => window.FixtureWidgets.ReactSelect(document.getElementById("widgets"), { id: "vet",
+    label: "Veteran status", options: ["I am a protected veteran", "I am not a protected veteran", "Choose not to self-identify"] }));
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const vi = indexOf(v.text, /<combobox label="Veteran status"/);
+  assert.ok(vi, v.text);
+  const r = await readLikeShell(page, vi, () => page.click("#vet"));
+  assert.deepStrictEqual(r.read.options, ["I am a protected veteran", "I am not a protected veteran", "Choose not to self-identify"]);
+  assert.ok(!r.open);
+  await page.close();
+});
+
+test("only the opened list is read: other closed lists, an inline listbox and the site's nav menu never are", async ({ open }) => {
+  const page = await open("job_page.html");
+  await page.evaluate(() => {
+    document.querySelector("header").insertAdjacentHTML("beforeend",
+      '<nav><ul class="dropdown menu"><li><a href="#">Home</a></li><li><a href="#">About us</a></li>'
+      + '<li><a href="#">Students and graduates</a><ul class="submenu"><li><a href="#">Internships</a></li></ul></li></ul></nav>');
+    const m = document.querySelector("main");
+    const field = (id, label, opts, ignoresEscape) => `
+      <div class="field"><span class="q" id="${id}-l">${label}</span>
+        <button id="${id}" type="button" aria-haspopup="listbox" aria-labelledby="${id}-l" ${ignoresEscape ? "data-noesc" : ""}>Select</button>
+        <ul class="dropdown-options" id="${id}-list" style="visibility:hidden">${opts.map((o) => `<li>${o}</li>`).join("")}</ul></div>`;
+    m.insertAdjacentHTML("beforeend",
+      field("gender", "Gender", ["Male", "Female", "Decline to self-identify"])
+      + field("race", "Race", ["Asian", "Black or African American", "White"], true)
+      + field("vet", "Veteran", ["I am a veteran", "I am not a veteran"])
+      + '<div class="field"><span class="q" id="skills-l">Skills</span><div role="listbox" aria-labelledby="skills-l">'
+      + '<div role="option">Python</div><div role="option">SQL</div></div></div>'
+      + '<div class="field"><label for="city">Current city</label><input id="city" role="combobox" aria-autocomplete="list" required></div>'
+      + '<div class="field"><label for="dead">Pronouns</label><button id="dead" type="button" aria-haspopup="listbox">Select</button></div>');
+    for (const id of ["gender", "race", "vet"]) {
+      const b = document.getElementById(id), list = document.getElementById(id + "-list");
+      b.addEventListener("click", () => { list.style.visibility = list.style.visibility === "hidden" ? "visible" : "hidden"; });
+      if (!b.hasAttribute("data-noesc")) b.addEventListener("keydown", (e) => { if (e.key === "Escape") list.style.visibility = "hidden"; });
+    }
+  });
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const ri = indexOf(v.text, /<combobox label="Race"/), ci = indexOf(v.text, /label="Current city"/);
+  const di = indexOf(v.text, /<combobox label="Pronouns"/), gi = indexOf(v.text, /<combobox label="Gender"/);
+  assert.ok(ri && ci && di && gi, v.text);
+  let r = await readLikeShell(page, ri, () => page.click("#race"));
+  assert.deepStrictEqual(r.read.options, ["Asian", "Black or African American", "White"]);
+  // Race ignores Escape: one Escape, then a second click on its button closes it
+  assert.ok(r.escapes === 1 && !r.open && await page.evaluate(() => document.getElementById("race-list").style.visibility === "hidden"));
+  r = await readLikeShell(page, ci, () => page.click("#city"));      // a typeahead that lists nothing yet
+  assert.deepStrictEqual(r.read.options, []);
+  assert.strictEqual(r.escapes, 0);
+  r = await readLikeShell(page, di, () => page.click("#dead"));      // a click that opened nothing
+  assert.deepStrictEqual(r.read.options, []);
+  assert.strictEqual(r.escapes, 0);
+  r = await readLikeShell(page, gi, () => page.click("#gender"));
+  assert.deepStrictEqual(r.read.options, ["Male", "Female", "Decline to self-identify"]);
+  await page.close();
+});
+
+test("status rows, disabled headers and a loading list are never choices; a native select gives every choice", async ({ open }) => {
+  const page = await open("job_page.html");
+  await page.evaluate(() => {
+    const m = document.querySelector("main");
+    m.insertAdjacentHTML("beforeend", `
+      <div class="field"><label for="city">City</label><input id="city" role="combobox" aria-controls="city-list" aria-expanded="true">
+        <ul id="city-list" role="listbox"><li class="no-results">No results found</li></ul></div>
+      <div class="field"><label id="eth-l">Ethnicity</label><button id="eth" type="button" aria-haspopup="listbox" aria-labelledby="eth-l" aria-controls="eth-list" aria-expanded="true">Select</button>
+        <ul id="eth-list" role="listbox"><li role="option" aria-disabled="true">Hispanic or Latino (choose one below)</li>
+          <li role="option">Mexican</li><li role="option">Cuban</li><li role="presentation">More</li></ul></div>
+      <div class="field"><label for="loc">Location</label><input id="loc" role="combobox" aria-controls="loc-list" aria-expanded="true">
+        <div id="loc-list" role="listbox" aria-busy="true"><div class="notice">Loading...</div></div></div>
+      <div class="field"><label for="race">Race/Ethnicity</label><select id="race" required>
+        <option value="">Select ...</option><option>American Indian or Alaskan Native</option><option>Asian</option>
+        <option>Black or African American</option><option disabled>Hispanic groups</option><option>Hispanic or Latino</option>
+        <option>Native Hawaiian or Other Pacific Islander</option><option>White</option><option>Two or More Races</option>
+        <option>Decline to self-identify</option></select></div>`);
+  });
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const ci = indexOf(v.text, /label="City"/), ei = indexOf(v.text, /<combobox label="Ethnicity"/);
+  const li = indexOf(v.text, /label="Location"/), si = indexOf(v.text, /<select label="Race\/Ethnicity"/);
+  assert.ok(ci && ei && li && si, v.text);
+  assert.deepStrictEqual((await page.evaluate(`window.TailorAgent.popupOptions(${ci})`)).options, []);
+  assert.deepStrictEqual((await page.evaluate(`window.TailorAgent.popupOptions(${ei})`)).options, ["Mexican", "Cuban"]);
+  const loading = await page.evaluate(`window.TailorAgent.popupOptions(${li})`);
+  assert.ok(loading.busy && !loading.options.length, JSON.stringify(loading));
+  assert.ok(/options=10 first=/.test(line(v.text, si)), line(v.text, si));       // the view still prints four
+  assert.deepStrictEqual(await page.evaluate(`window.TailorAgent.selectOptions(${si})`), {
+    options: ["American Indian or Alaskan Native", "Asian", "Black or African American", "Hispanic or Latino",
+              "Native Hawaiian or Other Pacific Islander", "White", "Two or More Races", "Decline to self-identify"],
+    partial: false });
+  await page.close();
+});
+
+test("a dropdown in a same-origin frame or a nested shadow root is read from its own root", async ({ open }) => {
+  const page = await open("job_page.html");
+  await page.evaluate(() => {
+    const make = (doc, root) => {
+      root.innerHTML = '<label id="gl">Gender</label><button id="g" type="button" aria-haspopup="listbox" aria-labelledby="gl">Select</button>';
+      const b = root.querySelector("#g");
+      b.addEventListener("click", () => {
+        const lb = doc.createElement("div");
+        lb.setAttribute("role", "listbox"); lb.id = "pop";
+        lb.innerHTML = '<div role="option">Male</div><div role="option">Female</div><div role="option">Decline to self-identify</div>';
+        root.appendChild(lb);
+      });
+      b.addEventListener("keydown", (e) => { if (e.key === "Escape") { const p = root.querySelector("#pop"); if (p) p.remove(); } });
+    };
+    const m = document.querySelector("main");
+    const outer = document.createElement("div"); m.appendChild(outer);
+    const inner = document.createElement("div");
+    outer.attachShadow({ mode: "open" }).appendChild(inner);
+    make(document, inner.attachShadow({ mode: "open" }));
+    const f = document.createElement("iframe");
+    f.srcdoc = "<!doctype html><body><div id='box'></div></body>";
+    f.style.cssText = "width:400px;height:300px";
+    f.onload = () => make(f.contentDocument, f.contentDocument.getElementById("box"));
+    m.appendChild(f);
+  });
+  await page.waitForTimeout(300);
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const both = indices(v.text).filter((i) => /<combobox label="Gender"/.test(line(v.text, i)));
+  assert.strictEqual(both.length, 2, v.text);
+  let r = await readLikeShell(page, both[0], () => page.click("#g >> nth=0"));       // nested shadow root
+  assert.deepStrictEqual(r.read.options, ["Male", "Female", "Decline to self-identify"]);
+  assert.ok(!r.open);
+  const frame = page.frames().find((f) => f !== page.mainFrame());
+  r = await readLikeShell(page, both[1], () => frame.click("#g"));
+  assert.deepStrictEqual(r.read.options, ["Male", "Female", "Decline to self-identify"]);
+  assert.ok(!r.open);
+  await page.close();
+});
+
+test("a form in a modal dialog stays open: one Escape closes only the dropdown, and the other answers stay", async ({ open }) => {
+  const page = await open("job_page.html");
+  await page.evaluate(() => {
+    document.body.insertAdjacentHTML("beforeend", `
+      <div id="dlg" role="dialog" aria-modal="true" style="position:fixed;top:20px;left:20px;background:#fff;border:1px solid #333;padding:10px">
+        <div class="field"><label id="gl">Gender</label><button id="g" type="button" aria-haspopup="listbox" aria-labelledby="gl" aria-expanded="false">Select</button></div>
+        <div class="field"><label for="country">Country</label><select id="country"><option value="">Select...</option><option selected>Canada</option></select></div>
+        <div class="field"><label id="nl">Notice period</label><button id="n" type="button" aria-haspopup="listbox" aria-labelledby="nl">Select</button></div>
+      </div>`);
+    // Radix-style layers: one document capture Escape listener dismisses the TOP layer only
+    const layers = [{ close: () => document.getElementById("dlg").remove() }];
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && layers.length) layers.pop().close(); }, true);
+    const g = document.getElementById("g");
+    g.addEventListener("click", () => {
+      const lb = document.createElement("div");
+      lb.setAttribute("role", "listbox"); lb.id = "glist";
+      lb.innerHTML = '<div role="option">Male</div><div role="option">Female</div>';
+      document.body.appendChild(lb);
+      g.setAttribute("aria-expanded", "true");
+      layers.push({ close: () => { lb.remove(); g.setAttribute("aria-expanded", "false"); } });
+    });
+  });
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const gi = indexOf(v.text, /<combobox label="Gender"/), ni = indexOf(v.text, /<combobox label="Notice period"/);
+  assert.ok(gi && ni, v.text);
+  let r = await readLikeShell(page, gi, () => page.click("#g"));
+  assert.deepStrictEqual(r.read.options, ["Male", "Female"]);
+  assert.ok(r.escapes === 1 && !r.open);
+  assert.ok(await page.evaluate(() => !!document.getElementById("dlg")), "the dialog is still open");
+  assert.strictEqual(await page.evaluate(`window.TailorAgent.closePopup(${gi}, "escape")`), true);
+  assert.ok(await page.evaluate(() => !!document.getElementById("dlg")), "closePopup sent nothing to a closed popup");
+  r = await readLikeShell(page, ni, () => page.click("#n"));      // opens nothing: no key at all
+  assert.ok(r.escapes === 0 && !r.read.options.length);
+  assert.ok(await page.evaluate(() => !!document.getElementById("dlg") && document.getElementById("country").value === "Canada"));
   await page.close();
 });
 

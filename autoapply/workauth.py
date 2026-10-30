@@ -239,7 +239,11 @@ _STATUS = re.compile(
     r"|current (visa|immigration|work authori[sz]ation)"
     r"|describes your (current )?(work|visa|immigration|citizenship|legal)"
     r"|status in the (us|u\.s\.|united states|uk|canada|australia)", re.I)
-_NATIONALITY = re.compile(r"country of (citizenship|birth|origin)|nationalit|which country", re.I)
+# "Which country": not in the profile. Lam's export-control question says "country/region of
+# citizenship ... (if you are a citizen of more than one, list each)": the bare "citizen" in its
+# tail must not make it the yes/no citizen question.
+_NATIONALITY = re.compile(r"country\s*(/\s*region|\s+or\s+region|\s+region)?\s+of\s+(citizenship|nationality|birth|origin)"
+                          r"|nationalit|which country", re.I)
 _CITIZEN_PR = re.compile(r"citizen.{0,40}(permanent resident|green card|lawful permanent|national)"
                          r"|(permanent resident|green card).{0,40}citizen", re.I)
 _CITIZEN = re.compile(r"\b(are|is) (you|applicant) (a|an) .{0,30}citizen|\bcitizen(ship)?\b.{0,40}\?|\bcitizen\b", re.I)

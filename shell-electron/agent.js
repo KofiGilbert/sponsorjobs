@@ -213,9 +213,19 @@ function createAgent(deps) {
     const release = deps.acquireDebugger(wc);
     if (!release) return null;
     try {
+      // An element inside a same-origin frame (the view walks into those): its box is relative to
+      // that frame, so each frame's own place on the page above it is added.
       const r = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); if (!el) return null;
         el.scrollIntoView({ block: "center", inline: "nearest" }); const b = el.getBoundingClientRect();
-        return { x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width, h: b.height }; })()`, true);
+        let x = b.left + b.width / 2, y = b.top + b.height / 2;
+        let w = el.ownerDocument && el.ownerDocument.defaultView;
+        for (let i = 0; w && w !== window && i < 8; i++) {
+          const f = w.frameElement; if (!f) return null;
+          const fb = f.getBoundingClientRect(); x += fb.left + f.clientLeft; y += fb.top + f.clientTop;
+          w = f.ownerDocument && f.ownerDocument.defaultView;
+        }
+        if (w !== window) return null;
+        return { x, y, w: b.width, h: b.height }; })()`, true);
       if (!r || !(r.w > 0 && r.h > 0)) return null;
       const dbg = wc.debugger;
       await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: r.x, y: r.y });
@@ -337,120 +347,64 @@ function createAgent(deps) {
     return () => { try { ses.webRequest.onBeforeSendHeaders(null); } catch (e) { /* gone */ } };
   }
 
-  // What to ask: the engine's open fields, else the fields the page's own errors name ("The
-  // field X is required"), else empty required boxes in the view. Labels only, never values.
-  function questionsFor(viewText, left, includeFilled) {
-    const out = [];
-    const text = String(viewText || "");
-    const add = (q) => { q = String(q || "").trim(); if (q && !out.includes(q)) out.push(q); };
-    // A person is asked only about a REQUIRED question: an optional box (LinkedIn URL, skills,
-    // a cover letter) is left alone, and a file box is an upload, never a question.
-    const lineFor = (label) => {
-      const esc = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const mm = new RegExp('^\\*?\\[\\d+\\]<[^\\n]*label="' + esc + '"[^\\n]*$', "m").exec(text);
-      return mm ? mm[0] : "";
-    };
-    for (const x of left || []) {
-      const q = typeof x === "string" ? x : (x && x.label) || "";
-      const ln = lineFor(q);
-      if (/^\*?\[\d+\]<file\b/.test(ln)) continue;
-      if (ln && !/\brequired\b/.test(ln)) continue;
-      add(q);
-    }
-    let m;
-    // The page's own errors. Workday writes "Errors Found Error-<question> The field <question>
-    // is required" in one banner and lists each one as an "Error-<question>" link button, so take
-    // the named field, never the whole banner.
-    const errRe = /Error: "([^"]*)"/g;
-    while ((m = errRe.exec(text))) {
-      const banner = m[1];
-      const named = banner.match(/The field (.+?) (?:is required|must have a value|is a required field|cannot be blank)/g);
-      if (named) {
-        for (const n of named) add(n.replace(/^The field /, "").replace(/ (?:is required|must have a value|is a required field|cannot be blank)$/, ""));
-      } else {
-        const one = /^(.+?) (?:is required|must have a value|is a required field|cannot be blank)/.exec(banner);
-        if (one && !/^Errors? Found\b/i.test(one[1])) add(one[1]);
-      }
-    }
-    const linkRe = /<button>Error-([^<]+?)<\/button>/g;
-    while ((m = linkRe.exec(text))) add(m[1]);
-    if (!out.length) {
-      const reqRe = /<(?:input|combobox|select|textarea)[^>]*label="([^"]*)"[^>]*value=""[^>]*required>/g;
-      while ((m = reqRe.exec(text))) add(m[1]);
-    }
-    // Never re-ask what is already in its box: a stale "is required" error can outlive the fill.
-    const filled = (label) => {
-      const esc = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return new RegExp('label="' + esc + '"[^\n]*(value="\\(filled\\)"|checked=true)').test(text);
-    };
-    return (includeFilled ? out : out.filter((q) => !filled(q))).slice(0, 6);
-  }
-
-  // The question just above this one on the page, with its answer when shown: a box called
-  // "Please provide more information" only makes sense under "Will you need sponsorship? Yes".
-  function contextFor(viewText, label) {
-    const lines = String(viewText || "").split("\n");
-    const want = String(label || "").trim().toLowerCase();
-    let at = -1;
-    for (let i = 0; i < lines.length; i++) {
-      const m = /label="([^"]*)"/.exec(lines[i]);
-      if (m && m[1].trim().toLowerCase() === want) { at = i; break; }
-    }
-    for (let i = at - 1; i >= 0 && at > 0; i--) {
-      const m = /label="([^"]*)"/.exec(lines[i]);
-      if (!m || m[1].trim().toLowerCase() === want) continue;
-      const val = /value="([^"]*)"/.exec(lines[i]);
-      const v = val && val[1] && val[1] !== "(filled)" ? val[1] : "";
-      return m[1].slice(0, 90) + (v ? ": " + v : "");
-    }
-    return "";
-  }
-
-  // The choices a page offers for a field, read off the view: a select's first options or the
-  // radio options that share the label. Empty when the field is free text or a typeahead.
-  function optionsFor(viewText, label) {
-    const want = String(label || "").trim().toLowerCase();
-    const out = [];
-    for (const line of String(viewText || "").split("\n")) {
-      const m = /label="([^"]*)"/.exec(line);
-      if (!m || m[1].trim().toLowerCase() !== want) continue;
-      const first = /first="([^"]*)"/.exec(line);
-      if (first) { for (const o of first[1].split("|")) if (o && !/^select/i.test(o)) out.push(o); }
-      const opt = /<radio [^>]*option="([^"]*)"/.exec(line);
-      if (opt && !out.includes(opt[1])) out.push(opt[1]);
-    }
-    return out.slice(0, 8);
-  }
-
-  // The view index of the field a question labels (0 when not found).
-  function indexFor(viewText, label) {
-    const want = String(label || "").trim().toLowerCase();
-    for (const line of String(viewText || "").split("\n")) {
-      const m = /^\*?\[(\d+)\]<[^\n]*label="([^"]*)"/.exec(line);
-      if (m && m[2].trim().toLowerCase() === want) return Number(m[1]);
-    }
-    return 0;
+  // Every choice of a native <select> (the view prints only its first four), read from the
+  // element itself, in its own frame. null when the field is not a select or cannot be read.
+  async function selectChoices(wc, fr, v, label) {
+    const idx = indexFor(v.text, label);
+    if (!idx || !/^\*?\[\d+\]<select\b/.test(viewLine(v.text, idx))) return null;
+    const ctx = v.frameOf.get(idx);
+    const expr = `window.TailorAgent.selectOptions(${idx})`;
+    let r = null;
+    try { r = ctx ? (fr ? await fr.eval(ctx, expr) : null) : await wc.executeJavaScript(expr, true); } catch (e) { r = null; }
+    if (!r || !Array.isArray(r.options) || !r.options.length) return null;
+    return { options: r.options.map((o) => String(o)).filter(Boolean), partial: !!r.partial };
   }
 
   // A custom dropdown (role=combobox, a button that opens a listbox) shows its choices only
-  // when open: open it with a real click, read the visible options, close it with Escape. The
-  // person is then offered the page's own words as buttons. Main frame only; [] when it is not
-  // such a dropdown or nothing showed.
+  // while open. Mark what is on screen, open it with a real click (unless it is open already),
+  // read the popup THAT click opened (a "Loading..." list is waited out for up to 3 s), and
+  // close it again. The person is then offered the page's own words. Main frame only; no
+  // choices when it is not such a dropdown or nothing showed.
   async function dropdownOptions(wc, v, label) {
+    const none = { options: [], partial: false };
     const idx = indexFor(v.text, label);
-    if (!idx || v.frameOf.has(idx)) return [];
-    const line = viewLine(v.text, idx);
-    if (!/^\*?\[\d+\]<combobox\b/.test(line)) return [];
+    if (!idx || v.frameOf.has(idx)) return none;
+    if (!/^\*?\[\d+\]<combobox\b/.test(viewLine(v.text, idx))) return none;
+    const js = (expr) => wc.executeJavaScript(expr, true);
+    let read = null;
     try {
-      const opened = await realClick(wc, idx);
-      if (!opened) await withTimeout(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index: idx })})`, true), ACTION_MS, "open");
-      await delay(500);
-      const opts = await wc.executeJavaScript(`window.TailorAgent.popupOptions(${idx})`, true);
-      await pressEscape(wc);
-      await delay(150);
-      await wc.executeJavaScript(`window.TailorAgent.closePopup(${idx})`, true).catch(() => false);
-      return Array.isArray(opts) ? opts.map((o) => String(o)).filter(Boolean) : [];
-    } catch (e) { return []; }
+      const was = !!(await js(`window.TailorAgent.popupOpen(${idx})`).catch(() => false));
+      await js(`window.TailorAgent.markPopups(${idx}, ${!was})`).catch(() => null);
+      if (!was) {
+        const opened = await realClick(wc, idx);
+        if (!opened) await withTimeout(js(`window.TailorAgent.act(${JSON.stringify({ op: "click", index: idx })})`), ACTION_MS, "open");
+      }
+      for (let i = 0; i < 8; i++) {
+        await delay(i ? 350 : 500);
+        read = await js(`window.TailorAgent.popupOptions(${idx})`).catch(() => null);
+        if (!read || !read.busy) break;
+      }
+    } catch (e) { read = null; }
+    await closeDropdown(wc, idx);
+    if (!read || read.busy || !Array.isArray(read.options)) return none;
+    return { options: read.options.map((o) => String(o)).filter(Boolean), partial: !!read.partial };
+  }
+  // Close what the read opened: ONE real Escape, and only while the popup is really open. An
+  // Escape that reaches a closed control can close the dialog that holds the form, so a click
+  // that opened nothing gets no key at all. A widget that ignores Escape is clicked shut or
+  // blurred (TailorAgent.closePopup), never sent more Escapes; the in-page Escape is used only
+  // when the real one could not be pressed.
+  async function closeDropdown(wc, idx) {
+    const isOpen = () => wc.executeJavaScript(`window.TailorAgent.popupOpen(${idx})`, true).catch(() => false);
+    if (!(await isOpen())) return true;
+    const sent = await pressEscape(wc);
+    await delay(150);
+    if (!(await isOpen())) return true;
+    await wc.executeJavaScript(`window.TailorAgent.closePopup(${idx}, ${JSON.stringify(sent ? "blur" : "escape")})`, true).catch(() => false);
+    await delay(150);
+    if (!(await isOpen())) return true;
+    if (!sent) await wc.executeJavaScript(`window.TailorAgent.closePopup(${idx}, "blur")`, true).catch(() => false);
+    return !(await isOpen());
   }
   async function pressEscape(wc) {
     const release = deps.acquireDebugger(wc);
@@ -612,28 +566,31 @@ function createAgent(deps) {
         }
         if (asks.length) {
           // Ask the person, on the bar and on Telegram, and carry on with the answers (saved for
-          // every later application). Every open question on the page goes in ONE message; a
-          // custom dropdown is opened first so its real choices become buttons. What the
-          // person's material already answers (the library, work authorization, the standing
-          // decline choice on self-identification questions) is never asked.
+          // every later application). Every open question on the page goes in ONE message, with
+          // the page's own choices: all of a native select's (read from the element), a radio
+          // group's, or a custom dropdown's from its open popup. A list that was only partly
+          // read says so, so an answer outside it still counts. What the person's material
+          // already answers (the library, work authorization, the standing decline choice on
+          // self-identification questions) is never asked.
           const items = [];
           for (const q of asks) {
             if (st.stop) return stopped("stopped", "Stopped.");
-            let options = optionsFor(v.text, q);
-            if (!options.length) options = await dropdownOptions(wc, v, q);
-            items.push({ question: q, options: orderOptions(q, options), context: contextFor(v.text, q) });
+            const got = (await selectChoices(wc, fr, v, q)) || optionsFor(v.text, q) || (await dropdownOptions(wc, v, q));
+            const all = cleanOptions(got.options, 1000);
+            items.push({ question: q, options: orderOptions(q, all), all_options: all.slice(0, 40),
+                         partial: !!got.partial || all.length > 40, context: contextFor(v.text, q) });
           }
-          const body = { questions: items, record_id: recordId, timeout_s: 300 };
           // A question the run already took a known answer for, still open: that answer did not
-          // fit, so the person is asked for real this time.
-          const force = items.some((it) => knownSeen.has(it.question));
-          let open = items;
-          if (!force) {
-            const k = await deps.postApp("/api/autoapply/agent/ask", Object.assign({}, body, { known_only: true })).catch(() => null);
-            if (k && k.answers) {
-              for (const [q, a] of Object.entries(k.answers)) { runAnswers[q] = a; knownSeen.add(q); }
-              open = items.filter((it) => !(it.question in k.answers));
-            }
+          // fit, so the person is asked for real about THAT question; every other question still
+          // gets the person's material first.
+          const forced = items.filter((it) => knownSeen.has(it.question));
+          const rest = items.filter((it) => !knownSeen.has(it.question));
+          let open = forced.slice();
+          if (rest.length) {
+            const k = await deps.postApp("/api/autoapply/agent/ask", { questions: rest, record_id: recordId, known_only: true }).catch(() => null);
+            const known = (k && k.answers) || {};
+            for (const [q, a] of Object.entries(known)) { runAnswers[q] = a; knownSeen.add(q); }
+            open = open.concat(rest.filter((it) => !(it.question in known)));
           }
           let answered = items.length - open.length;
           if (open.length) {
@@ -643,9 +600,11 @@ function createAgent(deps) {
               : "The application asks " + open.length + " questions.";
             progress(recordId, "ask", shown, { step, ask: { id, question: open[0].question, options: open.length === 1 ? open[0].options : [],
                                                              questions: open } });
-            const r = await withTimeout(deps.postApp("/api/autoapply/agent/ask", Object.assign({}, body, { id, questions: open, force })),
+            const r = await withTimeout(deps.postApp("/api/autoapply/agent/ask", {
+              questions: open, record_id: recordId, timeout_s: 300, id, force_questions: forced.map((it) => it.question) }),
                                         320000, "ask").catch(() => null);
             dlog("step " + step + " ask ->", r && { ok: r.ok, reason: r.reason, n: open.length });
+            if (r && r.reason === "stopped") return stopped("stopped", "Stopped.");
             if (!(r && r.ok)) return stopped("needs-answers", blockedMessage("needs-answers", open.map((it) => it.question)), { url, left });
             for (const [q, a] of Object.entries(r.answers || {})) runAnswers[q] = a;
             answered += open.length;
@@ -787,17 +746,149 @@ function createAgent(deps) {
   return { run, send, stop, isReady, MAX_STEPS };
 }
 
+// ---- reading the view for an ask (pure, so the tests reach them) -----------------------------
+// One question reaches the shell in several lengths: the view cuts a label at 80 characters,
+// the engine keeps 200, and a Workday "Error-" link cuts it at 74. Two labels name the same
+// question when they are equal, or one is a cut of the other at least 70 characters long (case
+// and spacing aside).
+const squash = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+function sameLabel(a, b) {
+  const x = squash(a), y = squash(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const [s, l] = x.length <= y.length ? [x, y] : [y, x];
+  return s.length >= 70 && l.startsWith(s);
+}
+const unq = (s) => String(s || "").replace(/\\(["\\])/g, "$1");
+// A view line's label ("" when it has none).
+function lineLabel(line) {
+  const m = /label="((?:[^"\\]|\\.)*)"/.exec(String(line || ""));
+  return m ? unq(m[1]) : "";
+}
+// The view's element lines for a question.
+function linesFor(viewText, label) {
+  return String(viewText || "").split("\n").filter((ln) => /^\*?\[\d+\]</.test(ln) && sameLabel(lineLabel(ln), label));
+}
+
+// What to ask: the engine's open fields, else the fields the page's own errors name ("The
+// field X is required"), else empty required boxes in the view. Labels only, never values.
+// One entry per question: a cut wording (an Error- link) folds into the fuller one.
+function questionsFor(viewText, left, includeFilled) {
+  const out = [];
+  const text = String(viewText || "");
+  const add = (q) => {
+    q = String(q || "").trim();
+    if (!q) return;
+    const i = out.findIndex((o) => sameLabel(o, q));
+    if (i < 0) out.push(q);
+    else if (q.length > out[i].length) out[i] = q;
+  };
+  // A person is asked only about a REQUIRED question: an optional box (LinkedIn URL, skills,
+  // a cover letter) is left alone, and a file box is an upload, never a question.
+  for (const x of left || []) {
+    const q = typeof x === "string" ? x : (x && x.label) || "";
+    const ln = linesFor(text, q)[0] || "";
+    if (/^\*?\[\d+\]<file\b/.test(ln)) continue;
+    if (ln && !/\brequired\b/.test(ln)) continue;
+    add(q);
+  }
+  let m;
+  // The page's own errors. Workday writes "Errors Found Error-<question> The field <question>
+  // is required" in one banner and lists each one as an "Error-<question>" link button, so take
+  // the named field, never the whole banner.
+  const errRe = /Error: "([^"]*)"/g;
+  while ((m = errRe.exec(text))) {
+    const banner = m[1];
+    const named = banner.match(/The field (.+?) (?:is required|must have a value|is a required field|cannot be blank)/g);
+    if (named) {
+      for (const n of named) add(n.replace(/^The field /, "").replace(/ (?:is required|must have a value|is a required field|cannot be blank)$/, ""));
+    } else {
+      const one = /^(.+?) (?:is required|must have a value|is a required field|cannot be blank)/.exec(banner);
+      if (one && !/^Errors? Found\b/i.test(one[1])) add(one[1]);
+    }
+  }
+  const linkRe = /<button>Error-([^<]+?)<\/button>/g;
+  while ((m = linkRe.exec(text))) add(m[1]);
+  if (!out.length) {
+    const reqRe = /<(?:input|combobox|select|textarea)[^>]*label="((?:[^"\\]|\\.)*)"[^>]*value=""[^>]*required>/g;
+    while ((m = reqRe.exec(text))) add(unq(m[1]));
+  }
+  // Never re-ask what is already in its box (a chosen option, typed text, a ticked box): a
+  // stale "is required" error can outlive the fill.
+  const filled = (label) => linesFor(text, label).some((ln) => /\bvalue="(?:[^"\\]|\\.)+"|checked=true/.test(ln));
+  return (includeFilled ? out : out.filter((q) => !filled(q))).slice(0, 6);
+}
+
+// The question just above this one on the page, with its answer when shown: a box called
+// "Please provide more information" only makes sense under "Will you need sponsorship? Yes".
+function contextFor(viewText, label) {
+  const lines = String(viewText || "").split("\n");
+  const at = lines.findIndex((ln) => sameLabel(lineLabel(ln), label));
+  for (let i = at - 1; i >= 0 && at > 0; i--) {
+    const lab = lineLabel(lines[i]);
+    if (!lab || sameLabel(lab, label)) continue;
+    const val = /value="([^"]*)"/.exec(lines[i]);
+    const v = val && val[1] && val[1] !== "(filled)" ? val[1] : "";
+    return lab.slice(0, 90) + (v ? ": " + v : "");
+  }
+  return "";
+}
+
+// The choices the view itself shows for a field: every radio option sharing its label, or a
+// select's first four (partial: the shell reads a select's full list from the element first).
+// null when the view shows none (free text, a typeahead, a custom dropdown).
+function optionsFor(viewText, label) {
+  const out = [];
+  let partial = false;
+  for (const line of linesFor(viewText, label)) {
+    const first = /first="((?:[^"\\]|\\.)*)"/.exec(line);
+    if (first) {
+      const shown = unq(first[1]).split("|");
+      for (const o of shown) if (o && !isPlaceholderOpt(o) && !out.includes(o)) out.push(o);
+      const total = Number((/\boptions=(\d+)/.exec(line) || [])[1] || 0);
+      if (total > shown.length || shown.some((o) => o.length >= 40)) partial = true;
+    }
+    const opt = /<radio [^>]*option="((?:[^"\\]|\\.)*)"/.exec(line);
+    if (opt) { const o = unq(opt[1]); if (o && !out.includes(o)) out.push(o); }
+  }
+  return out.length ? { options: out, partial } : null;
+}
+
+// The view index of the field a question labels (0 when not found).
+function indexFor(viewText, label) {
+  for (const line of linesFor(viewText, label)) {
+    const m = /^\*?\[(\d+)\]</.exec(line);
+    if (m) return Number(m[1]);
+  }
+  return 0;
+}
+
 // Voluntary self-identification questions (the planner's _EEO) and the decline choice (its
-// _DECLINE): on such a question the decline option is offered FIRST, never a guess for them.
+// _DECLINE, with the federal form's "I do not want to answer"): on such a question the decline
+// option is offered FIRST, never a guess for them.
 const EEO_RE = /gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun/i;
-const DECLINE_RE = /decline|prefer not|do not wish|don't wish|choose not|rather not|not to (say|answer|disclose)/i;
-const PLACEHOLDER_OPT_RE = /^(select|choose|please select|please choose|--|none selected|no selection)\b/i;
-function orderOptions(question, options) {
+const DECLINE_RE = /decline|prefer not|do not wish|don['\u2019]?t wish|not wish to|(?:do not|don['\u2019]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)/i;
+// A dropdown's prompt entry, never a choice. Only a pure prompt: "Choose not to disclose" (a
+// decline) and "Search engine" are real choices (autoapply/asks.py has the same rule).
+const PROMPT_RE = /^[\s\-_*.\u2013\u2014]*(?:(?:please )?(?:select|choose)\b|please (?:enter|type|pick)\b|make a selection\b)|^-{2,}|^(?:none selected|no selection|nothing selected)\W*$|^(?:search|start typing|type to search)(?:\W*$|\s*(?:\.{3}|\u2026)|\s+(?:for|by|here)\b)/i;
+function isPlaceholderOpt(t) {
+  const s = String(t || "").replace(/\s+/g, " ").trim();
+  return !!s && PROMPT_RE.test(s) && !DECLINE_RE.test(s);
+}
+// The page's choices, cleaned: no prompt entries, no repeats, at most `limit` (40).
+function cleanOptions(options, limit) {
   const out = [];
   for (const o of options || []) {
-    const t = String(o || "").replace(/\s+/g, " ").trim().slice(0, 80);
-    if (t && !PLACEHOLDER_OPT_RE.test(t) && !out.includes(t)) out.push(t);
+    const t = String(o || "").replace(/\s+/g, " ").trim().slice(0, 120);
+    if (t && !isPlaceholderOpt(t) && !out.includes(t)) out.push(t);
+    if (out.length >= (limit || 40)) break;
   }
+  return out;
+}
+// Up to 8 choices to offer, the decline choice first on a self-identification question (even
+// when it sat beyond the first eight).
+function orderOptions(question, options) {
+  const out = cleanOptions(options, 1000);
   if (EEO_RE.test(String(question || ""))) {
     const dec = out.find((o) => DECLINE_RE.test(o));
     if (dec) return [dec].concat(out.filter((o) => o !== dec)).slice(0, 8);
@@ -822,4 +913,5 @@ function blockedMessage(reason, left) {
   }
 }
 
-module.exports = { createAgent, blockedMessage, orderOptions, SUBMIT_RE, ATS_HOSTS, MAX_STEPS };
+module.exports = { createAgent, blockedMessage, orderOptions, cleanOptions, sameLabel, questionsFor,
+                   optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS };

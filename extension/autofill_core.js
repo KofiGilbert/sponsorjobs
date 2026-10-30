@@ -1078,7 +1078,7 @@
                   type: fieldType(el), required: !!(el.required || REQUIRED_MARK.test(label || "")) };
       if (el.tagName.toLowerCase() === "select") {
         f.options = [...el.options].map((o) => (o.textContent || o.value).trim())
-          .filter((t) => t && !/^(select|choose|--|please)/i.test(t)).slice(0, 40);
+          .filter((t) => t && !isPlaceholderText(t)).slice(0, 40);              // keeps "Choose not to disclose"
       }
       fields.push(f);
     });
@@ -1166,7 +1166,15 @@
   // reported as left for the person, never counted as filled).
   // Waits are fixed polling steps while a menu renders, never randomized: nothing here imitates
   // a human or hides from bot detection (CLAUDE.md section 7). Submit / Next are never touched.
-  const PLACEHOLDER_RE = /^(select|choose|--|please|search|start typing|type to search|none selected|no selection)/;
+  // A widget's prompt text ("Select One", "-- Choose --", "Search..."), never a chosen value. Only
+  // a pure prompt: a chosen "Choose not to disclose" (a decline) or "Search Engine (Google, Bing)"
+  // is an answer. The same rule as agent_view.js and autoapply/asks.py.
+  const DECLINE_TEXT_RE = /decline|prefer not|do not wish|don['’]?t wish|not wish to|(?:do not|don['’]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)/i;
+  const PROMPT_TEXT_RE = /^[\s\-_*.\u2013\u2014]*(?:(?:please )?(?:select|choose)\b|please (?:enter|type|pick)\b|make a selection\b)|^-{2,}|^(?:none selected|no selection|nothing selected)\W*$|^(?:search|start typing|type to search)(?:\W*$|\s*(?:\.{3}|\u2026)|\s+(?:for|by|here)\b)/i;
+  function isPlaceholderText(t) {
+    const s = norm(t);
+    return !!s && PROMPT_TEXT_RE.test(s) && !DECLINE_TEXT_RE.test(s);
+  }
   const COMBO_SEL = "[role='combobox'], button[aria-haspopup='listbox'], [data-uxi-widget-type='selectinput']";
   const OPTION_SEL = "[role='option'], [id*='-option-'], [data-automation-id='promptOption'], [data-automation-id='promptLeafNode']";
   const VALUE_SEL = "[class*='singleValue'], [class*='single-value'], [class*='multiValue__label'], "
@@ -1238,7 +1246,7 @@
   function comboValue(el) {
     if (tagOf(el) !== "INPUT") {
       const t = norm(el.textContent);
-      return PLACEHOLDER_RE.test(t) ? "" : t;
+      return isPlaceholderText(t) ? "" : t;
     }
     let node = el;
     for (let i = 0; i < 5 && node.parentElement; i++) {

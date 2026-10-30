@@ -82,7 +82,11 @@ def contact_key(label: str) -> str:
 
 _EEO = re.compile(r"gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation"
                   r"|transgender|pronoun", re.I)
-_DECLINE = re.compile(r"decline|prefer not|do not wish|don't wish|choose not|rather not|not to (say|answer|disclose)", re.I)
+# The "decline to self-identify" choice in its usual wordings, the federal disability form's
+# "I do not want to answer" (CC-305) included. Mirrored in shell-electron/agent.js DECLINE_RE.
+_DECLINE = re.compile(r"decline|prefer not|do not wish|don['’]?t wish|not wish to"
+                      r"|(do not|don['’]?t) want to (answer|disclose|say|self[- ]?identify|provide)"
+                      r"|choose not|rather not|not to (say|answer|disclose)", re.I)
 
 
 def decline_option(options) -> str | None:
@@ -120,6 +124,24 @@ def match_option(answer: str, options) -> str | None:
     return None
 
 
+def eeo_option(answer: str, options) -> str | None:
+    """The option a saved self-identification answer names: the same words, else the page's own
+    decline choice for a saved decline ("I don't wish to answer" is Workday's "I do not wish to
+    answer" and Lever's "Decline to self-identify"). Never the Yes/No or shared-prefix guesses of
+    match_option: a plain "Yes" is not "I identify as a protected veteran", and "Yes, I have a
+    disability" is not "Yes, I need an accommodation"."""
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    a = _n(answer)
+    if not opts or not a:
+        return None
+    eq = [o for o in opts if _n(o) == a]
+    if eq:
+        return eq[0]
+    if _DECLINE.search(str(answer)):
+        return decline_option(opts)
+    return None
+
+
 def _op_for(f: FormField) -> str:
     t = (f.type or "text").lower()
     if t in ("select", "radio"):
@@ -141,6 +163,36 @@ def _literal(f: FormField, text: str) -> str | None:
     if t == "checkbox":
         return "Yes" if workauth.polarity(text) is True else None
     return text
+
+
+def _eeo_fill(f: FormField, label: str, t: str, ctx) -> tuple | None:
+    """(FillAction, library key or "") for a self-identification field from the person's own
+    saved answer or their standing decline, else None (the field is theirs). Never a guess."""
+    if t == "checkbox":
+        # One box of a native group, labelled "Question: Option" (the engine's checkboxLabel):
+        # ticked only when ITS option is the saved answer, or both are a decline. Never from the
+        # answer's Yes/No polarity, which would tick every box of the group at once.
+        q, sep, opt = label.partition(": ")
+        if not sep or not opt.strip():
+            return None
+        hit = ctx.library.lookup(q) if ctx.library is not None else None
+        ans = str((hit or {}).get("answer") or "").strip()
+        if ans and (_n(opt) == _n(ans) or (_DECLINE.search(opt) and _DECLINE.search(ans))):
+            return FillAction(f.ref, "check", value="Yes", origin="library", sensitive=True), hit["key"]
+        return None
+    hit = ctx.library.lookup(label) if ctx.library is not None else None
+    ans = str((hit or {}).get("answer") or "").strip()
+    if f.options or t in ("select", "radio"):
+        v = eeo_option(ans, f.options) if ans else None
+        if v:
+            return FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True), hit["key"]
+        v = decline_option(f.options) if ctx.eeo_decline and f.options else None
+        if v:
+            return FillAction(f.ref, _op_for(f), value=v, origin="eeo", sensitive=True), ""
+        return None
+    if ans:
+        return FillAction(f.ref, "fill", value=ans, origin="library", sensitive=True), hit["key"]
+    return None
 
 
 # --------------------------------------------------------------------------- the known pass
@@ -191,18 +243,14 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.rest.append(f)
             continue
 
-        # 0. EEO / demographics: the person's own saved answer (an earlier "ask"), else their
-        #    standing "decline" choice, never a guess
+        # 0. EEO / demographics: the person's own saved answer (an earlier "ask"), on the exact
+        #    option it names, else their standing "decline" choice, never a guess
         if _EEO.search(label) and not workauth.classify(label):
-            hit = ctx.library.lookup(label) if ctx.library is not None else None
-            v = _literal(f, hit["answer"]) if hit else None
-            if v:
-                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True))
-                out.used_library.append(hit["key"])
-                continue
-            v = decline_option(f.options) if ctx.eeo_decline and f.options else None
-            if v:
-                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="eeo", sensitive=True))
+            got = _eeo_fill(f, label, t, ctx)
+            if got:
+                out.actions.append(got[0])
+                if got[1]:
+                    out.used_library.append(got[1])
             else:
                 out.left.append(f)
             continue

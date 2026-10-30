@@ -37,7 +37,12 @@
   // Workday's listbox buttons and prompt boxes too, not only on role=combobox.
   const COMBO_SEL = "[role='combobox'], button[aria-haspopup='listbox'], [data-uxi-widget-type='selectinput']";
   const OPTION_SEL = "[role='option'], [id*='-option-'], [data-automation-id='promptOption'], [data-automation-id='promptLeafNode']";
-  const PLACEHOLDER_RE = /^(select|choose|--|please|search|start typing|type to search|none selected|no selection)/;
+  // A dropdown's prompt entry ("Select...", "-- Choose one --", "Please select"), never a choice.
+  // Only a pure prompt: "Choose not to disclose" (a decline) and "Search engine" are real choices.
+  // The same rule as autoapply/asks.py, autofill_core.js and the shell's orderOptions.
+  const DECLINE_RE = /decline|prefer not|do not wish|don['’]?t wish|not wish to|(?:do not|don['’]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)/i;
+  const PROMPT_RE = /^[\s\-_*.\u2013\u2014]*(?:(?:please )?(?:select|choose)\b|please (?:enter|type|pick)\b|make a selection\b)|^-{2,}|^(?:none selected|no selection|nothing selected)\W*$|^(?:search|start typing|type to search)(?:\W*$|\s*(?:\.{3}|\u2026)|\s+(?:for|by|here)\b)/i;
+  const isPlaceholder = (t) => { const s = norm(t); return !!s && PROMPT_RE.test(s) && !DECLINE_RE.test(s); };
   const TEXT_TYPES = new Set(["text", "email", "tel", "url", "search", "password", "number", "date", "datetime-local",
                               "month", "week", "time", "color", "range", ""]);
   const BUTTON_TYPES = new Set(["submit", "button", "reset", "image"]);
@@ -265,7 +270,7 @@
   function selectValue(el) {
     const o = el.options && el.options[el.selectedIndex];
     if (!o) return "";
-    if (!o.value && (el.selectedIndex === 0 || PLACEHOLDER_RE.test(norm(o.textContent)))) return "";
+    if (!o.value && (el.selectedIndex === 0 || isPlaceholder(o.textContent))) return "";
     return cleanText(o.textContent).slice(0, MAX_LABEL);
   }
   function comboValue(el) {
@@ -275,7 +280,7 @@
     else if (tagOf(el) === "INPUT") v = norm(el.value);
     else {
       const t = norm(el.textContent || attrOf(el, "aria-label"));
-      v = PLACEHOLDER_RE.test(t) ? "" : t;
+      v = isPlaceholder(t) ? "" : t;
     }
     if (!v) return "";
     if (tagOf(el) === "INPUT" && norm(el.value) === v) return "(filled)";
@@ -374,7 +379,7 @@
   // a lone glyph. The model has the control's line already.
   function noiseText(s) {
     if (!/[\p{L}\p{N}]{2}/u.test(s)) return true;
-    return PLACEHOLDER_RE.test(norm(s)) && s.length <= 24;
+    return isPlaceholder(s) && s.length <= 24;
   }
   // Ids named by any aria-labelledby on the page: their text is already a control's label.
   function labelIds(root, out, depth) {
@@ -804,45 +809,231 @@
     return { x: r.left, y: r.top, width: r.width, height: r.height };
   }
 
-  // The choices an OPEN custom dropdown shows (the shell opens it with a real click first, then
-  // closes it with Escape): the listbox the control names (aria-controls / aria-owns, on it or
-  // on the input inside it), else the options visible on the page, else the items of a visible
-  // listbox. Labels only (the site's words), placeholders dropped, at most 40.
-  function popupOptions(index) {
-    const el = element(index);
-    if (!el) return [];
-    const texts = [];
-    const add = (o) => {
-      const t = cleanText(o.textContent).slice(0, 80);
-      if (t && !PLACEHOLDER_RE.test(norm(t)) && !texts.includes(t)) texts.push(t);
+  // ------------------------------------------------------------------ choices for an ask
+  // When the agent asks the person a question, it offers the page's own choices. A native
+  // <select> has them all in the element (selectOptions; the view prints only four). A custom
+  // dropdown shows them only while open, so the shell marks what is already on screen
+  // (markPopups), opens the control with a real click, reads the popup THAT click opened
+  // (popupOptions), and closes it again (popupOpen / closePopup), sending Escape only while it
+  // is really open: an Escape that reaches a closed control can close the dialog holding the form.
+  const NOT_AN_OPTION = /^(no options|no results|no matches|nothing found|loading|searching|type to search|start typing)/;
+  const NOT_OPTION_ROLES = /^(alert|status|presentation|none|group|separator|heading)$/;
+  const BOX_SEL = "[role='listbox'], [role='menu'], ul, [class*='menu'], [class*='listbox'], [class*='dropdown'], [class*='options']";
+  const MAX_CHOICES = 60;
+  let _mark = null;                    // { index, seen }: what was on screen before the shell's click
+  let _lastPopup = null;               // { index, box }: the popup popupOptions last read
+
+  // The document, every open shadow root and same-origin frame under it, nested.
+  function deepRoots() {
+    const out = [], seen = new Set();
+    const visit = (root, depth) => {
+      if (!root || seen.has(root) || depth > 8) return;
+      seen.add(root); out.push(root);
+      let all = [];
+      try { all = Array.from(root.querySelectorAll("*")); } catch (e) { all = []; }
+      for (const h of all) {
+        if (h.shadowRoot) visit(h.shadowRoot, depth + 1);
+        if ((tagOf(h) === "IFRAME" || tagOf(h) === "FRAME") && !captchaFrame(h)) { const d = frameDoc(h); if (d) visit(d, depth + 1); }
+      }
     };
-    const ids = [];
-    const named = [el].concat(el.querySelectorAll ? Array.from(el.querySelectorAll("[aria-controls], [aria-owns]")) : []);
-    for (const n of named) for (const a of ["aria-controls", "aria-owns"]) ids.push(...String(attrOf(n, a) || "").split(/\s+/));
-    for (const id of ids.filter(Boolean)) {
-      const box = byId(el, id);
-      if (!box) continue;
-      const opts = Array.from(box.querySelectorAll(OPTION_SEL));
-      for (const o of (opts.length ? opts : Array.from(box.querySelectorAll("li")))) if (!selfHidden(o)) add(o);
+    visit(document, 0);
+    return out;
+  }
+  function deepAll(sel) {
+    const out = [];
+    for (const r of deepRoots()) { try { out.push(...Array.from(r.querySelectorAll(sel))); } catch (e) { /* a bad root */ } }
+    return out;
+  }
+  // Really on screen: its own box, and no ancestor hidden, invisible or faded out (a closed list
+  // is often kept in the page with visibility hidden or opacity 0).
+  function onScreen(el) {
+    if (!el || !el.isConnected || selfHidden(el) || !boxShown(el)) return false;
+    for (let n = el.parentNode, i = 0; n && i < 40; i++) {
+      if (n.nodeType === 11) { n = n.host; continue; }      // a shadow root: on to its host
+      if (n.nodeType !== 1) break;
+      if (n.hidden || attrOf(n, "aria-hidden") === "true") return false;
+      const cs = styleOf(n);
+      if (cs && (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0")) return false;
+      if (cs && /hidden|clip/.test(cs.overflowX + " " + cs.overflowY)) {   // a list collapsed to 0 high
+        const r = n.getBoundingClientRect();
+        if (r.height < 1 || r.width < 1) return false;
+      }
+      n = n.parentNode;
     }
-    if (!texts.length) for (const o of visibleOptions()) add(o);
-    if (!texts.length) {
-      for (const lb of Array.from(document.querySelectorAll("[role='listbox'], ul[class*='listbox'], ul[class*='dropdown']"))) {
-        if (boxShown(lb)) for (const li of Array.from(lb.querySelectorAll("li"))) add(li);
+    return true;
+  }
+  const choiceText = (o) => cleanText(o.textContent || attrOf(o, "aria-label") || "").slice(0, 120);
+  // A real choice: on screen, enabled, not a status row ("No results found", "Loading...") or a
+  // group header, and not the "Select..." prompt.
+  function isChoice(o) {
+    if (!onScreen(o) || attrOf(o, "aria-disabled") === "true") return false;
+    if (NOT_OPTION_ROLES.test(norm(attrOf(o, "role")))) return false;
+    const t = choiceText(o);
+    return !!t && !NOT_AN_OPTION.test(norm(t)) && !isPlaceholder(t);
+  }
+  function innermost(list) { return list.filter((o) => !list.some((p) => p !== o && o.contains(p))); }
+  function choicesIn(box) {
+    let opts = [];
+    try { opts = Array.from(box.querySelectorAll(OPTION_SEL)); } catch (e) { opts = []; }
+    if (!opts.length) { try { opts = Array.from(box.querySelectorAll("li")); } catch (e) { opts = []; } }
+    return innermost(opts).filter(isChoice);
+  }
+  function busyBox(box) {
+    if (!box) return false;
+    if (attrOf(box, "aria-busy") === "true" || /^(loading|searching)/.test(norm(box.textContent))) return true;
+    let marks = [];
+    try { marks = Array.from(box.querySelectorAll("[aria-busy='true'], [class*='loading']")); } catch (e) { marks = []; }
+    return marks.some(onScreen);
+  }
+  function otherControl(node, el) {
+    let found = [];
+    try { found = Array.from(node.querySelectorAll(COMBO_SEL + ", select")); } catch (e) { found = []; }
+    return found.some((o) => o !== el && !o.contains(el) && !el.contains(o));
+  }
+  const popupRole = (b) => /^(listbox|menu)$/.test(norm(attrOf(b, "role")));
+  // Did this box appear with the shell's click? Without a mark (a direct call), only a box that
+  // says it is a list (role=listbox/menu, or real option elements) counts.
+  function appeared(b, index) {
+    if (_mark && _mark.index === index) return !_mark.seen.has(b);
+    try { return popupRole(b) || !!b.querySelector(OPTION_SEL); } catch (e) { return false; }
+  }
+
+  // The popup of THIS control, never another one's, an inline list elsewhere, or the site's nav:
+  // 1. the list the control names (aria-controls / aria-owns, on it or on an input inside it);
+  // 2. a list in the control's own field box, one that came up with the click (react-select's
+  //    menu sits beside the control; a hand-rolled list is a sibling shown on click);
+  // 3. a list that came up with the click anywhere (a portal at the end of <body>: Workday),
+  //    the newest. Nothing else: no page-wide scan.
+  function popupBox(el, index) {
+    const named = [el].concat(el.querySelectorAll ? Array.from(el.querySelectorAll("[aria-controls], [aria-owns]")) : []);
+    for (const n of named) {
+      for (const a of ["aria-controls", "aria-owns"]) {
+        for (const id of String(attrOf(n, a) || "").split(/\s+/).filter(Boolean)) {
+          const box = byId(n, id);
+          if (box && box !== el && choicesIn(box).length) return box;
+        }
       }
     }
-    return texts.slice(0, 40);
+    let node = el;
+    for (let i = 0; i < 6 && node.parentElement; i++) {
+      node = node.parentElement;
+      if (otherControl(node, el)) break;
+      let boxes = [];
+      try { boxes = Array.from(node.querySelectorAll(BOX_SEL)); } catch (e) { boxes = []; }
+      boxes = boxes.filter((b) => b !== el && !b.contains(el) && (!el.contains(b) || popupRole(b))
+                                  && !errorBlock(b) && appeared(b, index) && choicesIn(b).length);
+      if (boxes.length) {
+        // The list itself, not a wrapper around it: the innermost box holding the same choices.
+        const n0 = (b) => choicesIn(b).length;
+        const inner = boxes.filter((b) => !boxes.some((c) => c !== b && b.contains(c) && n0(c) === n0(b)));
+        return inner[0] || boxes[0];
+      }
+    }
+    if (!_mark || _mark.index !== index) return null;
+    const seen = _mark.seen;
+    const listOf = (o) => (o.closest && o.closest("[role='listbox'], [role='menu'], [role='tree'], ul, [data-automation-id='popup']")) || o.parentElement;
+    const fresh = innermost(deepAll(OPTION_SEL).filter((o) => !seen.has(o) && !el.contains(o) && isChoice(o)))
+      .filter((o) => { const lb = listOf(o); return !(lb && seen.has(lb)); });
+    if (fresh.length) return listOf(fresh[fresh.length - 1]);
+    const lbs = deepAll("[role='listbox'], [role='menu']").filter((b) => !seen.has(b) && !b.contains(el) && choicesIn(b).length);
+    return lbs.length ? lbs[lbs.length - 1] : null;
   }
-  // Close a dropdown popupOptions read (the in-page fallback; the shell presses a real Escape).
-  function closePopup(index) {
+
+  // A popup of this control that is still loading its choices ("Loading...", aria-busy).
+  function busyPopup(el, index) {
+    const named = [el].concat(el.querySelectorAll ? Array.from(el.querySelectorAll("[aria-controls], [aria-owns]")) : []);
+    for (const n of named) {
+      for (const a of ["aria-controls", "aria-owns"]) {
+        for (const id of String(attrOf(n, a) || "").split(/\s+/).filter(Boolean)) {
+          const box = byId(n, id);
+          if (box && onScreen(box) && busyBox(box)) return true;
+        }
+      }
+    }
+    if (!_mark || _mark.index !== index) return false;
+    return deepAll("[role='listbox'], [role='menu']").some((b) => !_mark.seen.has(b) && onScreen(b) && busyBox(b));
+  }
+
+  // Before the shell's click: what is on screen now, so the popup the click opens is told apart.
+  // markPopups(index, false) clears it (the control was open already and is not clicked).
+  function markPopups(index, on) {
+    if (on === false) { _mark = null; return true; }
+    _mark = { index: Number(index), seen: new WeakSet(deepAll(OPTION_SEL + ", " + BOX_SEL).filter(onScreen)) };
+    return true;
+  }
+  // {options, partial, open, busy}: the choices the control's open popup shows (the site's own
+  // words, at most 60), partial when there are more than that or the list renders only a window
+  // of a longer one (aria-setsize), busy while it says Loading.
+  function popupOptions(index) {
+    const res = { options: [], partial: false, open: false, busy: false };
     const el = element(index);
-    const target = document.activeElement || el;
-    for (const t of [target, el]) if (t) { fire(t, "keydown", { key: "Escape", code: "Escape", keyCode: 27 }); fire(t, "keyup", { key: "Escape", code: "Escape", keyCode: 27 }); }
-    return !!el && attrOf(el, "aria-expanded") !== "true";
+    if (!el || !el.isConnected) return res;
+    const box = popupBox(el, Number(index));
+    if (!box) {
+      res.open = attrOf(el, "aria-expanded") === "true";
+      res.busy = attrOf(el, "aria-busy") === "true" || busyPopup(el, Number(index));
+      return res;
+    }
+    _lastPopup = { index: Number(index), box };
+    res.open = true;
+    const all = choicesIn(box);
+    const texts = [];
+    for (const o of all) { const t = choiceText(o); if (t && !texts.includes(t)) texts.push(t); }
+    res.options = texts.slice(0, MAX_CHOICES);
+    const size = Math.max(0, ...all.map((o) => Number(attrOf(o, "aria-setsize")) || 0));
+    res.partial = texts.length > res.options.length || size > texts.length;
+    res.busy = !res.options.length && busyBox(box);
+    return res;
+  }
+  // Is the control's popup open now (it says so, or the popup last read is still showing)?
+  function popupOpen(index) {
+    const el = element(index);
+    if (!el || !el.isConnected) return false;
+    if (attrOf(el, "aria-expanded") === "true") return true;
+    try { if (el.querySelector && el.querySelector("[aria-expanded='true']")) return true; } catch (e) { /* fine */ }
+    const last = _lastPopup && _lastPopup.index === Number(index) ? _lastPopup.box : null;
+    return !!(last && last.isConnected && choicesIn(last).length);
+  }
+  // Close a popup that is still open. how "escape": ONE Escape, to the focused part of the
+  // control or the control itself, never to both (used when the shell could not press a real
+  // one). Otherwise the widget ignored a real Escape: a toggle button closes on a second click,
+  // anything else on blur, never more Escapes. Nothing at all when it is closed already.
+  // Returns whether it is closed now.
+  function closePopup(index, how) {
+    const el = element(index);
+    if (!el || !el.isConnected || !popupOpen(index)) return true;
+    const doc = el.ownerDocument || document;
+    const active = doc.activeElement;
+    if (how === "escape") {
+      const t = active && (active === el || composedContains(el, active)) ? active : el;
+      fire(t, "keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27 });
+      fire(t, "keyup", { key: "Escape", code: "Escape", keyCode: 27, which: 27 });
+    } else if (tagOf(el) === "BUTTON" || (attrOf(el, "aria-haspopup") && tagOf(el) !== "INPUT")) {
+      try { el.click(); } catch (e) { /* fine */ }
+    } else {
+      try { if (active && active !== doc.body && active.blur) active.blur(); if (el.blur) el.blur(); } catch (e) { /* fine */ }
+    }
+    return !popupOpen(index);
+  }
+  // {options, partial}: every choice of a native <select> (the view prints only four), from the
+  // element itself; the leading empty-value prompt, "Select..." entries and disabled headers
+  // left out.
+  function selectOptions(index) {
+    const el = element(index);
+    if (!el || tagOf(el) !== "SELECT") return { options: [], partial: false };
+    const out = [];
+    let total = 0;
+    Array.from(el.options || []).forEach((o, i) => {
+      const t = cleanText(o.textContent || o.label || "").slice(0, 120);
+      if (!t || o.disabled || (i === 0 && !o.value) || isPlaceholder(t) || out.includes(t)) return;
+      total++;
+      if (out.length < MAX_CHOICES) out.push(t);
+    });
+    return { options: out, partial: total > out.length };
   }
 
   window.TailorAgent = {
-    view, element, act, submitButton, rect, popupOptions, closePopup,
+    view, element, act, submitButton, rect, markPopups, popupOptions, popupOpen, closePopup, selectOptions,
     refs: () => window.__tailorAgentRefs || [],
     SUBMIT_RE,
   };
