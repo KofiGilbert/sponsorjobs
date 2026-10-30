@@ -1765,6 +1765,11 @@ class AnthropicLLM:
         twenty steps stays at a few cents. Goes through _complete, so BrokerLLM inherits it."""
         return self._complete(system, user, max_tokens=700, effort="low")
 
+    def ask_reply(self, system: str, user: str) -> str:
+        """Read the person's reply to the apply agent's question(s) (autoapply/asks.py owns the
+        prompt and the validation). A short JSON reply at low effort."""
+        return self._complete(system, user, max_tokens=300, effort="low")
+
     def draft_sponsorship_answer(self, profile: dict, status: str = "", future_need: str = "",
                                  role: str = "", company: str = "") -> str:
         """Draft a strong, honest spoken answer to the visa/sponsorship question international

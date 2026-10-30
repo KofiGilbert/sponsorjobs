@@ -33,6 +33,11 @@ _FILLER = re.compile(
     r"describe|state|list|your|you|do|does|are|is|what|which|how|the|a|an|of|to|for|in|on|"
     r"with|please note|e g|eg)\b")
 
+# How a form leads into a short question, and what may trail it ("Please select your gender",
+# "What is your race?", "Gender (optional)"), for the questions that must match as a WHOLE label.
+_ASK = r"^(please )?((select|choose|indicate|specify|state|enter|provide|identify) )?(what is |what's )?(your )?"
+_TAIL = r"( (optional|required|voluntary|if any))*$"
+
 # Canonical keys for the questions that recur on nearly every form, worded many ways. A
 # question that matches one of these (as its whole intent) gets that key.
 _CANON: list[tuple[str, re.Pattern]] = [
@@ -60,7 +65,31 @@ _CANON: list[tuple[str, re.Pattern]] = [
         r"( do you have)?( in total| overall)?$")),
     ("over_18", re.compile(r"(at least|over|older than) (the age of )?18|18 years (of age|or older|old)"
                            r"|age of majority")),
-    ("pronouns", re.compile(r"^(your |preferred )?pronouns?$|what are your pronouns")),
+    # Voluntary self-identification (EEO): asked once, answered the same way everywhere. Each is
+    # the WHOLE label (_ASK ... _TAIL): "Race: Asian" is one box of a checkbox group, "Gender
+    # pronouns" is another question, and an accommodation question is not the disability one.
+    # Race and Hispanic/Latino ethnicity are separate questions on many US forms, and so are sex
+    # and gender identity: separate keys, so one answer never overwrites the other.
+    ("pronouns", re.compile(_ASK + r"(preferred |gender )?pronouns?" + _TAIL
+                            + r"|what are your (gender |preferred )?pronouns")),
+    ("gender", re.compile(_ASK + r"gender( identity)?" + _TAIL)),
+    ("sex", re.compile(_ASK + r"(biological |legal )?sex( assigned at birth)?" + _TAIL)),
+    ("race", re.compile(_ASK + r"(race|racial (identity|background|group|origin)|race and ethnicity"
+                        r"|race ethnicity|race ethnic (identity|background|group|origin)|ethnicity and race"
+                        r"|ethnicity race)" + _TAIL)),
+    ("ethnicity", re.compile(_ASK + r"(ethnicity|ethnic (identity|background|group|origin))" + _TAIL)),
+    # VEVRAA "protected veteran" status only: "Are you a veteran?" (any service) is another
+    # question, and a "Yes" there is not a protected-veteran self-identification.
+    ("veteran", re.compile(_ASK + r"(protected )?veteran status" + _TAIL + r"|^(protected )?veteran" + _TAIL
+                           + r"|^are you an? protected veteran" + _TAIL)),
+    # The CC-305 question, never "Do you have a disability that requires an accommodation?".
+    ("disability", re.compile(_ASK + r"disability( status)?" + _TAIL + r"|^do you have an? disability" + _TAIL
+                              + r"|^voluntary self identification of disability( form)?( cc 305)?$")),
+    # The COUNTRY of citizenship ("Country of citizenship", and Lam's export-control wording
+    # "please provide your most recent country/region of citizenship or legal permanent
+    # residence..."). A citizenship STATUS or a yes/no citizenship question keeps its own key.
+    ("citizenship", re.compile(r"country (or region |region )?of (citizenship|nationality)"
+                               r"|^(what is )?(your )?nationality" + _TAIL + r"|what country are you a citizen of")),
     ("preferred_name", re.compile(r"^(preferred|chosen) (first )?name$|what (name|should we call)")),
     ("linkedin", re.compile(r"^linkedin( profile)?( url| link)?$")),
     ("portfolio", re.compile(r"^(portfolio|personal website|website)( url| link)?$")),
@@ -73,6 +102,28 @@ _CANON: list[tuple[str, re.Pattern]] = [
                                      r"|(former|past|prior) (employee|employment|contractor|intern)\b"
                                      r"|(ever )?(worked|interned|been employed) (for|at|by|with) (us|this|our|the company)")),
 ]
+
+_EEO_KEYS = frozenset({"@gender", "@sex", "@race", "@ethnicity", "@veteran", "@disability"})
+# Questions whose answer is one short choice, never a paragraph.
+_SHORT_KEYS = _EEO_KEYS | {"@citizenship"}
+
+
+def unusable(key: str, answer: str) -> bool:
+    """True for a saved answer that must not be used for its question. Such a row STAYS in the
+    library (the person sees it on Your answers and can delete it); the agent asks again, and
+    the person's new answer replaces it through save(). Two shapes, both raw chat replies the
+    agent saved before replies were read (Lam Research, 2026-10-30): a question back ("what are
+    the options?") on one of the recurring questions, where a question is never the answer, and
+    a paragraph where a self-identification or citizenship answer is one short choice. A question
+    the person wrote as the answer to an open question ("Do you have any questions for us?")
+    stays usable."""
+    a = str(answer or "").strip()
+    if not a:
+        return True
+    k = str(key or "")
+    if k.startswith("@") and a.endswith("?"):
+        return True
+    return k in _SHORT_KEYS and "\n" in a
 
 # Never saved: their answer belongs to ONE application.
 _PER_JOB = re.compile(r"why (do you want|are you interested|this|our|us|join|apply|would you like)"
@@ -136,17 +187,30 @@ class AnswerLibrary:
         """Move answers saved under an older key to the key their question has now. When the
         canonical wordings widen ("annual salary requirement" became the salary question), an
         answer saved before must still be found. Runs once per change of the key rules; a row
-        whose new key is already taken stays where it is."""
+        whose new key is already taken stays where it is. Nothing is ever deleted here: an
+        answer that cannot be used (see unusable) is skipped on read instead, and when two
+        wordings of one question meet, a usable answer claims the key first (the person's own
+        before a drafted one, the newest first)."""
         version = hashlib.sha1("|".join(k + rx.pattern for k, rx in _CANON).encode()).hexdigest()[:12]
         try:
             row = self.conn.execute("SELECT v FROM meta WHERE k='keys_version'").fetchone()
             if row and row[0] == version:
                 return
-            for r in self.conn.execute("SELECT key, question FROM answers").fetchall():
-                new = normalize(r["question"])
-                if new and new != r["key"] and not self.conn.execute(
-                        "SELECT 1 FROM answers WHERE key=?", (new,)).fetchone():
-                    self.conn.execute("UPDATE answers SET key=? WHERE key=?", (new, r["key"]))
+
+            def rank(r):
+                return (unusable(normalize(r["question"]), r["answer"]), r["source"] != "you",
+                        -float(r["updated_at"] or 0))
+            for _ in range(3):                     # a key freed by one move can take another row
+                moved = False
+                rows = self.conn.execute("SELECT key, question, answer, source, updated_at FROM answers").fetchall()
+                for r in sorted(rows, key=rank):
+                    new = normalize(r["question"])
+                    if new and new != r["key"] and not self.conn.execute(
+                            "SELECT 1 FROM answers WHERE key=?", (new,)).fetchone():
+                        self.conn.execute("UPDATE answers SET key=? WHERE key=?", (new, r["key"]))
+                        moved = True
+                if not moved:
+                    break
             self.conn.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('keys_version', ?)", (version,))
             self.conn.commit()
         except sqlite3.Error:
@@ -172,13 +236,14 @@ class AnswerLibrary:
 
     def save(self, question: str, answer: str, source: str = "you", *, company: str = "") -> dict | None:
         """Save (or replace) the answer to a question. A drafted answer never replaces one the
-        person wrote; per-application questions and empty answers are not saved. Returns the
-        stored row, or None when nothing was saved."""
+        person wrote; per-application questions, empty answers and answers their question can
+        never use (a question back on a recurring question, a paragraph for a one-choice one)
+        are not saved. Returns the stored row, or None when nothing was saved."""
         q = str(question or "").strip()[:MAX_Q]
         a = str(answer or "").strip()[:MAX_A]
         source = source if source in SOURCES else "you"
         key = normalize(q)
-        if not key or not a or is_per_job(q, company):
+        if not key or not a or is_per_job(q, company) or unusable(key, a):
             return None
         now = time.time()
         cur = self.conn.execute("SELECT * FROM answers WHERE key=?", (key,)).fetchone()
@@ -198,9 +263,13 @@ class AnswerLibrary:
         return self._row(r) if r else None
 
     def lookup(self, question: str) -> dict | None:
-        """The saved answer to this question (same normalized key), or None."""
+        """The saved answer to this question (same normalized key), or None. Every reader that
+        USES an answer (the planner, the agent's known answers, its asks) comes through here, so
+        an answer that cannot be used is never handed out, while its row stays saved until the
+        person replaces or deletes it."""
         key = normalize(question)
-        return self.get_key(key) if key else None
+        row = self.get_key(key) if key else None
+        return None if row is None or unusable(key, row["answer"]) else row
 
     def mark_used(self, key: str):
         self.conn.execute("UPDATE answers SET last_used=?, uses=uses+1 WHERE key=?", (time.time(), key))
@@ -216,9 +285,10 @@ class AnswerLibrary:
         if not a or not normalize(q):
             return None
         new_key = normalize(q)
-        if new_key != key:
-            self.delete(key)
-        return self.save(q, a, "you")
+        row = self.save(q, a, "you")
+        if row is not None and new_key != key:
+            self.delete(key)               # moved to its new key: the old entry goes only now
+        return row
 
     def delete(self, key: str) -> bool:
         n = self.conn.execute("DELETE FROM answers WHERE key=?", (key,)).rowcount

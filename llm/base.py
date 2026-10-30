@@ -1487,6 +1487,53 @@ class FakeLLM:
                 actions.append({"ref": ref, "op": op, "source": key})
         return {"actions": actions}
 
+    def ask_reply(self, system: str, user: str) -> str:
+        # Reads the person's reply to the apply agent's questions (autoapply/asks.py) the way
+        # the real model is told to, deterministically (a test double: plumbing, not quality):
+        # a numbered line goes to the question with THAT number (the numbers the person saw,
+        # kept when some were answered first); an option named in the reply (whole word, so
+        # "Male" never matches "Female") answers a question with options; a part ending in "?"
+        # is a question back, reported next to any answers; otherwise, for a single free-text
+        # question (or one whose choices were only partly read), the shortest plain part.
+        import json as _json
+        qm = re.search(r"<questions>\n(.*?)\n</questions>", user, re.S)
+        rm = re.search(r"<reply>\n(.*?)\n</reply>", user, re.S)
+        qs = _json.loads(qm.group(1)) if qm else []
+        nums = {int(q.get("n") or i) for i, q in enumerate(qs, start=1)}
+        reply = rm.group(1) if rm else ""
+        parts = []
+        for line in (x.strip() for x in reply.split("\n")):
+            if re.match(r"^\d+[.):]\s*\S", line):
+                parts.append(line)                 # "2. Yes" is one numbered answer, not two sentences
+            else:
+                parts += [p.strip() for p in re.split(r"(?<=[.?!])\s+", line) if p.strip()]
+        asked = [p for p in parts if p.endswith("?")]
+        plain = [p for p in parts if not p.endswith("?")]
+        answers = {}
+        loose = []                                 # parts not numbered: they may name an option
+        for p in plain:
+            m = re.match(r"^(\d+)[.):]\s*(.+)$", p)
+            if m and int(m.group(1)) in nums:
+                answers[int(m.group(1))] = m.group(2).strip().rstrip(".")
+            elif not m:
+                loose.append(p)
+        for q in qs:
+            n, opts = int(q["n"]), q.get("options") or []
+            if n in answers or not opts:
+                continue
+            for o in sorted(opts, key=len, reverse=True):
+                if any(re.search(r"(?<![A-Za-z])" + re.escape(o.lower()) + r"(?![A-Za-z])", p.lower())
+                       for p in loose):
+                    answers[n] = o
+                    break
+        if len(qs) == 1 and int(qs[0]["n"]) not in answers and plain \
+                and (not qs[0].get("options") or qs[0].get("partial")):
+            answers[int(qs[0]["n"])] = min(reversed(plain), key=len).rstrip(".")
+        out = {"answers": [{"n": n, "answer": a} for n, a in sorted(answers.items())],
+               "question": asked[0] if asked else "",
+               "unclear": not answers and not asked}
+        return _json.dumps(out)
+
     def agent_step(self, system: str, user: str) -> str:
         # A scripted brain for the apply agent, decided from the page view alone (the same
         # input the real model gets): click Apply, sign in with the portal placeholders, open

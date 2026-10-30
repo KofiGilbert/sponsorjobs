@@ -210,6 +210,40 @@ it is the Send path above. Belt and braces.
 - The person can press **Stop** at any time; the run ends after the current action.
 - "Needs you" tile counts packages stopped on `blocked`; each row says why in one line.
 
+### Asking the person (`/api/autoapply/agent/ask`, autoapply/asks.py)
+
+When the brain reports `blocked: needs-answers`, the shell asks about the REQUIRED questions
+still open on the page (at most 6), on the bar and on Telegram, and waits up to 5 minutes.
+
+- **Choices.** A native select's every option comes from the element (`selectOptions`; the view
+  prints four), a radio group's from the view, a custom dropdown's from its open popup: the
+  shell marks what is on screen (`markPopups`), opens it with a real click, reads only the popup
+  that click opened (`popupOptions`: the list the control names, a list in its own field box,
+  or a list that appeared, never another question's list or the site's nav), and closes it
+  with ONE real Escape only while it is open (an Escape on a closed control can close the dialog
+  holding the form); a widget that ignores Escape is clicked shut or blurred. The shell sends
+  `options` (at most 8 to offer, the decline choice first on EEO questions), `all_options` (up to
+  40, for matching) and `partial` (the page has more than were read).
+- **Known answers first.** Work authorization, the answer library and the standing
+  `eeo_decline` choice answer what they can (`known_only`); only the rest is asked. An EEO
+  answer fits only the choice it names, or the page's decline choice for a saved decline; never
+  a Yes/No or prefix guess. A question whose known answer did not stick is sent in
+  `force_questions` and asked for real; the others still get their known answers.
+- **Telegram.** One message: one question with its choices as buttons inside the broker's
+  contract (3 rows of up to 3, labels of 30 characters; longer or more choices are numbered and
+  listed in full in the text), or several numbered questions without buttons. A channel that
+  refuses the buttons gets the same question as text. Every message stays under 4096 characters.
+- **Reading the reply.** A choice's own words or its listed number need no model; anything else
+  goes through one small model call (25 s at most) that keeps only the part answering each
+  question, by the numbers the person saw (kept after a partial reply). A question back gets the
+  choices (with any answers in the same message taken); an unclear reply is asked again once;
+  when the model fails, the plain reading answers and the failure does not count against the
+  person. Slash commands are never answers: `/stop`, `/pause` and `/skip` also end the wait.
+  Only a question whose Telegram message was delivered takes Telegram text.
+- **Saved.** The person's answers are saved to the answer library (never a question back, never
+  a paragraph for a one-choice question). A raw reply saved before replies were read stays in
+  the library, unused, until the person replaces or deletes it.
+
 ## 9. What we took from browser-use, what we left
 
 Copied (adapted): one replaced state message with `<step_info>` last so the prefix caches;
