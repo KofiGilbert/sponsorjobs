@@ -242,7 +242,10 @@ let askedYears = false;
 let askedWorkAuth = false;
 for (let i = 0; i < 4 && /the application asks:/i.test(asked); i++) {
   if (/how many years/i.test(asked)) askedYears = true;
-  if (/authori[sz]ed|sponsorship/i.test(asked)) askedWorkAuth = true;
+  // Only the question itself counts: the bar's lead-in quotes the question before it on the
+  // form ("After 'Will you ... require visa sponsorship?', the application asks: ...").
+  const q = asked.split(/the application asks:/i).pop() || "";
+  if (/authori[sz]ed|sponsorship/i.test(q)) askedWorkAuth = true;
   const hasBox = await win.locator("#bbFill .bb-answer").count();
   if (hasBox) {
     await win.fill("#bbFill .bb-answer", /how many years/i.test(asked) ? "5" : "Yes");
