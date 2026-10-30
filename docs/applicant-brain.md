@@ -889,7 +889,10 @@ typed in intake chat is not asked again on the form".
   marks the fixture's salary question asked before comparing (Phase 3 asks it once; after that the
   agent answers exactly as the legacy stores did). `e2e-agent.mjs` section 12 types an address in
   the builder's chat and runs a `?address=1` job (City, State and a required ZIP code on the
-  contact page; `tests/fixtures/forms/mock_ats.js`).
+  contact page; `tests/fixtures/forms/mock_ats.js`). The test model's scripted agent brain
+  (`llm/base.py agent_step`) read any box labelled "code" as an emailed code, so "ZIP code" sent
+  that run to "Waiting for the site's email"; it now takes only a verification code box
+  (`tests/test_agent_brain.py` guards it).
 
 Not settled in Phase 3 (open for the owner):
 

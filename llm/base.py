@@ -1601,7 +1601,12 @@ class FakeLLM:
                     if tag == "input" and (f"type={kind}" in attrs or re.search(rf'label="[^"]*{kind}', attrs, re.I))]
         # Email checks (docs/apply-agent.md milestone 3): a code box is typed from {{email_code}}
         # once the mailbox handed it over, else the brain asks the shell to wait for the mail.
-        code = _input("code")
+        # A verification code box, never a ZIP, postal, area, country or promo "code" field
+        # (the e2e's ?address=1 contact page has "ZIP code": e2e-agent.mjs section 12).
+        code = next((idx for idx, tag, attrs, _t in lines if tag == "input" and (
+            "type=code" in attrs or re.search(
+                r'label="(?![^"]*\b(?:zip|postal|post|area|country|promo|discount|referral|coupon)\b)'
+                r'[^"]*(?:\bcode\b|\botp\b|passcode)', attrs, re.I))), None)
         if code is not None:
             if "email_code" in placeholders:
                 go = _find(r"verify( code)?|confirm|continue|submit code") or code
