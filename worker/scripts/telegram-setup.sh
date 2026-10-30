@@ -46,9 +46,19 @@ fi
 export TG_TOKEN
 tg() {   # tg <method> <json payload>  -> prints the JSON result; exits non-zero on failure
   TG_METHOD="$1" TG_PAYLOAD="$2" node --input-type=module -e '
-    const r = await fetch(`https://api.telegram.org/bot${process.env.TG_TOKEN}/${process.env.TG_METHOD}`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: process.env.TG_PAYLOAD,
-    }).catch((e) => { console.error(`${process.env.TG_METHOD}: ${e.name}`); process.exit(1); });
+    let r, err;
+    for (let i = 0; i < 3 && !r; i++) {   // a brief network drop is retried, not fatal
+      try {
+        r = await fetch(`https://api.telegram.org/bot${process.env.TG_TOKEN}/${process.env.TG_METHOD}`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: process.env.TG_PAYLOAD,
+        });
+      } catch (e) { err = e; await new Promise((ok) => setTimeout(ok, 2000)); }
+    }
+    if (!r) {
+      const why = (err && err.cause && (err.cause.code || err.cause.message)) || (err && err.name) || "unknown";
+      console.error(`${process.env.TG_METHOD}: could not reach Telegram (${why}). Check your internet and run this again.`);
+      process.exit(1);
+    }
     const body = await r.json().catch(() => ({}));
     if (!body.ok) { console.error(`${process.env.TG_METHOD} failed: ${body.description || r.status}`); process.exit(1); }
     console.log(JSON.stringify(body.result));
