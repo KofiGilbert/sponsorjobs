@@ -907,6 +907,10 @@
   "wiz.details.empty": "Fill in at least one detail, or Not now.",
   "wiz.details.more": "Saved. {n} to go.",
   "wiz.details.done": "Saved. Your profile is complete.",
+  "wiz.basics.h": "Questions every form asks",
+  "wiz.basics.p": "Answer once. Auto-apply fills them on every form.",
+  "wiz.basics.skip": "Skip",
+  "wiz.basics.save": "Save",
   "aa.empty.review": "Nothing to review. Tailor & queue tailors your best matches into here.",
   "aa.empty.waiting": "Nothing waiting on you. Approve a tailored role and it moves here.",
   "aa.empty.submitted": "Nothing sent yet.",
@@ -1190,5 +1194,7 @@
   "aa.agent.captcha": "The submit hit a captcha. Solve it on the page, then press Send again.",
   "aa.agent.nosend": "Could not find the Submit button. Press it on the page.",
   "aa.send": "Send",
-  "aa.stop": "Stop"
+  "aa.stop": "Stop",
+  "ans.termsAlways": "Accept the privacy notice or terms a site requires to apply, without asking me",
+  "ans.termsNote": "When this is off, I ask you the first time on each site. Every one I accept is named when the application is ready to send."
 }

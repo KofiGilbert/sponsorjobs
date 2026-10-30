@@ -11,6 +11,7 @@ control, work authorization and sponsorship."""
 from __future__ import annotations
 
 import importlib
+import json
 
 import pytest
 
@@ -202,3 +203,84 @@ def test_the_fill_route_is_identical_and_mirrors_the_use_counts(app, monkeypatch
     assert "Ghana" in vals and "f1_opt" in vals
     allowed = [f.label for f in FIELDS] + [o for f in FIELDS for o in f.options]
     assert sent and all(redact.leaks(s, vals, allowed) == [] for s in sent)
+
+
+# --------------------------------------------------------------------------- Lam's Phenom form (PR #146)
+# careers.lamresearch.com/careers/apply, read 2026-10-30 (tests/test_agent_lam_eeo.py)
+LAM_GENDER = ["Choose not to disclose", "Male", "Female"]
+LAM_ETHNICITY = ["American Indian/Alaskan Native", "Asian", "Black or African American", "Choose not to disclose",
+                 "Hispanic or Latino", "Native Hawaiian or Other Pacific Island", "Two or More Races", "White"]
+LAM_DISABILITY = ["Choose not to disclose", "No", "Yes"]
+LAM_VETERAN = ["Choose not to disclose", "No", "Yes"]
+LAM_VETERAN_NOTE = ("Veteran To meet U.S. Department of Labor requirements, your voluntary cooperation is appreciated. "
+                    "Title 38, United States Code, Section 4212(d), PL 105-339 and PL, 107-228, require that federal "
+                    "contractors report annually the number of employees who are: 1) special disabled veterans 2) "
+                    "veterans of the Vietnam era and 3) other protected veterans (that is, who served on active duty "
+                    "during ...")
+LAM_QS = [{"question": "Gender", "options": LAM_GENDER}, {"question": "Ethnicity", "options": LAM_ETHNICITY},
+          {"question": "Veteran", "options": LAM_VETERAN, "hint": LAM_VETERAN_NOTE},
+          {"question": "Disability", "options": LAM_DISABILITY},
+          {"question": "Gender", "options": ["Choose not to disclose"], "partial": True}]
+CARD = {"gender": "male", "hispanic": "no", "race": "black", "veteran": "not", "disability": "no"}
+
+
+@pytest.mark.parametrize("decline", [False, True])
+def test_lams_self_identification_fill_from_saved_answers_is_identical(data, decline):
+    from autoapply import basics
+    st = open_store(data / "applicant.db")
+    brain = BrainLibrary(st, mirror_path=data / "answers.db")
+    basics.write(brain, CARD)                                         # the card, through the brain and its mirror
+    legacy = AnswerLibrary(data / "answers.db")
+    try:
+        for q in LAM_QS:
+            kw = {"partial": q.get("partial", False), "eeo_decline": decline}
+            if q.get("hint"):
+                kw["hint"] = q["hint"]
+            a = AK.known_answer(q["question"], q["options"], library=legacy, **kw)
+            b = AK.known_answer(q["question"], q["options"], library=brain, **kw)
+            assert a == b, q["question"]
+        if not decline:
+            assert AK.known_answer("Ethnicity", LAM_ETHNICITY, library=brain) == ("Black or African American", "library")
+            assert AK.known_answer("Veteran", LAM_VETERAN, library=brain, hint=LAM_VETERAN_NOTE) == ("No", "library")
+        assert basics.read(legacy) == basics.read(brain)
+    finally:
+        legacy.close()
+
+
+@pytest.mark.parametrize("decline", [False, True])
+def test_the_known_only_pick_for_lam_is_identical(app, monkeypatch, decline):
+    from autoapply import basics
+    A, c = app
+    lib = A._answer_lib()
+    try:
+        basics.write(lib, CARD)
+    finally:
+        lib.close()
+    A._merge_prefs({"eeo_decline": decline})
+
+    def ask():
+        r = c.post("/api/autoapply/agent/ask", json={"known_only": True, "questions": LAM_QS}, headers=H).get_json()
+        r.pop("id", None)
+        return r
+    on, off = _twice(monkeypatch, ask)
+    assert on == off
+    if not decline:
+        assert on["select"] == {"Gender": "Male", "Ethnicity": "Black or African American", "Veteran": "No",
+                                "Disability": "No"}
+
+
+def test_the_terms_preference_reads_the_brain_and_is_mirrored(app, monkeypatch):
+    A, c = app
+    assert A._terms_pref() == "ask"
+    A._merge_prefs({"accept_required_terms": "always"})
+    st = open_store(A._DATA / "applicant.db")
+    assert [f["value"] for f in st.facts(key="accept_required_terms", status="active")] == ["always"]
+    assert json.loads((A._DATA / "app_prefs.json").read_text())["accept_required_terms"] == "always"
+    on, off = _twice(monkeypatch, lambda: (A._terms_pref(), c.get("/api/answers/basics").get_json()))
+    assert on == off and on[0] == "always" and on[1]["accept_required_terms"] == "always"
+    # a whole-store save without the key (the extension's) keeps it
+    A._save_prefs({"work_auth_us": "Yes"}, source="extension")
+    assert A._terms_pref() == "always"
+    c.post("/api/answers/basics", json={"fields": {}, "accept_required_terms": "ask"})
+    on, off = _twice(monkeypatch, A._terms_pref)
+    assert on == off == "ask" and st.facts(key="accept_required_terms", status="active") == []

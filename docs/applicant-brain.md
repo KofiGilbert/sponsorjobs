@@ -182,7 +182,7 @@ ask wording, and the legacy names it maps from.
 |---|---|---|
 | Contact | `name`, `email`, `phone`, `address.street`, `address.city`, `address.state`, `address.postal_code`, `address.country`, `@linkedin`, `@portfolio`, `github`, `@preferred_name`; (Phase 1 build) `address` and `location`, the whole line as the profile holds it today (the parts are filled in Phase 3) | normal |
 | Work and legal | `workauth` (subject = country, the entry from `autoapply/workauth.py`), `@citizenship` (multi), `citizenship.complete` (yes when the list holds every country), `permanent_resident` (subject = country), `@over_18`, `@previously_worked` (subject = company), `security_clearance`; (Phase 1 build) `@citizenship2`, the answer library's second-citizenship key, folded into `@citizenship` in Phase 3 | legal |
-| Preferences | `@salary` (with currency and period; subject = country when not US), `@start_date`, `@notice_period`, `relocate`, `remote`, `@heard_about`, `@years_experience` | normal |
+| Preferences | `@salary` (with currency and period; subject = country when not US), `@start_date`, `@notice_period`, `relocate`, `remote`, `@heard_about`, `@years_experience`; (Phase 1 build) `accept_required_terms` (`always`, or absent for the default `ask`: terms a site requires to apply, PR #146) | normal |
 | EEO | `@gender`, `@sex`, `@pronouns`, `@hispanic_latino`, `@race`, `@ethnicity`, `@veteran`, `@disability`, `@eeo_decline` (the standing decline) | eeo |
 | Career (open facts) | `role`, `school`, `project`, `skill`, `certification`, `language` (subject = item id) | normal |
 | One question | `q:<normalized wording>`: an answer to a question no canonical key covers, keyed the way `answers.normalize()` keys it today | normal, unless its wording classifies as legal or EEO |
@@ -493,6 +493,7 @@ read-only SQLite connections.
 | `app_prefs.json work_auth` | one `workauth` fact per country, confirmed |
 | flat prefs answers (`desired_salary`, `earliest_start`, `hear_about_us`, `years_experience`, `over_18`, `willing_to_relocate`) | facts under `@salary`, `@start_date`, `@heard_about`, `@years_experience`, `@over_18`, `relocate`, `source_ref = app_prefs.json:<field>` |
 | `eeo_decline` | `@eeo_decline` |
+| `accept_required_terms` | (Phase 1 build) `accept_required_terms` when it is `always`; read through the brain (`_terms_pref`, the basics card) and mirrored to `app_prefs.json` |
 | `conversation_memory` profile | open facts: contact at 0.9, each role, school and project with its dates, skills. Source `resume`. The profile JSON itself is untouched and stays the resume material until Phase 6 |
 | `memory_facts` | `preference` and `constraint` facts at their own confidence, source `chat`. A fact row whose key names a canonical key is proposed for that key as `needs_check` (Phase 1 build: reason `from_chat`; an EEO one is refused and counted as `refused_eeo`; a retracted row is skipped; any other fact row becomes a `fact` note) |
 | MemPalace transcripts | indexed in place: one `event` per file with its line count. The leftover `autoapply_*` scratch transcripts are marked scratch, not deleted. The ChromaDB `store/` folder is not touched |

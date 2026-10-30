@@ -88,6 +88,10 @@ REGISTRY: dict[str, Key] = {k.name: k for k in (
     _k("@heard_about", ask="How did you hear about us?", legacy=("app_prefs.json:hear_about_us",)),
     _k("@years_experience", ask="How many years of experience do you have?",
        legacy=("app_prefs.json:years_experience",)),
+    # Terms a site requires to apply (a privacy notice, an E-Verify acknowledgement): "always"
+    # accepts them for every application, "ask" (the default, never stored) asks per site.
+    _k("accept_required_terms", "choice", choices=("ask", "always"),
+       ask="Accept the terms a site requires to apply?", legacy=("app_prefs.json:accept_required_terms",)),
     # ---- voluntary self-identification (EEO)
     _k("@gender", "choice", EEO, ask="Gender"),
     _k("@sex", "choice", EEO, ask="Sex"),

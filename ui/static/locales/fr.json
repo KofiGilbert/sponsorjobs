@@ -907,6 +907,10 @@
   "wiz.details.empty": "Renseignez au moins une information, ou Plus tard.",
   "wiz.details.more": "Enregistré. Encore {n}.",
   "wiz.details.done": "Enregistré. Votre profil est complet.",
+  "wiz.basics.h": "Les questions de chaque formulaire",
+  "wiz.basics.p": "Répondez une fois. La candidature automatique les remplit sur chaque formulaire.",
+  "wiz.basics.skip": "Passer",
+  "wiz.basics.save": "Enregistrer",
   "aa.empty.review": "Rien à vérifier. Adapter et mettre en file place ici vos meilleures offres.",
   "aa.empty.waiting": "Rien en attente. Approuvez une offre adaptée et elle arrive ici.",
   "aa.empty.submitted": "Rien d'envoyé pour l'instant.",
@@ -1190,5 +1194,7 @@
   "aa.agent.captcha": "L'envoi a rencontré un captcha. Résolvez-le sur la page, puis appuyez de nouveau sur Envoyer.",
   "aa.agent.nosend": "Bouton Envoyer introuvable. Appuyez dessus sur la page.",
   "aa.send": "Envoyer",
-  "aa.stop": "Arrêter"
+  "aa.stop": "Arrêter",
+  "ans.termsAlways": "Accepter l'avis de confidentialité ou les conditions qu'un site exige pour postuler, sans me demander",
+  "ans.termsNote": "Désactivé, je vous demande la première fois sur chaque site. Chacun que j'accepte est indiqué quand la candidature est prête à envoyer."
 }

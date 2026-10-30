@@ -227,7 +227,10 @@ still open on the page (at most 6), on the bar and on Telegram, and waits up to 
   that click opened (`popupOptions`: the list the control names, a list in its own field box,
   or a list that appeared, never another question's list or the site's nav), and closes it
   with ONE real Escape only while it is open (an Escape on a closed control can close the dialog
-  holding the form); a widget that ignores Escape is clicked shut or blurred. The shell sends
+  holding the form); a widget that ignores Escape is clicked shut or blurred, and one that
+  ignores both (Phenom's select at Lam Research) is pressed shut from just outside it
+  (`closePopup(i, "outside")`). Before opening a dropdown the shell presses any OTHER open one
+  shut (`closeOthers`), and a list another control names is never read as this one's. The shell sends
   `options` (at most 8 to offer, the decline choice first on EEO questions), `all_options` (up to
   40, for matching) and `partial` (the page has more than were read).
 - **Known answers first.** Work authorization, the answer library and the standing
@@ -249,6 +252,15 @@ still open on the page (at most 6), on the bar and on Telegram, and waits up to 
 - **Saved.** The person's answers are saved to the answer library (never a question back, never
   a paragraph for a one-choice question). A raw reply saved before replies were read stays in
   the library, unused, until the person replaces or deletes it.
+- **Self-identification from saved answers.** Before the brain is asked, every required EEO
+  question still open is read with the page's own choices and checked with `known_only`; when
+  the saved answer maps to one choice (autoapply/eeo.py, in code), the reply's `select` names it
+  and the SHELL picks it with real clicks (`pickSaved`: open, `optionIndex`, click, `chosenIs`),
+  never the model. The choice is never logged (only "N filled from saved answers"), never sent to
+  the broker or Telegram, and the view prints the control as `(filled)`. The page's note right
+  above a field goes along as `hint` (Lam's "Veteran" sits under a paragraph about protected
+  veterans, so a saved "not a protected veteran" answers its plain No).
+
 - **Where known answers come from.** Every reader and writer of the answer library goes through
   `_answer_lib()` in `ui/app.py`, and the work authorization and the standing decline through
   `_work_auth()` and `_eeo_decline()`. With the applicant brain on (the default since Phase 1 of
@@ -258,6 +270,25 @@ still open on the page (at most 6), on the bar and on Telegram, and waits up to 
   extension and a rollback see it too. `SPONSORJOBS_BRAIN=0` or
   `python -m applicant.migrate --rollback` puts the readers back on `answers.db` and
   `app_prefs.json`.
+
+### Terms a site requires (`/api/autoapply/agent/terms`)
+
+A privacy notice, data privacy agreement, terms, a consent to process the application data or an
+E-Verify acknowledgement that the site needs accepted to take the application (Lam Research opens
+a "Data Privacy Agreement" dialog with Cancel and I Acknowledge when the resume is attached). The
+page side finds them (`termsItems`: an open dialog with one Accept / I Agree / I Acknowledge
+button, or a REQUIRED box that accepts a notice), never a marketing opt-in (job alerts, a talent
+community, texts) or a cookie banner. The person decides: `accept_required_terms` in
+data/app_prefs.json is "ask" (default) or "always" (the "Answers every form asks" card). On
+"ask" the first notice on a site is asked on the bar and Telegram: "<Company> needs you to accept
+its <title> to apply. Accept it?" with "Accept for all applications" (sets "always"), "Just this
+one" and "Stop". A typed reply is read strictly (a choice's words or number, yes or no), never by
+a model. Then the shell clicks the accept button or ticks the box with a real click, records the
+acceptance on the application (`terms_accepted`: company, title, url, time) and names it in the
+Ready to send summary ("Accepted Lam Research's Data Privacy Agreement for you."). Stop, or no
+answer, ends the run and nothing is accepted. The brain never accepts terms or follows a link to
+a policy (the in-page click refuses one: `policy-link`); it reports `blocked: needs-consent` when
+one still blocks the way.
 
 ## 9. What we took from browser-use, what we left
 

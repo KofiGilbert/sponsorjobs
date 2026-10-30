@@ -258,3 +258,10 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   tokens (the light theme's near-black primary had vanished into it). Measured at 1893x1183@2x and
   2490x1556@1.52 (76% zoom), dark and light: card left = title left, no sideways scroll, bar contrast
   over 7:1. Screens: docs/design/answers/.
+- 2026-10-30: Setup asks the answers every form asks as its last step, right after "A few details to finish your
+  profile": the Your answers card itself is lent to the wizard (moved into the panel, handed back on close), so
+  there is one set of rows, one decline choice and one save. Only rows still missing show; none missing, the step
+  never opens. Skip (ghost, left) saves nothing and never blocks; Save is the one primary. In the 620px wizard the
+  card drops its frame, heading and own Save, and its grid goes to two columns. "Not now" on the details step moves
+  setup on to this step instead of closing it. The "Before I apply" prompt stays as the safety net. Screens:
+  docs/design/onboarding/.

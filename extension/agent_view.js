@@ -609,6 +609,14 @@
   function submitLike(el) {
     return SUBMIT_RE.test(ownText(el));
   }
+  // A link to a privacy notice, terms or a poster opens a document or a "Data Privacy Agreement"
+  // dialog, never the next step (Lam Research, 2026-10-30): the agent does not follow one. A
+  // required box that names the notice is ticked instead, with the person's consent (termsItems).
+  const POLICY_LINK_RE = /privacy (notice|policy|statement|agreement)|data (privacy|protection) (notice|policy)|terms (and|&) conditions|terms of (use|service)|cookie (policy|notice)|e-?verify|right to work poster|notice at collection|(eea|ccpa|gdpr)\b.*(supplement|notice)/i;
+  function policyLink(el) {
+    const link = tagOf(el) === "A" || norm(attrOf(el, "role")) === "link";
+    return link && POLICY_LINK_RE.test(ownText(el));
+  }
   // Is the element at its centre point the element, one of its parts, its container, or the
   // label/control it belongs to? Otherwise an overlay (a cookie banner, a modal) covers it.
   function covered(el) {
@@ -664,6 +672,7 @@
     if (tagOf(el) === "SELECT") return { ok: false, note: "use select", changed: false };
     if (isFileInput(el)) return { ok: false, note: "use upload", changed: false };
     if (submitLike(el)) return { ok: false, note: "submit-guard", changed: false };
+    if (policyLink(el)) return { ok: false, note: "policy-link: tick the box instead, never open the notice", changed: false };
     if (isDisabled(el)) return { ok: false, note: "disabled", changed: false };
     const before = fingerprint();
     try { if (el.scrollIntoView) el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) { /* fine */ }
@@ -945,6 +954,28 @@
   //    menu sits beside the control; a hand-rolled list is a sibling shown on click);
   // 3. a list that came up with the click anywhere (a portal at the end of <body>: Workday),
   //    the newest. Nothing else: no page-wide scan.
+  // The ids a control names as its popup (aria-controls / aria-owns, on it or an input inside it).
+  function namedIds(c) {
+    const out = [];
+    const named = [c].concat(c.querySelectorAll ? Array.from(c.querySelectorAll("[aria-controls], [aria-owns]")) : []);
+    for (const n of named) for (const a of ["aria-controls", "aria-owns"]) {
+      for (const id of String(attrOf(n, a) || "").split(/\s+/)) if (id) out.push(id);
+    }
+    return out;
+  }
+  // A list ANOTHER control names is that control's, never this one's. Phenom (careers.
+  // lamresearch.com) keeps a dropdown open through Escape and blur, so the next control's read
+  // once took the open Gender list as Ethnicity's choices (2026-10-30).
+  function ownedByOther(box, el) {
+    const ids = new Set();
+    for (let n = box, i = 0; n && n.nodeType === 1 && i < 4; n = n.parentElement, i++) if (n.id) ids.add(n.id);
+    if (!ids.size) return false;
+    for (const o of deepAll(COMBO_SEL)) {
+      if (o === el || composedContains(o, el) || composedContains(el, o)) continue;
+      if (namedIds(o).some((id) => ids.has(id))) return true;
+    }
+    return false;
+  }
   function popupBox(el, index) {
     const named = [el].concat(el.querySelectorAll ? Array.from(el.querySelectorAll("[aria-controls], [aria-owns]")) : []);
     for (const n of named) {
@@ -962,7 +993,7 @@
       let boxes = [];
       try { boxes = Array.from(node.querySelectorAll(BOX_SEL)); } catch (e) { boxes = []; }
       boxes = boxes.filter((b) => b !== el && !b.contains(el) && (!el.contains(b) || popupRole(b))
-                                  && !errorBlock(b) && appeared(b, index) && choicesIn(b).length);
+                                  && !errorBlock(b) && appeared(b, index) && choicesIn(b).length && !ownedByOther(b, el));
       if (boxes.length) {
         // The list itself, not a wrapper around it: the innermost box holding the same choices.
         const n0 = (b) => choicesIn(b).length;
@@ -974,9 +1005,10 @@
     const seen = _mark.seen;
     const listOf = (o) => (o.closest && o.closest("[role='listbox'], [role='menu'], [role='tree'], ul, [data-automation-id='popup']")) || o.parentElement;
     const fresh = innermost(deepAll(OPTION_SEL).filter((o) => !seen.has(o) && !el.contains(o) && isChoice(o)))
-      .filter((o) => { const lb = listOf(o); return !(lb && seen.has(lb)); });
+      .filter((o) => { const lb = listOf(o); return !(lb && (seen.has(lb) || ownedByOther(lb, el))); });
     if (fresh.length) return listOf(fresh[fresh.length - 1]);
-    const lbs = deepAll("[role='listbox'], [role='menu']").filter((b) => !seen.has(b) && !b.contains(el) && choicesIn(b).length);
+    const lbs = deepAll("[role='listbox'], [role='menu']").filter((b) => !seen.has(b) && !b.contains(el) && choicesIn(b).length
+                                                                       && !ownedByOther(b, el));
     return lbs.length ? lbs[lbs.length - 1] : null;
   }
 
@@ -1049,6 +1081,8 @@
       const t = active && (active === el || composedContains(el, active)) ? active : el;
       fire(t, "keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27 });
       fire(t, "keyup", { key: "Escape", code: "Escape", keyCode: 27, which: 27 });
+    } else if (how === "outside") {
+      pressOutside(el, Number(index));
     } else if (tagOf(el) === "BUTTON" || (attrOf(el, "aria-haspopup") && tagOf(el) !== "INPUT")) {
       try { el.click(); } catch (e) { /* fine */ }
     } else {
@@ -1056,6 +1090,168 @@
     }
     return !popupOpen(index);
   }
+  // A press just outside the dropdown, the way a person clicks away: a widget that ignores Escape
+  // and blur (Phenom's select stays open through both, and its open list covers the next field)
+  // closes on a mousedown outside itself. The press lands on the parent of the smallest box that
+  // holds the control and its list, so it stays inside the form (and inside a dialog holding the
+  // form), never on the page itself; for a list portalled away, three levels above the control.
+  // Plain mouse events, no click: nothing there acts on them.
+  function outsideTarget(el, box) {
+    const doc = el.ownerDocument || document;
+    const top = (n) => !n || n === doc.body || n === doc.documentElement;
+    let r = null;
+    if (box && box.isConnected) { r = el; while (r && !composedContains(r, box)) r = r.parentElement; }
+    if (r && !top(r) && !top(r.parentElement)) return r.parentElement;
+    let t = el;
+    for (let i = 0; i < 3 && !top(t.parentElement); i++) t = t.parentElement;
+    return t === el ? null : t;
+  }
+  function pressOutside(el, index) {
+    let box = null;
+    try { box = popupBox(el, index); } catch (e) { box = null; }
+    if (!box && _lastPopup && _lastPopup.index === index) box = _lastPopup.box;
+    const t = outsideTarget(el, box);
+    if (!t) return false;
+    for (const ty of ["pointerdown", "mousedown", "pointerup", "mouseup"]) fire(t, ty, { button: 0 });
+    return true;
+  }
+  // Before the shell opens one dropdown: close any OTHER that is still open (it says
+  // aria-expanded=true), so its list neither covers this control nor passes for its popup.
+  // Returns how many it pressed shut.
+  function closeOthers(index) {
+    const el = element(index);
+    if (!el) return 0;
+    let n = 0;
+    for (const o of deepAll(COMBO_SEL)) {
+      if (o === el || composedContains(o, el) || composedContains(el, o)) continue;
+      if (attrOf(o, "aria-expanded") !== "true" || !onScreen(o)) continue;
+      const box = namedIds(o).map((id) => byId(o, id)).find((b) => b && onScreen(b)) || null;
+      const t = outsideTarget(o, box);
+      if (t && !composedContains(t, el)) {
+        for (const ty of ["pointerdown", "mousedown", "pointerup", "mouseup"]) fire(t, ty, { button: 0 });
+        n++;
+      }
+    }
+    return n;
+  }
+
+  // ------------------------------------------------------------------ the shell's own pick
+  // A saved self-identification answer goes on the page by the SHELL, never the model
+  // (shell-electron/agent.js pickSaved): the shell opens the control with a real click, asks here
+  // for the index of the open popup's option with exactly those words, clicks it for real, and
+  // asks whether the control now holds it. The words go shell -> page only; nothing here hands
+  // them back, and the view goes on printing such a control as (filled).
+  function refIndex(el) {
+    const refs = window.__tailorAgentRefs || [];
+    let i = refs.indexOf(el);
+    if (i < 0) { refs.push(el); window.__tailorAgentRefs = refs; i = refs.length - 1; }
+    return _base + i;
+  }
+  function optionIndex(index, text) {
+    const el = element(index);
+    if (!el || !el.isConnected) return null;
+    const box = popupBox(el, Number(index));
+    if (!box) return null;
+    const want = cleanText(text).slice(0, 120);
+    const hits = choicesIn(box).filter((o) => choiceText(o) === want);
+    return hits.length === 1 ? refIndex(hits[0]) : null;
+  }
+  // Does the control now show exactly this choice? (a native select's chosen option, a custom
+  // dropdown's shown value, a radio group's checked option)
+  function chosenIs(index, text) {
+    const el = element(index);
+    if (!el || !el.isConnected) return false;
+    const want = norm(text);
+    if (!want) return false;
+    if (tagOf(el) === "SELECT") {
+      const o = el.options && el.options[el.selectedIndex];
+      return !!o && norm(o.textContent) === want;
+    }
+    if (isToggleInput(el) || /^(radio|checkbox)$/.test(norm(attrOf(el, "role")))) {
+      return (el.checked || attrOf(el, "aria-checked") === "true") && norm(optionLabel(el)) === want;
+    }
+    const E = T();
+    let v = "";
+    if (E && typeof E.comboValue === "function") { try { v = E.comboValue(el) || ""; } catch (e) { v = ""; } }
+    if (!v) v = tagOf(el) === "INPUT" ? el.value : (el.textContent || "");
+    return norm(v) === want;
+  }
+
+  // ------------------------------------------------------------------ terms a site requires
+  // A notice the site needs the person to accept before it takes the application: a "Data
+  // Privacy Agreement" dialog with "I Acknowledge" (Phenom at Lam Research opens one when the
+  // resume is attached), a required "I have read and agree to the privacy notice / terms" box, a
+  // consent to process the application data, an E-Verify acknowledgement. The shell asks the
+  // person (or uses their standing "always" choice), records the acceptance, then clicks the
+  // accept button or ticks the box with a real click. Never a marketing opt-in (job alerts, a
+  // talent community, texts), never an optional box, never a cookie banner.
+  const TERMS_RE = /privacy (notice|policy|statement|agreement)|data (privacy|protection)|terms (and|&) conditions|terms of (use|service)|(agree|accept|consent)\w*\b[^.]{0,40}\bterms\b|consent to (the )?(collect|process|use|stor|transfer|shar)|process(ing)? (of )?(my )?(personal |application )?(data|information)|e-?verify|right to work poster|candidate (privacy|data)|applicant (privacy|data)|\bgdpr\b|\bccpa\b/i;
+  const MARKETING_RE = /newsletter|marketing|promotion|special offers?|job alerts?|talent (community|network|pool)|join our|(receive|send me|get|sign me up for) (emails?|e-?mails|texts?|sms|updates|communications|news|alerts)|text messages?|\bsms\b|recruiters? (can|may) contact|contact me (about|for|regarding)|future (job )?opportunit|similar (jobs|roles|positions)|subscribe|profile visible/i;
+  const COOKIE_RE = /cookie/i;
+  const JOB_RE = /appl(y|ying|ication|icant)|candida|employment|recruit|hiring|e-?verify/i;
+  const ACCEPT_RE = /^(yes,? )?(i )?(acknowledge|agree|accept|consent)( (to )?(it|this|the (terms|notice|agreement|policy)))?( (and|&) (continue|proceed))?[.!]?$/i;
+  function titleOf(box) {
+    const ids = String(attrOf(box, "aria-labelledby") || "").split(/\s+/).filter(Boolean);
+    let t = ids.map((id) => { const n = byId(box, id); return n ? cleanText(n.textContent) : ""; }).join(" ").trim();
+    if (!t) t = cleanText(attrOf(box, "aria-label") || "");
+    if (!t) {
+      const h = box.querySelector && box.querySelector("[role='heading'], h1, h2, h3, h4, legend");
+      if (h) t = cleanText(h.textContent);
+    }
+    return t.slice(0, 80);
+  }
+  // A short name for a notice named inside a box's label: "the privacy notice", "the terms".
+  function termsName(text) {
+    const s = cleanText(text);
+    const m = /((?:job application |candidate |applicant |global )?(?:data )?privacy (?:notice|policy|statement|agreement))|(terms (?:and|&) conditions|terms of (?:use|service))|(e-?verify[^.,;]{0,40}?(?:poster|notice|acknowledg\w*))|((?:data protection|personal data) (?:notice|policy|statement|consent))/i.exec(s);
+    if (m) {
+      const w = m[0].replace(/\s+/g, " ").trim();
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    }
+    if (/consent to (the )?(collect|process|use|stor|transfer|share)|process(ing)? (of )?(my )?(personal |application )?(data|information)/i.test(s)) return "Consent to process your application data";
+    if (/e-?verify/i.test(s)) return "E-Verify acknowledgement";
+    return "Terms";
+  }
+  function buttonsIn(box) {
+    let all = [];
+    try { all = Array.from(box.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit'], a")); } catch (e) { all = []; }
+    return all.filter((b) => onScreen(b) && !isDisabled(b));
+  }
+  // loose: also a box not marked required, for when the page refused to go on without it (the
+  // brain reported needs-consent). A marketing box never counts, loose or not.
+  function termsItems(loose) {
+    const out = [];
+    const seenBoxes = new Set();
+    // 1. a dialog that blocks the page until the notice is accepted
+    for (const d of deepAll("[role='dialog'], [role='alertdialog'], dialog[open], [aria-modal='true']")) {
+      if (seenBoxes.has(d) || !onScreen(d)) continue;
+      if (Array.from(seenBoxes).some((s) => composedContains(s, d) || composedContains(d, s))) continue;
+      const title = titleOf(d);
+      const body = cleanText(d.innerText != null ? d.innerText : d.textContent).slice(0, 2000);
+      // A cookie banner (even one titled "Privacy Notice") is rule 1's popup, not the application's terms.
+      if (COOKIE_RE.test(title + " " + body.slice(0, 600)) && !JOB_RE.test(title + " " + body)) continue;
+      if (MARKETING_RE.test(title) || !TERMS_RE.test(title + " " + body)) continue;
+      const accept = buttonsIn(d).filter((b) => ACCEPT_RE.test(ownText(b)) && !submitLike(b));
+      if (accept.length !== 1) continue;
+      seenBoxes.add(d);
+      out.push({ kind: "modal", title: title || termsName(body), index: refIndex(accept[0]),
+                 button: ownText(accept[0]).slice(0, 40) });
+    }
+    // 2. a REQUIRED box that accepts a notice (unticked)
+    for (const c of deepAll("input[type='checkbox'], [role='checkbox']")) {
+      if (c.checked || attrOf(c, "aria-checked") === "true" || isDisabled(c)) continue;
+      if (selfHidden(c) || !boxShown(c, true)) continue;
+      if (Array.from(seenBoxes).some((s) => composedContains(s, c))) continue;
+      const own = cleanText(ownLabel(c) || attrOf(c, "aria-label") || "");
+      const raw = (labelFor(c) && labelFor(c).textContent) || (c.closest && c.closest("label") && c.closest("label").textContent) || own;
+      const required = isRequired(c) || /[*✱]|\(required\)|\brequired\b/i.test(String(raw || ""));
+      if (!own || (!required && !loose)) continue;
+      if (MARKETING_RE.test(own) || !TERMS_RE.test(own)) continue;
+      out.push({ kind: "checkbox", title: termsName(own), index: refIndex(c), button: "" });
+    }
+    return out.slice(0, 4);
+  }
+
   // {options, partial}: every choice of a native <select> (the view prints only four), from the
   // element itself; the leading empty-value prompt, "Select..." entries and disabled headers
   // left out.
@@ -1075,6 +1271,7 @@
 
   window.TailorAgent = {
     view, element, act, submitButton, rect, markPopups, popupOptions, popupOpen, closePopup, selectOptions,
+    closeOthers, optionIndex, chosenIs, termsItems,
     refs: () => window.__tailorAgentRefs || [],
     SUBMIT_RE,
   };

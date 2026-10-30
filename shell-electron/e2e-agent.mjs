@@ -17,6 +17,10 @@
  * brain's migration (docs/applicant-brain.md, Phase 1): the brain reports the migrated counts,
  * the legacy files stay, the agent never asks what the migrated prefs answer, and an answer
  * given on the bar is reused on the next application without asking.
+ *  ... and (section 10) a ?phenom=1 job, Lam Research's Phenom form: attaching the resume opens a
+ *  "Data Privacy Agreement" the person is asked to accept ("Just this one"), the four Phenom
+ *  self-identification dropdowns are filled from the saved answers without asking, and the
+ *  Ready to send summary names the accepted notice.
  */
 import { _electron as electron } from "playwright";
 import { spawn, spawnSync } from "child_process";
@@ -78,7 +82,8 @@ for role, url in [("Business Intelligence Analyst", ${JSON.stringify(JOB)}),
                   ("Analyst (emailed code)", ${JSON.stringify(JOB + "?verify=1")}),
                   ("Analyst (existing account)", ${JSON.stringify(JOB + "?signin=fail")}),
                   ("Analyst (asks a question)", ${JSON.stringify(JOB + "?mustanswer=1")}),
-                  ("Analyst (answer remembered)", ${JSON.stringify(JOB + "?mustanswer=1&again=1")})]:
+                  ("Analyst (answer remembered)", ${JSON.stringify(JOB + "?mustanswer=1&again=1")}),
+                  ("Analyst (Phenom)", ${JSON.stringify(JOB + "?phenom=1")})]:
     rid = recs.add(role, "Acme Corp", 70, "", jd_label=role,
                    data={"status": "approved", "fit": 85, "render_profile": prof,
                          "source_job": {"url": url, "source_id": "mock:" + role, "location": "Bloomington, IL"},
@@ -91,8 +96,8 @@ recs.close()
 print(json.dumps(ids))
 `], { encoding: "utf8" });
 if (seed.status !== 0) { console.error(seed.stderr); process.exit(1); }
-const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK, RID_AGAIN] = JSON.parse(seed.stdout.trim().split("\n").pop());
-check("seeded six queued jobs", RID > 0 && RID_AGAIN > 0, `ids ${RID}..${RID_AGAIN}`);
+const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK, RID_AGAIN, RID_PHENOM] = JSON.parse(seed.stdout.trim().split("\n").pop());
+check("seeded seven queued jobs", RID > 0 && RID_AGAIN > 0 && RID_PHENOM > 0, `ids ${RID}..${RID_PHENOM}`);
 
 // ---- 3. the engine on the test model, then the real app ---------------------------------
 // The shell strips the test-model flags from any engine it spawns (real model only, CLAUDE.md
@@ -266,10 +271,49 @@ check("the answer is saved for next time", saved, JSON.stringify(lib).slice(0, 2
 await win.waitForSelector(`.aa-row[data-id="${RID_AGAIN}"]`, { timeout: 30_000 });
 await win.click(`.aa-row[data-id="${RID_AGAIN}"] [data-act]`);
 const again = await waitBar(/the application asks|ready to send|stopped|have a look|needs/i, 120_000);
-const log7 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+const logAgain = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
 check("the years answer is reused on the next application without asking",
-      /ready to send/i.test(again) && !/how many years/i.test(again) && log7.includes("questions:5"),
-      `${again} | ${JSON.stringify(log7)}`);
+      /ready to send/i.test(again) && !/how many years/i.test(again) && logAgain.includes("questions:5"),
+      `${again} | ${JSON.stringify(logAgain)}`);
+
+// ---- 11. Phenom (Lam Research, 2026-10-30): a privacy agreement to accept, saved EEO answers ----
+// The answers every form asks, saved the way the card saves them; then the run must never ask
+// Gender, Ethnicity, Disability or Veteran, must ask once about the Data Privacy Agreement, and
+// must name it in the Ready to send summary.
+const savedCard = await win.evaluate(() => fetch("/api/answers/basics", { method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ fields: { gender: "male", hispanic: "no", race: "black", veteran: "not", disability: "no" } }) }).then((r) => r.json()));
+check("the form answers card is saved", (savedCard.values || {}).gender === "male", JSON.stringify(savedCard.values || savedCard));
+await win.waitForSelector(`.aa-row[data-id="${RID_PHENOM}"]`, { timeout: 30_000 });
+await win.click(`.aa-row[data-id="${RID_PHENOM}"] [data-act]`);
+const seen = [];
+const watch = async (re, ms) => {
+  const t0 = Date.now();
+  let t = "";
+  while (Date.now() - t0 < ms) {
+    t = await barText();
+    if (t && seen[seen.length - 1] !== t) seen.push(t);
+    if (re.test(t)) return t;
+    await sleep(400);
+  }
+  return t;
+};
+const termsAsk = await watch(/needs you to accept|ready to send|stopped|have a look|the application asks/i, 120_000);
+check("the run asks to accept the Data Privacy Agreement", /Acme Corp needs you to accept its Data Privacy Agreement to apply\. Accept it\?/.test(termsAsk), termsAsk);
+const once = win.locator("#bbFill .bb-opt", { hasText: /^Just this one$/ });
+check("the bar offers Accept for all applications, Just this one, Stop",
+  (await win.locator("#bbFill .bb-opt").allTextContents()).join("|") === "Accept for all applications|Just this one|Stop");
+if (await once.count()) await once.first().click();
+const phenomDone = await watch(/ready to send|stopped|have a look|could not|the application asks/i, 150_000);
+check("the Phenom run reaches Ready to send", /ready to send/i.test(phenomDone), phenomDone);
+check("Ready to send names the accepted notice", /Accepted Acme Corp's Data Privacy Agreement for you\./.test(phenomDone), phenomDone);
+check("no self-identification question was asked", !seen.some((t) => /gender|ethnicity|veteran|disability/i.test(t)), JSON.stringify(seen));
+const log7 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+check("the mock saw the agreement acknowledged, never cancelled", log7.includes("privacy-ack") && !log7.includes("privacy-cancel"), JSON.stringify(log7));
+check("all four Phenom dropdowns were filled", log7.includes("eeo:4"), JSON.stringify(log7));
+check("nothing was submitted on the Phenom run", !log7.includes("submitted"), JSON.stringify(log7));
+const pkg = await win.evaluate((id) => fetch(`/api/record/${id}`).then((r) => r.json()), RID_PHENOM);
+const acc = (pkg.terms_accepted || []).map((x) => x.title + "|" + x.company);
+check("the acceptance is recorded on the application", acc.length === 1 && acc[0] === "Data Privacy Agreement|Acme Corp", JSON.stringify(pkg.terms_accepted));
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

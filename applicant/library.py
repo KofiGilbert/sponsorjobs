@@ -19,7 +19,8 @@ older build wrote, a mirror write that failed). With mirroring on, the two are e
 catch-up changes nothing.
 
 The prefs answers (``app_prefs.json``) live in the same table under ``store = 'app_prefs.json'``:
-one ``workauth`` fact per country, ``relocate``, ``@eeo_decline`` and the flat answers
+one ``workauth`` fact per country, ``relocate``, ``@eeo_decline``, ``accept_required_terms``
+(stored only when "always") and the flat answers
 (``@salary`` from desired_salary, ``@start_date``, ``@heard_about``, ``@years_experience``,
 ``@over_18``). ``prefs_view`` turns them back into the prefs shape the app reads.
 
@@ -340,6 +341,8 @@ def prefs_facts(prefs: dict | None) -> dict:
         out[("relocate", "")] = (wa["relocate"], "work_auth.relocate")
     if p.get("eeo_decline"):
         out[("@eeo_decline", "")] = ("Yes", "eeo_decline")
+    if p.get("accept_required_terms") == "always":          # "ask" is the default, never stored
+        out[("accept_required_terms", "")] = ("always", "accept_required_terms")
     for fld, key in K.PREFS_FIELDS:
         v = str(p.get(fld) or "").strip()
         if v:
@@ -380,7 +383,8 @@ def prefs_view(store: Store) -> dict:
             except ValueError:
                 continue
     wa = W.clean({"countries": countries, "relocate": cur.get(("relocate", ""), "")})
-    view = {"work_auth": wa, **W.legacy_prefs(wa), "eeo_decline": cur.get(("@eeo_decline", "")) == "Yes"}
+    view = {"work_auth": wa, **W.legacy_prefs(wa), "eeo_decline": cur.get(("@eeo_decline", "")) == "Yes",
+            "accept_required_terms": "always" if cur.get(("accept_required_terms", "")) == "always" else "ask"}
     for fld, key in K.PREFS_FIELDS:
         view[fld] = cur.get((key, ""), "")
     return view

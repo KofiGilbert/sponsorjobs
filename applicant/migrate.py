@@ -312,6 +312,8 @@ def verify(st: Store, snap: Snapshot) -> list[str]:
         bad.append("prefs:work_auth")
     if bool(view.get("eeo_decline")) != bool(snap.prefs.get("eeo_decline")):
         bad.append("prefs:eeo_decline")
+    if view.get("accept_required_terms") != ("always" if snap.prefs.get("accept_required_terms") == "always" else "ask"):
+        bad.append("prefs:accept_required_terms")
     for fld, _key in K.PREFS_FIELDS:
         if str(view.get(fld) or "").strip() != str(snap.prefs.get(fld) or "").strip():
             bad.append(f"prefs:{fld}")

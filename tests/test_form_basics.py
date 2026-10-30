@@ -65,7 +65,8 @@ LV_RACE = ["Hispanic or Latino", "White (Not Hispanic or Latino)", "Black or Afr
 LV_VETERAN = ["I am a veteran", "I am not a veteran", "Decline to self-identify"]
 LV_DISABILITY = ["Yes, I have a disability (or previously had a disability)", "No, I don't have a disability",
                  "I don't wish to answer"]
-# Phenom (careers.lamresearch.com) and iCIMS: Hispanic or Latino and race as separate questions.
+# Phenom-style and iCIMS sets: Hispanic or Latino and race as separate questions (Lam Research's real
+# Phenom choices, one combined Ethnicity list, are in tests/test_agent_lam_eeo.py).
 PH_GENDER = ["Man", "Woman", "Non-binary", "I choose not to disclose"]
 PH_ETHNICITY = ["Hispanic or Latino", "Not Hispanic or Latino", "I choose not to disclose"]
 PH_RACE = ["American Indian or Alaska Native", "Asian", "Black or African American",
@@ -1036,8 +1037,9 @@ def test_the_decline_box_saves_itself_and_the_note_shows_the_saved_choice():
 def test_the_card_follows_saved_answers_and_the_card_save_keeps_an_open_editor():
     lst = APP_JS[APP_JS.index('$("#ansList")?.addEventListener("click"'):APP_JS.index("/* ---- Up next")]
     assert lst.count("await basRefresh();") == 2
-    save = APP_JS[APP_JS.index('$("#ansBasicsSave")?.addEventListener'):APP_JS.index("function ansWhen(")]
-    assert "ansRefresh({ keepEditor: true })" in save
+    # The card's save (basSave, shared with setup's last step) refreshes the list below it.
+    save = APP_JS[APP_JS.index("async function basSave()"):APP_JS.index("function ansWhen(")]
+    assert "ansRefresh({ keepEditor: true })" in save and "await basSave();" in save
 
 
 def test_the_prompt_takes_the_keyboard():

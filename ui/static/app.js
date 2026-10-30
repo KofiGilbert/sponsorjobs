@@ -9553,6 +9553,7 @@
     BAS.orig = Object.assign({}, d.values || {});
     BAS.two = !!BAS.val.citizenship2;
     $("#ansEeo").checked = !!d.eeo_decline;
+    if ($("#ansTerms")) $("#ansTerms").checked = d.accept_required_terms === "always";
     $("#ansSalary").value = BAS.val.salary || "";
     basPaint();
   }
@@ -9647,20 +9648,46 @@
     box.disabled = false;
     BAS.noteT = setTimeout(() => { note.textContent = ""; }, 4000);
   });
-  $("#ansBasicsSave")?.addEventListener("click", async () => {
-    const btn = $("#ansBasicsSave"), note = $("#ansBasicsNote");
+  // Terms a site requires to apply: "always" accepts them without asking; off asks the first
+  // time on each site. Saved the moment it changes, like the decline choice above it.
+  $("#ansTerms")?.addEventListener("change", async e => {
+    const box = e.target, note = $("#ansBasicsNote"), want = box.checked;
+    box.disabled = true;
+    clearTimeout(BAS.noteT);
+    try {
+      const r = await api("/api/answers/basics", { fields: {}, accept_required_terms: want ? "always" : "ask" });
+      BAS.data = r;
+      box.checked = r.accept_required_terms === "always";
+      note.textContent = T("aa.saved", "Saved");
+    } catch (err) {
+      box.checked = !want;
+      note.textContent = err.message || T("profile.answers.failed", "Couldn't save.");
+    }
+    box.disabled = false;
+    BAS.noteT = setTimeout(() => { note.textContent = ""; }, 4000);
+  });
+  // The card's save: only the fields the person changed. Shared by the card's Save and setup's
+  // last step (which shows the same card). Throws with the server's message on a refusal.
+  async function basSave() {
     const fields = {};
     for (const k of Object.keys(Object.assign({}, BAS.orig, BAS.val))) {
       if ((BAS.val[k] || "") !== (BAS.orig[k] || "")) fields[k] = BAS.val[k] || "";
     }
+    const r = await api("/api/answers/basics", { fields, eeo_decline: $("#ansEeo").checked });
+    basTake(r);
+    if (ANS.data) {
+      ANS.data.eeo_decline = !!r.eeo_decline;
+      await ansRefresh({ keepEditor: true });    // the rows below show the same answers first
+    }
+    return r;
+  }
+  $("#ansBasicsSave")?.addEventListener("click", async () => {
+    const btn = $("#ansBasicsSave"), note = $("#ansBasicsNote");
     btn.disabled = true;
     note.textContent = "";                       // never an earlier "Saved" while this one is on its way
     clearTimeout(BAS.noteT);
     try {
-      const r = await api("/api/answers/basics", { fields, eeo_decline: $("#ansEeo").checked });
-      basTake(r);
-      if (ANS.data) ANS.data.eeo_decline = !!r.eeo_decline;
-      await ansRefresh({ keepEditor: true });    // the rows below show the same answers first
+      await basSave();
       note.textContent = T("aa.saved", "Saved");
     } catch (err) { note.textContent = err.message || T("profile.answers.failed", "Couldn't save."); }
     btn.disabled = false;
@@ -10056,11 +10083,18 @@
   const wizDone = { resume: false };
   function wizMsg(el, text, cls) { el.hidden = false; el.className = "ai-msg " + cls; el.textContent = text; }
   function showWizPanel(name) {
+    if (name !== "basics") wizBasicsReturn();
     document.querySelectorAll("#wizard .wiz-panel").forEach(p => { p.hidden = p.dataset.panel !== name; });
+    $("#wizard .wiz-card")?.classList.toggle("is-wide", name === "basics");
     $("#wizard").hidden = false;
   }
-  function openResumeBox() { $("#wizCvMsg").hidden = true; showWizPanel("resume"); }
-  function closeResumeBox() { $("#wizard").hidden = true; }
+  // WIZ_SETUP: the person is going through setup (Upload resume, then the details, then the
+  // answers every form asks). "Add the details" on Auto-apply opens the details step alone.
+  let WIZ_SETUP = false;
+  function openResumeBox() { $("#wizCvMsg").hidden = true; WIZ_SETUP = true; showWizPanel("resume"); }
+  function closeResumeBox() { wizBasicsReturn(); WIZ_SETUP = false; $("#wizard").hidden = true; }
+  // After the details step in setup: the answers every form asks, when any is still missing.
+  function wizAfterDetails() { if (WIZ_SETUP) openBasicsStep(); else closeResumeBox(); }
 
   /* The details step: one input per field the saved profile lacks, in the gate's own words
      ("the dates for your project Gate Check"), saved by /api/profile/details. Shown right
@@ -10108,9 +10142,68 @@
         await loadProfile();
         invalidateJobDetail();
         if ($("#view-autoapply")?.classList.contains("is-active")) { $("#aaMsg").hidden = true; loadAutoApply(); }
-        setTimeout(closeResumeBox, 900);
+        setTimeout(wizAfterDetails, 900);
       }
     } catch (err) { wizMsg(msg, err.message, "err"); }
+    finally { btn.disabled = false; }
+  });
+  /* The answers every form asks, as setup's last step (tailor-ux §6, 2026-10-30). The Your
+     answers card (#ansBasicsCard) is lent to the panel while it shows and handed back when it
+     closes, so the rows, the decline choice and the save (basSave, /api/answers/basics) are the
+     card's own. wizBasicsAsk() names the rows still missing; none, and the step never opens.
+     Skip saves nothing and closes: Auto-apply's "Before I apply" prompt still asks later. */
+  let WIZ_BAS_HOME = null;               // where the card lives on Your answers
+  function wizBasicsAsk(d) {
+    const miss = new Set((d && d.missing) || []);
+    const eeo = ["gender", "hispanic", "race", "veteran", "disability"].filter(f => miss.has(f));
+    return { rows: ["citizenship", "salary"].filter(f => miss.has(f)).concat(eeo), decline: eeo.length > 0 };
+  }
+  const WIZ_BAS_ROW = { citizenship: "#ansCit", salary: "#ansSalary", race: "#ansRace", veteran: "#ansVet",
+                        gender: '[data-basic="gender"]', hispanic: '[data-basic="hispanic"]', disability: '[data-basic="disability"]' };
+  function wizBasicsLend(ask) {
+    const card = $("#ansBasicsCard");
+    if (!card) return false;
+    if (!WIZ_BAS_HOME) { WIZ_BAS_HOME = document.createComment("ansBasicsCard"); card.before(WIZ_BAS_HOME); }
+    $("#wizBasics").appendChild(card);
+    card.classList.add("is-lent");
+    for (const [f, sel] of Object.entries(WIZ_BAS_ROW)) {
+      const row = card.querySelector(sel)?.closest(".ans-field");
+      if (row) row.classList.toggle("wiz-off", !ask.rows.includes(f));
+    }
+    const top = card.querySelector(".ans-grid");
+    top?.classList.toggle("wiz-off", !ask.rows.includes("citizenship") && !ask.rows.includes("salary"));
+    card.querySelector(".ans-check")?.classList.toggle("wiz-off", !ask.decline);
+    card.querySelector(".ans-check")?.classList.toggle("wiz-first", top?.classList.contains("wiz-off"));
+    $("#ansEeoNote")?.classList.toggle("wiz-off", !ask.decline);
+    $("#ansEeoRows")?.classList.toggle("wiz-off", !ask.decline);
+    return true;
+  }
+  function wizBasicsReturn() {
+    const card = $("#ansBasicsCard");
+    if (!card || !card.classList.contains("is-lent") || !WIZ_BAS_HOME) return;
+    WIZ_BAS_HOME.after(card);
+    card.classList.remove("is-lent");
+    card.querySelectorAll(".wiz-off, .wiz-first").forEach(n => n.classList.remove("wiz-off", "wiz-first"));
+  }
+  async function openBasicsStep() {
+    let d = null;
+    try { d = await api("/api/answers/basics"); } catch { d = null; }
+    const ask = wizBasicsAsk(d);
+    if (!d || !ask.rows.length || !wizBasicsLend(ask)) { closeResumeBox(); return; }
+    basTake(d);
+    $("#wizBasMsg").hidden = true;
+    showWizPanel("basics");
+    basFocusFirstOpen();
+  }
+  $("#wizBasSkip")?.addEventListener("click", closeResumeBox);
+  $("#wizBasSave")?.addEventListener("click", async () => {
+    const btn = $("#wizBasSave"), msg = $("#wizBasMsg");
+    btn.disabled = true;
+    try {
+      await basSave();
+      wizMsg(msg, T("aa.saved", "Saved"), "ok");
+      setTimeout(closeResumeBox, 700);
+    } catch (err) { wizMsg(msg, err.message || T("profile.answers.failed", "Couldn't save."), "err"); }
     finally { btn.disabled = false; }
   });
   function hideFirstBanner(forever) {
@@ -10119,7 +10212,10 @@
   }
   $("#firstBannerAdd")?.addEventListener("click", openResumeBox);
   $("#firstBannerX")?.addEventListener("click", () => hideFirstBanner(true));
-  document.querySelectorAll("[data-wiz=close]").forEach(b => b.addEventListener("click", closeResumeBox));
+  document.querySelectorAll("[data-wiz=close]").forEach(b => b.addEventListener("click", () => {
+    // Not now on the details step moves setup on to the last step; everywhere else it closes.
+    if (b.closest('[data-panel="details"]')) wizAfterDetails(); else closeResumeBox();
+  }));
   $("#wizCvFile")?.addEventListener("change", async e => {
     const file = e.target.files[0]; if (!file) return;
     const msg = $("#wizCvMsg");
@@ -10137,7 +10233,7 @@
       hideFirstBanner(true);
       // Gaps the import could not read (a project's dates) are asked now, not at the first build.
       if ((r.missing || []).length) openProfileDetails(r.missing);
-      else setTimeout(closeResumeBox, 900);
+      else setTimeout(wizAfterDetails, 900);
     } catch (err) { wizMsg(msg, "Couldn't read that file, " + err.message, "err"); }
     finally { e.target.value = ""; }
   });
