@@ -3,8 +3,9 @@
 packaging/tailor.spec used to exclude numpy, so in the frozen app rapidocr_onnxruntime,
 onnxruntime and cv2 could not import and intake/cv_import.py's OCR silently returned "": a
 photographed or scanned resume read as empty. Now the spec ships numpy and RapidOCR's config and
-models, and leaves chromadb and mempalace out so the semantic memory layer (being phased out)
-cannot start once numpy imports; the launcher also sets RESUME_AGENT_PALACE_INDEX=0.
+models. MemPalace and ChromaDB are no longer dependencies (the chat diary, intake/diary.py, is
+our own code); the spec still lists them as excluded, so even a build venv that has them can never
+pull them in once numpy imports.
 
 No build here (PyInstaller is not run): the spec is executed with stand-ins for PyInstaller's
 build objects, and the OCR stack is imported in a fresh interpreter that refuses every module the
@@ -37,18 +38,17 @@ def _launcher():
 
 
 # --------------------------------------------------------------------------- the launcher
-def test_the_launcher_keeps_the_semantic_index_off(tmp_path):
+def test_the_launcher_sets_the_data_dir_and_nothing_for_the_old_index(tmp_path):
     env: dict = {}
     _launcher()._engine_env(tmp_path, env)
-    assert env["RESUME_AGENT_PALACE_INDEX"] == "0"
-    assert env["RESUME_AGENT_DATA_DIR"] == str(tmp_path)
-    assert env["RESUME_AGENT_CRED_FILE"] == str(tmp_path / "credentials.env")
+    assert env == {"RESUME_AGENT_DATA_DIR": str(tmp_path),
+                   "RESUME_AGENT_CRED_FILE": str(tmp_path / "credentials.env")}
 
 
 def test_the_launcher_never_overrides_a_setting_already_made(tmp_path):
-    env = {"RESUME_AGENT_PALACE_INDEX": "1", "RESUME_AGENT_DATA_DIR": "/elsewhere"}
+    env = {"RESUME_AGENT_DATA_DIR": "/elsewhere"}
     _launcher()._engine_env(tmp_path, env)
-    assert env["RESUME_AGENT_PALACE_INDEX"] == "1" and env["RESUME_AGENT_DATA_DIR"] == "/elsewhere"
+    assert env["RESUME_AGENT_DATA_DIR"] == "/elsewhere"
 
 
 def test_main_uses_the_engine_env():
@@ -162,10 +162,22 @@ spec = importlib.util.spec_from_file_location("launcher", sys.argv[3])
 launcher = importlib.util.module_from_spec(spec); spec.loader.exec_module(launcher)
 launcher._engine_env(Path(sys.argv[4]))
 from intake.cv_import import extract_text, ocr_available
-from intake.palace_memory import PalaceMemory
-pm = PalaceMemory(Path(sys.argv[4]) / "palace")
+try:
+    import numpy  # noqa: F401  (in the build now, for OCR)
+    has_numpy = True
+except ImportError:
+    has_numpy = False
+from intake.diary import Diary
+pm = Diary(Path(sys.argv[4]) / "palace")
 pm.remember_turn("user", "I led the migration to Postgres.")
-print(json.dumps({"ocr": ocr_available(), "text": extract_text(sys.argv[2]), "palace": pm.enabled,
+try:
+    import chromadb  # noqa: F401
+    chroma_imports = True
+except ImportError:
+    chroma_imports = False
+print(json.dumps({"ocr": ocr_available(), "text": extract_text(sys.argv[2]),
+                  "recall": [h["text"] for h in pm.recall("Postgres migration")],
+                  "numpy": has_numpy, "chroma_imports": chroma_imports,
                   "chromadb": "chromadb" in sys.modules, "mempalace": "mempalace" in sys.modules}))
 """
 
@@ -173,7 +185,7 @@ print(json.dumps({"ocr": ocr_available(), "text": extract_text(sys.argv[2]), "pa
 def _frozen_run(tmp_path, excludes):
     png = tmp_path / "resume.png"
     _image(png)
-    env = {k: v for k, v in os.environ.items() if k != "RESUME_AGENT_PALACE_INDEX"}
+    env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT)
     out = subprocess.run([sys.executable, "-c", _FROZEN, json.dumps(sorted(excludes)), str(png),
                           str(ROOT / "packaging" / "launcher.py"), str(tmp_path)],
@@ -187,9 +199,11 @@ def test_ocr_imports_the_way_the_frozen_app_does(tmp_path, monkeypatch):
     excludes = _run_spec(monkeypatch)["excludes"]
     r = _frozen_run(tmp_path, excludes)
     assert r["ocr"] is True and "Analyst" in r["text"]
-    # ...and the semantic memory layer stays off: never imported, never indexed.
-    assert r["palace"] is False and not r["chromadb"] and not r["mempalace"]
-    assert (tmp_path / "palace" / "transcripts" / "default.jsonl").exists()   # the verbatim layer still works
+    # ...numpy is there, ChromaDB cannot import and nothing loaded it or MemPalace...
+    assert r["numpy"] is True and r["chroma_imports"] is False and not r["chromadb"] and not r["mempalace"]
+    # ...and the chat diary keeps and recalls the turn with neither.
+    assert (tmp_path / "palace" / "transcripts" / "default.jsonl").exists()
+    assert r["recall"] == ["I led the migration to Postgres."]
 
 
 @requires_ocr

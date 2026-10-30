@@ -3,7 +3,7 @@
 A template is a fixed set of slots. Each template ships a manifest — its slot
 schema plus a bank of warm, leading questions and interview-style guidance the LLM
 draws on to converse naturally (never a script). This is PRODUCT config that lives
-with the template; the person's own answers live in MemPalace, not here.
+with the template; the person's own answers live in the applicant memory, not here.
 
 One template today ('shetty'); the loader takes a name so future templates each
 ship their own manifest and the picker just selects one.

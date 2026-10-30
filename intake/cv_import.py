@@ -199,7 +199,7 @@ def extract_profile(path, llm, known: dict | None = None) -> dict:
 
 def summarize_import(essentials: dict, filename: str, when: str) -> str:
     """A CLEAN, tool-authored prose summary of the extracted facts — this is what
-    goes into MemPalace. Never the raw/OCR'd text (which can be garbled)."""
+    goes into the chat diary. Never the raw/OCR'd text (which can be garbled)."""
     ident = essentials.get("identity", {}) or {}
     bits = [f"User uploaded a resume ({filename}) on {when}."]
     if ident.get("name"):

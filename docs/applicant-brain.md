@@ -567,6 +567,40 @@ libraries plus the ChromaDB, OpenTelemetry and MemPalace Python code, all pulled
 MemPalace. `onnxruntime` (70 MB) stays: OCR uses it. Phase 2 measures the real saving on a
 build. `NOTICES.md` loses the MemPalace and ChromaDB entries and their exclusive dependencies.
 
+(Phase 2 build) What changed while building:
+
+- **Recall rules.** `Diary.recall` searches only the person's lines and app notes (`user`,
+  `note`), never the app's own questions (`agent`). Words are lower-cased, stop words and the
+  words every job post uses ("experience", "team", "skills") are dropped, and a light suffix
+  trim lets "dashboards" meet "dashboard"; tech tokens such as `c++`, `node.js` and `ci/cd` stay
+  whole. The same text said twice is recalled once. Each hit is `{text, similarity, ref}`:
+  `similarity` is the share of the query's words found, four words counting as a full match
+  (0.25 per shared word), and `ref` is the diary line.
+- **Career highlights threshold.** `_career_highlights_for_job` now keeps hits at
+  `similarity >= 0.5`: at least two of the job's words in the line (or every word of a shorter
+  query). One shared word is too weak to put in a resume unasked. The 0.3 of the embedder days
+  meant nothing for word overlap.
+- **Line refs.** `remember_turn` returns the line's `diary:<file>:<line>` ref (line counts are
+  cached per file and checked against the file size, under a lock, so the Telegram thread and
+  the chat agree). The session keeps the ref of the person's latest turn and `_distill_facts`
+  appends it to the `memory_facts` provenance (`turn 12 · 2026-10-30 · diary:default.jsonl:212`).
+  The migration takes that ref as the fact's `source_ref`; a row without one keeps
+  `resume_agent.db:memory_facts:<type>:<key>`. Live writes of chat facts into the brain are
+  Phase 3, and they take the same ref.
+- **Erase** removes every diary file, including leftover `autoapply_*` scratch diaries, and the
+  `store/` folder (`intake/diary.py` `erase_all`). Nothing else ever deletes `store/`.
+- **The packaged build.** `packaging/launcher.py` no longer sets `RESUME_AGENT_PALACE_INDEX`
+  (nothing reads it; a leftover value does nothing). `packaging/tailor.spec` keeps `chromadb`
+  and `mempalace` in `excludes` as a guard for a build venv that still has them installed.
+- **Install size.** The spec already left both out of the installed app since the OCR change
+  (f89d4c3, 2026-10-30), so the installer itself shrank then, by about the 30 MB above, not in
+  this phase. What Phase 2 removes is the dependency: a fresh `pip install` no longer pulls 59
+  packages (about 246 MB in site-packages on macOS: kubernetes 80 MB, chromadb 58 MB, grpcio
+  41 MB, tokenizers 10 MB, pygments 9 MB, hf-xet 8 MB, huggingface_hub 7 MB, mempalace 3 MB and
+  smaller ones). Eight of them (pydantic, anyio, click, idna, h11 and their helpers) stay,
+  pulled in by Flask and the model SDKs. The measured installer size is still to be recorded on
+  the next build Kofi asks for.
+
 ## 13. The memory page
 
 The page that today shows the profile form becomes "What SponsorJobs knows about you"
@@ -602,7 +636,8 @@ scroll; a back link, not a close button.
 **Install, disk, RAM**
 
 - New dependencies: none. Python's `sqlite3` only.
-- Install size: about 30 MB smaller after Phase 2 (MemPalace's native libraries), measured then.
+- Install size: about 30 MB smaller in the installer (MemPalace's native libraries; taken by the
+  OCR change's spec excludes), about 246 MB smaller for a source install (section 12).
 - Disk: under 1 MB a year for facts, choices and history (`answers.db` is 20 KB today). The diary
   grows by about 1 KB per ten chat turns, as today.
 - RAM: one SQLite connection and small caches, a few MB. No embedder, no model in memory.
@@ -729,6 +764,13 @@ Files:
   `tests/test_career_memory.py`, `tests/test_memory_first_tailoring.py`,
   `tests/test_derive_from_memory.py`; new `tests/test_diary_recall.py` (keyword recall ranks the
   right turns; no import of `mempalace` or `chromadb` anywhere: a test greps the source tree)
+
+(Phase 2 build) Also changed: `applicant/migrate.py` (a diary ref in a chat fact's provenance
+becomes its `source_ref`), `packaging/launcher.py` (the index switch removed),
+`requirements-broker.txt` (comment), `tests/test_packaged_ocr.py` (the frozen-app check now
+asserts numpy present, `import chromadb` failing and the diary recalling), and the
+`RESUME_AGENT_PALACE_INDEX` lines dropped from the tests that set it. The source-tree check
+parses imports (a string that mentions a package is not an import).
 
 E2E: all `e2e-agent.mjs` checks pass. Plus a packaged-build check: the engine starts with numpy
 present and `import chromadb` fails (the package is gone), and the measured install size is
@@ -883,7 +925,8 @@ pane fills from `/api/profile/autofill` first, so it proves that route reads the
 ## 17. Not certain yet
 
 - Token counts are estimates. The real figures come from Phase 4 and 5 runs.
-- The install saving from Phase 2 is an estimate from the installed engine's folders.
+- The installer saving is an estimate from the installed engine's folders; the next build
+  records the measured size.
 - Company type from a JD will be wrong sometimes. The person's correction wins, and a wrong
   label only changes which choice applies, never what a form says.
 - Whether people want choices by company type at all is untested. If nobody uses them after a

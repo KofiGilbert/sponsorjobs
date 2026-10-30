@@ -195,7 +195,6 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("RESUME_AGENT_CRED_FILE", str(tmp_path / "credentials.env"))
     monkeypatch.setenv("RESUME_AGENT_DEV", "1")
     monkeypatch.setenv("RESUME_AGENT_FAKE_LLM", "1")
-    monkeypatch.setenv("RESUME_AGENT_PALACE_INDEX", "0")
     import ui.app as A
     importlib.reload(A)
     A.DB_PATH = str(tmp_path / "m.db")

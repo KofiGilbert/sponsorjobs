@@ -16,7 +16,7 @@ import re
 import shutil
 from pathlib import Path
 
-from intake.palace_memory import PalaceMemory
+from intake.diary import Diary
 from tailoring.assembler import assemble_cv, normalize_profile
 from tailoring.conform import date_lacks_month, is_full_address
 
@@ -609,7 +609,7 @@ def _fill_project_locations(education: list, experience: list, projects: list):
 
 def _merge_turns(*sequences) -> list[dict]:
     """Union of turn lists in order, de-duplicated by (role, content), so the
-    SQLite-saved history and the palace transcript combine without repeats."""
+    SQLite-saved history and the diary combine without repeats."""
     seen, out = set(), []
     for seq in sequences:
         for t in seq or []:
@@ -664,7 +664,7 @@ class WebIntake:
         self.template = template_source
         # The selected template's interview config, slot schema + question bank the
         # LLM draws on to converse naturally (one template today; future picker passes
-        # the name). Product config, kept out of the user's MemPalace memory.
+        # the name). Product config, kept out of the person's diary.
         from intake.template_manifest import (headings, identity_fields, load_manifest,
                                                required_sections, sections)
         self.manifest = load_manifest(template_name)
@@ -686,14 +686,15 @@ class WebIntake:
         self.jobname = jobname
         self.role, self.company = _jd_label(jd_text)
 
-        # Durable verbatim + semantic memory (MemPalace). Defaults under the
-        # workdir so tests stay isolated; the app passes a stable shared dir.
-        self.palace = PalaceMemory(palace_dir or (self.workdir / "palace"), person=profile_name)
+        # The chat diary (intake/diary.py): every turn kept verbatim, keyword recall. Defaults
+        # under the workdir so tests stay isolated; the app passes a stable shared dir.
+        self.palace = Diary(palace_dir or (self.workdir / "palace"), person=profile_name)
+        self._last_user_ref = ""          # diary line of the person's latest turn (a fact's source_ref)
 
         self.essentials = {"identity": {}, "education": [], "experience": []}
         self.history: list[dict] = []      # this session's turns
         self.prior_history: list[dict] = []  # earlier sessions (kept, not replayed)
-        self.recalled: list[dict] = []     # palace hits for this JD (filled on start)
+        self.recalled: list[dict] = []     # diary lines recalled for this JD (filled on start)
         self.cv_selection: dict = {}       # P1: recall->decide reasoning for this build (surfaced)
         self.last_missing: list[str] = []  # outstanding gate fields from the last ask
         self.last_declined: list[str] = []  # declines already acknowledged (don't re-ack)
@@ -724,25 +725,27 @@ class WebIntake:
                 self.essentials = ess
                 self.prior_history = list(saved.get("history", []))
 
-        # Reload every turn ever recorded for this person from the palace, so a
+        # Reload every turn ever recorded for this person from the diary, so a
         # restart mid-conversation loses nothing and no entry point forgets, the
         # transcript is the source of truth even when Accept never happened.
         self.prior_history = _merge_turns(self.prior_history, self.palace.load_history())
 
     # ------------------------------------------------------------------ helpers
     def _append(self, role: str, content: str):
-        """Record one turn in the session AND persist it verbatim to the palace,
+        """Record one turn in the session AND persist it verbatim to the diary,
         as it happens, the fix for 'nothing persisted until Accept'."""
         self.history.append({"role": role, "content": content})
         try:
-            self.palace.remember_turn(role, content)
+            ref = self.palace.remember_turn(role, content)
+            if role == "user" and ref:
+                self._last_user_ref = ref
         except Exception:
             pass
 
     def _persist(self):
         """Autosave the structured profile/essentials to the SQLite store on every
         turn, so a returning user is recognized even if they never clicked
-        Accept & Save. (The palace holds the verbatim+semantic copy in parallel.)"""
+        Accept & Save. (The diary holds the verbatim copy in parallel.)"""
         try:
             self.memory.save(self.profile_name, self.profile or {}, self.essentials,
                              self.prior_history + self.history)
@@ -773,8 +776,10 @@ class WebIntake:
 
     def _distill_facts(self) -> list[dict]:
         """Distill NEW durable facts/preferences/constraints from the chat into the authoritative
-        SQLite store (deduped, with provenance) and mirror genuinely-new ones into the episodic
-        palace so recall surfaces them too. Best-effort: never breaks the chat."""
+        SQLite store (deduped, with provenance) and mirror genuinely-new ones into the diary so
+        recall surfaces them too. The provenance names the diary line of the person's latest
+        turn (``diary:default.jsonl:212``), which becomes the fact's ``source_ref`` in the
+        applicant brain. Best-effort: never breaks the chat."""
         from datetime import date
         new: list[dict] = []
         try:
@@ -786,6 +791,8 @@ class WebIntake:
         turn_no = len(self.prior_history) + len(self.history)
         for f in (result.get("facts") or []):
             prov = f"turn {turn_no} · {date.today().isoformat()}"
+            if self._last_user_ref:
+                prov += f" · {self._last_user_ref}"
             try:
                 row = self.memory.upsert_fact(self.profile_name, f.get("type"), f.get("key"),
                                               f.get("value"), provenance=prov,
@@ -795,7 +802,7 @@ class WebIntake:
             if not row:
                 continue
             new.append(row)
-            if row["key"] not in known:      # mirror only genuinely-new facts, no palace spam
+            if row["key"] not in known:      # mirror only genuinely-new facts, no diary spam
                 try:
                     self.palace.remember_summary(f"[{row['type']}] {row['key']}: {row['value']}")
                 except Exception:
@@ -1230,7 +1237,7 @@ class WebIntake:
 
     def ingest_certificate(self, text: str, filename: str = ""):
         """Record an uploaded certificate as a real credential (added to the skills
-        block's certifications). Raw file kept; clean summary to MemPalace."""
+        block's certifications). Raw file kept; clean summary to the diary."""
         self._append("user", f"[Uploaded certificate: {filename}]")
         name = _certificate_name(text, filename)
         if name:
@@ -1253,7 +1260,7 @@ class WebIntake:
     def ingest_resume(self, text: str, filename: str = ""):
         """Pre-fill the profile from an uploaded CV's extracted text: merge the
         structured facts into memory (the real store), write a CLEAN summary into
-        MemPalace (never the raw/OCR'd text), then gate on the required skeleton."""
+        the diary (never the raw/OCR'd text), then gate on the required skeleton."""
         self._append("user", f"[Uploaded resume: {filename}]")
         try:
             out = self.llm.extract_intake("", self.essentials, [{"role": "user", "content": text or ""}])
@@ -1286,7 +1293,7 @@ class WebIntake:
         self._conform_essentials()
         self._persist()
 
-        # Clean, tool-authored summary → semantic memory. Raw text is NOT indexed.
+        # Clean, tool-authored summary -> the diary. Raw text is NOT kept there.
         from datetime import date
         from intake.cv_import import summarize_import
         try:
@@ -1438,7 +1445,7 @@ class WebIntake:
     def ingest_transcript(self, text: str, filename: str = ""):
         """Read the REAL courses from an academic transcript and populate the
         most-recent degree's courses with the JD-relevant ones. Same storage rules
-        as any upload: facts -> profile, CLEAN summary -> palace, raw file kept."""
+        as any upload: facts -> profile, CLEAN summary -> diary, raw file kept."""
         from datetime import date
 
         self._append("user", f"[Uploaded transcript: {filename}]")
@@ -1626,8 +1633,8 @@ class WebIntake:
     _pdf_v = 0
 
     def start(self):
-        # Retrieve the most relevant prior statements for THIS job from the palace
-        #, on every entry point (New CV and Tailor-from-job both land here).
+        # Recall the most relevant prior statements for THIS job from the diary (keyword
+        # overlap), on every entry point (New CV and Tailor-from-job both land here).
         self.recalled = self.palace.recall(f"{self.role} {self.company} {self.jd[:200]}")
         text = self.opening()
         self._append("agent", text)

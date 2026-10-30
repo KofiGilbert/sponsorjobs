@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Structured facts / preferences / constraints the LLM distills from the chat. This is the
-# AUTHORITATIVE layer (MemPalace stays the episodic transcript + semantic recall): a row can be
+# AUTHORITATIVE layer (the diary, intake/diary.py, stays the episodic transcript + keyword recall): a row can be
 # deduped, updated, retracted, and read deterministically at build time (e.g. honor an active
 # "don't mention X" constraint via WHERE status='active', which semantic recall can miss).
 FACT_TYPES = ("fact", "preference", "constraint")

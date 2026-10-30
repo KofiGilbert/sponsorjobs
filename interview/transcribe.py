@@ -1,7 +1,7 @@
 """Local, on-device speech-to-text for interview screens (P2). NEVER cloud.
 
 Uses faster-whisper when it's installed, imported LAZILY so the whole app runs without it, exactly
-like the OCR and MemPalace layers self-skip. When the engine is unavailable, ``transcribe()``
+like the OCR layer self-skips. When the engine is unavailable, ``transcribe()``
 returns "" and the caller degrades to the person typing / pasting their own transcript. The model
 is a heavy optional dependency, so it lives in the ``[interview]`` extra, not the base install:
 

@@ -98,7 +98,8 @@ class Snapshot:
                     self.profile = {}
                 try:
                     self.memory_facts = [dict(x) for x in con.execute(
-                        "SELECT type, key, value, confidence, status FROM memory_facts WHERE name='default' ORDER BY id")]
+                        "SELECT type, key, value, confidence, status, provenance FROM memory_facts"
+                        " WHERE name='default' ORDER BY id")]
                 except sqlite3.Error:
                     self.memory_facts = []
                 con.close()
@@ -211,6 +212,17 @@ def _memory_fact_item(mf: dict):
     return (typ if typ in _NOTE_KEYS else "fact"), k, ACTIVE
 
 
+_DIARY_REF = re.compile(r"diary:[A-Za-z0-9_.-]+\.jsonl:\d+")
+
+
+def _memory_fact_ref(mf: dict) -> str:
+    """Where a chat fact came from: the diary line of the turn that produced it when its
+    provenance names one (``diary:default.jsonl:212``, written since Phase 2), else its
+    memory_facts row."""
+    m = _DIARY_REF.search(str(mf.get("provenance") or ""))
+    return m.group(0) if m else f"resume_agent.db:memory_facts:{mf.get('type')}:{mf.get('key')}"
+
+
 def plan_counts(snap: Snapshot) -> dict:
     """Per source, per outcome. Counts only."""
     c: dict = {s: {} for s in ("answers.db", "app_prefs.json", "conversation_memory", "memory_facts", "transcripts")}
@@ -274,7 +286,7 @@ def _write(st: Store, snap: Snapshot) -> None:
             key, subject, outcome = _memory_fact_item(mf)
             if key is None:
                 continue
-            kw = {"source": "chat", "source_ref": f"resume_agent.db:memory_facts:{mf.get('type')}:{mf.get('key')}",
+            kw = {"source": "chat", "source_ref": _memory_fact_ref(mf),
                   "confidence": float(mf.get("confidence") or 0.7)}
             if outcome == NEEDS_CHECK:
                 kw.update(status=NEEDS_CHECK, check_reason="from_chat")

@@ -3,7 +3,7 @@
 The CV's input is built from memory instead of the stored profile form: the structured facts are
 derived from what the person told us, and the strongest recalled accomplishments for THIS job are
 folded in (grounded, never invented). Built ALONGSIDE the form path so we can prove quality before
-switching. Offline: FakeLLM + verbatim memory; recall is injected so it's deterministic.
+switching. Offline: FakeLLM + the chat diary, whose keyword recall is deterministic.
 """
 
 from __future__ import annotations
@@ -19,20 +19,19 @@ def app_mod(tmp_path, monkeypatch):
     monkeypatch.setenv("RESUME_AGENT_CRED_FILE", str(tmp_path / "credentials.env"))
     monkeypatch.setenv("RESUME_AGENT_DEV", "1")
     monkeypatch.setenv("RESUME_AGENT_FAKE_LLM", "1")
-    monkeypatch.setenv("RESUME_AGENT_PALACE_INDEX", "0")
     import ui.app as A
     importlib.reload(A)
     return A
 
 
-def test_tailoring_input_is_built_from_memory_plus_recalled_wins(app_mod, monkeypatch):
+def test_tailoring_input_is_built_from_memory_plus_recalled_wins(app_mod):
     A = app_mod
     # The person only ever TALKED to the app; no form was filled.
     A._palace().remember_summary("I'm Priya Nair, priya@example.com")
-    # The strongest recalled accomplishment for this job (recall injected for determinism).
-    monkeypatch.setattr(A, "_career_highlights_for_job", lambda role, company, jd: [
-        {"text": "Resolved a production outage in 20 minutes on-call.", "similarity": 0.46}])
-    out = A._memory_first_profile("Site Reliability Engineer", "Acme", "incident response")
+    # A real win they told us about, recalled from the diary for this job by its words.
+    A._palace().remember_turn("user", "Resolved a production outage in 20 minutes on-call.")
+    out = A._memory_first_profile("Site Reliability Engineer", "Acme",
+                                  "production on-call and outage response")
     # Facts came from memory...
     assert out["essentials"]["identity"]["name"] == "Priya Nair"
     assert out["essentials"]["identity"]["email"] == "priya@example.com"
