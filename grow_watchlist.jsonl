@@ -7835,3 +7835,4 @@
 {"ats": "workday", "board_id": "planet.wd3/Planet", "cap_exempt": 0, "h1b_approvals": 24, "jobs": 63, "name": "Planet P Inc", "norm": "planet p", "perm_certs": 0, "status": "hit", "ts": 1793284730, "url": "https://planet.wd3.myworkdayjobs.com/Planet", "verified": "2026-10-29"}
 {"name": "Premier Inc", "norm": "premier", "reason": "no distinctive brand word to verify a board against", "status": "skipped", "ts": 1793284730}
 {"name": "Pinwheel Solutions Inc", "norm": "pinwheel solutions", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793284730}
+{"ats": "workday", "board_id": "quadient.wd3/External_Career_Site", "cap_exempt": 0, "h1b_approvals": 21, "jobs": 2, "name": "Quadient Inc", "norm": "quadient", "perm_certs": 3, "status": "hit", "ts": 1793370596, "url": "https://quadient.wd3.myworkdayjobs.com/External_Career_Site", "verified": "2026-10-30"}
