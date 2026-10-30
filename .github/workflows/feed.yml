@@ -23,6 +23,9 @@ on:
       crawl_minutes:
         description: "Crawl time cap in minutes (blank = the usual 70)"
         required: false
+      state_key:
+        description: "Start from this saved state key (e.g. feed-data-41039418699); blank = the newest"
+        required: false
 
 permissions:
   contents: read
@@ -67,9 +70,12 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .feed-data
-          key: feed-data-${{ github.run_id }}
+          key: ${{ inputs.state_key || format('feed-data-{0}', github.run_id) }}
           restore-keys: |
             feed-data-
+          # A missing state (cache egress refused, 2026-10-30) must stop the run: starting from an
+          # empty database publishes a fraction of the board and saves that as the next base.
+          fail-on-cache-miss: true
 
       - name: Install
         run: pip install -e .
@@ -152,9 +158,12 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .feed-data
-          key: feed-data-${{ github.run_id }}
+          key: ${{ inputs.state_key || format('feed-data-{0}', github.run_id) }}
           restore-keys: |
             feed-data-
+          # A missing state (cache egress refused, 2026-10-30) must stop the run: starting from an
+          # empty database publishes a fraction of the board and saves that as the next base.
+          fail-on-cache-miss: true
 
       - name: Install
         run: pip install -e . boto3
