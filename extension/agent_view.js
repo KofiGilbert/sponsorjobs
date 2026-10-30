@@ -804,8 +804,45 @@
     return { x: r.left, y: r.top, width: r.width, height: r.height };
   }
 
+  // The choices an OPEN custom dropdown shows (the shell opens it with a real click first, then
+  // closes it with Escape): the listbox the control names (aria-controls / aria-owns, on it or
+  // on the input inside it), else the options visible on the page, else the items of a visible
+  // listbox. Labels only (the site's words), placeholders dropped, at most 40.
+  function popupOptions(index) {
+    const el = element(index);
+    if (!el) return [];
+    const texts = [];
+    const add = (o) => {
+      const t = cleanText(o.textContent).slice(0, 80);
+      if (t && !PLACEHOLDER_RE.test(norm(t)) && !texts.includes(t)) texts.push(t);
+    };
+    const ids = [];
+    const named = [el].concat(el.querySelectorAll ? Array.from(el.querySelectorAll("[aria-controls], [aria-owns]")) : []);
+    for (const n of named) for (const a of ["aria-controls", "aria-owns"]) ids.push(...String(attrOf(n, a) || "").split(/\s+/));
+    for (const id of ids.filter(Boolean)) {
+      const box = byId(el, id);
+      if (!box) continue;
+      const opts = Array.from(box.querySelectorAll(OPTION_SEL));
+      for (const o of (opts.length ? opts : Array.from(box.querySelectorAll("li")))) if (!selfHidden(o)) add(o);
+    }
+    if (!texts.length) for (const o of visibleOptions()) add(o);
+    if (!texts.length) {
+      for (const lb of Array.from(document.querySelectorAll("[role='listbox'], ul[class*='listbox'], ul[class*='dropdown']"))) {
+        if (boxShown(lb)) for (const li of Array.from(lb.querySelectorAll("li"))) add(li);
+      }
+    }
+    return texts.slice(0, 40);
+  }
+  // Close a dropdown popupOptions read (the in-page fallback; the shell presses a real Escape).
+  function closePopup(index) {
+    const el = element(index);
+    const target = document.activeElement || el;
+    for (const t of [target, el]) if (t) { fire(t, "keydown", { key: "Escape", code: "Escape", keyCode: 27 }); fire(t, "keyup", { key: "Escape", code: "Escape", keyCode: 27 }); }
+    return !!el && attrOf(el, "aria-expanded") !== "true";
+  }
+
   window.TailorAgent = {
-    view, element, act, submitButton, rect,
+    view, element, act, submitButton, rect, popupOptions, closePopup,
     refs: () => window.__tailorAgentRefs || [],
     SUBMIT_RE,
   };

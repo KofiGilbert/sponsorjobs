@@ -9023,28 +9023,48 @@
       b.addEventListener("click", fn); bar.appendChild(b); return b;
     };
     if (info.state === "ask" && info.ask) {
-      // The agent needs one answer: buttons for the page's options, else a box. Saved for next time.
+      // The agent needs answers: one question shows the page's choices as buttons plus a box;
+      // several show as numbered lines with one box. A typed reply is read by the engine (only
+      // the part that answers counts, and a question back gets the choices), so its reply is
+      // shown here until every question is answered. Saved for next time.
       const ask = info.ask;
-      const answer = async (value) => {
-        const r = await fetch("/api/autoapply/agent/answer", { method: "POST", headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ id: ask.id || "", answer: value }) }).catch(() => null);
+      const qs = (ask.questions || []).length ? ask.questions : [{ question: ask.question, options: ask.options || [] }];
+      const post = async (body) => {
+        let r = await fetch("/api/autoapply/agent/answer", { method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(Object.assign({ id: ask.id || "" }, body)) }).catch(() => null);
         if (!r || !r.ok) {
-          // The engine assigns the id when it registers the question; find the open one by text.
-          await fetch("/api/autoapply/agent/answer", { method: "POST", headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ question: ask.question, answer: value }) }).catch(() => null);
+          // The engine may not have registered the question yet; find the open one by text.
+          await new Promise((res) => setTimeout(res, 800));
+          r = await fetch("/api/autoapply/agent/answer", { method: "POST", headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify(Object.assign({ id: ask.id || "", question: qs[0].question }, body)) }).catch(() => null);
         }
-        aaAgentBar({ state: "running", message: T("aa.agent.thanks", "Thanks. Carrying on") });
+        return r && r.ok ? r.json().catch(() => null) : null;
       };
-      if ((ask.options || []).length) {
-        for (const o of ask.options) btn(o, "btn-ghost bb-opt", () => answer(o));
+      const after = (d) => {
+        if (!d || d.done) { aaAgentBar({ state: "running", message: T("aa.agent.thanks", "Thanks. Carrying on") }); return; }
+        text.textContent = d.reply || info.message || "";
+      };
+      if (qs.length > 1) {
+        const list = document.createElement("span");
+        list.className = "bb-fill-text bb-asks";
+        list.textContent = qs.map((q, i) => (i + 1) + ". " + q.question + ((q.options || []).length ? " (" + q.options.join(", ") + ")" : "")).join("  ");
+        bar.appendChild(list);
       } else {
-        const inp = document.createElement("input");
-        inp.className = "fld bb-answer"; inp.type = "text"; inp.placeholder = T("aa.agent.answer", "Your answer");
-        inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && inp.value.trim()) answer(inp.value.trim()); });
-        bar.appendChild(inp);
-        btn(T("aa.agent.sendAnswer", "Answer"), "btn-primary bb-send", () => { if (inp.value.trim()) answer(inp.value.trim()); });
-        setTimeout(() => inp.focus(), 50);
+        for (const o of (qs[0].options || [])) btn(o, "btn-ghost bb-opt", async () => after(await post({ answer: o, exact: true, index: 0 })));
       }
+      const inp = document.createElement("input");
+      inp.className = "fld bb-answer"; inp.type = "text";
+      inp.placeholder = qs.length > 1 ? T("aa.agent.answers", "1. first answer, 2. second answer") : T("aa.agent.answer", "Your answer");
+      const typed = async () => {
+        const v = inp.value.trim();
+        if (!v) return;
+        inp.value = "";
+        after(await post({ answer: v }));
+      };
+      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") typed(); });
+      bar.appendChild(inp);
+      btn(T("aa.agent.sendAnswer", "Answer"), "btn-primary bb-send", typed);
+      if (!(qs.length === 1 && (qs[0].options || []).length)) setTimeout(() => inp.focus(), 50);
     } else if (info.state === "ready" && info.record_id != null) {
       btn(T("aa.send", "Send"), "btn-primary bb-send", async (e) => {
         e.target.disabled = true;

@@ -397,6 +397,49 @@ test("a captcha iframe is never entered", async ({ open }) => {
   await page.close();
 });
 
+test("popupOptions reads an open custom dropdown's choices (aria-controls, or the visible list); closePopup shuts it", async ({ open }) => {
+  const page = await open("job_page.html");
+  await page.evaluate(() => {
+    const m = document.querySelector("main") || document.body;
+    m.insertAdjacentHTML("beforeend", `
+      <label id="gl">Gender</label>
+      <button id="g" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="gl" aria-controls="glist">Select</button>
+      <ul id="glist" role="listbox" hidden>
+        <li role="option">Male</li><li role="option">Female</li><li role="option">I don't wish to answer</li>
+      </ul>
+      <label for="e">Ethnicity</label>
+      <input id="e" role="combobox" aria-expanded="false" aria-autocomplete="list">
+      <div id="portal"></div>`);
+    const g = document.getElementById("g"), gl = document.getElementById("glist");
+    const set = (on) => { gl.hidden = !on; g.setAttribute("aria-expanded", on ? "true" : "false"); };
+    g.addEventListener("click", () => set(gl.hidden));
+    g.addEventListener("keydown", (e) => { if (e.key === "Escape") set(false); });
+    const e = document.getElementById("e"), portal = document.getElementById("portal");
+    e.addEventListener("click", () => {          // a portal listbox with no aria-controls at all
+      portal.innerHTML = '<div role="listbox"><div role="option">Asian</div><div role="option">White</div>'
+        + '<div role="option">Decline to self-identify</div></div>';
+      e.setAttribute("aria-expanded", "true");
+    });
+    e.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { portal.innerHTML = ""; e.setAttribute("aria-expanded", "false"); } });
+  });
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const gi = indices(v.text).find((i) => /<combobox label="Gender"/.test(line(v.text, i)));
+  const ei = indices(v.text).find((i) => /<combobox label="Ethnicity"/.test(line(v.text, i)));
+  assert.ok(gi && ei, v.text);
+  await page.click("#g");
+  assert.deepStrictEqual(await page.evaluate(`window.TailorAgent.popupOptions(${gi})`), ["Male", "Female", "I don't wish to answer"]);
+  await page.focus("#g");
+  assert.strictEqual(await page.evaluate(`window.TailorAgent.closePopup(${gi})`), true);
+  assert.strictEqual(await page.evaluate(() => document.getElementById("glist").hidden), true);
+  await page.click("#e");
+  assert.deepStrictEqual(await page.evaluate(`window.TailorAgent.popupOptions(${ei})`), ["Asian", "White", "Decline to self-identify"]);
+  await page.focus("#e");
+  await page.evaluate(`window.TailorAgent.closePopup(${ei})`);
+  assert.strictEqual(await page.evaluate(() => document.getElementById("portal").innerHTML), "");
+  await page.close();
+});
+
 // ------------------------------------------------------------------ runner
 (async () => {
   const { chromium } = findPlaywright();

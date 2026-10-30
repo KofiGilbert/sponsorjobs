@@ -60,6 +60,22 @@ _CANON: list[tuple[str, re.Pattern]] = [
         r"( do you have)?( in total| overall)?$")),
     ("over_18", re.compile(r"(at least|over|older than) (the age of )?18|18 years (of age|or older|old)"
                            r"|age of majority")),
+    # Voluntary self-identification (EEO). Asked once, answered the same way everywhere.
+    ("gender", re.compile(r"^(what is )?(your )?(gender|sex)( identity)?$"
+                          r"|^(what is )?(your )?gender( identity)?\b.{0,30}$|^gender\b|^sex$")),
+    ("ethnicity", re.compile(r"^(what is )?(your )?(race|ethnicity|race and ethnicity|race ethnicity"
+                             r"|ethnic (origin|background|group)|ethnicity and race)\b")),
+    ("veteran", re.compile(r"^(protected )?veteran( status)?$|veteran status|are you a (protected )?veteran"
+                           r"|^(what is )?(your )?veteran\b")),
+    ("disability", re.compile(r"^disability( status)?$|disability status|do you have a disability"
+                              r"|^(what is )?(your )?disability\b|voluntary self identification of disability")),
+    # "Country of citizenship", and the export-control wording ("For the sole purpose of
+    # determining export licensing requirements, please provide your most recent
+    # country/region of citizenship or legal permanent residence...").
+    ("citizenship", re.compile(r"country (or region |region )?of (citizenship|nationality)"
+                               r"|(most recent|current|primary) (country (or region |region )?of )?citizenship"
+                               r"|export (control|licens)\w*.{0,200}citizenship|citizenship.{0,80}export"
+                               r"|^(country of )?citizenship( country)?$|^nationality$|what is your nationality")),
     ("pronouns", re.compile(r"^(your |preferred )?pronouns?$|what are your pronouns")),
     ("preferred_name", re.compile(r"^(preferred|chosen) (first )?name$|what (name|should we call)")),
     ("linkedin", re.compile(r"^linkedin( profile)?( url| link)?$")),
@@ -73,6 +89,8 @@ _CANON: list[tuple[str, re.Pattern]] = [
                                      r"|(former|past|prior) (employee|employment|contractor|intern)\b"
                                      r"|(ever )?(worked|interned|been employed) (for|at|by|with) (us|this|our|the company)")),
 ]
+
+_EEO_KEYS = frozenset({"@gender", "@ethnicity", "@veteran", "@disability"})
 
 # Never saved: their answer belongs to ONE application.
 _PER_JOB = re.compile(r"why (do you want|are you interested|this|our|us|join|apply|would you like)"
@@ -147,6 +165,13 @@ class AnswerLibrary:
                 if new and new != r["key"] and not self.conn.execute(
                         "SELECT 1 FROM answers WHERE key=?", (new,)).fetchone():
                     self.conn.execute("UPDATE answers SET key=? WHERE key=?", (new, r["key"]))
+            # A reply saved raw before replies were read (2026-10-30): a question back ("what are
+            # the options?") is never an answer, and a self-identification answer is one short
+            # choice, never a paragraph. Those go, so the next run asks properly.
+            for r in self.conn.execute("SELECT key, answer FROM answers").fetchall():
+                a = str(r["answer"] or "").strip()
+                if a.endswith("?") or (r["key"] in _EEO_KEYS and ("\n" in a or len(a) > 80)):
+                    self.conn.execute("DELETE FROM answers WHERE key=?", (r["key"],))
             self.conn.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('keys_version', ?)", (version,))
             self.conn.commit()
         except sqlite3.Error:
@@ -178,8 +203,8 @@ class AnswerLibrary:
         a = str(answer or "").strip()[:MAX_A]
         source = source if source in SOURCES else "you"
         key = normalize(q)
-        if not key or not a or is_per_job(q, company):
-            return None
+        if not key or not a or is_per_job(q, company) or (source == "you" and a.endswith("?")):
+            return None                            # a question back is never an answer
         now = time.time()
         cur = self.conn.execute("SELECT * FROM answers WHERE key=?", (key,)).fetchone()
         if cur is not None:

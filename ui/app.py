@@ -10562,96 +10562,253 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
 
 # ---- "Ask the person": a question the agent cannot answer goes to the bar and to Telegram, the
 # run waits for the answer (up to the caller's timeout), the answer is saved for every later
-# application, and the run goes on. One registry, answered from either side first.
+# application, and the run goes on. One registry, answered from either side first. Several open
+# questions on one page go out as ONE numbered message. A typed reply is read by one small model
+# call (autoapply/asks.py) that keeps only the part answering each question, and answers a
+# question back ("what are the options?") instead of saving it. Nothing is saved raw.
 _ASKS: dict = {}
 _ASKS_LOCK = threading.Lock()
+
+
+def _ask_items(ask: dict) -> list:
+    """The ask's questions as [{question, options, answer}] (older single-question shape too)."""
+    if "items" not in ask:
+        ask["items"] = [{"question": ask.get("question", ""), "options": list(ask.get("options") or []),
+                         "answer": ask.get("answer")}]
+    return ask["items"]
+
+
+def _ask_done(ask: dict) -> bool:
+    return all(it.get("answer") for it in _ask_items(ask))
+
+
+def _ask_got_it(items: list) -> str:
+    if len(items) == 1:
+        return f"Got it: {items[0]['answer']}."
+    return "Got it: " + "; ".join(f"{n}. {it['answer']}" for n, it in enumerate(items, start=1)) + "."
+
+
+def _ask_set(ask: dict, i: int, value: str):
+    items = _ask_items(ask)
+    items[i]["answer"] = value
+    if len(items) == 1:
+        ask["answer"] = value                      # the older single-question shape
+
+
+def _ask_take_reply(aid: str, text: str) -> tuple[str, bool]:
+    """Read a typed reply to an open ask. Returns (the message to send back, done). Only the
+    part of the reply that answers each question is kept; a question back gets the options."""
+    from autoapply import asks as AK
+    from autoapply.planner import match_option
+    text = str(text or "").strip()[:1500]
+    with _ASKS_LOCK:
+        ask = _ASKS.get(aid)
+        if not ask or not ask.get("open", True):
+            return "That question is no longer open.", False
+        items = _ask_items(ask)
+        pending = [(i, {"question": it["question"], "options": list(it.get("options") or [])})
+                   for i, it in enumerate(items) if not it.get("answer")]
+    if not pending or not text:
+        return ("", bool(not pending))
+    plain = [p for _, p in pending]
+    try:
+        llm = _make_llm()
+    except Exception:          # noqa: BLE001 - no model: the deterministic reading below
+        llm = None
+    if llm is not None:
+        got = AK.read_reply(llm, plain, text)
+    else:
+        got = {"answers": {}, "question": "", "unclear": True}
+        one = plain[0] if len(plain) == 1 else None
+        if one is not None and text.endswith("?"):
+            got = {"answers": {}, "question": text, "unclear": False}
+        elif one is not None and one["options"] and match_option(text, one["options"]):
+            got = {"answers": {0: match_option(text, one["options"])}, "question": "", "unclear": False}
+        elif one is not None and not one["options"] and "\n" not in text and len(text) <= 120:
+            got = {"answers": {0: text}, "question": "", "unclear": False}
+    with _ASKS_LOCK:
+        ask = _ASKS.get(aid)
+        if not ask or not ask.get("open", True):
+            return "That question is no longer open.", False
+        for j, val in got["answers"].items():
+            i = pending[j][0]
+            if not _ask_items(ask)[i].get("answer"):
+                _ask_set(ask, i, val)
+        items = _ask_items(ask)
+        if _ask_done(ask):
+            return _ask_got_it(items), True
+        left = [{"question": it["question"], "options": list(it.get("options") or [])}
+                for it in items if not it.get("answer")]
+        if got["answers"]:
+            return ("Got it: " + "; ".join(got["answers"].values()) + ". Still open: "
+                    + "; ".join(it["question"] for it in left) + "."), False
+        if got["question"]:
+            return AK.options_reply(left), False
+        ask["unclear"] = int(ask.get("unclear") or 0) + 1
+        if ask["unclear"] == 1:
+            return AK.unclear_reply(left), False
+        return "I still could not tell. Type just the answer, or answer on the page yourself.", False
 
 
 def _agent_ask_event(kind: str, payload: str):
     """The notify hub's hook: an "ask:<id>:<n>" button tap, or a text reply while a question is
     open. Returns the reply text when the event answered a question, else None."""
     with _ASKS_LOCK:
-        open_asks = [a for a in _ASKS.values() if a.get("answer") is None]
+        open_asks = [a for a in _ASKS.values() if a.get("open", True) and not _ask_done(a)]
         if kind == "button":
             parts = str(payload).split(":")
             if parts[0] != "ask" or len(parts) < 3:
                 return None
             ask = _ASKS.get(parts[1])
-            if not ask or ask.get("answer") is not None:
+            if not ask or _ask_done(ask) or not ask.get("open", True):
                 return "That question was already answered."
+            items = _ask_items(ask)
             try:
-                ask["answer"] = str(ask["options"][int(parts[2])])
+                _ask_set(ask, 0, str(items[0]["options"][int(parts[2])]))
             except (ValueError, IndexError):
                 return None
-            return f"Got it: {ask['answer']}."
+            return f"Got it: {items[0]['answer']}."
         if not open_asks:
             return None
-        ask = open_asks[-1]
-        ask["answer"] = str(payload).strip()[:300]
-        return f"Got it: {ask['answer']}."
+        aid = open_asks[-1]["id"]
+    msg, _done = _ask_take_reply(aid, str(payload))
+    return msg
 
 
 @app.post("/api/autoapply/agent/ask")
 @_guard
 def autoapply_agent_ask():
-    """Body {question, options?: [..], timeout_s?: <=600, record_id?}. Sends the question to
-    Telegram when a channel is connected (buttons for the options, else "reply with your answer"),
-    then waits for an answer from Telegram or from the bar (/api/autoapply/agent/answer). The
-    answer is saved to the person's answer library and returned: {ok, answer} or
-    {ok:false, reason:"timeout"}."""
+    """Body {question, options?, context?} or {questions: [{question, options?, context?}]},
+    plus {id?, timeout_s?: <=600, record_id?, force?}. First the person's own material
+    (autoapply/asks.known_answer: work authorization, the answer library, the standing decline
+    choice on EEO questions); what is still open goes to Telegram when a channel is connected
+    (ONE message; buttons only for a single question with options) and to the bar, and the
+    route waits for the answers (/api/autoapply/agent/answer, or a Telegram reply). Answers are
+    saved to the answer library. Reply {ok, id, answer, answers: {question: answer}} or
+    {ok:false, id, reason:"timeout"}."""
+    from autoapply import asks as AK
     b = request.json or {}
-    q = " ".join(str(b.get("question") or "").split())[:300]
-    if not q:
+    raw = b.get("questions") if isinstance(b.get("questions"), list) else [b]
+    items = []
+    for x in raw[:6]:
+        if not isinstance(x, dict):
+            continue
+        q = " ".join(str(x.get("question") or "").split())[:300]
+        if q and all(q != it["question"] for it in items):
+            items.append({"question": q, "options": AK.order_options(q, x.get("options") or []),
+                          "context": " ".join(str(x.get("context") or b.get("context") or "").split())[:120],
+                          "answer": None, "origin": ""})
+    if not items:
         return jsonify({"ok": False, "reason": "no-question"}), 400
-    options = [str(o).strip()[:80] for o in (b.get("options") or []) if str(o).strip()][:8]
     timeout = max(5, min(600, int(b.get("timeout_s") or 300)))
-    aid = secrets.token_hex(4)
+    aid = re.sub(r"[^a-z0-9]", "", str(b.get("id") or "").lower())[:16] or secrets.token_hex(4)
+    rec = _get_record(b.get("record_id")) if b.get("record_id") not in (None, "") else None
+    data = _record_data(rec) if rec else {}
+    company = (rec.get("company") if rec else "") or ""
+    # The person's own material first: never ask what the profile or the library already says.
+    if not b.get("force"):
+        lib = _answer_lib()
+        try:
+            eeo_decline = bool(_load_prefs().get("eeo_decline"))
+            for it in items:
+                k = AK.known_answer(it["question"], it["options"], library=lib, work_auth=_work_auth(),
+                                    eeo_decline=eeo_decline, job_country=_job_country(data))
+                if k:
+                    it["answer"], it["origin"] = k
+        finally:
+            lib.close()
+    answers = lambda: {it["question"]: it["answer"] for it in items if it["answer"]}   # noqa: E731
+    if b.get("known_only"):                        # the shell checks first, then shows the bar
+        return jsonify({"ok": all(it["answer"] for it in items), "id": aid, "known": True,
+                        "answers": answers(), "open": [it["question"] for it in items if not it["answer"]]})
+    if all(it["answer"] for it in items):
+        return jsonify({"ok": True, "id": aid, "known": True, "answer": items[0]["answer"], "answers": answers()})
+    pending = [it for it in items if not it["answer"]]
     with _ASKS_LOCK:
-        _ASKS[aid] = {"id": aid, "question": q, "options": options, "answer": None, "at": time.time()}
+        _ASKS[aid] = {"id": aid, "items": [{"question": it["question"], "options": it["options"], "answer": None}
+                                           for it in pending],
+                      "open": True, "unclear": 0, "at": time.time()}
+        if len(pending) == 1:
+            _ASKS[aid]["question"], _ASKS[aid]["options"], _ASKS[aid]["answer"] = \
+                pending[0]["question"], pending[0]["options"], None
         for k in [k for k, a in _ASKS.items() if time.time() - a["at"] > 3600]:
             _ASKS.pop(k, None)
     try:
         ch = _active_channel()
         if ch is not None:
-            ctx = " ".join(str(b.get("context") or "").split())[:120]
-            text = (f"After \u201c{ctx}\u201d, the application asks: {q}" if ctx else f"The application asks: {q}") \
-                + ("" if options else "\nReply with your answer and I will carry on.")
-            buttons = [[(o, f"ask:{aid}:{i}")] for i, o in enumerate(options)] if options else None
+            text = AK.prompt_text(pending)
+            buttons = ([[(o, f"ask:{aid}:{i}")] for i, o in enumerate(pending[0]["options"])]
+                       if len(pending) == 1 and pending[0]["options"] else None)
             ch.send(text, buttons)
     except Exception:          # noqa: BLE001 - no Telegram is fine; the bar still asks
         pass
+
+    def save_all():
+        lib = _answer_lib()
+        try:
+            for it in items:
+                if it["answer"] and not it["origin"]:
+                    lib.save(it["question"], it["answer"], "you", company=company)
+        finally:
+            lib.close()
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         with _ASKS_LOCK:
-            ans = _ASKS.get(aid, {}).get("answer")
-        if ans:
-            lib = _answer_lib()
-            try:
-                lib.save(q, ans, "you")
-            finally:
-                lib.close()
-            return jsonify({"ok": True, "id": aid, "answer": ans})
+            got = [x.get("answer") for x in _ask_items(_ASKS.get(aid, {"items": []}))]
+        if got and all(got):
+            for it, a in zip(pending, got):
+                it["answer"] = a
+            with _ASKS_LOCK:
+                if aid in _ASKS:
+                    _ASKS[aid]["open"] = False
+            save_all()
+            return jsonify({"ok": True, "id": aid, "answer": items[0]["answer"], "answers": answers()})
         time.sleep(1.0)
+    with _ASKS_LOCK:                               # a stale question never captures later replies
+        ask = _ASKS.get(aid)
+        if ask:
+            ask["open"] = False
+            for it, x in zip(pending, _ask_items(ask)):
+                it["answer"] = x.get("answer") or None
+    if any(it["answer"] and not it["origin"] for it in items):
+        save_all()                                 # what the person did answer is kept
     return jsonify({"ok": False, "id": aid, "reason": "timeout"})
 
 
 @app.post("/api/autoapply/agent/answer")
 @_guard
 def autoapply_agent_answer():
-    """The bar's answer to an open question: {id, answer}."""
+    """The bar's answer to an open question: {id, answer, exact?, index?}. A tapped option
+    (exact) is taken as is; typed text is read like a Telegram reply (only the part answering
+    the question is kept; a question back gets the options). Reply {ok, id, done, reply}."""
     b = request.json or {}
-    aid, ans = str(b.get("id") or ""), str(b.get("answer") or "").strip()[:300]
+    aid, ans = str(b.get("id") or ""), str(b.get("answer") or "").strip()[:1500]
     q = " ".join(str(b.get("question") or "").split())[:300]
     if not ans:
         return jsonify({"ok": False, "error": "Write an answer first."}), 400
     with _ASKS_LOCK:
         ask = _ASKS.get(aid)
         if not ask and q:                          # the bar knows the question, not the id
-            ask = next((a for a in _ASKS.values() if a["question"] == q and a.get("answer") is None), None)
-        if not ask:
+            ask = next((a for a in _ASKS.values() if a.get("open", True) and not _ask_done(a)
+                        and any(it["question"] == q for it in _ask_items(a))), None)
+        if not ask or not ask.get("open", True):
             return jsonify({"ok": False, "error": "That question is no longer open."}), 404
-        ask["answer"] = ans
-    return jsonify({"ok": True, "id": ask["id"]})
+        aid = ask["id"]
+        items = _ask_items(ask)
+        if b.get("exact"):
+            try:
+                i = int(b.get("index") or 0)
+            except (TypeError, ValueError):
+                i = 0
+            if not 0 <= i < len(items):
+                return jsonify({"ok": False, "error": "No such question."}), 400
+            _ask_set(ask, i, ans[:300])
+            done = _ask_done(ask)
+            return jsonify({"ok": True, "id": aid, "done": done,
+                            "reply": _ask_got_it(items) if done else f"Got it: {ans[:300]}."})
+    reply, done = _ask_take_reply(aid, ans)
+    return jsonify({"ok": True, "id": aid, "done": done, "reply": reply})
 
 
 @app.post("/api/autoapply/agent/step")
@@ -10695,6 +10852,13 @@ def autoapply_agent_step():
     # next to the field and fills it itself. Workday's "How did you hear about us" is a widget
     # the engine cannot drive but the model can: type, wait, click the suggestion.
     known = _known_answers_for([x for x in left if x.strip()], rec, data, applicant)
+    # What the person answered on the bar or Telegram during THIS run (or the decline choice the
+    # ask route picked), by the question's exact words: theirs, so it wins.
+    given = b.get("answers") if isinstance(b.get("answers"), dict) else {}
+    for label in [x for x in left if x.strip()]:
+        v = " ".join(str(given.get(label) or "").split())[:300]
+        if v:
+            known[label] = v
     for n, (label, value) in enumerate(known.items(), start=1):
         key = f"answer_{n}"
         values[key] = value

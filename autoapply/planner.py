@@ -191,8 +191,15 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.rest.append(f)
             continue
 
-        # 0. EEO / demographics: only the person's standing "decline" choice, never a guess
+        # 0. EEO / demographics: the person's own saved answer (an earlier "ask"), else their
+        #    standing "decline" choice, never a guess
         if _EEO.search(label) and not workauth.classify(label):
+            hit = ctx.library.lookup(label) if ctx.library is not None else None
+            v = _literal(f, hit["answer"]) if hit else None
+            if v:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True))
+                out.used_library.append(hit["key"])
+                continue
             v = decline_option(f.options) if ctx.eeo_decline and f.options else None
             if v:
                 out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="eeo", sensitive=True))

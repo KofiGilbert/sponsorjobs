@@ -1487,6 +1487,41 @@ class FakeLLM:
                 actions.append({"ref": ref, "op": op, "source": key})
         return {"actions": actions}
 
+    def ask_reply(self, system: str, user: str) -> str:
+        # Reads the person's reply to the apply agent's questions (autoapply/asks.py) the way
+        # the real model is told to, deterministically: numbered lines go to their question; an
+        # option named in the reply (whole word, so "Male" never matches "Female") answers a
+        # question with options; a line ending in "?" is a question back; otherwise the last
+        # plain line answers a single question.
+        import json as _json
+        qm = re.search(r"<questions>\n(.*?)\n</questions>", user, re.S)
+        rm = re.search(r"<reply>\n(.*?)\n</reply>", user, re.S)
+        qs = _json.loads(qm.group(1)) if qm else []
+        reply = rm.group(1) if rm else ""
+        parts = [p.strip() for p in re.split(r"\n+|(?<=[.?!])\s+", reply) if p.strip()]
+        asked = [p for p in parts if p.endswith("?")]
+        plain = [p for p in parts if not p.endswith("?")]
+        answers = {}
+        for p in plain:
+            m = re.match(r"^(\d+)[.):]\s*(.+)$", p)
+            if m and 1 <= int(m.group(1)) <= len(qs):
+                answers[int(m.group(1))] = m.group(2).strip().rstrip(".")
+        for q in qs:
+            n, opts = q["n"], q.get("options") or []
+            if n in answers or not opts:
+                continue
+            for o in sorted(opts, key=len, reverse=True):
+                if any(re.search(r"(?<![A-Za-z])" + re.escape(o.lower()) + r"(?![A-Za-z])", p.lower())
+                       for p in plain):
+                    answers[n] = o
+                    break
+        if len(qs) == 1 and 1 not in answers and plain and not qs[0].get("options"):
+            answers[1] = plain[-1].rstrip(".")
+        out = {"answers": [{"n": n, "answer": a} for n, a in sorted(answers.items())],
+               "question": "" if answers else (asked[0] if asked else ""),
+               "unclear": not answers and not asked}
+        return _json.dumps(out)
+
     def agent_step(self, system: str, user: str) -> str:
         # A scripted brain for the apply agent, decided from the page view alone (the same
         # input the real model gets): click Apply, sign in with the portal placeholders, open

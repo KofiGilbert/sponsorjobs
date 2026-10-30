@@ -383,7 +383,7 @@ function createAgent(deps) {
       const esc = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return new RegExp('label="' + esc + '"[^\n]*(value="\\(filled\\)"|checked=true)').test(text);
     };
-    return (includeFilled ? out : out.filter((q) => !filled(q))).slice(0, 3);
+    return (includeFilled ? out : out.filter((q) => !filled(q))).slice(0, 6);
   }
 
   // The question just above this one on the page, with its answer when shown: a box called
@@ -422,6 +422,47 @@ function createAgent(deps) {
     return out.slice(0, 8);
   }
 
+  // The view index of the field a question labels (0 when not found).
+  function indexFor(viewText, label) {
+    const want = String(label || "").trim().toLowerCase();
+    for (const line of String(viewText || "").split("\n")) {
+      const m = /^\*?\[(\d+)\]<[^\n]*label="([^"]*)"/.exec(line);
+      if (m && m[2].trim().toLowerCase() === want) return Number(m[1]);
+    }
+    return 0;
+  }
+
+  // A custom dropdown (role=combobox, a button that opens a listbox) shows its choices only
+  // when open: open it with a real click, read the visible options, close it with Escape. The
+  // person is then offered the page's own words as buttons. Main frame only; [] when it is not
+  // such a dropdown or nothing showed.
+  async function dropdownOptions(wc, v, label) {
+    const idx = indexFor(v.text, label);
+    if (!idx || v.frameOf.has(idx)) return [];
+    const line = viewLine(v.text, idx);
+    if (!/^\*?\[\d+\]<combobox\b/.test(line)) return [];
+    try {
+      const opened = await realClick(wc, idx);
+      if (!opened) await withTimeout(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index: idx })})`, true), ACTION_MS, "open");
+      await delay(500);
+      const opts = await wc.executeJavaScript(`window.TailorAgent.popupOptions(${idx})`, true);
+      await pressEscape(wc);
+      await delay(150);
+      await wc.executeJavaScript(`window.TailorAgent.closePopup(${idx})`, true).catch(() => false);
+      return Array.isArray(opts) ? opts.map((o) => String(o)).filter(Boolean) : [];
+    } catch (e) { return []; }
+  }
+  async function pressEscape(wc) {
+    const release = deps.acquireDebugger(wc);
+    if (!release) return false;
+    try {
+      await wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+      await wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+      return true;
+    } catch (e) { return false; }
+    finally { release(); }
+  }
+
   // ---- the run -----------------------------------------------------------------------------
   // opts: { url, resumePath, lane, autonomous }
   async function run(recordId, opts) {
@@ -440,6 +481,8 @@ function createAgent(deps) {
     const portals = new Set();           // hosts whose portal account was ensured this run
     const startedAt = Date.now() / 1000; // mail older than the run is never used
     let emailCode = "";                  // a code the mailbox handed over, for the next step only
+    const runAnswers = {};               // question -> the person's answer this run (bar, Telegram)
+    const knownSeen = new Set();         // questions answered from their material without asking
     const hashes = [];
     const pageHashes = [];
     let failed = 0;
@@ -539,7 +582,7 @@ function createAgent(deps) {
           reply = await withTimeout(deps.postApp("/api/autoapply/agent/step", {
             record_id: recordId, step, max_steps: MAX_STEPS, url, lane: opts.lane || "assisted",
             view: v.text, filled_this_step: filled, left, nudges, blocker: sig.blocker || "",
-            history: history.slice(-12), email_code: emailCode,
+            history: history.slice(-12), email_code: emailCode, answers: runAnswers,
           }), STEP_BRAIN_MS, "brain");
         } catch (e) { reply = null; }
         dlog("step " + step + " reply:", reply);
@@ -568,21 +611,44 @@ function createAgent(deps) {
           continue;
         }
         if (asks.length) {
-          // Ask the person, on the bar and on Telegram, and carry on with the answer (saved for
-          // every later application). Up to three questions, five minutes each.
-          const qs = asks;
-          let answered = 0;
-          for (const q of qs) {
+          // Ask the person, on the bar and on Telegram, and carry on with the answers (saved for
+          // every later application). Every open question on the page goes in ONE message; a
+          // custom dropdown is opened first so its real choices become buttons. What the
+          // person's material already answers (the library, work authorization, the standing
+          // decline choice on self-identification questions) is never asked.
+          const items = [];
+          for (const q of asks) {
             if (st.stop) return stopped("stopped", "Stopped.");
-            const options = optionsFor(v.text, q);
-            const prev = contextFor(v.text, q);
-            const shown = (prev ? "After \u201c" + prev + "\u201d, the application asks: " : "The application asks: ") + q;
-            progress(recordId, "ask", shown, { step, ask: { question: q, options } });
-            const r = await withTimeout(deps.postApp("/api/autoapply/agent/ask", {
-              question: q, options, context: prev, timeout_s: 300, record_id: recordId }), 320000, "ask").catch(() => null);
-            dlog("step " + step + " ask ->", r && { ok: r.ok, reason: r.reason });
-            if (r && r.ok) answered++;
-            else break;
+            let options = optionsFor(v.text, q);
+            if (!options.length) options = await dropdownOptions(wc, v, q);
+            items.push({ question: q, options: orderOptions(q, options), context: contextFor(v.text, q) });
+          }
+          const body = { questions: items, record_id: recordId, timeout_s: 300 };
+          // A question the run already took a known answer for, still open: that answer did not
+          // fit, so the person is asked for real this time.
+          const force = items.some((it) => knownSeen.has(it.question));
+          let open = items;
+          if (!force) {
+            const k = await deps.postApp("/api/autoapply/agent/ask", Object.assign({}, body, { known_only: true })).catch(() => null);
+            if (k && k.answers) {
+              for (const [q, a] of Object.entries(k.answers)) { runAnswers[q] = a; knownSeen.add(q); }
+              open = items.filter((it) => !(it.question in k.answers));
+            }
+          }
+          let answered = items.length - open.length;
+          if (open.length) {
+            const id = Math.random().toString(16).slice(2, 10);
+            const shown = open.length === 1
+              ? ((open[0].context ? "After \u201c" + open[0].context + "\u201d, the application asks: " : "The application asks: ") + open[0].question)
+              : "The application asks " + open.length + " questions.";
+            progress(recordId, "ask", shown, { step, ask: { id, question: open[0].question, options: open.length === 1 ? open[0].options : [],
+                                                             questions: open } });
+            const r = await withTimeout(deps.postApp("/api/autoapply/agent/ask", Object.assign({}, body, { id, questions: open, force })),
+                                        320000, "ask").catch(() => null);
+            dlog("step " + step + " ask ->", r && { ok: r.ok, reason: r.reason, n: open.length });
+            if (!(r && r.ok)) return stopped("needs-answers", blockedMessage("needs-answers", open.map((it) => it.question)), { url, left });
+            for (const [q, a] of Object.entries(r.answers || {})) runAnswers[q] = a;
+            answered += open.length;
           }
           if (!answered) return stopped("needs-answers", blockedMessage("needs-answers", left), { url, left });
           history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
@@ -721,6 +787,24 @@ function createAgent(deps) {
   return { run, send, stop, isReady, MAX_STEPS };
 }
 
+// Voluntary self-identification questions (the planner's _EEO) and the decline choice (its
+// _DECLINE): on such a question the decline option is offered FIRST, never a guess for them.
+const EEO_RE = /gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun/i;
+const DECLINE_RE = /decline|prefer not|do not wish|don't wish|choose not|rather not|not to (say|answer|disclose)/i;
+const PLACEHOLDER_OPT_RE = /^(select|choose|please select|please choose|--|none selected|no selection)\b/i;
+function orderOptions(question, options) {
+  const out = [];
+  for (const o of options || []) {
+    const t = String(o || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (t && !PLACEHOLDER_OPT_RE.test(t) && !out.includes(t)) out.push(t);
+  }
+  if (EEO_RE.test(String(question || ""))) {
+    const dec = out.find((o) => DECLINE_RE.test(o));
+    if (dec) return [dec].concat(out.filter((o) => o !== dec)).slice(0, 8);
+  }
+  return out.slice(0, 8);
+}
+
 function blockedMessage(reason, left) {
   switch (reason) {
     case "needs-answers": {
@@ -738,4 +822,4 @@ function blockedMessage(reason, left) {
   }
 }
 
-module.exports = { createAgent, blockedMessage, SUBMIT_RE, ATS_HOSTS, MAX_STEPS };
+module.exports = { createAgent, blockedMessage, orderOptions, SUBMIT_RE, ATS_HOSTS, MAX_STEPS };
