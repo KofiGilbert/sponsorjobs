@@ -373,6 +373,9 @@ function createAgent(deps) {
     const js = (expr) => wc.executeJavaScript(expr, true);
     let read = null;
     try {
+      // Another dropdown still open (Phenom keeps one open through Escape and blur) would cover
+      // this control, so the click below would land on ITS list: press it shut first.
+      await js(`window.TailorAgent.closeOthers(${idx})`).catch(() => 0);
       const was = !!(await js(`window.TailorAgent.popupOpen(${idx})`).catch(() => false));
       await js(`window.TailorAgent.markPopups(${idx}, ${!was})`).catch(() => null);
       if (!was) {
@@ -393,18 +396,171 @@ function createAgent(deps) {
   // Escape that reaches a closed control can close the dialog that holds the form, so a click
   // that opened nothing gets no key at all. A widget that ignores Escape is clicked shut or
   // blurred (TailorAgent.closePopup), never sent more Escapes; the in-page Escape is used only
-  // when the real one could not be pressed.
+  // when the real one could not be pressed. One that ignores both (Phenom's select at Lam
+  // Research stays open, its list over the next field) is pressed shut from just outside it.
   async function closeDropdown(wc, idx) {
     const isOpen = () => wc.executeJavaScript(`window.TailorAgent.popupOpen(${idx})`, true).catch(() => false);
+    const close = (how) => wc.executeJavaScript(`window.TailorAgent.closePopup(${idx}, ${JSON.stringify(how)})`, true).catch(() => false);
     if (!(await isOpen())) return true;
     const sent = await pressEscape(wc);
     await delay(150);
     if (!(await isOpen())) return true;
-    await wc.executeJavaScript(`window.TailorAgent.closePopup(${idx}, ${JSON.stringify(sent ? "blur" : "escape")})`, true).catch(() => false);
+    await close(sent ? "blur" : "escape");
     await delay(150);
     if (!(await isOpen())) return true;
-    if (!sent) await wc.executeJavaScript(`window.TailorAgent.closePopup(${idx}, "blur")`, true).catch(() => false);
+    if (!sent) {
+      await close("blur");
+      await delay(150);
+      if (!(await isOpen())) return true;
+    }
+    await close("outside");
+    await delay(200);
     return !(await isOpen());
+  }
+
+  // ---- the person's saved self-identification answers, put on the page by the shell ---------
+  // The engine maps a saved answer to the page's own option in code (autoapply/eeo.py, through
+  // the ask route's known_only check); the shell then picks THAT option itself with real clicks,
+  // never through the model, and checks it stuck. The choice is never logged, never sent to the
+  // broker or Telegram, and the view keeps printing the control as (filled).
+  async function pickSaved(wc, v, label, option) {
+    const idx = indexFor(v.text, label);
+    if (!idx || v.frameOf.has(idx) || !option) return false;
+    const js = (expr) => wc.executeJavaScript(expr, true);
+    const want = JSON.stringify(String(option));
+    const line = viewLine(v.text, idx);
+    const chosen = async (i) => !!(await js(`window.TailorAgent.chosenIs(${i}, ${want})`).catch(() => false));
+    const inPage = (a) => withTimeout(js(`window.TailorAgent.act(${JSON.stringify(a)})`), ACTION_MS, a.op).catch(() => null);
+    try {
+      if (/^\*?\[\d+\]<select\b/.test(line)) {
+        await inPage({ op: "select", index: idx, option: String(option) });
+        return await chosen(idx);
+      }
+      if (/^\*?\[\d+\]<radio\b/.test(line)) {
+        // the radio of this group whose own words are the option
+        const hit = linesFor(v.text, label).find((ln) => /^\*?\[\d+\]<radio\b/.test(ln)
+          && unq((/option="((?:[^"\\]|\\.)*)"/.exec(ln) || [])[1] || "") === String(option));
+        const ri = hit ? Number((/^\*?\[(\d+)\]/.exec(hit) || [])[1]) : 0;
+        if (!ri) return false;
+        if (!(await realClick(wc, ri))) await inPage({ op: "click", index: ri });
+        await delay(200);
+        return await chosen(ri);
+      }
+      if (!/^\*?\[\d+\]<combobox\b/.test(line)) return false;
+      await js(`window.TailorAgent.closeOthers(${idx})`).catch(() => 0);
+      const was = !!(await js(`window.TailorAgent.popupOpen(${idx})`).catch(() => false));
+      await js(`window.TailorAgent.markPopups(${idx}, ${!was})`).catch(() => null);
+      if (!was && !(await realClick(wc, idx))) await inPage({ op: "click", index: idx });
+      let oi = null;
+      for (let i = 0; i < 8 && !oi; i++) {
+        await delay(i ? 350 : 400);
+        oi = await js(`window.TailorAgent.optionIndex(${idx}, ${want})`).catch(() => null);
+      }
+      if (oi) {
+        if (!(await realClick(wc, oi))) await inPage({ op: "click", index: oi });
+        await delay(300);
+      }
+      await closeDropdown(wc, idx);
+      if (await chosen(idx)) return true;
+      // The engine's own widget path (open, filter, click, verify) as the second try.
+      await inPage({ op: "select", index: idx, option: String(option) });
+      await closeDropdown(wc, idx);
+      return await chosen(idx);
+    } catch (e) { return false; }
+  }
+
+  // Required self-identification questions still open on this page whose saved answer the
+  // engine maps to one of the page's options: picked by the shell (pickSaved). Each question is
+  // tried once per run (a widget that refuses goes on to the brain and, if need be, the person).
+  // Returns the questions it filled; the caller logs only how many.
+  async function fillSavedEeo(wc, fr, v, left, recordId, tried, st) {
+    const qs = questionsFor(v.text, left).filter((q) => EEO_RE.test(q) && !tried.has(q));
+    if (!qs.length) return [];
+    const items = [];
+    for (const q of qs) {
+      if (st.stop) return [];
+      tried.add(q);
+      const got = (await selectChoices(wc, fr, v, q)) || optionsFor(v.text, q) || (await dropdownOptions(wc, v, q));
+      const all = cleanOptions(got.options, 1000);
+      if (!all.length) continue;                       // the page's own choices are needed to pick one
+      items.push({ question: q, options: orderOptions(q, all), all_options: all.slice(0, 40),
+                   partial: !!got.partial || all.length > 40, hint: noteAbove(v.text, q) });
+    }
+    if (!items.length) return [];
+    const k = await deps.postApp("/api/autoapply/agent/ask", { questions: items, record_id: recordId, known_only: true }).catch(() => null);
+    const pick = (k && k.select) || {};
+    const done = [];
+    for (const it of items) {
+      if (st.stop) break;
+      if (pick[it.question] && await pickSaved(wc, v, it.question, pick[it.question])) done.push(it.question);
+    }
+    return done;
+  }
+
+  // ---- terms a site requires to apply (a privacy notice, a data privacy agreement) ------------
+  // The person decides: "always" in their answers accepts by itself; otherwise the first notice
+  // on a site is asked on the bar and Telegram ("Accept for all applications", "Just this one",
+  // "Stop"). Every acceptance is recorded on the application and named in the Ready to send
+  // summary. Then the accept button is clicked (or the box ticked) for real. Stop ends the run
+  // and nothing is accepted. Returns { stop: {reason, message} } to stop, else { accepted: n }.
+  async function handleTerms(wc, run, loose) {
+    let items = [];
+    try { items = (await wc.executeJavaScript(`window.TailorAgent.termsItems(${loose ? "true" : "false"})`, true)) || []; } catch (e) { items = []; }
+    let accepted = 0;
+    for (const it of items) {
+      if (run.st.stop) return { stop: { reason: "stopped", message: "Stopped." } };
+      const url = wc.getURL() || "";
+      const host = hostOf(url);
+      const title = String(it.title || "Terms").slice(0, 80);
+      const key = host + "|" + title.toLowerCase();
+      const tries = (run.termsTries.get(key) || 0) + 1;
+      run.termsTries.set(key, tries);
+      if (tries > 2) {
+        return { stop: { reason: "needs-person", message: "I could not accept " + possessive(run.company, title)
+                         + " on this page. Have a look at it." } };
+      }
+      let via = run.termsOk.get(host) || "";
+      if (!via) {
+        const body = { record_id: run.recordId, title, url, kind: it.kind, company: run.company };
+        const first = await deps.postApp("/api/autoapply/agent/terms", Object.assign({ check_only: true }, body)).catch(() => null);
+        if (first && first.decision === "accept") via = first.via || "always";
+        else {
+          const id = Math.random().toString(16).slice(2, 10);
+          const question = (first && first.question) || termsQuestion(run.company, title);
+          const options = (first && first.options) || TERMS_CHOICES;
+          progress(run.recordId, "ask", question, { ask: { id, question, options, questions: [{ question, options }], kind: "terms" } });
+          const r = await withTimeout(deps.postApp("/api/autoapply/agent/terms", Object.assign({ id, timeout_s: 300 }, body)),
+                                      320000, "terms").catch(() => null);
+          dlog("terms ->", r && { ok: r.ok, decision: r.decision, reason: r.reason });
+          if (r && r.reason === "stopped") return { stop: { reason: "stopped", message: "Stopped." } };
+          if (!r || r.ok === false) {
+            return { stop: { reason: "needs-consent", message: needsLine(run.company, title)
+                             + " I did not accept it. Press Apply for me again to answer." } };
+          }
+          if (r.decision !== "accept") {
+            return { stop: { reason: "terms-declined", message: "Stopped. You chose not to accept "
+                             + possessive(run.company, title) + ", so I did not apply." } };
+          }
+          via = r.via || "once";
+          progress(run.recordId, "running", "Thanks. Carrying on");
+        }
+        run.termsOk.set(host, via);
+      }
+      // The person said yes: click the accept button / tick the box like a person would.
+      const before = url;
+      let res = await realClick(wc, it.index);
+      if (!res) res = await withTimeout(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index: it.index })})`, true),
+                                        ACTION_MS, "accept").catch(() => null);
+      if (!(res && res.ok)) continue;                    // tried again on the next pass
+      await settle(wc, before);
+      try { await ensureScripts(wc); } catch (e) { /* the next step injects again */ }
+      await deps.postApp("/api/autoapply/agent/terms/accepted", {
+        record_id: run.recordId, title, url, kind: it.kind, via, company: run.company }).catch(() => null);
+      if (!run.accepted.includes(title)) run.accepted.push(title);
+      accepted++;
+      dlog("terms", "accepted (" + it.kind + ", " + via + ")");
+    }
+    return { accepted };
   }
   async function pressEscape(wc) {
     const release = deps.acquireDebugger(wc);
@@ -437,6 +593,11 @@ function createAgent(deps) {
     let emailCode = "";                  // a code the mailbox handed over, for the next step only
     const runAnswers = {};               // question -> the person's answer this run (bar, Telegram)
     const knownSeen = new Set();         // questions answered from their material without asking
+    const eeoTried = new Set();          // self-identification questions the shell tried to fill
+    // Terms the site requires: per site, the person's yes this run (via "always" | "all" |
+    // "once"), how often each notice was tried, and what was accepted (the Ready to send summary).
+    const terms = { st, recordId, company: String(opts.company || ""), termsTries: new Map(),
+                    termsOk: new Map(), accepted: [] };
     const hashes = [];
     const pageHashes = [];
     let failed = 0;
@@ -483,6 +644,12 @@ function createAgent(deps) {
         //    refuses when the person has turned "Create portal accounts for me" off, and the
         //    brain reports blocked (needs-person) in that case.
         let filled = 0, left = [];
+        // A notice the site needs accepted, left open by the last step's actions (a privacy
+        // dialog over the form): the person's consent first, before anything is filled under it.
+        {
+          const t = await handleTerms(wc, terms);
+          if (t.stop) return stopped(t.stop.reason, t.stop.message, { url });
+        }
         if (sig.blocker === "auth") {
           const h = hostOf(url);
           if (!portals.has(h)) {
@@ -506,11 +673,17 @@ function createAgent(deps) {
           }
         }
         if (st.stop) return stopped("stopped", "Stopped.");
+        // The fill can open one too (Phenom's "Data Privacy Agreement" comes up when the resume
+        // is attached).
+        {
+          const t = await handleTerms(wc, terms);
+          if (t.stop) return stopped(t.stop.reason, t.stop.message, { url });
+        }
 
         // 2. the view
         if (fr) { fr.close(); fr = null; }
         fr = await openFrames(wc);
-        const v = await view(wc, fr);
+        let v = await view(wc, fr);
         dlog("step " + step + " url=" + url + " blocker=" + (sig.blocker || "") + " filled=" + filled + " view:", v.text.slice(0, 600));
         const pageHash = hostOf(url) + "|" + String(v.text.length) + "|" + v.text.slice(0, 400);
         pageHashes.push(pageHash);
@@ -521,6 +694,21 @@ function createAgent(deps) {
         // The engine's open list, plus the fields the page's own errors name: a value the engine
         // typed into a widget that ignored it reads as filled, while the site still says empty.
         for (const q of questionsFor(v.text, [], true)) if (!left.includes(q)) left.push(q);
+
+        // Required self-identification questions with a saved answer: the shell picks them
+        // itself, before the model is asked anything (it never sees or sends these choices).
+        if (sig.blocker !== "auth") {
+          const got = await fillSavedEeo(wc, fr, v, left, recordId, eeoTried, st);
+          if (st.stop) return stopped("stopped", "Stopped.");
+          if (got.length) {
+            for (const q of got) knownSeen.add(q);
+            left = left.filter((x) => !got.some((q) => sameLabel(typeof x === "string" ? x : (x && x.label) || "", q)));
+            filled += got.length;
+            dlog("step " + step + " eeo:", got.length + " filled from saved answers");
+            progress(recordId, "running", "Filled from your saved answers", { step, filled });
+            v = await view(wc, fr);
+          }
+        }
 
         // 3. the brain
         const nudges = [];
@@ -550,7 +738,17 @@ function createAgent(deps) {
 
         // 4. done?
         const done = reply.done;
-        if (done && done.outcome === "ready_to_submit") return handOver(recordId, wc, url, opts, step);
+        if (done && done.outcome === "ready_to_submit") return handOver(recordId, wc, url, opts, step, terms.accepted);
+        if (done && done.outcome === "blocked" && done.reason === "needs-consent") {
+          // The model saw a notice to accept that the shell has not handled: the shell asks the
+          // person and clicks, never the model.
+          const t = await handleTerms(wc, terms, true);
+          if (t.stop) return stopped(t.stop.reason, t.stop.message, { url });
+          if (!t.accepted) return stopped("needs-consent", blockedMessage("needs-consent"), { url });
+          history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
+                         actions: ["(the person accepted the site's terms)"], results: ["accepted; continue"] });
+          continue;
+        }
         if (done && done.outcome === "submitted") {
           progress(recordId, "submitted", "Submitted.", { steps: step });
           await deps.postApp("/api/autofill/applied", { url: applyUrl, page_url: url, record_id: recordId });
@@ -578,7 +776,8 @@ function createAgent(deps) {
             const got = (await selectChoices(wc, fr, v, q)) || optionsFor(v.text, q) || (await dropdownOptions(wc, v, q));
             const all = cleanOptions(got.options, 1000);
             items.push({ question: q, options: orderOptions(q, all), all_options: all.slice(0, 40),
-                         partial: !!got.partial || all.length > 40, context: contextFor(v.text, q) });
+                         partial: !!got.partial || all.length > 40, context: contextFor(v.text, q),
+                         hint: noteAbove(v.text, q) });
           }
           // A question the run already took a known answer for, still open: that answer did not
           // fit, so the person is asked for real about THAT question; every other question still
@@ -589,7 +788,14 @@ function createAgent(deps) {
           if (rest.length) {
             const k = await deps.postApp("/api/autoapply/agent/ask", { questions: rest, record_id: recordId, known_only: true }).catch(() => null);
             const known = (k && k.answers) || {};
-            for (const [q, a] of Object.entries(known)) { runAnswers[q] = a; knownSeen.add(q); }
+            const pick = (k && k.select) || {};
+            for (const [q, a] of Object.entries(known)) {
+              knownSeen.add(q);
+              // A self-identification choice the page lists: the shell picks it itself, and it
+              // never travels on to the brain. Anything else goes to the brain as a placeholder.
+              if (pick[q] && await pickSaved(wc, v, q, pick[q])) continue;
+              runAnswers[q] = a;
+            }
             open = open.concat(rest.filter((it) => !(it.question in known)));
           }
           let answered = items.length - open.length;
@@ -660,7 +866,7 @@ function createAgent(deps) {
           if (a.placeholder === "email_code" && r && r.ok) emailCode = "";
           results.push(r && r.ok ? (r.note ? "ok, " + r.note : "ok") : "failed: " + ((r && r.note) || "?"));
           dlog("step " + step + " act " + h + " ->", r);
-          if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") return handOver(recordId, wc, url, opts, step); continue; }
+          if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") return handOver(recordId, wc, url, opts, step, terms.accepted); continue; }
           if (a.op === "click" || a.op === "wait") {
             const why = await settle(wc, before);
             if (why === "navigated" || (wc.getURL() || "") !== before) { results[results.length - 1] += ", page changed"; break; }
@@ -683,18 +889,20 @@ function createAgent(deps) {
   }
 
   // ---- Submit: the shell's decision, never the model's --------------------------------------
-  async function handOver(recordId, wc, url, opts, step) {
+  async function handOver(recordId, wc, url, opts, step, accepted) {
     if (current && current.disarmSigning) current.disarmSigning();
     const now = await deps.applyDecision(opts.url || url, url);
     const auto = !!opts.autonomous && now.click_submit === true;
     ready.set(recordId, { url, lane: auto ? "auto" : "assisted" });
+    const said = acceptedLine(opts.company || "", accepted);
     if (auto) {
-      progress(recordId, "running", "Sending", { step });
+      progress(recordId, "running", "Sending" + (said ? ". " + said : ""), { step });
       const r = await send(recordId);
       current = null;
       return r;
     }
-    progress(recordId, "ready", "Ready to send. Check it, then press Send.", { step, ready: true });
+    progress(recordId, "ready", "Ready to send. " + (said ? said + " " : "") + "Check it, then press Send.",
+             { step, ready: true, accepted: (accepted || []).slice() });
     current = null;
     return { ok: true, ready: true, steps: step };
   }
@@ -898,6 +1106,24 @@ function contextFor(viewText, label) {
   return "";
 }
 
+// The page's own note right above a field (the text lines between it and the element before,
+// a "Read more" button skipped): Lam Research explains its "Veteran" question in a paragraph
+// about protected veterans there. Sent only to the local engine, as a hint for a saved
+// self-identification answer; "" when there is none.
+function noteAbove(viewText, label) {
+  const lines = String(viewText || "").split("\n");
+  const at = lines.findIndex((ln) => /^\*?\[\d+\]</.test(ln) && sameLabel(lineLabel(ln), label));
+  const out = [];
+  for (let i = at - 1; at > 0 && i >= 0 && out.length < 3; i--) {
+    const ln = lines[i];
+    if (/^\*?\[\d+\]<button>(read|show|see) (more|less)<\/button>$/i.test(ln)) continue;
+    if (/^\*?\[\d+\]</.test(ln) || /^(URL:|Title:|\[Start of page\])/.test(ln)) break;
+    if (/^Error: /.test(ln)) continue;
+    out.unshift(ln);
+  }
+  return out.join(" ").slice(0, 400);
+}
+
 // The choices the view itself shows for a field: every radio option sharing its label, or a
 // select's first four (partial: the shell reads a select's full list from the element first).
 // null when the view shows none (free text, a typeahead, a custom dropdown).
@@ -960,8 +1186,23 @@ function orderOptions(question, options) {
   return out.slice(0, 8);
 }
 
+// ---- terms a site requires: the words the person sees (pure, so the tests reach them) --------
+const TERMS_CHOICES = ["Accept for all applications", "Just this one", "Stop"];
+const possessive = (company, title) => (String(company || "").trim() ? String(company).trim() + "'s " : "the site's ") + String(title || "terms");
+const needsLine = (company, title) => (String(company || "").trim() || "This site") + " needs you to accept its " + String(title || "terms") + " to apply.";
+const termsQuestion = (company, title) => needsLine(company, title) + " Accept it?";
+// The Ready to send summary's line: "Accepted Lam Research's Data Privacy Agreement for you."
+function acceptedLine(company, titles) {
+  const t = [...new Set((titles || []).map((x) => String(x || "").trim()).filter(Boolean))];
+  if (!t.length) return "";
+  const list = t.length === 1 ? t[0] : t.slice(0, -1).join(", ") + " and " + t[t.length - 1];
+  return "Accepted " + possessive(company, list) + " for you.";
+}
+
 function blockedMessage(reason, left) {
   switch (reason) {
+    case "needs-consent": return "This site needs you to accept its terms to apply, and I could not find where. Have a look at the page.";
+    case "terms-declined": return "Stopped. You chose not to accept the site's terms, so I did not apply.";
     case "needs-answers": {
       const qs = (left || []).map((x) => (typeof x === "string" ? x : (x && x.label) || "")).filter(Boolean).slice(0, 3);
       const list = qs.length ? " " + qs.map((q) => "\u201c" + q.slice(0, 90) + "\u201d").join(", ") + "." : "";
@@ -978,4 +1219,5 @@ function blockedMessage(reason, left) {
 }
 
 module.exports = { createAgent, blockedMessage, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion,
-                   optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS };
+                   optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, EEO_RE,
+                   TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove };

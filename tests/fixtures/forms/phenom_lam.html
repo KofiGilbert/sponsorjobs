@@ -1,0 +1,152 @@
+<!doctype html>
+<!-- Phenom's apply form as served at careers.lamresearch.com/careers/apply (read 2026-10-30,
+     public page, nothing typed or submitted). Sanitized: the page's own markup and class names
+     for the self-identification dropdowns and the "Data Privacy Agreement" dialog, with the
+     real option texts and dialog wording (its links point nowhere); everything else cut. The
+     script below stands in for Phenom's React code where a filler meets it:
+       - a dropdown opens on click (not mousedown), renders its list ONLY while open, as
+         ul#list-N[role=listbox] in an overlay that covers the next field, and ignores Escape,
+         blur, Tab and a second click; a mousedown outside its own box closes it (as on Lam);
+       - picking an option sets the input's value, closes the list, and adds "Clear <label>";
+       - attaching a resume opens the Data Privacy Agreement dialog (hidden until then, like
+         Lam's visibility:hidden / opacity:0 wrapper): Cancel drops the file, I Acknowledge
+         keeps it (window.fxAck).
+     window.fxLog() lists what happened. -->
+<html><head><meta charset="utf-8"><title>Submit application for Business Operations Analyst 2</title>
+<style>
+  body { font-family: sans-serif; margin: 0; padding: 16px 24px 400px; }
+  .field-3Ez-x { padding: 6px 12px; position: relative; }
+  .label-385LH { display: block; margin-bottom: 4px; }
+  .select-module_select-dropdown-main-wrapper__uq-6g { position: relative; width: 360px; }
+  .select-module_select-input__bO0s9 { width: 340px; padding: 8px; }
+  .select-module_select-dropdown-overlay__G4p-2 { position: absolute; left: 0; top: 38px; z-index: 50;
+      background: #fff; border: 1px solid #999; width: 360px; }
+  .list-module_list-container__9UkXh { list-style: none; margin: 0; padding: 0; }
+  .menuItem-module_menu-item-button__-RdU7 { display: block; width: 100%; text-align: left; padding: 12px 8px;
+      border: 0; background: #fff; }
+  .instruction-29usU { color: #444; max-width: 640px; }
+  .base-dialog-module_dialog-backdrop__GZb9L { position: fixed; inset: 0; display: flex; align-items: center;
+      justify-content: center; background: rgba(0,0,0,.4); z-index: 100; visibility: hidden; opacity: 0; }
+  .base-dialog-module_dialog-backdrop__GZb9L.is-open { visibility: visible; opacity: 1; }
+  .base-dialog-module_dialog__Vihkb { background: #fff; width: 560px; padding: 16px; }
+  footer { margin-top: 24px; }
+</style>
+</head>
+<body>
+<h1>Application Form</h1>
+<p>Business Operations Analyst 2</p>
+<p>US-CA-Fremont (1003)</p>
+
+<div class="field-3Ez-x"><label class="label-385LH" for="resumeInput"><span>Resume</span></label>
+  <p>Accepted file format: .pdf, .doc, .docx</p>
+  <input type="file" id="resumeInput" accept=".pdf,.doc,.docx" /></div>
+
+<h2>Job-Specific Information</h2>
+<div class="instruction-29usU">Diversity Information The Equal Employment Opportunity Commission (EEOC) requires organizations with 100 or more employees to complete an EEO-1 report each year. Completion of this data is voluntary and will not affect your terms or conditions of employment. This data will be used for EEO-1 and other reporting purposes.</div>
+
+<div id="eeo"></div>
+
+<div class="field-3Ez-x"><label><input type="checkbox" id="alerts" /> Send me job alerts and news about Lam Research by email</label></div>
+
+<button type="button" id="next">Next</button>
+<p id="err" role="alert" hidden></p>
+
+<footer><a href="#privacy-policy" id="pp">Privacy Policy</a></footer>
+
+<div class="base-dialog-module_dialog-backdrop__GZb9L privacyAgreementDialogWrapper-2Q4v3" role="dialog" aria-modal="true" aria-labelledby="dialog-label-2" id="privacyDialog">
+  <div class="base-dialog-module_dialog__Vihkb dialog-module_dialog__KA9-m privacyAgreementDialog-FbZ2O dialog-module_medium__ygdY-">
+    <div class="base-dialog-module_header__sxAFf dialog-module_header__P-qvg"><span id="dialog-label-2" role="heading" aria-level="2">Data Privacy Agreement</span>
+      <span class="base-dialog-module_header-buttons__aQKTr"><button aria-disabled="false" aria-label="Close" type="button" id="closeUploadResume">x</button></span></div>
+    <div class="base-dialog-module_body__m9LL- dialog-module_body__o8x5B privacyAgreementBody-13meT"><div class="privacy-content">
+      <p>In order to create an account, I acknowledge having read and understood the <a href="#notice" rel="noopener noreferrer"> Job Application Data Privacy Notice</a>. I further acknowledge that information provided can be used by Lam Research to complete a background check required for employment at Lam Research, in strict accordance with and to the extent permitted by any applicable local laws.</p>
+      <p>For US applicants only - As Lam Research is an E-Verify employer, I acknowledge having read and understood the <a href="#everify" rel="noopener noreferrer">E-Verify Employer participation poster</a> and <a href="#rtw" rel="noopener noreferrer">Right to Work poster.</a></p>
+    </div></div>
+    <div class="base-dialog-module_footer__v82ew dialog-module_footer__IBLjh">
+      <button data-test-id="cancel-upload-resume" aria-disabled="false" type="button" id="cancelUploadResume"><span>Cancel</span></button>
+      <button data-test-id="confirm-upload-resume" aria-disabled="false" type="button" id="confirmUploadResume"><span>I Acknowledge</span></button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const log = [];
+  window.fxLog = () => log.slice();
+  window.fxAck = false;
+  // The four self-identification questions as Lam's page has them (choices in its own order).
+  const FIELDS = [
+    { id: "q_custGender", label: "Gender", choices: ["Choose not to disclose", "Male", "Female"] },
+    { id: "q_ethnicity", label: "Ethnicity", choices: ["American Indian/Alaskan Native", "Asian", "Black or African American",
+      "Choose not to disclose", "Hispanic or Latino", "Native Hawaiian or Other Pacific Island", "Two or More Races", "White"] },
+    { id: "disability", label: "Disability", choices: ["Choose not to disclose", "No", "Yes"],
+      note: "Disability A Disabled Person is an individual who has a mental or physical impairment which substantially limits one or more major life activities, has a record of each impairment, or who is perceived as having such impairment." },
+    { id: "veteran", label: "Veteran", choices: ["Choose not to disclose", "No", "Yes"],
+      note: "Veteran To meet U.S. Department of Labor requirements, your voluntary cooperation is appreciated. Title 38, United States Code, Section 4212(d), PL 105-339 and PL, 107-228, require that federal contractors report annually the number of employees who are: 1) special disabled veterans 2) veterans of the Vietnam era and 3) other protected veterans (that is, who served on active duty during a war or in a campaign or expedition for which a campaign badge has been authorized). This information is requested solely for affirmative action record keeping purposes only." },
+  ];
+  const host = document.getElementById("eeo");
+  let seq = 16;
+  const setValue = (input, v) => Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, v);
+  for (const f of FIELDS) {
+    const n = seq; seq += 3;
+    const fid = "Job_Specific_Information_" + f.id;
+    const wrap = document.createElement("div");
+    wrap.className = "grid-module_col__Z6OUq grid-module_col-12__1nlO4 field-3Ez-x";
+    wrap.innerHTML = (f.note ? '<div class="instruction-29usU">' + f.note + '</div><button type="button" class="readmore">Read more</button>' : "")
+      + '<div class="grid-module_row__ZO4ww"><label id="' + fid + '_label" for="' + fid + '" class="label-385LH required-3upJY"><span>' + f.label + '</span></label></div>'
+      + '<div class="select-module_select-wrapper__SyQtt select-module_select-medium__pdYM2" data-test-id="' + fid + '" id="' + fid + '">'
+      + '<div aria-atomic="true" aria-live="polite" class="select-module_select-live-region__401gg" role="status"></div>'
+      + '<div class="select-module_select-dropdown-main-wrapper__uq-6g dropdown-module_main-wrapper__Q-inC">'
+      + '<div class="dropdown-module_reference-wrapper__6alfI select-module_select-input-wrapper__jVLZL" id="dropdown-' + (n + 2) + 'reference">'
+      + '<div class="input-module_input-wrapper__shFjF"><div class="select-module_select-input-group__g64bR input-module_input-group__XS3F4">'
+      + '<input aria-controls="list-' + (n + 1) + '" aria-expanded="false" aria-labelledby="' + fid + '_label" aria-required="true" role="combobox" aria-disabled="false"'
+      + ' class="select-module_select-input__bO0s9" id="input-' + (n + 3) + '" placeholder="Select" type="text" aria-invalid="false" value="">'
+      + '</div></div></div></div></div>'
+      + '<div class="errorSection-2kBtg" id="' + fid + '_error"></div>';
+    host.appendChild(wrap);
+    const input = wrap.querySelector("input[role=combobox]");
+    const main = wrap.querySelector(".select-module_select-dropdown-main-wrapper__uq-6g");
+    let overlay = null;
+    const close = () => { if (overlay) { overlay.remove(); overlay = null; } input.setAttribute("aria-expanded", "false"); };
+    const open = () => {
+      overlay = document.createElement("div");
+      overlay.className = "select-module_select-dropdown-overlay__G4p-2 dropdown-module_dropdown-wrapper__P1BI- dropdown-module_open__5ac4r";
+      overlay.innerHTML = '<div class="menu-module_menu-container__daPuY menu-module_medium__ZIYVs"><ul id="list-' + (n + 1) + '" role="listbox" class="list-module_list-container__9UkXh list-module_vertical__ZaxlZ">'
+        + f.choices.map((c, i) => '<li class="menuItem-module_menu-item__A6Ufi" role="presentation"><button class="menuItem-module_menu-item-button__-RdU7" tabindex="0" type="button" id="list-' + (n + 1) + '-option-' + i + '" title="' + c + '" aria-selected="false" role="option"><span class="menuItem-module_menu-item-wrapper__juhT9"><span class="menuItem-module_item-text__fEpKy"><span class="menuItem-module_label__T4Rzl">' + c + '</span></span></span></button></li>').join("")
+        + '</ul></div>';
+      main.appendChild(overlay);
+      input.setAttribute("aria-expanded", "true");
+      overlay.querySelectorAll("[role=option]").forEach((b) => b.addEventListener("click", () => {
+        setValue(input, b.title);
+        log.push("pick:" + f.label);
+        close();
+        if (!wrap.querySelector(".clear")) {
+          const clr = document.createElement("button");
+          clr.type = "button"; clr.className = "clear"; clr.textContent = "Clear " + f.label;
+          clr.addEventListener("click", () => { setValue(input, ""); clr.remove(); });
+          main.after(clr);
+        }
+      }));
+    };
+    input.addEventListener("click", () => { if (!overlay) open(); });          // a second click keeps it open
+    input.addEventListener("keydown", (e) => { if (e.key === "ArrowDown" && !overlay) open(); });   // Escape and Tab: ignored
+    document.addEventListener("mousedown", (e) => { if (overlay && !main.contains(e.target)) close(); });
+  }
+  const dlg = document.getElementById("privacyDialog");
+  const file = document.getElementById("resumeInput");
+  file.addEventListener("change", () => { if (file.files && file.files.length) { dlg.classList.add("is-open"); log.push("privacy-dialog"); } });
+  document.getElementById("cancelUploadResume").addEventListener("click", () => { dlg.classList.remove("is-open"); file.value = ""; log.push("privacy-cancel"); });
+  document.getElementById("closeUploadResume").addEventListener("click", () => { dlg.classList.remove("is-open"); file.value = ""; log.push("privacy-cancel"); });
+  document.getElementById("confirmUploadResume").addEventListener("click", () => { dlg.classList.remove("is-open"); window.fxAck = true; log.push("privacy-ack"); });
+  document.getElementById("pp").addEventListener("click", (e) => { e.preventDefault(); log.push("policy-link"); });
+  // Test hook: open the dialog the way attaching a resume does (a test cannot set a file here).
+  window.fxOpenPrivacy = () => { dlg.classList.add("is-open"); log.push("privacy-dialog"); };
+  document.getElementById("next").addEventListener("click", () => {
+    const open = FIELDS.filter((f) => !document.querySelector("#Job_Specific_Information_" + f.id + " input").value);
+    const err = document.getElementById("err");
+    if (open.length) { err.textContent = open.map((f) => "The field " + f.label + " is required and must have a value.").join(" "); err.hidden = false; log.push("next-blocked"); return; }
+    err.hidden = true; log.push("next");
+  });
+})();
+</script>
+</body></html>

@@ -1190,5 +1190,7 @@
   "aa.agent.captcha": "The submit hit a captcha. Solve it on the page, then press Send again.",
   "aa.agent.nosend": "Could not find the Submit button. Press it on the page.",
   "aa.send": "Send",
-  "aa.stop": "Stop"
+  "aa.stop": "Stop",
+  "ans.termsAlways": "Accept the privacy notice or terms a site requires to apply, without asking me",
+  "ans.termsNote": "When this is off, I ask you the first time on each site. Every one I accept is named when the application is ready to send."
 }

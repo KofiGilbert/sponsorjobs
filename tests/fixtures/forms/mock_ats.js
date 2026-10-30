@@ -11,6 +11,10 @@
   const verify = q.get("verify") === "1";             // a 6-digit code is emailed after sign-in
   const resetToken = q.get("reset") || "";             // the emailed reset link lands here
   const mustAnswer = q.get("mustanswer") === "1";      // years of experience is required
+  // ?phenom=1: Lam Research's Phenom form (2026-10-30). Attaching the resume opens a "Data
+  // Privacy Agreement" dialog that must be acknowledged, and the disclosures are Phenom's
+  // dropdowns (ignore Escape and blur, list over the next field), all four required.
+  const phenom = q.get("phenom") === "1";
   const CODE = "482913";
   const log = [];                                      // what happened, read by the test
   window.fxLog = () => log.slice();
@@ -93,8 +97,20 @@
         + '<div class="field"><label for="cv">Resume/CV</label><input type="file" id="cv" style="opacity:0;position:absolute;width:1px;height:1px"><button type="button" id="cvbtn">Upload</button><span id="cvname"></span></div>'
         + btn("next", "Save and Continue"));
       $("cvbtn").onclick = () => $("cv").click();
-      $("cv").onchange = () => { $("cvname").textContent = ($("cv").files[0] || {}).name || ""; };
-      $("next").onclick = () => { log.push("contact:" + ["fn", "ln", "em", "ph"].filter((i) => $(i).value).length + ":" + (($("cv").files || []).length ? "cv" : "nocv")); pages.questions(); };
+      let dlg = null;
+      if (phenom) {
+        dlg = W.PrivacyDialog({ company: "Acme Corp", onAck: () => log.push("privacy-ack"),
+                                onCancel: () => { log.push("privacy-cancel"); $("cv").value = ""; $("cvname").textContent = ""; } });
+      }
+      $("cv").onchange = () => {
+        $("cvname").textContent = ($("cv").files[0] || {}).name || "";
+        if (dlg && ($("cv").files || []).length) { log.push("privacy-dialog"); dlg.open(); }
+      };
+      $("next").onclick = () => {
+        if (dlg && ($("cv").files || []).length && !dlg.acked) { log.push("privacy-needed"); return; }
+        log.push("contact:" + ["fn", "ln", "em", "ph"].filter((i) => $(i).value).length + ":" + (($("cv").files || []).length ? "cv" : "nocv"));
+        pages.questions();
+      };
     },
     questions() {
       page('<h2>Application Questions</h2><p class="muted">Step 2 of 3</p><div id="w"></div>'
@@ -111,12 +127,33 @@
       };
     },
     disclosures() {
+      if (phenom) return pages.phenomDisclosures();
       page('<h2>Voluntary Disclosures</h2><p class="muted">Step 3 of 3</p>'
         + '<div class="field"><label for="vet">Veteran status</label><select id="vet"><option value="">Select...</option>'
         + '<option>I am a protected veteran</option><option>I am not a protected veteran</option><option>I do not wish to self-identify</option></select></div>'
         + '<div class="field"><label><input type="checkbox" id="agree"> I agree to the terms and conditions</label></div>'
         + btn("next", "Save and Continue"));
       $("next").onclick = () => { log.push("disclosures"); pages.review(); };
+    },
+    phenomDisclosures() {
+      page('<h2>Job-Specific Information</h2><p class="muted">Step 3 of 3</p><div id="w"></div>'
+        + '<p id="err" class="error" hidden></p>' + btn("next", "Save and Continue"));
+      const host = $("w");
+      const f = {
+        gender: W.PhenomSelect(host, { id: "q_custGender", label: "Gender", options: ["Choose not to disclose", "Male", "Female"] }),
+        ethnicity: W.PhenomSelect(host, { id: "q_ethnicity", label: "Ethnicity", options: ["American Indian/Alaskan Native", "Asian",
+          "Black or African American", "Choose not to disclose", "Hispanic or Latino", "Native Hawaiian or Other Pacific Island",
+          "Two or More Races", "White"] }),
+        disability: W.PhenomSelect(host, { id: "disability", label: "Disability", options: ["Choose not to disclose", "No", "Yes"] }),
+        veteran: W.PhenomSelect(host, { id: "veteran", label: "Veteran", options: ["Choose not to disclose", "No", "Yes"],
+          note: "Veteran To meet U.S. Department of Labor requirements, federal contractors report annually the number of employees who are: 1) special disabled veterans 2) veterans of the Vietnam era and 3) other protected veterans." }),
+      };
+      window.fx.eeo = f;
+      $("next").onclick = () => {
+        const open = Object.entries(f).filter(([, w]) => !w.value).map(([k]) => k);
+        if (open.length) { $("err").textContent = open.map((k) => "The field " + k[0].toUpperCase() + k.slice(1) + " is required and must have a value.").join(" "); $("err").hidden = false; log.push("eeo-open:" + open.join(",")); return; }
+        log.push("eeo:" + Object.keys(f).length); pages.review();
+      };
     },
     review() {
       page('<h2>Review</h2><p>Check your application, then submit it.</p>'
@@ -133,4 +170,5 @@
     },
   };
   function $(id) { return document.getElementById(id); }
+  window.fxGo = (name) => { if (pages[name]) pages[name](); };      // tests jump to a page
   if (resetToken) { log.push("reset-link-opened"); pages.newpw(); } else pages.job();

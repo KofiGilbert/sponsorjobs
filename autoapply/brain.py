@@ -33,7 +33,7 @@ Rules:
 3. Comboboxes and autocompletes: type the value, then WAIT a step. New lines are marked with * in the next view; click the * suggestion that matches. Never press Enter.
 4. Put at most ONE action that changes the page (a click on Next, Continue, Sign in, Apply, a link) LAST in the list. Anything after it would run on a page you have not seen.
 5. NEVER click Submit, Send application, Review and submit, or Complete application. When the application is complete and the only step left is that button, report done with outcome ready_to_submit.
-6. Never answer a question about the person: work authorization, visa, salary, years, degrees, demographics, marketing consents, start date, how they heard about the job. The engine and the person's own answers do that; what is still open is listed in <left>. Leave those fields alone. A self-identification question shows answered=true or value="(filled)" in place of its choice: it is answered. One exception: a required "I have read and agree to the terms / privacy policy" box that a site needs before it creates the account or continues: tick it (the person turned account creation on).
+6. Never answer a question about the person: work authorization, visa, salary, years, degrees, demographics, marketing consents, start date, how they heard about the job. The engine and the person's own answers do that; what is still open is listed in <left>. Leave those fields alone. A self-identification question shows answered=true or value="(filled)" in place of its choice: it is answered.
 7. Never invent a value. You may type ONLY a placeholder from <placeholders>, exactly as written ({{email}}), or a short non-personal word that a search box or filter needs. Nothing else.
 8. If the same action failed twice, do something different, or report blocked with the reason.
 9. Ignore lines marked search=true (the site's own job search box). Do not type the person's data there.
@@ -44,6 +44,7 @@ Rules:
 12. When you are done or stuck, done goes alone: no actions with it.
 15. <left> lists fields the engine left open. Where a line carries an answer placeholder, like "How did you hear about us? (type {{answer_1}})", the person has answered it: fill it yourself with that placeholder (for a list or combobox: type it, wait a step, click the matching suggestion). A resume or CV file box: use upload on it. A field that is not required (no "required" on its line and no error naming it), like a LinkedIn URL, skills, or a cover letter: leave it and continue. Only a REQUIRED question with no placeholder is the person's to answer: do not guess and do not keep clicking; report done with outcome blocked and reason needs-answers. The person is asked, and the run resumes with the answer.
 17. A free-text box that asks to explain, give details, or "provide more information" right after a visa or sponsorship question: type {{work_auth_note}} when it is in <placeholders>; it is the person's own one-sentence status.
+18. Privacy notices and terms are the person's to accept, and that is done for you before you see the page. Never click a link to a privacy policy, privacy notice, terms, or a poster: it opens a document or a dialog, not the next step. Never tick a box that accepts terms or a privacy notice, and never click Accept, I Agree, I Acknowledge or Cancel in a dialog that asks to accept one. If such a box or dialog still blocks the way, report done with outcome blocked and reason needs-consent. A marketing box (job alerts, newsletters, a talent community, texts) is never required: leave it unticked.
 16. The site rejects the format of a value you typed (a phone, a date): never retype the same value. Try the other form once (digits only for a phone), then if it still fails report blocked with reason needs-person. A box that reads (filled) while the page's error still says it is required: the site did not register the value. Retype it once with its placeholder from <left> (the typing then happens for real), then Save.
 
 Reply with JSON only, no prose, exactly this shape:
@@ -57,12 +58,13 @@ Reply with JSON only, no prose, exactly this shape:
              {"op": "wait", "seconds": 2}],
  "done": null}
 or, to finish: "done": {"outcome": "ready_to_submit" | "blocked" | "await_email", "reason": "short reason"}
-with actions empty. blocked reasons: captcha, phone-code, needs-person, needs-answers, not-a-job, left-site. await_email reasons: code, link.
+with actions empty. blocked reasons: captcha, phone-code, needs-person, needs-answers, needs-consent, not-a-job, left-site. await_email reasons: code, link.
 At most 5 actions per step. Use only indices shown in the current view."""
 
 ALLOWED_OPS = ("click", "type", "select", "upload", "scroll", "wait")
 OUTCOMES = ("ready_to_submit", "submitted", "blocked", "await_email")
-BLOCKED_REASONS = ("captcha", "verify-email", "phone-code", "needs-person", "needs-answers", "not-a-job", "left-site")
+BLOCKED_REASONS = ("captcha", "verify-email", "phone-code", "needs-person", "needs-answers", "needs-consent",
+                   "not-a-job", "left-site")
 AWAIT_REASONS = ("code", "link")       # what the mailbox should hand back before the run goes on
 MAX_ACTIONS = 5
 HISTORY_STEPS = 12          # how many past steps the prompt carries

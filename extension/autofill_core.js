@@ -1283,6 +1283,25 @@
     return cleanLabel(rawLabel(el) || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "");
   }
 
+  // A list ANOTHER combobox names (aria-controls / aria-owns) is that one's, never this one's.
+  // Phenom (careers.lamresearch.com) keeps a dropdown open through Escape and blur, so the
+  // engine once read the still-open Ethnicity list as Disability's choices (2026-10-30).
+  function namedIdsOf(c) {
+    const out = [];
+    for (const n of [c].concat(qsaSafe("[aria-controls], [aria-owns]", c))) {
+      for (const a of ["aria-controls", "aria-owns"]) {
+        for (const id of String(n.getAttribute(a) || "").split(/\s+/)) if (id) out.push(id);
+      }
+    }
+    return out;
+  }
+  function ownedByOther(box, el) {
+    const ids = new Set();
+    for (let n = box, i = 0; n && n.nodeType === 1 && i < 4; n = n.parentElement, i++) if (n.id) ids.add(n.id);
+    if (!ids.size) return false;
+    return qsaDeep(COMBO_SEL).some((o) => o !== el && !o.contains(el) && !el.contains(o)
+                                         && namedIdsOf(o).some((id) => ids.has(id)));
+  }
   function listboxFor(el) {
     for (const attr of ["aria-controls", "aria-owns"]) {
       for (const id of String(el.getAttribute(attr) || "").split(/\s+/).filter(Boolean)) {
@@ -1293,13 +1312,30 @@
     for (let i = 0; i < 6 && node.parentElement; i++) {     // react-select: the menu sits beside the control
       node = node.parentElement;
       if (otherCombo(node, el)) break;
-      const m = qsaSafe("[role='listbox'], [class*='menu']", node).find((x) => !x.contains(el) && boxShown(x));
+      const m = qsaSafe("[role='listbox'], [class*='menu']", node).find((x) => !x.contains(el) && boxShown(x) && !ownedByOther(x, el));
       if (m) return m;
     }
     // A menu portalled to the end of <body> (Workday, react-select menuPortalTarget): the
-    // visible listbox, newest last.
-    const lbs = qsaDeep("[role='listbox']").filter((x) => boxShown(x) && !x.contains(el));
+    // visible listbox, newest last, never one another control names.
+    const lbs = qsaDeep("[role='listbox']").filter((x) => boxShown(x) && !x.contains(el) && !ownedByOther(x, el));
     return lbs.length ? lbs[lbs.length - 1] : null;
+  }
+  // A press just outside the dropdown, the way a person clicks away (plain mouse events on the
+  // parent of the smallest box holding the control and its list, so it stays inside the form and
+  // any dialog holding it; no click). For a widget that ignores Escape and blur (Phenom).
+  function pressOutside(el) {
+    const doc = el.ownerDocument || document;
+    const top = (n) => !n || n === doc.body || n === doc.documentElement;
+    const lb = listboxFor(el);
+    let r = null;
+    if (lb) { r = el; while (r && !r.contains(lb)) r = r.parentElement; }
+    let t = r && !top(r) && !top(r.parentElement) ? r.parentElement : null;
+    if (!t) {
+      t = el;
+      for (let i = 0; i < 3 && !top(t.parentElement); i++) t = t.parentElement;
+      if (t === el) return;
+    }
+    for (const ty of ["pointerdown", "mousedown", "pointerup", "mouseup"]) fire(t, ty, { button: 0 });
   }
   function optionText(o) { return norm(o.textContent || o.getAttribute("aria-label") || ""); }
   function optionsFor(el) {
@@ -1328,11 +1364,16 @@
     return menuOpen(el);
   }
   async function closeCombo(el) {
-    if (el.getAttribute("aria-expanded") === "true" || optionsFor(el).length) {
+    const open = () => el.getAttribute("aria-expanded") === "true" || optionsFor(el).length > 0;
+    if (open()) {
       fire(el, "keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27 });
       await sleep(STEP_MS);
     }
     try { if (el.blur) el.blur(); } catch (e) { /* fine */ }
+    if (open()) {                       // ignored Escape and blur: click away, once
+      await sleep(STEP_MS);
+      if (open()) { pressOutside(el); await sleep(STEP_MS * 2); }
+    }
   }
 
   // ---- matching an option to the value we want

@@ -1190,5 +1190,7 @@
   "aa.agent.captcha": "Beim Absenden kam ein Captcha. Löse es auf der Seite und drücke erneut Senden.",
   "aa.agent.nosend": "Senden-Button nicht gefunden. Drücke ihn auf der Seite.",
   "aa.send": "Senden",
-  "aa.stop": "Stopp"
+  "aa.stop": "Stopp",
+  "ans.termsAlways": "Die Datenschutzhinweise oder Bedingungen, die eine Website für die Bewerbung verlangt, ohne Rückfrage akzeptieren",
+  "ans.termsNote": "Wenn das aus ist, frage ich dich beim ersten Mal auf jeder Website. Alles, was ich akzeptiere, wird genannt, wenn die Bewerbung bereit zum Senden ist."
 }
