@@ -19,6 +19,8 @@ dependencies = [
     "flask>=3.0",                # local web UI + JSON API server, ui/app.py (BSD-3)
     "cryptography>=42.0",        # App Lock: scrypt + AES-256-GCM at rest, ui/lock.py (Apache-2.0/BSD)
     "openai>=1.0",               # optional OpenAI backend, llm/openai_client.py (Anthropic is the default; MIT)
+    "requests>=2.28",            # broker, Telegram and feed HTTP calls in ui/app.py and notify/ (Apache-2.0);
+                                 # it used to arrive only through mempalace, which is gone
 ]
 
 [project.optional-dependencies]

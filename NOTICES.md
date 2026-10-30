@@ -7,7 +7,7 @@ the pinned inventory for commercial-use review.
 **Scope.** Runtime base install of: `python-docx`, `pypdf`, `python-pptx`,
 `pypdfium2`, `rapidocr-onnxruntime` (CV upload/extraction/OCR) and their
 transitive closure. No optional extras. Enumerated statically from the resolved
-dependency graph. 21 packages total.
+dependency graph. 26 packages total.
 
 MemPalace and ChromaDB were removed on 2026-10-30 (the applicant brain, Phase 2,
 docs/applicant-brain.md section 12): the chat diary is now the app's own
@@ -38,9 +38,11 @@ still installed by Flask and the model SDKs, which this inventory does not cover
 
 | Package | Version | License |
 |---|---|---|
-| PyYAML | 6.0.3 | MIT License |
+| certifi | 2026.7.22 | Mozilla Public License 2.0 (MPL 2.0) |
+| charset-normalizer | 3.5.2 | MIT License |
 | colorama | 0.4.6 | BSD License |
 | flatbuffers | 25.12.19 | Apache Software License |
+| idna | 3.20 | BSD-3-Clause |
 | lxml | 6.1.1 | BSD-3-Clause |
 | numpy | 2.5.1 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 |
 | onnxruntime | 1.27.0 | MIT License |
@@ -53,11 +55,14 @@ still installed by Flask and the model SDKs, which this inventory does not cover
 | pypdfium2 | 5.11.0 | BSD-3-Clause / Apache-2.0 (PDFium BSD-3) |
 | python-docx | 1.2.0 | MIT License |
 | python-pptx | 1.0.2 | MIT License |
+| PyYAML | 6.0.3 | MIT License |
 | rapidocr-onnxruntime | 1.4.4 | Apache-2.0 |
+| requests | 2.34.2 | Apache-2.0 |
 | shapely | 2.1.2 | BSD License |
 | six | 1.17.0 | MIT License |
 | tqdm | 4.68.4 | MPL-2.0 AND MIT (weak, file-level) |
 | typing_extensions | 4.16.0 | PSF-2.0 |
+| urllib3 | 2.8.0 | MIT License |
 | xlsxwriter | 3.2.9 | BSD License |
 
 ## Excluded (intentionally not installed)
