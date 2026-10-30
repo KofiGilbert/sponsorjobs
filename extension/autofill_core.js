@@ -942,10 +942,22 @@
   // ---------------------------------------------------------- anti-bot wall
   // A captcha or auth/login wall means the site wants a HUMAN here. We NEVER try to get past it
   // (no evasion, no stealth, per CLAUDE.md §7): we detect it and drop the whole fill to the person.
+  // Only a captcha the person can SEE is a wall. Invisible reCAPTCHA v3 / Turnstile score checks
+  // load a zero-size, hidden frame on many career sites (Lam Research) and never ask anything:
+  // stopping on them sent people looking for a captcha that was not there.
+  function shownFrame(f) {
+    try {
+      const r = f.getBoundingClientRect();
+      if (r.width < 20 || r.height < 20) return false;
+      const cs = getComputedStyle(f);
+      if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) === 0) return false;
+      return !(f.closest && f.closest('[aria-hidden="true"]'));
+    } catch (e) { return true; }
+  }
   function pageBlocker() {
     for (const f of qsaDeep("iframe")) {
       const src = norm(f.getAttribute && f.getAttribute("src"));
-      if (/recaptcha|hcaptcha|\bcaptcha\b|turnstile|arkoselabs|funcaptcha|challenges\.cloudflare/.test(src))
+      if (/recaptcha|hcaptcha|\bcaptcha\b|turnstile|arkoselabs|funcaptcha|challenges\.cloudflare/.test(src) && shownFrame(f))
         return "captcha";
     }
     const body = norm((document.body && document.body.textContent) || "").slice(0, 5000);
