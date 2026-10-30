@@ -261,6 +261,16 @@ still open on the page (at most 6), on the bar and on Telegram, and waits up to 
   above a field goes along as `hint` (Lam's "Veteran" sits under a paragraph about protected
   veterans, so a saved "not a protected veteran" answers its plain No).
 
+- **Where known answers come from.** Every reader and writer of the answer library goes through
+  `_answer_lib()` in `ui/app.py`, and the work authorization and the standing decline through
+  `_work_auth()` and `_eeo_decline()`. With the applicant brain on (the default since Phase 1 of
+  `docs/applicant-brain.md`) these read `data/applicant.db`: `BrainLibrary`
+  (`applicant/library.py`) has the answer library's methods and gives the same answers, and
+  every write is mirrored one way into `answers.db` and `app_prefs.json`, so the browser
+  extension and a rollback see it too. `SPONSORJOBS_BRAIN=0` or
+  `python -m applicant.migrate --rollback` puts the readers back on `answers.db` and
+  `app_prefs.json`.
+
 ### Terms a site requires (`/api/autoapply/agent/terms`)
 
 A privacy notice, data privacy agreement, terms, a consent to process the application data or an

@@ -8313,7 +8313,7 @@
   });
   $("#memExport")?.addEventListener("click", () => { window.location.href = "/api/memory/export"; });
   $("#memErase")?.addEventListener("click", async () => {
-    if (!confirm("Erase everything SponsorJobs has learned about you? This clears your saved facts, the conversation history, and cannot be undone.")) return;
+    if (!confirm("Erase everything SponsorJobs has learned about you? This clears your saved facts, your form answers, your interview notes and the conversation history. Your resumes and applications stay. This cannot be undone.")) return;
     try { await fetch("/api/memory/erase", { method: "POST" }); toast("Memory erased."); renderMemory(); }
     catch { toast("Couldn't erase memory."); }
   });

@@ -265,6 +265,27 @@ def is_per_job(question: str, company: str = "") -> bool:
     return bool(co) and len(co) > 2 and co in q.lower()
 
 
+def row_rank(row) -> tuple:
+    """How two saved rows for one question are ranked: the person's own before a drafted one,
+    then the most recently updated. Shared by AnswerLibrary and the applicant brain's
+    BrainLibrary (applicant/library.py), so both always hand out the same answer."""
+    return (row["source"] != "you", -float(row["updated_at"] or 0))
+
+
+def best_row(key: str, rows: list) -> dict | None:
+    """The answer a key has among its candidate rows: the usable ones only, ranked by row_rank."""
+    usable = [r for r in rows if not unusable(key, r["answer"])]
+    if not usable:
+        return None
+    usable.sort(key=row_rank)
+    return usable[0]
+
+
+def rekey_rank(row) -> tuple:
+    """The order the re-key moves rows in: a usable answer claims a key first, then row_rank."""
+    return (unusable(normalize(row["question"]), row["answer"]),) + row_rank(row)
+
+
 class AnswerLibrary:
     """question -> answer, keyed by ``normalize(question)``. One row per key."""
 
@@ -299,13 +320,10 @@ class AnswerLibrary:
             if row and row[0] == version:
                 return
 
-            def rank(r):
-                return (unusable(normalize(r["question"]), r["answer"]), r["source"] != "you",
-                        -float(r["updated_at"] or 0))
             for _ in range(3):                     # a key freed by one move can take another row
                 moved = False
                 rows = self.conn.execute("SELECT key, question, answer, source, updated_at FROM answers").fetchall()
-                for r in sorted(rows, key=rank):
+                for r in sorted(rows, key=rekey_rank):
                     new = normalize(r["question"])
                     if new and new != r["key"] and not self.conn.execute(
                             "SELECT 1 FROM answers WHERE key=?", (new,)).fetchone():
@@ -402,11 +420,7 @@ class AnswerLibrary:
         then the most recently updated. Two saved salaries that disagree (one under the salary
         key, a newer one the agent saved under an "Error: The field ..." label before labels were
         cleaned) give the newer one, here and on Your answers alike."""
-        rows = [r for r in self.candidates(key) if not unusable(key, r["answer"])]
-        if not rows:
-            return None
-        rows.sort(key=lambda r: (r["source"] != "you", -float(r["updated_at"] or 0)))
-        return rows[0]
+        return best_row(key, self.candidates(key))
 
     def lookup(self, question: str) -> dict | None:
         """The saved answer to this question (same normalized key), or None. Every reader that
