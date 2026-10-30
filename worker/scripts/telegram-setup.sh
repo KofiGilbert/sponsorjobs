@@ -81,8 +81,8 @@ tg setMyCommands '{"commands":[
   {"command":"help","description":"What this bot does"},
   {"command":"stop","description":"Pause messages"},
   {"command":"resume","description":"Turn messages back on"},
-  {"command":"show","description":"A picture of a tailored CV"},
-  {"command":"versions","description":"Saved versions of a CV"}]}' >/dev/null
+  {"command":"show","description":"A picture of a tailored resume"},
+  {"command":"versions","description":"Saved versions of a resume"}]}' >/dev/null
 
 INFO="$(tg getWebhookInfo '{}')"
 INFO="$INFO" node -e '
