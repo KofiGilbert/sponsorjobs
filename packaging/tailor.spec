@@ -69,6 +69,9 @@ hiddenimports = [
     "ui.shell", "tailoring.compiler", "tailoring.assembler", "tailoring.keywords",
     "sourcing.sponsors", "sourcing.ats", "sourcing.service", "sourcing.watchlist",
     "submit.allowlist", "intake.memory", "intake.template_manifest", "llm.anthropic_client",
+    # The applicant brain (docs/applicant-brain.md), imported inside functions in ui/app.py.
+    "applicant", "applicant.keys", "applicant.store", "applicant.library", "applicant.migrate",
+    "applicant.redact",
 ]
 
 a = Analysis(

@@ -4835,7 +4835,10 @@ def _load_prefs() -> dict:
         return {}
 
 
-def _save_prefs(prefs: dict) -> dict:
+def _save_prefs(prefs: dict, source: str = "you") -> dict:
+    """Save the prefs answers. With the applicant brain on, the brain is written first and the
+    file below is its one-way mirror (docs/applicant-brain.md, section 11), so the browser
+    extension and every older reader see the same answers."""
     import json
 
     def _txt(v, n):
@@ -4872,12 +4875,25 @@ def _save_prefs(prefs: dict) -> dict:
         clean["work_auth"] = wa
         for k, v in _wa.legacy_prefs(wa).items():
             clean[k] = v
+    st = _brain()
+    if st is not None:
+        try:
+            from applicant.library import catch_up_prefs
+            with st.lock:                           # the brain and its mirror, as one step
+                catch_up_prefs(st, clean, source=source)
+                if st.meta("mirror_legacy", "1") != "1":
+                    return clean
+                _DATA.mkdir(parents=True, exist_ok=True)
+                _PREFS_PATH.write_text(json.dumps(clean, indent=2), encoding="utf-8")
+                return clean
+        except Exception:      # noqa: BLE001 - the prefs file is always written
+            traceback.print_exc()
     _DATA.mkdir(parents=True, exist_ok=True)
     _PREFS_PATH.write_text(json.dumps(clean, indent=2), encoding="utf-8")
     return clean
 
 
-def _merge_prefs(patch: dict) -> dict:
+def _merge_prefs(patch: dict, source: str = "you") -> dict:
     """Update only the answers in ``patch``, keeping every other saved answer."""
     cur = _load_prefs()
     cur.update({k: v for k, v in (patch or {}).items() if k in _PREF_KEYS})
@@ -4888,7 +4904,7 @@ def _merge_prefs(patch: dict) -> dict:
             and any(k in (patch or {}) for k in legacy):
         from autoapply import workauth as _wa     # carry the flat answer into the structured profile
         cur["work_auth"] = _wa.apply_legacy(cur["work_auth"], patch)
-    return _save_prefs(cur)
+    return _save_prefs(cur, source=source)
 
 
 _PREF_KEYS = ("work_authorized", "work_auth_us", "needs_sponsorship", "willing_to_relocate",
@@ -4988,7 +5004,7 @@ def _learn_from_corrections(body: dict) -> dict:
                            "willing_to_relocate", "over_18")}
     if "eeo_decline" in body:
         pref_patch["eeo_decline"] = bool(body.get("eeo_decline"))
-    prefs = _merge_prefs(pref_patch) if pref_patch else _load_prefs()
+    prefs = _merge_prefs(pref_patch, source="extension") if pref_patch else _load_prefs()
     learned_q = 0
     qa_list = [x for x in (body.get("answers") or []) if isinstance(x, dict)][:40]
     if qa_list:                                   # a typed answer the person fixed on a form
@@ -5229,7 +5245,7 @@ def profile_prefs_set():
             # scrolling or clicking) and sends the extraction here, to the local app only.
             return _nostore(jsonify(_linkedin_review_run(ev.get("profile"), draft=False)))
         return jsonify({"ok": False, "error": f"Unknown event {kind!r}."}), 400
-    return _nostore(jsonify({"ok": True, "prefs": _save_prefs(body)}))
+    return _nostore(jsonify({"ok": True, "prefs": _save_prefs(body, source="extension")}))
 
 
 @app.post("/api/profile/answers")
@@ -5263,9 +5279,32 @@ def profile_answers_save():
 _ANSWERS_DB = _DATA / "answers.db"
 
 
+def _brain():
+    """The applicant brain (applicant/, docs/applicant-brain.md) for this data folder, migrated
+    from the legacy stores the first time; None when it is off (SPONSORJOBS_BRAIN=0, a
+    rollback, or a migration that did not verify), and the legacy stores are read instead."""
+    try:
+        from applicant import migrate as _bm
+        return _bm.ensure(_DATA)
+    except Exception:          # noqa: BLE001 - the legacy stores always work
+        traceback.print_exc()
+        return None
+
+
 def _answer_lib():
-    """Open the answer library, seeding it once from the older saved answers."""
+    """Open the answer library: the brain's (BrainLibrary, same methods and answers) when the
+    brain is on, else answers.db itself, seeded once from the older saved answers. The brain
+    first catches up on anything answers.db holds that it has not seen, so the two never drift."""
     from autoapply.answers import AnswerLibrary, seed_once
+    st = _brain()
+    if st is not None:
+        try:
+            from applicant.library import BrainLibrary, catch_up_library_file
+            if st.meta("mirror_legacy", "1") == "1":
+                catch_up_library_file(st, _ANSWERS_DB, _load_prefs())
+            return BrainLibrary(st, mirror_path=_ANSWERS_DB)
+        except Exception:      # noqa: BLE001 - the legacy library always works
+            traceback.print_exc()
     lib = AnswerLibrary(_ANSWERS_DB)
     try:
         seed_once(lib, _load_prefs())
@@ -5274,10 +5313,31 @@ def _answer_lib():
     return lib
 
 
+def _brain_prefs() -> dict:
+    """The prefs answers as the readers use them: from the brain when it is on (after catching
+    up on the prefs file), else the file itself."""
+    st = _brain()
+    if st is not None:
+        try:
+            from applicant.library import catch_up_prefs, prefs_view
+            with st.lock:
+                if st.meta("mirror_legacy", "1") == "1":
+                    catch_up_prefs(st, _load_prefs())
+                return prefs_view(st)
+        except Exception:      # noqa: BLE001
+            traceback.print_exc()
+    return _load_prefs()
+
+
 def _work_auth() -> dict:
     """The person's work-authorization profile (structured, or built from the older answers)."""
     from autoapply import workauth as _wa
-    return _wa.load(_load_prefs())
+    return _wa.load(_brain_prefs())
+
+
+def _eeo_decline() -> bool:
+    """The standing "decline to self-identify" choice."""
+    return bool(_brain_prefs().get("eeo_decline"))
 
 
 def _answers_payload(query: str = "") -> dict:
@@ -5293,7 +5353,7 @@ def _answers_payload(query: str = "") -> dict:
                            "statuses": [{"code": k, "label": v} for k, v in _wa.STATUSES[c]]}
                           for c in _wa.COUNTRIES],
             "implied": sorted(_wa.CITIZEN | _wa.PERMANENT), "dated": sorted(_wa.DATED),
-            "eeo_decline": bool(_load_prefs().get("eeo_decline")),
+            "eeo_decline": _eeo_decline(),
             "answers": rows, "total": total}
 
 
@@ -5412,7 +5472,7 @@ def answers_basics_save():
         patch["desired_salary"] = str(now)
     if "eeo_decline" in b:
         patch["eeo_decline"] = bool(b.get("eeo_decline"))
-    prefs = _merge_prefs(patch) if patch else _load_prefs()
+    prefs = _merge_prefs(patch, source="card") if patch else _load_prefs()
     return jsonify(_basics_payload(prefs))
 
 
@@ -5892,6 +5952,7 @@ def memory_export():
         "transcript": _palace().load_history(),
         "profile": saved.get("profile") or {},
         "essentials": saved.get("essentials") or {},
+        **_brain_export(),
     }
     resp = _nostore(jsonify(payload))
     resp.headers["Content-Disposition"] = "attachment; filename=tailor-memory.json"
@@ -6033,17 +6094,122 @@ def memory_highlights():
     return jsonify({"ok": True, "highlights": hi})
 
 
+def _read_json_file(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    except (OSError, ValueError):
+        return None
+
+
+def _answers_db_rows(path: Path) -> list:
+    """Every row of an answers.db, read only (a missing or unreadable file gives none)."""
+    import sqlite3
+    if not path.exists():
+        return []
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        try:
+            return [dict(r) for r in con.execute("SELECT * FROM answers ORDER BY rowid")]
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return []
+
+
+# The person's files Export and Erase cover beside the profile, the facts and the diary
+# (docs/applicant-brain.md, section 10).
+_INTERVIEW_FILES = ("interviews.json", "preps.json", "screens.json", "interview_goals.json")
+
+
+def _brain_export() -> dict:
+    """The rest of what the app knows about the person, for Export: the brain's tables, the
+    answer library, the prefs answers, the interview files, aa_learn.json, linkedin_review.json
+    and the migration backups. All local; the person saves the file themselves."""
+    out: dict = {"brain": None, "answers": _answers_db_rows(_ANSWERS_DB),
+                 "prefs": _read_json_file(_PREFS_PATH) or {},
+                 "interviews": {name: _read_json_file(_DATA / name) for name in _INTERVIEW_FILES
+                                if (_DATA / name).exists()},
+                 "aa_learn": _read_json_file(_DATA / "aa_learn.json"),
+                 "linkedin_review": _read_json_file(_DATA / "linkedin_review.json"),
+                 "backups": []}
+    from applicant import migrate as _bm
+    if _bm.brain_path(_DATA).exists():
+        try:
+            from applicant.store import open_store
+            out["brain"] = open_store(_bm.brain_path(_DATA)).export()
+        except Exception:      # noqa: BLE001 - the rest of the export still goes out
+            traceback.print_exc()
+    for d in sorted(_DATA.glob("brain-backup-*")):
+        if d.is_dir():
+            out["backups"].append({"folder": d.name, "files": sorted(f.name for f in d.iterdir()),
+                                   "answers": _answers_db_rows(d / "answers.db"),
+                                   "prefs": _read_json_file(d / "app_prefs.json") or {}})
+    return out
+
+
+def _erase_brain_and_answers() -> list:
+    """Delete the applicant brain, the answer library, the prefs answers, the interview files,
+    aa_learn.json and the migration backups. Returns the names deleted (no contents)."""
+    import shutil
+    from applicant import migrate as _bm
+    from applicant.store import db_files
+    gone = []
+    _bm.forget_process_state(_DATA)                 # close the brain before its file goes
+    paths = db_files(_bm.brain_path(_DATA)) + db_files(_ANSWERS_DB) + [_PREFS_PATH] \
+        + [_DATA / n for n in _INTERVIEW_FILES] + [_DATA / "aa_learn.json"]
+    for f in paths:
+        try:
+            if f.exists():
+                f.unlink()
+                gone.append(f.name)
+        except OSError:
+            traceback.print_exc()
+    for d in _DATA.glob("brain-backup-*"):
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+            gone.append(d.name)
+    try:                                            # the next brain starts empty, with nothing to back up
+        from applicant.store import open_store
+        open_store(_bm.brain_path(_DATA)).set_meta("backup_dir", "erased")
+    except Exception:          # noqa: BLE001
+        traceback.print_exc()
+    return gone
+
+
 @app.post("/api/memory/erase")
 @_guard
 def memory_erase():
-    """Erase everything remembered: distilled facts, the SQLite conversation row, and the palace
-    transcript + semantic index. Local and irreversible; the person chose it."""
+    """Erase everything remembered: distilled facts, the SQLite conversation row, the palace
+    transcript + semantic index, the applicant brain, the answer library, the prefs answers,
+    the interview files, the skip list and the migration backups. Local and irreversible; the
+    person chose it. Resumes and applications stay."""
     mem = _memory()
     mem.erase_facts("default")
     mem.delete("default")
     _palace().erase()
     _SESSION.pop("s", None)   # drop any live in-memory session so it can't re-save the old state
-    return jsonify({"ok": True})
+    gone = _erase_brain_and_answers()
+    return jsonify({"ok": True, "erased": len(gone)})
+
+
+@app.get("/api/brain/status")
+@_guard
+def brain_status():
+    """The applicant brain: whether it is on, the migration report and rows per table. Counts
+    only, never a value."""
+    from applicant import migrate as _bm
+    _brain()
+    return _nostore(jsonify(_bm.status(_DATA)))
+
+
+@app.get("/api/brain/migrate")
+@_guard
+def brain_migrate_plan():
+    """What the migration moves from the legacy stores, per source and outcome (?dry_run=1).
+    Counts only, and nothing is written."""
+    from applicant import migrate as _bm
+    return _nostore(jsonify(_bm.dry_run(_DATA)))
 
 
 # ---- Guided project builder: the defend-your-work gate. A project cannot be marked
@@ -10640,7 +10806,7 @@ def autoapply_plan():
                            drafted=[x for x in (data.get("screening") or []) if isinstance(x, dict)],
                            cover_letter=str(data.get("cover_letter") or ""), applicant=applicant,
                            resume_path=resume, job_country=_job_country(data), company=company,
-                           eeo_decline=bool(_load_prefs().get("eeo_decline")))
+                           eeo_decline=_eeo_decline())
         res = plan_known(fields, ctx)
         if res.rest:
             try:
@@ -10758,7 +10924,7 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
                            drafted=[x for x in ((data or {}).get("screening") or []) if isinstance(x, dict)],
                            cover_letter="", applicant=applicant, resume_path="",
                            job_country=_job_country(data or {}), company=(rec.get("company") if rec else "") or "",
-                           eeo_decline=bool(_load_prefs().get("eeo_decline")))
+                           eeo_decline=_eeo_decline())
         res = plan_known(fields, ctx)
         ops = resolve_plan([a for a in res.actions if a.op in ("fill", "select", "check")], applicant)
     except Exception:          # noqa: BLE001 - a planner hiccup never blocks the step
@@ -11160,7 +11326,7 @@ def autoapply_agent_ask():
     if unforced:
         lib = _answer_lib()
         try:
-            eeo_decline = bool(_load_prefs().get("eeo_decline"))
+            eeo_decline = _eeo_decline()
             wa, country = _work_auth(), _job_country(data)
             for it in unforced:
                 k = AK.known_answer(it["question"], it["all_options"], partial=it["partial"], library=lib,
@@ -13347,6 +13513,7 @@ def main() -> None:
     """
     import threading
 
+    _brain()               # the applicant brain: migrate the legacy stores once (applicant/migrate.py)
     start_auto_updater()   # keep the job feed fresh on its own (only if RESUME_AGENT_AUTOUPDATE=1)
     start_notify_loop()    # Telegram: taps, job-match alerts, the away digest (every 30 s)
     _start_feed_download()  # the job list downloads in the background from launch, never in a request

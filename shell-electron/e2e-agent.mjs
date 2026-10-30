@@ -12,6 +12,11 @@
  *     the sign-in, and every page, and the resume attached;
  *  2. Send presses the mock's Submit and the bar says Sent;
  *  3. a ?captcha=1 job stops at the review page with the captcha message and nothing submitted.
+ * The seed also writes the LEGACY answer stores (app_prefs.json: US authorized, needs
+ * sponsorship; one answers.db row) before the engine starts, so the run proves the applicant
+ * brain's migration (docs/applicant-brain.md, Phase 1): the brain reports the migrated counts,
+ * the legacy files stay, the agent never asks what the migrated prefs answer, and an answer
+ * given on the bar is reused on the next application without asking.
  */
 import { _electron as electron } from "playwright";
 import { spawn, spawnSync } from "child_process";
@@ -59,13 +64,21 @@ prof = {"identity": {"name": "Kofi Test", "email": "kofi.test@example.com", "pho
                      "location": "Chicago, IL"},
         "skills": ["SQL", "Python"], "experience": [{"title": "Analyst", "company": "Acme", "bullets": ["Did things"]}]}
 ConversationMemory(db).save("default", prof, {"name": "Kofi Test"}, [])
+# The legacy answer stores, as an older build left them: the applicant brain migrates them.
+(data / "app_prefs.json").write_text(json.dumps({"work_authorized": "Yes", "work_auth_us": "Yes",
+                                                 "needs_sponsorship": "Yes"}, indent=2), encoding="utf-8")
+from autoapply.answers import AnswerLibrary
+lib = AnswerLibrary(str(data / "answers.db"))
+lib.save("How did you hear about us?", "LinkedIn", "you")
+lib.close()
 recs = CVRecords(db)
 ids = []
 for role, url in [("Business Intelligence Analyst", ${JSON.stringify(JOB)}),
                   ("Analyst (captcha)", ${JSON.stringify(JOB + "?captcha=1")}),
                   ("Analyst (emailed code)", ${JSON.stringify(JOB + "?verify=1")}),
                   ("Analyst (existing account)", ${JSON.stringify(JOB + "?signin=fail")}),
-                  ("Analyst (asks a question)", ${JSON.stringify(JOB + "?mustanswer=1")})]:
+                  ("Analyst (asks a question)", ${JSON.stringify(JOB + "?mustanswer=1")}),
+                  ("Analyst (answer remembered)", ${JSON.stringify(JOB + "?mustanswer=1&again=1")})]:
     rid = recs.add(role, "Acme Corp", 70, "", jd_label=role,
                    data={"status": "approved", "fit": 85, "render_profile": prof,
                          "source_job": {"url": url, "source_id": "mock:" + role, "location": "Bloomington, IL"},
@@ -78,8 +91,8 @@ recs.close()
 print(json.dumps(ids))
 `], { encoding: "utf8" });
 if (seed.status !== 0) { console.error(seed.stderr); process.exit(1); }
-const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK] = JSON.parse(seed.stdout.trim().split("\n").pop());
-check("seeded five queued jobs", RID > 0 && RID_ASK > 0, `ids ${RID}..${RID_ASK}`);
+const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK, RID_AGAIN] = JSON.parse(seed.stdout.trim().split("\n").pop());
+check("seeded six queued jobs", RID > 0 && RID_AGAIN > 0, `ids ${RID}..${RID_AGAIN}`);
 
 // ---- 3. the engine on the test model, then the real app ---------------------------------
 // The shell strips the test-model flags from any engine it spawns (real model only, CLAUDE.md
@@ -98,6 +111,17 @@ for (let i = 0; i < 60 && !up; i++) {
 check("engine up on the test model", up, up ? "" : engineErr.slice(-400));
 const stopEngine = () => { try { engine.kill(); } catch {} };
 process.on("exit", stopEngine);
+
+// The applicant brain migrated the legacy answer stores at start-up (counts only), and kept them.
+const brain = await fetch("http://127.0.0.1:57000/api/brain/status").then((r) => r.json()).catch(() => null);
+const rep = (brain && brain.report) || {};
+check("the brain migrated the legacy answers",
+      !!(brain && brain.active && (rep["answers.db"] || {}).active >= 1 && (rep["app_prefs.json"] || {}).active >= 1),
+      JSON.stringify({ active: brain && brain.active, report: rep }));
+const prefsKept = fs.existsSync(path.join(DATA, "app_prefs.json"))
+  && JSON.parse(fs.readFileSync(path.join(DATA, "app_prefs.json"), "utf8")).needs_sponsorship === "Yes";
+check("the legacy files are still there", prefsKept && fs.existsSync(path.join(DATA, "answers.db"))
+      && fs.readdirSync(DATA).some((f) => f.startsWith("brain-backup-")), fs.readdirSync(DATA).join(", "));
 
 const app = await electron.launch({
   args: [HERE],
@@ -205,13 +229,15 @@ check("the mock saw the reset link opened and the password saved", log5.includes
 // ---- 9. a required question nobody answered: the agent asks on the bar, carries on, remembers --
 await win.waitForSelector(`.aa-row[data-id="${RID_ASK}"]`, { timeout: 30_000 });
 await win.click(`.aa-row[data-id="${RID_ASK}"] [data-act]`);
-// The empty test profile means the agent may ask work authorization and sponsorship too;
-// answer whatever comes, up to four questions, the way a person on the bar would.
+// Work authorization and sponsorship came from the migrated prefs, so they are never asked;
+// answer whatever does come, up to four questions, the way a person on the bar would.
 let asked = await waitBar(/the application asks|ready to send|stopped|have a look|needs/i, 120_000);
 check("the agent asks a question on the bar", /the application asks:/i.test(asked), asked);
 let askedYears = false;
+let askedWorkAuth = false;
 for (let i = 0; i < 4 && /the application asks:/i.test(asked); i++) {
   if (/how many years/i.test(asked)) askedYears = true;
+  if (/authori[sz]ed|sponsorship/i.test(asked)) askedWorkAuth = true;
   const hasBox = await win.locator("#bbFill .bb-answer").count();
   if (hasBox) {
     await win.fill("#bbFill .bb-answer", /how many years/i.test(asked) ? "5" : "Yes");
@@ -227,6 +253,7 @@ for (let i = 0; i < 4 && /the application asks:/i.test(asked); i++) {
   asked = await waitBar(/the application asks|ready to send|stopped|have a look|needs/i, 120_000);
 }
 check("the years question was among them", askedYears, asked);
+check("work authorization and sponsorship were never asked (they came from the migrated prefs)", !askedWorkAuth, asked);
 const askDone = asked;
 check("the run carries on with the answer and reaches Ready to send", /ready to send/i.test(askDone), askDone);
 const log6 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
@@ -234,6 +261,15 @@ check("the mock saw the answer typed in", log6.includes("questions:5"), JSON.str
 const lib = await win.evaluate(() => fetch("/api/answers").then((r) => r.json()));
 const saved = JSON.stringify(lib).includes("5");
 check("the answer is saved for next time", saved, JSON.stringify(lib).slice(0, 200));
+
+// ---- 10. the next application with the same required question: answered from memory ---------
+await win.waitForSelector(`.aa-row[data-id="${RID_AGAIN}"]`, { timeout: 30_000 });
+await win.click(`.aa-row[data-id="${RID_AGAIN}"] [data-act]`);
+const again = await waitBar(/the application asks|ready to send|stopped|have a look|needs/i, 120_000);
+const log7 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+check("the years answer is reused on the next application without asking",
+      /ready to send/i.test(again) && !/how many years/i.test(again) && log7.includes("questions:5"),
+      `${again} | ${JSON.stringify(log7)}`);
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

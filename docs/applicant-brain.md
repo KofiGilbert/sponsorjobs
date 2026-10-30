@@ -7,7 +7,8 @@
 > `intake/palace_memory.py`, `autoapply/answers.py`, `autoapply/basics.py`, `autoapply/planner.py`,
 > `_known_answers_for` or `_answer_lib` in `ui/app.py`, or the profile and Your answers pages.
 >
-> Status: plan only. No product code ships with this document.
+> Status: Phase 1 built (the store, the migration, the apply agent's readers). Phases 2 to 7
+> are plans. Changes made while building Phase 1 are marked "(Phase 1 build)" below.
 
 ## Contents
 
@@ -152,10 +153,11 @@ One row per value. A changed value adds a row and marks the old one replaced.
 | `words` | The person's own words, when they differ from the value ("I'm Ghanaian, on OPT"). Never kept for EEO keys: the code and the chosen option are enough |
 | `source` | `you`, `card`, `onboarding`, `ask_bar`, `ask_telegram`, `late_telegram`, `extension`, `resume`, `chat`, `telegram_chat`, `drafted`, `derived`, `migration` |
 | `source_ref` | Where exactly: application id, ask id, diary file and line, document name, or the legacy row (`answers.db:@salary`) |
+| `store` | (Phase 1 build) The legacy home of the fact while the brain runs beside the older stores: `answers.db`, `app_prefs.json`, or empty for a brain-only fact. Each legacy view reads only its own facts, so every answer stays exactly what that store gave, and a write is mirrored into that file. Phase 3 joins the views into one truth |
 | `confidence` | 1.0 said or chosen by the person; 0.9 read from their resume; 0.8 drafted from the profile; 0.7 extracted from chat |
 | `confirmed` | 1 when the person saw it and kept it |
 | `status` | `active`, `replaced`, `needs_check` |
-| `check_reason` | For `needs_check`: `raw_reply` (a whole chat reply saved as an answer), `conflict`, `expired`, `unconfirmed_legal` |
+| `check_reason` | For `needs_check`: `raw_reply` (a whole chat reply saved as an answer), `conflict`, `expired`, `unconfirmed_legal`; (Phase 1 build) `drafted_eeo` (an EEO answer the legacy library holds from a draft: kept, never created again) and `from_chat` (a chat fact proposed for a canonical key) |
 | `sensitivity` | `normal`, `legal`, `eeo`. Set from the key registry, never by the caller |
 | `valid_from`, `valid_to` | When it became true and when it stops (an OPT end date, a past role) |
 | `replaced_by` | The newer fact's id |
@@ -164,8 +166,11 @@ One row per value. A changed value adds a row and marks the old one replaced.
 
 Indexes: `(person, key, subject, status)` and `(source_ref)`.
 
-Single-valued keys (salary, gender) have at most one `active` row per subject. Multi-valued keys
-(citizenship, skills) can have several.
+Single-valued keys (salary, gender) have at most one `active` row per subject (and, until Phase
+3, per `store`: the library's `@salary` and the prefs file's `desired_salary` are two facts, as
+they are two values today). Multi-valued keys (citizenship, skills) can have several. (Phase 1
+build) A value the person forgets is overwritten on disk (`PRAGMA secure_delete`), not left in a
+free page, and a third index `(person, store, status)` serves the legacy views.
 
 ### 5.2 The key registry: `applicant/keys.py`
 
@@ -175,13 +180,13 @@ ask wording, and the legacy names it maps from.
 
 | Group | Keys | Sensitivity |
 |---|---|---|
-| Contact | `name`, `email`, `phone`, `address.street`, `address.city`, `address.state`, `address.postal_code`, `address.country`, `@linkedin`, `@portfolio`, `github`, `@preferred_name` | normal |
-| Work and legal | `workauth` (subject = country, the entry from `autoapply/workauth.py`), `@citizenship` (multi), `citizenship.complete` (yes when the list holds every country), `permanent_resident` (subject = country), `@over_18`, `@previously_worked` (subject = company), `security_clearance` | legal |
+| Contact | `name`, `email`, `phone`, `address.street`, `address.city`, `address.state`, `address.postal_code`, `address.country`, `@linkedin`, `@portfolio`, `github`, `@preferred_name`; (Phase 1 build) `address` and `location`, the whole line as the profile holds it today (the parts are filled in Phase 3) | normal |
+| Work and legal | `workauth` (subject = country, the entry from `autoapply/workauth.py`), `@citizenship` (multi), `citizenship.complete` (yes when the list holds every country), `permanent_resident` (subject = country), `@over_18`, `@previously_worked` (subject = company), `security_clearance`; (Phase 1 build) `@citizenship2`, the answer library's second-citizenship key, folded into `@citizenship` in Phase 3 | legal |
 | Preferences | `@salary` (with currency and period; subject = country when not US), `@start_date`, `@notice_period`, `relocate`, `remote`, `@heard_about`, `@years_experience` | normal |
 | EEO | `@gender`, `@sex`, `@pronouns`, `@hispanic_latino`, `@race`, `@ethnicity`, `@veteran`, `@disability`, `@eeo_decline` (the standing decline) | eeo |
 | Career (open facts) | `role`, `school`, `project`, `skill`, `certification`, `language` (subject = item id) | normal |
 | One question | `q:<normalized wording>`: an answer to a question no canonical key covers, keyed the way `answers.normalize()` keys it today | normal, unless its wording classifies as legal or EEO |
-| Chat notes | `preference`, `constraint` (subject = the key `distill_memory` gave), migrated from `memory_facts` | normal |
+| Chat notes | `preference`, `constraint` (subject = the key `distill_memory` gave), migrated from `memory_facts`; (Phase 1 build) `fact` for a chat fact that names no canonical key | normal |
 
 **Item ids.** A role is `role:<org>|<title>`, normalized the way `ui/session.py _role_key` does.
 Schools and projects use their names. An item id survives edits: renaming a role in the builder
@@ -404,8 +409,19 @@ text to parse.
   confirm makes it `active` at 1.0. A proposal from the resume or chat waits as `needs_check`
   with reason `unconfirmed_legal`, and it never fills a form.
 - **Never to the model or the broker.** Model payloads carry labels, options and key names. A
-  guard (`applicant/redact.py for_model()`) runs on every payload the agent and the label
-  mapper build, and a test scans captured prompts for every stored EEO and legal value.
+  guard (`applicant/redact.py for_model()`) runs on every payload the agent and the label mapper
+  build, and a test scans captured prompts for every stored EEO and legal value.
+  (Phase 1 build) Phase 1 ships the guard and the scan: `tests/test_brain_parity.py` captures
+  what the fill route hands the model and finds no stored EEO or legal value outside the form's
+  own labels and options. The guard works against the form's own text because the stored words
+  are often the form's options ("Female", "Asian"); run as a filter over the agent's page view
+  it would blank those options, so it is wired in with the label mapper (Phase 4), whose
+  payload is built from scratch.
+- (Phase 1 build) **A drafted EEO answer is never saved.** The legacy library kept a drafted
+  answer to any question; the brain refuses one for an EEO key, so `BrainLibrary.save` returns
+  None for it (nothing writes one today: drafted answers come from screening questions). An EEO
+  row the legacy library already holds from a draft is migrated as `needs_check`
+  (`drafted_eeo`) and handed out exactly as before until Phase 3 asks the person.
 - **Telegram.** EEO asks go out with buttons. A typed EEO reply is matched locally
   (`asks._accept`) and never sent to the model, as today. Telegram never echoes an EEO value:
   it says "Saved." The assistant summary says "saved" or "not saved" for EEO questions, never
@@ -444,16 +460,28 @@ text to parse.
 - offers "Also delete the chat lines where I said this", which rewrites the diary without the
   lines in the fact's `source_ref`.
 
+(Phase 1 build) In Phase 1, Export is still the JSON file `/api/memory/export` gives, with new
+sections: `brain` (every table), `answers` (the library rows), `prefs`, `interviews`,
+`aa_learn`, `linkedin_review` and `backups` (each backup's answers and prefs). The zip and
+"Include my files" come with the memory page in Phase 6.
+
 **Erase my memory** deletes `applicant.db`, the diary and the old palace store, `answers.db`,
 the answers in `app_prefs.json`, the `conversation_memory` and `memory_facts` rows, the
 interview files, `aa_learn.json`, and the migration backups (`data/brain-backup-*`). A second
 tick, "and my resumes and applications", also deletes `cv_record` rows and their files. Today's
 erase misses `answers.db`, `app_prefs.json` and the interview files; Phase 1 fixes that,
-because the brain now holds copies of them.
+because the brain now holds copies of them. (Phase 1 build) Found while testing: a row deleted
+from `resume_agent.db` (`memory_facts`, `conversation_memory`) can still sit in SQLite's free
+pages. Phase 6's byte search (`tests/test_brain_erase.py`) needs `PRAGMA secure_delete` or a
+`VACUUM` on that file too.
 
 ## 11. Migration from the five stores
 
-Runs once at start-up in Phase 1. Safe to run again. Deletes nothing.
+Runs once at start-up in Phase 1 (`main()` in `ui/app.py`, and on the first read if the
+engine was started another way). Safe to run again. Deletes nothing. (Phase 1 build) It reads
+every legacy store read-only: the answer library from a temporary copy opened by
+`AnswerLibrary` (so its rows carry the keys the app would give them today), the rest through
+read-only SQLite connections.
 
 **What goes where**
 
@@ -466,7 +494,7 @@ Runs once at start-up in Phase 1. Safe to run again. Deletes nothing.
 | flat prefs answers (`desired_salary`, `earliest_start`, `hear_about_us`, `years_experience`, `over_18`, `willing_to_relocate`) | facts under `@salary`, `@start_date`, `@heard_about`, `@years_experience`, `@over_18`, `relocate`, `source_ref = app_prefs.json:<field>` |
 | `eeo_decline` | `@eeo_decline` |
 | `conversation_memory` profile | open facts: contact at 0.9, each role, school and project with its dates, skills. Source `resume`. The profile JSON itself is untouched and stays the resume material until Phase 6 |
-| `memory_facts` | `preference` and `constraint` facts at their own confidence, source `chat`. A fact row whose key names a canonical key is proposed for that key as `needs_check` |
+| `memory_facts` | `preference` and `constraint` facts at their own confidence, source `chat`. A fact row whose key names a canonical key is proposed for that key as `needs_check` (Phase 1 build: reason `from_chat`; an EEO one is refused and counted as `refused_eeo`; a retracted row is skipped; any other fact row becomes a `fact` note) |
 | MemPalace transcripts | indexed in place: one `event` per file with its line count. The leftover `autoapply_*` scratch transcripts are marked scratch, not deleted. The ChromaDB `store/` folder is not touched |
 
 **Disagreements are kept, not settled.** Phase 1 changes no answer. The two salaries stay two
@@ -487,6 +515,20 @@ disagreement into one question to the person.
    on the legacy stores, and retries on the next start (three tries at most).
 5. **Activate.** `meta.brain_active = 1`. The report (counts) is stored in `meta` and shown on
    the memory page from Phase 6.
+
+(Phase 1 build) The backup is made once, the first time (`meta.backup_dir`). The plan's counts
+per source are: `answers.db` active and needs_check; `app_prefs.json` active;
+`conversation_memory` contact, role, school, project, skill; `memory_facts` active,
+needs_check, refused_eeo, skipped_retracted, skipped_empty; `transcripts` indexed and scratch.
+`GET /api/brain/migrate` is always a dry run; `--apply` on the command line migrates (and
+turns the brain back on after a rollback).
+
+**Catch-up.** (Phase 1 build) While mirroring is on, each open of the library and each read of
+the prefs answers first carries into the brain any change the legacy file holds that the brain
+has not seen: a row written while `SPONSORJOBS_BRAIN=0`, a write by an older build or by code
+that writes `answers.db` directly, a mirror write that failed. A row deleted there is forgotten
+here. With the mirror working this changes nothing, and it means a rollback followed by a
+return to the brain loses nothing either.
 
 **Mirroring.** While `meta.mirror_legacy = 1`, every brain write is copied one way into the
 legacy store it came from: library facts to `answers.db`, prefs facts to `app_prefs.json`. The
@@ -659,6 +701,13 @@ E2E (`shell-electron/e2e-agent.mjs`):
 
 Done when: parity tests pass, e2e passes, and a dry run on a copy of Kofi's data folder (copied
 to a temp folder, never the live one) reports counts with zero verify mismatches.
+
+(Phase 1 build) Result on a copy of Kofi's data folder, 2026-10-30, counts only:
+`answers.db` 13 active and 1 needs_check; `app_prefs.json` 3 active; `conversation_memory`
+4 contact, 4 roles, 2 schools, 2 projects, 24 skills; `memory_facts` none; transcripts 1
+indexed and 6 scratch. Apply: 0 verify mismatches, the three legacy files byte-identical
+afterwards, a second apply added nothing, and the agent's known answers, work authorization
+and decline were identical with the brain on and off.
 
 ### Phase 2: remove the MemPalace library, keep the diary
 

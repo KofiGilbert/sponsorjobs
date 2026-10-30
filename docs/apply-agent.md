@@ -249,6 +249,15 @@ still open on the page (at most 6), on the bar and on Telegram, and waits up to 
 - **Saved.** The person's answers are saved to the answer library (never a question back, never
   a paragraph for a one-choice question). A raw reply saved before replies were read stays in
   the library, unused, until the person replaces or deletes it.
+- **Where known answers come from.** Every reader and writer of the answer library goes through
+  `_answer_lib()` in `ui/app.py`, and the work authorization and the standing decline through
+  `_work_auth()` and `_eeo_decline()`. With the applicant brain on (the default since Phase 1 of
+  `docs/applicant-brain.md`) these read `data/applicant.db`: `BrainLibrary`
+  (`applicant/library.py`) has the answer library's methods and gives the same answers, and
+  every write is mirrored one way into `answers.db` and `app_prefs.json`, so the browser
+  extension and a rollback see it too. `SPONSORJOBS_BRAIN=0` or
+  `python -m applicant.migrate --rollback` puts the readers back on `answers.db` and
+  `app_prefs.json`.
 
 ## 9. What we took from browser-use, what we left
 
