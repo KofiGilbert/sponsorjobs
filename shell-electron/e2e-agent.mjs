@@ -137,6 +137,10 @@ await win.waitForSelector(`.aa-row[data-id="${RID}"]`, { timeout: 30_000 });
 const label = await win.locator(`.aa-row[data-id="${RID}"] [data-act]`).first().textContent();
 check("the row button says Apply for me", /apply for me/i.test(label || ""), label);
 await win.click(`.aa-row[data-id="${RID}"] [data-act]`);
+// Answers every form asks are missing in the fresh data folder: the bar asks once first.
+const gate = await waitBar(/before i apply/i, 30_000);
+check("the bar asks for the form answers first", /before i apply/i.test(gate), gate);
+await win.locator("#bbFill button", { hasText: /apply anyway/i }).first().click();
 const ready = await waitBar(/ready to send|stopped|could not|needs you|have a look/i, 120_000);
 check("the run ends on Ready to send", /ready to send/i.test(ready), ready);
 const log1 = (await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null";
