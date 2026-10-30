@@ -68,6 +68,11 @@ if (scenario === 'form') {
 } else if (scenario === 'captcha') {
   iframes = [{ getAttribute: () => 'https://www.google.com/recaptcha/api2/anchor' }];
   inputs = [mkInput({ type: 'email', placeholder: 'Email' })];
+} else if (scenario === 'invisible_captcha') {
+  // reCAPTCHA v3: a zero-size hidden frame that scores in the background and never asks.
+  iframes = [{ getAttribute: () => 'https://www.recaptcha.net/recaptcha/api2/anchor?size=invisible',
+               getBoundingClientRect: () => ({ width: 0, height: 0 }) }];
+  inputs = [mkInput({ type: 'email', placeholder: 'Email' })];
 } else if (scenario === 'auth') {
   passwordEl = mkInput({ type: 'password', placeholder: 'Password' });
   bodyText = 'Please sign in to apply for this role.';
@@ -125,6 +130,13 @@ def test_fill_proceeds_on_a_captcha_but_reports_it():
     r = _run("captcha")
     assert r["ok"] is True and r["captcha"] is True
     assert "filled" in r
+
+
+def test_an_invisible_captcha_is_not_a_wall():
+    # Lam Research loads a hidden reCAPTCHA v3 frame. Nothing is shown to the person, so the run
+    # must not stop and tell them to solve a captcha that is not there.
+    r = _run("invisible_captcha")
+    assert r["ok"] is True and r["captcha"] is False
 
 
 def test_fill_aborts_on_an_auth_wall():
