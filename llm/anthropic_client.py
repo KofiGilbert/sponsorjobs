@@ -1765,6 +1765,13 @@ class AnthropicLLM:
         twenty steps stays at a few cents. Goes through _complete, so BrokerLLM inherits it."""
         return self._complete(system, user, max_tokens=700, effort="low")
 
+    def app_assistant(self, system: str, user: str) -> str:
+        """The SponsorJobs assistant's reply in the Telegram chat (notify/assistant.py owns the
+        prompt and checks the reply). Short, low effort. Goes through _complete, so BrokerLLM
+        inherits it."""
+        from tailoring.conform import strip_ai_dashes
+        return strip_ai_dashes(self._complete(system, user, max_tokens=300, effort="low").strip())
+
     def ask_reply(self, system: str, user: str) -> str:
         """Read the person's reply to the apply agent's question(s) (autoapply/asks.py owns the
         prompt and the validation). A short JSON reply at low effort."""

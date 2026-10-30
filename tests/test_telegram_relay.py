@@ -322,3 +322,82 @@ def test_setup_helper_sets_the_webhook_with_the_secret(monkeypatch, tmp_path):
     assert method == "setWebhook" and payload["url"] == "https://broker.example.com/telegram/webhook"
     assert payload["secret_token"] == SECRET
     assert [m for m, _ in tg.calls] == ["setWebhook", "setMyCommands", "getWebhookInfo"]
+
+
+def _file_app(store, download=b"resume bytes", file_size=12):
+    """The broker with a relay that can pass files through (getFile + a download stub)."""
+    downloads = []
+
+    class Tg(FakeTelegram):
+        def __call__(self, method, payload):
+            if method == "getFile":
+                self.calls.append((method, payload))
+                return {"file_id": payload["file_id"], "file_path": "documents/f.pdf", "file_size": file_size}
+            return super().__call__(method, payload)
+
+    tg, clock = Tg(), Clock()
+    relay = TelegramRelay(store, tg, bot_username="SponsorJobsBot", webhook_secret=SECRET, now=clock,
+                          download_transport=lambda path: downloads.append(path) or download)
+    app = create_app(meter=Meter(InMemoryStore()), period_fn=lambda: "2026-10",
+                     accounts=InMemoryAccountStore(), telegram=relay)
+    app.config.update(TESTING=True)
+    return app.test_client(), tg, downloads
+
+
+def _file_upd(chat_id, extra, uid):
+    return {"update_id": uid, "message": {"message_id": uid, "chat": {"id": chat_id, "type": "private"},
+                                          "from": {"id": chat_id}, **extra}}
+
+
+def test_a_resume_or_photo_is_queued_as_a_file_event_and_other_media_get_an_honest_reply(store):
+    import json as _json
+
+    from backend.telegram_relay import MSG_FILE_QUEUED, MSG_FILE_TYPE, MSG_NO_MEDIA, MSG_TOO_BIG
+    c, tg, _ = _file_app(store)
+    H = _linked(c)
+    c.post("/telegram/webhook", json=_file_upd(555, {"document": {
+        "file_id": "D1", "file_name": "Kofi Gilbert_Resume.pdf", "mime_type": "application/pdf",
+        "file_size": 800}, "caption": "my resume"}, 10), headers=WH)
+    c.post("/telegram/webhook", json=_file_upd(555, {"photo": [
+        {"file_id": "S", "width": 90, "height": 90}, {"file_id": "B", "width": 1200, "height": 1600},
+        {"file_id": "M", "width": 320, "height": 400}]}, 11), headers=WH)
+    c.post("/telegram/webhook", json=_file_upd(555, {"voice": {"file_id": "v"}}, 12), headers=WH)
+    c.post("/telegram/webhook", json=_file_upd(555, {"document": {"file_id": "Z", "file_name": "x.zip"},
+                                                     "caption": "look"}, 13), headers=WH)
+    c.post("/telegram/webhook", json=_file_upd(555, {"document": {"file_id": "H", "file_name": "cv.pdf",
+                                                                  "file_size": 21 * 1024 * 1024}}, 14), headers=WH)
+    assert tg.texts(555)[-5:] == [MSG_FILE_QUEUED, MSG_FILE_QUEUED, MSG_NO_MEDIA, MSG_FILE_TYPE, MSG_TOO_BIG]
+    ev = c.get("/notify/telegram/inbox", headers=H).get_json()["events"]
+    assert [(e["type"], e["data"]) for e in ev] == [("file", "D1"), ("file", "B"), ("text", "")]
+    assert _json.loads(ev[0]["text"]) == {"name": "Kofi Gilbert_Resume.pdf", "mime": "application/pdf",
+                                          "size": 800, "caption": "my resume"}
+    assert ev[2]["text"] == "look"
+    c.post("/telegram/webhook", json={"update_id": 15, "message": {
+        "chat": {"id": 999, "type": "private"}, "document": {"file_id": "d"}}}, headers=WH)
+    assert tg.texts(999) == [MSG_UNBOUND]
+
+
+def test_the_file_route_passes_bytes_through_only_for_the_accounts_own_file(store):
+    c, tg, downloads = _file_app(store)
+    H = _linked(c, 555)
+    other = _linked(c, 777)
+    c.post("/telegram/webhook", json=_file_upd(555, {"document": {"file_id": "MINE", "file_name": "cv.pdf"}}, 20),
+           headers=WH)
+    r = c.post("/notify/telegram/file", json={"file_id": "MINE"}, headers=H)
+    assert r.status_code == 200 and r.data == b"resume bytes"
+    assert r.headers["Content-Type"] == "application/octet-stream" and downloads == ["documents/f.pdf"]
+    assert c.post("/notify/telegram/file", json={"file_id": "MINE"}, headers=other).status_code == 404
+    assert c.post("/notify/telegram/file", json={"file_id": "NOPE"}, headers=H).status_code == 404
+    assert c.post("/notify/telegram/file", json={}, headers=H).status_code == 400
+    assert len(downloads) == 1                    # nobody else's file was ever fetched
+    c.post("/notify/telegram/unlink", headers=H)
+    assert c.post("/notify/telegram/file", json={"file_id": "MINE"}, headers=H).status_code == 404
+
+
+def test_the_file_route_refuses_a_file_over_20_mb(store):
+    c, _tg, downloads = _file_app(store, file_size=25 * 1024 * 1024)
+    H = _linked(c)
+    c.post("/telegram/webhook", json=_file_upd(555, {"document": {"file_id": "BIG", "file_name": "cv.pdf"}}, 30),
+           headers=WH)
+    r = c.post("/notify/telegram/file", json={"file_id": "BIG"}, headers=H)
+    assert r.status_code == 413 and r.get_json()["error"] == "too_big" and downloads == []

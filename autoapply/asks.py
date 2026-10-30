@@ -473,3 +473,43 @@ def read_reply(llm, items: list[dict], reply: str, *, timeout: float = READ_TIME
             answers[j] = v
     asked = " ".join(str(data.get("question") or "").split())[:200]
     return _got(answers, question=asked, unclear=not answers and not asked)
+
+
+# --------------------------------------------------------------------------- a late reply
+_NUMBERED = re.compile(r"^\s*#?\s*(\d{1,2})\s*[.):]", re.M)
+
+
+def late_ok(it: dict, n: int, value: str, reply: str) -> bool:
+    """Is ``value`` (read off ``reply`` for question ``it``, numbered ``n``) safe to keep when
+    the question is no longer open? A late reply may be about something else entirely, so it
+    needs more than the live path: the person numbered the line for that question ("1. Male"),
+    or the reply is short and the value is one of the question's own choices, or, for a
+    self-identification question with no choices read, a value that names a real choice of that
+    kind (autoapply/eeo.py). A free text answer to any other question is never taken late."""
+    s = str(reply or "").strip()
+    v = str(value or "").strip()
+    if not s or not v:
+        return False
+    if n in {int(m) for m in _NUMBERED.findall(s)}:
+        return True
+    short = len(s) <= 200 and "?" not in s and s.count("\n") <= 6
+    if not short:
+        return False
+    every = _every(it)
+    if every:
+        return v in every
+    if is_eeo(it.get("question")):
+        return EEO.value_class(normalize(it.get("question") or ""), v) is not None
+    return False
+
+
+def read_late(llm, items: list[dict], reply: str, *, timeout: float = READ_TIMEOUT_S) -> dict:
+    """``read_reply`` for a reply that came after the questions stopped waiting (the run timed
+    out, stopped, or the app restarted). The same reader, then only what ``late_ok`` keeps."""
+    got = read_reply(llm, items, reply, timeout=timeout)
+    keep = {}
+    for j, v in (got.get("answers") or {}).items():
+        if 0 <= j < len(items) and late_ok(items[j], _num(items[j], j + 1), v, reply):
+            keep[j] = v
+    got["answers"] = keep
+    return got

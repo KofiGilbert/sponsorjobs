@@ -10,10 +10,16 @@
 //   * telegram_links  : the sha256 of a one-time link code -> account, 15 minutes, deleted on use;
 //   * telegram_chats  : account -> chat id, Telegram username, paused flag, linked time;
 //   * telegram_events : taps / replies waiting for the app, deleted once acknowledged or after 7 days;
-//   * telegram_sends  : one timestamp per message sent or edited, for the rate limit, 24 hours.
+//   * telegram_sends  : one timestamp per message sent or edited, for the rate limit, 24 hours;
+//   * telegram_files  : the Telegram file_id of a file the person sent (never the file), 7 days,
+//                       so /notify/telegram/file serves only files from the account's own chat
+//                       (migrations/0009_telegram_files.sql).
 // Outgoing messages carry only what the app sends and are not stored. A CV preview picture or PDF
 // (send_media) is passed straight through to Telegram inside the same request and never written
 // anywhere; only its size is logged. Every photo and document goes out with protect_content.
+// A resume the person sends the bot travels the other way the same way: the webhook queues a
+// "file" event holding only Telegram's file_id, name, type and size, and /notify/telegram/file
+// fetches the bytes from Telegram and streams them to the app in one request, never stored.
 //
 // Rate limits: the Python broker kept them in memory (one process). A Worker runs in many isolates
 // at once, so the counters are rows in D1, checked and taken in ONE guarded INSERT so parallel
@@ -52,6 +58,16 @@ export const MSG_HELP = "I'm the SponsorJobs bot. I message you about new jobs a
   "/stop pauses messages, /resume turns them back on.\n" +
   "To disconnect, open SponsorJobs, Settings, Notifications.";
 export const MSG_DISCONNECTED = "Disconnected from SponsorJobs.";
+// Files from a linked chat (docs/notify.md). A resume (a document of a kind the app reads, or a
+// photo) is queued for the app, which imports it and answers with what it found; everything else
+// gets a short honest reply at once. The app's own-bot channel says the same (notify/channel.py).
+export const MSG_FILE_QUEUED = "Got it. SponsorJobs will read it on your computer and tell you here what it found.";
+export const MSG_NO_MEDIA = "I can't use voice notes, videos or stickers. Send your resume as a PDF, Word file or photo, or type your message.";
+export const MSG_FILE_TYPE = "I can't read that kind of file. Send your resume as a PDF, Word, PowerPoint or text file, or a photo.";
+export const MSG_TOO_BIG = "That file is too big for Telegram to pass on (over 20 MB). Add it in SponsorJobs under My profile, Upload resume.";
+export const MAX_FILE_BYTES = 20 * 1024 * 1024;     // the Bot API's getFile limit
+export const FILE_EXTS = ["pdf", "doc", "docx", "ppt", "pptx", "txt", "rtf", "png", "jpg", "jpeg", "webp"];
+export const MEDIA_KINDS = ["voice", "video", "audio", "sticker", "video_note", "animation"] as const;
 
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", ...headers } });
@@ -192,6 +208,7 @@ const accountForChat = async (db: D1Database, chatId: number): Promise<string | 
 const unbind = (db: D1Database, account: string) => db.batch([
   db.prepare("DELETE FROM telegram_chats WHERE account = ?").bind(account),
   db.prepare("DELETE FROM telegram_events WHERE account = ?").bind(account),
+  db.prepare("DELETE FROM telegram_files WHERE account = ?").bind(account),
 ]);
 
 const addEvent = (db: D1Database, account: string, type: string, data: string, text: string, at: number) =>
@@ -488,8 +505,92 @@ export async function handleUpdate(env: Env, bot: Bot, update: Obj, now: number)
   }
 
   if (account === null) return say(bot, chatId, MSG_UNBOUND);
+  if (!text && (msg.document || msg.photo || MEDIA_KINDS.some((k) => msg[k]))) {
+    return handleFile(db, bot, chatId, account, msg, now);
+  }
   if (text) await addEvent(db, account, "text", "", cpSlice(text, MAX_EVENT_TEXT), now);
 }
+
+/** The file a message carries, as the app needs it: Telegram's file_id (the largest photo size),
+ * a file name, its type and size. Null for anything that is not a document or a photo. */
+export function fileOf(msg: Obj): { file_id: string; name: string; mime: string; size: number } | null {
+  const doc = obj(msg.document);
+  if (doc && typeof doc.file_id === "string" && doc.file_id) {
+    return { file_id: doc.file_id, name: cpSlice(String(doc.file_name ?? "") || "file", 120),
+             mime: cpSlice(String(doc.mime_type ?? ""), 80), size: Number(doc.file_size) || 0 };
+  }
+  const sizes = Array.isArray(msg.photo) ? msg.photo.map(obj).filter((p): p is Obj => !!p && typeof p.file_id === "string") : [];
+  if (!sizes.length) return null;
+  const area = (p: Obj) => (Number(p.width) || 0) * (Number(p.height) || 0) || Number(p.file_size) || 0;
+  const big = sizes.reduce((a, b) => (area(b) >= area(a) ? b : a));
+  return { file_id: String(big.file_id), name: "photo.jpg", mime: "image/jpeg", size: Number(big.file_size) || 0 };
+}
+
+const extOf = (name: string): string => (/\.([A-Za-z0-9]{1,5})$/.exec(name)?.[1] ?? "").toLowerCase();
+
+/** A file from a linked chat: a resume is queued for the app (file_id, name, type, size and the
+ * caption, never the bytes), anything else gets a short honest reply. */
+async function handleFile(db: D1Database, bot: Bot, chatId: number, account: string, msg: Obj, now: number): Promise<void> {
+  const caption = cpSlice(String(msg.caption ?? "").trim(), 700);
+  const f = fileOf(msg);
+  let reply = MSG_FILE_QUEUED;
+  if (!f) reply = MSG_NO_MEDIA;
+  else if (f.size > MAX_FILE_BYTES) reply = MSG_TOO_BIG;
+  else if (msg.document && !FILE_EXTS.includes(extOf(f.name)) && !/^(application\/pdf|image\/|text\/plain)/.test(f.mime)) {
+    reply = MSG_FILE_TYPE;
+  }
+  if (f && reply === MSG_FILE_QUEUED) {
+    await db.batch([
+      db.prepare("DELETE FROM telegram_files WHERE at < ?").bind(now - EVENT_TTL),
+      db.prepare("INSERT INTO telegram_files(account, file_id, size, at) VALUES(?, ?, ?, ?) " +
+                 "ON CONFLICT(account, file_id) DO UPDATE SET at = excluded.at").bind(account, f.file_id, f.size, now),
+      db.prepare("INSERT INTO telegram_events(account, type, data, text, at) VALUES(?, 'file', ?, ?, ?)")
+        .bind(account, f.file_id, JSON.stringify({ name: f.name, mime: f.mime, size: f.size, caption }), now),
+    ]);
+  } else if (caption) {
+    await addEvent(db, account, "text", "", cpSlice(caption, MAX_EVENT_TEXT), now);   // the words still count
+  }
+  return say(bot, chatId, reply);
+}
+
+/** POST /notify/telegram/file {file_id}: the bytes of a file the person sent the bot, streamed
+ * from Telegram straight to the app and never stored (only the size is logged). Only a file_id
+ * that arrived in THIS account's own chat in the last 7 days is served (404 otherwise), so no one
+ * can fetch another person's file. 413 over 20 MB, 502 when Telegram fails. */
+export const file = authed(async ({ req, env, now }, bot, user) => {
+  const body = await jsonBody(req);
+  const fileId = typeof body.file_id === "string" ? body.file_id : "";
+  if (!fileId || fileId.length > 200) return json({ error: "file_id is required" }, 400);
+  const own = await env.DB.prepare("SELECT size FROM telegram_files WHERE account = ? AND file_id = ? AND at >= ?")
+    .bind(user, fileId, now - EVENT_TTL).first<{ size: number }>();
+  if (!own) return json({ error: "not_found" }, 404);
+  let path = "";
+  let size = 0;
+  try {
+    const meta = await tg(bot, "getFile", { file_id: fileId });
+    path = typeof meta.file_path === "string" ? meta.file_path : "";
+    size = Number(meta.file_size) || 0;
+  } catch (err) {
+    if (err instanceof TelegramError && err.status === 400 && /too big/i.test(err.message)) return json({ error: "too_big" }, 413);
+    console.warn("telegram getFile failed:", err instanceof Error ? err.message : err);
+    return json({ error: "telegram_unavailable" }, 502);
+  }
+  if (size > MAX_FILE_BYTES) return json({ error: "too_big" }, 413);
+  if (!path) return json({ error: "telegram_unavailable" }, 502);
+  let res: Response;
+  try {
+    res = await fetch(`${TELEGRAM_API}/file/bot${bot.token}/${path}`, { signal: AbortSignal.timeout(60_000) });
+  } catch {
+    return json({ error: "telegram_unavailable" }, 502);
+  }
+  if (!res.ok || !res.body) return json({ error: "telegram_unavailable" }, 502);
+  const len = Number(res.headers.get("content-length") ?? size) || size;
+  if (len > MAX_FILE_BYTES) return json({ error: "too_big" }, 413);
+  console.log(`telegram file in: ${len} bytes`);            // size only, never content or name
+  const headers: Record<string, string> = { "content-type": "application/octet-stream", "cache-control": "no-store" };
+  if (len) headers["content-length"] = String(len);
+  return new Response(res.body, { status: 200, headers });
+});
 
 async function handleCallback(env: Env, bot: Bot, cq: Obj, now: number): Promise<void> {
   const chatId = chatIdOf(obj(obj(cq.message)?.chat)?.id) ?? chatIdOf(obj(cq.from)?.id);

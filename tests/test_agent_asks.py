@@ -268,7 +268,10 @@ def test_a_a_command_is_never_an_answer_and_stop_ends_the_wait(A):
     th.join(20)
     assert out["r"] == {"ok": False, "id": "s1", "reason": "stopped"} and time.time() - t0 < 5
     assert _lib_answer(mod, "Gender") is None
-    assert mod._agent_ask_event("text", "Male") is None                # nothing open any more
+    # Nothing open any more: the stopped run does not take it, but it is saved for next time as a
+    # late answer (tests/test_telegram_chat.py), and the reply says the application stopped.
+    late = mod._agent_ask_event("text", "Male")
+    assert late.startswith("Saved for next time: Gender.") and "already stopped" in late
 
 
 def test_a_text_is_taken_only_by_a_question_telegram_received(A, monkeypatch):
