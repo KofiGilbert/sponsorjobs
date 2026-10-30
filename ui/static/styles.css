@@ -1918,6 +1918,14 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .bb-fill .bb-fill-text { flex: 1 1 auto; min-width: 0; }
 .bb-fill.is-ready { background: #15231c; color: #d6f5e3; }
 .bb-fill .btn { flex: 0 0 auto; padding: 3px 12px; }
+/* The bar sits on the in-app browser's chrome, dark in both themes, so its buttons and answer box
+   take the dark tokens: in the light theme the near-black primary vanished into the bar and the
+   outline buttons' grey text could hardly be read. */
+.bb-fill {
+  --bg: #131316; --surface: #17171b; --surface-2: #1c1c21; --ink: #e7e7ea; --ink-2: #b4b4bb;
+  --muted: #82828c; --faint: #55555e; --border: #242429; --border-strong: #2f2f36;
+  --accent: #e4e4e8; --accent-hover: #f4f4f6; --accent-ink: #16161a; --accent-ring: rgba(228, 228, 232, 0.22);
+}
 
 /* ---------------- profile section editor ---------------- */
 .pe-card .prof-card-h { display: flex; align-items: center; justify-content: space-between; }
@@ -4280,8 +4288,17 @@ body.cv-dragging * { cursor: grabbing !important; }
 .ans-row.is-editing .fld { width: 100%; font-size: 13px; }
 .ans-row.is-editing textarea.fld { resize: vertical; line-height: 1.5; }
 .ans-empty { padding: 18px 16px; font-size: 13px; color: var(--muted); }
+/* Answers every form asks: the Work authorization card's grammar. The decline choice sits
+   between the two groups, above the five self-identification rows it folds away, so the box
+   never moves under the pointer when it is ticked. */
+.ans-field > label { font-size: 12.5px; color: var(--muted); }
+.ans-span2 { grid-column: span 2; }
+.ans-eeo { margin-top: 18px; }
+.ans-eeo-note { margin: 8px 0 0 29px; font-size: 12.5px; color: var(--muted); }
+.ans-add2 { align-self: flex-start; padding: 0; font-size: 12.5px; }
 @media (max-width: 760px) {
   .ans-grid { grid-template-columns: 1fr; }
+  .ans-span2 { grid-column: auto; }
   .ans-card { padding: 20px 16px; }
   .ans-row { flex-direction: column; }
 }

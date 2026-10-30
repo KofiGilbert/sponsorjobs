@@ -13,6 +13,10 @@ saved: their answer belongs to one application.
 
 Lookup is exact on the key (after normalization and synonyms), never fuzzy, so a saved answer
 is only reused for the same question.
+
+Before any matching, a label loses the form furniture around its question (clean_label): a
+validation error the page wrapped round it ("Error: The field What is your annual salary
+requirement? is required and must have a value.") and the required markers ("*", "(required)").
 """
 from __future__ import annotations
 
@@ -25,6 +29,71 @@ from pathlib import Path
 SOURCES = ("you", "drafted")
 MAX_Q = 300
 MAX_A = 4000
+
+# Bumped when clean_label or _clean change what a question normalizes to, so the library re-keys
+# its older rows once (the _CANON patterns are part of the version too).
+_LABEL_RULES = "labels-1"
+
+# --------------------------------------------------------------------------- label cleaning
+# Form furniture around a question. A validation error the page wrapped round its label (Phenom
+# at Lam Research, 2026-10-30: "Error: The field What is your annual salary requirement? is
+# required and must have a value."; Workday: "Errors Found Error-<question> The field <question>
+# is required"), and the required markers ("*", "(required)", "Required"). Mirrored in
+# shell-electron/agent.js cleanQuestion.
+# Workday's link reads "Error-What is..."; "Error-free code?" is a question (a capital after the
+# hyphen, case-sensitive inside the case-insensitive pattern).
+_ERR_HEAD = re.compile(r"^[\s*\u2731]*(?:(?:\d+\s+)?errors?\s+found\b[\s:.!\-]*|errors?\s*[:\u2013\u2014]+\s*"
+                       r"|errors?\s+-\s*|errors?-(?=(?-i:[A-Z0-9\"'\u201c(])))+", re.I)
+# "The field <question> ...": at the start, or after the end of a sentence (a banner that names
+# the question twice).
+_THE_FIELD = re.compile(r"(?:^|(?<=[?.!:]\s))the field\s+", re.I)
+# What an error says after the question. The bare "is" and "is and must have a value" are what
+# is left when the fill engine has already cut the word "required" out of a label.
+_ERR_TAIL = re.compile(
+    r"\s+(?:is\s+(?:(?:required|mandatory)\s+)?and\s+must\s+have\s+a\s+value"
+    r"|is\s+(?:a\s+)?(?:required|mandatory)(?:\s+(?:field|question))?(?:\s+and\s+must\s+have\s+a\s+value)?"
+    r"|must\s+have\s+a\s+value|cannot\s+be\s+(?:left\s+)?(?:blank|empty)|is\s+(?:blank|empty|missing|invalid)"
+    r"|is)\s*[.!]*\s*$", re.I)
+_REQ_SENTENCE = re.compile(r"\s*\b(?:this\s+)?(?:field|question|answer)\s+is\s+(?:required|mandatory)\W*$", re.I)
+_REQ_PAREN = re.compile(r"\(\s*(?:required|mandatory)\s*\)", re.I)
+# A trailing "Required" only after a marker ("?", "*", ":", " - "), never a word of the question
+# ("Visa sponsorship required" keeps its last word).
+_REQ_TRAIL = re.compile(r"(?:(?<=[?*\u2731)\]])\s*|\s*[:*\u2731]\s*|\s+-\s+)(?:required|mandatory)[\s*\u2731.]*$", re.I)
+_REQ_LEAD = re.compile(r"^(?:required|mandatory)\s*[:*\u2731\-]+\s*", re.I)
+_ONLY_FURNITURE = re.compile(r"^(?:is\s+)?(?:a\s+)?(?:required|mandatory)(?:\s+(?:field|question))?\W*$", re.I)
+
+
+def clean_label(text: str) -> str:
+    """The question a form label asks, without the furniture around it: "Error: The field What
+    is your annual salary requirement? is required and must have a value." and "What is your
+    annual salary requirement? (required)" both give "What is your annual salary requirement?".
+    The words of the question itself are kept as written. "" when nothing but furniture is left."""
+    s = " ".join(str(text or "").split())
+    if not s:
+        return ""
+    erred = False
+    m = _ERR_HEAD.match(s)
+    if m:
+        s, erred = s[m.end():], True
+    fields = list(_THE_FIELD.finditer(s))
+    if fields:
+        tail = s[fields[-1].end():]
+        cut = _ERR_TAIL.sub("", tail, count=1)
+        if cut != tail or (erred and fields[-1].start() == 0):
+            s, erred = cut, True
+    if erred:
+        s = _ERR_TAIL.sub("", s, count=1)
+    else:
+        cut = _ERR_TAIL.sub("", s, count=1)
+        if cut != s and cut.rstrip().endswith("?"):    # "<question>? is required"
+            s = cut
+    s = _REQ_SENTENCE.sub("", s)
+    s = _REQ_PAREN.sub(" ", s)
+    s = _REQ_TRAIL.sub("", s)
+    s = _REQ_LEAD.sub("", s)
+    s = re.sub(r"^[\s*\u2731]+|[\s*\u2731]+$", "", s)
+    s = " ".join(s.split())
+    return "" if _ONLY_FURNITURE.match(s) else s
 
 # Words that change nothing about what a question asks.
 _FILLER = re.compile(
@@ -77,7 +146,13 @@ _CANON: list[tuple[str, re.Pattern]] = [
     ("race", re.compile(_ASK + r"(race|racial (identity|background|group|origin)|race and ethnicity"
                         r"|race ethnicity|race ethnic (identity|background|group|origin)|ethnicity and race"
                         r"|ethnicity race)" + _TAIL)),
-    ("ethnicity", re.compile(_ASK + r"(ethnicity|ethnic (identity|background|group|origin))" + _TAIL)),
+    # The Hispanic or Latino question is the US forms' "ethnicity": "Are you Hispanic/Latino?",
+    # "Hispanic or Latino", "Do you identify as Hispanic or Latino?". Never "Race: Hispanic or
+    # Latino" (one box of a race group) or a combined race list's own label ("Race").
+    ("ethnicity", re.compile(_ASK + r"(ethnicity|ethnic (identity|background|group|origin)"
+                             r"|(hispanic|latin[oax]|latine)(( or | )(latin[oax]|latine|hispanic))?( origin| ethnicity)?)" + _TAIL
+                             + r"|^(are you|do you identify as|do you consider yourself( to be)?)( of)? (hispanic|latin[oax]|latine)"
+                             r"(( or | )(latin[oax]|latine|hispanic))?( origin| ethnicity| descent)?" + _TAIL)),
     # VEVRAA "protected veteran" status only: "Are you a veteran?" (any service) is another
     # question, and a "Yes" there is not a protected-veteran self-identification.
     ("veteran", re.compile(_ASK + r"(protected )?veteran status" + _TAIL + r"|^(protected )?veteran" + _TAIL
@@ -85,6 +160,12 @@ _CANON: list[tuple[str, re.Pattern]] = [
     # The CC-305 question, never "Do you have a disability that requires an accommodation?".
     ("disability", re.compile(_ASK + r"disability( status)?" + _TAIL + r"|^do you have an? disability" + _TAIL
                               + r"|^voluntary self identification of disability( form)?( cc 305)?$")),
+    # A second country of citizenship ("Second country of citizenship", "Other nationality"):
+    # before the first, whose pattern would take it. "Do you hold dual citizenship?" is a yes/no.
+    ("citizenship2", re.compile(r"^(please (provide|enter|list|select) )?(your )?(second|secondary|other|additional|another|dual) "
+                                r"(country (or region |region )?of )?(citizenship|nationality)( country)?( if any| if applicable)?$"
+                                r"|^country (or region |region )?of (second|secondary|other|additional|dual) "
+                                r"(citizenship|nationality)( if any| if applicable)?$")),
     # The COUNTRY of citizenship ("Country of citizenship", and Lam's export-control wording
     # "please provide your most recent country/region of citizenship or legal permanent
     # residence..."). A citizenship STATUS or a yes/no citizenship question keeps its own key.
@@ -105,7 +186,7 @@ _CANON: list[tuple[str, re.Pattern]] = [
 
 _EEO_KEYS = frozenset({"@gender", "@sex", "@race", "@ethnicity", "@veteran", "@disability"})
 # Questions whose answer is one short choice, never a paragraph.
-_SHORT_KEYS = _EEO_KEYS | {"@citizenship"}
+_SHORT_KEYS = _EEO_KEYS | {"@citizenship", "@citizenship2"}
 
 
 def unusable(key: str, answer: str) -> bool:
@@ -144,8 +225,9 @@ def _clean(text: str) -> str:
 def normalize(question: str) -> str:
     """The key a question is stored and looked up under: a canonical name for the recurring
     questions ("salary", "start_date", "heard_about", ...), else the question lowercased with
-    punctuation, filler words and word order removed. "" for an empty question."""
-    c = _clean(question)
+    punctuation, filler words and word order removed. "" for an empty question, and for a label
+    that is only form furniture ("Errors Found", "This field is required")."""
+    c = _clean(clean_label(question))
     if not c:
         return ""
     for key, rx in _CANON:
@@ -181,17 +263,20 @@ class AnswerLibrary:
             " last_used REAL, uses INTEGER NOT NULL DEFAULT 0)")
         self.conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
         self.conn.commit()
+        self._stuck_keys: dict | None = None
         self._rekey()
 
     def _rekey(self):
         """Move answers saved under an older key to the key their question has now. When the
-        canonical wordings widen ("annual salary requirement" became the salary question), an
-        answer saved before must still be found. Runs once per change of the key rules; a row
-        whose new key is already taken stays where it is. Nothing is ever deleted here: an
-        answer that cannot be used (see unusable) is skipped on read instead, and when two
-        wordings of one question meet, a usable answer claims the key first (the person's own
-        before a drafted one, the newest first)."""
-        version = hashlib.sha1("|".join(k + rx.pattern for k, rx in _CANON).encode()).hexdigest()[:12]
+        canonical wordings widen ("annual salary requirement" became the salary question), or
+        the label cleaning learns a new kind of furniture ("Error: The field ... is required"),
+        an answer saved before must still be found. Runs once per change of the key rules; a row
+        whose new key is already taken stays where it is (lookup still weighs it, see best).
+        Nothing is ever deleted here: an answer that cannot be used (see unusable) is skipped on
+        read instead, and when two wordings of one question meet, a usable answer claims the key
+        first (the person's own before a drafted one, the newest first)."""
+        version = hashlib.sha1((_LABEL_RULES + "|" + "|".join(k + rx.pattern for k, rx in _CANON))
+                               .encode()).hexdigest()[:12]
         try:
             row = self.conn.execute("SELECT v FROM meta WHERE k='keys_version'").fetchone()
             if row and row[0] == version:
@@ -230,7 +315,10 @@ class AnswerLibrary:
 
     @staticmethod
     def _row(r) -> dict:
-        return {"key": r["key"], "question": r["question"], "answer": r["answer"],
+        # A row saved before labels were cleaned still reads as its question, never as the
+        # page's error round it (the stored text itself is left as it was).
+        q = str(r["question"] or "")
+        return {"key": r["key"], "question": clean_label(q) or q, "answer": r["answer"],
                 "source": r["source"], "updated_at": r["updated_at"], "last_used": r["last_used"],
                 "uses": r["uses"]}
 
@@ -238,8 +326,10 @@ class AnswerLibrary:
         """Save (or replace) the answer to a question. A drafted answer never replaces one the
         person wrote; per-application questions, empty answers and answers their question can
         never use (a question back on a recurring question, a paragraph for a one-choice one)
-        are not saved. Returns the stored row, or None when nothing was saved."""
-        q = str(question or "").strip()[:MAX_Q]
+        are not saved. The question is kept without its form furniture (clean_label). Returns
+        the stored row, or None when nothing was saved."""
+        raw = str(question or "").strip()
+        q = (clean_label(raw) or raw)[:MAX_Q]
         a = str(answer or "").strip()[:MAX_A]
         source = source if source in SOURCES else "you"
         key = normalize(q)
@@ -256,11 +346,50 @@ class AnswerLibrary:
             self.conn.execute("INSERT INTO answers (key, question, answer, source, created_at, updated_at, uses)"
                               " VALUES (?,?,?,?,?,?,0)", (key, q, a, source, now, now))
         self.conn.commit()
+        self._stuck_keys = None
         return self.get_key(key)
 
     def get_key(self, key: str) -> dict | None:
         r = self.conn.execute("SELECT * FROM answers WHERE key=?", (key,)).fetchone()
         return self._row(r) if r else None
+
+    def _stuck(self) -> dict:
+        """{canonical key: [row keys]} for rows that sit under an older key although their
+        question has a canonical key now (the re-key leaves a row in place when its new key is
+        already taken). Read once per library, again after a write."""
+        if self._stuck_keys is None:
+            out: dict = {}
+            for r in self.conn.execute("SELECT key, question FROM answers WHERE key NOT LIKE '@%'").fetchall():
+                k = normalize(r["question"])
+                if k.startswith("@") and k != r["key"]:
+                    out.setdefault(k, []).append(r["key"])
+            self._stuck_keys = out
+        return self._stuck_keys
+
+    def candidates(self, key: str) -> list[dict]:
+        """Every saved row for a key: the row under it, and for a canonical key the rows left
+        under an older key whose question is the same canonical question."""
+        rows = []
+        r = self.get_key(key) if key else None
+        if r:
+            rows.append(r)
+        if key.startswith("@"):
+            for k in self._stuck().get(key, []):
+                x = self.get_key(k)
+                if x:
+                    rows.append(x)
+        return rows
+
+    def best(self, key: str) -> dict | None:
+        """The answer a key has: the usable one first, the person's own before a drafted one,
+        then the most recently updated. Two saved salaries that disagree (one under the salary
+        key, a newer one the agent saved under an "Error: The field ..." label before labels were
+        cleaned) give the newer one, here and on Your answers alike."""
+        rows = [r for r in self.candidates(key) if not unusable(key, r["answer"])]
+        if not rows:
+            return None
+        rows.sort(key=lambda r: (r["source"] != "you", -float(r["updated_at"] or 0)))
+        return rows[0]
 
     def lookup(self, question: str) -> dict | None:
         """The saved answer to this question (same normalized key), or None. Every reader that
@@ -268,8 +397,7 @@ class AnswerLibrary:
         an answer that cannot be used is never handed out, while its row stays saved until the
         person replaces or deletes it."""
         key = normalize(question)
-        row = self.get_key(key) if key else None
-        return None if row is None or unusable(key, row["answer"]) else row
+        return self.best(key) if key else None
 
     def mark_used(self, key: str):
         self.conn.execute("UPDATE answers SET last_used=?, uses=uses+1 WHERE key=?", (time.time(), key))
@@ -293,6 +421,7 @@ class AnswerLibrary:
     def delete(self, key: str) -> bool:
         n = self.conn.execute("DELETE FROM answers WHERE key=?", (key,)).rowcount
         self.conn.commit()
+        self._stuck_keys = None
         return n > 0
 
     def list(self, query: str = "") -> list[dict]:

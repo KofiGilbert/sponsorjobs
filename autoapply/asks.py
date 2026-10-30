@@ -6,7 +6,8 @@ the bar and on Telegram (ui/app.py, /api/autoapply/agent/ask). This module holds
 * ``known_answer``: before asking, the person's own material (the answer library, work
   authorization, the standing "decline to self-identify" choice on EEO questions). Nothing is
   guessed: a demographic answer only ever comes from the person, and it is used only on the
-  exact choice it names (or a decline for a decline).
+  choice that says the same thing in the form's own words (autoapply/eeo.py), or a decline for
+  a decline.
 * ``order_options``: at most 8 choices to offer, the decline choice FIRST on an EEO question,
   picked from every choice the page has (``all_options``, up to 40). A list the page did not
   show in full is marked ``partial``: then a saved answer or a typed reply outside it is the
@@ -26,8 +27,11 @@ import json
 import re
 import threading
 
+from autoapply import eeo as EEO
 from autoapply import workauth
-from autoapply.planner import _DECLINE, _EEO, _n, decline_option, eeo_option, match_option
+from autoapply.answers import normalize
+from autoapply.planner import (_DECLINE, _EEO, _n, citizenship_text, decline_option, eeo_option, literal_for,
+                               match_option)
 
 MAX_OPTIONS = 8          # choices offered as buttons
 MAX_ALL = 40             # choices kept to match a saved answer or a reply against
@@ -100,14 +104,18 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     """(answer, origin) when the person's own material answers this question, else None.
     Origins: "library", "workauth", "eeo_decline". ``options`` is every choice the page has (or
     as many as were read; ``partial`` says the list is cut). With options, the answer is the
-    exact option; on an EEO question a saved answer fits only the choice it names, or a decline
-    choice for a saved decline. On a cut list a saved answer that fits none of the choices read
-    is still the person's answer: it goes to the page as is, where the brain picks the entry."""
+    exact option (a saved country by name or alias). On an EEO question the standing decline
+    comes first, then the saved answers on the form's own wording (autoapply/eeo.py: "Male" is
+    "Man", a combined race list takes the race and the Hispanic or Latino answer together), or
+    the page's decline choice for a saved decline, never a guess. On a cut list a saved answer
+    that fits none of the choices read is still the person's answer: it goes to the page as is,
+    where the brain picks the entry. A free-text citizenship question that asks for each country
+    gets the second one too."""
     q = str(question or "").strip()
     if not q:
         return None
     opts = clean_options(options)
-    eeo = is_eeo(q)
+    key = normalize(q)
 
     def fit(text):
         text = str(text or "").strip()
@@ -115,7 +123,7 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
             return None
         if not opts:
             return text
-        hit = eeo_option(text, opts) if eeo else match_option(text, opts)
+        hit = literal_for(key, text, opts)
         return hit or (text if partial else None)
 
     if workauth.classify(q):
@@ -123,15 +131,29 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
                             job_country=job_country)
         if v:
             return v, "workauth"
-    hit = library.lookup(q) if library is not None else None
-    if hit:
-        v = fit(hit.get("answer"))
+    if is_eeo(q):
+        # The standing decline first (the person asked for it on every form), then their own
+        # saved answers on the form's own wording (autoapply/eeo.py), never a guess.
+        if eeo_decline and opts:
+            v = decline_option(opts)
+            if v:
+                return v, "eeo_decline"
+        qkey, answers, _rows = EEO.saved(library, q)
+        own = answers.get(qkey, "")
+        if not opts:
+            return (own, "library") if own else None
+        v = eeo_option(own, opts, qkey, answers) if answers else None
         if v:
             return v, "library"
-    if eeo and eeo_decline and opts:
-        v = decline_option(opts)
+        return (own, "library") if partial and own else None
+    hit = library.lookup(q) if library is not None else None
+    if hit:
+        ans = hit.get("answer")
+        if key == "@citizenship" and not opts:
+            ans = citizenship_text(q, library, ans)
+        v = fit(ans)
         if v:
-            return v, "eeo_decline"
+            return v, "library"
     return None
 
 

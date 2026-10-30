@@ -40,7 +40,7 @@
   // A dropdown's prompt entry ("Select...", "-- Choose one --", "Please select"), never a choice.
   // Only a pure prompt: "Choose not to disclose" (a decline) and "Search engine" are real choices.
   // The same rule as autoapply/asks.py, autofill_core.js and the shell's orderOptions.
-  const DECLINE_RE = /decline|prefer not|do not wish|don['’]?t wish|not wish to|(?:do not|don['’]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)/i;
+  const DECLINE_RE = /decline|prefer not|do not wish|don['’]?t wish|not wish to|(?:do not|don['’]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)|not declared/i;
   const PROMPT_RE = /^[\s\-_*.\u2013\u2014]*(?:(?:please )?(?:select|choose)\b|please (?:enter|type|pick)\b|make a selection\b)|^-{2,}|^(?:none selected|no selection|nothing selected)\W*$|^(?:search|start typing|type to search)(?:\W*$|\s*(?:\.{3}|\u2026)|\s+(?:for|by|here)\b)/i;
   const isPlaceholder = (t) => { const s = norm(t); return !!s && PROMPT_RE.test(s) && !DECLINE_RE.test(s); };
   const TEXT_TYPES = new Set(["text", "email", "tel", "url", "search", "password", "number", "date", "datetime-local",

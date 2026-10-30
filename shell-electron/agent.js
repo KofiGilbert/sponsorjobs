@@ -747,13 +747,55 @@ function createAgent(deps) {
 }
 
 // ---- reading the view for an ask (pure, so the tests reach them) -----------------------------
+// Form furniture around a question (autoapply/answers.py clean_label): a validation error the
+// page wrapped round its label (Phenom at Lam Research: "Error: The field What is your annual
+// salary requirement? is required and must have a value."; Workday: "Errors Found
+// Error-<question> The field <question> is required") and the required markers ("*",
+// "(required)", "Required"). The question's own words are kept as written; "" when nothing but
+// furniture is left. The bare "is" tail is what the engine leaves after cutting "required".
+const ERR_TAIL = /\s+(?:is\s+(?:(?:required|mandatory)\s+)?and\s+must\s+have\s+a\s+value|is\s+(?:a\s+)?(?:required|mandatory)(?:\s+(?:field|question))?(?:\s+and\s+must\s+have\s+a\s+value)?|must\s+have\s+a\s+value|cannot\s+be\s+(?:left\s+)?(?:blank|empty)|is\s+(?:blank|empty|missing|invalid)|is)\s*[.!]*\s*$/i;
+const THE_FIELD = /(?:^|(?<=[?.!:]\s))the field\s+/gi;
+const REQ_SENTENCE = /\s*\b(?:this\s+)?(?:field|question|answer)\s+is\s+(?:required|mandatory)\W*$/i;
+const REQ_PAREN = /\(\s*(?:required|mandatory)\s*\)/gi;
+const REQ_TRAIL = /(?:(?<=[?*\u2731)\]])\s*|\s*[:*\u2731]\s*|\s+-\s+)(?:required|mandatory)[\s*\u2731.]*$/i;
+const REQ_LEAD = /^(?:required|mandatory)\s*[:*\u2731-]+\s*/i;
+const ONLY_FURNITURE = /^(?:is\s+)?(?:a\s+)?(?:required|mandatory)(?:\s+(?:field|question))?\W*$/i;
+function cleanQuestion(text) {
+  let s = String(text || "").replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  let erred = false;
+  for (;;) {                    // "Errors Found Error-": one error head after another
+    // Workday's link reads "Error-What is..."; "Error-free code?" is a question (a capital after the hyphen).
+    const m = /^[\s*\u2731]*(?:(?:\d+\s+)?errors?\s+found\b[\s:.!-]*|errors?\s*[:\u2013\u2014]+\s*|errors?\s+-\s*)/i.exec(s)
+      || /^[\s*\u2731]*[Ee][Rr][Rr][Oo][Rr][Ss]?-(?=[A-Z0-9"'\u201c(])/.exec(s);
+    if (!m || !m[0]) break;
+    s = s.slice(m[0].length);
+    erred = true;
+  }
+  const fields = [...s.matchAll(THE_FIELD)];
+  if (fields.length) {
+    const last = fields[fields.length - 1];
+    const tail = s.slice(last.index + last[0].length);
+    const cut = tail.replace(ERR_TAIL, "");
+    if (cut !== tail || (erred && last.index === 0)) { s = cut; erred = true; }
+  }
+  if (erred) s = s.replace(ERR_TAIL, "");
+  else {
+    const cut = s.replace(ERR_TAIL, "");
+    if (cut !== s && /\?\s*$/.test(cut)) s = cut;          // "<question>? is required"
+  }
+  s = s.replace(REQ_SENTENCE, "").replace(REQ_PAREN, " ").replace(REQ_TRAIL, "").replace(REQ_LEAD, "");
+  s = s.replace(/^[\s*\u2731]+|[\s*\u2731]+$/g, "").replace(/\s+/g, " ").trim();
+  return ONLY_FURNITURE.test(s) ? "" : s;
+}
+
 // One question reaches the shell in several lengths: the view cuts a label at 80 characters,
 // the engine keeps 200, and a Workday "Error-" link cuts it at 74. Two labels name the same
-// question when they are equal, or one is a cut of the other at least 70 characters long (case
-// and spacing aside).
+// question when they are equal, or one is a cut of the other at least 70 characters long (case,
+// spacing and the furniture round the question aside: "Error: The field X is required" is X).
 const squash = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
 function sameLabel(a, b) {
-  const x = squash(a), y = squash(b);
+  const x = squash(cleanQuestion(a) || a), y = squash(cleanQuestion(b) || b);
   if (!x || !y) return false;
   if (x === y) return true;
   const [s, l] = x.length <= y.length ? [x, y] : [y, x];
@@ -771,13 +813,15 @@ function linesFor(viewText, label) {
 }
 
 // What to ask: the engine's open fields, else the fields the page's own errors name ("The
-// field X is required"), else empty required boxes in the view. Labels only, never values.
-// One entry per question: a cut wording (an Error- link) folds into the fuller one.
+// field X is required"), else empty required boxes in the view. Labels only, never values,
+// and without the furniture round them (cleanQuestion): the person is asked X, never "Error:
+// The field X is required". One entry per question: a cut wording (an Error- link) folds into
+// the fuller one.
 function questionsFor(viewText, left, includeFilled) {
   const out = [];
   const text = String(viewText || "");
   const add = (q) => {
-    q = String(q || "").trim();
+    q = cleanQuestion(q);
     if (!q) return;
     const i = out.findIndex((o) => sameLabel(o, q));
     if (i < 0) out.push(q);
@@ -863,11 +907,11 @@ function indexFor(viewText, label) {
   return 0;
 }
 
-// Voluntary self-identification questions (the planner's _EEO) and the decline choice (its
-// _DECLINE, with the federal form's "I do not want to answer"): on such a question the decline
-// option is offered FIRST, never a guess for them.
+// Voluntary self-identification questions (the planner's _EEO) and the decline choice
+// (autoapply/eeo.py DECLINE, with the federal form's "I do not want to answer" and Workday's
+// "Not Declared"): on such a question the decline option is offered FIRST, never a guess.
 const EEO_RE = /gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun/i;
-const DECLINE_RE = /decline|prefer not|do not wish|don['\u2019]?t wish|not wish to|(?:do not|don['\u2019]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)/i;
+const DECLINE_RE = /decline|prefer not|do not wish|don['\u2019]?t wish|not wish to|(?:do not|don['\u2019]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)|not declared/i;
 // A dropdown's prompt entry, never a choice. Only a pure prompt: "Choose not to disclose" (a
 // decline) and "Search engine" are real choices (autoapply/asks.py has the same rule).
 const PROMPT_RE = /^[\s\-_*.\u2013\u2014]*(?:(?:please )?(?:select|choose)\b|please (?:enter|type|pick)\b|make a selection\b)|^-{2,}|^(?:none selected|no selection|nothing selected)\W*$|^(?:search|start typing|type to search)(?:\W*$|\s*(?:\.{3}|\u2026)|\s+(?:for|by|here)\b)/i;
@@ -913,5 +957,5 @@ function blockedMessage(reason, left) {
   }
 }
 
-module.exports = { createAgent, blockedMessage, orderOptions, cleanOptions, sameLabel, questionsFor,
+module.exports = { createAgent, blockedMessage, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion,
                    optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS };

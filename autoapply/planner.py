@@ -24,8 +24,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from autoapply import workauth
+from autoapply import eeo, workauth
 from autoapply.answers import normalize
+from autoapply.countries import country_option
 from autoapply.fields import APPLICANT_KEYS, FillAction, FormField
 
 _VALID_OPS = {"fill", "select", "check", "upload", "skip"}
@@ -82,17 +83,30 @@ def contact_key(label: str) -> str:
 
 _EEO = re.compile(r"gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation"
                   r"|transgender|pronoun", re.I)
-# The "decline to self-identify" choice in its usual wordings, the federal disability form's
-# "I do not want to answer" (CC-305) included. Mirrored in shell-electron/agent.js DECLINE_RE.
-_DECLINE = re.compile(r"decline|prefer not|do not wish|don['’]?t wish|not wish to"
-                      r"|(do not|don['’]?t) want to (answer|disclose|say|self[- ]?identify|provide)"
-                      r"|choose not|rather not|not to (say|answer|disclose)", re.I)
+# The "decline to self-identify" choice in its usual wordings (autoapply/eeo.py, where the
+# self-identification matching lives). Mirrored in shell-electron/agent.js DECLINE_RE.
+_DECLINE = eeo.DECLINE
+decline_option = eeo.decline_option
+
+# Country questions: a saved country is matched to the form's own list by name and alias.
+_COUNTRY_KEYS = frozenset({"@citizenship", "@citizenship2"})
+# "...country of citizenship (if you are a citizen of more than one, list each)": every country.
+_EACH = re.compile(r"more than one|list (each|all|them)|all (countries|citizenships)|each (country|citizenship)"
+                   r"|dual|multiple", re.I)
 
 
-def decline_option(options) -> str | None:
-    """The one "decline to self-identify" option, or None."""
-    hits = [str(o) for o in (options or []) if _DECLINE.search(str(o))]
-    return hits[0] if len(hits) == 1 else None
+def citizenship_text(label: str, library, first: str) -> str:
+    """The answer to a free-text citizenship question: the saved country, and the second one as
+    well when the question asks for each ("Ghana, Canada")."""
+    first = str(first or "").strip()
+    if not first or library is None or not _EACH.search(str(label or "")):
+        return first
+    try:
+        hit = library.lookup("Second country of citizenship")
+    except Exception:          # noqa: BLE001 - only the first country then
+        hit = None
+    second = str((hit or {}).get("answer") or "").strip()
+    return f"{first}, {second}" if second and second.lower() != first.lower() else first
 
 
 _RESUME = re.compile(r"r[ée]sum[ée]|\bcv\b|curriculum", re.I)
@@ -124,12 +138,20 @@ def match_option(answer: str, options) -> str | None:
     return None
 
 
-def eeo_option(answer: str, options) -> str | None:
-    """The option a saved self-identification answer names: the same words, else the page's own
+def eeo_option(answer: str, options, key: str = "", answers: dict | None = None) -> str | None:
+    """The option a saved self-identification answer names: the same words, else (for a known
+    question ``key``) the option that makes the same choice in the form's own words ("Male" is
+    "Man", "No" is "No, I do not have a disability..."; autoapply/eeo.py), else the page's own
     decline choice for a saved decline ("I don't wish to answer" is Workday's "I do not wish to
     answer" and Lever's "Decline to self-identify"). Never the Yes/No or shared-prefix guesses of
     match_option: a plain "Yes" is not "I identify as a protected veteran", and "Yes, I have a
-    disability" is not "Yes, I need an accommodation"."""
+    disability" is not "Yes, I need an accommodation". ``answers`` ({key: answer}) carries the
+    other self-identification answers a combined race and ethnicity list needs."""
+    got = dict(answers or {})
+    if key and str(answer or "").strip():
+        got[key] = str(answer).strip()
+    if key:
+        return eeo.choose(key, options, got)
     opts = [str(o) for o in (options or []) if str(o).strip()]
     a = _n(answer)
     if not opts or not a:
@@ -142,6 +164,16 @@ def eeo_option(answer: str, options) -> str | None:
     return None
 
 
+def literal_for(key: str, text: str, options) -> str | None:
+    """A saved answer on a choice field: a country by name or alias on a country question,
+    else match_option."""
+    if key in _COUNTRY_KEYS:
+        v = country_option(text, options)
+        if v:
+            return v
+    return match_option(text, options)
+
+
 def _op_for(f: FormField) -> str:
     t = (f.type or "text").lower()
     if t in ("select", "radio"):
@@ -151,48 +183,75 @@ def _op_for(f: FormField) -> str:
     return "fill"
 
 
-def _literal(f: FormField, text: str) -> str | None:
-    """Fit a known answer to this field: an exact option for a choice field, Yes for a checkbox
-    the answer affirms, the text itself for a text box."""
+def _literal(f: FormField, text: str, key: str = "") -> str | None:
+    """Fit a known answer to this field: an exact option for a choice field (a country by name
+    or alias on a country question), Yes for a checkbox the answer affirms, the text itself for a
+    text box."""
     text = str(text or "").strip()
     if not text:
         return None
     t = (f.type or "text").lower()
     if f.options or t in ("select", "radio"):
-        return match_option(text, f.options)
+        return literal_for(key, text, f.options)
     if t == "checkbox":
         return "Yes" if workauth.polarity(text) is True else None
     return text
 
 
-def _eeo_fill(f: FormField, label: str, t: str, ctx) -> tuple | None:
-    """(FillAction, library key or "") for a self-identification field from the person's own
-    saved answer or their standing decline, else None (the field is theirs). Never a guess."""
+def _used(key: str, rows: dict) -> list:
+    """The library rows an EEO choice came from (both halves for a race or ethnicity list)."""
+    keys = ("@race", "@ethnicity") if key in ("@race", "@ethnicity") else (key,)
+    return [rows[k] for k in keys if k in rows]
+
+
+def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None) -> tuple | None:
+    """(FillAction, [library keys]) for a self-identification field from the person's standing
+    decline or their own saved answers, else None (the field is theirs). Never a guess. The
+    standing "decline to self-identify" choice comes first: the person asked for it on every
+    form, and Your answers says so."""
     if t == "checkbox":
         # One box of a native group, labelled "Question: Option" (the engine's checkboxLabel):
-        # ticked only when ITS option is the saved answer, or both are a decline. Never from the
-        # answer's Yes/No polarity, which would tick every box of the group at once.
+        # the group's ONE chosen option is worked out from all its boxes, and only that box is
+        # ticked. Never from the answer's Yes/No polarity, which would tick every box at once.
         q, sep, opt = label.partition(": ")
         if not sep or not opt.strip():
             return None
-        hit = ctx.library.lookup(q) if ctx.library is not None else None
-        ans = str((hit or {}).get("answer") or "").strip()
-        if ans and (_n(opt) == _n(ans) or (_DECLINE.search(opt) and _DECLINE.search(ans))):
-            return FillAction(f.ref, "check", value="Yes", origin="library", sensitive=True), hit["key"]
+        group = list((groups or {}).get(q) or [opt])
+        if ctx.eeo_decline:
+            v = decline_option(group)
+            if v:
+                return (FillAction(f.ref, "check", value="Yes", origin="eeo", sensitive=True), []) if v == opt else None
+        key, answers, rows = eeo.saved(ctx.library, q)
+        v = eeo_option(answers.get(key, ""), group, key, answers) if answers else None
+        if v and v == opt:
+            return FillAction(f.ref, "check", value="Yes", origin="library", sensitive=True), _used(key, rows)
+        return None
+    if f.options or t in ("select", "radio"):
+        if ctx.eeo_decline and f.options:
+            v = decline_option(f.options)
+            if v:
+                return FillAction(f.ref, _op_for(f), value=v, origin="eeo", sensitive=True), []
+        key, answers, rows = eeo.saved(ctx.library, label)
+        v = eeo_option(answers.get(key, ""), f.options, key, answers) if answers else None
+        if v:
+            return FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True), _used(key, rows)
         return None
     hit = ctx.library.lookup(label) if ctx.library is not None else None
     ans = str((hit or {}).get("answer") or "").strip()
-    if f.options or t in ("select", "radio"):
-        v = eeo_option(ans, f.options) if ans else None
-        if v:
-            return FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True), hit["key"]
-        v = decline_option(f.options) if ctx.eeo_decline and f.options else None
-        if v:
-            return FillAction(f.ref, _op_for(f), value=v, origin="eeo", sensitive=True), ""
-        return None
     if ans:
-        return FillAction(f.ref, "fill", value=ans, origin="library", sensitive=True), hit["key"]
+        return FillAction(f.ref, "fill", value=ans, origin="library", sensitive=True), [hit["key"]]
     return None
+
+
+def _checkbox_groups(fields: list) -> dict:
+    """{question: [option, ...]} for the checkbox groups a form lists as "Question: Option"."""
+    out: dict = {}
+    for f in fields:
+        if (f.type or "").lower() == "checkbox":
+            q, sep, opt = (f.label or "").partition(": ")
+            if sep and opt.strip():
+                out.setdefault(q, []).append(opt)
+    return out
 
 
 # --------------------------------------------------------------------------- the known pass
@@ -230,6 +289,7 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             k = normalize(qa.get("question") or "")
             if k and k not in drafted:
                 drafted[k] = (str(qa.get("question") or ""), str(qa.get("answer")).strip())
+    groups = _checkbox_groups(fields)
     for f in fields:
         label = f.label or ""
         t = (f.type or "text").lower()
@@ -243,14 +303,13 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.rest.append(f)
             continue
 
-        # 0. EEO / demographics: the person's own saved answer (an earlier "ask"), on the exact
-        #    option it names, else their standing "decline" choice, never a guess
+        # 0. EEO / demographics: the person's standing "decline" choice, else their own saved
+        #    answers (Your answers, or an earlier "ask") on the form's own wording, never a guess
         if _EEO.search(label) and not workauth.classify(label):
-            got = _eeo_fill(f, label, t, ctx)
+            got = _eeo_fill(f, label, t, ctx, groups)
             if got:
                 out.actions.append(got[0])
-                if got[1]:
-                    out.used_library.append(got[1])
+                out.used_library.extend(k for k in got[1] if k not in out.used_library)
             else:
                 out.left.append(f)
             continue
@@ -273,10 +332,14 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.left.append(f)                         # theirs to answer
             continue
 
-        # 2. the answer library
+        # 2. the answer library (a free-text citizenship question that asks for each country
+        #    gets the second one too)
         hit = ctx.library.lookup(label) if ctx.library is not None else None
         if hit:
-            v = _literal(f, hit["answer"])
+            ans, qkey = hit["answer"], normalize(label)
+            if qkey == "@citizenship" and not f.options and t in ("text", "textarea"):
+                ans = citizenship_text(label, ctx.library, ans)
+            v = _literal(f, ans, qkey)
             if v:
                 out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True))
                 out.used_library.append(hit["key"])

@@ -766,11 +766,45 @@
               <div class="ans-field"><span data-i18n="ans.relocate">Willing to relocate</span>
                 <div class="ans-seg ans-yn" data-yn="relocate"></div></div>
             </div>
-            <label class="ans-check"><input type="checkbox" id="ansEeo" />
-              <span data-i18n="profile.answers.eeo">On EEO and demographic questions, pick "Decline to self-identify"</span></label>
             <div class="ans-foot">
               <button class="btn btn-primary btn-sm" id="ansWaSave" type="button" data-i18n="ans.save">Save</button>
               <span class="ans-note" id="ansWaNote" role="status"></span>
+            </div>
+          </section>
+
+          <!-- The answers every form asks (autoapply/basics.py): saved once as the person's own
+               under their canonical keys, so the apply agent never asks them again. The decline
+               choice sits above the five self-identification rows it folds away. -->
+          <section class="ans-card" id="ansBasicsCard" aria-labelledby="ansBasicsH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="ansBasicsH"><span data-i18n="ans.basics">Answers every form asks</span> <span class="ans-count" id="ansBasicsCount"></span></h2>
+            </div>
+            <div class="ans-grid">
+              <div class="ans-field"><label for="ansCit" data-i18n="ans.citizenship">Country of citizenship</label>
+                <select class="fld" id="ansCit"></select>
+                <select class="fld" id="ansCit2" hidden aria-label="Second country of citizenship" data-i18n-aria="ans.citizenship2"></select>
+                <button class="link-btn ans-add2" id="ansCitAdd" type="button" data-i18n="ans.addAnother">Add another</button></div>
+              <label class="ans-field"><span data-i18n="ans.salary">Desired annual salary (USD)</span>
+                <input class="fld" id="ansSalary" type="text" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="120000" /></label>
+            </div>
+            <label class="ans-check"><input type="checkbox" id="ansEeo" />
+              <span data-i18n="profile.answers.eeo">On EEO and demographic questions, pick "Decline to self-identify"</span></label>
+            <p class="ans-eeo-note" id="ansEeoNote" hidden data-i18n="ans.eeoNote">Gender, ethnicity, race, veteran and disability will be declined on every form.</p>
+            <div class="ans-grid ans-eeo" id="ansEeoRows">
+              <div class="ans-field ans-span2"><span data-i18n="ans.gender">Gender</span>
+                <div class="ans-seg" data-basic="gender" role="group" aria-label="Gender" data-i18n-aria="ans.gender"></div></div>
+              <div class="ans-field"><span data-i18n="ans.hispanic">Hispanic or Latino</span>
+                <div class="ans-seg" data-basic="hispanic" role="group" aria-label="Hispanic or Latino" data-i18n-aria="ans.hispanic"></div></div>
+              <label class="ans-field"><span data-i18n="ans.race">Race</span>
+                <select class="fld" id="ansRace" data-basic="race"></select></label>
+              <label class="ans-field"><span data-i18n="ans.veteran">Veteran status</span>
+                <select class="fld" id="ansVet" data-basic="veteran"></select></label>
+              <div class="ans-field"><span data-i18n="ans.disability">Disability</span>
+                <div class="ans-seg" data-basic="disability" role="group" aria-label="Disability" data-i18n-aria="ans.disability"></div></div>
+            </div>
+            <div class="ans-foot">
+              <button class="btn btn-ghost btn-sm" id="ansBasicsSave" type="button" data-i18n="ans.save">Save</button>
+              <span class="ans-note" id="ansBasicsNote" role="status"></span>
             </div>
           </section>
 
