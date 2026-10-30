@@ -358,8 +358,22 @@ function createAgent(deps) {
       add(q);
     }
     let m;
-    const errRe = /Error: "(?:The field )?(.+?) (?:is required|must have a value|is a required field|cannot be blank)/g;
-    while ((m = errRe.exec(text))) add(m[1].replace(/^"|"$/g, ""));
+    // The page's own errors. Workday writes "Errors Found Error-<question> The field <question>
+    // is required" in one banner and lists each one as an "Error-<question>" link button, so take
+    // the named field, never the whole banner.
+    const errRe = /Error: "([^"]*)"/g;
+    while ((m = errRe.exec(text))) {
+      const banner = m[1];
+      const named = banner.match(/The field (.+?) (?:is required|must have a value|is a required field|cannot be blank)/g);
+      if (named) {
+        for (const n of named) add(n.replace(/^The field /, "").replace(/ (?:is required|must have a value|is a required field|cannot be blank)$/, ""));
+      } else {
+        const one = /^(.+?) (?:is required|must have a value|is a required field|cannot be blank)/.exec(banner);
+        if (one && !/^Errors? Found\b/i.test(one[1])) add(one[1]);
+      }
+    }
+    const linkRe = /<button>Error-([^<]+?)<\/button>/g;
+    while ((m = linkRe.exec(text))) add(m[1]);
     if (!out.length) {
       const reqRe = /<(?:input|combobox|select|textarea)[^>]*label="([^"]*)"[^>]*value=""[^>]*required>/g;
       while ((m = reqRe.exec(text))) add(m[1]);
