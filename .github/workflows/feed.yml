@@ -70,6 +70,9 @@ jobs:
           key: feed-data-${{ github.run_id }}
           restore-keys: |
             feed-data-
+          # A missing state (cache egress refused, 2026-10-30) must stop the run: starting from an
+          # empty database publishes a fraction of the board and saves that as the next base.
+          fail-on-cache-miss: true
 
       - name: Install
         run: pip install -e .
@@ -155,6 +158,9 @@ jobs:
           key: feed-data-${{ github.run_id }}
           restore-keys: |
             feed-data-
+          # A missing state (cache egress refused, 2026-10-30) must stop the run: starting from an
+          # empty database publishes a fraction of the board and saves that as the next base.
+          fail-on-cache-miss: true
 
       - name: Install
         run: pip install -e . boto3
