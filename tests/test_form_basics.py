@@ -1036,8 +1036,9 @@ def test_the_decline_box_saves_itself_and_the_note_shows_the_saved_choice():
 def test_the_card_follows_saved_answers_and_the_card_save_keeps_an_open_editor():
     lst = APP_JS[APP_JS.index('$("#ansList")?.addEventListener("click"'):APP_JS.index("/* ---- Up next")]
     assert lst.count("await basRefresh();") == 2
-    save = APP_JS[APP_JS.index('$("#ansBasicsSave")?.addEventListener'):APP_JS.index("function ansWhen(")]
-    assert "ansRefresh({ keepEditor: true })" in save
+    # The card's save (basSave, shared with setup's last step) refreshes the list below it.
+    save = APP_JS[APP_JS.index("async function basSave()"):APP_JS.index("function ansWhen(")]
+    assert "ansRefresh({ keepEditor: true })" in save and "await basSave();" in save
 
 
 def test_the_prompt_takes_the_keyboard():

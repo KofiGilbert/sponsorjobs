@@ -21,6 +21,8 @@ import os
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 ROOT = Path(os.getcwd())
 
 datas = [
@@ -60,6 +62,13 @@ else:
     print("WARNING: packaging/seed/sponsors.db missing; this build ships NO visa data. "
           "Run: python packaging/bundle_sponsor_db.py")
 
+# Photo and scanned-PDF reading (intake/cv_import.py): RapidOCR on onnxruntime and OpenCV, all
+# of which need numpy. RapidOCR finds its config.yaml and its three PP-OCR .onnx models (~15 MB)
+# next to its own module (Path(__file__).parent), so they ship as data under
+# rapidocr_onnxruntime/. Without them, or without numpy, OCR returned "" in the installed app
+# and a photographed resume read as empty.
+datas += collect_data_files("rapidocr_onnxruntime", excludes=["**/__pycache__/*"])
+
 hiddenimports = [
     # Flask/Werkzeug reach for these dynamically, so static analysis misses them.
     "flask", "jinja2", "werkzeug", "click", "itsdangerous", "markupsafe",
@@ -69,6 +78,9 @@ hiddenimports = [
     "ui.shell", "tailoring.compiler", "tailoring.assembler", "tailoring.keywords",
     "sourcing.sponsors", "sourcing.ats", "sourcing.service", "sourcing.watchlist",
     "submit.allowlist", "intake.memory", "intake.template_manifest", "llm.anthropic_client",
+    # The OCR stack, imported lazily inside intake/cv_import.py.
+    "intake.cv_import", "numpy", "cv2", "onnxruntime", "shapely", "shapely.geometry", "pyclipper", "yaml",
+    "pypdfium2", *collect_submodules("rapidocr_onnxruntime"),
 ]
 
 a = Analysis(
@@ -79,8 +91,16 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    # Nothing here is used by the app and each drags in a large dependency tree.
-    excludes=["tkinter", "matplotlib", "numpy", "pandas", "PyQt5", "PySide6", "pytest"],
+    # Nothing here is used by the app and each drags in a large dependency tree. numpy is NOT
+    # here: OCR needs it. MemPalace and ChromaDB are, so the semantic memory layer (being phased
+    # out) cannot start in the installed app: it would add RAM and an 80 MB model download now
+    # that numpy imports. The verbatim transcript layer needs neither (intake/palace_memory.py),
+    # and packaging/launcher.py also sets RESUME_AGENT_PALACE_INDEX=0. Leaving them out drops
+    # their own trees too (grpc, opentelemetry, kubernetes, tokenizers, huggingface_hub).
+    # numpy's build and test tools are left out; OCR uses none of them.
+    excludes=["tkinter", "matplotlib", "pandas", "PyQt5", "PySide6", "pytest",
+              "chromadb", "mempalace",
+              "numpy.f2py", "numpy.distutils", "numpy.testing", "numpy.tests"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

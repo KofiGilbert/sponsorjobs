@@ -93,6 +93,23 @@ def _die(title: str, message: str) -> None:
     sys.exit(1)
 
 
+def _engine_env(data: Path, env=None) -> None:
+    """The packaged engine's settings, each only when not already set (a person or a test can
+    still override any of them):
+
+    * the person's writable data dir and their credentials file;
+    * MemPalace's semantic index OFF. The installed app ships numpy for photo and scanned-PDF
+      reading (OCR), and with numpy present the semantic memory layer could start: ChromaDB in
+      RAM plus an 80 MB embedding model download on first use. That layer is being phased out,
+      the verbatim transcript keeps every turn without it, and the build leaves chromadb and
+      mempalace out anyway (packaging/tailor.spec); this keeps it off even if one is present.
+    """
+    env = os.environ if env is None else env
+    env.setdefault("RESUME_AGENT_DATA_DIR", str(data))
+    env.setdefault("RESUME_AGENT_CRED_FILE", str(data / "credentials.env"))
+    env.setdefault("RESUME_AGENT_PALACE_INDEX", "0")
+
+
 def main() -> None:
     bundle = _bundle_dir()
     data = _user_data_dir()
@@ -100,8 +117,7 @@ def main() -> None:
     # own env vars at the person's writable data dir before ui.app imports and reads them.
     os.chdir(bundle)
     sys.path.insert(0, str(bundle))
-    os.environ.setdefault("RESUME_AGENT_DATA_DIR", str(data))
-    os.environ.setdefault("RESUME_AGENT_CRED_FILE", str(data / "credentials.env"))
+    _engine_env(data)
 
     try:
         from ui.app import main as run
