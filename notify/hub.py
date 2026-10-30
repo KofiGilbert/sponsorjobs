@@ -10,6 +10,7 @@ Event routing (same for both channels):
   * ``approve:<id>`` / ``skip:<id>`` / ``approveall`` buttons -> the batch review actions
   * text and slash commands -> NotifyService.handle_command (/list, /approve, /status, /stop,
     /resume, /skip, /handle, free-text chat)
+  * a file or picture (own bot) -> channel.FILES_REPLY, then its caption as text
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .alerts import away_activity, digest_due, digest_text
-from .channel import ChannelError
+from .channel import FILES_REPLY, ChannelError, _kind
 
 
 class NotifyHub:
@@ -37,6 +38,13 @@ class NotifyHub:
     # -- inbound ----------------------------------------------------------------- #
     def handle_event(self, channel, ev: dict) -> str:
         kind = ev.get("type")
+        if kind == "file":
+            # Neither bot can open a file yet: say so at once, then treat a caption as a message.
+            channel.send(FILES_REPLY)
+            cap = str(ev.get("text") or "").strip()
+            if not cap:
+                return FILES_REPLY
+            return self.handle_event(channel, {**ev, "type": _kind(cap), "text": cap})
         if self.ask_callback is not None:
             payload = (ev.get("data") or "") if kind == "button" else (ev.get("text") or "")
             if payload and (kind != "button" or payload.startswith("ask:")):

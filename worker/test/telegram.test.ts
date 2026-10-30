@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import worker from "../src/index";
 import {
-  EDIT_PER_DAY, EVENT_TTL, INBOX_LIMIT, MAX_TEXT, MSG_CONNECTED, MSG_DISCONNECTED, MSG_EXPIRED, MSG_PAUSED,
-  MSG_UNBOUND, rateCheck, SEND_PER_DAY, TELEGRAM_API,
+  EDIT_PER_DAY, EVENT_TTL, INBOX_LIMIT, MAX_TEXT, MSG_CONNECTED, MSG_DISCONNECTED, MSG_EXPIRED, MSG_NO_FILES,
+  MSG_PAUSED, MSG_UNBOUND, rateCheck, SEND_PER_DAY, TELEGRAM_API,
 } from "../src/telegram";
 import { call, env, newAccount } from "./helpers";
 
@@ -375,6 +375,31 @@ describe("POST /telegram/webhook", () => {
     expect(calls.map((c) => c.body.text)).toEqual([MSG_UNBOUND, MSG_UNBOUND]);
     await hook({ message: { chat: { id: -100, type: "group" }, text: "/help" } });
     expect(calls).toHaveLength(2);
+  });
+
+  it("a file, picture or voice note gets an honest reply at once; only a caption is queued", async () => {
+    const a = await linked();
+    const calls = stubTelegram();
+    const file = (extra: Record<string, unknown>) =>
+      ({ message: { message_id: 2, chat: { id: a.chatId, type: "private" }, from: { id: a.chatId }, ...extra } });
+    await hook(file({ photo: [{ file_id: "p1", width: 90, height: 90 }] }));
+    await hook(file({ document: { file_id: "d1", file_name: "Kofi Gilbert_Resume.pdf" }, caption: "my resume" }));
+    for (const kind of ["voice", "video", "audio", "sticker"]) await hook(file({ [kind]: { file_id: "x" } }));
+    expect(calls.map((c) => [c.method, c.body.chat_id, c.body.text])).toEqual(
+      Array.from({ length: 6 }, () => ["sendMessage", a.chatId, MSG_NO_FILES]));
+    expect(MSG_NO_FILES).not.toMatch(/[\u2013\u2014]/);
+
+    const r = await tgCall("/notify/telegram/inbox", a.token);
+    expect(r.data.events.map((e: any) => [e.type, e.data, e.text])).toEqual([["text", "", "my resume"]]);
+  });
+
+  it("a file from an unlinked chat keeps the connect reply and stores nothing", async () => {
+    const calls = stubTelegram();
+    const chatId = freshChat();
+    await hook({ message: { message_id: 3, chat: { id: chatId, type: "private" }, document: { file_id: "d" }, caption: "hi" } });
+    expect(calls.map((c) => c.body.text)).toEqual([MSG_UNBOUND]);
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM telegram_events WHERE text = 'hi'").first<{ n: number }>();
+    expect(n?.n).toBe(0);
   });
 
   it("answers 200 even when handling fails, so Telegram does not retry", async () => {

@@ -322,3 +322,24 @@ def test_setup_helper_sets_the_webhook_with_the_secret(monkeypatch, tmp_path):
     assert method == "setWebhook" and payload["url"] == "https://broker.example.com/telegram/webhook"
     assert payload["secret_token"] == SECRET
     assert [m for m, _ in tg.calls] == ["setWebhook", "setMyCommands", "getWebhookInfo"]
+
+
+def test_a_file_from_a_linked_chat_gets_an_honest_reply_and_only_its_caption_is_queued(store):
+    from backend.telegram_relay import MSG_NO_FILES
+    from notify.channel import FILES_REPLY
+    assert MSG_NO_FILES == FILES_REPLY          # both bots say the same words
+    c, tg, _ = _app(store)
+    H = _linked(c)
+
+    def upd(extra, uid):
+        return {"update_id": uid, "message": {"message_id": uid, "chat": {"id": 555, "type": "private"},
+                                              "from": {"id": 555}, **extra}}
+    c.post("/telegram/webhook", json=upd({"photo": [{"file_id": "p"}]}, 10), headers=WH)
+    c.post("/telegram/webhook", json=upd({"document": {"file_id": "d"}, "caption": "my resume"}, 11), headers=WH)
+    c.post("/telegram/webhook", json=upd({"voice": {"file_id": "v"}}, 12), headers=WH)
+    assert tg.texts(555)[-3:] == [MSG_NO_FILES] * 3
+    ev = c.get("/notify/telegram/inbox", headers=H).get_json()["events"]
+    assert [(e["type"], e["text"]) for e in ev] == [("text", "my resume")]
+    c.post("/telegram/webhook", json={"update_id": 13, "message": {
+        "chat": {"id": 999, "type": "private"}, "document": {"file_id": "d"}}}, headers=WH)
+    assert tg.texts(999) == [MSG_UNBOUND]

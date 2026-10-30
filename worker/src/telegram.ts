@@ -52,6 +52,11 @@ export const MSG_HELP = "I'm the SponsorJobs bot. I message you about new jobs a
   "/stop pauses messages, /resume turns them back on.\n" +
   "To disconnect, open SponsorJobs, Settings, Notifications.";
 export const MSG_DISCONNECTED = "Disconnected from SponsorJobs.";
+// A file, picture or voice note from a linked chat. The bot can't open one, so it says so at once
+// instead of queueing nothing and leaving the app to guess (2026-10-30: a resume photo and PDF were
+// dropped without a word). The app's own-bot channel sends the same (notify/channel.py FILES_REPLY).
+export const MSG_NO_FILES = "I can't open files here yet. To add your resume, open SponsorJobs and go to Resumes, then Upload.";
+export const ATTACHMENT_KINDS = ["document", "photo", "voice", "video", "audio", "sticker", "video_note", "animation"] as const;
 
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", ...headers } });
@@ -488,6 +493,12 @@ export async function handleUpdate(env: Env, bot: Bot, update: Obj, now: number)
   }
 
   if (account === null) return say(bot, chatId, MSG_UNBOUND);
+  if (!text && ATTACHMENT_KINDS.some((k) => msg[k])) {
+    // Nothing is queued for the file itself; a caption is the person's words, so it goes on as text.
+    const caption = String(msg.caption ?? "").trim();
+    if (caption) await addEvent(db, account, "text", "", cpSlice(caption, MAX_EVENT_TEXT), now);
+    return say(bot, chatId, MSG_NO_FILES);
+  }
   if (text) await addEvent(db, account, "text", "", cpSlice(text, MAX_EVENT_TEXT), now);
 }
 

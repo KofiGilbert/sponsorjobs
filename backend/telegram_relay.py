@@ -59,6 +59,11 @@ MSG_HELP = ("I'm the SponsorJobs bot. I message you about new jobs and applicati
             "/stop pauses messages, /resume turns them back on.\n"
             "To disconnect, open SponsorJobs, Settings, Notifications.")
 MSG_DISCONNECTED = "Disconnected from SponsorJobs."
+# A file, picture or voice note from a linked chat: said at once, nothing queued for the file
+# (worker/src/telegram.ts MSG_NO_FILES, notify/channel.py FILES_REPLY say the same).
+MSG_NO_FILES = ("I can't open files here yet. To add your resume, open SponsorJobs and go to "
+                "Resumes, then Upload.")
+ATTACHMENT_KINDS = ("document", "photo", "voice", "video", "audio", "sticker", "video_note", "animation")
 
 
 def _iso(ts: float) -> str:
@@ -372,6 +377,12 @@ class TelegramRelay:
 
         if account is None:
             self._say(chat_id, MSG_UNBOUND)
+            return
+        if not text and any(msg.get(k) for k in ATTACHMENT_KINDS):
+            caption = str(msg.get("caption") or "").strip()
+            if caption:                                  # the person's words go on as text
+                self.store.add_event(account, "text", "", caption[:MAX_EVENT_TEXT], now)
+            self._say(chat_id, MSG_NO_FILES)
             return
         if text:
             self.store.add_event(account, "text", "", text[:MAX_EVENT_TEXT], now)

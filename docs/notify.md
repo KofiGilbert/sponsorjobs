@@ -86,6 +86,10 @@ not configured every route, including the webhook, answers `503 {"error": "teleg
   - `/stop` pauses (send returns 409 paused), `/resume` unpauses, `/help` explains.
   - a button tap: `answerCallbackQuery` with the toast "Got it", then queues a `button` event.
   - plain text: queues a `text` event.
+  - a file, picture, voice note, video, audio or sticker from a linked chat: replies at once "I
+    can't open files here yet. To add your resume, open SponsorJobs and go to Resumes, then
+    Upload." Nothing is queued for the file; its caption, if any, is queued as a `text` event.
+    (The app's own-bot channel answers files the same way, notify/channel.py `FILES_REPLY`.)
   - anything from a chat not bound to an account gets "Open SponsorJobs, Settings, Notifications
     to connect." and nothing is stored.
 

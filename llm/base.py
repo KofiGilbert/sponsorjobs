@@ -1534,6 +1534,21 @@ class FakeLLM:
                "unclear": not answers and not asked}
         return _json.dumps(out)
 
+    def app_assistant(self, system: str, user: str) -> str:
+        # The Telegram assistant (notify/assistant.py owns the prompt and the honesty check).
+        # A test double: it greets the person by the name in the summary and names the resumes
+        # the app has built, so the plumbing (the summary reaching the call) is testable.
+        name = re.search(r"^Name: (.+)$", user, re.M)
+        first = (name.group(1).split()[0] if name and name.group(1) != "not saved" else "")
+        built = re.search(r"^Resumes built: (.+)$", user, re.M)
+        said = (re.search(r"THE PERSON SAYS:\n(.*)\Z", user, re.S) or [None, ""])[1].lower()
+        out = f"Hi {first}." if first else "Hi."
+        if "resume" in said and built:
+            out += f" Your resumes: {built.group(1)}."
+        else:
+            out += " Ask me about your applications, or send /list."
+        return out
+
     def agent_step(self, system: str, user: str) -> str:
         # A scripted brain for the apply agent, decided from the page view alone (the same
         # input the real model gets): click Apply, sign in with the portal placeholders, open

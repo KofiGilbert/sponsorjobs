@@ -14,8 +14,9 @@ which is in use:
 own bot when it is configured, else none.
 
 Events (what ``poll`` returns) are plain dicts, the same for both channels:
-``{cursor, type: "button"|"text"|"command", data, text, at, ack}`` where ``data`` is the
-button id for a tap and ``ack`` is an opaque handle passed back to ``ack()``.
+``{cursor, type: "button"|"text"|"command"|"file", data, text, at, ack}`` where ``data`` is the
+button id for a tap and ``ack`` is an opaque handle passed back to ``ack()``. A ``file`` event
+(own bot only: the official bot answers files in its webhook) carries the caption as its text.
 Buttons are rows of ``{"id", "label"}``. Every call is OUTBOUND (CLAUDE.md section 5):
 nothing listens on this machine.
 """
@@ -78,6 +79,17 @@ def _as_rows(buttons) -> list:
 
 def _kind(text: str) -> str:
     return "command" if (text or "").strip().startswith("/") else "text"
+
+
+# A file or picture sent in the chat. Neither bot can open one yet, so the person is told at
+# once, and how to add a resume instead (the official bot's webhook sends the same words,
+# worker/src/telegram.ts MSG_NO_FILES).
+FILES_REPLY = "I can't open files here yet. To add your resume, open SponsorJobs and go to Resumes, then Upload."
+ATTACHMENTS = ("document", "photo", "voice", "video", "audio", "sticker", "video_note", "animation")
+
+
+def has_attachment(msg: dict) -> bool:
+    return any(msg.get(k) for k in ATTACHMENTS)
 
 
 class OwnBotChannel(Channel):
@@ -177,9 +189,14 @@ def parse_update(up: dict, owner_chat: str) -> dict | None:
                 "ack": cb.get("id") or ""}
     msg = up.get("message") or up.get("edited_message") or {}
     text = msg.get("text") or ""
-    if not text:
-        return None
     if str((msg.get("chat") or {}).get("id", "")) != owner:
+        return None
+    if not text and up.get("message") and has_attachment(msg):
+        # A file, picture or voice note: a "file" event (the hub says it can't open it), with
+        # its caption as the text, handled like any message after that.
+        return {"cursor": cursor, "type": "file", "data": "", "text": str(msg.get("caption") or ""),
+                "at": msg.get("date"), "ack": ""}
+    if not text:
         return None
     return {"cursor": cursor, "type": _kind(text), "data": "", "text": text,
             "at": msg.get("date"), "ack": ""}
