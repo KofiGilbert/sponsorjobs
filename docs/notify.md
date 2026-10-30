@@ -14,8 +14,8 @@ with `protect_content: true` (Telegram blocks forwarding and saving); the app ca
 off. Telegram bot chats are cloud chats, not end to end encrypted, and a bot can delete its
 messages only within 48 hours, which is why previews cover the contact line by default and the
 first "Send PDF" warns the person. The broker is the Cloudflare Worker at
-`https://api.sponsorjobs.ai` (`worker/src/telegram.ts`); it keeps four tables in its D1 database
-(`worker/migrations/0008_telegram.sql`):
+`https://api.sponsorjobs.ai` (`worker/src/telegram.ts`); it keeps five tables in its D1 database
+(`worker/migrations/0008_telegram.sql`, `0009_telegram_files.sql`):
 
 | table | what | lifetime |
 |---|---|---|
@@ -23,6 +23,16 @@ first "Send PDF" warns the person. The broker is the Cloudflare Worker at
 | `telegram_chats(account, chat_id, username, paused, linked_at)` | the account to chat binding | until unlink (or the person blocks the bot) |
 | `telegram_events(id, account, type, data, text, at)` | button taps / replies waiting for the app | deleted once acknowledged, or after 7 days |
 | `telegram_sends(account, kind, at)` | one timestamp per message sent or edited, for the rate limit | 24 hours |
+| `telegram_files(account, file_id, size, at)` | Telegram's file_id of a file the person sent, never the file | deleted on unlink, or after 7 days |
+
+A resume the person sends the bot (a document or a photo) travels to their computer the same
+pass-through way, in the other direction. The webhook queues a `file` event holding only
+Telegram's file_id, the file name, type, size and caption, and remembers the file_id for that
+account (`telegram_files`). The app then asks `POST /notify/telegram/file`, which fetches the bytes
+from Telegram (`getFile`) and streams them back in the same request: they are never written to
+disk, D1, KV or R2, and only their size is logged. A file_id is served only to the account whose
+chat sent it. The import itself (reading the file, OCR for a photo, the profile it fills) happens
+on the person's computer, like the in-app upload.
 
 A Worker runs in many places at once, so the send rate-limit counters live in D1 (`telegram_sends`)
 rather than in memory; one guarded insert checks and takes a slot, so parallel sends cannot slip
@@ -77,6 +87,14 @@ not configured every route, including the webhook, answers `503 {"error": "teleg
     `send` text may be longer (4096); inbox text stays at 1000.
   - `type: "command"`: `data` = the command name without the slash (`stop`, `resume`, or any
     other command such as `jobs`), `text` = anything after it.
+  - `type: "file"`: `data` = Telegram's file_id (the largest size of a photo), `text` = JSON
+    `{name, mime, size, caption}` (a photo is `photo.jpg`, `image/jpeg`). Fetch it with `/file`.
+- `POST /notify/telegram/file` `{file_id}` -> the file's bytes (`application/octet-stream`,
+  `Cache-Control: no-store`), passed through from Telegram and never stored. Only a file_id that
+  arrived in this account's own chat in the last 7 days: `404 {"error": "not_found"}` otherwise
+  (another account's file_id included, and Telegram is never asked). `413 {"error": "too_big"}`
+  over 20 MB (the Bot API's `getFile` limit), `502 telegram_unavailable` when Telegram fails,
+  `400` without a file_id.
 - `POST /telegram/webhook` (Telegram calls this). The `X-Telegram-Bot-Api-Secret-Token` header must
   equal `TELEGRAM_WEBHOOK_SECRET` (403 otherwise). Always answers 200 for an authentic call so
   Telegram does not retry. Handles:
@@ -86,10 +104,19 @@ not configured every route, including the webhook, answers `503 {"error": "teleg
   - `/stop` pauses (send returns 409 paused), `/resume` unpauses, `/help` explains.
   - a button tap: `answerCallbackQuery` with the toast "Got it", then queues a `button` event.
   - plain text: queues a `text` event.
-  - a file, picture, voice note, video, audio or sticker from a linked chat: replies at once "I
-    can't open files here yet. To add your resume, open SponsorJobs and go to Resumes, then
-    Upload." Nothing is queued for the file; its caption, if any, is queued as a `text` event.
-    (The app's own-bot channel answers files the same way, notify/channel.py `FILES_REPLY`.)
+  - a file from a linked chat:
+    - a document (pdf, doc, docx, ppt, pptx, txt, rtf, or an image) or a photo: queues a `file`
+      event and replies "Got it. SponsorJobs will read it on your computer and tell you here
+      what it found." The app imports it and replies with what the import did.
+    - a voice note, video, audio, sticker or GIF: "I can't use voice notes, videos or stickers.
+      Send your resume as a PDF, Word file or photo, or type your message."
+    - any other document: "I can't read that kind of file. Send your resume as a PDF, Word,
+      PowerPoint or text file, or a photo."
+    - over 20 MB: "That file is too big for Telegram to pass on (over 20 MB). Add it in
+      SponsorJobs under My profile, Upload resume."
+    Only a queued file carries its caption inside the `file` event; for the others the caption,
+    if any, is queued as a `text` event. The app's own-bot channel gives the same replies
+    (`notify/channel.py`).
   - anything from a chat not bound to an account gets "Open SponsorJobs, Settings, Notifications
     to connect." and nothing is stored.
 
@@ -165,8 +192,15 @@ its picture can go back to back):
 
 | Channel | When | How |
 |---|---|---|
-| `OfficialBotChannel` | the broker reports `linked: true` | `POST /notify/telegram/send`, `/send_media`, `/edit`, `GET /notify/telegram/inbox?after=<cursor>` with the app's bearer token |
-| `OwnBotChannel` | the person saved their own bot token and chat id | Bot API `sendMessage` with `reply_markup` (inline keyboard), `sendPhoto` / `sendDocument` (multipart, `protect_content`), `editMessageText` / `editMessageCaption` / `editMessageReplyMarkup`, `getUpdates` for messages and `callback_query` taps, `answerCallbackQuery` to ack |
+| `OfficialBotChannel` | the broker reports `linked: true` | `POST /notify/telegram/send`, `/send_media`, `/edit`, `/file` (download), `GET /notify/telegram/inbox?after=<cursor>` with the app's bearer token |
+| `OwnBotChannel` | the person saved their own bot token and chat id | Bot API `sendMessage` with `reply_markup` (inline keyboard), `sendPhoto` / `sendDocument` (multipart, `protect_content`), `editMessageText` / `editMessageCaption` / `editMessageReplyMarkup`, `getUpdates` for messages and `callback_query` taps, `answerCallbackQuery` to ack, `getFile` + the file URL for a file the person sent |
+
+A `file` event (both channels) is handled by the hub: a resume is downloaded (`download(file_id)`)
+and run through the same import as the in-app upload (`ui/app.py` `_import_resume_file`, behind
+`/api/profile/from_cv`); a photo goes through its OCR path. The reply is written by code from what
+the import did ("Got Kofi Gilbert_Resume.pdf. I read 4 roles, 2 schools and 18 skills and added
+them to your profile. Open SponsorJobs, My profile to see it."), names what the profile still
+needs, or says plainly what failed. The caption is then handled as a text message.
 
 `select_channel` picks official, else own bot, else none. Broker status is cached for a
 minute. A `409 not_linked` from the broker (the person blocked the bot or unlinked

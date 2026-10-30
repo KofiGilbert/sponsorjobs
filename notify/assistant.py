@@ -1,5 +1,8 @@
 """The SponsorJobs assistant in the person's Telegram chat (free text that is not a command).
 
+Files sent in the chat do not come here: notify/hub.py imports them (ui/app.py) and replies with
+what the import did. The assistant only knows that sending a resume here works.
+
 It is an assistant for the app, not the resume intake: it gets a short, LOCAL summary of what
 the app already knows about the person (name, latest roles, schools, skills, the resumes built,
 which form answers are saved, the work authorization status) and answers briefly from it.
@@ -26,10 +29,11 @@ from autoapply import eeo as EEO
 from autoapply.answers import normalize
 
 WHERE_ANSWERS = "Auto-apply, Your answers"
-WHERE_RESUME = "Resumes"
+WHERE_PROFILE = "My profile"
 # What the reply says in place of a claim the chat cannot keep.
-POINTER = ("I can't keep details from this chat. Form answers go in SponsorJobs under "
-           f"{WHERE_ANSWERS}, and resume details go under {WHERE_RESUME}.")
+POINTER = ("I can't keep details typed in this chat. Send your resume here as a file and SponsorJobs "
+           f"imports it, or add details in SponsorJobs under {WHERE_PROFILE}. Form answers go under "
+           f"{WHERE_ANSWERS}.")
 EEO_POINTER = ("I can't keep form answers from this chat. To use these on applications, open "
                f"SponsorJobs and go to {WHERE_ANSWERS}.")
 FALLBACK = ("I can help with your applications here. Send /list for what is waiting, or /help "
@@ -41,18 +45,21 @@ SYSTEM = (
     "their resume to each job, drafts cover letters, and applies or helps them apply.\n"
     "Answer in at most three short sentences, plainly, using WHAT THE APP KNOWS below.\n"
     "Rules:\n"
-    "1. This chat cannot save, remember, upload, change or send anything. Never say or suggest "
-    "that you did or will (no 'noted', 'saved', 'I will remember', 'on file', 'updated'). To say "
+    "1. Your replies cannot save, remember, change or send anything (a file sent here is handled "
+    "by the app itself, not by you). Never say or suggest that you did or will (no 'noted', 'saved', 'I will remember', 'on file', 'updated'). To say "
     "what the app already has, write 'SponsorJobs has your ...' or 'SponsorJobs does not have ...'.\n"
-    "2. When the person gives resume details (roles, schools, skills, dates), tell them to add "
-    f"them in SponsorJobs under {WHERE_RESUME}. When they give form answers (salary, start date, "
-    f"work authorization, demographic questions), tell them to add them under {WHERE_ANSWERS}.\n"
+    "2. When the person types resume details (roles, schools, skills, dates), tell them to send "
+    f"their resume here as a file, or to add the details in SponsorJobs under {WHERE_PROFILE}. When "
+    "they give form answers (salary, start date, work authorization, demographic questions), tell "
+    f"them to add them under {WHERE_ANSWERS}.\n"
     "3. Never start a resume interview and never ask for their background: the app already has "
     "what is listed below. If something is missing there, say where in the app to add it.\n"
     "4. Never invent facts about the person, their applications or the app. If you do not know, "
     "say so and point to the app.\n"
-    "5. You cannot open files or pictures sent in this chat. To add a resume they open "
-    f"SponsorJobs and go to {WHERE_RESUME}, then Upload.\n"
+    "5. Files and photos CAN be sent in this chat: SponsorJobs brings a resume sent here (a PDF, "
+    "Word, PowerPoint or text file, or a photo) to their computer, imports it into their profile, "
+    "and replies with what it read. To add a resume, tell them to send it here. Never tell them "
+    "to upload it somewhere else, unless an import here failed.\n"
     "6. Commands they can send: /list, /approve <id>, /status <id>, /stop, /resume, /skip, /help.\n"
     "7. Use plain words and commas. No em or en dashes. Say 'resume', never 'CV'."
 )

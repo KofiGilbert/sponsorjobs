@@ -4575,7 +4575,7 @@ def profile_from_cv():
 
     from werkzeug.utils import secure_filename
 
-    from intake.cv_import import SUPPORTED_EXTS, extract_text
+    from intake.cv_import import SUPPORTED_EXTS
 
     f = request.files.get("file")
     if f is None or not f.filename:
@@ -4587,18 +4587,34 @@ def profile_from_cv():
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     dest = UPLOADS_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{name}"
     f.save(str(dest))       # raw backup, kept, never deleted
+    out = _import_resume_file(dest)
+    if out.get("error") == "no_text":
+        return jsonify({"error": "Couldn't read any text from that file. Try a Word or PDF export."}), 400
+    if out.get("error") == "no_profile":
+        return jsonify({"error": "Couldn't find a profile in that file, try another resume."}), 400
+    return jsonify({"ok": True, "profile": out["profile"], "missing": out["missing"], "summary": out["summary"]})
+
+
+def _import_resume_file(dest: Path) -> dict:
+    """THE resume import, shared by the in-app upload (/api/profile/from_cv) and a resume sent on
+    Telegram: read the file locally (Word, PDF, PowerPoint, text, or an image through OCR), parse
+    it into a profile with the real model, and fold it into the saved profile without losing
+    anything. {"error": "no_text" | "no_profile"} when it could not, else {profile (saved),
+    parsed (what this file held), missing, summary}. A model failure raises (the callers say why)."""
+    from intake.cv_import import extract_text
     text = extract_text(dest)
     if not (text or "").strip():
-        return jsonify({"error": "Couldn't read any text from that file. Try a Word or PDF export."}), 400
+        return {"error": "no_text"}
     llm = _make_llm()       # real model; raises a clear error if the key/connectivity is missing
     profile = _coerce_profile(llm.extract_profile(text))
     if not (profile.get("identity") or profile.get("experience")):
-        return jsonify({"error": "Couldn't find a profile in that file, try another resume."}), 400
+        return {"error": "no_profile"}
     # Projects conventionally carry a "Personal Project" location (matches the rest of the
     # pipeline) so a one-click autonomous build isn't stopped by a missing project location.
     for pr in profile.get("projects") or []:
         if isinstance(pr, dict) and not str(pr.get("location") or "").strip():
             pr["location"] = "Personal Project"
+    parsed = profile
     # Non-destructive: never wipe a richer existing profile or its history, fold the résumé
     # into what's saved (fill gaps, add new entries), keeping the conversation history.
     saved = _memory().load("default") or {}
@@ -4611,12 +4627,77 @@ def profile_from_cv():
     ident = profile.get("identity") or {}
     # What the gate would still ask for: the wizard turns it into the details step right
     # away, so an unattended build never stalls later on a date the import could not read.
-    return jsonify({"ok": True, "profile": profile, "missing": _profile_missing_slots(), "summary": {
+    return {"profile": profile, "parsed": parsed, "missing": _profile_missing_slots(), "summary": {
         "name": ident.get("name", ""),
         "roles": sum(len(e.get("roles") or [e]) for e in profile.get("experience") or []),
         "skills": len(profile.get("skills") or {}),
         "education": len(profile.get("education") or []),
-    }})
+    }}
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else ("es" if word.endswith("ch") else "s"))
+
+
+_TG_IMPORT_UNREADABLE = {".doc": "Word 97 (.doc)", ".ppt": "PowerPoint 97 (.ppt)", ".rtf": "rich text (.rtf)"}
+
+
+def _telegram_file_import(meta: dict, blob: bytes) -> str:
+    """A resume the person sent on Telegram (notify/hub.py): saved with the uploads, then run
+    through the SAME import as the in-app upload (``_import_resume_file``). Returns the reply,
+    written here from what really happened, never by the model: what was read and added, what
+    is still missing and where to finish it, or plainly what failed."""
+    from datetime import datetime
+
+    from werkzeug.utils import secure_filename
+
+    from intake.cv_import import IMAGE_EXTS, SUPPORTED_EXTS, ocr_available
+    from notify import assistant as AS
+    shown = " ".join(str(meta.get("name") or "").split())[:80] or "your file"
+    photo = bool(meta.get("photo")) or str(meta.get("mime") or "").startswith("image/")
+    name = secure_filename(str(meta.get("name") or "")) or ("photo.jpg" if photo else "resume")
+    ext = Path(name).suffix.lower()
+    if not ext and str(meta.get("mime") or "") == "application/pdf":
+        name, ext = name + ".pdf", ".pdf"
+    what = "that photo" if photo else shown
+    if ext in _TG_IMPORT_UNREADABLE:
+        return (f"I can't read {_TG_IMPORT_UNREADABLE[ext]} files yet. Save {shown} as a PDF or "
+                "Word (.docx) file and send it again.")
+    if ext not in SUPPORTED_EXTS | {".txt"}:
+        return "I can't read that kind of file. Send your resume as a PDF, Word, PowerPoint or text file, or a photo."
+    if ext in IMAGE_EXTS and not ocr_available():
+        return ("This copy of SponsorJobs can't read text from pictures yet. A PDF or Word file "
+                "works best: send that instead.")
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = UPLOADS_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_telegram_{name}"
+    dest.write_bytes(blob)      # kept with the in-app uploads: the raw backup, never sent anywhere
+    try:
+        out = _import_resume_file(dest)
+    except Exception as exc:    # noqa: BLE001 - no key, offline, out of credit: say which
+        traceback.print_exc()
+        detail = _FAILURE_TEXT.get(_classify_outage(exc), "something went wrong on this computer.")
+        detail = detail.replace("tap the button again", "send the file again").replace("then tap again", "then send it again")
+        return f"I got {what} but could not read it: {detail}"
+    if out.get("error") == "no_text":
+        if photo or ext in IMAGE_EXTS:
+            return "I could not read text from that photo. A PDF or Word file works best."
+        return f"I could not read any text from {shown}. A PDF or Word file works best."
+    if out.get("error") == "no_profile":
+        return f"I read {what} but could not find a resume in it, so nothing was added to your profile."
+    parsed = out.get("parsed") or {}
+    roles = sum(len(e.get("roles") or [e]) for e in parsed.get("experience") or [] if isinstance(e, dict))
+    schools = len(parsed.get("education") or [])
+    skills = len(AS._skills(parsed))
+    msg = (f"Got {'your photo' if photo else shown}. I read {_plural(roles, 'role')}, "
+           f"{_plural(schools, 'school')} and {_plural(skills, 'skill')} and added them to your "
+           "profile. Open SponsorJobs, My profile to see it.")
+    missing = [m for m in (out.get("missing") or []) if isinstance(m, dict)]
+    if missing:
+        first = str(missing[0].get("q") or "").strip()
+        msg += (f" It still needs {_plural(len(missing), 'detail')}"
+                + (f", like {first}" if first else "")
+                + ": open SponsorJobs, Auto-apply, Add the details to finish.")
+    return msg
 
 
 def _coerce_profile(profile) -> dict:
@@ -9530,7 +9611,22 @@ def _official_channel():
                               lambda: st.get("official_cursor", ""),
                               lambda c: st.set("official_cursor", c),
                               on_unlinked=_official_unlinked,
-                              post_media=_broker_post_media)
+                              post_media=_broker_post_media,
+                              fetch_file=_broker_fetch_file)
+
+
+def _broker_fetch_file(path: str, body: dict):
+    """POST to the broker for a file the person sent the official bot; the bytes come straight
+    back (passed through from Telegram, never stored there). (status, bytes_or_None), status 0
+    when the broker is unreachable."""
+    import requests
+    try:
+        r = requests.post(f"{BROKER_URL}{path}", json=body, headers=_broker_headers(), timeout=90)
+        if r.status_code == 401 and _recover_from_401():
+            r = requests.post(f"{BROKER_URL}{path}", json=body, headers=_broker_headers(), timeout=90)
+    except requests.RequestException:
+        return 0, None
+    return r.status_code, (r.content if 200 <= r.status_code < 300 else None)
 
 
 def _broker_post_media(path: str, fields: dict, file_path: str, content_type: str):
@@ -9711,7 +9807,8 @@ def _notify_hub():
     return NotifyHub(state, AlertEngine(state, match_fn=_alert_match_score),
                      NotifyService(None, _RecordActions()),
                      batch_callback=act, job_actions=_JobAlertActions(),
-                     review=_cv_review(state), ask_callback=_agent_ask_event)
+                     review=_cv_review(state), ask_callback=_agent_ask_event,
+                     file_import=_telegram_file_import)
 
 
 def _cv_review(state=None):

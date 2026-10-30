@@ -7,7 +7,9 @@ The broker is a RELAY, not a store of personal data. It never sees a résumé. I
   * telegram_links  -- a hashed one-time link code -> account, 15 minutes;
   * telegram_chats  -- account -> chat_id, Telegram username, paused flag, linked time;
   * telegram_events -- the user's button taps / replies waiting for their app to poll, deleted
-    once the app acknowledges them (a later ``after`` cursor) or after 7 days.
+    once the app acknowledges them (a later ``after`` cursor) or after 7 days;
+  * telegram_files  -- the Telegram file_id of a file the person sent (never the file), 7 days,
+    so ``/notify/telegram/file`` passes through only files from the account's own chat.
 Outgoing messages carry only what the app sends (job title, company, short text, button ids) and
 are not persisted. A CV preview picture or PDF (``/notify/telegram/send_media``) is streamed
 straight through to Telegram in the same request and never written anywhere; only its size is
@@ -31,7 +33,7 @@ import urllib.request
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 
-from flask import jsonify, request
+from flask import Response, jsonify, request
 
 LINK_TTL = 900                       # seconds a /start code stays valid
 EVENT_TTL = 7 * 24 * 3600            # inbox events are dropped after 7 days
@@ -59,11 +61,36 @@ MSG_HELP = ("I'm the SponsorJobs bot. I message you about new jobs and applicati
             "/stop pauses messages, /resume turns them back on.\n"
             "To disconnect, open SponsorJobs, Settings, Notifications.")
 MSG_DISCONNECTED = "Disconnected from SponsorJobs."
-# A file, picture or voice note from a linked chat: said at once, nothing queued for the file
-# (worker/src/telegram.ts MSG_NO_FILES, notify/channel.py FILES_REPLY say the same).
-MSG_NO_FILES = ("I can't open files here yet. To add your resume, open SponsorJobs and go to "
-                "Resumes, then Upload.")
-ATTACHMENT_KINDS = ("document", "photo", "voice", "video", "audio", "sticker", "video_note", "animation")
+# Files from a linked chat (worker/src/telegram.ts says the same words). A resume (a document of a
+# kind the app reads, or a photo) is queued for the app as a "file" event holding only Telegram's
+# file_id, name, type, size and the caption; the app fetches the bytes through /notify/telegram/file
+# (passed through, never stored). Everything else gets a short honest reply at once.
+MSG_FILE_QUEUED = "Got it. SponsorJobs will read it on your computer and tell you here what it found."
+MSG_NO_MEDIA = ("I can't use voice notes, videos or stickers. Send your resume as a PDF, Word file "
+                "or photo, or type your message.")
+MSG_FILE_TYPE = ("I can't read that kind of file. Send your resume as a PDF, Word, PowerPoint or "
+                 "text file, or a photo.")
+MSG_TOO_BIG = ("That file is too big for Telegram to pass on (over 20 MB). Add it in SponsorJobs "
+               "under My profile, Upload resume.")
+MAX_FILE_BYTES = 20 * 1024 * 1024        # the Bot API's getFile limit
+FILE_EXTS = {"pdf", "doc", "docx", "ppt", "pptx", "txt", "rtf", "png", "jpg", "jpeg", "webp"}
+MEDIA_KINDS = ("voice", "video", "audio", "sticker", "video_note", "animation")
+
+
+def file_of(msg: dict) -> dict | None:
+    """The file a message carries: Telegram's file_id (the largest photo size), a name, its type
+    and size. None for anything that is not a document or a photo."""
+    doc = msg.get("document")
+    if isinstance(doc, dict) and doc.get("file_id"):
+        return {"file_id": str(doc["file_id"]), "name": str(doc.get("file_name") or "file")[:120],
+                "mime": str(doc.get("mime_type") or "")[:80], "size": int(doc.get("file_size") or 0)}
+    sizes = [p for p in (msg.get("photo") or []) if isinstance(p, dict) and p.get("file_id")]
+    if not sizes:
+        return None
+    big = max(sizes, key=lambda p: (int(p.get("width") or 0) * int(p.get("height") or 0))
+              or int(p.get("file_size") or 0))
+    return {"file_id": str(big["file_id"]), "name": "photo.jpg", "mime": "image/jpeg",
+            "size": int(big.get("file_size") or 0)}
 
 
 def _iso(ts: float) -> str:
@@ -145,6 +172,22 @@ def urllib_media_transport(token: str, timeout: float = 60.0):
     return call
 
 
+def urllib_download_transport(token: str, timeout: float = 60.0):
+    """GET a file from api.telegram.org/file/bot<token>/<file_path>; bytes held only for the
+    request. Never echoes the URL (it holds the token)."""
+    base = f"https://api.telegram.org/file/bot{token}/"
+
+    def call(file_path: str) -> bytes:
+        try:
+            with urllib.request.urlopen(base + file_path, timeout=timeout) as r:   # noqa: S310 - fixed host
+                return r.read(MAX_FILE_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            raise TelegramError(f"HTTP {exc.code}", exc.code) from None
+        except Exception as exc:                                       # noqa: BLE001
+            raise TelegramError(f"{type(exc).__name__}") from None
+    return call
+
+
 # --------------------------------------------------------------------------------------------- #
 # Storage: the in-memory double (tests). The SQLite store lives in backend/store_sqlite.py.
 # --------------------------------------------------------------------------------------------- #
@@ -154,6 +197,7 @@ class InMemoryTelegramStore:
         self._links: dict[str, tuple[str, float]] = {}       # code_hash -> (account, expires_at)
         self._chats: dict[str, dict] = {}                    # account -> chat row
         self._events: list[dict] = []
+        self._files: dict[tuple, dict] = {}                  # (account, file_id) -> {size, at}
         self._next_id = 1
 
     def add_link(self, code_hash: str, account: str, expires_at: float) -> None:
@@ -193,6 +237,16 @@ class InMemoryTelegramStore:
         with self._lock:
             self._chats.pop(account, None)
             self._events = [e for e in self._events if e["account"] != account]
+            self._files = {k: v for k, v in self._files.items() if k[0] != account}
+
+    def add_file(self, account: str, file_id: str, size: int, at: float) -> None:
+        with self._lock:
+            self._files = {k: v for k, v in self._files.items() if v["at"] >= at - EVENT_TTL}
+            self._files[(account, file_id)] = {"size": int(size or 0), "at": at}
+
+    def owns_file(self, account: str, file_id: str, since: float) -> bool:
+        row = self._files.get((account, file_id))
+        return bool(row) and row["at"] >= since
 
     def add_event(self, account: str, type_: str, data: str, text: str, at: float) -> int:
         with self._lock:
@@ -214,10 +268,11 @@ class InMemoryTelegramStore:
 # --------------------------------------------------------------------------------------------- #
 class TelegramRelay:
     def __init__(self, store, transport, bot_username: str, webhook_secret: str, now=time.time,
-                 media_transport=None):
+                 media_transport=None, download_transport=None):
         self.store = store
         self.transport = transport
         self.media_transport = media_transport        # multipart uploads; None -> media is 503
+        self.download_transport = download_transport  # file_path -> bytes; None -> /file is 503
         self.bot_username = bot_username.lstrip("@")
         self.webhook_secret = webhook_secret or ""
         self.now = now
@@ -316,6 +371,40 @@ class TelegramRelay:
         result = self.transport("sendMessage", payload)
         return int(result.get("message_id") or 0)
 
+    def fetch_file(self, file_id: str) -> bytes:
+        """The bytes of a file the person sent the bot: getFile, then the download, held only in
+        this call (pass-through, never stored). TelegramError(..., 413) over 20 MB."""
+        meta = self.transport("getFile", {"file_id": file_id}) or {}
+        path, size = str(meta.get("file_path") or ""), int(meta.get("file_size") or 0)
+        if size > MAX_FILE_BYTES:
+            raise TelegramError("too_big", 413)
+        if not path:
+            raise TelegramError("no file path")
+        data = self.download_transport(path)
+        if len(data) > MAX_FILE_BYTES:
+            raise TelegramError("too_big", 413)
+        return data
+
+    def _handle_file(self, chat_id, account: str, msg: dict, now: float) -> None:
+        caption = str(msg.get("caption") or "").strip()[:700]
+        f = file_of(msg)
+        reply = MSG_FILE_QUEUED
+        ext = f["name"].rsplit(".", 1)[-1].lower() if f and "." in f["name"] else ""
+        if f is None:
+            reply = MSG_NO_MEDIA
+        elif f["size"] > MAX_FILE_BYTES:
+            reply = MSG_TOO_BIG
+        elif msg.get("document") and ext not in FILE_EXTS and not re.match(
+                r"(application/pdf|image/|text/plain)", f["mime"]):
+            reply = MSG_FILE_TYPE
+        if f and reply == MSG_FILE_QUEUED:
+            self.store.add_file(account, f["file_id"], f["size"], now)
+            self.store.add_event(account, "file", f["file_id"], json.dumps(
+                {"name": f["name"], "mime": f["mime"], "size": f["size"], "caption": caption}), now)
+        elif caption:
+            self.store.add_event(account, "text", "", caption[:MAX_EVENT_TEXT], now)
+        self._say(chat_id, reply)
+
     def _say(self, chat_id, text: str) -> None:
         try:
             self.transport("sendMessage", {"chat_id": chat_id, "text": text})
@@ -378,11 +467,8 @@ class TelegramRelay:
         if account is None:
             self._say(chat_id, MSG_UNBOUND)
             return
-        if not text and any(msg.get(k) for k in ATTACHMENT_KINDS):
-            caption = str(msg.get("caption") or "").strip()
-            if caption:                                  # the person's words go on as text
-                self.store.add_event(account, "text", "", caption[:MAX_EVENT_TEXT], now)
-            self._say(chat_id, MSG_NO_FILES)
+        if not text and (msg.get("document") or msg.get("photo") or any(msg.get(k) for k in MEDIA_KINDS)):
+            self._handle_file(chat_id, account, msg, now)
             return
         if text:
             self.store.add_event(account, "text", "", text[:MAX_EVENT_TEXT], now)
@@ -590,6 +676,33 @@ def register_telegram(app, relay, identify) -> None:
         finally:
             del data
         return jsonify(ok=True, message_id=message_id)
+
+    @app.route("/notify/telegram/file", methods=["POST"])
+    def tg_file():
+        """{file_id} -> the bytes of a file the person sent the bot, from Telegram straight to the
+        app, never stored (only the size is logged). Only a file_id that came from THIS account's
+        own chat in the last 7 days (404 otherwise); 413 over 20 MB; 502 when Telegram fails."""
+        if relay is None or relay.download_transport is None:
+            return _off()
+        user = _user()
+        if not user:
+            return jsonify(error="no user"), 401
+        file_id = (request.get_json(silent=True) or {}).get("file_id")
+        if not isinstance(file_id, str) or not file_id or len(file_id) > 200:
+            return jsonify(error="file_id is required"), 400
+        if not relay.store.owns_file(user, file_id, relay.now() - EVENT_TTL):
+            return jsonify(error="not_found"), 404
+        try:
+            data = relay.fetch_file(file_id)
+        except TelegramError as exc:
+            if exc.status == 413:
+                return jsonify(error="too_big"), 413
+            app.logger.warning("telegram file failed: %s", exc)
+            return jsonify(error="telegram_unavailable"), 502
+        app.logger.info("telegram file in: %d bytes", len(data))   # size only, never content
+        resp = Response(data, mimetype="application/octet-stream")
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.route("/notify/telegram/edit", methods=["POST"])
     def tg_edit():

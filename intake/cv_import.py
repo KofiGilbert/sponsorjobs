@@ -168,6 +168,8 @@ def extract_text(path) -> str:
             return _from_pptx(path)
         if ext == ".pdf":
             return _from_pdf(path)
+        if ext == ".txt":           # a plain text resume (Telegram takes these; the upload routes do not)
+            return path.read_bytes()[:400_000].decode("utf-8", errors="replace")
         if ext in IMAGE_EXTS:
             return _from_image(path)
     except Exception:
