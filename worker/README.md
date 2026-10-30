@@ -45,8 +45,13 @@ e-mail already has an account, the device logs in to it; otherwise the e-mail is
 caller's device account (keeping its pass and usage), or a new account is made. Buying a pass or a
 pack needs a signed-in account (`401 sign_in_required` otherwise), and the e-mail is prefilled on
 Stripe Checkout. Each sign-in method stays `503 ... not configured` until its secrets are set
-(`docs/sign-in-setup.md`). The Python broker's password routes (`/account/signup|login|claim`) and
-Telegram answer `503 ... not configured`.
+(`docs/sign-in-setup.md`). The Python broker's password routes (`/account/signup|login|claim`)
+answer `503 ... not configured`.
+
+The official Telegram bot (`src/telegram.ts`, `docs/notify.md`) relays alerts and button taps
+between the app and Telegram. It stays `503 telegram_not_configured` until the owner runs
+`./scripts/telegram-setup.sh` once, which stores the three `TELEGRAM_*` secrets and points
+Telegram's webhook here.
 
 Mail aliases (`src/mail.ts`, `docs/mail-alias.md`): each student gets `first.last@sponsorjobs.ai`
 to give job portals. Email Routing's catch-all delivers to this Worker's `email` handler, which

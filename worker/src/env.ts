@@ -45,6 +45,12 @@ export interface Env {
   // private key's 32-byte seed, base64url, set with `wrangler secret put`. Without it /agent/sign
   // and the key directory answer 503 not_configured and the agent's requests go out unsigned.
   AGENT_SIGNING_KEY?: string;
+  // The official SponsorJobs Telegram bot (src/telegram.ts, docs/notify.md). All three are secrets
+  // set by scripts/telegram-setup.sh; until ALL are set every /notify/telegram/* route and the
+  // webhook answer 503 telegram_not_configured.
+  TELEGRAM_BOT_TOKEN?: string;      // from @BotFather
+  TELEGRAM_BOT_USERNAME?: string;   // e.g. "SponsorJobsBot" (a leading @ is fine)
+  TELEGRAM_WEBHOOK_SECRET?: string; // proves a /telegram/webhook call came from Telegram
   // The founder's admin dashboard (src/admin.ts, docs/admin-dashboard.md). Plain vars. Without both
   // ACCESS_* values every request to the admin host answers 403.
   ACCESS_TEAM_DOMAIN?: string;      // the Cloudflare Zero Trust team, e.g. "sponsorjobs" (.cloudflareaccess.com)
