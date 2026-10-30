@@ -147,7 +147,8 @@ test("select shows its options count and first four; select() picks by text, lis
   const hit = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "i do not wish to self-identify"})`);
   assert.strictEqual(hit.ok, true, JSON.stringify(hit));
   const w = await page.evaluate("window.TailorAgent.view()");
-  assert.ok(line(w.text, sel).includes('value="I do not wish to self-identify"'), line(w.text, sel));
+  // a self-identification choice reads as filled, never which one
+  assert.ok(line(w.text, sel).includes('value="(filled)"'), line(w.text, sel));
   // click on a select is refused: the brain must use select.
   const c = await page.evaluate(`window.TailorAgent.act({op: "click", index: ${sel}})`);
   assert.deepStrictEqual([c.ok, c.note], [false, "use select"]);
@@ -489,11 +490,12 @@ test("the fixture widgets: a Workday listbox and react-select keep a 'Choose not
     r = await readLikeShell(page, pi, () => page.click("input[placeholder='Search'] >> nth=-1"));
     assert.deepStrictEqual(r.read.options, ["Asian", "Hispanic or Latino", "Choose not to self-identify"]);
     assert.ok(!r.open);
-    // the person's decline, once chosen, is a value: the field no longer looks unanswered
+    // the person's decline, once chosen, is a value: the field no longer looks unanswered (a
+    // self-identification choice reads as filled, never which one)
     await page.click("[data-automation-id='gender']");
     await page.click("text=Choose not to disclose");
     v = await page.evaluate("window.TailorAgent.view()");
-    assert.ok(/<combobox label="Gender" value="choose not to disclose"/i.test(v.text), v.text);
+    assert.ok(/<combobox label="Gender" value="\(filled\)"/i.test(v.text), v.text);
     await page.close();
   }
   const page = await open("react_select.html");
@@ -664,6 +666,41 @@ test("a form in a modal dialog stays open: one Escape closes only the dropdown, 
   r = await readLikeShell(page, ni, () => page.click("#n"));      // opens nothing: no key at all
   assert.ok(r.escapes === 0 && !r.read.options.length);
   assert.ok(await page.evaluate(() => !!document.getElementById("dlg") && document.getElementById("country").value === "Canada"));
+  await page.close();
+});
+
+test("a self-identification answer never leaves the page: answered, never which choice", async ({ open }) => {
+  const page = await open("job_page.html");
+  await page.evaluate(() => {
+    document.body.insertAdjacentHTML("beforeend", `
+      <form id="eeo">
+        <label for="gen">Gender</label><select id="gen"><option value="">Select...</option><option selected>Male</option><option>Female</option></select>
+        <label for="eth">Ethnicity</label><select id="eth"><option value="">Select...</option><option selected>Asian (Not Hispanic or Latino) (United States of America)</option></select>
+        <fieldset><legend>Veteran Status</legend>
+          <label><input type="radio" name="vet" value="n"> I am not a protected veteran</label>
+          <label><input type="radio" name="vet" value="p" checked> I identify as one or more of the classifications of protected veterans</label></fieldset>
+        <fieldset><legend>Disability Status</legend>
+          <label><input type="checkbox" name="dis" checked> Yes, I have a disability, or have had one in the past</label>
+          <label><input type="checkbox" name="dis"> No, I do not have a disability</label></fieldset>
+        <label id="racel">Race</label><button id="race" type="button" aria-haspopup="listbox" aria-labelledby="racel">Black or African American</button>
+        <label for="cty">Country</label><select id="cty"><option value="">Select...</option><option selected>Canada</option></select>
+      </form>`);
+  });
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  // the choices are the site's list (first="..."); the CHOICE made is never printed
+  const self = v.text.split("\n").filter((l) => /label="(Gender|Ethnicity|Veteran Status|Race)"|label="Yes, I have a disability/.test(l));
+  for (const word of ['value="Male"', 'value="Asian', "checked=true", "checked=false", 'value="Black']) {
+    assert.ok(!self.some((l) => l.includes(word)), word + " leaked: " + self.join("\n"));
+  }
+  assert.ok(/<select label="Gender" value="\(filled\)" options=3/.test(v.text), v.text);
+  assert.ok(/<select label="Ethnicity" value="\(filled\)"/.test(v.text), v.text);
+  assert.ok(/<radio label="Veteran Status" option="I am not a protected veteran" checked=hidden answered=true/.test(v.text), v.text);
+  // a box of a group says whether the GROUP is answered (so a filled group is not re-asked), never which box
+  assert.ok(/<checkbox label="Yes, I have a disability, or have had one in the past" checked=hidden answered=true/.test(v.text), v.text);
+  assert.ok(/<checkbox label="No, I do not have a disability" checked=hidden answered=true/.test(v.text), v.text);
+  assert.ok(/<combobox label="Race" value="\(filled\)"/.test(v.text) || !/label="Race"/.test(v.text), v.text);
+  assert.ok(/<select label="Country" value="Canada"/.test(v.text), "a site's ordinary choice still shows");
   await page.close();
 });
 

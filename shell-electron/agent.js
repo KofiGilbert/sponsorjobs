@@ -755,6 +755,7 @@ function createAgent(deps) {
 // furniture is left. The bare "is" tail is what the engine leaves after cutting "required".
 const ERR_TAIL = /\s+(?:is\s+(?:(?:required|mandatory)\s+)?and\s+must\s+have\s+a\s+value|is\s+(?:a\s+)?(?:required|mandatory)(?:\s+(?:field|question))?(?:\s+and\s+must\s+have\s+a\s+value)?|must\s+have\s+a\s+value|cannot\s+be\s+(?:left\s+)?(?:blank|empty)|is\s+(?:blank|empty|missing|invalid)|is)\s*[.!]*\s*$/i;
 const THE_FIELD = /(?:^|(?<=[?.!:]\s))the field\s+/gi;
+const THE_FIELD_ANY = /(?:^|(?<=\s))the field\s+/gi;
 const REQ_SENTENCE = /\s*\b(?:this\s+)?(?:field|question|answer)\s+is\s+(?:required|mandatory)\W*$/i;
 const REQ_PAREN = /\(\s*(?:required|mandatory)\s*\)/gi;
 const REQ_TRAIL = /(?:(?<=[?*\u2731)\]])\s*|\s*[:*\u2731]\s*|\s+-\s+)(?:required|mandatory)[\s*\u2731.]*$/i;
@@ -772,34 +773,52 @@ function cleanQuestion(text) {
     s = s.slice(m[0].length);
     erred = true;
   }
-  const fields = [...s.matchAll(THE_FIELD)];
+  let fields = [...s.matchAll(THE_FIELD)];
+  // Workday's banner names the question twice with no stop between: "Error-Gender The field Gender is required".
+  if (!fields.length && erred) fields = [...s.matchAll(THE_FIELD_ANY)];
   if (fields.length) {
     const last = fields[fields.length - 1];
     const tail = s.slice(last.index + last[0].length);
     const cut = tail.replace(ERR_TAIL, "");
     if (cut !== tail || (erred && last.index === 0)) { s = cut; erred = true; }
   }
-  if (erred) s = s.replace(ERR_TAIL, "");
-  else {
-    const cut = s.replace(ERR_TAIL, "");
-    if (cut !== s && /\?\s*$/.test(cut)) s = cut;          // "<question>? is required"
-  }
-  s = s.replace(REQ_SENTENCE, "").replace(REQ_PAREN, " ").replace(REQ_TRAIL, "").replace(REQ_LEAD, "");
+  // "<question>? is required", "Gender is required", and the "Gender is" the engine leaves after cutting "required"
+  s = s.replace(REQ_SENTENCE, "");
+  const cut = s.replace(ERR_TAIL, "");
+  if (cut.trim()) s = cut;
+  s = s.replace(REQ_PAREN, " ").replace(REQ_TRAIL, "").replace(REQ_LEAD, "");
   s = s.replace(/^[\s*\u2731]+|[\s*\u2731]+$/g, "").replace(/\s+/g, " ").trim();
   return ONLY_FURNITURE.test(s) ? "" : s;
 }
 
 // One question reaches the shell in several lengths: the view cuts a label at 80 characters,
 // the engine keeps 200, and a Workday "Error-" link cuts it at 74. Two labels name the same
-// question when they are equal, or one is a cut of the other at least 70 characters long (case,
-// spacing and the furniture round the question aside: "Error: The field X is required" is X).
+// question when they are equal, or one is a cut of the other at least 70 characters long, first
+// as the page wrote them (the view's 80-character cut of "Error: The field <question> is ..."
+// is a cut of the engine's label, not of the question), then without the furniture round the
+// question ("Error: The field X is required" is X). Case and spacing aside.
 const squash = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
-function sameLabel(a, b) {
-  const x = squash(cleanQuestion(a) || a), y = squash(cleanQuestion(b) || b);
+function cutOf(x, y) {
   if (!x || !y) return false;
   if (x === y) return true;
   const [s, l] = x.length <= y.length ? [x, y] : [y, x];
   return s.length >= 70 && l.startsWith(s);
+}
+// What the view's 80-character cut can leave of an error's tail after the question ("Error: The
+// field <question> is  and must have a val"): never a word of a question.
+const TAIL_WORDS = ["is required and must have a value", "is and must have a value", "is a required field",
+                    "is required", "must have a value", "cannot be left blank", "cannot be blank"];
+function cutTail(x, y) {
+  const [s, l] = x.length <= y.length ? [x, y] : [y, x];
+  if (s.length < 8 || !l.startsWith(s)) return false;
+  const rest = l.slice(s.length).replace(/\s+/g, " ").trim();
+  return !!rest && TAIL_WORDS.some((t) => t.startsWith(rest));
+}
+function sameLabel(a, b) {
+  if (cutOf(squash(a), squash(b))) return true;
+  const x = squash(cleanQuestion(a) || a), y = squash(cleanQuestion(b) || b);
+  // the tail rule only for a label the view cut short (80 characters)
+  return cutOf(x, y) || (Math.max(squash(a).length, squash(b).length) >= 75 && cutTail(x, y));
 }
 const unq = (s) => String(s || "").replace(/\\(["\\])/g, "$1");
 // A view line's label ("" when it has none).
@@ -859,7 +878,8 @@ function questionsFor(viewText, left, includeFilled) {
   }
   // Never re-ask what is already in its box (a chosen option, typed text, a ticked box): a
   // stale "is required" error can outlive the fill.
-  const filled = (label) => linesFor(text, label).some((ln) => /\bvalue="(?:[^"\\]|\\.)+"|checked=true/.test(ln));
+  // A self-identification radio group says answered=true instead (its choice never leaves the page).
+  const filled = (label) => linesFor(text, label).some((ln) => /\bvalue="(?:[^"\\]|\\.)+"|checked=true|answered=true/.test(ln));
   return (includeFilled ? out : out.filter((q) => !filled(q))).slice(0, 6);
 }
 

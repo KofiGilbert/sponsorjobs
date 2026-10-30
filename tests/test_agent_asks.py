@@ -706,7 +706,9 @@ def test_e_known_answers_consult_workauth_and_the_library(A, monkeypatch):
     # engine's 200-character cut of it, find the saved country, never the work-auth "No"
     labels = [LAM_CITIZENSHIP, LAM_CITIZENSHIP[:200], "What is your gender?"]
     known = mod._known_answers_for(labels, None, {}, {"first_name": "K"})
-    assert known == {labels[0]: "Ghana", labels[1]: "Ghana", labels[2]: "Male"}
+    # A self-identification answer never goes to the brain as text: the ask reads the page's
+    # choices and picks the matching one (or the decline) instead (form-basics review, legal-1/4).
+    assert known == {labels[0]: "Ghana", labels[1]: "Ghana"}
     q = "Will you now or in the future require visa sponsorship for employment?"
     assert mod._known_answers_for([q], None, {}, {})[q] == "Yes"
     r = mod.app.test_client().post("/api/autoapply/agent/ask", json={
@@ -795,8 +797,16 @@ def test_e_separate_questions_never_overwrite_each_other(A):
         lib.close()
     assert _lib_answer(mod, "Ethnicity") == "Not Hispanic or Latino" and _lib_answer(mod, "Race") == "Asian"
     assert _lib_answer(mod, "Country of citizenship") == "Ghana"
-    known = mod._known_answers_for(["Ethnicity", "Gender pronouns", "Sex"], None, {}, {})
-    assert known == {"Ethnicity": "Not Hispanic or Latino"}
+    assert mod._known_answers_for(["Ethnicity", "Gender pronouns", "Sex"], None, {}, {}) == {}   # asked with choices
+    from autoapply import asks as AK
+    lib = mod._answer_lib()
+    try:
+        assert AK.known_answer("Ethnicity", ["Hispanic or Latino", "Not Hispanic or Latino"], library=lib) == \
+            ("Not Hispanic or Latino", "library")
+        assert AK.known_answer("Sex", ["Male", "Female"], library=lib) is None
+        assert AK.known_answer("Gender pronouns", ["He/him", "She/her"], library=lib) is None
+    finally:
+        lib.close()
 
 
 def test_e_answers_given_this_run_reach_the_brain(A):

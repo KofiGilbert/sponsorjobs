@@ -133,3 +133,32 @@ def country_option(answer: str, options) -> str | None:
         if hits:
             return None
     return None
+
+
+# Every name and alias of four or more characters, written as forms write them, longest first,
+# so "Papua New Guinea" is found before "Guinea" and "Dominican Republic" before "Dominica".
+_SPELLINGS: list[tuple[str, str]] = sorted(
+    {(n, n) for n in NAMES} | {(a, n) for n, alts in ALIASES.items() for a in alts if len(a) >= 4},
+    key=lambda p: -len(p[0]))
+_SPELLING_RX = [(re.compile(r"(?<![A-Za-z])" + re.escape(sp) + r"(?![A-Za-z])"), name) for sp, name in _SPELLINGS]
+
+
+def named_in(text: str) -> list[str]:
+    """The countries a question names, by the list's own name, in the order first named: "Are
+    you a citizen of Cuba, Iran, North Korea, Syria, or the Crimea region of Ukraine?" names
+    Cuba, Iran, North Korea, Syria and Ukraine. Case-sensitive, as a form capitalizes a country
+    ("Chad" the country, never "chad"); the two-letter "US" and "UK" are left to the caller."""
+    s = unicodedata.normalize("NFC", str(text or ""))
+    found: list[tuple[int, str]] = []
+    taken: list[tuple[int, int]] = []
+    for rx, name in _SPELLING_RX:
+        for m in rx.finditer(s):
+            if any(a < m.end() and m.start() < b for a, b in taken):
+                continue                      # part of a longer name already found
+            taken.append((m.start(), m.end()))
+            found.append((m.start(), name))
+    out: list[str] = []
+    for _, name in sorted(found):
+        if name not in out:
+            out.append(name)
+    return out

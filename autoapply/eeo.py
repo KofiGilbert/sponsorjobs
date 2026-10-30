@@ -2,15 +2,16 @@
 
 The person answers gender, Hispanic or Latino, race, veteran status and disability ONCE (on Your
 answers, or when the agent asks). Every form words the same choice differently: "Male" is "Man"
-or "M", "I am not a protected veteran" is Workday's "I am not a veteran" or a plain "No", and
+or "M", "I am not a protected veteran" is a plain "No" to "Are you a protected veteran?", and
 Workday's "Ethnicity" is one COMBINED list of races and the Hispanic or Latino choice ("Asian (Not
 Hispanic or Latino) (United States of America)"). ``choose`` maps the saved answers to the one
 option that says the same thing, in code, with no model.
 
 Never a guess: when no option says it, or several do, the answer is None and the field stays
 open for the person. A saved "Yes" is not a protected-veteran self-identification (a "Veteran"
-question can mean any service), and a combined race list is only answered when both the race and
-the Hispanic or Latino answer are known (or either is a decline).
+question can mean any service), "not a protected veteran" is never "not a veteran" (a veteran who
+is not protected served), and a combined race list is only answered when both the race and the
+Hispanic or Latino answer are known (or either is a decline).
 """
 from __future__ import annotations
 
@@ -27,7 +28,10 @@ DECLINE = re.compile(r"decline|prefer not|do not wish|don['’]?t wish|not wish 
 
 # The canonical question for each self-identification key (how the library is asked for it).
 QUESTIONS = {"@gender": "Gender", "@sex": "Sex", "@race": "Race", "@ethnicity": "Ethnicity",
+             "@hispanic_latino": "Are you Hispanic or Latino?",
              "@veteran": "Veteran status", "@disability": "Disability status"}
+# The keys a race or ethnicity question reads together (a combined list needs both halves).
+RACE_KEYS = ("@race", "@ethnicity", "@hispanic_latino")
 KEYS = tuple(QUESTIONS)
 
 
@@ -109,23 +113,34 @@ def hispanic_class(text: str, *, bare: bool = True) -> str | None:
 
 
 def veteran_class(text: str, *, saved: bool = False) -> str | None:
-    """not, protected or decline for the protected-veteran question. A plain Yes or No counts as
-    an OPTION ("Are you a protected veteran?" Yes / No), never as a saved answer: "Yes" to a
-    "Veteran" question can mean any service."""
+    """The choice a veteran answer or option makes:
+
+    * ``not``: not a PROTECTED veteran ("I am not a protected veteran"), which says nothing about
+      any other service;
+    * ``not_veteran``: never served ("I am not a veteran"), so not a protected veteran either;
+    * ``veteran_not_protected``: served, not protected ("I am a veteran but not a protected
+      veteran");
+    * ``protected``; ``veteran`` (any service: "I am a veteran"); ``decline``;
+    * ``no`` / ``yes``: a plain option, read with its question (see choose). Never a saved
+      answer: "Yes" to a "Veteran" question can mean any service."""
     t = str(text or "")
     if DECLINE.search(t):
         return "decline"
     c = _core(t)
-    if re.search(r"\bnot an? (protected )?veterans?\b", c):
+    if re.search(r"\bveteran\b.*\bnot an? protected veterans?\b|\bveteran\b.*\bnot protected\b", c):
+        return "veteran_not_protected"
+    if re.search(r"\bnot an? protected veterans?\b", c):
         return "not"
+    if re.search(r"\bnot an? veterans?\b|\bnever served\b|\bhave not served\b", c):
+        return "not_veteran"
     if re.search(r"\bidentify as (one or more of the classifications of )?(an? )?protected veterans?\b"
                  r"|\bi am an? protected veteran\b|^protected veterans?$", c):
         return "protected"
     if not saved:                    # "Are you a protected veteran?" Yes / No
         if re.match(r"no\b", c):
-            return "not"
+            return "no"
         if c == "yes":
-            return "protected"
+            return "yes"
     if re.fullmatch(r"(yes )?i am an? veteran|veteran", c):
         return "veteran"             # any service: true of a protected veteran too (see choose)
     return None
@@ -156,7 +171,7 @@ def value_class(key: str, text: str, *, saved: bool = False) -> str | None:
         return gender_class(text)
     if key == "@race":
         return "decline" if DECLINE.search(str(text)) else race_class(text)
-    if key == "@ethnicity":
+    if key in ("@ethnicity", "@hispanic_latino"):
         return hispanic_class(text)
     if key == "@veteran":
         return veteran_class(text, saved=saved)
@@ -168,15 +183,19 @@ def value_class(key: str, text: str, *, saved: bool = False) -> str | None:
 # --------------------------------------------------------------------------- the person
 def person(answers: dict) -> tuple[str | None, str | None]:
     """(race, hispanic) from the saved answers: the race class (or "decline") and yes / no /
-    "decline" for Hispanic or Latino. An answer picked on a combined list says both ("Asian (Not
-    Hispanic or Latino)"), so each fills in what the other key leaves open."""
+    "decline" for Hispanic or Latino. The Hispanic or Latino question's own answer first, else
+    an "Ethnicity" answer that says it. An answer picked on a combined list says both ("Asian
+    (Not Hispanic or Latino)"), so each fills in what the other key leaves open."""
     ra = str((answers or {}).get("@race") or "").strip()
     ea = str((answers or {}).get("@ethnicity") or "").strip()
+    ha = str((answers or {}).get("@hispanic_latino") or "").strip()
     race = ("decline" if DECLINE.search(ra) else race_class(ra)) if ra else None
-    hisp = hispanic_class(ea) if ea else None
+    hisp = hispanic_class(ha) if ha else None
+    if hisp is None and ea:
+        hisp = hispanic_class(ea)
     if not ra and ea and not DECLINE.search(ea):        # only when nothing of its own is saved
         race = race_class(ea)
-    if not ea and ra and re.search(r"hispanic|latin", ra, re.I):
+    if hisp is None and ra and re.search(r"hispanic|latin", ra, re.I):
         hisp = hispanic_class(ra, bare=False)
     return race, hisp
 
@@ -244,7 +263,8 @@ def _race_or_ethnicity(key: str, opts: list, answers: dict) -> str | None:
         return _one(hits, prefer=lambda o: _core(o) == _core(answers.get("@race") or ""))
     # the Hispanic or Latino question ("Yes" / "No", or the words); a race question whose
     # options are neither races nor Hispanic or Latino is nobody's to answer here
-    if key != "@ethnicity" and not any(re.search(r"hispanic|latin[oax]|latine", o, re.I) for o in opts):
+    if key not in ("@ethnicity", "@hispanic_latino") and not any(re.search(r"hispanic|latin[oax]|latine", o, re.I)
+                                                                  for o in opts):
         return None
     if hisp == "decline":
         return decline_option(opts)
@@ -253,18 +273,42 @@ def _race_or_ethnicity(key: str, opts: list, answers: dict) -> str | None:
     return _one([o for o in opts if not DECLINE.search(o) and hispanic_class(o) == hisp])
 
 
-def choose(key: str, options, answers: dict) -> str | None:
-    """The one option of a self-identification question (``key`` is its normalized key) that
-    the person's saved ``answers`` ({key: answer}) name: the saved words themselves, else the
-    option that makes the same choice in the form's own words, else the page's own decline
-    choice for a saved decline. None when nothing fits, or more than one option does."""
+# A question about PROTECTED veteran status, where a plain Yes or No says it.
+_PROTECTED_Q = re.compile(r"protected", re.I)
+
+
+def _veteran(want: str, opts: list, a: str, question: str) -> str | None:
+    """The veteran option that says what the saved choice says, never more. "I am not a
+    protected veteran" is not "I am not a veteran" (a veteran who is not protected served), and
+    a plain No only answers a question that asks about protected veterans."""
+    cls = {o: value_class("@veteran", o) for o in opts}
+    protected_q = bool(_PROTECTED_Q.search(question or ""))
+    order = {
+        "not": ["not"] + (["no"] if protected_q else []),
+        "not_veteran": ["not_veteran", "not", "no"],
+        "veteran_not_protected": ["veteran_not_protected", "veteran", "not"] + (["no"] if protected_q else []),
+        "protected": ["protected", "yes", "veteran"],
+    }.get(want, [])
+    for c in order:
+        hits = [o for o in opts if cls[o] == c]
+        if hits:
+            return _one(hits, prefer=lambda o: _core(o) == _core(a))
+    return None
+
+
+def choose(key: str, options, answers: dict, question: str = "") -> str | None:
+    """The one option of a self-identification question (``key`` is its normalized key, and
+    ``question`` its words when known) that the person's saved ``answers`` ({key: answer}) name:
+    the saved words themselves, else the option that makes the same choice in the form's own
+    words, else the page's own decline choice for a saved decline. None when nothing fits, or
+    more than one option does."""
     opts = [str(o) for o in (options or []) if str(o).strip()]
     answers = answers or {}
     a = str(answers.get(key) or "").strip()
     if not opts:
         return None
     eq = [o for o in opts if a and _n(o) == _n(a)]
-    if key in ("@race", "@ethnicity"):
+    if key in RACE_KEYS:
         # Both halves first: a Hispanic or Latino person gets the Hispanic choice on a combined
         # list even where their race is a choice of its own; the saved words otherwise.
         return _race_or_ethnicity(key, opts, answers) or (eq[0] if eq else None)
@@ -277,8 +321,7 @@ def choose(key: str, options, answers: dict) -> str | None:
     want = value_class(key, a, saved=True)
     if not want or want in ("decline", "veteran"):
         return None
+    if key == "@veteran":
+        return _veteran(want, opts, a, question)
     hits = [o for o in opts if value_class(key, o) == want]
-    if not hits and key == "@veteran" and want == "protected":
-        # Lever asks "I am a veteran" / "I am not a veteran": a protected veteran is a veteran.
-        hits = [o for o in opts if value_class(key, o) == "veteran"]
     return _one(hits, prefer=lambda o: _core(o) == _core(a))

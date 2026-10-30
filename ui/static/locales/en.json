@@ -1008,7 +1008,7 @@
   "ans.race": "Race",
   "ans.veteran": "Veteran status",
   "ans.disability": "Disability",
-  "ans.eeoNote": "Gender, ethnicity, race, veteran and disability will be declined on every form.",
+  "ans.eeoNote": "Gender, ethnicity, race, veteran and disability are declined. A form with no decline choice asks you.",
   "ans.ch.decline": "Prefer not to say",
   "ans.ch.male": "Male",
   "ans.ch.female": "Female",

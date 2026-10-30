@@ -1008,7 +1008,7 @@
   "ans.race": "Raza",
   "ans.veteran": "Condición de veterano",
   "ans.disability": "Discapacidad",
-  "ans.eeoNote": "Género, etnia, raza, veterano y discapacidad se rechazarán en todos los formularios.",
+  "ans.eeoNote": "Género, etnia, raza, veterano y discapacidad se rechazan. Un formulario sin opción de rechazo te lo pregunta.",
   "ans.ch.decline": "Prefiero no decirlo",
   "ans.ch.male": "Hombre",
   "ans.ch.female": "Mujer",

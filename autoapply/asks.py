@@ -30,8 +30,8 @@ import threading
 from autoapply import eeo as EEO
 from autoapply import workauth
 from autoapply.answers import normalize
-from autoapply.planner import (_DECLINE, _EEO, _n, citizenship_text, decline_option, eeo_option, literal_for,
-                               match_option)
+from autoapply.planner import (_DECLINE, _EEO, _n, both_halves, citizenship_text, decline_option, eeo_option,
+                               listed_citizenship, literal_for, match_option, residence_withheld)
 
 MAX_OPTIONS = 8          # choices offered as buttons
 MAX_ALL = 40             # choices kept to match a saved answer or a reply against
@@ -126,27 +126,36 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         hit = literal_for(key, text, opts)
         return hit or (text if partial else None)
 
+    v = listed_citizenship(q, library, opts, "select" if opts else "text")
+    if v:
+        return v, "library"
     if workauth.classify(q):
         v = workauth.answer(q, work_auth or {}, options=opts, field_type="select" if opts else "text",
                             job_country=job_country)
         if v:
             return v, "workauth"
     if is_eeo(q):
-        # The standing decline first (the person asked for it on every form), then their own
-        # saved answers on the form's own wording (autoapply/eeo.py), never a guess.
-        if eeo_decline and opts:
+        # The standing decline first and alone: while it is on, a saved answer is never used.
+        # The page's decline choice, else the question stays open (the person is asked).
+        if eeo_decline:
             v = decline_option(opts)
-            if v:
-                return v, "eeo_decline"
+            return (v, "eeo_decline") if v else None
+        # Then their own saved answers on the form's own wording (autoapply/eeo.py), never a guess.
         qkey, answers, _rows = EEO.saved(library, q)
         own = answers.get(qkey, "")
         if not opts:
+            if qkey in ("@race", "@ethnicity") and own and not both_halves(own):
+                return None                 # a combined race list needs its choices read
             return (own, "library") if own else None
-        v = eeo_option(own, opts, qkey, answers) if answers else None
+        v = eeo_option(own, opts, qkey, answers, question=q) if answers else None
         if v:
             return v, "library"
-        return (own, "library") if partial and own else None
+        if partial and own and (qkey not in ("@race", "@ethnicity") or both_halves(own)):
+            return own, "library"
+        return None
     hit = library.lookup(q) if library is not None else None
+    if hit and residence_withheld(q, work_auth):
+        return None
     if hit:
         ans = hit.get("answer")
         if key == "@citizenship" and not opts:

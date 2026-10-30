@@ -1008,7 +1008,7 @@
   "ans.race": "Ethnische Herkunft",
   "ans.veteran": "Veteranenstatus",
   "ans.disability": "Behinderung",
-  "ans.eeoNote": "Geschlecht, Ethnie, Herkunft, Veteranenstatus und Behinderung werden in jedem Formular abgelehnt.",
+  "ans.eeoNote": "Geschlecht, Ethnie, Herkunft, Veteranenstatus und Behinderung werden abgelehnt. Ein Formular ohne Ablehnungsoption fragt Sie.",
   "ans.ch.decline": "Keine Angabe",
   "ans.ch.male": "Männlich",
   "ans.ch.female": "Weiblich",

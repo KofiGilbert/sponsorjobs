@@ -41,7 +41,7 @@
     },
     "eeo_decline": {
       "label_re": "gender|\\brace\\b|ethnic|veteran|disab|sexual orientation|pronoun",
-      "option_re": "decline|prefer not|not to (answer|identify|disclose|say)|don'?t (wish|want)|do not (wish|want)|i do not",
+      "option_re": "decline|prefer not|not to (answer|identify|disclose|say)|don'?t (wish|want)|do not (wish|want)|not declared",
       "answer_from": "eeo_decline"
     }
   },

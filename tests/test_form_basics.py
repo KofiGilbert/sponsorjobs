@@ -124,10 +124,12 @@ def test_an_error_wrapped_eeo_label_is_the_eeo_question():
 
 
 @pytest.mark.parametrize("q,key", [
-    ("Are you Hispanic or Latino?", "@ethnicity"), ("Are you Hispanic/Latino?", "@ethnicity"),
-    ("Hispanic or Latino", "@ethnicity"), ("Do you identify as Hispanic or Latino?", "@ethnicity"),
-    ("Are you of Hispanic or Latino origin?", "@ethnicity"), ("Ethnicity", "@ethnicity"),
+    ("Are you Hispanic or Latino?", "@hispanic_latino"), ("Are you Hispanic/Latino?", "@hispanic_latino"),
+    ("Hispanic or Latino", "@hispanic_latino"), ("Do you identify as Hispanic or Latino?", "@hispanic_latino"),
+    ("Are you of Hispanic or Latino origin?", "@hispanic_latino"), ("Ethnicity", "@ethnicity"),
+    ("What is your ethnic group?", "@ethnicity"),
     ("Second country of citizenship", "@citizenship2"), ("Other citizenship", "@citizenship2"),
+    ("Dual citizenship country", "@citizenship2"), ("Country of dual citizenship", "@citizenship2"),
     ("Additional nationality", "@citizenship2"), ("Country of citizenship", "@citizenship"),
     ("Desired annual salary (USD)", "@salary"), ("Veteran status", "@veteran"), ("Disability status", "@disability"),
 ])
@@ -137,7 +139,10 @@ def test_canonical_keys_of_the_card(q, key):
 
 @pytest.mark.parametrize("q,not_key", [
     ("Race: Hispanic or Latino", "@ethnicity"), ("Ethnicity: Hispanic or Latino", "@ethnicity"),
+    ("Race: Hispanic or Latino", "@hispanic_latino"), ("Ethnicity", "@hispanic_latino"),
     ("Do you hold dual citizenship?", "@citizenship2"), ("Race", "@ethnicity"),
+    # legal-5: a bare "Dual citizenship" is a yes/no question, never the second country
+    ("Dual citizenship", "@citizenship2"), ("Dual Citizenship?", "@citizenship2"), ("Dual nationality", "@citizenship2"),
 ])
 def test_one_box_of_a_group_is_not_the_question(q, not_key):
     assert normalize(q) != not_key
@@ -274,19 +279,33 @@ def test_an_answer_picked_on_a_combined_list_counts_for_both_halves():
     assert choose("@ethnicity", PH_ETHNICITY, {"@ethnicity": picked}) == "Not Hispanic or Latino"
 
 
-@pytest.mark.parametrize("opts,not_,protected", [
-    (GH_VETERAN, "I am not a protected veteran", "I identify as one or more of the classifications of protected veteran"),
-    (WD_VETERAN, "I am not a veteran", "I identify as one or more of the classifications of protected veterans"),
-    (PH_VETERAN, "I am not a protected veteran", "I identify as one or more of the classifications of protected veteran"),
+@pytest.mark.parametrize("opts,not_,protected,question", [
+    (GH_VETERAN, "I am not a protected veteran", "I identify as one or more of the classifications of protected veteran",
+     "Veteran Status"),
+    # legal-8: "not a PROTECTED veteran" is not "not a veteran" (a veteran who is not protected
+    # served): an any-service list is left open, and the person is asked once
+    (WD_VETERAN, None, "I identify as one or more of the classifications of protected veterans", "Veteran Status"),
+    (PH_VETERAN, "I am not a protected veteran", "I identify as one or more of the classifications of protected veteran",
+     "Veteran Status"),
     (IC_VETERAN, "I am not a protected veteran",
-     "I identify as one or more of the classifications of protected veteran listed above"),
-    (LV_VETERAN, "I am not a veteran", "I am a veteran"),
-    (YES_NO, "No", "Yes"),
+     "I identify as one or more of the classifications of protected veteran listed above", "Veteran Status"),
+    (LV_VETERAN, None, "I am a veteran", "Veteran Status"),
+    (YES_NO, "No", "Yes", "Are you a protected veteran?"),
+    (YES_NO, None, "Yes", "Veteran"),                       # a bare No could mean "never served"
 ])
-def test_veteran_status(opts, not_, protected):
-    assert choose("@veteran", opts, {"@veteran": "I am not a protected veteran"}) == not_
-    assert choose("@veteran", opts, {"@veteran": "I am a protected veteran"}) == protected
-    assert choose("@veteran", opts, {"@veteran": "Prefer not to say"}) == opts[-1]
+def test_veteran_status(opts, not_, protected, question):
+    assert choose("@veteran", opts, {"@veteran": "I am not a protected veteran"}, question=question) == not_
+    assert choose("@veteran", opts, {"@veteran": "I am a protected veteran"}, question=question) == protected
+    assert choose("@veteran", opts, {"@veteran": "Prefer not to say"}, question=question) == opts[-1]
+
+
+def test_a_saved_never_served_answer_fits_every_veteran_list():
+    """A reply "I am not a veteran" (asked once on an any-service list) is also "not a protected
+    veteran", and a plain No to either question."""
+    saved = {"@veteran": "I am not a veteran"}
+    assert choose("@veteran", WD_VETERAN, saved) == "I am not a veteran"
+    assert choose("@veteran", GH_VETERAN, saved) == "I am not a protected veteran"
+    assert choose("@veteran", YES_NO, saved, question="Veteran") == "No"
 
 
 def test_veteran_never_guessed():
@@ -329,17 +348,31 @@ def test_the_planner_fills_a_workday_combined_list_from_two_saved_answers(tmp_pa
         by = {a.ref: a.value for a in res.actions}
         assert by == {"e": WD_ETHNICITY[1], "g": "Man", "d1": "Yes"}
         assert {f.ref for f in res.left} == {"v", "d0", "d2"}          # veteran not saved: theirs
-        assert sorted(res.used_library) == ["@disability", "@ethnicity", "@gender", "@race"]
+        assert sorted(res.used_library) == ["@disability", "@gender", "@hispanic_latino", "@race"]
 
 
 def test_the_standing_decline_wins_over_a_saved_answer(tmp_path):
+    """legal-1: while the decline is on, a saved self-identification answer is never used. A
+    field with its decline choice gets it; any other (no decline choice, a dropdown whose list
+    is not read yet, a text box) stays open, and the agent's ask reads the page's choices."""
     with AnswerLibrary(tmp_path / "a.db") as lib:
-        lib.save("Gender", "Male", "you")
-        res = plan_known([FormField("g", "Gender", "select", GH_GENDER),
-                          FormField("m", "Gender", "select", ["Male", "Female"])], KnownContext(library=lib, eeo_decline=True))
-        assert [(a.ref, a.value, a.origin) for a in res.actions] == [("g", "Decline To Self Identify", "eeo"),
-                                                                    ("m", "Male", "library")]
+        for q, a in (("Gender", "Male"), ("Race", "Asian"), ("Are you Hispanic or Latino?", "No"),
+                     ("Veteran status", "I am a protected veteran"), ("Disability status", "Yes")):
+            lib.save(q, a, "you")
+        fields = [FormField("g", "Gender", "select", GH_GENDER),
+                  FormField("m", "Gender", "select", ["Male", "Female"]),
+                  FormField("c", "Gender", "combobox"),
+                  FormField("r", "Race", "combobox", []),
+                  FormField("t", "Ethnicity", "text"),
+                  FormField("v", "Veteran Status", "radio", ["Yes", "No"])]
+        fields += [FormField(f"d{i}", "Disability Status: " + o, "checkbox") for i, o in enumerate(["Yes", "No"])]
+        res = plan_known(fields, KnownContext(library=lib, eeo_decline=True))
+        assert [(a.ref, a.value, a.origin) for a in res.actions] == [("g", "Decline To Self Identify", "eeo")]
+        assert {f.ref for f in res.left} == {"m", "c", "r", "t", "v", "d0", "d1"}
         assert AK.known_answer("Gender", GH_GENDER, library=lib, eeo_decline=True) == ("Decline To Self Identify", "eeo_decline")
+        for q, opts, partial in (("Gender", [], False), ("Gender", ["Male", "Female"], True), ("Race", [], False),
+                                 ("Veteran Status", ["Yes", "No"], False)):
+            assert AK.known_answer(q, opts, partial=partial, library=lib, eeo_decline=True) is None
 
 
 def test_known_answer_uses_the_forms_wording(tmp_path):
@@ -347,12 +380,14 @@ def test_known_answer_uses_the_forms_wording(tmp_path):
         lib.save("Veteran status", "I am not a protected veteran", "you")
         lib.save("Race", "White", "you")
         lib.save("Are you Hispanic or Latino?", "No", "you")
-        assert AK.known_answer("Veteran Status", WD_VETERAN, library=lib) == ("I am not a veteran", "library")
+        assert AK.known_answer("Veteran Status", GH_VETERAN, library=lib) == ("I am not a protected veteran", "library")
+        assert AK.known_answer("Veteran Status", WD_VETERAN, library=lib) is None      # any service: asked
         assert AK.known_answer("Ethnicity", WD_ETHNICITY, library=lib) == (WD_ETHNICITY[6], "library")
         assert AK.known_answer("Are you Hispanic/Latino?", GH_HISPANIC, library=lib) == ("No", "library")
+        assert AK.known_answer("Are you a protected veteran?", ["Yes", "No"], library=lib) == ("No", "library")
         # an error-wrapped label of the same question
-        assert AK.known_answer("Error: The field Veteran Status is required", WD_VETERAN, library=lib) == \
-            ("I am not a veteran", "library")
+        assert AK.known_answer("Error: The field Veteran Status is required", GH_VETERAN, library=lib) == \
+            ("I am not a protected veteran", "library")
 
 
 def test_countries_match_the_forms_list():
@@ -420,8 +455,8 @@ def test_post_basics_saves_canonical_keys_and_the_salary_pref(app):
     assert r["values"]["salary"] == "130000" and r["values"]["race"] == "black"
     rows = _db_rows(A)
     assert rows == {"@citizenship": "Ghana", "@citizenship2": "Canada", "@salary": "130000", "@gender": "Male",
-                    "@ethnicity": "No", "@race": "Black or African American", "@veteran": "I am not a protected veteran",
-                    "@disability": "No"}
+                    "@hispanic_latino": "Not Hispanic or Latino", "@race": "Black or African American",
+                    "@veteran": "I am not a protected veteran", "@disability": "No"}
     assert A._load_prefs()["desired_salary"] == "130000"                 # the browser extension fills it too
     lst = c.get("/api/answers").get_json()["answers"]
     assert {x["key"]: x["source"] for x in lst}["@gender"] == "you"
@@ -487,7 +522,14 @@ def test_a_combined_list_pick_shows_both_halves_and_survives_an_edit(app):
     assert d["values"]["race"] == "asian" and d["values"]["hispanic"] == "no"
     r = c.post("/api/answers/basics", json={"fields": {"hispanic": "yes"}}).get_json()
     assert r["values"]["race"] == "asian" and r["values"]["hispanic"] == "yes"
-    assert _db_rows(A)["@race"] == "Asian" and _db_rows(A)["@ethnicity"] == "Yes"
+    rows = _db_rows(A)
+    assert rows["@hispanic_latino"] == "Hispanic or Latino" and rows["@ethnicity"] == WD_ETHNICITY[1]
+    # and the agent reads the person's newer Hispanic or Latino answer first
+    lib = A._answer_lib()
+    try:
+        assert AK.known_answer("Ethnicity", WD_ETHNICITY, library=lib) == (WD_ETHNICITY[3], "library")
+    finally:
+        lib.close()
 
 
 def test_own_words_are_never_replaced_by_a_derived_value(app):
@@ -594,3 +636,411 @@ def test_english_strings_exist_and_every_locale_has_them():
         assert k in en
     assert en["ans.basicsSub"] == "{n} of {m} form answers saved"
     assert en["aa.basics.ask"] == "Before I apply: {n} questions every form asks."
+
+
+# =========================================================================== review fixes
+# --------------------------------------------------------------------------- label cleaning gaps
+@pytest.mark.parametrize("label,want,key", [
+    ("Gender is required", "Gender", "@gender"),
+    ("Gender is", "Gender", "@gender"),                       # the engine cut "required" out
+    ("Veteran Status is required", "Veteran Status", "@veteran"),
+    ("Ethnicity is required and must have a value.", "Ethnicity", "@ethnicity"),
+    ("Errors Found Error-Gender The field Gender is required", "Gender", "@gender"),
+    ("Errors Found Error-Veteran Status The field Veteran Status is required", "Veteran Status", "@veteran"),
+])
+def test_labels_without_a_question_mark_are_cleaned_too(label, want, key):
+    assert clean_label(label) == want and normalize(label) == key
+
+
+def test_the_shell_cleans_the_same_shapes():
+    if not shutil.which("node"):
+        pytest.skip("needs node")
+    js = r"""
+const A = require(%r);
+const eq = (a, b) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(JSON.stringify(a) + " != " + JSON.stringify(b)); };
+eq(A.cleanQuestion("Gender is required"), "Gender");
+eq(A.cleanQuestion("Gender is"), "Gender");
+eq(A.cleanQuestion("Errors Found Error-Gender The field Gender is required"), "Gender");
+eq(A.cleanQuestion("What is your salary? This field is required."), "What is your salary?");
+eq(A.cleanQuestion("Visa sponsorship required"), "Visa sponsorship required");
+console.log("ok");
+""" % str(ROOT / "shell-electron" / "agent.js")
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and out.stdout.strip() == "ok", out.stderr
+
+
+def test_the_views_80_character_cut_of_an_error_label_is_still_the_same_field():
+    """data-samelabel-80-cut: the view cleans a label (cutting the word "required") and cuts it
+    at 80 characters; the engine keeps it whole. Lam's salary box, already filled under a stale
+    error, is never re-asked, and a select under that label still gives its choices."""
+    if not shutil.which("node"):
+        pytest.skip("needs node")
+    js = r"""
+const A = require(%r);
+const eq = (a, b) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(JSON.stringify(a) + " != " + JSON.stringify(b)); };
+const cl = (t) => String(t || "").replace(/\s+/g, " ").replace(/\b(select one|required)\b/ig, "").replace(/[*✱]+/g, "").trim();
+const raw = %r, q = "What is your annual salary requirement?";
+const engine = cl(raw), view = engine.slice(0, 80);
+eq(view.length, 80);
+eq(A.sameLabel(view, engine), true);
+eq(A.sameLabel(view, q), true);
+eq(A.questionsFor('[3]<input type=text label="' + view + '" value="(filled)" required>', [engine]), []);
+const sel = '[5]<select label="' + view + '" value="" options=3 first="Select...|100000|150000" required>';
+eq(A.questionsFor(sel, [engine]), [q]);
+eq(A.indexFor(sel, q), 5);
+eq(A.optionsFor(sel, q).options, ["100000", "150000"]);
+eq(A.sameLabel("Gender", "Gender is a protected category"), false);
+console.log("ok");
+""" % (str(ROOT / "shell-electron" / "agent.js"), LAM_SALARY)
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and out.stdout.strip() == "ok", out.stderr
+
+
+def test_an_answered_self_identification_radio_group_is_not_re_asked():
+    if not shutil.which("node"):
+        pytest.skip("needs node")
+    js = r"""
+const A = require(%r);
+const v = '[4]<radio label="Gender" option="Male" checked=hidden answered=true required>\n'
+        + '[5]<radio label="Gender" option="Female" checked=hidden answered=true required>\n'
+        + '[6]<radio label="Disability" option="Yes" checked=hidden answered=false required>';
+const got = JSON.stringify(A.questionsFor(v, ["Gender", "Disability"]));
+if (got !== JSON.stringify(["Disability"])) throw new Error(got);
+console.log("ok");
+""" % str(ROOT / "shell-electron" / "agent.js")
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and out.stdout.strip() == "ok", out.stderr
+
+
+# --------------------------------------------------------------------------- dual citizenship (legal-5)
+def test_a_yes_no_dual_citizenship_reply_never_becomes_the_second_country(tmp_path):
+    lam = ("For the sole purpose of determining export licensing requirements, please provide your most recent "
+           "country/region of citizenship or legal permanent residence (if you are a citizen of more than one, "
+           "list each)")
+    with AnswerLibrary(tmp_path / "a.db") as lib:
+        from autoapply import basics
+        basics.write(lib, {"citizenship": "Ghana", "citizenship2": "Canada"})
+        res = plan_known([FormField("d", "Dual Citizenship?", "radio", ["Yes", "No"])], KnownContext(library=lib))
+        assert [f.ref for f in res.left] == ["d"]
+        lib.save("Dual Citizenship?", "Yes", "you")                     # the person's reply on the bar
+        assert basics.read(lib)["values"]["citizenship2"] == "Canada"
+        assert AK.known_answer(lam, [], library=lib) == ("Ghana, Canada", "library")
+        # a "Yes" that did land on the second-country key is never a country
+        lib.conn.execute("UPDATE answers SET answer='Yes' WHERE key='@citizenship2'")
+        lib.conn.commit()
+        assert basics.read(lib)["values"]["citizenship2"] == ""
+        assert AK.known_answer(lam, [], library=lib) == ("Ghana", "library")
+        assert lib.save("Second country of citizenship", "No", "you") is None
+
+
+def test_an_old_dual_citizenship_answer_moves_off_the_second_country_key(tmp_path):
+    path = tmp_path / "a.db"
+    _old_db(path, [("@citizenship2", "Dual citizenship", "No", 1.0)])
+    with AnswerLibrary(path) as lib:
+        assert lib.get_key("@citizenship2") is None and lib.lookup("Dual citizenship")["answer"] == "No"
+        assert lib.count() == 1
+
+
+# --------------------------------------------------------------------------- sanctions screens (legal-3)
+CUBA_Q = "Are you a citizen of Cuba, Iran, North Korea, Syria, or the Crimea region of Ukraine?"
+EMBARGO_Q = "Are you a citizen or national of a country subject to U.S. embargo or sanctions (Cuba, Iran, North Korea, Syria)?"
+US_CITIZEN = {"countries": {"US": {"status": "us_citizen"}}}
+IRAN_H1B = {"countries": {"US": {"status": "h1b"}}}
+
+
+@pytest.mark.parametrize("q", [CUBA_Q, EMBARGO_Q])
+def test_a_sanctions_screen_is_never_answered_from_the_work_authorization_profile(tmp_path, q):
+    from autoapply import workauth
+    assert workauth.classify(q) is None
+    assert workauth.answer(q, US_CITIZEN, options=["Yes", "No"]) is None
+    with AnswerLibrary(tmp_path / "a.db") as lib:
+        # nothing saved about citizenship: the person answers it
+        assert AK.known_answer(q, ["Yes", "No"], library=lib, work_auth=US_CITIZEN) is None
+        res = plan_known([FormField("s", q, "radio", ["Yes", "No"])], KnownContext(library=lib, work_auth=US_CITIZEN))
+        assert [f.ref for f in res.left] == ["s"]
+
+
+@pytest.mark.parametrize("q", [CUBA_Q, EMBARGO_Q])
+def test_a_sanctions_screen_is_answered_from_the_saved_countries_of_citizenship(tmp_path, q):
+    from autoapply import basics
+    with AnswerLibrary(tmp_path / "us.db") as lib:
+        basics.write(lib, {"citizenship": "United States"})
+        assert AK.known_answer(q, ["Yes", "No"], library=lib, work_auth=US_CITIZEN) == ("No", "library")
+        res = plan_known([FormField("s", q, "select", ["Yes", "No"])], KnownContext(library=lib, work_auth=US_CITIZEN))
+        assert [(a.ref, a.value) for a in res.actions] == [("s", "No")]
+    with AnswerLibrary(tmp_path / "ir.db") as lib:
+        basics.write(lib, {"citizenship": "Ghana", "citizenship2": "Iran"})
+        assert AK.known_answer(q, ["Yes", "No"], library=lib, work_auth=IRAN_H1B) == ("Yes", "library")
+        assert AK.known_answer(q, [], library=lib, work_auth=IRAN_H1B) == ("Yes", "library")
+
+
+def test_a_screen_about_residence_too_gets_a_yes_but_never_a_no(tmp_path):
+    from autoapply import basics
+    q = "Are you a citizen or permanent resident of Cuba, Iran, North Korea or Syria?"
+    with AnswerLibrary(tmp_path / "a.db") as lib:
+        basics.write(lib, {"citizenship": "Ghana"})
+        assert AK.known_answer(q, ["Yes", "No"], library=lib) is None
+        basics.write(lib, {"citizenship": "Syria"})
+        assert AK.known_answer(q, ["Yes", "No"], library=lib) == ("Yes", "library")
+
+
+def test_the_job_countrys_citizen_question_still_comes_from_the_profile(tmp_path):
+    from autoapply import workauth
+    assert workauth.classify("Are you a US citizen?") == "citizen"
+    assert workauth.classify("Are you legally authorized to work in Germany?") == "authorized"
+    assert workauth.classify("Are you legally authorized to work in India?") is None     # not a profile country
+    with AnswerLibrary(tmp_path / "a.db") as lib:
+        assert AK.known_answer("Are you a US citizen?", ["Yes", "No"], library=lib, work_auth=US_CITIZEN) == ("Yes", "workauth")
+
+
+# --------------------------------------------------------------------------- residence (legal-9)
+LAM_EXPORT = ("For the sole purpose of determining export licensing requirements, please provide your most recent "
+              "country/region of citizenship or legal permanent residence (if you are a citizen of more than one, "
+              "list each)")
+
+
+def test_the_lam_export_question_is_left_to_a_permanent_resident(tmp_path):
+    from autoapply import basics
+    gc = {"countries": {"US": {"status": "green_card"}}}
+    with AnswerLibrary(tmp_path / "a.db") as lib:
+        basics.write(lib, {"citizenship": "Ghana"})
+        assert AK.known_answer(LAM_EXPORT, [], library=lib, work_auth=gc) is None
+        res = plan_known([FormField("t", LAM_EXPORT, "text")], KnownContext(library=lib, work_auth=gc))
+        assert [f.ref for f in res.left] == ["t"]
+        # without a permanent residence anywhere, the citizenship answers it
+        assert AK.known_answer(LAM_EXPORT, [], library=lib, work_auth=IRAN_H1B) == ("Ghana", "library")
+        # the card's own question never mentions residence
+        assert AK.known_answer("Country of citizenship", [], library=lib, work_auth=gc) == ("Ghana", "library")
+
+
+def test_the_step_route_leaves_the_lam_export_question_to_a_permanent_resident(app, monkeypatch):
+    A, c = app
+    c.post("/api/answers/basics", json={"fields": {"citizenship": "Ghana"}})
+    monkeypatch.setattr(A, "_work_auth", lambda: {"countries": {"US": {"status": "green_card"}}})
+    assert A._known_answers_for([LAM_EXPORT, "Country of citizenship"], None, {}, {}) == {"Country of citizenship": "Ghana"}
+
+
+# --------------------------------------------------------------------------- self-identification on the step route
+def _seed_card(c, **extra):
+    fields = {"gender": "male", "race": "asian", "hispanic": "no", "veteran": "protected", "disability": "yes"}
+    return c.post("/api/answers/basics", json={"fields": fields, **extra}).get_json()
+
+
+def test_the_step_route_never_hands_the_brain_a_self_identification_answer(app):
+    """legal-1, legal-4: EEO fields left to the brain arrive as text with no choices, where a
+    saved "No" or "Asian" is half an answer and the decline cannot be honored: they go to the
+    ask instead, which reads the page's choices (and picks the decline while it is on)."""
+    A, c = app
+    labels = ["Gender", "Race", "Ethnicity", "Are you Hispanic or Latino?", "Veteran Status", "Disability Status",
+              "Race/Ethnicity"]
+    for decline in (False, True):
+        _seed_card(c, eeo_decline=decline)
+        assert A._known_answers_for(labels, None, {}, {}) == {}
+    lib = A._answer_lib()
+    try:
+        # the ask (known_only) reads the choices: the decline while it is on
+        assert AK.known_answer("Ethnicity", WD_ETHNICITY, library=lib, eeo_decline=True) == (WD_ETHNICITY[-1], "eeo_decline")
+        assert AK.known_answer("Ethnicity", WD_ETHNICITY, library=lib) == (WD_ETHNICITY[1], "library")
+    finally:
+        lib.close()
+
+
+class _SpyLLM:
+    def __init__(self):
+        self.user = []
+
+    def agent_step(self, system, user):
+        self.user.append(user)
+        return json.dumps({"memory": "", "evaluation": "", "actions": [], "done": {"outcome": "blocked", "reason": "needs-person"}})
+
+
+def test_choices_the_engine_made_on_self_identification_never_reach_the_model(app, monkeypatch):
+    """legal-2: the engine filled Workday's Voluntary Disclosures page; the view the shell sends
+    still carries the choices (an older view), and the brain's prompt must not."""
+    A, c = app
+    _seed_card(c)
+    spy = _SpyLLM()
+    monkeypatch.setattr(A, "_make_llm", lambda: spy)
+    view = ("URL: https://acme.wd1.myworkdayjobs.com/apply\nTitle: Apply\n[Start of page]\n"
+            "[3]<combobox label=\"Gender\" value=\"Male\" expanded=false required>\n"
+            "[4]<select label=\"Ethnicity\" value=\"Asian (Not Hispanic or Latino) (United States of America)\" options=8 first=\"A|B|C|D\" required>\n"
+            "[5]<radio label=\"Please select the veteran status which most accurately describes your relationship\" "
+            "option=\"I identify as one or more of the classifications of protected veterans\" checked=true required>\n"
+            "[6]<radio label=\"Please select the veteran status which most accurately describes your relationship\" "
+            "option=\"I am not a veteran\" checked=false required>\n"
+            "[7]<checkbox label=\"Disability: Yes, I have a disability, or have had one in the past\" checked=true>\n"
+            "[8]<select label=\"Country\" value=\"Canada\" options=3 first=\"A|B|C\">\n"
+            "[9]<button>Save and Continue</button>\n[End of page]")
+    r = c.post("/api/autoapply/agent/step", json={"record_id": None, "step": 2, "max_steps": 40,
+                                                   "url": "https://acme.wd1.myworkdayjobs.com/apply", "view": view,
+                                                   "left": ["Gender", "Race"], "history": []},
+               headers={"X-Tailor-Extension": "1"})
+    assert r.status_code == 200 and spy.user, r.get_data(as_text=True)
+    prompt = spy.user[0]
+    for word in ('value="Male"', 'value="Asian', "checked=true", "{{answer_"):
+        assert word not in prompt, word
+    assert 'value="(filled)"' in prompt and "answered=true" in prompt and 'value="Canada"' in prompt
+
+
+def test_mask_self_id_keeps_the_choices_and_hides_the_choice():
+    from autoapply.brain import mask_self_id
+    v = ('[1]<radio label="Gender" option="Male" checked=false>\n[2]<radio label="Gender" option="Female" checked=true>\n'
+         '[3]<radio label="Remote?" option="Yes" checked=true>\n*[4]<select label="Race" value="" options=3 first="A|B|C">')
+    out = mask_self_id(v)
+    assert 'option="Male" checked=hidden answered=true' in out and 'option="Female" checked=hidden answered=true' in out
+    assert '[3]<radio label="Remote?" option="Yes" checked=true>' in out
+    assert '*[4]<select label="Race" value=""' in out
+
+
+# --------------------------------------------------------------------------- combined halves (legal-4)
+def test_a_half_answer_never_fills_a_combined_race_field_without_its_choices(tmp_path):
+    from autoapply import basics
+    with AnswerLibrary(tmp_path / "a.db") as lib:
+        basics.write(lib, {"race": "asian", "hispanic": "yes"})
+        fields = [FormField("re", "Race/Ethnicity", "text"), FormField("r", "Race", "combobox"),
+                  FormField("e", "Ethnicity", "combobox"), FormField("h", "Are you Hispanic or Latino?", "text")]
+        res = plan_known(fields, KnownContext(library=lib))
+        assert [(a.ref, a.value) for a in res.actions] == [("h", "Hispanic or Latino")]
+        assert {f.ref for f in res.left} == {"re", "r", "e"}
+        assert AK.known_answer("Race/Ethnicity", [], library=lib) is None
+        # with the page's choices, both halves: the Hispanic choice
+        assert AK.known_answer("Race", LV_RACE, library=lib) == ("Hispanic or Latino", "library")
+        # words that say both halves fill a text box
+        lib.save("Ethnicity", WD_ETHNICITY[1], "you")
+        res = plan_known([FormField("e", "Ethnicity", "text")], KnownContext(library=lib))
+        assert [(a.ref, a.value) for a in res.actions] == [("e", WD_ETHNICITY[1])]
+
+
+# --------------------------------------------------------------------------- clearing a derived half (legal-7)
+def test_clearing_a_race_read_from_a_combined_pick_sticks(app):
+    A, c = app
+    lib = A._answer_lib()
+    try:
+        lib.save("Ethnicity", WD_ETHNICITY[1], "you")                  # Asian (Not Hispanic or Latino) ...
+    finally:
+        lib.close()
+    d = c.get("/api/answers/basics").get_json()
+    assert d["values"]["race"] == "asian" and d["values"]["hispanic"] == "no"
+    r = c.post("/api/answers/basics", json={"fields": {"race": ""}}).get_json()
+    assert r["values"]["race"] == "" and r["values"]["hispanic"] == "no"           # the other half stays
+    rows = _db_rows(A)
+    assert "@ethnicity" not in rows and rows["@hispanic_latino"] == "Not Hispanic or Latino"
+    lib = A._answer_lib()
+    try:
+        assert AK.known_answer("Race", LV_RACE, library=lib) is None                # race unknown: asked
+        assert AK.known_answer("Ethnicity", WD_ETHNICITY, library=lib) is None
+        res = plan_known([FormField("r", "Race", "select", LV_RACE)], KnownContext(library=lib))
+        assert [f.ref for f in res.left] == ["r"]
+    finally:
+        lib.close()
+
+
+def test_clearing_a_hispanic_answer_read_from_a_race_pick_keeps_the_race(app):
+    A, c = app
+    lib = A._answer_lib()
+    try:
+        lib.save("Race", LV_RACE[4], "you")                            # Asian (Not Hispanic or Latino)
+    finally:
+        lib.close()
+    d = c.get("/api/answers/basics").get_json()
+    assert d["values"]["race"] == "asian" and d["values"]["hispanic"] == "no"
+    r = c.post("/api/answers/basics", json={"fields": {"hispanic": ""}}).get_json()
+    assert r["values"]["hispanic"] == "" and r["values"]["race"] == "asian"
+    assert _db_rows(A)["@race"] == "Asian" and "@hispanic_latino" not in _db_rows(A)
+
+
+# --------------------------------------------------------------------------- the UK's ethnic group (ui-4)
+def test_another_ethnicity_answer_is_not_the_hispanic_answer_and_is_never_overwritten(app):
+    A, c = app
+    lib = A._answer_lib()
+    try:
+        lib.save("What is your ethnic group?", "Asian or Asian British: Indian", "you")
+    finally:
+        lib.close()
+    d = c.get("/api/answers/basics").get_json()
+    assert d["values"]["hispanic"] == "" and "hispanic" in d["missing"]
+    c.post("/api/answers/basics", json={"fields": {"hispanic": "no"}})
+    rows = _db_rows(A)
+    assert rows["@ethnicity"] == "Asian or Asian British: Indian" and rows["@hispanic_latino"] == "Not Hispanic or Latino"
+
+
+def test_an_older_hispanic_reply_moves_to_its_own_key(tmp_path):
+    path = tmp_path / "a.db"
+    _old_db(path, [("@ethnicity", "Are you Hispanic or Latino?", "No", 1.0)])
+    with AnswerLibrary(path) as lib:
+        assert lib.get_key("@hispanic_latino")["answer"] == "No" and lib.get_key("@ethnicity") is None
+
+
+# --------------------------------------------------------------------------- one salary (ui-2, ui-3)
+def test_saving_the_card_salary_replaces_the_older_wording_and_an_edit_stays_on_its_row(tmp_path):
+    from autoapply import basics
+    path = tmp_path / "a.db"
+    _old_db(path, [("@salary", "What are your salary expectations?", "120000", 1.0),
+                   (OLD_KEY, LAM_SALARY, "130000", 2.0)])
+    with AnswerLibrary(path) as lib:
+        # an unchanged Edit and Save on the stuck row changes that row only
+        row = lib.update(OLD_KEY, question="What is your annual salary requirement?", answer="130000")
+        assert row["key"] == OLD_KEY and lib.get_key("@salary")["answer"] == "120000" and lib.count() == 2
+        basics.write(lib, {"salary": "140000"})
+        assert [(r["key"], r["answer"]) for r in lib.list()] == [("@salary", "140000")]
+        assert lib.lookup(LAM_SALARY)["answer"] == "140000"
+
+
+def test_saving_any_field_brings_the_extension_salary_in_line(app):
+    A, c = app
+    A._merge_prefs({"desired_salary": "95000"})
+    c.get("/api/answers/basics")
+    con = sqlite3.connect(A._ANSWERS_DB)
+    con.execute("INSERT INTO answers (key, question, answer, source, created_at, updated_at, uses)"
+                " VALUES (?,?,?,'you',?,?,0)", (OLD_KEY, LAM_SALARY, "130000", time.time(), time.time()))
+    con.commit()
+    con.close()
+    d = c.get("/api/answers/basics").get_json()
+    assert d["values"]["salary"] == "130000"
+    c.post("/api/answers/basics", json={"fields": {"gender": "female"}})
+    assert A._load_prefs()["desired_salary"] == "130000"
+
+
+def test_a_salary_only_the_extension_had_shows_and_is_saved_with_the_card(app):
+    A, c = app
+    lib = A._answer_lib()                                                 # opened (and seeded) first
+    lib.close()
+    A._merge_prefs({"desired_salary": "$110,000"})
+    d = c.get("/api/answers/basics").get_json()
+    assert d["values"]["salary"] == "110000" and "salary" not in d["missing"]
+    c.post("/api/answers/basics", json={"fields": {"gender": "male"}})
+    assert _db_rows(A)["@salary"] == "110000" and A._load_prefs()["desired_salary"] == "110000"
+
+
+# --------------------------------------------------------------------------- salary formats
+@pytest.mark.parametrize("text,want", [
+    ("120000", 120000), ("$120,000", 120000), ("120k", 120000), ("120K USD", 120000), ("120.000", 120000),
+    ("120.000,00", 120000), ("120 000", 120000), ("120 000", 120000), ("100 000 USD", 100000),
+    ("1.5M", 1500000), ("1,200,000", 1200000), ("120,000.50", 120000), ("$120,000 - $140,000", 120000),
+    ("95/hour", None), ("95 per hour", None), ("45", None), ("120", None), ("lots", None), ("", None),
+])
+def test_parse_salary(text, want):
+    from autoapply.basics import parse_salary
+    assert parse_salary(text) == want
+
+
+# --------------------------------------------------------------------------- the page
+def test_the_decline_box_saves_itself_and_the_note_shows_the_saved_choice():
+    i = APP_JS.index('$("#ansEeo")?.addEventListener("change"')
+    handler = APP_JS[i:APP_JS.index('$("#ansBasicsSave")', i)]
+    assert '"/api/answers/basics"' in handler and "eeo_decline: want" in handler and "box.checked = !want" in handler
+    paint = APP_JS[APP_JS.index("function basPaint()"):APP_JS.index("function basFocusFirstOpen()")]
+    assert "const dec = !!d.eeo_decline;" in paint and '$("#ansEeo").checked' not in paint
+
+
+def test_the_card_follows_saved_answers_and_the_card_save_keeps_an_open_editor():
+    lst = APP_JS[APP_JS.index('$("#ansList")?.addEventListener("click"'):APP_JS.index("/* ---- Up next")]
+    assert lst.count("await basRefresh();") == 2
+    save = APP_JS[APP_JS.index('$("#ansBasicsSave")?.addEventListener'):APP_JS.index("function ansWhen(")]
+    assert "ansRefresh({ keepEditor: true })" in save
+
+
+def test_the_prompt_takes_the_keyboard():
+    i = APP_JS.index('} else if (info.state === "basics") {')
+    branch = APP_JS[i:APP_JS.index('} else if (info.state === "running")', i)]
+    assert "setTimeout(() => answer.focus(), 50)" in branch

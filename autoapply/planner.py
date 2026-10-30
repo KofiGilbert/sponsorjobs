@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 
 from autoapply import eeo, workauth
 from autoapply.answers import normalize
+from autoapply import countries
 from autoapply.countries import country_option
 from autoapply.fields import APPLICANT_KEYS, FillAction, FormField
 
@@ -95,18 +96,92 @@ _EACH = re.compile(r"more than one|list (each|all|them)|all (countries|citizensh
                    r"|dual|multiple", re.I)
 
 
+def _country_answer(library, question: str) -> str:
+    """The saved country for a citizenship question, by the list's own name; "" when nothing is
+    saved or the saved words are not a country."""
+    try:
+        hit = library.lookup(question) if library is not None else None
+    except Exception:          # noqa: BLE001 - nothing saved then
+        hit = None
+    return countries.canonical(str((hit or {}).get("answer") or "").strip())
+
+
 def citizenship_text(label: str, library, first: str) -> str:
     """The answer to a free-text citizenship question: the saved country, and the second one as
-    well when the question asks for each ("Ghana, Canada")."""
+    well when the question asks for each ("Ghana, Canada"). Only a second answer that is a
+    country counts (never a "Yes" to a "Dual citizenship?" question)."""
     first = str(first or "").strip()
     if not first or library is None or not _EACH.search(str(label or "")):
         return first
-    try:
-        hit = library.lookup("Second country of citizenship")
-    except Exception:          # noqa: BLE001 - only the first country then
-        hit = None
-    second = str((hit or {}).get("answer") or "").strip()
+    second = _country_answer(library, "Second country of citizenship")
     return f"{first}, {second}" if second and second.lower() != first.lower() else first
+
+
+# A question that asks about permanent residence too ("country/region of citizenship or legal
+# permanent residence"): the country of citizenship alone may not be its answer.
+_RESIDENCE = re.compile(r"permanent resid|lawful permanent|legal permanent|green card|residen(ce|cy)", re.I)
+
+
+def residence_withheld(label: str, work_auth: dict | None) -> bool:
+    """True when a saved country of citizenship must not answer this question: it also asks
+    for a permanent residence, and the person holds one somewhere (a green card, settled
+    status...). Lam's export-control question wants the MOST RECENT of the two; only the person
+    knows which that is."""
+    lbl = str(label or "")
+    if normalize(lbl) != "@citizenship" or not _RESIDENCE.search(lbl):
+        return False
+    for e in ((work_auth or {}).get("countries") or {}).values():
+        if isinstance(e, dict) and e.get("status") in workauth.PERMANENT:
+            return True
+    return False
+
+
+_CITIZEN_OF = re.compile(r"\bcitizen|nationality|\bnational of\b|\bnationals?\b", re.I)
+# Beyond citizenship: residence, birth, travel. A "No" to one of those is not the person's to give.
+_BEYOND = re.compile(r"resid|green card|born|birth|travel|visit|located|live[ds]? in|ordinarily|employ", re.I)
+
+
+def listed_citizenship(question: str, library, options=(), field_type: str = "text") -> str | None:
+    """The answer to a sanctions or export screen that names countries ("Are you a citizen of
+    Cuba, Iran, North Korea, Syria, or the Crimea region of Ukraine?"), from the countries of
+    citizenship the person saved: Yes when one of them is named; No only when their saved
+    countries are all known, none is named, and the question asks about citizenship alone.
+    Otherwise None (theirs to answer). Never from the work-authorization profile, which is
+    about the job's country (workauth.classify leaves these out)."""
+    q = str(question or "")
+    if workauth.classify(q):
+        return None                                       # the job's country: the profile answers
+    named = countries.named_in(q)
+    if workauth._SCREENING.search(q):
+        named = [n for n in named if n != "United States"]     # the country imposing the embargo
+    if not named or not _CITIZEN_OF.search(q) or library is None:
+        return None
+    first = _country_answer(library, "Country of citizenship")
+    if not first:
+        return None
+    mine = {first}
+    try:
+        raw2 = str((library.lookup("Second country of citizenship") or {}).get("answer") or "").strip()
+    except Exception:          # noqa: BLE001 - treated as unknown
+        raw2 = "?"
+    if raw2:
+        second = countries.canonical(raw2)
+        if not second:
+            return None                                   # a second answer we cannot read: ask
+        mine.add(second)
+    if mine & set(named):
+        yes = True
+    elif _BEYOND.search(q):
+        return None
+    else:
+        yes = False
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    t = str(field_type or "text").lower()
+    if t == "checkbox":
+        return "Yes" if yes else None
+    if opts or t in ("select", "radio"):
+        return workauth.pick_yes_no(yes, opts)
+    return "Yes" if yes else "No"
 
 
 _RESUME = re.compile(r"r[ée]sum[ée]|\bcv\b|curriculum", re.I)
@@ -138,7 +213,7 @@ def match_option(answer: str, options) -> str | None:
     return None
 
 
-def eeo_option(answer: str, options, key: str = "", answers: dict | None = None) -> str | None:
+def eeo_option(answer: str, options, key: str = "", answers: dict | None = None, question: str = "") -> str | None:
     """The option a saved self-identification answer names: the same words, else (for a known
     question ``key``) the option that makes the same choice in the form's own words ("Male" is
     "Man", "No" is "No, I do not have a disability..."; autoapply/eeo.py), else the page's own
@@ -146,12 +221,14 @@ def eeo_option(answer: str, options, key: str = "", answers: dict | None = None)
     answer" and Lever's "Decline to self-identify"). Never the Yes/No or shared-prefix guesses of
     match_option: a plain "Yes" is not "I identify as a protected veteran", and "Yes, I have a
     disability" is not "Yes, I need an accommodation". ``answers`` ({key: answer}) carries the
-    other self-identification answers a combined race and ethnicity list needs."""
+    other self-identification answers a combined race and ethnicity list needs, and
+    ``question`` the words of the question (a plain No only answers "Are you a protected
+    veteran?")."""
     got = dict(answers or {})
     if key and str(answer or "").strip():
         got[key] = str(answer).strip()
     if key:
-        return eeo.choose(key, options, got)
+        return eeo.choose(key, options, got, question=question)
     opts = [str(o) for o in (options or []) if str(o).strip()]
     a = _n(answer)
     if not opts or not a:
@@ -200,15 +277,16 @@ def _literal(f: FormField, text: str, key: str = "") -> str | None:
 
 def _used(key: str, rows: dict) -> list:
     """The library rows an EEO choice came from (both halves for a race or ethnicity list)."""
-    keys = ("@race", "@ethnicity") if key in ("@race", "@ethnicity") else (key,)
+    keys = eeo.RACE_KEYS if key in eeo.RACE_KEYS else (key,)
     return [rows[k] for k in keys if k in rows]
 
 
 def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None) -> tuple | None:
     """(FillAction, [library keys]) for a self-identification field from the person's standing
     decline or their own saved answers, else None (the field is theirs). Never a guess. The
-    standing "decline to self-identify" choice comes first: the person asked for it on every
-    form, and Your answers says so."""
+    standing "decline to self-identify" choice comes first and ALONE: while it is on, a saved
+    answer is never used. A field with no decline choice (or whose choices are not read yet) is
+    left open, and the agent's ask, which reads the page's choices, picks the decline there."""
     if t == "checkbox":
         # One box of a native group, labelled "Question: Option" (the engine's checkboxLabel):
         # the group's ONE chosen option is worked out from all its boxes, and only that box is
@@ -219,28 +297,42 @@ def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None)
         group = list((groups or {}).get(q) or [opt])
         if ctx.eeo_decline:
             v = decline_option(group)
-            if v:
-                return (FillAction(f.ref, "check", value="Yes", origin="eeo", sensitive=True), []) if v == opt else None
+            return (FillAction(f.ref, "check", value="Yes", origin="eeo", sensitive=True), []) if v and v == opt else None
         key, answers, rows = eeo.saved(ctx.library, q)
-        v = eeo_option(answers.get(key, ""), group, key, answers) if answers else None
+        v = eeo_option(answers.get(key, ""), group, key, answers, question=q) if answers else None
         if v and v == opt:
             return FillAction(f.ref, "check", value="Yes", origin="library", sensitive=True), _used(key, rows)
         return None
     if f.options or t in ("select", "radio"):
-        if ctx.eeo_decline and f.options:
+        if ctx.eeo_decline:
             v = decline_option(f.options)
-            if v:
-                return FillAction(f.ref, _op_for(f), value=v, origin="eeo", sensitive=True), []
+            return (FillAction(f.ref, _op_for(f), value=v, origin="eeo", sensitive=True), []) if v else None
         key, answers, rows = eeo.saved(ctx.library, label)
-        v = eeo_option(answers.get(key, ""), f.options, key, answers) if answers else None
+        v = eeo_option(answers.get(key, ""), f.options, key, answers, question=label) if answers else None
         if v:
             return FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True), _used(key, rows)
         return None
+    # No choices read (a text box, or a dropdown whose list opens later)
+    if ctx.eeo_decline:
+        return None
     hit = ctx.library.lookup(label) if ctx.library is not None else None
     ans = str((hit or {}).get("answer") or "").strip()
-    if ans:
-        return FillAction(f.ref, "fill", value=ans, origin="library", sensitive=True), [hit["key"]]
-    return None
+    if not ans:
+        return None
+    if normalize(label) in ("@race", "@ethnicity") and not both_halves(ans):
+        # "Race/Ethnicity" or Workday's combined "Ethnicity" list: a bare "Asian" or "No" says
+        # one half only. Left open; the ask reads the page's choices and takes both halves.
+        return None
+    return FillAction(f.ref, "fill", value=ans, origin="library", sensitive=True), [hit["key"]]
+
+
+def both_halves(words: str) -> bool:
+    """True when saved words state a race and the Hispanic or Latino answer together ("Asian
+    (Not Hispanic or Latino)"), or a decline that covers both."""
+    w = str(words or "")
+    if _DECLINE.search(w):
+        return True
+    return bool(eeo.race_class(w)) and eeo.hispanic_class(w, bare=False) is not None
 
 
 def _checkbox_groups(fields: list) -> dict:
@@ -314,6 +406,12 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.left.append(f)
             continue
 
+        # 0b. a sanctions or export screen naming countries: from the saved citizenships only
+        v = listed_citizenship(label, ctx.library, f.options, t)
+        if v:
+            out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True))
+            continue
+
         # 1. work authorization
         if workauth.classify(label):
             v = workauth.answer(label, ctx.work_auth, options=f.options, field_type=t,
@@ -335,6 +433,9 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
         # 2. the answer library (a free-text citizenship question that asks for each country
         #    gets the second one too)
         hit = ctx.library.lookup(label) if ctx.library is not None else None
+        if hit and residence_withheld(label, ctx.work_auth):
+            out.left.append(f)                             # residence too: theirs to say
+            continue
         if hit:
             ans, qkey = hit["answer"], normalize(label)
             if qkey == "@citizenship" and not f.options and t in ("text", "textarea"):

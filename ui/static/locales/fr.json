@@ -1008,7 +1008,7 @@
   "ans.race": "Origine",
   "ans.veteran": "Statut d'ancien combattant",
   "ans.disability": "Handicap",
-  "ans.eeoNote": "Genre, ethnicité, origine, ancien combattant et handicap seront déclinés sur chaque formulaire.",
+  "ans.eeoNote": "Genre, ethnicité, origine, ancien combattant et handicap sont déclinés. Un formulaire sans choix de refus vous le demande.",
   "ans.ch.decline": "Je préfère ne pas répondre",
   "ans.ch.male": "Homme",
   "ans.ch.female": "Femme",

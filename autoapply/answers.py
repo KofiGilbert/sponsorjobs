@@ -32,7 +32,7 @@ MAX_A = 4000
 
 # Bumped when clean_label or _clean change what a question normalizes to, so the library re-keys
 # its older rows once (the _CANON patterns are part of the version too).
-_LABEL_RULES = "labels-1"
+_LABEL_RULES = "labels-2"
 
 # --------------------------------------------------------------------------- label cleaning
 # Form furniture around a question. A validation error the page wrapped round its label (Phenom
@@ -47,6 +47,7 @@ _ERR_HEAD = re.compile(r"^[\s*\u2731]*(?:(?:\d+\s+)?errors?\s+found\b[\s:.!\-]*|
 # "The field <question> ...": at the start, or after the end of a sentence (a banner that names
 # the question twice).
 _THE_FIELD = re.compile(r"(?:^|(?<=[?.!:]\s))the field\s+", re.I)
+_THE_FIELD_ANY = re.compile(r"(?:^|(?<=\s))the field\s+", re.I)
 # What an error says after the question. The bare "is" and "is and must have a value" are what
 # is left when the fill engine has already cut the word "required" out of a label.
 _ERR_TAIL = re.compile(
@@ -76,18 +77,21 @@ def clean_label(text: str) -> str:
     if m:
         s, erred = s[m.end():], True
     fields = list(_THE_FIELD.finditer(s))
+    if not fields and erred:
+        # Workday's banner names the question twice with no stop between: "Errors Found
+        # Error-Gender The field Gender is required".
+        fields = list(_THE_FIELD_ANY.finditer(s))
     if fields:
         tail = s[fields[-1].end():]
         cut = _ERR_TAIL.sub("", tail, count=1)
         if cut != tail or (erred and fields[-1].start() == 0):
             s, erred = cut, True
-    if erred:
-        s = _ERR_TAIL.sub("", s, count=1)
-    else:
-        cut = _ERR_TAIL.sub("", s, count=1)
-        if cut != s and cut.rstrip().endswith("?"):    # "<question>? is required"
-            s = cut
+    # "<question>? is required", "Gender is required", and the "Gender is" the fill engine leaves
+    # after cutting the word "required"
     s = _REQ_SENTENCE.sub("", s)
+    cut = _ERR_TAIL.sub("", s, count=1)
+    if cut.strip():
+        s = cut
     s = _REQ_PAREN.sub(" ", s)
     s = _REQ_TRAIL.sub("", s)
     s = _REQ_LEAD.sub("", s)
@@ -149,10 +153,14 @@ _CANON: list[tuple[str, re.Pattern]] = [
     # The Hispanic or Latino question is the US forms' "ethnicity": "Are you Hispanic/Latino?",
     # "Hispanic or Latino", "Do you identify as Hispanic or Latino?". Never "Race: Hispanic or
     # Latino" (one box of a race group) or a combined race list's own label ("Race").
-    ("ethnicity", re.compile(_ASK + r"(ethnicity|ethnic (identity|background|group|origin)"
-                             r"|(hispanic|latin[oax]|latine)(( or | )(latin[oax]|latine|hispanic))?( origin| ethnicity)?)" + _TAIL
-                             + r"|^(are you|do you identify as|do you consider yourself( to be)?)( of)? (hispanic|latin[oax]|latine)"
-                             r"(( or | )(latin[oax]|latine|hispanic))?( origin| ethnicity| descent)?" + _TAIL)),
+    # The Hispanic or Latino question has its own key: a form's "Ethnicity" can be another
+    # question (the UK's "What is your ethnic group?"), and one answer must never overwrite the
+    # other. The US "Ethnicity" list of Hispanic or Latino choices reads both (autoapply/eeo.py).
+    ("hispanic_latino", re.compile(_ASK + r"(hispanic|latin[oax]|latine)(( or | )(latin[oax]|latine|hispanic))?"
+                                   r"( origin| ethnicity)?" + _TAIL
+                                   + r"|^(are you|do you identify as|do you consider yourself( to be)?)( of)? (hispanic|latin[oax]|latine)"
+                                   r"(( or | )(latin[oax]|latine|hispanic))?( origin| ethnicity| descent)?" + _TAIL)),
+    ("ethnicity", re.compile(_ASK + r"(ethnicity|ethnic (identity|background|group|origin))" + _TAIL)),
     # VEVRAA "protected veteran" status only: "Are you a veteran?" (any service) is another
     # question, and a "Yes" there is not a protected-veteran self-identification.
     ("veteran", re.compile(_ASK + r"(protected )?veteran status" + _TAIL + r"|^(protected )?veteran" + _TAIL
@@ -162,8 +170,11 @@ _CANON: list[tuple[str, re.Pattern]] = [
                               + r"|^voluntary self identification of disability( form)?( cc 305)?$")),
     # A second country of citizenship ("Second country of citizenship", "Other nationality"):
     # before the first, whose pattern would take it. "Do you hold dual citizenship?" is a yes/no.
-    ("citizenship2", re.compile(r"^(please (provide|enter|list|select) )?(your )?(second|secondary|other|additional|another|dual) "
+    # A bare "Dual citizenship" is a yes/no question, never the second country.
+    ("citizenship2", re.compile(r"^(please (provide|enter|list|select) )?(your )?(second|secondary|other|additional|another) "
                                 r"(country (or region |region )?of )?(citizenship|nationality)( country)?( if any| if applicable)?$"
+                                r"|^(please (provide|enter|list|select) )?(your )?dual (citizenship|nationality) country"
+                                r"( if any| if applicable)?$"
                                 r"|^country (or region |region )?of (second|secondary|other|additional|dual) "
                                 r"(citizenship|nationality)( if any| if applicable)?$")),
     # The COUNTRY of citizenship ("Country of citizenship", and Lam's export-control wording
@@ -184,7 +195,10 @@ _CANON: list[tuple[str, re.Pattern]] = [
                                      r"|(ever )?(worked|interned|been employed) (for|at|by|with) (us|this|our|the company)")),
 ]
 
-_EEO_KEYS = frozenset({"@gender", "@sex", "@race", "@ethnicity", "@veteran", "@disability"})
+_EEO_KEYS = frozenset({"@gender", "@sex", "@race", "@ethnicity", "@hispanic_latino", "@veteran", "@disability"})
+_COUNTRY_KEYS = frozenset({"@citizenship", "@citizenship2"})
+# A yes/no reply is never a country ("Dual citizenship?" Yes).
+_NOT_A_COUNTRY = re.compile(r"(yes|no|y|n|none|nil|n/?a|not applicable|true|false)\W*", re.I)
 # Questions whose answer is one short choice, never a paragraph.
 _SHORT_KEYS = _EEO_KEYS | {"@citizenship", "@citizenship2"}
 
@@ -197,12 +211,15 @@ def unusable(key: str, answer: str) -> bool:
     the options?") on one of the recurring questions, where a question is never the answer, and
     a paragraph where a self-identification or citizenship answer is one short choice. A question
     the person wrote as the answer to an open question ("Do you have any questions for us?")
-    stays usable."""
+    stays usable. A yes/no reply saved as a country of citizenship (a "Dual citizenship?" Yes)
+    is not a country either."""
     a = str(answer or "").strip()
     if not a:
         return True
     k = str(key or "")
     if k.startswith("@") and a.endswith("?"):
+        return True
+    if k in _COUNTRY_KEYS and _NOT_A_COUNTRY.fullmatch(a):
         return True
     return k in _SHORT_KEYS and "\n" in a
 
@@ -413,6 +430,19 @@ class AnswerLibrary:
         if not a or not normalize(q):
             return None
         new_key = normalize(q)
+        raw = self.conn.execute("SELECT question FROM answers WHERE key=?", (key,)).fetchone()
+        same_words = clean_label(q).lower() == clean_label(str(raw[0] if raw else "")).lower()
+        if new_key != key and same_words and self.get_key(new_key) is not None:
+            # The same question, only the key rules moved on (a row saved under an "Error: The
+            # field ..." label, left in place because its canonical key was taken): an edit
+            # changes THIS row, never the other row that holds the canonical key.
+            if unusable(new_key, a):
+                return None
+            self.conn.execute("UPDATE answers SET answer=?, source='you', updated_at=? WHERE key=?",
+                              (a, time.time(), key))
+            self.conn.commit()
+            self._stuck_keys = None
+            return self.get_key(key)
         row = self.save(q, a, "you")
         if row is not None and new_key != key:
             self.delete(key)               # moved to its new key: the old entry goes only now

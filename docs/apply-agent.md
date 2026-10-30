@@ -79,7 +79,13 @@ Rules:
   skipped, EXCEPT `input[type=file]` at opacity 0 (that is how every upload button is built).
 - `label` is the engine's `cleanLabel(labelFor(el))`, capped at 80 chars. `value` for a text
   field is `""` or `"(filled)"`, NEVER the contents (section 5). For select/radio/checkbox the
-  chosen option label is fine. `select` carries `options=<count> first="A|B|C|D"`.
+  chosen option label is fine, EXCEPT on a voluntary self-identification question (gender,
+  race, ethnicity, Hispanic or Latino, veteran, disability, sexual orientation, pronouns): its
+  choice is the person's answer and never leaves the machine. Such a select or combobox reads
+  `value="(filled)"`, its radios `checked=hidden answered=true|false` (any radio of the group
+  chosen), its checkboxes `checked=hidden`. The choices themselves stay, so the question can
+  still be read and asked. `brain.mask_self_id` applies the same rule on the engine side before
+  any view reaches the model. `select` carries `options=<count> first="A|B|C|D"`.
 - `*` before the index (`*[12]`) marks an element that was not in the previous view: that is
   how the model spots an autocomplete suggestion list or a conditional follow-up.
 - Non-interactive text: headings, form section titles, visible validation errors

@@ -9111,13 +9111,15 @@
         }
       });
     } else if (info.state === "basics") {
-      btn(T(info.missing === 1 ? "aa.basics.answer1" : "aa.basics.answer", info.missing === 1 ? "Answer it" : "Answer them"),
+      const answer = btn(T(info.missing === 1 ? "aa.basics.answer1" : "aa.basics.answer", info.missing === 1 ? "Answer it" : "Answer them"),
           "btn-primary bb-send", () => {
             bar.hidden = true;
             if (info.opened && window.Panel) window.Panel.close();
             openAnswers("autoapply", { focus: "basics" });
           });
       btn(T("aa.basics.anyway", "Apply anyway"), "btn-ghost", () => { bar.hidden = true; info.go(); });
+      // The choice takes the keyboard: a second Enter on the row must not skip it.
+      setTimeout(() => answer.focus(), 50);
     } else if (info.state === "running") {
       btn(T("aa.stop", "Stop"), "btn-ghost bb-stop", () => { try { window.tailorShell.agentStop(); } catch {} });
     }
@@ -9554,6 +9556,23 @@
     $("#ansSalary").value = BAS.val.salary || "";
     basPaint();
   }
+  // The card again after Saved answers changed below it: fields the person has not touched take
+  // the saved values; one they are editing keeps their edit (and Save compares it with the new
+  // saved value, so it is sent).
+  async function basRefresh() {
+    let d;
+    try { d = await api("/api/answers/basics"); } catch { return; }
+    if (!BAS.data) return basTake(d);
+    const nv = d.values || {};
+    for (const k of Object.keys(Object.assign({}, BAS.orig, nv))) {
+      if ((BAS.val[k] || "") === (BAS.orig[k] || "")) BAS.val[k] = nv[k] || "";
+    }
+    if ($("#ansSalary").value.trim() === (BAS.orig.salary || "")) $("#ansSalary").value = nv.salary || "";
+    BAS.orig = Object.assign({}, nv);
+    BAS.data = d;
+    BAS.two = BAS.two || !!BAS.val.citizenship2;
+    basPaint();
+  }
   function basPaint() {
     const d = BAS.data;
     if (!d) return;
@@ -9577,14 +9596,15 @@
       $(sel).innerHTML = basNotSet() + list.map(c => `<option value="${esc(c.code)}"${c.code === cur ? " selected" : ""}>${esc(basWord(c))}</option>`).join("")
         + (cur && !list.some(c => c.code === cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : "");
     }
-    const dec = $("#ansEeo").checked;
+    // The rows fold away, and the note says they will be declined, only once the choice is saved.
+    const dec = !!d.eeo_decline;
     $("#ansEeoRows").hidden = dec;
     $("#ansEeoNote").hidden = !dec;
     $("#ansBasicsCount").textContent = d.total ? T("ans.basicsCount", "{n} of {m}").replace("{n}", d.answered).replace("{m}", d.total) : "";
   }
   // The first field still open, so "Answer them" lands where typing starts.
   function basFocusFirstOpen() {
-    const dec = $("#ansEeo").checked;
+    const dec = !!(BAS.data && BAS.data.eeo_decline);
     if (!BAS.val.citizenship) return $("#ansCit")?.focus({ preventScroll: true });
     if (!BAS.val.salary) return $("#ansSalary")?.focus({ preventScroll: true });
     if (dec) return;
@@ -9607,7 +9627,26 @@
   $("#ansCit2")?.addEventListener("change", e => { BAS.val.citizenship2 = e.target.value; });
   $("#ansSalary")?.addEventListener("input", e => { BAS.val.salary = e.target.value.trim(); });
   $("#ansCitAdd")?.addEventListener("click", () => { BAS.two = true; basPaint(); $("#ansCit2").focus(); });
-  $("#ansEeo")?.addEventListener("change", basPaint);
+  // The decline choice is saved the moment it changes: the note under it promises what every
+  // form will get, so it never shows for a choice that is not saved yet.
+  $("#ansEeo")?.addEventListener("change", async e => {
+    const box = e.target, note = $("#ansBasicsNote"), want = box.checked;
+    box.disabled = true;
+    clearTimeout(BAS.noteT);
+    try {
+      const r = await api("/api/answers/basics", { fields: {}, eeo_decline: want });
+      BAS.data = r;
+      if (ANS.data) ANS.data.eeo_decline = !!r.eeo_decline;
+      box.checked = !!r.eeo_decline;
+      basPaint();
+      note.textContent = T("aa.saved", "Saved");
+    } catch (err) {
+      box.checked = !want;
+      note.textContent = err.message || T("profile.answers.failed", "Couldn't save.");
+    }
+    box.disabled = false;
+    BAS.noteT = setTimeout(() => { note.textContent = ""; }, 4000);
+  });
   $("#ansBasicsSave")?.addEventListener("click", async () => {
     const btn = $("#ansBasicsSave"), note = $("#ansBasicsNote");
     const fields = {};
@@ -9621,7 +9660,7 @@
       const r = await api("/api/answers/basics", { fields, eeo_decline: $("#ansEeo").checked });
       basTake(r);
       if (ANS.data) ANS.data.eeo_decline = !!r.eeo_decline;
-      await ansRefresh();                        // the rows below show the same answers first
+      await ansRefresh({ keepEditor: true });    // the rows below show the same answers first
       note.textContent = T("aa.saved", "Saved");
     } catch (err) { note.textContent = err.message || T("profile.answers.failed", "Couldn't save."); }
     btn.disabled = false;
@@ -9662,10 +9701,13 @@
           <button class="btn btn-ghost btn-sm ans-del" type="button" data-ans="delete" aria-label="${esc(T("ans.delete", "Delete"))}">${esc(T("ans.delete", "Delete"))}</button></div>
       </div>`).join("");
   }
-  async function ansRefresh() {
+  // ``keepEditor``: an answer being added or edited in the list stays open as typed (the card's
+  // Save refreshes the list under it); the list repaints when that editor closes.
+  async function ansRefresh(opts) {
     let d;
     try { d = await api("/api/answers?q=" + encodeURIComponent($("#ansQ").value.trim())); } catch { return; }
     ANS.data.answers = d.answers; ANS.data.total = d.total;
+    if (opts && opts.keepEditor && (ANS.adding || ANS.editing)) { $("#ansCount").textContent = d.total ? String(d.total) : ""; return; }
     paintAnsList(d.answers || [], d.total || 0);
   }
   let ANS_T = 0;
@@ -9690,6 +9732,7 @@
       b.disabled = true;
       try { await api("/api/answers/delete", { key }); toast(T("ans.deleted", "Deleted.")); } catch (err) { b.disabled = false; toast(err.message); return; }
       await ansRefresh();
+      await basRefresh();                        // the card above shows the same answers
       return;
     }
     if (act === "save") {
@@ -9701,6 +9744,7 @@
       catch (err) { b.disabled = false; note.textContent = err.message; return; }
       ANS.editing = null; ANS.adding = false;
       await ansRefresh();
+      await basRefresh();
     }
   });
 
