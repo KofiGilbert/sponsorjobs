@@ -444,6 +444,20 @@ def test_tick_routes_batch_buttons(tmp_path):
     assert got == ["approve:7"] and b.sent[-1]["text"] == "Approved"
 
 
+def test_official_bot_commands_the_broker_answers_get_no_second_reply(tmp_path):
+    """The broker answers /stop, /resume and /help in the chat itself; the app still acts on them
+    but must not send its own reply too (the person saw every /resume answered twice)."""
+    st = NotifyState(tmp_path / "s.json")
+    cmds = Cmds()
+    hub = NotifyHub(st, AlertEngine(st), cmds)
+    b = FakeBroker()
+    b.push("command", data="resume")
+    b.push("command", data="list")
+    hub.tick(_official(b, {}), NOON, lambda a: False)
+    assert cmds.seen == ["/resume", "/list"]            # both acted on
+    assert len(b.sent) == 1                            # only /list got the app's reply
+
+
 # ------------------------------------------------------------------ app wiring
 def _app(tmp_path, monkeypatch):
     import ui.app as app

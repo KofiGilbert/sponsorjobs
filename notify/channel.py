@@ -191,6 +191,10 @@ class OfficialBotChannel(Channel):
     _broker_post). ``cursor_get`` / ``cursor_set`` persist the inbox cursor (the broker keeps
     seven days of events, so a tap sent while the app was closed is handled on next start)."""
 
+    # Commands the broker already answers in the chat (docs/notify.md, webhook). The app still
+    # acts on them (pause, resume) but sends no second reply.
+    SERVER_ANSWERS = frozenset({"start", "stop", "pause", "resume", "help"})
+
     name = "official"
 
     # A rate-limit wait this short is slept through once instead of failing the message: a

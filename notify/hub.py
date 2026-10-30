@@ -78,6 +78,9 @@ class NotifyHub:
             if handled is not None:
                 return handled
         reply = self.commands.handle_command(text)
+        cmd = text.strip().split()[0].lstrip("/").split("@", 1)[0].lower() if text.strip().startswith("/") else ""
+        if cmd and cmd in getattr(channel, "SERVER_ANSWERS", ()):
+            return reply                  # the broker already replied in the chat
         channel.send(reply)
         return reply
 
