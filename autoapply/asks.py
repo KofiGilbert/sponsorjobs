@@ -100,7 +100,7 @@ def same_question(a, b) -> bool:
 
 
 def known_answer(question: str, options, *, partial: bool = False, library=None, work_auth=None,
-                 eeo_decline: bool = False, job_country: str = "US") -> tuple[str, str] | None:
+                 eeo_decline: bool = False, job_country: str = "US", hint: str = "") -> tuple[str, str] | None:
     """(answer, origin) when the person's own material answers this question, else None.
     Origins: "library", "workauth", "eeo_decline". ``options`` is every choice the page has (or
     as many as were read; ``partial`` says the list is cut). With options, the answer is the
@@ -110,7 +110,9 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     the page's decline choice for a saved decline, never a guess. On a cut list a saved answer
     that fits none of the choices read is still the person's answer: it goes to the page as is,
     where the brain picks the entry. A free-text citizenship question that asks for each country
-    gets the second one too."""
+    gets the second one too. ``hint`` is the page's own note right above the field (Lam
+    Research's "Veteran" sits under a paragraph about protected veterans, so its plain No says
+    "not a protected veteran"); it only ever narrows an EEO choice, never answers alone."""
     q = str(question or "").strip()
     if not q:
         return None
@@ -147,7 +149,8 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
             if qkey in ("@race", "@ethnicity") and own and not both_halves(own):
                 return None                 # a combined race list needs its choices read
             return (own, "library") if own else None
-        v = eeo_option(own, opts, qkey, answers, question=q) if answers else None
+        about = " ".join((q + " " + " ".join(str(hint or "").split())[:400]).split())
+        v = eeo_option(own, opts, qkey, answers, question=about) if answers else None
         if v:
             return v, "library"
         if partial and own and (qkey not in ("@race", "@ethnicity") or both_halves(own)):
@@ -473,6 +476,55 @@ def read_reply(llm, items: list[dict], reply: str, *, timeout: float = READ_TIME
             answers[j] = v
     asked = " ".join(str(data.get("question") or "").split())[:200]
     return _got(answers, question=asked, unclear=not answers and not asked)
+
+
+# --------------------------------------------------------------------------- terms a site requires
+# A privacy notice, data privacy agreement, terms or E-Verify acknowledgement a site needs accepted
+# before it takes the application (Lam Research's "Data Privacy Agreement", 2026-10-30). The person
+# decides: these are the three choices on the bar and on Telegram. "Accept for all applications"
+# also sets the standing preference (accept_required_terms = "always"); "Stop" ends the run and
+# nothing is accepted. Mirrored in shell-electron/agent.js TERMS_CHOICES and termsQuestion.
+TERMS_ALL = "Accept for all applications"
+TERMS_ONCE = "Just this one"
+TERMS_STOP = "Stop"
+TERMS_CHOICES = (TERMS_ALL, TERMS_ONCE, TERMS_STOP)
+TERMS_PREF = ("ask", "always")
+
+
+def terms_question(company: str, title: str) -> str:
+    """"Lam Research needs you to accept its Data Privacy Agreement to apply. Accept it?\""""
+    who = " ".join(str(company or "").split())[:80] or "This site"
+    what = " ".join(str(title or "").split())[:80] or "terms"
+    return f"{who} needs you to accept its {what} to apply. Accept it?"
+
+
+def terms_decision(choice: str) -> tuple[str, str]:
+    """(decision, via) for a choice: ("accept", "all"), ("accept", "once") or ("stop", "")."""
+    if choice == TERMS_ALL:
+        return "accept", "all"
+    if choice == TERMS_ONCE:
+        return "accept", "once"
+    return "stop", ""
+
+
+def read_terms_reply(text: str) -> str | None:
+    """The choice a typed reply makes, strictly: a choice's own words or its number, or a plain
+    yes / no. Consent is never read by a model and never guessed: anything else is None (the
+    person is asked to tap a choice)."""
+    s = " ".join(str(text or "").split()).strip(" .!").lower()
+    if not s:
+        return None
+    for k, c in enumerate(TERMS_CHOICES, start=1):
+        if s in (c.lower(), str(k)):
+            return c
+    if s in ("accept for all", "accept all", "all", "always", "for all", "yes to all", "yes for all"):
+        return TERMS_ALL
+    if s in ("yes", "y", "ok", "okay", "accept", "accept it", "i accept", "yes, accept it", "this one",
+             "just this once", "once", "only this one"):
+        return TERMS_ONCE
+    if s in ("no", "n", "stop", "don't", "do not", "no thanks", "decline", "cancel", "/stop"):
+        return TERMS_STOP
+    return None
 
 
 # --------------------------------------------------------------------------- a late reply

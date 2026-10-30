@@ -1666,6 +1666,8 @@ def _package_view(rec: dict) -> dict:
         "submission": submission,
         # The original posting, assisted apply opens it so the person can click Apply there.
         "apply_url": (data.get("source_job") or {}).get("url") or "",
+        # Notices the apply agent accepted for the person, with their consent (company, title, url, at).
+        "terms_accepted": [x for x in (data.get("terms_accepted") or []) if isinstance(x, dict)],
     }
 
 
@@ -4858,6 +4860,10 @@ def _save_prefs(prefs: dict) -> dict:
         "earliest_start": _txt(prefs.get("earliest_start"), 60),
         "hear_about_us": _txt(prefs.get("hear_about_us"), 60),
         "eeo_decline": bool(prefs.get("eeo_decline")),
+        # Terms a site requires to apply: "ask" (default) or "always" (accept without asking).
+        # A write that does not carry it (the extension's whole-store save) keeps the saved one.
+        "accept_required_terms": "always" if (prefs.get("accept_required_terms") if "accept_required_terms" in prefs
+                                              else _load_prefs().get("accept_required_terms")) == "always" else "ask",
     }
     # The structured work-authorization profile (autoapply/workauth.py) is the truth; the flat
     # Yes/No answers above are derived from it so the extension and older code fill the same
@@ -4893,7 +4899,7 @@ def _merge_prefs(patch: dict) -> dict:
 
 _PREF_KEYS = ("work_authorized", "work_auth_us", "needs_sponsorship", "willing_to_relocate",
               "over_18", "years_experience", "desired_salary", "earliest_start", "hear_about_us",
-              "eeo_decline", "work_auth")
+              "eeo_decline", "work_auth", "accept_required_terms")
 
 
 def _profile_answers(prefs: dict | None = None) -> dict:
@@ -5368,6 +5374,7 @@ def _basics_payload(prefs: dict | None = None) -> dict:
     finally:
         lib.close()
     return {"ok": True, **d, "eeo_decline": bool(p.get("eeo_decline")),
+            "accept_required_terms": "always" if p.get("accept_required_terms") == "always" else "ask",
             "countries": list(countries.NAMES),
             "choices": {f: [{"code": c, "label": w} for c, w in ch] for f, ch in basics.CHOICES.items()}}
 
@@ -5383,7 +5390,7 @@ def answers_basics():
 @app.post("/api/answers/basics")
 @_guard
 def answers_basics_save():
-    """Save the card {fields: {field: value}, eeo_decline?}: only the fields the person changed,
+    """Save the card {fields: {field: value}, eeo_decline?, accept_required_terms?}: only the fields the person changed,
     "" clearing one. Saved in the answer library under the canonical keys as the person's own,
     the salary in the prefs store too (desired_salary) so the browser extension fills the same
     number. Nothing here reaches a model, the broker, Telegram or a log."""
@@ -5412,6 +5419,8 @@ def answers_basics_save():
         patch["desired_salary"] = str(now)
     if "eeo_decline" in b:
         patch["eeo_decline"] = bool(b.get("eeo_decline"))
+    if b.get("accept_required_terms") in ("ask", "always"):     # terms a site requires to apply
+        patch["accept_required_terms"] = b["accept_required_terms"]
     prefs = _merge_prefs(patch) if patch else _load_prefs()
     return jsonify(_basics_payload(prefs))
 
@@ -10855,6 +10864,13 @@ def _ask_take_reply(aid: str, text: str) -> tuple[str, bool]:
         if not ask or not ask.get("open", True):
             return "That question is no longer open.", False
         pending = _ask_open_items(_ask_items(ask))
+        if pending and text and ask.get("kind") == "terms":
+            # Consent is read strictly, never by a model: a choice's words or number, yes or no.
+            choice = AK.read_terms_reply(text)
+            if not choice:
+                return "Tap or type one: " + ", ".join(AK.TERMS_CHOICES) + ".", False
+            _ask_set(ask, 0, choice)
+            return f"Got it: {choice}.", True
     if not pending or not text:
         return ("", not pending)
     got = AK.read_reply(_ask_reader(), pending, text)
@@ -11136,6 +11152,7 @@ def autoapply_agent_ask():
         every = cleaned[:AK.MAX_ALL]
         it = {"question": q, "options": AK.order_options(q, cleaned), "all_options": every,
               "partial": bool(x.get("partial")) or len(cleaned) > len(every),
+              "hint": " ".join(str(x.get("hint") or "").split())[:400],
               "context": " ".join(str(x.get("context") or b.get("context") or "").split())[:120],
               "answer": None, "origin": "", "force": force_all or any(AK.same_question(q, f) for f in forced)}
         dup = next((o for o in items if AK.same_question(o["question"], q)), None)
@@ -11164,52 +11181,25 @@ def autoapply_agent_ask():
             wa, country = _work_auth(), _job_country(data)
             for it in unforced:
                 k = AK.known_answer(it["question"], it["all_options"], partial=it["partial"], library=lib,
-                                    work_auth=wa, eeo_decline=eeo_decline, job_country=country)
+                                    work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"])
                 if k:
                     it["answer"], it["origin"] = k
         finally:
             lib.close()
     answers = lambda: {it["question"]: it["answer"] for it in items if it["answer"]}   # noqa: E731
     if b.get("known_only"):                        # the shell checks first, then shows the bar
+        # A self-identification answer that IS one of the page's choices: the shell picks it
+        # itself with real clicks (shell-electron/agent.js pickSaved), never through the model.
+        select = {it["question"]: it["answer"] for it in items
+                  if it["answer"] and AK.is_eeo(it["question"]) and it["answer"] in it["all_options"]}
         return jsonify({"ok": all(it["answer"] for it in items), "id": aid, "known": True,
-                        "answers": answers(), "open": [it["question"] for it in items if not it["answer"]]})
+                        "answers": answers(), "select": select,
+                        "open": [it["question"] for it in items if not it["answer"]]})
     if all(it["answer"] for it in items):
         return jsonify({"ok": True, "id": aid, "known": True, "answer": items[0]["answer"], "answers": answers()})
     pending = [it for it in items if not it["answer"]]
-    with _ASKS_LOCK:
-        _ASKS[aid] = {"id": aid, "items": [{"question": it["question"], "options": it["options"],
-                                            "all_options": it["all_options"], "partial": it["partial"],
-                                            "answer": None} for it in pending],
-                      "open": True, "unclear": 0, "at": time.time(), "sent": False,
-                      "record_id": "" if b.get("record_id") in (None, "") else str(b.get("record_id"))}
-        if len(pending) == 1:
-            _ASKS[aid]["question"], _ASKS[aid]["options"], _ASKS[aid]["answer"] = \
-                pending[0]["question"], pending[0]["options"], None
-        for k in [k for k, a in _ASKS.items() if time.time() - a["at"] > 3600]:
-            _ASKS.pop(k, None)
-    # Telegram: one message, and for a single question its choices as buttons (asks.telegram_ask
-    # keeps them inside docs/notify.md). A channel that refuses the buttons still gets the
-    # question, its choices numbered in the text, so a person away from the desk always sees it.
-    sent = False
-    try:
-        ch = _active_channel()
-    except Exception:          # noqa: BLE001 - no Telegram is fine; the bar still asks
-        ch = None
-    if ch is not None:
-        text, buttons = AK.telegram_ask(aid, pending)
-        try:
-            ch.send(text, buttons)
-            sent = True
-        except Exception:      # noqa: BLE001 - retried without buttons below
-            if buttons:
-                try:
-                    ch.send(AK.prompt_text(pending, list_choices=True, buttons=False), None)
-                    sent = True
-                except Exception:  # noqa: BLE001 - no Telegram is fine; the bar still asks
-                    pass
-    with _ASKS_LOCK:
-        if aid in _ASKS:
-            _ASKS[aid]["sent"] = sent
+    _ask_open(aid, pending, b.get("record_id"))
+    sent = _ask_telegram(aid, pending)
     if sent:                                       # kept a day for a late reply (_late_answer)
         try:
             _recent_ask_add(aid, pending, record_id=b.get("record_id") or "",
@@ -11228,6 +11218,70 @@ def autoapply_agent_ask():
         finally:
             lib.close()
 
+    how = _ask_wait(aid, pending, timeout)
+    if how == "answered":
+        save_all()
+        if sent:
+            _recent_ask_end(aid, [it["question"] for it in pending])
+        return jsonify({"ok": True, "id": aid, "answer": items[0]["answer"], "answers": answers()})
+    if any(it["answer"] and not it["origin"] for it in items):
+        save_all()                                 # what the person did answer is kept
+    if sent:                                       # the rest stays open to a late reply for a day
+        _recent_ask_end(aid, [it["question"] for it in pending if it["answer"]])
+    return jsonify({"ok": False, "id": aid, "reason": how})
+
+
+def _ask_open(aid: str, pending: list, record_id=None, kind: str = ""):
+    """Register an ask in the registry the bar, Telegram and /answer share."""
+    with _ASKS_LOCK:
+        _ASKS[aid] = {"id": aid, "items": [{"question": it["question"], "options": it["options"],
+                                            "all_options": it["all_options"], "partial": it["partial"],
+                                            "answer": None} for it in pending],
+                      "open": True, "unclear": 0, "at": time.time(), "sent": False, "kind": kind,
+                      "record_id": "" if record_id in (None, "") else str(record_id)}
+        if len(pending) == 1:
+            _ASKS[aid]["question"], _ASKS[aid]["options"], _ASKS[aid]["answer"] = \
+                pending[0]["question"], pending[0]["options"], None
+        for k in [k for k, a in _ASKS.items() if time.time() - a["at"] > 3600]:
+            _ASKS.pop(k, None)
+
+
+def _ask_telegram(aid: str, pending: list, kind: str = "") -> bool:
+    """Telegram: one message, and for a single question its choices as buttons (asks.telegram_ask
+    keeps them inside docs/notify.md). A channel that refuses the buttons still gets the
+    question, its choices numbered in the text, so a person away from the desk always sees it.
+    Returns whether the message went out."""
+    from autoapply import asks as AK
+    sent = False
+    try:
+        ch = _active_channel()
+    except Exception:          # noqa: BLE001 - no Telegram is fine; the bar still asks
+        ch = None
+    if ch is not None:
+        text, buttons = AK.telegram_ask(aid, pending)
+        if kind == "terms":                        # the site's own notice, asked as it is
+            text = pending[0]["question"] + "\nTap a choice below, or reply 1, 2 or 3."
+        try:
+            ch.send(text, buttons)
+            sent = True
+        except Exception:      # noqa: BLE001 - retried without buttons below
+            if buttons:
+                try:
+                    ch.send(AK.prompt_text(pending, list_choices=True, buttons=False), None)
+                    sent = True
+                except Exception:  # noqa: BLE001 - no Telegram is fine; the bar still asks
+                    pass
+    with _ASKS_LOCK:
+        if aid in _ASKS:
+            _ASKS[aid]["sent"] = sent
+    return sent
+
+
+def _ask_wait(aid: str, pending: list, timeout: float) -> str:
+    """Wait for every pending question of the ask to be answered (the bar, a Telegram reply or
+    button). Fills each item's "answer" and returns "answered", "stopped" (/stop or /skip on
+    Telegram) or "timeout". The ask is closed either way, so a stale question never captures
+    a later reply."""
     deadline = time.time() + timeout
     stopped = False
     while time.time() < deadline:
@@ -11241,25 +11295,18 @@ def autoapply_agent_ask():
             with _ASKS_LOCK:
                 if aid in _ASKS:
                     _ASKS[aid]["open"] = False
-            save_all()
-            if sent:
-                _recent_ask_end(aid, [it["question"] for it in pending])
-            return jsonify({"ok": True, "id": aid, "answer": items[0]["answer"], "answers": answers()})
+            return "answered"
         if closed:                                 # /stop or /skip on Telegram
             stopped = True
             break
         time.sleep(1.0)
-    with _ASKS_LOCK:                               # a stale question never captures later replies
+    with _ASKS_LOCK:
         ask = _ASKS.get(aid)
         if ask:
             ask["open"] = False
             for it, x in zip(pending, _ask_items(ask)):
                 it["answer"] = x.get("answer") or None
-    if any(it["answer"] and not it["origin"] for it in items):
-        save_all()                                 # what the person did answer is kept
-    if sent:                                       # the rest stays open to a late reply for a day
-        _recent_ask_end(aid, [it["question"] for it in pending if it["answer"]])
-    return jsonify({"ok": False, "id": aid, "reason": "stopped" if stopped else "timeout"})
+    return "stopped" if stopped else "timeout"
 
 
 @app.post("/api/autoapply/agent/answer")
@@ -11290,12 +11337,96 @@ def autoapply_agent_answer():
                 i = 0
             if not 0 <= i < len(items):
                 return jsonify({"ok": False, "error": "No such question."}), 400
+            if ask.get("kind") == "terms" and ans not in AK.TERMS_CHOICES:
+                return jsonify({"ok": False, "error": "Pick one of the choices."}), 400
             _ask_set(ask, i, ans[:300])
             done = _ask_done(ask)
             return jsonify({"ok": True, "id": aid, "done": done,
                             "reply": _ask_got_it(items) if done else f"Got it: {ans[:300]}."})
     reply, done = _ask_take_reply(aid, ans)
     return jsonify({"ok": True, "id": aid, "done": done, "reply": reply})
+
+
+# ---- Terms a site requires to apply (docs/apply-agent.md): a privacy notice, a data privacy
+# agreement, terms, a consent to process the application data, an E-Verify acknowledgement. The
+# agent accepts one only with the person's consent: their standing choice in Your answers
+# (accept_required_terms "always"), else asked on the bar and on Telegram, once per site and
+# run. Every acceptance is recorded on the application (terms_accepted) and named in the Ready
+# to send summary. Marketing opt-ins are never terms (extension/agent_view.js termsItems).
+def _terms_pref() -> str:
+    v = str(_load_prefs().get("accept_required_terms") or "ask")
+    return v if v in ("ask", "always") else "ask"
+
+
+def _terms_company(rec, b: dict) -> str:
+    from submit.policy import _host
+    company = " ".join(str((rec.get("company") if rec else "") or b.get("company") or "").split())[:80]
+    return company or _host(str(b.get("url") or ""))
+
+
+@app.post("/api/autoapply/agent/terms")
+@_guard
+def autoapply_agent_terms():
+    """Body {record_id?, title, url, kind?, company?, check_only?, id?, timeout_s?}. The person's
+    decision on accepting a notice the site requires. With the standing choice "always": at once
+    {ok, decision:"accept", via:"always"}. Else check_only returns {ok, decision:"ask", question,
+    options}; without it the question goes to Telegram (three buttons) and the bar, and the
+    route waits: {ok, decision:"accept", via:"all"|"once"} ("all" also sets the standing choice
+    to "always") or {ok, decision:"stop"}; {ok:false, reason:"timeout"|"stopped"} when nobody
+    answered or /stop ended the wait. Nothing is accepted here: the shell clicks, then records
+    the acceptance with /api/autoapply/agent/terms/accepted."""
+    from autoapply import asks as AK
+    b = request.json or {}
+    title = " ".join(str(b.get("title") or "").split())[:80] or "terms"
+    rec = _get_record(b.get("record_id")) if b.get("record_id") not in (None, "") else None
+    company = _terms_company(rec, b)
+    if _terms_pref() == "always":
+        return jsonify({"ok": True, "decision": "accept", "via": "always"})
+    question = AK.terms_question(company, title)
+    if b.get("check_only"):
+        return jsonify({"ok": True, "decision": "ask", "question": question, "options": list(AK.TERMS_CHOICES)})
+    aid = re.sub(r"[^a-z0-9]", "", str(b.get("id") or "").lower())[:16] or secrets.token_hex(4)
+    timeout = max(5, min(600, int(b.get("timeout_s") or 300)))
+    pending = [{"question": question, "options": list(AK.TERMS_CHOICES), "all_options": list(AK.TERMS_CHOICES),
+                "partial": False, "answer": None}]
+    _ask_open(aid, pending, b.get("record_id"), kind="terms")
+    # Consent is given while the run waits, never late: a terms ask is not kept for _late_answer,
+    # and while it is open it takes the person's Telegram reply before any late-answer reading.
+    _ask_telegram(aid, pending, kind="terms")
+    how = _ask_wait(aid, pending, timeout)
+    if how != "answered":
+        return jsonify({"ok": False, "id": aid, "reason": how})
+    decision, via = AK.terms_decision(pending[0]["answer"])
+    if via == "all":
+        _merge_prefs({"accept_required_terms": "always"})
+    return jsonify({"ok": True, "id": aid, "decision": decision, "via": via})
+
+
+@app.post("/api/autoapply/agent/terms/accepted")
+@_guard
+def autoapply_agent_terms_accepted():
+    """Record that the agent accepted a notice for the person: body {record_id, title, url, kind?,
+    via?, company?}. Appended to the application's terms_accepted list (company, title, url,
+    host, kind, via, at), at most 20, one entry per title and host. Reply {ok, accepted}."""
+    from submit.policy import _host
+    b = request.json or {}
+    if b.get("record_id") in (None, ""):
+        return jsonify({"ok": False, "reason": "no-record"})
+    recs = _records()
+    try:
+        rec = recs.get(int(b.get("record_id")))
+        if rec is None:
+            return jsonify({"ok": False, "reason": "no-record"}), 404
+        url = str(b.get("url") or "")[:500]
+        entry = {"company": _terms_company(rec, b), "title": " ".join(str(b.get("title") or "").split())[:80] or "terms",
+                 "url": url, "host": _host(url), "kind": str(b.get("kind") or "")[:20],
+                 "via": str(b.get("via") or "")[:10], "at": _now_iso()}
+        have = [x for x in (_record_data(rec).get("terms_accepted") or []) if isinstance(x, dict)]
+        have = [x for x in have if not (x.get("title") == entry["title"] and x.get("host") == entry["host"])]
+        data = recs.merge_data(int(rec["id"]), {"terms_accepted": (have + [entry])[-20:]})
+    finally:
+        recs.close()
+    return jsonify({"ok": True, "accepted": data.get("terms_accepted") if isinstance(data, dict) else [entry]})
 
 
 @app.post("/api/autoapply/agent/step")

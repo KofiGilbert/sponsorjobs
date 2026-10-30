@@ -14,6 +14,8 @@
 //     div[role=option][data-automation-id=promptOption]; a pick adds a selectedItem pill.
 //   - AriaRadioGroup / AriaCheckbox: div[role=radiogroup] > div[role=radio aria-checked], and
 //     div[role=checkbox aria-checked], toggled by click (aria-checked updated a tick later).
+//   - PhenomSelect / PrivacyDialog: Phenom's select and its "Data Privacy Agreement" dialog (Lam
+//     Research), described where they are defined.
 (function () {
   "use strict";
   let seq = 0;
@@ -189,5 +191,73 @@
     return { get value() { return cb.getAttribute("aria-checked") === "true"; } };
   }
 
-  window.FixtureWidgets = { ReactSelect, WorkdayListbox, WorkdayPrompt, AriaRadioGroup, AriaCheckbox };
+  // Phenom's select (careers.lamresearch.com, 2026-10-30; tests/fixtures/forms/phenom_lam.html
+  // has the page itself): an <input role=combobox placeholder=Select aria-controls=list-N>; a
+  // click opens ul#list-N[role=listbox] of button[role=option] in an overlay over the next
+  // field; Escape, blur, Tab and a second click are ignored; a mousedown outside its own box
+  // closes it; a pick sets the input's value and adds "Clear <label>".
+  function PhenomSelect(host, cfg) {
+    const n = seq++;
+    const fid = "Job_Specific_Information_" + cfg.id;
+    const wrap = h("div", { class: "field-3Ez-x", style: "position:relative" });
+    if (cfg.note) wrap.appendChild(h("div", { class: "instruction-29usU", text: cfg.note }));
+    wrap.appendChild(h("label", { id: fid + "_label", for: fid, class: "label-385LH required-3upJY" }, [h("span", { text: cfg.label })]));
+    const input = h("input", { "aria-controls": "list-ph" + n, "aria-expanded": "false", "aria-labelledby": fid + "_label",
+                               "aria-required": "true", role: "combobox", "aria-disabled": "false", id: "input-ph" + n,
+                               placeholder: "Select", type: "text", class: "select-module_select-input__bO0s9" });
+    const main = h("div", { class: "select-module_select-dropdown-main-wrapper__uq-6g", style: "position:relative;width:360px" },
+                   [h("div", { class: "select-module_select-input-group__g64bR" }, [input])]);
+    wrap.appendChild(h("div", { class: "select-module_select-wrapper__SyQtt", id: fid }, [main]));
+    host.appendChild(wrap);
+    let overlay = null, value = null;
+    const setV = (v) => Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, v);
+    const close = () => { if (overlay) overlay.remove(); overlay = null; input.setAttribute("aria-expanded", "false"); };
+    input.addEventListener("click", () => {
+      if (overlay) return;
+      const ul = h("ul", { id: "list-ph" + n, role: "listbox", style: "list-style:none;margin:0;padding:0" });
+      cfg.options.forEach((o, i) => {
+        const b = h("button", { type: "button", role: "option", id: "list-ph" + n + "-option-" + i, title: o, "aria-selected": "false",
+                                style: "display:block;width:100%;text-align:left;padding:10px 8px" }, [h("span", { text: o })]);
+        b.addEventListener("click", () => {
+          value = o; setV(o); close();
+          if (cfg.onChange) cfg.onChange(o);
+          if (!wrap.querySelector(".clear")) {
+            const c = h("button", { type: "button", class: "clear", text: "Clear " + cfg.label });
+            c.addEventListener("click", () => { value = null; setV(""); c.remove(); });
+            main.after(c);
+          }
+        });
+        ul.appendChild(h("li", { role: "presentation" }, [b]));
+      });
+      overlay = h("div", { class: "select-module_select-dropdown-overlay__G4p-2",
+                           style: "position:absolute;left:0;top:36px;z-index:50;background:#fff;border:1px solid #999;width:360px" }, [ul]);
+      main.appendChild(overlay);
+      input.setAttribute("aria-expanded", "true");
+    });
+    document.addEventListener("mousedown", (e) => { if (overlay && !main.contains(e.target)) close(); });
+    return { get value() { return value; } };
+  }
+
+  // Phenom's "Data Privacy Agreement" dialog (Lam Research opens it when the resume is attached):
+  // role=dialog aria-modal, Cancel and I Acknowledge. Returns {open(), acked}.
+  function PrivacyDialog(cfg) {
+    const dlg = h("div", { role: "dialog", "aria-modal": "true", "aria-labelledby": "dlg-privacy-h", id: "privacyDialog",
+                           style: "position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.4);z-index:100" });
+    const box = h("div", { style: "background:#fff;width:520px;padding:16px" }, [
+      h("span", { id: "dlg-privacy-h", role: "heading", "aria-level": "2", text: "Data Privacy Agreement" }),
+      h("p", { text: "In order to create an account, I acknowledge having read and understood the Job Application Data Privacy Notice. "
+                   + "For US applicants only: as " + (cfg.company || "the company") + " is an E-Verify employer, I acknowledge the E-Verify participation poster." }),
+    ]);
+    const cancel = h("button", { type: "button", id: "cancelUploadResume", text: "Cancel" });
+    const ack = h("button", { type: "button", id: "confirmUploadResume", text: "I Acknowledge" });
+    box.appendChild(h("div", {}, [cancel, ack]));
+    dlg.appendChild(box);
+    document.body.appendChild(dlg);
+    const st = { acked: false };
+    cancel.addEventListener("click", () => { dlg.style.display = "none"; if (cfg.onCancel) cfg.onCancel(); });
+    ack.addEventListener("click", () => { dlg.style.display = "none"; st.acked = true; if (cfg.onAck) cfg.onAck(); });
+    return { open() { dlg.style.display = "flex"; }, get acked() { return st.acked; } };
+  }
+
+  window.FixtureWidgets = { ReactSelect, WorkdayListbox, WorkdayPrompt, AriaRadioGroup, AriaCheckbox, PhenomSelect, PrivacyDialog };
 })();

@@ -1194,5 +1194,7 @@
   "aa.agent.captcha": "O envio encontrou um captcha. Resolva na página e pressione Enviar novamente.",
   "aa.agent.nosend": "Botão Enviar não encontrado. Pressione-o na página.",
   "aa.send": "Enviar",
-  "aa.stop": "Parar"
+  "aa.stop": "Parar",
+  "ans.termsAlways": "Aceitar o aviso de privacidade ou os termos que um site exige para se candidatar, sem me perguntar",
+  "ans.termsNote": "Quando isto está desligado, pergunto a você na primeira vez em cada site. Cada um que aceito aparece quando a candidatura está pronta para enviar."
 }

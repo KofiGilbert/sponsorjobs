@@ -9553,6 +9553,7 @@
     BAS.orig = Object.assign({}, d.values || {});
     BAS.two = !!BAS.val.citizenship2;
     $("#ansEeo").checked = !!d.eeo_decline;
+    if ($("#ansTerms")) $("#ansTerms").checked = d.accept_required_terms === "always";
     $("#ansSalary").value = BAS.val.salary || "";
     basPaint();
   }
@@ -9639,6 +9640,24 @@
       if (ANS.data) ANS.data.eeo_decline = !!r.eeo_decline;
       box.checked = !!r.eeo_decline;
       basPaint();
+      note.textContent = T("aa.saved", "Saved");
+    } catch (err) {
+      box.checked = !want;
+      note.textContent = err.message || T("profile.answers.failed", "Couldn't save.");
+    }
+    box.disabled = false;
+    BAS.noteT = setTimeout(() => { note.textContent = ""; }, 4000);
+  });
+  // Terms a site requires to apply: "always" accepts them without asking; off asks the first
+  // time on each site. Saved the moment it changes, like the decline choice above it.
+  $("#ansTerms")?.addEventListener("change", async e => {
+    const box = e.target, note = $("#ansBasicsNote"), want = box.checked;
+    box.disabled = true;
+    clearTimeout(BAS.noteT);
+    try {
+      const r = await api("/api/answers/basics", { fields: {}, accept_required_terms: want ? "always" : "ask" });
+      BAS.data = r;
+      box.checked = r.accept_required_terms === "always";
       note.textContent = T("aa.saved", "Saved");
     } catch (err) {
       box.checked = !want;

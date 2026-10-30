@@ -704,6 +704,212 @@ test("a self-identification answer never leaves the page: answered, never which 
   await page.close();
 });
 
+// ------------------------------------------------------------------ Phenom (Lam Research, 2026-10-30)
+// tests/fixtures/forms/phenom_lam.html: the real widget markup and choices. Its dropdown ignores
+// Escape, blur and a second click, and its open list covers the next field, so the shell's old
+// read took Gender's list as Ethnicity's choices and the saved answers never fitted.
+const realClick = async (page, idx) => {
+  const r = await page.evaluate(`(() => { const el = window.TailorAgent.element(${idx}); if (!el) return null;
+    el.scrollIntoView({ block: "center" }); const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+  assert.ok(r, "no element " + idx);
+  await page.mouse.click(r.x, r.y);
+};
+// The shell's dropdownOptions + closeDropdown, in order: close any other open one, mark, a
+// trusted click, read; then one real Escape, blur, and the press from outside, each only while
+// the popup is still open.
+async function readLikeShellPhenom(page, idx) {
+  await page.evaluate(`window.TailorAgent.closeOthers(${idx})`);
+  const was = await page.evaluate(`window.TailorAgent.popupOpen(${idx})`);
+  await page.evaluate(`window.TailorAgent.markPopups(${idx}, ${!was})`);
+  if (!was) await realClick(page, idx);
+  await page.waitForTimeout(150);
+  const read = await page.evaluate(`window.TailorAgent.popupOptions(${idx})`);
+  const steps = [];
+  const isOpen = () => page.evaluate(`window.TailorAgent.popupOpen(${idx})`);
+  if (await isOpen()) { await page.keyboard.press("Escape"); steps.push("escape"); }
+  if (await isOpen()) { await page.evaluate(`window.TailorAgent.closePopup(${idx}, "blur")`); steps.push("blur"); }
+  if (await isOpen()) { await page.evaluate(`window.TailorAgent.closePopup(${idx}, "outside")`); steps.push("outside"); }
+  return { read, steps, open: await isOpen() };
+}
+const LAM = {
+  Gender: ["Choose not to disclose", "Male", "Female"],
+  Ethnicity: ["American Indian/Alaskan Native", "Asian", "Black or African American", "Choose not to disclose",
+              "Hispanic or Latino", "Native Hawaiian or Other Pacific Island", "Two or More Races", "White"],
+  Disability: ["Choose not to disclose", "No", "Yes"],
+  Veteran: ["Choose not to disclose", "No", "Yes"],
+};
+
+test("Phenom (Lam): each dropdown read in a row gives its OWN choices, and one that ignores Escape and blur is pressed shut", async ({ open }) => {
+  const page = await open("phenom_lam.html");
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  for (const label of ["Gender", "Ethnicity", "Disability", "Veteran"]) {
+    const i = indexOf(v.text, new RegExp(`<combobox label="${label}" value="" expanded=false required>`));
+    assert.ok(i, label + "\n" + v.text);
+    const r = await readLikeShellPhenom(page, i);
+    assert.deepStrictEqual(r.read.options, LAM[label], label);
+    assert.deepStrictEqual(r.steps, ["escape", "blur", "outside"], label + " ignores Escape and blur");
+    assert.strictEqual(r.open, false, label + " is closed again");
+  }
+  // reading never picked anything, and nothing is left open over the next field
+  assert.deepStrictEqual(await page.evaluate(() => Array.from(document.querySelectorAll("input[role=combobox]")).map((x) => x.value)),
+                         ["", "", "", ""]);
+  assert.strictEqual(await page.evaluate(() => document.querySelectorAll("[role=listbox]").length), 0);
+  await page.close();
+});
+
+test("Phenom (Lam): another control's still-open list is never this one's choices, and closeOthers presses it shut", async ({ open }) => {
+  const page = await open("phenom_lam.html");
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const gi = indexOf(v.text, /<combobox label="Gender"/), ei = indexOf(v.text, /<combobox label="Ethnicity"/);
+  await realClick(page, gi);                          // Gender's list opens (and stays open)
+  await page.evaluate(`window.TailorAgent.markPopups(${ei}, true)`);
+  // Gender's list re-renders (new nodes), the way it did under the shell's click on Ethnicity
+  await page.evaluate(() => { const l = document.getElementById("list-17"); l.replaceWith(l.cloneNode(true)); });
+  const r = await page.evaluate(`window.TailorAgent.popupOptions(${ei})`);
+  assert.deepStrictEqual(r.options, [], "Gender's list read as Ethnicity's: " + JSON.stringify(r));
+  assert.ok(await page.evaluate(`window.TailorAgent.closeOthers(${ei})`) >= 1);
+  assert.strictEqual(await page.evaluate(() => document.querySelectorAll("#list-17").length), 0);
+  await page.close();
+});
+
+test("Phenom (Lam): the shell picks a saved choice with real clicks, checks it stuck, and the view says only (filled)", async ({ open }) => {
+  const page = await open("phenom_lam.html");
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  let v = await page.evaluate("window.TailorAgent.view()");
+  const want = { Gender: "Male", Ethnicity: "Black or African American", Disability: "No", Veteran: "No" };
+  for (const [label, option] of Object.entries(want)) {
+    const i = indexOf(v.text, new RegExp(`<combobox label="${label}"`));
+    await page.evaluate(`window.TailorAgent.closeOthers(${i})`);
+    await page.evaluate(`window.TailorAgent.markPopups(${i}, true)`);
+    await realClick(page, i);
+    await page.waitForTimeout(100);
+    const oi = await page.evaluate(`window.TailorAgent.optionIndex(${i}, ${JSON.stringify(option)})`);
+    assert.ok(oi, label + ": no option index for its saved choice");
+    await realClick(page, oi);
+    await page.waitForTimeout(100);
+    assert.strictEqual(await page.evaluate(`window.TailorAgent.chosenIs(${i}, ${JSON.stringify(option)})`), true, label);
+    assert.strictEqual(await page.evaluate(`window.TailorAgent.chosenIs(${i}, "Female")`), false, label);
+  }
+  assert.strictEqual((await page.evaluate("fxLog()")).filter((x) => x.startsWith("pick:")).length, 4);
+  v = await page.evaluate("window.TailorAgent.view()");
+  for (const label of Object.keys(want)) assert.ok(new RegExp(`<combobox label="${label}" value="\\(filled\\)"`).test(v.text), label + "\n" + v.text);
+  for (const word of ['value="Male"', 'value="Black', 'value="No"']) assert.ok(!v.text.includes(word), word + " leaked");
+  // a near miss is never an option index ("Man" is not "Male")
+  const gi = indexOf(v.text, /<combobox label="Gender"/);
+  await realClick(page, gi);
+  await page.waitForTimeout(100);
+  assert.strictEqual(await page.evaluate(`window.TailorAgent.optionIndex(${gi}, "Man")`), null);
+  await page.close();
+});
+
+test("Phenom (Lam): the engine reads each list as its own and drives the dropdown (no stale list from the one before)", async ({ open }) => {
+  const page = await open("phenom_lam.html");
+  await page.evaluate(CORE);
+  const fields = await page.evaluate(() => window.TailorAutofill.extractFormAsync({ onlyEmpty: true }));
+  for (const [label, opts] of Object.entries(LAM)) {
+    const f = fields.find((x) => x.label === label);
+    assert.ok(f, label + " " + JSON.stringify(fields.map((x) => x.label)));
+    assert.deepStrictEqual(f.options, opts, label);
+  }
+  assert.strictEqual(await page.evaluate(() => document.querySelectorAll("[role=listbox]").length), 0, "every list closed again");
+  const g = fields.find((x) => x.label === "Gender"), d = fields.find((x) => x.label === "Disability");
+  const rep = await page.evaluate((ops) => window.TailorAutofill.applyOpsAsync(ops),
+                                  [{ op: "select", ref: g.ref, text: "Male" }, { op: "select", ref: d.ref, text: "No" }]);
+  assert.strictEqual(rep.filled, 2, JSON.stringify(rep));
+  assert.deepStrictEqual(await page.evaluate(() => [document.querySelector("#Job_Specific_Information_q_custGender input").value,
+                                                     document.querySelector("#Job_Specific_Information_disability input").value]),
+                         ["Male", "No"]);
+  await page.close();
+});
+
+test("terms: Lam's Data Privacy Agreement is found with its I Acknowledge button only once it opens; cookies, marketing and optional boxes never", async ({ open }) => {
+  const page = await open("phenom_lam.html");
+  await page.evaluate(AGENT);
+  await page.evaluate("window.TailorAgent.view()");
+  // closed (visibility hidden, opacity 0, like Lam's): nothing to accept; the job alerts box is marketing
+  assert.deepStrictEqual(await page.evaluate("window.TailorAgent.termsItems()"), []);
+  assert.deepStrictEqual(await page.evaluate("window.TailorAgent.termsItems(true)"), []);
+  await page.evaluate("fxOpenPrivacy()");
+  const items = await page.evaluate("window.TailorAgent.termsItems()");
+  assert.strictEqual(items.length, 1, JSON.stringify(items));
+  assert.strictEqual(items[0].kind, "modal");
+  assert.strictEqual(items[0].title, "Data Privacy Agreement");
+  assert.strictEqual(items[0].button, "I Acknowledge");
+  assert.strictEqual(await page.evaluate(`window.TailorAgent.element(${items[0].index}).id`), "confirmUploadResume");
+  await realClick(page, items[0].index);
+  assert.strictEqual(await page.evaluate("window.fxAck"), true);
+  assert.ok((await page.evaluate("fxLog()")).includes("privacy-ack"));
+  assert.deepStrictEqual(await page.evaluate("window.TailorAgent.termsItems()"), []);
+  // a cookie banner (even one titled "Privacy Notice") and a marketing dialog are not terms
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend",
+    '<div role="dialog" aria-modal="true" aria-label="Privacy Notice" id="ck"><p>We use cookies to improve your visit.</p><button>I Accept</button></div>'
+    + '<div role="dialog" aria-modal="true" aria-labelledby="tc" id="mk"><h2 id="tc">Join our talent community</h2><p>Get job alerts and agree to our privacy policy.</p><button>I Agree</button></div>'));
+  assert.deepStrictEqual(await page.evaluate("window.TailorAgent.termsItems()"), []);
+  await page.evaluate(() => { document.getElementById("ck").remove(); document.getElementById("mk").remove(); });
+  // a required "I have read and agree to the privacy notice" box: yes; an optional one only when loose
+  await page.evaluate(() => document.getElementById("next").insertAdjacentHTML("beforebegin",
+    '<div class="field-3Ez-x"><input type="checkbox" id="pn" required><label for="pn">I have read and agree to the Job Application Data Privacy Notice *</label></div>'
+    + '<div class="field-3Ez-x"><input type="checkbox" id="tou"><label for="tou">I accept the Terms of Use</label></div>'));
+  let boxes = await page.evaluate("window.TailorAgent.termsItems()");
+  assert.deepStrictEqual(boxes.map((b) => [b.kind, b.title]), [["checkbox", "Job Application Data Privacy Notice"]], JSON.stringify(boxes));
+  boxes = await page.evaluate("window.TailorAgent.termsItems(true)");
+  assert.deepStrictEqual(boxes.map((b) => b.title), ["Job Application Data Privacy Notice", "Terms of Use"]);
+  await page.close();
+});
+
+test("a link to a privacy policy or notice is never followed (it opens a document or a dialog, not the next step)", async ({ open }) => {
+  const page = await open("phenom_lam.html");
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const pi = indexOf(v.text, /<a>Privacy Policy<\/a>/);
+  assert.ok(pi, v.text);
+  const r = await page.evaluate(`window.TailorAgent.act({ op: "click", index: ${pi} })`);
+  assert.strictEqual(r.ok, false);
+  assert.ok(/^policy-link/.test(r.note), r.note);
+  assert.ok(!(await page.evaluate("fxLog()")).includes("policy-link"));
+  const ni = indexOf(v.text, /<button>Next<\/button>/);
+  assert.strictEqual((await page.evaluate(`window.TailorAgent.act({ op: "click", index: ${ni} })`)).ok, true, "an ordinary button still clicks");
+  await page.close();
+});
+
+test("mock ATS ?phenom=1: the resume opens the Data Privacy Agreement, and the four Phenom disclosures read and pick in a row", async ({ open }) => {
+  const page = await open("mock_ats.html", "?phenom=1");
+  await page.evaluate("fxGo('contact')");
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  await page.evaluate("window.TailorAgent.view()");
+  assert.deepStrictEqual(await page.evaluate("window.TailorAgent.termsItems()"), []);
+  await page.setInputFiles("#cv", { name: "cv.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n%%EOF\n") });
+  const items = await page.evaluate("window.TailorAgent.termsItems()");
+  assert.deepStrictEqual(items.map((x) => [x.kind, x.title, x.button]), [["modal", "Data Privacy Agreement", "I Acknowledge"]]);
+  await realClick(page, items[0].index);
+  assert.ok((await page.evaluate("fxLog()")).includes("privacy-ack"));
+  await page.evaluate("fxGo('disclosures')");
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const want = { Gender: "Male", Ethnicity: "Black or African American", Disability: "No", Veteran: "No" };
+  for (const label of Object.keys(want)) {
+    const i = indexOf(v.text, new RegExp(`<combobox label="${label}"`));
+    const r = await readLikeShellPhenom(page, i);
+    assert.ok(r.read.options.includes(want[label]) && !r.open, label + " " + JSON.stringify(r));
+  }
+  for (const [label, option] of Object.entries(want)) {
+    const i = indexOf(v.text, new RegExp(`<combobox label="${label}"`));
+    await page.evaluate(`window.TailorAgent.closeOthers(${i})`);
+    await page.evaluate(`window.TailorAgent.markPopups(${i}, true)`);
+    await realClick(page, i);
+    await page.waitForTimeout(100);
+    await realClick(page, await page.evaluate(`window.TailorAgent.optionIndex(${i}, ${JSON.stringify(option)})`));
+    assert.strictEqual(await page.evaluate(`window.TailorAgent.chosenIs(${i}, ${JSON.stringify(option)})`), true, label);
+  }
+  await page.click("#next");
+  assert.ok((await page.evaluate("fxLog()")).includes("eeo:4"), JSON.stringify(await page.evaluate("fxLog()")));
+  await page.close();
+});
+
 // ------------------------------------------------------------------ runner
 (async () => {
   const { chromium } = findPlaywright();

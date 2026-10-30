@@ -65,7 +65,8 @@ LV_RACE = ["Hispanic or Latino", "White (Not Hispanic or Latino)", "Black or Afr
 LV_VETERAN = ["I am a veteran", "I am not a veteran", "Decline to self-identify"]
 LV_DISABILITY = ["Yes, I have a disability (or previously had a disability)", "No, I don't have a disability",
                  "I don't wish to answer"]
-# Phenom (careers.lamresearch.com) and iCIMS: Hispanic or Latino and race as separate questions.
+# Phenom-style and iCIMS sets: Hispanic or Latino and race as separate questions (Lam Research's real
+# Phenom choices, one combined Ethnicity list, are in tests/test_agent_lam_eeo.py).
 PH_GENDER = ["Man", "Woman", "Non-binary", "I choose not to disclose"]
 PH_ETHNICITY = ["Hispanic or Latino", "Not Hispanic or Latino", "I choose not to disclose"]
 PH_RACE = ["American Indian or Alaska Native", "Asian", "Black or African American",
