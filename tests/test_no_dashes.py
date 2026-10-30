@@ -43,7 +43,7 @@ WEB_FILES += [str(p) for p in sorted(Path("ui/static/locales").glob("*.json"))] 
 # home is in scope — an end-to-end pass found dashes here that the two lists above never
 # swept. Docstrings are excluded (they're for us, like comments); everything else counts.
 COPY_MODULES = [
-    "notify/batch.py", "notify/service.py", "notify/control.py",
+    "notify/batch.py", "notify/service.py", "notify/control.py", "notify/assistant.py", "notify/channel.py",
     "submit/service.py", "submit/drivers.py", "submit/policy.py", "submit/allowlist.py",
     "sourcing/sponsors.py", "sourcing/ats.py", "sourcing/watchlist.py", "sourcing/service.py",
     "interview/transcribe.py", "backend/tavus_client.py",

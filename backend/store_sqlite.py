@@ -195,6 +195,13 @@ CREATE TABLE IF NOT EXISTS telegram_events (
     at      REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS telegram_events_account ON telegram_events(account, id);
+CREATE TABLE IF NOT EXISTS telegram_files (     -- a file_id only, never the file
+    account TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    size    INTEGER NOT NULL DEFAULT 0,
+    at      REAL NOT NULL,
+    PRIMARY KEY (account, file_id)
+);
 """
 
 
@@ -252,6 +259,19 @@ class SqliteTelegramStore:
         with self._conn() as c:
             c.execute("DELETE FROM telegram_chats WHERE account = ?", (account,))
             c.execute("DELETE FROM telegram_events WHERE account = ?", (account,))
+            c.execute("DELETE FROM telegram_files WHERE account = ?", (account,))
+
+    def add_file(self, account: str, file_id: str, size: int, at: float) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM telegram_files WHERE at < ?", (at - 7 * 24 * 3600,))
+            c.execute("INSERT OR REPLACE INTO telegram_files(account, file_id, size, at) VALUES(?, ?, ?, ?)",
+                      (account, file_id, int(size or 0), at))
+
+    def owns_file(self, account: str, file_id: str, since: float) -> bool:
+        with self._conn() as c:
+            row = c.execute("SELECT 1 FROM telegram_files WHERE account = ? AND file_id = ? AND at >= ?",
+                            (account, file_id, since)).fetchone()
+        return row is not None
 
     def add_event(self, account: str, type_: str, data: str, text: str, at: float) -> int:
         with self._conn() as c:

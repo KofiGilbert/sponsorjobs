@@ -261,3 +261,25 @@ def test_the_preference_lives_in_app_prefs_and_survives_other_saves(A):
     assert mod._terms_pref() == "ask"
     c.post("/api/answers/basics", json={"fields": {}, "accept_required_terms": "sometimes"}, headers=H)
     assert mod._terms_pref() == "ask"
+
+
+def test_an_open_terms_ask_takes_the_reply_before_any_late_answer(A):
+    """A late answer (an ask that stopped waiting within the day) never steals a reply meant for
+    an open terms ask; a terms ask is never kept for a late reply; once it closes, late answers
+    work as before."""
+    mod, _sent, rid = A
+    mod._recent_ask_add("old1", [{"question": "Gender", "options": ["Male", "Female"], "all_options": ["Male", "Female"],
+                                  "partial": False}], record_id=rid, company="Lam Research", timeout=1)
+    mod._recent_ask_end("old1", [])
+    th, out = _terms_in_thread(mod, {"record_id": rid, "title": "Data Privacy Agreement", "url": LAM_URL,
+                                     "id": "t9", "timeout_s": 10})
+    assert mod._agent_ask_event("text", "1") == "Got it: Accept for all applications."
+    th.join(15)
+    assert out["r"]["decision"] == "accept" and out["r"]["via"] == "all"
+    rows = mod._recent_asks_load()
+    assert [r["id"] for r in rows] == ["old1"] and rows[0]["items"][0]["question"] == "Gender"
+    # the terms ask is closed now: a tap on its button is never consent, and never a late answer
+    assert mod._agent_ask_event("button", "ask:t9:1") in ("That question was already answered.", "That question is no longer open.")
+    # the late answer for the old ask still works
+    got = mod._agent_ask_event("text", "1. Male")
+    assert got and got.startswith("Saved for next time: Gender")

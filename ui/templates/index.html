@@ -1636,6 +1636,21 @@
           <button class="btn btn-primary" id="wizDetSave" type="button" data-i18n="wiz.details.save">Save</button>
         </div>
       </div>
+      <!-- The answers every form asks, right after the details step: the Your answers card
+           itself (#ansBasicsCard) is lent to this panel while it shows, so the questions, the
+           decline choice and the save are the same ones. Only the rows still missing show; when
+           none are, the step never opens. Skip never blocks setup: Auto-apply's "Before I apply"
+           prompt is the safety net. -->
+      <div class="wiz-panel" data-panel="basics" hidden>
+        <h2 class="wiz-h" data-i18n="wiz.basics.h">Questions every form asks</h2>
+        <p class="wiz-p" data-i18n="wiz.basics.p">Answer once. Auto-apply fills them on every form.</p>
+        <div class="wiz-basics" id="wizBasics"><!-- #ansBasicsCard while this step shows --></div>
+        <div class="ai-msg" id="wizBasMsg" hidden></div>
+        <div class="wiz-foot">
+          <button class="btn btn-ghost" id="wizBasSkip" type="button" data-i18n="wiz.basics.skip">Skip</button>
+          <button class="btn btn-primary" id="wizBasSave" type="button" data-i18n="wiz.basics.save">Save</button>
+        </div>
+      </div>
     </div>
   </div>
 

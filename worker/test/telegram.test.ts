@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import worker from "../src/index";
 import {
-  EDIT_PER_DAY, EVENT_TTL, INBOX_LIMIT, MAX_TEXT, MSG_CONNECTED, MSG_DISCONNECTED, MSG_EXPIRED, MSG_PAUSED,
-  MSG_UNBOUND, rateCheck, SEND_PER_DAY, TELEGRAM_API,
+  EDIT_PER_DAY, EVENT_TTL, INBOX_LIMIT, MAX_TEXT, MSG_CONNECTED, MSG_DISCONNECTED, MSG_EXPIRED, MSG_FILE_QUEUED,
+  MSG_FILE_TYPE, MSG_NO_MEDIA, MSG_PAUSED, MSG_TOO_BIG, MSG_UNBOUND, rateCheck, SEND_PER_DAY, TELEGRAM_API,
 } from "../src/telegram";
 import { call, env, newAccount } from "./helpers";
 
@@ -28,6 +28,12 @@ function stubTelegram(replies: Record<string, Reply> = {}) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const req = new Request(input as RequestInfo, init as RequestInit);
     const prefix = `${TELEGRAM_API}/bot${BOT.TELEGRAM_BOT_TOKEN}/`;
+    const filePrefix = `${TELEGRAM_API}/file/bot${BOT.TELEGRAM_BOT_TOKEN}/`;
+    if (req.url.startsWith(filePrefix)) {          // a file download: replies.download is its body
+      calls.push({ method: "download", body: req.url.slice(filePrefix.length) });
+      const r = replies.download ?? { body: "" };
+      return new Response(String(r.body), { status: r.status ?? 200 });
+    }
     if (!req.url.startsWith(prefix)) throw new Error(`unexpected fetch ${req.url}`);
     const method = req.url.slice(prefix.length);
     const ctype = req.headers.get("content-type") ?? "";
@@ -377,6 +383,96 @@ describe("POST /telegram/webhook", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("a file from an unlinked chat keeps the connect reply and stores nothing", async () => {
+    const calls = stubTelegram();
+    const chatId = freshChat();
+    await hook({ message: { message_id: 3, chat: { id: chatId, type: "private" }, document: { file_id: "d" }, caption: "hi" } });
+    expect(calls.map((c) => c.body.text)).toEqual([MSG_UNBOUND]);
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM telegram_files WHERE file_id = 'd'").first<{ n: number }>();
+    expect(n?.n).toBe(0);
+  });
+});
+
+describe("files the person sends the bot", () => {
+  const fileMsg = (chatId: number, extra: Record<string, unknown>) =>
+    ({ message: { message_id: 2, chat: { id: chatId, type: "private" }, from: { id: chatId }, ...extra } });
+
+  it("a resume or photo is queued for the app as a file event: file_id, name, type, size, caption", async () => {
+    const a = await linked();
+    const calls = stubTelegram();
+    await hook(fileMsg(a.chatId, { document: { file_id: "DOC1", file_name: "Kofi Gilbert_Resume.pdf",
+                                                mime_type: "application/pdf", file_size: 81234 }, caption: "my resume" }));
+    await hook(fileMsg(a.chatId, { photo: [{ file_id: "SMALL", width: 90, height: 120, file_size: 900 },
+                                           { file_id: "BIG", width: 1280, height: 1706, file_size: 190000 },
+                                           { file_id: "MID", width: 320, height: 427, file_size: 9000 }] }));
+    expect(calls.map((c) => [c.method, c.body.chat_id, c.body.text])).toEqual(
+      [["sendMessage", a.chatId, MSG_FILE_QUEUED], ["sendMessage", a.chatId, MSG_FILE_QUEUED]]);
+    const ev = (await tgCall("/notify/telegram/inbox", a.token)).data.events;
+    expect(ev.map((e: any) => [e.type, e.data])).toEqual([["file", "DOC1"], ["file", "BIG"]]);
+    expect(JSON.parse(ev[0].text)).toEqual({ name: "Kofi Gilbert_Resume.pdf", mime: "application/pdf", size: 81234, caption: "my resume" });
+    expect(JSON.parse(ev[1].text)).toEqual({ name: "photo.jpg", mime: "image/jpeg", size: 190000, caption: "" });
+  });
+
+  it("voice, video, stickers, other file types and files over 20 MB get an honest reply and are not queued", async () => {
+    const a = await linked();
+    const calls = stubTelegram();
+    for (const kind of ["voice", "video", "audio", "sticker"]) await hook(fileMsg(a.chatId, { [kind]: { file_id: "x" } }));
+    await hook(fileMsg(a.chatId, { document: { file_id: "Z", file_name: "a.zip", mime_type: "application/zip" }, caption: "see this" }));
+    await hook(fileMsg(a.chatId, { document: { file_id: "H", file_name: "cv.pdf", file_size: 21 * 1024 * 1024 } }));
+    expect(calls.map((c) => c.body.text)).toEqual([MSG_NO_MEDIA, MSG_NO_MEDIA, MSG_NO_MEDIA, MSG_NO_MEDIA, MSG_FILE_TYPE, MSG_TOO_BIG]);
+    for (const m of [MSG_FILE_QUEUED, MSG_NO_MEDIA, MSG_FILE_TYPE, MSG_TOO_BIG]) expect(m).not.toMatch(/[\u2013\u2014]/);
+    const ev = (await tgCall("/notify/telegram/inbox", a.token)).data.events;
+    expect(ev.map((e: any) => [e.type, e.text])).toEqual([["text", "see this"]]);   // only the caption
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM telegram_files WHERE account = ?").bind(a.id).first<{ n: number }>();
+    expect(n?.n).toBe(0);
+  });
+
+  it("POST /notify/telegram/file streams the bytes through from Telegram, stores nothing", async () => {
+    const a = await linked();
+    stubTelegram();
+    await hook(fileMsg(a.chatId, { document: { file_id: "DOC2", file_name: "cv.docx", file_size: 11 } }));
+    const calls = stubTelegram({ getFile: { body: { ok: true, result: { file_id: "DOC2", file_path: "documents/file_7.docx", file_size: 11 } } },
+                                 download: { body: "hello bytes" } });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const res = await worker.fetch(new Request("https://broker.test/notify/telegram/file", {
+      method: "POST", body: JSON.stringify({ file_id: "DOC2" }),
+      headers: { authorization: `Bearer ${a.token}`, "content-type": "application/json" },
+    }), { ...env, ...BOT } as Env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(await res.text()).toBe("hello bytes");
+    expect(calls.map((c) => c.method)).toEqual(["getFile", "download"]);
+    expect(calls[0]!.body).toEqual({ file_id: "DOC2" });
+    expect(calls[1]!.body).toBe("documents/file_7.docx");
+    expect(log.mock.calls.flat().join(" ")).not.toMatch(/cv\.docx|hello/);   // only the size is logged
+  });
+
+  it("refuses a file_id from another account's chat, an unknown one, and a file over 20 MB", async () => {
+    const a = await linked();
+    const b = await linked();
+    stubTelegram();
+    await hook(fileMsg(a.chatId, { document: { file_id: "MINE", file_name: "cv.pdf" } }));
+    const calls = stubTelegram({ getFile: { body: { ok: true, result: { file_path: "d/x.pdf", file_size: 25 * 1024 * 1024 } } } });
+    expect((await tgCall("/notify/telegram/file", b.token, { body: { file_id: "MINE" } })).status).toBe(404);
+    expect((await tgCall("/notify/telegram/file", a.token, { body: { file_id: "NOPE" } })).status).toBe(404);
+    expect((await tgCall("/notify/telegram/file", a.token, { body: {} })).status).toBe(400);
+    expect(calls).toHaveLength(0);                 // Telegram is never asked for someone else's file
+    const big = await tgCall("/notify/telegram/file", a.token, { body: { file_id: "MINE" } });
+    expect([big.status, big.data.error]).toEqual([413, "too_big"]);
+    expect(calls.map((c) => c.method)).toEqual(["getFile"]);
+    stubTelegram({ getFile: { status: 500, body: { ok: false, description: "boom" } } });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect((await tgCall("/notify/telegram/file", a.token, { body: { file_id: "MINE" } })).status).toBe(502);
+  });
+
+  it("unlink forgets the files", async () => {
+    const a = await linked();
+    stubTelegram();
+    await hook(fileMsg(a.chatId, { document: { file_id: "GONE", file_name: "cv.pdf" } }));
+    await tgCall("/notify/telegram/unlink", a.token, { body: {} });
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM telegram_files WHERE account = ?").bind(a.id).first<{ n: number }>();
+    expect(n?.n).toBe(0);
+  });
   it("answers 200 even when handling fails, so Telegram does not retry", async () => {
     const a = await linked();
     vi.spyOn(console, "error").mockImplementation(() => {});

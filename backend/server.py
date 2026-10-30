@@ -155,7 +155,7 @@ def build_google():
     return GoogleOAuth(cid, secret, redirect_uri, state_secret=secret)
 
 
-def build_telegram(db_path: str, transport=None, media_transport=None):
+def build_telegram(db_path: str, transport=None, media_transport=None, download_transport=None):
     """The official SponsorJobs Telegram bot relay when TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME
     and TELEGRAM_WEBHOOK_SECRET are all set; otherwise None (the /notify/telegram/* routes answer
     503 telegram_not_configured). The token stays server-side. See docs/notify.md."""
@@ -169,10 +169,12 @@ def build_telegram(db_path: str, transport=None, media_transport=None):
               "TELEGRAM_WEBHOOK_SECRET is missing; the bot relay stays off")
         return None
     from backend.store_sqlite import SqliteTelegramStore
-    from backend.telegram_relay import TelegramRelay, urllib_media_transport, urllib_transport
+    from backend.telegram_relay import (TelegramRelay, urllib_download_transport, urllib_media_transport,
+                                        urllib_transport)
     return TelegramRelay(SqliteTelegramStore(db_path), transport or urllib_transport(token),
                          bot_username=username, webhook_secret=secret,
-                         media_transport=media_transport or urllib_media_transport(token))
+                         media_transport=media_transport or urllib_media_transport(token),
+                         download_transport=download_transport or urllib_download_transport(token))
 
 
 def create_broker_app():
