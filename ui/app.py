@@ -1227,23 +1227,84 @@ def _handling_note(rec: dict) -> str:
     return str(_record_data(rec).get("handling_note") or "").strip()
 
 
+def _assistant_summary() -> str:
+    """What the app knows about the person, for the Telegram assistant (notify/assistant.py):
+    name, latest roles, schools and skills from the saved profile, the resumes built, which form
+    answers are saved (self-identification ones only as saved or not, never their values), and
+    the work authorization status. Built here, on this machine."""
+    from autoapply import workauth as _wa
+    from notify import assistant as AS
+    try:
+        profile = _saved_full_profile() or {}
+    except Exception:          # noqa: BLE001 - a missing profile is "not saved", not an error
+        profile = {}
+    resumes = []
+    try:
+        recs = _records()
+        try:
+            for r in recs.list(limit=12):
+                t = " at ".join(x for x in (str(r.get("role") or "").strip(),
+                                            str(r.get("company") or "").strip()) if x)
+                if t and t not in resumes:
+                    resumes.append(t)
+        finally:
+            recs.close()
+    except Exception:          # noqa: BLE001
+        pass
+    answers = []
+    try:
+        lib = _answer_lib()
+        try:
+            answers = [{"key": r["key"], "question": r["question"]} for r in lib.list()]
+        finally:
+            lib.close()
+    except Exception:          # noqa: BLE001
+        pass
+    try:
+        wa = _work_auth()
+    except Exception:          # noqa: BLE001
+        wa = {}
+    labels = {(cc, code): label for cc, rows in _wa.STATUSES.items() for code, label in rows}
+    return AS.summary(profile, resumes, answers, wa, labels)
+
+
 def _annalisa_reply(text: str) -> str:
-    """Free text from Telegram, answered by Annalisa with the shared P1 memory and remembered in
-    the diary. Best-effort: returns "" (so the caller falls back to help) if the model or memory
-    isn't available, e.g. no API key configured, so a message is never met with a stack trace."""
+    """Free text from Telegram, answered by the SponsorJobs assistant (notify/assistant.py), not
+    the resume intake. It knows a short local summary of the person (``_assistant_summary``) and
+    it never claims a save: this chat saves nothing, and a sentence that says otherwise is
+    dropped from the reply. A message that states a self-identification answer never goes to
+    the model; it gets where to put it. The turn is kept in the local diary for the history.
+    Returns "" (the caller then sends help) only when nothing could answer at all."""
+    from notify import assistant as AS
+    text = str(text or "").strip()
+    if not text:
+        return ""
     try:
         palace = _palace()
-        palace.remember_turn("user", text)
-        mem = _memory()
-        facts = mem.list_facts("default", status="active")
-        history = palace.load_history()
-        recalled = palace.recall(text)
-        reply = str(_make_llm().converse("", history, recalled, facts) or "").strip()
-        if reply:
+    except Exception:          # noqa: BLE001 - the diary is history, never a blocker
+        palace = None
+    history = []
+    if palace is not None:
+        try:
+            history = palace.load_history()
+            palace.remember_turn("user", text)
+        except Exception:      # noqa: BLE001
+            history = []
+    if AS.carries_eeo(text):
+        reply = AS.EEO_POINTER
+    else:
+        try:
+            user = AS.build_user(_assistant_summary(), AS.scrub_history(history), text)
+            reply = AS.honest(str(_make_llm().app_assistant(AS.SYSTEM, user) or ""))
+        except Exception:      # noqa: BLE001 - no key, offline: help instead of a stack trace
+            traceback.print_exc()
+            return ""
+    if palace is not None:
+        try:
             palace.remember_turn("note", reply)
-        return reply
-    except Exception:
-        return ""
+        except Exception:      # noqa: BLE001
+            pass
+    return reply
 
 
 def _session() -> WebIntake:
@@ -4514,7 +4575,7 @@ def profile_from_cv():
 
     from werkzeug.utils import secure_filename
 
-    from intake.cv_import import SUPPORTED_EXTS, extract_text
+    from intake.cv_import import SUPPORTED_EXTS
 
     f = request.files.get("file")
     if f is None or not f.filename:
@@ -4526,18 +4587,34 @@ def profile_from_cv():
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     dest = UPLOADS_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{name}"
     f.save(str(dest))       # raw backup, kept, never deleted
+    out = _import_resume_file(dest)
+    if out.get("error") == "no_text":
+        return jsonify({"error": "Couldn't read any text from that file. Try a Word or PDF export."}), 400
+    if out.get("error") == "no_profile":
+        return jsonify({"error": "Couldn't find a profile in that file, try another resume."}), 400
+    return jsonify({"ok": True, "profile": out["profile"], "missing": out["missing"], "summary": out["summary"]})
+
+
+def _import_resume_file(dest: Path) -> dict:
+    """THE resume import, shared by the in-app upload (/api/profile/from_cv) and a resume sent on
+    Telegram: read the file locally (Word, PDF, PowerPoint, text, or an image through OCR), parse
+    it into a profile with the real model, and fold it into the saved profile without losing
+    anything. {"error": "no_text" | "no_profile"} when it could not, else {profile (saved),
+    parsed (what this file held), missing, summary}. A model failure raises (the callers say why)."""
+    from intake.cv_import import extract_text
     text = extract_text(dest)
     if not (text or "").strip():
-        return jsonify({"error": "Couldn't read any text from that file. Try a Word or PDF export."}), 400
+        return {"error": "no_text"}
     llm = _make_llm()       # real model; raises a clear error if the key/connectivity is missing
     profile = _coerce_profile(llm.extract_profile(text))
     if not (profile.get("identity") or profile.get("experience")):
-        return jsonify({"error": "Couldn't find a profile in that file, try another resume."}), 400
+        return {"error": "no_profile"}
     # Projects conventionally carry a "Personal Project" location (matches the rest of the
     # pipeline) so a one-click autonomous build isn't stopped by a missing project location.
     for pr in profile.get("projects") or []:
         if isinstance(pr, dict) and not str(pr.get("location") or "").strip():
             pr["location"] = "Personal Project"
+    parsed = profile
     # Non-destructive: never wipe a richer existing profile or its history, fold the résumé
     # into what's saved (fill gaps, add new entries), keeping the conversation history.
     saved = _memory().load("default") or {}
@@ -4550,12 +4627,77 @@ def profile_from_cv():
     ident = profile.get("identity") or {}
     # What the gate would still ask for: the wizard turns it into the details step right
     # away, so an unattended build never stalls later on a date the import could not read.
-    return jsonify({"ok": True, "profile": profile, "missing": _profile_missing_slots(), "summary": {
+    return {"profile": profile, "parsed": parsed, "missing": _profile_missing_slots(), "summary": {
         "name": ident.get("name", ""),
         "roles": sum(len(e.get("roles") or [e]) for e in profile.get("experience") or []),
         "skills": len(profile.get("skills") or {}),
         "education": len(profile.get("education") or []),
-    }})
+    }}
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else ("es" if word.endswith("ch") else "s"))
+
+
+_TG_IMPORT_UNREADABLE = {".doc": "Word 97 (.doc)", ".ppt": "PowerPoint 97 (.ppt)", ".rtf": "rich text (.rtf)"}
+
+
+def _telegram_file_import(meta: dict, blob: bytes) -> str:
+    """A resume the person sent on Telegram (notify/hub.py): saved with the uploads, then run
+    through the SAME import as the in-app upload (``_import_resume_file``). Returns the reply,
+    written here from what really happened, never by the model: what was read and added, what
+    is still missing and where to finish it, or plainly what failed."""
+    from datetime import datetime
+
+    from werkzeug.utils import secure_filename
+
+    from intake.cv_import import IMAGE_EXTS, SUPPORTED_EXTS, ocr_available
+    from notify import assistant as AS
+    shown = " ".join(str(meta.get("name") or "").split())[:80] or "your file"
+    photo = bool(meta.get("photo")) or str(meta.get("mime") or "").startswith("image/")
+    name = secure_filename(str(meta.get("name") or "")) or ("photo.jpg" if photo else "resume")
+    ext = Path(name).suffix.lower()
+    if not ext and str(meta.get("mime") or "") == "application/pdf":
+        name, ext = name + ".pdf", ".pdf"
+    what = "that photo" if photo else shown
+    if ext in _TG_IMPORT_UNREADABLE:
+        return (f"I can't read {_TG_IMPORT_UNREADABLE[ext]} files yet. Save {shown} as a PDF or "
+                "Word (.docx) file and send it again.")
+    if ext not in SUPPORTED_EXTS | {".txt"}:
+        return "I can't read that kind of file. Send your resume as a PDF, Word, PowerPoint or text file, or a photo."
+    if ext in IMAGE_EXTS and not ocr_available():
+        return ("This copy of SponsorJobs can't read text from pictures yet. A PDF or Word file "
+                "works best: send that instead.")
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = UPLOADS_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_telegram_{name}"
+    dest.write_bytes(blob)      # kept with the in-app uploads: the raw backup, never sent anywhere
+    try:
+        out = _import_resume_file(dest)
+    except Exception as exc:    # noqa: BLE001 - no key, offline, out of credit: say which
+        traceback.print_exc()
+        detail = _FAILURE_TEXT.get(_classify_outage(exc), "something went wrong on this computer.")
+        detail = detail.replace("tap the button again", "send the file again").replace("then tap again", "then send it again")
+        return f"I got {what} but could not read it: {detail}"
+    if out.get("error") == "no_text":
+        if photo or ext in IMAGE_EXTS:
+            return "I could not read text from that photo. A PDF or Word file works best."
+        return f"I could not read any text from {shown}. A PDF or Word file works best."
+    if out.get("error") == "no_profile":
+        return f"I read {what} but could not find a resume in it, so nothing was added to your profile."
+    parsed = out.get("parsed") or {}
+    roles = sum(len(e.get("roles") or [e]) for e in parsed.get("experience") or [] if isinstance(e, dict))
+    schools = len(parsed.get("education") or [])
+    skills = len(AS._skills(parsed))
+    msg = (f"Got {'your photo' if photo else shown}. I read {_plural(roles, 'role')}, "
+           f"{_plural(schools, 'school')} and {_plural(skills, 'skill')} and added them to your "
+           "profile. Open SponsorJobs, My profile to see it.")
+    missing = [m for m in (out.get("missing") or []) if isinstance(m, dict)]
+    if missing:
+        first = str(missing[0].get("q") or "").strip()
+        msg += (f" It still needs {_plural(len(missing), 'detail')}"
+                + (f", like {first}" if first else "")
+                + ": open SponsorJobs, Auto-apply, Add the details to finish.")
+    return msg
 
 
 def _coerce_profile(profile) -> dict:
@@ -9469,7 +9611,22 @@ def _official_channel():
                               lambda: st.get("official_cursor", ""),
                               lambda c: st.set("official_cursor", c),
                               on_unlinked=_official_unlinked,
-                              post_media=_broker_post_media)
+                              post_media=_broker_post_media,
+                              fetch_file=_broker_fetch_file)
+
+
+def _broker_fetch_file(path: str, body: dict):
+    """POST to the broker for a file the person sent the official bot; the bytes come straight
+    back (passed through from Telegram, never stored there). (status, bytes_or_None), status 0
+    when the broker is unreachable."""
+    import requests
+    try:
+        r = requests.post(f"{BROKER_URL}{path}", json=body, headers=_broker_headers(), timeout=90)
+        if r.status_code == 401 and _recover_from_401():
+            r = requests.post(f"{BROKER_URL}{path}", json=body, headers=_broker_headers(), timeout=90)
+    except requests.RequestException:
+        return 0, None
+    return r.status_code, (r.content if 200 <= r.status_code < 300 else None)
 
 
 def _broker_post_media(path: str, fields: dict, file_path: str, content_type: str):
@@ -9650,7 +9807,8 @@ def _notify_hub():
     return NotifyHub(state, AlertEngine(state, match_fn=_alert_match_score),
                      NotifyService(None, _RecordActions()),
                      batch_callback=act, job_actions=_JobAlertActions(),
-                     review=_cv_review(state), ask_callback=_agent_ask_event)
+                     review=_cv_review(state), ask_callback=_agent_ask_event,
+                     file_import=_telegram_file_import)
 
 
 def _cv_review(state=None):
@@ -10732,12 +10890,174 @@ def _ask_take_reply(aid: str, text: str) -> tuple[str, bool]:
         return "I still could not tell. Type just the answer, or answer on the page yourself.", False
 
 
+# ---- Late answers: the asks that went to Telegram, kept for a day after they stop waiting. The
+# person often replies after the 5 minute wait ran out, or after the app restarted (2026-10-30:
+# "1.Male 2.African 3.No Disability 4.Not a veteran" went to the free chat, which then claimed it
+# had kept them). A text reply while no ask is open, within LATE_WINDOW of such an ask, is read
+# with the same reader (autoapply/asks.read_late), and what it answers is saved to the answer
+# library as the person's own, under the same keys the live path uses. The file holds the
+# questions and their choices, never an answer. Local only.
+LATE_WINDOW = 24 * 3600
+_RECENT_ASKS_FILE = None      # None -> telegram_recent_asks.json in the data dir (a test's tmp dir)
+_RECENT_ASKS_LOCK = threading.Lock()
+
+
+def _recent_asks_path() -> Path:
+    return Path(_RECENT_ASKS_FILE) if _RECENT_ASKS_FILE else _DATA / "telegram_recent_asks.json"
+
+
+def _recent_asks_load() -> list:
+    """The kept asks still inside their window (a day after they stopped waiting)."""
+    import json as _json
+    try:
+        rows = _json.loads(_recent_asks_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    now = time.time()
+    return [r for r in rows if isinstance(r, dict) and r.get("items")
+            and now <= float(r.get("ended_at") or r.get("expires_at") or 0) + LATE_WINDOW]
+
+
+def _recent_asks_save(rows: list) -> None:
+    import json as _json
+    path = _recent_asks_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(rows[-10:], ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+def _recent_ask_add(aid: str, items: list, *, record_id="", role="", company="", timeout=300) -> None:
+    """Keep an ask that Telegram received: its questions (with the numbers the person saw), their
+    choices, the application it belongs to, and when it stops waiting (kept even if the app
+    closes before then)."""
+    now = time.time()
+    row = {"id": aid, "record_id": str(record_id or ""), "role": str(role or "")[:120],
+           "company": str(company or "")[:120], "sent_at": now, "expires_at": now + float(timeout),
+           "ended_at": None,
+           "items": [{"n": i, "question": it["question"], "options": list(it.get("options") or []),
+                      "all_options": list(it.get("all_options") or it.get("options") or []),
+                      "partial": bool(it.get("partial"))} for i, it in enumerate(items, start=1)]}
+    with _RECENT_ASKS_LOCK:
+        rows = [r for r in _recent_asks_load() if r.get("id") != aid]
+        _recent_asks_save(rows + [row])
+
+
+def _recent_ask_end(aid: str, answered: list) -> None:
+    """The ask stopped waiting (answered, timed out, or stopped): keep only its questions that
+    are still unanswered, for LATE_WINDOW from now. Nothing left drops it."""
+    from autoapply import asks as AK
+    with _RECENT_ASKS_LOCK:
+        rows = _recent_asks_load()
+        for r in rows:
+            if r.get("id") == aid:
+                r["items"] = [it for it in r["items"]
+                              if not any(AK.same_question(it["question"], q) for q in answered)]
+                r["ended_at"] = time.time()
+        _recent_asks_save([r for r in rows if r.get("items")])
+
+
+def _late_job(row: dict) -> str:
+    """The job an ask belonged to, "Role at Company", for the late answer's reply."""
+    role, company = str(row.get("role") or ""), str(row.get("company") or "")
+    if not (role or company) and row.get("record_id"):
+        try:
+            rec = _get_record(row["record_id"])
+        except Exception:      # noqa: BLE001 - the job's name is a courtesy
+            rec = None
+        if rec:
+            role, company = rec.get("role") or "", rec.get("company") or ""
+    if role and company:
+        return f"{role} at {company}"
+    return role or company
+
+
+def _late_save(row: dict, picks: dict) -> str | None:
+    """Save {item index: answer} from a late reply to the ask ``row`` as the person's own
+    answers, drop those questions from the record, and return the reply that says plainly what
+    was saved and that the application already stopped. A self-identification answer is named
+    by its question only, never its value (it does not travel back through the broker). None
+    when nothing could be saved."""
+    from autoapply import asks as AK
+    items = row["items"]
+    saved = []
+    lib = _answer_lib()
+    try:
+        for j, val in sorted(picks.items()):
+            if not 0 <= j < len(items):
+                continue
+            it = items[j]
+            if lib.save(it["question"], str(val), "you", company=row.get("company") or ""):
+                saved.append((it, str(val)))
+    finally:
+        lib.close()
+    if not saved:
+        return None
+    done = {it["question"] for it, _v in saved}
+    with _RECENT_ASKS_LOCK:
+        rows = _recent_asks_load()
+        for r in rows:
+            if r.get("id") == row.get("id"):
+                r["items"] = [it for it in r["items"] if it["question"] not in done]
+        _recent_asks_save([r for r in rows if r.get("items")])
+    left = [it for it in items if it["question"] not in done]
+
+    def name(q):
+        q = " ".join(str(q).split())
+        return q if len(q) <= 60 else q[:59].rstrip() + "…"
+    parts = [name(it["question"]) if AK.is_eeo(it["question"]) else f"{name(it['question'])}: {v[:80]}"
+             for it, v in saved]
+    job = _late_job(row)
+    msg = "Saved for next time: " + "; ".join(parts) + "."
+    msg += (f" The application for {job} already stopped, so these were not used on it."
+            if job else " That application already stopped, so these were not used on it.")
+    if left:
+        msg += " Not saved yet: " + "; ".join(name(it["question"]) for it in left) + "."
+    msg += " You can see and change your answers in SponsorJobs, Auto-apply, Your answers."
+    return AK.fit_text(msg)
+
+
+def _late_answer(kind: str, payload: str):
+    """A reply to an ask that is no longer open: a tap on one of its buttons, or text. Returns
+    the reply when something was saved, else None (text then goes on to the chat)."""
+    from autoapply import asks as AK
+    with _RECENT_ASKS_LOCK:
+        rows = _recent_asks_load()
+    if not rows:
+        return None
+    with _ASKS_LOCK:
+        live = {k for k, a in _ASKS.items() if a.get("open", True) and not _ask_done(a)}
+    rows = [r for r in rows if r.get("id") not in live]
+    if kind == "button":
+        parts = payload.split(":")
+        row = next((r for r in rows if len(parts) >= 3 and r.get("id") == parts[1]), None)
+        if not row or len(row["items"]) != 1:
+            return None
+        try:
+            val = row["items"][0]["options"][int(parts[2])]
+        except (ValueError, IndexError):
+            return None
+        return _late_save(row, {0: val})
+    if not rows:
+        return None
+    row = max(rows, key=lambda r: float(r.get("sent_at") or 0))
+    got = AK.read_late(_ask_reader(), row["items"], str(payload or "")[:1500])
+    return _late_save(row, got["answers"]) if got.get("answers") else None
+
+
 def _agent_ask_event(kind: str, payload: str):
     """The notify hub's hook: an "ask:<id>:<n>" button tap, or a text reply while a question is
     open. Returns the reply text when the event answered a question, else None. A slash command
     is never an answer: it goes on to the usual routing (None), and /stop, /pause or /skip also
     end the wait, so the run stops instead of sitting out the question. Text is taken only by a
-    question whose Telegram message was actually sent."""
+    question whose Telegram message was actually sent. With no question open, a tap or a text
+    reply to an ask that stopped waiting within the last day is read as a late answer
+    (``_late_answer``): what it answers is saved for next time, else text goes on to the chat."""
     text = str(payload or "").strip()
     with _ASKS_LOCK:
         if kind == "button":
@@ -10745,32 +11065,42 @@ def _agent_ask_event(kind: str, payload: str):
             if parts[0] != "ask" or len(parts) < 3:
                 return None
             ask = _ASKS.get(parts[1])
-            if not ask or _ask_done(ask) or not ask.get("open", True):
+            if ask and _ask_done(ask):
                 return "That question was already answered."
-            items = _ask_items(ask)
-            try:
-                _ask_set(ask, 0, str(items[0]["options"][int(parts[2])]))
-            except (ValueError, IndexError):
+            if ask and ask.get("open", True):
+                items = _ask_items(ask)
+                try:
+                    _ask_set(ask, 0, str(items[0]["options"][int(parts[2])]))
+                except (ValueError, IndexError):
+                    return None
+                return f"Got it: {items[0]['answer']}."
+            aid = None
+        else:
+            if text.startswith("/"):
+                words = text.split()
+                cmd = words[0].lstrip("/").split("@", 1)[0].lower()
+                arg = words[1] if len(words) > 1 else ""
+                if cmd in ("stop", "pause", "skip"):
+                    for a in _ASKS.values():
+                        if a.get("open", True) and not _ask_done(a) and (
+                                cmd != "skip" or not arg or str(a.get("record_id") or "") == arg):
+                            a["open"] = False
+                            a["closed"] = cmd
                 return None
-            return f"Got it: {items[0]['answer']}."
-        if text.startswith("/"):
-            words = text.split()
-            cmd = words[0].lstrip("/").split("@", 1)[0].lower()
-            arg = words[1] if len(words) > 1 else ""
-            if cmd in ("stop", "pause", "skip"):
-                for a in _ASKS.values():
-                    if a.get("open", True) and not _ask_done(a) and (
-                            cmd != "skip" or not arg or str(a.get("record_id") or "") == arg):
-                        a["open"] = False
-                        a["closed"] = cmd
-            return None
-        open_asks = [a for a in _ASKS.values()
-                     if a.get("open", True) and not _ask_done(a) and a.get("sent", True)]
-        if not open_asks:
-            return None
-        aid = open_asks[-1]["id"]
-    msg, _done = _ask_take_reply(aid, text)
-    return msg
+            open_asks = [a for a in _ASKS.values()
+                         if a.get("open", True) and not _ask_done(a) and a.get("sent", True)]
+            aid = open_asks[-1]["id"] if open_asks else None
+    if aid is not None:
+        msg, _done = _ask_take_reply(aid, text)
+        return msg
+    try:
+        late = _late_answer(kind, text)
+    except Exception:          # noqa: BLE001 - a late answer never breaks the chat
+        traceback.print_exc()
+        late = None
+    if kind == "button":
+        return late or "That question is no longer open."
+    return late
 
 
 @app.post("/api/autoapply/agent/ask")
@@ -10880,6 +11210,12 @@ def autoapply_agent_ask():
     with _ASKS_LOCK:
         if aid in _ASKS:
             _ASKS[aid]["sent"] = sent
+    if sent:                                       # kept a day for a late reply (_late_answer)
+        try:
+            _recent_ask_add(aid, pending, record_id=b.get("record_id") or "",
+                            role=(rec.get("role") if rec else "") or "", company=company, timeout=timeout)
+        except Exception:      # noqa: BLE001 - the live ask never depends on it
+            traceback.print_exc()
 
     def save_all():
         lib = _answer_lib()
@@ -10906,6 +11242,8 @@ def autoapply_agent_ask():
                 if aid in _ASKS:
                     _ASKS[aid]["open"] = False
             save_all()
+            if sent:
+                _recent_ask_end(aid, [it["question"] for it in pending])
             return jsonify({"ok": True, "id": aid, "answer": items[0]["answer"], "answers": answers()})
         if closed:                                 # /stop or /skip on Telegram
             stopped = True
@@ -10919,6 +11257,8 @@ def autoapply_agent_ask():
                 it["answer"] = x.get("answer") or None
     if any(it["answer"] and not it["origin"] for it in items):
         save_all()                                 # what the person did answer is kept
+    if sent:                                       # the rest stays open to a late reply for a day
+        _recent_ask_end(aid, [it["question"] for it in pending if it["answer"]])
     return jsonify({"ok": False, "id": aid, "reason": "stopped" if stopped else "timeout"})
 
 

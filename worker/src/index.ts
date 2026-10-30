@@ -425,6 +425,7 @@ const ROUTES: Route[] = [
   ["POST", /^\/notify\/telegram\/send_media$/, tg.sendMedia],
   ["POST", /^\/notify\/telegram\/edit$/, tg.edit],
   ["GET", /^\/notify\/telegram\/inbox$/, tg.inbox],
+  ["POST", /^\/notify\/telegram\/file$/, tg.file],
   ["POST", /^\/telegram\/webhook$/, tg.webhook],
 ];
 

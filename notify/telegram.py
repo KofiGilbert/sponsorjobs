@@ -56,6 +56,16 @@ def _urlopen_multipart(url: str, payload: dict) -> dict:  # pragma: no cover - n
         return json.loads(resp.read().decode("utf-8"))
 
 
+_FILE_API = "https://api.telegram.org/file/bot{token}/{path}"
+MAX_DOWNLOAD = 20 * 1024 * 1024        # the Bot API's getFile limit
+
+
+def _urlopen_bytes(url: str) -> bytes:  # pragma: no cover - net
+    """GET a file's bytes (a resume the person sent their own bot), at most MAX_DOWNLOAD + 1."""
+    with urllib.request.urlopen(url, timeout=60) as resp:
+        return resp.read(MAX_DOWNLOAD + 1)
+
+
 def inline_keyboard(rows) -> dict:
     """Build a Telegram inline keyboard from rows of (text, callback_data) tuples."""
     return {"inline_keyboard": [[{"text": t, "callback_data": d} for (t, d) in row] for row in rows]}
@@ -68,10 +78,11 @@ class TelegramBot:
     urllib client. ``chat_id`` is the person's own chat; every push goes there.
     """
 
-    def __init__(self, token: str, chat_id: str = "", http=None):
+    def __init__(self, token: str, chat_id: str = "", http=None, fetch=None):
         self.token = token
         self.chat_id = str(chat_id or "")
         self._http = http or _urlopen_json
+        self._fetch = fetch or _urlopen_bytes        # fetch(url) -> bytes, for download_file
 
     def _url(self, method: str) -> str:
         return _API.format(token=self.token, method=method)
@@ -129,6 +140,21 @@ class TelegramBot:
         """Acknowledge a tapped inline button (stops Telegram's spinner)."""
         return self._http(self._url("answerCallbackQuery"),
                           {"callback_query_id": callback_query_id, "text": text})
+
+    def download_file(self, file_id: str) -> bytes:
+        """The bytes of a file the person sent the bot: getFile, then the download. Held in
+        memory only; the caller decides where it goes. ValueError("too_big") over 20 MB,
+        RuntimeError when Telegram refuses."""
+        data = self._http(self._url("getFile"), {"file_id": file_id})
+        res = (data or {}).get("result") or {} if isinstance(data, dict) else {}
+        if not (isinstance(data, dict) and data.get("ok", True)) or not res.get("file_path"):
+            raise RuntimeError(str((data or {}).get("description") or "Telegram did not give the file"))
+        if int(res.get("file_size") or 0) > MAX_DOWNLOAD:
+            raise ValueError("too_big")
+        blob = self._fetch(_FILE_API.format(token=self.token, path=res["file_path"]))
+        if len(blob) > MAX_DOWNLOAD:
+            raise ValueError("too_big")
+        return blob
 
     def get_updates(self, offset: int = 0, timeout: int = 0) -> list[dict]:
         """Fetch new updates (messages + callback taps). ``offset`` acks everything below it."""

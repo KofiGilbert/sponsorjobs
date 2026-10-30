@@ -10,6 +10,9 @@ Event routing (same for both channels):
   * ``approve:<id>`` / ``skip:<id>`` / ``approveall`` buttons -> the batch review actions
   * text and slash commands -> NotifyService.handle_command (/list, /approve, /status, /stop,
     /resume, /skip, /handle, free-text chat)
+  * a file (a resume or photo) -> downloaded and imported like the in-app upload
+    (``file_import``), the reply says what it found; anything else gets an honest reply
+    (channel.file_refusal); then its caption is handled as text
 """
 
 from __future__ import annotations
@@ -17,13 +20,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .alerts import away_activity, digest_due, digest_text
-from .channel import ChannelError
+from .channel import MSG_DOWNLOAD_FAILED, MSG_IMPORT_FAILED, MSG_TOO_BIG, ChannelError, _kind, file_refusal
 
 
 class NotifyHub:
     def __init__(self, state, engine, commands, batch_callback=None, job_actions=None,
-                 review=None, ask_callback=None):
+                 review=None, ask_callback=None, file_import=None):
         self.state = state
+        # A resume the person sent the bot: fn(file meta, bytes) -> the reply that says what the
+        # import actually did (ui/app.py, the same import as the in-app upload).
+        self.file_import = file_import
         # The apply agent's questions (docs/apply-agent.md, "ask the person"): fn(kind, payload)
         # -> a reply when it consumed the event (an "ask:" button tap, or a text reply while a
         # question is open), else None so the event goes on to the usual routing.
@@ -37,6 +43,13 @@ class NotifyHub:
     # -- inbound ----------------------------------------------------------------- #
     def handle_event(self, channel, ev: dict) -> str:
         kind = ev.get("type")
+        if kind == "file":
+            msg = self._take_file(channel, ev.get("file"))
+            channel.send(msg)
+            cap = str(ev.get("text") or "").strip()
+            if not cap:
+                return msg
+            return self.handle_event(channel, {**ev, "type": _kind(cap), "text": cap, "file": None})
         if self.ask_callback is not None:
             payload = (ev.get("data") or "") if kind == "button" else (ev.get("text") or "")
             if payload and (kind != "button" or payload.startswith("ask:")):
@@ -83,6 +96,26 @@ class NotifyHub:
             return reply                  # the broker already replied in the chat
         channel.send(reply)
         return reply
+
+    def _take_file(self, channel, f) -> str:
+        """Bring a file the person sent to this computer and import it; the reply says what
+        really happened (written by code, never the model)."""
+        refused = file_refusal(f)
+        if refused:
+            return refused
+        download = getattr(channel, "download", None)
+        if self.file_import is None or not callable(download):
+            return MSG_DOWNLOAD_FAILED
+        try:
+            blob = download(f["file_id"])
+        except ChannelError as exc:
+            return MSG_TOO_BIG if exc.code == "too_big" else MSG_DOWNLOAD_FAILED
+        try:
+            return str(self.file_import(f, blob) or "") or MSG_IMPORT_FAILED
+        except Exception:   # noqa: BLE001 - the person still hears what happened
+            return MSG_IMPORT_FAILED
+        finally:
+            del blob
 
     def _preview_ready(self, channel) -> None:
         """A tailoring the chat started just finished: send its preview (picture, change

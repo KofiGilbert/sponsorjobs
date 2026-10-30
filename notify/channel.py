@@ -14,8 +14,10 @@ which is in use:
 own bot when it is configured, else none.
 
 Events (what ``poll`` returns) are plain dicts, the same for both channels:
-``{cursor, type: "button"|"text"|"command", data, text, at, ack}`` where ``data`` is the
-button id for a tap and ``ack`` is an opaque handle passed back to ``ack()``.
+``{cursor, type: "button"|"text"|"command"|"file", data, text, at, ack}`` where ``data`` is the
+button id for a tap and ``ack`` is an opaque handle passed back to ``ack()``. A ``file`` event
+carries ``file`` ({file_id, name, mime, size, photo}, or None for a voice note or video) and the
+caption as its text; ``download(file_id)`` brings the bytes to this computer.
 Buttons are rows of ``{"id", "label"}``. Every call is OUTBOUND (CLAUDE.md section 5):
 nothing listens on this machine.
 """
@@ -78,6 +80,57 @@ def _as_rows(buttons) -> list:
 
 def _kind(text: str) -> str:
     return "command" if (text or "").strip().startswith("/") else "text"
+
+
+# Files the person sends the bot. A resume (a document of a kind the app reads, or a photo) is
+# brought to this computer and imported like the in-app upload (ui/app.py, the hub's
+# ``file_import``); everything else gets a short honest reply. The official bot's webhook says the
+# same words (worker/src/telegram.ts) and only queues the resumes.
+MSG_NO_MEDIA = ("I can't use voice notes, videos or stickers. Send your resume as a PDF, Word file "
+                "or photo, or type your message.")
+MSG_FILE_TYPE = ("I can't read that kind of file. Send your resume as a PDF, Word, PowerPoint or "
+                 "text file, or a photo.")
+MSG_TOO_BIG = ("That file is too big for Telegram to pass on (over 20 MB). Add it in SponsorJobs "
+               "under My profile, Upload resume.")
+MSG_DOWNLOAD_FAILED = ("I could not get that file from Telegram. Send it again, or add it in "
+                       "SponsorJobs under My profile, Upload resume.")
+MSG_IMPORT_FAILED = ("I got the file but something went wrong on this computer while importing it. "
+                     "Open SponsorJobs and add it under My profile, Upload resume.")
+MAX_FILE_BYTES = 20 * 1024 * 1024        # the Bot API's getFile limit
+FILE_EXTS = {"pdf", "doc", "docx", "ppt", "pptx", "txt", "rtf", "png", "jpg", "jpeg", "webp"}
+MEDIA_KINDS = ("voice", "video", "audio", "sticker", "video_note", "animation")
+
+
+def file_of(msg: dict) -> dict | None:
+    """The file a message carries: Telegram's file_id (the largest photo size), a name, its type
+    and size, as the official bot's file event holds it. None for anything but a document or a
+    photo."""
+    doc = msg.get("document")
+    if isinstance(doc, dict) and doc.get("file_id"):
+        return {"file_id": str(doc["file_id"]), "name": str(doc.get("file_name") or "file")[:120],
+                "mime": str(doc.get("mime_type") or "")[:80], "size": int(doc.get("file_size") or 0),
+                "photo": False}
+    sizes = [p for p in (msg.get("photo") or []) if isinstance(p, dict) and p.get("file_id")]
+    if not sizes:
+        return None
+    big = max(sizes, key=lambda p: (int(p.get("width") or 0) * int(p.get("height") or 0))
+              or int(p.get("file_size") or 0))
+    return {"file_id": str(big["file_id"]), "name": "photo.jpg", "mime": "image/jpeg",
+            "size": int(big.get("file_size") or 0), "photo": True}
+
+
+def file_refusal(f: dict | None) -> str | None:
+    """The honest reply for a file that will not be imported, or None for a resume to import."""
+    if not f or not f.get("file_id"):
+        return MSG_NO_MEDIA
+    if int(f.get("size") or 0) > MAX_FILE_BYTES:
+        return MSG_TOO_BIG
+    name = str(f.get("name") or "")
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    mime = str(f.get("mime") or "")
+    if ext not in FILE_EXTS and not mime.startswith(("application/pdf", "image/", "text/plain")):
+        return MSG_FILE_TYPE
+    return None
 
 
 class OwnBotChannel(Channel):
@@ -150,6 +203,15 @@ class OwnBotChannel(Channel):
             self._set(nxt)
         return events
 
+    def download(self, file_id: str) -> bytes:
+        """The bytes of a file the person sent their own bot (getFile, then the download)."""
+        try:
+            return self.bot.download_file(file_id)
+        except ValueError as exc:
+            raise ChannelError("too_big", str(exc)) from None
+        except Exception as exc:   # noqa: BLE001 - any Telegram or network failure
+            raise ChannelError("telegram_unavailable", type(exc).__name__) from None
+
     def ack(self, event: dict, text: str = "") -> None:
         cb = event.get("ack")
         if cb:
@@ -177,9 +239,16 @@ def parse_update(up: dict, owner_chat: str) -> dict | None:
                 "ack": cb.get("id") or ""}
     msg = up.get("message") or up.get("edited_message") or {}
     text = msg.get("text") or ""
-    if not text:
-        return None
     if str((msg.get("chat") or {}).get("id", "")) != owner:
+        return None
+    if not text and up.get("message") and (msg.get("document") or msg.get("photo")
+                                           or any(msg.get(k) for k in MEDIA_KINDS)):
+        # A file, picture or voice note: a "file" event carrying the file (None for a voice note
+        # or a video), with its caption as the text, handled like any message after that.
+        f = file_of(msg)
+        return {"cursor": cursor, "type": "file", "data": (f or {}).get("file_id", ""),
+                "text": str(msg.get("caption") or ""), "file": f, "at": msg.get("date"), "ack": ""}
+    if not text:
         return None
     return {"cursor": cursor, "type": _kind(text), "data": "", "text": text,
             "at": msg.get("date"), "ack": ""}
@@ -202,9 +271,10 @@ class OfficialBotChannel(Channel):
     RETRY_SHORT_WAIT = 6.0
 
     def __init__(self, get, post, cursor_get, cursor_set, on_unlinked=None, post_media=None,
-                 sleep=time.sleep):
+                 sleep=time.sleep, fetch_file=None):
         self._get_http = get
         self._post_http = post
+        self._fetch_file = fetch_file     # (path, body) -> (status, bytes_or_None)
         self._post_media = post_media     # (path, fields, file_path, content_type) -> (status, json)
         self._sleep = sleep
         self._cget = cursor_get
@@ -284,6 +354,22 @@ class OfficialBotChannel(Channel):
             body["buttons"] = _as_rows(buttons)
         return self._call(lambda: self._post_http("/notify/telegram/edit", body))
 
+    def download(self, file_id: str) -> bytes:
+        """The bytes of a file the person sent the official bot, passed through by the broker
+        (/notify/telegram/file; it serves only files from this account's own chat and keeps
+        nothing)."""
+        if self._fetch_file is None:
+            raise ChannelError("media_unsupported", "This app can't fetch files from the bot.")
+        code, blob = self._fetch_file("/notify/telegram/file", {"file_id": file_id})
+        if code == 413:
+            raise ChannelError("too_big", "The file is over 20 MB.")
+        if code == 404:
+            raise ChannelError("not_found", "The service no longer has that file.")
+        if not (200 <= code < 300) or blob is None:
+            self._check(code, None)
+            raise ChannelError("telegram_unavailable", "The file did not come through.")
+        return blob
+
     def poll(self) -> list[dict]:
         cursor = str(self._cget() or "")
         path = "/notify/telegram/inbox" + (f"?after={cursor}" if cursor else "")
@@ -295,9 +381,24 @@ class OfficialBotChannel(Channel):
         events = []
         for e in data.get("events") or []:
             t = e.get("type")
-            if t not in ("button", "text", "command"):
+            if t not in ("button", "text", "command", "file"):
                 continue
             ev_data, ev_text = str(e.get("data") or ""), str(e.get("text") or "")
+            if t == "file":
+                # {data: file_id, text: JSON {name, mime, size, caption}} (docs/notify.md).
+                import json as _json
+                try:
+                    meta = _json.loads(ev_text or "{}")
+                except ValueError:
+                    meta = {}
+                meta = meta if isinstance(meta, dict) else {}
+                f = {"file_id": ev_data, "name": str(meta.get("name") or "file")[:120],
+                     "mime": str(meta.get("mime") or "")[:80], "size": int(meta.get("size") or 0),
+                     "photo": str(meta.get("mime") or "").startswith("image/")}
+                events.append({"cursor": str(e.get("cursor") if e.get("cursor") is not None else ""),
+                               "type": "file", "data": ev_data, "text": str(meta.get("caption") or ""),
+                               "file": f if ev_data else None, "at": e.get("at"), "ack": ""})
+                continue
             if t == "command":
                 # The broker strips the slash: {data: "stop"} or {data: "approve", text: "12"}.
                 # Rebuild "/approve 12" so the existing command router handles it unchanged.
