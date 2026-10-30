@@ -360,6 +360,13 @@ class KnownContext:
     job_country: str = "US"
     company: str = ""
     eeo_decline: bool = False                    # pick "Decline to self-identify" on EEO questions
+    # (Phase 3, docs/applicant-brain.md) With the applicant brain on, "Have you worked here
+    # before?" is answered per company (``worked_here``: ("Yes"|"No", origin) or None to ask),
+    # never from an answer given for another employer; and a key in ``hold`` (a salary
+    # conflict not asked yet) is left open on a REQUIRED field, so the person is asked once.
+    per_company: bool = False
+    worked_here: tuple | None = None
+    hold: frozenset = frozenset()
 
 
 @dataclass
@@ -430,9 +437,23 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.left.append(f)                         # theirs to answer
             continue
 
+        # 1b. "Have you worked here before?": for THIS company (applicant/facts.py worked_here)
+        qkey0 = normalize(label)
+        if ctx.per_company and qkey0 == "@previously_worked":
+            v = _literal(f, ctx.worked_here[0]) if ctx.worked_here else None
+            if v:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin=ctx.worked_here[1] or "library",
+                                              sensitive=True))
+            else:
+                out.left.append(f)
+            continue
+
         # 2. the answer library (a free-text citizenship question that asks for each country
         #    gets the second one too)
         hit = ctx.library.lookup(label) if ctx.library is not None else None
+        if hit and qkey0 in ctx.hold and f.required:
+            out.left.append(f)                             # two saved values disagree: asked once
+            continue
         if hit and residence_withheld(label, ctx.work_auth):
             out.left.append(f)                             # residence too: theirs to say
             continue

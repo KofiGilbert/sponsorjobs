@@ -1003,6 +1003,8 @@
   "ans.basics": "Answers every form asks",
   "ans.basicsCount": "{n} of {m}",
   "ans.basicsSub": "{n} of {m} form answers saved",
+  "ans.needs": "Needs a look",
+  "ans.needsSaved": "Saved. Every form gets this salary.",
   "ans.citizenship": "Country of citizenship",
   "ans.citizenship2": "Second country of citizenship",
   "ans.addAnother": "Add another",

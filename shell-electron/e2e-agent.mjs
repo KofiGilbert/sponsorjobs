@@ -21,6 +21,9 @@
  *  "Data Privacy Agreement" the person is asked to accept ("Just this one"), the four Phenom
  *  self-identification dropdowns are filled from the saved answers without asking, and the
  *  Ready to send summary names the accepted notice.
+ *  ... and (section 12, the applicant brain's Phase 3) an address typed in the intake chat is
+ *  remembered: a ?address=1 job's contact page fills City, State and the required ZIP code from
+ *  memory, and the run never asks for them.
  */
 import { _electron as electron } from "playwright";
 import { spawn, spawnSync } from "child_process";
@@ -83,7 +86,8 @@ for role, url in [("Business Intelligence Analyst", ${JSON.stringify(JOB)}),
                   ("Analyst (existing account)", ${JSON.stringify(JOB + "?signin=fail")}),
                   ("Analyst (asks a question)", ${JSON.stringify(JOB + "?mustanswer=1")}),
                   ("Analyst (answer remembered)", ${JSON.stringify(JOB + "?mustanswer=1&again=1")}),
-                  ("Analyst (Phenom)", ${JSON.stringify(JOB + "?phenom=1")})]:
+                  ("Analyst (Phenom)", ${JSON.stringify(JOB + "?phenom=1")}),
+                  ("Analyst (address)", ${JSON.stringify(JOB + "?address=1")})]:
     rid = recs.add(role, "Acme Corp", 70, "", jd_label=role,
                    data={"status": "approved", "fit": 85, "render_profile": prof,
                          "source_job": {"url": url, "source_id": "mock:" + role, "location": "Bloomington, IL"},
@@ -96,8 +100,8 @@ recs.close()
 print(json.dumps(ids))
 `], { encoding: "utf8" });
 if (seed.status !== 0) { console.error(seed.stderr); process.exit(1); }
-const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK, RID_AGAIN, RID_PHENOM] = JSON.parse(seed.stdout.trim().split("\n").pop());
-check("seeded seven queued jobs", RID > 0 && RID_AGAIN > 0 && RID_PHENOM > 0, `ids ${RID}..${RID_PHENOM}`);
+const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK, RID_AGAIN, RID_PHENOM, RID_ADDRESS] = JSON.parse(seed.stdout.trim().split("\n").pop());
+check("seeded eight queued jobs", RID > 0 && RID_AGAIN > 0 && RID_PHENOM > 0 && RID_ADDRESS > 0, `ids ${RID}..${RID_ADDRESS}`);
 
 // ---- 3. the engine on the test model, then the real app ---------------------------------
 // The shell strips the test-model flags from any engine it spawns (real model only, CLAUDE.md
@@ -317,6 +321,25 @@ check("nothing was submitted on the Phenom run", !log7.includes("submitted"), JS
 const pkg = await win.evaluate((id) => fetch(`/api/record/${id}`).then((r) => r.json()), RID_PHENOM);
 const acc = (pkg.terms_accepted || []).map((x) => x.title + "|" + x.company);
 check("the acceptance is recorded on the application", acc.length === 1 && acc[0] === "Data Privacy Agreement|Acme Corp", JSON.stringify(pkg.terms_accepted));
+
+// ---- 12. the applicant brain, Phase 3: what the intake chat was told, a form never asks -------
+// The person types their address in the resume builder's chat (the test model reads it the way
+// the real one does). The ZIP code exists nowhere else: the seeded profile only says "Chicago, IL".
+const post = (url, body) => win.evaluate(([u, b]) => fetch(u, { method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(b) }).then((r) => r.status).catch(() => 0), [url, body]);
+const st1 = await post("/api/session/start", { jd: "Business Intelligence Analyst at Acme Corp. SQL, Python and dashboards." });
+const st2 = await post("/api/session/answer", { text: "My home address is 200 W Madison St, Chicago, IL 60606" });
+check("the intake chat took the address", st1 === 200 && st2 > 0, `start ${st1}, answer ${st2}`);
+await win.waitForSelector(`.aa-row[data-id="${RID_ADDRESS}"]`, { timeout: 30_000 });
+seen.length = 0;
+await win.click(`.aa-row[data-id="${RID_ADDRESS}"] [data-act]`);
+const addrDone = await watch(/ready to send|stopped|have a look|could not|the application asks/i, 150_000);
+check("the address run reaches Ready to send", /ready to send/i.test(addrDone), addrDone);
+const log8 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+check("the contact page fills city, state and ZIP from memory", log8.includes("address:Chicago|IL|60606"), JSON.stringify(log8));
+check("a value typed in intake chat is not asked again on the form",
+      !log8.includes("zip-required") && !seen.some((t) => /zip|postal|the application asks/i.test(t)), JSON.stringify(seen));
+check("nothing was submitted on the address run", !log8.includes("submitted"), JSON.stringify(log8));
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

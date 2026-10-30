@@ -685,7 +685,9 @@ class AnthropicLLM:
         system = (
             "You extract DURABLE structured memory from a career chat, to store as rows. Distill "
             "only NEW items the person ACTUALLY stated (never infer or invent):\n"
-            "- type 'fact': a concrete skill, project, achievement, role, date, or credential.\n"
+            "- type 'fact': a concrete skill, project, achievement, role, date, or credential. A form answer "
+            "they state (desired salary, earliest start date, notice period, years of experience) is a "
+            "'fact' with key desired_salary, start_date, notice_period or years_experience.\n"
             "- type 'preference': something they want (targeting fintech, prefers remote).\n"
             "- type 'constraint': something to ENFORCE on the resume (do not mention the 2021 gap; "
             "needs visa sponsorship).\n"

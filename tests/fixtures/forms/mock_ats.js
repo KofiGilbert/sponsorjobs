@@ -15,6 +15,9 @@
   // Privacy Agreement" dialog that must be acknowledged, and the disclosures are Phenom's
   // dropdowns (ignore Escape and blur, list over the next field), all four required.
   const phenom = q.get("phenom") === "1";
+  // ?address=1: the contact page also asks City, State and ZIP code (ZIP required), filled from
+  // the applicant brain's memory (docs/applicant-brain.md, Phase 3).
+  const address = q.get("address") === "1";
   const CODE = "482913";
   const log = [];                                      // what happened, read by the test
   window.fxLog = () => log.slice();
@@ -94,6 +97,10 @@
         + '<div class="field"><label for="ln">Last name</label><input type="text" id="ln"></div>'
         + '<div class="field"><label for="em">Email</label><input type="email" id="em"></div>'
         + '<div class="field"><label for="ph">Phone</label><input type="tel" id="ph"></div>'
+        + (address ? '<div class="field"><label for="city">City</label><input type="text" id="city"></div>'
+            + '<div class="field"><label for="st">State</label><input type="text" id="st"></div>'
+            + '<div class="field"><label for="zip">ZIP code</label><input type="text" id="zip" required></div>'
+            + '<p id="err" class="error" hidden></p>' : '')
         + '<div class="field"><label for="cv">Resume/CV</label><input type="file" id="cv" style="opacity:0;position:absolute;width:1px;height:1px"><button type="button" id="cvbtn">Upload</button><span id="cvname"></span></div>'
         + btn("next", "Save and Continue"));
       $("cvbtn").onclick = () => $("cv").click();
@@ -108,6 +115,10 @@
       };
       $("next").onclick = () => {
         if (dlg && ($("cv").files || []).length && !dlg.acked) { log.push("privacy-needed"); return; }
+        if (address) {
+          if (!$("zip").value.trim()) { $("err").textContent = "The field ZIP code is required and must have a value."; $("err").hidden = false; log.push("zip-required"); return; }
+          log.push("address:" + ["city", "st", "zip"].map((i) => $(i).value.trim()).join("|"));
+        }
         log.push("contact:" + ["fn", "ln", "em", "ph"].filter((i) => $(i).value).length + ":" + (($("cv").files || []).length ? "cv" : "nocv"));
         pages.questions();
       };

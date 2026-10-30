@@ -1003,6 +1003,8 @@
   "ans.basics": "Respostas que todo formulário pede",
   "ans.basicsCount": "{n} de {m}",
   "ans.basicsSub": "{n} de {m} respostas de formulário salvas",
+  "ans.needs": "Precisa de atenção",
+  "ans.needsSaved": "Salvo. Todos os formulários recebem este salário.",
   "ans.citizenship": "País de cidadania",
   "ans.citizenship2": "Segundo país de cidadania",
   "ans.addAnother": "Adicionar outro",

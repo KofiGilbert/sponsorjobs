@@ -713,6 +713,12 @@ class FakeLLM:
         if re.search(r"\b(?:need|needs|require[sd]?|will need)\b[^.\n]{0,25}"
                      r"\b(?:sponsor|sponsorship|visa)\b", low) or "visa sponsorship" in low:
             _add("constraint", "needs_sponsorship", "needs visa sponsorship")
+        # A form answer stated in passing ("I'm looking for $95,000 a year"): a fact under the
+        # key the applicant brain maps to its canonical key (applicant/keys.py CHAT_ALIASES).
+        m = re.search(r"(?:salary|compensation|looking for|expect(?:ing)?|target(?:ing)?)[^.\n$\d]{0,30}"
+                      r"(\$?\s?\d[\d,.]*\s?k?)\b", low)
+        if m and re.search(r"\d{2,}", m.group(1)):
+            _add("fact", "desired_salary", m.group(1).strip(), 0.7)
         return {"facts": facts}
 
     def select_for_cv(self, jd_text: str, profile: dict, recalled: list[dict],

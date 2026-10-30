@@ -9556,6 +9556,44 @@
     if ($("#ansTerms")) $("#ansTerms").checked = d.accept_required_terms === "always";
     $("#ansSalary").value = BAS.val.salary || "";
     basPaint();
+    basNeeds(d.conflicts || []);
+  }
+  function basNote(msg) {
+    const note = $("#ansBasicsNote");
+    if (!note) return;
+    clearTimeout(BAS.noteT);
+    note.textContent = msg || "";
+    BAS.noteT = setTimeout(() => { note.textContent = ""; }, 4000);
+  }
+  // Needs a look (Phase 3): two saved salaries that disagree become one question with a button
+  // per amount. Settling it writes the chosen one everywhere (POST /api/brain/conflicts/settle)
+  // and returns the card.
+  function basNeeds(list) {
+    const box = $("#ansNeeds");
+    if (!box) return;
+    const c = list[0];
+    box.hidden = !c;
+    if (!c) return;
+    $("#ansNeedsQ").textContent = c.text || "";
+    const acts = $("#ansNeedsActs");
+    acts.innerHTML = "";
+    for (const ch of (c.choices || [])) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "btn btn-ghost btn-sm"; b.textContent = ch.label;
+      b.addEventListener("click", async () => {
+        acts.querySelectorAll("button").forEach((x) => { x.disabled = true; });
+        try {
+          const d = await api("/api/brain/conflicts/settle", { key: c.key, value: ch.value });
+          basTake(d);
+          basNote(T("ans.needsSaved", "Saved. Every form gets this salary."));
+          if (ANS.data) await ansRefresh({ keepEditor: true });     // the rows below changed too
+        } catch (err) {
+          acts.querySelectorAll("button").forEach((x) => { x.disabled = false; });
+          basNote(err.message || T("profile.answers.failed", "Couldn't save."));
+        }
+      });
+      acts.appendChild(b);
+    }
   }
   // The card again after Saved answers changed below it: fields the person has not touched take
   // the saved values; one they are editing keeps their edit (and Save compares it with the new

@@ -1261,11 +1261,66 @@ def _assistant_summary() -> str:
     except Exception:          # noqa: BLE001
         pass
     try:
+        profile, answers = _assistant_from_brain(profile, answers)
+    except Exception:          # noqa: BLE001 - the summary without the brain's extras
+        traceback.print_exc()
+    try:
         wa = _work_auth()
     except Exception:          # noqa: BLE001
         wa = {}
     labels = {(cc, code): label for cc, rows in _wa.STATUSES.items() for code, label in rows}
     return AS.summary(profile, resumes, answers, wa, labels)
+
+
+def _assistant_from_brain(profile: dict, answers: list) -> tuple[dict, list]:
+    """(Phase 3) The Telegram assistant's summary reads the brain: the name and roles, schools and
+    skills the brain holds when the saved profile has none (a resume sent on Telegram, the
+    extension), and the form answers saved outside the answer library (the prefs answers the
+    extension fills, "worked here before" per company), named by their question only. Never a
+    value: the summary lists questions, and self-identification ones only as saved or not."""
+    import json as _j
+
+    from applicant import facts as _F
+    from applicant import keys as _K
+    p = dict(profile or {})
+    ps, st = _profile_brain(), _brain()
+    if ps is None or st is None:
+        return p, list(answers)
+    ident = dict(p.get("identity") or {})
+    mem = _F.identity(ps)
+    if not str(ident.get("name") or "").strip() and mem.get("name"):
+        ident["name"] = mem["name"]
+    p["identity"] = ident
+
+    def items(key):
+        out = []
+        for r in ps.q("SELECT value FROM fact WHERE person='default' AND store='' AND status='active' AND key=?"
+                      " ORDER BY id", (key,)):
+            try:
+                out.append(_j.loads(r["value"]) if key != "skill" else r["value"])
+            except ValueError:
+                continue
+        return out
+    if not p.get("experience"):
+        p["experience"] = [{"org": v.get("org", ""), "title": v.get("title", ""), "dates": v.get("dates", "")}
+                           for v in items("role") if isinstance(v, dict)]
+    if not p.get("education"):
+        p["education"] = [v for v in items("school") if isinstance(v, dict)]
+    if not p.get("skills"):
+        sk = [str(v) for v in items("skill") if str(v).strip()]
+        if sk:
+            p["skills"] = {"Skills": ", ".join(sk)}
+    have = {str(a.get("key") or "") for a in answers}
+    extra = []
+    for r in st.q("SELECT DISTINCT key FROM fact WHERE person='default' AND status='active'"
+                  " AND store IN ('app_prefs.json', '') AND key LIKE '@%'"):
+        k = r["key"]
+        reg = _K.get(k)
+        if k in have or reg is None or reg.sensitivity == _K.EEO or not reg.ask:
+            continue
+        extra.append({"key": k, "question": reg.ask})
+        have.add(k)
+    return p, list(answers) + extra
 
 
 def _annalisa_reply(text: str) -> str:
@@ -4443,16 +4498,21 @@ def _profile_missing_slots(include_soft: bool = True) -> list[dict]:
     and the template shows projects. One source for the onboarding step, "Add the details" on
     Auto-apply, and the run's pre-flight (HARD only). Empty without a profile: that is "add
     your resume"'s job."""
+    import copy
+
     from tailoring.assembler import normalize_profile
-    from ui.session import _essentials_from, _flatten_profile, _missing_slots
+    from ui.session import _essentials_from, _flatten_profile, _missing_slots, brain_backfill
     saved = _memory().load("default") or {}
     profile = saved.get("profile") or {}
     if not profile.get("experience"):
         return []
     ess = _essentials_from(saved.get("essentials") or {}, profile)
     soft = include_soft and _template_shows_projects(_load_template(None)[1])
-    return [x for x in _missing_slots(*_flatten_profile(normalize_profile(profile)),
-                                      declined=ess.get("declined") or [])
+    ident, edu, exp, projs = copy.deepcopy(_flatten_profile(normalize_profile(profile)))
+    # (Phase 3) The brain first: a detail another writer saved (the extension, a resume
+    # import, an earlier details step) is never asked again.
+    brain_backfill(ident, edu, exp, projs, _profile_brain())
+    return [x for x in _missing_slots(ident, edu, exp, projs, declined=ess.get("declined") or [])
             if x["crit"] or (soft and x["soft"])]
 
 
@@ -4558,14 +4618,34 @@ def profile_details_save():
     if _SESSION.get("s") is not None:
         return jsonify({"error": "Finish or close the resume you're building first, "
                                  "its autosave would overwrite these edits."}), 409
+    import copy
     b = request.json or {}
     mem = _memory()
     saved = mem.load("default") or {}
     profile = saved.get("profile") or {}
     ess = saved.get("essentials") or {}
+    before = copy.deepcopy(profile)
     _apply_profile_details(profile, ess, list(b.get("answers") or []), list(b.get("declines") or []))
     mem.save("default", profile, ess, saved.get("history") or [])
+    _pbrain_do(_brain_details, before, profile)      # (Phase 3) the person's answers are facts
     return jsonify({"ok": True, "missing": _profile_missing_slots()})
+
+
+def _brain_details(st, before: dict, after: dict) -> int:
+    """(Phase 3) What the details step changed, as the person's own facts (source "you"): the
+    contact details they typed, and each role, school or project whose dates or location they
+    gave. Only what changed: an untouched entry keeps where it came from."""
+    from applicant import facts as _F
+    from applicant.migrate import _profile_items
+    ib, ia = (before.get("identity") or {}), (after.get("identity") or {})
+    n = _F.write_contact(st, {k: v for k, v in ia.items() if str(v or "").strip() and ib.get(k) != v},
+                         source="you", source_ref="details")
+    old = {(k, sub): v for k, sub, v, part in _profile_items(before) if part != "contact"}
+    for key, sub, val, part in _profile_items(after):
+        if part != "contact" and old.get((key, sub)) != val:
+            if _F.put(st, key, val, source="you", subject=sub, source_ref="details") is not None:
+                n += 1
+    return n
 
 
 @app.post("/api/profile/from_cv")
@@ -4597,7 +4677,7 @@ def profile_from_cv():
     return jsonify({"ok": True, "profile": out["profile"], "missing": out["missing"], "summary": out["summary"]})
 
 
-def _import_resume_file(dest: Path) -> dict:
+def _import_resume_file(dest: Path, channel: str = "app") -> dict:
     """THE resume import, shared by the in-app upload (/api/profile/from_cv) and a resume sent on
     Telegram: read the file locally (Word, PDF, PowerPoint, text, or an image through OCR), parse
     it into a profile with the real model, and fold it into the saved profile without losing
@@ -4624,6 +4704,7 @@ def _import_resume_file(dest: Path) -> dict:
     if existing.get("experience") or (existing.get("identity") or {}).get("name"):
         profile = _merge_profiles(existing, profile)
     _memory().save("default", profile, _essentials_from_profile(profile), saved.get("history") or [])
+    _pbrain_do(_brain_resume, parsed, dest, channel)  # (Phase 3) its facts, with a document row
     _autofill_saved_project_dates()     # a linked repo's dates, before asking for them
     profile = (_memory().load("default") or {}).get("profile") or profile
     ident = profile.get("identity") or {}
@@ -4635,6 +4716,16 @@ def _import_resume_file(dest: Path) -> dict:
         "skills": len(profile.get("skills") or {}),
         "education": len(profile.get("education") or []),
     }}
+
+
+def _brain_resume(st, parsed: dict, dest: Path, channel: str) -> int:
+    """(Phase 3) What one resume file held, as open facts at 0.9 (roles, schools, projects,
+    skills, contact details), each pointing at the file's ``document`` row."""
+    from applicant import facts as _F
+    did = _F.add_document(st, dest.name, kind="resume", path=str(dest), channel=channel)
+    n = _F.write_profile(st, parsed, source="resume", source_ref=f"document:{did}")
+    _F.set_document_facts(st, did, n)
+    return n
 
 
 def _plural(n: int, word: str) -> str:
@@ -4674,7 +4765,7 @@ def _telegram_file_import(meta: dict, blob: bytes) -> str:
     dest = UPLOADS_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_telegram_{name}"
     dest.write_bytes(blob)      # kept with the in-app uploads: the raw backup, never sent anywhere
     try:
-        out = _import_resume_file(dest)
+        out = _import_resume_file(dest, channel="telegram")
     except Exception as exc:    # noqa: BLE001 - no key, offline, out of credit: say which
         traceback.print_exc()
         detail = _FAILURE_TEXT.get(_classify_outage(exc), "something went wrong on this computer.")
@@ -4809,6 +4900,9 @@ def profile_identity_save():
         mem.save("default", profile, essentials, history)
     finally:
         mem.close()
+    from applicant import facts as _F                # (Phase 3) the person saw and kept these
+    _pbrain_do(_F.write_contact, {k: v for k, v in ident.items() if v}, source="you", source_ref="profile",
+               confirm=True)
     # Keep a live builder session (if any) consistent so it doesn't overwrite on autosave.
     sess = _SESSION.get("s")
     if sess is not None:
@@ -5005,6 +5099,16 @@ def _learn_from_corrections(body: dict) -> dict:
                     sess.profile.setdefault("identity", {}).update(patch)
             except Exception:
                 pass
+    # (Phase 3) The corrected contact details are facts too, the address in its parts as the
+    # form had them (street, city, state, ZIP), so the next form fills each part from memory.
+    if patch or any(str(fields.get(k) or "").strip() for k in ("street", "city", "state", "zip", "country")):
+        from applicant import facts as _F
+        learned = dict(patch)
+        for k in ("street", "city", "state", "zip", "country"):
+            v = str(fields.get(k) or "").strip()[:120]
+            if v:
+                learned[k] = v
+        _pbrain_do(_F.write_contact, learned, source="extension", source_ref="extension")
     pref_patch = {k: v for k, v in screening.items()
                   if k in ("work_auth_us", "work_authorized", "needs_sponsorship",
                            "willing_to_relocate", "over_18")}
@@ -5017,8 +5121,8 @@ def _learn_from_corrections(body: dict) -> dict:
         lib = _answer_lib()
         try:
             for x in qa_list:
-                if lib.save(str(x.get("question") or ""), str(x.get("answer") or ""), "you",
-                            company=str(body.get("company") or "")):
+                if _save_answer(lib, str(x.get("question") or ""), str(x.get("answer") or ""),
+                                company=str(body.get("company") or ""), via="extension"):
                     learned_q += 1
         finally:
             lib.close()
@@ -5346,6 +5450,156 @@ def _eeo_decline() -> bool:
     return bool(_brain_prefs().get("eeo_decline"))
 
 
+# ---- (Phase 3, docs/applicant-brain.md) every writer saves facts; the readers ask the brain first.
+def _brain_do(fn, *a, **k):
+    """Run one applicant-brain writer or reader (applicant/facts.py) on this data folder's brain.
+    None when the brain is off; never breaks the caller."""
+    st = _brain()
+    if st is None:
+        return None
+    try:
+        return fn(st, *a, **k)
+    except Exception:          # noqa: BLE001 - the legacy stores still hold everything
+        traceback.print_exc()
+        return None
+
+
+def _profile_brain():
+    """The brain beside the person's memory file (DB_PATH), where the profile's facts live (contact
+    details, roles, schools, projects). In the app that is the data folder's brain; a test that
+    points DB_PATH at its own folder gets its own brain there."""
+    try:
+        d = Path(DB_PATH).resolve().parent
+    except (OSError, TypeError):
+        return None
+    if d == _DATA:
+        return _brain()
+    try:
+        from applicant import migrate as _bm
+        return _bm.ensure(d)
+    except Exception:          # noqa: BLE001
+        traceback.print_exc()
+        return None
+
+
+def _pbrain_do(fn, *a, **k):
+    """_brain_do on the profile's brain (``_profile_brain``)."""
+    st = _profile_brain()
+    if st is None:
+        return None
+    try:
+        return fn(st, *a, **k)
+    except Exception:          # noqa: BLE001
+        traceback.print_exc()
+        return None
+
+
+def _memory_contact() -> dict:
+    """The contact facts a form takes (city, state, ZIP, country...), at confidence 0.9 or more."""
+    from applicant import facts as _F
+    return _pbrain_do(_F.contact) or {}
+
+
+def _applicant_for(prof: dict) -> dict:
+    """The applicant map a fill resolves against: the record's own identity, the address parts
+    from its own line, then the brain's contact facts for anything it lacks."""
+    from autoapply import applicant_from_record
+    return applicant_from_record({"profile": prof or {}}, _memory_contact())
+
+
+def _employers() -> list:
+    """Every employer the person has (the brain's roles and the saved profile's)."""
+    from applicant import facts as _F
+    try:
+        prof = _saved_full_profile() or {}
+    except Exception:          # noqa: BLE001
+        prof = {}
+    return _F.employers(_profile_brain(), prof)
+
+
+def _worked_here(company: str):
+    """("Yes" | "No", origin) for "Have you worked for <company> before?" from the person's
+    answers for that company and their employer history, else None (asked). None with the
+    brain off: the answer library answers as before."""
+    from applicant import facts as _F
+    st = _brain()
+    if st is None or not str(company or "").strip():
+        return None
+    try:
+        return _F.worked_here(st, company, _employers())
+    except Exception:          # noqa: BLE001
+        traceback.print_exc()
+        return None
+
+
+def _salary_conflict():
+    """The one question two disagreeing salaries become (applicant/facts.py), or None."""
+    from applicant import facts as _F
+    return _brain_do(_F.salary_conflict)
+
+
+def _held() -> frozenset:
+    """Keys the agent asks about instead of filling on a required field: a salary conflict it
+    has not asked yet (asked once, then the newest salary fills as before)."""
+    c = _salary_conflict()
+    return frozenset({c["key"]}) if c and not c.get("asked") else frozenset()
+
+
+def _recall_ctx(company: str = "") -> dict:
+    """What the planner and the ask route take from the brain: per-company "worked here before",
+    and the keys held for a conflict question. Empty with the brain off (legacy behaviour)."""
+    if _brain() is None:
+        return {}
+    return {"per_company": True, "worked_here": _worked_here(company), "hold": _held()}
+
+
+def _settle_salary(value) -> bool:
+    """The person chose their salary (on Your answers, or in the agent's question): it is the
+    salary everywhere, the answer library (older wordings of the question go, as on the card),
+    the prefs store the extension fills from, and a salary said in chat. False when it is not a
+    yearly amount."""
+    from autoapply import basics
+    from applicant import facts as _F
+    n = basics.parse_salary(value)
+    if not n:
+        return False
+    lib = _answer_lib()
+    try:
+        if hasattr(lib, "via"):
+            lib.via = "settled"
+        basics.write(lib, {"salary": str(n)})
+    finally:
+        lib.close()
+    _merge_prefs({"desired_salary": str(n)}, source="you")
+    _brain_do(_F.settle_chat_salary, n)
+    return True
+
+
+def _save_answer(lib, question: str, answer: str, *, source: str = "you", company: str = "",
+                 via: str = "", ref: str = ""):
+    """Save one answer the person gave, with where it came from as the fact's source ref
+    (``via``: ask_bar, ask_telegram, late_telegram, extension, package, answers_page...).
+    "Have you worked here before?" is kept for that company only (the brain); a salary the
+    person gives settles an open salary question (it becomes the salary everywhere). Returns the
+    saved row, or None when nothing was saved."""
+    from autoapply.answers import normalize
+    from applicant import facts as _F
+    key = normalize(question)
+    if key == "@previously_worked" and company:
+        st = _brain()
+        if st is not None:
+            yes = _F.save_worked_here(st, company, answer, question=question, source=source,
+                                      source_ref=":".join(x for x in (via, ref) if x))
+            return {"key": key, "question": question, "answer": answer} if yes else None
+    if hasattr(lib, "via"):
+        row = lib.save(question, answer, source, company=company, ref=":".join(x for x in (via, ref) if x))
+    else:
+        row = lib.save(question, answer, source, company=company)
+    if row is not None and key == "@salary" and source == "you" and _salary_conflict() is not None:
+        _settle_salary(row["answer"])
+    return row
+
+
 def _answers_payload(query: str = "") -> dict:
     from autoapply import workauth as _wa
     lib = _answer_lib()
@@ -5400,8 +5654,10 @@ def answers_save():
         return jsonify({"error": "Write an answer first."}), 400
     lib = _answer_lib()
     try:
+        if hasattr(lib, "via"):
+            lib.via = "answers_page"
         key = str(b.get("key") or "").strip()
-        row = lib.update(key, question=q or None, answer=a) if key else lib.save(q, a, "you")
+        row = lib.update(key, question=q or None, answer=a) if key else _save_answer(lib, q, a, via="answers_page")
     finally:
         lib.close()
     if row is None:
@@ -5433,7 +5689,10 @@ def _basics_payload(prefs: dict | None = None) -> dict:
         d = basics.read(lib, eeo_decline=bool(p.get("eeo_decline")), salary_fallback=p.get("desired_salary") or "")
     finally:
         lib.close()
+    c = _salary_conflict()
     return {"ok": True, **d, "eeo_decline": bool(p.get("eeo_decline")),
+            # (Phase 3) Needs a look: two saved salaries that disagree, as ONE question
+            "conflicts": [{k: c[k] for k in ("key", "field", "text", "choices")}] if c else [],
             "accept_required_terms": "always" if p.get("accept_required_terms") == "always" else "ask",
             "countries": list(countries.NAMES),
             "choices": {f: [{"code": c, "label": w} for c, w in ch] for f, ch in basics.CHOICES.items()}}
@@ -5459,6 +5718,8 @@ def answers_basics_save():
     fields = b.get("fields") if isinstance(b.get("fields"), dict) else {}
     pref_salary = str(_load_prefs().get("desired_salary") or "").strip()
     lib = _answer_lib()
+    if hasattr(lib, "via"):
+        lib.via = "card"
     try:
         # A salary only the prefs store holds (the extension's) is the card's salary too: saved
         # in the library with the rest, unless the person cleared or changed it here.
@@ -5482,7 +5743,32 @@ def answers_basics_save():
     if b.get("accept_required_terms") in ("ask", "always"):     # terms a site requires to apply
         patch["accept_required_terms"] = b["accept_required_terms"]
     prefs = _merge_prefs(patch, source="card") if patch else _load_prefs()
+    if got["salary"]:                         # the card's salary settles a salary said in chat
+        from applicant import facts as _F
+        _brain_do(_F.settle_chat_salary, int(got["salary"]))
     return jsonify(_basics_payload(prefs))
+
+
+@app.get("/api/brain/conflicts")
+@_guard
+def brain_conflicts():
+    """(Phase 3) Needs a look: the questions two disagreeing saved values become (today, the
+    salary), each with its choices. Local only."""
+    c = _salary_conflict()
+    return _nostore(jsonify({"ok": True, "conflicts": [{k: c[k] for k in ("key", "field", "text", "choices")}] if c else []}))
+
+
+@app.post("/api/brain/conflicts/settle")
+@_guard
+def brain_conflicts_settle():
+    """Settle one {key, value}: the chosen value becomes the answer everywhere (the answer
+    library, the prefs the extension fills from, a value said in chat). Returns the card."""
+    b = request.json or {}
+    if str(b.get("key") or "") != "@salary":
+        return jsonify({"error": "Which answer?"}), 400
+    if not _settle_salary(b.get("value")):
+        return jsonify({"error": "Enter your yearly salary as a number, like 120000."}), 400
+    return jsonify(_basics_payload())
 
 
 @app.post("/api/record/<int:rid>/screening")
@@ -5516,7 +5802,7 @@ def record_screening_save(rid: int):
     if ans:
         lib = _answer_lib()
         try:
-            saved = lib.save(scr[idx].get("question") or "", ans, "you", company=company)
+            saved = _save_answer(lib, scr[idx].get("question") or "", ans, company=company, via="package", ref=str(rid))
         finally:
             lib.close()
     return jsonify({"ok": True, "screening": scr, "reused": bool(saved)})
@@ -10804,7 +11090,7 @@ def autoapply_plan():
     prof = data.get("render_profile") or data.get("profile") or {}
     if not (prof.get("identity") or {}).get("name"):
         prof = _saved_full_profile() or prof             # fall back to the saved profile's identity
-    applicant = applicant_from_record({"profile": prof})
+    applicant = _applicant_for(prof)                     # city, state, ZIP and country from memory too
     if _application_email():
         applicant["email"] = _application_email()       # the alias, when the person took one
     resume = _resume_upload_path(rec) if rec else ""   # named after the person, not cv-<id>.pdf
@@ -10817,7 +11103,7 @@ def autoapply_plan():
                            drafted=[x for x in (data.get("screening") or []) if isinstance(x, dict)],
                            cover_letter=str(data.get("cover_letter") or ""), applicant=applicant,
                            resume_path=resume, job_country=_job_country(data), company=company,
-                           eeo_decline=_eeo_decline())
+                           eeo_decline=_eeo_decline(), **_recall_ctx(company))
         res = plan_known(fields, ctx)
         if res.rest:
             try:
@@ -10928,14 +11214,18 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
     labels = [lab for lab in labels if not is_eeo(lab)]
     if not labels:
         return {}
-    fields = [FormField(ref=f"l{i}", label=lab, type="text") for i, lab in enumerate(labels)]
+    company = (rec.get("company") if rec else "") or ""
+    recall = _recall_ctx(company)
+    # (Phase 3) These labels are the ones left open, required or named by the page's errors: a
+    # held key (a salary conflict not asked yet) stays open here so the agent asks it once.
+    fields = [FormField(ref=f"l{i}", label=lab, type="text", required=True) for i, lab in enumerate(labels)]
     lib = _answer_lib()
     try:
         ctx = KnownContext(work_auth=_work_auth(), library=lib,
                            drafted=[x for x in ((data or {}).get("screening") or []) if isinstance(x, dict)],
                            cover_letter="", applicant=applicant, resume_path="",
-                           job_country=_job_country(data or {}), company=(rec.get("company") if rec else "") or "",
-                           eeo_decline=_eeo_decline())
+                           job_country=_job_country(data or {}), company=company,
+                           eeo_decline=_eeo_decline(), **recall)
         res = plan_known(fields, ctx)
         ops = resolve_plan([a for a in res.actions if a.op in ("fill", "select", "check")], applicant)
     except Exception:          # noqa: BLE001 - a planner hiccup never blocks the step
@@ -10952,10 +11242,14 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
     # the structured work-auth profile is still empty.
     lib = _answer_lib()
     wa = _work_auth()
+    from autoapply.answers import normalize as _norm_q
     try:
         for lab in labels:
             if lab in out or residence_withheld(lab, wa):
                 continue
+            k = _norm_q(lab)
+            if k in recall.get("hold", ()) or (recall.get("per_company") and k == "@previously_worked"):
+                continue                       # asked, or answered for this company only (above)
             hit = lib.lookup(lab)
             if hit and str(hit.get("answer") or "").strip():
                 out[lab] = str(hit["answer"]).strip()
@@ -10982,6 +11276,17 @@ def _ask_items(ask: dict) -> list:
         ask["items"] = [{"question": ask.get("question", ""), "options": list(ask.get("options") or []),
                          "answer": ask.get("answer")}]
     return ask["items"]
+
+
+def _ask_key(question: str) -> str:
+    """The key an asked question is saved under, for the event log (never its answer; a
+    self-identification question is logged as "eeo")."""
+    from autoapply.answers import normalize
+    from autoapply.asks import is_eeo
+    if is_eeo(question):
+        return "eeo"
+    k = normalize(question)
+    return k if k.startswith("@") else "question"
 
 
 def _ask_done(ask: dict) -> bool:
@@ -11176,7 +11481,8 @@ def _late_save(row: dict, picks: dict) -> str | None:
             if not 0 <= j < len(items):
                 continue
             it = items[j]
-            if lib.save(it["question"], str(val), "you", company=row.get("company") or ""):
+            if _save_answer(lib, it["question"], str(val), company=row.get("company") or "",
+                            via="late_telegram", ref=str(row.get("id") or "")):
                 saved.append((it, str(val)))
     finally:
         lib.close()
@@ -11257,6 +11563,7 @@ def _agent_ask_event(kind: str, payload: str):
                     _ask_set(ask, 0, str(items[0]["options"][int(parts[2])]))
                 except (ValueError, IndexError):
                     return None
+                ask["via"] = "telegram"
                 return f"Got it: {items[0]['answer']}."
             aid = None
         else:
@@ -11275,6 +11582,9 @@ def _agent_ask_event(kind: str, payload: str):
                          if a.get("open", True) and not _ask_done(a) and a.get("sent", True)]
             aid = open_asks[-1]["id"] if open_asks else None
     if aid is not None:
+        with _ASKS_LOCK:
+            if aid in _ASKS:
+                _ASKS[aid]["via"] = "telegram"
         msg, _done = _ask_take_reply(aid, text)
         return msg
     try:
@@ -11342,6 +11652,7 @@ def autoapply_agent_ask():
     company = (rec.get("company") if rec else "") or ""
     # The person's own material first: never ask what the profile or the library already says.
     unforced = [it for it in items if not it["force"]]
+    recall = _recall_ctx(company)
     if unforced:
         lib = _answer_lib()
         try:
@@ -11349,11 +11660,21 @@ def autoapply_agent_ask():
             wa, country = _work_auth(), _job_country(data)
             for it in unforced:
                 k = AK.known_answer(it["question"], it["all_options"], partial=it["partial"], library=lib,
-                                    work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"])
+                                    work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"],
+                                    **recall)
                 if k:
                     it["answer"], it["origin"] = k
         finally:
             lib.close()
+    # (Phase 3) Two saved salaries that disagree become ONE question, in its own words, with the
+    # amounts as the choices (a typed amount counts too). Asked once: then the newest fills.
+    conflict = _salary_conflict() if recall.get("hold") else None
+    reword = {}
+    if conflict:
+        from autoapply.answers import normalize as _nq
+        for it in items:
+            if not it["answer"] and _nq(it["question"]) == conflict["key"] and not it["all_options"]:
+                reword[it["question"]] = {"say": conflict["text"], "options": [c["label"] for c in conflict["choices"]]}
     answers = lambda: {it["question"]: it["answer"] for it in items if it["answer"]}   # noqa: E731
     if b.get("known_only"):                        # the shell checks first, then shows the bar
         # A self-identification answer that IS one of the page's choices: the shell picks it
@@ -11361,13 +11682,22 @@ def autoapply_agent_ask():
         select = {it["question"]: it["answer"] for it in items
                   if it["answer"] and AK.is_eeo(it["question"]) and it["answer"] in it["all_options"]}
         return jsonify({"ok": all(it["answer"] for it in items), "id": aid, "known": True,
-                        "answers": answers(), "select": select,
+                        "answers": answers(), "select": select, "reword": reword,
                         "open": [it["question"] for it in items if not it["answer"]]})
     if all(it["answer"] for it in items):
         return jsonify({"ok": True, "id": aid, "known": True, "answer": items[0]["answer"], "answers": answers()})
     pending = [it for it in items if not it["answer"]]
+    for it in pending:
+        r = reword.get(it["question"])
+        if r:
+            it.update(say=r["say"], options=list(r["options"]), all_options=list(r["options"]), partial=True)
     _ask_open(aid, pending, b.get("record_id"))
     sent = _ask_telegram(aid, pending)
+    if conflict:
+        from applicant import facts as _F
+        from autoapply.answers import normalize as _nq
+        if any(_nq(it["question"]) == conflict["key"] for it in pending):
+            _brain_do(_F.mark_asked, conflict)     # asked once; never again for these amounts
     if sent:                                       # kept a day for a late reply (_late_answer)
         try:
             _recent_ask_add(aid, pending, record_id=b.get("record_id") or "",
@@ -11376,13 +11706,17 @@ def autoapply_agent_ask():
             traceback.print_exc()
 
     def save_all():
+        with _ASKS_LOCK:
+            via = "ask_telegram" if (_ASKS.get(aid) or {}).get("via") == "telegram" else "ask_bar"
         lib = _answer_lib()
         try:
             for it in items:
                 a = str(it["answer"] or "").strip()
                 # A question back is never an answer (the reply reader drops it too).
                 if a and not it["origin"] and not a.endswith("?"):
-                    lib.save(it["question"], a, "you", company=company)
+                    _save_answer(lib, it["question"], a, company=company, via=via, ref=aid)
+                    _brain_do(lambda st: st.log("ask_answered", ref=f"ask:{aid}", key=_ask_key(it["question"]),
+                                                 options=len(it.get("all_options") or []), source=via))
         finally:
             lib.close()
 
@@ -11497,6 +11831,7 @@ def autoapply_agent_answer():
         if not ask or not ask.get("open", True):
             return jsonify({"ok": False, "error": "That question is no longer open."}), 404
         aid = ask["id"]
+        ask["via"] = "bar"
         items = _ask_items(ask)
         if b.get("exact"):
             try:
@@ -11619,7 +11954,7 @@ def autoapply_agent_step():
     prof = data.get("render_profile") or data.get("profile") or {}
     if not (prof.get("identity") or {}).get("name"):
         prof = _saved_full_profile() or prof             # fall back to the saved profile's identity
-    applicant = applicant_from_record({"profile": prof})
+    applicant = _applicant_for(prof)                     # city, state, ZIP and country from memory too
     if _application_email():
         applicant["email"] = _application_email()       # the alias, when the person took one
     portal = _portal_account(_host(url))

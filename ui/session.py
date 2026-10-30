@@ -528,6 +528,73 @@ def _backfill(dst_entries: list, src_entries: list, key_field: str, fields: tupl
                 d[f] = s.get(f)
 
 
+def _brain_items(st) -> dict:
+    """The applicant brain's open facts (roles, schools, projects) as the gate's flat entries:
+    {"experience": [{org, title, dates, location}], "education": [...], "projects": [...]}."""
+    import json as _json
+    out = {"experience": [], "education": [], "projects": []}
+    if st is None:
+        return out
+    try:
+        rows = st.q("SELECT key, value FROM fact WHERE person='default' AND store='' AND status='active'"
+                    " AND key IN ('role','school','project')")
+    except Exception:          # noqa: BLE001 - the brain is a help here, never a blocker
+        return out
+    for r in rows:
+        try:
+            v = _json.loads(r["value"])
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(v, dict):
+            continue
+        if r["key"] == "role":
+            out["experience"].append({"org": v.get("org", ""), "title": v.get("title", ""),
+                                      "dates": v.get("dates", ""), "location": v.get("location", "")})
+        elif r["key"] == "school":
+            out["education"].append({k: v.get(k, "") for k in ("school", "degree", "date", "location")})
+        else:
+            out["projects"].append({"org": v.get("title") or v.get("name") or v.get("org") or "",
+                                    "dates": v.get("dates", "")})
+    return out
+
+
+def brain_backfill(identity: dict, education: list, experience: list, projects: list, st) -> None:
+    """(Phase 3) The gate checks the applicant brain before asking: an empty contact detail, a
+    role's dates or location, a school's date, a project's dates the brain already holds (from
+    the details step, the extension, a resume import) is filled in place, so it is never asked
+    again. Matches a role on its org AND title, never on the org alone. Does nothing without a
+    brain."""
+    if st is None:
+        return
+    from applicant import facts as _F
+    try:
+        mem = _F.identity(st)
+    except Exception:          # noqa: BLE001
+        mem = {}
+    for f in ("name", "email", "phone", "address", "github", "linkedin", "blog"):
+        if not str(identity.get(f) or "").strip() and str(mem.get(f) or "").strip():
+            identity[f] = mem[f]
+    items = _brain_items(st)
+    norm = lambda s: re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip()   # noqa: E731
+    roles = {(norm(x["org"]), norm(x["title"])): x for x in items["experience"]}
+    for d in experience or []:
+        x = roles.get((norm(d.get("org")), norm(d.get("title"))))
+        for f in ("dates", "location"):
+            if x and not str(d.get(f) or "").strip() and str(x.get(f) or "").strip():
+                d[f] = x[f]
+    schools = {norm(x["school"]): x for x in items["education"]}
+    for d in education or []:
+        x = schools.get(norm(d.get("school")))
+        for f in ("degree", "date", "location"):
+            if x and not str(d.get(f) or "").strip() and str(x.get(f) or "").strip():
+                d[f] = x[f]
+    projs = {norm(x["org"]): x for x in items["projects"]}
+    for d in projects or []:
+        x = projs.get(norm(d.get("org")))
+        if x and not str(d.get("dates") or "").strip() and str(x.get("dates") or "").strip():
+            d["dates"] = x["dates"]
+
+
 _ACTION_RE = re.compile(
     r"\b(?:built|led|designed|developed|created|launched|shipped|managed|owned|drove|"
     r"delivered|automated|analy[sz]ed|improved|implemented|migrated|scaled|reduced|"
@@ -751,6 +818,39 @@ class WebIntake:
                              self.prior_history + self.history)
         except Exception:
             pass
+        self._brain_contact()
+
+    def _brain(self):
+        """(Phase 3) The applicant brain beside this session's memory file, for the person's own
+        profile only ("default": never a variant or a batch's scratch copy). None when there is
+        no brain there (a test's bare memory) or it is off."""
+        if self.profile_name != "default":
+            return None
+        p = str(getattr(self.memory, "db_path", "") or "")
+        if not p or p == ":memory:":
+            return None
+        d = Path(p).parent
+        if not (d / "applicant.db").exists():
+            return None
+        try:
+            from applicant import migrate as _bm
+            return _bm.ensure(d)
+        except Exception:      # noqa: BLE001 - the brain never breaks the chat
+            return None
+
+    def _brain_contact(self):
+        """(Phase 3) The contact details the person gave the builder are facts: their own words
+        in answer to the builder's question (source "you"), with the diary line as the ref. An
+        unchanged value writes nothing."""
+        st = self._brain()
+        if st is None:
+            return
+        try:
+            from applicant import facts as _F
+            ident = dict(self.essentials.get("identity") or {})
+            _F.write_contact(st, ident, source="you", source_ref=self._last_user_ref or "builder")
+        except Exception:      # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------ P1 memory
     @staticmethod
@@ -781,11 +881,17 @@ class WebIntake:
         turn (``diary:default.jsonl:212``), which becomes the fact's ``source_ref`` in the
         applicant brain. Best-effort: never breaks the chat."""
         from datetime import date
+
+        from notify.assistant import carries_eeo
         new: list[dict] = []
         try:
             existing = self.memory.list_facts(self.profile_name, status=None)
             known = {f["key"] for f in existing}
-            result = self.llm.distill_memory(self.prior_history + self.history, sorted(known))
+            # (Phase 3) A turn that states a self-identification answer never reaches the model:
+            # chat never sets one (docs/applicant-brain.md, section 9).
+            turns = [t for t in self.prior_history + self.history
+                     if not (t.get("role") == "user" and carries_eeo(t.get("content")))]
+            result = self.llm.distill_memory(turns, sorted(known))
         except Exception:
             return new
         turn_no = len(self.prior_history) + len(self.history)
@@ -807,7 +913,36 @@ class WebIntake:
                     self.palace.remember_summary(f"[{row['type']}] {row['key']}: {row['value']}")
                 except Exception:
                     pass
+        if new:
+            self._brain_sync_chat()
         return new
+
+    def _brain_sync_chat(self):
+        """(Phase 3) The chat's distilled facts land in the applicant brain at their own confidence
+        (0.7 by default): a fact naming a form answer (salary, start date) waits there as a
+        proposal for the person to confirm, a legal one as unconfirmed, a self-identification one
+        is refused. Returns the brain (or None)."""
+        st = self._brain()
+        if st is None:
+            return None
+        try:
+            from applicant import facts as _F
+            _F.sync_chat(st, self.memory.list_facts(self.profile_name, status=None))
+        except Exception:      # noqa: BLE001
+            return None
+        return st
+
+    def _preferences(self) -> list:
+        """The active preferences and constraints tailoring honors: from the applicant brain when
+        it is on (kept equal to the chat's distilled facts first), else the memory store."""
+        st = self._brain_sync_chat()
+        if st is not None:
+            try:
+                from applicant import facts as _F
+                return _F.notes(st)
+            except Exception:  # noqa: BLE001
+                pass
+        return self.memory.active_preferences(self.profile_name)
 
     def _converse(self, message: str):
         """Handle a free-form turn conversationally with the real LLM, grounded in the full
@@ -831,7 +966,7 @@ class WebIntake:
         they are enforced non-destructively at RENDER time (see _render_profile), so the durable
         saved profile is NEVER mutated and an exclusion is reversible by retracting the fact."""
         try:
-            prefs = self.memory.active_preferences(self.profile_name)
+            prefs = self._preferences()
         except Exception:
             prefs = []
         try:
@@ -844,7 +979,7 @@ class WebIntake:
         >= 4 chars). Read fresh every call, so retracting a constraint takes effect on the next
         build with no lingering state."""
         try:
-            prefs = self.memory.active_preferences(self.profile_name)
+            prefs = self._preferences()
         except Exception:
             return []
         avoid = []
@@ -970,7 +1105,18 @@ class WebIntake:
         the built CV (``self.profile``) and the saved profile, so the gate CHECKS
         THE CV before asking, and never re-requests a location/date/degree that's
         already shown (e.g. a returning user whose stored essentials predate the
-        location fields)."""
+        location fields).
+
+        (Phase 3) The applicant brain comes first: a contact detail, a role's dates or location,
+        a school's date the brain holds (the details step, the extension, a resume import) lands
+        in the essentials themselves, so the gate never asks for it and the resume shows it."""
+        st = self._brain()
+        if st is not None:
+            ess = self.essentials
+            if not isinstance(ess.get("identity"), dict):
+                ess["identity"] = {}
+            brain_backfill(ess["identity"], ess.get("education") or [], ess.get("experience") or [],
+                           ess.get("projects") or [], st)
         e = {
             "identity": dict(self.essentials.get("identity") or {}),
             "education": [dict(x) for x in (self.essentials.get("education") or [])],
@@ -988,6 +1134,8 @@ class WebIntake:
             _backfill(e["education"], sedu, "school", ("school", "degree", "date", "location", "courses"))
             _backfill(e["experience"], sexp, "org", ("org", "title", "dates", "location"))
             _backfill(e["projects"], sproj, "org", ("org", "location", "dates"))
+        # (Phase 3) then the applicant brain again, for what only the built or saved CV named
+        brain_backfill(e["identity"], e["education"], e["experience"], e["projects"], st)
         _normalize_identity(e["identity"])
         _fill_project_locations(e["education"], e["experience"], e["projects"])
         return e

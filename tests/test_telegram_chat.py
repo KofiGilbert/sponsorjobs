@@ -459,7 +459,7 @@ def test_c_app_import_saves_the_profile_and_says_what_it_read(A, monkeypatch):
     _txt(mod, monkeypatch)
     calls = []
     real = mod._import_resume_file
-    monkeypatch.setattr(mod, "_import_resume_file", lambda p: calls.append(p) or real(p))
+    monkeypatch.setattr(mod, "_import_resume_file", lambda p, **k: calls.append(p) or real(p, **k))
     meta = {"file_id": "F", "name": "Kofi Gilbert_Resume.txt", "mime": "text/plain", "size": 60}
     reply = mod._telegram_file_import(meta, RESUME_TXT.encode())
     assert reply == ("Got Kofi Gilbert_Resume.txt. I read 1 role, 1 school and 7 skills and added them "

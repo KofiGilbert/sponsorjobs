@@ -27,6 +27,8 @@ LEGAL_PROPOSAL_SOURCES = frozenset({"resume", "chat", "telegram_chat"})
 # Confidence by source (section 5.1): said or chosen by the person 1.0, read from their resume
 # 0.9, drafted from the profile 0.8, extracted from chat 0.7.
 CONFIDENCE = {"resume": 0.9, "drafted": 0.8, "chat": 0.7, "telegram_chat": 0.7}
+# Sources whose facts the person has not seen and kept yet (``confirmed = 0``).
+UNCONFIRMED_SOURCES = frozenset({"drafted", "resume", "chat", "telegram_chat", "derived"})
 
 
 def confidence_for(source: str) -> float:
@@ -153,6 +155,19 @@ def library_key(fact_key_: str) -> str:
     """The answer-library key of a brain fact key (the inverse of fact_key)."""
     k = str(fact_key_ or "")
     return k[len(QUESTION_PREFIX):] if k.startswith(QUESTION_PREFIX) else k
+
+
+# Keys the chat distiller gives (snake case, its own words) that name a canonical key.
+# (Phase 3) Read by the migration and by applicant/facts.py sync_chat.
+CHAT_ALIASES = {
+    "salary": "@salary", "desired_salary": "@salary", "expected_salary": "@salary", "target_salary": "@salary",
+    "salary_expectation": "@salary", "salary_expectations": "@salary", "salary_requirement": "@salary",
+    "compensation": "@salary", "desired_compensation": "@salary",
+    "start_date": "@start_date", "earliest_start": "@start_date", "earliest_start_date": "@start_date",
+    "availability": "@start_date", "notice_period": "@notice_period",
+    "years_experience": "@years_experience", "years_of_experience": "@years_experience",
+    "citizenship": "@citizenship", "nationality": "@citizenship",
+}
 
 
 # The flat answers of app_prefs.json and the keys they become (section 11).

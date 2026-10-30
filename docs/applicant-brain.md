@@ -7,8 +7,9 @@
 > `intake/palace_memory.py`, `autoapply/answers.py`, `autoapply/basics.py`, `autoapply/planner.py`,
 > `_known_answers_for` or `_answer_lib` in `ui/app.py`, or the profile and Your answers pages.
 >
-> Status: Phase 1 built (the store, the migration, the apply agent's readers). Phases 2 to 7
-> are plans. Changes made while building Phase 1 are marked "(Phase 1 build)" below.
+> Status: Phases 1 to 3 built (the store, the migration and the apply agent's readers; the diary
+> without MemPalace; every writer saves facts and the readers ask the brain first). Phases 4 to 7
+> are plans. Changes made while building are marked "(Phase N build)" below.
 
 ## Contents
 
@@ -180,8 +181,8 @@ ask wording, and the legacy names it maps from.
 
 | Group | Keys | Sensitivity |
 |---|---|---|
-| Contact | `name`, `email`, `phone`, `address.street`, `address.city`, `address.state`, `address.postal_code`, `address.country`, `@linkedin`, `@portfolio`, `github`, `@preferred_name`; (Phase 1 build) `address` and `location`, the whole line as the profile holds it today (the parts are filled in Phase 3) | normal |
-| Work and legal | `workauth` (subject = country, the entry from `autoapply/workauth.py`), `@citizenship` (multi), `citizenship.complete` (yes when the list holds every country), `permanent_resident` (subject = country), `@over_18`, `@previously_worked` (subject = company), `security_clearance`; (Phase 1 build) `@citizenship2`, the answer library's second-citizenship key, folded into `@citizenship` in Phase 3 | legal |
+| Contact | `name`, `email`, `phone`, `address.street`, `address.city`, `address.state`, `address.postal_code`, `address.country`, `@linkedin`, `@portfolio`, `github`, `@preferred_name`; (Phase 1 build) `address` and `location`, the whole line as the profile holds it today (the parts are filled in Phase 3); (Phase 3 build) every writer of an address also writes its parts, split by code (`applicant/facts.py split_address`), and a new city or state retires the parts the new line does not give (kept as history) | normal |
+| Work and legal | `workauth` (subject = country, the entry from `autoapply/workauth.py`), `@citizenship` (multi), `citizenship.complete` (yes when the list holds every country), `permanent_resident` (subject = country), `@over_18`, `@previously_worked` (subject = company), `security_clearance`; (Phase 1 build) `@citizenship2`, the answer library's second-citizenship key, folded into `@citizenship` in Phase 3; (Phase 3 build) not folded yet: the basics card, the planner and the export screens read the two library keys, so the fold waits for Phase 7, when the library view goes | legal |
 | Preferences | `@salary` (with currency and period; subject = country when not US), `@start_date`, `@notice_period`, `relocate`, `remote`, `@heard_about`, `@years_experience`; (Phase 1 build) `accept_required_terms` (`always`, or absent for the default `ask`: terms a site requires to apply, PR #146) | normal |
 | EEO | `@gender`, `@sex`, `@pronouns`, `@hispanic_latino`, `@race`, `@ethnicity`, `@veteran`, `@disability`, `@eeo_decline` (the standing decline) | eeo |
 | Career (open facts) | `role`, `school`, `project`, `skill`, `certification`, `language` (subject = item id) | normal |
@@ -811,6 +812,93 @@ extended.
 E2E: all checks pass, plus new: "the contact page fills city, state and ZIP from memory"
 (add those fields to the mock contact page in `tests/fixtures/forms/mock_ats.js`); "a value
 typed in intake chat is not asked again on the form".
+
+(Phase 3 build) What was built, and what changed while building:
+
+- **One module for the writers and readers**, `applicant/facts.py`: `put` (one brain-only fact,
+  idempotent; an unchanged value writes nothing, `confirm` raises a value the person saw and kept
+  to 1.0), `write_contact`, `write_profile`, `add_document`, `sync_chat`, `notes`, `contact`,
+  `employers`, `worked_here`, `save_worked_here`, `salary_conflict`, `mark_asked`,
+  `settle_chat_salary`. The rule "a lower-confidence value never replaces a confirmed one, it
+  opens a conflict" lives in `put` and in `Store.add_fact` (the new value waits as `needs_check`,
+  `conflict`); the salary question itself is built in `facts.py`, not `store.py`, because it
+  reads the answer library's ranking and `basics.parse_salary`.
+- **Writers and their source refs.** Details step: `you`, `details` (only what the answers
+  changed). Resume import: `resume` at 0.9, `document:<id>`, the `document` row on the `app` or
+  `telegram` channel. My profile's contact form: `you`, `profile`, confirmed. The builder's chat:
+  the contact details the person types in answer to the builder are `you` at 1.0 with the diary
+  line as the ref (they answer the builder's own question and see them on the resume they
+  review; at 0.7 they would turn every contact field into a one-tap confirm, a loss against
+  today, where the profile identity already fills them). Distilled chat facts: `chat` at their
+  own confidence, written by `sync_chat`, which keeps the brain equal to `memory_facts` (a
+  retracted row is marked replaced, a row the person deleted is forgotten). A chat key that
+  names a form answer (`desired_salary`, `start_date`, ...; `keys.CHAT_ALIASES`) is a proposal
+  for the canonical key (`needs_check`, `from_chat`; a legal one `unconfirmed_legal`). The
+  extension's corrections: `extension`, the address parts as the form had them. Answer library
+  writes keep the library's own `you`/`drafted` source (the mirror and the ranking need it) and
+  take a ref: `ask_bar:<ask id>`, `ask_telegram:<ask id>`, `late_telegram:<ask id>`, `card`,
+  `answers_page`, `package:<record id>`, `extension`. The onboarding step saves through the card,
+  so its ref is `card`. An answered ask also logs `ask_answered` with the key and the number of
+  the form's options (never the answer). Library facts now carry `code` (the yearly salary, the
+  country, the self-identification choice).
+- **Where the profile's facts live.** Beside the person's memory file (`DB_PATH`), which in the
+  app is the data folder, so there is one brain. A test that points `DB_PATH` elsewhere gets its
+  own brain there (`_profile_brain`), so tests never share profile facts.
+- **Readers.** The fill (`/api/autoapply/plan`) and the agent's step build the applicant through
+  `applicant_from_record(record, memory)`: the record's own values first, then city, state, ZIP
+  and country split from the record's own address line, then the brain's contact facts at 0.9 or
+  more. A ZIP from another city is never mixed into the record's address. The intake gate and the
+  profile gate (`/api/profile/missing`) fill an empty contact detail, a role's dates or location
+  (matched on org and title), a school's date and a project's dates from the brain before
+  asking; in the builder these land in the session's essentials, so the resume shows them too.
+  `_apply_memory_selection` and `_avoid_token_sets` read the brain's preferences and
+  constraints (after `sync_chat`). The Telegram summary reads the brain: the name, roles, schools
+  and skills it holds when the profile has none, and the form answers saved outside the library
+  (named by their question only).
+- **"Have you worked here before?"** (`facts.worked_here`), with the brain on: the person's own
+  answer for this company (subject = company key, the employer normal form); else Yes when the
+  company is one of their employers (role facts and the saved profile, by name); else No when it
+  is not and the person has answered No before for a company outside their employer history, or
+  saved a standing No on Your answers; else asked once, and that answer is saved for that company
+  only. A standing Yes on Your answers is never used for another company (it was, before). With
+  the brain off the answer library answers as before.
+- **The salary question.** The values are every usable library wording of the salary, the
+  prefs' `desired_salary` and a salary said in chat. Two amounts: "Forms say $90,000 (April); you
+  just said $110,000. Which one?" ("you just said" for chat, "the browser extension fills" for
+  the prefs, "you also saved" for the library); three or four: "You saved 3 different salaries.
+  Which one is right?", the amounts being the buttons beside it. Shown on Your answers, in the
+  "Answers every form asks" card as a "Needs a look" line (the memory page comes in Phase 6), and
+  in the agent's next ask: a REQUIRED salary field is left open by the planner and
+  `_known_answers_for`, the ask offers the amounts as choices (a typed amount counts), and it is
+  marked asked when it goes out (`meta asked:@salary`, per set of amounts). After that the newest
+  salary fills as before; the question stays on Your answers until settled. An optional salary
+  field fills as before. Settling (a button on Your answers, the ask's answer, or the card's own
+  Save) makes the chosen amount the salary everywhere: the library (older wordings of the
+  question go, exactly as the card's Save does), the prefs the extension fills, and a chat
+  proposal (confirmed when it is that amount, else replaced).
+- **The shell.** `shell-electron/agent.js` takes the ask route's `reword` (the question's own
+  words and its choices) for the bar, and a stuck run's message no longer names a label already
+  answered this run (`stillOpen`). Telegram buttons carry `ask:<id>:<n>` only (checked, no change
+  needed).
+- **The Phase 3 upgrade.** A brain migrated before Phase 3 gets the address parts of the saved
+  profile's contact once at start-up (`migrate._phase3`, `meta.phase3`).
+- **Self-identification.** `_distill_facts` drops every turn `notify/assistant.carries_eeo`
+  flags before the model call, and the store refuses an EEO fact from chat, as before.
+- **Packaging.** `applicant.facts` added to the hidden imports in `packaging/tailor.spec`.
+- **Tests and e2e.** New `tests/test_brain_writers.py` (26 tests). `tests/test_brain_parity.py`
+  marks the fixture's salary question asked before comparing (Phase 3 asks it once; after that the
+  agent answers exactly as the legacy stores did). `e2e-agent.mjs` section 12 types an address in
+  the builder's chat and runs a `?address=1` job (City, State and a required ZIP code on the
+  contact page; `tests/fixtures/forms/mock_ats.js`).
+
+Not settled in Phase 3 (open for the owner):
+
+- Whether a legal fact derived from the resume (Yes to "worked here before" because the company is
+  on the resume) needs a one-tap confirm the first time. Built: it fills, and the handover lists
+  it with the other legal fields.
+- Whether the brain's contact facts should also feed the browser extension's autofill
+  (`/api/profile/autofill`). Phase 7 moves that route to the brain; until then the extension
+  still reads the profile identity.
 
 ### Phase 4: new wordings, legal confirm once, expiry
 

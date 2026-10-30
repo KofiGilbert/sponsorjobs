@@ -265,3 +265,10 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   card drops its frame, heading and own Save, and its grid goes to two columns. "Not now" on the details step moves
   setup on to this step instead of closing it. The "Before I apply" prompt stays as the safety net. Screens:
   docs/design/onboarding/.
+- 2026-10-30: Two saved values that disagree are ONE "Needs a look" line, never two questions. On Your
+  answers it sits under the "Answers every form asks" title, aligned to the card's grid: a surface-2 framed
+  row with a 7px --flag dot beside the words "Needs a look", the question in one line ("Forms say $90,000
+  (April); you also saved $120,000. Which one?", or "You saved 3 different salaries. Which one is right?"
+  when the amounts are the buttons anyway), and one ghost button per value. No accent (the page's one
+  primary stays Work authorization's Save). Hidden while the card is lent to setup. Measured at 1893x1183
+  DSF 2 and 2490x1556 DSF 1.52, dark and light: 44px tall, inside the card, no sideways scroll.
