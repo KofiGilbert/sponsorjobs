@@ -16,6 +16,7 @@ is only reused for the same question.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 import time
@@ -36,11 +37,11 @@ _FILLER = re.compile(
 # question that matches one of these (as its whole intent) gets that key.
 _CANON: list[tuple[str, re.Pattern]] = [
     ("salary", re.compile(
-        r"^(what (is|are) )?(your )?(desired |expected |target |minimum )?"
+        r"^(what (is|are) )?(your )?((desired|expected|target|minimum|annual|yearly|base) )*"
         r"(salary|compensation|pay|base salary|base pay|total compensation|rate)"
         r"( (expectations?|requirements?|range|requested|expected|desired))?"
         r"( for this (role|position))?( \(?(usd|annual|per year|yearly|in usd)\)?)*$"
-        r"|^(desired|expected|target) (annual )?(salary|compensation|pay)"
+        r"|^(desired|expected|target|annual|yearly) (annual |base )?(salary|compensation|pay)"
         r"|^salary (expectations?|requirements?|range)"
         r"|^compensation (expectations?|requirements?)"
         r"|^what (salary|compensation|pay) (are you|do you|would you)")),
@@ -129,6 +130,27 @@ class AnswerLibrary:
             " last_used REAL, uses INTEGER NOT NULL DEFAULT 0)")
         self.conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
         self.conn.commit()
+        self._rekey()
+
+    def _rekey(self):
+        """Move answers saved under an older key to the key their question has now. When the
+        canonical wordings widen ("annual salary requirement" became the salary question), an
+        answer saved before must still be found. Runs once per change of the key rules; a row
+        whose new key is already taken stays where it is."""
+        version = hashlib.sha1("|".join(k + rx.pattern for k, rx in _CANON).encode()).hexdigest()[:12]
+        try:
+            row = self.conn.execute("SELECT v FROM meta WHERE k='keys_version'").fetchone()
+            if row and row[0] == version:
+                return
+            for r in self.conn.execute("SELECT key, question FROM answers").fetchall():
+                new = normalize(r["question"])
+                if new and new != r["key"] and not self.conn.execute(
+                        "SELECT 1 FROM answers WHERE key=?", (new,)).fetchone():
+                    self.conn.execute("UPDATE answers SET key=? WHERE key=?", (new, r["key"]))
+            self.conn.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('keys_version', ?)", (version,))
+            self.conn.commit()
+        except sqlite3.Error:
+            self.conn.rollback()
 
     def close(self):
         try:
