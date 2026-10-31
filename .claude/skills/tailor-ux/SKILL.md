@@ -310,3 +310,24 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   Undo action; the panel's Timeline has "Undo last change" and a quiet "Got as far as <stage>" line
   when the card has moved back. The job panel stops at the 42px icon rail (it used to sit under it,
   clipping its right edge). Measured at 1893x1183 DSF 2 and 2490x1556 DSF 1.52, dark and light.
+- 2026-10-30 (applicant brain Phase 6, the memory page): "What SponsorJobs knows about you" replaced
+  the profile form AND Your answers (the old `#view-profile`, so every door lands there). One 1040
+  reading column, a row of quiet pill jump links under the title, then `.ans-card` cards with
+  `.ans-row` rows that read across: label (200px), value, and under it where it came from and when
+  in words ("From your resume, Oct 5", "You, on Telegram, Oct 28"), then ghost Edit and Forget.
+  Forget confirms in the row ("Forget your email? Forms and resumes stop using it.", plus "Also
+  delete the chat lines where I said this" when a chat line said it), never a dialog. Self-
+  identification rows read "Saved" (a muted dot) until Show; Edit reveals that one row. The chat's
+  proposals are "I noted from your chats" chips (surface-2, Save / Not quite); a value that
+  disagrees with a saved one is the one "Needs a look" line instead, never also a chip. Your answers
+  is a door: it opens the page at Form answers with a back link named for the door (none from the
+  account menu). The work authorization editor opens as an inset surface-2 panel inside Work and
+  visa (header button toggles to Done). Erase asks in the page with the "and my resumes and
+  applications" tick. No accent while nothing is being edited; the empty memory's Upload resume is
+  the page's one primary. Borrowed: ChatGPT's Manage memories (a plain list, per-item delete,
+  delete-all behind a confirm; we add "also delete the chat lines", which ChatGPT leaves to a
+  second step), Teal's master profile (per-entry Edit and Add per section, upload or type),
+  Simplify's grouped profile tabs (contact, work authorization, self-identification apart; we
+  hide the values until Show where Simplify shows them). Measured at 1893x1183 DSF 2 and 2490x1556
+  DSF 1.52, dark and light: card left = title left (453 / 752), cards 1040 wide, no sideways
+  scroll. Screens: docs/design/memory/.

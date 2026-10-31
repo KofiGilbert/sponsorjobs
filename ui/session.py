@@ -790,6 +790,14 @@ class WebIntake:
         saved = memory.load(profile_name)
         if saved:
             self.saved_profile = saved.get("profile") or {}
+            # (Phase 6) The resume material assembled from memory: the person's own contact
+            # details and the dates the brain holds, laid over the saved material
+            # (applicant/profile.py). No model call; nothing invented.
+            try:
+                from applicant.profile import assemble
+                self.saved_profile = assemble(self.saved_profile, self._brain())
+            except Exception:      # noqa: BLE001 - the saved material always stands on its own
+                pass
             # Seed the built profile FROM the saved one, so the first autosave of a returning
             # session writes the real profile back instead of clobbering the durable saved
             # profile (bullets, projects, extracurricular, skills) with the empty skeleton a

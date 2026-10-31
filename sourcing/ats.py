@@ -227,7 +227,11 @@ def salary_from_text(jd: str) -> str:
         return ""
     text = " ".join(jd.split())
     def scale(num_s, suffix):
-        v = float(num_s.replace(",", ""))
+        # "$," or "$ ," (a dollar sign with commas and no digits) matches _MONEY: no figure, 0.
+        try:
+            v = float(num_s.replace(",", ""))
+        except ValueError:
+            return 0.0
         # "$120k" -> 120000, but a stray k after an already-large number ("$185,000k") is spurious:
         # nobody writes a salary in thousands-of-thousands, so only scale genuinely small numbers.
         return v * 1000 if (suffix and v < 1000) else v

@@ -429,113 +429,271 @@
         </div>
       </section>
 
-      <!-- ============ MY PROFILE (view + edit the saved profile) ============ -->
+      <!-- ============ THE MEMORY PAGE (docs/applicant-brain.md, section 13, Phase 6) ============
+           "What SponsorJobs knows about you": every fact grouped, each with where it came from
+           and when, Edit and Forget. It replaced the profile form (and holds what Your answers
+           held: Your answers is a door into its Form answers section). Self-identification
+           answers stay behind Show. Everything here is local. -->
       <section class="view view-profile" id="view-profile">
         <header class="page-head">
           <div>
-            <h1 class="page-title">What SponsorJobs knows about you</h1>
-            <p class="page-sub">Drop your resume once and I learn it all, then quietly reuse it on every resume, letterhead, and cover letter. Nothing to fill in.</p>
+            <button class="btn btn-ghost btn-back tpl-back" id="memBack" type="button" hidden>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span id="memBackLbl" data-i18n="nav.autoapply">Auto-apply</span>
+            </button>
+            <h1 class="page-title" data-i18n="mem.title">What SponsorJobs knows about you</h1>
+            <p class="page-sub" data-i18n="mem.sub">It all stays on this computer. Edit or forget any of it.</p>
+          </div>
+          <div class="page-head-actions">
+            <label class="btn btn-ghost" id="memAddResume" hidden>
+              <input type="file" id="profCvFile" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp" hidden />
+              <span id="memAddResumeLbl" data-i18n="mem.addResume">Read another resume</span>
+            </label>
           </div>
         </header>
 
-        <div class="prof-wrap">
-          <div class="prof-import" id="profImport">
+        <div class="mem-wrap">
+          <!-- Empty memory: one decision, add a resume. The page's one primary action. -->
+          <div class="prof-import" id="profImport" hidden>
             <div class="prof-import-txt">
-              <div class="prof-import-h">Start with your resume</div>
-              <div class="prof-import-p">We read it once and fill your whole profile. Faster than typing it out.</div>
+              <div class="prof-import-h" data-i18n="mem.startH">Start with your resume</div>
+              <div class="prof-import-p" data-i18n="mem.startP">I read it once and remember it all: your contact details, roles, schools and skills.</div>
             </div>
             <label class="prof-import-drop" id="profDrop">
-              <input type="file" id="profCvFile" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp" hidden />
-              <span class="btn btn-primary" id="profUploadBtn">Upload resume</span>
-              <span class="prof-import-hint">PDF, Word, or an image</span>
+              <input type="file" id="profCvFile0" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.webp" hidden />
+              <span class="btn btn-primary" id="profUploadBtn" data-i18n="mem.upload">Upload resume</span>
+              <span class="prof-import-hint" data-i18n="mem.uploadHint">PDF, Word, or an image</span>
             </label>
           </div>
           <div class="prof-import-msg" id="profImportMsg" hidden></div>
 
-          <!-- Contact details read as "what SponsorJobs already knows", not a form to fill:
-               a read-only summary is the default face (magic), and Edit reveals the
-               inputs only when you want to correct something (the safety net the CV
-               flow can't always reach). -->
-          <div class="prof-card" id="identityCard">
-            <div class="prof-card-h">Contact details
-              <button class="btn btn-ghost btn-sm" id="idEdit" type="button" hidden>Edit</button>
+          <nav class="mem-jump" id="memJump" aria-label="Sections"></nav>
+
+          <!-- "I noted ...": facts the chat proposed, saved only on the person's tap. -->
+          <section class="ans-card mem-card mem-noted" id="memNoted" aria-labelledby="memNotedH" hidden>
+            <div class="ans-card-h"><h2 class="ans-h" id="memNotedH" data-i18n="mem.noted">I noted from your chats</h2></div>
+            <div class="mem-chips" id="memNotedList"></div>
+          </section>
+
+          <!-- Needs a look: conflicts, raw replies, expired values, unconfirmed legal facts. One
+               button settles each. -->
+          <section class="ans-card mem-card" id="memNeeds" aria-labelledby="memNeedsH" hidden>
+            <div class="ans-card-h"><h2 class="ans-h" id="memNeedsH"><span data-i18n="ans.needs">Needs a look</span> <span class="ans-count" id="memNeedsCount"></span></h2></div>
+            <div class="mem-needs" id="memNeedsList"></div>
+          </section>
+
+          <section class="ans-card mem-card" id="memAbout" data-jump="about" aria-labelledby="memAboutH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="memAboutH" data-i18n="mem.about">About you</h2>
+              <button class="btn btn-ghost btn-sm" id="memAboutAdd" type="button" data-i18n="mem.addDetail">Add a detail</button>
             </div>
+            <div class="ans-list mem-rows" id="memAboutRows"></div>
+          </section>
 
-            <div class="prof-known" id="idKnown" hidden><!-- read-only rows injected --></div>
-
-            <form id="identityForm" autocomplete="off" hidden>
-              <div class="prof-grid">
-                <label class="prof-field"><span>Full name</span><input class="fld" id="idName" placeholder="Your name" /></label>
-                <label class="prof-field"><span>Email</span><input class="fld" id="idEmail" type="email" placeholder="you@example.com" /></label>
-                <label class="prof-field"><span>Phone</span><input class="fld" id="idPhone" placeholder="(312) 555-0134" /></label>
-                <label class="prof-field prof-wide"><span>Address</span><input class="fld" id="idAddress" placeholder="Street, City, ST ZIP" /></label>
-                <label class="prof-field"><span>LinkedIn URL</span><input class="fld" id="idLinkedin" placeholder="https://linkedin.com/in/…" /></label>
-                <label class="prof-field"><span>GitHub URL</span><input class="fld" id="idGithub" placeholder="https://github.com/…" /></label>
-                <label class="prof-field"><span>Website / blog URL</span><input class="fld" id="idBlog" placeholder="https://…" /></label>
-              </div>
-              <div class="prof-card-foot">
-                <button class="btn btn-primary btn-sm" type="submit">Save contact details</button>
-                <button class="btn btn-ghost btn-sm" id="idCancel" type="button">Cancel</button>
-                <span class="prof-saved" id="idSaved"></span>
-              </div>
-            </form>
-          </div>
-
-          <!-- Application answers: a door to Your answers (work authorization + saved answers),
-               which fill every application for the person to review (CLAUDE.md section 7: it
-               fills from THEIR answer, never guesses). -->
-          <div class="prof-card" id="answersCard">
-            <div class="prof-card-h"><span data-i18n="profile.answers.title">Application answers</span>
-              <button class="btn btn-ghost btn-sm" id="profAnsOpen" type="button" data-i18n="aa.open">Open</button>
+          <section class="ans-card mem-card" id="memWork" data-jump="work" aria-labelledby="memWorkH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="memWorkH" data-i18n="mem.work">Work and visa</h2>
+              <button class="btn btn-ghost btn-sm" id="memWaEdit" type="button" data-i18n="mem.editWa">Edit work authorization</button>
             </div>
-            <p class="prof-note" id="profAnsSum" data-i18n="ans.sub">Answer once. Every application reuses it.</p>
-          </div>
+            <section class="ans-card mem-sub" id="ansWaCard" hidden aria-labelledby="ansWaH">
+                        <div class="ans-card-h">
+                          <h2 class="ans-h" id="ansWaH" data-i18n="ans.wa">Work authorization</h2>
+                          <div class="ans-seg" id="ansCountry" role="group" aria-label="Country"></div>
+                        </div>
+                        <div class="ans-grid">
+                          <label class="ans-field ans-wide"><span data-i18n="ans.status">Current status</span>
+                            <select class="fld" id="ansStatus"></select></label>
+                          <div class="ans-field"><span data-i18n="ans.authorized">Authorized to work here</span>
+                            <div class="ans-seg ans-yn" data-yn="authorized"></div></div>
+                          <div class="ans-field"><span data-i18n="ans.sponsorNow">Need sponsorship now</span>
+                            <div class="ans-seg ans-yn" data-yn="sponsor_now"></div></div>
+                          <div class="ans-field"><span data-i18n="ans.sponsorFuture">Need sponsorship in the future</span>
+                            <div class="ans-seg ans-yn" data-yn="sponsor_future"></div></div>
+                          <label class="ans-field" id="ansEndWrap" hidden><span data-i18n="ans.authEnd">Work permit ends</span>
+                            <input class="fld" id="ansAuthEnd" type="date" /></label>
+                          <div class="ans-field"><span data-i18n="ans.relocate">Willing to relocate</span>
+                            <div class="ans-seg ans-yn" data-yn="relocate"></div></div>
+                        </div>
+                        <div class="ans-foot">
+                          <button class="btn btn-primary btn-sm" id="ansWaSave" type="button" data-i18n="ans.save">Save</button>
+                          <span class="ans-note" id="ansWaNote" role="status"></span>
+                        </div>
+                      </section>
+            <div class="ans-list mem-rows" id="memWorkRows"></div>
+          </section>
 
-          <!-- LinkedIn review: a read-only score of the person's OWN profile page, sent here by
-               the browser extension while they have it open (it reads, never clicks or edits).
-               The fixes and the drafted headline / About live here; they paste into LinkedIn
-               by hand. -->
-          <div class="prof-card" id="liCard">
-            <div class="prof-card-h"><span data-i18n="li.title">LinkedIn review</span>
-              <button class="btn btn-ghost btn-sm" id="liRescore" type="button" data-i18n="li.rescore" hidden>Re-score</button>
+          <section class="ans-card mem-card" id="memAnswers" data-jump="answers" aria-labelledby="memAnswersH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="memAnswersH"><span data-i18n="mem.answers">Form answers</span> <span class="ans-count" id="memBasicsCount"></span></h2>
             </div>
-            <p class="prof-note" id="liEmpty" data-i18n="li.empty">Open your own LinkedIn profile in Chrome with the SponsorJobs extension installed, and your score lands here.</p>
-            <div class="li-body" id="liBody" hidden>
-              <div class="li-top">
-                <div class="li-ring" aria-hidden="true">
-                  <svg viewBox="0 0 120 120"><circle class="li-ring-bg" cx="60" cy="60" r="52"/><circle class="li-ring-fg" id="liRingFg" cx="60" cy="60" r="52"/></svg>
-                  <div class="li-ring-n" id="liScore">0</div>
-                </div>
-                <div class="li-meta">
-                  <div class="li-who" id="liWho"></div>
-                  <div class="li-target" id="liTarget"></div>
-                  <div class="prof-note" id="liAt"></div>
-                </div>
-              </div>
-              <div class="li-sections" id="liSections"></div>
-              <div class="li-drafts" id="liDrafts" hidden>
-                <div class="li-draft">
-                  <div class="li-draft-h"><span data-i18n="li.headline">Drafted headline</span>
-                    <button class="btn btn-ghost btn-sm li-copy" type="button" data-copy="liHeadline" data-i18n="li.copy">Copy</button></div>
-                  <div class="li-draft-t" id="liHeadline"></div>
-                </div>
-                <div class="li-draft">
-                  <div class="li-draft-h"><span data-i18n="li.about">Drafted About</span>
-                    <button class="btn btn-ghost btn-sm li-copy" type="button" data-copy="liAbout" data-i18n="li.copy">Copy</button></div>
-                  <div class="li-draft-t li-pre" id="liAbout"></div>
-                </div>
-                <p class="prof-note" id="liFlags" hidden></p>
-              </div>
-              <p class="prof-note" id="liNote" hidden></p>
+            <div class="mem-open" id="memOpen" hidden>
+              <span class="mem-open-t" id="memOpenT"></span>
+              <button class="btn btn-ghost btn-sm" id="memOpenBtn" type="button" data-i18n="mem.answerThem">Answer them</button>
             </div>
-          </div>
+            <!-- The answers every form asks, as one card: lent to setup's last step, and shown
+                 here (only the rows still open) when the person taps Answer them. -->
+            <div class="mem-basics" id="memBasicsHome" hidden>
+              <section class="ans-card" id="ansBasicsCard" aria-labelledby="ansBasicsH">
+                          <div class="ans-card-h">
+                            <h2 class="ans-h" id="ansBasicsH"><span data-i18n="ans.basics">Answers every form asks</span> <span class="ans-count" id="ansBasicsCount"></span></h2>
+                          </div>
+                          <!-- Needs a look (docs/applicant-brain.md, Phase 3): two saved values that disagree, as
+                               ONE question with a button per value. Answered here or once by the apply agent. -->
+                          <div class="ans-needs" id="ansNeeds" role="group" aria-labelledby="ansNeedsTag" hidden>
+                            <span class="ans-needs-tag" id="ansNeedsTag" data-i18n="ans.needs">Needs a look</span>
+                            <span class="ans-needs-q" id="ansNeedsQ"></span>
+                            <span class="ans-needs-acts" id="ansNeedsActs"></span>
+                          </div>
+                          <div class="ans-grid">
+                            <div class="ans-field"><label for="ansCit" data-i18n="ans.citizenship">Country of citizenship</label>
+                              <select class="fld" id="ansCit"></select>
+                              <select class="fld" id="ansCit2" hidden aria-label="Second country of citizenship" data-i18n-aria="ans.citizenship2"></select>
+                              <button class="link-btn ans-add2" id="ansCitAdd" type="button" data-i18n="ans.addAnother">Add another</button></div>
+                            <label class="ans-field"><span data-i18n="ans.salary">Desired annual salary (USD)</span>
+                              <input class="fld" id="ansSalary" type="text" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="120000" /></label>
+                          </div>
+                          <label class="ans-check"><input type="checkbox" id="ansEeo" />
+                            <span data-i18n="profile.answers.eeo">On EEO and demographic questions, pick "Decline to self-identify"</span></label>
+                          <p class="ans-eeo-note" id="ansEeoNote" hidden data-i18n="ans.eeoNote">Gender, ethnicity, race, veteran and disability are declined. A form with no decline choice asks you.</p>
+                          <div class="ans-grid ans-eeo" id="ansEeoRows">
+                            <div class="ans-field ans-span2"><span data-i18n="ans.gender">Gender</span>
+                              <div class="ans-seg" data-basic="gender" role="group" aria-label="Gender" data-i18n-aria="ans.gender"></div></div>
+                            <div class="ans-field"><span data-i18n="ans.hispanic">Hispanic or Latino</span>
+                              <div class="ans-seg" data-basic="hispanic" role="group" aria-label="Hispanic or Latino" data-i18n-aria="ans.hispanic"></div></div>
+                            <label class="ans-field"><span data-i18n="ans.race">Race</span>
+                              <select class="fld" id="ansRace" data-basic="race"></select></label>
+                            <label class="ans-field"><span data-i18n="ans.veteran">Veteran status</span>
+                              <select class="fld" id="ansVet" data-basic="veteran"></select></label>
+                            <div class="ans-field"><span data-i18n="ans.disability">Disability</span>
+                              <div class="ans-seg" data-basic="disability" role="group" aria-label="Disability" data-i18n-aria="ans.disability"></div></div>
+                          </div>
+                          <label class="ans-check"><input type="checkbox" id="ansTerms" />
+                            <span data-i18n="ans.termsAlways">Accept the privacy notice or terms a site requires to apply, without asking me</span></label>
+                          <p class="ans-eeo-note" data-i18n="ans.termsNote">When this is off, I ask you the first time on each site. Every one I accept is named when the application is ready to send.</p>
+                          <div class="ans-foot">
+                            <button class="btn btn-ghost btn-sm" id="ansBasicsSave" type="button" data-i18n="ans.save">Save</button>
+                            <span class="ans-note" id="ansBasicsNote" role="status"></span>
+                          </div>
+                        </section>
+            </div>
+            <div class="ans-list mem-rows" id="memAnswerRows"></div>
+            <div class="mem-subh">
+              <h3 class="mem-h3"><span data-i18n="mem.other">Other answers</span> <span class="ans-count" id="ansCount"></span></h3>
+              <button class="btn btn-ghost btn-sm" id="ansAdd" type="button" data-i18n="ans.add">Add answer</button>
+            </div>
+            <label class="jf-search ans-search">
+              <svg class="jf-ic" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14 14l4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+              <input class="jf-input" id="ansQ" type="search" autocomplete="off" placeholder="Search your answers" data-i18n-ph="ans.search" aria-label="Search your answers" />
+            </label>
+            <div class="ans-list" id="ansList"></div>
+          </section>
 
-          <div class="prof-empty" id="profEmpty" hidden>
-            No profile yet. <b>Upload your resume</b> to fill it in automatically, or click <b>New Resume</b> to build one as you tailor.
-          </div>
+          <!-- Self-identification: "Saved" or "Prefer not to say" until the person taps Show. -->
+          <section class="ans-card mem-card" id="memEeo" data-jump="eeo" aria-labelledby="memEeoH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="memEeoH" data-i18n="mem.eeo">Self-identification</h2>
+              <button class="btn btn-ghost btn-sm" id="memEeoShow" type="button" aria-pressed="false" data-i18n="mem.show">Show</button>
+            </div>
+            <p class="mem-note" data-i18n="mem.eeoNote">Only you see these, on this computer. Forms get them; no model, server or chat ever does.</p>
+            <label class="ans-check mem-decline"><input type="checkbox" id="memEeoDecline" />
+              <span data-i18n="profile.answers.eeo">On EEO and demographic questions, pick "Decline to self-identify"</span></label>
+            <div class="ans-list mem-rows" id="memEeoRows"></div>
+          </section>
 
-          <div class="prof-sections" id="profSections"><!-- CV sections injected (read-only) --></div>
-          <p class="prof-note" id="profSecNote" hidden>Experience, education, skills, and projects are built and edited while you tailor a resume. Start or open a resume to change them.</p>
+          <section class="ans-card mem-card" id="memCareer" data-jump="career" aria-labelledby="memCareerH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="memCareerH" data-i18n="mem.career">Career</h2>
+            </div>
+            <div class="mem-career" id="memCareerBody"></div>
+          </section>
+
+          <!-- Resume choices (Phase 5): which of the person's own roles and projects each kind of
+               job sees, with Edit, Pause, Delete and Add a choice. -->
+          <section class="ans-card mem-card" id="ansChoicesCard" data-jump="choices" aria-labelledby="ansChoicesH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="ansChoicesH"><span data-i18n="choice.title">Resume choices</span> <span class="ans-count" id="ansChoicesCount"></span></h2>
+              <button class="btn btn-ghost btn-sm" id="chcAdd" type="button" data-i18n="choice.add">Add a choice</button>
+            </div>
+            <div class="chc-offers" id="ansChoiceOffers"></div>
+            <div id="chcAddBox" hidden></div>
+            <div class="ans-list" id="ansChoiceList"></div>
+          </section>
+
+          <section class="ans-card mem-card" id="liCard" aria-labelledby="liH">
+                      <div class="ans-card-h">
+                        <h2 class="ans-h" id="liH" data-i18n="li.title">LinkedIn review</h2>
+                        <button class="btn btn-ghost btn-sm" id="liRescore" type="button" data-i18n="li.rescore" hidden>Re-score</button>
+                      </div>
+                      <p class="prof-note" id="liEmpty" data-i18n="li.empty">Open your own LinkedIn profile in Chrome with the SponsorJobs extension installed, and your score lands here.</p>
+                      <div class="li-body" id="liBody" hidden>
+                        <div class="li-top">
+                          <div class="li-ring" aria-hidden="true">
+                            <svg viewBox="0 0 120 120"><circle class="li-ring-bg" cx="60" cy="60" r="52"/><circle class="li-ring-fg" id="liRingFg" cx="60" cy="60" r="52"/></svg>
+                            <div class="li-ring-n" id="liScore">0</div>
+                          </div>
+                          <div class="li-meta">
+                            <div class="li-who" id="liWho"></div>
+                            <div class="li-target" id="liTarget"></div>
+                            <div class="prof-note" id="liAt"></div>
+                          </div>
+                        </div>
+                        <div class="li-sections" id="liSections"></div>
+                        <div class="li-drafts" id="liDrafts" hidden>
+                          <div class="li-draft">
+                            <div class="li-draft-h"><span data-i18n="li.headline">Drafted headline</span>
+                              <button class="btn btn-ghost btn-sm li-copy" type="button" data-copy="liHeadline" data-i18n="li.copy">Copy</button></div>
+                            <div class="li-draft-t" id="liHeadline"></div>
+                          </div>
+                          <div class="li-draft">
+                            <div class="li-draft-h"><span data-i18n="li.about">Drafted About</span>
+                              <button class="btn btn-ghost btn-sm li-copy" type="button" data-copy="liAbout" data-i18n="li.copy">Copy</button></div>
+                            <div class="li-draft-t li-pre" id="liAbout"></div>
+                          </div>
+                          <p class="prof-note" id="liFlags" hidden></p>
+                        </div>
+                        <p class="prof-note" id="liNote" hidden></p>
+                      </div>
+                    </section>
+
+          <section class="ans-card mem-card" id="memHistory" data-jump="history" aria-labelledby="memHistoryH">
+            <div class="ans-card-h"><h2 class="ans-h" id="memHistoryH" data-i18n="mem.history">History</h2></div>
+            <div class="mem-hist" id="memHistBody"></div>
+            <div class="mem-subh"><h3 class="mem-h3" data-i18n="mem.remember">Tell me something to remember</h3></div>
+            <div class="mem-add">
+              <textarea class="fld" id="memAddText" rows="3" placeholder="A win, a project, feedback you got, a hard problem you solved. I keep it and draw on it when a resume needs it." data-i18n-ph="mem.rememberPh"></textarea>
+              <div class="mem-add-acts">
+                <button class="btn btn-ghost btn-sm" id="memAddBtn" type="button" data-i18n="mem.rememberBtn">Remember this</button>
+                <button class="btn btn-ghost btn-sm" id="memAssessBtn" type="button" data-i18n="mem.assess">Is this resume-worthy?</button>
+                <label class="btn btn-ghost btn-sm" for="memAddFile" id="memAddFileLbl" data-i18n="mem.addDoc">Add a document</label>
+                <input type="file" id="memAddFile" accept=".pdf,.docx,.pptx,.txt,.png,.jpg,.jpeg" hidden>
+              </div>
+              <div class="mem-assess" id="memAssessOut" hidden></div>
+              <p class="mem-add-note" data-i18n="mem.addDocNote">A performance review, an offer letter or a project doc. Read on this computer; the file itself is not kept.</p>
+            </div>
+          </section>
+
+          <section class="ans-card mem-card" id="memData" aria-labelledby="memDataH">
+            <div class="ans-card-h"><h2 class="ans-h" id="memDataH" data-i18n="mem.data">Your data</h2></div>
+            <div class="mem-data-row">
+              <div class="mem-data-t"><div class="mem-data-n" data-i18n="mem.export">Export everything</div>
+                <div class="mem-note" data-i18n="mem.exportNote">One zip: your facts, answers, choices, history and chat diary.</div></div>
+              <label class="ans-check mem-files"><input type="checkbox" id="memExportFiles" /> <span data-i18n="mem.includeFiles">Include my files</span></label>
+              <button class="btn btn-ghost btn-sm" id="memExport" type="button" data-i18n="mem.exportBtn">Export</button>
+            </div>
+            <div class="mem-data-row">
+              <div class="mem-data-t"><div class="mem-data-n" data-i18n="mem.erase">Erase everything</div>
+                <div class="mem-note" data-i18n="mem.eraseNote">Your profile, answers, choices, chat diary, interview notes and photo, from this computer. It cannot be undone.</div></div>
+              <button class="btn btn-danger-ghost btn-sm" id="memErase" type="button" data-i18n="mem.eraseBtn">Erase everything</button>
+            </div>
+            <div class="mem-erase" id="memEraseBox" role="group" aria-labelledby="memEraseQ" hidden>
+              <div class="mem-erase-q" id="memEraseQ" data-i18n="mem.eraseQ">Erase everything SponsorJobs knows about you?</div>
+              <label class="ans-check"><input type="checkbox" id="memEraseResumes" /> <span data-i18n="mem.eraseResumes">And my resumes and applications</span></label>
+              <div class="mem-erase-acts">
+                <button class="btn btn-danger-ghost btn-sm" id="memEraseYes" type="button" data-i18n="mem.eraseYes">Erase it all</button>
+                <button class="btn btn-ghost btn-sm" id="memEraseNo" type="button" data-i18n="ans.cancel">Cancel</button>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -730,118 +888,9 @@
         </aside>
       </section>
 
-      <!-- ============ YOUR ANSWERS (work authorization + the answer library) =====           Answer once, reused on every form: the structured work authorization the planner
-           answers every visa / sponsorship question from (autoapply/workauth.py), and the saved
-           answers (autoapply/answers.py) the person fixed once. Its own page with a back link
-           to wherever they came from (Auto-apply, Profile, an application). -->
-      <section class="view view-answers" id="view-answers">
-        <header class="page-head">
-          <div>
-            <button class="btn btn-ghost btn-back tpl-back" id="ansBack" type="button">
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3.5L5.5 8 10 12.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <span id="ansBackLbl" data-i18n="nav.autoapply">Auto-apply</span>
-            </button>
-            <h1 class="page-title" data-i18n="ans.title">Your answers</h1>
-            <p class="page-sub" data-i18n="ans.sub">Answer once. Every application reuses it.</p>
-          </div>
-        </header>
-
-        <div class="ans-wrap">
-          <section class="ans-card" id="ansWaCard" aria-labelledby="ansWaH">
-            <div class="ans-card-h">
-              <h2 class="ans-h" id="ansWaH" data-i18n="ans.wa">Work authorization</h2>
-              <div class="ans-seg" id="ansCountry" role="group" aria-label="Country"></div>
-            </div>
-            <div class="ans-grid">
-              <label class="ans-field ans-wide"><span data-i18n="ans.status">Current status</span>
-                <select class="fld" id="ansStatus"></select></label>
-              <div class="ans-field"><span data-i18n="ans.authorized">Authorized to work here</span>
-                <div class="ans-seg ans-yn" data-yn="authorized"></div></div>
-              <div class="ans-field"><span data-i18n="ans.sponsorNow">Need sponsorship now</span>
-                <div class="ans-seg ans-yn" data-yn="sponsor_now"></div></div>
-              <div class="ans-field"><span data-i18n="ans.sponsorFuture">Need sponsorship in the future</span>
-                <div class="ans-seg ans-yn" data-yn="sponsor_future"></div></div>
-              <label class="ans-field" id="ansEndWrap" hidden><span data-i18n="ans.authEnd">Work permit ends</span>
-                <input class="fld" id="ansAuthEnd" type="date" /></label>
-              <div class="ans-field"><span data-i18n="ans.relocate">Willing to relocate</span>
-                <div class="ans-seg ans-yn" data-yn="relocate"></div></div>
-            </div>
-            <div class="ans-foot">
-              <button class="btn btn-primary btn-sm" id="ansWaSave" type="button" data-i18n="ans.save">Save</button>
-              <span class="ans-note" id="ansWaNote" role="status"></span>
-            </div>
-          </section>
-
-          <!-- The answers every form asks (autoapply/basics.py): saved once as the person's own
-               under their canonical keys, so the apply agent never asks them again. The decline
-               choice sits above the five self-identification rows it folds away. -->
-          <section class="ans-card" id="ansBasicsCard" aria-labelledby="ansBasicsH">
-            <div class="ans-card-h">
-              <h2 class="ans-h" id="ansBasicsH"><span data-i18n="ans.basics">Answers every form asks</span> <span class="ans-count" id="ansBasicsCount"></span></h2>
-            </div>
-            <!-- Needs a look (docs/applicant-brain.md, Phase 3): two saved values that disagree, as
-                 ONE question with a button per value. Answered here or once by the apply agent. -->
-            <div class="ans-needs" id="ansNeeds" role="group" aria-labelledby="ansNeedsTag" hidden>
-              <span class="ans-needs-tag" id="ansNeedsTag" data-i18n="ans.needs">Needs a look</span>
-              <span class="ans-needs-q" id="ansNeedsQ"></span>
-              <span class="ans-needs-acts" id="ansNeedsActs"></span>
-            </div>
-            <div class="ans-grid">
-              <div class="ans-field"><label for="ansCit" data-i18n="ans.citizenship">Country of citizenship</label>
-                <select class="fld" id="ansCit"></select>
-                <select class="fld" id="ansCit2" hidden aria-label="Second country of citizenship" data-i18n-aria="ans.citizenship2"></select>
-                <button class="link-btn ans-add2" id="ansCitAdd" type="button" data-i18n="ans.addAnother">Add another</button></div>
-              <label class="ans-field"><span data-i18n="ans.salary">Desired annual salary (USD)</span>
-                <input class="fld" id="ansSalary" type="text" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="120000" /></label>
-            </div>
-            <label class="ans-check"><input type="checkbox" id="ansEeo" />
-              <span data-i18n="profile.answers.eeo">On EEO and demographic questions, pick "Decline to self-identify"</span></label>
-            <p class="ans-eeo-note" id="ansEeoNote" hidden data-i18n="ans.eeoNote">Gender, ethnicity, race, veteran and disability are declined. A form with no decline choice asks you.</p>
-            <div class="ans-grid ans-eeo" id="ansEeoRows">
-              <div class="ans-field ans-span2"><span data-i18n="ans.gender">Gender</span>
-                <div class="ans-seg" data-basic="gender" role="group" aria-label="Gender" data-i18n-aria="ans.gender"></div></div>
-              <div class="ans-field"><span data-i18n="ans.hispanic">Hispanic or Latino</span>
-                <div class="ans-seg" data-basic="hispanic" role="group" aria-label="Hispanic or Latino" data-i18n-aria="ans.hispanic"></div></div>
-              <label class="ans-field"><span data-i18n="ans.race">Race</span>
-                <select class="fld" id="ansRace" data-basic="race"></select></label>
-              <label class="ans-field"><span data-i18n="ans.veteran">Veteran status</span>
-                <select class="fld" id="ansVet" data-basic="veteran"></select></label>
-              <div class="ans-field"><span data-i18n="ans.disability">Disability</span>
-                <div class="ans-seg" data-basic="disability" role="group" aria-label="Disability" data-i18n-aria="ans.disability"></div></div>
-            </div>
-            <label class="ans-check"><input type="checkbox" id="ansTerms" />
-              <span data-i18n="ans.termsAlways">Accept the privacy notice or terms a site requires to apply, without asking me</span></label>
-            <p class="ans-eeo-note" data-i18n="ans.termsNote">When this is off, I ask you the first time on each site. Every one I accept is named when the application is ready to send.</p>
-            <div class="ans-foot">
-              <button class="btn btn-ghost btn-sm" id="ansBasicsSave" type="button" data-i18n="ans.save">Save</button>
-              <span class="ans-note" id="ansBasicsNote" role="status"></span>
-            </div>
-          </section>
-
-          <section class="ans-card" aria-labelledby="ansLibH">
-            <div class="ans-card-h">
-              <h2 class="ans-h" id="ansLibH"><span data-i18n="ans.saved">Saved answers</span> <span class="ans-count" id="ansCount"></span></h2>
-              <button class="btn btn-ghost btn-sm" id="ansAdd" type="button" data-i18n="ans.add">Add answer</button>
-            </div>
-            <label class="jf-search ans-search">
-              <svg class="jf-ic" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14 14l4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-              <input class="jf-input" id="ansQ" type="search" autocomplete="off" placeholder="Search your answers" data-i18n-ph="ans.search" aria-label="Search your answers" />
-            </label>
-            <div class="ans-list" id="ansList"></div>
-          </section>
-
-          <!-- Resume choices (docs/applicant-brain.md, Phase 5): which of the person's own roles and
-               projects each kind of job sees. Every choice in plain words, with Edit, Pause and
-               Delete. The full memory page comes in Phase 6. -->
-          <section class="ans-card" id="ansChoicesCard" aria-labelledby="ansChoicesH">
-            <div class="ans-card-h">
-              <h2 class="ans-h" id="ansChoicesH"><span data-i18n="choice.title">Resume choices</span> <span class="ans-count" id="ansChoicesCount"></span></h2>
-            </div>
-            <div class="chc-offers" id="ansChoiceOffers"></div>
-            <div class="ans-list" id="ansChoiceList"></div>
-          </section>
-        </div>
-      </section>
+      <!-- Your answers (work authorization, the answers every form asks, the saved answers, the
+           resume choices) moved onto the memory page (#view-profile) in Phase 6; openAnswers()
+           opens it at Form answers, so every door to Your answers still works. -->
       <!-- Why was this skipped? One tap, optional. Shared by Up next, the drawer and Jobs. -->
       <div class="skip-why" id="skipWhy" role="region" aria-label="Why did you skip it?" hidden></div>
 
@@ -1590,29 +1639,15 @@
             </div>
           </div>
 
-          <!-- Memory: what SponsorJobs has learned about you from your chats, and full control over it. -->
-          <div class="set-row set-row-block">
+          <!-- Memory: a door to the memory page, where every fact can be seen, edited, forgotten,
+               exported and erased (Phase 6). -->
+          <div class="set-row">
             <div class="set-row-t">
-              <div class="set-row-n">Your memory</div>
-              <div class="set-row-d">What SponsorJobs has learned from your conversations, so it can decide what belongs on your resume for each role. <span id="memCount"></span></div>
+              <div class="set-row-n" data-i18n="mem.setTitle">Your memory</div>
+              <div class="set-row-d"><span data-i18n="mem.setBody">Everything SponsorJobs knows about you, with where it came from. Edit, forget, export or erase it.</span> <span id="memCount"></span></div>
             </div>
-            <div class="mem-acts">
-              <button class="btn btn-ghost btn-sm" id="memExport" type="button">Export</button>
-              <button class="btn btn-danger-ghost btn-sm" id="memErase" type="button">Erase all</button>
-            </div>
+            <button class="btn btn-ghost btn-sm" id="memOpenSettings" type="button" data-i18n="aa.open">Open</button>
           </div>
-          <div class="mem-add">
-            <textarea class="fld" id="memAddText" rows="3" placeholder="Tell me anything about your career you want me to remember, a win, a project, feedback you got, a hard problem you solved. I'll keep it and draw on it when it helps."></textarea>
-            <div class="mem-add-acts">
-              <button class="btn btn-primary btn-sm" id="memAddBtn" type="button">Remember this</button>
-              <button class="btn btn-ghost btn-sm" id="memAssessBtn" type="button">Is this resume-worthy?</button>
-              <label class="btn btn-ghost btn-sm" for="memAddFile">Upload a document</label>
-              <input type="file" id="memAddFile" accept=".pdf,.docx,.pptx,.txt,.png,.jpg,.jpeg" hidden>
-            </div>
-            <div class="mem-assess" id="memAssessOut" hidden></div>
-            <p class="mem-add-note">A performance review, offer letter, old resume, or project doc. Read on your machine, remembered, and the file itself is not kept.</p>
-          </div>
-          <div id="memList" class="mem-list"><!-- fact rows injected --></div>
         </section>
       </div>
     </div>

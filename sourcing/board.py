@@ -87,6 +87,11 @@ def migrate_board(c: sqlite3.Connection) -> None:
         rfc_id TEXT DEFAULT '', matched_by TEXT DEFAULT '', label TEXT DEFAULT '',
         subject TEXT DEFAULT '', at TEXT NOT NULL)""")
     c.execute("CREATE INDEX IF NOT EXISTS tracker_mail_job ON tracker_mail(source_id)")
+    c.execute("""CREATE TABLE IF NOT EXISTS tracker_contact (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL,
+        name TEXT NOT NULL, role TEXT DEFAULT '', email TEXT DEFAULT '', linkedin TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+    c.execute("CREATE INDEX IF NOT EXISTS tracker_contact_job ON tracker_contact(source_id)")
     if "furthest_stage" not in cols:
         _backfill_furthest(c)
 
@@ -108,11 +113,6 @@ def _backfill_furthest(c: sqlite3.Connection) -> None:
         best = _furthest(seen.get(r[0], []) + [r[1]])
         if best:
             c.execute("UPDATE sourced_job SET furthest_stage=? WHERE source_id=?", (best, r[0]))
-    c.execute("""CREATE TABLE IF NOT EXISTS tracker_contact (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL,
-        name TEXT NOT NULL, role TEXT DEFAULT '', email TEXT DEFAULT '', linkedin TEXT DEFAULT '',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
-    c.execute("CREATE INDEX IF NOT EXISTS tracker_contact_job ON tracker_contact(source_id)")
 
 
 _BOARD_COLS = ("source_id, source, company, title, location, remote, url, posted_at, salary, "
@@ -313,6 +313,39 @@ class BoardMixin:
             out.update(r[0] for r in self._conn.execute(
                 f"SELECT message_id FROM tracker_mail WHERE message_id IN ({','.join('?' * len(chunk))})", chunk))
         return out
+
+    # -- the person's Export and Erase (docs/applicant-brain.md, section 10) -- #
+    def tracker_export(self) -> dict:
+        """What the Tracker remembers about the person: the mail tied to each application, the
+        stage history (with what Undo would restore), the contacts and each tracked card."""
+        q = lambda sql: [dict(r) for r in self._conn.execute(sql).fetchall()]  # noqa: E731
+        return {"mail": q("SELECT * FROM tracker_mail ORDER BY at"),
+                "history": q("SELECT * FROM tracker_activity ORDER BY id"),
+                "contacts": q("SELECT * FROM tracker_contact ORDER BY id"),
+                "cards": q("SELECT source_id, company, title, url, stage, stage_at, applied_at, "
+                           "follow_up_at, notes, furthest_stage FROM sourced_job "
+                           "WHERE stage IS NOT NULL AND stage<>''")}
+
+    def tracker_erase(self, applications: bool = False) -> int:
+        """Erase what the Tracker learned from the person's mail: every tracker_mail row, and the
+        inbox's words in the stage history (an inbox move's note quotes the subject). With
+        ``applications`` the applications go too: the whole stage history, the contacts, and
+        every card's stage, dates and notes. ``secure_delete`` zeroes the freed bytes; the caller
+        vacuums the file afterwards. Returns the rows touched."""
+        c = self._conn
+        c.execute("PRAGMA secure_delete=ON")
+        n = c.execute("DELETE FROM tracker_mail").rowcount
+        if applications:
+            n += c.execute("DELETE FROM tracker_activity").rowcount
+            n += c.execute("DELETE FROM tracker_contact").rowcount
+            n += c.execute("UPDATE sourced_job SET stage=NULL, stage_at=NULL, applied_at=NULL, "
+                           "follow_up_at=NULL, notes='', furthest_stage=NULL "
+                           "WHERE stage IS NOT NULL OR notes<>''").rowcount
+        else:
+            n += c.execute("UPDATE tracker_activity SET note='' WHERE note<>'' AND "
+                           "(ref<>'' OR note LIKE 'From your inbox%')").rowcount
+        c.commit()
+        return n
 
     def mail_for(self, source_id: str) -> list[dict]:
         return [dict(r) for r in self._conn.execute(
