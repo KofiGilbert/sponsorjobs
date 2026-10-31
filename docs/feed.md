@@ -1,27 +1,26 @@
 # The static job feed
 
 **Status: the supported path (2026-09-30).** It replaces the hosted "kitchen" (`backend/feed.py` on
-Render, now suspended), and is hosted on GitHub Pages for now (see "Where the feed is hosted"). Nothing is served by a process we run: a scheduled GitHub Action crawls the
+Render, now suspended), and is hosted on Cloudflare R2 (see "Where the feed is hosted"). Nothing is served by a process we run: a scheduled GitHub Action crawls the
 GREEN-lane sources, writes three kinds of file, and publishes them behind our domain. Every install
 downloads the slim list at most once an hour and filters it locally. There is no server to pay for
 or keep alive, and the local crawl remains the fallback, so the app works offline.
 
 ## Where the feed is hosted
 
-**Now: GitHub Pages** (decided 2026-10-06), at `https://feed.sponsorjobs.ai/feed`. Cloudflare would
-not activate R2 on our account (a billing hold that support could not clear), and Pages costs
-nothing and needs no card on a public repo. The `feed` workflow builds the files and publishes them
-as a Pages site; the domain stays on Cloudflare as a DNS record pointing at GitHub.
+**Now: Cloudflare R2** (since 2026-10-10), at `https://feed.sponsorjobs.ai/feed`. The repository
+variable `FEED_HOST` is `r2` and `R2_PREFIX` is `feed`: the `feed` workflow uploads the built files
+with `scripts/upload_feed.py` into the `sponsorjobs-feed` bucket under `feed/`, and the bucket's
+custom domain `feed.sponsorjobs.ai` serves them through Cloudflare's CDN. An R2 custom domain
+serves **every key in the bucket**, not just `feed/`, so nothing private may be stored in that
+bucket: the crawl state has its own private bucket (see "The crawl state" below).
 
-**Move back to R2 when either of these happens:**
-1. Cloudflare billing is sorted out on the account that owns the domain, or
-2. paid plans launch. GitHub's terms say Pages is not free hosting for a commercial business or
-   SaaS, so the feed should leave Pages before SponsorJobs charges money.
-
-**How to move back** (the app does not change; it only knows the address): do the R2 set-up
-below (steps 1 to 4), set the repository variable `FEED_HOST` to `r2`, run the workflow once,
-then in Cloudflare DNS replace the `feed` CNAME record with the R2 custom domain, and turn Pages
-off in the repo (Settings -> Pages).
+**GitHub Pages** (2026-10-06 to 2026-10-10, while Cloudflare would not activate R2 on the account)
+is still wired as the fallback host: unset `FEED_HOST` (or set it to anything but `r2`) and the
+workflow publishes the same files as a Pages site instead. GitHub's terms say Pages is not free
+hosting for a commercial business or SaaS, so stay on R2 once paid plans launch. To fall back:
+do the Pages set-up below, clear `FEED_HOST`, run the workflow once, then point the `feed` DNS
+record at GitHub. The app does not change; it only knows the address.
 
 Pages limits (soft): 1 GB site (the feed is ~10 MB) and 100 GB of downloads a month. GitHub serves
 the `.json.gz` files as plain gzip without `Content-Encoding`; the app checks the gzip magic bytes
@@ -130,14 +129,14 @@ At ~500 bytes a row the full list is ~25 MB uncompressed, ~4-6 MB gzipped.
   `stable_version`). Apps from before this read the `parts` block or `jobs.json.gz`, which are
   still written, so nothing changes for them.
 - **How the builder keeps parts stable** (`feedfile.write_stable`). The build starts from the
-  previous build's stable parts, saved in the crawl's data dir (`.feed-data/feed-prev/`, which the
-  workflow already caches between runs). A previous part is kept as it is (same name, copied into
+  previous build's stable parts, saved in the crawl's data dir (`.feed-data/feed-prev/`, part
+  of the full crawl state the workflow saves in R2 between runs). A previous part is kept as it is (same name, copied into
   the output, since a Pages deploy replaces the whole site) when at most 20% of its rows are dead
   and it is at least half the target size. Its rows that left the list or changed are listed in the
   `removed` file. Changed rows, new rows and the rows of parts that were not kept are laid out by
   first-seen week into new parts. Without the `removed` file, the ~1% of roles that close between
   two builds, spread over every week, would touch every part. With no saved state (the first run,
-  a cache miss, a file failing its sha256) the build lays everything out afresh: correct, just a
+  a state that held no `feed-prev/`, a file failing its sha256) the build lays everything out afresh: correct, just a
   full download once. The uploader does not resend a part the bucket already has.
 - **Measured** (2026-10-23, the live 150k-role list, a rebuild simulated with 1% of rows added,
   1% removed and 1% changed): the per-version parts make a client fetch the whole
@@ -207,8 +206,12 @@ re-polls until rows arrive.
   10,000 daily users is roughly 7-8M Class B operations a month, still inside the free tier. Serving
   through a Cloudflare custom domain puts the CDN cache in front, which cuts R2 reads further.
 - **GitHub Actions**: ~8 runs a day. Public repos get unlimited minutes; a private repo's 2,000
-  free minutes/month covers runs of up to ~8 minutes each. The crawl state (jobs DB + sponsor
-  overlay) is kept between runs with `actions/cache` (10 GB limit per repo).
+  free minutes/month covers runs of up to ~8 minutes each. Since 2026-10-30 the workflow downloads
+  **nothing** from the Actions cache (see "The crawl state"): the account's cache egress limit is
+  what cut the 2026-10-30 18:06 run off from its state.
+- **The crawl state in R2**: the newest 5 saved states, each ~0.4 GB full + ~0.05 GB slim, so about
+  2.3 GB of the 10 GB free storage; ~6 writes and ~12 reads a run (Class A / B), and R2 has no
+  egress fees.
 - **Aggregator keys**: JSearch (RapidAPI) is used once per run centrally, never per user.
 
 ## Aggregator terms (what may go in the public file)
@@ -435,6 +438,106 @@ Preparatory Academy of Oklahoma", "Lincoln Property Company". Yale and Arizona S
 their robots.txt disallows the career sites, so they were left alone. One tenant answered 401
 (nyu.wd503) and is now blocked. SmartRecruiters was left out by its robots.txt.
 
+### The crawl state (R2, 2026-10-30)
+
+The crawl's persistent state (the jobs DB with every description, the sponsor overlay, the
+cursors, the last build's stable parts) is what makes `first_seen`, the cross-run dedup and the
+prune work. Until 2026-10-30 it lived in the GitHub Actions cache, and **each of the five jobs**
+(four crawl shards + the merge) downloaded the whole ~377 MB entry, plus a ~243 MB pip cache: about
+**3.1 GB of Actions-cache downloads a run**, ~25 GB a day. On 2026-10-30 the account's cache egress
+limit refused the merge job's restore ("Egress is over the account limit"), the merge built from an
+empty DB and published 158,535 jobs instead of ~233,000, and saved that as the next base. PR #149
+made a missing state fail the run; this change removes the dependency.
+
+**Where it lives.** A **private** R2 bucket named by the repository variable `R2_STATE_BUCKET`,
+under `R2_STATE_PREFIX` (default `state`). Not the feed bucket: an R2 custom domain serves every key
+of its bucket, so `state/` in `sponsorjobs-feed` would be public at `feed.sponsorjobs.ai/state/...`
+(`scripts/feed_state.py` refuses `R2_STATE_BUCKET` = `R2_BUCKET`). The same `R2_*` secrets are used,
+so the API token must cover both buckets. Layout (`scripts/feed_state.py`):
+
+| key | what |
+|---|---|
+| `state/full/<id>.tar.zst` | the merge job's whole data dir after a good build |
+| `state/slim/<id>.tar.zst` | the **shard state**: the jobs DB with each stored description replaced by a marker (`JD_HELD`), plus the cursor / slug JSON files; no sponsor overlay (shard 0 rebuilds it from the committed seed, which is all the saved copy ever held) and no `feed-prev/` |
+| `state/runs/<id>.json` | that state's manifest: `{format, id, created_at, rows, feed_count, full: {key, bytes, sha256}, slim: {...}}` |
+| `state/latest.json` | a copy of the newest good manifest: what a run starts from |
+
+`<id>` is the merge run's `github.run_id` (`seed-<cache key>` for a bootstrap copy).
+
+**Each run.** Each crawl shard downloads only the **slim** state, crawls, and hands the merge its
+delta plus the id of the state it started from (`base-<n>.txt`). The merge job downloads the
+**full** state with that same id (the latest if the shards disagree), folds the deltas in, builds
+the feed, runs the publish guard, then saves the next state: both archives, the run manifest, and
+`latest.json` **last**, so `latest.json` never names an archive that is not there. It then deletes
+all but the newest **5** saved states, never the one `latest.json` names. A shard never reads a
+stored description's text (it only asks whether a row has one), so the slim marker changes nothing
+it decides; the merge keeps the full state's description for every delta row that carries the
+marker (`build_feed.merge_delta`) and re-runs the salary backfill for those rows, which a shard on
+the full state would have done from the text. A test (`tests/test_feed_state.py`) runs the same
+shards on the full and on the slim state and checks the two merges publish the same feed and
+store the same rows.
+
+**What a run downloads** (389,256 rows in the DB, 2026-10-30):
+
+| | before | now |
+|---|---|---|
+| Actions cache | 5 x (377 MB state + 243 MB pip) = **~3.1 GB** | **0** |
+| R2 (no egress fees, no account limit) | 0 | full state ~380 MB (merge) + 4 x slim ~40 MB = **~540 MB** |
+
+The slim size is an estimate (the live rows of the published list, ~85 bytes a row compressed,
+scaled to the DB's 389k rows: ~185 MB as a file, ~35-45 MB compressed); each run logs the real
+sizes (`[feed_state] uploaded slim state ...`).
+
+`pip` now downloads its wheels from PyPI (no `cache: pip`), which costs a little install time and
+no cache egress. Nothing is saved to the Actions cache any more either, so the ~10 GB of old
+`feed-data-*` entries stop growing and age out by themselves (GitHub evicts entries unused for 7
+days); nothing deletes them.
+
+**A missing state stops the run** (as with PR #149's `fail-on-cache-miss`): with nothing in R2, or
+an archive failing its sha256 or its row count, the shard or the merge fails and nothing is
+published or saved. The live feed and the saved state stay as they were.
+
+**The publish guard.** After the build, `feed_state.py guard` compares the new feed's count with
+the live `manifest.json` (`TAILOR_FEED_URL/manifest.json`; if that cannot be read, the `feed_count`
+the restored state recorded). Under **80%** of it, the run fails before saving the state or
+uploading anything. The workflow input `allow_drop` publishes anyway (a real drop, e.g. a source
+switched off on purpose).
+
+**Bootstrap and recovery** (Actions -> feed -> Run workflow):
+
+- **First R2 run (once, after this change):** `seed_from_cache` = the last good Actions-cache key,
+  e.g. `feed-data-41039418699` (the 2026-10-30 10:15 run, 233,496 jobs published). A `seed-state`
+  job restores that one entry (one ~377 MB cache download), saves it to R2 as the latest state
+  (full + slim), and the run then crawls and merges from it as usual. The key must still be in the
+  cache (Settings -> Actions -> Caches lists them; entries unused for 7 days are evicted). Do not
+  pick `feed-data-41103949680`: that is the 158,535-job state the failed restore saved.
+- **First-ever run, nothing saved anywhere:** `allow_empty_state` = true lets the shards and the
+  merge start from an empty DB; add `allow_drop` if a feed is already live (the guard would refuse
+  the smaller first build).
+- **Roll back to an earlier state:** `state_id` = one of the ids under `state/runs/` (the newest 5
+  are kept). The shards and the merge start from it; the run then saves a new latest as usual.
+- **By hand** (a machine with the R2 keys and `pip install boto3`; `R2_STATE_BUCKET` and the
+  `R2_*` keys in the environment):
+
+  ```sh
+  python scripts/feed_state.py pull --kind full --dest .feed-data           # the latest state
+  python scripts/feed_state.py pull --kind full --dest .feed-data --id 41039418699
+  python scripts/feed_state.py push --data .feed-data --id manual-2026-10-31   # becomes the latest
+  ```
+
+**Set-up (once, before the first run of this workflow version):**
+
+1. Cloudflare -> R2 -> **Create bucket** `sponsorjobs-state`. Leave **Public access** off: no
+   custom domain, no r2.dev URL.
+2. R2 -> **Manage API tokens** -> the feed workflow's token -> **Edit** -> add `sponsorjobs-state`
+   to its buckets (Object Read & Write). Same keys, nothing to change in GitHub secrets.
+3. GitHub -> Settings -> Secrets and variables -> Actions -> **Variables** -> `R2_STATE_BUCKET` =
+   `sponsorjobs-state`.
+4. Actions -> feed -> Run workflow with `seed_from_cache` = `feed-data-41039418699`.
+
+Until step 3 is done, every run stops at its first step with "set R2_STATE_BUCKET" and the live
+feed stays as it is.
+
 ### How often each board is crawled
 
 The build crawls boards in watchlist order from a cursor saved under `--data`, stopping at
@@ -450,7 +553,7 @@ should be visited every run and the long tail rotated.
 150 of 1,375 per run), so the workflow now crawls in two parallel jobs. `board_shard` in
 `scripts/build_feed.py` puts each board in shard 0 or 1 by a stable hash of `(ats, board_id)`
 (so a board never moves between shards, and new seed boards split evenly). Each shard job restores
-the saved state read-only, crawls its half from its own cursor (`crawl_cursor.s0of2.json`,
+the saved state read-only (since 2026-10-30 the slim shard state from R2, see "The crawl state"), crawls its half from its own cursor (`crawl_cursor.s0of2.json`,
 `crawl_cursor.s1of2.json`; the first sharded run starts from the old `crawl_cursor.json`), and
 uploads only the rows it touched (`--export-delta`). Shard 0 alone runs the career-site lane and the
 aggregator APIs, so nothing is fetched twice; Amazon is a board and lands in one shard. The

@@ -15,6 +15,11 @@ name: feed
 # state, writes the feed once and publishes it once. More boards per run at no cost (public repo:
 # Actions minutes are free). Shard 0 also runs the career-site lane and the aggregator APIs, so
 # nothing is fetched twice. FEED_SHARD_COUNT must equal the number of matrix entries.
+#
+# The crawl state (2026-10-30) lives in a PRIVATE R2 bucket, R2_STATE_BUCKET (scripts/feed_state.py):
+# each shard downloads the SLIM state (no stored descriptions, ~1/10 of the size), the merge job the
+# FULL state, and the merge saves the next state after a good build. R2 has no egress fees and no
+# account egress limit, unlike the Actions cache this replaced. docs/feed.md, "The crawl state".
 on:
   schedule:
     - cron: "23 */3 * * *"
@@ -23,9 +28,20 @@ on:
       crawl_minutes:
         description: "Crawl time cap in minutes (blank = the usual 70)"
         required: false
-      state_key:
-        description: "Start from this saved state key (e.g. feed-data-41039418699); blank = the newest"
+      state_id:
+        description: "Start from this saved R2 state id instead of the latest (rollback; docs/feed.md)"
         required: false
+      seed_from_cache:
+        description: "BOOTSTRAP: copy this Actions cache key (e.g. feed-data-41039418699) to R2 first"
+        required: false
+      allow_empty_state:
+        description: "BOOTSTRAP: start from an empty database when R2 holds no saved state"
+        type: boolean
+        default: false
+      allow_drop:
+        description: "Publish even when the feed shrank under 80% of the last one"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,11 +54,46 @@ concurrency:
   group: static-feed
   cancel-in-progress: false
 
+env:
+  # The crawl state lives in a PRIVATE R2 bucket (scripts/feed_state.py, docs/feed.md "The crawl
+  # state"), never in the public feed bucket, whose custom domain serves every key.
+  R2_STATE_BUCKET: ${{ vars.R2_STATE_BUCKET }}
+  R2_STATE_PREFIX: ${{ vars.R2_STATE_PREFIX || 'state' }}
+
 jobs:
+  # BOOTSTRAP only (workflow_dispatch with seed_from_cache): copy a saved Actions-cache state into
+  # R2 once, so the first R2 run starts from it. One cache download (~380 MB), then never again.
+  seed-state:
+    if: ${{ inputs.seed_from_cache && vars.TAILOR_FEED_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Restore the named cache state
+        uses: actions/cache/restore@v4
+        with:
+          path: .feed-data
+          key: ${{ inputs.seed_from_cache }}
+          fail-on-cache-miss: true
+      - name: Install
+        run: pip install -e . boto3
+      - name: Save it to R2 as the latest state
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python scripts/feed_state.py push --data .feed-data --id "seed-${{ inputs.seed_from_cache }}"
+
   crawl:
+    needs: seed-state
     # Skip (no runner, no minutes, no failure email) until the host is set up and the
-    # TAILOR_FEED_URL repository variable exists. See docs/feed.md.
-    if: ${{ vars.TAILOR_FEED_URL != '' }}
+    # TAILOR_FEED_URL repository variable exists. See docs/feed.md. Runs whether or not the
+    # bootstrap seed job ran, but not after it failed.
+    if: ${{ !cancelled() && vars.TAILOR_FEED_URL != '' && needs.seed-state.result != 'failure' }}
     runs-on: ubuntu-latest
     timeout-minutes: 175
     strategy:
@@ -57,28 +108,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `cache: pip`: the wheels come from PyPI. The Actions cache is not used at all (its
+      # account egress limit cut a run off from its state on 2026-10-30; docs/feed.md).
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-
-      # The crawl's state (jobs DB + sponsor overlay + cursors) persists between runs, so
-      # first_seen, the cross-run dedup and the 21-day prune work as they did on the server. The
-      # shards only READ it (restore, never save): the merge job is the one writer, so the shards
-      # can never overwrite each other's state.
-      - name: Restore crawl state
-        uses: actions/cache/restore@v4
-        with:
-          path: .feed-data
-          key: ${{ inputs.state_key || format('feed-data-{0}', github.run_id) }}
-          restore-keys: |
-            feed-data-
-          # A missing state (cache egress refused, 2026-10-30) must stop the run: starting from an
-          # empty database publishes a fraction of the board and saves that as the next base.
-          fail-on-cache-miss: true
 
       - name: Install
-        run: pip install -e .
+        run: pip install -e . boto3
+
+      # The SLIM saved state (scripts/feed_state.py export_shard_state): the jobs DB without the
+      # stored descriptions, plus the cursors; ~1/10 of the full state. The shards only READ it:
+      # the merge job is the one writer. A missing state stops the run: starting from an empty
+      # database publishes a fraction of the board and saves that as the next base.
+      - name: Restore the shard state from R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          python scripts/feed_state.py pull --kind slim --dest "$FEED_DATA_DIR" \
+            --id "${{ inputs.state_id }}" \
+            --id-file "${{ github.workspace }}/.shard/base-${{ matrix.shard }}.txt" \
+            ${{ inputs.allow_empty_state && '--allow-empty' || '' }}
 
       - name: Crawl this shard
         env:
@@ -127,7 +180,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: feed-shard-${{ matrix.shard }}
-          path: .shard/shard-${{ matrix.shard }}.db
+          # The delta, and which saved state it was crawled from (the merge restores that one).
+          path: |
+            .shard/shard-${{ matrix.shard }}.db
+            .shard/base-${{ matrix.shard }}.txt
           retention-days: 1
           if-no-files-found: error
 
@@ -151,19 +207,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-
-      # The same state the shards started from (the concurrency group keeps any other run out).
-      - name: Restore crawl state
-        uses: actions/cache/restore@v4
-        with:
-          path: .feed-data
-          key: ${{ inputs.state_key || format('feed-data-{0}', github.run_id) }}
-          restore-keys: |
-            feed-data-
-          # A missing state (cache egress refused, 2026-10-30) must stop the run: starting from an
-          # empty database publishes a fraction of the board and saves that as the next base.
-          fail-on-cache-miss: true
 
       - name: Install
         run: pip install -e . boto3
@@ -173,6 +216,21 @@ jobs:
         with:
           pattern: feed-shard-*
           path: .shards
+
+      # The FULL saved state, the same one the shards started from (their base-*.txt name it; the
+      # concurrency group keeps any other run out). A missing state stops the run, unless this is
+      # a deliberate first-ever run (allow_empty_state).
+      - name: Restore the crawl state from R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          python scripts/feed_state.py pull --kind full --dest "$FEED_DATA_DIR" \
+            --id "${{ inputs.state_id }}" --pair-dir .shards \
+            --save-manifest "${{ github.workspace }}/.state/restored.json" \
+            ${{ inputs.allow_empty_state && '--allow-empty' || '' }}
 
       - name: Merge the shards and build the feed
         env:
@@ -187,13 +245,27 @@ jobs:
             --merge-dir .shards \
             --jobs-url "${TAILOR_FEED_URL:-https://tailor.example/feed}/jobs.json.gz"
 
-      # The merged state is saved ONLY after a successful merge, under a new per-run key (the
-      # next run's prefix restore picks the newest), so a failed run never replaces good state.
-      - name: Save crawl state
-        uses: actions/cache/save@v4
-        with:
-          path: .feed-data
-          key: feed-data-${{ github.run_id }}
+      # The publish guard: a feed under 80% of the one live now is a broken run (2026-10-30: an
+      # empty restored state published 158,535 jobs instead of ~233,000). Nothing is published or
+      # saved; the live feed and the saved state stay as they are. allow_drop overrides it.
+      - name: Check the feed did not shrink
+        run: |
+          python scripts/feed_state.py guard --manifest "$FEED_OUT_DIR/manifest.json" \
+            --previous-url "${{ vars.TAILOR_FEED_URL }}/manifest.json" \
+            --state-manifest "${{ github.workspace }}/.state/restored.json" \
+            ${{ inputs.allow_drop && '--allow-drop' || '' }}
+
+      # The merged state is saved ONLY after a successful merge and guard, as a new state named by
+      # this run (full + slim archives, then the latest.json pointer last); the newest 5 are kept.
+      - name: Save the crawl state to R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          python scripts/feed_state.py push --data "$FEED_DATA_DIR" --id "${{ github.run_id }}" \
+            --feed-manifest "$FEED_OUT_DIR/manifest.json"
 
       # The browser extension's own sponsor lookup (works with no app installed): a sharded
       # index of the bundled H-1B / PERM / E-Verify data, written to <feed>/sponsors/. Built
