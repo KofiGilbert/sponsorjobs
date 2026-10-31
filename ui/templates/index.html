@@ -829,6 +829,17 @@
             </label>
             <div class="ans-list" id="ansList"></div>
           </section>
+
+          <!-- Resume choices (docs/applicant-brain.md, Phase 5): which of the person's own roles and
+               projects each kind of job sees. Every choice in plain words, with Edit, Pause and
+               Delete. The full memory page comes in Phase 6. -->
+          <section class="ans-card" id="ansChoicesCard" aria-labelledby="ansChoicesH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="ansChoicesH"><span data-i18n="choice.title">Resume choices</span> <span class="ans-count" id="ansChoicesCount"></span></h2>
+            </div>
+            <div class="chc-offers" id="ansChoiceOffers"></div>
+            <div class="ans-list" id="ansChoiceList"></div>
+          </section>
         </div>
       </section>
       <!-- Why was this skipped? One tap, optional. Shared by Up next, the drawer and Jobs. -->
@@ -1759,7 +1770,7 @@
             <div class="preview-toolbar">
               <div class="pv-left">
                 <span class="preview-label">Live preview · PDF</span>
-                <button class="seg-btn" id="editToggle" type="button" hidden>Edit bullets</button>
+                <button class="seg-btn" id="editToggle" type="button" hidden data-i18n="choice.edit">Edit</button>
               </div>
               <div class="coverage" id="coverage" hidden>
                 <!-- The ad's key phrases found on THIS resume. Named "Keywords", never "match":
@@ -1785,7 +1796,7 @@
               </div>
               <iframe class="pdf-frame" id="pdfFrame" title="Compiled one-page PDF" hidden></iframe>
               <div class="paper-wrap edit-panel" id="paperWrap" hidden>
-                <p class="edit-note">Click any bullet to edit it. Each change re-renders the PDF; Done editing shows the real result.</p>
+                <p class="edit-note" data-i18n="choice.editNote">Click any text to edit it. Switch a role off to leave it off this resume.</p>
                 <article class="paper" id="paper">
                   <header class="cv-head">
                     <h1 class="cv-name" data-slot="name">Your Name</h1>
@@ -1795,6 +1806,11 @@
                 </article>
               </div>
             </div>
+
+            <!-- The person's choices (docs/applicant-brain.md, section 8): after a switch or a swap,
+                 ONE line asks once whether to do the same on similar jobs; or, the first time two
+                 overlapping roles both show, whether to show both or one per job. -->
+            <div class="choice-line" id="choiceLine" role="group" aria-live="polite" hidden></div>
 
             <div class="accept-bar">
               <p class="accept-note" id="acceptNote">Answer a few questions and I’ll draft this for you.</p>

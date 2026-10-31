@@ -196,6 +196,11 @@ class LLMBackend(Protocol):
         (applicant/mapper.py): the raw JSON text {"map": [{"n", "key"}]}. The message carries
         labels, options and key names only, never a value."""
 
+    def classify_company(self, system: str, user: str) -> str:
+        """Label an employer for the person's resume choices (applicant/scope.py owns the prompt):
+        the raw JSON text {"naics": "52", "type": "startup"}. The message carries the company
+        name and the start of its ad only, never anything about the person."""
+
     def agent_step(self, system: str, user: str) -> str:
         """One step of the apply agent (autoapply/brain.py): the cached system prompt plus
         the single state message, answered with the raw JSON text the brain validates. The
@@ -724,7 +729,60 @@ class FakeLLM:
                       r"(\$?\s?\d[\d,.]*\s?k?)\b", low)
         if m and re.search(r"\d{2,}", m.group(1)):
             _add("fact", "desired_salary", m.group(1).strip(), 0.7)
-        return {"facts": facts}
+        return {"facts": facts, "rules": self._fake_rules(history)}
+
+    @staticmethod
+    def _fake_rules(history: list[dict]) -> list[dict]:
+        """Choices stated in chat, read by plain patterns (a test double: plumbing, not quality).
+        Only the LAST user turn, so an old sentence is not proposed again on every turn. Names
+        are capitalized words; the keywords match in any case."""
+        last = next((t.get("content", "") for t in reversed(history or []) if t.get("role") == "user"), "")
+        text = re.sub(r"\s+", " ", str(last or "")).strip()
+        name = r"([A-Z][\w&'-]*(?:\s[A-Z][\w&'-]*){0,3})"
+        scope = r"(?:\s*(?i:for|on|at|with)\s+(?i:my\s+)?(?i:other\s+)?([\w\s&-]{2,40}?)(?:\s+(?i:jobs?|roles?|applications?))?)?\s*(?:[.!,]|$)"
+        out: list[dict] = []
+        front = re.match(r"(?i:for|on)\s+(?i:my\s+)?([\w\s&-]{2,40}?)\s*(?i:jobs?|roles?|applications?)?\s*,\s*(.+)$", text)
+        lead_scope = front.group(1) if front else ""
+
+        def add(action, items, where):
+            out.append({"action": action, "items": items, "scope": (where or lead_scope or "").strip(" .,")})
+        m = re.search(r"(?i:for|on)\s+([\w\s&-]{2,40}?)\s*(?i:jobs?|roles?)?\s*,?\s*(?i:show|use)\s+" + name
+                      + r"\s*,?\s*(?i:not|instead of|rather than)\s+" + name, text)
+        if m:
+            add("prefer", [m.group(2), m.group(3)], m.group(1))
+            return out
+        m = re.search(r"(?i:never show (?:both )?)" + name + r"(?i: and )" + name, text)
+        if m:
+            add("apart", [m.group(1), m.group(2)], "")
+            return out
+        m = re.search(r"(?i:lead with )" + name + scope, text)
+        if m:
+            add("lead", [m.group(1)], m.group(2))
+            return out
+        m = re.search(r"(?i:hide|don'?t show|do not show|leave off) " + name + scope, text)
+        if m:
+            add("hide", [m.group(1)], m.group(2))
+            return out
+        m = re.search(r"(?i:always show) " + name + scope, text)
+        if m:
+            add("show", [m.group(1)], m.group(2))
+        return out
+        m = re.search(r"never show (?:both )?" + name + r" and " + name + r"(?: together)?", text, re.I)
+        if m:
+            add("apart", [m.group(1), m.group(2)], "")
+            return out
+        m = re.search(r"lead with " + name + scope, text, re.I)
+        if m:
+            add("lead", [m.group(1)], m.group(2))
+            return out
+        m = re.search(r"(?:hide|don'?t show|do not show|leave off|never show) " + name + scope, text, re.I)
+        if m:
+            add("hide", [m.group(1)], m.group(2))
+            return out
+        m = re.search(r"always show " + name + scope, text, re.I)
+        if m:
+            add("show", [m.group(1)], m.group(2))
+        return out
 
     def select_for_cv(self, jd_text: str, profile: dict, recalled: list[dict],
                       preferences: list[dict]) -> dict:
@@ -1544,6 +1602,26 @@ class FakeLLM:
                "question": asked[0] if asked else "",
                "unclear": not answers and not asked}
         return _json.dumps(out)
+
+    # How many company-label calls this process made (the scope tests read it).
+    company_calls = 0
+
+    def classify_company(self, system: str, user: str) -> str:
+        # Labels an employer from plain words in its ad (a test double): "seed", "Series A/B" or
+        # "startup" is a startup, "bank" or "lending" is finance (52), else unknown. Counted.
+        import json as _json
+        FakeLLM.company_calls += 1
+        low = user.lower()
+        naics = "52" if re.search(r"\bbank|lending|insur|fintech", low) else ""
+        if re.search(r"\bseed\b|series [ab]\b|start-?up|early[- ]stage", low):
+            ct = "startup"
+        elif re.search(r"series [c-f]\b|scale-?up", low):
+            ct = "scaleup"
+        elif re.search(r"fortune 500|global leader|founded in 1[89]\d\d", low):
+            ct = "established"
+        else:
+            ct = "unknown"
+        return _json.dumps({"naics": naics, "type": ct})
 
     # How many label-mapping calls this process made (the e2e and the mapper tests read it).
     map_calls = 0

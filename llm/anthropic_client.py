@@ -691,11 +691,17 @@ class AnthropicLLM:
             "- type 'preference': something they want (targeting fintech, prefers remote).\n"
             "- type 'constraint': something to ENFORCE on the resume (do not mention the 2021 gap; "
             "needs visa sponsorship).\n"
+            "Separately, list in 'rules' each CHOICE they state about which of their own roles or projects "
+            "to show for a KIND of job ('for banks, show Stanbic, not Viva'; 'lead with BlackOrigin for "
+            "startups'; 'never show both 2020 jobs together'), only from their LAST message. Each rule: "
+            "'action' (show, hide, lead, prefer, apart), 'items' (the names exactly as they said them; for "
+            "prefer, the one to show first), 'scope' (their words for the kind of job, '' for every job).\n"
             "Each item needs a short STABLE snake_case 'key' so the same item updates in place "
             "(e.g. 'target_industry', 'skill_python', 'avoid_2021_gap'), a concise 'value', and a "
             "'confidence' 0-1. Skip anything already in KNOWN KEYS unless the value changed. If "
-            "there is nothing new, return an empty list. Return ONLY JSON: {\"facts\":[{\"type\":"
-            "\"...\",\"key\":\"...\",\"value\":\"...\",\"confidence\":0.9}]}."
+            "there is nothing new, return empty lists. Return ONLY JSON: {\"facts\":[{\"type\":"
+            "\"...\",\"key\":\"...\",\"value\":\"...\",\"confidence\":0.9}], \"rules\":[{\"action\":"
+            "\"prefer\",\"items\":[\"...\",\"...\"],\"scope\":\"...\"}]}."
         )
         convo = "\n".join(f"[{t.get('role')}] {t.get('content')}" for t in (history or [])[-16:])
         user = (f"KNOWN KEYS (already stored, skip unless changed):\n{', '.join(known_keys) or '(none)'}"
@@ -717,7 +723,16 @@ class AnthropicLLM:
                 conf = 0.8
             out.append({"type": ftype, "key": key,
                         "value": strip_ai_dashes(str(f.get("value", "")).strip()), "confidence": conf})
-        return {"facts": out}
+        # Choices the person stated: names and scope words only. Code resolves them to their own
+        # items and saves nothing until they tap Save (applicant/rules.py).
+        rules = []
+        for r in (data.get("rules") or [])[:4]:
+            if not isinstance(r, dict) or str(r.get("action", "")).lower() not in ("show", "hide", "lead", "prefer", "apart"):
+                continue
+            rules.append({"action": str(r.get("action")).lower(),
+                          "items": [str(x)[:80] for x in (r.get("items") or [])][:2],
+                          "scope": str(r.get("scope") or "")[:80]})
+        return {"facts": out, "rules": rules}
 
     def select_for_cv(self, jd_text: str, profile: dict, recalled: list[dict],
                       preferences: list[dict]) -> dict:
@@ -1784,6 +1799,12 @@ class AnthropicLLM:
         prompt, the redaction and the validation). Labels, options and key names only, never a
         value. A short JSON reply at low effort."""
         return self._complete(system, user, max_tokens=400, effort="low")
+
+    def classify_company(self, system: str, user: str) -> str:
+        """Label an employer for the person's resume choices (applicant/scope.py owns the
+        prompt): the company name and the start of its ad, never anything about the person. A
+        short JSON reply at low effort, once per company."""
+        return self._complete(system, user, max_tokens=60, effort="low")
 
     def draft_sponsorship_answer(self, profile: dict, status: str = "", future_need: str = "",
                                  role: str = "", company: str = "") -> str:

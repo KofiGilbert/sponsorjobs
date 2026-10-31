@@ -7,9 +7,9 @@
 > `intake/palace_memory.py`, `autoapply/answers.py`, `autoapply/basics.py`, `autoapply/planner.py`,
 > `_known_answers_for` or `_answer_lib` in `ui/app.py`, or the profile and Your answers pages.
 >
-> Status: Phases 1 to 4 built (the store, the migration and the apply agent's readers; the diary
+> Status: Phases 1 to 5 built (the store, the migration and the apply agent's readers; the diary
 > without MemPalace; every writer saves facts and the readers ask the brain first; new wordings,
-> legal confirm once and expiry). Phases 5 to 7 are plans. Changes made while building are marked
+> legal confirm once and expiry; choices). Phases 6 and 7 are plans. Changes made while building are marked
 > "(Phase N build)" below.
 
 ## Contents
@@ -1048,6 +1048,66 @@ job, hide Viva, answer "Yes, bank and finance jobs"; build for a second bank job
 is hidden with no ask; build for a startup job and check Viva can show; delete the rule on the
 memory page and check the next bank build shows the scorer's pick. Plus all `e2e-agent.mjs`
 checks.
+
+(Phase 5 build) What shipped, and where it differs from the plan above:
+
+- `applicant/scope.py`: the job's family (title, then the top job tag), industry (sponsor NAICS,
+  then the JD's banking or investing tags as `52`, then the model) and company type (model only),
+  cached in `company_class`; the person's correction (`source = person`) is never replaced.
+  `classify_company` (`llm/base.py`, `llm/anthropic_client.py`) is ONE call per new company that
+  returns industry and type together, reads the company name and 1,500 characters of the ad, and
+  runs only when an active choice is scoped to a label nothing else settled. The builder's ask
+  never triggers it: it offers the most specific label already known. The sponsor lookup is
+  wired from `ui/app.py` (`set_sponsor_source`). A company scope stores the company's display
+  name (not its key) and matches the same employer or a longer name of it ("Stanbic" covers
+  "Stanbic Bank Ghana"), never a shorter one.
+- `applicant/rules.py`: item ids (`role:<org>|<title>` with the title the person gave, so a title
+  aligned to a job keeps its id; `project:<name>`), CRUD (the same choice twice is one row, a
+  contradicting one for the same item and scope replaces the older), `rename_item`, `sync_items`
+  (a choice naming a removed item is paused and comes back with it; one the person paused stays
+  paused), `plan` (per item the most specific show, hide or lead wins; this resume's own switches
+  beat every saved choice), plain sentences, "Just this time" for 30 days, the overlap answers,
+  chat and Telegram proposals, the "do not mention" offers, and the `application` row.
+  A choice that names a role whose title was edited since still finds it when it is the only role
+  at that employer.
+- `tailoring/assembler.py`: `select_roles_for_jd(..., choices=, report=)`. With no choices it is
+  the old code path, untouched. With choices: hidden items go; `prefer` drops the second of two
+  and puts the first in the second's place when the scorer would have shown the second; `apart`
+  drops the weaker match (a `prefer` or a pin settles which); a pin made for a narrower kind of
+  job keeps an item a broader `prefer` or `apart` would drop. Projects take hide, prefer and
+  apart too. The grow pass builds from the person's material MINUS what the choices left out
+  (`choice_pool`), so a hidden role never comes back to fill a short page. `lead` marks the item
+  (`_lead`, stripped before the page leaves): the shrinker takes bullets from other entries
+  first, and the summary's sentence naming it moves to the front (reordered, never reworded).
+  `AssembleResult.choices_report` says what was shown, what was left out and why, and which
+  saved choices changed the page.
+- The builder (`ui/session.py`, `ui/app.py`): `POST /api/session/shown`, `/swap`, `/choice`,
+  `/overlap`, `/proposal`; `state.choices` carries each item's switch, its "Swap for ..." (a
+  shown role with an overlapping role that is not shown) and its "why" line ("Hidden for bank
+  and finance jobs." "That beat your data and AI jobs choice." with Change, which opens the
+  choice on Your answers). The overlapping-roles question is asked once, ever, per pair (the
+  answer or the asking is kept in `meta.overlap_asked`), and only on a page that shows both
+  roles; a one-month handover is a job change, not two jobs (three shared months or more).
+  The record's `render_profile` (the Word export) leaves out what the choices left out, and
+  `data.choices` keeps the shown ids and the rule ids. A choice saved from a resume counts that
+  resume as a use. The unattended runs build under a scratch name for the same person and read
+  the choices too (`_rules_store` ignores the profile name; only the person's taps write).
+- Chat: `distill_memory` returns `rules` (names and scope words only, from the last message);
+  code resolves them to the person's own items by the fixed table and keeps them as proposals in
+  `meta.rule_proposals` (seven days). The builder's chat shows a chip with Save (one per option
+  when a name fits two roles) and Not quite; a turn that is a choice gets "Want me to keep this
+  choice for next time?" instead of being read as resume material. On Telegram,
+  `NotifyHub(rule_proposer=)` checks by code that the message names one of the person's roles and
+  a choice word before ONE `distill_memory` call; the reply carries Save and Not quite
+  (`rule:s:<token>:<n>`, `rule:n:<token>`), and "Saved" comes only after code saved it.
+- The list: Phase 6's memory page is not built yet, so every choice sits on Your answers in a
+  fourth card, "Resume choices": the sentence, "Used on N resumes", Edit (what it does, for which
+  jobs, from lists), Pause or Resume, Delete; and the chat's "do not mention X" lines that name
+  one of the person's items as "Save as a choice" or "Not now" (`GET/POST /api/brain/rules`,
+  `POST /api/brain/rules/<id>`). "Add a choice" from lists has its route (`POST
+  /api/brain/rules` with items) but no UI until Phase 6.
+- `/api/brain/status` adds `choices` (active choices, company calls, applications).
+- Screens: `docs/design/choices/` (1893x1183 DSF 2 and 2490x1556 DSF 1.52, dark and light).
 
 ### Phase 6: the memory page replaces the profile form
 

@@ -48,6 +48,7 @@ COPY_MODULES = [
     "sourcing/sponsors.py", "sourcing/ats.py", "sourcing/watchlist.py", "sourcing/service.py",
     "interview/transcribe.py", "backend/tavus_client.py",
     "autoapply/brain.py",   # the apply agent's prompt: the model copies what it sees
+    "applicant/rules.py", "applicant/scope.py",   # the resume choices' sentences and the company prompt
 ]
 
 

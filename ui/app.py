@@ -617,6 +617,14 @@ def _sponsors() -> SponsorDB:
         return _open_sponsors(key)
 
 
+# The resume choices read an employer's industry from its sponsor record (applicant/scope.py).
+try:
+    from applicant import scope as _choice_scope
+    _choice_scope.set_sponsor_source(lambda: _sponsors())
+except Exception:  # noqa: BLE001 - the JD's own tags still give the industry
+    pass
+
+
 def _open_sponsors(key: str) -> SponsorDB:
     db = _SPONSORS.get(key)
     if db is None:
@@ -3012,6 +3020,49 @@ def edit_field():
 def edit_date():
     body = request.json or {}
     return jsonify(_session().edit_date(body.get("ref", ""), body.get("text", "")))
+
+
+@app.post("/api/session/shown")
+@_guard
+def session_shown():
+    """The builder's "Show on this resume" switch (docs/applicant-brain.md, section 8.1): this
+    resume shows, or leaves off, one of the person's roles or projects."""
+    body = request.json or {}
+    return jsonify(_session().set_shown(str(body.get("id") or ""), bool(body.get("show"))))
+
+
+@app.post("/api/session/swap")
+@_guard
+def session_swap():
+    """"Swap for ...": this resume shows one role instead of another whose dates overlap."""
+    body = request.json or {}
+    return jsonify(_session().swap_role(str(body.get("from") or ""), str(body.get("to") or "")))
+
+
+@app.post("/api/session/choice")
+@_guard
+def session_choice():
+    """The one line under the preview: keep this change for similar jobs (``scope``), for this
+    company (``company``), or ``once``. Saved only on this tap."""
+    body = request.json or {}
+    return jsonify(_session().answer_choice(str(body.get("answer") or "")))
+
+
+@app.post("/api/session/overlap")
+@_guard
+def session_overlap():
+    """"Show both, or one per job?" for two roles whose dates overlap (section 8.3)."""
+    body = request.json or {}
+    return jsonify(_session().answer_overlap(str(body.get("answer") or "")))
+
+
+@app.post("/api/session/proposal")
+@_guard
+def session_proposal():
+    """A choice read in the builder's chat: Save (with the option picked) or Not quite."""
+    body = request.json or {}
+    return jsonify(_session().answer_proposal(str(body.get("token") or ""), bool(body.get("save")),
+                                              int(body.get("option") or 0)))
 
 
 @app.post("/api/session/accept")
@@ -6593,6 +6644,10 @@ def brain_status():
     out = _bm.status(_DATA)
     if st is not None:
         out["mapper"] = _M.counts(st)          # (Phase 4) label-mapping calls and cached wordings
+        # (Phase 5) how many choices are saved and how many company-label calls were made
+        out["choices"] = {"rules": st.q("SELECT COUNT(*) n FROM rule WHERE status='active'")[0]["n"],
+                          "company_calls": int(st.meta("company_calls") or 0),
+                          "applications": st.q("SELECT COUNT(*) n FROM application")[0]["n"]}
     return _nostore(jsonify(out))
 
 
@@ -6603,6 +6658,164 @@ def brain_migrate_plan():
     Counts only, and nothing is written."""
     from applicant import migrate as _bm
     return _nostore(jsonify(_bm.dry_run(_DATA)))
+
+
+# ---- The person's choices (docs/applicant-brain.md, Phase 5): see, edit, pause and delete
+# every one. The full memory page is Phase 6; until then the list sits on Your answers. ----
+def _choice_items_now() -> list:
+    from applicant import rules as _R
+    return _R.items(_saved_full_profile() or {})
+
+
+def _rule_out(r: dict, its: list) -> dict:
+    from applicant import rules as _R
+    from applicant import scope as _Sc
+    return {"id": r["id"], "text": _R.sentence(r, its), "used": _R.used_line(r), "status": r["status"],
+            "action": r["action"], "scope_kind": r["scope_kind"], "scope_value": r["scope_value"],
+            "scope_words": _Sc.words(r["scope_kind"], r["scope_value"]),
+            "items": [{"id": i, "label": _R.label_of(i, its)} for i in r["items"]],
+            "source": r["source"], "times_applied": r["times_applied"], "created_at": r["created_at"]}
+
+
+def _scope_options(rules: list) -> list:
+    """The scopes the Edit control offers: every job, the job families, the common industries,
+    the company types, and each company a saved choice already names."""
+    from applicant import scope as _Sc
+    out = [{"kind": "all", "value": "", "label": "Every job"}]
+    out += [{"kind": "industry", "value": v, "label": _Sc.words("industry", v).capitalize()}
+            for v in ("52", "51", "54", "62", "61", "92", "31", "44")]
+    out += [{"kind": "company_type", "value": v, "label": _Sc.words("company_type", v).capitalize()}
+            for v in _Sc.COMPANY_TYPES]
+    out += [{"kind": "job_family", "value": v, "label": _Sc.words("job_family", v).capitalize()}
+            for v in _Sc.FAMILIES]
+    seen = set()
+    for r in rules:
+        if r["scope_kind"] == "company" and r["scope_value"] not in seen:
+            seen.add(r["scope_value"])
+            out.append({"kind": "company", "value": r["scope_value"], "label": r["scope_value"]})
+        if r["scope_kind"] == "industry" and not any(o["kind"] == "industry" and o["value"] == r["scope_value"] for o in out):
+            out.append({"kind": "industry", "value": r["scope_value"],
+                        "label": _Sc.words("industry", r["scope_value"]).capitalize()})
+    return out
+
+
+@app.get("/api/brain/rules")
+@_guard
+def brain_rules():
+    """Every saved choice in plain words, with how often it was used, plus the chat's "do not
+    mention" lines offered as hide choices for the person to confirm."""
+    from applicant import rules as _R
+    st = _brain()
+    if st is None:
+        return _nostore(jsonify({"rules": [], "offers": [], "scopes": [], "available": False}))
+    its = _choice_items_now()
+    rows = _R.list_rules(st, status=(_R.ACTIVE, _R.PAUSED))
+    try:
+        from applicant import facts as _F
+        offers = _R.constraint_offers(st, _F.notes(st, types=("constraint",)), its)
+    except Exception:          # noqa: BLE001
+        offers = []
+    return _nostore(jsonify({"rules": [_rule_out(r, its) for r in rows], "offers": offers,
+                             "scopes": _scope_options(rows), "available": True}))
+
+
+@app.post("/api/brain/rules")
+@_guard
+def brain_rules_add():
+    """Add a choice from lists (items, action, scope), or settle a chat "do not mention" offer
+    (``offer``: {fact, item, save})."""
+    from applicant import rules as _R
+    st = _brain()
+    if st is None:
+        return jsonify({"error": "Your memory is off on this computer."}), 409
+    body = request.json or {}
+    offer = body.get("offer")
+    if isinstance(offer, dict):
+        rid = _R.settle_constraint(st, offer.get("fact"), str(offer.get("item") or ""), bool(offer.get("save")),
+                                   words=str(offer.get("words") or ""))
+        return brain_rules() if rid is None else _nostore(jsonify(dict(brain_rules().get_json(), saved=rid)))
+    its = _choice_items_now()
+    ids = [str(i) for i in body.get("items") or []]
+    if not ids or not all(_R.resolve(i, its) for i in ids):
+        return jsonify({"error": "Pick roles or projects from your own resume."}), 400
+    try:
+        rid = _R.add_rule(st, str(body.get("action") or ""), ids, str(body.get("scope_kind") or "all"),
+                          str(body.get("scope_value") or ""), source="memory_page")
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return _nostore(jsonify(dict(brain_rules().get_json(), saved=rid)))
+
+
+@app.post("/api/brain/rules/<int:rid>")
+@_guard
+def brain_rule_edit(rid: int):
+    """Edit (action, scope), pause or resume (``status``), or delete (``delete``: true) one choice."""
+    from applicant import rules as _R
+    st = _brain()
+    if st is None:
+        return jsonify({"error": "Your memory is off on this computer."}), 409
+    body = request.json or {}
+    if body.get("delete"):
+        if not _R.delete_rule(st, rid):
+            return jsonify({"error": "That choice is gone already."}), 404
+    else:
+        try:
+            got = _R.update_rule(st, rid, action=body.get("action"), scope_kind=body.get("scope_kind"),
+                                 scope_value=body.get("scope_value"), status=body.get("status"))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        if got is None:
+            return jsonify({"error": "That choice is gone already."}), 404
+    return brain_rules()
+
+
+def _rule_proposer(text: str):
+    """Telegram: a message that states a choice ("for banks, show Stanbic, not Viva") gets ONE
+    message back with Save and Not quite. Code checks first that it names one of the person's own
+    roles and a choice word; only then does the model read it. Nothing is saved until the tap.
+    Returns {text, buttons} or None (the message goes on to the assistant)."""
+    from applicant import rules as _R
+    st = _brain()
+    if st is None:
+        return None
+    its = _choice_items_now()
+    if not its or not _R.looks_like_choice(text, its):
+        return None
+    try:
+        from notify.assistant import carries_eeo
+        if carries_eeo(text):
+            return None
+        rows = (_make_llm().distill_memory([{"role": "user", "content": str(text)}], []) or {}).get("rules") or []
+    except Exception:          # noqa: BLE001 - no model: the assistant answers as before
+        return None
+    props = _R.propose_from_chat(st, rows, its, "telegram")
+    if not props:
+        return None
+    p = props[0]
+    buttons = [[{"id": f"rule:s:{p['token']}:{i}", "label": "Save" if len(p["options"]) == 1 else f"Save: {lab}"}]
+               for i, lab in enumerate(p["options"])]
+    buttons.append([{"id": f"rule:n:{p['token']}", "label": "Not quite"}])
+    return {"text": p["text"], "buttons": buttons}
+
+
+def _rule_button(data: str) -> dict:
+    """A tap on a Telegram choice proposal: ``rule:s:<token>:<option>`` saves, ``rule:n:<token>``
+    does not. The reply says "Saved" only after code saved it."""
+    from applicant import rules as _R
+    st = _brain()
+    parts = str(data or "").split(":")
+    if st is None or len(parts) < 3:
+        return {"message": "That choice could not be saved. Open SponsorJobs, Your answers, Resume choices."}
+    save = parts[1] == "s"
+    opt = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+    res = _R.answer_proposal(st, parts[2], save, opt)
+    if res.get("gone"):
+        return {"message": "That one was answered already."}
+    if res.get("saved"):
+        rule = _R.get_rule(st, res["rule_id"])
+        return {"message": "Saved. " + (_R.sentence(rule, _choice_items_now()) if rule else "")
+                + " Change it any time on Your answers, under Resume choices."}
+    return {"message": "Not saved. Say it another way, or set it in the app on Your answers, under Resume choices."}
 
 
 # ---- Guided project builder: the defend-your-work gate. A project cannot be marked
@@ -10361,13 +10574,16 @@ def _notify_hub():
     batch = BatchReview(None, _BatchActions(), approve_all_enabled=_prefs()["approve_all"])
 
     def act(data: str) -> dict:
-        # The Autopilot's batch buttons (ap:...) and the batch review's (approve:/skip:/approveall).
+        # The Autopilot's batch buttons (ap:...), a choice proposal's (rule:...), and the batch
+        # review's (approve:/skip:/approveall).
+        if str(data or "").startswith("rule:"):
+            return _rule_button(data)
         return _autopilot_act(data) if str(data or "").startswith("ap:") else batch.act(data)
     return NotifyHub(state, AlertEngine(state, match_fn=_alert_match_score),
                      NotifyService(None, _RecordActions()),
                      batch_callback=act, job_actions=_JobAlertActions(),
                      review=_cv_review(state), ask_callback=_agent_ask_event,
-                     file_import=_telegram_file_import)
+                     file_import=_telegram_file_import, rule_proposer=_rule_proposer)
 
 
 def _cv_review(state=None):

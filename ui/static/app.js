@@ -2649,6 +2649,11 @@
   // handler). Everything on the page is one of these except bullets and dates, which have
   // their own controls. The whole page is editable (Kofi, 2026-10-08); the server refuses an
   // edit only when it would push the resume onto a second page.
+  // The person's choices for this page (state.choices) and the last page drawn (to restore it
+  // when a switch fails). Declared before any render reads them.
+  let CHOICES = null;
+  let lastPreview = { p: {}, sections: null };
+  const chT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
   function ed(ref, text, cls, placeholder) {
     const empty = !text;
     return `<span class="${cls || ""} cv-ed${empty ? " cv-ed-empty" : ""}" contenteditable="true" spellcheck="false"`
@@ -2656,6 +2661,7 @@
   }
   function renderPreview(p, templateSections) {
     p = p || {};
+    lastPreview = { p, sections: templateSections };
     // null = the template's section list is unknown (an empty builder); then every section the
     // profile has is shown. With a list, only those sections appear, in the page's own order.
     const shows = (name) => !templateSections || templateSections.includes(name);
@@ -2762,23 +2768,124 @@
     const end = pres ? "Present" : (() => { const em = g(".dp-em"), ey = g(".dp-ey"); return (em && ey) ? `${em} ${ey}` : (ey || ""); })();
     return !start ? "" : (end ? `${start} - ${end}` : start);
   }
+  /* The person's choices on the edit page (docs/applicant-brain.md, section 8.1): above each role
+     and project, a "Show on this resume" switch, "Swap for ..." when another role overlaps it in
+     time, and one muted line saying why it is shown or not when a choice decided it. A role that
+     is off stays on the edit page, dimmed, so it can be switched back on. */
+  const choiceOf = (pos) => (CHOICES && CHOICES.items || []).find(i => i.pos === pos) || null;
+  function choiceStrip(pos) {
+    const it = choiceOf(pos);
+    if (!it) return "";
+    const swap = (it.swap || []).map(x => `<button type="button" class="cv-swap" data-swap-from="${esc(it.id)}" data-swap-to="${esc(x.id)}">`
+      + `${esc(chT("choice.swapFor", "Swap for {x}").replace("{x}", x.label))}</button>`).join("");
+    const why = it.why ? `<span class="cv-why">${esc(it.why)}${it.rule && CHOICES.can_save
+      ? ` <button type="button" class="cv-why-change" data-rule="${Number(it.rule)}">${esc(chT("choice.change", "Change"))}</button>` : ""}</span>` : "";
+    return `<div class="cv-show${it.shown ? "" : " is-off"}" contenteditable="false">`
+      + `<button type="button" class="cv-sw" role="switch" aria-checked="${it.shown ? "true" : "false"}" data-show-id="${esc(it.id)}">`
+      + `<span class="cv-sw-track" aria-hidden="true"><span class="cv-sw-knob"></span></span>`
+      + `<span class="cv-sw-l">${esc(chT("choice.show", "Show on this resume"))}</span></button>${swap}${why}</div>`;
+  }
+  const choiceOff = (pos) => { const it = choiceOf(pos); return !!(it && !it.shown); };
   function projHTML(p) {
-    return (p.projects || []).map((x, gi) => `<div class="cv-block${x.suggested ? " cv-suggested" : ""}">
+    return (p.projects || []).map((x, gi) => `<div class="cv-block${x.suggested ? " cv-suggested" : ""}">${choiceStrip(`proj-${gi}`)}
+      <div class="cv-body-in${choiceOff(`proj-${gi}`) ? " is-off" : ""}">
       <div class="cv-row"><span class="cv-org">${ed(`ent-${gi}-org`, x.org, "", "Project")}${x.suggested ? ' <span class="cv-sugg-badge">Suggested · replace before finalizing</span>' : ""}</span>${ed(`ent-${gi}-location`, x.location, "cv-loc", "")}</div>
       <div class="cv-row">${ed(`ent-${gi}-r0-title`, x.title, "cv-role", "Your role")}<span class="cv-dates">${datePicker(x.dates, `proj-${gi}`, false, x.dates_placeholder)}</span></div>
-      ${bulletList(x.bullets, `g${gi}-r0`)}</div>`).join("");
+      ${bulletList(x.bullets, `g${gi}-r0`)}</div></div>`).join("");
   }
   function expHTML(p, nproj) {
     return (p.experience || []).map((x, ei) => {
-      const roles = (x.roles || [x]).map((r, ri) => {
+      const list = x.roles || [x];
+      const roles = list.map((r, ri) => {
         const title = r.title_suggested
           ? `<span class="cv-role"><span class="cv-flag" data-role="${ei}-${ri}" data-sugg="${esc(r.title)}" data-orig="${esc(r.title_original || "")}">${esc(r.title)}</span></span>`
           : ed(`ent-${nproj + ei}-r${ri}-title`, r.title, "cv-role", "Job title");
-        return `<div class="cv-row">${title}<span class="cv-dates">${datePicker(r.dates, `exp-${ei}-${ri}`, false, r.dates_placeholder)}</span></div>
-                ${bulletList(r.bullets, `g${nproj + ei}-r${ri}`)}`;
+        // The first role's switch sits above the employer line it belongs to.
+        return `${ri ? choiceStrip(`exp-${ei}-${ri}`) : ""}<div class="cv-body-in${choiceOff(`exp-${ei}-${ri}`) ? " is-off" : ""}"><div class="cv-row">${title}<span class="cv-dates">${datePicker(r.dates, `exp-${ei}-${ri}`, false, r.dates_placeholder)}</span></div>
+                ${bulletList(r.bullets, `g${nproj + ei}-r${ri}`)}</div>`;
       }).join("");
-      return `<div class="cv-block"><div class="cv-row">${ed(`ent-${nproj + ei}-org`, x.org, "cv-org", "Company")}${ed(`ent-${nproj + ei}-location`, x.location, "cv-loc", "City, ST")}</div>${roles}</div>`;
+      const allOff = list.every((_r, ri) => choiceOff(`exp-${ei}-${ri}`));
+      return `<div class="cv-block">${choiceStrip(`exp-${ei}-0`)}<div class="cv-row${allOff ? " is-off" : ""}">${ed(`ent-${nproj + ei}-org`, x.org, "cv-org", "Company")}${ed(`ent-${nproj + ei}-location`, x.location, "cv-loc", "City, ST")}</div>${roles}</div>`;
     }).join("");
+  }
+
+  // The switch, Swap for ..., and Change (a choice's row on Your answers). The page and the PDF
+  // update in place; the edit page stays open.
+  function applyChoiceState(st) {
+    if (!st) return;
+    CHOICES = st.choices || null;
+    if (st.preview) renderPreview(st.preview, st.template_sections || null);
+    if (st.coverage) { setCoverage(st.coverage.ratio); renderCovDetail(st.coverage); }
+    if (st.pdf) {
+      $("#pdfFrame").src = st.pdf + "&preview=1#toolbar=0&navpanes=0&view=FitH";
+      $("#downloadBtn").href = st.pdf;
+      document.getElementById("spDownload")?.setAttribute("href", st.pdf);
+    }
+    renderChoiceLine(CHOICES);
+    if (st.choice_saved) toast(st.choice_saved);
+    if (st.choice_error) toast(st.choice_error);
+  }
+  async function choiceCall(url, body, btn) {
+    document.querySelectorAll("#cvBody .cv-sw, #cvBody .cv-swap, #choiceLine button").forEach(b => { b.disabled = true; });
+    if (btn) btn.classList.add("is-busy");
+    try { applyChoiceState(await api(url, body)); }
+    catch (err) { toast(err.message); renderPreview(lastPreview.p, lastPreview.sections); renderChoiceLine(CHOICES); }
+  }
+  $("#cvBody").addEventListener("click", (e) => {
+    const sw = e.target.closest(".cv-sw");
+    if (sw) {
+      const on = sw.getAttribute("aria-checked") !== "true";
+      sw.setAttribute("aria-checked", on ? "true" : "false");
+      return choiceCall("/api/session/shown", { id: sw.dataset.showId, show: on }, sw);
+    }
+    const sp = e.target.closest(".cv-swap");
+    if (sp) return choiceCall("/api/session/swap", { from: sp.dataset.swapFrom, to: sp.dataset.swapTo }, sp);
+    const ch = e.target.closest(".cv-why-change");
+    if (ch) return openAnswers("builder", { focus: "choices", rule: Number(ch.dataset.rule) });
+  });
+  function renderChoiceLine(ch) {
+    const box = $("#choiceLine");
+    if (!box) return;
+    const ask = ch && ch.ask, ov = ch && ch.overlap;
+    if (!ask && !(ov && ov.text)) { box.hidden = true; box.innerHTML = ""; return; }
+    const btn = (attr, id, label) => `<button type="button" class="btn btn-ghost btn-sm" ${attr}="${esc(id)}">${esc(label)}</button>`;
+    box.innerHTML = ask
+      ? `<span class="chl-q">${esc(ask.text)}</span><span class="chl-acts">${(ask.buttons || []).map(b => btn("data-choice", b.id, b.label)).join("")}</span>`
+      : `<span class="chl-q">${esc(ov.text)}</span><span class="chl-acts">${btn("data-overlap", "both", chT("choice.both", "Both"))}${btn("data-overlap", "one", chT("choice.onePerJob", "One per job"))}</span>`;
+    box.hidden = false;
+  }
+  $("#choiceLine")?.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.choice) return choiceCall("/api/session/choice", { answer: b.dataset.choice }, b);
+    if (b.dataset.overlap) return choiceCall("/api/session/overlap", { answer: b.dataset.overlap }, b);
+  });
+
+  /* A choice the builder's chat read ("for banks, show Stanbic, not Viva"): one chip with Save
+     and Not quite. Nothing is kept until the tap. */
+  const PROPS_SHOWN = new Set();
+  function renderProposals(list) {
+    (list || []).forEach(p => {
+      if (!p || PROPS_SHOWN.has(p.token)) return;
+      PROPS_SHOWN.add(p.token);
+      const opts = p.options || [];
+      const saves = opts.length > 1
+        ? opts.map((o, i) => `<button type="button" class="btn btn-ghost btn-sm" data-prop-save="${i}">${esc(chT("choice.saveWith", "Save: {x}").replace("{x}", o))}</button>`).join("")
+        : `<button type="button" class="btn btn-ghost btn-sm" data-prop-save="0">${esc(chT("ans.save", "Save"))}</button>`;
+      const m = bubble("agent", `<div class="chip-prop"><span class="chip-prop-t">${esc(p.text)}</span>`
+        + `<span class="chip-prop-acts">${saves}<button type="button" class="btn btn-ghost btn-sm" data-prop-no="1">${esc(chT("choice.notQuite", "Not quite"))}</button></span></div>`);
+      m.querySelector(".chip-prop").addEventListener("click", async (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        const save = b.dataset.propSave !== undefined;
+        m.querySelectorAll("button").forEach(x => { x.disabled = true; });
+        try {
+          const st = await api("/api/session/proposal", { token: p.token, save, option: save ? Number(b.dataset.propSave) : 0 });
+          m.querySelector(".chip-prop-acts").remove();
+          applyState(st);
+        } catch (err) { m.querySelectorAll("button").forEach(x => { x.disabled = false; }); toast(err.message); }
+      });
+    });
   }
   function extraHTML(p) {
     return (p.extracurricular || []).map((x, xi) => `<div class="cv-block">
@@ -2951,7 +3058,11 @@
     else document.getElementById("autobuildAction")?.remove();
     if (st.role) $("#builderRole").textContent = st.role + (st.company ? " · " + st.company : "");
     if (st.step) setStep(st.step);
+    if ("choices" in st || st.pdf) CHOICES = st.choices || null;
     if (st.preview) renderPreview(st.preview, st.template_sections || null);
+    renderChoiceLine(CHOICES);
+    renderProposals(st.rule_proposals);
+    if (st.choice_saved) toast(st.choice_saved);
 
     if (st.coverage) {
       $("#coverage").hidden = false;
@@ -3129,7 +3240,7 @@
     $("#paperWrap").hidden = true;
     $("#pdfFrame").hidden = false;
     $("#editToggle").classList.remove("is-active");
-    $("#editToggle").textContent = "Edit bullets";
+    $("#editToggle").textContent = chT("choice.edit", "Edit");
   }
   function showEdit() {
     $("#pdfPlaceholder").hidden = true;
@@ -3155,6 +3266,8 @@
     $("#pdfPlaceholder").hidden = false;
     $("#pdfFrame").hidden = true; $("#paperWrap").hidden = true;
     $("#builderRole").textContent = "New Resume";
+    CHOICES = null;
+    renderChoiceLine(null);
     renderPreview({});
   }
 
@@ -9405,7 +9518,7 @@
   const ANS_CC = { US: "US", UK: "UK", CA: "Canada", AU: "Australia", EU: "EU" };
   const ANS_YN = [["Yes", "ans.yes", "Yes"], ["No", "ans.no", "No"]];
   const ANS_BACK = { autoapply: ["nav.autoapply", "Auto-apply"], profile: ["acct.myProfile", "My profile"],
-                     package: ["ans.backApp", "Application"] };
+                     package: ["ans.backApp", "Application"], builder: ["choice.backResume", "Resume"] };
   function waEntry(cc) {
     const c = (ANS.wa.countries = ANS.wa.countries || {});
     return (c[cc] = c[cc] || { status: "", authorized: "", sponsor_now: "", sponsor_future: "", auth_end: "" });
@@ -9447,6 +9560,11 @@
     showView("answers");
     window.scrollTo(0, 0);
     await ansLoad();
+    if (opts && opts.focus === "choices") {
+      const row = opts.rule && document.querySelector(`#ansChoiceList [data-rule="${Number(opts.rule)}"]`);
+      (row || $("#ansChoicesCard"))?.scrollIntoView({ block: "center" });
+      if (row) { row.classList.add("is-focus"); setTimeout(() => row.classList.remove("is-focus"), 2400); }
+    }
     if (opts && opts.focus === "basics") {
       $("#ansBasicsCard")?.scrollIntoView({ block: "start" });
       // After the next frame: the button that opened this page was just hidden, and the
@@ -9457,6 +9575,7 @@
   $("#ansBack")?.addEventListener("click", () => {
     if (ANS.origin === "profile") { loadProfile(); showView("profile"); }
     else if (ANS.origin === "package") { showView("package"); }
+    else if (ANS.origin === "builder") { showView("builder"); }
     else { loadAutoApply(); showView("autoapply"); }
   });
   async function ansLoad() {
@@ -9472,7 +9591,103 @@
     paintWa();
     paintAnsList(d.answers || [], d.total || 0);
     await basLoad();
+    await chcLoad();
   }
+
+  /* ---- Resume choices (docs/applicant-brain.md, Phase 5): every saved choice in plain words
+     ("Bank and finance jobs: hide Viva."), how often it shaped a resume, and Edit (what it does
+     and for which jobs), Pause and Delete. A chat line "do not mention X" that names one of the
+     person's roles is offered here as a choice, saved only on Save. */
+  const CHC = { data: null, editing: null };
+  const CHC_ACTIONS = { one: [["hide", "choice.a.hide", "Hide it"], ["show", "choice.a.show", "Always show it"], ["lead", "choice.a.lead", "Lead with it"]],
+                        two: [["prefer", "choice.a.prefer", "Show the first, not the second"], ["apart", "choice.a.apart", "Never both together"]] };
+  async function chcLoad() {
+    let d;
+    try { d = await api("/api/brain/rules"); } catch { d = null; }
+    CHC.data = d;
+    CHC.editing = null;
+    paintChoices();
+  }
+  function chcEditor(r) {
+    const acts = CHC_ACTIONS[r.items.length === 2 ? "two" : "one"];
+    const scopes = (CHC.data.scopes || []);
+    const cur = `${r.scope_kind}|${r.scope_value}`;
+    const opt = (v, label, on) => `<option value="${esc(v)}"${on ? " selected" : ""}>${esc(label)}</option>`;
+    return `<div class="ans-row is-editing chc-edit" data-rule="${r.id}">
+      <div class="chc-edit-q">${esc(r.items.map(i => i.label).join(", "))}</div>
+      <div class="chc-edit-g">
+        <label class="ans-field"><span>${esc(chT("choice.what", "What it does"))}</span>
+          <select class="fld" data-chc="action">${acts.map(([v, k, f]) => opt(v, chT(k, f), v === r.action)).join("")}</select></label>
+        <label class="ans-field"><span>${esc(chT("choice.where", "For which jobs"))}</span>
+          <select class="fld" data-chc="scope">${scopes.map(o => opt(`${o.kind}|${o.value}`, o.label, `${o.kind}|${o.value}` === cur)).join("")}</select></label>
+      </div>
+      <div class="ans-row-acts"><button class="btn btn-ghost btn-sm" type="button" data-chc-act="save">${esc(chT("ans.save", "Save"))}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-chc-act="cancel">${esc(chT("ans.cancel", "Cancel"))}</button>
+        <span class="ans-note" data-chc-note></span></div></div>`;
+  }
+  function paintChoices() {
+    const list = $("#ansChoiceList"), offers = $("#ansChoiceOffers");
+    if (!list) return;
+    const d = CHC.data || { rules: [], offers: [] };
+    const rows = d.rules || [];
+    $("#ansChoicesCount").textContent = rows.length ? String(rows.length) : "";
+    offers.innerHTML = (d.offers || []).map((o, i) => `<div class="ans-needs chc-offer" data-offer="${i}">
+        <span class="ans-needs-q">${esc(o.text)}</span>
+        <span class="ans-needs-acts"><button class="btn btn-ghost btn-sm" type="button" data-offer-act="save">${esc(chT("choice.saveChoice", "Save as a choice"))}</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-offer-act="no">${esc(chT("choice.notNow", "Not now"))}</button></span></div>`).join("");
+    offers.hidden = !(d.offers || []).length;
+    if (!rows.length) {
+      list.innerHTML = `<div class="ans-empty">${esc(d.available === false
+        ? chT("choice.off", "Your memory is off on this computer, so no choices are kept.")
+        : chT("choice.empty", "No choices yet. Switch a role off on a resume and I ask once whether to do the same for similar jobs."))}</div>`;
+      return;
+    }
+    list.innerHTML = rows.map(r => CHC.editing === r.id ? chcEditor(r) : `<div class="ans-row${r.status === "paused" ? " is-paused" : ""}" data-rule="${r.id}">
+        <div class="ans-row-main">
+          <div class="ans-q">${esc(r.text)}${r.status === "paused" ? ` <span class="ans-tag">${esc(chT("choice.paused", "Paused"))}</span>` : ""}</div>
+          <div class="ans-meta">${esc(r.used)}</div>
+        </div>
+        <div class="ans-row-acts"><button class="btn btn-ghost btn-sm" type="button" data-chc-act="edit">${esc(chT("aa.edit", "Edit"))}</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-chc-act="${r.status === "paused" ? "resume" : "pause"}">${esc(r.status === "paused" ? chT("choice.resume", "Resume") : chT("choice.pause", "Pause"))}</button>
+          <button class="btn btn-ghost btn-sm ans-del" type="button" data-chc-act="delete">${esc(chT("ans.delete", "Delete"))}</button></div>
+      </div>`).join("");
+  }
+  $("#ansChoiceList")?.addEventListener("click", async e => {
+    const b = e.target.closest("[data-chc-act]");
+    if (!b) return;
+    const row = b.closest("[data-rule]"), id = Number(row && row.dataset.rule), act = b.dataset.chcAct;
+    if (act === "edit") { CHC.editing = id; paintChoices(); row && $(`#ansChoiceList [data-rule="${id}"] select`)?.focus(); return; }
+    if (act === "cancel") { CHC.editing = null; paintChoices(); return; }
+    let body;
+    if (act === "delete") body = { delete: true };
+    else if (act === "pause") body = { status: "paused" };
+    else if (act === "resume") body = { status: "active" };
+    else if (act === "save") {
+      const [kind, ...rest] = row.querySelector('[data-chc="scope"]').value.split("|");
+      body = { action: row.querySelector('[data-chc="action"]').value, scope_kind: kind, scope_value: rest.join("|") };
+    } else return;
+    b.disabled = true;
+    try {
+      const d = await api(`/api/brain/rules/${id}`, body);
+      CHC.data = d; CHC.editing = null; paintChoices();
+      toast(act === "delete" ? chT("ans.deleted", "Deleted.") : chT("choice.savedT", "Saved."));
+    } catch (err) {
+      b.disabled = false;
+      const note = row.querySelector("[data-chc-note]");
+      if (note) note.textContent = err.message; else toast(err.message);
+    }
+  });
+  $("#ansChoiceOffers")?.addEventListener("click", async e => {
+    const b = e.target.closest("[data-offer-act]");
+    if (!b) return;
+    const o = ((CHC.data || {}).offers || [])[Number(b.closest("[data-offer]").dataset.offer)];
+    if (!o) return;
+    b.disabled = true;
+    try {
+      const d = await api("/api/brain/rules", { offer: { fact: o.fact, item: o.item, save: b.dataset.offerAct === "save", words: o.text } });
+      CHC.data = d; CHC.editing = null; paintChoices();
+    } catch (err) { b.disabled = false; toast(err.message); }
+  });
   function paintWa() {
     const d = ANS.data, cc = ANS.country, e = waEntry(cc);
     $("#ansCountry").innerHTML = (d.countries || []).map(c =>
