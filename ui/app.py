@@ -4432,7 +4432,7 @@ def _saved_full_profile() -> dict:
     mem = _memory().load("default") or {}
     prof = mem.get("profile") or {}
     if prof.get("experience") or (prof.get("identity") or {}).get("name"):
-        return prof
+        return _assembled_profile(prof)          # (Phase 6) assembled from memory
     return mem.get("essentials") or prof
 
 
@@ -4500,11 +4500,20 @@ def profile_sections_save():
     if _SESSION.get("s") is not None:
         return jsonify({"error": "Finish or close the resume you're building first, "
                                  "its autosave would overwrite these edits."}), 409
-    b = request.json or {}
+    _save_sections(request.json or {})
+    return profile_view()
+
+
+def _save_sections(b: dict) -> tuple[dict, dict]:
+    """Write the section edits into both saved bags. (Phase 6) Each entry the person changed is
+    their own fact in the brain (source "you", on the memory page), and a choice naming an entry
+    that is gone is paused. Returns (before, after) profiles."""
+    import copy
     mem = _memory()
     saved = mem.load("default") or {}
     profile = saved.get("profile") or {}
     ess = saved.get("essentials") or {}
+    before = copy.deepcopy(profile)
 
     edu = _prof_rows(b.get("education"), ("school", "degree", "date", "location", "courses"))
     flat = _prof_rows(b.get("experience"), ("org", "title", "dates", "location"))
@@ -4540,7 +4549,33 @@ def profile_sections_save():
     ess["declined"] = declined
 
     mem.save("default", profile, ess, saved.get("history") or [])
-    return profile_view()
+    _pbrain_do(_brain_details, before, profile, ref="memory_page")
+    _pbrain_do(_retire_items, before, profile)
+    _pbrain_do(_sync_choice_items, profile)
+    return before, profile
+
+
+def _retire_items(st, before: dict, after: dict) -> int:
+    """An entry renamed or removed in an edit is no longer current in the brain (kept as history,
+    never handed out; only Forget deletes it)."""
+    from applicant.migrate import _profile_items
+    from applicant.store import ACTIVE, REPLACED
+    now = {(k, sub) for k, sub, _v, part in _profile_items(after) if part != "contact"}
+    gone = {(k, sub) for k, sub, _v, part in _profile_items(before) if part != "contact"} - now
+    n = 0
+    for key, sub in gone:
+        for r in st.current(key, sub, ""):
+            if r["status"] == ACTIVE:
+                st.update_fact(r["id"], status=REPLACED)
+                n += 1
+    return n
+
+
+def _sync_choice_items(st, profile: dict):
+    """A choice that names a role or project no longer on the profile is paused (and comes back
+    with it)."""
+    from applicant import rules as _R
+    return _R.sync_items(st, _R.items(profile or {}))
 
 
 def _template_shows_projects(name: str | None = None) -> bool:
@@ -4695,7 +4730,7 @@ def profile_details_save():
     return jsonify({"ok": True, "missing": _profile_missing_slots()})
 
 
-def _brain_details(st, before: dict, after: dict) -> int:
+def _brain_details(st, before: dict, after: dict, ref: str = "details") -> int:
     """(Phase 3) What the details step changed, as the person's own facts (source "you"): the
     contact details they typed, and each role, school or project whose dates or location they
     gave. Only what changed: an untouched entry keeps where it came from."""
@@ -4703,11 +4738,11 @@ def _brain_details(st, before: dict, after: dict) -> int:
     from applicant.migrate import _profile_items
     ib, ia = (before.get("identity") or {}), (after.get("identity") or {})
     n = _F.write_contact(st, {k: v for k, v in ia.items() if str(v or "").strip() and ib.get(k) != v},
-                         source="you", source_ref="details")
+                         source="you", source_ref=ref)
     old = {(k, sub): v for k, sub, v, part in _profile_items(before) if part != "contact"}
     for key, sub, val, part in _profile_items(after):
         if part != "contact" and old.get((key, sub)) != val:
-            if _F.put(st, key, val, source="you", subject=sub, source_ref="details") is not None:
+            if _F.put(st, key, val, source="you", subject=sub, source_ref=ref) is not None:
                 n += 1
     return n
 
@@ -5756,7 +5791,7 @@ def _save_answer(lib, question: str, answer: str, *, source: str = "you", compan
     return row
 
 
-def _answers_payload(query: str = "") -> dict:
+def _answers_payload(query: str = "", view: str = "") -> dict:
     from autoapply import workauth as _wa
     lib = _answer_lib()
     try:
@@ -5764,6 +5799,22 @@ def _answers_payload(query: str = "") -> dict:
         total = lib.count()
     finally:
         lib.close()
+    if view == "memory":
+        # (Phase 6) The memory page's Other answers: never a self-identification answer (those
+        # sit behind Show) nor one a row above already shows; each with where it came from.
+        from applicant import keys as _K
+        from applicant import page as _P
+        from applicant.store import STORE_ANSWERS
+        st = _brain()
+        rows = _P.one_question(rows)
+        for r in rows:
+            m = _P.meta(_P.newest(st, _K.fact_key(r["key"]), "", stores=(STORE_ANSWERS,)))
+            r.update({"from": m["source"], "when": m["when"]})
+        lib = _answer_lib()
+        try:
+            total = len(_P.one_question(lib.list()))
+        finally:
+            lib.close()
     return {"ok": True, "work_auth": _work_auth(),
             "countries": [{"code": c, "name": _wa.COUNTRY_NAMES[c],
                            "statuses": [{"code": k, "label": v} for k, v in _wa.STATUSES[c]]}
@@ -5777,7 +5828,7 @@ def _answers_payload(query: str = "") -> dict:
 @_guard
 def answers_list():
     """Your answers: the work-authorization profile and the saved answer library (?q= filters)."""
-    return _nostore(jsonify(_answers_payload(str(request.args.get("q") or ""))))
+    return _nostore(jsonify(_answers_payload(str(request.args.get("q") or ""), str(request.args.get("view") or ""))))
 
 
 @app.post("/api/answers/workauth")
@@ -6471,54 +6522,43 @@ def memory_assess():
     return jsonify({"ok": True, "assessment": _make_llm().assess_cv_worthiness(text)})
 
 
-def _derive_essentials_from_memory(person: str = "default", max_turns: int = 80) -> dict:
-    """Compute the resume's STRUCTURED facts (identity, education, experience) FROM MEMORY, by
-    replaying the person's captured statements through the same grounded extractor the live intake
-    uses. This is the 'profile is computed, not a form you fill' path: the structure is DERIVED from
-    what they told us, held internally, never a page. Invents nothing (extract_intake keeps names,
-    companies, dates, schools exactly as stated). Bounded to the most recent statements to cap cost."""
-    history = _palace(person).load_history()
-    turns = [h for h in history if h.get("role") in ("user", "note") and str(h.get("content") or "").strip()]
-    if not turns:
-        return {"identity": {}, "education": [], "experience": []}
-    llm = _make_llm()
-    known = {"identity": {}, "education": [], "experience": []}
-    for t in turns[-max_turns:]:
-        try:
-            res = llm.extract_intake("", known, [{"role": "user", "content": t["content"]}])
-            if isinstance(res, dict) and isinstance(res.get("essentials"), dict):
-                known = res["essentials"]
-        except Exception:
-            continue   # one bad turn never breaks the derivation
-    return known
+def _assembled_profile(profile: dict | None = None) -> dict:
+    """(Phase 6) The resume material assembled from memory (applicant/profile.py): the saved
+    material with the person's own contact details and the dates the brain holds laid over it.
+    Code only, no model call. ``profile`` defaults to the saved one."""
+    from applicant.profile import assemble
+    if profile is None:
+        profile = (_memory().load("default") or {}).get("profile") or {}
+    try:
+        return assemble(profile, _profile_brain())
+    except Exception:          # noqa: BLE001 - the saved material always stands on its own
+        traceback.print_exc()
+        return profile
 
 
 def _memory_first_profile(role: str = "", company: str = "", jd: str = "") -> dict:
-    """Build the CV's input FROM MEMORY instead of the stored profile form: derive the structured
-    essentials from what the person told us (identity/roles/dates/education), then fold in the
-    STRONGEST recalled accomplishments for THIS job (grounded, attached to the right role). This is
-    the 'memory-first' tailoring input, built ALONGSIDE the form path so we can prove quality before
-    switching the default. Returns {essentials, drew_on}: drew_on is what it pulled from the career
-    memory (for the 'from your career memory' transparency, and never invented)."""
-    essentials = _derive_essentials_from_memory()
-    highlights = _career_highlights_for_job(role, company, jd)
-    if highlights:
-        try:
-            merged = _make_llm().absorb_enrichment(
-                jd or "", essentials, ". ".join(h.get("text", "") for h in highlights if h.get("text")))
-            if isinstance(merged, dict):
-                essentials = merged
-        except Exception:
-            pass   # fall back to the derived essentials; a bad enrich never loses the facts
-    return {"essentials": essentials, "drew_on": highlights}
+    """The resume's input, from memory (docs/applicant-brain.md, Phase 6, finishing the August
+    plan): the profile assembled from the brain and the saved material, plus the person's own
+    diary lines that fit THIS job (``drew_on``, the 'from your career memory' transparency).
+
+    The August version replayed up to 80 chat turns through the model on every call; the brain
+    now holds the facts, so this is code only and costs nothing. Returns {profile, essentials,
+    drew_on}; nothing invented."""
+    from applicant.profile import essentials as _ess
+    saved = _memory().load("default") or {}
+    prof = saved.get("profile") or {}
+    if not (prof.get("experience") or (prof.get("identity") or {}).get("name")):
+        prof = {**(saved.get("essentials") or {}), **({"identity": prof["identity"]} if prof.get("identity") else {})}
+    profile = _assembled_profile(prof)
+    return {"profile": profile, "essentials": _ess(profile),
+            "drew_on": _career_highlights_for_job(role, company, jd)}
 
 
 @app.post("/api/memory/tailoring-input")
 @_guard
 def memory_tailoring_input():
-    """The tailoring INPUT built entirely from memory (derived facts + recalled wins for THIS job),
-    exposed so we can prove memory-first CVs hold up BEFORE retiring the profile form. Body:
-    {role, company, jd}. Grounded; nothing invented."""
+    """The tailoring INPUT from memory (the assembled profile, plus the diary lines that fit THIS
+    job). Body: {role, company, jd}. Grounded; nothing invented; no model call."""
     b = request.json or {}
     return jsonify({"ok": True, **_memory_first_profile(
         str(b.get("role") or ""), str(b.get("company") or ""), str(b.get("jd") or ""))})
@@ -6527,24 +6567,579 @@ def memory_tailoring_input():
 @app.get("/api/memory/derived-profile")
 @_guard
 def memory_derived_profile():
-    """The resume's structured facts COMPUTED from memory (identity / roles+dates / education), not a
-    form the person maintains. Behind the scenes this is what tailoring will read once the profile
-    page is retired; exposed here so we can verify the derivation holds up BEFORE removing the page.
-    Grounded; nothing invented."""
-    return jsonify({"ok": True, "essentials": _derive_essentials_from_memory()})
+    """The resume's structured facts assembled from memory (identity, roles and dates,
+    education): what tailoring reads. Code only; nothing invented."""
+    out = _memory_first_profile()
+    return jsonify({"ok": True, "essentials": out["essentials"], "profile": out["profile"]})
 
 
 @app.post("/api/memory/highlights")
 @_guard
 def memory_highlights():
-    """The career-diary memories relevant to a specific job, so the app can autonomously draw on the
-    person's real past accomplishments when tailoring (no decisions asked of them) and, in
-    conversational mode, mention what it remembered. Body: {role, company, jd}. Grounded; strong
-    matches only."""
+    """The career-diary memories relevant to a specific job (the same recall the builder uses
+    for this job, ``_memory_first_profile``'s ``drew_on``). Body: {role, company, jd}. Grounded;
+    strong matches only."""
     b = request.json or {}
     hi = _career_highlights_for_job(str(b.get("role") or ""), str(b.get("company") or ""),
                                     str(b.get("jd") or ""))
     return jsonify({"ok": True, "highlights": hi})
+
+
+# ---- The memory page (docs/applicant-brain.md, section 13, Phase 6): "What SponsorJobs knows
+# about you". Every fact grouped, with where it came from and when, Edit and Forget; the
+# self-identification answers behind Show; the chat's "I noted" proposals; Export as one zip;
+# Erase everything. All local: nothing here reaches a model, the broker, Telegram or a log. ----
+def _memory_page_payload() -> dict:
+    from applicant import page as _P
+    from applicant import rules as _R
+    from autoapply import basics, countries
+    from autoapply import workauth as _wa
+    from intake.diary import stats as _dstats
+    saved = _memory().load("default") or {}
+    prof = saved.get("profile") or {}
+    ess = saved.get("essentials") or {}
+    identity = dict(prof.get("identity") or ess.get("identity") or {})
+    st, pst = _brain(), _profile_brain()
+    prefs = _brain_prefs()
+    wa = _wa.load(prefs)
+    conflict = _salary_conflict()
+    lib = _answer_lib()
+    try:
+        about = _P.contact_rows(pst, identity)
+        work = _P.work_rows(st, wa, lib, prefs)
+        answers = _P.answer_rows(st, lib, prefs)
+        eeo = _P.eeo_rows(st, lib, bool(prefs.get("eeo_decline")))
+        bas = basics.read(lib, eeo_decline=bool(prefs.get("eeo_decline")), salary_fallback=prefs.get("desired_salary") or "")
+        needs = _P.needs(st, conflict=conflict, wa=wa, lib=lib, prefs=prefs)
+        others = len(_P.one_question(lib.list()))
+    finally:
+        lib.close()
+    its = _R.items(prof)
+    material = bool(prof.get("experience") or prof.get("education") or ess.get("experience"))
+    out = {
+        "ok": True, "available": st is not None,
+        "has_profile": bool(identity.get("name") or material),
+        "about": about, "work": work, "answers": answers, "others": others,
+        "eeo": eeo, "eeo_decline": bool(prefs.get("eeo_decline")),
+        "basics": {k: bas[k] for k in ("answered", "total", "missing")},
+        # a chat value that disagrees with a saved one is ONE question (Needs a look), never
+        # also an "I noted" chip
+        "needs": needs, "noted": [n for n in _P.noted(st) if not (conflict and n["key"] == conflict.get("key"))],
+        "career": _P.career(pst, prof, ess), "notes": _P.notes(pst),
+        "history": _P.history(st, its, _R.label_of),
+        "diary": _dstats(PALACE_DIR),
+        "countries": list(countries.NAMES),
+        "eeo_choices": {f: [{"code": c, "label": w} for c, w in ch] for f, ch in basics.CHOICES.items()},
+        "wa_countries": [{"code": c, "name": _wa.COUNTRY_NAMES[c]} for c in _wa.COUNTRIES],
+    }
+    if st is not None:
+        try:
+            out["report"] = st.counts().get("facts", {})
+        except Exception:      # noqa: BLE001
+            pass
+    return out
+
+
+@app.get("/api/memory/page")
+@_guard
+def memory_page():
+    """Everything the memory page shows, grouped. A self-identification answer is only "saved"
+    or "declined" here; its value comes from /api/memory/reveal when the person taps Show."""
+    return _nostore(jsonify(_memory_page_payload()))
+
+
+@app.get("/api/memory/reveal")
+@_guard
+def memory_reveal():
+    """The self-identification answers in words, for the person's own screen after they tap
+    Show. Local only: never logged, never sent anywhere."""
+    from applicant import page as _P
+    lib = _answer_lib()
+    try:
+        vals = _P.reveal(lib)
+    finally:
+        lib.close()
+    return _nostore(jsonify({"ok": True, "values": vals}))
+
+
+def _chat_rows_for(key: str, subject: str = "") -> list[int]:
+    """The memory_facts rows (every status) that stand for this brain fact: the chat said it."""
+    from applicant.migrate import _memory_fact_item
+    out = []
+    for mf in _memory().list_facts("default", status=None):
+        k, sub, _o = _memory_fact_item(dict(mf, status="active"))
+        if k == key and (sub or "") == (subject or ""):
+            out.append(int(mf["id"]))
+    return out
+
+
+def _forget_chat_rows(key: str, subject: str = "") -> int:
+    mem = _memory()
+    ids = _chat_rows_for(key, subject)
+    for i in ids:
+        mem.delete_fact("default", i)
+    return len(ids)
+
+
+def _forget_rows(st, key: str, subject: str, store: str, sources=None) -> int:
+    """Hard delete the rows of one key, subject and store (only those from ``sources`` when
+    given), and the fill rows pointing at them."""
+    from applicant import keys as _K
+    sql, args = "SELECT id FROM fact WHERE person='default' AND key=? AND subject=? AND store=?", [key, subject, store]
+    if sources:
+        sql += f" AND source IN ({','.join('?' * len(sources))})"
+        args += list(sources)
+    ids = [r["id"] for r in st.q(sql, args)]
+    if not ids:
+        return 0
+    marks = ",".join("?" * len(ids))
+    with st.tx() as c:
+        c.execute(f"DELETE FROM fill WHERE fact_id IN ({marks})", ids)
+        c.execute(f"DELETE FROM fact WHERE id IN ({marks})", ids)
+    st.log("fact_forgotten", key=key if _K.sensitivity(key) != _K.EEO else "eeo", n=len(ids))
+    return len(ids)
+
+
+def _clear_identity(fields) -> None:
+    """Clear contact fields in both saved bags and in a live builder session."""
+    mem = _memory()
+    saved = mem.load("default") or {}
+    profile = saved.get("profile") or {}
+    ess = saved.get("essentials") or {}
+    for bag in (profile, ess):
+        ident = bag.get("identity")
+        if isinstance(ident, dict):
+            for f in fields:
+                ident.pop(f, None)
+    mem.save("default", profile, ess, saved.get("history") or [])
+    sess = _SESSION.get("s")
+    if sess is not None:
+        for bag in (getattr(sess, "essentials", None), getattr(sess, "profile", None)):
+            if isinstance(bag, dict) and isinstance(bag.get("identity"), dict):
+                for f in fields:
+                    bag["identity"].pop(f, None)
+
+
+def _forget_key(key: str, refs: list) -> int:
+    """Forget one thing the person knows about themselves, in every store that holds a copy: the
+    answer library (every wording of the question), the prefs answers, the brain's own facts and
+    the chat facts that said it. Returns how many copies went."""
+    from applicant import keys as _K
+    from applicant import page as _P
+    st = _brain()
+    n = 0
+    refs += _P.diary_refs(st, key)
+    lkeys = {_K.library_key(key)}
+    lib = _answer_lib()
+    try:
+        if key.startswith("@"):
+            lkeys |= {r["key"] for r in lib.candidates(key)}
+        for lk in lkeys:
+            n += 1 if lib.delete(lk) else 0
+    finally:
+        lib.close()
+    fld = _P.PREFS_FIELD.get(key)
+    if fld and str(_load_prefs().get(fld) or "").strip():
+        _merge_prefs({fld: ""})
+        n += 1
+    if key == "accept_required_terms":
+        _merge_prefs({"accept_required_terms": "ask"})
+    if key == "relocate":
+        wa = _work_auth()
+        if wa.get("relocate"):
+            wa["relocate"] = ""
+            _merge_prefs({"work_auth": wa})
+            n += 1
+    if key == "@eeo_decline":
+        _merge_prefs({"eeo_decline": False})
+    if st is not None:
+        n += _forget_rows(st, key, "", "")
+    n += _forget_chat_rows(key, "")
+    return n
+
+
+def _forget(token: str, chat: bool = False) -> int:
+    """Forget what one memory-page row names (its ``id``). With ``chat``, the chat lines the
+    person said it in are deleted from the diary too. Returns how many copies went."""
+    from applicant import page as _P
+    from applicant.store import STORE_ANSWERS
+    kind, _, rest = str(token or "").partition(":")
+    refs: list = []
+    n = 0
+    st, pst = _brain(), _profile_brain()
+    if kind == "contact" and rest in _P.CONTACT_KEY:
+        key = _P.CONTACT_KEY[rest]
+        keys = [key] + (["location", "address.street", "address.city", "address.state", "address.postal_code",
+                         "address.country"] if rest == "address" else [])
+        _clear_identity([rest] + (["location"] if rest == "address" else []))
+        for k in keys:
+            refs += _P.diary_refs(pst, k)
+            n += _forget_rows(pst, k, "", "") if pst is not None else 0
+            n += _forget_chat_rows(k, "")
+        n += 1
+    elif kind == "wa":
+        wa = _work_auth()
+        if rest in (wa.get("countries") or {}):
+            wa["countries"].pop(rest, None)
+            _merge_prefs({"work_auth": wa})
+            n += 1
+    elif kind == "key":
+        n += _forget_key(rest, refs)
+    elif kind == "eeo":
+        from autoapply import basics
+        if rest in basics.KEY:
+            lib = _answer_lib()
+            try:
+                keys = {basics.KEY[rest]}
+                half = basics._halves(lib).get(rest)
+                if half:
+                    keys.add(half[1])
+                for k in keys:
+                    for r in lib.candidates(k):
+                        n += 1 if lib.delete(r["key"]) else 0
+            finally:
+                lib.close()
+    elif kind == "lib":
+        lib = _answer_lib()
+        try:
+            n += 1 if lib.delete(rest) else 0
+        finally:
+            lib.close()
+    elif kind == "worked" and st is not None:
+        refs += [r["source_ref"] for r in st.q("SELECT source_ref FROM fact WHERE key='@previously_worked' AND subject=?",
+                                                (rest,)) if str(r["source_ref"] or "").startswith("diary:")]
+        n += _forget_rows(st, "@previously_worked", rest, "")
+    elif kind in ("fact", "noted", "note") and rest.isdigit():
+        for s_ in [x for x in (pst, st) if x is not None]:
+            rows = s_.q("SELECT * FROM fact WHERE id=? AND person='default'", (int(rest),))
+            if not rows:
+                continue
+            r = rows[0]
+            refs += [x["source_ref"] for x in s_.q("SELECT source_ref FROM fact WHERE key=? AND subject=? AND store=?",
+                                                   (r["key"], r["subject"], r["store"]))
+                     if str(x["source_ref"] or "").startswith("diary:")]
+            if r["store"] == STORE_ANSWERS:
+                lib = _answer_lib()
+                try:
+                    n += 1 if lib.delete(r["key"][2:] if r["key"].startswith("q:") else r["key"]) else 0
+                finally:
+                    lib.close()
+            else:
+                srcs = (r["source"],) if kind in ("noted", "fact") and r["source"] in ("chat", "telegram_chat", "resume") else None
+                n += _forget_rows(s_, r["key"], r["subject"], r["store"], sources=srcs)
+                if r["source"] in ("chat", "telegram_chat"):
+                    n += _forget_chat_rows(r["key"], r["subject"])
+            break
+    elif kind == "doc" and rest.isdigit() and st is not None:
+        d = st.q("SELECT * FROM document WHERE id=?", (int(rest),))
+        if d:
+            ref = f"document:{int(rest)}"
+            # the facts only this file gave (every row of that key and subject came from it)
+            for r in st.q("SELECT DISTINCT key, subject, store FROM fact WHERE source_ref=?", (ref,)):
+                refs_all = {x["source_ref"] for x in st.q("SELECT source_ref FROM fact WHERE key=? AND subject=? AND store=?",
+                                                          (r["key"], r["subject"], r["store"]))}
+                if refs_all == {ref}:
+                    n += _forget_rows(st, r["key"], r["subject"], r["store"])
+            path = Path(str(d[0]["path"] or ""))
+            try:
+                if path.is_file() and _DATA in path.resolve().parents:
+                    path.unlink()
+            except OSError:
+                pass
+            with st.tx() as c:
+                c.execute("DELETE FROM document WHERE id=?", (int(rest),))
+            st.log("document_forgotten", ref=ref)
+            n += 1
+    if chat and refs:
+        from intake.diary import forget_refs
+        n += forget_refs(PALACE_DIR, refs)
+    for s_ in {id(x): x for x in (st, pst) if x is not None}.values():
+        try:
+            s_.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")   # the deleted pages leave the WAL file too
+        except Exception:      # noqa: BLE001
+            pass
+    return n
+
+
+@app.post("/api/memory/forget")
+@_guard
+def memory_forget():
+    """Forget one row of the memory page {id, chat}: the value, its history and every copy (the
+    answer library, the prefs, the chat facts), and with ``chat`` the chat lines it came from.
+    Returns the page."""
+    b = request.json or {}
+    token = str(b.get("id") or "")
+    if not token:
+        return jsonify({"error": "Which one?"}), 400
+    if token.startswith("contact:") and _SESSION.get("s") is not None:
+        pass   # the live session is cleared too (_clear_identity)
+    n = _forget(token, chat=bool(b.get("chat")))
+    out = _memory_page_payload()
+    out["forgotten"] = n
+    return _nostore(jsonify(out))
+
+
+@app.post("/api/memory/noted")
+@_guard
+def memory_noted():
+    """Settle one "I noted ..." proposal from chat {fact, save}: Save makes it the person's own
+    answer everywhere a form reads it; Not quite forgets it (and the chat fact it came from)."""
+    from applicant import keys as _K
+    from applicant import page as _P
+    b = request.json or {}
+    st = _brain()
+    if st is None:
+        return jsonify({"error": "Your memory is off on this computer."}), 409
+    try:
+        fid = int(b.get("fact"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Which one?"}), 400
+    rows = st.q("SELECT * FROM fact WHERE id=? AND person='default'", (fid,))
+    if not rows:
+        return jsonify({"error": "That one is settled already."}), 404
+    r = rows[0]
+    if not b.get("save"):
+        _forget(f"noted:{fid}")
+        return _nostore(jsonify(_memory_page_payload()))
+    key, value = r["key"], str(r["value"] or "")
+    if key == "@salary":
+        if not _settle_salary(value):
+            return jsonify({"error": "That is not a yearly salary. Edit it under Form answers."}), 400
+    else:
+        if key in _P.CONTACT_KEY.values():
+            fld = {v: k for k, v in _P.CONTACT_KEY.items()}[key]
+            _save_identity_fields({fld: value})
+        elif key in ("@citizenship", "@citizenship2"):
+            from autoapply import basics
+            lib = _answer_lib()
+            try:
+                basics.write(lib, {key.lstrip("@"): value})
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 400
+            finally:
+                lib.close()
+        elif key.startswith("@") and _K.get(key) is not None and _K.get(key).ask:
+            lib = _answer_lib()
+            try:
+                _save_answer(lib, _K.get(key).ask, value, via="memory_page")
+            finally:
+                lib.close()
+            fld = _P.PREFS_FIELD.get(key)
+            if fld:
+                _merge_prefs({fld: value})
+        _P.confirm_fact(st, fid)
+    return _nostore(jsonify(_memory_page_payload()))
+
+
+@app.post("/api/memory/confirm")
+@_guard
+def memory_confirm():
+    """The person kept a value the memory page asked about {fact} (a legal fact read from their
+    resume, a newer value that waited): it becomes their own."""
+    from applicant import page as _P
+    st = _brain()
+    try:
+        fid = int((request.json or {}).get("fact"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Which one?"}), 400
+    if st is None or _P.confirm_fact(st, fid) is None:
+        return jsonify({"error": "That one is settled already."}), 404
+    return _nostore(jsonify(_memory_page_payload()))
+
+
+def _save_identity_fields(patch: dict) -> None:
+    """Save some contact fields as the person's own (both saved bags, the brain, a live session),
+    exactly as the contact form does."""
+    mem = _memory()
+    saved = mem.load("default") or {}
+    profile = saved.get("profile") or {}
+    ess = saved.get("essentials") or {"identity": {}, "education": [], "experience": []}
+    clean = {k: " ".join(str(v or "").split())[:300] for k, v in patch.items() if k in IDENTITY_KEYS}
+    profile.setdefault("identity", {}).update(clean)
+    ess.setdefault("identity", {}).update(clean)
+    mem.save("default", profile, ess, saved.get("history") or [])
+    from applicant import facts as _F
+    _pbrain_do(_F.write_contact, {k: v for k, v in clean.items() if v}, source="you", source_ref="memory_page",
+               confirm=True)
+    sess = _SESSION.get("s")
+    if sess is not None:
+        try:
+            sess.essentials.setdefault("identity", {}).update(clean)
+            if isinstance(getattr(sess, "profile", None), dict):
+                sess.profile.setdefault("identity", {}).update(clean)
+        except Exception:      # noqa: BLE001
+            pass
+
+
+@app.post("/api/memory/answer")
+@_guard
+def memory_answer():
+    """Edit one form answer on the memory page {key, value}: saved as the person's own wherever
+    forms read it (the answer library, the prefs the browser extension fills, the brain)."""
+    from applicant import keys as _K
+    from applicant import page as _P
+    from autoapply import basics
+    b = request.json or {}
+    key, value = str(b.get("key") or ""), " ".join(str(b.get("value") or "").split())
+    if not value:
+        return jsonify({"error": "Write an answer first, or use Forget."}), 400
+    if key == "@salary":
+        n = basics.parse_salary(value)
+        if not n:
+            return jsonify({"error": "Enter your yearly salary as a number, like 120000."}), 400
+        lib = _answer_lib()
+        try:
+            if hasattr(lib, "via"):
+                lib.via = "memory_page"
+            basics.write(lib, {"salary": str(n)})
+        finally:
+            lib.close()
+        _merge_prefs({"desired_salary": str(n)})
+        from applicant import facts as _F
+        _brain_do(_F.settle_chat_salary, n)
+    elif key in ("@citizenship", "@citizenship2"):
+        lib = _answer_lib()
+        try:
+            if hasattr(lib, "via"):
+                lib.via = "memory_page"
+            basics.write(lib, {key.lstrip("@"): value})
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        finally:
+            lib.close()
+    elif key == "accept_required_terms":
+        _merge_prefs({"accept_required_terms": "always" if value == "always" else "ask"})
+    elif key == "relocate":
+        if value not in ("Yes", "No"):
+            return jsonify({"error": "Yes or No?"}), 400
+        wa = _work_auth()
+        wa["relocate"] = value
+        _merge_prefs({"work_auth": wa})
+    elif key in {k for k, *_ in _P.ANSWERS} or key == "@over_18":
+        if key == "@over_18" and value not in ("Yes", "No"):
+            return jsonify({"error": "Yes or No?"}), 400
+        lib = _answer_lib()
+        try:
+            _save_answer(lib, _K.get(key).ask, value, via="memory_page")
+        finally:
+            lib.close()
+        fld = _P.PREFS_FIELD.get(key)
+        if fld:
+            _merge_prefs({fld: value})
+    elif key.startswith("contact:"):
+        fld = key.split(":", 1)[1]
+        if fld not in IDENTITY_KEYS:
+            return jsonify({"error": "Which detail?"}), 400
+        _save_identity_fields({fld: value})
+    else:
+        return jsonify({"error": "That answer is edited under Other answers."}), 400
+    return _nostore(jsonify(_memory_page_payload()))
+
+
+_CAREER_SECS = ("experience", "education", "projects", "extracurricular")
+
+
+@app.post("/api/memory/career")
+@_guard
+def memory_career_forget():
+    """Forget one entry of the resume material {sec, i} (a role, a school, a project, an activity),
+    or a whole field {sec: summary | interests | skills_input}: gone from the saved material and
+    from the brain (with its history), and a choice that named it is paused. Refused while a
+    resume is being built (its autosave would bring it back)."""
+    from applicant.migrate import _profile_items
+    if _SESSION.get("s") is not None:
+        return jsonify({"error": "Finish or close the resume you're building first, "
+                                 "its autosave would bring this back."}), 409
+    b = request.json or {}
+    sec = str(b.get("sec") or "")
+    view = profile_view().get_json()
+    flat = []
+    for e in view.get("experience") or []:
+        for r in (e.get("roles") or [e]):
+            flat.append({"org": e.get("org") or e.get("company") or "", "title": r.get("title") or "",
+                         "dates": r.get("dates") or e.get("dates") or "", "location": e.get("location") or "",
+                         "bullets": r.get("bullets") or []})
+    state = {"summary": view.get("summary") or "", "experience": flat,
+             "education": [dict(x, courses=x.get("courses") if isinstance(x.get("courses"), str)
+                                else ", ".join(x.get("courses") or [])) for x in view.get("education") or []],
+             "projects": [{"org": p.get("org") or p.get("title") or "", "link": p.get("link") or p.get("url") or "",
+                           "location": p.get("location") or "", "dates": p.get("dates") or "",
+                           "bullets": p.get("bullets") or []} for p in view.get("projects") or []],
+             "extracurricular": view.get("extracurricular") or [], "interests": view.get("interests") or "",
+             "skills_input": view.get("skills_input") or [], "declined": view.get("declined") or []}
+    if sec in _CAREER_SECS:
+        try:
+            i = int(b.get("i"))
+            state[sec].pop(i)
+        except (TypeError, ValueError, IndexError):
+            return jsonify({"error": "That entry is gone already."}), 404
+    elif sec in ("summary", "interests"):
+        state[sec] = ""
+    elif sec == "skills_input":
+        state[sec] = []
+    else:
+        return jsonify({"error": "Which part?"}), 400
+    before, after = _save_sections(state)
+    pst = _profile_brain()
+    if pst is not None:
+        now = {(k, sub) for k, sub, _v, part in _profile_items(after) if part != "contact"}
+        for key, sub, _v, part in _profile_items(before):
+            if part != "contact" and (key, sub) not in now:
+                _forget_rows(pst, key, sub, "")
+    return _nostore(jsonify(_memory_page_payload()))
+
+
+def _export_zip(include_files: bool) -> bytes:
+    """Everything the app knows about the person, as one zip (docs/applicant-brain.md, section
+    10): memory.json (the brain's tables, the answer library, the prefs, the profile, the facts,
+    the interview files and the rest), the chat diary files as they are, and with
+    ``include_files`` the files they shared (resumes, documents, the profile photo)."""
+    import io
+    import zipfile
+    from datetime import datetime
+    mem = _memory()
+    saved = mem.load("default") or {}
+    payload = {"exported_at": datetime.now().isoformat(timespec="seconds"),
+               "facts": mem.list_facts("default", status=None),
+               "transcript": _palace().load_history(),
+               "profile": saved.get("profile") or {}, "essentials": saved.get("essentials") or {},
+               **_brain_export()}
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("memory.json", json.dumps(payload, indent=2, default=str))
+        z.writestr("README.txt", "Everything SponsorJobs knew about you when you exported it.\n"
+                   "memory.json: your facts, answers, choices, history and profile.\n"
+                   "diary/: every chat line, as it was kept.\n"
+                   + ("files/: the files you shared.\n" if include_files else ""))
+        tdir = PALACE_DIR / "transcripts"
+        for f in sorted(tdir.glob("*.jsonl")) if tdir.is_dir() else []:
+            z.write(f, f"diary/{f.name}")
+        for name in ("app_prefs.json", "aa_learn.json", "linkedin_review.json") + _INTERVIEW_FILES:
+            f = _DATA / name
+            if f.is_file():
+                z.write(f, f"stores/{name}")
+        if include_files:
+            seen = set()
+            for d in (UPLOADS_DIR, _DATA / "imports"):
+                for f in sorted(d.rglob("*")) if d.is_dir() else []:
+                    if f.is_file() and f.resolve() not in seen:
+                        seen.add(f.resolve())
+                        z.write(f, "files/" + str(f.relative_to(_DATA)))
+            ph = _photo_path()
+            if ph and Path(ph).is_file():
+                z.write(ph, "files/" + Path(ph).name)
+    return buf.getvalue()
+
+
+@app.get("/api/memory/export.zip")
+@_guard
+def memory_export_zip():
+    """Export as one zip (?files=1 adds the files the person shared). Local; the person saves it."""
+    from datetime import date
+    data = _export_zip(str(request.args.get("files") or "") in ("1", "true", "yes"))
+    resp = _nostore(app.response_class(data, mimetype="application/zip"))
+    resp.headers["Content-Disposition"] = f"attachment; filename=sponsorjobs-memory-{date.today().isoformat()}.zip"
+    return resp
 
 
 def _read_json_file(path: Path):
@@ -6610,7 +7205,8 @@ def _erase_brain_and_answers() -> list:
     gone = []
     _bm.forget_process_state(_DATA)                 # close the brain before its file goes
     paths = db_files(_bm.brain_path(_DATA)) + db_files(_ANSWERS_DB) + [_PREFS_PATH] \
-        + [_DATA / n for n in _INTERVIEW_FILES] + [_DATA / "aa_learn.json"]
+        + [_DATA / n for n in _INTERVIEW_FILES] + [_DATA / "aa_learn.json"] \
+        + [_DATA / "linkedin_review.json"] + ([_photo_path()] if _photo_path() else [])
     for f in paths:
         try:
             if f.exists():
@@ -6633,17 +7229,54 @@ def _erase_brain_and_answers() -> list:
 @app.post("/api/memory/erase")
 @_guard
 def memory_erase():
-    """Erase everything remembered: distilled facts, the SQLite conversation row, every chat
-    diary file and the old MemPalace store folder, the applicant brain, the answer library, the
-    prefs answers, the interview files, the skip list and the migration backups. Local and
-    irreversible; the person chose it. Resumes and applications stay."""
-    mem = _memory()
-    mem.erase_facts("default")
-    mem.delete("default")
-    _erase_diary(PALACE_DIR)
+    """Erase everything remembered: the profile and every scratch copy of it, the distilled
+    facts, every chat diary file and the old MemPalace store folder, the applicant brain, the
+    answer library, the prefs answers, the interview files, the skip list, the LinkedIn review,
+    the profile photo and the migration backups. With {resumes: true}, the resumes and
+    applications too (their records, PDFs and the files they came from). Local and
+    irreversible; the person chose it. (Phase 6) The resume file is vacuumed afterwards, so no
+    erased row survives in a free page of it."""
+    import shutil
+    resumes = bool((request.json or {}).get("resumes")) if request.is_json else False
     _SESSION.pop("s", None)   # drop any live in-memory session so it can't re-save the old state
+    mem = _memory()
+    try:
+        mem.erase_everything()
+    finally:
+        mem.close()
+    _erase_diary(PALACE_DIR)
     gone = _erase_brain_and_answers()
-    return jsonify({"ok": True, "erased": len(gone)})
+    if resumes:
+        recs = _records()
+        try:
+            recs._conn.execute("DELETE FROM cv_record")
+            recs._conn.commit()
+        finally:
+            recs.close()
+        for d in (WORKDIR, UPLOADS_DIR, _DATA / "imports", _DATA / "recordings"):
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+                gone.append(d.name)
+    _vacuum_db(DB_PATH)
+    return jsonify({"ok": True, "erased": len(gone), "resumes": resumes})
+
+
+def _vacuum_db(path) -> None:
+    """Rebuild a SQLite file so nothing deleted from it survives in a free page or its WAL."""
+    import sqlite3
+    try:
+        con = sqlite3.connect(str(path), timeout=10)
+        try:
+            con.execute("PRAGMA secure_delete=ON")
+            con.execute("VACUUM")
+            try:
+                con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass
+        finally:
+            con.close()
+    except sqlite3.Error:
+        traceback.print_exc()
 
 
 @app.get("/api/brain/status")
@@ -6729,7 +7362,10 @@ def brain_rules():
     except Exception:          # noqa: BLE001
         offers = []
     return _nostore(jsonify({"rules": [_rule_out(r, its) for r in rows], "offers": offers,
-                             "scopes": _scope_options(rows), "available": True}))
+                             "scopes": _scope_options(rows), "available": True,
+                             # (Phase 6) the person's own roles and projects, for "Add a choice"
+                             "items": [{"id": i["id"], "kind": i["kind"], "label": _R.label_of(i["id"], its)}
+                                       for i in its]}))
 
 
 @app.post("/api/brain/rules")
@@ -11461,6 +12097,12 @@ def autoapply_plan():
                         "reason": "Could not plan this form confidently. Fill it in and I'll help.",
                         "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
     ops = resolve_plan(plan, applicant, resume_path=resume)
+    if rec:                                 # (Phase 6) the memory page's history: filled from memory
+        from applicant import page as _Pg
+        by_ref = {f.ref: f.label for f in fields}
+        _brain_do(_Pg.record_fills, rec.get("id"),
+                  [(by_ref.get(o.ref, ""), o.origin) for o in ops
+                   if o.origin in ("library", "eeo", "workauth", "derived", "eeo_decline") and o.ref in by_ref])
     return jsonify({"ok": True, "filled": len(ops),
                     "ops": [{"ref": o.ref, "op": o.op, "text": o.text, "path": o.path,
                              "sensitive": o.is_sensitive, "from": o.origin} for o in ops],
@@ -12431,6 +13073,9 @@ def autoapply_agent_step():
     # next to the field and fills it itself. Workday's "How did you hear about us" is a widget
     # the engine cannot drive but the model can: type, wait, click the suggestion.
     known = _known_answers_for([x for x in left if x.strip()], rec, data, applicant)
+    if rec and known:                       # (Phase 6) the memory page's history: filled from memory
+        from applicant import page as _Pg
+        _brain_do(_Pg.record_fills, rec.get("id"), [(lab, "library") for lab in known])
     # What the person answered on the bar or Telegram during THIS run (or the decline choice the
     # ask route picked), by the question's words: theirs, so it wins. The engine's label can
     # still carry the page's error round the question ("Error: The field ... is required"),

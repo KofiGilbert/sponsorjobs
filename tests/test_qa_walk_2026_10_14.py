@@ -92,8 +92,10 @@ def test_back_links_name_the_page_the_rail_names():
     assert '<span id="pkgBackLbl">Dashboard</span>' not in HTML
     assert "Saved Resumes" not in APP_JS
     assert '? "Dashboard" : "Resumes"' not in APP_JS
-    # The Your answers page, opened from My profile, says "My profile" like the menu item.
-    assert 'profile: ["acct.myProfile", "My profile"]' in APP_JS
+    # (Phase 6) Your answers is part of the memory page (My profile), so a door from the page
+    # itself shows no back link; the other doors name where they came from.
+    assert 'origin: origin === "profile" ? "" : (origin || "autoapply")' in APP_JS
+    assert 'autoapply: ["nav.autoapply", "Auto-apply"], package: ["ans.backApp", "Application"]' in APP_JS
     assert all("ans.backProfile" not in loc for loc in LOCALES.values())
 
 
@@ -143,6 +145,7 @@ def test_profile_summary_box_is_full_width():
 
 def test_my_profile_unlights_the_nav_and_visa_change_opens_your_answers():
     assert '$("#menuProfile")?.addEventListener("click", () => { closeAcctMenu(); openProfilePage(); });' in APP_JS
-    i = APP_JS.index("function openProfilePage()")       # the one door the menu goes through
-    assert 'classList.remove("is-active")' in APP_JS[i:i + 400]
+    assert "function openProfilePage() { return openMemory({}); }" in APP_JS   # the one door the menu goes through
+    i = APP_JS.index("async function openMemory(")
+    assert 'classList.remove("is-active")' in APP_JS[i:i + 1200]
     assert '$("#aaPfVisaChange")?.addEventListener("click", () => openAnswers("autoapply"));' in APP_JS
