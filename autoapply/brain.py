@@ -162,6 +162,46 @@ def mask_self_id(view: str) -> str:
     return _VIEW_LINE.sub(fix, text)
 
 
+def mask_values(view: str, withheld) -> str:
+    """(Phase 4, docs/applicant-brain.md section 9) The view with the person's stored legal and
+    self-identification values hidden where a form control holds them: a select or combobox whose
+    chosen value is one of them reads value="(filled)", and a radio group or checkbox whose chosen
+    option is one of them reads checked=hidden. Only the CHOICE is hidden: labels, the choices
+    themselves (the site's words, "Ghana" in a country list) and the page's text stay, so the
+    model can still read the page. ``withheld`` comes from applicant/redact.sensitive_values."""
+    vals = [str(v) for v in (withheld or []) if str(v or "").strip()]
+    text = str(view or "")
+    if not vals or not text:
+        return text
+    rx = [re.compile(r"(?<![A-Za-z0-9])" + re.escape(v) + r"(?![A-Za-z0-9])", re.I) for v in vals]
+
+    def hit(s: str) -> bool:
+        return bool(s) and s != "(filled)" and any(r.search(s) for r in rx)
+
+    groups: set = set()
+    for m in _VIEW_LINE.finditer(text):
+        if m.group(2) in ("radio", "checkbox") and "checked=true" in m.group(3):
+            opt = re.search(r'option="((?:[^"\\]|\\.)*)"', m.group(3))
+            lab = _ATTR_LABEL.search(m.group(3))
+            words = opt.group(1) if opt else (lab.group(1).partition(": ")[2] if lab else "")
+            if lab and hit(words):
+                groups.add(lab.group(1).lower())
+
+    def fix(m):
+        kind, rest = m.group(2), m.group(3)
+        if kind in ("select", "combobox"):
+            v = re.search(r'value="((?:[^"\\]|\\.)*)"', rest)
+            if v and hit(v.group(1)):
+                rest = rest[:v.start()] + 'value="(filled)"' + rest[v.end():]
+        else:
+            lab = _ATTR_LABEL.search(rest)
+            if lab and lab.group(1).lower() in groups:
+                rest = re.sub(r"checked=(true|false)", "checked=hidden answered=true" if kind == "radio"
+                              else "checked=hidden", rest, count=1)
+        return m.group(1) + kind + rest
+    return _VIEW_LINE.sub(fix, text)
+
+
 # --------------------------------------------------------------------------- the user message
 def _history_lines(history: list) -> list[str]:
     lines = []
@@ -190,7 +230,8 @@ def _action_key(a) -> str:
     return str(a or "").strip()
 
 
-def build_user_message(req: dict, placeholders: list, nudges: list, values: dict | None = None) -> str:
+def build_user_message(req: dict, placeholders: list, nudges: list, values: dict | None = None,
+                       withheld=()) -> str:
     """The single state message. <step_info> goes LAST so everything before it is a stable
     prefix the model's cache can reuse. The view and history are redacted when values are given."""
     req = req or {}
@@ -200,7 +241,7 @@ def build_user_message(req: dict, placeholders: list, nudges: list, values: dict
     lane = str(req.get("lane") or "assisted").strip()
     view = str(req.get("view") or "").strip()
     hist = _history_lines(req.get("history") or [])
-    view = mask_self_id(view)
+    view = mask_values(mask_self_id(view), withheld)
     if values:
         view = redact(view, values)
         hist = [redact(h, values) for h in hist]
@@ -392,7 +433,7 @@ def _blocked(reason: str, memory: str = "", evaluation: str = "") -> dict:
 
 
 def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeholders: list | None = None,
-         resume_path: str = "") -> dict:
+         resume_path: str = "", withheld=()) -> dict:
     """One step of the agent: build the prompt, ask the model (one retry on an empty reply),
     validate, guard, resolve. Returns {ok, memory, evaluation, actions, done, notes}."""
     req = req or {}
@@ -408,7 +449,7 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
     if step_n >= max_steps:
         nudges.append("This is the last step. Reply with done only: ready_to_submit if the "
                       "application is complete up to the submit button, else blocked with the reason.")
-    user = build_user_message(req, placeholders or [], nudges, values=values)
+    user = build_user_message(req, placeholders or [], nudges, values=values, withheld=withheld)
     reply = None
     for _ in range(2):                           # one retry on an empty or garbled reply
         try:

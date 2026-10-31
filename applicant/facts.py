@@ -439,7 +439,8 @@ def worked_here(st: Store | None, company: str, employers_: list | tuple = ()) -
     """("Yes" | "No", origin) for "Have you worked for <company> before?", else None (asked):
 
     1. the person's own answer for this company (an earlier application to it);
-    2. Yes when the company is one of their employers (their resume's roles);
+    2. Yes when the company is one of their employers (their resume's roles), with origin
+       ``confirm``: the agent asks the person once for this company before it is used;
     3. No when it is not, and the person has answered No for a company outside their employer
        history before (or saved a standing No on Your answers): they answer from that history.
     Never the answer they gave for another company as such."""
@@ -451,7 +452,10 @@ def worked_here(st: Store | None, company: str, employers_: list | tuple = ()) -
             if r["status"] == ACTIVE and _yes_no(r["value"]):
                 return _yes_no(r["value"]), "library"
     if any(same_company(e, company) for e in employers_ or ()):
-        return "Yes", "derived"
+        # (Phase 4) Read from the resume, not said by the person: a legal answer is never sent
+        # unconfirmed, so this Yes is asked once per company as a one-tap confirm ("Your resume
+        # lists Acme. Have you worked for Acme before?"); the answer is then theirs (1. above).
+        return "Yes", "confirm"
     if st is None:
         return None
     for r in st.q("SELECT subject, value, store, source FROM fact WHERE person=? AND key=? AND status=?",
@@ -499,6 +503,8 @@ def salary_values(st: Store) -> list[dict]:
     for f in st.facts(store=STORE_PREFS, key=SALARY, status=(ACTIVE, NEEDS_CHECK)):
         rows.append((f["value"], float(f["updated_at"] or 0), "extension"))
     for f in st.facts(store="", key=SALARY, status=(ACTIVE, NEEDS_CHECK)):
+        if f["subject"]:
+            continue                    # (Phase 4) a salary for jobs in one other country
         rows.append((f["value"], float(f["updated_at"] or 0), "chat" if f["source"] in ("chat", "telegram_chat") else "you"))
     by: dict = {}
     for v, at, where in rows:
@@ -561,6 +567,8 @@ def settle_chat_salary(st: Store, amount: int) -> None:
     it is no longer current (kept as history)."""
     from autoapply.basics import parse_salary
     for f in st.facts(store="", key=SALARY, status=(ACTIVE, NEEDS_CHECK)):
+        if f["subject"]:
+            continue
         if parse_salary(f["value"]) == amount:
             st.update_fact(f["id"], status=ACTIVE, check_reason="", confirmed=1, confidence=1.0)
         else:

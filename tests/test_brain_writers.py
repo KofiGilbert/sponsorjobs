@@ -375,12 +375,13 @@ def test_the_telegram_summary_reads_the_brain_and_never_a_value(app):
 
 # --------------------------------------------------------------------------- worked here before
 def test_worked_here_before_is_per_company(st):
-    assert F.worked_here(st, "Stanbic Bank", ["Stanbic Bank Ghana", "Viva"]) == ("Yes", "derived")
+    # (Phase 4) a Yes read from the resume is confirmed once per company before it is used
+    assert F.worked_here(st, "Stanbic Bank", ["Stanbic Bank Ghana", "Viva"]) == ("Yes", "confirm")
     assert F.worked_here(st, "Acme Corp", ["Stanbic Bank Ghana"]) is None                # never answered: asked
     F.save_worked_here(st, "Acme Corporation", "No", question="Have you worked for us before?")
     assert F.worked_here(st, "ACME Corp.", []) == ("No", "library")                        # the same company
     assert F.worked_here(st, "Globex", ["Stanbic Bank"]) == ("No", "derived")             # answers from history
-    assert F.worked_here(st, "Stanbic", ["Stanbic Bank"]) == ("Yes", "derived")
+    assert F.worked_here(st, "Stanbic", ["Stanbic Bank"]) == ("Yes", "confirm")
     F.save_worked_here(st, "Globex", "Yes, as an intern")
     assert F.worked_here(st, "Globex", []) == ("Yes", "library")
     assert F.worked_here(st, "Initech", []) == ("No", "derived")                           # a No exists elsewhere
@@ -403,11 +404,19 @@ def test_a_yes_for_one_company_never_answers_another(app):
     rid = recs.add("Analyst", "Stanbic Bank", 70, "", data={})
     recs.close()
     r = c.post("/api/autoapply/agent/ask", json={"known_only": True, "questions": q, "record_id": rid}, headers=H).get_json()
-    assert r["answers"] == {q[0]["question"]: "Yes"}
-    # the planner, for a form field
+    # (Phase 4) the person's employer: the resume's Yes is a one-tap confirm, never sent unconfirmed
+    assert r["answers"] == {}
+    assert r["reword"][q[0]["question"]] == {"say": "Your resume lists Stanbic Bank. Have you worked for Stanbic Bank before?",
+                                             "options": ["Yes", "No"]}
     ctx = KnownContext(per_company=True, worked_here=A._worked_here("Stanbic Bank"))
-    res = plan_known([FormField("w", "Were you previously an employee of Stanbic Bank?", "radio", ["Yes", "No"])], ctx)
-    assert [(a.value, a.origin) for a in res.actions] == [("Yes", "derived")]
+    fld = FormField("w", "Were you previously an employee of Stanbic Bank?", "radio", ["Yes", "No"])
+    res = plan_known([fld], ctx)
+    assert res.actions == [] and res.left == [fld]
+    # once the person says Yes for this company, it is theirs and fills
+    st = A._brain()
+    F.save_worked_here(st, "Stanbic Bank", "Yes", question=q[0]["question"])
+    ctx = KnownContext(per_company=True, worked_here=A._worked_here("Stanbic Bank"))
+    assert [(a.value, a.origin) for a in plan_known([fld], ctx).actions] == [("Yes", "library")]
 
 
 def test_an_asked_worked_here_answer_is_saved_for_that_company_only(app):
@@ -431,7 +440,7 @@ def test_an_asked_worked_here_answer_is_saved_for_that_company_only(app):
     assert _active(st, "@previously_worked", F.company_key("Initech"))[0]["source_ref"] == "ask_bar:w1"
     assert not _facts(st, "@previously_worked", "", "answers.db")                       # never every employer's
     assert A._worked_here("Globex") == ("No", "derived")
-    assert A._worked_here("Stanbic Bank") == ("Yes", "derived")
+    assert A._worked_here("Stanbic Bank") == ("Yes", "confirm")
 
 
 # --------------------------------------------------------------------------- one question for two salaries

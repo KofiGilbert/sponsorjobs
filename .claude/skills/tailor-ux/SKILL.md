@@ -272,3 +272,12 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   when the amounts are the buttons anyway), and one ghost button per value. No accent (the page's one
   primary stays Work authorization's Save). Hidden while the card is lent to setup. Measured at 1893x1183
   DSF 2 and 2490x1556 DSF 1.52, dark and light: 44px tall, inside the card, no sideways scroll.
+- 2026-10-30 (applicant brain Phase 4): the apply agent's bar puts a question longer than about a
+  line (`bb-stack`, over 90 characters: a new wording to confirm, "After ..., the application
+  asks: ...") on its own full-width row, with the choices and the answer box under it. Beside three
+  choices and the box it was squeezed into a 207px column of five lines (eight for a long
+  wording). The one-tap confirm reads "New wording: "<question>" If it means "<what you answered
+  before>", use your saved answer. If not, pick an answer.", its first choice "Use my saved answer"
+  as a ghost button (the bar's one primary stays Answer). It never names the saved value, so the
+  same words can go to Telegram. Measured at 1893x1183 DSF 2 and 2490x1556 DSF 1.52, dark and
+  light: 759px bar, 90px tall, text 735px on two lines, no overflow, nothing outside the bar.

@@ -191,6 +191,11 @@ class LLMBackend(Protocol):
         person edits and sends it themselves.
         """
 
+    def map_labels(self, system: str, user: str) -> str:
+        """Match form question wordings no rule knows to the applicant brain's keys
+        (applicant/mapper.py): the raw JSON text {"map": [{"n", "key"}]}. The message carries
+        labels, options and key names only, never a value."""
+
     def agent_step(self, system: str, user: str) -> str:
         """One step of the apply agent (autoapply/brain.py): the cached system prompt plus
         the single state message, answered with the raw JSON text the brain validates. The
@@ -1539,6 +1544,34 @@ class FakeLLM:
                "question": asked[0] if asked else "",
                "unclear": not answers and not asked}
         return _json.dumps(out)
+
+    # How many label-mapping calls this process made (the e2e and the mapper tests read it).
+    map_calls = 0
+
+    def map_labels(self, system: str, user: str) -> str:
+        # Matches new form wordings to the brain's keys (applicant/mapper.py) by plain keywords,
+        # deterministically (a test double: plumbing, not quality). It counts its calls. "U.S.
+        # person" maps to the citizen key on purpose: the person must confirm that once.
+        import json as _json
+        FakeLLM.map_calls += 1
+        qm = re.search(r"<questions>\n(.*?)\n</questions>", user, re.S)
+        qs = _json.loads(qm.group(1)) if qm else []
+        rules = [
+            (r"\bwhy\b|excit|interest(ed)? in", "none"),
+            (r"base pay|remuneration|compensation|\bpay\b|salary", "@salary"),
+            (r"notice", "@notice_period"),
+            (r"\bstart\b|begin work|available to join", "@start_date"),
+            (r"u\.?s\.? person", "workauth:citizen"),
+            (r"how do you identify|identify as", "@gender"),
+            (r"payroll|worked (for|with) (us|this company)", "@previously_worked"),
+            (r"passport", "@citizenship"),
+        ]
+        out = []
+        for q in qs:
+            text = str(q.get("question") or "").lower()
+            key = next((k for rx, k in rules if re.search(rx, text)), "ask")
+            out.append({"n": int(q.get("n") or 0), "key": key})
+        return _json.dumps({"map": out})
 
     def app_assistant(self, system: str, user: str) -> str:
         # The Telegram assistant (notify/assistant.py owns the prompt and the honesty check).

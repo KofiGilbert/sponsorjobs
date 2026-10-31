@@ -24,6 +24,9 @@
  *  ... and (section 12, the applicant brain's Phase 3) an address typed in the intake chat is
  *  remembered: a ?address=1 job's contact page fills City, State and the required ZIP code from
  *  memory, and the run never asks for them.
+ *  ... and (section 13, Phase 4) a ?pay=1 job asks "What base pay are you targeting for this
+ *  position?", a wording no rule knows: the saved salary fills it after one label-mapping call,
+ *  and a second such job makes no call (the wording is cached).
  */
 import { _electron as electron } from "playwright";
 import { spawn, spawnSync } from "child_process";
@@ -87,7 +90,9 @@ for role, url in [("Business Intelligence Analyst", ${JSON.stringify(JOB)}),
                   ("Analyst (asks a question)", ${JSON.stringify(JOB + "?mustanswer=1")}),
                   ("Analyst (answer remembered)", ${JSON.stringify(JOB + "?mustanswer=1&again=1")}),
                   ("Analyst (Phenom)", ${JSON.stringify(JOB + "?phenom=1")}),
-                  ("Analyst (address)", ${JSON.stringify(JOB + "?address=1")})]:
+                  ("Analyst (address)", ${JSON.stringify(JOB + "?address=1")}),
+                  ("Analyst (base pay)", ${JSON.stringify(JOB + "?pay=1")}),
+                  ("Analyst (base pay again)", ${JSON.stringify(JOB + "?pay=1&again=1")})]:
     rid = recs.add(role, "Acme Corp", 70, "", jd_label=role,
                    data={"status": "approved", "fit": 85, "render_profile": prof,
                          "source_job": {"url": url, "source_id": "mock:" + role, "location": "Bloomington, IL"},
@@ -100,8 +105,8 @@ recs.close()
 print(json.dumps(ids))
 `], { encoding: "utf8" });
 if (seed.status !== 0) { console.error(seed.stderr); process.exit(1); }
-const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK, RID_AGAIN, RID_PHENOM, RID_ADDRESS] = JSON.parse(seed.stdout.trim().split("\n").pop());
-check("seeded eight queued jobs", RID > 0 && RID_AGAIN > 0 && RID_PHENOM > 0 && RID_ADDRESS > 0, `ids ${RID}..${RID_ADDRESS}`);
+const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK, RID_AGAIN, RID_PHENOM, RID_ADDRESS, RID_PAY, RID_PAY2] = JSON.parse(seed.stdout.trim().split("\n").pop());
+check("seeded ten queued jobs", RID > 0 && RID_AGAIN > 0 && RID_PHENOM > 0 && RID_ADDRESS > 0 && RID_PAY2 > 0, `ids ${RID}..${RID_PAY2}`);
 
 // ---- 3. the engine on the test model, then the real app ---------------------------------
 // The shell strips the test-model flags from any engine it spawns (real model only, CLAUDE.md
@@ -340,6 +345,35 @@ check("the contact page fills city, state and ZIP from memory", log8.includes("a
 check("a value typed in intake chat is not asked again on the form",
       !log8.includes("zip-required") && !seen.some((t) => /zip|postal|the application asks/i.test(t)), JSON.stringify(seen));
 check("nothing was submitted on the address run", !log8.includes("submitted"), JSON.stringify(log8));
+
+// ---- 13. the applicant brain, Phase 4: a question in new words still finds the saved answer ------
+// "What base pay are you targeting for this position?" (required) matches no rule. The label
+// mapper makes ONE model call for it (the test model counts calls in /api/brain/status), the
+// saved salary fills it, and the next application with the same wording makes no call at all.
+const mapperCalls = async () => ((await fetch("http://127.0.0.1:57000/api/brain/status").then((r) => r.json()).catch(() => null)) || {}).mapper || {};
+const salCard = await win.evaluate(() => fetch("/api/answers/basics", { method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ fields: { salary: "95000" } }) }).then((r) => r.json()));
+check("the salary is saved on the form answers card", String((salCard.values || {}).salary || "") === "95000", JSON.stringify(salCard.values || salCard));
+const calls0 = (await mapperCalls()).calls || 0;
+await win.waitForSelector(`.aa-row[data-id="${RID_PAY}"]`, { timeout: 30_000 });
+seen.length = 0;
+await win.click(`.aa-row[data-id="${RID_PAY}"] [data-act]`);
+const payDone = await watch(/ready to send|stopped|have a look|could not|the application asks/i, 150_000);
+const calls1 = (await mapperCalls()).calls || 0;
+const log9 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+check("the base pay run reaches Ready to send without asking", /ready to send/i.test(payDone)
+      && !seen.some((t) => /base pay|salary|the application asks/i.test(t)), JSON.stringify(seen));
+check("the agent fills the saved salary after one mapping call", log9.includes("pay:95000") && calls1 - calls0 === 1,
+      `calls ${calls0} -> ${calls1} | ${JSON.stringify(log9)}`);
+await win.waitForSelector(`.aa-row[data-id="${RID_PAY2}"]`, { timeout: 30_000 });
+seen.length = 0;
+await win.click(`.aa-row[data-id="${RID_PAY2}"] [data-act]`);
+const pay2Done = await watch(/ready to send|stopped|have a look|could not|the application asks/i, 150_000);
+const calls2 = (await mapperCalls()).calls || 0;
+const log10 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+check("the second run makes no mapping call", /ready to send/i.test(pay2Done) && log10.includes("pay:95000") && calls2 === calls1,
+      `calls ${calls1} -> ${calls2} | ${pay2Done} | ${JSON.stringify(log10)}`);
+check("nothing was submitted on the base pay runs", !log9.includes("submitted") && !log10.includes("submitted"));
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

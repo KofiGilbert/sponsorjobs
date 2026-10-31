@@ -270,6 +270,13 @@ still open on the page (at most 6), on the bar and on Telegram, and waits up to 
   extension and a rollback see it too. `SPONSORJOBS_BRAIN=0` or
   `python -m applicant.migrate --rollback` puts the readers back on `answers.db` and
   `app_prefs.json`.
+  Since Phase 4 a wording no rule knows is matched to a saved answer by one batched model call
+  per page (`applicant/mapper.py`, labels, options and key names only, cached per wording); a
+  legal or self-identification match waits for the person's one tap ("Use my saved answer"), and
+  a value that expired or does not fit the job (an ended OPT, a salary older than six months, a
+  start date in the past, a US dollar salary on a UK job) is asked, not sent
+  (`applicant/expiry.py`). The page view hides a control's chosen legal or self-identification
+  value from the model (`brain.mask_values`).
 
 ### Terms a site requires (`/api/autoapply/agent/terms`)
 

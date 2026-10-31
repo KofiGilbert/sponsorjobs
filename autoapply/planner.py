@@ -367,6 +367,17 @@ class KnownContext:
     per_company: bool = False
     worked_here: tuple | None = None
     hold: frozenset = frozenset()
+    # (Phase 4) New wordings and expiry (applicant/mapper.py, applicant/expiry.py), brain on only:
+    # ``mapped`` {label: key} answers a wording no rule knows from that key; ``confirm`` {label:
+    # key} is a legal or self-identification mapping the person has not confirmed yet (left
+    # open, asked once); ``withhold`` keys are never filled (a start date that passed, a salary
+    # in the wrong currency for this job); ``job_salary`` is the person's salary for a job
+    # outside the US; ``wa_ended`` the date the job country's time-limited status ended.
+    mapped: dict = field(default_factory=dict)
+    confirm: dict = field(default_factory=dict)
+    withhold: frozenset = frozenset()
+    job_salary: str = ""
+    wa_ended: object = None
 
 
 @dataclass
@@ -376,6 +387,75 @@ class KnownResult:
     left: list = field(default_factory=list)     # FormFields only the person can answer
     used_library: list = field(default_factory=list)   # library keys used (to mark last used)
     drafted_used: list = field(default_factory=list)   # (question, answer) drafted answers used
+
+
+def _newer(hit: dict | None, ended) -> bool:
+    """True when a saved answer was given after the date a status ended (it is still theirs)."""
+    import datetime as _dt
+    try:
+        return _dt.date.fromtimestamp(float((hit or {}).get("updated_at") or 0)) > ended
+    except (TypeError, ValueError, OSError):
+        return False
+
+
+def _ended_for(label: str, ctx: KnownContext):
+    """The end date that makes this work-authorization question unsafe to fill, or None."""
+    if ctx.wa_ended is None:
+        return None
+    from applicant.expiry import expired_kind
+    return ctx.wa_ended if expired_kind(label, ctx.wa_ended) else None
+
+
+def keyed(ctx: KnownContext, key: str, hit: dict | None) -> dict | None:
+    """The saved row a key may fill from: the person's salary for this country on a job
+    outside the US; nothing for a withheld key; else the library's own row."""
+    if key == "@salary" and ctx.job_salary:
+        return {"answer": ctx.job_salary, "key": "", "updated_at": None}
+    if key in ctx.withhold:
+        return None
+    return hit
+
+
+def mapped_value(key: str, f: FormField, ctx: KnownContext) -> tuple | None:
+    """(value, origin, [library keys]) for a field whose wording the label mapper matched to
+    ``key`` (applicant/mapper.py), by the same rules the key's own wording gets. None when the
+    key holds nothing usable here (the field is then the person's)."""
+    label, t = f.label or "", (f.type or "text").lower()
+    if key.startswith("workauth:"):
+        kind = key.split(":", 1)[1]
+        from applicant.expiry import EXPIRED_KINDS
+        if ctx.wa_ended is not None and kind in EXPIRED_KINDS:
+            return None
+        v = workauth.answer(label, ctx.work_auth, options=f.options, field_type=t, job_country=ctx.job_country,
+                            kind=kind)
+        return (v, "workauth", []) if v else None
+    if key in eeo.KEYS:
+        if ctx.eeo_decline:
+            v = decline_option(f.options) if f.options else None
+            return (v, "eeo", []) if v else None
+        _k, answers, rows = eeo.saved(ctx.library)
+        own = answers.get(key, "")
+        if not own:
+            return None
+        if f.options or t in ("select", "radio"):
+            v = eeo_option(own, f.options, key, answers, question=label)
+            return (v, "library", _used(key, rows)) if v else None
+        if t == "checkbox" or (key in ("@race", "@ethnicity") and not both_halves(own)):
+            return None
+        return own, "library", _used(key, rows)
+    if key == "@previously_worked" and ctx.per_company:
+        wh = ctx.worked_here
+        if not wh or wh[1] == "confirm":
+            return None
+        v = _literal(f, wh[0])
+        return (v, wh[1] or "library", []) if v else None
+    if key in ctx.hold and f.required:
+        return None
+    hit = keyed(ctx, key, ctx.library.best(key) if ctx.library is not None else None)
+    if not hit:
+        return None
+    v = _literal(f, hit["answer"], key)
+    return (v, "library", [hit["key"]] if hit.get("key") else []) if v else None
 
 
 def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
@@ -421,14 +501,18 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
 
         # 1. work authorization
         if workauth.classify(label):
-            v = workauth.answer(label, ctx.work_auth, options=f.options, field_type=t,
-                                job_country=ctx.job_country)
+            # (Phase 4) a status whose end date passed (OPT, an EAD) no longer answers it
+            ended = _ended_for(label, ctx)
+            v = None if ended else workauth.answer(label, ctx.work_auth, options=f.options, field_type=t,
+                                                   job_country=ctx.job_country)
             if v:
                 out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="workauth", sensitive=True))
                 continue
             # The profile does not say, but the person answered this exact question before (on
             # the agent's bar, or in Your answers): their own words, not a guess.
             hit = ctx.library.lookup(label) if ctx.library is not None else None
+            if ended and not _newer(hit, ended):
+                hit = None                                 # answered before the status ended
             v = _literal(f, hit["answer"]) if hit else None
             if v:
                 out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True))
@@ -440,9 +524,11 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
         # 1b. "Have you worked here before?": for THIS company (applicant/facts.py worked_here)
         qkey0 = normalize(label)
         if ctx.per_company and qkey0 == "@previously_worked":
-            v = _literal(f, ctx.worked_here[0]) if ctx.worked_here else None
+            # (Phase 4) a Yes read from the resume waits for the person's one tap per company
+            wh = ctx.worked_here if ctx.worked_here and ctx.worked_here[1] != "confirm" else None
+            v = _literal(f, wh[0]) if wh else None
             if v:
-                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin=ctx.worked_here[1] or "library",
+                out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin=wh[1] or "library",
                                               sensitive=True))
             else:
                 out.left.append(f)
@@ -451,6 +537,22 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
         # 2. the answer library (a free-text citizenship question that asks for each country
         #    gets the second one too)
         hit = ctx.library.lookup(label) if ctx.library is not None else None
+        if qkey0.startswith("@"):
+            hit = keyed(ctx, qkey0, hit)                   # (Phase 4) withheld, or this country's
+            if not hit and qkey0 in ctx.withhold:
+                out.left.append(f)                         # a stale value: theirs to give again
+                continue
+        if not hit and label in ctx.confirm:
+            out.left.append(f)                             # a new wording of a legal question: asked once
+            continue
+        if not hit and label in ctx.mapped:
+            got = mapped_value(ctx.mapped[label], f, ctx)
+            if got:
+                out.actions.append(FillAction(f.ref, _op_for(f), value=got[0], origin=got[1], sensitive=True))
+                out.used_library.extend(k for k in got[2] if k not in out.used_library)
+            else:
+                out.left.append(f)
+            continue
         if hit and qkey0 in ctx.hold and f.required:
             out.left.append(f)                             # two saved values disagree: asked once
             continue
@@ -464,7 +566,8 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
             v = _literal(f, ans, qkey)
             if v:
                 out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True))
-                out.used_library.append(hit["key"])
+                if hit.get("key"):
+                    out.used_library.append(hit["key"])
             else:
                 out.left.append(f)
             continue

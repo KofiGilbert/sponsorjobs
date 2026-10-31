@@ -7,9 +7,10 @@
 > `intake/palace_memory.py`, `autoapply/answers.py`, `autoapply/basics.py`, `autoapply/planner.py`,
 > `_known_answers_for` or `_answer_lib` in `ui/app.py`, or the profile and Your answers pages.
 >
-> Status: Phases 1 to 3 built (the store, the migration and the apply agent's readers; the diary
-> without MemPalace; every writer saves facts and the readers ask the brain first). Phases 4 to 7
-> are plans. Changes made while building are marked "(Phase N build)" below.
+> Status: Phases 1 to 4 built (the store, the migration and the apply agent's readers; the diary
+> without MemPalace; every writer saves facts and the readers ask the brain first; new wordings,
+> legal confirm once and expiry). Phases 5 to 7 are plans. Changes made while building are marked
+> "(Phase N build)" below.
 
 ## Contents
 
@@ -295,7 +296,8 @@ code did.
    - the `label_map` cache;
    - (Phase 4) one batched model call per page for labels still unmapped. It sees labels,
      options and key names only, never values. It may answer `none` (belongs to one job) or
-     `ask`.
+     `ask`. (Phase 4 build) `applicant/mapper.py`; the keys it may answer include the work
+     authorization kinds as `workauth:<kind>` (`workauth:citizen`), all legal.
 3. **Read the current fact**: `active`, inside its valid dates, for the right subject (the job's
    country for `workauth` and salary, the company for `@previously_worked`).
 4. **Derive by code, never by the model**, and only from confirmed facts:
@@ -418,6 +420,15 @@ text to parse.
   are often the form's options ("Female", "Asian"); run as a filter over the agent's page view
   it would blank those options, so it is wired in with the label mapper (Phase 4), whose
   payload is built from scratch.
+  (Phase 4 build) Two places now. The label mapper's payload goes through `for_model` with only
+  the form's own options (and our key list) allowed: a label that carries a stored value ("Is
+  your Ghana passport valid?") reaches the model as "[withheld]". The agent's page view gets the
+  guard where it is safe: only a control's CHOICE is hidden (`autoapply/brain.py mask_values`): a
+  select or combobox whose chosen value is a stored legal or EEO value reads `value="(filled)"`,
+  and a radio group or checkbox whose chosen option is one reads `checked=hidden`. The options,
+  the labels and the page's own text are never touched, so nothing the model needs to read the
+  page is blanked. Before this, a filled "Country of citizenship" select showed the model
+  `value="Ghana"`.
 - (Phase 1 build) **A drafted EEO answer is never saved.** The legacy library kept a drafted
   answer to any question; the brain refuses one for an EEO key, so `BrainLibrary.save` returns
   None for it (nothing writes one today: drafted answers come from screening questions). An EEO
@@ -651,7 +662,7 @@ estimates)
 |---|---|---|---|---|
 | Reading facts and choices | every application | none | $0 | $0 |
 | Company type | a new company, and only when a rule needs it | ~1,600 in, 60 out | $0.002 | $0.004 |
-| Label mapping (Phase 4) | a page with wordings never seen before | ~2,600 in, 300 out | $0.004 | $0.008 |
+| Label mapping (Phase 4) | a page with wordings never seen before | ~1,000 in, 100 out (Phase 4 build, measured by characters) | $0.0015 | $0.003 |
 | Reading a typed ask reply | per ask, already exists | ~1,200 in, 150 out | $0.002 | $0.004 |
 | Choices from chat | adds ~300 tokens to the existing `distill_memory` call | | under $0.001 | under $0.001 |
 
@@ -898,7 +909,8 @@ Not settled in Phase 3 (open for the owner):
 
 - Whether a legal fact derived from the resume (Yes to "worked here before" because the company is
   on the resume) needs a one-tap confirm the first time. Built: it fills, and the handover lists
-  it with the other legal fields.
+  it with the other legal fields. (Phase 4 build) Decided by the owner's rule "never send a legal
+  answer the person did not confirm": it gets the one-tap confirm, once per company (below).
 - Whether the brain's contact facts should also feed the browser extension's autofill
   (`/api/profile/autofill`). Phase 7 moves that route to the brain; until then the extension
   still reads the profile identity.
@@ -923,6 +935,85 @@ per-job question out of memory); `tests/test_brain_expiry.py`.
 E2E: new mock question in a wording no pattern knows ("What base pay are you targeting for this
 position?"): check "the agent fills the saved salary after one mapping call" and "the second run
 makes no mapping call" (the fake model counts calls).
+
+(Phase 4 build) What was built, and what changed while building:
+
+- **The mapper**, `applicant/mapper.py`. Only a label the rules do not know goes to it: not a
+  contact field, not work authorization (`workauth.classify`), not a canonical wording
+  (`answers.normalize`), not a self-identification question (`asks.is_eeo`), not a sanctions
+  screen, not a cover letter, resume, per-job question, or the portal's own furniture (password,
+  verification code, terms, privacy, consent), and not a wording the answer library already holds.
+  The rest of a page goes in ONE call (at most 20 labels; options cut to 20 of 60 characters),
+  through the redact guard (section 9). The reply is validated: a key not on our list becomes
+  `ask`. It is cached in `label_map` per cleaned, lowercased label and options hash (the
+  `rule` rows the Phase 1 migration seeded for the library's own wordings are left alone: the
+  library answers those), and a field read without
+  its options (the agent's step) finds the newest mapping of its label, so the step never calls
+  again for a field the fill already mapped. A failed or stalled call (20 seconds) caches nothing,
+  and the field is asked as before. `meta.mapper_calls` counts calls; `/api/brain/status` shows
+  `mapper: {calls, by_how}` (counts only).
+- **Where it runs.** The fill (`/api/autoapply/plan`): after the known pass, the fields left for
+  the person AND the fields left for the model are mapped; a hit re-runs the known pass. Mapping
+  the model's fields too keeps a wording like "How do you identify?" (no self-identification word
+  the fact gate knows) away from the model's own fill. The agent's step (`_known_answers_for`)
+  and the ask route map their open labels from the cache (or one call). Brain on only.
+- **What a mapping does** (`planner.mapped_value`, shared with `asks.known_answer`). A normal key
+  (salary, start date) answers at once from that key, by the same rules as its own wording
+  (held, expired, this country's salary). A legal or EEO key waits for the person's one tap; until
+  then the field is theirs (never the model's). `none`: the person's answer is used on this job
+  and never saved (`skip_save`, also kept out of the late Telegram answers). `ask`: asked, and
+  saved under its own words as before.
+- **The one-tap confirm.** Offered only when the key holds an answer for this field (else the
+  question is simply asked). The bar and Telegram say: "New wording: "Are you a U.S. person?" If
+  it means "Are you a citizen of the job's country?", use your saved answer. If not, pick an
+  answer." The choices are "Use my saved answer", then the page's own. It never names the value,
+  so an EEO confirm says nothing on Telegram. "Use my saved answer" confirms the mapping for good
+  (`how = person`, `confirmed = 1`) and the field gets the saved answer (not saved again; the tap's
+  words are never saved as an answer). Any other choice or a typed answer is this form's answer,
+  saved under the wording as before. Built on the Phase 3 `reword` (the shell needed no change):
+  the options sent back keep up to 39 of the page's choices after the confirm.
+- **"Have you worked here before?"** A Yes read from the resume (the company is one of the
+  person's employers) now has origin `confirm`: it is never filled, and the ask says "Your resume
+  lists Acme Corp. Have you worked for Acme Corp before?" with the form's choices. The answer is
+  saved for that company, so it is asked once per company. A No derived from the person's own No
+  answers (and their employer history) still fills: it is a code rule over confirmed facts
+  (7.1 step 6). An optional "worked here before" field with only the resume's Yes stays blank.
+- **Expiry**, `applicant/expiry.py`, through the keys `_recall_ctx` adds (`withhold`,
+  `job_salary`, `wa_ended`, and `@salary` in `hold`):
+  - a time-limited status (`workauth.DATED`: OPT, STEM OPT, EADs, permits) whose `auth_end` passed
+    (a month means its last day): authorized, sponsorship now or any, status and end date are
+    asked, with "Your saved work authorization ended on June 30, 2025." before the question. An
+    answer the person gave after that date still fills. Citizenship, permanent residence, future
+    sponsorship and relocation still fill;
+  - a salary older than six months (183 days, the key's `reconfirm_days`) on a US job: a REQUIRED
+    field asks "Still $90,000? Tap it to keep it, or type a new amount." with the amount as the
+    choice, once per amount and date (`meta asked:stale:@salary`), like a conflict; then it fills
+    as before. An optional field fills as before. A conflict, when there is one, is asked instead;
+  - a start date that is a real date in the past is never filled (required or optional): "Your
+    saved start date (May 1, 2026) has passed. When can you start?". Words ("Two weeks after an
+    offer") never expire;
+  - a salary for a job outside the US (`_job_country`): a US dollar or bare amount (the card saves
+    bare amounts, in US dollars) is never filled; "This job is in the UK. What salary do you want
+    for it?". The answer is kept as `@salary` with subject = the country (brain only, never the
+    answer library, never the prefs), used for that country's jobs from then on, and left out of
+    the salary conflict. A salary already in the job's currency ("£60,000") fills.
+- **Telegram.** A `say` that already quotes the question is sent without "The application asks:"
+  before it (`asks.prompt_text`). A late reply knows the job's country (the kept ask holds it).
+- **The bar** (`ui/static/app.js aaAgentBar`): a question longer than 90 characters reads on its
+  own row with the choices and the answer box under it (`bb-stack`); beside three choices it was a
+  207px column of five lines. Measured at 1893x1183 DSF 2 and 2490x1556 DSF 1.52, dark and light.
+- **LLM.** `map_labels(system, user)` on `AnthropicLLM` (so the broker and OpenAI clients too):
+  400 tokens out at low effort. The FakeLLM maps by keywords and counts its calls
+  (`FakeLLM.map_calls`). `workauth.answer` takes an explicit `kind` for a confirmed mapping.
+- **Cost, measured by characters** (about 3.5 characters a token) on a page of six new wordings
+  with their options: system 649 and user 2,793 characters, about 1,000 tokens in (the key list is
+  about 600 of them), about 100 out. Haiku 4.5 about $0.0015 a page, Sonnet 5.5 about $0.003; a
+  wording is never mapped twice.
+- **Tests.** New `tests/test_brain_mapper.py` (14) and `tests/test_brain_expiry.py` (10).
+  `test_brain_writers.py` now expects the confirm for the resume's Yes;
+  `test_brain_parity.py` expects the UK job to leave the US dollar salary out (asked), everything
+  else identical. E2E (`e2e-agent.mjs` section 13): a `?pay=1` job and a second one; the mock's
+  questions page asks the required base pay question (`tests/fixtures/forms/mock_ats.js`).
 
 ### Phase 5: choices
 
@@ -1015,7 +1106,8 @@ pane fills from `/api/profile/autofill` first, so it proves that route reads the
 
 ## 17. Not certain yet
 
-- Token counts are estimates. The real figures come from Phase 4 and 5 runs.
+- Token counts are estimates. The real figures come from Phase 4 and 5 runs. (Phase 4 build) The
+  label mapping figure is now measured by characters, not yet by a real model's usage report.
 - The installer saving is an estimate from the installed engine's folders; the next build
   records the measured size.
 - Company type from a JD will be wrong sometimes. The person's correction wins, and a wrong
