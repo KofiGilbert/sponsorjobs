@@ -331,3 +331,16 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   hide the values until Show where Simplify shows them). Measured at 1893x1183 DSF 2 and 2490x1556
   DSF 1.52, dark and light: card left = title left (453 / 752), cards 1040 wide, no sideways
   scroll. Screens: docs/design/memory/.
+- 2026-10-30 (honest tailoring): the builder's side panel gains ONE quiet block under the preview
+  toolbar, `.tw`: a "Refine" row of outline pill chips ("Work in Kubernetes", up to four, the
+  coverage gaps the person's material supports; a chip runs Add this keyword, so the before/after
+  card opens as before), then a one-line "What changed" toggle ("12 reworded · skills reordered ·
+  1 cut to fit", an SVG chevron, collapsed by default) that opens to the list and to "Cut to fit
+  one page", one surface-2 row per cut with a ghost "Put back" (it re-runs the one-page fit; what
+  went instead is listed with its own Put back). The list is built in code (tailoring/changes.py),
+  never by a model. Neutral greys only; Accept & Save stays the panel's one primary; hidden in the
+  package context. Job cards show the brand (`coName(j)`: display_name, else the legal name), the
+  sponsor badge still matches the legal filing name. Measured at 1893x1183 DSF 2 and 2490x1556 DSF
+  1.52, dark and light: the block is 759px wide inside the 760 panel, chips 26px tall on one 36px
+  row, the toggle 37px, the open list 157px (scrolls past 38vh), cut rows 711x51, no sideways
+  scroll on the page, the panel or the block, no console errors.

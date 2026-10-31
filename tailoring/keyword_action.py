@@ -11,7 +11,8 @@ of them into a concrete, reviewable change, the way Rezi's keyword targeting and
   and that it belongs to the target entry. No evidence, no edit.
 * The draft is hard-validated before anyone sees it: the term must be present, the
   rewrite must stay within the bullet's length budget (about plus or minus ten percent),
-  every figure must trace back to the person's material (tailoring/fact_gate.py), no other
+  every figure and every name, tool or credential must trace back to the person's material
+  (tailoring/fact_gate.py), no other
   unsupported skill may ride along (keywords.introduced_skills), and no filler padding
   (tailoring/filler.py).
 * Applying goes through the surgical editor and a self-healing compile: the edit touches
@@ -29,7 +30,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .compiler import CompileResult, compile_tex
-from .fact_gate import figures, source_figures
+from .fact_gate import figures, new_claims, source_figures
 from .filler import is_padded
 from .keywords import _grounded, introduced_skills, profile_text, term_present
 from .latex_template import LatexTemplate
@@ -232,6 +233,11 @@ def validate_draft(term: str, draft: str, before: str, kind: str, profile: dict,
     if new_figures:
         problems.append("The draft adds a figure your profile never states: "
                         + ", ".join(new_figures) + ".")
+    # Claim gate: no employer, school, tool, acronym or credential the person never states.
+    named = [c for c in new_claims(draft, profile, before) if _norm(c) != _norm(term)]
+    if named:
+        problems.append("The draft names something your profile never states: "
+                        + ", ".join(named) + ".")
     # Honesty gate shared with the tailoring pass: the term itself is vouched for by the
     # verified evidence; anything else that is new must already be in this entry.
     extra = [s for s in introduced_skills(before if kind != "new" else "", draft, grounding, jd_text)

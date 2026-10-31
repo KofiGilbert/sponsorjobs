@@ -253,9 +253,16 @@ def read_watchlist_seed(path: str | Path = WATCHLIST_SEED) -> list[dict]:
     path = Path(path)
     if not path.exists():
         return []
+    out = []
     with open(path, encoding="utf-8", newline="") as f:
-        return [{"company": r["company"], "ats": r["ats"], "board_id": r["board_id"]}
-                for r in csv.DictReader(f) if r.get("ats") and r.get("board_id")]
+        for r in csv.DictReader(f):
+            if not (r.get("ats") and r.get("board_id")):
+                continue
+            row = {"company": r["company"], "ats": r["ats"], "board_id": r["board_id"]}
+            if (r.get("display_name") or "").strip():
+                row["display_name"] = r["display_name"].strip()    # the brand (sourcing/brands.py)
+            out.append(row)
+    return out
 
 
 def write_watchlist_seed(path: str | Path, rows) -> list[dict]:
@@ -269,11 +276,16 @@ def write_watchlist_seed(path: str | Path, rows) -> list[dict]:
         if key in seen or not valid_board_id_for(key[0], key[1]):
             continue
         seen.add(key)
-        clean.append({"company": r["company"].strip(), "ats": key[0], "board_id": key[1]})
+        row = {"company": r["company"].strip(), "ats": key[0], "board_id": key[1]}
+        if str(r.get("display_name") or "").strip():
+            row["display_name"] = str(r["display_name"]).strip()
+        clean.append(row)
     clean.sort(key=lambda r: (r["company"], r["ats"], r["board_id"]))
     Path(path).parent.mkdir(parents=True, exist_ok=True)
+    # The brand column (display_name) is written only when some row carries one.
+    fields = ["company", "ats", "board_id"] + (["display_name"] if any("display_name" in r for r in clean) else [])
     with open(path, "w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["company", "ats", "board_id"])   # CRLF, as committed
+        w = csv.DictWriter(f, fieldnames=fields, restval="")   # CRLF, as committed
         w.writeheader()
         w.writerows(clean)
     return clean

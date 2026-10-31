@@ -910,28 +910,48 @@ def _split_sentences(text: str) -> list[str]:
     return [s for s in _SENTENCE_SPLIT.split(text.strip()) if s]
 
 
-def _iter_bullet_slots_with_grounding(profile: dict):
+def _iter_bullet_slots_with_grounding(profile: dict, with_label: bool = False):
     """Yield (container_list, index, grounding_text) for every editable bullet.
 
     ``grounding_text`` is everything the bullet's OWN entry says: the employer/project
     with its title(s), tech line, and sibling bullets. It is the only material a reword of
-    that bullet may draw skills from (see ``keywords.introduced_skills``)."""
+    that bullet may draw skills from (see ``keywords.introduced_skills``). With
+    ``with_label`` each item also carries (section, "Employer, Title") for the review."""
     from .keywords import profile_text
 
-    for e in profile.get("projects", []) + profile.get("experience", []):
+    projects = profile.get("projects", [])
+    for n, e in enumerate(projects + profile.get("experience", [])):
+        section = "projects" if n < len(projects) else "experience"
         grounding = profile_text(e)
         roles = e.get("roles") or [e]
         for r in roles:
             bl = r.get("bullets")
             if isinstance(bl, list):
                 for i in range(len(bl)):
-                    yield bl, i, grounding
+                    if with_label:
+                        yield bl, i, grounding, section, entry_label(e, r)
+                    else:
+                        yield bl, i, grounding
     for it in profile.get("extracurricular", []):
         bl = it.get("bullets")
         if isinstance(bl, list):
             grounding = profile_text(it)
             for i in range(len(bl)):
-                yield bl, i, grounding
+                if with_label:
+                    yield bl, i, grounding, "extracurricular", entry_label(it)
+                else:
+                    yield bl, i, grounding
+
+
+def entry_label(entry: dict, role: dict | None = None) -> str:
+    """"Acme Analytics, Data Engineer": the employer or project, then the role title."""
+    org = str(entry.get("org") or entry.get("name") or entry.get("company") or "").strip()
+    title = str((role if role is not None else entry).get("title") or "").strip()
+    if not org:
+        org, title = title, ""
+    if title == org:
+        title = ""
+    return ", ".join(x for x in (org, title) if x) or "Entry"
 
 
 def _reword_smuggled_unsupported(original: str, new: str, jd_text: str,
@@ -949,24 +969,36 @@ def _reword_smuggled_unsupported(original: str, new: str, jd_text: str,
     return bool(introduced_skills(original, new, grounding, jd_text)) or is_padded(original, new)
 
 
-def _tailor_bullets(profile: dict, jd_text: str, llm: LLMBackend) -> dict:
+def _tailor_bullets(profile: dict, jd_text: str, llm: LLMBackend, *,
+                    material: tuple = (), reverted: list | None = None,
+                    origins: dict | None = None) -> dict:
     """Return a copy of ``profile`` with bullets reworded toward the JD.
 
     Bullets are plain text here — escaping happens once, at render time (`_esc`),
-    so the LLM output must NOT be pre-escaped. Two safety nets apply per bullet:
+    so the LLM output must NOT be pre-escaped. Three safety nets apply per bullet:
     (1) a reword that claims a skill its own role/project doesn't show is discarded in
     favor of the person's real bullet (anti-fabrication, §8); (2) a reword that blew past
     the length budget is rewritten shorter via ``shorten_bullet`` (re-emphasis, not
     expansion, §8) — a rewrite, never a mid-sentence cut, so bullets stay complete
-    sentences and the fit/shrink stage still handles page-level reduction.
+    sentences and the fit/shrink stage still handles page-level reduction; (3) the fact gate
+    (tailoring/fact_gate.py): a reword that states a figure, a name, a tool, an acronym or a
+    credential found nowhere in ``material`` (the person's profile, brain facts) or the source
+    bullet is discarded too, and recorded in ``reverted`` so the review can say why.
+
+    ``origins`` (a dict) is filled with {tailored text: source text}, so a later cut can be
+    traced back to the person's own bullet.
     """
     import copy
+    from .fact_gate import gate_rewrite, known_material, source_figures
     from .keywords import term_present
 
     tailored = copy.deepcopy(profile)
     # Weave only real supported SKILLS into bullets — never company/location terms.
     supported = supported_skills(jd_text, profile)
-    for bl, i, grounding in _iter_bullet_slots_with_grounding(tailored):
+    sources = (profile,) + tuple(material or ())
+    known = known_material(*sources)
+    known_figs = source_figures(*sources)
+    for bl, i, grounding, section, label in _iter_bullet_slots_with_grounding(tailored, with_label=True):
         original = str(bl[i])
         budget = _bullet_budget(original)
         # Offer the model only the JD skills THIS role/project demonstrates, so it is never
@@ -992,36 +1024,94 @@ def _tailor_bullets(profile: dict, jd_text: str, llm: LLMBackend) -> dict:
                 continue                 # the shortening fabricated: keep the real bullet
             if shorter:
                 new = shorter
+        # (3) The fact gate: nothing on the page the person's material does not state.
+        bad = gate_rewrite(original, new, known=known, known_figures=known_figs)
+        if bad:
+            if reverted is not None:
+                reverted.append({"section": section, "label": label, "bullet": original,
+                                 "attempted": new, "claims": bad, "action": "reverted"})
+            continue
+        if origins is not None and new != original:
+            origins[new] = original
         bl[i] = new
     return tailored
 
 
-def _drop_trailing_bullet(profile: dict) -> bool:
+# --------------------------------------------------------------------------- #
+# Cuts made to fit one page, kept so the person can put them back (never lost silently).
+# --------------------------------------------------------------------------- #
+
+def _norm_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip().lower()
+
+
+def trim_id(kind: str, label: str, text: str) -> str:
+    """A stable id for one cut, the same across rebuilds of the same material."""
+    import hashlib
+    raw = f"{kind}|{_norm_text(label)}|{_norm_text(text)}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+class _Cuts:
+    """Records what the fit loop cuts, and refuses to cut what the person put back."""
+
+    def __init__(self, trims: list | None, keep, origins: dict | None):
+        self.trims = trims
+        self.keep = set(keep or ())
+        self.origins = origins or {}
+
+    def kept(self, kind: str, label: str, text: str) -> bool:
+        if not self.keep:
+            return False
+        ids = {trim_id(kind, label, text)}
+        src = self.origins.get(text)
+        if src:
+            ids.add(trim_id(kind, label, src))
+        return bool(ids & self.keep)
+
+    def add(self, kind: str, section: str, label: str, text: str, **extra) -> None:
+        if self.trims is None:
+            return
+        src = self.origins.get(text, text) if isinstance(text, str) else text
+        self.trims.append({"id": trim_id(kind, label, text), "kind": kind, "section": section,
+                           "label": label, "text": text, "source": src, **extra})
+
+
+def _role_lists(profile: dict):
+    """(bullets list, section, label, is_lead) for every role/project/extracurricular entry."""
+    projects = profile.get("projects", [])
+    for n, e in enumerate(projects + profile.get("experience", [])):
+        section = "projects" if n < len(projects) else "experience"
+        for r in (e.get("roles") or [e]):
+            if isinstance(r.get("bullets"), list):
+                yield r["bullets"], section, entry_label(e, r), bool(r.get("_lead") or e.get("_lead"))
+    for it in profile.get("extracurricular", []):
+        if isinstance(it.get("bullets"), list):
+            yield it["bullets"], "extracurricular", entry_label(it), False
+
+
+def _drop_trailing_bullet(profile: dict, cuts: "_Cuts | None" = None) -> bool:
     """Drop the last bullet of the entry that has the most bullets (>1).
 
     Never truncates text — a dropped bullet is removed whole, so every surviving
-    bullet stays a complete sentence. Returns True if something was dropped.
+    bullet stays a complete sentence. Returns True if something was dropped. A bullet the
+    person put back is skipped: the next one up goes instead.
     """
-    lists: list[list] = []
-    lead: list[list] = []
-    for e in profile.get("projects", []) + profile.get("experience", []):
-        for r in (e.get("roles") or [e]):
-            if isinstance(r.get("bullets"), list):
-                lists.append(r["bullets"])
-                if r.get("_lead") or e.get("_lead"):
-                    lead.append(r["bullets"])
-    for it in profile.get("extracurricular", []):
-        if isinstance(it.get("bullets"), list):
-            lists.append(it["bullets"])
+    cuts = cuts or _Cuts(None, (), None)
+    lists = list(_role_lists(profile))
     # Prefer trimming an entry that still has more than one bullet. A role the person leads
     # with keeps its full bullet budget while any other entry can give one up.
-    candidates = [bl for bl in lists if len(bl) > 1]
-    others = [bl for bl in candidates if not any(bl is x for x in lead)]
+    def droppable(bl, label):
+        return [i for i in range(len(bl) - 1, 0, -1) if not cuts.kept("bullet", label, str(bl[i]))]
+    candidates = [x for x in lists if len(x[0]) > 1 and droppable(x[0], x[2])]
+    others = [x for x in candidates if not x[3]]
     if others:
         candidates = others
     if candidates:
-        target = max(candidates, key=lambda bl: sum(len(str(b)) for b in bl))
-        target.pop()
+        bl, section, label, _lead = max(candidates, key=lambda x: sum(len(str(b)) for b in x[0]))
+        i = droppable(bl, label)[0]
+        cuts.add("bullet", section, label, str(bl[i]), index=i)
+        bl.pop(i)
         return True
     return False
 
@@ -1033,31 +1123,43 @@ def _all_roles(profile: dict):
             yield r
 
 
-def _shrink_once(profile: dict) -> bool:
+def _shrink_once(profile: dict, trims: list | None = None, keep=None,
+                 origins: dict | None = None) -> bool:
     """Reduce content by ONE step so the CV fits one page, keeping every bullet a
     complete sentence and never character-truncating.
 
     Least-destructive first. Each call performs exactly one reduction and returns
     True; when nothing remains to reduce it returns False.
+
+    ``trims`` (a list) receives one record per cut (what, where, the text), so nothing cut to
+    fit is lost: the builder offers "Put back" for each. ``keep`` holds the ids
+    (``trim_id``) the person put back; those are never cut again, the next thing goes instead.
     """
+    import copy
+    cuts = _Cuts(trims, keep, origins)
     # 1. A multi-sentence bullet: drop its last sentence.
-    slots = sorted(_iter_bullet_slots(profile),
+    slots = sorted(_iter_bullet_slots_with_grounding(profile, with_label=True),
                    key=lambda s: len(str(s[0][s[1]])), reverse=True)
-    for bl, i in slots:
+    for bl, i, _g, section, label in slots:
         sentences = _split_sentences(str(bl[i]))
-        if len(sentences) > 1:
+        if len(sentences) > 1 and not cuts.kept("sentence", label, str(bl[i])):
+            before = str(bl[i])
             bl[i] = " ".join(sentences[:-1]).strip()
+            cuts.add("sentence", section, label, before, cut=sentences[-1], after=bl[i])
             return True
 
     # 2. Drop the last bullet of the fullest role that still has more than one.
-    if _drop_trailing_bullet(profile):
+    if _drop_trailing_bullet(profile, cuts):
         return True
 
     # 3. One-shot: cap every "Courses:" line to at most 6 courses.
     changed = False
     for e in profile.get("education", []):
         items = [c.strip() for c in str(e.get("courses", "")).split(",") if c.strip()]
-        if len(items) > 6:
+        label = str(e.get("school") or "Education")
+        if len(items) > 6 and not cuts.kept("courses", label, str(e.get("courses", ""))):
+            cuts.add("courses", "education", label, str(e.get("courses", "")),
+                     cut=", ".join(items[6:]))
             e["courses"] = ", ".join(items[:6])
             changed = True
     if changed:
@@ -1068,7 +1170,8 @@ def _shrink_once(profile: dict) -> bool:
     changed = False
     for k, v in list(skills.items()):
         items = [x.strip() for x in str(v).split(",") if x.strip()]
-        if len(items) > 8:
+        if len(items) > 8 and not cuts.kept("skills", str(k), str(v)):
+            cuts.add("skills", "skills", str(k), str(v), cut=", ".join(items[8:]))
             skills[k] = ", ".join(items[:8])
             changed = True
     if changed:
@@ -1080,38 +1183,130 @@ def _shrink_once(profile: dict) -> bool:
     for x in reversed(profile.get("extracurricular", []) or []):
         bl = x.get("bullets")
         if isinstance(bl, list) and len(bl) > 1:
-            bl.pop()
+            label = entry_label(x)
+            idx = next((i for i in range(len(bl) - 1, 0, -1)
+                        if not cuts.kept("bullet", label, str(bl[i]))), None)
+            if idx is None:
+                continue
+            cuts.add("bullet", "extracurricular", label, str(bl[idx]), index=idx)
+            bl.pop(idx)
             return True
 
     # 6. Drop a trailing project entry (keep at least one).
-    if len(profile.get("projects", [])) > 1:
-        profile["projects"].pop()
-        return True
+    projects = profile.get("projects", [])
+    if len(projects) > 1:
+        idx = next((i for i in range(len(projects) - 1, 0, -1)
+                    if not cuts.kept("project", entry_label(projects[i]), entry_label(projects[i]))), None)
+        if idx is not None:
+            label = entry_label(projects[idx])
+            cuts.add("project", "projects", label, label, index=idx, entry=copy.deepcopy(projects[idx]))
+            projects.pop(idx)
+            return True
 
     # 7. Skills must keep 4-5 dense categories (hard rule) — drop a line ONLY when there
     # are more than the 4-category floor, so it can go 5 -> 4 but never below 4.
     if len(profile.get("skills", {})) > 4:
-        last = list(profile["skills"])[-1]
-        del profile["skills"][last]
-        return True
+        last = next((k for k in reversed(list(profile["skills"]))
+                     if not cuts.kept("skills_line", str(k), str(k))), None)
+        if last is not None:
+            cuts.add("skills_line", "skills", str(last), str(last), value=profile["skills"][last])
+            del profile["skills"][last]
+            return True
 
     # 8. Drop a trailing education entry if there is more than one.
-    if len(profile.get("education", [])) > 1:
-        profile["education"].pop()
-        return True
+    edu = profile.get("education", [])
+    if len(edu) > 1:
+        idx = next((i for i in range(len(edu) - 1, 0, -1)
+                    if not cuts.kept("education", str(edu[i].get("school") or ""),
+                                     str(edu[i].get("school") or ""))), None)
+        if idx is not None:
+            school = str(edu[idx].get("school") or "Education")
+            cuts.add("education", "education", school, school, index=idx, entry=copy.deepcopy(edu[idx]))
+            edu.pop(idx)
+            return True
 
     # 9. Drop a remaining single bullet from the last role that has one.
-    roles = [r for r in _all_roles(profile)
-             if isinstance(r.get("bullets"), list) and r["bullets"]]
-    if roles:
-        roles[-1]["bullets"].pop()
+    for bl, section, label, _lead in reversed([x for x in _role_lists(profile)
+                                                if x[1] != "extracurricular" and x[0]]):
+        idx = next((i for i in range(len(bl) - 1, -1, -1)
+                    if not cuts.kept("bullet", label, str(bl[i]))), None)
+        if idx is None:
+            continue
+        cuts.add("bullet", section, label, str(bl[idx]), index=idx)
+        bl.pop(idx)
         return True
 
     # 10. Last resort: drop a trailing experience entry (keep at least one).
-    if len(profile.get("experience", [])) > 1:
-        profile["experience"].pop()
-        return True
+    exp = profile.get("experience", [])
+    if len(exp) > 1:
+        idx = next((i for i in range(len(exp) - 1, 0, -1)
+                    if not cuts.kept("role", entry_label(exp[i]), entry_label(exp[i]))), None)
+        if idx is not None:
+            label = entry_label(exp[idx])
+            cuts.add("role", "experience", label, label, index=idx, entry=copy.deepcopy(exp[idx]))
+            exp.pop(idx)
+            return True
 
+    return False
+
+
+def restore_trim(profile: dict, trim: dict) -> bool:
+    """Put one cut back into ``profile`` (the person's material), in its own place. Returns
+    True when the content is back. The caller then rebuilds with ``trim["id"]`` kept, which
+    re-runs the one-page fit check."""
+    kind, label = trim.get("kind"), str(trim.get("label") or "")
+    text, source = str(trim.get("text") or ""), str(trim.get("source") or "")
+
+    def _lists(section):
+        for bl, sec, lab, _lead in _role_lists(profile):
+            if sec == section and _norm_text(lab) == _norm_text(label):
+                yield bl
+    if kind == "bullet":
+        for bl in _lists(trim.get("section")):
+            for i, b in enumerate(bl):
+                if _norm_text(b) in (_norm_text(text), _norm_text(source)):
+                    bl[i] = text                 # the wording the person saw cut
+                    return True
+            bl.insert(min(int(trim.get("index") or len(bl)), len(bl)), text)
+            return True
+        return False
+    if kind == "sentence":
+        after = _norm_text(trim.get("after") or "")
+        for bl in _lists(trim.get("section")):
+            for i, b in enumerate(bl):
+                if _norm_text(b) in (after, _norm_text(text), _norm_text(source)):
+                    bl[i] = text
+                    return True
+        return False
+    if kind in ("project", "role", "education"):
+        key = {"project": "projects", "role": "experience", "education": "education"}[kind]
+        items = profile.setdefault(key, [])
+        name = (lambda e: str(e.get("school") or "")) if kind == "education" else entry_label
+        if any(_norm_text(name(e)) == _norm_text(label) for e in items if isinstance(e, dict)):
+            return True                          # still in the material: keeping it is enough
+        entry = trim.get("entry")
+        if not isinstance(entry, dict):
+            return False
+        items.insert(min(int(trim.get("index") or len(items)), len(items)), entry)
+        return True
+    if kind == "courses":
+        for e in profile.get("education") or []:
+            if _norm_text(e.get("school") or "Education") == _norm_text(label):
+                e["courses"] = text
+                return True
+        return False
+    if kind == "skills":
+        sk = profile.setdefault("skills", {})
+        if isinstance(sk, dict):
+            sk[label] = text
+            return True
+        return False
+    if kind == "skills_line":
+        sk = profile.setdefault("skills", {})
+        if isinstance(sk, dict):
+            sk.setdefault(label, str(trim.get("value") or ""))
+            return True
+        return False
     return False
 
 
@@ -1158,6 +1353,12 @@ class AssembleResult:
     # What the person's choices did on this page (select_roles_for_jd ``report``): the item
     # ids shown, the ones left out and why, and which saved choices changed the page.
     choices_report: dict | None = None
+    # What the one-page fit cut, one record per cut (``_shrink_once``), so the builder can
+    # offer "Put back" and nothing cut to fit is ever lost silently.
+    trims: list = field(default_factory=list)
+    # Rewrites the fact gate refused (a name, tool, acronym, credential or figure the person's
+    # material never states): the bullet kept the person's own wording.
+    reverted: list = field(default_factory=list)
 
     @property
     def underfull(self) -> bool:
@@ -1199,9 +1400,11 @@ def _dropped_material(full: dict, selected: dict) -> bool:
 
 
 def _fit_to_page(preamble, used: dict, sections, workdir: Path, jobname: str,
-                 max_shrink: int, headings=None) -> tuple[int, "CompileResult | None"]:
+                 max_shrink: int, headings=None, trims: list | None = None, keep=None,
+                 origins: dict | None = None) -> tuple[int, "CompileResult | None"]:
     """Render, compile and shrink ``used`` in place until the page is clean (one page, no
-    overfull line, not flush to the bottom edge). Returns (attempts, last compile result)."""
+    overfull line, not flush to the bottom edge). Returns (attempts, last compile result).
+    Every cut is appended to ``trims``; ids in ``keep`` are never cut (``_shrink_once``)."""
     attempts = 0
     result: CompileResult | None = None
     for attempts in range(1, max_shrink + 2):
@@ -1218,7 +1421,7 @@ def _fit_to_page(preamble, used: dict, sections, workdir: Path, jobname: str,
         # otherwise one-page CV is acceptable to ship.
         if result.ok and result.pages == 1 and attempts > 1 and not over_bottom:
             break
-        if not _shrink_once(used):
+        if not _shrink_once(used, trims, keep, origins):
             break
     return attempts, result
 
@@ -1235,6 +1438,8 @@ def assemble_cv(
     sections=None,
     headings: dict | None = None,
     choices: dict | None = None,
+    keep=None,
+    material: tuple | list = (),
 ) -> AssembleResult:
     """Assemble a one-page CV from ``profile`` in the template's shape.
 
@@ -1243,7 +1448,9 @@ def assemble_cv(
     it compiles to a single page. ``sections`` (from the template's manifest) drives
     which sections render and in what order — e.g. summary-first with no extracurricular.
     ``choices`` are the person's choices for this kind of job (``select_roles_for_jd``); what
-    they changed is in ``choices_report``.
+    they changed is in ``choices_report``. ``keep`` holds the ids of cuts the person put back
+    (``trims``), never cut again; ``material`` is more of the person's own words (brain facts)
+    the fact gate may trace a rewrite to.
     """
     workdir = Path(workdir)
     preamble = extract_preamble(template_source)
@@ -1265,10 +1472,15 @@ def assemble_cv(
     selected_source = _copy.deepcopy(profile)
 
     # Escaping happens once, at render time (`_esc`); the LLM returns plain prose.
-    used = _tailor_bullets(profile, jd_text, llm) if tailor else profile
+    reverted: list = []
+    origins: dict = {}
+    gate_material = (source_material,) + tuple(material or ())
+    used = (_tailor_bullets(profile, jd_text, llm, material=gate_material, reverted=reverted,
+                            origins=origins) if tailor else profile)
 
+    trims: list = []
     attempts, result = _fit_to_page(preamble, used, sections, workdir, jobname, max_shrink,
-                                    headings=headings)
+                                    headings=headings, trims=trims, keep=keep, origins=origins)
 
     # THE GROW PASS. Selection trims a career to 4 roles x 3 bullets so a long one is not
     # squeezed into an index. For a THIN profile that trim is backwards: Kofi's own CV
@@ -1279,14 +1491,20 @@ def assemble_cv(
     # nothing is padded.
     if (result and result.ok and result.pages == 1 and result.fill_ratio is not None
             and result.fill_ratio < TARGET_FILL and _dropped_material(full_profile, profile)):
-        grown = _tailor_bullets(full_profile, jd_text, llm) if tailor else full_profile
+        g_reverted: list = []
+        g_origins: dict = {}
+        grown = (_tailor_bullets(full_profile, jd_text, llm, material=gate_material,
+                                 reverted=g_reverted, origins=g_origins) if tailor else full_profile)
+        g_trims: list = []
         g_attempts, g_result = _fit_to_page(preamble, grown, sections, workdir,
-                                            jobname + "-full", max_shrink, headings=headings)
+                                            jobname + "-full", max_shrink, headings=headings,
+                                            trims=g_trims, keep=keep, origins=g_origins)
         if (g_result and g_result.ok and g_result.pages == 1
                 and (g_result.fill_ratio or 0) > result.fill_ratio
                 and (g_result.fill_ratio or 0) <= MAX_FILL):
             used, result, attempts = grown, g_result, attempts + g_attempts
             selected_source = _copy.deepcopy(full_profile)
+            trims, reverted = g_trims, g_reverted
 
     # LAYOUT GROW. All of the person's material is on the page and it is still short: pick the
     # largest standard layout step that keeps one clean page, measured, not guessed. This is
@@ -1349,9 +1567,14 @@ def assemble_cv(
         profile_used=used,
         empty_template_source=template_source,
         fill_ratio=fill,
-        fact_flags=flag_new_figures(used, source_material) if tailor else [],
+        # Rewrites the gate refused come first (already reverted, so nothing to strike), then
+        # any figure still on the page with no origin (the person's own edits are material).
+        fact_flags=(list(reverted) + flag_new_figures(used, source_material, *(material or ()))
+                    if tailor else []),
         source_profile=selected_source,
         choices_report=report,
+        trims=trims,
+        reverted=reverted,
     )
 
 

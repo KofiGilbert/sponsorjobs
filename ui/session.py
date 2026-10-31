@@ -786,6 +786,13 @@ class WebIntake:
         self._born_rules: set = set()            # choices saved from this resume (it used them)
         self._labels: dict | None = None
         self._keyword_previews: dict = {}        # term -> the last validated preview, for apply
+        # What the one-page fit cut that the person put back (assembler.trim_id): never cut
+        # again on this resume; the next thing goes instead (assembler._shrink_once).
+        self.kept_trims: set = set()
+        # The base resume "What changed" is measured against (tailoring/changes.py): the saved
+        # profile a tailored build started from. None for a page drafted from the chat.
+        self._change_base: dict | None = None
+        self._last_reverted: list = []           # rewrites the fact gate kept in the person's words
 
         saved = memory.load(profile_name)
         if saved:
@@ -856,6 +863,26 @@ class WebIntake:
             return _bm.ensure(d)
         except Exception:      # noqa: BLE001 - the brain never breaks the chat
             return None
+
+    def _brain_material(self) -> list:
+        """The person's own material for the fact gate (tailoring/fact_gate.py), beyond the page
+        being built: the Phase 6 profile assembled from memory (applicant/profile.py, already in
+        self.saved_profile) and the brain's active facts as plain strings, so a rewrite may name
+        what the person told the brain even when the resume material does not say it.
+        Self-identification (EEO) answers are never read. Local only; never sent anywhere."""
+        out: list = [self.saved_profile] if self.saved_profile else []
+        st = self._brain()
+        if st is None:
+            return out
+        try:
+            from applicant import keys as _K
+            from applicant.store import ACTIVE
+            out += [" ".join(str(r[k] or "") for k in ("subject", "value"))
+                    for r in st.facts(store="", status=ACTIVE)
+                    if _K.sensitivity(r["key"]) != _K.EEO]
+        except Exception:      # noqa: BLE001 - the gate works from the profile alone
+            pass
+        return out
 
     def _brain_contact(self):
         """(Phase 3) The contact details the person gave the builder are facts: their own words
@@ -2220,6 +2247,18 @@ class WebIntake:
             # Keywords added through the coverage report, so the panel can offer undo links.
             s["keyword_actions"] = [{"term": a["term"], "kind": a["kind"], "label": a["label"]}
                                     for a in self.keyword_actions]
+            # What tailoring did, worked out in code (tailoring/changes.py), never by the model.
+            try:
+                s["changes"] = self.changes_dict()
+            except Exception:  # noqa: BLE001 - the page works without its change list
+                s["changes"] = None
+            # What the one-page fit cut, each with "Put back" (re-runs the fit check).
+            from tailoring.changes import public_trim
+            s["trims"] = [public_trim(t) for t in (getattr(self.assembled, "trims", None) or [])]
+            # One-click refine chips from the coverage gaps the person's material supports:
+            # "Work in Kubernetes" runs the "Add this keyword" path. Made here from the report,
+            # with no model call.
+            s["refine"] = self.refine_chips(s.get("coverage"))
             s["pdf"] = f"/api/cv.pdf?job={self.jobname}&v={self._pdf_v}"
             try:
                 s["choices"] = self.choices_dict()
@@ -2645,6 +2684,8 @@ class WebIntake:
         if gaps:
             return self._ask_missing(gaps, lead=lead, critical=bool(self.essentials.get("override")))
         self.stage = "drafting"
+        self._change_base = None           # a page drafted from the chat has no base resume
+        self._last_reverted = []
         drafted = normalize_profile(self.llm.draft_profile(self.jd, self.essentials))
         self.profile = drafted
         self.profile["identity"] = self.essentials.get("identity", {}) or self.profile.get("identity", {})
@@ -2680,6 +2721,9 @@ class WebIntake:
                         "so I'll ask you for a few more real things to fill it properly.")
         else:
             msgs.append("Here's your draft, a real, one-page resume.")
+        cut_note = self._trims_note()
+        if cut_note:
+            msgs.append(cut_note)
         if self.title_flags():
             msgs.append("I aligned a job <b>title</b> to the role, it's highlighted; click it to "
                         "confirm or revert.")
@@ -2766,10 +2810,14 @@ class WebIntake:
             # reword the saved bullets toward THIS job, from a constraint-filtered COPY so a
             # 'do not mention X' never renders; the durable self.profile stays whole (restored below)
             self._new_build()
+            import copy as _copy
+            self._change_base = _copy.deepcopy(normalize_profile(self.saved_profile))
             self.assembled = assemble_cv(
                 self.template, self._render_profile(), self.jd, self.llm, self.workdir,
                 jobname=self.jobname, tailor=True, sections=self.sections,
-                headings=self.headings, choices=self._choices_plan())
+                headings=self.headings, choices=self._choices_plan(),
+                keep=self.kept_trims, material=self._brain_material())
+            self._last_reverted = list(getattr(self.assembled, "reverted", None) or [])
             self.profile = self._whole_profile_after_render(self.assembled.profile_used)
             self._pdf_v += 1
             self.dirty = False
@@ -2782,6 +2830,9 @@ class WebIntake:
             if getattr(self.assembled, "fact_flags", None):
                 from tailoring.fact_gate import describe as _describe_figures
                 msgs.append(_describe_figures(self.assembled.fact_flags))
+            cut_note = self._trims_note()
+            if cut_note:
+                msgs.append(cut_note)
             if self.title_flags():
                 msgs.append("I aligned a job <b>title</b> to the role, it's highlighted; "
                             "click it to confirm or revert.")
@@ -2964,8 +3015,13 @@ class WebIntake:
         ``entry`` is the bullets' own employer / project / activity dict. A resize may
         reword, but never claim a skill that entry doesn't show (issue #279)."""
         from tailoring.textwidth import line_fraction, text_width_pt, BULLET_WIDTH_PT
+        from tailoring.fact_gate import gate_rewrite, known_material
         from tailoring.filler import is_padded
         from tailoring.keywords import introduced_skills, profile_text
+        # The fact gate too (tailoring/fact_gate.py): a resize never names a tool, employer,
+        # acronym or credential, nor states a figure, that the person's material does not.
+        known = known_material(self.profile or {}, self.essentials or {}, entry or {},
+                               list(bullets or []), *self._brain_material())
         # ONE anti-fabrication rule, shared with the assembler's reword gate
         # (assembler._iter_bullet_slots_with_grounding): the grounding is everything the
         # bullet's own entry says (title, org, tech line, sibling bullets), never the whole
@@ -3021,7 +3077,9 @@ class WebIntake:
                     cand = ""
                 if not cand:
                     break
-                if introduced_skills(b, cand, grounding, self.jd) or is_padded(b, cand):
+                if (introduced_skills(b, cand, grounding, self.jd) or is_padded(b, cand)
+                        or gate_rewrite(b, cand, self.profile or {}, self.essentials or {},
+                                        entry or {}, known=known)):
                     # Fabricated a skill, or reached the target with hollow phrases: discard
                     # it. best/target are unchanged, so an identical call would only get the
                     # identical rejection; allow ONE altered retry (a tighter target), then
@@ -3447,7 +3505,7 @@ class WebIntake:
         self.assembled = assemble_cv(
             self.template, self._render_profile(), self.jd, self.llm, self.workdir,
             jobname=self.jobname, tailor=False, sections=self.sections, headings=self.headings,
-            choices=self._choices_plan(),
+            choices=self._choices_plan(), keep=self.kept_trims, material=self._brain_material(),
         )
         self.profile = self._whole_profile_after_render(self.assembled.profile_used)
         self._pdf_v += 1
@@ -3661,6 +3719,108 @@ class WebIntake:
         return review_resume(self.profile, self.coverage_dict(), self.assembled.status,
                              fill=getattr(self.assembled, "fill_ratio", None))
 
+    def changes_dict(self) -> dict:
+        """What changed on this page against the base resume (tailoring/changes.py): bullets
+        reworded, roles hidden or shown by choices, skills reordered, job terms added, what the
+        fit cut and what the fact gate kept in the person's words. Deterministic."""
+        from tailoring.changes import points, what_changed
+        a = self.assembled
+        rep = self._report()
+        try:
+            labels = {it["id"]: it["label"] for it in self._choice_items()}
+        except Exception:  # noqa: BLE001
+            labels = {}
+        shown_ids = set(rep.get("shown") or [])
+        hidden = [labels.get(i, i) for i in (rep.get("excluded") or {})]
+        shown = [labels.get(i, i) for i, src in (rep.get("pins") or {}).items()
+                 if i in shown_ids and (src or {}).get("how") in ("show", "lead")]
+        ch = what_changed(self._change_base, getattr(a, "profile_used", None) or {},
+                          coverage=self.coverage_dict(), hidden=hidden, shown=shown,
+                          trims=getattr(a, "trims", None) or [], reverted=self._last_reverted,
+                          keyword_terms=[k["term"] for k in self.keyword_actions])
+        ch["points"] = points(ch)
+        return ch
+
+    def _trims_note(self) -> str:
+        """One line when the one-page fit cut something: nothing is cut silently."""
+        n = len(getattr(self.assembled, "trims", None) or []) if self.assembled is not None else 0
+        if not n:
+            return ""
+        if n == 1:
+            return "To fit one page I cut one item. It is under <b>What changed</b>, with Put back."
+        return (f"To fit one page I cut {n} items. They are under <b>What changed</b>, "
+                "each with Put back.")
+
+    REFINE_CHIPS = 4
+
+    def refine_chips(self, coverage: dict | None = None) -> list:
+        """Up to four "Work in X" chips: the job's terms the person's material supports but the
+        page does not show yet, in the report's order. Each runs keyword_preview(term)."""
+        cov = coverage if coverage is not None else self.coverage_dict()
+        done = {str(a["term"]).lower() for a in self.keyword_actions}
+        out = []
+        for t in cov.get("missing_supported") or []:
+            if str(t).lower() in done:
+                continue
+            out.append({"term": t, "label": f"Work in {t}"})
+            if len(out) >= self.REFINE_CHIPS:
+                break
+        return out
+
+    def put_back(self, trim_id: str) -> dict:
+        """Put one cut back on the page and re-run the one-page fit. When it fits (perhaps by
+        cutting something else, which is then listed with its own Put back) it stays; when it
+        cannot fit at all, nothing changes and the person is told why."""
+        import copy as _copy
+        from tailoring.assembler import restore_trim
+        trim_id = str(trim_id or "").strip()
+        a = self.assembled
+        trim = next((t for t in (getattr(a, "trims", None) or []) if t.get("id") == trim_id), None)
+        if a is None or trim is None:
+            st = self._state()
+            st.update({"put_back_ok": False,
+                       "put_back_error": "That cut is no longer on this page. Rebuild to see the current list."})
+            return st
+        before_profile = _copy.deepcopy(self.profile)
+        before_keep = set(self.kept_trims)
+        before_ids = {t.get("id") for t in a.trims}
+        if not restore_trim(self.profile, trim):
+            st = self._state()
+            st.update({"put_back_ok": False,
+                       "put_back_error": "I could not find where that went. Add it again on the edit page."})
+            return st
+        self.kept_trims.add(trim_id)
+        self._assemble()
+        b = self.assembled
+        back = bool(b and b.ok and b.compile and b.compile.pages == 1
+                    and not any(t.get("id") == trim_id for t in b.trims))
+        if not back:
+            self.profile, self.kept_trims = before_profile, before_keep
+            self._assemble()
+            st = self._state()
+            st.update({"put_back_ok": False,
+                       "put_back_error": "That does not fit on one page, even with everything else that "
+                                         "can go cut. Shorten or remove something on the edit page, then put it back."})
+            return st
+        self._persist()
+        from tailoring.changes import public_trim
+        moved = [public_trim(t) for t in b.trims if t.get("id") not in before_ids]
+        def clip(text, words=10):
+            w = str(text or "").split()
+            return " ".join(w[:words]) + ("..." if len(w) > words else "")
+        what = public_trim(trim)
+        note = f"Put back: {clip(what['text'], 14)}"
+        note += "" if note.endswith((".", "...")) else "."
+        if moved:
+            note += (" To keep one page, " + ("this" if len(moved) == 1 else f"these {len(moved)}")
+                     + " went instead, and you can put "
+                     + ("it" if len(moved) == 1 else "them") + " back too: "
+                     + "; ".join(clip(m["text"]) for m in moved[:3]))
+            note += "" if note.endswith((".", "...")) else "."
+        st = self._state([note])
+        st.update({"put_back_ok": True, "moved": moved})
+        return st
+
     # ------------------------------------------------------------------ "Add this keyword"
     # One missing JD term from the coverage report becomes one reviewable edit of one bullet
     # (tailoring/keyword_action.py). The page is edited surgically and recompiled; the same
@@ -3872,6 +4032,15 @@ class WebIntake:
             "sections": list(self.sections or []),
             "headings": dict(self.headings or {}),
         }
+        # What the fit cut and what tailoring changed travel with the record, so nothing cut to
+        # fit is lost and Telegram's caption says the same thing the builder did.
+        data["trims"] = list(getattr(self.assembled, "trims", None) or [])
+        try:
+            ch = self.changes_dict()
+            data["changes"] = {k: ch.get(k) for k in ("hidden", "shown", "trimmed", "points",
+                                                        "terms_added", "reverted")}
+        except Exception:  # noqa: BLE001 - the record saves without its change list
+            pass
         rep = self._report()
         if rep.get("excluded") or rep.get("applied") or self.session_choices:
             # What the person's choices did on this page (item ids and rule ids, no words).

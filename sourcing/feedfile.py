@@ -52,7 +52,7 @@ PART_TARGET_BYTES = 1_000_000      # each list part is about this many gzipped b
 # card renderer in ui/static/app.js). jd_text is deliberately absent: it lives in the shards.
 SLIM_KEYS = ("source_id", "source", "company", "title", "location", "remote", "url", "posted_at",
              "first_seen", "salary", "sponsorship_stated", "us", "entry_level", "visa",
-             "nationality_visas", "sponsor", "ad_stance", "ad_sentence", "tags")
+             "nationality_visas", "sponsor", "ad_stance", "ad_sentence", "tags", "display_name")
 
 # Rows from a company's OWN board (Greenhouse, Lever, ...). When the same opening also arrives
 # through an aggregator, the board row wins: canonical URL, full JD, the employer's own wording.

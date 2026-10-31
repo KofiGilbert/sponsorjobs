@@ -262,7 +262,8 @@ def seed_if_empty(store: Watchlist) -> None:
             with open(SEED_WATCHLIST, encoding="utf-8", newline="") as f:
                 for row in csv.DictReader(f):
                     try:
-                        store.add_company(row["company"], row["ats"], row["board_id"])
+                        store.add_company(row["company"], row["ats"], row["board_id"],
+                                          row.get("display_name") or "")
                         added += 1
                     except (KeyError, ValueError):
                         continue                       # skip a malformed / invalid-slug row
@@ -285,7 +286,8 @@ def sync_seed(store: Watchlist) -> int:
         with open(SEED_WATCHLIST, encoding="utf-8", newline="") as f:
             for row in csv.DictReader(f):
                 try:
-                    store.add_company(row["company"], row["ats"], row["board_id"])
+                    store.add_company(row["company"], row["ats"], row["board_id"],
+                                          row.get("display_name") or "")
                     n += 1
                 except (KeyError, ValueError):
                     continue

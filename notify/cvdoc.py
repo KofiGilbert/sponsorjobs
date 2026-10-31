@@ -456,34 +456,19 @@ def apply_fact_to_profile(profile: dict, change: dict, doc: dict) -> bool:
 
 
 # --------------------------------------------------------------------------- messages
-def _plural(n: int, one: str, many: str) -> str:
-    return f"{n} {one if n == 1 else many}"
-
-
-def change_summary(role: str, company: str, base: dict, page: dict, coverage: dict) -> str:
+def change_summary(role: str, company: str, base: dict, page: dict, coverage: dict,
+                   changes: dict | None = None) -> str:
     """The preview caption: 'Tailored for {Role} at {Company}: {n} bullets reworded,
-    summary updated. Added the job's terms: PnL, ETL. Missing: Kafka.'"""
-    from tailoring.keywords import profile_text, term_present
-    who = f"{role} at {company}" if company else (role or "this role")
-    bits = []
-    if base and page:
-        b, p = span_map({"profile": base}), span_map({"profile": page})
-        n = sum(1 for k, s in p.items() if s["kind"] == "bullet"
-                and k in b and b[k]["text"].strip() != s["text"].strip())
-        if n:
-            bits.append(_plural(n, "bullet reworded", "bullets reworded"))
-        if "S" in p and p["S"]["text"].strip() != b.get("S", {}).get("text", "").strip():
-            bits.append("summary updated")
-    present = list((coverage or {}).get("present") or [])
-    base_text = profile_text(base or {})
-    added = [t for t in present if not term_present(t, base_text)] if base else present
-    missing = list((coverage or {}).get("missing") or [])
-    text = f"Tailored for {who}" + (": " + ", ".join(bits) if bits else "") + "."
-    if added:
-        text += " Added the job's terms: " + ", ".join(added[:8]) + "."
-    if missing:
-        text += " Missing: " + ", ".join(missing[:8]) + "."
-    return text[:1024]
+    summary updated. Added the job's terms: PnL, ETL. Missing: Kafka.' Built in code
+    (tailoring/changes.py), never by a model. ``changes`` is the record's saved diff (what the
+    builder's choices hid and what the fit cut); the page itself is diffed fresh, so a chat
+    edit made after the build is counted too."""
+    from tailoring.changes import summary_line, what_changed
+    saved = changes or {}
+    ch = what_changed(base, page, coverage=coverage, hidden=saved.get("hidden") or (),
+                      shown=saved.get("shown") or ())
+    ch["trimmed"] = list(saved.get("trimmed") or [])
+    return summary_line(ch, role, company)
 
 
 def before_after(sid: str, before: str, after: str) -> str:
