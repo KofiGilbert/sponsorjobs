@@ -25,8 +25,11 @@ from .channel import MSG_DOWNLOAD_FAILED, MSG_IMPORT_FAILED, MSG_TOO_BIG, Channe
 
 class NotifyHub:
     def __init__(self, state, engine, commands, batch_callback=None, job_actions=None,
-                 review=None, ask_callback=None, file_import=None):
+                 review=None, ask_callback=None, file_import=None, rule_proposer=None):
         self.state = state
+        # A message that states a resume choice ("for banks, show Stanbic, not Viva"): fn(text) ->
+        # {text, buttons} with Save and Not quite, or None to answer it as usual (ui/app.py).
+        self.rule_proposer = rule_proposer
         # A resume the person sent the bot: fn(file meta, bytes) -> the reply that says what the
         # import actually did (ui/app.py, the same import as the in-app upload).
         self.file_import = file_import
@@ -90,6 +93,14 @@ class NotifyHub:
             handled = self.review.handle_text(channel, text)
             if handled is not None:
                 return handled
+        if self.rule_proposer is not None and not text.strip().startswith("/"):
+            try:
+                prop = self.rule_proposer(text)
+            except Exception:                     # noqa: BLE001 - the assistant answers instead
+                prop = None
+            if prop:
+                channel.send(prop["text"], buttons=prop.get("buttons"))
+                return prop["text"]
         reply = self.commands.handle_command(text)
         cmd = text.strip().split()[0].lstrip("/").split("@", 1)[0].lower() if text.strip().startswith("/") else ""
         if cmd and cmd in getattr(channel, "SERVER_ANSWERS", ()):

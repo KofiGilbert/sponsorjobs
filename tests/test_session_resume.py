@@ -75,3 +75,23 @@ def test_reading_the_session_never_mutates_it(tmp_path, monkeypatch):
         again = client.get("/api/session/state").get_json()
     assert again["phase"] == first["phase"]
     assert again["history"] == first["history"]
+
+
+@requires_latex
+def test_a_resume_left_and_reopened_keeps_its_switches(tmp_path, monkeypatch):
+    """(Applicant brain, Phase 5) A role switched off on the edit page stays off when the person
+    leaves the builder and comes back: the switches live on the server's session."""
+    _isolate(tmp_path, monkeypatch)
+    client = app.app.test_client()
+    client.post("/api/session/start", json={"jd": JD})
+    s = app._SESSION["s"]
+    s.profile = {"identity": {"name": "Ada Lovelace", "email": "ada@example.com"},
+                 "experience": [{"org": "Northwind", "roles": [{"title": "Analyst", "dates": "2020 - Present", "bullets": ["SQL dashboards."]}]},
+                                {"org": "Contoso", "roles": [{"title": "Clerk", "dates": "2018 - 2020", "bullets": ["Filed papers."]}]}]}
+    s.stage = "review"
+    s._assemble()
+    st = client.post("/api/session/shown", json={"id": "role:contoso|clerk", "show": False}).get_json()
+    assert {i["id"]: i["shown"] for i in st["choices"]["items"]}["role:contoso|clerk"] is False
+    again = client.get("/api/session/state").get_json()
+    assert {i["id"]: i["shown"] for i in again["choices"]["items"]}["role:contoso|clerk"] is False
+    assert again["choices"]["ask"] is None          # no brain beside this memory: nothing to save

@@ -259,3 +259,25 @@ def test_a_thin_profile_is_not_trimmed_into_a_half_page(template_source, fake_ll
     # Everything the person gave is on the page: no role and no bullet silently dropped.
     assert _count_material(res.profile_used) == (5, 9)
     assert res.fill_ratio is not None
+
+
+# --------------------------------------------------------------------------- #
+# The person's choices (applicant brain, Phase 5)
+
+@requires_latex
+def test_no_choices_builds_the_same_page(template_source, cv_profile, workdir, fake_llm):
+    """Zero behaviour loss: an empty choice plan gives the very same page as none."""
+    plain = _assemble(template_source, cv_profile, workdir, fake_llm, jobname="plain")
+    empty = _assemble(template_source, cv_profile, workdir, fake_llm, jobname="empty", choices={"hide": {}})
+    assert plain.tex_source == empty.tex_source
+    assert plain.choices_report["shown"] == ["role:acme data|senior engineer", "project:open rag toolkit"]
+
+
+@requires_latex
+def test_a_hidden_project_stays_off_even_when_the_page_grows(template_source, cv_profile, workdir, fake_llm):
+    """The grow pass refills a short page from the person's material, but never with what their
+    choices left out."""
+    res = _assemble(template_source, cv_profile, workdir, fake_llm,
+                    choices={"hide": {"project:open rag toolkit": {"rule": 3, "rank": [0, 0, 0, 3]}}})
+    assert res.ok and "Open RAG Toolkit" not in res.tex_source
+    assert res.choices_report["excluded"] == {"project:open rag toolkit": {"rule": 3, "how": "hide"}}

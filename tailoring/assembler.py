@@ -436,7 +436,9 @@ def _terms(text: str) -> set:
 
 def select_roles_for_jd(profile: dict, jd_text: str, *,
                         max_roles: int = MAX_ROLES_ON_PAGE,
-                        max_bullets: int = MAX_BULLETS_PER_ROLE) -> dict:
+                        max_bullets: int = MAX_BULLETS_PER_ROLE,
+                        choices: dict | None = None,
+                        report: dict | None = None) -> dict:
     """Keep the roles that argue for THIS job, and cap how much each one says.
 
     A long career does not shrink gracefully. Rendering every role forces the fitter to
@@ -450,8 +452,18 @@ def select_roles_for_jd(profile: dict, jd_text: str, *,
     reads as a gap). Output stays in the profile's original order, so chronology is never
     rearranged to flatter the score. Nothing is invented or rewritten here -- this only
     decides what is shown, which is the person's own material either way.
+
+    ``choices`` (applicant/rules.py ``plan``) are the person's own choices for this kind of
+    job (docs/applicant-brain.md, section 6), applied BEFORE the scoring: hidden items go,
+    shown and lead items stay (and count toward the limit), ``prefer`` keeps the first of two,
+    ``apart`` keeps the better match of two. With no choices this is exactly the scorer.
+    ``report`` (a dict) is filled with what was shown and which choices changed it.
     """
+    if choices and any(choices.get(k) for k in ("hide", "show", "lead", "prefer", "apart")):
+        return _select_with_choices(profile, jd_text, choices, max_roles, max_bullets, report)
     experience = profile.get("experience") or []
+    if report is not None:
+        report.update(_report_shown(profile))
     if not experience:
         return profile
 
@@ -509,6 +521,248 @@ def select_roles_for_jd(profile: dict, jd_text: str, *,
 
     profile = dict(profile)
     profile["experience"] = kept
+    if report is not None:
+        report.update(_report_shown(profile))
+    return profile
+
+
+# --------------------------------------------------------------------------- #
+# The person's choices (docs/applicant-brain.md, section 6). Item ids come from
+# applicant/rules.py so the builder, the brain and this selection name a role alike.
+# --------------------------------------------------------------------------- #
+
+def _role_entries(profile: dict) -> list:
+    """(employer_index, role_index, role, entry, item id) for every role, in page order."""
+    from applicant.rules import role_id, role_title
+    out = []
+    for ei, entry in enumerate(profile.get("experience") or []):
+        roles = entry.get("roles") if isinstance(entry.get("roles"), list) else [entry]
+        for ri, role in enumerate(roles):
+            out.append((ei, ri, role, entry,
+                        role_id(entry.get("org") or entry.get("company"), role_title(role))))
+    return out
+
+
+def _report_shown(profile: dict) -> dict:
+    """{shown: [item ids]} for a page with no choices applied."""
+    from applicant.rules import project_id
+    shown = [iid for *_x, iid in _role_entries(profile)]
+    shown += [project_id(p) for p in profile.get("projects") or [] if isinstance(p, dict)]
+    return {"shown": shown, "excluded": {}, "dropped_pins": [], "applied": [], "lead": []}
+
+
+def _scorer_pick(flat: list, jd_terms: set, max_roles: int) -> set:
+    """The plain scorer (no choices): the selection ``select_roles_for_jd`` always made."""
+    if len(flat) <= max_roles:
+        return {(ei, ri) for ei, ri, *_r in flat}
+    scored = []
+    for ei, ri, role, entry, _iid in flat:
+        text = " ".join([str(role.get("title", "")), str(entry.get("org", "")),
+                         " ".join(map(str, role.get("bullets") or []))])
+        scored.append((len(jd_terms & _terms(text)), -ei, -ri, ei, ri))
+    scored.sort(reverse=True)
+    selected = {(ei, ri) for _, _, _, ei, ri in scored[:max_roles]}
+    selected.add((flat[0][0], flat[0][1]))
+    return selected
+
+
+def _rank_beats(a, b) -> bool:
+    return list(a or []) > list(b or [])
+
+
+def choice_exclusions(ids: list, scores: dict, choices: dict, base: set) -> tuple[dict, dict]:
+    """Which of these item ids the choices leave out, and which they pin.
+
+    ``ids`` in page order, ``scores`` {id: (job overlap, recency)}, ``base`` the ids the plain
+    scorer would show. Returns (excluded {id: {rule, how, by}}, pins {id: {rule, rank, how}}).
+    A hidden item goes. ``prefer`` drops the second of two when both are the person's, and the
+    first takes the second's place when the scorer would have shown it. ``apart`` drops the
+    weaker match of two (a ``prefer`` or a pin settles which). A choice made for a narrower
+    kind of job beats a broader one when they disagree."""
+    present = set(ids)
+    hide, show, lead = choices.get("hide") or {}, choices.get("show") or {}, choices.get("lead") or {}
+    pins = {i: dict(src, how="lead" if i in lead else "show") for i, src in {**show, **lead}.items() if i in present}
+    excluded: dict = {}
+    for i, src in hide.items():
+        if i in present:
+            excluded[i] = {"rule": src.get("rule", 0), "how": "hide"}
+    prefer = [p for p in choices.get("prefer") or [] if len(p) >= 3]
+    for a, b, src in prefer:
+        if a not in present or b not in present or a in excluded or b in excluded:
+            continue
+        if b in pins and _rank_beats(pins[b].get("rank"), src.get("rank")):
+            continue                                   # a narrower choice keeps b on the page
+        excluded[b] = {"rule": src.get("rule", 0), "how": "prefer", "by": a}
+        pins.pop(b, None)
+        if b in base and a not in pins:
+            pins[a] = dict(src, how="prefer")
+    for p in choices.get("apart") or []:
+        if len(p) < 3:
+            continue
+        a, b, src = p[0], p[1], p[2]
+        if a not in present or b not in present or a in excluded or b in excluded:
+            continue
+        winner = next((x for x, y, _s in prefer if {x, y} == {a, b}), None)
+        if winner is None:
+            if (a in pins) != (b in pins):
+                winner = a if a in pins else b
+            else:
+                winner = a if scores.get(a, (0, 0)) >= scores.get(b, (0, 0)) else b
+        loser = b if winner == a else a
+        if loser in pins and _rank_beats(pins[loser].get("rank"), src.get("rank")):
+            continue
+        excluded[loser] = {"rule": src.get("rule", 0), "how": "apart", "by": winner}
+        pins.pop(loser, None)
+    for i in list(pins):
+        if i in excluded:
+            pins.pop(i)
+    return excluded, pins
+
+
+def _select_with_choices(profile: dict, jd_text: str, choices: dict, max_roles: int,
+                         max_bullets: int, report: dict | None) -> dict:
+    """``select_roles_for_jd`` with the person's choices (see its docstring). Chronological
+    order is kept; a pinned role over the limit is reported, the most recent ones kept."""
+    from applicant.rules import project_id
+    jd_terms = _terms(jd_text)
+    flat = _role_entries(profile)
+    projects = [p for p in profile.get("projects") or [] if isinstance(p, dict)]
+    pids = [project_id(p) for p in projects]
+    base = _scorer_pick(flat, jd_terms, max_roles) if flat else set()
+    base_ids = {iid for ei, ri, _r, _e, iid in flat if (ei, ri) in base} | set(pids)
+    scores = {}
+    for n, (ei, ri, role, entry, iid) in enumerate(flat):
+        text = " ".join([str(role.get("title", "")), str(entry.get("org", "")),
+                         " ".join(map(str, role.get("bullets") or []))])
+        scores[iid] = (len(jd_terms & _terms(text)), -n)
+    for n, p in enumerate(projects):
+        scores[pids[n]] = (len(jd_terms & _terms(" ".join([str(p.get("org", "")), str(p.get("title", "")),
+                                                              " ".join(map(str, p.get("bullets") or []))]))), -n)
+    excluded, pins = choice_exclusions([x[4] for x in flat] + pids, scores, choices, base_ids)
+
+    role_pins = [x for x in flat if x[4] in pins]          # page order: most recent first
+    dropped_pins = [x[4] for x in role_pins[max_roles:]]
+    role_pins = role_pins[:max_roles]
+    keep = {(x[0], x[1]) for x in role_pins}
+    candidates = [x for x in flat if x[4] not in excluded and (x[0], x[1]) not in keep]
+    room = max_roles - len(keep)
+    if len(candidates) <= room:
+        keep |= {(x[0], x[1]) for x in candidates}
+    elif room > 0:
+        ranked = sorted(candidates, key=lambda x: (scores[x[4]][0], -x[0], -x[1]), reverse=True)
+        keep |= {(x[0], x[1]) for x in ranked[:room]}
+        first = next((x for x in flat if x[4] not in excluded), None)
+        if first is not None:
+            keep.add((first[0], first[1]))               # the most recent role still survives
+    lead_ids = {i for i, src in pins.items() if src.get("how") == "lead"}
+
+    def _trim(role: dict, iid: str) -> dict:
+        role = dict(role)
+        bullets = list(role.get("bullets") or [])
+        if len(bullets) > max_bullets:
+            ranked = sorted(range(len(bullets)), key=lambda i: len(jd_terms & _terms(bullets[i])),
+                            reverse=True)[:max_bullets]
+            bullets = [bullets[i] for i in sorted(ranked)]
+        role["bullets"] = bullets
+        if iid in lead_ids:
+            role["_lead"] = True
+        return role
+
+    kept = []
+    for ei, entry in enumerate(profile.get("experience") or []):
+        nested = isinstance(entry.get("roles"), list)
+        roles = [_trim(role, iid) for (e2, ri, role, _en, iid) in flat if e2 == ei and (e2, ri) in keep]
+        if not roles:
+            continue
+        if nested:
+            entry = dict(entry)
+            entry["roles"] = roles
+            kept.append(entry)
+        else:
+            kept.append(roles[0])
+    kept_projects = []
+    for n, p in enumerate(projects):
+        if pids[n] in excluded:
+            continue
+        if pids[n] in lead_ids:
+            p = dict(p, _lead=True)
+        kept_projects.append(p)
+    out = dict(profile)
+    out["experience"] = kept
+    if "projects" in profile:
+        out["projects"] = kept_projects
+    shown_roles = [x[4] for x in flat if (x[0], x[1]) in keep]
+    shown = shown_roles + [pids[n] for n in range(len(projects)) if pids[n] not in excluded]
+    lead_names = [str(x[3].get("org") or "") for x in flat if x[4] in lead_ids and (x[0], x[1]) in keep]
+    lead_names += [str(p.get("org") or p.get("title") or "") for n, p in enumerate(projects)
+                   if pids[n] in lead_ids and pids[n] not in excluded]
+    if lead_names and out.get("summary"):
+        out["summary"] = lead_summary(str(out["summary"]), lead_names)
+    if report is not None:
+        applied = set()
+        for i, why in excluded.items():
+            if i in base_ids and why.get("rule"):
+                applied.add(int(why["rule"]))
+        for i, src in pins.items():
+            if i in shown and (i not in base_ids or i in lead_ids) and src.get("rule"):
+                applied.add(int(src["rule"]))
+        report.update({"shown": shown, "excluded": excluded, "dropped_pins": dropped_pins,
+                       "applied": sorted(applied), "lead": [i for i in shown if i in lead_ids],
+                       "pins": {i: {"rule": s.get("rule", 0), "how": s.get("how")} for i, s in pins.items()}})
+    return out
+
+
+def choice_pool(profile: dict, report: dict | None) -> dict:
+    """The person's whole material minus what their choices left out (hidden, or the loser of
+    a ``prefer`` or ``apart``), so the grow pass never brings a hidden role back."""
+    ex = (report or {}).get("excluded") or {}
+    if not ex:
+        return profile
+    from applicant.rules import project_id
+    out = dict(profile)
+    exp = []
+    for entry in profile.get("experience") or []:
+        nested = isinstance(entry.get("roles"), list)
+        roles = [r for (_e, _r, r, en, iid) in _role_entries({"experience": [entry]}) if iid not in ex]
+        if not roles:
+            continue
+        if nested:
+            exp.append(dict(entry, roles=roles))
+        else:
+            exp.append(roles[0])
+    out["experience"] = exp
+    if "projects" in profile:
+        out["projects"] = [p for p in profile.get("projects") or [] if not isinstance(p, dict) or project_id(p) not in ex]
+    return out
+
+
+def lead_summary(summary: str, names: list) -> str:
+    """The summary names the lead item first: the sentence that names it moves to the front.
+    Only the person's own sentences are reordered; no word is added or changed."""
+    parts = _split_sentences(summary)
+    if len(parts) < 2:
+        return summary
+    low = [p.lower() for p in parts]
+    for name in names:
+        n = str(name or "").strip().lower()
+        if not n:
+            continue
+        hit = next((i for i, p in enumerate(low) if n in p), None)
+        if hit:
+            return " ".join([parts[hit]] + parts[:hit] + parts[hit + 1:])
+        if hit == 0:
+            return summary
+    return summary
+
+
+def strip_choice_marks(profile: dict) -> dict:
+    """Remove the selection's private marks (``_lead``) before the page leaves the assembler."""
+    for e in (profile.get("projects") or []) + (profile.get("experience") or []):
+        if isinstance(e, dict):
+            e.pop("_lead", None)
+            for r in e.get("roles") or []:
+                if isinstance(r, dict):
+                    r.pop("_lead", None)
     return profile
 
 
@@ -749,15 +1003,22 @@ def _drop_trailing_bullet(profile: dict) -> bool:
     bullet stays a complete sentence. Returns True if something was dropped.
     """
     lists: list[list] = []
+    lead: list[list] = []
     for e in profile.get("projects", []) + profile.get("experience", []):
         for r in (e.get("roles") or [e]):
             if isinstance(r.get("bullets"), list):
                 lists.append(r["bullets"])
+                if r.get("_lead") or e.get("_lead"):
+                    lead.append(r["bullets"])
     for it in profile.get("extracurricular", []):
         if isinstance(it.get("bullets"), list):
             lists.append(it["bullets"])
-    # Prefer trimming an entry that still has more than one bullet.
+    # Prefer trimming an entry that still has more than one bullet. A role the person leads
+    # with keeps its full bullet budget while any other entry can give one up.
     candidates = [bl for bl in lists if len(bl) > 1]
+    others = [bl for bl in candidates if not any(bl is x for x in lead)]
+    if others:
+        candidates = others
     if candidates:
         target = max(candidates, key=lambda bl: sum(len(str(b)) for b in bl))
         target.pop()
@@ -894,6 +1155,9 @@ class AssembleResult:
     # The selected, pre-tailoring material the page was built from (same roles, same bullet
     # order as ``profile_used``), so a later review can show each bullet before and after.
     source_profile: dict | None = None
+    # What the person's choices did on this page (select_roles_for_jd ``report``): the item
+    # ids shown, the ones left out and why, and which saved choices changed the page.
+    choices_report: dict | None = None
 
     @property
     def underfull(self) -> bool:
@@ -970,6 +1234,7 @@ def assemble_cv(
     tailor: bool = True,
     sections=None,
     headings: dict | None = None,
+    choices: dict | None = None,
 ) -> AssembleResult:
     """Assemble a one-page CV from ``profile`` in the template's shape.
 
@@ -977,6 +1242,8 @@ def assemble_cv(
     bullet language to the JD (truthful to the profile), and shrinks content until
     it compiles to a single page. ``sections`` (from the template's manifest) drives
     which sections render and in what order — e.g. summary-first with no extracurricular.
+    ``choices`` are the person's choices for this kind of job (``select_roles_for_jd``); what
+    they changed is in ``choices_report``.
     """
     workdir = Path(workdir)
     preamble = extract_preamble(template_source)
@@ -986,7 +1253,14 @@ def assemble_cv(
     # page is not a resume, it is an index: every role gets squeezed to a single line and
     # the strongest evidence ($60M exports, a 250-driver fleet) is the first thing cut.
     # Selecting first means the roles that survive get room to argue.
-    profile = select_roles_for_jd(full_profile, jd_text)
+    report: dict = {}
+    profile = select_roles_for_jd(full_profile, jd_text, choices=choices, report=report)
+    # What the person's choices left out never comes back through the grow pass below.
+    full_profile = choice_pool(full_profile, report)
+    if report.get("lead"):
+        # The grow pass keeps the lead item's bullet budget and summary order too.
+        full_profile = select_roles_for_jd(full_profile, jd_text, max_roles=10 ** 6,
+                                           max_bullets=10 ** 6, choices=choices)
     import copy as _copy
     selected_source = _copy.deepcopy(profile)
 
@@ -1043,6 +1317,8 @@ def assemble_cv(
 
     # Ship without the probe: it has no layout effect, so the measurement above still
     # describes this render exactly (see _FILL_PROBE).
+    strip_choice_marks(used)
+    strip_choice_marks(selected_source)
     tex = render_cv(preamble, used, sections, layout=layout, headings=headings)
     cv_text = _rendered_cv_text(used, sections)
     # One model read of the ad gives the skill list the report is measured against; the curated
@@ -1075,6 +1351,7 @@ def assemble_cv(
         fill_ratio=fill,
         fact_flags=flag_new_figures(used, source_material) if tailor else [],
         source_profile=selected_source,
+        choices_report=report,
     )
 
 

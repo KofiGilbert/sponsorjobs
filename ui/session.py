@@ -774,6 +774,17 @@ class WebIntake:
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
         self.source_job = {}               # {url, source, source_id} when started from a sourced job
         self.keyword_actions: list[dict] = []   # "Add this keyword" edits on this page, undo one by one
+        # The person's choices (applicant brain, Phase 5): this resume's own switches ("Show on
+        # this resume", "Swap for ..."), the one line that asks once whether to keep a change for
+        # similar jobs, the overlapping-roles question, and choices read in chat waiting for Save.
+        self.session_choices: dict = {}          # item id -> "show" | "hide", this resume only
+        self.choice_ask: dict | None = None
+        self._choice_asked = False
+        self.overlap_ask: dict | None = None
+        self.rule_proposals: list[dict] = []
+        self._new_proposals: list[dict] = []
+        self._born_rules: set = set()            # choices saved from this resume (it used them)
+        self._labels: dict | None = None
         self._keyword_previews: dict = {}        # term -> the last validated preview, for apply
 
         saved = memory.load(profile_name)
@@ -895,6 +906,7 @@ class WebIntake:
         except Exception:
             return new
         turn_no = len(self.prior_history) + len(self.history)
+        self._propose_rules(result.get("rules") or [])
         for f in (result.get("facts") or []):
             prov = f"turn {turn_no} · {date.today().isoformat()}"
             if self._last_user_ref:
@@ -969,6 +981,7 @@ class WebIntake:
             prefs = self._preferences()
         except Exception:
             prefs = []
+        prefs = list(prefs) + self._choice_notes()   # so its "why" agrees with what code shows
         try:
             self.cv_selection = self.llm.select_for_cv(self.jd, self.profile, self.recalled, prefs) or {}
         except Exception:
@@ -1097,7 +1110,441 @@ class WebIntake:
 
         whole = dict(rendered)
         whole["experience"] = merged
+        return self._restore_choice_projects(whole)
+
+    def _restore_choice_projects(self, whole: dict) -> dict:
+        """A project the person's choices left off this page stays in the durable profile, in
+        its own place. With no choices this changes nothing."""
+        ex = ((getattr(self.assembled, "choices_report", None) or {}).get("excluded") or {})
+        if not any(str(k).startswith("project:") for k in ex):
+            return whole
+        from applicant.rules import project_id
+        used = {project_id(p): p for p in (whole.get("projects") or []) if isinstance(p, dict)}
+        out = []
+        for p in (self.profile or {}).get("projects") or []:
+            if not isinstance(p, dict):
+                continue
+            pid = project_id(p)
+            if pid in used:
+                out.append(used[pid])
+            elif pid in ex:
+                out.append(p)
+        whole = dict(whole)
+        whole["projects"] = out
         return whole
+
+    # ------------------------------------------------------------------ choices (brain, Phase 5)
+    # "Show one of each depending on where I am applying" (docs/applicant-brain.md, sections 6
+    # and 8). The person's saved choices for this kind of job decide which of their own roles
+    # and projects this page shows; a switch on the builder's edit page changes this resume, and
+    # ONE line then asks whether to keep the change for similar jobs. Nothing is learned without
+    # a tap, and a choice never adds words. With no choices every path below is a no-op.
+    def _rules_store(self):
+        """The brain the person's choices live in: beside this session's memory file. Read for
+        every build of this person (the unattended runs build under a scratch name for the same
+        person); written only from the person's own taps."""
+        p = str(getattr(self.memory, "db_path", "") or "")
+        if not p or p == ":memory:":
+            return None
+        d = Path(p).parent
+        if not (d / "applicant.db").exists():
+            return None
+        try:
+            from applicant import migrate as _bm
+            return _bm.ensure(d)
+        except Exception:      # noqa: BLE001 - choices never break a build
+            return None
+
+    def _choice_notes(self) -> list:
+        """The saved choices that fit this job, as plain sentences for ``select_for_cv`` (it
+        explains the page; code decides it). Empty with no choices."""
+        st = self._rules_store()
+        if st is None:
+            return []
+        try:
+            from applicant import rules as _R
+            from applicant import scope as _Sc
+            rules = _R.list_rules(st, status=_R.ACTIVE)
+            if not rules:
+                return []
+            its = self._choice_items()
+            return [{"type": "preference", "key": f"choice_{r['id']}", "value": _R.sentence(r, its)}
+                    for r in _Sc.applicable(rules, self._job_labels(rules))]
+        except Exception:      # noqa: BLE001
+            return []
+
+    def _new_build(self):
+        """A fresh build of this resume: the one-line asks may come once more."""
+        self._choice_asked = False
+        self.choice_ask = None
+        self.overlap_ask = None
+
+    def _choice_items(self) -> list:
+        from applicant import rules as _R
+        return _R.items(self.profile or {})
+
+    def _job_labels(self, rules=None) -> dict:
+        """This job's family, industry and company type (applicant/scope.py), worked out once per
+        resume. The small model call runs only when a saved choice needs a label nothing else
+        settled."""
+        need = {r.get("scope_kind") for r in (rules or [])}
+        cached = self._labels
+        if cached is not None and not (("company_type" in need and cached.get("company_type") == "unknown"
+                                        and not cached.get("_typed"))
+                                       or ("industry" in need and not cached.get("industry")
+                                           and not cached.get("_typed"))):
+            return cached
+        from applicant import scope as _Sc
+        st = self._rules_store()
+        lab = _Sc.labels(st, {"title": self.role, "company": self.company, "jd": self.jd},
+                         sponsors=_Sc.sponsor_source(), llm=self.llm, rules=rules)
+        if {"company_type", "industry"} & need:
+            lab["_typed"] = True             # the model was asked (or need not be): ask once
+        self._labels = lab
+        return lab
+
+    def _choices_plan(self):
+        """The plan ``assemble_cv`` applies: the saved choices that fit this job, plus this
+        resume's own switches. None when there are none (the page is exactly the scorer's)."""
+        from applicant import rules as _R
+        st = self._rules_store()
+        its = self._choice_items()
+        rules = []
+        if st is not None:
+            try:
+                if its:
+                    _R.sync_items(st, its)
+                rules = _R.list_rules(st, status=_R.ACTIVE)
+            except Exception:  # noqa: BLE001
+                rules = []
+        if not rules and not self.session_choices:
+            return None
+        lab = self._job_labels(rules) if rules else {}
+        p = _R.plan(rules, lab, its, self.session_choices)
+        return None if _R.empty(p) else p
+
+    def _report(self) -> dict:
+        return dict(getattr(self.assembled, "choices_report", None) or {})
+
+    def _after_build(self):
+        """After a build: the overlapping-roles question, asked once per pair (8.3)."""
+        if self.overlap_ask is not None or self.choice_ask is not None:
+            return
+        st = self._rules_store()
+        if st is None:
+            return
+        from applicant import rules as _R
+        try:
+            shown = set(self._report().get("shown") or [])
+            active = _R.list_rules(st, status=_R.ACTIVE)
+            for a, b, _n in _R.overlapping_pairs(self._choice_items()):
+                if a["id"] not in shown or b["id"] not in shown:
+                    continue
+                if _R.overlap_answer(st, a["id"], b["id"]):
+                    continue
+                if any(r["action"] == "apart" and sorted(r["items"]) == sorted([a["id"], b["id"]]) for r in active):
+                    continue
+                when = _R.years(a, b)
+                _R.save_overlap_answer(st, a["id"], b["id"], "asked")    # asked once, ever
+                self.overlap_ask = {
+                    "a": a["id"], "b": b["id"],
+                    "text": (f"You were at {a['label']} and {b['label']} at the same time"
+                             + (f" ({when})" if when else "") + ". Show both, or one per job?")}
+                return
+        except Exception:      # noqa: BLE001
+            self.overlap_ask = None
+
+    def _offer_scope(self):
+        from applicant import scope as _Sc
+        return _Sc.offer(self._job_labels())
+
+    def _make_ask(self, kind: str, action: str, items: list, names: list):
+        """The ONE line under the preview after the person changed what this resume shows: keep
+        it for similar jobs? Offered at the job's most specific known label. Not asked when a
+        saved choice already says it, after "Just this time" in the last 30 days, or twice in one
+        build."""
+        if self._choice_asked:
+            return
+        st = self._rules_store()
+        if st is None:
+            return
+        from applicant import rules as _R
+        from applicant import scope as _Sc
+        sc = self._offer_scope()
+        company = (self.company or "").strip()
+        if sc is None and not company:
+            return
+        kind_, val = sc if sc else ("company", company)
+        if _R.said_once(st, _R.once_sig(action, items, kind_, val)):
+            return
+        for r in _R.list_rules(st, status=_R.ACTIVE):
+            if r["action"] == action and r["items"] == items and r["scope_kind"] == kind_ and r["scope_value"] == val:
+                return
+        where = _Sc.words(kind_, val)
+        other = "other " + where if kind_ != "company" else f"other {val} jobs"
+        if kind == "hide":
+            text = f"Hide {names[0]} for {other} too?"
+        elif kind == "show":
+            text = f"Show {names[0]} on {other} too?"
+        else:
+            text = f"Use {names[0]} instead of {names[1]} for {other}?"
+        buttons = []
+        if sc:
+            buttons.append({"id": "scope", "label": f"Yes, {where}"})
+            if company:
+                buttons.append({"id": "company", "label": f"Only {company}"})
+        else:
+            buttons.append({"id": "company", "label": f"Yes, {company} jobs"})
+        buttons.append({"id": "once", "label": "Just this time"})
+        self.choice_ask = {"kind": kind, "action": action, "items": items, "text": text,
+                           "scope_kind": kind_, "scope_value": val, "buttons": buttons}
+        self.overlap_ask = None
+        self._choice_asked = True
+
+    def set_shown(self, item_id: str, show: bool):
+        """The builder's "Show on this resume" switch: this resume shows (or leaves off) one of
+        the person's roles or projects, then rebuilds. One line may ask to keep it for similar
+        jobs."""
+        its = {it["id"]: it for it in self._choice_items()}
+        if item_id not in its or self.assembled is None:
+            st = self._state(); st["choice_error"] = "That part of your resume is not on this page."
+            return st
+        want = "show" if show else "hide"
+        ask = self.choice_ask
+        if ask and ask.get("kind") in ("show", "hide") and ask.get("items") == [item_id] and ask["action"] != want:
+            self.choice_ask, self._choice_asked = None, False      # the person undid it
+            self.session_choices.pop(item_id, None)
+        else:
+            self.session_choices[item_id] = want
+            self._make_ask(want, want, [item_id], [its[item_id]["label"]])
+        self.dirty = True
+        self._assemble()
+        return self._state()
+
+    def swap_role(self, from_id: str, to_id: str):
+        """"Swap for ...": this resume shows ``to_id`` instead of ``from_id`` (two roles whose
+        dates overlap), then rebuilds; the line asks whether to do the same on similar jobs."""
+        its = {it["id"]: it for it in self._choice_items()}
+        if from_id not in its or to_id not in its or from_id == to_id or self.assembled is None:
+            st = self._state(); st["choice_error"] = "Those roles are not on this resume."
+            return st
+        self.session_choices[from_id] = "hide"
+        self.session_choices[to_id] = "show"
+        self._make_ask("swap", "prefer", [to_id, from_id], [its[to_id]["label"], its[from_id]["label"]])
+        self.dirty = True
+        self._assemble()
+        return self._state()
+
+    def answer_choice(self, answer: str):
+        """The person's tap on the one line: ``scope`` (Yes, bank and finance jobs), ``company``
+        (Only Acme Bank) or ``once`` (Just this time)."""
+        ask, st = self.choice_ask, self._rules_store()
+        if not ask or st is None:
+            return self._state()
+        from applicant import rules as _R
+        from applicant import scope as _Sc
+        saved = ""
+        if answer in ("scope", "company"):
+            kind, val = ((ask["scope_kind"], ask["scope_value"]) if answer == "scope"
+                         else (_Sc.COMPANY, (self.company or "").strip()))
+            label = next((b["label"] for b in ask.get("buttons") or [] if b["id"] == answer), "")
+            rid = _R.add_rule(st, ask["action"], ask["items"], kind, val,
+                              words=f"{ask['text']} {label}".strip(), source="builder",
+                              source_ref=f"builder:{self.jobname}")
+            self._born_rules.add(int(rid))
+            rule = _R.get_rule(st, rid)
+            saved = "Saved. " + _R.sentence(rule, self._choice_items()) if rule else ""
+        elif answer == "once":
+            _R.remember_once(st, _R.once_sig(ask["action"], ask["items"], ask["scope_kind"], ask["scope_value"]))
+        self.choice_ask = None
+        out = self._state()
+        if saved:
+            out["choice_saved"] = saved
+        return out
+
+    def answer_overlap(self, answer: str):
+        """"Show both, or one per job?" ``both`` keeps both (never asked again for the pair);
+        ``one`` saves an apart choice for every job and rebuilds."""
+        ask, st = self.overlap_ask, self._rules_store()
+        if not ask or st is None:
+            return self._state()
+        from applicant import rules as _R
+        _R.save_overlap_answer(st, ask["a"], ask["b"], "one" if answer == "one" else "both")
+        self.overlap_ask = None
+        saved = ""
+        if answer == "one":
+            rid = _R.add_rule(st, "apart", [ask["a"], ask["b"]], "all", "", words=f"{ask['text']} One per job",
+                              source="builder", source_ref=f"builder:{self.jobname}")
+            rule = _R.get_rule(st, rid)
+            saved = "Saved. " + _R.sentence(rule, self._choice_items()) if rule else ""
+            self.overlap_ask = {"done": True}             # do not ask about another pair this build
+            self.dirty = True
+            self._assemble()
+            self.overlap_ask = None
+        out = self._state()
+        if saved:
+            out["choice_saved"] = saved
+        return out
+
+    def answer_proposal(self, token: str, save: bool, option: int = 0):
+        """Save (or not) a choice read in this chat. Saved, it applies to this page at once."""
+        st = self._rules_store()
+        self.rule_proposals = [p for p in self.rule_proposals if p.get("token") != token]
+        if st is None:
+            return self._state()
+        from applicant import rules as _R
+        res = _R.answer_proposal(st, token, bool(save), int(option or 0))
+        msg = ""
+        if res.get("saved"):
+            rule = _R.get_rule(st, res["rule_id"])
+            msg = "Saved. " + _R.sentence(rule, self._choice_items()) if rule else "Saved."
+            if self.assembled is not None:
+                self.dirty = True
+                self._assemble()
+        elif res.get("ok"):
+            msg = "Not saved. Say it another way, or set it on Your answers, under Resume choices."
+        if msg:
+            self._append("agent", msg)
+        return self._state([msg] if msg else None)
+
+    def _propose_rules(self, rows):
+        """Choices the chat read (distill_memory's ``rules``), kept as chips with Save."""
+        self._new_proposals = []
+        st = self._rules_store()
+        if st is None or not rows:
+            return
+        from applicant import rules as _R
+        its = _R.items(self.profile if (self.profile or {}).get("experience") else (self.saved_profile or {}))
+        try:
+            new = _R.propose_from_chat(st, rows, its, "app", companies=[self.company] if self.company else [],
+                                       ref=self._last_user_ref or "")
+        except Exception:      # noqa: BLE001
+            new = []
+        self.rule_proposals.extend(new)
+        self._new_proposals = new
+
+    def _why(self, it: dict, rep: dict, rules: dict, its: list) -> str:
+        """"Shown because ..." in plain words, or "" when only the job match decided."""
+        from applicant import rules as _R
+        from applicant import scope as _Sc
+        iid = it["id"]
+        ex = (rep.get("excluded") or {}).get(iid)
+        pin = (rep.get("pins") or {}).get(iid)
+
+        def where(rid):
+            r = rules.get(int(rid or 0))
+            return _Sc.words(r["scope_kind"], r["scope_value"]) if r else ""
+        line = ""
+        if ex:
+            rid = ex.get("rule") or 0
+            other = _R.label_of(ex.get("by") or "", its) if ex.get("by") else ""
+            if not rid:
+                line = "Hidden on this resume."
+            elif ex.get("how") == "hide":
+                line = f"Hidden for {where(rid)}." if where(rid) != "every job" else "Hidden on every resume."
+            elif ex.get("how") == "prefer":
+                line = f"Hidden for {where(rid)}: you show {other} instead."
+            else:
+                line = f"Hidden: you never show {other} and {it['label']} together."
+        elif pin and iid in (rep.get("shown") or []):
+            rid = pin.get("rule") or 0
+            if not rid:
+                line = "Shown on this resume."
+            elif pin.get("how") == "lead":
+                line = f"Leads this resume for {where(rid)}."
+            else:
+                line = f"Shown because you always show it for {where(rid)}."
+        elif iid in (rep.get("dropped_pins") or []):
+            line = "Not shown: your choices keep more roles than fit, so the most recent stay."
+        beat = ((self._last_beat or {}).get(iid))
+        if line and beat and int(beat) in rules:
+            line += f" That beat your {where(beat)} choice."
+        return line
+
+    _last_beat: dict | None = None
+
+    def _rename_items(self, before, after, back=None) -> list:
+        """A role or project renamed on the page: its saved choices (and the brain's fact about
+        it) follow the new name, and so do this resume's switches. Returns the (old, new) pairs."""
+        from applicant import rules as _R
+        if back is not None:
+            pairs = [(n, o) for o, n in back]
+        else:
+            old = {it["pos"]: it["id"] for it in _R.items(before or {})}
+            pairs = [(old[it["pos"]], it["id"]) for it in _R.items(after or {})
+                     if it["pos"] in old and old[it["pos"]] != it["id"]]
+        if not pairs:
+            return []
+        st = self._rules_store()
+        for o, n in pairs:
+            if o in self.session_choices:
+                self.session_choices[n] = self.session_choices.pop(o)
+            if st is not None:
+                try:
+                    _R.rename_item(st, o, n)
+                except Exception:  # noqa: BLE001
+                    pass
+        return pairs
+
+    def _record_render_profile(self) -> dict:
+        """The material saved with the record (the Word export reads it): the constraint-filtered
+        copy, minus what the person's choices left off this page."""
+        prof = self._render_profile()
+        ex = self._report().get("excluded") or {}
+        if not ex:
+            return prof
+        from tailoring.assembler import choice_pool
+        return choice_pool(prof, {"excluded": ex})
+
+    def _record_application(self, rec_id) -> None:
+        """The brain's history row for this application (section 5.4): the job's labels, what
+        the page showed and which choices changed it; each such choice counts one more use."""
+        st = self._rules_store()
+        if st is None:
+            return
+        try:
+            from applicant import rules as _R
+            rep = self._report()
+            lab = self._labels or self._job_labels()
+            _R.record_application(st, rec_id, company=self.company or "", role=self.role or "",
+                                  url=(self.source_job or {}).get("url") or "", labels=lab,
+                                  shown=rep.get("shown") or [],
+                                  applied=sorted(set(rep.get("applied") or []) | set(self._born_rules)))
+        except Exception:      # noqa: BLE001 - history never blocks a save
+            pass
+
+    def choices_dict(self) -> dict:
+        """For the builder's edit page: each role and project with its switch, its swap and why
+        it is shown or not; the one line to answer; the choices read in chat."""
+        from applicant import rules as _R
+        rep = self._report()
+        its = self._choice_items()
+        st = self._rules_store()
+        rules = {}
+        if st is not None:
+            try:
+                rules = {int(r["id"]): r for r in _R.list_rules(st)}
+            except Exception:  # noqa: BLE001
+                rules = {}
+        shown = set(rep.get("shown") or [it["id"] for it in its])
+        plan = self._choices_plan() or {}
+        self._last_beat = plan.get("beat") or {}
+        out_items = []
+        for it in its:
+            row = {"id": it["id"], "pos": it["pos"], "kind": it["kind"], "label": it["label"],
+                   "shown": it["id"] in shown, "why": self._why(it, rep, rules, its)}
+            ex = (rep.get("excluded") or {}).get(it["id"]) or (rep.get("pins") or {}).get(it["id"])
+            if ex and ex.get("rule"):
+                row["rule"] = int(ex["rule"])
+            if it["kind"] == "role" and row["shown"]:
+                row["swap"] = [{"id": b["id"], "label": b["label"]} for a, b, _n in
+                               [(x, y, n) if x["id"] == it["id"] else (y, x, n)
+                                for x, y, n in _R.overlapping_pairs(its) if it["id"] in (x["id"], y["id"])]
+                               if b["id"] not in shown]
+            out_items.append(row)
+        return {"items": out_items, "ask": self.choice_ask,
+                "overlap": self.overlap_ask if (self.overlap_ask and not self.choice_ask) else None,
+                "can_save": st is not None}
 
     # ------------------------------------------------------------------ gate
     def _effective_essentials(self) -> dict:
@@ -1749,6 +2196,8 @@ class WebIntake:
         }
         if self.recalled:
             s["recalled"] = self.recalled
+        if self.rule_proposals:
+            s["rule_proposals"] = list(self.rule_proposals)
         # P1: why these choices, so the person sees the reasoning and can override on the page.
         if self.cv_selection and (self.cv_selection.get("selected")
                                   or self.cv_selection.get("excluded")):
@@ -1764,6 +2213,10 @@ class WebIntake:
             s["keyword_actions"] = [{"term": a["term"], "kind": a["kind"], "label": a["label"]}
                                     for a in self.keyword_actions]
             s["pdf"] = f"/api/cv.pdf?job={self.jobname}&v={self._pdf_v}"
+            try:
+                s["choices"] = self.choices_dict()
+            except Exception:  # noqa: BLE001 - the page works without its switches
+                pass
             s["one_page"] = bool(self.assembled.ok and self.assembled.compile.pages == 1)
             # Flagged placeholder projects block finalization until resolved.
             sugg = self._suggested_projects()
@@ -1858,7 +2311,15 @@ class WebIntake:
         # P1: distill durable facts/preferences/constraints from this turn into the authoritative
         # store (best-effort; the turn is already saved verbatim). Meaningful prose only.
         if self._is_meaningful_turn(message):
+            self._new_proposals = []
             self._distill_facts()
+            if self._new_proposals:
+                # A choice for kinds of jobs ("for banks, show Stanbic, not Viva"): offered as a
+                # chip with Save. Nothing is kept until the tap, and the turn is not material.
+                note = "Want me to keep this choice for next time?"
+                self._append("agent", note)
+                self._persist()
+                return self._state([note])
 
         # EXPLICIT OVERRIDE: "build with what you have / continue with what you know /
         # just build it". The completeness gate only protects a user who is silently
@@ -2198,6 +2659,7 @@ class WebIntake:
         self._fill_skills()         # foreground supported JD terms (no stretch, ragged if short)
         self._dedupe_skill_groups() # one term, one line -- no duplicate Computing/Knowledge rows
         self._apply_memory_selection()  # P1: record why these belong (reasoning only, surfaced)
+        self._new_build()
         self._assemble()                # renders a constraint-filtered copy; durable profile stays whole
         self.stage = "review"
         self._persist()   # the built profile is now remembered for next time
@@ -2295,13 +2757,15 @@ class WebIntake:
             self._apply_memory_selection()  # P1: record why these belong (reasoning only, surfaced)
             # reword the saved bullets toward THIS job, from a constraint-filtered COPY so a
             # 'do not mention X' never renders; the durable self.profile stays whole (restored below)
+            self._new_build()
             self.assembled = assemble_cv(
                 self.template, self._render_profile(), self.jd, self.llm, self.workdir,
                 jobname=self.jobname, tailor=True, sections=self.sections,
-                headings=self.headings)
+                headings=self.headings, choices=self._choices_plan())
             self.profile = self._whole_profile_after_render(self.assembled.profile_used)
             self._pdf_v += 1
             self.dirty = False
+            self._after_build()
             self.stage = "review"
             self._persist()
             lead = "Building from your saved profile, tailored to this role."
@@ -2975,10 +3439,12 @@ class WebIntake:
         self.assembled = assemble_cv(
             self.template, self._render_profile(), self.jd, self.llm, self.workdir,
             jobname=self.jobname, tailor=False, sections=self.sections, headings=self.headings,
+            choices=self._choices_plan(),
         )
         self.profile = self._whole_profile_after_render(self.assembled.profile_used)
         self._pdf_v += 1
         self.dirty = False
+        self._after_build()
 
     # ------------------------------------------------------------------ review actions
     def _roles(self):
@@ -3095,12 +3561,15 @@ class WebIntake:
             container[key] = text
             if ref == "ent-" or ref.endswith("-title"):
                 container.pop("title_suggested", None)      # the person's own title wins
+        renamed = self._rename_items(before, self.profile)   # a renamed role keeps its choices
         self.dirty = True
         self._assemble()
         a = self.assembled
         if (a is None or not a.ok or (a.compile and a.compile.pages and a.compile.pages > 1)
                     or a.attempts > 1):   # the builder had to cut text to fit: not what was typed
             self.profile = before
+            if renamed:
+                self._rename_items(None, None, back=renamed)
             self._assemble()
             st = self._state(); st["edit_ok"] = False
             st["edit_error"] = "That change would push the resume onto a second page, so it was not kept. Shorten it, or trim something else first."
@@ -3385,7 +3854,7 @@ class WebIntake:
             "source_job": self.source_job or {},   # drives the submission policy (submit/)
             # The exact tailored profile this CV was rendered from, so an ATS-friendly .docx
             # export reproduces the SAME content as the PDF (not a lossy PDF->Word convert).
-            "render_profile": self._render_profile(),
+            "render_profile": self._record_render_profile(),
             # The exact page (after role selection, tailoring and one-page fitting) and the
             # same material before tailoring, so a chat edit (notify/cvreview.py) starts from
             # what the person actually sees and "Show changes" can pair each bullet.
@@ -3395,6 +3864,10 @@ class WebIntake:
             "sections": list(self.sections or []),
             "headings": dict(self.headings or {}),
         }
+        rep = self._report()
+        if rep.get("excluded") or rep.get("applied") or self.session_choices:
+            # What the person's choices did on this page (item ids and rule ids, no words).
+            data["choices"] = {"shown": rep.get("shown") or [], "applied": rep.get("applied") or []}
         # Records are named for the JOB APPLIED TO, never the CV's first role title:
         # four Amazon builds once all read "Founder (Side Project)" and the person
         # couldn't tell which was which (obs #35). The template is NOT part of that name:
@@ -3407,6 +3880,7 @@ class WebIntake:
         rec_id = self.records.add(role=label, company=self.company, coverage=cov,
                                   pdf_path="", jd_label=self.role, data=data)
         self._last_record_id = rec_id   # remember it so a repeat accept() is idempotent
+        self._record_application(rec_id)
         job = f"cv-{rec_id}"
         if self.assembled.pdf_path and Path(self.assembled.pdf_path).exists():
             shutil.copyfile(self.assembled.pdf_path, self.workdir / f"{job}.pdf")

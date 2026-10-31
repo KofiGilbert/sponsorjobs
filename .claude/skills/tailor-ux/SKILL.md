@@ -281,3 +281,20 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   as a ghost button (the bar's one primary stays Answer). It never names the saved value, so the
   same words can go to Telegram. Measured at 1893x1183 DSF 2 and 2490x1556 DSF 1.52, dark and
   light: 759px bar, 90px tall, text 735px on two lines, no overflow, nothing outside the bar.
+- 2026-10-30 (applicant brain Phase 5, resume choices): the builder's edit page ("Edit", was "Edit
+  bullets") puts a quiet strip above each role and project, in the app's sans type on the paper's
+  own colours: a "Show on this resume" switch (ink track when on, no accent), "Swap for X" on the
+  right when another role overlaps it in time and is not shown, and one muted line saying why a
+  choice decided it ("Hidden for bank and finance jobs. Change", Change opens the choice on Your
+  answers with a back link named "Resume"). A role that is off stays on the edit page at 38%
+  opacity so it can come back; the switch updates the page and the PDF in place and the edit page
+  stays open. After a change ONE line sits under the preview, above the accept bar, on surface-2
+  ("Hide Viva for other bank and finance jobs too?" with ghost buttons Yes, bank and finance jobs /
+  Only Acme Bank / Just this time); the same slot asks once, ever, about two overlapping roles
+  (Both / One per job). The panel's one primary stays Accept & Save. A choice said in chat is a
+  chip in the agent's bubble with ghost Save and Not quite. Your answers gains a fourth card,
+  "Resume choices", in the Saved answers row grammar (sentence, "Used on N resumes", Edit / Pause /
+  Delete; the inline editor is two selects, What it does and For which jobs). Measured at 1893x1183
+  DSF 2 and 2490x1556 DSF 1.52, dark and light: the line is 759x43 inside the 760 panel, no
+  sideways scroll on the page or the paper, the card's left edge equals the title's. Screens:
+  docs/design/choices/.

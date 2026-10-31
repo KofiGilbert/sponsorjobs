@@ -9,4 +9,6 @@
 * ``facts``: the writers and readers of brain-only facts (Phase 3);
 * ``mapper``: new wordings of known questions, one batched model call per page, cached (Phase 4);
 * ``expiry``: when a saved value expired or does not fit the job (Phase 4).
+* ``scope``: which kind of job this is (family, industry, company type) and which choice wins;
+* ``rules``: choices, how the person comes across for kinds of jobs (Phase 5).
 """
