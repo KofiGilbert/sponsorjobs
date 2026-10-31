@@ -6,10 +6,10 @@ the sharded descriptions and a manifest into an output directory for scripts/upl
         --jobs-url https://tailor.example/feed/jobs.json.gz
 
 Runs from a scheduled GitHub Action (.github/workflows/feed.yml). `--data` is the crawl's
-persistent state (the jobs DB + sponsor overlay); keep it between runs (actions/cache) so
-first_seen, dedup and the 21-day prune behave as they did on the server. Reuses, never copies:
-sourcing.service.refresh_watchlist for the crawl and backend.feed.feed_jobs for the
-sponsor-tagging / US-only / freshness shaping. GREEN-lane sources only (CLAUDE.md §6).
+persistent state (the jobs DB + sponsor overlay); keep it between runs (scripts/feed_state.py
+saves it in R2) so first_seen, dedup and the 21-day prune behave as they did on the server.
+Reuses, never copies: sourcing.service.refresh_watchlist for the crawl and
+backend.feed.feed_jobs for the sponsor-tagging / US-only / freshness shaping. GREEN-lane sources only (CLAUDE.md §6).
 
 Aggregator policy (details + sources in docs/feed.md): keyless feeds whose API notices invite
 sharing with attribution (Remotive, Remote OK) or set no restriction (freehire) are always in.
@@ -212,7 +212,12 @@ def merge_delta(jobs_db, data_dir, delta_path, log=print) -> dict:
         main_cols = [r[1] for r in conn.execute("PRAGMA main.table_info(sourced_job)")]
         cols = [c for c in (r[1] for r in conn.execute("PRAGMA d.table_info(sourced_job)")) if c in main_cols]
         upd = [c for c in cols if c not in ("source_id", "first_seen")]
-        sets = ", ".join(f"{c}=excluded.{c}" for c in upd)
+        # A shard that started from the SLIM state (scripts/feed_state.py) holds JD_HELD in place
+        # of each stored description: its row keeps the description this DB already has.
+        from scripts.feed_state import JD_HELD
+        held = "'" + JD_HELD.replace("'", "''") + "'"
+        sets = ", ".join(f"{c}=CASE WHEN excluded.{c} = {held} THEN sourced_job.{c} ELSE excluded.{c} END"
+                         if c == "jd_text" else f"{c}=excluded.{c}" for c in upd)
         if "first_seen" in cols:
             sets += (", first_seen=CASE WHEN sourced_job.first_seen IS NULL OR excluded.first_seen "
                      "< sourced_job.first_seen THEN excluded.first_seen ELSE sourced_job.first_seen END")
@@ -222,6 +227,23 @@ def merge_delta(jobs_db, data_dir, delta_path, log=print) -> dict:
             f"ON CONFLICT(source_id) DO UPDATE SET {sets} "
             "WHERE sourced_job.last_seen IS NULL OR excluded.last_seen >= sourced_job.last_seen")
         rows = cur.rowcount
+        if "jd_text" in cols:
+            heldq = f"SELECT source_id FROM d.sourced_job WHERE jd_text = {held}"
+            # A held row this DB did not have (a state mismatch: it was pruned here) has no text to
+            # keep; it is stored without one, so the next crawl fetches the description again.
+            conn.execute(f"UPDATE main.sourced_job SET jd_text='' WHERE jd_text = {held} "
+                         f"AND source_id IN ({heldq})")
+            # The shard's salary backfill (service.refresh_watchlist -> backfill_salaries) reads
+            # the description, which a slim shard does not hold: re-run it here for those rows,
+            # so the stored salary is what a shard on the full state would have written.
+            from sourcing.ats import salary_from_text
+            for sid, jd in conn.execute(
+                    f"SELECT source_id, jd_text FROM main.sourced_job WHERE source_id IN ({heldq}) "
+                    "AND (salary IS NULL OR salary = '') AND jd_text IS NOT NULL AND jd_text <> ''"
+                    ).fetchall():
+                pay = salary_from_text(jd)
+                if pay:
+                    conn.execute("UPDATE main.sourced_job SET salary=? WHERE source_id=?", (pay, sid))
         if _has_table(conn, "d", "careersite_skip"):
             conn.execute("CREATE TABLE IF NOT EXISTS main.careersite_skip ("
                          "url TEXT PRIMARY KEY, host TEXT, reason TEXT, at TEXT)")
