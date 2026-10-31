@@ -102,9 +102,14 @@ def test_build_matches_the_employer_and_proposes_the_stage():
     assert by_id["m-offer"]["source_id"] == "freehire::beta" and by_id["m-offer"]["stage"] == "offer"
     assert by_id["m-assess"]["stage"] == "interviewing" and by_id["m-assess"]["kind"] == "assessment"
     assert by_id["m-recv"]["source_id"] == "freehire::gamma" and by_id["m-recv"]["stage"] == "applied"
-    # Outreach proposes no stage, noise names no employer, and a friend mentioning the company
-    # has no stage wording: none of them become a suggestion.
-    assert "m-out" not in by_id and "m-noise" not in by_id and "m-friend" not in by_id
+    # Outreach proposes no stage but asks a question, so it is a reply to draft, not a move.
+    assert by_id["m-out"]["label"] == "question" and by_id["m-out"]["stage"] == ""
+    assert by_id["m-out"]["questions"] == ["I am a recruiter on the hiring team at Gamma, are you open to new opportunities?"]
+    # Noise names no employer, and a friend mentioning the company is personal mail: neither
+    # becomes a suggestion.
+    assert "m-noise" not in by_id and "m-friend" not in by_id
+    # Each says how it was matched.
+    assert by_id["m-invite"]["matched_by"] == "company" and by_id["m-assess"]["label"] == "interview_request"
 
 
 def test_no_suggestion_when_the_job_is_already_there_or_closed():
@@ -118,37 +123,39 @@ def test_no_suggestion_when_the_job_is_already_there_or_closed():
     assert build_suggestions([RECEIVED], jobs) == []
 
 
-def test_model_pass_runs_only_for_other_mail_from_a_tracked_employer():
+def test_model_reads_only_mail_tied_to_a_tracked_application():
     class Spy(FakeLLM):
         seen = []
 
-        def classify_application_mail(self, subject, body, sender, company):
+        def classify_reply(self, subject, body, sender, company):
             self.seen.append((subject, company))
-            return super().classify_application_mail(subject, body, sender, company)
+            return super().classify_reply(subject, body, sender, company)
 
     llm = Spy()
     out = build_suggestions([INVITE, SOFT, NOISE, FRIEND], JOBS, llm=llm)
-    # Only SOFT (rules said "other", names Acme) and FRIEND (same) reached the model; never the
-    # newsletter and never the already-classified invite.
-    assert [c for _, c in llm.seen] == ["Acme Robotics, Inc.", "Acme Robotics, Inc."]
-    assert [s for s, _ in llm.seen] == ["Quick note", "how did the Acme Robotics thing go?"]
+    # One call per message tied to a tracked application (INVITE and SOFT, both Acme). Never the
+    # newsletter (no application) and never the friend's personal mail that only names Acme.
+    assert llm.seen == [("Next steps on your Data Analyst application", "Acme Robotics, Inc."),
+                        ("Quick note", "Acme Robotics, Inc.")]
     soft = next(s for s in out if s["id"] == "m-soft")
-    assert soft["kind"] == "interview_invite" and soft["stage"] == "interviewing"
+    assert soft["label"] == "interview_request" and soft["stage"] == "interviewing" and soft["by"] == "model"
     assert "come in and meet" in soft["reason"]
-    assert not any(s["id"] == "m-friend" for s in out)       # the fake does not guess
+    assert not any(s["id"] == "m-friend" for s in out)
 
 
 def test_model_failure_or_nonsense_leaves_the_rules_verdict():
     class Boom:
-        def classify_application_mail(self, *a, **k):
+        def classify_reply(self, *a, **k):
             raise RuntimeError("down")
 
     class Nonsense:
-        def classify_application_mail(self, *a, **k):
-            return {"kind": "promotion", "phrase": "x"}
+        def classify_reply(self, *a, **k):
+            return {"label": "promotion", "phrase": "x"}
 
     assert build_suggestions([SOFT], JOBS, llm=Boom()) == []
     assert build_suggestions([SOFT], JOBS, llm=Nonsense()) == []
+    # And with a rules verdict in hand, a failing model leaves it exactly as the rules read it.
+    assert [s["stage"] for s in build_suggestions([INVITE], JOBS, llm=Boom())] == ["interviewing"]
 
 
 def test_suggestion_id_is_stable_without_a_mailbox_id():

@@ -154,3 +154,75 @@ def test_forget_overwrites_the_value_on_disk(seeded):
         p = data / f
         if p.exists():
             assert CARD_SALARY.encode() not in p.read_bytes(), f
+
+
+# The Tracker: the mail the inbox tied to an application, the inbox's words in the stage history,
+# the suggestion file, and (with the tick) the applications themselves.
+MAIL_SUBJECT = "Mailsubject Glimmerfenwick"
+MAIL_THREAD = "thread-Quorlapine"
+JOB_NOTE = "Cardnote Brindlemoss"
+CONTACT = "Contactname Pewterhollow"
+TRACKER_JOB = {"source_id": "careers::erase-co", "source": "careers", "company": "Erasetest Larkspur",
+               "title": "Data Analyst", "location": "Boston", "remote": "", "posted_at": "2026-10-20",
+               "url": "https://careers.erasetest.example/jobs/1", "salary": "", "jd_text": ""}
+
+
+def _seed_tracker(A, data):
+    sid = TRACKER_JOB["source_id"]
+    w = A._watchlist()
+    try:
+        w.upsert_jobs([TRACKER_JOB])
+        w.track_job(sid, "applied")
+        w.record_mail(sid, "msg-erase-1", thread_id=MAIL_THREAD, rfc_id="<rfc-erase@x>",
+                      matched_by="thread", label="interview", subject=MAIL_SUBJECT)
+        w.move_stage(sid, "interviewing", note=f'From your inbox: "{MAIL_SUBJECT}"', ref="sg-erase")
+        w.set_notes(sid, JOB_NOTE)
+        w.add_contact(sid, CONTACT, email="pewter@erasetest.example")
+    finally:
+        w.close()
+    (data / "inbox_suggestions.json").write_text(json.dumps(
+        [{"id": "sg-erase", "subject": MAIL_SUBJECT, "status": "pending"}]), encoding="utf-8")
+    return sid
+
+
+def test_export_carries_the_tracker_mail_and_history(seeded):
+    A, c, data = seeded
+    sid = _seed_tracker(A, data)
+    d = c.get("/api/memory/export").get_json()
+    t = d["tracker"]
+    assert [m["subject"] for m in t["mail"]] == [MAIL_SUBJECT] and t["mail"][0]["thread_id"] == MAIL_THREAD
+    assert [h["to_stage"] for h in t["history"] if h["source_id"] == sid][-1] == "interviewing"
+    assert [x["name"] for x in t["contacts"]] == [CONTACT]
+    assert d["inbox_suggestions"][0]["subject"] == MAIL_SUBJECT
+    import io
+    import zipfile
+    z = zipfile.ZipFile(io.BytesIO(c.get("/api/memory/export.zip").data))
+    assert MAIL_SUBJECT in z.read("memory.json").decode() and "stores/inbox_suggestions.json" in z.namelist()
+
+
+def test_erase_leaves_no_inbox_mail_but_keeps_the_cards(seeded):
+    A, c, data = seeded
+    sid = _seed_tracker(A, data)
+    assert set(_hits(data, [MAIL_SUBJECT, MAIL_THREAD])) == {MAIL_SUBJECT, MAIL_THREAD}
+    assert c.post("/api/memory/erase").status_code == 200
+    assert not _hits(data, [MAIL_SUBJECT, MAIL_THREAD])          # the mail is gone from every file
+    w = A._watchlist()
+    try:
+        assert w.stage_of(sid) == "interviewing"                   # the application itself stays
+        assert w.tracker_export()["mail"] == []
+    finally:
+        w.close()
+
+
+def test_erase_with_applications_clears_the_tracker(seeded):
+    A, c, data = seeded
+    sid = _seed_tracker(A, data)
+    assert c.post("/api/memory/erase", json={"resumes": True}).status_code == 200
+    assert not _hits(data, [MAIL_SUBJECT, MAIL_THREAD, JOB_NOTE, CONTACT])
+    w = A._watchlist()
+    try:
+        assert not w.stage_of(sid)
+        t = w.tracker_export()
+        assert t["mail"] == [] and t["history"] == [] and t["contacts"] == [] and t["cards"] == []
+    finally:
+        w.close()

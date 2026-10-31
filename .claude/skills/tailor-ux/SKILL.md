@@ -298,6 +298,18 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   DSF 2 and 2490x1556 DSF 1.52, dark and light: the line is 759x43 inside the 760 panel, no
   sideways scroll on the page or the paper, the card's left edge equals the title's. Screens:
   docs/design/choices/.
+- 2026-10-30: Inbox replies on the Tracker stay in the strip's grammar (one row per message, quiet
+  meta under the subject, ghost buttons on the right). Each row says its label (Interview request,
+  Rejection, Offer, Question, Acknowledgement), the deciding phrase AND how the mail was tied to the
+  job ("Matched by email thread / sender's domain / company name"), so a wrong match is visible.
+  A confirmed interview time is one line in ink; questions are a short list. A drafted reply opens
+  inline at letter width (760px, never the full 1320 strip), unanswered questions are bracketed
+  "[Add your answer: ...]" placeholders in the body plus ONE quiet line counting them (never a second
+  list repeating the questions). The only move the app makes by itself is a plain acknowledgement,
+  shown as "Moved to Applied" with Undo and OK. Every stage move (drag, picker, inbox) toasts with an
+  Undo action; the panel's Timeline has "Undo last change" and a quiet "Got as far as <stage>" line
+  when the card has moved back. The job panel stops at the 42px icon rail (it used to sit under it,
+  clipping its right edge). Measured at 1893x1183 DSF 2 and 2490x1556 DSF 1.52, dark and light.
 - 2026-10-30 (applicant brain Phase 6, the memory page): "What SponsorJobs knows about you" replaced
   the profile form AND Your answers (the old `#view-profile`, so every door lands there). One 1040
   reading column, a row of quiet pill jump links under the title, then `.ans-card` cards with

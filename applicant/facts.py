@@ -586,3 +586,42 @@ def upgrade(st: Store, profile: dict | None) -> int:
         src = "resume"
         n = write_contact(st, ident, source=src, source_ref="resume_agent.db:conversation_memory")
     return n
+
+
+# ---------------------------------------------------------------------------- replying to a recruiter
+# What a recruiter's question may be answered from: the person's saved preferences (start date,
+# notice period, relocation, remote, salary, years of experience) and the chat's preferences and
+# constraints. Normal-sensitivity facts only: a legal value (work authorization, citizenship) or a
+# self-identification one never goes into a model payload (applicant/redact.py), so a question
+# about them is left for the person to answer (the draft lists it as unanswered).
+REPLY_KEYS = (("preferred_name", "@preferred_name"), ("location", "location"),
+              ("start_date", "@start_date"), ("notice_period", "@notice_period"),
+              ("willing_to_relocate", "relocate"), ("open_to_remote", "remote"),
+              ("desired_salary", "@salary"), ("years_experience", "@years_experience"))
+
+
+def reply_facts(st: Store | None, min_conf: float = 0.8) -> dict:
+    """{"answers": {name: value}, "notes": [one line each]} for drafting a reply to a recruiter's
+    questions. Only facts at ``min_conf`` or more, and never a legal or self-identification one."""
+    if st is None:
+        return {"answers": {}, "notes": []}
+    answers = {}
+    for name, key in REPLY_KEYS:
+        if K.sensitivity(key) != K.NORMAL:
+            continue
+        v = _current_value(st, key, "", min_conf)
+        if v:
+            answers[name] = v
+    lines = []
+    for n in notes(st):
+        if float(n.get("confidence") or 0) < 0.6:
+            continue
+        val = " ".join(str(n.get("value") or "").split())[:200]
+        if val:
+            lines.append(val)
+        if len(lines) >= 12:
+            break
+    # A chat note can repeat a legal or self-identification value in passing ("I am on an F-1");
+    # those words are withheld the same way every model payload withholds them.
+    from applicant import redact
+    return redact.for_model({"answers": answers, "notes": lines}, redact.sensitive_values(st))
