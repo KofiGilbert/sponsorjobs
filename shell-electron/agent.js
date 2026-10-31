@@ -22,6 +22,14 @@ const ACTION_MS = 25000;
 const SETTLE_QUIET_MS = 600;
 const SETTLE_CAP_MS = 8000;
 const LOOP_WINDOW = 12;
+// Asking the person (2026-10-31): an ask waits as long as the engine says (an hour by default,
+// with one Telegram reminder), in long-polls of ASK_CHUNK_S so Stop still ends it within seconds;
+// past the wait the job PARKS (the question stays open, the pane is released) and an answer
+// re-runs it. A batch never waits: its asks park at once and go out in ONE digest.
+const ASK_CHUNK_S = 20;
+const PARK_POLL_MS = Number(process.env.SJ_AGENT_PARK_POLL_MS) || 4000;
+const DIGEST_MS = Number(process.env.SJ_AGENT_DIGEST_MS) || 30 * 60 * 1000;
+const PARK_REASONS = new Set(["captcha", "phone-code", "needs-person"]);
 const SUBMIT_RE = /^(submit( application)?|send( application)?|review and submit|complete application)$/i;
 // Enough to keep running when the engine's allowed-hosts route is unreachable.
 // Web Bot Auth (docs/apply-agent.md section 7, Cloudflare signed agents): while a run is on, the
@@ -46,7 +54,11 @@ const dlog = (what, obj) => {
   } catch (e) { /* debugging only */ }
 };
 const hostOf = (url) => { try { return (new URL(url).hostname || "").toLowerCase().replace(/^www\./, ""); } catch (e) { return ""; } };
-const withTimeout = (p, ms, what) => Promise.race([p, delay(ms).then(() => { throw new Error(what + " timed out"); })]);
+const withTimeout = (p, ms, what) => {
+  let t = null;
+  const cap = new Promise((_r, rej) => { t = setTimeout(() => rej(new Error(what + " timed out")), ms); });
+  return Promise.race([p, cap]).finally(() => clearTimeout(t));
+};
 
 // A MutationObserver that stamps the last DOM change, so "the page went quiet" is measurable.
 // Idempotent per document; a navigation drops it and the next view() puts it back.
@@ -63,7 +75,14 @@ function createAgent(deps) {
   // deps: { getPane, openInPane, waitPaneLoad, autofillCore, agentViewSource, runAutoApplyOnPane,
   //         postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision, net, SERVER }
   let current = null;                 // the one run at a time: { recordId, stop, ready }
-  const ready = new Map();            // recordId -> { url, lane } packages waiting for Send
+  const ready = new Map();            // recordId -> { url, lane, epoch } packages waiting for Send
+  // Parked jobs this shell still remembers (recordId as a string -> { epoch, pageUrl, opts,
+  // state, kind, opened }): a re-run carries on from the same page with its state when the pane
+  // is still on it (paneEpoch: bumped each time a run or a Continue opens a page in the pane);
+  // else (the pane moved, or the app restarted) it opens the job again.
+  const parked = new Map();
+  let paneEpoch = 0;
+  let batchOn = null;                 // { stop } while a batch runs: resumes wait behind it
 
   const progress = (recordId, state, message, extra) =>
     deps.sendProgress(Object.assign({ agent: true, record_id: recordId == null ? null : recordId,
@@ -528,11 +547,14 @@ function createAgent(deps) {
           const id = Math.random().toString(16).slice(2, 10);
           const question = (first && first.question) || termsQuestion(run.company, title);
           const options = (first && first.options) || TERMS_CHOICES;
-          progress(run.recordId, "ask", question, { ask: { id, question, options, questions: [{ question, options }], kind: "terms" } });
-          const r = await withTimeout(deps.postApp("/api/autoapply/agent/terms", Object.assign({ id, timeout_s: 300 }, body)),
-                                      320000, "terms").catch(() => null);
+          const ask = { id, question, options, questions: [{ question, options }], kind: "terms" };
+          // In a batch the person is away: never wait, park the job and move on (the digest
+          // asks). A single run asks on the bar and Telegram and waits, then parks.
+          if (!run.batch) progress(run.recordId, "ask", question, { ask });
+          const r = await askLong("/api/autoapply/agent/terms", Object.assign({ id, park: run.parkInfo(), no_wait: !!run.batch }, body), run.st);
           dlog("terms ->", r && { ok: r.ok, decision: r.decision, reason: r.reason });
           if (r && r.reason === "stopped") return { stop: { reason: "stopped", message: "Stopped." } };
+          if (r && r.reason === "parked") return { park: { kind: "terms", question: needsLine(run.company, title), ask } };
           if (!r || r.ok === false) {
             return { stop: { reason: "needs-consent", message: needsLine(run.company, title)
                              + " I did not accept it. Press Apply for me again to answer." } };
@@ -573,11 +595,41 @@ function createAgent(deps) {
     finally { release(); }
   }
 
+  // ---- asking the person -------------------------------------------------------------------
+  // One ask on the engine (/ask or /terms with ``park``): it answers within a chunk, or says
+  // "waiting" and the shell asks again until the engine's wait is over (then "parked"). Stop
+  // closes the ask between chunks. A missed reply is retried, so a hiccup never ends an hour.
+  async function askLong(path, body, st) {
+    const once = (p, b) => withTimeout(deps.postApp(p, b), (ASK_CHUNK_S + 60) * 1000, "ask").catch(() => null);
+    let r = await once(path, Object.assign({ chunk_s: ASK_CHUNK_S }, body));
+    let id = (r && r.id) || body.id;
+    let misses = 0;
+    while (!r || (r.ok === false && r.reason === "waiting")) {
+      if (!r) { if (++misses > 3 || !id) return null; await delay(1000); } else misses = 0;
+      if (st && st.stop) {
+        await deps.postApp("/api/autoapply/agent/ask/close", { id }).catch(() => null);
+        return { ok: false, reason: "stopped" };
+      }
+      r = await once("/api/autoapply/agent/ask/wait", { id, chunk_s: ASK_CHUNK_S });
+      if (r && r.id) id = r.id;
+    }
+    return r;
+  }
+  const runOpts = (o) => ({ url: o.url || "", resume_path: o.resumePath || "", lane: o.lane || "assisted",
+                            autonomous: !!o.autonomous, company: o.company || "" });
+  const optsFrom = (r) => ({ url: (r && r.url) || "", resumePath: (r && r.resume_path) || "", lane: (r && r.lane) || "assisted",
+                             autonomous: !!(r && r.autonomous), company: (r && r.company) || "" });
+  const ridOf = (x) => (/^\d+$/.test(String(x)) ? Number(x) : x);
+
   // ---- the run -----------------------------------------------------------------------------
-  // opts: { url, resumePath, lane, autonomous }
+  // opts: { url, resumePath, lane, autonomous, company, mode?: "single" | "batch",
+  //         resume?: { entry, state, samePage } }
   async function run(recordId, opts) {
     opts = opts || {};
     if (current) return { ok: false, reason: "busy" };
+    if (batchOn && opts.mode !== "batch") return { ok: false, reason: "busy" };
+    const batch = opts.mode === "batch";
+    const R = opts.resume || null;
     const applyUrl = opts.url || "";
     if (!/^https?:/i.test(applyUrl)) return { ok: false, reason: "bad-url" };
     if (/(^|\.)linkedin\.com$/i.test(hostOf(applyUrl))) { deps.openInPane(applyUrl); return { ok: false, reason: "linkedin" }; }
@@ -586,39 +638,96 @@ function createAgent(deps) {
 
     const st = { recordId, stop: false, disarmSigning: () => {} };
     current = st;
+    if (!R) {
+      // A fresh Apply for me on a parked job replaces the park (its question closes).
+      parked.delete(String(recordId));
+      await deps.postApp("/api/autoapply/agent/parked/" + encodeURIComponent(recordId) + "/take", { drop: true }).catch(() => null);
+    }
+    const S = (R && R.state) || null;     // the parked run's own state, when it carries on in place
     const hosts = await allowedHosts(applyUrl);
-    const history = [];
-    const portals = new Set();           // hosts whose portal account was ensured this run
-    const startedAt = Date.now() / 1000; // mail older than the run is never used
+    if (S && S.hosts) for (const h of S.hosts) hosts.add(h);
+    const history = (S && S.history) || [];
+    const portals = (S && S.portals) || new Set();   // hosts whose portal account was ensured this run
+    const startedAt = (S && S.startedAt) || Date.now() / 1000; // mail older than the run is never used
     let emailCode = "";                  // a code the mailbox handed over, for the next step only
-    const runAnswers = {};               // question -> the person's answer this run (bar, Telegram)
-    const knownSeen = new Set();         // questions answered from their material without asking
-    const eeoTried = new Set();          // self-identification questions the shell tried to fill
+    const runAnswers = (S && S.runAnswers) || {};    // question -> the person's answer this run (bar, Telegram)
+    const knownSeen = (S && S.knownSeen) || new Set();  // questions answered from their material without asking
+    const eeoTried = (S && S.eeoTried) || new Set();    // self-identification questions the shell tried to fill
     // Terms the site requires: per site, the person's yes this run (via "always" | "all" |
     // "once"), how often each notice was tried, and what was accepted (the Ready to send summary).
-    const terms = { st, recordId, company: String(opts.company || ""), termsTries: new Map(),
-                    termsOk: new Map(), accepted: [] };
+    const terms = (S && S.terms) || { recordId, company: String(opts.company || ""), termsTries: new Map(),
+                                      termsOk: new Map(), accepted: [] };
+    terms.st = st;
+    terms.batch = batch;
+    // What a re-run brings in: the consent (also kept on the record, or as the standing choice),
+    // and the answers a parked question got (the saved ones come back from the person's material
+    // anyway; a job's own answer, never saved, only from here).
+    const resumeLeft = {};
+    if (R && R.entry) {
+      const e = R.entry;
+      if (e.kind === "terms" && e.decision === "accept") {
+        terms.termsOk.set(hostOf(e.page_url || applyUrl), e.via || "once");
+        terms.termsTries = new Map();
+      }
+      for (const [q, a] of Object.entries(e.answers || {})) { runAnswers[q] = a; resumeLeft[q] = a; }
+    }
     const hashes = [];
     const pageHashes = [];
     let failed = 0;
-    let page = 1;
+    let page = (S && S.page) || 1;
     let fr = null;
     let disarmSigning = () => {};
+    let wcNow = null;
     const finish = (res) => { if (fr) { fr.close(); fr = null; } disarmSigning(); current = null; return res; };
     const stopped = (reason, message, extra) => {
       progress(recordId, "stopped", message, Object.assign({ reason, steps: history.length }, extra));
       return finish({ ok: false, reason, steps: history.length });
     };
+    const where = () => (wcNow && !wcNow.isDestroyed() ? wcNow.getURL() || "" : "");
+    terms.parkInfo = () => ({ page_url: where(), run: runOpts(opts), batch });
+    const lead = batch && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "";
+    // Park the job: the pane is released for the next one, the question (if any) stays open, and
+    // an answer (or Continue) re-runs it. ``kind`` "questions" | "terms" (the engine already parked
+    // the ask) or "captcha" | "person" (parked here, nothing to answer).
+    const park = async (kind, message, extra) => {
+      const pageUrl = where();
+      parked.set(String(recordId), { epoch: paneEpoch, pageUrl, opts: Object.assign({}, opts, { resume: null, mode: "single" }), kind,
+                                     state: { history, portals, startedAt, runAnswers, knownSeen, eeoTried, terms, page, hosts: Array.from(hosts) } });
+      if (kind === "captcha" || kind === "person") {
+        await deps.postApp("/api/autoapply/agent/park", { record_id: recordId, kind, message, page_url: pageUrl, run: runOpts(opts), batch }).catch(() => null);
+      }
+      const onPage = kind === "captcha" || kind === "person";
+      const said = batch ? lead + "Paused, it needs you: " + message + " Moving on."
+        : (onPage ? "Paused. " : "Paused: waiting on your answer. ") + message
+          + (onPage ? "" : " The question stays open: answer here or on Telegram any time and I carry on.");
+      progress(recordId, "parked", said, Object.assign({ parked: { kind, batch }, steps: history.length }, extra || {}));
+      dlog("parked", kind + " " + message);
+      startPolling();
+      return finish({ ok: false, parked: true, reason: "parked", kind, steps: history.length });
+    };
+    const parkFor = (reason, message, extra) => park(reason === "captcha" ? "captcha" : "person",
+      reason === "captcha" ? "This page has a captcha. Solve it on the page, then press Continue."
+        : reason === "phone-code" ? "The site wants a code from your phone. Enter it on the page, then press Continue."
+          : String(message || "This page needs you.").replace(/ Have a look( at it| at the page)?\.?$/, "") + " Do the step on the page, then press Continue.", extra);
 
     try {
-      progress(recordId, "running", "Opening the job");
-      deps.openInPane(applyUrl);
-      { const p0 = deps.getPane(); if (p0) { disarmSigning = armSigning(p0.webContents, hosts); st.disarmSigning = disarmSigning; } }
-      await delay(400);
-      await deps.waitPaneLoad();
-      const pane = deps.getPane();
+      let pane = null;
+      if (R && R.samePage && deps.getPane()) {
+        pane = deps.getPane();
+        progress(recordId, "running", "Thanks. Carrying on where I paused");
+        { disarmSigning = armSigning(pane.webContents, hosts); st.disarmSigning = disarmSigning; }
+      } else {
+        progress(recordId, "running", lead + (R ? "Thanks. Opening the job again" : "Opening the job"));
+        paneEpoch++;
+        deps.openInPane(applyUrl);
+        { const p0 = deps.getPane(); if (p0) { disarmSigning = armSigning(p0.webContents, hosts); st.disarmSigning = disarmSigning; } }
+        await delay(400);
+        await deps.waitPaneLoad();
+        pane = deps.getPane();
+      }
       if (!pane) return stopped("no-page", "The browser pane is closed.");
       const wc = pane.webContents;
+      wcNow = wc;
       wc.on("will-prevent-unload", (e) => e.preventDefault());    // "leave page?" never blocks the agent
       await settle(wc, "");
 
@@ -634,7 +743,7 @@ function createAgent(deps) {
           await deps.postApp("/api/autofill/applied", { url: applyUrl, page_url: url, record_id: recordId });
           return finish({ ok: true, submitted: true, steps: step });
         }
-        if (sig.blocker === "captcha") return stopped("captcha", "This page has a captcha. Solve it, then press Apply for me again.");
+        if (sig.blocker === "captcha") return parkFor("captcha", "", { url });
 
         // 1. the deterministic engine first (not on a sign-in page: the portal account goes
         //    through the brain's placeholders, never the profile fill). At the first sign-in or
@@ -649,6 +758,7 @@ function createAgent(deps) {
         {
           const t = await handleTerms(wc, terms);
           if (t.stop) return stopped(t.stop.reason, t.stop.message, { url });
+          if (t.park) return park("terms", t.park.question, { url, ask: batch ? undefined : t.park.ask });
         }
         if (sig.blocker === "auth") {
           const h = hostOf(url);
@@ -678,6 +788,7 @@ function createAgent(deps) {
         {
           const t = await handleTerms(wc, terms);
           if (t.stop) return stopped(t.stop.reason, t.stop.message, { url });
+          if (t.park) return park("terms", t.park.question, { url, ask: batch ? undefined : t.park.ask });
         }
 
         // 2. the view
@@ -717,7 +828,7 @@ function createAgent(deps) {
         const worst = Math.max(0, ...last.map(repeats));
         if (worst >= 5) return stopped("stuck", "I kept repeating the same action without progress. Have a look.", { url });
         if (worst >= 3) nudges.push("You repeated the same action " + worst + " times and it is not working. Try something else or report blocked.");
-        progress(recordId, "running", step === 1 ? "Reading the job page" : "Page " + page + ": deciding what to click",
+        progress(recordId, "running", lead + (step === 1 && !R ? "Reading the job page" : "Page " + page + ": deciding what to click"),
                  { step, filled });
         let reply = null;
         try {
@@ -744,6 +855,7 @@ function createAgent(deps) {
           // person and clicks, never the model.
           const t = await handleTerms(wc, terms, true);
           if (t.stop) return stopped(t.stop.reason, t.stop.message, { url });
+          if (t.park) return park("terms", t.park.question, { url, ask: batch ? undefined : t.park.ask });
           if (!t.accepted) return stopped("needs-consent", blockedMessage("needs-consent"), { url });
           history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
                          actions: ["(the person accepted the site's terms)"], results: ["accepted; continue"] });
@@ -771,8 +883,12 @@ function createAgent(deps) {
           // already answers (the library, work authorization, the standing decline choice on
           // self-identification questions) is never asked.
           const items = [];
+          let fromPark = 0;
           for (const q of asks) {
             if (st.stop) return stopped("stopped", "Stopped.");
+            // The answer a parked question got, brought in by this re-run: used once.
+            const k = Object.keys(resumeLeft).find((x) => x === q || sameLabel(x, q));
+            if (k !== undefined) { runAnswers[q] = resumeLeft[k]; delete resumeLeft[k]; fromPark++; continue; }
             const got = (await selectChoices(wc, fr, v, q)) || optionsFor(v.text, q) || (await dropdownOptions(wc, v, q));
             const all = cleanOptions(got.options, 1000);
             items.push({ question: q, options: orderOptions(q, all), all_options: all.slice(0, 40),
@@ -799,20 +915,21 @@ function createAgent(deps) {
             }
             open = open.concat(rest.filter((it) => !(it.question in known)));
           }
-          let answered = items.length - open.length;
+          let answered = items.length - open.length + fromPark;
           if (open.length) {
             const id = Math.random().toString(16).slice(2, 10);
             const shown = open.length === 1
               ? (open[0].say ? open[0].say
-                 : (open[0].context ? "After \u201c" + open[0].context + "\u201d, the application asks: " : "The application asks: ") + open[0].question)
+                 : (open[0].context ? "After “" + open[0].context + "”, the application asks: " : "The application asks: ") + open[0].question)
               : "The application asks " + open.length + " questions.";
-            progress(recordId, "ask", shown, { step, ask: { id, question: open[0].question, options: open.length === 1 ? open[0].options : [],
-                                                             questions: open } });
-            const r = await withTimeout(deps.postApp("/api/autoapply/agent/ask", {
-              questions: open, record_id: recordId, timeout_s: 300, id, force_questions: forced.map((it) => it.question) }),
-                                        320000, "ask").catch(() => null);
+            const ask = { id, question: open[0].question, options: open.length === 1 ? open[0].options : [], questions: open };
+            if (!batch) progress(recordId, "ask", shown, { step, ask });
+            const r = await askLong("/api/autoapply/agent/ask", {
+              questions: open, record_id: recordId, id, force_questions: forced.map((it) => it.question),
+              park: terms.parkInfo(), no_wait: batch }, st);
             dlog("step " + step + " ask ->", r && { ok: r.ok, reason: r.reason, n: open.length });
             if (r && r.reason === "stopped") return stopped("stopped", "Stopped.");
+            if (r && r.reason === "parked") return park("questions", shown, { url, left, ask: batch ? undefined : ask });
             if (!(r && r.ok)) return stopped("needs-answers", blockedMessage("needs-answers", open.map((it) => it.question)), { url, left });
             for (const [q, a] of Object.entries(r.answers || {})) runAnswers[q] = a;
             answered += open.length;
@@ -820,10 +937,15 @@ function createAgent(deps) {
           if (!answered) return stopped("needs-answers", blockedMessage("needs-answers", stillOpen(left, runAnswers, knownSeen)), { url, left });
           history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
                          actions: ["asked the person"], results: [answered + " answered"] });
-          progress(recordId, "running", "Thanks. Carrying on", { step });
+          if (open.length || fromPark) progress(recordId, "running", "Thanks. Carrying on", { step });
           continue;
         }
         if (done && done.outcome === "blocked") {
+          // What only the person can do on the page (a captcha, a phone code, a sign-in): the job
+          // parks with Continue, and the next job goes on.
+          if (PARK_REASONS.has(done.reason || "needs-person")) {
+            return parkFor(done.reason || "needs-person", blockedMessage(done.reason, stillOpen(left, runAnswers, knownSeen)), { url, left });
+          }
           return stopped(done.reason || "needs-person", blockedMessage(done.reason, stillOpen(left, runAnswers, knownSeen)), { url, left });
         }
         if (done && done.outcome === "await_email") {
@@ -890,12 +1012,134 @@ function createAgent(deps) {
     }
   }
 
+  // ---- a batch: "Apply for me" on several jobs while the person is away ---------------------
+  // One job after another in the pane. Nothing waits on the person: a job that needs them parks
+  // (its question stays open) and the next one starts. ONE digest goes to Telegram when the batch
+  // ends (and every 30 minutes while it runs, when something new parked). jobs: [{ recordId, url,
+  // resumePath, lane, autonomous, company }].
+  async function batch(jobs) {
+    if (current || batchOn) return { ok: false, reason: "busy" };
+    const list = (jobs || []).filter((j) => j && j.recordId != null && /^https?:/i.test(j.url || ""));
+    if (!list.length) return { ok: false, reason: "empty" };
+    const b = batchOn = { stop: false };
+    const digest = () => deps.postApp("/api/autoapply/agent/digest", { only_new: true }).catch(() => null);
+    const timer = setInterval(() => { digest(); }, DIGEST_MS);
+    if (timer.unref) timer.unref();
+    const results = [];
+    try {
+      for (let i = 0; i < list.length; i++) {
+        if (b.stop) break;
+        const j = list[i];
+        const r = await run(j.recordId, Object.assign({}, j, { mode: "batch", batchAt: { i: i + 1, n: list.length } }));
+        results.push(Object.assign({ record_id: j.recordId }, r || { ok: false, reason: "error" }));
+      }
+    } finally {
+      clearInterval(timer);
+    }
+    const d = await digest();
+    batchOn = null;
+    const n = (pred) => results.filter(pred).length;
+    const readyN = n((r) => r.ready), sentN = n((r) => r.submitted), parkedN = n((r) => r.parked);
+    const stoppedN = results.length - readyN - sentN - parkedN;
+    const parts = [];
+    if (sentN) parts.push(sentN + " sent");
+    if (readyN) parts.push(readyN + " ready to send");
+    if (parkedN) parts.push(parkedN + " paused, waiting on you");
+    if (stoppedN) parts.push(stoppedN + " stopped");
+    const msg = (b.stop ? "Stopped after " : "Done with ") + results.length + " application" + (results.length === 1 ? "" : "s")
+      + (parts.length ? ": " + parts.join(", ") + "." : ".")
+      + (parkedN ? " Answer them in Auto-apply, Needs you" + (d && d.sent ? " or on Telegram" : "") + ", and I carry on with each one." : "");
+    progress(null, "batch-done", msg, { batch: { results: results.length, ready: readyN, sent: sentN, parked: parkedN, stopped: stoppedN } });
+    if (parkedN) startPolling();
+    setTimeout(() => { pollParked().catch(() => {}); }, 50);
+    return { ok: true, results, digest: d || null };
+  }
+
+  // ---- parked jobs carry on by themselves ---------------------------------------------------
+  // The engine says which parked jobs got their answer (GET /api/autoapply/agent/parked). One at a
+  // time, never during another run or a batch: the job is taken and re-run, from the same page
+  // when the pane is still on it, else from the job's link.
+  let pollT = null;
+  let polling = false;
+  function startPolling() {
+    if (pollT || deps.noPolling) return;
+    pollT = setInterval(() => { pollParked().catch(() => {}); }, PARK_POLL_MS);
+    if (pollT.unref) pollT.unref();
+  }
+  async function pollParked() {
+    if (polling || current || batchOn) return { ok: false, reason: "busy" };
+    polling = true;
+    let resumed = 0;
+    try {
+      const r = await deps.getApp("/api/autoapply/agent/parked");
+      for (const e of (r && r.parked) || []) {
+        if (current || batchOn) break;
+        if (e.state === "waiting") continue;
+        const t = await deps.postApp("/api/autoapply/agent/parked/" + encodeURIComponent(e.record_id) + "/take", {}).catch(() => null);
+        if (!t || !t.ok) continue;
+        const ent = t.entry || e;
+        const key = String(ent.record_id);
+        const mem = parked.get(key);
+        parked.delete(key);
+        const rid = ridOf(ent.record_id);
+        if (ent.state !== "answered") {
+          progress(rid, "stopped", ent.state === "declined"
+            ? "Stopped. You chose not to accept " + possessive(ent.company, ent.title) + ", so I did not apply."
+            : "Stopped. The paused question was closed.", { reason: ent.state });
+          continue;
+        }
+        resumed++;
+        await resume(rid, ent, mem);
+      }
+    } finally {
+      polling = false;
+    }
+    return { ok: true, resumed };
+  }
+  async function resume(rid, ent, mem) {
+    const pane = deps.getPane();
+    const wcp = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+    const here = !!(mem && wcp && mem.epoch === paneEpoch && (mem.opened || (wcp.getURL() || "") === (mem.pageUrl || ent.page_url)));
+    const base = mem ? mem.opts : optsFrom(ent.run);
+    dlog("resume", rid + " samePage=" + here);
+    return run(rid, Object.assign({}, base, { mode: "single", resume: { entry: ent, state: here && !mem.opened ? mem.state : null, samePage: here } }));
+  }
+  // "Continue" on a job parked at a captcha or a step on the page. With the pane still on that
+  // page: it carries on. Otherwise the page opens first, for the person to do the step, and the
+  // next Continue carries on from it.
+  async function continueParked(recordId) {
+    const key = String(recordId);
+    const r = await deps.getApp("/api/autoapply/agent/parked");
+    const e = ((r && r.parked) || []).find((x) => String(x.record_id) === key);
+    if (!e) return { ok: false, reason: "none" };
+    if (e.kind === "questions" || e.kind === "terms") return { ok: false, reason: "answer" };
+    const mem = parked.get(key);
+    const pane = deps.getPane();
+    const wcp = pane && !pane.webContents.isDestroyed() ? pane.webContents : null;
+    const here = !!(mem && wcp && mem.epoch === paneEpoch && (mem.opened || (wcp.getURL() || "") === mem.pageUrl));
+    if (!here) {
+      if (current || batchOn) return { ok: false, reason: "busy" };
+      const url = e.page_url || (e.run && e.run.url) || "";
+      if (!/^https?:/i.test(url)) return { ok: false, reason: "bad-url" };
+      paneEpoch++;
+      deps.openInPane(url);
+      parked.set(key, { epoch: paneEpoch, pageUrl: url, opened: true, kind: e.kind, state: null,
+                        opts: (mem && mem.opts) || optsFrom(e.run) });
+      progress(ridOf(recordId), "parked", e.kind === "captcha" ? "Solve the captcha on this page, then press Continue."
+        : "Do the step on this page, then press Continue.", { parked: { kind: e.kind, opened: true } });
+      return { ok: true, opened: true };
+    }
+    await deps.postApp("/api/autoapply/agent/parked/" + encodeURIComponent(key) + "/continue", {}).catch(() => null);
+    const p = await pollParked();
+    return { ok: true, resumed: !!(p && p.resumed), queued: !(p && p.resumed) };
+  }
+
   // ---- Submit: the shell's decision, never the model's --------------------------------------
   async function handOver(recordId, wc, url, opts, step, accepted) {
     if (current && current.disarmSigning) current.disarmSigning();
     const now = await deps.applyDecision(opts.url || url, url);
     const auto = !!opts.autonomous && now.click_submit === true;
-    ready.set(recordId, { url, lane: auto ? "auto" : "assisted" });
+    ready.set(recordId, { url, lane: auto ? "auto" : "assisted", epoch: paneEpoch });
     const said = acceptedLine(opts.company || "", accepted);
     if (auto) {
       progress(recordId, "running", "Sending" + (said ? ". " + said : ""), { step });
@@ -903,9 +1147,11 @@ function createAgent(deps) {
       current = null;
       return r;
     }
-    progress(recordId, "ready", "Ready to send. " + (said ? said + " " : "") + "Check it, then press Send.",
+    progress(recordId, "ready", (opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "")
+             + "Ready to send. " + (said ? said + " " : "") + "Check it, then press Send.",
              { step, ready: true, accepted: (accepted || []).slice() });
     current = null;
+    setTimeout(() => { pollParked().catch(() => {}); }, 50);     // a parked job may be waiting its turn
     return { ok: true, ready: true, steps: step };
   }
 
@@ -915,6 +1161,8 @@ function createAgent(deps) {
     const pane = deps.getPane();
     const r = ready.get(recordId);
     if (!pane || !r) return { ok: false, reason: "not-ready" };
+    // Another application took the pane since (a batch, a parked job carrying on): its page is gone.
+    if (r.epoch !== paneEpoch) { ready.delete(recordId); return { ok: false, reason: "page-gone" }; }
     const wc = pane.webContents;
     await ensureScripts(wc);
     const sig = (await signature(wc)) || {};
@@ -950,10 +1198,12 @@ function createAgent(deps) {
     return { ok: true, submitted: true, confirmed };
   }
 
-  function stop() { if (current) current.stop = true; }
+  function stop() { if (current) current.stop = true; if (batchOn) batchOn.stop = true; }
   const isReady = (recordId) => ready.has(recordId);
+  const busy = () => !!(current || batchOn);
 
-  return { run, send, stop, isReady, MAX_STEPS };
+  return { run, batch, send, stop, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
+           _test: { askLong, parked, epoch: () => paneEpoch } };
 }
 
 // ---- reading the view for an ask (pure, so the tests reach them) -----------------------------

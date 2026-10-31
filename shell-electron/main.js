@@ -1051,6 +1051,14 @@ ipcMain.handle("agent:run", async (_e, opts) => {
 });
 ipcMain.handle("agent:send", async (_e, recordId) => agent.send(recordId));
 ipcMain.handle("agent:stop", async () => { agent.stop(); return { ok: true }; });
+// Several jobs, one after another; a job that needs the person parks and the next one goes on.
+ipcMain.handle("agent:batch", async (_e, jobs) => agent.batch((Array.isArray(jobs) ? jobs : []).map((o) => ({
+  recordId: o.recordId, url: o.url, resumePath: o.resumePath, lane: o.lane, autonomous: !!o.autonomous, company: o.company || "" }))));
+// "Continue" on a job parked at a captcha or a step on the page.
+ipcMain.handle("agent:continue", async (_e, recordId) => agent.continueParked(recordId));
+ipcMain.handle("agent:busy", async () => ({ busy: agent.busy() }));
+// Parked jobs carry on by themselves once answered, also after a restart (the engine keeps them).
+agent.startPolling();
 ipcMain.handle("agent:ready", async (_e, recordId) => ({ ready: agent.isReady(recordId) }));
 
 // AI-fill whatever page is CURRENTLY open in the pane (after the person navigated / signed in).

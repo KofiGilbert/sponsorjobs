@@ -126,6 +126,7 @@ REASON_SHORT = {
     "form_blocker": ("form question", "form questions"),
     "site_error": ("site error", "site errors"),
     "posting_closed": ("closed posting", "closed postings"),
+    "paused": ("paused application", "paused applications"),   # the apply agent parked it (ui/app.py)
 }
 
 # The one row action per tile (and per reason on "Needs you"). The page turns the code into

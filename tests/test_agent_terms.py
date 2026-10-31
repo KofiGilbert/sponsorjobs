@@ -103,7 +103,7 @@ def test_the_shell_handles_terms_with_consent_and_never_on_stop():
     """The shell's handleTerms: asks (or takes "always"), records, then clicks; on Stop or no
     answer it stops without clicking. The Ready to send summary names what was accepted."""
     src = (ROOT / "shell-electron" / "agent.js").read_text(encoding="utf-8")
-    body = src[src.index("async function handleTerms("):src.index("  return { run, send, stop")]
+    body = src[src.index("async function handleTerms("):src.index("  return { run, batch, send, stop")]
     decide = body.index('"/api/autoapply/agent/terms"')
     click = body.index("realClick(wc, it.index)")
     record = body.index('"/api/autoapply/agent/terms/accepted"')

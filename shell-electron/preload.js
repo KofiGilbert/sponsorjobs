@@ -49,6 +49,9 @@ contextBridge.exposeInMainWorld("tailorShell", {
   agentRun: (opts) => ipcRenderer.invoke("agent:run", opts || {}),
   agentSend: (recordId) => ipcRenderer.invoke("agent:send", recordId),
   agentStop: () => ipcRenderer.invoke("agent:stop"),
+  agentBatch: (jobs) => ipcRenderer.invoke("agent:batch", jobs || []),
+  agentContinue: (recordId) => ipcRenderer.invoke("agent:continue", recordId),
+  agentBusy: () => ipcRenderer.invoke("agent:busy"),
   agentReady: (recordId) => ipcRenderer.invoke("agent:ready", recordId),
   // AI-fill whatever page is currently open in the pane, for one saved application.
   autoApplyFillCurrent: (recordId) => ipcRenderer.invoke("autoapply:fill-current", recordId),

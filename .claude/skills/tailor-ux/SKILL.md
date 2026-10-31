@@ -344,3 +344,13 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   1.52, dark and light: the block is 759px wide inside the 760 panel, chips 26px tall on one 36px
   row, the toggle 37px, the open list 157px (scrolls past 38vh), cut rows 711x51, no sideways
   scroll on the page, the panel or the block, no console errors.
+- 2026-10-31: A job the apply agent cannot finish without the person is PAUSED, never dropped. Its
+  Auto-apply row moves to Needs you with "Paused: needs you." plus the exact question (or "This page
+  has a captcha. Solve it on the page, then press Continue."), and ONE row action: "Answer and
+  continue" (the question on the bar, the same choices and box as a live question) or "Continue".
+  The bar says "Paused: waiting on your answer." and keeps the choices; an answer says "I carry on
+  with the application for X as soon as the browser is free." The standing choice on terms a site
+  requires is ONE bar question before the first run ("Yes, accept them for me" primary, "No, ask me
+  first" ghost), never mid-run and never ticked for the person. "Apply for me to all N" is a link
+  button on Waiting on you beside Approve all; the batch ends with one bar line ("Done with 3
+  applications: 1 ready to send, 2 paused, waiting on you.") and "See them" (Needs you).

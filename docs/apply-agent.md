@@ -219,7 +219,9 @@ it is the Send path above. Belt and braces.
 ### Asking the person (`/api/autoapply/agent/ask`, autoapply/asks.py)
 
 When the brain reports `blocked: needs-answers`, the shell asks about the REQUIRED questions
-still open on the page (at most 6), on the bar and on Telegram, and waits up to 5 minutes.
+still open on the page (at most 6), on the bar and on Telegram, and waits up to an hour
+(`agent_ask_wait_min` in the review prefs, 5 to 180 minutes), with ONE Telegram reminder at
+about 15 minutes; then the job PARKS (see "Parked jobs and batches" below).
 
 - **Choices.** A native select's every option comes from the element (`selectOptions`; the view
   prints four), a radio group's from the view, a custom dropdown's from its open popup: the
@@ -292,10 +294,38 @@ its <title> to apply. Accept it?" with "Accept for all applications" (sets "alwa
 one" and "Stop". A typed reply is read strictly (a choice's words or number, yes or no), never by
 a model. Then the shell clicks the accept button or ticks the box with a real click, records the
 acceptance on the application (`terms_accepted`: company, title, url, time) and names it in the
-Ready to send summary ("Accepted Lam Research's Data Privacy Agreement for you."). Stop, or no
-answer, ends the run and nothing is accepted. The brain never accepts terms or follows a link to
+Ready to send summary ("Accepted Lam Research's Data Privacy Agreement for you."). Stop ends the
+run and nothing is accepted; no answer within the wait parks the job, and nothing is accepted
+until the person answers. "Just this one" is remembered on that application (`terms_consent`),
+so its re-run accepts the same notice without asking again. The brain never accepts terms or follows a link to
 a policy (the in-page click refuses one: `policy-link`); it reports `blocked: needs-consent` when
 one still blocks the way.
+
+### Parked jobs and batches (2026-10-31)
+
+The owner was away when Lam Research asked for consent; the 5 minute wait ran out and the run
+died. Now nothing that only the person can give ever ends a run:
+
+- **The standing choice up front.** `accept_required_terms` is asked once in setup's "Questions
+  every form asks" step (an unticked box) and, while still not made (`terms_decided` in the
+  review prefs), as one question on the bar before the first Apply for me or batch starts. It is
+  never made for the person; leaving the box unticked decides nothing.
+- **Single runs** ask live and wait (chunks of 20 s: `/ask` or `/terms` with `park`, then
+  `/ask/wait`; Stop closes the ask between chunks with `/ask/close`). Past the wait the job parks.
+- **Batches** (`agent.batch`, "Apply for me to all" on Waiting on you) never wait: an unknown
+  question or consent not given parks the job at once (`no_wait`) and the next job starts. ONE
+  digest (`/api/autoapply/agent/digest`) goes to Telegram at the end, and every 30 minutes while
+  the batch runs when something new parked, with buttons for up to three jobs.
+- **Parked** (`data/agent_parked.json`, `agent_park` on the record): the question stays open for
+  7 days on the bar, Telegram and the Auto-apply row ("Paused: needs you", "Answer and continue").
+  A captcha, a phone code or a step on the page parks too, with "Continue". The pane is released.
+- **Resume.** An answer (bar, Telegram button, or a typed reply while exactly one parked question
+  is open) saves as usual and marks the job ready; the shell polls `/api/autoapply/agent/parked`,
+  takes it, and re-runs it one at a time, behind any run or batch: from the same page with its
+  state when the pane is still there, else by opening the job again, the consent and answers
+  applied on the way through. A fresh Apply for me on a parked job replaces the park.
+- **Late answers** (PR #143) never take a parked question: it is still open, so the late path
+  skips it, and its answer trims the late-answer row.
 
 ## 9. What we took from browser-use, what we left
 
