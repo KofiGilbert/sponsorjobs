@@ -143,6 +143,11 @@ def parse_message(raw: dict) -> dict:
         "subject": headers.get("subject", ""),
         "date": headers.get("date", ""),
         "body": _extract_body(payload) or raw.get("snippet", ""),
+        # The conversation headers: a reply carries the Message-ID it answers, so the tracker
+        # can tie it to the application its thread already belongs to.
+        "rfc_id": headers.get("message-id", ""),
+        "in_reply_to": headers.get("in-reply-to", ""),
+        "references": headers.get("references", ""),
     }
 
 

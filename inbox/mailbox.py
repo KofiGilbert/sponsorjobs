@@ -182,13 +182,17 @@ def parse_rfc822(raw: bytes, uid: str = "") -> dict:
             body = html_to_text(content) if part.get_content_type() == "text/html" else content
     except Exception:
         body = ""
-    msg_id = str(m.get("Message-ID") or "").strip() or uid
+    rfc_id = str(m.get("Message-ID") or "").strip()
+    msg_id = rfc_id or uid
     return {
         "id": msg_id,
         "from": str(m.get("From") or ""),
         "subject": str(m.get("Subject") or ""),
         "body": body or "",
         "date": str(m.get("Date") or ""),
+        "rfc_id": rfc_id,
+        "in_reply_to": str(m.get("In-Reply-To") or "").strip(),
+        "references": " ".join(str(m.get("References") or "").split()),
     }
 
 

@@ -25,6 +25,13 @@ from datetime import date, datetime, timedelta, timezone
 # auto-submit stays here, marked "Needs you", until the person submits it.
 STAGES = ("saved", "approved", "applied", "interviewing", "offer", "rejected", "archived")
 RANK = {s: i for i, s in enumerate(STAGES)}
+# How far an application got, for honest funnel counts. Rejected and archived are endings, not
+# progress, so the furthest stage is always one of these; a job that interviewed and was then
+# rejected keeps "interviewing" here even though its card now sits in Closed.
+PROGRESS = ("saved", "approved", "applied", "interviewing", "offer")
+PROGRESS_RANK = {s: i for i, s in enumerate(PROGRESS)}
+# How many recent stage changes the side panel lists (each one can be walked back with Undo).
+HISTORY_SHOWN = 5
 # Stages where a "did they see it?" nudge still helps. A new Applied job gets a default follow-up
 # this many days out (the same window submit/tracker.py uses for a record's nudge).
 FOLLOW_UP_DAYS = 6
@@ -53,25 +60,64 @@ def date_of(value) -> date | None:
 
 
 def migrate_board(c: sqlite3.Connection) -> None:
-    """Idempotent: add the board columns to sourced_job and create the two side tables."""
+    """Idempotent: add the board columns to sourced_job and create the side tables."""
     cols = {r[1] for r in c.execute("PRAGMA table_info(sourced_job)")}
     for name, ddl in (("stage", "TEXT"), ("stage_at", "TEXT"), ("applied_at", "TEXT"),
-                      ("follow_up_at", "TEXT"), ("notes", "TEXT DEFAULT ''")):
+                      ("follow_up_at", "TEXT"), ("notes", "TEXT DEFAULT ''"),
+                      ("furthest_stage", "TEXT")):
         if name not in cols:
             c.execute(f"ALTER TABLE sourced_job ADD COLUMN {name} {ddl}")
     c.execute("""CREATE TABLE IF NOT EXISTS tracker_activity (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL,
         from_stage TEXT, to_stage TEXT NOT NULL, at TEXT NOT NULL, note TEXT DEFAULT '')""")
     c.execute("CREATE INDEX IF NOT EXISTS tracker_activity_job ON tracker_activity(source_id)")
+    # Undo needs what the row looked like before the change (the dates a move rewrites), whether
+    # the change was walked back, and what caused it (an inbox suggestion id, so undoing an inbox
+    # move puts the suggestion back).
+    acols = {r[1] for r in c.execute("PRAGMA table_info(tracker_activity)")}
+    for name, ddl in (("prev_stage_at", "TEXT"), ("prev_applied_at", "TEXT"),
+                      ("prev_follow_up_at", "TEXT"), ("undone", "INTEGER DEFAULT 0"),
+                      ("undone_at", "TEXT"), ("ref", "TEXT DEFAULT ''")):
+        if name not in acols:
+            c.execute(f"ALTER TABLE tracker_activity ADD COLUMN {name} {ddl}")
+    # Mail the app has tied to an application: the thread lane of inbox matching reads it, and
+    # the record says how each message was matched (thread, domain, company).
+    c.execute("""CREATE TABLE IF NOT EXISTS tracker_mail (
+        message_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, thread_id TEXT DEFAULT '',
+        rfc_id TEXT DEFAULT '', matched_by TEXT DEFAULT '', label TEXT DEFAULT '',
+        subject TEXT DEFAULT '', at TEXT NOT NULL)""")
+    c.execute("CREATE INDEX IF NOT EXISTS tracker_mail_job ON tracker_mail(source_id)")
     c.execute("""CREATE TABLE IF NOT EXISTS tracker_contact (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL,
         name TEXT NOT NULL, role TEXT DEFAULT '', email TEXT DEFAULT '', linkedin TEXT DEFAULT '',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
     c.execute("CREATE INDEX IF NOT EXISTS tracker_contact_job ON tracker_contact(source_id)")
+    if "furthest_stage" not in cols:
+        _backfill_furthest(c)
+
+
+def _furthest(stages) -> str | None:
+    best = None
+    for st in stages:
+        if st in PROGRESS_RANK and (best is None or PROGRESS_RANK[st] > PROGRESS_RANK[best]):
+            best = st
+    return best
+
+
+def _backfill_furthest(c: sqlite3.Connection) -> None:
+    """First open after the column arrived: every board job's furthest stage from its log."""
+    seen: dict[str, list[str]] = {}
+    for r in c.execute("SELECT source_id, to_stage FROM tracker_activity"):
+        seen.setdefault(r[0], []).append(r[1])
+    for r in c.execute("SELECT source_id, stage FROM sourced_job WHERE stage IS NOT NULL AND stage<>''").fetchall():
+        best = _furthest(seen.get(r[0], []) + [r[1]])
+        if best:
+            c.execute("UPDATE sourced_job SET furthest_stage=? WHERE source_id=?", (best, r[0]))
 
 
 _BOARD_COLS = ("source_id, source, company, title, location, remote, url, posted_at, salary, "
-               "saved, sponsorship_stated, stage, stage_at, applied_at, follow_up_at, notes")
+               "saved, sponsorship_stated, stage, stage_at, applied_at, follow_up_at, notes, "
+               "furthest_stage")
 
 
 class BoardMixin:
@@ -106,7 +152,7 @@ class BoardMixin:
         return self.move_stage(source_id, stage, note=note, now=now, applied_at=applied_at)
 
     def move_stage(self, source_id: str, stage: str, note: str = "", now: str | None = None,
-                   applied_at: str | None = None) -> dict:
+                   applied_at: str | None = None, ref: str = "") -> dict:
         """Move one job to ``stage`` and log it. Entering Applied stamps applied_at (kept on a
         later re-entry) and arms a default follow-up; a closed stage (rejected / archived) clears
         the follow-up because a nudge no longer helps. Moving to the stage it is already in is a
@@ -115,14 +161,17 @@ class BoardMixin:
             raise ValueError(f"unknown stage {stage!r}")
         now = now or now_iso()
         cur = self._conn.execute(
-            "SELECT stage, applied_at, follow_up_at FROM sourced_job WHERE source_id=?",
-            (source_id,)).fetchone()
+            "SELECT stage, stage_at, applied_at, follow_up_at, furthest_stage FROM sourced_job "
+            "WHERE source_id=?", (source_id,)).fetchone()
         if cur is None:
             raise KeyError(f"no job {source_id}")
         prev = cur["stage"] if cur["stage"] in STAGES else None
         if prev == stage:
             return self.board_job(source_id)
         sets, params = ["stage=?", "stage_at=?"], [stage, now]
+        best = _furthest([cur["furthest_stage"], stage])
+        if best and best != cur["furthest_stage"]:
+            sets.append("furthest_stage=?"); params.append(best)
         if stage == "applied":
             applied = cur["applied_at"] or applied_at or now
             sets.append("applied_at=?"); params.append(applied)
@@ -141,25 +190,167 @@ class BoardMixin:
             sets.append("applied_at=?"); params.append(applied_at or now)
         params.append(source_id)
         self._conn.execute(f"UPDATE sourced_job SET {', '.join(sets)} WHERE source_id=?", params)
-        self._conn.execute(
-            "INSERT INTO tracker_activity(source_id, from_stage, to_stage, at, note) VALUES(?,?,?,?,?)",
-            (source_id, prev, stage, now, (note or "")[:300]))
+        self._log_change(source_id, prev, stage, now, note, cur, ref)
         self._conn.commit()
         return self.board_job(source_id)
+
+    def _log_change(self, source_id, prev, stage, now, note, cur, ref="") -> None:
+        """One timeline row, carrying the dates as they were so Undo can put them back."""
+        self._conn.execute(
+            "INSERT INTO tracker_activity(source_id, from_stage, to_stage, at, note, prev_stage_at, "
+            "prev_applied_at, prev_follow_up_at, ref) VALUES(?,?,?,?,?,?,?,?,?)",
+            (source_id, prev, stage, now, (note or "")[:300], cur["stage_at"], cur["applied_at"],
+             cur["follow_up_at"], (ref or "")[:160]))
 
     def untrack(self, source_id: str, note: str = "", now: str | None = None) -> None:
         """Take a job off the board (stage NULL), logging the exit so the timeline is honest."""
         cur = self._conn.execute(
-            "SELECT stage FROM sourced_job WHERE source_id=?", (source_id,)).fetchone()
+            "SELECT stage, stage_at, applied_at, follow_up_at FROM sourced_job WHERE source_id=?",
+            (source_id,)).fetchone()
         if cur is None or cur["stage"] not in STAGES:
             return
         self._conn.execute(
             "UPDATE sourced_job SET stage=NULL, stage_at=?, follow_up_at=NULL WHERE source_id=?",
             (now or now_iso(), source_id))
-        self._conn.execute(
-            "INSERT INTO tracker_activity(source_id, from_stage, to_stage, at, note) VALUES(?,?,?,?,?)",
-            (source_id, cur["stage"], "", now or now_iso(), (note or "")[:300]))
+        self._log_change(source_id, cur["stage"], "", now or now_iso(), note, cur)
         self._conn.commit()
+
+    # -- undo ------------------------------------------------------------ #
+    def undo_last(self, source_id: str, now: str | None = None) -> dict | None:
+        """Walk back the newest stage change that is not already undone: the stage and the dates
+        it rewrote (stage_at, applied_at, follow_up_at) return to what they were, the timeline
+        row is kept but marked undone, and the furthest stage is worked out again from the
+        changes that still stand. Calling it again walks back the one before. Returns
+        {"activity": the undone row, "job": the board row (None when the job left the board)},
+        or None when there is nothing to undo."""
+        row = self._conn.execute(
+            "SELECT * FROM tracker_activity WHERE source_id=? AND COALESCE(undone,0)=0 "
+            "ORDER BY id DESC LIMIT 1", (source_id,)).fetchone()
+        if row is None:
+            return None
+        back = row["from_stage"] if row["from_stage"] in STAGES else None
+        self._conn.execute(
+            "UPDATE sourced_job SET stage=?, stage_at=?, applied_at=?, follow_up_at=? WHERE source_id=?",
+            (back, row["prev_stage_at"], row["prev_applied_at"], row["prev_follow_up_at"], source_id))
+        if back is None:
+            # Off the board again: a bookmark that only put it there goes too (set_saved keeps
+            # the two in step the same way).
+            self._conn.execute("UPDATE sourced_job SET saved=0 WHERE source_id=?", (source_id,))
+        elif back == "saved" and not row["to_stage"]:
+            # Undoing "Removed from saved jobs" brings the bookmark back with the card.
+            self._conn.execute("UPDATE sourced_job SET saved=1 WHERE source_id=?", (source_id,))
+        self._conn.execute("UPDATE tracker_activity SET undone=1, undone_at=? WHERE id=?",
+                           (now or now_iso(), row["id"]))
+        self._refresh_furthest(source_id)
+        self._conn.commit()
+        return {"activity": dict(row), "job": self.board_job(source_id) if back else None}
+
+    def _refresh_furthest(self, source_id: str) -> None:
+        stages = [r[0] for r in self._conn.execute(
+            "SELECT to_stage FROM tracker_activity WHERE source_id=? AND COALESCE(undone,0)=0",
+            (source_id,))]
+        cur = self._conn.execute("SELECT stage FROM sourced_job WHERE source_id=?", (source_id,)).fetchone()
+        if cur is not None:
+            stages.append(cur[0])
+        self._conn.execute("UPDATE sourced_job SET furthest_stage=? WHERE source_id=?",
+                           (_furthest(stages), source_id))
+
+    def history(self, source_id: str, limit: int = HISTORY_SHOWN) -> list[dict]:
+        """The newest stage changes that still stand, newest first, each with what Undo would
+        put back. Only the first one is the next Undo."""
+        rows = self._conn.execute(
+            "SELECT id, from_stage, to_stage, at, note, ref FROM tracker_activity "
+            "WHERE source_id=? AND COALESCE(undone,0)=0 ORDER BY id DESC LIMIT ?",
+            (source_id, int(limit))).fetchall()
+        return [dict(r) for r in rows]
+
+    # -- mail tied to an application -------------------------------------- #
+    def record_mail(self, source_id: str, message_id: str, *, thread_id: str = "", rfc_id: str = "",
+                    matched_by: str = "", label: str = "", subject: str = "",
+                    now: str | None = None) -> None:
+        """Remember that one message belongs to this application, so a later reply in the same
+        thread matches it first. A message already recorded keeps its first record."""
+        mid = str(message_id or "").strip()[:200]
+        if not mid or not source_id:
+            return
+        self._conn.execute(
+            "INSERT OR IGNORE INTO tracker_mail(message_id, source_id, thread_id, rfc_id, matched_by, "
+            "label, subject, at) VALUES(?,?,?,?,?,?,?,?)",
+            (mid, source_id, str(thread_id or "")[:200], str(rfc_id or "").strip("<> ")[:300],
+             str(matched_by or "")[:20], str(label or "")[:40], str(subject or "")[:200],
+             now or now_iso()))
+        self._conn.commit()
+
+    def forget_mail(self, message_id: str) -> int:
+        """"Not this": the message is no longer tied to the application, so its thread stops
+        matching it."""
+        cur = self._conn.execute("DELETE FROM tracker_mail WHERE message_id=?", (str(message_id or ""),))
+        self._conn.commit()
+        return cur.rowcount
+
+    def thread_index(self) -> dict[str, str]:
+        """{key: source_id} for every recorded message: its mailbox thread id and its own
+        Message-ID, the two things a reply in the same conversation carries. Only jobs still on
+        the board count."""
+        out: dict[str, str] = {}
+        for r in self._conn.execute(
+                "SELECT m.source_id, m.thread_id, m.rfc_id FROM tracker_mail m JOIN sourced_job j "
+                "ON j.source_id=m.source_id WHERE j.stage IS NOT NULL AND j.stage<>'' ORDER BY m.at"):
+            thread = str(r["thread_id"] or "").strip().lower()
+            rfc = str(r["rfc_id"] or "").strip().strip("<>").lower()
+            if thread:
+                out[f"t:{thread}"] = r["source_id"]
+            if rfc:
+                out[f"m:{rfc}"] = r["source_id"]
+        return out
+
+    def known_mail(self, message_ids) -> set[str]:
+        """Which of these messages the app has already tied to an application (and labelled)."""
+        ids = [str(m or "")[:200] for m in message_ids if m]
+        out: set[str] = set()
+        for i in range(0, len(ids), 400):
+            chunk = ids[i:i + 400]
+            out.update(r[0] for r in self._conn.execute(
+                f"SELECT message_id FROM tracker_mail WHERE message_id IN ({','.join('?' * len(chunk))})", chunk))
+        return out
+
+    # -- the person's Export and Erase (docs/applicant-brain.md, section 10) -- #
+    def tracker_export(self) -> dict:
+        """What the Tracker remembers about the person: the mail tied to each application, the
+        stage history (with what Undo would restore), the contacts and each tracked card."""
+        q = lambda sql: [dict(r) for r in self._conn.execute(sql).fetchall()]  # noqa: E731
+        return {"mail": q("SELECT * FROM tracker_mail ORDER BY at"),
+                "history": q("SELECT * FROM tracker_activity ORDER BY id"),
+                "contacts": q("SELECT * FROM tracker_contact ORDER BY id"),
+                "cards": q("SELECT source_id, company, title, url, stage, stage_at, applied_at, "
+                           "follow_up_at, notes, furthest_stage FROM sourced_job "
+                           "WHERE stage IS NOT NULL AND stage<>''")}
+
+    def tracker_erase(self, applications: bool = False) -> int:
+        """Erase what the Tracker learned from the person's mail: every tracker_mail row, and the
+        inbox's words in the stage history (an inbox move's note quotes the subject). With
+        ``applications`` the applications go too: the whole stage history, the contacts, and
+        every card's stage, dates and notes. ``secure_delete`` zeroes the freed bytes; the caller
+        vacuums the file afterwards. Returns the rows touched."""
+        c = self._conn
+        c.execute("PRAGMA secure_delete=ON")
+        n = c.execute("DELETE FROM tracker_mail").rowcount
+        if applications:
+            n += c.execute("DELETE FROM tracker_activity").rowcount
+            n += c.execute("DELETE FROM tracker_contact").rowcount
+            n += c.execute("UPDATE sourced_job SET stage=NULL, stage_at=NULL, applied_at=NULL, "
+                           "follow_up_at=NULL, notes='', furthest_stage=NULL "
+                           "WHERE stage IS NOT NULL OR notes<>''").rowcount
+        else:
+            n += c.execute("UPDATE tracker_activity SET note='' WHERE note<>'' AND "
+                           "(ref<>'' OR note LIKE 'From your inbox%')").rowcount
+        c.commit()
+        return n
+
+    def mail_for(self, source_id: str) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(
+            "SELECT message_id, thread_id, matched_by, label, subject, at FROM tracker_mail "
+            "WHERE source_id=? ORDER BY at DESC", (source_id,)).fetchall()]
 
     # -- reads ----------------------------------------------------------- #
     def board_job(self, source_id: str) -> dict | None:
@@ -247,7 +438,7 @@ class BoardMixin:
         """The job's timeline, newest first."""
         return [dict(r) for r in self._conn.execute(
             "SELECT id, from_stage, to_stage, at, note FROM tracker_activity "
-            "WHERE source_id=? ORDER BY id DESC", (source_id,)).fetchall()]
+            "WHERE source_id=? AND COALESCE(undone,0)=0 ORDER BY id DESC", (source_id,)).fetchall()]
 
     def funnel_rows(self) -> list[dict]:
         """One row per board job with the dates the funnel math needs: when it was applied to,
@@ -255,14 +446,17 @@ class BoardMixin:
         firsts: dict[tuple[str, str], str] = {}
         for r in self._conn.execute(
                 "SELECT source_id, to_stage, MIN(at) AS at FROM tracker_activity "
-                "WHERE to_stage IN ('interviewing','offer','rejected') GROUP BY source_id, to_stage"):
+                "WHERE to_stage IN ('interviewing','offer','rejected') AND COALESCE(undone,0)=0 "
+                "GROUP BY source_id, to_stage"):
             firsts[(r["source_id"], r["to_stage"])] = r["at"]
         out = []
         for r in self._conn.execute(
-                "SELECT source_id, stage, applied_at FROM sourced_job WHERE stage IS NOT NULL AND stage<>''"):
+                "SELECT source_id, stage, applied_at, furthest_stage FROM sourced_job "
+                "WHERE stage IS NOT NULL AND stage<>''"):
             sid = r["source_id"]
             out.append({
                 "source_id": sid, "stage": r["stage"], "applied_at": r["applied_at"],
+                "furthest_stage": r["furthest_stage"],
                 "interviewed_at": firsts.get((sid, "interviewing")),
                 "offered_at": firsts.get((sid, "offer")),
                 "rejected_at": firsts.get((sid, "rejected")),
@@ -281,15 +475,16 @@ def funnel_metrics(rows: list[dict], today: date, weekly_goal: int = 0, weeks: i
     """The numbers at the top of the Tracker page, from ``funnel_rows()`` and a pinned clock.
 
     applied_total counts every job with an applied date (whatever stage it is in now);
-    interviews / offers count jobs that EVER reached that stage, so a rejection after an
-    interview still counts as an interview. Conversion is interviews / applied and offers /
+    interviews / offers count jobs that EVER reached that stage (the first time in the log, or
+    the furthest stage kept on the row), so a rejection after an interview still counts as an
+    interview, and an undone move does not. Conversion is interviews / applied and offers /
     interviews, in percent. Median days is applied -> first interview over jobs with both."""
     ws = week_start(today)
     applied_dates = [d for d in (date_of(r.get("applied_at")) for r in rows) if d]
     applied_total = len(applied_dates)
     applied_week = sum(1 for d in applied_dates if ws <= d <= today)
-    interviews = sum(1 for r in rows if r.get("interviewed_at"))
-    offers = sum(1 for r in rows if r.get("offered_at"))
+    interviews = sum(1 for r in rows if r.get("interviewed_at") or _reached(r, "interviewing"))
+    offers = sum(1 for r in rows if r.get("offered_at") or _reached(r, "offer"))
     rejected = sum(1 for r in rows if r.get("rejected_at") or r.get("stage") == "rejected")
     gaps = sorted((date_of(r["interviewed_at"]) - date_of(r["applied_at"])).days
                   for r in rows if date_of(r.get("interviewed_at")) and date_of(r.get("applied_at")))
@@ -318,6 +513,14 @@ def funnel_metrics(rows: list[dict], today: date, weekly_goal: int = 0, weeks: i
                  "pct": min(100, _pct(applied_week, goal)) if goal else 0},
         "week_start": ws.isoformat(),
     }
+
+
+def _reached(row: dict, stage: str) -> bool:
+    """Did this application ever get as far as ``stage``? From its furthest stage, so a job that
+    went straight from Applied to Offer counts as an interview too, and one moved back after an
+    interview still counts."""
+    got = row.get("furthest_stage")
+    return got in PROGRESS_RANK and PROGRESS_RANK[got] >= PROGRESS_RANK[stage]
 
 
 def _pct(num: int, den: int) -> float:
