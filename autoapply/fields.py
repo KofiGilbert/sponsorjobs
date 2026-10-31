@@ -77,9 +77,15 @@ def phone_digits(phone: str) -> str:
     return digits
 
 
-def applicant_from_record(record_data: dict) -> dict:
+def applicant_from_record(record_data: dict, memory: dict | None = None) -> dict:
     """Build the real personal-data map from a saved application record / profile. Stays local; only
-    its KEYS (APPLICANT_KEYS) are ever exposed to the model. Missing values are simply absent."""
+    its KEYS (APPLICANT_KEYS) are ever exposed to the model. Missing values are simply absent.
+
+    (Phase 3, docs/applicant-brain.md) City, state, postal code and country come from the record's
+    own address line when it has them (split by code, never guessed), else from ``memory``: the
+    applicant brain's contact facts ({city, state, postal_code, country, ...} in APPLICANT_KEYS
+    names, applicant/facts.py ``contact``), which also fill any other contact field the record
+    lacks. The record's own values always win."""
     identity = (record_data.get("profile") or {}).get("identity") or record_data.get("identity") or {}
     name = str(identity.get("name") or "").strip()
     first, _, last = name.partition(" ")
@@ -98,6 +104,24 @@ def applicant_from_record(record_data: dict) -> dict:
         "github": str(identity.get("github") or "").strip(),
         "website": str(identity.get("website") or identity.get("blog") or "").strip(),
     }
+    from applicant.facts import split_address
+    own = split_address(identity.get("address"), identity.get("location"))
+    for k in ("city", "state", "postal_code", "country"):
+        if not out[k] and own.get(k):
+            out[k] = own[k]
+    mem = memory or {}
+    # Memory's address parts only when they are about the same place as the record's own line
+    # (never a ZIP from another city mixed into this address).
+    other_place = bool(out["city"]) and str(mem.get("city") or "").strip().lower() not in ("", out["city"].lower())
+    for k, v in mem.items():
+        if k not in out or out[k] or not str(v or "").strip():
+            continue
+        if other_place and k in ("state", "postal_code", "country", "address"):
+            continue
+        out[k] = phone_digits(v) if k == "phone" else str(v).strip()
+    if out["full_name"] and not out["first_name"]:
+        first, _, last = out["full_name"].partition(" ")
+        out["first_name"], out["last_name"] = first.strip(), last.strip()
     return {k: v for k, v in out.items() if v}
 
 

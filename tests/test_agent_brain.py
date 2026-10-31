@@ -345,6 +345,27 @@ def test_fake_brain_types_the_code_when_offered_else_waits_for_the_mail():
     assert typing["actions"][1] == {"op": "click", "index": 4}
 
 
+def test_fake_brain_never_reads_a_zip_code_box_as_an_emailed_code():
+    """e2e-agent.mjs section 12 (the ?address=1 contact page): a "ZIP code" box is an address
+    field, not a verification code. The scripted brain once answered await_email for it, and the
+    run sat on "Waiting for the site's email" forever."""
+    from llm.base import FakeLLM
+    from autoapply.brain import SYSTEM_PROMPT, build_user_message
+    view = ("URL: http://127.0.0.1:57434/mock_ats.html?address=1\nTitle: Mock ATS\n[Start of page]\nMy Information\n"
+            "[3]<input type=text label=\"First name\" value=\"(filled)\">\n[4]<input type=text label=\"City\" value=\"(filled)\">\n"
+            "[5]<input type=text label=\"State\" value=\"(filled)\">\n"
+            "[6]<input type=text label=\"ZIP code\" value=\"(filled)\" required>\n"
+            "[7]<input type=text label=\"Postal code\" value=\"(filled)\">\n[8]<input type=text label=\"Promo code\" value=\"\">\n"
+            "[9]<button>Save and Continue</button>\n[End of page]")
+    llm = FakeLLM()
+    r = json.loads(llm.agent_step(SYSTEM_PROMPT, build_user_message({"view": view, "step": 3}, ["email", "postal_code"], [])))
+    assert r["done"] is None and r["actions"] == [{"op": "click", "index": 9}]
+    for label in ("One-time passcode", "Security code", "Enter the code we sent"):
+        v = view.replace('label=\"Promo code\"', f'label=\"{label}\"')
+        r = json.loads(llm.agent_step(SYSTEM_PROMPT, build_user_message({"view": v, "step": 3}, ["email"], [])))
+        assert r["done"] == {"outcome": "await_email", "reason": "code"}, label
+
+
 def test_fake_brain_runs_the_forgot_password_path():
     from llm.base import FakeLLM
     from autoapply.brain import SYSTEM_PROMPT, build_user_message

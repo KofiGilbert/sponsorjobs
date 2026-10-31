@@ -100,7 +100,8 @@ def same_question(a, b) -> bool:
 
 
 def known_answer(question: str, options, *, partial: bool = False, library=None, work_auth=None,
-                 eeo_decline: bool = False, job_country: str = "US", hint: str = "") -> tuple[str, str] | None:
+                 eeo_decline: bool = False, job_country: str = "US", hint: str = "",
+                 per_company: bool = False, worked_here=None, hold=frozenset()) -> tuple[str, str] | None:
     """(answer, origin) when the person's own material answers this question, else None.
     Origins: "library", "workauth", "eeo_decline". ``options`` is every choice the page has (or
     as many as were read; ``partial`` says the list is cut). With options, the answer is the
@@ -112,12 +113,19 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     where the brain picks the entry. A free-text citizenship question that asks for each country
     gets the second one too. ``hint`` is the page's own note right above the field (Lam
     Research's "Veteran" sits under a paragraph about protected veterans, so its plain No says
-    "not a protected veteran"); it only ever narrows an EEO choice, never answers alone."""
+    "not a protected veteran"); it only ever narrows an EEO choice, never answers alone.
+
+    (Phase 3) ``per_company``: "Have you worked here before?" is ``worked_here`` (the person's
+    answer for this company or their employer history), never an answer given for another
+    company. A key in ``hold`` (two saved values disagree, not asked yet) is not known: the
+    person is asked once."""
     q = str(question or "").strip()
     if not q:
         return None
     opts = clean_options(options)
     key = normalize(q)
+    if key in (hold or ()):
+        return None
 
     def fit(text):
         text = str(text or "").strip()
@@ -156,6 +164,8 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         if partial and own and (qkey not in ("@race", "@ethnicity") or both_halves(own)):
             return own, "library"
         return None
+    if per_company and key == "@previously_worked":
+        return (fit(worked_here[0]), worked_here[1] or "library") if worked_here and fit(worked_here[0]) else None
     hit = library.lookup(q) if library is not None else None
     if hit and residence_withheld(q, work_auth):
         return None
@@ -206,6 +216,8 @@ def prompt_text(items: list[dict], context: str = "", *, list_choices: bool = Fa
             it = items[0]
             c = " ".join(str(it.get("context") or ctx or "").split())[:120]
             head = (f"After “{c}”, the application asks: " if c else "The application asks: ") + it["question"]
+            if it.get("say"):                     # (Phase 3) one question for two saved values
+                head = "The application asks: " + it["question"] + "\n" + " ".join(str(it["say"]).split())[:300]
             shown = list(it.get("options") or [])[:cap] if cap else []
             if not (it.get("options") or []):
                 text = head + "\nReply with your answer and I will carry on."

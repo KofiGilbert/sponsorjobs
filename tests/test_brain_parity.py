@@ -140,8 +140,20 @@ def _twice(monkeypatch, fn):
     return on, off
 
 
+def _asked_once(A):
+    """Phase 3: the fixture's two salaries that disagree are ONE question, asked once by the
+    agent (tests/test_brain_writers.py). Once it was asked, the agent fills the newest salary
+    exactly as the legacy stores did, which is what parity compares."""
+    from applicant import facts as F
+    st = A._brain()
+    c = F.salary_conflict(st)
+    assert c and not c["asked"]
+    F.mark_asked(st, c)
+
+
 def test_known_answers_for_is_identical(app, monkeypatch):
     A, c = app
+    _asked_once(A)
     labels = [f.label for f in FIELDS]
     for country in ("US", "UK"):
         data = {"location": "London, UK"} if country == "UK" else {}
@@ -154,6 +166,7 @@ def test_known_answers_for_is_identical(app, monkeypatch):
 @pytest.mark.parametrize("decline", [False, True])
 def test_the_ask_route_is_identical(app, monkeypatch, decline):
     A, c = app
+    _asked_once(A)
     A._merge_prefs({"eeo_decline": decline})
     body = {"known_only": True, "questions": [{"question": q, "options": o} for q, o in QUESTIONS]}
     def ask():
@@ -276,7 +289,11 @@ def test_the_terms_preference_reads_the_brain_and_is_mirrored(app, monkeypatch):
     st = open_store(A._DATA / "applicant.db")
     assert [f["value"] for f in st.facts(key="accept_required_terms", status="active")] == ["always"]
     assert json.loads((A._DATA / "app_prefs.json").read_text())["accept_required_terms"] == "always"
-    on, off = _twice(monkeypatch, lambda: (A._terms_pref(), c.get("/api/answers/basics").get_json()))
+    def read():
+        d = c.get("/api/answers/basics").get_json()
+        d.pop("conflicts", None)             # Phase 3: the brain's Needs a look (the fixture's salaries)
+        return A._terms_pref(), d
+    on, off = _twice(monkeypatch, read)
     assert on == off and on[0] == "always" and on[1]["accept_required_terms"] == "always"
     # a whole-store save without the key (the extension's) keeps it
     A._save_prefs({"work_auth_us": "Yes"}, source="extension")

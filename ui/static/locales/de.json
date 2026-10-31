@@ -1003,6 +1003,8 @@
   "ans.basics": "Antworten, die jedes Formular fragt",
   "ans.basicsCount": "{n} von {m}",
   "ans.basicsSub": "{n} von {m} Formularantworten gespeichert",
+  "ans.needs": "Bitte prüfen",
+  "ans.needsSaved": "Gespeichert. Jedes Formular bekommt dieses Gehalt.",
   "ans.citizenship": "Staatsangehörigkeit",
   "ans.citizenship2": "Zweite Staatsangehörigkeit",
   "ans.addAnother": "Weitere hinzufügen",

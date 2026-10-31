@@ -1003,6 +1003,8 @@
   "ans.basics": "Respuestas que piden todos los formularios",
   "ans.basicsCount": "{n} de {m}",
   "ans.basicsSub": "{n} de {m} respuestas de formulario guardadas",
+  "ans.needs": "Revisa esto",
+  "ans.needsSaved": "Guardado. Todos los formularios usarán este salario.",
   "ans.citizenship": "País de ciudadanía",
   "ans.citizenship2": "Segundo país de ciudadanía",
   "ans.addAnother": "Añadir otro",

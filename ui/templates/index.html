@@ -779,6 +779,13 @@
             <div class="ans-card-h">
               <h2 class="ans-h" id="ansBasicsH"><span data-i18n="ans.basics">Answers every form asks</span> <span class="ans-count" id="ansBasicsCount"></span></h2>
             </div>
+            <!-- Needs a look (docs/applicant-brain.md, Phase 3): two saved values that disagree, as
+                 ONE question with a button per value. Answered here or once by the apply agent. -->
+            <div class="ans-needs" id="ansNeeds" role="group" aria-labelledby="ansNeedsTag" hidden>
+              <span class="ans-needs-tag" id="ansNeedsTag" data-i18n="ans.needs">Needs a look</span>
+              <span class="ans-needs-q" id="ansNeedsQ"></span>
+              <span class="ans-needs-acts" id="ansNeedsActs"></span>
+            </div>
             <div class="ans-grid">
               <div class="ans-field"><label for="ansCit" data-i18n="ans.citizenship">Country of citizenship</label>
                 <select class="fld" id="ansCit"></select>

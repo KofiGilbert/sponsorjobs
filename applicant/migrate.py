@@ -187,6 +187,8 @@ _NOTE_KEYS = frozenset({"preference", "constraint", "fact"})
 def _canonical(key: str) -> str:
     """The registry key a chat fact's key names ("salary" is @salary, "email" is email), or ""."""
     k = key.lstrip("@")
+    if k.lower() in K.CHAT_ALIASES:
+        return K.CHAT_ALIASES[k.lower()]
     if K.get("@" + k):
         return "@" + k
     if K.get(k) and k not in K.ITEM_KEYS and k not in _NOTE_KEYS:
@@ -442,6 +444,7 @@ def ensure(data_dir) -> Store | None:
     with _LOCK:
         st = open_store(brain_path(key))
         if st.meta("brain_active") == "1":
+            _phase3(st, key)
             return st
         if st.meta("rolled_back") == "1" or key in _TRIED or int(st.meta("migrate_tries") or 0) >= MAX_TRIES:
             return None
@@ -451,7 +454,35 @@ def ensure(data_dir) -> Store | None:
         except Exception as exc:                    # never blocks the app: legacy stores carry on
             print(f"applicant brain: migration did not run ({type(exc).__name__})", file=sys.stderr)
             return None
-        return st if res.get("ok") else None
+        if res.get("ok"):
+            _phase3(st, key)
+            return st
+        return None
+
+
+def _phase3(st: Store, data_dir) -> None:
+    """Once per brain (``meta.phase3``): what Phase 3 reads that a Phase 1 migration did not
+    write, the address parts of the saved contact details (applicant/facts.py ``upgrade``)."""
+    if st.meta("phase3") == "1":
+        return
+    try:
+        from applicant import facts as F
+        profile = {}
+        db = Path(data_dir) / "resume_agent.db"
+        if db.exists():
+            con = _ro(db)
+            try:
+                row = con.execute("SELECT profile FROM conversation_memory WHERE name='default'").fetchone()
+                profile = json.loads(row[0]) if row and row[0] else {}
+            except (sqlite3.Error, ValueError):
+                profile = {}
+            finally:
+                con.close()
+        n = F.upgrade(st, profile)
+        st.set_meta("phase3", "1")
+        st.log("phase3_upgrade", n=n)
+    except Exception as exc:                        # noqa: BLE001 - tried again on the next start
+        print(f"applicant brain: phase 3 upgrade did not run ({type(exc).__name__})", file=sys.stderr)
 
 
 def forget_process_state(data_dir) -> None:

@@ -713,6 +713,12 @@ class FakeLLM:
         if re.search(r"\b(?:need|needs|require[sd]?|will need)\b[^.\n]{0,25}"
                      r"\b(?:sponsor|sponsorship|visa)\b", low) or "visa sponsorship" in low:
             _add("constraint", "needs_sponsorship", "needs visa sponsorship")
+        # A form answer stated in passing ("I'm looking for $95,000 a year"): a fact under the
+        # key the applicant brain maps to its canonical key (applicant/keys.py CHAT_ALIASES).
+        m = re.search(r"(?:salary|compensation|looking for|expect(?:ing)?|target(?:ing)?)[^.\n$\d]{0,30}"
+                      r"(\$?\s?\d[\d,.]*\s?k?)\b", low)
+        if m and re.search(r"\d{2,}", m.group(1)):
+            _add("fact", "desired_salary", m.group(1).strip(), 0.7)
         return {"facts": facts}
 
     def select_for_cv(self, jd_text: str, profile: dict, recalled: list[dict],
@@ -1595,7 +1601,12 @@ class FakeLLM:
                     if tag == "input" and (f"type={kind}" in attrs or re.search(rf'label="[^"]*{kind}', attrs, re.I))]
         # Email checks (docs/apply-agent.md milestone 3): a code box is typed from {{email_code}}
         # once the mailbox handed it over, else the brain asks the shell to wait for the mail.
-        code = _input("code")
+        # A verification code box, never a ZIP, postal, area, country or promo "code" field
+        # (the e2e's ?address=1 contact page has "ZIP code": e2e-agent.mjs section 12).
+        code = next((idx for idx, tag, attrs, _t in lines if tag == "input" and (
+            "type=code" in attrs or re.search(
+                r'label="(?![^"]*\b(?:zip|postal|post|area|country|promo|discount|referral|coupon)\b)'
+                r'[^"]*(?:\bcode\b|\botp\b|passcode)', attrs, re.I))), None)
         if code is not None:
             if "email_code" in placeholders:
                 go = _find(r"verify( code)?|confirm|continue|submit code") or code

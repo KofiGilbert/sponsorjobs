@@ -4280,6 +4280,17 @@ body.cv-dragging * { cursor: grabbing !important; }
 .ans-field .fld { height: 36px; }
 .ans-wide { grid-column: 1 / -1; max-width: 420px; }
 .ans-check { display: flex; align-items: center; gap: 9px; margin-top: 20px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+/* Needs a look (applicant brain, Phase 3): one question for two saved values that disagree. A
+   quiet framed line under the card's title; status colour only on the small dot, with its word. */
+.ans-needs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin: -4px 0 20px; padding: 10px 14px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r); }
+.ans-needs[hidden] { display: none; }
+.ans-needs-tag { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.ans-needs-tag::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--flag); flex: none; }
+.ans-needs-q { flex: 1 1 320px; min-width: 0; font-size: 13px; color: var(--ink); line-height: 1.45; }
+.ans-needs-acts { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.ans-needs-acts .btn { font-variant-numeric: tabular-nums; }
+.ans-card.is-lent .ans-needs { display: none; }
 .ans-foot { display: flex; align-items: center; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .ans-note { font-size: 12.5px; color: var(--muted); }
 .ans-search { margin-bottom: 14px; max-width: 420px; }

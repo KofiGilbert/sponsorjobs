@@ -48,6 +48,28 @@ def _locked(fn):
     return wrapper
 
 
+def _code(lkey: str, answer: str) -> str:
+    """(Phase 3) The normalized value of a choice key (docs section 5.1 ``code``): a yearly salary
+    in whole units, a country by its name, a self-identification choice's code. "" otherwise."""
+    try:
+        a = str(answer or "")
+        if lkey == "@salary":
+            from autoapply.basics import parse_salary
+            n = parse_salary(a)
+            return str(n) if n else ""
+        if lkey in ("@citizenship", "@citizenship2"):
+            from autoapply import countries
+            return countries.canonical(a)
+        if lkey in ("@gender", "@sex", "@race", "@ethnicity", "@hispanic_latino", "@veteran", "@disability"):
+            from autoapply import eeo
+            if lkey == "@hispanic_latino":
+                return eeo.hispanic_class(a) or ""
+            return eeo.value_class(lkey, a, saved=True) or ""
+    except Exception:          # noqa: BLE001 - the code is a convenience, the value is the truth
+        return ""
+    return ""
+
+
 def _lib_status(lkey: str, question: str, answer: str) -> tuple[str, str]:
     """A library row the agent can never use (a raw chat reply an older run saved) is kept as
     needs_check (raw_reply). It is never deleted; the ranking still skips it exactly as the
@@ -67,6 +89,9 @@ class BrainLibrary:
         self.path = self.mirror_path
         self._stuck_keys: dict | None = None
         self._legacy_conn = None
+        # (Phase 3) Where this library's writes come from (card, answers_page, extension...),
+        # kept as the fact's source ref. The fact's source stays the library's own you/drafted.
+        self.via = ""
 
     # ------------------------------------------------------------------ plumbing
     @property
@@ -112,16 +137,16 @@ class BrainLibrary:
                 "uses": f["uses"]}
 
     def _put(self, lkey: str, question: str, answer: str, source: str, *, created_at, updated_at,
-             uses: int, last_used, legacy_import: bool = False) -> int:
+             uses: int, last_used, legacy_import: bool = False, ref: str = "") -> int:
         """Write the current value of a library key: a new fact, the old one marked replaced."""
         status, reason = _lib_status(lkey, question, answer)
         with self.store.tx() as c:
             old = [r["id"] for r in self.store.current(K.fact_key(lkey), "", STORE_ANSWERS)]
             new_id = self.store.add_fact(
                 K.fact_key(lkey), answer, source=source, store=STORE_ANSWERS, question=question,
-                source_ref=f"{STORE_ANSWERS}:{lkey}", status=status, check_reason=reason, uses=uses,
+                source_ref=ref or f"{STORE_ANSWERS}:{lkey}", status=status, check_reason=reason, uses=uses,
                 last_used=last_used, created_at=created_at, updated_at=updated_at, replace=False,
-                legacy_import=legacy_import)
+                legacy_import=legacy_import, code=_code(lkey, answer))
             if old:
                 c.execute(f"UPDATE fact SET status=?, replaced_by=? WHERE id IN ({','.join('?' * len(old))})",
                           (REPLACED, new_id, *old))
@@ -162,7 +187,11 @@ class BrainLibrary:
 
     # ------------------------------------------------------------------ AnswerLibrary's methods
     @_locked
-    def save(self, question: str, answer: str, source: str = "you", *, company: str = "") -> dict | None:
+    def save(self, question: str, answer: str, source: str = "you", *, company: str = "",
+             ref: str = "") -> dict | None:
+        """AnswerLibrary.save, plus (Phase 3) ``ref``: where the answer came from (an ask id, the
+        card), kept as the fact's source ref (``via`` when not given)."""
+        ref = str(ref or self.via or "")
         raw = str(question or "").strip()
         q = (A.clean_label(raw) or raw)[:A.MAX_Q]
         a = str(answer or "").strip()[:A.MAX_A]
@@ -178,9 +207,9 @@ class BrainLibrary:
             if source == "drafted" and cur["source"] == "you":
                 return None
             self._put(key, q, a, source, created_at=cur["created_at"], updated_at=now,
-                      uses=cur["uses"], last_used=cur["last_used"])
+                      uses=cur["uses"], last_used=cur["last_used"], ref=ref)
         else:
-            self._put(key, q, a, source, created_at=now, updated_at=now, uses=0, last_used=None)
+            self._put(key, q, a, source, created_at=now, updated_at=now, uses=0, last_used=None, ref=ref)
         self._mirror(key)
         return self.get_key(key)
 

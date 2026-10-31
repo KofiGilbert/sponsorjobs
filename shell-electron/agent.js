@@ -789,6 +789,7 @@ function createAgent(deps) {
             const k = await deps.postApp("/api/autoapply/agent/ask", { questions: rest, record_id: recordId, known_only: true }).catch(() => null);
             const known = (k && k.answers) || {};
             const pick = (k && k.select) || {};
+            applyReword(rest, k && k.reword);
             for (const [q, a] of Object.entries(known)) {
               knownSeen.add(q);
               // A self-identification choice the page lists: the shell picks it itself, and it
@@ -802,7 +803,8 @@ function createAgent(deps) {
           if (open.length) {
             const id = Math.random().toString(16).slice(2, 10);
             const shown = open.length === 1
-              ? ((open[0].context ? "After \u201c" + open[0].context + "\u201d, the application asks: " : "The application asks: ") + open[0].question)
+              ? (open[0].say ? open[0].say
+                 : (open[0].context ? "After \u201c" + open[0].context + "\u201d, the application asks: " : "The application asks: ") + open[0].question)
               : "The application asks " + open.length + " questions.";
             progress(recordId, "ask", shown, { step, ask: { id, question: open[0].question, options: open.length === 1 ? open[0].options : [],
                                                              questions: open } });
@@ -815,14 +817,14 @@ function createAgent(deps) {
             for (const [q, a] of Object.entries(r.answers || {})) runAnswers[q] = a;
             answered += open.length;
           }
-          if (!answered) return stopped("needs-answers", blockedMessage("needs-answers", left), { url, left });
+          if (!answered) return stopped("needs-answers", blockedMessage("needs-answers", stillOpen(left, runAnswers, knownSeen)), { url, left });
           history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
                          actions: ["asked the person"], results: [answered + " answered"] });
           progress(recordId, "running", "Thanks. Carrying on", { step });
           continue;
         }
         if (done && done.outcome === "blocked") {
-          return stopped(done.reason || "needs-person", blockedMessage(done.reason, left), { url, left });
+          return stopped(done.reason || "needs-person", blockedMessage(done.reason, stillOpen(left, runAnswers, knownSeen)), { url, left });
         }
         if (done && done.outcome === "await_email") {
           // The site emailed a code or a link. With a mailbox connected the engine watches the
@@ -1199,6 +1201,31 @@ function acceptedLine(company, titles) {
   return "Accepted " + possessive(company, list) + " for you.";
 }
 
+// (Phase 3, docs/applicant-brain.md) A question the engine put in its own words: two saved
+// salaries that disagree become ONE question ("Forms say $90,000 (March); you said $120,000
+// (Oct 28). Which one?") with the amounts as its choices; a typed amount still counts.
+function applyReword(items, reword) {
+  for (const it of items || []) {
+    const r = reword && reword[it.question];
+    if (!r) continue;
+    it.say = String(r.say || "").slice(0, 300);
+    const opts = Array.isArray(r.options) ? r.options.map(String).filter(Boolean) : [];
+    if (opts.length) { it.options = opts.slice(0, 8); it.all_options = opts.slice(0, 40); it.partial = true; }
+  }
+  return items;
+}
+
+// The labels a stuck run still names to the person: never one already answered this run (on the
+// bar, on Telegram, or from their saved material), so "needs answers only you can give" lists
+// only what is really open.
+function stillOpen(left, runAnswers, knownSeen) {
+  const done = Object.keys(runAnswers || {}).concat(Array.from(knownSeen || []));
+  return (left || []).filter((x) => {
+    const lab = typeof x === "string" ? x : (x && x.label) || "";
+    return !done.some((q) => sameLabel(lab, q));
+  });
+}
+
 function blockedMessage(reason, left) {
   switch (reason) {
     case "needs-consent": return "This site needs you to accept its terms to apply, and I could not find where. Have a look at the page.";
@@ -1218,6 +1245,6 @@ function blockedMessage(reason, left) {
   }
 }
 
-module.exports = { createAgent, blockedMessage, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion,
+module.exports = { createAgent, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion,
                    optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove };

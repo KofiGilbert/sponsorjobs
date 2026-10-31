@@ -273,11 +273,18 @@ class Store:
         if sens == K.LEGAL and source in K.LEGAL_PROPOSAL_SOURCES and status == ACTIVE:
             status, check_reason = NEEDS_CHECK, "unconfirmed_legal"
         conf = K.confidence_for(source) if confidence is None else float(confidence)
-        conf_flag = (1 if source not in ("drafted", "resume", "chat", "telegram_chat", "derived") else 0) \
-            if confirmed is None else int(confirmed)
+        conf_flag = (1 if source not in K.UNCONFIRMED_SOURCES else 0) if confirmed is None else int(confirmed)
         now = time.time()
         val = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
         with self.tx() as c:
+            if replace and not K.is_multi(key) and status == ACTIVE:
+                # (Phase 3) A value from a source less sure than the person's confirmed current
+                # value never replaces it: it waits as needs_check (conflict) for them to settle.
+                top = c.execute("SELECT confidence, value FROM fact WHERE person=? AND key=? AND subject=? AND store=?"
+                                " AND status=? AND confirmed=1 ORDER BY id DESC LIMIT 1",
+                                (PERSON, key, str(subject or ""), store, ACTIVE)).fetchone()
+                if top is not None and float(top["confidence"] or 0) > conf and top["value"] != val:
+                    status, check_reason, replace = NEEDS_CHECK, "conflict", False
             cur = c.execute(
                 "INSERT INTO fact (person, key, subject, value, code, question, words, source, source_ref,"
                 " store, confidence, confirmed, status, check_reason, sensitivity, valid_from, valid_to,"
@@ -294,12 +301,14 @@ class Store:
         return new_id
 
     def update_fact(self, fact_id: int, **cols) -> None:
-        """Change bookkeeping columns of one fact in place (uses, last_used, status). A changed
-        VALUE is a new fact (add_fact), never an update."""
-        allowed = {"uses", "last_used", "status", "check_reason", "confirmed", "code", "source_ref"}
+        """Change bookkeeping columns of one fact in place (uses, last_used, status, a confirmation
+        that raises its confidence). A changed VALUE is a new fact (add_fact), never an update."""
+        allowed = {"uses", "last_used", "status", "check_reason", "confirmed", "code", "source_ref", "confidence"}
         sets = {k: v for k, v in cols.items() if k in allowed}
         if not sets:
             return
+        if sets.get("status") == REPLACED:
+            sets.setdefault("updated_at", time.time())
         with self.tx() as c:
             c.execute(f"UPDATE fact SET {', '.join(k + '=?' for k in sets)} WHERE id=?",
                       (*sets.values(), int(fact_id)))

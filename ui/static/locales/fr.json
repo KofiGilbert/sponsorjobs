@@ -1003,6 +1003,8 @@
   "ans.basics": "Réponses demandées par chaque formulaire",
   "ans.basicsCount": "{n} sur {m}",
   "ans.basicsSub": "{n} réponses de formulaire sur {m} enregistrées",
+  "ans.needs": "À vérifier",
+  "ans.needsSaved": "Enregistré. Chaque formulaire reçoit ce salaire.",
   "ans.citizenship": "Pays de citoyenneté",
   "ans.citizenship2": "Deuxième pays de citoyenneté",
   "ans.addAnother": "Ajouter un autre",
