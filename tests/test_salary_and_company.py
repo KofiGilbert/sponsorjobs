@@ -49,3 +49,12 @@ def test_naics_industry_unknown_is_blank():
     assert naics_industry("") == ""
     assert naics_industry("99") == ""                            # not a real sector
     assert naics_industry(None) == ""
+
+
+def test_a_dollar_sign_with_no_digits_is_not_a_salary_and_never_crashes():
+    """2026-10-31 feed build crashed on a description with "$," next to a pay word: the
+    pattern matched a figure made only of commas. No digits means no salary, never a crash."""
+    from sourcing.ats import salary_from_text
+    for text in ("The base salary is $, - $,", "salary range: $,,,", "Compensation: $ , to $ ,"):
+        assert salary_from_text(text) == ""
+    assert salary_from_text("The base salary is $, - $, or $120,000 per year") != ""
