@@ -18,6 +18,9 @@
   // ?address=1: the contact page also asks City, State and ZIP code (ZIP required), filled from
   // the applicant brain's memory (docs/applicant-brain.md, Phase 3).
   const address = q.get("address") === "1";
+  // ?pay=1: the questions page also asks the salary in words no rule knows (required), answered
+  // from the saved salary through the applicant brain's label mapper (Phase 4).
+  const pay = q.get("pay") === "1";
   const CODE = "482913";
   const log = [];                                      // what happened, read by the test
   window.fxLog = () => log.slice();
@@ -126,6 +129,7 @@
     questions() {
       page('<h2>Application Questions</h2><p class="muted">Step 2 of 3</p><div id="w"></div>'
         + '<div class="field"><label for="yrs">How many years of experience do you have?</label><input type="text" id="yrs"' + (mustAnswer ? ' required' : '') + '></div>'
+        + (pay ? '<div class="field"><label for="pay">What base pay are you targeting for this position?</label><input type="text" id="pay" required></div>' : '')
         + '<p id="err" class="error" hidden></p>'
         + btn("back", "Back") + ' ' + btn("next", "Save and Continue"));
       const host = $("w");
@@ -133,6 +137,8 @@
       window.fx.sponsor = W.AriaRadioGroup(host, { label: "Will you now or in the future require visa sponsorship?", options: ["Yes", "No"] });
       $("back").onclick = () => pages.contact();
       $("next").onclick = () => {
+        if (pay && !$("pay").value.trim()) { $("err").textContent = "The field What base pay are you targeting for this position? is required and must have a value."; $("err").hidden = false; log.push("pay-required"); return; }
+        if (pay) log.push("pay:" + $("pay").value.trim());
         if (mustAnswer && !$("yrs").value.trim()) { $("err").textContent = "The field How many years of experience do you have? is required and must have a value."; $("err").hidden = false; log.push("years-required"); return; }
         log.push("questions:" + ($("yrs").value.trim() || "-")); pages.disclosures();
       };

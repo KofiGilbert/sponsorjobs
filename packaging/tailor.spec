@@ -80,7 +80,7 @@ hiddenimports = [
     "submit.allowlist", "intake.memory", "intake.template_manifest", "llm.anthropic_client",
     # The applicant brain (docs/applicant-brain.md), imported inside functions in ui/app.py.
     "applicant", "applicant.keys", "applicant.store", "applicant.library", "applicant.migrate",
-    "applicant.redact", "applicant.facts",
+    "applicant.redact", "applicant.facts", "applicant.mapper", "applicant.expiry",
     # The OCR stack, imported lazily inside intake/cv_import.py.
     "intake.cv_import", "numpy", "cv2", "onnxruntime", "shapely", "shapely.geometry", "pyclipper", "yaml",
     "pypdfium2", *collect_submodules("rapidocr_onnxruntime"),

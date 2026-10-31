@@ -158,6 +158,12 @@ def test_known_answers_for_is_identical(app, monkeypatch):
     for country in ("US", "UK"):
         data = {"location": "London, UK"} if country == "UK" else {}
         on, off = _twice(monkeypatch, lambda: A._known_answers_for(labels, None, data, APPLICANT))
+        if country == "UK":
+            # (Phase 4) a salary saved in US dollars is never sent to a UK job: the person is
+            # asked for that country's salary once; everything else is exactly as before
+            from autoapply.answers import normalize
+            assert all(normalize(k) == "@salary" for k in set(off) - set(on)) and set(off) - set(on)
+            off = {k: v for k, v in off.items() if normalize(k) != "@salary"}
         assert on == off and on
     on, _ = _twice(monkeypatch, lambda: A._known_answers_for(labels, None, {}, APPLICANT))
     assert on[LAM_SALARY] == "130000" and on[CUBA_Q] == "No" and "Gender" not in on

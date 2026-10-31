@@ -1779,6 +1779,12 @@ class AnthropicLLM:
         prompt and the validation). A short JSON reply at low effort."""
         return self._complete(system, user, max_tokens=300, effort="low")
 
+    def map_labels(self, system: str, user: str) -> str:
+        """Match new form wordings to the applicant brain's keys (applicant/mapper.py owns the
+        prompt, the redaction and the validation). Labels, options and key names only, never a
+        value. A short JSON reply at low effort."""
+        return self._complete(system, user, max_tokens=400, effort="low")
+
     def draft_sponsorship_answer(self, profile: dict, status: str = "", future_need: str = "",
                                  role: str = "", company: str = "") -> str:
         """Draft a strong, honest spoken answer to the visa/sponsorship question international

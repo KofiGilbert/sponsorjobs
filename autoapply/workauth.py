@@ -533,12 +533,13 @@ _CHOICE_TYPES = ("select", "radio")
 
 
 def answer(question: str, wa: dict | None, *, options=(), field_type: str = "text",
-           job_country: str = "US"):
+           job_country: str = "US", kind: str | None = None):
     """The consistent answer to one work-authorization question, as the text to put in the
     field: the exact option label for a select/radio, "Yes"/"No" for a checkbox or a text box,
     the status label or date for those questions. None when it is not such a question or the
-    profile does not say: the field is then left for the person, never guessed."""
-    kind = classify(question)
+    profile does not say: the field is then left for the person, never guessed. ``kind`` is
+    given for a wording the person confirmed means one of these questions (applicant/mapper.py)."""
+    kind = kind or classify(question)
     if not kind:
         return None
     country = question_country(question, job_country)

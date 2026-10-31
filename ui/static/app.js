@@ -9125,6 +9125,10 @@
     }
     bar.classList.toggle("is-wall", info.state === "stopped");
     bar.classList.toggle("is-ready", info.state === "ready" || info.state === "ask" || info.state === "basics");
+    // A question longer than a line (a new wording to confirm, "After ..., the application asks")
+    // reads on its own row, the choices and the answer box under it: beside three choices it was
+    // squeezed to a 200px column of five lines.
+    bar.classList.toggle("bb-stack", info.state === "ask" && String(info.message || "").length > 90);
     bar.hidden = false;
   }
 

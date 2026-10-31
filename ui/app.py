@@ -5545,12 +5545,91 @@ def _held() -> frozenset:
     return frozenset({c["key"]}) if c and not c.get("asked") else frozenset()
 
 
-def _recall_ctx(company: str = "") -> dict:
+def _stale_salary(st=None):
+    """(Phase 4) The library's salary row when it is older than six months and the agent has not
+    asked "Still $X?" about it yet, else None. US jobs only (the caller checks)."""
+    from applicant import expiry as _E
+    from applicant.library import BrainLibrary
+    st = st or _brain()
+    if st is None:
+        return None
+    row = BrainLibrary(st).best("@salary")
+    return row if row and _E.salary_stale(row) and not _E.stale_asked(st, row) else None
+
+
+def _recall_ctx(company: str = "", data: dict | None = None) -> dict:
     """What the planner and the ask route take from the brain: per-company "worked here before",
-    and the keys held for a conflict question. Empty with the brain off (legacy behaviour)."""
-    if _brain() is None:
+    the keys held for a conflict question, and (Phase 4, applicant/expiry.py) what expired or
+    does not fit this job: a salary older than six months (held on a required field, asked once),
+    a start date that passed, a salary in the wrong currency for a job outside the US (or the
+    person's salary for that country), a work authorization whose end date passed. Empty with the
+    brain off (legacy behaviour)."""
+    st = _brain()
+    if st is None:
         return {}
-    return {"per_company": True, "worked_here": _worked_here(company), "hold": _held()}
+    out = {"per_company": True, "worked_here": _worked_here(company), "hold": _held()}
+    try:
+        from applicant import expiry as _E
+        from applicant.library import BrainLibrary
+        lib = BrainLibrary(st)
+        country = _job_country(data or {})
+        hold, withhold, job_salary = set(out["hold"]), set(), ""
+        sal = lib.best("@salary")
+        if country != "US":
+            job_salary = _E.country_salary(st, country)
+            if not job_salary and sal and not _E.fits_job(sal["answer"], country):
+                withhold.add("@salary")
+        elif _stale_salary(st) is not None:
+            hold.add("@salary")
+        start = lib.best("@start_date")
+        if start and _E.start_date_passed(start["answer"]):
+            withhold.add("@start_date")
+        out.update(hold=frozenset(hold), withhold=frozenset(withhold), job_salary=job_salary,
+                   wa_ended=_E.workauth_ended(_work_auth(), country))
+    except Exception:          # noqa: BLE001 - expiry only ever asks more, never breaks a fill
+        traceback.print_exc()
+    return out
+
+
+def _label_maps(items: list, company: str = "", library=None) -> tuple[dict, dict, set]:
+    """(Phase 4, applicant/mapper.py) The page's wordings no rule knows, mapped to the brain's
+    keys with at most one model call (cached per wording): ({label: key} usable now, {label: key}
+    a legal or self-identification mapping waiting for the person's one tap, {labels} whose
+    answer belongs to this one job). Empty with the brain off, or with no model."""
+    st = _brain()
+    if st is None or not items:
+        return {}, {}, set()
+    from applicant import mapper as _M
+    items = [{"label": it.get("label"), "options": [o for o in (it.get("options") or []) if o != _M.CONFIRM]}
+             for it in items if isinstance(it, dict) and str(it.get("label") or "").strip()]
+    try:
+        rows = _M.map_page(st, _make_llm, items, library=library, company=company)
+    except Exception:          # noqa: BLE001 - a mapping hiccup only means the person is asked
+        traceback.print_exc()
+        return {}, {}, set()
+    mapped, confirm, none = {}, {}, set()
+    for label, row in rows.items():
+        if _M.usable(row):
+            mapped[label] = row["key"]
+        elif _M.needs_confirm(row):
+            confirm[label] = row["key"]
+        elif row["key"] == _M.NONE:
+            none.add(label)
+    return mapped, confirm, none
+
+
+def _confirmable(confirm: dict, ctx, options_of=None) -> dict:
+    """The waiting mappings worth one tap: those whose key holds an answer for this field once
+    confirmed. A key with nothing saved is simply asked (the answer is saved under its words)."""
+    from autoapply.fields import FormField
+    from autoapply.planner import mapped_value
+    out = {}
+    for label, key in (confirm or {}).items():
+        opts = list((options_of or {}).get(label) or [])
+        f = FormField(ref="c", label=label, type="select" if opts else "text", options=opts, required=False)
+        if mapped_value(key, f, ctx) is not None:
+            out[label] = key
+    return out
 
 
 def _settle_salary(value) -> bool:
@@ -5576,15 +5655,28 @@ def _settle_salary(value) -> bool:
 
 
 def _save_answer(lib, question: str, answer: str, *, source: str = "you", company: str = "",
-                 via: str = "", ref: str = ""):
+                 via: str = "", ref: str = "", job_country: str = "US"):
     """Save one answer the person gave, with where it came from as the fact's source ref
     (``via``: ask_bar, ask_telegram, late_telegram, extension, package, answers_page...).
     "Have you worked here before?" is kept for that company only (the brain); a salary the
     person gives settles an open salary question (it becomes the salary everywhere). Returns the
-    saved row, or None when nothing was saved."""
+    saved row, or None when nothing was saved. (Phase 4) A salary given for a job outside the US
+    is kept for that country only (``job_country``), never as the salary every US form gets; the
+    one-tap confirm's own choice is never an answer."""
     from autoapply.answers import normalize
     from applicant import facts as _F
+    from applicant import mapper as _M
     key = normalize(question)
+    if str(answer or "").strip() == _M.CONFIRM:
+        return None
+    country = str(job_country or "US").upper()
+    if key == "@salary" and country != "US" and source == "you":
+        st = _brain()
+        if st is not None:
+            from applicant import expiry as _E
+            ok = _E.save_country_salary(st, country, answer, question=question,
+                                        source_ref=":".join(x for x in (via, ref) if x))
+            return {"key": key, "question": question, "answer": answer} if ok else None
     if key == "@previously_worked" and company:
         st = _brain()
         if st is not None:
@@ -6495,9 +6587,13 @@ def memory_erase():
 def brain_status():
     """The applicant brain: whether it is on, the migration report and rows per table. Counts
     only, never a value."""
+    from applicant import mapper as _M
     from applicant import migrate as _bm
-    _brain()
-    return _nostore(jsonify(_bm.status(_DATA)))
+    st = _brain()
+    out = _bm.status(_DATA)
+    if st is not None:
+        out["mapper"] = _M.counts(st)          # (Phase 4) label-mapping calls and cached wordings
+    return _nostore(jsonify(out))
 
 
 @app.get("/api/brain/migrate")
@@ -11103,8 +11199,19 @@ def autoapply_plan():
                            drafted=[x for x in (data.get("screening") or []) if isinstance(x, dict)],
                            cover_letter=str(data.get("cover_letter") or ""), applicant=applicant,
                            resume_path=resume, job_country=_job_country(data), company=company,
-                           eeo_decline=_eeo_decline(), **_recall_ctx(company))
+                           eeo_decline=_eeo_decline(), **_recall_ctx(company, data))
         res = plan_known(fields, ctx)
+        open_ = res.left + [f for f in res.rest if (f.type or "").lower() != "file"]
+        if open_ and ctx.per_company:
+            # (Phase 4) the wordings no rule knows, mapped to saved answers (one call per page). The
+            # model's own fill never sees a field mapped to a legal or self-identification key.
+            mapped, confirm, _none = _label_maps([{"label": f.label, "options": f.options} for f in open_],
+                                                 company, lib)
+            if mapped or confirm:
+                # every waiting legal or self-identification mapping stays the person's (the ask
+                # route offers the one tap where a saved answer stands behind it)
+                ctx.mapped, ctx.confirm = mapped, confirm
+                res = plan_known(fields, ctx)
         if res.rest:
             try:
                 llm = _make_llm()
@@ -11215,17 +11322,23 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
     if not labels:
         return {}
     company = (rec.get("company") if rec else "") or ""
-    recall = _recall_ctx(company)
+    recall = _recall_ctx(company, data)
     # (Phase 3) These labels are the ones left open, required or named by the page's errors: a
     # held key (a salary conflict not asked yet) stays open here so the agent asks it once.
     fields = [FormField(ref=f"l{i}", label=lab, type="text", required=True) for i, lab in enumerate(labels)]
     lib = _answer_lib()
+    skip: set = set()
     try:
         ctx = KnownContext(work_auth=_work_auth(), library=lib,
                            drafted=[x for x in ((data or {}).get("screening") or []) if isinstance(x, dict)],
                            cover_letter="", applicant=applicant, resume_path="",
                            job_country=_job_country(data or {}), company=company,
                            eeo_decline=_eeo_decline(), **recall)
+        if recall:
+            # (Phase 4) new wordings: the cached mapping (or one call for the page)
+            mapped, confirm, none = _label_maps([{"label": lab} for lab in labels], company, lib)
+            ctx.mapped, ctx.confirm = mapped, confirm
+            skip = set(confirm) | none
         res = plan_known(fields, ctx)
         ops = resolve_plan([a for a in res.actions if a.op in ("fill", "select", "check")], applicant)
     except Exception:          # noqa: BLE001 - a planner hiccup never blocks the step
@@ -11250,6 +11363,11 @@ def _known_answers_for(labels: list, rec, data: dict, applicant: dict) -> dict:
             k = _norm_q(lab)
             if k in recall.get("hold", ()) or (recall.get("per_company") and k == "@previously_worked"):
                 continue                       # asked, or answered for this company only (above)
+            if lab in skip or k in recall.get("withhold", ()) or (k == "@salary" and recall.get("job_salary")):
+                continue                       # (Phase 4) a confirm, one job's own, expired, or this country's
+            from applicant.expiry import expired_kind
+            if expired_kind(lab, recall.get("wa_ended")):
+                continue                       # (Phase 4) the status it hangs on ended (planner above)
             hit = lib.lookup(lab)
             if hit and str(hit.get("answer") or "").strip():
                 out[lab] = str(hit["answer"]).strip()
@@ -11287,6 +11405,73 @@ def _ask_key(question: str) -> str:
         return "eeo"
     k = normalize(question)
     return k if k.startswith("@") else "question"
+
+
+def _rewords(items: list, recall: dict, confirm: dict, company: str, country: str) -> dict:
+    """{question: {say, options}}: the open questions the engine puts in its own words.
+
+    * (Phase 3) Two saved salaries that disagree: ONE question with the amounts as the choices
+      (a typed amount counts too). Asked once: then the newest fills.
+    * (Phase 4, applicant/expiry.py) A salary older than six months: "Still $90,000?" with the
+      amount as the choice; a start date that passed; a salary for a job outside the US; a work
+      authorization whose end date passed.
+    * (Phase 4) A new wording mapped to a legal or self-identification key (applicant/mapper.py):
+      the one-tap confirm, "Use my saved answer" first, then the page's own choices.
+    * (Phase 4) "Have you worked here before?" when only the resume says Yes: asked once per
+      company, never sent unconfirmed.
+    Empty with the brain off."""
+    if not recall:
+        return {}
+    from autoapply.answers import normalize as _nq
+    from autoapply.basics import parse_salary
+    from applicant import expiry as _E
+    from applicant import facts as _F
+    from applicant import mapper as _M
+    out: dict = {}
+    hold = recall.get("hold", ())
+    conflict = _salary_conflict() if "@salary" in hold else None
+    if conflict and conflict.get("asked"):
+        conflict = None
+    stale = None if conflict or country != "US" else _stale_salary()
+    lib = None
+    try:
+        for it in items:
+            if it.get("answer"):
+                continue
+            q, page = it["question"], list(it.get("page_options") or it.get("all_options") or [])
+            k = _nq(q)
+            # a salary question's own choices, or the amounts this question offered last time
+            free = not page or all(parse_salary(o) for o in page)
+            if q in (confirm or {}):
+                key = confirm[q]
+                tail = "If not, pick an answer." if page else "If not, type your answer."
+                out[q] = {"say": f"New wording: \u201c{q[:120]}\u201d If it means \u201c{_M.asked_as(key)}\u201d, "
+                                 f"use your saved answer. {tail}",
+                          "options": [_M.CONFIRM] + [o for o in page if o != _M.CONFIRM][:39]}
+            elif k == "@salary" and conflict and free:
+                out[q] = {"say": conflict["text"], "options": [c["label"] for c in conflict["choices"]]}
+            elif k == "@salary" and stale is not None and free:
+                n = parse_salary(stale["answer"])
+                if n:
+                    out[q] = {"say": _E.say_stale(_F.money(n)), "options": [_F.money(n)]}
+            elif k == "@salary" and "@salary" in recall.get("withhold", ()):
+                out[q] = {"say": _E.say_country_salary(country), "options": []}
+            elif k == "@start_date" and "@start_date" in recall.get("withhold", ()):
+                if lib is None:
+                    from applicant.library import BrainLibrary
+                    lib = BrainLibrary(_brain())
+                row = lib.best("@start_date")
+                d = _E.start_date_passed((row or {}).get("answer"))
+                if d:
+                    out[q] = {"say": _E.say_start(d), "options": []}
+            elif k == "@previously_worked" and (recall.get("worked_here") or ("", ""))[1] == "confirm" and company:
+                out[q] = {"say": f"Your resume lists {company}. Have you worked for {company} before?",
+                          "options": page[:8] or ["Yes", "No"]}
+            elif _E.expired_kind(q, recall.get("wa_ended")):
+                out[q] = {"say": _E.say_workauth(recall["wa_ended"], q[:160]), "options": []}
+    except Exception:          # noqa: BLE001 - a plain question is always a fine fallback
+        traceback.print_exc()
+    return out
 
 
 def _ask_done(ask: dict) -> bool:
@@ -11421,17 +11606,19 @@ def _recent_asks_save(rows: list) -> None:
         pass
 
 
-def _recent_ask_add(aid: str, items: list, *, record_id="", role="", company="", timeout=300) -> None:
+def _recent_ask_add(aid: str, items: list, *, record_id="", role="", company="", timeout=300,
+                    country="US") -> None:
     """Keep an ask that Telegram received: its questions (with the numbers the person saw), their
     choices, the application it belongs to, and when it stops waiting (kept even if the app
     closes before then)."""
     now = time.time()
     row = {"id": aid, "record_id": str(record_id or ""), "role": str(role or "")[:120],
            "company": str(company or "")[:120], "sent_at": now, "expires_at": now + float(timeout),
-           "ended_at": None,
+           "ended_at": None, "country": str(country or "US")[:4],
            "items": [{"n": i, "question": it["question"], "options": list(it.get("options") or []),
                       "all_options": list(it.get("all_options") or it.get("options") or []),
-                      "partial": bool(it.get("partial"))} for i, it in enumerate(items, start=1)]}
+                      "partial": bool(it.get("partial"))} for i, it in enumerate(items, start=1)
+                     if not it.get("skip_save")]}
     with _RECENT_ASKS_LOCK:
         rows = [r for r in _recent_asks_load() if r.get("id") != aid]
         _recent_asks_save(rows + [row])
@@ -11482,7 +11669,8 @@ def _late_save(row: dict, picks: dict) -> str | None:
                 continue
             it = items[j]
             if _save_answer(lib, it["question"], str(val), company=row.get("company") or "",
-                            via="late_telegram", ref=str(row.get("id") or "")):
+                            via="late_telegram", ref=str(row.get("id") or ""),
+                            job_country=str(row.get("country") or "US")):
                 saved.append((it, str(val)))
     finally:
         lib.close()
@@ -11651,30 +11839,40 @@ def autoapply_agent_ask():
     data = _record_data(rec) if rec else {}
     company = (rec.get("company") if rec else "") or ""
     # The person's own material first: never ask what the profile or the library already says.
+    from applicant import mapper as _M
+    from autoapply import KnownContext
     unforced = [it for it in items if not it["force"]]
-    recall = _recall_ctx(company)
+    recall = _recall_ctx(company, data)
+    country = _job_country(data)
+    for it in items:                               # the one-tap confirm's own choice is ours, not the page's
+        it["page_options"] = [o for o in it["all_options"] if o != _M.CONFIRM]
+    mapped, confirm, none = {}, {}, set()
     if unforced:
         lib = _answer_lib()
         try:
             eeo_decline = _eeo_decline()
-            wa, country = _work_auth(), _job_country(data)
+            wa = _work_auth()
+            if recall:
+                # (Phase 4) wordings no rule knows: the cached mapping, or one call for the page
+                mapped, confirm, none = _label_maps(
+                    [{"label": it["question"], "options": it["page_options"]} for it in unforced], company, lib)
+                if confirm:
+                    confirm = _confirmable(confirm, KnownContext(work_auth=wa, library=lib, job_country=country,
+                                                                 eeo_decline=eeo_decline, **recall),
+                                           {it["question"]: it["page_options"] for it in unforced})
             for it in unforced:
-                k = AK.known_answer(it["question"], it["all_options"], partial=it["partial"], library=lib,
+                k = AK.known_answer(it["question"], it["page_options"], partial=it["partial"], library=lib,
                                     work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"],
-                                    **recall)
+                                    mapped=mapped, confirm=confirm, **recall) if recall else \
+                    AK.known_answer(it["question"], it["page_options"], partial=it["partial"], library=lib,
+                                    work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"])
                 if k:
                     it["answer"], it["origin"] = k
         finally:
             lib.close()
-    # (Phase 3) Two saved salaries that disagree become ONE question, in its own words, with the
-    # amounts as the choices (a typed amount counts too). Asked once: then the newest fills.
-    conflict = _salary_conflict() if recall.get("hold") else None
-    reword = {}
-    if conflict:
-        from autoapply.answers import normalize as _nq
-        for it in items:
-            if not it["answer"] and _nq(it["question"]) == conflict["key"] and not it["all_options"]:
-                reword[it["question"]] = {"say": conflict["text"], "options": [c["label"] for c in conflict["choices"]]}
+    reword = _rewords(items, recall, confirm, company, country)
+    conflict = _salary_conflict() if "@salary" in recall.get("hold", ()) else None
+    stale = _stale_salary() if recall and country == "US" else None
     answers = lambda: {it["question"]: it["answer"] for it in items if it["answer"]}   # noqa: E731
     if b.get("known_only"):                        # the shell checks first, then shows the bar
         # A self-identification answer that IS one of the page's choices: the shell picks it
@@ -11690,20 +11888,48 @@ def autoapply_agent_ask():
     for it in pending:
         r = reword.get(it["question"])
         if r:
-            it.update(say=r["say"], options=list(r["options"]), all_options=list(r["options"]), partial=True)
+            it["say"] = r["say"]
+            if r["options"]:
+                it.update(options=list(r["options"]), all_options=list(r["options"]), partial=True)
+        if it["question"] in none or it["question"] in confirm:
+            it["skip_save"] = True                 # one job's own answer, or the confirm (never kept raw)
     _ask_open(aid, pending, b.get("record_id"))
     sent = _ask_telegram(aid, pending)
+    from autoapply.answers import normalize as _nq
     if conflict:
         from applicant import facts as _F
-        from autoapply.answers import normalize as _nq
         if any(_nq(it["question"]) == conflict["key"] for it in pending):
             _brain_do(_F.mark_asked, conflict)     # asked once; never again for these amounts
+    elif stale is not None and any(_nq(it["question"]) == "@salary" for it in pending):
+        from applicant import expiry as _E
+        _brain_do(_E.mark_stale_asked, stale)      # (Phase 4) "Still $X?" asked once per amount
     if sent:                                       # kept a day for a late reply (_late_answer)
         try:
             _recent_ask_add(aid, pending, record_id=b.get("record_id") or "",
-                            role=(rec.get("role") if rec else "") or "", company=company, timeout=timeout)
+                            role=(rec.get("role") if rec else "") or "", company=company, timeout=timeout,
+                            country=country)
         except Exception:      # noqa: BLE001 - the live ask never depends on it
             traceback.print_exc()
+
+    def take_confirms():
+        """(Phase 4) "Use my saved answer" on a new wording: the mapping is confirmed for good,
+        and the field gets the saved answer (the person's own, so it is not saved again)."""
+        lib = None
+        try:
+            for it in items:
+                key = confirm.get(it["question"])
+                if not key or str(it.get("answer") or "").strip() != _M.CONFIRM:
+                    continue
+                _brain_do(_M.confirm, it["question"], key)
+                if lib is None:
+                    lib = _answer_lib()
+                k = AK.known_answer(it["question"], it["page_options"], partial=True, library=lib,
+                                    work_auth=_work_auth(), eeo_decline=_eeo_decline(), job_country=country,
+                                    mapped={it["question"]: key}, **{**recall, "hold": frozenset()})
+                it["answer"], it["origin"] = (k[0], k[1]) if k else (None, "")
+        finally:
+            if lib is not None:
+                lib.close()
 
     def save_all():
         with _ASKS_LOCK:
@@ -11713,14 +11939,17 @@ def autoapply_agent_ask():
             for it in items:
                 a = str(it["answer"] or "").strip()
                 # A question back is never an answer (the reply reader drops it too).
-                if a and not it["origin"] and not a.endswith("?"):
-                    _save_answer(lib, it["question"], a, company=company, via=via, ref=aid)
+                if a and not it["origin"] and not a.endswith("?") and it["question"] not in none:
+                    _save_answer(lib, it["question"], a, company=company, via=via, ref=aid, job_country=country)
                     _brain_do(lambda st: st.log("ask_answered", ref=f"ask:{aid}", key=_ask_key(it["question"]),
                                                  options=len(it.get("all_options") or []), source=via))
         finally:
             lib.close()
 
     how = _ask_wait(aid, pending, timeout)
+    take_confirms()
+    if how == "answered" and not all(it["answer"] for it in items):
+        how = "timeout"                            # a confirm with nothing behind it after all
     if how == "answered":
         save_all()
         if sent:
@@ -11997,7 +12226,12 @@ def autoapply_agent_step():
         "job": {"role": (rec.get("role") if rec else "") or "", "company": (rec.get("company") if rec else "") or ""},
     }
     resume = _resume_upload_path(rec) if rec else ""
-    out = brain.step(req, _make_llm(), values, portal, placeholders=placeholders, resume_path=resume)
+    # (Phase 4) the redact guard on the page view: a control holding a stored legal or
+    # self-identification value shows the model "(filled)", never the value
+    from applicant import redact as _R
+    withheld = _brain_do(_R.sensitive_values) or []
+    out = brain.step(req, _make_llm(), values, portal, placeholders=placeholders, resume_path=resume,
+                     withheld=withheld)
     out["placeholders"] = placeholders
     return jsonify(out)
 

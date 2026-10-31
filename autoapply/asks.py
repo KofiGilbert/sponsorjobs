@@ -101,7 +101,8 @@ def same_question(a, b) -> bool:
 
 def known_answer(question: str, options, *, partial: bool = False, library=None, work_auth=None,
                  eeo_decline: bool = False, job_country: str = "US", hint: str = "",
-                 per_company: bool = False, worked_here=None, hold=frozenset()) -> tuple[str, str] | None:
+                 per_company: bool = False, worked_here=None, hold=frozenset(), mapped=None, confirm=None,
+                 withhold=frozenset(), job_salary: str = "", wa_ended=None) -> tuple[str, str] | None:
     """(answer, origin) when the person's own material answers this question, else None.
     Origins: "library", "workauth", "eeo_decline". ``options`` is every choice the page has (or
     as many as were read; ``partial`` says the list is cut). With options, the answer is the
@@ -118,14 +119,28 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     (Phase 3) ``per_company``: "Have you worked here before?" is ``worked_here`` (the person's
     answer for this company or their employer history), never an answer given for another
     company. A key in ``hold`` (two saved values disagree, not asked yet) is not known: the
-    person is asked once."""
+    person is asked once.
+
+    (Phase 4) ``mapped`` {question: key}: a wording no rule knows, answered from the key the
+    label mapper matched it to; ``confirm`` {question: key}: such a mapping to a legal or
+    self-identification key, not confirmed yet (not known: the person taps once); ``withhold``:
+    keys whose saved value expired or does not fit this job; ``job_salary``: the salary for a job
+    outside the US; ``wa_ended``: the job country's status ended on that date (applicant/expiry.py)."""
     q = str(question or "").strip()
     if not q:
         return None
     opts = clean_options(options)
     key = normalize(q)
-    if key in (hold or ()):
+    if key in (hold or ()) or q in (confirm or {}):
         return None
+    from autoapply.planner import KnownContext, _newer, keyed, mapped_value
+    from autoapply.fields import FormField
+    ctx = KnownContext(work_auth=work_auth or {}, library=library, job_country=job_country, eeo_decline=eeo_decline,
+                       per_company=per_company, worked_here=worked_here, hold=frozenset(hold or ()),
+                       mapped=dict(mapped or {}), confirm=dict(confirm or {}), withhold=frozenset(withhold or ()),
+                       job_salary=job_salary, wa_ended=wa_ended)
+    from applicant.expiry import expired_kind
+    ended = wa_ended if expired_kind(q, wa_ended) else None
 
     def fit(text):
         text = str(text or "").strip()
@@ -139,7 +154,7 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
     v = listed_citizenship(q, library, opts, "select" if opts else "text")
     if v:
         return v, "library"
-    if workauth.classify(q):
+    if workauth.classify(q) and not ended:
         v = workauth.answer(q, work_auth or {}, options=opts, field_type="select" if opts else "text",
                             job_country=job_country)
         if v:
@@ -165,8 +180,21 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
             return own, "library"
         return None
     if per_company and key == "@previously_worked":
-        return (fit(worked_here[0]), worked_here[1] or "library") if worked_here and fit(worked_here[0]) else None
+        ok = worked_here and worked_here[1] != "confirm" and fit(worked_here[0])
+        return (fit(worked_here[0]), worked_here[1] or "library") if ok else None
     hit = library.lookup(q) if library is not None else None
+    if ended and not _newer(hit, ended):
+        return None                         # answered before the status ended: asked again
+    if key.startswith("@"):
+        hit = keyed(ctx, key, hit)
+        if not hit and key in (withhold or ()):
+            return None
+    if not hit and q in ctx.mapped:
+        got = mapped_value(ctx.mapped[q], FormField(ref="q", label=q, type="select" if opts else "text",
+                                                    options=opts, required=True), ctx)
+        if got:
+            return got[0], got[1]
+        return None
     if hit and residence_withheld(q, work_auth):
         return None
     if hit:
@@ -217,7 +245,10 @@ def prompt_text(items: list[dict], context: str = "", *, list_choices: bool = Fa
             c = " ".join(str(it.get("context") or ctx or "").split())[:120]
             head = (f"After “{c}”, the application asks: " if c else "The application asks: ") + it["question"]
             if it.get("say"):                     # (Phase 3) one question for two saved values
-                head = "The application asks: " + it["question"] + "\n" + " ".join(str(it["say"]).split())[:300]
+                say = " ".join(str(it["say"]).split())[:300]
+                # (Phase 4) a line that already quotes the question is not led by it again
+                head = say if _squash(it["question"])[:60] in _squash(say) else \
+                    "The application asks: " + it["question"] + "\n" + say
             shown = list(it.get("options") or [])[:cap] if cap else []
             if not (it.get("options") or []):
                 text = head + "\nReply with your answer and I will carry on."
