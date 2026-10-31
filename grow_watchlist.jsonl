@@ -7836,3 +7836,4 @@
 {"name": "Premier Inc", "norm": "premier", "reason": "no distinctive brand word to verify a board against", "status": "skipped", "ts": 1793284730}
 {"name": "Pinwheel Solutions Inc", "norm": "pinwheel solutions", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793284730}
 {"ats": "workday", "board_id": "quadient.wd3/External_Career_Site", "cap_exempt": 0, "h1b_approvals": 21, "jobs": 2, "name": "Quadient Inc", "norm": "quadient", "perm_certs": 3, "status": "hit", "ts": 1793370596, "url": "https://quadient.wd3.myworkdayjobs.com/External_Career_Site", "verified": "2026-10-30"}
+{"name": "Rassy Logistics Llc", "norm": "rassy logistics", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793454619}
