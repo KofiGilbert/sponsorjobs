@@ -245,7 +245,10 @@ def merge_delta(jobs_db, data_dir, delta_path, log=print) -> dict:
                     f"SELECT source_id, jd_text FROM main.sourced_job WHERE source_id IN ({heldq}) "
                     "AND (salary IS NULL OR salary = '') AND jd_text IS NOT NULL AND jd_text <> ''"
                     ).fetchall():
-                pay = salary_from_text(jd)
+                try:
+                    pay = salary_from_text(jd)
+                except Exception:  # noqa: BLE001 - one odd description never stops the build
+                    pay = ""
                 if pay:
                     conn.execute("UPDATE main.sourced_job SET salary=? WHERE source_id=?", (pay, sid))
         if _has_table(conn, "d", "careersite_skip"):
