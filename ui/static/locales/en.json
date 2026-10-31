@@ -1210,7 +1210,7 @@
   "aa.send": "Send",
   "aa.stop": "Stop",
   "ans.termsAlways": "Accept the privacy notice or terms a site requires to apply, without asking me",
-  "ans.termsNote": "When this is off, I ask you the first time on each site. Every one I accept is named when the application is ready to send.",
+  "ans.termsNote": "When this is off, I ask you first, and while you are away an application that needs it waits for your answer. Every one I accept is named when the application is ready to send.",
   "choice.editNote": "Click any text to edit it. Switch a role off to leave it off this resume.",
   "choice.title": "Resume choices",
   "choice.edit": "Edit",

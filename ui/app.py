@@ -1731,6 +1731,10 @@ def _package_view(rec: dict) -> dict:
         "apply_url": (data.get("source_job") or {}).get("url") or "",
         # Notices the apply agent accepted for the person, with their consent (company, title, url, at).
         "terms_accepted": [x for x in (data.get("terms_accepted") or []) if isinstance(x, dict)],
+        # "Just this one" consent given for THIS application (title, host, at), and whether the
+        # apply agent has the job paused waiting on the person (the question it waits on).
+        "terms_consent": [x for x in (data.get("terms_consent") or []) if isinstance(x, dict)],
+        "agent_park": data.get("agent_park") or None,
     }
 
 
@@ -2050,7 +2054,11 @@ _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
                   "autopilot_per_day": 2,   # at most this many packages a day (1..10)
                   "portal_accounts": True,  # the apply agent may create employer portal accounts
                   "mail_alias": "",         # the person's SponsorJobs address (docs/mail-alias.md)
-                  "apply_with_alias": True} # apply with it, so codes and links reach the agent
+                  "apply_with_alias": True, # apply with it, so codes and links reach the agent
+                  # How long the apply agent waits on a question before it parks the job (minutes)
+                  "agent_ask_wait_min": 60,
+                  # The person made the standing choice on terms a site requires (either way)
+                  "terms_decided": False}
 
 
 def _prefs() -> dict:
@@ -2097,6 +2105,13 @@ def _set_prefs(patch: dict) -> dict:
         cur["mail_alias"] = str(patch["mail_alias"] or "").strip()[:120]
     if "apply_with_alias" in patch:
         cur["apply_with_alias"] = bool(patch["apply_with_alias"])
+    if "agent_ask_wait_min" in patch:        # the apply agent's wait on a question, 5 to 180 minutes
+        try:
+            cur["agent_ask_wait_min"] = max(5, min(180, int(patch["agent_ask_wait_min"])))
+        except (TypeError, ValueError):
+            pass
+    if "terms_decided" in patch:
+        cur["terms_decided"] = bool(patch["terms_decided"])
     _PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
     _PREFS_FILE.write_text(_json_prefs.dumps(cur), encoding="utf-8")
     return cur
@@ -5916,6 +5931,9 @@ def _basics_payload(prefs: dict | None = None) -> dict:
             # (Phase 3) Needs a look: two saved salaries that disagree, as ONE question
             "conflicts": [{k: c[k] for k in ("key", "field", "text", "choices")}] if c else [],
             "accept_required_terms": "always" if p.get("accept_required_terms") == "always" else "ask",
+            # False until the person made the choice: setup's last step and the first Apply for
+            # me ask it (never ticked for them)
+            "terms_decided": p.get("accept_required_terms") == "always" or bool(_prefs().get("terms_decided")),
             "countries": list(countries.NAMES),
             "choices": {f: [{"code": c, "label": w} for c, w in ch] for f, ch in basics.CHOICES.items()}}
 
@@ -5964,6 +5982,7 @@ def answers_basics_save():
         patch["eeo_decline"] = bool(b.get("eeo_decline"))
     if b.get("accept_required_terms") in ("ask", "always"):     # terms a site requires to apply
         patch["accept_required_terms"] = b["accept_required_terms"]
+        _set_prefs({"terms_decided": True})                   # the person's own choice, either way
     prefs = _merge_prefs(patch, source="card") if patch else _load_prefs()
     if got["salary"]:                         # the card's salary settles a salary said in chat
         from applicant import facts as _F
@@ -6759,6 +6778,7 @@ def _forget_key(key: str, refs: list) -> int:
         n += 1
     if key == "accept_required_terms":
         _merge_prefs({"accept_required_terms": "ask"})
+        _set_prefs({"terms_decided": False})                  # forgotten: asked again, up front
     if key == "relocate":
         wa = _work_auth()
         if wa.get("relocate"):
@@ -7024,6 +7044,7 @@ def memory_answer():
             lib.close()
     elif key == "accept_required_terms":
         _merge_prefs({"accept_required_terms": "always" if value == "always" else "ask"})
+        _set_prefs({"terms_decided": True})
     elif key == "relocate":
         if value not in ("Yes", "No"):
             return jsonify({"error": "Yes or No?"}), 400
@@ -12573,9 +12594,11 @@ def _ask_reader():
     return llm
 
 
-def _ask_take_reply(aid: str, text: str) -> tuple[str, bool]:
+def _ask_take_reply(aid: str, text: str, parked: bool = False) -> tuple[str | None, bool]:
     """Read a typed reply to an open ask. Returns (the message to send back, done). Only the
-    part of the reply that answers each question is kept; a question back gets the options."""
+    part of the reply that answers each question is kept; a question back gets the options.
+    ``parked``: the reply may not be meant for this (parked) question at all, so (None, False)
+    when it answers nothing, and the text goes on to the chat."""
     from autoapply import asks as AK
     text = str(text or "").strip()[:1500]
     with _ASKS_LOCK:
@@ -12587,6 +12610,8 @@ def _ask_take_reply(aid: str, text: str) -> tuple[str, bool]:
             # Consent is read strictly, never by a model: a choice's words or number, yes or no.
             choice = AK.read_terms_reply(text)
             if not choice:
+                if parked:
+                    return None, False
                 return "Tap or type one: " + ", ".join(AK.TERMS_CHOICES) + ".", False
             _ask_set(ask, 0, choice)
             return f"Got it: {choice}.", True
@@ -12614,6 +12639,8 @@ def _ask_take_reply(aid: str, text: str) -> tuple[str, bool]:
             if got["question"]:                    # they also asked for the choices
                 msg += "\n" + AK.options_reply(left)
             return AK.fit_text(msg), False
+        if parked:
+            return None, False
         if got["question"]:
             return AK.options_reply(left), False
         if got.get("error"):
@@ -12789,15 +12816,37 @@ def _late_answer(kind: str, payload: str):
     return _late_save(row, got["answers"]) if got.get("answers") else None
 
 
+def _parked_reply(aid: str, msg: str) -> str:
+    """A reply that answered a parked job: say it carries on (the shell re-runs it)."""
+    with _ASKS_LOCK:
+        ask = _ASKS.get(aid) or {}
+        rid = ask.get("record_id") or (ask.get("ctx") or {}).get("record_id") or ""
+    ready = _park_settle()
+    if str(rid) not in [str(x) for x in ready]:
+        return msg
+    with _PARK_LOCK:
+        e = _parked_load().get(str(rid)) or {}
+    if e.get("state") == "declined":
+        return msg
+    job = _park_job(rid)
+    return msg + (f" I carry on with the application for {job} as soon as the browser is free."
+                  if job else " I carry on with that application as soon as the browser is free.")
+
+
 def _agent_ask_event(kind: str, payload: str):
     """The notify hub's hook: an "ask:<id>:<n>" button tap, or a text reply while a question is
     open. Returns the reply text when the event answered a question, else None. A slash command
     is never an answer: it goes on to the usual routing (None), and /stop, /pause or /skip also
     end the wait, so the run stops instead of sitting out the question. Text is taken only by a
-    question whose Telegram message was actually sent. With no question open, a tap or a text
+    question whose Telegram message was actually sent. A PARKED job's question (the run stopped
+    waiting and released the pane) takes a tap any time in its window, and text only while it is
+    the one parked question open and only when the text answers it (else the text goes on, to a
+    late answer or the chat); its answer re-runs the job. With no question open, a tap or a text
     reply to an ask that stopped waiting within the last day is read as a late answer
     (``_late_answer``): what it answers is saved for next time, else text goes on to the chat."""
+    _parked_boot()
     text = str(payload or "").strip()
+    parked_aid = None
     with _ASKS_LOCK:
         if kind == "button":
             parts = text.split(":")
@@ -12813,7 +12862,10 @@ def _agent_ask_event(kind: str, payload: str):
                 except (ValueError, IndexError):
                     return None
                 ask["via"] = "telegram"
-                return f"Got it: {items[0]['answer']}."
+                got = f"Got it: {items[0]['answer']}."
+                if not ask.get("parked"):
+                    return got
+                parked_aid = ask["id"]
             aid = None
         else:
             if text.startswith("/"):
@@ -12822,20 +12874,36 @@ def _agent_ask_event(kind: str, payload: str):
                 arg = words[1] if len(words) > 1 else ""
                 if cmd in ("stop", "pause", "skip"):
                     for a in _ASKS.values():
+                        # /stop ends a live wait; a parked job is ended only by /skip <its id>
                         if a.get("open", True) and not _ask_done(a) and (
-                                cmd != "skip" or not arg or str(a.get("record_id") or "") == arg):
+                                (cmd != "skip" and not a.get("parked"))
+                                or (cmd == "skip" and (str(a.get("record_id") or "") == arg
+                                                       or (not arg and not a.get("parked"))))):
                             a["open"] = False
                             a["closed"] = cmd
                 return None
             open_asks = [a for a in _ASKS.values()
                          if a.get("open", True) and not _ask_done(a) and a.get("sent", True)]
-            aid = open_asks[-1]["id"] if open_asks else None
+            live = [a for a in open_asks if not a.get("parked")]
+            parked = [a for a in open_asks if a.get("parked")]
+            aid = live[-1]["id"] if live else None
+            if aid is None and len(parked) == 1:
+                parked_aid = parked[0]["id"]
+    if kind == "button" and parked_aid:
+        return _parked_reply(parked_aid, got)
     if aid is not None:
         with _ASKS_LOCK:
             if aid in _ASKS:
                 _ASKS[aid]["via"] = "telegram"
         msg, _done = _ask_take_reply(aid, text)
         return msg
+    if parked_aid is not None:
+        with _ASKS_LOCK:
+            if parked_aid in _ASKS:
+                _ASKS[parked_aid]["via"] = "telegram"
+        msg, done = _ask_take_reply(parked_aid, text, parked=True)
+        if msg is not None:
+            return _parked_reply(parked_aid, msg) if done else msg
     try:
         late = _late_answer(kind, text)
     except Exception:          # noqa: BLE001 - a late answer never breaks the chat
@@ -12860,8 +12928,13 @@ def autoapply_agent_ask():
     for a single question with choices, inside the broker's limits; when the channel refuses
     them, the same question without buttons) and to the bar, and the route waits for the answers
     (/api/autoapply/agent/answer, or a Telegram reply). Answers are saved to the answer library.
-    Reply {ok, id, answer, answers: {question: answer}}, or {ok:false, id, reason:"timeout"}, or
-    reason "stopped" when /stop or /skip on Telegram ended the wait."""
+    Reply {ok, id, answer, answers: {question: answer}, job_answers}, or {ok:false, id,
+    reason:"timeout"}, or reason "stopped" when /stop or /skip on Telegram ended the wait.
+    The shell's runs send ``park`` ({page_url, run, batch?}): the wait is then the configured one
+    (_ask_wait_s, an hour by default, one Telegram reminder at about 15 minutes) in chunks of
+    ``chunk_s`` (reason "waiting": go on with /api/autoapply/agent/ask/wait), and past it the job
+    PARKS (reason "parked": the question stays open, an answer re-runs the job). With ``no_wait``
+    as well (a batch) it parks at once, and Telegram hears of it in the batch's digest."""
     from autoapply import asks as AK
     b = request.json or {}
     raw = b.get("questions") if isinstance(b.get("questions"), list) else [b]
@@ -12954,8 +13027,25 @@ def autoapply_agent_ask():
                 it.update(options=list(r["options"]), all_options=list(r["options"]), partial=True)
         if it["question"] in none or it["question"] in confirm:
             it["skip_save"] = True                 # one job's own answer, or the confirm (never kept raw)
-    _ask_open(aid, pending, b.get("record_id"))
-    sent = _ask_telegram(aid, pending)
+    # The shell's runs park instead of stopping (``park``: the page and the run's options): the
+    # wait is the configured one (up to an hour), in chunks the shell asks for again. A run in a
+    # batch never waits (``no_wait``): the ask parks at once and goes out in the batch's digest.
+    park = b.get("park") if isinstance(b.get("park"), dict) else None
+    no_wait = bool(b.get("no_wait")) and park is not None
+    if park is not None:
+        timeout = _ask_wait_s()
+        try:
+            chunk = max(0.0, min(float(ASK_CHUNK_MAX), float(b.get("chunk_s") or ASK_CHUNK_S)))
+        except (TypeError, ValueError):
+            chunk = float(ASK_CHUNK_S)
+    else:
+        chunk = float(timeout)
+    ctx = {"items": items, "pending": [i for i, it in enumerate(items) if not it["answer"]],
+           "company": company, "country": country, "confirm": confirm, "none": sorted(none),
+           "record_id": "" if b.get("record_id") in (None, "") else str(b.get("record_id")),
+           "role": (rec.get("role") if rec else "") or ""}
+    _ask_open(aid, pending, b.get("record_id"), ctx=ctx, timeout=timeout, park=park)
+    sent = False if no_wait else _ask_telegram(aid, pending)
     from autoapply.answers import normalize as _nq
     if conflict:
         from applicant import facts as _F
@@ -12971,70 +13061,74 @@ def autoapply_agent_ask():
                             country=country)
         except Exception:      # noqa: BLE001 - the live ask never depends on it
             traceback.print_exc()
-
-    def take_confirms():
-        """(Phase 4) "Use my saved answer" on a new wording: the mapping is confirmed for good,
-        and the field gets the saved answer (the person's own, so it is not saved again)."""
-        lib = None
-        try:
-            for it in items:
-                key = confirm.get(it["question"])
-                if not key or str(it.get("answer") or "").strip() != _M.CONFIRM:
-                    continue
-                _brain_do(_M.confirm, it["question"], key)
-                if lib is None:
-                    lib = _answer_lib()
-                k = AK.known_answer(it["question"], it["page_options"], partial=True, library=lib,
-                                    work_auth=_work_auth(), eeo_decline=_eeo_decline(), job_country=country,
-                                    mapped={it["question"]: key}, **{**recall, "hold": frozenset()})
-                it["answer"], it["origin"] = (k[0], k[1]) if k else (None, "")
-        finally:
-            if lib is not None:
-                lib.close()
-
-    def save_all():
-        with _ASKS_LOCK:
-            via = "ask_telegram" if (_ASKS.get(aid) or {}).get("via") == "telegram" else "ask_bar"
-        lib = _answer_lib()
-        try:
-            for it in items:
-                a = str(it["answer"] or "").strip()
-                # A question back is never an answer (the reply reader drops it too).
-                if a and not it["origin"] and not a.endswith("?") and it["question"] not in none:
-                    _save_answer(lib, it["question"], a, company=company, via=via, ref=aid, job_country=country)
-                    _brain_do(lambda st: st.log("ask_answered", ref=f"ask:{aid}", key=_ask_key(it["question"]),
-                                                 options=len(it.get("all_options") or []), source=via))
-        finally:
-            lib.close()
-
-    how = _ask_wait(aid, pending, timeout)
-    take_confirms()
-    if how == "answered" and not all(it["answer"] for it in items):
-        how = "timeout"                            # a confirm with nothing behind it after all
-    if how == "answered":
-        save_all()
-        if sent:
-            _recent_ask_end(aid, [it["question"] for it in pending])
-        return jsonify({"ok": True, "id": aid, "answer": items[0]["answer"], "answers": answers()})
-    if any(it["answer"] and not it["origin"] for it in items):
-        save_all()                                 # what the person did answer is kept
-    if sent:                                       # the rest stays open to a late reply for a day
-        _recent_ask_end(aid, [it["question"] for it in pending if it["answer"]])
-    return jsonify({"ok": False, "id": aid, "reason": how})
+    if no_wait:
+        _park_from_ask(aid)
+        return jsonify({"ok": False, "id": aid, "reason": "parked"})
+    return jsonify(_ask_result(aid, _ask_long_wait(aid, chunk)))
 
 
-def _ask_open(aid: str, pending: list, record_id=None, kind: str = ""):
-    """Register an ask in the registry the bar, Telegram and /answer share."""
+@app.post("/api/autoapply/agent/ask/wait")
+@_guard
+def autoapply_agent_ask_wait():
+    """Go on waiting for an ask the shell started (/api/autoapply/agent/ask or /terms with
+    ``park``): body {id, chunk_s?}. The same replies as the first call: the answers, or reason
+    "waiting" (ask again), "parked", "stopped" or "timeout"."""
+    b = request.json or {}
+    aid = re.sub(r"[^a-z0-9]", "", str(b.get("id") or "").lower())[:16]
+    _parked_boot()
+    try:
+        chunk = max(0.0, min(float(ASK_CHUNK_MAX), float(b.get("chunk_s") or ASK_CHUNK_S)))
+    except (TypeError, ValueError):
+        chunk = float(ASK_CHUNK_S)
+    with _ASKS_LOCK:
+        known = aid in _ASKS
+    if not known:
+        return jsonify({"ok": False, "id": aid, "reason": "timeout"})
+    return jsonify(_ask_result(aid, _ask_long_wait(aid, chunk)))
+
+
+@app.post("/api/autoapply/agent/ask/close")
+@_guard
+def autoapply_agent_ask_close():
+    """The run was stopped (the Stop button) while an ask waited: body {id}. The ask closes and
+    the wait ends with reason "stopped". A parked ask is not closed here."""
+    b = request.json or {}
+    aid = re.sub(r"[^a-z0-9]", "", str(b.get("id") or "").lower())[:16]
+    with _ASKS_LOCK:
+        ask = _ASKS.get(aid)
+        if ask and ask.get("open", True) and not ask.get("parked"):
+            ask["open"] = False
+            ask["closed"] = "stop"
+            return jsonify({"ok": True})
+    return jsonify({"ok": False})
+
+
+def _ask_open(aid: str, pending: list, record_id=None, kind: str = "", *, ctx=None, timeout: float = 300,
+              park=None):
+    """Register an ask in the registry the bar, Telegram and /answer share. ``ctx`` is what the
+    ask needs to finish later (the route's items, the company, the confirm map), so the answer
+    can be taken by a later wait or by a parked job (_park_settle) as well as by the first wait.
+    ``park`` (the run's page and options) lets the ask PARK at its deadline instead of closing."""
+    now = time.time()
     with _ASKS_LOCK:
         _ASKS[aid] = {"id": aid, "items": [{"question": it["question"], "options": it["options"],
                                             "all_options": it["all_options"], "partial": it["partial"],
                                             "answer": None} for it in pending],
-                      "open": True, "unclear": 0, "at": time.time(), "sent": False, "kind": kind,
-                      "record_id": "" if record_id in (None, "") else str(record_id)}
+                      "open": True, "unclear": 0, "at": now, "sent": False, "kind": kind,
+                      "record_id": "" if record_id in (None, "") else str(record_id),
+                      # the one reminder, for the shell's runs (the ones that park)
+                      "deadline": now + float(timeout),
+                      "remind_at": now + _ask_remind_s(float(timeout)) if isinstance(park, dict) else None,
+                      "reminded": False, "park": park if isinstance(park, dict) else None, "parked": False,
+                      "ctx": ctx or {}}
         if len(pending) == 1:
             _ASKS[aid]["question"], _ASKS[aid]["options"], _ASKS[aid]["answer"] = \
                 pending[0]["question"], pending[0]["options"], None
-        for k in [k for k, a in _ASKS.items() if time.time() - a["at"] > 3600]:
+        # A closed ask goes after an hour; a parked one stays open for its whole window.
+        for k in [k for k, a in _ASKS.items()
+                  if (now - a["at"] > 3600 and not a.get("open", True))
+                  or (not a.get("parked") and now - a["at"] > 4 * 3600)
+                  or (a.get("parked") and now > float(a.get("park_expires") or 0))]:
             _ASKS.pop(k, None)
 
 
@@ -13069,36 +13163,650 @@ def _ask_telegram(aid: str, pending: list, kind: str = "") -> bool:
     return sent
 
 
-def _ask_wait(aid: str, pending: list, timeout: float) -> str:
-    """Wait for every pending question of the ask to be answered (the bar, a Telegram reply or
-    button). Fills each item's "answer" and returns "answered", "stopped" (/stop or /skip on
-    Telegram) or "timeout". The ask is closed either way, so a stale question never captures
-    a later reply."""
-    deadline = time.time() + timeout
-    stopped = False
-    while time.time() < deadline:
+# ---- How long an ask waits (2026-10-31, Lam Research): the person was away, the 5 minute wait
+# ran out and the run died. An ask now waits up to an hour (agent_ask_wait_min in the review
+# prefs, 5 to 180 minutes; SJ_AGENT_ASK_WAIT_S overrides it for the tests), with ONE Telegram
+# reminder at about 15 minutes. Past the wait the run PARKS instead of stopping: the question
+# stays open (bar, Telegram, the Auto-apply row) for PARK_WINDOW, and an answer re-runs the job.
+ASK_WAIT_MIN_DEFAULT = 60
+ASK_REMIND_MAX = 15 * 60
+ASK_CHUNK_S = 20          # one long-poll of the shell; it asks again until the wait is over
+ASK_CHUNK_MAX = 300
+PARK_WINDOW = 7 * 24 * 3600
+
+
+def _ask_wait_s() -> float:
+    env = os.environ.get("SJ_AGENT_ASK_WAIT_S")
+    if env:
+        try:
+            return max(2.0, min(86400.0, float(env)))
+        except ValueError:
+            pass
+    try:
+        m = float(_prefs().get("agent_ask_wait_min") or ASK_WAIT_MIN_DEFAULT)
+    except (TypeError, ValueError):
+        m = ASK_WAIT_MIN_DEFAULT
+    return max(5.0, min(180.0, m)) * 60
+
+
+def _ask_remind_s(wait: float) -> float:
+    """When the one reminder goes: about 15 minutes in, sooner on a short wait (half of it)."""
+    return min(ASK_REMIND_MAX, float(wait) / 2)
+
+
+def _park_window_s() -> float:
+    env = os.environ.get("SJ_AGENT_PARK_S")
+    if env:
+        try:
+            return max(5.0, float(env))
+        except ValueError:
+            pass
+    return float(PARK_WINDOW)
+
+
+def _wait_words(seconds: float) -> str:
+    m = max(1, int(round(seconds / 60)))
+    return f"{m} minute" + ("" if m == 1 else "s")
+
+
+def _ask_remind(aid: str, items: list, kind: str, left: float) -> None:
+    """The ONE reminder of an ask Telegram received: the question again, with its buttons, and
+    what happens if nobody answers. Never sent twice (the caller marks it)."""
+    from autoapply import asks as AK
+    try:
+        ch = _active_channel()
+    except Exception:          # noqa: BLE001
+        ch = None
+    if ch is None or not items:
+        return
+    _text, buttons = AK.telegram_ask(aid, items)
+    qs = "; ".join(" ".join(str(it["question"]).split())[:200] for it in items)
+    text = AK.fit_text(f"Still waiting on: {qs}\nI will wait {_wait_words(left)} more. After that I pause this "
+                       "application and keep the question open, so you can answer any time and I carry on.")
+    try:
+        ch.send(text, buttons)
+    except Exception:          # noqa: BLE001 - the reminder is a courtesy
+        try:
+            ch.send(text, None)
+        except Exception:      # noqa: BLE001
+            pass
+
+
+def _ask_long_wait(aid: str, chunk: float) -> str:
+    """Wait up to ``chunk`` seconds for every question of the ask to be answered. Returns
+    "answered", "waiting" (the chunk ran out, the ask is still open), "parked" (its deadline
+    passed and it parks: still open, for the person to answer later), "stopped" (/stop, /skip or
+    the Stop button) or "timeout" (its deadline passed and it cannot park: it is closed, so a
+    stale question never captures a later reply). Sends the one reminder when it is due."""
+    end = time.time() + max(0.0, float(chunk))
+    while True:
+        now = time.time()
+        remind = None
         with _ASKS_LOCK:
             ask = _ASKS.get(aid)
-            got = [x.get("answer") for x in _ask_items(ask)] if ask else []
-            closed = bool(ask) and ask.get("open", True) is False
-        if got and all(got):
-            for it, a in zip(pending, got):
-                it["answer"] = a
+            if not ask:
+                return "timeout"
+            items = _ask_items(ask)
+            if items and all(x.get("answer") for x in items):
+                if not ask.get("parked"):
+                    ask["open"] = False
+                return "answered"
+            if ask.get("open", True) is False:
+                return "stopped" if ask.get("closed") else "timeout"
+            if ask.get("parked"):
+                return "parked"
+            if ask.get("sent") and not ask.get("reminded") and now >= float(ask.get("remind_at") or now + 1):
+                ask["reminded"] = True
+                remind = (_ask_open_items(items), ask.get("kind") or "", float(ask.get("deadline") or now) - now)
+            deadline = float(ask.get("deadline") or now)
+            can_park = ask.get("park") is not None
+        if remind:
+            _ask_remind(aid, *remind)
+        if now >= deadline:
+            if can_park:
+                _park_from_ask(aid)
+                return "parked"
             with _ASKS_LOCK:
                 if aid in _ASKS:
                     _ASKS[aid]["open"] = False
-            return "answered"
-        if closed:                                 # /stop or /skip on Telegram
-            stopped = True
-            break
-        time.sleep(1.0)
+            return "timeout"
+        if now >= end:
+            return "waiting"
+        time.sleep(max(0.05, min(0.5, deadline - now, end - now)))
+
+
+def _ask_result(aid: str, how: str) -> dict:
+    """The reply for an ask after a wait: the answers (saved for next time), or why not. Taken
+    once: a later call gets the same reply."""
+    with _ASKS_LOCK:
+        ask = _ASKS.get(aid)
+        if not ask:
+            return {"ok": False, "id": aid, "reason": "timeout"}
+        if ask.get("result") is not None:
+            return ask["result"]
+        if how in ("waiting", "parked"):
+            return {"ok": False, "id": aid, "reason": how}
+        kind = ask.get("kind") or ""
+        ctx = ask.get("ctx") or {}
+        reg = [dict(x) for x in _ask_items(ask)]
+        sent = bool(ask.get("sent"))
+        via = "ask_telegram" if ask.get("via") == "telegram" else "ask_bar"
+        ask["result"] = {"ok": False, "id": aid, "reason": "busy"}      # one taker
+    try:
+        if kind == "terms":
+            out = _terms_result(aid, how, reg, ctx)
+        else:
+            out = _questions_result(aid, how, reg, ctx, sent, via)
+    except Exception:          # noqa: BLE001 - never leave the ask half-taken
+        traceback.print_exc()
+        out = {"ok": False, "id": aid, "reason": "error"}
+    with _ASKS_LOCK:
+        if aid in _ASKS:
+            _ASKS[aid]["result"] = out
+    return out
+
+
+def _questions_result(aid: str, how: str, reg: list, ctx: dict, sent: bool, via: str) -> dict:
+    """Finish a question ask: the one-tap confirms, the answers saved to the library (never a
+    job's own answer, never a question back), the late-answer row trimmed."""
+    from applicant import mapper as _M
+    from autoapply import asks as AK
+    items = [dict(it) for it in (ctx.get("items") or [])]
+    pend = list(ctx.get("pending") or [])
+    for j, i in enumerate(pend):
+        if j < len(reg) and 0 <= i < len(items):
+            items[i]["answer"] = reg[j].get("answer") or None
+    confirm = dict(ctx.get("confirm") or {})
+    none = set(ctx.get("none") or [])
+    company, country = ctx.get("company") or "", ctx.get("country") or "US"
+    answers = lambda: {it["question"]: it["answer"] for it in items if it.get("answer")}   # noqa: E731
+    # (Phase 4) "Use my saved answer" on a new wording: the mapping is confirmed for good, and the
+    # field gets the saved answer (the person's own, so it is not saved again).
+    if any(confirm.get(it["question"]) and str(it.get("answer") or "").strip() == _M.CONFIRM for it in items):
+        rec = _get_record(ctx.get("record_id")) if ctx.get("record_id") not in (None, "") else None
+        recall = _recall_ctx(company, _record_data(rec) if rec else {})
+        lib = _answer_lib()
+        try:
+            for it in items:
+                key = confirm.get(it["question"])
+                if not key or str(it.get("answer") or "").strip() != _M.CONFIRM:
+                    continue
+                _brain_do(_M.confirm, it["question"], key)
+                k = AK.known_answer(it["question"], it.get("page_options") or [], partial=True, library=lib,
+                                    work_auth=_work_auth(), eeo_decline=_eeo_decline(), job_country=country,
+                                    mapped={it["question"]: key}, **{**(recall or {}), "hold": frozenset()})
+                it["answer"], it["origin"] = (k[0], k[1]) if k else (None, "")
+        finally:
+            lib.close()
+
+    def save_all():
+        lib = _answer_lib()
+        try:
+            for it in items:
+                a = str(it.get("answer") or "").strip()
+                # A question back is never an answer (the reply reader drops it too).
+                if a and not it.get("origin") and not a.endswith("?") and it["question"] not in none:
+                    _save_answer(lib, it["question"], a, company=company, via=via, ref=aid, job_country=country)
+                    _brain_do(lambda st, q=it["question"], n=len(it.get("all_options") or []): st.log(
+                        "ask_answered", ref=f"ask:{aid}", key=_ask_key(q), options=n, source=via))
+        finally:
+            lib.close()
+
+    asked = [items[i]["question"] for i in pend if 0 <= i < len(items)]
+    if how == "answered" and not all(it.get("answer") for it in items):
+        how = "timeout"                            # a confirm with nothing behind it after all
+    if how == "answered":
+        save_all()
+        if sent:
+            _recent_ask_end(aid, asked)
+        # A job's own answer (never kept) and a confirm are handed to the run as they are.
+        keep = {it["question"]: it["answer"] for it in items
+                if it.get("answer") and (it["question"] in none or it.get("skip_save"))}
+        return {"ok": True, "id": aid, "answer": items[0]["answer"], "answers": answers(), "job_answers": keep}
+    if any(it.get("answer") and not it.get("origin") for it in items):
+        save_all()                                 # what the person did answer is kept
+    if sent:                                       # the rest stays open to a late reply for a day
+        _recent_ask_end(aid, [items[i]["question"] for i in pend if 0 <= i < len(items) and items[i].get("answer")])
+    return {"ok": False, "id": aid, "reason": how}
+
+
+def _terms_result(aid: str, how: str, reg: list, ctx: dict) -> dict:
+    """Finish a terms ask: the decision. "Accept for all applications" sets the standing choice;
+    "Just this one" is remembered on THIS application (a re-run of it, after a pause, accepts
+    the same notice without asking again)."""
+    from autoapply import asks as AK
+    if how != "answered" or not reg or not reg[0].get("answer"):
+        return {"ok": False, "id": aid, "reason": how if how != "answered" else "timeout"}
+    decision, via = AK.terms_decision(reg[0]["answer"])
+    if via == "all":
+        _merge_prefs({"accept_required_terms": "always"})
+        _set_prefs({"terms_decided": True})
+    elif via == "once":
+        _terms_consent_add(ctx.get("record_id"), ctx.get("title") or "", ctx.get("host") or "")
+    return {"ok": True, "id": aid, "decision": decision, "via": via}
+
+
+# ---- Parked jobs (2026-10-31, the owner's direction: "the user was away and told the agent to
+# apply for 5 jobs, and it is stuck on the first job's page"). A job that needs something only the
+# person can give is PARKED instead of stopped: its question stays open (the bar, Telegram, the
+# Auto-apply row "Answer and continue"), the browser pane is released for the next job, and an
+# answer any time within the window re-runs it (the shell polls GET /api/autoapply/agent/parked),
+# the saved answer or consent applied on the way through. A captcha or a sign-in the person must
+# do themselves parks too, with "Continue" once they did it. One entry per application, kept in
+# agent_parked.json (questions, choices and the run's page; an answer only from the moment it is
+# given until the shell takes it), and on the record as agent_park for the Auto-apply row.
+_PARKED_FILE = None           # None -> agent_parked.json in the data dir (a test's tmp dir)
+_PARK_LOCK = threading.RLock()
+_PARKED_BOOTED = False
+_DIGEST = {"last": None, "count": 0}
+PARK_KINDS = ("questions", "terms", "captcha", "person")
+
+
+def _parked_path() -> Path:
+    return Path(_PARKED_FILE) if _PARKED_FILE else _DATA / "agent_parked.json"
+
+
+def _parked_load() -> dict:
+    import json as _json
+    try:
+        rows = _json.loads(_parked_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): v for k, v in rows.items() if isinstance(v, dict)} if isinstance(rows, dict) else {}
+
+
+def _parked_save(rows: dict) -> None:
+    import json as _json
+    path = _parked_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(rows, ensure_ascii=False, default=str), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+def _record_park(record_id, entry) -> None:
+    """The Auto-apply row's copy of a parked job (agent_park on the record), or None to clear."""
+    if record_id in (None, ""):
+        return
+    recs = _records()
+    try:
+        rid = int(record_id)
+        if recs.get(rid) is None:
+            return
+        view = None
+        if entry:
+            view = {k: entry.get(k) for k in ("state", "kind", "message", "questions", "parked_at", "expires_at")}
+        recs.merge_data(rid, {"agent_park": view})
+    except (TypeError, ValueError):
+        return
+    finally:
+        recs.close()
+
+
+def _park_message(kind: str, questions: list, title: str = "", company: str = "") -> str:
+    """What a parked job needs, in the person's words (the row, the bar, the digest)."""
+    if kind == "terms":
+        who = (company or "This site").strip()
+        return f"{who} needs you to accept its {title or 'terms'} to apply."
+    if kind == "captcha":
+        return "This page has a captcha. Solve it on the page, then press Continue."
+    if kind == "person":
+        return "This page needs you. Do the step on the page, then press Continue."
+    qs = [" ".join(str(q).split())[:160] for q in questions if str(q).strip()]
+    if len(qs) == 1:
+        return f"The application asks: {qs[0]}"
+    return f"The application asks {len(qs)} questions: " + "; ".join(qs[:4]) + ("." if len(qs) <= 4 else ", and more.")
+
+
+def _park_put(entry: dict) -> dict:
+    with _PARK_LOCK:
+        rows = _parked_load()
+        old = rows.get(str(entry["record_id"]))
+        if old and old.get("ask_id") and old.get("ask_id") != entry.get("ask_id"):
+            _ask_close_quiet(old["ask_id"])
+        rows[str(entry["record_id"])] = entry
+        _parked_save(rows)
+    _record_park(entry["record_id"], entry)
+    return entry
+
+
+def _ask_close_quiet(aid: str) -> None:
     with _ASKS_LOCK:
         ask = _ASKS.get(aid)
         if ask:
             ask["open"] = False
-            for it, x in zip(pending, _ask_items(ask)):
-                it["answer"] = x.get("answer") or None
-    return "stopped" if stopped else "timeout"
+            ask["parked"] = False
+
+
+def _ask_view(ask: dict) -> dict:
+    """The bar's copy of an ask (the same shape the shell's progress carries)."""
+    items = _ask_items(ask)
+    open_ = _ask_open_items(items)
+    qs = [{"question": it["question"], "options": it["options"]} for it in open_]
+    one = qs[0] if qs else {"question": "", "options": []}
+    return {"id": ask["id"], "question": one["question"], "options": one["options"] if len(qs) == 1 else [],
+            "questions": qs, "kind": ask.get("kind") or ""}
+
+
+def _park_from_ask(aid: str) -> dict | None:
+    """An ask's wait ran out (or a batch never waits): the job parks. The ask stays open for the
+    park window; the entry keeps what a re-run needs (the page, the run's options)."""
+    now = time.time()
+    window = _park_window_s()
+    with _ASKS_LOCK:
+        ask = _ASKS.get(aid)
+        if not ask or ask.get("open", True) is False:
+            return None
+        ask["parked"] = True
+        ask["parked_at"] = now
+        ask["park_expires"] = now + window
+        park = dict(ask.get("park") or {})
+        ctx = ask.get("ctx") or {}
+        rid = ask.get("record_id") or ctx.get("record_id") or ""
+        kind = "terms" if ask.get("kind") == "terms" else "questions"
+        questions = [it["question"] for it in _ask_items(ask) if not it.get("answer")]
+        view = _ask_view(ask)
+        snap = {k: v for k, v in ask.items() if k not in ("result",)}
+    if not rid:
+        return None
+    rec = _get_record(rid)
+    company = ctx.get("company") or (rec.get("company") if rec else "") or ""
+    role = ctx.get("role") or (rec.get("role") if rec else "") or ""
+    entry = {"record_id": str(rid), "ask_id": aid, "kind": kind, "questions": questions,
+             "message": _park_message(kind, questions, ctx.get("title") or "", company),
+             "title": ctx.get("title") or "", "company": company, "role": role,
+             "page_url": str(park.get("page_url") or "")[:1000], "run": park.get("run") or {},
+             "parked_at": now, "expires_at": now + window, "state": "waiting", "digested": False,
+             "batch": bool(park.get("batch")), "ask_view": view, "ask": snap}
+    return _park_put(entry)
+
+
+def _parked_boot() -> None:
+    """After a restart: put the parked asks back in the registry, so a tap or a reply still
+    reaches them (and the late-answer path, which skips open asks, never takes them)."""
+    global _PARKED_BOOTED
+    if _PARKED_BOOTED:
+        return
+    _PARKED_BOOTED = True
+    now = time.time()
+    with _PARK_LOCK:
+        rows = _parked_load()
+    with _ASKS_LOCK:
+        for e in rows.values():
+            snap = e.get("ask")
+            if e.get("state") == "waiting" and isinstance(snap, dict) and snap.get("id") \
+                    and now <= float(e.get("expires_at") or 0) and snap["id"] not in _ASKS:
+                snap = dict(snap, open=True, parked=True, park_expires=float(e.get("expires_at") or 0))
+                _ASKS[snap["id"]] = snap
+
+
+def _park_job(rid) -> str:
+    rec = _get_record(rid) if rid not in (None, "") else None
+    return _late_job({"role": (rec or {}).get("role") or "", "company": (rec or {}).get("company") or ""}) if rec else ""
+
+
+def _park_settle() -> list:
+    """Move the parked jobs on: an answered ask is finished (the answers saved, the consent
+    recorded) and its job marked ready to re-run; an ask closed by /stop marks it stopped; past
+    the window the question closes and the job leaves the list. Returns the record ids that
+    became ready."""
+    _parked_boot()
+    now = time.time()
+    ready = []
+    with _PARK_LOCK:
+        rows = _parked_load()
+        changed = False
+        for key, e in list(rows.items()):
+            if e.get("state") != "waiting":
+                continue
+            aid = e.get("ask_id") or ""
+            if now > float(e.get("expires_at") or 0):
+                if aid:
+                    _ask_close_quiet(aid)
+                    if e.get("kind") == "questions":
+                        try:
+                            _recent_ask_end(aid, [])
+                        except Exception:      # noqa: BLE001
+                            pass
+                rows.pop(key, None)
+                _record_park(e.get("record_id"), None)
+                changed = True
+                continue
+            if not aid:
+                continue
+            with _ASKS_LOCK:
+                ask = _ASKS.get(aid)
+                done = bool(ask) and _ask_done(ask)
+                closed = bool(ask) and ask.get("open", True) is False and not done
+                if done and ask:
+                    ask["parked"] = False
+                    ask["open"] = False
+            if closed or not ask:
+                e["state"] = "stopped"
+                e.pop("ask", None)
+                changed = True
+                _record_park(e.get("record_id"), None)
+                continue
+            if not done:
+                continue
+            out = _ask_result(aid, "answered")
+            e.pop("ask", None)
+            if e.get("kind") == "terms":
+                if out.get("ok") and out.get("decision") == "accept":
+                    e.update(state="answered", decision="accept", via=out.get("via") or "once")
+                else:
+                    e.update(state="declined", decision="stop")
+            elif out.get("ok"):
+                e.update(state="answered", answers=out.get("job_answers") or {},
+                         answered=list((out.get("answers") or {}).keys()))
+            else:
+                e["state"] = "stopped"
+            changed = True
+            if e["state"] == "answered":
+                ready.append(e["record_id"])
+                _record_park(e.get("record_id"), dict(e, message="Your answer is in. I carry on with it as soon as the browser is free."))
+            else:
+                _record_park(e.get("record_id"), None)
+        if changed:
+            _parked_save(rows)
+    return ready
+
+
+def _parked_list() -> list:
+    rows = _parked_load()
+    out = []
+    for e in sorted(rows.values(), key=lambda r: float(r.get("parked_at") or 0)):
+        out.append({k: e.get(k) for k in ("record_id", "ask_id", "kind", "questions", "message", "title",
+                                          "company", "role", "page_url", "run", "parked_at", "expires_at",
+                                          "state", "decision", "via", "batch", "ask_view")})
+    return out
+
+
+@app.get("/api/autoapply/agent/parked")
+@_guard
+def autoapply_agent_parked():
+    """The parked jobs, oldest first: {record_id, kind, questions, message, state ("waiting" for
+    the person, "answered" ready to re-run, "declined" / "stopped" to drop), page_url, run,
+    ask_view (the bar's copy of the open question)}. The shell polls it to resume a job."""
+    _park_settle()
+    return _nostore(jsonify({"ok": True, "parked": _parked_list()}))
+
+
+@app.post("/api/autoapply/agent/park")
+@_guard
+def autoapply_agent_park():
+    """Park a job that needs the person on the page itself (a captcha, a phone code, a sign-in):
+    body {record_id, kind: "captcha"|"person", message?, page_url, run, batch?}. No question to
+    answer: "Continue" (/parked/<id>/continue) re-runs it once they did the step."""
+    b = request.json or {}
+    if b.get("record_id") in (None, ""):
+        return jsonify({"ok": False, "reason": "no-record"}), 400
+    kind = b.get("kind") if b.get("kind") in ("captcha", "person") else "person"
+    now = time.time()
+    msg = " ".join(str(b.get("message") or "").split())[:300] or _park_message(kind, [])
+    rec = _get_record(b.get("record_id"))
+    entry = {"record_id": str(b.get("record_id")), "ask_id": "", "kind": kind, "questions": [],
+             "message": msg, "title": "", "company": (rec or {}).get("company") or "",
+             "role": (rec or {}).get("role") or "", "page_url": str(b.get("page_url") or "")[:1000],
+             "run": b.get("run") if isinstance(b.get("run"), dict) else {}, "parked_at": now,
+             "expires_at": now + _park_window_s(), "state": "waiting", "digested": False,
+             "batch": bool(b.get("batch")), "ask_view": None}
+    return jsonify({"ok": True, "entry": _park_put(entry)})
+
+
+@app.post("/api/autoapply/agent/parked/<int:rid>/continue")
+@_guard
+def autoapply_agent_parked_continue(rid: int):
+    """The person did the step a captcha or sign-in park needed: the job is ready to re-run. A
+    parked question is answered instead (the bar, Telegram), never skipped here."""
+    with _PARK_LOCK:
+        rows = _parked_load()
+        e = rows.get(str(rid))
+        if not e:
+            return jsonify({"ok": False, "error": "That application is not paused."}), 404
+        if e.get("kind") in ("questions", "terms") and e.get("state") == "waiting":
+            return jsonify({"ok": False, "error": "Answer the question first."}), 400
+        e["state"] = "answered"
+        _parked_save(rows)
+    _record_park(rid, dict(e, message="Carrying on with it as soon as the browser is free."))
+    return jsonify({"ok": True, "entry": e})
+
+
+@app.post("/api/autoapply/agent/parked/<int:rid>/take")
+@_guard
+def autoapply_agent_parked_take(rid: int):
+    """The shell takes a parked job to re-run it (or to drop it, when it was declined or
+    stopped): the entry leaves the list, answers and all. A job still waiting is not taken
+    unless body {drop: true} (a new Apply for me on it replaces the park)."""
+    b = request.json or {}
+    _park_settle()
+    with _PARK_LOCK:
+        rows = _parked_load()
+        e = rows.get(str(rid))
+        if not e:
+            return jsonify({"ok": False, "reason": "none"})
+        if e.get("state") == "waiting" and not b.get("drop"):
+            return jsonify({"ok": False, "reason": "waiting"})
+        rows.pop(str(rid), None)
+        _parked_save(rows)
+    if e.get("ask_id") and e.get("state") == "waiting":
+        _ask_close_quiet(e["ask_id"])
+    _record_park(rid, None)
+    e.pop("ask", None)
+    return jsonify({"ok": True, "entry": e})
+
+
+@app.post("/api/autoapply/agent/ready")
+@_guard
+def autoapply_agent_ready():
+    """The agent left this application on its review page, Ready to send: body {record_id, sig,
+    accepted?, run} keeps it on the record (agent_ready) for the Auto-apply row's Send, which
+    also works once the page is gone (the shell fills it again and submits only when the review
+    page comes out the same: ``sig``). {record_id, clear: true} drops it (sent, or a new run)."""
+    b = request.json or {}
+    if b.get("record_id") in (None, ""):
+        return jsonify({"ok": False, "reason": "no-record"}), 400
+    recs = _records()
+    try:
+        rid = int(b.get("record_id"))
+        if recs.get(rid) is None:
+            return jsonify({"ok": False, "reason": "no-record"}), 404
+        if b.get("clear"):
+            recs.merge_data(rid, {"agent_ready": None})
+            return jsonify({"ok": True, "ready": None})
+        run = b.get("run") if isinstance(b.get("run"), dict) else {}
+        view = {"sig": str(b.get("sig") or "")[:80], "at": _now_iso(),
+                "accepted": [str(x)[:80] for x in (b.get("accepted") or [])][:10],
+                "run": {k: run.get(k) for k in ("url", "resume_path", "lane", "autonomous", "company")}}
+        recs.merge_data(rid, {"agent_ready": view})
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "reason": "no-record"}), 400
+    finally:
+        recs.close()
+    return jsonify({"ok": True, "ready": view})
+
+
+def _digest_text(rows: list) -> tuple[str, list | None]:
+    """ONE message for every parked job: each with what it needs, numbered; buttons for up to
+    three single-question jobs with up to three short choices (docs/notify.md: at most 3 rows of
+    1 to 3 buttons, labels up to 30 characters), "1. Just this one" pointing at that job's ask."""
+    from autoapply import asks as AK
+    lines = []
+    rows_b = []
+    for n, e in enumerate(rows, start=1):
+        job = " at ".join(x for x in (e.get("role") or "", e.get("company") or "") if x) or "An application"
+        lines.append(f"{n}. {job}: {e.get('message') or ''}")
+        v = e.get("ask_view") or {}
+        opts = list(v.get("options") or [])
+        if v.get("id") and len(v.get("questions") or []) == 1 and 1 <= len(opts) <= 3 and len(rows_b) < 3:
+            row = []
+            for k, o in enumerate(opts):
+                label = f"{n}. {o}"
+                row.append((label if len(label) <= AK.LABEL_MAX else label[:AK.LABEL_MAX - 1] + "…", f"ask:{v['id']}:{k}"))
+            rows_b.append(row)
+    head = ("Paused: 1 application needs you." if len(rows) == 1
+            else f"Paused: {len(rows)} applications need you.")
+    tail = ("Tap a choice below, or answer in SponsorJobs, Auto-apply, Needs you. " if rows_b
+            else "Answer in SponsorJobs, Auto-apply, Needs you. ")
+    tail += "Each one carries on by itself once it has its answer."
+    return AK.fit_text(head + "\n" + "\n".join(lines) + "\n" + tail), (rows_b or None)
+
+
+@app.post("/api/autoapply/agent/digest")
+@_guard
+def autoapply_agent_digest():
+    """The batch's ONE message: every job still parked, with its question and buttons where they
+    fit, sent to Telegram when connected. body {only_new?: true} sends nothing when no job parked
+    since the last digest. Reply {ok, sent, text, jobs, count}. The parked asks it lists count as
+    sent, so a typed reply can reach one of them (only while exactly one is open)."""
+    b = request.json or {}
+    _park_settle()
+    with _PARK_LOCK:
+        rows = _parked_load()
+        waiting = [e for e in sorted(rows.values(), key=lambda r: float(r.get("parked_at") or 0))
+                   if e.get("state") == "waiting"]
+        if not waiting or (b.get("only_new") and all(e.get("digested") for e in waiting)):
+            return jsonify({"ok": True, "sent": False, "text": "", "jobs": [], "count": _DIGEST["count"]})
+        for e in waiting:
+            e["digested"] = True
+        _parked_save(rows)
+    text, buttons = _digest_text(waiting)
+    sent = False
+    try:
+        ch = _active_channel()
+    except Exception:          # noqa: BLE001
+        ch = None
+    if ch is not None:
+        try:
+            ch.send(text, buttons)
+            sent = True
+        except Exception:      # noqa: BLE001 - the same list is on the Auto-apply page
+            try:
+                ch.send(text, None)
+                sent = True
+            except Exception:  # noqa: BLE001
+                pass
+    if sent:
+        with _ASKS_LOCK:
+            for e in waiting:
+                if e.get("ask_id") in _ASKS:
+                    _ASKS[e["ask_id"]]["sent"] = True
+    _DIGEST["count"] += 1
+    _DIGEST["last"] = {"text": text, "buttons": buttons, "jobs": [e["record_id"] for e in waiting],
+                       "sent": sent, "at": _now_iso()}
+    return jsonify({"ok": True, "sent": sent, "text": text, "jobs": [e["record_id"] for e in waiting],
+                    "count": _DIGEST["count"]})
+
+
+@app.get("/api/autoapply/agent/digest")
+@_guard
+def autoapply_agent_digest_last():
+    """The last digest built (its text, the jobs it listed) and how many were built: for the
+    Auto-apply page and the tests. Nothing is sent."""
+    return _nostore(jsonify({"ok": True, "count": _DIGEST["count"], "last": _DIGEST["last"]}))
 
 
 @app.post("/api/autoapply/agent/answer")
@@ -13113,6 +13821,7 @@ def autoapply_agent_answer():
     q = " ".join(str(b.get("question") or "").split())[:300]
     if not ans:
         return jsonify({"ok": False, "error": "Write an answer first."}), 400
+    _parked_boot()
     with _ASKS_LOCK:
         ask = _ASKS.get(aid)
         if not ask and q:                          # the bar knows the question, not the id
@@ -13123,6 +13832,7 @@ def autoapply_agent_answer():
         aid = ask["id"]
         ask["via"] = "bar"
         items = _ask_items(ask)
+        exact = None
         if b.get("exact"):
             try:
                 i = int(b.get("index") or 0)
@@ -13134,9 +13844,18 @@ def autoapply_agent_answer():
                 return jsonify({"ok": False, "error": "Pick one of the choices."}), 400
             _ask_set(ask, i, ans[:300])
             done = _ask_done(ask)
-            return jsonify({"ok": True, "id": aid, "done": done,
-                            "reply": _ask_got_it(items) if done else f"Got it: {ans[:300]}."})
+            parked = bool(ask.get("parked"))
+            exact = (done, parked, _ask_got_it(items) if done else f"Got it: {ans[:300]}.")
+    if exact is not None:
+        done, parked, reply = exact
+        if done and parked:
+            return jsonify({"ok": True, "id": aid, "done": True, "parked": True, "reply": _parked_reply(aid, reply)})
+        return jsonify({"ok": True, "id": aid, "done": done, "reply": reply})
+    with _ASKS_LOCK:
+        parked = bool((_ASKS.get(aid) or {}).get("parked"))
     reply, done = _ask_take_reply(aid, ans)
+    if done and parked:
+        return jsonify({"ok": True, "id": aid, "done": True, "parked": True, "reply": _parked_reply(aid, reply)})
     return jsonify({"ok": True, "id": aid, "done": done, "reply": reply})
 
 
@@ -13157,42 +13876,95 @@ def _terms_company(rec, b: dict) -> str:
     return company or _host(str(b.get("url") or ""))
 
 
+def _terms_decided() -> bool:
+    """Whether the person made the standing choice on terms a site requires (either way). Never
+    made for them: until they do, the first Apply for me asks it once, before the run starts."""
+    return _terms_pref() == "always" or bool(_prefs().get("terms_decided"))
+
+
+def _terms_consent_add(record_id, title: str, host: str = "") -> None:
+    """"Just this one": the person accepted THIS notice for THIS application. Kept on the record
+    (terms_consent), so a re-run of the same application (after a pause) accepts it again
+    without asking. Never used for another application."""
+    if record_id in (None, ""):
+        return
+    recs = _records()
+    try:
+        rec = recs.get(int(record_id))
+        if rec is None:
+            return
+        have = [x for x in (_record_data(rec).get("terms_consent") or []) if isinstance(x, dict)]
+        t = " ".join(str(title or "").split())[:80].lower()
+        have = [x for x in have if str(x.get("title") or "").lower() != t]
+        recs.merge_data(int(rec["id"]), {"terms_consent": (have + [{"title": t, "host": str(host or "")[:120],
+                                                                    "via": "once", "at": _now_iso()}])[-10:]})
+    except (TypeError, ValueError):
+        return
+    finally:
+        recs.close()
+
+
+def _terms_consented(rec, title: str) -> bool:
+    if not rec:
+        return False
+    t = " ".join(str(title or "").split())[:80].lower()
+    return any(isinstance(x, dict) and str(x.get("title") or "") == t
+               for x in (_record_data(rec).get("terms_consent") or []))
+
+
 @app.post("/api/autoapply/agent/terms")
 @_guard
 def autoapply_agent_terms():
-    """Body {record_id?, title, url, kind?, company?, check_only?, id?, timeout_s?}. The person's
-    decision on accepting a notice the site requires. With the standing choice "always": at once
-    {ok, decision:"accept", via:"always"}. Else check_only returns {ok, decision:"ask", question,
-    options}; without it the question goes to Telegram (three buttons) and the bar, and the
-    route waits: {ok, decision:"accept", via:"all"|"once"} ("all" also sets the standing choice
-    to "always") or {ok, decision:"stop"}; {ok:false, reason:"timeout"|"stopped"} when nobody
-    answered or /stop ended the wait. Nothing is accepted here: the shell clicks, then records
-    the acceptance with /api/autoapply/agent/terms/accepted."""
+    """Body {record_id?, title, url, kind?, company?, check_only?, id?, timeout_s?, park?,
+    no_wait?, chunk_s?}. The person's decision on accepting a notice the site requires. With the
+    standing choice "always", or "Just this one" already given for this application: at once
+    {ok, decision:"accept", via:"always"|"once"}. Else check_only returns {ok, decision:"ask",
+    question, options}; without it the question goes to Telegram (three buttons) and the bar, and
+    the route waits: {ok, decision:"accept", via:"all"|"once"} ("all" also sets the standing
+    choice to "always") or {ok, decision:"stop"}; {ok:false, reason:"timeout"|"stopped"} when
+    nobody answered or /stop ended the wait. With ``park`` (the shell's runs) the wait is the
+    configured one, in chunks (reason "waiting": ask /ask/wait again), and past it the job parks
+    (reason "parked"); with ``no_wait`` too (a batch) it parks at once. Nothing is accepted here:
+    the shell clicks, then records the acceptance with /api/autoapply/agent/terms/accepted."""
     from autoapply import asks as AK
+    from submit.policy import _host
     b = request.json or {}
     title = " ".join(str(b.get("title") or "").split())[:80] or "terms"
     rec = _get_record(b.get("record_id")) if b.get("record_id") not in (None, "") else None
     company = _terms_company(rec, b)
     if _terms_pref() == "always":
         return jsonify({"ok": True, "decision": "accept", "via": "always"})
+    if _terms_consented(rec, title):
+        return jsonify({"ok": True, "decision": "accept", "via": "once"})
     question = AK.terms_question(company, title)
     if b.get("check_only"):
         return jsonify({"ok": True, "decision": "ask", "question": question, "options": list(AK.TERMS_CHOICES)})
     aid = re.sub(r"[^a-z0-9]", "", str(b.get("id") or "").lower())[:16] or secrets.token_hex(4)
-    timeout = max(5, min(600, int(b.get("timeout_s") or 300)))
+    park = b.get("park") if isinstance(b.get("park"), dict) else None
+    no_wait = bool(b.get("no_wait")) and park is not None
+    if park is not None:
+        timeout = _ask_wait_s()
+        try:
+            chunk = max(0.0, min(float(ASK_CHUNK_MAX), float(b.get("chunk_s") or ASK_CHUNK_S)))
+        except (TypeError, ValueError):
+            chunk = float(ASK_CHUNK_S)
+    else:
+        timeout = max(5, min(600, int(b.get("timeout_s") or 300)))
+        chunk = float(timeout)
     pending = [{"question": question, "options": list(AK.TERMS_CHOICES), "all_options": list(AK.TERMS_CHOICES),
                 "partial": False, "answer": None}]
-    _ask_open(aid, pending, b.get("record_id"), kind="terms")
-    # Consent is given while the run waits, never late: a terms ask is not kept for _late_answer,
-    # and while it is open it takes the person's Telegram reply before any late-answer reading.
+    ctx = {"title": title, "company": company, "host": _host(str(b.get("url") or "")),
+           "record_id": "" if b.get("record_id") in (None, "") else str(b.get("record_id")),
+           "role": (rec.get("role") if rec else "") or ""}
+    _ask_open(aid, pending, b.get("record_id"), kind="terms", ctx=ctx, timeout=timeout, park=park)
+    # Consent is given while the ask is open (the run waits, or the job is parked), never late:
+    # a terms ask is not kept for _late_answer, and while it is open it takes the person's
+    # Telegram reply before any late-answer reading.
+    if no_wait:
+        _park_from_ask(aid)
+        return jsonify({"ok": False, "id": aid, "reason": "parked"})
     _ask_telegram(aid, pending, kind="terms")
-    how = _ask_wait(aid, pending, timeout)
-    if how != "answered":
-        return jsonify({"ok": False, "id": aid, "reason": how})
-    decision, via = AK.terms_decision(pending[0]["answer"])
-    if via == "all":
-        _merge_prefs({"accept_required_terms": "always"})
-    return jsonify({"ok": True, "id": aid, "decision": decision, "via": via})
+    return jsonify(_ask_result(aid, _ask_long_wait(aid, chunk)))
 
 
 @app.post("/api/autoapply/agent/terms/accepted")
@@ -14513,6 +15285,26 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
     match = _record_fit(rec, data)
     url = (sj.get("url") or job.get("url") or "")
     plan = classify_record(data)
+    # A job the apply agent parked (it needs the person): on Needs you, with what it needs and
+    # "Answer and continue" (a question) or "Continue" (a captcha or a step on the page).
+    park = data.get("agent_park") if isinstance(data.get("agent_park"), dict) else None
+    if park and st["stage"] not in ("submitted", "skipped") and park.get("state") in ("waiting", "answered"):
+        waiting = park.get("state") == "waiting"
+        msg = str(park.get("message") or "")
+        st = dict(st, label="Paused", reason="paused",
+                  detail=("Paused: needs you. " + msg) if waiting else msg)
+        tile = "needs"
+        action = ("answer" if park.get("kind") in ("questions", "terms") else "continue") if waiting else "view"
+    else:
+        park = None
+        action = row_action(tile, st["reason"])
+    # Left on its review page by the agent: Send (one click, also once the page is gone).
+    ready = data.get("agent_ready") if isinstance(data.get("agent_ready"), dict) else None
+    if ready and not park and st["stage"] == "approved":
+        st = dict(st, detail="Ready to send. Press Send and I submit it, filling it in again if the page was closed.")
+        action = "send"
+    else:
+        ready = None
     return {
         "id": rec["id"], "role": (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0],
         "company": company, "location": location,
@@ -14521,7 +15313,10 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         "match": round(match) if match is not None else None,
         "tile": tile, "stage": st["stage"], "stage_label": st["label"], "stage_detail": st["detail"],
         "reason": st["reason"], "how": st["how"], "queued": bool(data.get("queued")),
-        "action": row_action(tile, st["reason"]),
+        "action": action,
+        "paused": ({"state": park.get("state"), "kind": park.get("kind"), "questions": park.get("questions") or [],
+                    "message": park.get("message") or ""} if park else None),
+        "ready_sig": (ready or {}).get("sig") or "",
         "lane": plan["tier"],
         "apply_url": _application_url(url, company) if url else "",
         "posting_url": url,

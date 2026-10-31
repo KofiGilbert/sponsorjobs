@@ -1049,8 +1049,21 @@ ipcMain.handle("agent:run", async (_e, opts) => {
   return agent.run(o.recordId, { url: o.url, resumePath: o.resumePath, lane: o.lane, autonomous: !!o.autonomous,
                                  company: o.company || "" });
 });
-ipcMain.handle("agent:send", async (_e, recordId) => agent.send(recordId));
+// Send: presses the site's Submit; when the page is gone (a batch, a restart) it fills the job
+// again from the saved answers and submits only if nothing new came up (opts: the row's job).
+ipcMain.handle("agent:send", async (_e, recordId, opts) => agent.send(recordId, opts && typeof opts === "object" ? {
+  url: opts.url, resumePath: opts.resumePath, lane: opts.lane, autonomous: !!opts.autonomous, company: opts.company || "", sig: opts.sig || "" } : undefined));
+// An answer to a paused job just came in on the bar: carry on with it now, not on the next poll.
+ipcMain.handle("agent:poll", async () => agent.pollParked());
 ipcMain.handle("agent:stop", async () => { agent.stop(); return { ok: true }; });
+// Several jobs, one after another; a job that needs the person parks and the next one goes on.
+ipcMain.handle("agent:batch", async (_e, jobs) => agent.batch((Array.isArray(jobs) ? jobs : []).map((o) => ({
+  recordId: o.recordId, url: o.url, resumePath: o.resumePath, lane: o.lane, autonomous: !!o.autonomous, company: o.company || "" }))));
+// "Continue" on a job parked at a captcha or a step on the page.
+ipcMain.handle("agent:continue", async (_e, recordId) => agent.continueParked(recordId));
+ipcMain.handle("agent:busy", async () => ({ busy: agent.busy() }));
+// Parked jobs carry on by themselves once answered, also after a restart (the engine keeps them).
+agent.startPolling();
 ipcMain.handle("agent:ready", async (_e, recordId) => ({ ready: agent.isReady(recordId) }));
 
 // AI-fill whatever page is CURRENTLY open in the pane (after the person navigated / signed in).
