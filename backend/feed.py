@@ -115,6 +115,9 @@ def feed_jobs(level: str | None = None) -> list[dict]:
         # and the endpoint isn't tagging tens of thousands of rows on every hit.
         jobs = _sponsors(spon_db).tag_jobs(
             w.list_jobs(order="recent", since_days=FEED_FRESH_DAYS, seen_days=FEED_SEEN_DAYS, limit=FEED_SCAN_LIMIT))
+        from sourcing.hackernews import enabled as hn_enabled
+        if not hn_enabled():          # off by default: rows left from a run with it on stay out
+            jobs = [j for j in jobs if j.get("source") != "hackernews"]
         try:   # diagnostics only: how old are the rows the freshness window drops, and are they still live?
             FUNNEL_SAMPLES["too_old"] = [dict(r) for r in w._conn.execute(
                 "SELECT company, title, location, posted_at, last_seen FROM sourced_job WHERE posted_at IS NOT NULL "

@@ -64,6 +64,25 @@ SUPPORTED_AGGREGATORS = tuple(AGGREGATORS.keys())
 # hosted board -- that's what made the JDs look "scanty". freehire carries the same roles with the
 # FULL text for free, so we lean on it for volume (see FREEHIRE_BULK_MAX) and drop Adzuna.
 DEFAULT_AGGREGATORS = ("remotive", "remoteok", "jsearch")
+# Aggregators pulled whole once per refresh rather than searched once per title term: freehire
+# (the bulk pulls, step 3) and the Hacker News "Who is hiring?" thread (step 3c).
+WHOLE_FEED_AGGREGATORS = ("freehire", "hackernews")
+
+
+def watched_brands(companies) -> set[str]:
+    """Normalized names of the employers whose boards are on the watchlist."""
+    from .sponsors import normalize_employer
+    return {n for n in (normalize_employer(c.get("company", "")) for c in companies) if n}
+
+
+def brand_watched(company: str, watched: set[str]) -> bool:
+    """Is `company` (an aggregator row's employer) one whose own board we already crawl? Equal
+    normalized names, or the watched legal name extends the brand ("anthropic" / "anthropic pbc")."""
+    from .sponsors import normalize_employer
+    n = normalize_employer(company or "")
+    if not n:
+        return False
+    return n in watched or any(w.startswith(n + " ") for w in watched)
 
 # Seed a few real, official public boards so the watchlist shows live jobs
 # immediately. The person edits this list freely.
@@ -401,8 +420,8 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
         # None = not configured -> the defaults; an explicit empty list means "run none".
         for agg in (DEFAULT_AGGREGATORS if chosen is None else chosen):
             fn = AGGREGATORS.get(agg)
-            if fn is None or agg == "freehire":    # freehire runs as the bulk pull (step 3), not per term
-                continue
+            if fn is None or agg in WHOLE_FEED_AGGREGATORS:   # whole-feed pulls (steps 3, 3c),
+                continue                                        # not one search per term
             seen: set[str] = set()
             for term in titles:
                 try:
@@ -466,6 +485,29 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
                 new_total += n
             except Exception as exc:                     # best-effort: never let it kill the refresh
                 errors.append({"company": "freehire-sponsor", "error": str(exc)})
+
+    from .hackernews import enabled as hn_enabled
+    if include_aggregators and (aggs is None or "hackernews" in aggs) and hn_enabled():
+        # 3c) Hacker News "Who is hiring?" (sourcing/hackernews.py), OFF unless HN_WHOISHIRING=1
+        # (Y Combinator's terms restrict commercial use of HN content): the month's thread, two
+        # requests at most every HN_CACHE_HOURS (cached beside the database). Rows from an
+        # employer whose own board we already watch are dropped: the board carries the same roles
+        # with full descriptions. Like the freehire pulls, only the accessibility check applies.
+        try:
+            from .hackernews import hn_jobs
+            cache = None if store.db_path == ":memory:" else Path(store.db_path).parent
+            hjobs = hn_jobs(fetch=fetch, cache_dir=cache, sleep=sleep)
+            fetched += len(hjobs)
+            watched = watched_brands(store.companies())
+            keep = [j for j in hjobs if not brand_watched(j.get("company", ""), watched)
+                    and is_intl_student_accessible(j)]
+            keep, dup = index.filter(keep)
+            duplicates += dup
+            matched += len(keep)
+            n, _ = store.upsert_jobs(keep)
+            new_total += n
+        except Exception as exc:                         # noqa: BLE001 - never kill the refresh
+            errors.append({"company": "hackernews", "error": str(exc)})
 
     # Retire Adzuna: its API licensed only a ~500-char preview of each posting, so its rows had
     # truncated JDs. We no longer ingest it (see DEFAULT_AGGREGATORS); clear any rows it left so

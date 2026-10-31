@@ -227,6 +227,7 @@ Checked 2026-09-30. `FEED_INCLUDE_AGGREGATORS` (a repository *variable*, comma l
 | **Remotive** | the API response's own `0-legal-notice`: "API documentation and access is granted so that developers can share our jobs further. Please do not submit Remotive jobs to third Party websites [job aggregators] ... Please link back to the URL found on Remotive AND mention Remotive as a source" (https://remotive.com/api/remote-jobs) | **yes**, with attribution; the file's `attribution` block carries the credit |
 | **Remote OK** | the API's first array element: "Please link back (with follow, and without nofollow!) to the URL on Remote OK and mention Remote OK as a source ... Please don't use the Remote OK logo" (https://remoteok.com/api) | **yes**, with attribution |
 | **JSearch** (RapidAPI, publisher OpenWeb Ninja) | [OpenWeb Ninja Terms](https://www.openwebninja.com/terms): "we additionally grant you a non-exclusive, non-transferable license to use, reproduce, and commercially exploit such API Data in your own products, services, applications, or business, including for resale or redistribution as part of a broader product offering, provided that you do not resell, sublicense, or redistribute API Data as a standalone data or API product that substantially replicates the Services themselves." RapidAPI's platform policy defers to the provider's terms. | **yes by default** (`jsearch`); our feed is part of the app, not a standalone data product |
+| **Hacker News "Who is hiring?"** (2026-10-30) | Read through the HN search API Hacker News links to (`hn.algolia.com/api/v1`, keyless; its robots.txt answers 404 = no rules). [Y Combinator's site terms](https://www.ycombinator.com/legal/) reserve HN content: "you agree not to display, distribute, license, perform, publish, reproduce, duplicate, copy ... for any commercial purposes, any portion of the Site" unless authorized; the official [HN API](https://github.com/HackerNews/API) makes the data available but grants no redistribution licence | **no, off by default** (2026-10-30). Built and tested, but not crawled unless `HN_WHOISHIRING=1`: the terms restrict commercial use and it adds only ~15 sponsor rows a month. When on, a row carries only facts from the post's first line (employer, role, location, work mode, stated pay, sponsorship signal), a description WE write from them and a link to the post (its `url`); the poster's text is never copied. Its "via Hacker News" credit is sent with its rows (the feed file's `attribution` block, `/api/jobs` `attribution`), so nothing names Hacker News while it is off |
 | **Adzuna** | [Developer Terms of Service](https://developer.adzuna.com/docs/terms_of_service): beyond a 14-day trial, use by "a commercial, government or academic organisation ... may not be used in its original format or in aggregation ... to deliver any ongoing work or research ... without written consent"; also requires a "Jobs by Adzuna" label on every displayed advert, and the API returns only a ~500-char preview | **no.** `build_feed.py` refuses `adzuna` even if listed (and `sourcing/service.py` already prunes it). Needs written consent from Adzuna first. |
 
 Remotive's notice also mentions a daily request budget (~4/day) and a 24-hour listing delay; the crawl
@@ -235,9 +236,62 @@ budget. If Remotive objects, `FEED_INCLUDE_AGGREGATORS` is not the lever (Remoti
 it from `PUBLIC_OK_AGGREGATORS` in `scripts/build_feed.py`, or run the crawl less often.
 
 Attribution: `jobs.json.gz` carries an `attribution` map for every aggregator present, and the
-Jobs page prints a muted "via Remotive" / "via Remote OK" on each such row (a fact on the card, a
+Jobs page prints a muted "via Remotive" / "via Remote OK" on each such row (and "via Hacker News"
+when that opt-in source is on; its credit comes with its rows in `/api/jobs`'s `attribution`) (a fact on the card, a
 plain `rel="noopener"` link to the listing in the detail view, never `nofollow`; `VIA_SOURCES` in
 `ui/static/app.js`).
+
+### Hacker News "Who is hiring?" (`sourcing/hackernews.py`, 2026-10-30)
+
+**Off by default.** Nothing below runs unless `HN_WHOISHIRING=1` in the environment of the feed
+build or the app (`.github/workflows/feed.yml` does not pass it today, so the public feed cannot
+turn it on by accident). Why: Y Combinator's site terms restrict commercial use of
+HN content (see the terms row above), and the measured yield is small (~15 sponsor rows a month).
+While it is off: the crawl makes no HN request (`refresh_watchlist` step 3c), `build_feed`
+does not list it among the feed's aggregators, `backend.feed.feed_jobs` leaves out any HN rows a
+run with it on stored, the feed file's `attribution` names only sources whose rows are present,
+and the Jobs page has no built-in HN credit (it takes credits for opt-in sources from
+`/api/jobs`'s `attribution`, which `ui/app.py` fills from the rows on the page). Turning it on
+needs a decision on the terms first (written permission from Y Combinator would settle it).
+
+Each month the `whoishiring` account posts "Ask HN: Who is hiring? (Month Year)" and employers
+answer with one top-level comment each (the October 2026 thread: 261 posts). Many are US startups
+that do not use one of our ATS boards, and the thread's convention is a first line like
+`Acme (YC S24) | Senior Backend Engineer | San Francisco, CA | ONSITE | VISA | https://acme.com`.
+
+* **Requests.** Two, through the HN search API: `search_by_date?tags=story,author_whoishiring`
+  finds the newest "Who is hiring?" story (not "Who wants to be hired?" or "Freelancer?"; none
+  older than 45 days), then `items/{id}` returns the whole thread in one answer (~0.5 MB). The
+  answer is cached beside the database (`hn_whoishiring.json`, in the feed build's saved crawl
+  state) and reused for `HN_CACHE_HOURS` (6), so the 3-hourly build asks at most 4 times a day. A
+  failed refresh serves the older cache. The Firebase HN API is not used: it needs one request per
+  comment. The step runs once per refresh (`service.refresh_watchlist` step 3c, like the freehire
+  bulk pull, not once per title term), on the first crawl shard only, and only with
+  `HN_WHOISHIRING=1`.
+* **Parsing.** The header is split on `|` (else an em dash or " - "): the first part is the
+  company (parentheses such as "(YC S24)" dropped, or read as the location when they name one),
+  then a role, a location, a work mode (REMOTE / ONSITE / HYBRID), pay and a VISA tag are picked
+  out by their words. A post that names no role in its first line gets the first role phrase in
+  its body ("We're hiring Senior Platform Engineers"); a comment with neither is not a job post
+  and is skipped (complaints, replies, deleted comments). Pay is kept only as a yearly USD range.
+* **Sponsorship signal** (`sponsorship_stated`). True for a VISA tag, "visa sponsorship", "we
+  sponsor visas", "H-1B sponsorship"; False for "no visa", "not able to sponsor", "no
+  sponsorship" (a no beats a yes: "H-1B transfers welcome; no new visa sponsorship" is False);
+  None when silent. A post requiring US citizenship or a clearance is dropped.
+* **Facts only.** See the terms row above: the description is our own sentences ("Acme is hiring:
+  Senior Backend Engineer. Location: ... The post says visa sponsorship is available. ... Read the
+  full post and how to apply on Hacker News: <link>"), and the row's `url` is the post. The
+  sponsorship sentence uses words `sourcing/adstance.py` reads, so the feed's existing gate
+  applies unchanged: an HN row is published only with a sponsor badge (the employer is in the
+  H-1B / PERM data and the role is in the US) or a stated yes, and never with a stated no.
+* **Dedupe.** A post from an employer whose own board is on the watchlist is dropped (the board
+  has the same roles with full descriptions; matched on the normalized name, "Anthropic" =
+  "Anthropic Pbc"), and the usual cross-feed dedup (`sourcing/dedup.py`) runs on the rest, board
+  rows first.
+* **Measured on the October 2026 thread** (offline, from one recorded read): 261 posts -> 222 rows
+  -> 115 placed in the US -> 5 from employers we already watch -> about 15 pass the sponsor gate
+  (8 posts state sponsorship, 11 state they will not). With it switched on, expect roughly 15-30 new feed rows a month,
+  mostly US startups with a stated VISA or an H-1B record, each linking back to its post.
 
 ### freehire: search by sponsor (`sourcing/freehire_sponsors.py`)
 
@@ -408,12 +462,13 @@ The same script now grows the list in bounded batches (default `--limit 300`) wi
   SmartRecruiters at all**, and since 2026-10-19 neither does the feed or the app (see
   "SmartRecruiters is switched off" below).
   Greenhouse (only `/embed/` disallowed), Lever, Workable allow it; Ashby's API answers 401 for
-  robots.txt, which RFC 9309 reads as "no robots file". A robots.txt that cannot be read (5xx,
-  timeout) owes the request rather than guessing. Workday tenants' own robots.txt was already
+  robots.txt, which RFC 9309 reads as "no robots file". A robots.txt that cannot be read (429,
+  5xx, timeout) owes the request rather than guessing (see "robots.txt status codes" below). Workday tenants' own robots.txt was already
   read and obeyed per tenant.
 * **Evidence.** Every verified board gets a line in `seed/watchlist_evidence.csv` (`ats,
-  board_id, company, url, jobs, verified, cap_exempt, h1b_approvals, perm_certs`), merged by
-  board. The seed itself keeps its three columns. The app needs no new field for the cap-exempt
+  board_id, company, url, jobs, verified, cap_exempt, h1b_approvals, perm_certs, source`), merged
+  by board (`source`, added 2026-10-30, names where a hand-added board came from, e.g.
+  `remoteintech`; blank for boards discovery found). The seed itself keeps its three columns. The app needs no new field for the cap-exempt
   chip: it already derives "Cap-exempt (likely)" per employer at serve time
   (`SponsorDB.lookup` -> `CAP-EXEMPT` badge, `ui/static/app.js`), so the evidence flag is a
   record for maintainers, not a second source of truth.
@@ -682,6 +737,58 @@ a barred role is dismissed with a clear message instead of shown. SmartRecruiter
 10 requests a second on its Posting API; the crawl spaces one board's detail reads 0.2 s apart and
 backs off on a 429 / 5xx before one retry.
 
+### Boards from the remoteintech company list (2026-10-30)
+
+[remoteintech/remote-jobs](https://github.com/remoteintech/remote-jobs) (ISC) lists ~880 remote-
+friendly tech companies with their careers pages. Only facts were used (company names and careers
+URLs); none of its prose was copied. Of its companies, 144 not already covered run a supported ATS
+(Greenhouse, Lever, Ashby, Workable, Workday, Recruitee; SmartRecruiters is off). Each board was
+checked with one request (robots.txt read first, one request a second, `SponsorJobsBot` user
+agent): 99 answered with jobs, 16 were live but empty, 25 were dead (404 / 422) and one refused
+(403). Following the watchlist's own rules, **42 were added**: the live boards with jobs whose
+employer has an H-1B or PERM record (the seed's company is the employer's filing name, so the
+sponsor badge matches). Not added: the 57 live boards with no sponsorship record (the watchlist
+promises every board's jobs are from a sponsor; e.g. Calendly, Zapier, OpenRouter, Sigma Defense),
+empty boards (`jobs` must be at least 1), and Marco Polo (its H-1B match is a different company).
+The largest: The New York Times (159 jobs, 152 US), Grafana Labs (120), Red Hat (Workday, 127),
+1Password (87), Kraken (87), Instructure (62), Supabase (64), Mapbox (35), Render (35), Replit (34),
+Grubhub (Workday, 34). In all ~1,200 listed jobs, ~590 placed in the US from the list alone.
+Evidence rows carry `source=remoteintech`.
+
+Big sponsors whose own sites are JavaScript apps were probed the same way (a direct guess per
+likely ATS, then `discover.discover_for_company`, the logic `scripts/discover_boards.py` runs):
+PNC (Workday `pnc.wd5/External`, 2,000+ jobs), HubSpot (Greenhouse `hubspotjobs`, 84), Plaid
+(Ashby `plaid`, 132), DigitalOcean (Greenhouse `digitalocean98`, 167) and Quora (Ashby `quora`, 9)
+were added. Wells Fargo and Dow Jones were already watched. No public board on a supported ATS was
+found for Akamai, Atlassian, Nagarro (its jobs are on SmartRecruiters, which is off), Shopify,
+HashiCorp (its Greenhouse board is gone since IBM bought it) or NerdWallet. Oracle and IBM were not asked
+(known to block); Cognizant, Wipro and Capgemini were not either (no readable board).
+
+### robots.txt status codes (RFC 9309, 2026-10-30)
+
+[RFC 9309](https://www.rfc-editor.org/rfc/rfc9309) section 2.3.1: a robots.txt answered with a
+4xx other than 429 is "unavailable", and the crawler MAY access the site (there are no rules); a
+429 or 5xx is "unreachable", and the crawler must assume a complete disallow. One helper,
+`careersite.robots_unavailable(code)`, decides this everywhere:
+
+* **ATS discovery** (`growth.PoliteFetch`) already read a 4xx as "no rules" (Ashby's API answers
+  401); a 429 was wrongly counted with the other 4xx and is now owed like a 5xx.
+* **The career-site lane** (`careersite.Host.load_robots`) treated only a 404 as "no rules": a 401
+  or 403 stopped the host as if it had blocked us, and a 410 or 451 was an error. Now any 4xx but
+  429 means no rules; a 429 still stops the host and a 5xx still reads nothing.
+* **Career-site discovery** (`scripts/discover_careersites.py`) did the same (only 404 / 410 were
+  "no rules"); now it follows the same rule.
+* A 401 / 403 whose body is a bot-challenge page is still a block in both career-site paths: that
+  is a WAF saying no, not a missing file. Any later 401 / 403 / 429 on a real page still stops the
+  host, so nothing gets past a refusal.
+
+What it unlocks today: no board on the watchlist (the board crawl does not gate on ATS robots.txt,
+and discovery already let Ashby through) and none of the configured career sites (all serve a
+readable robots.txt). It changes what career-site discovery can verify from now on: hosts whose
+robots.txt answers a plain 401 / 403 / 410 used to be rejected unseen. The 35 Ashby boards from the
+remoteintech list were verified under this rule. (Python's `urllib.robotparser` reads a 401 / 403
+robots.txt as "disallow all", so a quick script built on it would wrongly skip every Ashby board.)
+
 ### Career sites (`sourcing/careersite.py`)
 
 Most of the biggest H-1B sponsors (Amazon, Apple, JPMorgan, IBM, Oracle, Capital One...) hire
@@ -700,7 +807,8 @@ permits it, and the lane reads it the way Google for Jobs does:
 Politeness is not optional: one request at a time per host with at least a 1 s gap, hard timeouts,
 honest identification, `CAREERSITE_MAX_DETAIL` job pages per site per run (default 400; pages already
 stored are stamped "still listed" from the sitemap without a request), and a hard STOP for the host
-this run on a 401 / 403 / 429, three server errors in a row, or a bot-challenge page. There is no
+this run on a 401 / 403 / 429, three server errors in a row, or a bot-challenge page (robots.txt
+itself follows RFC 9309: a plain 4xx other than 429 there means no rules, see above). There is no
 retry loop, no second identity and no proxy: a host that answers like that has said no for now, and
 the next run asks again politely. The lane runs beside the board pass in the feed build in its own
 threads and SQLite connections (`CAREERSITE_WORKERS` hosts at once, default 4, each still one request

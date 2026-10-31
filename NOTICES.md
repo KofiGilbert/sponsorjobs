@@ -95,6 +95,21 @@ OpenCATS (MPL-2.0 / CATS Public License) and PeelJobs (MIT) were reviewed; no co
 copied from either. OpenCATS's candidate status vocabulary informed the inbox
 classifier's wording list only.
 
+## Job data sources (attribution)
+
+- **remoteintech/remote-jobs** (https://github.com/remoteintech/remote-jobs), ISC License,
+  Copyright (c) remoteintech contributors. Used 2026-10-30 as a list of company names and careers
+  URLs to find public ATS boards; 42 verified boards were added to `seed/watchlist_seed.csv`
+  (marked `source=remoteintech` in `seed/watchlist_evidence.csv`). Only those facts were used; no
+  text from the project was copied.
+- **Hacker News "Ask HN: Who is hiring?"** (https://news.ycombinator.com), read through the HN
+  search API (https://hn.algolia.com/api). **Off by default**: the adapter
+  (`sourcing/hackernews.py`) runs only with `HN_WHOISHIRING=1`, because Y Combinator's site terms
+  (https://www.ycombinator.com/legal/) restrict commercial use of HN content. When switched on,
+  rows carry only facts from each post's first line and link back to the post; the posts' text
+  is not copied, and the rows are credited "via Hacker News" (docs/feed.md). While it is off, no
+  HN data is fetched, stored, published or credited.
+
 ## Bundled brand icons (CC0)
 
 - **Simple Icons** 16.33.0 (simpleicons.org, npm `simple-icons`) — **CC0 1.0 Universal**

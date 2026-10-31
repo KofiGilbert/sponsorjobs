@@ -3581,7 +3581,8 @@ def jobs_list():
                                 "page": page, "per_page": per_page, "refreshed_at": refreshed,
                                 "newest_at": _newest_arrival(jobs),
                                 "stale": _is_stale(refreshed, hours=12) if refreshed else False,
-                                "source": "central"})
+                                "source": "central",
+                                "attribution": _page_attribution(page_jobs, header.get("attribution"))})
         except FeedLoading:
             # The first download of the list is still running (a slow link can take minutes).
             # Say so at once instead of holding the request or flashing an empty local board;
@@ -3655,11 +3656,23 @@ def jobs_list():
                         "newest_at": _newest_arrival(jobs),
                         "stale": _is_stale(refreshed, hours=12),
                         "source": "local",
+                        "attribution": _page_attribution(page_jobs),
                         "degraded": bool(feed_url), "crawling": crawling,
                         "crawl_error": crawl_error or None,
                         "feed": _feed_status() if feed_url else None})
     finally:
         w.close()
+
+
+def _page_attribution(page_jobs, credits=None) -> dict:
+    """{source: {name, url}} credits for the aggregator rows on this page, from the feed file's
+    `attribution` block (or our own table on the local path). The Jobs page adds these to its
+    built-in "via" credits, so an opt-in source (Hacker News) is named only when its rows exist."""
+    from sourcing.feedfile import ATTRIBUTION
+    table = credits if isinstance(credits, dict) and credits else ATTRIBUTION
+    present = {str(j.get("source") or "") for j in page_jobs}
+    return {k: {"name": v.get("name", ""), "url": v.get("url", "")}
+            for k, v in table.items() if k in present and isinstance(v, dict)}
 
 
 @app.get("/api/jobs/detail")

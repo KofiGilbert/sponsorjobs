@@ -197,8 +197,10 @@ def test_verifies_a_phenom_site_and_picks_one_locale():
 @pytest.mark.parametrize("change, status, reason", [
     ({"https://careers.acme.com/robots.txt": "User-agent: *\nDisallow: /\n"}, "rejected", "disallows the sitemap"),
     ({"https://careers.acme.com/robots.txt": "<!doctype html><html>home</html>"}, "rejected", "HTML"),
-    ({"https://careers.acme.com/robots.txt": 403}, "blocked", "403"),
+    ({"https://careers.acme.com/robots.txt": (403, "<html><title>Just a moment...</title></html>", "")},
+     "blocked", "403"),
     ({"https://careers.acme.com/robots.txt": 429}, "blocked", "429"),
+    ({"https://careers.acme.com/robots.txt": 503}, "rejected", "answered 503"),
     ({"https://careers.acme.com/robots.txt": (301, "", "https://www.acme.com/robots.txt")}, "redirect", "www.acme.com"),
     ({"https://careers.acme.com/careers/sitemap.xml?domain=acme.com": urlset([])}, "rejected", "no job pages"),
 ])
@@ -209,6 +211,17 @@ def test_rejections_and_blocks(change, status, reason):
     assert r["status"] == status and reason in (r["reason"] + r.get("redirect", ""))
     if status == "blocked":
         assert net.calls == ["https://careers.acme.com/robots.txt"]           # stop, no retry
+
+
+@pytest.mark.parametrize("code", [401, 403, 404, 410])
+def test_a_4xx_robots_txt_means_no_rules(code):
+    """RFC 9309: a 4xx robots.txt (other than 429) is "unavailable", so the site may be read.
+    A plain 401 / 403 used to count as a block and the host was never verified."""
+    pages = {**eightfold_pages(), "https://careers.acme.com/robots.txt": code}
+    p, net = prober(pages)
+    r = p.probe("careers.acme.com")
+    assert r["status"] != "blocked" and "robots.txt answered" not in r["reason"]
+    assert len(net.calls) > 1                                   # it went on past robots.txt
 
 
 def test_job_page_without_jsonld_or_behind_a_challenge():

@@ -857,6 +857,13 @@ def freehire_bulk(search="", company="", fetch=fetch_json, cap=None, visa_sponso
     return out
 
 
+def hackernews_jobs(search="", company="", fetch=fetch_json, **kw):
+    """Hacker News "Who is hiring?" (sourcing/hackernews.py): the month's thread via the HN
+    search API, facts only. Imported lazily, like the Workday adapter."""
+    from .hackernews import hn_jobs
+    return hn_jobs(search, company, fetch=fetch, **kw)
+
+
 def workday_jobs(board_id, company="", fetch=fetch_json, **kw):
     """Workday adapter (sourcing/workday.py). board_id is "{tenant}.wd{n}/{site}", e.g.
     "nvidia.wd5/NVIDIAExternalCareerSite". Rows come back list-only (no JD) -- the service
@@ -891,6 +898,7 @@ AGGREGATORS = {
     "remoteok": remoteok_jobs,
     "jsearch": jsearch_jobs,
     "freehire": freehire_jobs,
+    "hackernews": hackernews_jobs,
 }
 
 

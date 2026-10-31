@@ -210,6 +210,58 @@ def test_missing_robots_allows_the_table_sitemap():
     assert summary["kept"] == 2 and summary["error"] == ""
 
 
+# -- robots.txt status codes (RFC 9309 section 2.3.1) ---------------------------------- #
+
+@pytest.mark.parametrize("code", [401, 403, 404, 410])
+def test_a_4xx_robots_txt_means_no_rules_and_the_site_is_read(code):
+    """RFC 9309: a 4xx robots.txt (other than 429) is "unavailable", so everything is allowed.
+    Before 2026-10-30 a 401 / 403 here stopped the host as if it had blocked us."""
+    pages = base_pages()
+    pages[f"https://{HOST}/robots.txt"] = code
+    site = Site(pages)
+    cfg = {**CFG, "sitemaps": [f"https://{HOST}/sitemap-jobs-1.xml"]}
+    summary = cs.crawl_site(Watchlist(":memory:"), HOST, cfg, text_fetch=site, sleep=lambda s: None,
+                            clock=lambda: 0.0)
+    assert summary["blocked"] == "" and summary["error"] == ""
+    assert summary["kept"] == 2 and f"https://{HOST}/sitemap-jobs-1.xml" in site.calls
+
+
+@pytest.mark.parametrize("code", [429, 500, 503])
+def test_a_429_or_5xx_robots_txt_means_nothing_is_read(code):
+    """RFC 9309: a 429 / 5xx robots.txt is "unreachable": assume a complete disallow."""
+    pages = base_pages()
+    pages[f"https://{HOST}/robots.txt"] = code
+    site, _, summary, _ = run(pages)
+    assert summary["listed"] == 0 and summary["fetched"] == 0 and summary["kept"] == 0
+    assert site.calls == [f"https://{HOST}/robots.txt"]
+    assert summary["blocked"] or summary["error"]
+
+
+def test_a_403_robots_txt_that_is_a_challenge_page_is_still_a_block():
+    """A WAF that answers robots.txt with a bot-challenge page has said no; that is a block, not
+    an "unavailable" file, and nothing else is asked."""
+    import io
+
+    class Challenged(Site):
+        def __call__(self, url, timeout=20, **_):
+            if url.endswith("/robots.txt"):
+                self.calls.append(url)
+                body = io.BytesIO(b"<html><title>Just a moment...</title>cf-chl-x</html>")
+                raise urllib.error.HTTPError(url, 403, "Forbidden", {}, body)
+            return super().__call__(url, timeout)
+
+    site = Challenged(base_pages())
+    summary = cs.crawl_site(Watchlist(":memory:"), HOST, {**CFG, "sitemaps": [f"https://{HOST}/sitemap-jobs-1.xml"]},
+                            text_fetch=site, sleep=lambda s: None, clock=lambda: 0.0)
+    assert "challenge" in summary["blocked"]
+    assert site.calls == [f"https://{HOST}/robots.txt"]
+
+
+def test_robots_unavailable_follows_rfc_9309():
+    assert all(cs.robots_unavailable(c) for c in (400, 401, 403, 404, 410, 451))
+    assert not any(cs.robots_unavailable(c) for c in (429, 500, 502, 503, 200, 301))
+
+
 def test_host_never_leaves_its_domain():
     host = cs.Host(HOST, CFG, text_fetch=Site({}), sleep=lambda s: None, clock=lambda: 0.0)
     with pytest.raises(ValueError):

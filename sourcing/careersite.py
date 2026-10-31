@@ -3,9 +3,10 @@
 the ATS feeds, so the ATS-only crawl never saw them. This lane reads such a site the way Google
 for Jobs does:
 
-  1. robots.txt   -- fetched first and OBEYED (urllib.robotparser, our own user agent): a
+  1. robots.txt   -- fetched first and OBEYED (RFC 9309, `Robots`, our own user agent): a
                      disallowed path is never fetched, a Crawl-delay is honoured, and the lane
-                     only follows the job sitemap(s) robots.txt or the site table names.
+                     only follows the job sitemap(s) robots.txt or the site table names. A 4xx
+                     robots.txt (other than 429) means no rules; a 429 / 5xx means stop.
   2. job sitemap  -- the site's own list of job-page URLs (with lastmod), newest first.
   3. job page     -- the schema.org JobPosting JSON-LD the page embeds for search engines:
                      title, description, hiring organization, location, datePosted, validThrough.
@@ -151,6 +152,23 @@ class Blocked(Exception):
     """The host answered 403 / 429 / a bot-challenge page: stop crawling it this run."""
 
 
+def robots_unavailable(code: int) -> bool:
+    """RFC 9309 section 2.3.1.3-4: what an HTTP error status on robots.txt means. A 4xx other
+    than 429 means the file is "unavailable": there are no rules, so the crawler MAY access the
+    site (Ashby's API answers 401 here, many sites 403 or 410). A 429 or 5xx means "unreachable":
+    assume a complete disallow and try again later. A bot-challenge PAGE served with the 4xx is
+    not "unavailable", it is a block (`looks_challenged`); callers check the body for that."""
+    return 400 <= int(code) < 500 and int(code) != 429
+
+
+def _error_body(exc) -> str:
+    """The body of an HTTPError, best-effort (to tell a plain 403 from a challenge page)."""
+    try:
+        return (exc.read() or b"")[:4000].decode("utf-8", "replace")
+    except Exception:                                      # noqa: BLE001
+        return ""
+
+
 class Robots:
     """robots.txt the way search engines read it (RFC 9309): the group for our product token
     (else `*`), the LONGEST matching rule wins and Allow wins a tie, `*` and `$` wildcards.
@@ -261,9 +279,11 @@ class Host:
         self.server_errors = 0
         self.slug_dropped = 0                 # sitemap URLs the keep rule dropped by their slug
 
-    def get(self, url: str) -> str:
+    def get(self, url: str, robots_file: bool = False) -> str:
         """One polite request. Blocked on 403 / 429 / a challenge page; other HTTP errors
-        propagate (a 404 is an answer). MAX_SERVER_ERRORS consecutive 5xx also block."""
+        propagate (a 404 is an answer). MAX_SERVER_ERRORS consecutive 5xx also block.
+        `robots_file`: this is the robots.txt read, where a plain 401 / 403 is RFC 9309's
+        "unavailable" (no rules) rather than a block, so it propagates like a 404 does."""
         if urlsplit(url).netloc.lower() != self.host:
             raise ValueError(f"{url!r} is not on {self.host}")      # the table is the allowlist
         if self._last is not None:
@@ -276,7 +296,10 @@ class Host:
             text = self._fetch(url, timeout=TIMEOUT)
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403, 429):
-                raise Blocked(f"{self.host} answered {exc.code} for {url}") from exc
+                if not (robots_file and robots_unavailable(exc.code)):
+                    raise Blocked(f"{self.host} answered {exc.code} for {url}") from exc
+                if looks_challenged(_error_body(exc)):
+                    raise Blocked(f"{self.host} answered a bot challenge ({exc.code}) for {url}") from exc
             if 500 <= exc.code < 600:
                 self.server_errors += 1
                 if self.server_errors >= MAX_SERVER_ERRORS:
@@ -288,11 +311,13 @@ class Host:
         return text
 
     def load_robots(self) -> None:
+        """Read and keep robots.txt (RFC 9309): a 4xx other than 429 means no rules (everything
+        allowed); a 429 is a Blocked stop and a 5xx propagates, so nothing is fetched blind."""
         try:
-            self.robots = Robots(self.get(f"https://{self.host}/robots.txt"))
+            self.robots = Robots(self.get(f"https://{self.host}/robots.txt", robots_file=True))
         except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                self.robots = Robots("")                       # no robots.txt: everything allowed
+            if robots_unavailable(exc.code):
+                self.robots = Robots("")                       # unavailable: everything allowed
             else:
                 raise
         if self.robots.delay:
