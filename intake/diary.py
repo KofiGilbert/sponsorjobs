@@ -241,6 +241,58 @@ class Diary:
         self.last_ref = ""
 
 
+_REF = re.compile(r"^diary:([A-Za-z0-9_.-]+\.jsonl):(\d+)$")
+
+
+def forget_refs(palace_dir, refs) -> int:
+    """Forget the diary lines these refs name (``diary:<file>:<line>``): each line is blanked in
+    place, so every other line keeps its number and every other ref still points at the right
+    turn. The file is rewritten whole (a temporary file, then a rename), so the words are gone
+    from it. Returns how many lines were blanked. (Phase 6: Forget with "Also delete the chat
+    lines where I said this".)"""
+    by_file: dict[str, set[int]] = {}
+    for ref in refs or ():
+        m = _REF.match(str(ref or "").strip())
+        if m:
+            by_file.setdefault(m.group(1), set()).add(int(m.group(2)))
+    tdir = Path(palace_dir) / "transcripts"
+    n = 0
+    with _LOCK:
+        for name, lines in by_file.items():
+            path = tdir / name
+            if path.parent != tdir or not path.exists():
+                continue
+            try:
+                raw = path.read_text(encoding="utf-8").splitlines(keepends=True)
+            except OSError:
+                continue
+            hit = 0
+            for i in sorted(lines):
+                if 1 <= i <= len(raw) and raw[i - 1].strip():
+                    raw[i - 1] = "\n"
+                    hit += 1
+            if not hit:
+                continue
+            tmp = path.with_name(path.name + ".tmp")
+            try:
+                tmp.write_text("".join(raw), encoding="utf-8")
+                tmp.replace(path)
+            except OSError:
+                continue
+            _LINES.pop(str(path), None)
+            n += hit
+    return n
+
+
+def stats(palace_dir, person: str = "default") -> dict:
+    """{lines, first, last}: how many turns the person's diary keeps and the dates of the first
+    and last (ISO dates, "" when empty). Counts and dates only, for the memory page."""
+    d = Diary(palace_dir, person=person)
+    rows = d._lines()
+    ats = [str(r.get("at") or "")[:10] for _i, r in rows if r.get("at")]
+    return {"lines": len(rows), "first": min(ats) if ats else "", "last": max(ats) if ats else ""}
+
+
 def _remove_store(store: Path) -> None:
     try:
         if store.exists():

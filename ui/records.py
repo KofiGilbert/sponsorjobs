@@ -33,6 +33,7 @@ class CVRecords:
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA secure_delete=ON")      # a deleted resume is gone from the file
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS cv_record (

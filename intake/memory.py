@@ -43,6 +43,9 @@ class ConversationMemory:
         # ("recursive use"/"changed thread") or interleave a write and drop an autosave.
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        # (Phase 6) A forgotten or erased value is overwritten on disk, never left in a free page
+        # of the file (docs/applicant-brain.md, section 10): the person's Forget really forgets.
+        self._conn.execute("PRAGMA secure_delete=ON")
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS conversation_memory (
@@ -192,6 +195,21 @@ class ConversationMemory:
             cur = self._conn.execute("DELETE FROM memory_facts WHERE name=?", (name,))
             self._conn.commit()
             return cur.rowcount
+
+    def erase_everything(self) -> int:
+        """Erase my memory: every profile row (the person's and any scratch copy a batch made)
+        and every distilled fact. Returns rows removed. The caller vacuums the file."""
+        with self._lock:
+            n = self._conn.execute("DELETE FROM conversation_memory").rowcount
+            n += self._conn.execute("DELETE FROM memory_facts").rowcount
+            self._conn.commit()
+            return n
+
+    def vacuum(self) -> None:
+        """Rebuild the file so nothing deleted survives in it (after Erase)."""
+        with self._lock:
+            self._conn.commit()
+            self._conn.execute("VACUUM")
 
     def close(self) -> None:
         self._conn.close()

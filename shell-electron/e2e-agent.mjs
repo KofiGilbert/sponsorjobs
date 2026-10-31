@@ -27,6 +27,9 @@
  *  ... and (section 13, Phase 4) a ?pay=1 job asks "What base pay are you targeting for this
  *  position?", a wording no rule knows: the saved salary fills it after one label-mapping call,
  *  and a second such job makes no call (the wording is cached).
+ *  ... and (section 14, Phase 6, the memory page) Export is one zip holding the seeded salary and
+ *  the chat diary; the salary forgotten on the memory page is gone everywhere, and the next
+ *  base pay job asks for it.
  */
 import { _electron as electron } from "playwright";
 import { spawn, spawnSync } from "child_process";
@@ -92,7 +95,8 @@ for role, url in [("Business Intelligence Analyst", ${JSON.stringify(JOB)}),
                   ("Analyst (Phenom)", ${JSON.stringify(JOB + "?phenom=1")}),
                   ("Analyst (address)", ${JSON.stringify(JOB + "?address=1")}),
                   ("Analyst (base pay)", ${JSON.stringify(JOB + "?pay=1")}),
-                  ("Analyst (base pay again)", ${JSON.stringify(JOB + "?pay=1&again=1")})]:
+                  ("Analyst (base pay again)", ${JSON.stringify(JOB + "?pay=1&again=1")}),
+                  ("Analyst (salary forgotten)", ${JSON.stringify(JOB + "?pay=1&again=2")})]:
     rid = recs.add(role, "Acme Corp", 70, "", jd_label=role,
                    data={"status": "approved", "fit": 85, "render_profile": prof,
                          "source_job": {"url": url, "source_id": "mock:" + role, "location": "Bloomington, IL"},
@@ -105,8 +109,8 @@ recs.close()
 print(json.dumps(ids))
 `], { encoding: "utf8" });
 if (seed.status !== 0) { console.error(seed.stderr); process.exit(1); }
-const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK, RID_AGAIN, RID_PHENOM, RID_ADDRESS, RID_PAY, RID_PAY2] = JSON.parse(seed.stdout.trim().split("\n").pop());
-check("seeded ten queued jobs", RID > 0 && RID_AGAIN > 0 && RID_PHENOM > 0 && RID_ADDRESS > 0 && RID_PAY2 > 0, `ids ${RID}..${RID_PAY2}`);
+const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK, RID_AGAIN, RID_PHENOM, RID_ADDRESS, RID_PAY, RID_PAY2, RID_FORGOT] = JSON.parse(seed.stdout.trim().split("\n").pop());
+check("seeded eleven queued jobs", RID > 0 && RID_AGAIN > 0 && RID_PHENOM > 0 && RID_ADDRESS > 0 && RID_PAY2 > 0 && RID_FORGOT > 0, `ids ${RID}..${RID_FORGOT}`);
 
 // ---- 3. the engine on the test model, then the real app ---------------------------------
 // The shell strips the test-model flags from any engine it spawns (real model only, CLAUDE.md
@@ -374,6 +378,40 @@ const log10 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.f
 check("the second run makes no mapping call", /ready to send/i.test(pay2Done) && log10.includes("pay:95000") && calls2 === calls1,
       `calls ${calls1} -> ${calls2} | ${pay2Done} | ${JSON.stringify(log10)}`);
 check("nothing was submitted on the base pay runs", !log9.includes("submitted") && !log10.includes("submitted"));
+
+// ---- 14. the memory page, Phase 6: Export holds what the brain knows; Forget really forgets ------
+// Export is one zip: memory.json with the salary saved in section 13, and the chat diary with the
+// address typed in section 12. Then the salary is forgotten on the memory page itself (its row's
+// Forget, then the in-row confirm), and the next application with the base pay question asks.
+const zipCheck = spawnSync(PY, ["-c", `
+import io, json, sys, urllib.request, zipfile
+z = zipfile.ZipFile(io.BytesIO(urllib.request.urlopen("http://127.0.0.1:57000/api/memory/export.zip").read()))
+names = z.namelist()
+mem = z.read("memory.json").decode()
+diary = "".join(z.read(n).decode() for n in names if n.startswith("diary/"))
+print(json.dumps({"names": names, "salary": "95000" in mem, "diary": "60606" in diary}))
+`], { encoding: "utf8" });
+const zr = (() => { try { return JSON.parse(zipCheck.stdout.trim().split("\n").pop()); } catch { return {}; } })();
+check("Export holds the seeded salary and the diary", zr.salary === true && zr.diary === true && (zr.names || []).includes("memory.json"),
+      zipCheck.stdout.slice(-300) + zipCheck.stderr.slice(-300));
+await win.click("#acctBtn");
+await win.click("#menuProfile");
+await win.waitForSelector('#memAnswerRows [data-id="key:@salary"]', { timeout: 30_000 });
+check("the memory page shows the saved salary with where it came from",
+      /\$95,000/.test(await win.locator('#memAnswerRows [data-id="key:@salary"]').textContent()));
+await win.click('#memAnswerRows [data-id="key:@salary"] [data-mem="forget"]');
+await win.click('#memAnswerRows [data-id="key:@salary"] [data-mem="forget-yes"]');
+await win.waitForFunction(() => !document.querySelector('#memAnswerRows [data-id="key:@salary"]'), null, { timeout: 30_000 });
+const afterForget = await win.evaluate(() => fetch("/api/answers/basics").then((r) => r.json()));
+check("Forget clears the salary everywhere forms read it", !(afterForget.values || {}).salary, JSON.stringify(afterForget.values || afterForget));
+await win.click("[data-nav=autoapply]");
+await win.waitForSelector(`.aa-row[data-id="${RID_FORGOT}"]`, { timeout: 30_000 });
+await win.click(`.aa-row[data-id="${RID_FORGOT}"] [data-act]`);
+const forgotAsk = await waitBar(/the application asks|ready to send|stopped|have a look|needs/i, 150_000);
+check("Forget the salary on the memory page, the next application asks for it",
+      /the application asks/i.test(forgotAsk) && /base pay|salary/i.test(forgotAsk), forgotAsk);
+const logForgot = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+check("the forgotten salary was not filled", !logForgot.includes("pay:95000") && !logForgot.includes("submitted"), JSON.stringify(logForgot));
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

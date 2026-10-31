@@ -584,10 +584,15 @@ def _section(html, start, end_marker="</section>\n      <!-- Why was this skippe
 
 
 def test_the_card_sits_between_work_authorization_and_saved_answers_with_one_accent():
-    view = _section(HTML, 'id="view-answers"')
-    wa, basics, saved = view.index('id="ansWaCard"'), view.index('id="ansBasicsCard"'), view.index('id="ansLibH"')
+    # (Phase 6) Your answers lives on the memory page: Work and visa holds the work authorization
+    # editor, Form answers holds this card (shown for the questions still open) and the saved
+    # answers under it.
+    view = HTML[HTML.index('id="view-profile"'):HTML.index("<!-- ============ TEMPLATES ============ -->")]
+    wa, basics, saved = view.index('id="ansWaCard"'), view.index('id="ansBasicsCard"'), view.index('id="ansList"')
     assert wa < basics < saved
-    assert view.count("btn-primary") == 1                                # Work authorization's Save
+    # Work authorization's Save, and the empty memory's Upload resume (never shown together
+    # with anything to edit: an empty memory has no work authorization rows)
+    assert view.count("btn-primary") == 2 and 'class="btn btn-primary" id="profUploadBtn"' in view
     card = view[basics:saved]
     assert 'id="ansBasicsSave"' in card and "btn btn-ghost btn-sm\" id=\"ansBasicsSave\"" in card
     assert 'id="ansEeo"' in card and 'id="ansEeo"' not in view[wa:basics]   # the decline sits by its rows

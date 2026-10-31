@@ -294,6 +294,9 @@ class AnswerLibrary:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
+        # A deleted or changed answer is overwritten on disk, never left in a free page (the
+        # memory page's Forget, docs/applicant-brain.md Phase 6).
+        self.conn.execute("PRAGMA secure_delete=ON")
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS answers ("
             " key TEXT PRIMARY KEY, question TEXT NOT NULL, answer TEXT NOT NULL,"

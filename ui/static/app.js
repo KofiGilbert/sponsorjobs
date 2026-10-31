@@ -3613,242 +3613,581 @@
     }
   });
 
-  /* ---------------------------------------------------------------- my profile */
-  const ID_FIELDS = {
-    name: "idName", email: "idEmail", phone: "idPhone", address: "idAddress",
-    linkedin: "idLinkedin", github: "idGithub", blog: "idBlog",
-  };
-  const ID_LABELS = {
-    name: "Name", email: "Email", phone: "Phone", address: "Address",
-    linkedin: "LinkedIn", github: "GitHub", blog: "Website",
-  };
-  let PROF_IDENTITY = {};   // last-loaded identity, so Cancel can restore without a refetch
+  /* ---------------------------------------------------------------- the memory page
+     "What SponsorJobs knows about you" (docs/applicant-brain.md, section 13, Phase 6). It
+     replaced the profile form: every fact the app keeps, grouped (About you, Work and visa,
+     Form answers, Self-identification, Career, Resume choices, History), each with where it
+     came from and when, Edit and Forget. Self-identification answers read "Saved" or "Prefer not
+     to say" until the person taps Show (GET /api/memory/reveal, local only). Facts the chat
+     proposed wait as "I noted" chips until a tap saves them. Export is one zip; Erase everything
+     asks once, in the page. Your answers opens this page at Form answers (openAnswers). */
+  const MT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  const MEM = { data: null, editing: null, forgetting: null, adding: false, show: false, eeo: null,
+                origin: "", busy: false };
+  const MEM_BACK = { autoapply: ["nav.autoapply", "Auto-apply"], package: ["ans.backApp", "Application"],
+                     builder: ["choice.backResume", "Resume"], settings: ["mem.backSettings", "Settings"] };
+  const MEM_JUMP = [["about", "mem.about", "About you"], ["work", "mem.work", "Work and visa"],
+                    ["answers", "mem.answers", "Form answers"], ["eeo", "mem.eeo", "Self-identification"],
+                    ["career", "mem.career", "Career"], ["choices", "choice.title", "Resume choices"],
+                    ["history", "mem.history", "History"]];
+  const MEM_YN = [["Yes", "ans.yes", "Yes"], ["No", "ans.no", "No"]];
+  const memMeta = r => [r.source, r.when].filter(Boolean).join(", ");
+  const memBtn = (act, label, extra) => `<button class="btn btn-ghost btn-sm${extra || ""}" type="button" data-mem="${act}">${esc(label)}</button>`;
 
-  // The contact card wears two faces: a read-only "here's what I know" summary (the
-  // default, so the profile feels like memory, not a form) and the inputs, revealed
-  // only when you click Edit to correct something.
-  function renderIdentityKnown(identity) {
-    const id = identity || {};
-    const isUrl = k => k === "linkedin" || k === "github" || k === "blog";
-    const known = Object.keys(ID_FIELDS).filter(k => (id[k] || "").trim());
-    const rows = known.map(k => {
-      const v = id[k].trim();
-      const val = isUrl(k)
-        ? `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>`
-        : esc(v);
-      return `<div class="prof-known-row"><span class="prof-known-k">${ID_LABELS[k]}</span>`
-        + `<span class="prof-known-v">${val}</span></div>`;
-    });
-    const missing = Object.keys(ID_FIELDS).filter(k => !(id[k] || "").trim());
-    let html = rows.join("");
-    if (!rows.length) {
-      html = `<p class="prof-note">Nothing here yet, upload your resume and I'll fill it in.</p>`;
-    } else if (missing.length) {
-      html += `<p class="prof-note">I'll ask for the rest (${missing.map(k => (k === "linkedin" || k === "github") ? ID_LABELS[k] : ID_LABELS[k].toLowerCase()).join(", ")}) if a resume needs it.</p>`;
+  // One row: the label, the value, where it came from and when; Edit and Forget. Forget asks in
+  // the row itself, with "Also delete the chat lines where I said this" when a chat line said it.
+  function memRow(r, opts) {
+    const o = opts || {};
+    if (MEM.forgetting === r.id) {
+      return `<div class="ans-row mem-row is-editing mem-forget" data-id="${esc(r.id)}">
+        <div class="mem-forget-q">${esc(MT("mem.forgetQ", "Forget {what}? Forms and resumes stop using it.").replace("{what}", o.what || r.label.toLowerCase()))}</div>
+        ${r.chat ? `<label class="ans-check mem-chatlines"><input type="checkbox" data-mem-chat /> <span>${esc(MT("mem.alsoChat", "Also delete the chat lines where I said this"))}</span></label>` : ""}
+        <div class="ans-row-acts">${memBtn("forget-yes", MT("mem.forget", "Forget"), " ans-del")}${memBtn("cancel", MT("ans.cancel", "Cancel"))}
+          <span class="ans-note" data-mem-note></span></div></div>`;
     }
-    $("#idKnown").innerHTML = html;
+    if (MEM.editing === r.id && o.editor) return o.editor(r);
+    const value = o.value !== undefined ? o.value : esc(r.value || "");
+    return `<div class="ans-row mem-row${o.cls ? " " + o.cls : ""}" data-id="${esc(r.id)}">
+      <div class="ans-row-main"><div class="ans-q">${esc(r.label)}</div>
+        <div class="ans-a">${value}</div>
+        ${memMeta(r) ? `<div class="ans-meta">${esc(memMeta(r))}</div>` : ""}</div>
+      <div class="ans-row-acts">${o.noEdit ? "" : memBtn("edit", MT("aa.edit", "Edit"))}${o.noForget ? "" : memBtn("forget", MT("mem.forget", "Forget"), " ans-del")}</div></div>`;
+  }
+  // The inline editor of a single value: a box, a country list, or Yes / No.
+  function memEditor(r, kind, cur) {
+    let input;
+    if (kind === "country") {
+      const names = (MEM.data.countries || []);
+      input = `<select class="fld" data-mem-in>${names.concat(cur && !names.includes(cur) ? [cur] : []).map(n =>
+        `<option value="${esc(n)}"${n === cur ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>`;
+    } else if (kind === "yn") {
+      input = `<div class="ans-seg" data-mem-seg>${MEM_YN.map(([v, k, f]) =>
+        `<button type="button" class="ans-seg-b${cur === v ? " is-on" : ""}" data-v="${v}" aria-pressed="${cur === v}">${esc(MT(k, f))}</button>`).join("")}</div>`;
+    } else if (kind === "terms") {
+      input = `<div class="ans-seg" data-mem-seg>${[["always", "mem.termsAlways", "Accept without asking me"], ["ask", "mem.termsAsk", "Ask me on each site"]].map(([v, k, f]) =>
+        `<button type="button" class="ans-seg-b${(cur || "always") === v ? " is-on" : ""}" data-v="${v}" aria-pressed="${(cur || "always") === v}">${esc(MT(k, f))}</button>`).join("")}</div>`;
+    } else if (kind === "choice") {
+      const list = ((MEM.data.eeo_choices || {})[r.field] || []);
+      input = `<div class="ans-seg" data-mem-seg>${list.map(c =>
+        `<button type="button" class="ans-seg-b${cur === c.code ? " is-on" : ""}" data-v="${esc(c.code)}" aria-pressed="${cur === c.code}">${esc(MT(c.code === "decline" ? "ans.ch.decline" : "ans.ch." + c.code, c.label))}</button>`).join("")}</div>`;
+    } else {
+      input = `<input class="fld" data-mem-in type="text" maxlength="300" value="${esc(cur || "")}" aria-label="${esc(r.label)}"${kind === "salary" ? ' inputmode="numeric"' : ""} />`;
+    }
+    return `<div class="ans-row mem-row is-editing" data-id="${esc(r.id)}" data-kind="${esc(kind)}">
+      <div class="ans-q">${esc(r.label)}</div>${input}
+      <div class="ans-row-acts">${memBtn("save", MT("ans.save", "Save"))}${memBtn("cancel", MT("ans.cancel", "Cancel"))}<span class="ans-note" data-mem-note></span></div></div>`;
   }
 
-  function setIdentityMode(editing) {
-    $("#identityForm").hidden = !editing;
-    $("#idKnown").hidden = editing;
+  async function memLoad() {
+    let d;
+    try { d = await api("/api/memory/page"); }
+    catch (e) { toast(e.message || MT("mem.loadFail", "Couldn't read your memory.")); return null; }
+    MEM.data = d;
+    const name = ((d.about || []).find(r => r.field === "name") || {}).value || "";
+    paintAccount({ identity: { name } });
+    memPaint();
+    return d;
+  }
+  function loadProfile() { return memLoad(); }      // every older door to "My profile" lands here
+
+  function memPaint() {
+    const d = MEM.data;
+    if (!d) return;
+    const empty = !d.has_profile;
+    $("#profImport").hidden = !empty;
+    $("#memAddResume").hidden = empty;
+    $("#memJump").innerHTML = MEM_JUMP.map(([k, key, f]) => `<button type="button" class="mem-jump-b" data-jump-to="${k}">${esc(MT(key, f))}</button>`).join("");
+    memPaintNoted(); memPaintNeeds(); memPaintAbout(); memPaintWork(); memPaintAnswers(); memPaintEeo(); memPaintCareer(); memPaintHistory();
+  }
+  function memPaintNoted() {
+    const list = MEM.data.noted || [];
+    $("#memNoted").hidden = !list.length;
+    $("#memNotedList").innerHTML = list.map(n => `<div class="mem-chip" data-fact="${n.fact}">
+      <span class="mem-chip-t">${esc(n.label)}: <b>${esc(n.value)}</b></span>
+      <span class="mem-chip-m">${esc(memMeta(n))}</span>
+      <span class="mem-chip-acts"><button class="btn btn-ghost btn-sm" type="button" data-noted="save">${esc(MT("mem.saveIt", "Save"))}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-noted="no">${esc(MT("choice.notQuite", "Not quite"))}</button></span></div>`).join("");
+  }
+  function memPaintNeeds() {
+    const list = MEM.data.needs || [];
+    $("#memNeeds").hidden = !list.length;
+    $("#memNeedsCount").textContent = list.length > 1 ? String(list.length) : "";
+    $("#memNeedsList").innerHTML = list.map((n, i) => `<div class="ans-needs mem-need" data-need="${i}">
+      <span class="ans-needs-q">${esc(n.text)}</span>
+      <span class="ans-needs-acts">${(n.acts || []).map((a, j) => `<button class="btn btn-ghost btn-sm" type="button" data-need-act="${j}">${esc(a.label)}</button>`).join("")}</span></div>`).join("");
+  }
+  function memPaintAbout() {
+    const rows = MEM.data.about || [];
+    const missing = ["name", "email", "phone", "address", "linkedin", "github", "blog"].filter(f => !rows.some(r => r.field === f));
+    $("#memAboutAdd").hidden = !missing.length || MEM.adding;
+    const LBL = { name: "Name", email: "Email", phone: "Phone", address: "Address", linkedin: "LinkedIn", github: "GitHub", blog: "Website" };
+    const add = MEM.adding ? `<div class="ans-row mem-row is-editing" data-id="add-contact">
+        <div class="mem-add-g"><select class="fld" data-mem-field aria-label="${esc(MT("mem.which", "Which detail"))}">${missing.map(f => `<option value="${f}">${esc(MT("mem.f." + f, LBL[f]))}</option>`).join("")}</select>
+        <input class="fld" data-mem-in type="text" maxlength="300" aria-label="${esc(MT("mem.value", "Value"))}" /></div>
+        <div class="ans-row-acts">${memBtn("add-save", MT("ans.save", "Save"))}${memBtn("cancel", MT("ans.cancel", "Cancel"))}<span class="ans-note" data-mem-note></span></div></div>` : "";
+    const isUrl = f => ["linkedin", "github", "blog"].includes(f);
+    $("#memAboutRows").innerHTML = add + (rows.length ? rows.map(r => memRow(Object.assign({}, r, { label: MT("mem.f." + r.field, r.label) }), {
+      value: isUrl(r.field) ? `<a href="${esc(/^https?:/i.test(r.value) ? r.value : "https://" + r.value)}" target="_blank" rel="noopener">${esc(r.value)}</a>` : esc(r.value),
+      editor: x => memEditor(x, "text", x.value),
+    })).join("") : (MEM.adding ? "" : `<div class="ans-empty">${esc(MT("mem.aboutEmpty", "Nothing yet. Add your resume and I fill this in."))}</div>`));
+  }
+  function memPaintWork() {
+    const rows = MEM.data.work || [];
+    $("#memWorkRows").innerHTML = rows.length ? rows.map(r => {
+      if (r.kind === "workauth") return memRow(Object.assign({}, r, { label: MT("ans.cc." + r.cc, r.label) }), { what: MT("mem.waWhat", "your work authorization for {c}").replace("{c}", r.label), cls: r.ended ? "is-ended" : "" });
+      if (r.kind === "citizenship") return memRow(r, { editor: x => memEditor(x, "country", x.value) });
+      if (r.kind === "relocate" || r.kind === "yes_no") return memRow(r, { editor: x => memEditor(x, "yn", x.value) });
+      return memRow(r, { noEdit: true });
+    }).join("") : `<div class="ans-empty">${esc(MT("mem.workEmpty", "Not saved yet. Edit work authorization and every form gets the same answer."))}</div>`;
+  }
+  function memPaintAnswers() {
+    const d = MEM.data, b = d.basics || {};
+    $("#memBasicsCount").textContent = b.total ? MT("ans.basicsCount", "{n} of {m}").replace("{n}", b.answered).replace("{m}", b.total) : "";
+    const open = (b.missing || []).length;
+    $("#memOpen").hidden = !open || !$("#memBasicsHome").hidden;
+    $("#memOpenT").textContent = MT(open === 1 ? "mem.open1" : "mem.openN", open === 1 ? "1 question every form asks is still open." : "{n} questions every form asks are still open.").replace("{n}", open);
+    const rows = d.answers || [];
+    $("#memAnswerRows").innerHTML = rows.map(r => memRow(r, {
+      editor: x => memEditor(x, r.kind === "terms" ? "terms" : r.kind === "salary" ? "salary" : "text", r.kind === "terms" ? "always" : (x.raw || x.value)),
+    })).join("");
+    $("#memAnswerRows").hidden = !rows.length;
+  }
+  function memPaintEeo() {
+    const d = MEM.data, rows = d.eeo || [];
+    $("#memEeoDecline").checked = !!d.eeo_decline;
+    const anySaved = rows.some(r => r.state === "saved");
+    $("#memEeoShow").hidden = !anySaved;
+    $("#memEeoShow").textContent = MEM.show ? MT("mem.hide", "Hide") : MT("mem.show", "Show");
+    $("#memEeoShow").setAttribute("aria-pressed", String(MEM.show));
+    $("#memEeoRows").innerHTML = rows.map(r => {
+      const shown = MEM.show && MEM.eeo && MEM.eeo[r.field];
+      const word = r.state === "saved" ? (shown ? esc(MEM.eeo[r.field]) : `<span class="mem-hidden">${esc(MT("mem.saved", "Saved"))}</span>`)
+        : r.state === "declined" ? esc(MT("ans.ch.decline", "Prefer not to say")) : `<span class="mem-dim">${esc(MT("mem.notAnswered", "Not answered"))}</span>`;
+      const label = MT("ans." + ({ gender: "gender", hispanic: "hispanic", race: "race", veteran: "veteran", disability: "disability" })[r.field], r.label);
+      return memRow(Object.assign({}, r, { label }), { value: word, noForget: !r.own,
+        editor: x => memEditor(x, "choice", MEM.eeo ? MEM.eeoCodes && MEM.eeoCodes[x.field] : "") });
+    }).join("");
   }
 
-  function profSection(title, html) {
-    return `<div class="prof-card"><div class="prof-card-h">${esc(title)}</div>${html}</div>`;
-  }
-
-  /* ------------------------------------------------- editable profile sections
-     The sections used to be read-only ("edited while you tailor a CV"), which left
-     bad saved data unfixable without a whole CV session, the Amazon case study
-     needed SQL surgery three times (obs #15). Now the profile screen IS the editor:
-     every section is inputs, Save writes both saved bags atomically server-side. */
-  let PROF_STATE = null;
-
-  function peInput(sec, i, key, val, ph, wide) {
-    return `<input class="fld pe-in${wide ? " pe-wide" : ""}" data-sec="${sec}" data-i="${i}" data-k="${key}"
-            value="${esc(val || "")}" placeholder="${esc(ph)}" spellcheck="false">`;
-  }
-
-  function peBullets(sec, i, bullets) {
-    return `<textarea class="fld pe-bullets" data-sec="${sec}" data-i="${i}" data-k="bullets" rows="3"
-            placeholder="One bullet per line…" spellcheck="false">${esc((bullets || []).join("\n"))}</textarea>`;
-  }
-
-  function peRowShell(sec, i, inner) {
-    return `<div class="pe-row">${inner}
-      <button class="btn btn-ghost btn-sm pe-del" data-del="${sec}" data-i="${i}" type="button" title="Remove">Remove</button>
-    </div>`;
-  }
-
-  function buildProfileEditor(p) {
-    const flat = [];
-    (p.experience || []).forEach(e => (e.roles || [e]).forEach(r => flat.push({
-      org: e.org || e.company || "", title: r.title || "", dates: r.dates || e.dates || "",
-      location: e.location || "", bullets: r.bullets || [],
-    })));
-    PROF_STATE = {
-      summary: p.summary || "",
-      experience: flat,
-      education: (p.education || []).map(ed => ({
-        school: ed.school || "", degree: ed.degree || "", date: ed.date || "",
-        location: ed.location || "",
-        courses: typeof ed.courses === "string" ? ed.courses : (ed.courses || []).join(", "),
-      })),
-      projects: (p.projects || []).map(pr => ({
-        org: pr.org || pr.title || "", link: pr.link || pr.url || "",
-        location: pr.location || "", dates: pr.dates || "", bullets: pr.bullets || [],
-      })),
-      extracurricular: (p.extracurricular || []).map(x => ({
-        title: x.title || "", date: x.date || "", bullets: x.bullets || [],
-      })),
-      interests: p.interests || "",
-      skills_input: p.skills_input || [],
-      declined: p.declined || [],
+  /* Career: the resume material, one entry at a time. An edit saves the whole material through
+     /api/profile/sections (the same save the profile form had), so nothing it did is lost. */
+  const CAR_SECS = [["roles", "experience", "mem.exp", "Experience", "mem.addRole", "Add a role"],
+                    ["schools", "education", "mem.edu", "Education", "mem.addSchool", "Add a school"],
+                    ["projects", "projects", "mem.projects", "Projects", "mem.addProject", "Add a project"],
+                    ["extracurricular", "extracurricular", "mem.extra", "Activities", "mem.addActivity", "Add an activity"]];
+  const CAR_FIELDS = {
+    experience: [["org", "Company"], ["title", "Job title"], ["dates", "Feb 2018 - May 2020"], ["location", "City, ST"]],
+    education: [["school", "School"], ["degree", "Degree"], ["date", "Sept 2024 - Dec 2025"], ["location", "City, ST"], ["courses", "Courses (comma-separated)"]],
+    projects: [["org", "Project name"], ["link", "https://github.com/..."], ["location", "Tech (shows right-aligned)"], ["dates", "Dates (optional)"]],
+    extracurricular: [["title", "Team Captain, Intramural Soccer"], ["date", "Dates (optional)"]],
+  };
+  const CAR_DECLINABLE = ["github", "blog", "linkedin", "projects", "courses", "address", "extracurricular", "interests"];
+  function carState() {
+    const c = (MEM.data && MEM.data.career) || {};
+    const pick = (o, ks) => Object.fromEntries(ks.map(k => [k, o[k] || ""]));
+    return {
+      summary: c.summary || "",
+      experience: (c.roles || []).map(r => Object.assign(pick(r, ["org", "title", "dates", "location"]), { bullets: r.bullets || [] })),
+      education: (c.schools || []).map(r => pick(r, ["school", "degree", "date", "location", "courses"])),
+      projects: (c.projects || []).map(r => Object.assign(pick(r, ["org", "link", "location", "dates"]), { bullets: r.bullets || [] })),
+      extracurricular: (c.extracurricular || []).map(r => Object.assign(pick(r, ["title", "date"]), { bullets: r.bullets || [] })),
+      interests: c.interests || "", skills_input: c.skills_input || [], declined: c.declined || [],
     };
-    renderProfileEditor();
+  }
+  function carEditor(sec, i, entry) {
+    const flds = CAR_FIELDS[sec].map(([k, ph]) => `<input class="fld" data-car="${k}" value="${esc(entry[k] || "")}" placeholder="${esc(ph)}" aria-label="${esc(ph)}" spellcheck="false" />`).join("");
+    const bul = "bullets" in entry || sec !== "education" ? `<textarea class="fld" data-car="bullets" rows="4" placeholder="${esc(MT("mem.bulletsPh", "One bullet per line"))}" spellcheck="false">${esc((entry.bullets || []).join("\n"))}</textarea>` : "";
+    return `<div class="ans-row mem-row is-editing" data-car-sec="${sec}" data-car-i="${i}">
+      <div class="mem-car-g">${flds}</div>${sec === "education" ? "" : bul}
+      <div class="ans-row-acts">${memBtn("car-save", MT("ans.save", "Save"))}${memBtn("cancel", MT("ans.cancel", "Cancel"))}<span class="ans-note" data-mem-note></span></div></div>`;
+  }
+  function carRow(sec, i, e, src) {
+    const id = `career:${sec}:${i}`;
+    const title = sec === "experience" ? [e.title, e.org].filter(Boolean).join(", ") : sec === "education" ? [e.degree, e.school].filter(Boolean).join(", ")
+      : sec === "projects" ? e.org : e.title;
+    const sub = sec === "experience" ? [e.dates, e.location] : sec === "education" ? [e.date, e.location] : sec === "projects" ? [e.dates, e.location] : [e.date];
+    const n = (e.bullets || []).length;
+    const value = [sub.filter(Boolean).map(esc).join(" · "), n ? esc(MT(n === 1 ? "mem.bullet1" : "mem.bullets", n === 1 ? "1 bullet" : "{n} bullets").replace("{n}", n)) : ""].filter(Boolean).join(" · ");
+    if (MEM.editing === id) return carEditor(sec, i, e);
+    return memRow({ id, label: title || MT("mem.untitled", "Untitled"), source: src.source, when: src.when }, { value, what: title || MT("mem.thisEntry", "this entry") });
+  }
+  function memPaintCareer() {
+    const c = MEM.data.career || {}, st = carState();
+    const parts = [];
+    for (const [key, sec, hk, hf, ak, af] of CAR_SECS) {
+      const list = st[sec], srcs = c[key] || [];
+      const adding = MEM.editing === `career:${sec}:new`;
+      parts.push(`<div class="mem-subh"><h3 class="mem-h3">${esc(MT(hk, hf))} <span class="ans-count">${list.length || ""}</span></h3>${adding ? "" : memBtn("car-add", MT(ak, af)).replace('data-mem="car-add"', `data-mem="car-add" data-sec="${sec}"`)}</div>`);
+      const rows = list.map((e, i) => carRow(sec, i, e, srcs[i] || {})).join("");
+      const blank = Object.fromEntries(CAR_FIELDS[sec].map(([k]) => [k, ""]));
+      if (sec !== "education") blank.bullets = [];
+      parts.push(`<div class="ans-list mem-rows">${adding ? carEditor(sec, "new", blank) : ""}${rows || (adding ? "" : `<div class="ans-empty">${esc(MT("mem.none", "None yet."))}</div>`)}</div>`);
+    }
+    // Skills: the groups read from the resume, and the ones the person named.
+    const groups = Object.entries(c.skills || {});
+    parts.push(`<div class="mem-subh"><h3 class="mem-h3">${esc(MT("mem.skills", "Skills"))}</h3></div>`);
+    const named = MEM.editing === "career:skills_input" ? `<div class="ans-row mem-row is-editing" data-id="career:skills_input">
+        <div class="ans-q">${esc(MT("mem.named", "Skills you named"))}</div>
+        <textarea class="fld" data-car="skills_input" rows="3" placeholder="${esc(MT("mem.skillsPh", "Comma-separated skills"))}" spellcheck="false">${esc((st.skills_input || []).join(", "))}</textarea>
+        <div class="ans-row-acts">${memBtn("car-save-f", MT("ans.save", "Save"))}${memBtn("cancel", MT("ans.cancel", "Cancel"))}<span class="ans-note" data-mem-note></span></div></div>`
+      : memRow({ id: "career:skills_input", label: MT("mem.named", "Skills you named") }, {
+          value: (st.skills_input || []).length ? `<span class="mem-tags">${st.skills_input.map(s => `<span class="mem-tag">${esc(s)}</span>`).join("")}</span>` : `<span class="mem-dim">${esc(MT("mem.noneNamed", "None. The Skills section is packed from your resume."))}</span>`,
+          noForget: !(st.skills_input || []).length, what: MT("mem.namedWhat", "the skills you named") });
+    parts.push(`<div class="ans-list mem-rows">${groups.map(([k, v]) => `<div class="ans-row mem-row"><div class="ans-row-main"><div class="ans-q">${esc(k)}</div>
+        <div class="ans-a"><span class="mem-tags">${String(v).split(",").map(x => x.trim()).filter(Boolean).map(x => `<span class="mem-tag">${esc(x)}</span>`).join("")}</span></div>
+        <div class="ans-meta">${esc(MT("mem.fromResume", "From your resume"))}</div></div></div>`).join("")}${named}</div>`);
+    // Summary, interests, and what the person skipped on purpose.
+    const one = (fid, label, val, ph, rows) => MEM.editing === fid ? `<div class="ans-row mem-row is-editing" data-id="${fid}">
+        <div class="ans-q">${esc(label)}</div><textarea class="fld" data-car="${fid.split(":")[1]}" rows="${rows}" placeholder="${esc(ph)}" spellcheck="false">${esc(val)}</textarea>
+        <div class="ans-row-acts">${memBtn("car-save-f", MT("ans.save", "Save"))}${memBtn("cancel", MT("ans.cancel", "Cancel"))}<span class="ans-note" data-mem-note></span></div></div>`
+      : memRow({ id: fid, label }, { value: val ? esc(val) : `<span class="mem-dim">${esc(MT("mem.notSet", "Not written yet"))}</span>`, noForget: !val, what: label.toLowerCase() });
+    parts.push(`<div class="mem-subh"><h3 class="mem-h3">${esc(MT("mem.more", "More on your resume"))}</h3></div>`);
+    const dec = MEM.editing === "career:declined" ? `<div class="ans-row mem-row is-editing" data-id="career:declined">
+        <div class="ans-q">${esc(MT("mem.skipped", "Skipped on purpose"))}</div>
+        <div class="pe-declined">${CAR_DECLINABLE.map(k => `<label class="pe-dec"><input type="checkbox" data-dec="${k}"${st.declined.includes(k) ? " checked" : ""}> ${esc(MT("mem.dec." + k, k))}</label>`).join("")}</div>
+        <div class="ans-row-acts">${memBtn("car-save-f", MT("ans.save", "Save"))}${memBtn("cancel", MT("ans.cancel", "Cancel"))}<span class="ans-note" data-mem-note></span></div></div>`
+      : memRow({ id: "career:declined", label: MT("mem.skipped", "Skipped on purpose") }, {
+          value: st.declined.length ? esc(st.declined.map(k => MT("mem.dec." + k, k)).join(", ")) : `<span class="mem-dim">${esc(MT("mem.skippedNone", "Nothing. Checked items are never asked about again."))}</span>`, noForget: true });
+    parts.push(`<div class="ans-list mem-rows">${one("career:summary", MT("mem.summary", "Summary"), st.summary, MT("mem.summaryPh", "A short professional summary"), 3)}${one("career:interests", MT("mem.interests", "Interests"), st.interests, MT("mem.interestsPh", "Competitive soccer; building apps"), 2)}${dec}</div>`);
+    // Notes from chat: preferences and "leave out" lines that shape every resume.
+    const notes = MEM.data.notes || [];
+    if (notes.length) {
+      parts.push(`<div class="mem-subh"><h3 class="mem-h3">${esc(MT("mem.notes", "From your chats"))} <span class="ans-count">${notes.length}</span></h3></div>`);
+      parts.push(`<div class="ans-list mem-rows">${notes.map(n => memRow(n, { noEdit: true, what: MT("mem.noteWhat", "this note") })).join("")}</div>`);
+    }
+    $("#memCareerBody").innerHTML = parts.join("");
+  }
+  function memPaintHistory() {
+    const h = MEM.data.history || { applications: [], documents: [] }, dy = MEM.data.diary || {};
+    const parts = [];
+    parts.push(`<div class="mem-subh"><h3 class="mem-h3">${esc(MT("mem.apps", "Applications"))} <span class="ans-count">${(h.applications || []).length || ""}</span></h3></div>`);
+    parts.push(`<div class="ans-list mem-rows">${(h.applications || []).length ? h.applications.map(a => {
+      const bits = [];
+      if ((a.shown || []).length) bits.push(MT("mem.showed", "Showed {x}.").replace("{x}", memList(a.shown)));
+      if ((a.filled || []).length) bits.push(MT("mem.filled", "Filled {x} from memory.").replace("{x}", memList(a.filled)));
+      if (a.other) bits.push(MT(a.other === 1 ? "mem.other1" : "mem.otherN", a.other === 1 ? "1 other answer from memory." : "{n} other answers from memory.").replace("{n}", a.other));
+      for (const e of a.eeo || []) bits.push(e.charAt(0).toUpperCase() + e.slice(1) + ".");
+      return `<div class="ans-row mem-row"><div class="ans-row-main"><div class="ans-q">${esc([a.company, a.role].filter(Boolean).join(", "))}</div>
+        ${bits.length ? `<div class="ans-a">${esc(bits.join(" "))}</div>` : ""}<div class="ans-meta">${esc(a.when)}</div></div></div>`;
+    }).join("") : `<div class="ans-empty">${esc(MT("mem.appsEmpty", "No applications yet. Each resume you save lands here with what it showed."))}</div>`}</div>`);
+    if ((h.documents || []).length) {
+      parts.push(`<div class="mem-subh"><h3 class="mem-h3">${esc(MT("mem.docs", "Files you shared"))} <span class="ans-count">${h.documents.length}</span></h3></div>`);
+      parts.push(`<div class="ans-list mem-rows">${h.documents.map(d => memRow({ id: d.id, label: d.name || MT("mem.file", "A file"),
+        source: d.channel === "telegram" ? MT("mem.onTelegram", "On Telegram") : MT("mem.inApp", "In the app"), when: d.when },
+        { noEdit: true, what: d.name, value: esc(MT(d.facts === 1 ? "mem.gave1" : "mem.gaveN", d.facts === 1 ? "Gave 1 fact" : "Gave {n} facts").replace("{n}", d.facts || 0)) })).join("")}</div>`);
+    }
+    parts.push(`<div class="mem-subh"><h3 class="mem-h3">${esc(MT("mem.diary", "Chat diary"))}</h3></div>`);
+    const oneDay = dy.first && dy.first === dy.last;
+    parts.push(`<p class="mem-note">${esc(dy.lines ? (oneDay ? MT("mem.diaryDay", "{n} lines kept, all from {a}. Forget a fact above to delete the lines it came from.")
+      : MT("mem.diaryN", "{n} lines kept, {a} to {b}. Forget a fact above to delete the lines it came from."))
+      .replace("{n}", fmtNum(dy.lines)).replace("{a}", isoDay(dy.first)).replace("{b}", isoDay(dy.last)) : MT("mem.diaryEmpty", "Nothing yet. What you tell me in chat is kept here, word for word."))}</p>`);
+    $("#memHistBody").innerHTML = parts.join("");
+  }
+  const memList = xs => xs.length < 2 ? (xs[0] || "") : xs.slice(0, -1).join(", ") + " " + MT("mem.and", "and") + " " + xs[xs.length - 1];
+  const fmtNum = n => Number(n || 0).toLocaleString();
+  function isoDay(s) {
+    if (!s) return "";
+    const d = new Date(s + "T12:00:00");
+    return isNaN(d) ? s : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
   }
 
-  function renderProfileEditor() {
-    const s = PROF_STATE;
-    const card = (title, body, addSec) => `<div class="prof-card pe-card">
-      <div class="prof-card-h">${title}${addSec ? `<button class="btn btn-ghost btn-sm pe-add" data-add="${addSec}" type="button">+ Add</button>` : ""}</div>
-      ${body}</div>`;
+  // Open the page. ``origin`` names the page a door came from (the back link); ``focus`` lands on
+  // a section ("answers", "basics": the questions every form asks still open, "choices").
+  async function openMemory(opts) {
+    const o = opts || {};
+    MEM.origin = o.origin || "";
+    MEM.editing = null; MEM.forgetting = null; MEM.adding = false; MEM.show = false; MEM.eeo = null;
+    const back = MEM_BACK[MEM.origin];
+    $("#memBack").hidden = !back;
+    if (back) $("#memBackLbl").textContent = MT(back[0], back[1]);
+    $("#memBasicsHome").hidden = true;
+    $("#ansWaCard").hidden = true; memWaLabel();
+    $("#memEraseBox").hidden = true;
+    showView("profile");
+    document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("is-active"));
+    if (!o.focus) window.scrollTo(0, 0);
+    await Promise.all([memLoad(), ansLoad(), loadLinkedinReview()]);
+    if (o.focus === "answers" || o.focus === "basics") $("#memAnswers")?.scrollIntoView({ block: "start" });
+    if (o.focus === "basics") { memBasicsOpen(); requestAnimationFrame(() => requestAnimationFrame(basFocusFirstOpen)); }
+    if (o.focus === "choices") {
+      const row = o.rule && document.querySelector(`#ansChoiceList [data-rule="${Number(o.rule)}"]`);
+      (row || $("#ansChoicesCard"))?.scrollIntoView({ block: "center" });
+      if (row) { row.classList.add("is-focus"); setTimeout(() => row.classList.remove("is-focus"), 2400); }
+    }
+  }
+  function openProfilePage() { return openMemory({}); }
+  $("#memBack")?.addEventListener("click", () => {
+    const o = MEM.origin;
+    if (o === "package") showView("package");
+    else if (o === "builder") showView("builder");
+    else if (o === "settings") { showView("dashboard"); loadDashboard(); openSettings(); }
+    else document.querySelector('[data-nav="autoapply"]')?.click();
+  });
+  $("#memJump")?.addEventListener("click", e => {
+    const b = e.target.closest("[data-jump-to]");
+    if (b) document.querySelector(`[data-jump="${b.dataset.jumpTo}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
 
-    const parts = [];
-    parts.push(card("Summary",
-      `<textarea class="fld pe-bullets" data-sec="summary" rows="3"
-        placeholder="A short professional summary (summary-led templates open with it)…"
-        spellcheck="false">${esc(s.summary)}</textarea>`));
-    parts.push(card("Experience", s.experience.map((r, i) => peRowShell("experience", i,
-      peInput("experience", i, "org", r.org, "Company") +
-      peInput("experience", i, "title", r.title, "Job title") +
-      peInput("experience", i, "dates", r.dates, "Feb 2018 - May 2020") +
-      peInput("experience", i, "location", r.location, "City, ST") +
-      peBullets("experience", i, r.bullets))).join(""), "experience"));
-    parts.push(card("Education", s.education.map((ed, i) => peRowShell("education", i,
-      peInput("education", i, "school", ed.school, "School") +
-      peInput("education", i, "degree", ed.degree, "Degree") +
-      peInput("education", i, "date", ed.date, "Sept 2024 - Dec 2025") +
-      peInput("education", i, "location", ed.location, "City, ST") +
-      peInput("education", i, "courses", ed.courses, "Courses (comma-separated)", true))).join(""), "education"));
-    parts.push(card("Projects", s.projects.map((pr, i) => peRowShell("projects", i,
-      peInput("projects", i, "org", pr.org, "Project name") +
-      peInput("projects", i, "link", pr.link, "https://github.com/…") +
-      peInput("projects", i, "location", pr.location, "Tech (shows right-aligned)") +
-      peInput("projects", i, "dates", pr.dates, "Dates (optional)") +
-      peBullets("projects", i, pr.bullets))).join(""), "projects"));
-    parts.push(card("Extracurricular", s.extracurricular.map((x, i) => peRowShell("extracurricular", i,
-      peInput("extracurricular", i, "title", x.title, "Team Captain, Intramural Soccer") +
-      peInput("extracurricular", i, "date", x.date, "Dates (optional)") +
-      peBullets("extracurricular", i, x.bullets))).join(""), "extracurricular"));
-    parts.push(card("Interests",
-      `<input class="fld pe-in pe-wide" data-sec="interests" value="${esc(s.interests)}"
-        placeholder="Competitive soccer and basketball; building apps…" spellcheck="false">`));
-    parts.push(card("Stated skills",
-      `<textarea class="fld pe-bullets" data-sec="skills_input" rows="3" spellcheck="false"
-        placeholder="Comma-separated skills, the Skills section is packed from these at build…">${esc(s.skills_input.join(", "))}</textarea>`));
-    parts.push(card("Skipped on purpose",
-      `<div class="pe-declined">` +
-      ["github", "blog", "linkedin", "projects", "courses", "address", "extracurricular", "interests"]
-        .map(k => `<label class="pe-dec"><input type="checkbox" data-dec="${k}"
-          ${s.declined.includes(k) ? "checked" : ""}> ${k}</label>`).join("") +
-      `</div><p class="prof-note">Checked items are never asked about again.</p>`));
-    parts.push(`<div class="pe-foot">
-      <button class="btn btn-primary" id="peSave" type="button">Save profile sections</button>
-      <span class="prof-saved" id="peSaved"></span></div>`);
+  // The answers every form asks that are still open: the one card (also setup's last step),
+  // showing only those rows, with its own Save.
+  function memBasicsOpen() {
+    const card = $("#ansBasicsCard");
+    if (!card || card.classList.contains("is-lent")) return;
+    const ask = wizBasicsAsk({ missing: ((MEM.data || {}).basics || {}).missing || [] });
+    if (!ask.rows.length) return;
+    basRows(card, ask);
+    // the terms switch is a Form answers row of its own here
+    card.querySelector("#ansTerms")?.closest(".ans-check")?.classList.add("wiz-off");
+    card.querySelector("#ansTerms")?.closest(".ans-check")?.nextElementSibling?.classList.add("wiz-off");
+    card.classList.add("is-rows");
+    const foot = card.querySelector(".ans-foot");
+    if (foot && !$("#memBasicsCancel")) {
+      const x = document.createElement("button");
+      x.type = "button"; x.id = "memBasicsCancel"; x.className = "btn btn-ghost btn-sm";
+      x.textContent = MT("ans.cancel", "Cancel");
+      x.addEventListener("click", () => { memBasicsClose(); memPaintAnswers(); });
+      foot.querySelector("#ansBasicsSave")?.after(x);
+    }
+    $("#memBasicsHome").hidden = false;
+    $("#memOpen").hidden = true;
+  }
+  function memBasicsClose() {
+    const card = $("#ansBasicsCard");
+    $("#memBasicsHome").hidden = true;
+    card?.classList.remove("is-rows");
+    card?.querySelectorAll(".wiz-off, .wiz-first").forEach(n => n.classList.remove("wiz-off", "wiz-first"));
+  }
+  $("#memOpenBtn")?.addEventListener("click", async () => { await basLoad(); memBasicsOpen(); basFocusFirstOpen(); });
 
-    const root = $("#profSections");
-    root.innerHTML = parts.join("");
+  function memWaLabel() {
+    const open = !$("#ansWaCard").hidden;
+    $("#memWaEdit").textContent = open ? MT("mem.done", "Done") : MT("mem.editWa", "Edit work authorization");
+  }
+  function memWaOpen(cc) {
+    if (cc && ANS.data) { ANS.country = cc; paintWa(); }
+    $("#ansWaCard").hidden = false; memWaLabel();
+    $("#ansWaCard").scrollIntoView({ block: "nearest" });
+  }
+  $("#memWaEdit")?.addEventListener("click", () => {
+    if ($("#ansWaCard").hidden) memWaOpen(); else { $("#ansWaCard").hidden = true; memWaLabel(); }
+  });
 
-    root.querySelectorAll(".pe-in, .pe-bullets").forEach(el => el.addEventListener("input", () => {
-      const sec = el.dataset.sec, i = el.dataset.i, k = el.dataset.k;
-      const val = el.value;
-      if (sec === "summary") PROF_STATE.summary = val;
-      else if (sec === "interests") PROF_STATE.interests = val;
-      else if (sec === "skills_input") PROF_STATE.skills_input = val.split(",").map(x => x.trim()).filter(Boolean);
-      else if (k === "bullets") PROF_STATE[sec][i].bullets = val.split("\n").map(x => x.trim()).filter(Boolean);
-      else PROF_STATE[sec][i][k] = val;
-    }));
-    root.querySelectorAll("[data-dec]").forEach(cb => cb.addEventListener("change", () => {
-      const k = cb.dataset.dec;
-      PROF_STATE.declined = PROF_STATE.declined.filter(d => d !== k);
-      if (cb.checked) PROF_STATE.declined.push(k);
-    }));
-    root.querySelectorAll(".pe-del").forEach(b => b.addEventListener("click", () => {
-      PROF_STATE[b.dataset.del].splice(Number(b.dataset.i), 1);
-      renderProfileEditor();
-    }));
-    root.querySelectorAll(".pe-add").forEach(b => b.addEventListener("click", () => {
-      const blank = { experience: { org: "", title: "", dates: "", location: "", bullets: [] },
-                      education: { school: "", degree: "", date: "", location: "", courses: "" },
-                      projects: { org: "", link: "", location: "", dates: "", bullets: [] },
-                      extracurricular: { title: "", date: "", bullets: [] } }[b.dataset.add];
-      PROF_STATE[b.dataset.add].push(blank);
-      renderProfileEditor();
-    }));
-    $("#peSave").addEventListener("click", async () => {
-      const btn = $("#peSave"), note = $("#peSaved");
-      btn.disabled = true; note.textContent = "Saving…";
-      try {
-        const res = await fetch("/api/profile/sections", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(PROF_STATE),
-        });
-        const r = await res.json().catch(() => ({}));
-        if (!res.ok || r.error) throw new Error(r.error || ("HTTP " + res.status));
-        note.textContent = "Saved. Every new resume builds from this.";
-        paintAccount(r);
-      } catch (err) {
-        note.textContent = err.message;
-      } finally {
-        btn.disabled = false;
+  // Saving one value: the server returns the whole page again.
+  async function memPost(url, body, row) {
+    const note = row && row.querySelector("[data-mem-note]");
+    try {
+      const d = await api(url, body);
+      MEM.editing = null; MEM.forgetting = null; MEM.adding = false;
+      if (d && d.about) { MEM.data = d; memPaint(); } else await memLoad();
+      return d;
+    } catch (err) {
+      if (note) note.textContent = err.message || MT("profile.answers.failed", "Couldn't save.");
+      else toast(err.message || MT("profile.answers.failed", "Couldn't save."));
+      row?.querySelectorAll("button").forEach(b => { b.disabled = false; });
+      throw err;
+    }
+  }
+  function memFind(id) {
+    const d = MEM.data || {};
+    for (const k of ["about", "work", "answers", "eeo", "notes"]) {
+      const r = (d[k] || []).find(x => x.id === id);
+      if (r) return r;
+    }
+    const docs = ((d.history || {}).documents || []).find(x => x.id === id);
+    return docs || null;
+  }
+  async function memReveal() {
+    const r = await api("/api/memory/reveal");
+    MEM.eeo = r.values || {};
+    MEM.eeoCodes = {};
+    const ch = (MEM.data || {}).eeo_choices || {};
+    for (const [f, w] of Object.entries(MEM.eeo)) {
+      const c = (ch[f] || []).find(x => x.label === w || (f === "hispanic" && ((x.code === "yes" && w === "Hispanic or Latino") || (x.code === "no" && w === "Not Hispanic or Latino"))));
+      MEM.eeoCodes[f] = c ? c.code : "";
+    }
+  }
+  $("#memEeoShow")?.addEventListener("click", async () => {
+    if (MEM.show) { MEM.show = false; MEM.eeo = null; memPaintEeo(); return; }
+    try { await memReveal(); MEM.show = true; } catch (err) { toast(err.message); }
+    memPaintEeo();
+  });
+  $("#memEeoDecline")?.addEventListener("change", async e => {
+    const box = e.target, want = box.checked;
+    box.disabled = true;
+    try { await api("/api/answers/basics", { fields: {}, eeo_decline: want }); await memLoad(); await basLoad(); }
+    catch (err) { box.checked = !want; toast(err.message); }
+    box.disabled = false;
+  });
+
+  // Every row's buttons, on every card of the page.
+  $("#view-profile")?.addEventListener("click", async e => {
+    const seg = e.target.closest("[data-mem-seg] [data-v]");
+    if (seg) {
+      seg.parentElement.querySelectorAll(".ans-seg-b").forEach(x => { x.classList.toggle("is-on", x === seg); x.setAttribute("aria-pressed", String(x === seg)); });
+      return;
+    }
+    const b = e.target.closest("[data-mem]");
+    if (!b || !$("#view-profile").contains(b)) return;
+    const row = b.closest("[data-id], [data-car-sec]");
+    const id = row && row.dataset.id, act = b.dataset.mem;
+    if (act === "edit") {
+      if (id.startsWith("wa:")) { memWaOpen(id.slice(3)); return; }
+      MEM.editing = id; MEM.forgetting = null;
+      if (id.startsWith("eeo:") && !MEM.eeo) { try { await memReveal(); } catch { /* the editor opens empty */ } }
+      memPaint();
+      document.querySelector(`#view-profile [data-id="${CSS.escape(id)}"] [data-mem-in], #view-profile [data-id="${CSS.escape(id)}"] textarea, #view-profile [data-car-sec] .fld`)?.focus();
+      return;
+    }
+    if (act === "cancel") { MEM.editing = null; MEM.forgetting = null; MEM.adding = false; memPaint(); return; }
+    if (act === "forget") { MEM.forgetting = id; MEM.editing = null; memPaint(); return; }
+    if (act === "car-add") { MEM.editing = `career:${b.dataset.sec}:new`; MEM.forgetting = null; memPaint(); document.querySelector("#memCareerBody [data-car-i='new'] .fld")?.focus(); return; }
+    row?.querySelectorAll("button").forEach(x => { x.disabled = true; });
+    try {
+      if (act === "forget-yes") {
+        const chat = !!row.querySelector("[data-mem-chat]:checked");
+        if (id.startsWith("career:")) {
+          const [, sec, i] = id.split(":");
+          await memPost("/api/memory/career", i !== undefined ? { sec, i: Number(i) } : { sec }, row);
+        } else {
+          await memPost("/api/memory/forget", { id, chat }, row);
+        }
+        if (id.startsWith("key:") || id.startsWith("eeo:") || id.startsWith("wa:")) { ansLoad(); }
+        toast(MT("mem.forgotten", "Forgotten."));
+      } else if (act === "save") {
+        const kind = row.dataset.kind;
+        const v = kind === "yn" || kind === "terms" || kind === "choice"
+          ? (row.querySelector("[data-mem-seg] .is-on") || {}).dataset?.v || "" : (row.querySelector("[data-mem-in]") || {}).value || "";
+        if (id.startsWith("eeo:")) {
+          await api("/api/answers/basics", { fields: { [id.slice(4)]: v } });
+          MEM.eeo = null; MEM.show = false; MEM.editing = null;
+          await memLoad();
+          await basLoad();
+        } else {
+          const r = memFind(id) || {};
+          const key = id.startsWith("contact:") ? id : id.startsWith("key:") ? id.slice(4) : (r.key || "");
+          await memPost("/api/memory/answer", { key, value: v }, row);
+          ansLoad();
+        }
+        toast(MT("aa.saved", "Saved"));
+      } else if (act === "add-save") {
+        const fld = row.querySelector("[data-mem-field]").value, v = row.querySelector("[data-mem-in]").value.trim();
+        await memPost("/api/memory/answer", { key: "contact:" + fld, value: v }, row);
+      } else if (act === "car-save" || act === "car-save-f") {
+        await carSave(row);
       }
-    });
+    } catch { /* the row says why */ }
+  });
+  async function carSave(row) {
+    const st = carState();
+    if (row.dataset.carSec) {
+      const sec = row.dataset.carSec, i = row.dataset.carI;
+      const entry = {};
+      row.querySelectorAll("[data-car]").forEach(el => {
+        entry[el.dataset.car] = el.dataset.car === "bullets" ? el.value.split("\n").map(x => x.trim()).filter(Boolean) : el.value.trim();
+      });
+      if (i === "new") st[sec].push(entry); else st[sec][Number(i)] = Object.assign(st[sec][Number(i)], entry);
+    } else {
+      const fid = row.dataset.id.split(":")[1];
+      if (fid === "declined") st.declined = [...row.querySelectorAll("[data-dec]:checked")].map(x => x.dataset.dec);
+      else if (fid === "skills_input") st.skills_input = row.querySelector("[data-car]").value.split(",").map(x => x.trim()).filter(Boolean);
+      else st[fid] = row.querySelector("[data-car]").value.trim();
+    }
+    const note = row.querySelector("[data-mem-note]");
+    const res = await fetch("/api/profile/sections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(st) });
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok || r.error) {
+      if (note) note.textContent = r.error || ("HTTP " + res.status);
+      row.querySelectorAll("button").forEach(b => { b.disabled = false; });
+      throw new Error(r.error || "save");
+    }
+    MEM.editing = null;
+    await memLoad();
+    invalidateJobDetail();
+    toast(MT("mem.carSaved", "Saved. Every new resume builds from this."));
   }
+  $("#memAboutAdd")?.addEventListener("click", () => { MEM.adding = true; MEM.editing = null; memPaintAbout(); $("#memAboutRows [data-mem-in]")?.focus(); });
+  $("#memNotedList")?.addEventListener("click", async e => {
+    const b = e.target.closest("[data-noted]");
+    if (!b) return;
+    const chip = b.closest("[data-fact]");
+    chip.querySelectorAll("button").forEach(x => { x.disabled = true; });
+    try {
+      await memPost("/api/memory/noted", { fact: Number(chip.dataset.fact), save: b.dataset.noted === "save" });
+      if (b.dataset.noted === "save") { toast(MT("aa.saved", "Saved")); ansLoad(); }
+    } catch { chip.querySelectorAll("button").forEach(x => { x.disabled = false; }); }
+  });
+  $("#memNeedsList")?.addEventListener("click", async e => {
+    const b = e.target.closest("[data-need-act]");
+    if (!b) return;
+    const n = (MEM.data.needs || [])[Number(b.closest("[data-need]").dataset.need)];
+    const a = n && (n.acts || [])[Number(b.dataset.needAct)];
+    if (!a) return;
+    if (a.act === "edit_wa") { memWaOpen(n.cc); return; }
+    if (a.act === "edit") {
+      MEM.editing = a.value; memPaint();
+      document.querySelector(`#view-profile [data-id="${CSS.escape(a.value)}"]`)?.scrollIntoView({ block: "center" });
+      return;
+    }
+    b.closest(".ans-needs-acts").querySelectorAll("button").forEach(x => { x.disabled = true; });
+    try {
+      if (a.act === "settle") await memPost("/api/brain/conflicts/settle", { key: n.key, value: a.value });
+      else if (a.act === "keep_salary") await memPost("/api/memory/answer", { key: "@salary", value: a.value });
+      else if (a.act === "forget") await memPost("/api/memory/forget", { id: a.value });
+      else if (a.act === "confirm") await memPost("/api/memory/confirm", { fact: Number(a.value) });
+      await memLoad(); ansLoad();
+      toast(MT("aa.saved", "Saved"));
+    } catch { /* toast said why */ }
+  });
+  $("#memExport")?.addEventListener("click", () => {
+    window.location.href = "/api/memory/export.zip" + ($("#memExportFiles").checked ? "?files=1" : "");
+  });
+  $("#memErase")?.addEventListener("click", () => { $("#memEraseBox").hidden = false; $("#memErase").hidden = true; $("#memEraseYes").focus(); });
+  $("#memEraseNo")?.addEventListener("click", () => { $("#memEraseBox").hidden = true; $("#memErase").hidden = false; $("#memEraseResumes").checked = false; });
+  $("#memEraseYes")?.addEventListener("click", async () => {
+    const btn = $("#memEraseYes");
+    btn.disabled = true;
+    try {
+      await api("/api/memory/erase", { resumes: $("#memEraseResumes").checked });
+      $("#memEraseBox").hidden = true; $("#memErase").hidden = false; $("#memEraseResumes").checked = false;
+      toast(MT("mem.erased", "Erased. SponsorJobs no longer knows anything about you."));
+      await Promise.all([memLoad(), ansLoad(), loadLinkedinReview()]);
+      loadPhoto();
+    } catch (err) { toast(err.message || MT("mem.eraseFail", "Couldn't erase.")); }
+    btn.disabled = false;
+  });
 
-  function renderProfileSections(p) {
-    const parts = [];
-    const roleEntries = (e) => e.roles || [e];
-    if ((p.experience || []).length) {
-      parts.push(profSection("Experience", p.experience.map(e => {
-        const org = esc(e.org || e.company || "");
-        const meta = [e.location, e.dates].filter(Boolean).map(esc).join(" · ");
-        const roles = roleEntries(e).map(r => {
-          const bullets = (r.bullets || []).map(b => `<li>${esc(b)}</li>`).join("");
-          return `<div class="prof-role"><b>${esc(r.title || "")}</b>${r.dates && r.dates !== e.dates ? ` <span class="prof-dim">${esc(r.dates)}</span>` : ""}${bullets ? `<ul>${bullets}</ul>` : ""}</div>`;
-        }).join("");
-        return `<div class="prof-entry"><div class="prof-entry-h"><span>${org}</span><span class="prof-dim">${meta}</span></div>${roles}</div>`;
-      }).join("")));
+  // Read a resume into memory (the empty state's primary, or "Read another resume" above).
+  async function memReadResume(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const msg = $("#profImportMsg"), btn = $("#profUploadBtn");
+    msg.hidden = false; msg.className = "prof-import-msg working";
+    msg.textContent = MT("mem.reading", "Reading your resume...");
+    if (btn) btn.textContent = MT("mem.readingBtn", "Reading...");
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const res = await fetch("/api/profile/from_cv", { method: "POST", body: fd });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok || r.error) throw new Error(r.error || ("HTTP " + res.status));
+      const s = r.summary || {};
+      const plur = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+      msg.className = "prof-import-msg ok";
+      msg.textContent = `Done${s.name ? ", " + s.name : ""}: I now know ${plur(s.roles || 0, "role")}, `
+        + `${plur(s.skills || 0, "skill group")} and ${plur(s.education || 0, "school")}. Everything is below.`;
+      await memLoad();
+      invalidateJobDetail();   // match now reflects the freshly-imported profile
+      if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
+      if ((r.missing || []).length) openProfileDetails(r.missing);   // the same step as the wizard
+    } catch (err) {
+      msg.className = "prof-import-msg err";
+      msg.textContent = MT("mem.readFail", "Couldn't read that resume: ") + err.message;
+    } finally {
+      if (btn) btn.textContent = MT("mem.upload", "Upload resume");
+      e.target.value = "";   // allow re-uploading the same file
     }
-    if ((p.education || []).length) {
-      parts.push(profSection("Education", p.education.map(ed =>
-        `<div class="prof-entry"><div class="prof-entry-h"><span>${esc(ed.school || "")}</span><span class="prof-dim">${[ed.location, ed.date].filter(Boolean).map(esc).join(" · ")}</span></div>
-         <div class="prof-dim">${esc(ed.degree || "")}</div>${ed.courses ? `<div class="prof-courses">${esc(typeof ed.courses === "string" ? ed.courses : (ed.courses || []).join(", "))}</div>` : ""}</div>`
-      ).join("")));
-    }
-    const skills = p.skills || {};
-    if (Object.keys(skills).length) {
-      parts.push(profSection("Skills", `<div class="prof-skills">${Object.entries(skills).map(([k, v]) =>
-        `<div class="prof-skline"><b>${esc(k)}:</b> ${esc(v)}</div>`).join("")}</div>`));
-    }
-    if ((p.projects || []).length) {
-      parts.push(profSection("Projects", p.projects.map(pr =>
-        `<div class="prof-entry"><div class="prof-entry-h"><span>${esc(pr.title || pr.org || "")}</span><span class="prof-dim">${esc(pr.dates || "")}</span></div>
-         ${(pr.bullets || []).length ? `<ul>${pr.bullets.map(b => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}</div>`
-      ).join("")));
-    }
-    if ((p.extracurricular || []).length) {
-      parts.push(profSection("Extracurricular", p.extracurricular.map(x =>
-        `<div class="prof-entry"><div class="prof-entry-h"><span>${esc(x.title || "")}</span><span class="prof-dim">${esc(x.date || "")}</span></div>
-         ${(x.bullets || []).length ? `<ul>${x.bullets.map(b => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}</div>`
-      ).join("")));
-    }
-    if ((p.interests || "").trim()) {
-      parts.push(profSection("Interests", `<div class="prof-dim">${esc(p.interests)}</div>`));
-    }
-    return parts.join("");
   }
+  $("#profCvFile")?.addEventListener("change", memReadResume);
+  $("#profCvFile0")?.addEventListener("change", memReadResume);
 
   /* The sidebar-foot identity. Signed in, the foot shows the account's email and the menu head
      shows the profile name over that email; signed out, the profile name (or "Your profile") and
@@ -3892,27 +4231,6 @@
     } catch (err) { toast(err.message || "Couldn't save that photo."); }
     finally { e.target.value = ""; }
   });
-
-  async function loadProfile() {
-    let p;
-    try { p = await api("/api/profile"); }
-    catch { p = { has_profile: false, identity: {} }; }
-    paintAccount(p);
-    PROF_IDENTITY = p.identity || {};
-    for (const [key, id] of Object.entries(ID_FIELDS)) $("#" + id).value = PROF_IDENTITY[key] || "";
-    renderIdentityKnown(PROF_IDENTITY);
-    // Read-only by default when we already know something; brand-new users see the
-    // inputs directly so they're never stuck behind an Edit click.
-    const hasIdentity = Object.keys(ID_FIELDS).some(k => (PROF_IDENTITY[k] || "").trim());
-    $("#idEdit").hidden = !hasIdentity;
-    setIdentityMode(!hasIdentity);
-    buildProfileEditor(p);
-    $("#profEmpty").hidden = !!p.has_profile;
-    $("#profSecNote").hidden = true;
-    $("#idSaved").textContent = "";
-    paintAnswers(p.answers || {});
-    loadLinkedinReview();
-  }
 
   /* ---- LinkedIn review: the extension reads the person's OWN profile page while they have
      it open (read-only, never clicks or edits) and the app scores it. This paints the stored
@@ -3985,74 +4303,6 @@
     catch { b.textContent = I18N.t("li.copyFailed", "Select and copy"); }
     setTimeout(() => { b.textContent = was; }, 1800);
   }));
-
-  /* ---- application answers: the profile card is a door to Your answers (openAnswers). */
-  function paintAnswers(a) {
-    const el = $("#profAnsSum");
-    if (!el) return;
-    const bits = [];
-    if (a.work_auth_us) bits.push(I18N.t("ans.sumAuth", "Authorized in the US: {v}").replace("{v}", a.work_auth_us === "Yes" ? I18N.t("ans.yes", "Yes") : I18N.t("ans.no", "No")));
-    if (a.needs_sponsorship) bits.push(I18N.t("ans.sumSponsor", "Sponsorship: {v}").replace("{v}",
-      { Yes: I18N.t("ans.sponsorNowShort", "now"), Future: I18N.t("ans.sponsorFutureShort", "in the future"), No: I18N.t("ans.no", "No") }[a.needs_sponsorship] || ""));
-    el.textContent = bits.length ? bits.join(" · ") : I18N.t("ans.sub", "Answer once. Every application reuses it.");
-  }
-  $("#profAnsOpen")?.addEventListener("click", () => openAnswers("profile"));
-
-  $("#idEdit").addEventListener("click", () => { setIdentityMode(true); $("#idEdit").hidden = true; });
-  $("#idCancel").addEventListener("click", () => {
-    for (const [key, id] of Object.entries(ID_FIELDS)) $("#" + id).value = PROF_IDENTITY[key] || "";
-    setIdentityMode(false);
-    $("#idEdit").hidden = false;
-    $("#idSaved").textContent = "";
-  });
-
-  // Profile-first: drop a resume, we parse it into the whole profile.
-  $("#profCvFile")?.addEventListener("change", async e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const msg = $("#profImportMsg"), btn = $("#profUploadBtn");
-    msg.hidden = false; msg.className = "prof-import-msg working";
-    msg.textContent = "Reading your resume and filling your profile…";
-    if (btn) btn.textContent = "Reading…";
-    try {
-      const fd = new FormData(); fd.append("file", file);
-      const res = await fetch("/api/profile/from_cv", { method: "POST", body: fd });
-      const r = await res.json().catch(() => ({}));
-      if (!res.ok || r.error) throw new Error(r.error || ("HTTP " + res.status));
-      const s = r.summary || {};
-      const plur = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
-      msg.className = "prof-import-msg ok";
-      msg.textContent = `Done${s.name ? ", " + s.name : ""}: pulled ${plur(s.roles || 0, "role")}, `
-        + `${plur(s.skills || 0, "skill group")}, and ${plur(s.education || 0, "degree")}. `
-        + "Review below and edit anything.";
-      await loadProfile();
-      invalidateJobDetail();   // match now reflects the freshly-imported profile
-      if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
-      if ((r.missing || []).length) openProfileDetails(r.missing);   // the same step as the wizard
-    } catch (err) {
-      msg.className = "prof-import-msg err";
-      msg.textContent = "Couldn't build your profile, " + err.message;
-    } finally {
-      if (btn) btn.textContent = "Upload resume";
-      e.target.value = "";   // allow re-uploading the same file
-    }
-  });
-
-  $("#identityForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const body = {};
-    for (const [key, id] of Object.entries(ID_FIELDS)) body[key] = $("#" + id).value.trim();
-    try {
-      await api("/api/profile/identity", body);
-      invalidateJobDetail();   // identity feeds the match; keep the open role in sync
-      PROF_IDENTITY = body;
-      renderIdentityKnown(PROF_IDENTITY);
-      setIdentityMode(false);          // drop back to the read-only "known" face
-      $("#idEdit").hidden = false;
-      $("#idSaved").textContent = "Saved, used by autofill, your resume letterhead, and cover letters.";
-    } catch { $("#idSaved").textContent = "Couldn't save."; }
-    setTimeout(() => { $("#idSaved").textContent = ""; }, 4000);
-  });
 
   /* ------------------------------------------------------------- inbox (§5)
      Read-first: only application mail (verifications + recruiter replies) comes back. Lives on
@@ -4673,7 +4923,7 @@
     teardownCvi();   // leaving via the sidebar ends any in-progress live interview (no leaked meter or pane)
     document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("is-active", x === n));
     if (n.dataset.nav !== "jobs") stopFeedPoll();
-    if (n.dataset.nav === "profile") { loadProfile(); showView("profile"); }
+    if (n.dataset.nav === "profile") { openMemory({}); }
     else if (n.dataset.nav === "cvs") { loadCvs(); showView("cvs"); }
     else if (n.dataset.nav === "templates") { loadTemplates(); showView("templates"); }
     else if (n.dataset.nav === "jobs") { loadJobsFeed(); showView("jobs"); }
@@ -7802,12 +8052,8 @@
   });
   // Direct open: the profile nav-item was removed on purpose (one door policy), so the
   // account menu and Auto-apply's "Add the details" both come through here.
-  function openProfilePage() {
-    loadProfile();
-    showView("profile");
-    // No nav item owns this page, so none stays lit (the last page's item did).
-    document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("is-active"));
-  }
+  // (openProfilePage is the memory page's openMemory: no nav item owns that page, so none
+  // stays lit.)
   $("#menuProfile")?.addEventListener("click", () => { closeAcctMenu(); openProfilePage(); });
 
   // ---- Language picker (opens from the account menu; uses the client-side i18n layer) ----
@@ -8349,30 +8595,13 @@
   }
   function closeSettings() { if (setModal) setModal.hidden = true; ntStopPoll(); }
 
-  // ---- Memory (P1): what SponsorJobs learned about you, and full local control over it ----
-  async function renderMemory() {
-    const list = $("#memList"); if (!list) return;
-    let d;
-    try { d = await api("/api/memory"); } catch { list.innerHTML = ""; return; }
+  // ---- Memory: Settings keeps a door to the memory page (Phase 6), where every fact is seen,
+  // edited, forgotten, exported and erased. ----
+  function renderMemory() {
     const count = $("#memCount");
-    if (count) count.textContent = d.turns
-      ? `${d.facts.length} fact${d.facts.length === 1 ? "" : "s"} from ${d.turns} turn${d.turns === 1 ? "" : "s"}.`
-      : "Nothing remembered yet.";
-    if (!d.facts.length) { list.innerHTML = ""; return; }
-    list.innerHTML = d.facts.map(f => `
-      <div class="mem-item" data-id="${f.id}">
-        <span class="mem-type mem-${esc(f.type)}">${esc(f.type)}</span>
-        <span class="mem-val">${esc(f.value || f.key)}</span>
-        ${f.provenance ? `<span class="mem-prov">${esc(f.provenance)}</span>` : ""}
-        <button class="mem-del" data-del title="Forget this" type="button">&times;</button>
-      </div>`).join("");
-    list.querySelectorAll(".mem-item").forEach(el => {
-      el.querySelector("[data-del]")?.addEventListener("click", async () => {
-        await fetch(`/api/memory/fact/${el.dataset.id}`, { method: "DELETE" });
-        renderMemory();
-      });
-    });
+    if (count) count.textContent = "";
   }
+  $("#memOpenSettings")?.addEventListener("click", () => { closeSettings(); openMemory({ origin: "settings" }); });
   $("#memAddBtn")?.addEventListener("click", async () => {
     const ta = $("#memAddText"), text = (ta?.value || "").trim();
     if (!text) { toast("Write something for me to remember."); return; }
@@ -8381,9 +8610,9 @@
       await api("/api/memory/ingest", { text });
       if (ta) ta.value = "";
       toast("Remembered. I'll draw on it when it helps.");
-      renderMemory();
+      memLoad();
     } catch (err) { toast(err.message || "Couldn't save that."); }
-    finally { btn.disabled = false; btn.textContent = "Remember this"; }
+    finally { btn.disabled = false; btn.textContent = MT("mem.rememberBtn", "Remember this"); }
   });
   $("#memAssessBtn")?.addEventListener("click", async () => {
     const text = ($("#memAddText")?.value || "").trim();
@@ -8399,11 +8628,11 @@
       out.innerHTML = `<div class="mem-assess-yes"><b>Yes, this belongs on your resume.</b> ${esc(a.reason || "")}
         ${a.competency ? `<span class="scr-comp">${esc(a.competency)}</span>` : ""}
         ${a.headline ? `<div class="mem-assess-head">Framed: ${esc(a.headline)}</div>` : ""}
-        <button class="btn btn-primary btn-sm" id="memHighlight" type="button">Save as a highlight</button></div>`;
+        <button class="btn btn-ghost btn-sm" id="memHighlight" type="button">Save as a highlight</button></div>`;
       $("#memHighlight")?.addEventListener("click", async () => {
         try { await api("/api/memory/ingest", { text, source: "highlight" });
           if ($("#memAddText")) $("#memAddText").value = "";
-          out.hidden = true; toast("Saved as a highlight."); renderMemory();
+          out.hidden = true; toast("Saved as a highlight."); memLoad();
         } catch (err) { toast(err.message || "Couldn't save."); }
       });
     } else {
@@ -8420,15 +8649,9 @@
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || "Couldn't read that document.");
       toast(`Remembered "${file.name}". I'll draw on it when it helps.`);
-      renderMemory();
+      memLoad();
     } catch (err) { toast(err.message || "Couldn't read that document."); }
-    finally { if (lab) { lab.textContent = "Upload a document"; lab.style.pointerEvents = ""; } e.target.value = ""; }
-  });
-  $("#memExport")?.addEventListener("click", () => { window.location.href = "/api/memory/export"; });
-  $("#memErase")?.addEventListener("click", async () => {
-    if (!confirm("Erase everything SponsorJobs has learned about you? This clears your saved facts, your form answers, your interview notes and the conversation history. Your resumes and applications stay. This cannot be undone.")) return;
-    try { await fetch("/api/memory/erase", { method: "POST" }); toast("Memory erased."); renderMemory(); }
-    catch { toast("Couldn't erase memory."); }
+    finally { if (lab) { lab.textContent = MT("mem.addDoc", "Add a document"); lab.style.pointerEvents = ""; } e.target.value = ""; }
   });
 
   // ---- Connections settings pane: Telegram (connect in-app), browser extension, Gmail ----
@@ -9517,8 +9740,6 @@
   const ANS = { data: null, country: "US", wa: null, origin: "autoapply", editing: null, adding: false };
   const ANS_CC = { US: "US", UK: "UK", CA: "Canada", AU: "Australia", EU: "EU" };
   const ANS_YN = [["Yes", "ans.yes", "Yes"], ["No", "ans.no", "No"]];
-  const ANS_BACK = { autoapply: ["nav.autoapply", "Auto-apply"], profile: ["acct.myProfile", "My profile"],
-                     package: ["ans.backApp", "Application"], builder: ["choice.backResume", "Resume"] };
   function waEntry(cc) {
     const c = (ANS.wa.countries = ANS.wa.countries || {});
     return (c[cc] = c[cc] || { status: "", authorized: "", sponsor_now: "", sponsor_future: "", auth_end: "" });
@@ -9550,37 +9771,16 @@
   }
   $("#aaAnsBtn")?.addEventListener("click", () => openAnswers("autoapply"));
 
-  // opts.focus "basics": straight to the answers every form asks (the agent's pre-run prompt).
-  async function openAnswers(origin, opts) {
-    ANS.origin = origin || "autoapply";
-    const [k, f] = ANS_BACK[ANS.origin] || ANS_BACK.autoapply;
-    $("#ansBackLbl").textContent = T(k, f);
-    ANS.editing = null; ANS.adding = false;
-    $("#ansQ").value = "";
-    showView("answers");
-    window.scrollTo(0, 0);
-    await ansLoad();
-    if (opts && opts.focus === "choices") {
-      const row = opts.rule && document.querySelector(`#ansChoiceList [data-rule="${Number(opts.rule)}"]`);
-      (row || $("#ansChoicesCard"))?.scrollIntoView({ block: "center" });
-      if (row) { row.classList.add("is-focus"); setTimeout(() => row.classList.remove("is-focus"), 2400); }
-    }
-    if (opts && opts.focus === "basics") {
-      $("#ansBasicsCard")?.scrollIntoView({ block: "start" });
-      // After the next frame: the button that opened this page was just hidden, and the
-      // browser moves focus off a hidden button when it next renders.
-      requestAnimationFrame(() => requestAnimationFrame(basFocusFirstOpen));
-    }
+  // Your answers is a door into the memory page's Form answers (Phase 6), so every link to it
+  // still works: opts.focus "basics" opens the answers every form asks still open (the agent's
+  // pre-run prompt), "choices" a saved choice. The back link is named for where it came from.
+  function openAnswers(origin, opts) {
+    const o = opts || {};
+    return openMemory({ origin: origin === "profile" ? "" : (origin || "autoapply"), focus: o.focus || "answers", rule: o.rule });
   }
-  $("#ansBack")?.addEventListener("click", () => {
-    if (ANS.origin === "profile") { loadProfile(); showView("profile"); }
-    else if (ANS.origin === "package") { showView("package"); }
-    else if (ANS.origin === "builder") { showView("builder"); }
-    else { loadAutoApply(); showView("autoapply"); }
-  });
   async function ansLoad() {
     let d;
-    try { d = await api("/api/answers"); }
+    try { d = await api("/api/answers?view=memory"); }
     catch (e) { $("#ansList").innerHTML = `<div class="ans-empty">${esc(e.message)}</div>`; return; }
     ANS.data = d;
     ANS.wa = JSON.parse(JSON.stringify(d.work_auth || { countries: {}, relocate: "" }));
@@ -9636,6 +9836,7 @@
         <span class="ans-needs-acts"><button class="btn btn-ghost btn-sm" type="button" data-offer-act="save">${esc(chT("choice.saveChoice", "Save as a choice"))}</button>
           <button class="btn btn-ghost btn-sm" type="button" data-offer-act="no">${esc(chT("choice.notNow", "Not now"))}</button></span></div>`).join("");
     offers.hidden = !(d.offers || []).length;
+    chcAddPaint();
     if (!rows.length) {
       list.innerHTML = `<div class="ans-empty">${esc(d.available === false
         ? chT("choice.off", "Your memory is off on this computer, so no choices are kept.")
@@ -9676,6 +9877,49 @@
       const note = row.querySelector("[data-chc-note]");
       if (note) note.textContent = err.message; else toast(err.message);
     }
+  });
+  // Add a choice (docs/applicant-brain.md, 8.4): pick one or two of your own roles or projects,
+  // what to do with them and for which jobs, all from lists. No free text to parse.
+  function chcAddPaint() {
+    const box = $("#chcAddBox"), d = CHC.data || {};
+    const its = d.items || [];
+    $("#chcAdd").hidden = !d.available || !its.length || !box.hidden;
+    if (box.hidden) return;
+    const picked = [...box.querySelectorAll("[data-chc-item]:checked")].map(x => x.value);
+    const acts = CHC_ACTIONS[picked.length === 2 ? "two" : "one"];
+    const opt = (v, label) => `<option value="${esc(v)}">${esc(label)}</option>`;
+    const wasAct = box.querySelector('[data-chc="action"]')?.value, wasScope = box.querySelector('[data-chc="scope"]')?.value;
+    box.innerHTML = `<div class="ans-row is-editing chc-edit chc-new">
+      <div class="chc-edit-q">${esc(chT("choice.pick", "Pick one role or project, or two to compare"))}</div>
+      <div class="chc-items">${its.map(i => `<label class="chc-item"><input type="checkbox" data-chc-item value="${esc(i.id)}"${picked.includes(i.id) ? " checked" : ""}${!picked.includes(i.id) && picked.length >= 2 ? " disabled" : ""}> ${esc(i.label)}</label>`).join("")}</div>
+      <div class="chc-edit-g">
+        <label class="ans-field"><span>${esc(chT("choice.what", "What it does"))}</span>
+          <select class="fld" data-chc="action">${acts.map(([v, k, f]) => opt(v, chT(k, f))).join("")}</select></label>
+        <label class="ans-field"><span>${esc(chT("choice.where", "For which jobs"))}</span>
+          <select class="fld" data-chc="scope">${(d.scopes || []).map(o => opt(`${o.kind}|${o.value}`, o.label)).join("")}</select></label>
+      </div>
+      <div class="ans-row-acts"><button class="btn btn-ghost btn-sm" type="button" data-chc-new="save"${picked.length ? "" : " disabled"}>${esc(chT("ans.save", "Save"))}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-chc-new="cancel">${esc(chT("ans.cancel", "Cancel"))}</button>
+        <span class="ans-note" data-chc-note></span></div></div>`;
+    const a = box.querySelector('[data-chc="action"]'), sc = box.querySelector('[data-chc="scope"]');
+    if (wasAct && [...a.options].some(o => o.value === wasAct)) a.value = wasAct;
+    if (wasScope) sc.value = wasScope;
+  }
+  $("#chcAdd")?.addEventListener("click", () => { $("#chcAddBox").hidden = false; $("#chcAddBox").innerHTML = ""; chcAddPaint(); $("#chcAddBox [data-chc-item]")?.focus(); });
+  $("#chcAddBox")?.addEventListener("change", e => { if (e.target.matches("[data-chc-item]")) chcAddPaint(); });
+  $("#chcAddBox")?.addEventListener("click", async e => {
+    const b = e.target.closest("[data-chc-new]");
+    if (!b) return;
+    const box = $("#chcAddBox");
+    if (b.dataset.chcNew === "cancel") { box.hidden = true; box.innerHTML = ""; chcAddPaint(); return; }
+    const items = [...box.querySelectorAll("[data-chc-item]:checked")].map(x => x.value);
+    const [kind, ...rest] = box.querySelector('[data-chc="scope"]').value.split("|");
+    b.disabled = true;
+    try {
+      const d = await api("/api/brain/rules", { items, action: box.querySelector('[data-chc="action"]').value, scope_kind: kind, scope_value: rest.join("|") });
+      CHC.data = d; CHC.editing = null; box.hidden = true; box.innerHTML = ""; paintChoices();
+      toast(chT("choice.savedT", "Saved."));
+    } catch (err) { b.disabled = false; box.querySelector("[data-chc-note]").textContent = err.message; }
   });
   $("#ansChoiceOffers")?.addEventListener("click", async e => {
     const b = e.target.closest("[data-offer-act]");
@@ -9744,6 +9988,8 @@
       ANS.data.work_auth = r.work_auth;
       paintWa();
       note.textContent = T("ans.waSaved", "Saved. Every form gets this answer.");
+      await memLoad();
+      setTimeout(() => { $("#ansWaCard").hidden = true; memWaLabel(); }, 900);
     } catch (err) { note.textContent = err.message || T("profile.answers.failed", "Couldn't save."); }
     btn.disabled = false;
     setTimeout(() => { note.textContent = ""; }, 4000);
@@ -9932,6 +10178,7 @@
     }
     const r = await api("/api/answers/basics", { fields, eeo_decline: $("#ansEeo").checked });
     basTake(r);
+    if (!$("#ansBasicsCard").classList.contains("is-lent")) { memBasicsClose(); memLoad(); }
     if (ANS.data) {
       ANS.data.eeo_decline = !!r.eeo_decline;
       await ansRefresh({ keepEditor: true });    // the rows below show the same answers first
@@ -9979,17 +10226,17 @@
         <div class="ans-row-main">
           <div class="ans-q">${esc(r.question)}${r.source === "drafted" ? ` <span class="ans-tag" title="${esc(T("ans.draftedTip", "Drafted from your profile. Edit it to make it yours."))}">${esc(T("ans.drafted", "Drafted"))}</span>` : ""}</div>
           <div class="ans-a">${esc(r.answer)}</div>
-          <div class="ans-meta">${esc(r.uses ? T(r.uses === 1 ? "ans.used1" : "ans.used", r.uses === 1 ? "Used once, {when}" : "Used {n} times, last {when}").replace("{n}", r.uses).replace("{when}", ansWhen(r.last_used)) : T("ans.notUsed", "Not used yet"))}</div>
+          <div class="ans-meta">${esc([[r.from, r.when].filter(Boolean).join(", "), r.uses ? T(r.uses === 1 ? "ans.used1" : "ans.used", r.uses === 1 ? "Used once, {when}" : "Used {n} times, last {when}").replace("{n}", r.uses).replace("{when}", ansWhen(r.last_used)) : T("ans.notUsed", "Not used yet")].filter(Boolean).join(" · "))}</div>
         </div>
         <div class="ans-row-acts"><button class="btn btn-ghost btn-sm" type="button" data-ans="edit">${esc(T("aa.edit", "Edit"))}</button>
-          <button class="btn btn-ghost btn-sm ans-del" type="button" data-ans="delete" aria-label="${esc(T("ans.delete", "Delete"))}">${esc(T("ans.delete", "Delete"))}</button></div>
+          <button class="btn btn-ghost btn-sm ans-del" type="button" data-ans="delete" aria-label="${esc(T("mem.forget", "Forget"))}">${esc(T("mem.forget", "Forget"))}</button></div>
       </div>`).join("");
   }
   // ``keepEditor``: an answer being added or edited in the list stays open as typed (the card's
   // Save refreshes the list under it); the list repaints when that editor closes.
   async function ansRefresh(opts) {
     let d;
-    try { d = await api("/api/answers?q=" + encodeURIComponent($("#ansQ").value.trim())); } catch { return; }
+    try { d = await api("/api/answers?view=memory&q=" + encodeURIComponent($("#ansQ").value.trim())); } catch { return; }
     ANS.data.answers = d.answers; ANS.data.total = d.total;
     if (opts && opts.keepEditor && (ANS.adding || ANS.editing)) { $("#ansCount").textContent = d.total ? String(d.total) : ""; return; }
     paintAnsList(d.answers || [], d.total || 0);
@@ -10014,9 +10261,10 @@
     if (act === "cancel") { ANS.editing = null; ANS.adding = false; paintAnsList(ANS.data.answers || [], ANS.data.total || 0); return; }
     if (act === "delete") {
       b.disabled = true;
-      try { await api("/api/answers/delete", { key }); toast(T("ans.deleted", "Deleted.")); } catch (err) { b.disabled = false; toast(err.message); return; }
+      try { await api("/api/answers/delete", { key }); toast(T("mem.forgotten", "Forgotten.")); } catch (err) { b.disabled = false; toast(err.message); return; }
       await ansRefresh();
       await basRefresh();                        // the card above shows the same answers
+      memLoad();
       return;
     }
     if (act === "save") {
@@ -10029,6 +10277,7 @@
       ANS.editing = null; ANS.adding = false;
       await ansRefresh();
       await basRefresh();
+      memLoad();
     }
   });
 
@@ -10421,8 +10670,15 @@
     const card = $("#ansBasicsCard");
     if (!card) return false;
     if (!WIZ_BAS_HOME) { WIZ_BAS_HOME = document.createComment("ansBasicsCard"); card.before(WIZ_BAS_HOME); }
+    memBasicsClose();
     $("#wizBasics").appendChild(card);
     card.classList.add("is-lent");
+    basRows(card, ask);
+    return true;
+  }
+  // Show only the rows still open (``ask`` from wizBasicsAsk): setup's last step, and the memory
+  // page's Answer them. Saved self-identification answers never show here.
+  function basRows(card, ask) {
     for (const [f, sel] of Object.entries(WIZ_BAS_ROW)) {
       const row = card.querySelector(sel)?.closest(".ans-field");
       if (row) row.classList.toggle("wiz-off", !ask.rows.includes(f));
@@ -10433,7 +10689,6 @@
     card.querySelector(".ans-check")?.classList.toggle("wiz-first", top?.classList.contains("wiz-off"));
     $("#ansEeoNote")?.classList.toggle("wiz-off", !ask.decline);
     $("#ansEeoRows")?.classList.toggle("wiz-off", !ask.decline);
-    return true;
   }
   function wizBasicsReturn() {
     const card = $("#ansBasicsCard");
