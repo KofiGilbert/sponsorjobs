@@ -159,7 +159,8 @@ def is_entry_level(title: str, jd_text: str = "") -> bool:
 # an aggregator row fits only when the employer carries a sponsor badge or the posting itself
 # states sponsorship (decided 2026-10-01: sponsor-relevant only, like niche boards such as
 # H1BGrader, rather than an Indeed-style "everything, ranked" list).
-AGGREGATOR_SOURCES = frozenset({"remotive", "adzuna", "arbeitnow", "remoteok", "jsearch", "freehire"})
+AGGREGATOR_SOURCES = frozenset({"remotive", "adzuna", "arbeitnow", "remoteok", "jsearch", "freehire",
+                                "hackernews"})
 
 
 def is_sponsor_relevant(job: dict) -> bool:

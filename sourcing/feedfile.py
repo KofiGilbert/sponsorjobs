@@ -65,6 +65,9 @@ ATTRIBUTION = {
                  "note": "Link back to the job's Remotive URL and name Remotive as the source."},
     "remoteok": {"name": "Remote OK", "url": "https://remoteok.com",
                  "note": "Link back (follow) to the Remote OK URL and name Remote OK as the source."},
+    "hackernews": {"name": "Hacker News", "url": "https://news.ycombinator.com",
+                   "note": "Facts from the monthly \"Ask HN: Who is hiring?\" thread; each row "
+                           "links to its post on Hacker News."},
     "jsearch": {"name": "JSearch by OpenWeb Ninja", "url": "https://www.openwebninja.com",
                 "note": "Licensed API data, redistributed as part of this product."},
 }

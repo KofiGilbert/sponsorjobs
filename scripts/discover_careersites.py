@@ -8,7 +8,7 @@ are not already on the watchlist (seed/watchlist_seed.csv) or in the site table,
 few careers hosts from the brand name (careers.<brand>.com, jobs.<brand>.com,
 <brand>.eightfold.ai, apply.careers.<brand>.com, www.<brand>careers.com) and, per host:
 
-  1. reads robots.txt FIRST (a 404 means "no rules"; an HTML page, a redirect off the host or
+  1. reads robots.txt FIRST (a 4xx other than 429 means "no rules", RFC 9309; an HTML page, a redirect off the host or
      a file whose text forbids automated collection means "leave it alone"),
   2. names the platform from what robots.txt and the sitemap show (Eightfold, Phenom, Workday,
      iCIMS, SuccessFactors, Oracle, Avature, Radancy, other),
@@ -58,6 +58,7 @@ if str(ROOT) not in sys.path:
 
 from sourcing.careersite import (  # noqa: E402
     SITES_FILE, UA, Robots, extract_jobposting, load_sites, looks_challenged, parse_sitemap,
+    robots_unavailable,
     site_entry_ok,
 )
 from sourcing.sponsors import normalize_employer  # noqa: E402
@@ -317,10 +318,13 @@ class Prober:
     def __init__(self, gate: Gate, fetch=http_get, log=None):
         self.gate, self.fetch, self.log = gate, fetch, log or (lambda *_: None)
 
-    def _get(self, host: str, url: str, delay: float = 0.0) -> tuple[int, str, str]:
+    def _get(self, host: str, url: str, delay: float = 0.0,
+             robots_file: bool = False) -> tuple[int, str, str]:
         status, body, loc = self.gate.run(host, lambda: self.fetch(url), gap=delay)
-        if status in (401, 403, 429):
+        if status in (401, 403, 429) and not (robots_file and robots_unavailable(status)):
             raise Blocked(f"answered {status} for {url}")
+        if robots_file and status in (401, 403) and looks_challenged(body or ""):
+            raise Blocked(f"bot challenge ({status}) at {url}")
         if status == 200 and looks_challenged(body):
             raise Blocked(f"bot challenge at {url}")
         return status, body, loc
@@ -336,15 +340,15 @@ class Prober:
 
     def _probe(self, host: str, res: dict) -> dict:
         url = f"https://{host}/robots.txt"
-        status, body, loc = self._get(host, url)
+        status, body, loc = self._get(host, url, robots_file=True)
         if 300 <= status < 400:
             target = (urlsplit(urljoin(url, loc)).hostname or "").lower()
             if target and target != host:
                 return {**res, "status": "redirect", "redirect": target,
                         "reason": f"robots.txt redirects to {target}"}
-            status, body, loc = self._get(host, urljoin(url, loc))
-        if status == 404 or status == 410:
-            text = ""
+            status, body, loc = self._get(host, urljoin(url, loc), robots_file=True)
+        if robots_unavailable(status):
+            text = ""                                  # RFC 9309: 4xx (not 429) = no rules
         elif status == 200:
             if not looks_like_robots(body):
                 return {**res, "status": "rejected", "reason": "robots.txt answers an HTML page"}

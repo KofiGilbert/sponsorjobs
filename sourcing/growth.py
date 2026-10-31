@@ -48,7 +48,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .ats import fetch_json, valid_board_id_for
-from .careersite import Robots, looks_challenged
+from .careersite import Robots, looks_challenged, robots_unavailable
 from .discover import DISCOVER_ATS, discover_for_company, slug_candidates
 from .quality import employer_is_clearance_heavy
 from .workday import WD_EXTRA_INSTANCES, WD_INSTANCES, parse_board_id
@@ -61,8 +61,10 @@ WATCHLIST_SEED = ROOT / "seed" / "watchlist_seed.csv"
 # jobs it held, and whether the employer is likely cap-exempt. Kept beside (not in) the seed so
 # the seed stays the three columns every reader expects.
 WATCHLIST_EVIDENCE = ROOT / "seed" / "watchlist_evidence.csv"
+# `source` names where a hand-added board came from (e.g. "remoteintech", the public
+# remoteintech/remote-jobs company list, 2026-10-30); blank for boards discovery found itself.
 EVIDENCE_FIELDS = ["ats", "board_id", "company", "url", "jobs", "verified", "cap_exempt",
-                   "h1b_approvals", "perm_certs"]
+                   "h1b_approvals", "perm_certs", "source"]
 
 # A filing year older than the newest one in the data counts for this much less per year,
 # so 200 approvals last year outrank 300 approvals that stopped four years ago.
@@ -289,6 +291,7 @@ def board_url(ats: str, board_id: str) -> str:
         "ashby": f"https://api.ashbyhq.com/posting-api/job-board/{board_id}",
         "workable": f"https://apply.workable.com/api/v1/widget/accounts/{board_id}",
         "smartrecruiters": f"https://api.smartrecruiters.com/v1/companies/{board_id}/postings",
+        "recruitee": f"https://{board_id}.recruitee.com/api/offers/",
     }.get(ats, "")
 
 
@@ -657,16 +660,17 @@ class PoliteFetch:
             self._local.refused.append(hostname)
 
     def _robots_for(self, lane: str) -> Robots | None:
-        """The lane's robots.txt, read once per run. A 4xx means there is none (RFC 9309: all
-        allowed; Ashby's API answers 401 here). A 5xx or network error is not cached and counts
-        as "not allowed yet", so the request is owed rather than made blind."""
+        """The lane's robots.txt, read once per run. A 4xx other than 429 means there is none
+        (RFC 9309 "unavailable": all allowed; Ashby's API answers 401 here). A 429, a 5xx or a
+        network error is not cached and counts as "not allowed yet" (RFC 9309 "unreachable"),
+        so the request is owed rather than made blind."""
         if lane in self._robots:
             return self._robots[lane]
         try:
             text = self._fetch(f"https://{lane}/robots.txt", timeout=self.timeout, raw=True)
             rules = Robots(text if isinstance(text, str) else "")
         except urllib.error.HTTPError as exc:
-            if not 400 <= exc.code < 500:
+            if not robots_unavailable(exc.code):
                 return None
             rules = Robots("")
         except Exception:                                  # noqa: BLE001 - timeout / DNS

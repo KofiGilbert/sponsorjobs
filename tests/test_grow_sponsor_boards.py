@@ -268,6 +268,27 @@ def test_an_unreadable_robots_txt_owes_the_request_rather_than_guessing():
     assert not any("/v1/boards/a" in u for u in rec.urls)
 
 
+@pytest.mark.parametrize("code", [401, 403, 404, 410])
+def test_a_4xx_robots_txt_on_an_ats_api_means_no_rules(code):
+    """RFC 9309: Ashby's API answers 401 for robots.txt; that is "unavailable" (all allowed)."""
+    rec = Recorder([("api.ashbyhq.com/robots.txt", _http(code)),
+                    ("posting-api/job-board/a", {"jobs": []})])
+    pf = _pf(rec, robots=True)
+    pf.begin(("ashby",))
+    assert pf("https://api.ashbyhq.com/posting-api/job-board/a") == {"jobs": []}
+    assert pf.allowed_atss(["ashby"]) == (["ashby"], {})
+
+
+def test_a_429_robots_txt_owes_the_request_like_a_5xx():
+    """RFC 9309 treats 429 like 5xx ("unreachable"), not like the other 4xx."""
+    rec = Recorder([("api.ashbyhq.com/robots.txt", _http(429))])
+    pf = _pf(rec, robots=True)
+    pf.begin(("ashby",))
+    with pytest.raises(growth.HostBlocked):
+        pf("https://api.ashbyhq.com/posting-api/job-board/a")
+    assert not any("job-board/a" in u for u in rec.urls)
+
+
 # -- evidence ----------------------------------------------------------------------- #
 
 def test_evidence_rows_merge_by_board_and_record_url_date_jobs_and_cap_exempt(tmp_path):

@@ -1,0 +1,74 @@
+{
+ "exhaustive": {
+  "nbHits": true,
+  "typo": true
+ },
+ "hitsPerPage": 10,
+ "nbHits": 512,
+ "nbPages": 52,
+ "page": 0,
+ "params": "tags=story%2Cauthor_whoishiring&hitsPerPage=10",
+ "query": "",
+ "hits": [
+  {
+   "_tags": [
+    "story",
+    "author_whoishiring",
+    "story_49922570",
+    "ask_hn"
+   ],
+   "author": "whoishiring",
+   "created_at": "2026-10-01T15:02:07Z",
+   "created_at_i": 1790866927,
+   "num_comments": 120,
+   "objectID": "49922570",
+   "story_id": 49922570,
+   "title": "Ask HN: Freelancer? Seeking freelancer? (October 2026)"
+  },
+  {
+   "_tags": [
+    "story",
+    "author_whoishiring",
+    "story_49922568",
+    "ask_hn"
+   ],
+   "author": "whoishiring",
+   "created_at": "2026-10-01T15:02:07Z",
+   "created_at_i": 1790866927,
+   "num_comments": 699,
+   "objectID": "49922568",
+   "story_id": 49922568,
+   "title": "Ask HN: Who wants to be hired? (October 2026)"
+  },
+  {
+   "_tags": [
+    "story",
+    "author_whoishiring",
+    "story_49922569",
+    "ask_hn"
+   ],
+   "author": "whoishiring",
+   "created_at": "2026-10-01T15:02:07Z",
+   "created_at_i": 1790866927,
+   "num_comments": 390,
+   "objectID": "49922569",
+   "story_id": 49922569,
+   "title": "Ask HN: Who is hiring? (October 2026)"
+  },
+  {
+   "_tags": [
+    "story",
+    "author_whoishiring",
+    "story_49522897",
+    "ask_hn"
+   ],
+   "author": "whoishiring",
+   "created_at": "2026-09-01T15:01:17Z",
+   "created_at_i": 1788274927,
+   "num_comments": 389,
+   "objectID": "49522897",
+   "story_id": 49522897,
+   "title": "Ask HN: Who is hiring? (September 2026)"
+  }
+ ]
+}

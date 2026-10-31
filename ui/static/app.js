@@ -1395,10 +1395,12 @@
   // their listings on condition that each one names them and links back to the listing, Remote OK
   // with a FOLLOW link, so the detail link carries rel="noopener" only, never "nofollow". Company
   // boards need no credit. The card is a <button>, so it names the source as plain text (a nested
-  // link would be invalid markup) and the detail view carries the link.
+  // link would be invalid markup) and the detail view carries the link. Hacker News rows hold
+  // only facts from a "Who is hiring?" post, so the detail link (the row's url) opens the post.
   const VIA_SOURCES = {
     remotive: { name: "Remotive", url: "https://remotive.com" },
     remoteok: { name: "Remote OK", url: "https://remoteok.com" },
+    hackernews: { name: "Hacker News", url: "https://news.ycombinator.com" },
   };
   function viaSource(j) { return VIA_SOURCES[String(j.source || "").toLowerCase()] || null; }
   function viaText(a) { return I18N.t("job.via", "via {source}").replace("{source}", a.name); }
