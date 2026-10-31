@@ -1731,6 +1731,10 @@ def _package_view(rec: dict) -> dict:
         "apply_url": (data.get("source_job") or {}).get("url") or "",
         # Notices the apply agent accepted for the person, with their consent (company, title, url, at).
         "terms_accepted": [x for x in (data.get("terms_accepted") or []) if isinstance(x, dict)],
+        # "Just this one" consent given for THIS application (title, host, at), and whether the
+        # apply agent has the job paused waiting on the person (the question it waits on).
+        "terms_consent": [x for x in (data.get("terms_consent") or []) if isinstance(x, dict)],
+        "agent_park": data.get("agent_park") or None,
     }
 
 
