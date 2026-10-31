@@ -60,3 +60,28 @@ def draft_email(llm, kind: str, job: dict, profile: dict, contact: dict | None =
     body = strip_ai_dashes(str(out.get("body") or "")).strip()
     return {"type": kind, "subject": subject, "body": body,
             "to": str((contact or {}).get("email") or "").strip()}
+
+
+def reply_subject(subject: str) -> str:
+    s = " ".join(str(subject or "").split())[:190]
+    return s if s.lower().startswith("re:") else f"Re: {s}" if s else "Re: your message"
+
+
+def draft_question_reply(llm, msg: dict, questions: list[str], profile: dict, facts: dict) -> dict:
+    """{"subject", "body", "to", "unanswered"} answering a recruiter's questions from the
+    person's saved facts (applicant.facts.reply_facts) and profile. The person edits it and sends
+    it from their own mail; this never sends, and never creates a mailbox draft."""
+    import re
+
+    from tailoring.conform import strip_ai_dashes
+    qs = [str(q).strip() for q in (questions or []) if str(q).strip()][:6]
+    if not qs:
+        raise ValueError("that message asks no questions to answer")
+    out = llm.draft_question_reply(str(msg.get("subject") or ""), str(msg.get("body") or "")[:3000],
+                                   str(msg.get("from") or ""), qs, profile or {}, facts or {}) or {}
+    body = strip_ai_dashes(str(out.get("body") or "")).strip()
+    unanswered = [strip_ai_dashes(str(q)).strip()[:240] for q in (out.get("unanswered") or []) if str(q).strip()]
+    addr = re.search(r"[\w.+-]+@[\w.-]+", str(msg.get("from") or ""))
+    to = addr.group(0) if addr and not re.search(r"no-?reply|do-?not-?reply", addr.group(0), re.I) else ""
+    return {"subject": reply_subject(msg.get("subject") or ""), "body": body, "to": to,
+            "unanswered": unanswered[:6]}

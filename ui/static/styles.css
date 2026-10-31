@@ -2749,6 +2749,12 @@ body.cv-dragging * { cursor: grabbing !important; }
   opacity: 0; pointer-events: none; z-index: 300;
   transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease); }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* An undo toast: one action beside the message, clickable while it shows. */
+.toast.has-act { display: flex; align-items: center; gap: 14px; }
+.toast.has-act.show { pointer-events: auto; }
+.toast-act { background: none; border: 0; padding: 0; font: inherit; font-weight: 650; color: inherit;
+  text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.toast-act:focus-visible { outline: 2px solid var(--bg); outline-offset: 2px; border-radius: 3px; }
 
 /* ============ Connections settings pane ============ */
 .conn-intro { margin-bottom: 6px; }
@@ -3401,6 +3407,10 @@ body.cv-dragging * { cursor: grabbing !important; }
 .trk-scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 40; }
 .trk-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--surface); border-left: 1px solid var(--border);
   box-shadow: var(--shadow-md); z-index: 41; overflow-y: auto; padding: 22px 24px 32px; }
+/* The job panel stops at the icon rail (and at an open side panel), like the content does, so
+   its right edge (Undo last change, Draft an email, the timeline dates) is never under it. */
+.trk-panel { right: 42px; width: min(440px, calc(100vw - 42px)); }
+body.panel-open .trk-panel { right: calc(var(--panel-w) + 42px); }
 .trk-p-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .trk-p-head-main { min-width: 0; }
 .trk-p-title { font-size: 18px; font-weight: 650; letter-spacing: -0.01em; margin: 2px 0 0; line-height: 1.25; }
@@ -3533,6 +3543,16 @@ body.cv-dragging * { cursor: grabbing !important; }
 .trk-inbox-why { font-size: 12px; color: var(--faint); margin-top: 1px; }
 .trk-inbox-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .trk-inbox-empty { font-size: 12.5px; color: var(--faint); padding: 4px 0; }
+.trk-inbox-when { font-size: 12.5px; color: var(--ink); margin-top: 3px; }
+.trk-inbox-qs { margin: 5px 0 2px; padding-left: 16px; font-size: 12.5px; color: var(--ink-2); }
+.trk-inbox-qs li { margin: 1px 0; }
+.trk-inbox-done { font-size: 12px; color: var(--faint); align-self: center; margin-right: 2px; }
+/* A drafted reply reads at letter width, not across the whole 1320 strip. */
+.trk-inbox-draft { grid-column: 1 / -1; margin-top: 2px; max-width: 760px; }
+.trk-inbox-gaps { margin-top: 6px; font-size: 12px; color: var(--faint); }
+.trk-p-h-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.trk-p-h-row .btn { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.trk-furthest { font-size: 12px; color: var(--faint); margin: -2px 0 6px; }
 .trk-mail-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
 .trk-mail-row #trkMailType { grid-column: 1 / -1; }
 .trk-mail-out { margin-top: 10px; }

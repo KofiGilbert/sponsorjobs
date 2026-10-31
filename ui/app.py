@@ -10057,10 +10057,11 @@ def inbox_scan():
                 v["auto"] = complete_verification(v["link"])
     # A recruiter reply SUGGESTS a tracker move (Interviewing, or Rejected); the person clicks.
     _board_suggestions(result.get("recruiters") or [])
-    # The finer triage (interview / rejection / offer / assessment / confirmation) for mail
-    # that names a TRACKED employer lands in the "From your inbox" strip. Stored by message id
-    # so a rescan never re-asks about mail the person already settled.
-    result["suggestions"] = _store_inbox_suggestions(messages, llm)
+    # Mail tied to a TRACKED application (thread, domain, company) gets one label each
+    # (rejection, interview request, question, offer, acknowledgement) and lands in the "From
+    # your inbox" strip. The model labels it when one is reachable; offline, the rules do.
+    # Stored by message id so a rescan never re-asks about mail the person already settled.
+    result["suggestions"] = _store_inbox_suggestions(messages, llm if llm is not None else _classifier_llm())
     return _nostore(jsonify({"ok": True, **result}))
 
 
@@ -10129,11 +10130,33 @@ def _await_match(messages: list[dict], kind: str, host: str, company: str) -> di
     return None
 
 
+def _await_record(messages: list[dict], hit: dict, source_id: str) -> None:
+    """The run named the job it is applying to: tie the portal's mail to it, so the employer's
+    later reply in that thread matches the application by thread. Best-effort."""
+    if not source_id:
+        return
+    msg = next((m for m in messages if m.get("id") == hit.get("message_id")), None)
+    if msg is None:
+        return
+    try:
+        w = _watchlist()
+        try:
+            if w.stage_of(source_id):
+                w.record_mail(source_id, msg.get("id") or "", thread_id=msg.get("thread_id") or "",
+                              rfc_id=msg.get("rfc_id") or "", matched_by="apply",
+                              label=hit.get("kind") or "", subject=msg.get("subject") or "")
+        finally:
+            w.close()
+    except Exception:          # noqa: BLE001 - the run already has what it waited for
+        pass
+
+
 @app.post("/api/inbox/await")
 @_guard
 def inbox_await():
     """Long-poll the person's mailbox for the mail an unattended apply run is waiting on.
-    Body {kind: verify|code|reset|any, host, company?, since (epoch seconds), timeout_s}.
+    Body {kind: verify|code|reset|any, host, company?, since (epoch seconds), timeout_s,
+    source_id? (the board job being applied to; its mail is then tied to it for thread matching)}.
     Returns {ok: true, kind, link?, code?, subject, message_id}; {ok: false, reason:
     "not-connected"} at once when no mailbox is set up; {ok: false, reason: "timeout"} after
     timeout_s (default 120, at most 240). Blocks the request; the server is threaded."""
@@ -10167,6 +10190,7 @@ def inbox_await():
             return jsonify({"ok": False, "reason": "mailbox-error", "error": str(exc)})
         hit = _await_match(messages, kind, host, company)
         if hit:
+            _await_record(messages, hit, str(b.get("source_id") or "").strip())
             return _nostore(jsonify(hit))
         if time.time() + poll > deadline:
             return jsonify({"ok": False, "reason": "timeout"})
@@ -10194,39 +10218,92 @@ def _suggestion_store():
     return SuggestionStore(_SUGGESTIONS_FILE)
 
 
+class _ClassifierLLM:
+    """The model for the reply classifier, built on its first use, so a scan whose mail matches
+    no application never builds (or pays for) one. When it cannot be built (no key, offline) the
+    call raises and inbox/replies falls back to the rules, so a scan never fails for want of a
+    model."""
+
+    def __init__(self):
+        self._llm = None
+        self._failed = False
+
+    def classify_reply(self, *a, **k):
+        if self._llm is None and not self._failed:
+            try:
+                self._llm = _make_llm()
+            except Exception:      # noqa: BLE001 - the rules still label every message
+                self._failed = True
+        if self._llm is None:
+            raise RuntimeError("no model for the classifier")
+        return self._llm.classify_reply(*a, **k)
+
+
+def _classifier_llm():
+    return _ClassifierLLM()
+
+
 def _store_inbox_suggestions(messages: list[dict], llm=None) -> list[dict]:
-    """Triage ``messages`` against the board, keep the new suggestions, return the pending
-    ones. The model pass (``llm``) only ever sees mail the rules left as "other" AND that
-    names a tracked employer (CLAUDE.md §5: nothing unrelated is read by anyone)."""
-    from inbox.suggestions import build_suggestions
+    """Match ``messages`` to the board (same thread, then the sender's domain, then the company
+    name), label each new one (one model call per message when ``llm`` is given, the rules
+    otherwise), keep the new suggestions, and return what the strip shows. Mail that matches no
+    application is never read further, and personal mail that only names an employer never
+    reaches the model (CLAUDE.md section 5). Every matched message is recorded against its job,
+    so a later reply in the same thread matches by thread. A plain acknowledgement matched by
+    thread or domain is applied here, logged, and shown with Undo; everything else waits for the
+    person's tap."""
+    from inbox.suggestions import build_suggestions, suggestion_id
     store = _suggestion_store()
     known = {s["id"] for s in store.all()}
-    from inbox.suggestions import suggestion_id
     fresh = [m for m in (messages or []) if suggestion_id(m) not in known]
     if fresh:
         w = _watchlist()
         try:
-            _board_reconcile(w)
-            jobs = w.board_jobs()
+            seen = w.known_mail(m.get("id") or suggestion_id(m) for m in fresh)
+            fresh = [m for m in fresh if (m.get("id") or suggestion_id(m)) not in seen]
+
+            threads = w.thread_index()
+
+            def remember(msg, job, lane, label):
+                w.record_mail(job["source_id"], msg.get("id") or suggestion_id(msg),
+                              thread_id=msg.get("thread_id") or "", rfc_id=msg.get("rfc_id") or "",
+                              matched_by=lane, label=label, subject=msg.get("subject") or "")
+                # A later message in this same batch that answers this one matches by thread too.
+                if msg.get("thread_id"):
+                    threads[f"t:{str(msg['thread_id']).strip().lower()}"] = job["source_id"]
+                if msg.get("rfc_id"):
+                    threads[f"m:{str(msg['rfc_id']).strip().strip('<>').lower()}"] = job["source_id"]
+
+            by_job = _board_reconcile(w)
+            # Oldest first, so a reply is read after the message it answers.
+            new = store.add(build_suggestions(list(reversed(fresh)), w.board_jobs(), llm=llm,
+                                              threads=threads, on_match=remember))
+            for sg in new:
+                if sg.get("auto") and sg.get("stage") and w.stage_of(sg["source_id"]):
+                    note = f'From your inbox: "{(sg.get("subject") or "").strip()[:120]}"'
+                    w.move_stage(sg["source_id"], sg["stage"], note=note, ref=sg["id"])
+                    _board_patch_records(by_job.get(sg["source_id"], []), sg["stage"])
+                    store.set_status(sg["id"], "auto")
         finally:
             w.close()
-        store.add(build_suggestions(fresh, jobs, llm=llm))
-    return store.pending()
+    return store.shown()
 
 
 @app.get("/api/inbox/suggestions")
 @_guard
 def inbox_suggestions():
-    """The pending "From your inbox" suggestions (Tracker strip, Review page). Read-only."""
-    return _nostore(jsonify({"ok": True, "suggestions": _suggestion_store().pending()}))
+    """The "From your inbox" suggestions (Tracker strip, Review page): the pending ones plus any
+    acknowledgement the app applied itself that the person has not seen yet. Read-only."""
+    return _nostore(jsonify({"ok": True, "suggestions": _suggestion_store().shown()}))
 
 
 @app.post("/api/inbox/suggestions/<sid>/accept")
 @_guard
 def inbox_suggestion_accept(sid):
     """The person's click: move the card to the suggested stage, log the mail subject in the
-    timeline, and settle the suggestion (plus any other pending one for the same job and
-    stage). This is the ONLY path from a suggestion to a move."""
+    timeline (with the suggestion id, so Undo can bring the suggestion back), and settle the
+    suggestion (plus any other pending one for the same job and stage). This is the ONLY path
+    from a suggestion to a move, apart from a plain acknowledgement."""
     from datetime import date
     store = _suggestion_store()
     s = store.get(sid)
@@ -10234,6 +10311,8 @@ def inbox_suggestion_accept(sid):
         return jsonify({"error": "No such suggestion."}), 404
     if s.get("status", "pending") != "pending":
         return jsonify({"error": "That suggestion was already settled."}), 409
+    if not s.get("stage"):
+        return jsonify({"error": "That message does not suggest a move."}), 400
     w = _watchlist()
     try:
         by_job = _board_reconcile(w)
@@ -10242,7 +10321,7 @@ def inbox_suggestion_accept(sid):
             store.set_status(sid, "dismissed")
             return jsonify({"error": "That job is no longer on your board."}), 404
         note = f'From your inbox: "{(s.get("subject") or "").strip()[:120]}"'
-        row = w.move_stage(job_id, s["stage"], note=note)
+        row = w.move_stage(job_id, s["stage"], note=note, ref=sid)
         _board_patch_records(by_job.get(job_id, []), s["stage"])
         job = _sponsors().tag_jobs([row])[0]
         due = len(w.due_followups(date.today()))
@@ -10250,23 +10329,75 @@ def inbox_suggestion_accept(sid):
         w.close()
     store.set_status(sid, "accepted")
     for other in store.pending():
-        if other.get("source_id") == job_id and other.get("stage") == s["stage"]:
+        if other.get("source_id") == job_id and other.get("stage") == s["stage"] and not other.get("questions"):
             store.set_status(other["id"], "dismissed")
     return jsonify({"ok": True, "suggestion": store.get(sid),
                     "job": _board_card(job, by_job.get(job_id, []), date.today()),
-                    "due_count": due, "suggestions": store.pending()})
+                    "due_count": due, "suggestions": store.shown()})
 
 
 @app.post("/api/inbox/suggestions/<sid>/dismiss")
 @_guard
 def inbox_suggestion_dismiss(sid):
-    """"Not this": the suggestion is kept as dismissed so the same mail never asks again."""
+    """"Not this": the suggestion is kept as dismissed so the same mail never asks again, and the
+    message is no longer tied to that job (its thread stops matching it)."""
     store = _suggestion_store()
     s = store.get(sid)
     if s is None:
         return jsonify({"error": "No such suggestion."}), 404
     store.set_status(sid, "dismissed")
-    return jsonify({"ok": True, "suggestion": store.get(sid), "suggestions": store.pending()})
+    w = _watchlist()
+    try:
+        w.forget_mail(s.get("message_id") or sid)
+    finally:
+        w.close()
+    return jsonify({"ok": True, "suggestion": store.get(sid), "suggestions": store.shown()})
+
+
+@app.post("/api/inbox/suggestions/<sid>/done")
+@_guard
+def inbox_suggestion_done(sid):
+    """"Done" on a question (the person replied) or "OK" on a move the app made itself: the row
+    leaves the strip. Nothing on the board changes."""
+    store = _suggestion_store()
+    s = store.get(sid)
+    if s is None:
+        return jsonify({"error": "No such suggestion."}), 404
+    if s.get("status") == "auto":
+        store.update(sid, seen=True)
+    elif s.get("status", "pending") == "pending":
+        store.set_status(sid, "accepted")
+    return jsonify({"ok": True, "suggestion": store.get(sid), "suggestions": store.shown()})
+
+
+def _reply_facts() -> dict:
+    """The applicant brain's saved answers and notes a recruiter's question may be answered from
+    (applicant/facts.reply_facts: normal facts only, legal and self-identification withheld)."""
+    from applicant import facts as _facts
+    out = _brain_do(_facts.reply_facts)
+    return out if isinstance(out, dict) else {"answers": {}, "notes": []}
+
+
+@app.post("/api/inbox/suggestions/<sid>/draft")
+@_guard
+def inbox_suggestion_draft(sid):
+    """Draft a reply to the questions in one message, from the person's saved facts and profile.
+    The draft is kept on the suggestion (it survives a reload) and comes back with a compose link;
+    the person edits and sends it themselves. Nothing is sent, no mailbox draft is created."""
+    from inbox.drafts import draft_question_reply, gmail_compose_url
+    store = _suggestion_store()
+    s = store.get(sid)
+    if s is None:
+        return jsonify({"error": "No such suggestion."}), 404
+    msg = {"from": s.get("from") or "", "subject": s.get("subject") or "",
+           "body": s.get("excerpt") or s.get("snippet") or ""}
+    try:
+        d = draft_question_reply(_make_llm(), msg, s.get("questions") or [], _saved_full_profile(), _reply_facts())
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    d["gmail_url"] = gmail_compose_url(d["to"], d["subject"], d["body"])
+    store.update(sid, draft=d)
+    return _nostore(jsonify({"ok": True, "draft": d, "suggestion": store.get(sid)}))
 
 
 @app.post("/api/tracker/<path:sid>/draft-email")
@@ -14231,6 +14362,49 @@ def tracker_move():
                     "due_count": due})
 
 
+@app.post("/api/tracker/undo")
+@_guard
+def tracker_undo():
+    """Walk back the newest stage change on one job. Body: {source_id, ref?}. With ``ref`` (an
+    inbox suggestion id) the newest change must be the one that suggestion made, else 409, so an
+    Undo on an old strip row never rewinds a later move. Undoing an inbox move puts its suggestion
+    back in the strip. Returns {job (null when the job left the board), history, due_count,
+    suggestions}."""
+    from datetime import date
+    body = request.json or {}
+    sid = str(body.get("source_id") or "").strip()
+    ref = str(body.get("ref") or "").strip()
+    w = _watchlist()
+    try:
+        by_job = _board_reconcile(w)
+        last = w.history(sid, limit=1)
+        if not last:
+            return jsonify({"error": "Nothing to undo on that job."}), 404
+        if ref and last[0].get("ref") != ref:
+            return jsonify({"error": "That job has moved since, undo from its panel."}), 409
+        out = w.undo_last(sid)
+        undone = out["activity"]
+        back = undone.get("from_stage") or None
+        if back:
+            _board_patch_records(by_job.get(sid, []), back)
+        card = None
+        if out["job"] is not None:
+            card = _board_card(_sponsors().tag_jobs([out["job"]])[0], by_job.get(sid, []), date.today())
+        history = w.history(sid)
+        due = len(w.due_followups(date.today()))
+    finally:
+        w.close()
+    store = _suggestion_store()
+    if undone.get("ref"):
+        sg = store.get(undone["ref"])
+        if sg is not None and sg.get("status") in ("accepted", "auto"):
+            store.set_status(sg["id"], "pending")
+            store.update(sg["id"], auto=False, seen=False)
+    return jsonify({"ok": True, "job": card, "undone": {"from_stage": undone.get("from_stage"),
+                                                         "to_stage": undone.get("to_stage")},
+                    "history": history, "due_count": due, "suggestions": store.shown()})
+
+
 @app.get("/api/tracker/job")
 @_guard
 def tracker_job():
@@ -14247,6 +14421,8 @@ def tracker_job():
         job = _sponsors().tag_jobs([row])[0]
         contacts = w.contacts(sid)
         activity = w.activity(sid)
+        history = w.history(sid)
+        mail = w.mail_for(sid)
     finally:
         w.close()
     recs = []
@@ -14259,7 +14435,9 @@ def tracker_job():
                                       if (data.get("cover_letter") or "").strip() else None)})
     card = _board_card(job, by_job.get(sid, []), date.today())
     return _nostore(jsonify({**card, "notes": job.get("notes") or "", "contacts": contacts,
-                             "activity": activity, "records": recs, "salary": job.get("salary") or ""}))
+                             "activity": activity, "history": history, "mail": mail,
+                             "furthest_stage": job.get("furthest_stage") or "",
+                             "records": recs, "salary": job.get("salary") or ""}))
 
 
 @app.post("/api/tracker/note")

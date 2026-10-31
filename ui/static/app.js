@@ -4406,10 +4406,31 @@
       renderTrackerMetrics();
       renderTracker();
       if (TRK_OPEN === sid) openTrackerPanel(sid);
+      toast(trkT("tracker.movedTo", "Moved {company} to {stage}").replace("{company}", card.company || "").replace("{stage}", trkStageName(stage)),
+        { label: trkT("tracker.undo", "Undo"), run: () => trkUndo(sid) });
     } catch {
       card.stage = prev;
       renderTracker();
       toast(trkT("tracker.moveFail", "Couldn't move that job, try again."));
+    }
+  }
+
+  // Walk back the newest stage change on one job (tracker_activity keeps the dates it rewrote).
+  // ``ref`` (an inbox suggestion id) makes it refuse when the job has moved on since that move.
+  async function trkUndo(sid, ref) {
+    try {
+      const out = await api("/api/tracker/undo", ref ? { source_id: sid, ref } : { source_id: sid });
+      if (Array.isArray(out.suggestions)) { INBOX_SUGG = out.suggestions; renderInboxStrip(); }
+      trkSetDot(out.due_count);
+      await trkReloadCards();
+      TRK_METRICS = await api("/api/tracker/metrics").catch(() => TRK_METRICS);
+      renderTrackerMetrics();
+      if (TRK_OPEN === sid) { if (out.job) openTrackerPanel(sid); else closeTrackerPanel(); }
+      const to = out.undone && out.undone.from_stage;
+      toast(to ? trkT("tracker.undoneTo", "Back in {stage}").replace("{stage}", trkStageName(to))
+               : trkT("tracker.undoneOff", "Taken off the board"));
+    } catch (err) {
+      toast(err.message || trkT("tracker.undoFail", "Couldn't undo that, try again."));
     }
   }
 
@@ -4482,13 +4503,18 @@
         <div class="trk-p-h">${esc(trkT("tracker.files", "Files"))}</div>
         ${files}
       </div>
+      ${trkPanelMailHtml(j)}
       <div class="trk-p-sec">
-        <div class="trk-p-h">${esc(trkT("tracker.timeline", "Timeline"))}</div>
+        <div class="trk-p-h trk-p-h-row"><span>${esc(trkT("tracker.timeline", "Timeline"))}</span>
+          ${(j.history || []).length ? `<button class="btn btn-ghost btn-sm" id="trkPanelUndo" type="button">${esc(trkT("tracker.undoLast", "Undo last change"))}</button>` : ""}</div>
+        ${j.furthest_stage && j.furthest_stage !== j.stage && TRK_STAGES.indexOf(j.furthest_stage) >= 0
+          ? `<div class="trk-furthest">${esc(trkT("tracker.furthest", "Got as far as {stage}").replace("{stage}", trkStageName(j.furthest_stage)))}</div>` : ""}
         <div class="trk-tl">${timeline}</div>
       </div>`;
     panel.hidden = false;
     if (scrim) scrim.hidden = false;
     $("#trkPanelClose").addEventListener("click", closeTrackerPanel);
+    $("#trkPanelUndo")?.addEventListener("click", () => trkUndo(sid));
     trkBindMail(sid, j);
     $("#trkPanelStage").addEventListener("change", (e) => trkMove(sid, e.target.value));
     $("#trkPanelFu").addEventListener("change", async (e) => {
@@ -4531,8 +4557,17 @@
      the Review page's inbox card. Move <stage> is the person's click; Not this settles it so
      the same mail never asks again. Nothing moves on its own. */
   let INBOX_SUGG = [], INBOX_CONNECTED = false;
-  const INBOX_KIND_EN = { interview_invite: "Interview invite", rejection: "Rejection", offer: "Offer",
-    assessment: "Assessment", application_received: "Application received" };
+  // One label per message (inbox/replies.py). "kind" is the finer rules reading, kept so an
+  // assessment still says Assessment.
+  const INBOX_LABEL_EN = { interview_request: "Interview request", rejection: "Rejection", offer: "Offer",
+    question: "Question", acknowledgement: "Acknowledgement", assessment: "Assessment" };
+  const INBOX_LANE_EN = { thread: "Matched by email thread", domain: "Matched by sender's domain", company: "Matched by company name" };
+
+  function inboxLabel(sg) {
+    const key = sg.kind === "assessment" ? "assessment" : (sg.label || { interview_invite: "interview_request",
+      application_received: "acknowledgement" }[sg.kind] || sg.kind);
+    return trkT("inbox.label." + key, INBOX_LABEL_EN[key] || key);
+  }
 
   async function loadInboxSuggestions() {
     try { const d = await api("/api/inbox/suggestions"); INBOX_SUGG = d.suggestions || []; }
@@ -4540,18 +4575,49 @@
     renderInboxStrip();
   }
 
+  function inboxDraftHtml(sg) {
+    const d = sg.draft;
+    if (!d) return "";
+    const mailHref = INBOX_CONNECTED ? gmailComposeUrl(d.to, d.subject, d.body)
+      : `mailto:${encodeURIComponent(d.to || "")}?subject=${encodeURIComponent(d.subject || "")}&body=${encodeURIComponent(d.body || "")}`;
+    return `<div class="trk-inbox-draft" data-sugg-draft="${esc(sg.id)}">
+        <textarea class="fld trk-mail-body" rows="8" aria-label="${esc(trkT("inbox.draft.body", "Reply"))}">${esc(d.body || "")}</textarea>
+        ${(d.unanswered || []).length ? `<div class="trk-inbox-gaps">${esc((d.unanswered.length === 1
+          ? trkT("inbox.draft.gap1", "Fill in 1 answer marked [Add your answer] before you send.")
+          : trkT("inbox.draft.gaps", "Fill in {n} answers marked [Add your answer] before you send.")).replace("{n}", d.unanswered.length))}</div>` : ""}
+        <div class="trk-mail-foot">
+          <button class="btn btn-ghost btn-sm" type="button" data-sugg-copy>${esc(trkT("tracker.emailCopy", "Copy"))}</button>
+          <a class="btn btn-ghost btn-sm" data-sugg-open href="${esc(mailHref)}" ${INBOX_CONNECTED ? 'target="_blank" rel="noopener"' : ""}>${esc(INBOX_CONNECTED ? trkT("tracker.emailGmail", "Open in Gmail") : trkT("tracker.emailApp", "Open in your email app"))}</a>
+          <button class="btn btn-ghost btn-sm" type="button" data-sugg-done="${esc(sg.id)}">${esc(trkT("inbox.strip.done", "Done"))}</button>
+          <span class="trk-mail-hint">${esc(trkT("tracker.emailHint", "You send it. Nothing is sent from here."))}</span>
+        </div>
+      </div>`;
+  }
+
   function inboxSuggRow(sg) {
-    const kind = trkT("inbox.kind." + sg.kind, INBOX_KIND_EN[sg.kind] || sg.kind);
+    const lane = sg.matched_by ? trkT("inbox.lane." + sg.matched_by, INBOX_LANE_EN[sg.matched_by] || "") : "";
+    const why = [sg.reason, lane].filter(Boolean).join(" \u00b7 ");
+    const qs = (sg.questions || []);
+    let acts;
+    if (sg.status === "auto") {
+      acts = `<span class="trk-inbox-done">${esc(trkT("inbox.strip.autoMoved", "Moved to {stage}").replace("{stage}", trkStageName(sg.stage)))}</span>
+        <button class="btn btn-ghost btn-sm" type="button" data-sugg-undo="${esc(sg.id)}">${esc(trkT("tracker.undo", "Undo"))}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-sugg-done="${esc(sg.id)}">${esc(trkT("inbox.strip.ok", "OK"))}</button>`;
+    } else {
+      acts = (sg.stage ? `<button class="btn btn-ghost btn-sm" type="button" data-sugg-accept="${esc(sg.id)}">${esc(trkT("tracker.suggest", "Move to {stage}").replace("{stage}", trkStageName(sg.stage)))}</button>` : "")
+        + (qs.length && !sg.draft ? `<button class="btn btn-ghost btn-sm" type="button" data-sugg-reply="${esc(sg.id)}">${esc(trkT("inbox.strip.draftReply", "Draft reply"))}</button>` : "")
+        + `<button class="btn btn-ghost btn-sm" type="button" data-sugg-dismiss="${esc(sg.id)}">${esc(trkT("inbox.strip.notThis", "Not this"))}</button>`;
+    }
     return `<div class="trk-inbox-row" data-sugg-row="${esc(sg.id)}">
       <div class="trk-inbox-who">
-        <div><span class="trk-inbox-co">${esc(sg.company)}</span>${sg.title ? ` <span class="prof-dim">${esc(sg.title)}</span>` : ""}<span class="trk-inbox-kind">${esc(kind)}</span></div>
+        <div><span class="trk-inbox-co">${esc(sg.company)}</span>${sg.title ? ` <span class="prof-dim">${esc(sg.title)}</span>` : ""}<span class="trk-inbox-kind">${esc(inboxLabel(sg))}</span></div>
         <div class="trk-inbox-subj" title="${esc(sg.subject)}">${esc(sg.sender || sg.from || "")}${sg.subject ? ` &middot; ${esc(sg.subject)}` : ""}</div>
-        ${sg.reason ? `<div class="trk-inbox-why">${esc(sg.reason)}</div>` : ""}
+        ${sg.interview_time ? `<div class="trk-inbox-when">${esc(trkT("inbox.strip.when", "Interview {when}").replace("{when}", sg.interview_time))}</div>` : ""}
+        ${qs.length && !sg.draft ? `<ul class="trk-inbox-qs">${qs.map(q => `<li>${esc(q)}</li>`).join("")}</ul>` : ""}
+        ${why ? `<div class="trk-inbox-why">${esc(why)}</div>` : ""}
       </div>
-      <div class="trk-inbox-acts">
-        <button class="btn btn-ghost btn-sm" type="button" data-sugg-accept="${esc(sg.id)}">${esc(trkT("tracker.suggest", "Move to {stage}").replace("{stage}", trkStageName(sg.stage)))}</button>
-        <button class="btn btn-ghost btn-sm" type="button" data-sugg-dismiss="${esc(sg.id)}">${esc(trkT("inbox.strip.notThis", "Not this"))}</button>
-      </div>
+      <div class="trk-inbox-acts">${acts}</div>
+      ${inboxDraftHtml(sg)}
     </div>`;
   }
 
@@ -4569,12 +4635,44 @@
         ${INBOX_SUGG.length ? INBOX_SUGG.map(inboxSuggRow).join("") : `<div class="trk-inbox-empty">${esc(trkT("inbox.strip.empty", "Nothing new from your inbox. Scan to check for interview invites, offers and rejections for jobs on your board."))}</div>`}`;
       host.querySelectorAll("[data-sugg-accept]").forEach(b => b.addEventListener("click", () => inboxSuggDecide(b.dataset.suggAccept, "accept")));
       host.querySelectorAll("[data-sugg-dismiss]").forEach(b => b.addEventListener("click", () => inboxSuggDecide(b.dataset.suggDismiss, "dismiss")));
+      host.querySelectorAll("[data-sugg-done]").forEach(b => b.addEventListener("click", () => inboxSuggDecide(b.dataset.suggDone, "done")));
+      host.querySelectorAll("[data-sugg-undo]").forEach(b => b.addEventListener("click", () => {
+        const sg = INBOX_SUGG.find(x => x.id === b.dataset.suggUndo);
+        if (sg) { b.disabled = true; trkUndo(sg.source_id, sg.id); }
+      }));
+      host.querySelectorAll("[data-sugg-reply]").forEach(b => b.addEventListener("click", () => inboxDraftReply(b)));
+      host.querySelectorAll("[data-sugg-draft]").forEach(box => {
+        const sg = INBOX_SUGG.find(x => x.id === box.dataset.suggDraft);
+        const body = box.querySelector("textarea"), open = box.querySelector("[data-sugg-open]");
+        body.addEventListener("input", () => {
+          sg.draft.body = body.value;
+          open.setAttribute("href", INBOX_CONNECTED ? gmailComposeUrl(sg.draft.to, sg.draft.subject, body.value)
+            : `mailto:${encodeURIComponent(sg.draft.to || "")}?subject=${encodeURIComponent(sg.draft.subject || "")}&body=${encodeURIComponent(body.value)}`);
+        });
+        box.querySelector("[data-sugg-copy]").addEventListener("click", (e) => {
+          navigator.clipboard.writeText(body.value);
+          e.currentTarget.textContent = trkT("tracker.emailCopied", "Copied");
+        });
+      });
       host.querySelector("[data-sugg-scan]")?.addEventListener("click", async (e) => {
         const b = e.currentTarget; b.disabled = true; b.textContent = trkT("inbox.strip.scanning", "Scanning...");
-        try { const r = await api("/api/inbox/scan", { draft: false }); INBOX_SUGG = r.suggestions || []; renderInboxStrip(); }
+        try { const r = await api("/api/inbox/scan", { draft: false }); INBOX_SUGG = r.suggestions || []; renderInboxStrip(); trkReloadCards(); }
         catch (err) { toast(err.message || trkT("inbox.strip.fail", "Couldn't do that, try again.")); b.disabled = false; b.textContent = trkT("inbox.strip.scan", "Scan inbox"); }
       });
     });
+  }
+
+  async function inboxDraftReply(b) {
+    const id = b.dataset.suggReply;
+    b.disabled = true; b.textContent = trkT("tracker.emailDrafting", "Drafting...");
+    try {
+      const out = await api(`/api/inbox/suggestions/${encodeURIComponent(id)}/draft`, {});
+      INBOX_SUGG = INBOX_SUGG.map(x => x.id === id ? out.suggestion : x);
+      renderInboxStrip();
+    } catch (err) {
+      toast(err.message || trkT("tracker.emailFail", "Couldn't draft that, try again."));
+      b.disabled = false; b.textContent = trkT("inbox.strip.draftReply", "Draft reply");
+    }
   }
 
   async function inboxSuggDecide(id, action) {
@@ -4586,7 +4684,8 @@
       INBOX_SUGG = out.suggestions || INBOX_SUGG.filter(x => x.id !== id);
       renderInboxStrip();
       if (action === "accept") {
-        toast(trkT("inbox.strip.moved", "Moved {company} to {stage}").replace("{company}", sg.company).replace("{stage}", trkStageName(sg.stage)));
+        toast(trkT("inbox.strip.moved", "Moved {company} to {stage}").replace("{company}", sg.company).replace("{stage}", trkStageName(sg.stage)),
+          { label: trkT("tracker.undo", "Undo"), run: () => trkUndo(sg.source_id, sg.id) });
         trkSetDot(out.due_count);
         trkReloadCards();
         TRK_METRICS = await api("/api/tracker/metrics").catch(() => TRK_METRICS);
@@ -4597,6 +4696,21 @@
       renderInboxStrip();
       toast(err.message || trkT("inbox.strip.fail", "Couldn't do that, try again."));
     }
+  }
+
+  // The panel's record of the mail tied to this job, and how each one was matched.
+  const INBOX_LANE_SHORT_EN = { ...INBOX_LANE_EN, apply: "From the apply run" };
+  function trkPanelMailHtml(j) {
+    const rows = (j.mail || []).slice(0, 6);
+    if (!rows.length) return "";
+    return `<div class="trk-p-sec">
+        <div class="trk-p-h">${esc(trkT("tracker.fromInbox", "From your inbox"))}</div>
+        ${rows.map(m => `<div class="trk-tl-row">
+          <span class="trk-tl-dot" aria-hidden="true"></span>
+          <span class="trk-tl-what">${esc(m.subject || "")} <span class="prof-dim">${esc(trkT("inbox.lane." + m.matched_by, INBOX_LANE_SHORT_EN[m.matched_by] || ""))}</span></span>
+          <span class="trk-tl-when">${esc(trkDay(m.at))}</span>
+        </div>`).join("")}
+      </div>`;
   }
 
   /* ---------------------------------------------------------------- Draft an email (Tracker panel)
@@ -7926,11 +8040,21 @@
   // Free stays unlimited on the person's own AI key.
   $("#upgOwnKey")?.addEventListener("click", () => { closeUpgrade(); openAiModal(true); });
 
-  function toast(msg) {
+  // toast("Moved", {label: "Undo", run}) shows one action beside the message (Gmail's undo
+  // toast) and stays up a little longer so there is time to reach it.
+  function toast(msg, action) {
     let t = $("#toast");
     if (!t) { t = document.createElement("div"); t.id = "toast"; t.className = "toast"; document.body.appendChild(t); }
-    t.textContent = msg; t.classList.add("show");
-    clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove("show"), 2600);
+    t.textContent = msg;
+    t.classList.toggle("has-act", !!action);
+    if (action) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "toast-act"; b.textContent = action.label;
+      b.addEventListener("click", () => { t.classList.remove("show"); action.run(); }, { once: true });
+      t.appendChild(b);
+    }
+    t.classList.add("show");
+    clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove("show"), action ? 6000 : 2600);
   }
 
   // Buying, the production way (claude.ai, ChatGPT, Notion, Linear): signing in is its OWN screen,
