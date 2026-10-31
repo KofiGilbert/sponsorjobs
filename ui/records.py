@@ -33,6 +33,7 @@ class CVRecords:
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA secure_delete=ON")      # a deleted resume is gone from the file
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS cv_record (
@@ -89,6 +90,40 @@ class CVRecords:
                            (json.dumps(data), record_id))
         self._conn.commit()
         return data
+
+    # What the one-page fit cut and the "What changed" list (ui/session.py accept) hold copies of
+    # the person's own resume text, so Export lists them and Erase removes them.
+    TAILORING_LOG_KEYS = ("trims", "changes")
+
+    def tailoring_logs(self) -> list[dict]:
+        """[{record_id, role, company, trims, changes}] for every record that keeps them."""
+        out = []
+        for r in self._conn.execute("SELECT id, role, company, data FROM cv_record ORDER BY id"):
+            try:
+                data = json.loads(r["data"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if any(k in data for k in self.TAILORING_LOG_KEYS):
+                out.append({"record_id": r["id"], "role": r["role"], "company": r["company"],
+                            **{k: data.get(k) for k in self.TAILORING_LOG_KEYS if k in data}})
+        return out
+
+    def erase_tailoring_logs(self) -> int:
+        """Remove the cuts and change lists from every record (secure_delete is on, and the caller
+        vacuums the file). Returns how many records changed."""
+        n = 0
+        for r in self._conn.execute("SELECT id, data FROM cv_record").fetchall():
+            try:
+                data = json.loads(r["data"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if any(k in data for k in self.TAILORING_LOG_KEYS):
+                for k in self.TAILORING_LOG_KEYS:
+                    data.pop(k, None)
+                self._conn.execute("UPDATE cv_record SET data=? WHERE id=?", (json.dumps(data), r["id"]))
+                n += 1
+        self._conn.commit()
+        return n
 
     def set_coverage(self, record_id: int, coverage: float) -> bool:
         """Update the JD-match column after an accepted edit changed the CV."""

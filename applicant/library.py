@@ -103,6 +103,7 @@ class BrainLibrary:
                 raise AttributeError("conn: this BrainLibrary has no legacy answers.db")
             A.AnswerLibrary(self.mirror_path).close()          # the table exists
             self._legacy_conn = sqlite3.connect(self.mirror_path)
+            self._legacy_conn.execute("PRAGMA secure_delete=ON")
             self._legacy_conn.row_factory = sqlite3.Row
         return self._legacy_conn
 

@@ -156,3 +156,44 @@ def test_put_back_of_an_unknown_cut_is_refused_plainly(tmp_path):
                   tmp_path, jobname="cv", palace_dir=tmp_path / "p")
     out = s.put_back("nope")
     assert out["put_back_ok"] is False and "no longer on this page" in out["put_back_error"]
+
+
+CUT = "Cutbullet Plumcrestwater built the nightly loader for the treasury desk."
+
+
+def test_export_lists_and_erase_removes_the_cuts_and_change_lists(tmp_path, monkeypatch):
+    """The cuts and the "What changed" list kept with a record are copies of the person's resume
+    text: Export lists them, Erase removes them (secure_delete on, the file vacuumed) even when
+    the resumes themselves stay."""
+    import importlib
+    import json
+    data = tmp_path / "data"
+    data.mkdir()
+    monkeypatch.setenv("RESUME_AGENT_DATA_DIR", str(data))
+    monkeypatch.setenv("RESUME_AGENT_CRED_FILE", str(tmp_path / "credentials.env"))
+    monkeypatch.setenv("RESUME_AGENT_DEV", "1")
+    monkeypatch.setenv("RESUME_AGENT_FAKE_LLM", "1")
+    import ui.app as A
+    importlib.reload(A)
+    A._SESSION.pop("s", None)
+    trim = {"id": "t1", "kind": "bullet", "label": "Acme Bank, Analyst", "text": CUT}
+    recs = A._records()
+    try:
+        rid = recs.add("Analyst", "Acme Bank", 0.8, "", data={
+            "trims": [trim], "changes": {"trimmed": [trim], "points": ["1 item cut to fit one page."]}})
+    finally:
+        recs.close()
+    c = A.app.test_client()
+    exported = c.get("/api/memory/export").get_json()
+    assert exported["resume_changes"][0]["record_id"] == rid
+    assert exported["resume_changes"][0]["trims"][0]["text"] == CUT
+    assert c.post("/api/memory/erase").status_code == 200          # resumes stay
+    recs = A._records()
+    try:
+        kept = recs.get(rid)
+        assert kept is not None and "trims" not in json.loads(kept["data"])
+        assert recs.tailoring_logs() == []
+    finally:
+        recs.close()
+    assert CUT.encode() not in (data / "resume_agent.db").read_bytes()   # vacuumed, no free page keeps it
+    A._SESSION.pop("s", None)

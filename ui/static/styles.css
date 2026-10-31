@@ -4578,3 +4578,108 @@ body.cv-dragging * { cursor: grabbing !important; }
 .chc-edit-q { font-size: 13.5px; font-weight: 600; color: var(--ink); }
 .chc-edit-g { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
 @media (max-width: 640px) { .chc-edit-g { grid-template-columns: 1fr; } .choice-line { padding: 10px 16px; } }
+
+/* ---------------------------------------------------------------- the memory page (Phase 6)
+   "What SponsorJobs knows about you" (docs/applicant-brain.md, section 13). The reading column
+   of Your answers (1040px), its cards (.ans-card) and rows (.ans-row): label, value, where it came
+   from and when, then Edit and Forget. No accent on the page but the empty state's Upload. */
+.view-profile .page-head { max-width: 1040px; margin-left: auto; margin-right: auto; }
+.mem-wrap { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; padding-bottom: 48px; }
+.mem-wrap > .prof-import-msg { margin-bottom: 0; }
+.mem-jump { display: flex; flex-wrap: wrap; gap: 6px; margin: -6px 0 -4px; }
+.mem-jump:empty { display: none; }
+.mem-jump-b { font: inherit; font-size: 12.5px; font-weight: 550; color: var(--muted); background: none;
+  border: 1px solid var(--border); border-radius: var(--r-pill); padding: 5px 12px; cursor: pointer; }
+.mem-jump-b:hover { color: var(--ink); border-color: var(--border-strong); background: var(--surface-2); }
+.mem-jump-b:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.mem-card { scroll-margin-top: 16px; }
+.mem-rows { margin: 0; }
+.mem-rows:empty { display: none; }
+.mem-rows + .mem-subh, .ans-list + .mem-subh { margin-top: 22px; }
+.mem-subh { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; }
+.mem-h3 { margin: 0; font-size: 13px; font-weight: 650; color: var(--ink-2); display: flex; align-items: baseline; gap: 8px; }
+.mem-note { margin: -8px 0 14px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.mem-hist .mem-note { margin: 0 0 22px; }
+/* A row reads across: the label on the left, the value and where it came from on the right. */
+.mem-row:not(.is-editing) .ans-row-main { display: grid; grid-template-columns: 200px minmax(0, 1fr); column-gap: 20px; align-items: baseline; }
+.mem-row:not(.is-editing) .ans-q { grid-row: span 2; }
+.mem-row:not(.is-editing) .ans-a { margin-top: 0; }
+.mem-row:not(.is-editing) .ans-meta { grid-column: 2; margin-top: 3px; }
+.mem-row:not(.is-editing) .ans-q:only-child { grid-row: auto; }
+.mem-row .ans-a a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 2px; }
+.mem-row .ans-a a:hover { text-decoration-color: currentColor; }
+.mem-row.is-ended .ans-a { color: var(--flag); }
+.mem-hidden { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); }
+.mem-hidden::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.mem-dim { color: var(--faint); }
+.mem-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; white-space: normal; }
+.mem-tag { font-size: 12px; font-weight: 500; color: var(--ink); background: color-mix(in srgb, var(--ink) 7%, transparent);
+  border: 1px solid var(--border-strong); border-radius: var(--r-pill); padding: 2px 10px; }
+.mem-row.is-editing .ans-q { margin-bottom: -2px; }
+.mem-row.is-editing .ans-seg { align-self: flex-start; }
+.mem-row.is-editing select.fld, .mem-row.is-editing input.fld { height: 36px; max-width: 520px; }
+.mem-car-g, .mem-add-g { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+.mem-add-g { grid-template-columns: 180px minmax(0, 1fr); max-width: 640px; }
+.mem-add-g .fld { max-width: none !important; }
+.mem-forget-q { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.mem-chatlines { margin-top: 0; }
+/* The Work authorization editor, inside Work and visa: an inset panel, not a card in a card. */
+.ans-card.mem-sub { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; margin: 0 0 16px; }
+.ans-card.mem-sub[hidden] { display: none; }
+.ans-card.mem-sub .ans-h { font-size: 14px; }
+/* "I noted": one chip per fact the chat proposed, saved on a tap. */
+.mem-chips { display: flex; flex-direction: column; gap: 8px; }
+.mem-chip { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; padding: 10px 14px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r); }
+.mem-chip-t { font-size: 13px; color: var(--ink); flex: 1 1 260px; min-width: 0; }
+.mem-chip-t b { font-weight: 600; }
+.mem-chip-m { font-size: 11.5px; color: var(--faint); }
+.mem-chip-acts { display: inline-flex; gap: 6px; }
+.mem-needs { display: flex; flex-direction: column; gap: 8px; }
+.mem-needs .ans-needs { margin: 0; }
+/* Form answers: the questions every form asks that are still open. */
+.mem-open { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: -4px 0 14px;
+  padding: 10px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r); }
+.mem-open[hidden] { display: none; }
+.mem-open-t { font-size: 13px; color: var(--ink-2); }
+.mem-basics { margin: 0 0 16px; }
+.mem-basics[hidden] { display: none; }
+.mem-basics .ans-card { background: var(--surface-2); border-radius: var(--r); padding: 18px 20px; }
+.ans-card.is-rows .ans-card-h, .ans-card.is-rows .ans-needs { display: none; }
+.ans-card.is-rows .wiz-off { display: none !important; }
+.ans-card.is-rows .ans-check.wiz-first { margin-top: 0; }
+.ans-card.is-lent #memBasicsCancel { display: none; }
+.mem-answers-other { margin-top: 22px; }
+.mem-decline { margin: 0 0 14px; }
+/* Your data: export and erase, the erase asked in the page. */
+.mem-data-row { display: flex; align-items: center; gap: 16px; padding: 14px 0; }
+.mem-data-row + .mem-data-row { border-top: 1px solid var(--border); }
+.ans-card-h + .mem-data-row { padding-top: 0; }
+.mem-data-row .btn-danger-ghost, .mem-erase .btn-danger-ghost { border-color: var(--border-strong); }
+.mem-data-t { flex: 1; min-width: 0; }
+.mem-data-n { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.mem-data-t .mem-note { margin: 3px 0 0; }
+.mem-files { margin: 0; white-space: nowrap; }
+.mem-erase { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; padding: 14px 16px; background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--flag) 35%, var(--border)); border-radius: var(--r); }
+.mem-erase[hidden] { display: none; }
+.mem-erase-q { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.mem-erase .ans-check { margin: 0; }
+.mem-erase-acts { display: flex; gap: 8px; }
+/* The note box (moved from Settings): quiet buttons, theme colours. */
+#memHistory .mem-add { margin: 0; }
+#memHistory .mem-assess-yes { background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 30%, transparent); color: var(--ink); }
+#memHistory .mem-assess-head { color: var(--ink-2); }
+#memHistory .mem-assess-no { background: var(--surface-2); border-color: var(--border); color: var(--ink-2); }
+/* Resume choices: Add a choice from lists. */
+.chc-new { border: 1px solid var(--border); border-radius: var(--r); margin-bottom: 12px; }
+.chc-items { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.chc-item { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+#liCard .li-body, #liCard .prof-note { margin-top: 0; }
+@media (max-width: 760px) {
+  .mem-row:not(.is-editing) .ans-row-main { grid-template-columns: 1fr; }
+  .mem-row:not(.is-editing) .ans-q { grid-row: auto; }
+  .mem-row:not(.is-editing) .ans-meta { grid-column: 1; }
+  .mem-car-g, .mem-add-g { grid-template-columns: 1fr; }
+  .mem-data-row { flex-wrap: wrap; }
+}

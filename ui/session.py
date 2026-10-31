@@ -797,6 +797,14 @@ class WebIntake:
         saved = memory.load(profile_name)
         if saved:
             self.saved_profile = saved.get("profile") or {}
+            # (Phase 6) The resume material assembled from memory: the person's own contact
+            # details and the dates the brain holds, laid over the saved material
+            # (applicant/profile.py). No model call; nothing invented.
+            try:
+                from applicant.profile import assemble
+                self.saved_profile = assemble(self.saved_profile, self._brain())
+            except Exception:      # noqa: BLE001 - the saved material always stands on its own
+                pass
             # Seed the built profile FROM the saved one, so the first autosave of a returning
             # session writes the real profile back instead of clobbering the durable saved
             # profile (bullets, projects, extracurricular, skills) with the empty skeleton a
@@ -857,18 +865,24 @@ class WebIntake:
             return None
 
     def _brain_material(self) -> list:
-        """The person's confirmed facts from the applicant brain, as plain strings, for the fact
-        gate (tailoring/fact_gate.py): a rewrite may name what the person told the brain even
-        when the profile does not say it. Empty with no brain. Never sent anywhere."""
+        """The person's own material for the fact gate (tailoring/fact_gate.py), beyond the page
+        being built: the Phase 6 profile assembled from memory (applicant/profile.py, already in
+        self.saved_profile) and the brain's active facts as plain strings, so a rewrite may name
+        what the person told the brain even when the resume material does not say it.
+        Self-identification (EEO) answers are never read. Local only; never sent anywhere."""
+        out: list = [self.saved_profile] if self.saved_profile else []
         st = self._brain()
         if st is None:
-            return []
+            return out
         try:
+            from applicant import keys as _K
             from applicant.store import ACTIVE
-            return [" ".join(str(r[k] or "") for k in ("subject", "value"))
-                    for r in st.facts(store="", status=ACTIVE)]
+            out += [" ".join(str(r[k] or "") for k in ("subject", "value"))
+                    for r in st.facts(store="", status=ACTIVE)
+                    if _K.sensitivity(r["key"]) != _K.EEO]
         except Exception:      # noqa: BLE001 - the gate works from the profile alone
-            return []
+            pass
+        return out
 
     def _brain_contact(self):
         """(Phase 3) The contact details the person gave the builder are facts: their own words

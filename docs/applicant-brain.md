@@ -7,10 +7,10 @@
 > `intake/palace_memory.py`, `autoapply/answers.py`, `autoapply/basics.py`, `autoapply/planner.py`,
 > `_known_answers_for` or `_answer_lib` in `ui/app.py`, or the profile and Your answers pages.
 >
-> Status: Phases 1 to 5 built (the store, the migration and the apply agent's readers; the diary
+> Status: Phases 1 to 6 built (the store, the migration and the apply agent's readers; the diary
 > without MemPalace; every writer saves facts and the readers ask the brain first; new wordings,
-> legal confirm once and expiry; choices). Phases 6 and 7 are plans. Changes made while building are marked
-> "(Phase N build)" below.
+> legal confirm once and expiry; choices; the memory page). Phase 7 is a plan. Changes made while
+> building are marked "(Phase N build)" below.
 
 ## Contents
 
@@ -485,7 +485,13 @@ erase misses `answers.db`, `app_prefs.json` and the interview files; Phase 1 fix
 because the brain now holds copies of them. (Phase 1 build) Found while testing: a row deleted
 from `resume_agent.db` (`memory_facts`, `conversation_memory`) can still sit in SQLite's free
 pages. Phase 6's byte search (`tests/test_brain_erase.py`) needs `PRAGMA secure_delete` or a
-`VACUUM` on that file too.
+`VACUUM` on that file too. (Phase 6 build) Both: `resume_agent.db` (`ConversationMemory`,
+`CVRecords`) and `answers.db` (`AnswerLibrary` and the mirror's connection) delete with
+`secure_delete` on, so a Forget overwrites the value; Erase deletes every profile row (scratch
+copies a batch made too) and every chat fact, then `VACUUM`s `resume_agent.db` and truncates its
+WAL. Erase also takes `linkedin_review.json` and the profile photo, and with "and my resumes and
+applications" the `cv_record` rows and the `cv_build/`, `uploads/`, `imports/` and `recordings/`
+folders.
 
 ## 11. Migration from the five stores
 
@@ -1134,6 +1140,89 @@ included).
 E2E: all checks pass, plus new: "Forget the salary on the memory page, the next application
 asks for it"; "Export holds the seeded salary and the diary"; screenshots at 1893x1183 and 76%
 zoom, light and dark, attached to the PR.
+
+(Phase 6 build) What shipped, and where it differs from the plan above:
+
+- **One page, the old view's id** (`#view-profile`, so every older door lands there): "What
+  SponsorJobs knows about you", in the 1040 reading column, a row of jump links, then cards in Your
+  answers' grammar (`.ans-card`, `.ans-row`). Each row reads across: the label, the value, and
+  under it where it came from and when ("From your resume, Oct 5"; "You, on Telegram, Oct 28";
+  `applicant/page.py source_words`), then Edit and Forget. Forget asks in the row itself, with
+  "Also delete the chat lines where I said this" when a diary line said it. Sections: I noted from
+  your chats, Needs a look, About you, Work and visa, Form answers (the ones every form asks, then
+  Other answers: the answer library's one-question answers with search and Add), Self-
+  identification, Career (Experience, Education, Projects, Activities, Skills, Summary, Interests,
+  Skipped on purpose, From your chats), Resume choices (with "Add a choice" from lists), LinkedIn
+  review, History (applications, files you shared, the chat diary, and the "Tell me something to
+  remember" box that was in Settings), Your data (Export, Erase).
+- **The profile form is gone; nothing it did is.** Every section of it is an inline editor per
+  entry (`/api/profile/sections`, unchanged, so a role's bullets, the summary, activities, interests,
+  the skills the person named and "Skipped on purpose" all still save the same way), and an edit
+  now also writes the changed entry as the person's own fact (source `you`, ref `memory_page`); an
+  entry renamed in an edit is no longer current in the brain. Forget on an entry
+  (`POST /api/memory/career`) removes it from the material and its facts from the brain, and pauses
+  a choice that named it.
+- **Your answers is a door, not a page.** `openAnswers(origin, opts)` opens the memory page at Form
+  answers with a back link named for the door (Auto-apply, Application, Resume, Settings); from the
+  account menu there is no back link. Its cards moved in: the work authorization editor opens
+  inside Work and visa (Edit work authorization, or a country row's Edit); the "Answers every form
+  asks" card stays one card, lent to setup's last step as before and shown under Form answers,
+  with only the rows still open, when the person taps Answer them (or the agent's "Before I apply"
+  prompt sends them); the saved answers list is Other answers, never listing a self-identification
+  answer or a key a row above shows (`/api/answers?view=memory`); the choices card is Resume choices.
+- **Self-identification** rows say "Saved", "Prefer not to say" or "Not answered" (`page.eeo_rows`:
+  never the value). Show calls `GET /api/memory/reveal` for the person's own screen; Edit on a row
+  reveals it too. A test serializes the whole page payload and finds no saved value.
+- **I noted** (`page.noted`): a chat fact proposed for a form answer (`needs_check`, `from_chat` or
+  `unconfirmed_legal`) is a chip with Save and Not quite (`POST /api/memory/noted`). Save writes it
+  where forms read it (the library and the prefs; a contact detail into both saved bags) and
+  confirms the chat fact in place, so a later chat sync keeps it settled; Not quite forgets it and
+  its `memory_facts` row, so it never comes back. A chat salary that disagrees with a saved one is
+  never also a chip: it is the one Needs a look question.
+- **Needs a look** (`page.needs`): the salary conflict (a button per amount), a time-limited work
+  authorization that ended (Update it), a salary older than six months (Still right / Change it), a
+  start date that passed, a raw reply an older run saved, a drafted self-identification answer, a
+  legal fact read from a resume, a newer value waiting behind a confirmed one.
+- **Forget** (`POST /api/memory/forget {id, chat}`): one row per thing, every copy. The salary row
+  clears every wording in the answer library, the prefs' `desired_salary`, the brain's own rows and
+  the chat facts that said it, history included; a contact detail clears both saved bags, the brain
+  (an address also its parts) and a live builder session; a document deletes its row, its stored
+  file and the facts only it gave. With `chat`, `intake/diary.py forget_refs` blanks the diary
+  lines the facts name, in place, so every other line keeps its number and ref. The brain's WAL is
+  checkpointed after a Forget, so the deleted pages leave it too.
+- **History**: `fill` rows were never written before; now the fill route and the agent's step
+  record one per field filled from memory (label, key, origin; never the value; the same label once
+  per application, `page.record_fills`), so an application reads "Showed Stanbic and BlackOrigin.
+  Filled salary and citizenship from memory. Gender: your saved answer." A self-identification fill
+  says "Prefer not to say" or "your saved answer", never the value.
+- **Export** is one zip (`GET /api/memory/export.zip`, `?files=1` for "Include my files"):
+  `memory.json` (the old JSON export, every table and legacy store), `diary/*.jsonl` as kept,
+  `stores/` (the prefs, interview files, skip list, LinkedIn review as they are) and, with the tick,
+  `files/` (uploads, imports, the photo). `/api/memory/export` (JSON) stays.
+- **Erase everything** asks in the page (never a browser dialog) with the "and my resumes and
+  applications" tick; see section 10 for what it covers. `tests/test_brain_erase.py` seeds a unique
+  value into every store (the brain, its backup, the legacy library and prefs, the profile and a
+  batch's scratch copy, a chat fact, the diary and the old store folder, the interview files, the
+  skip list, the LinkedIn review, the photo, a resume record and its files) and byte-searches every
+  file in the data folder after Erase: nothing survives. Without the tick, only the resume record
+  and its files still carry the name.
+- **The August plan, finished.** `_derive_essentials_from_memory` (replaying up to 80 chat turns
+  through the model on every call, never wired in) is removed. `applicant/profile.py assemble` lays
+  the brain over the saved material by code: the person's own confirmed contact details win (a
+  phone corrected anywhere is corrected everywhere), a fact at 0.9 or more fills only what is
+  empty, the brain's dates fill a role, school or project that lacks them. It is the main path:
+  `_saved_full_profile()` (drafting, the agent, cover letters) and the builder session's saved
+  profile read it. `/api/memory/derived-profile` and `/api/memory/tailoring-input` return it (with
+  the diary lines that fit the job as `drew_on`); `/api/memory/highlights` stays the diary recall.
+  No model call anywhere on this page.
+- **Settings** keeps a door: "Your memory" with Open (back link "Settings").
+- Screens: `docs/design/memory/` (1893x1183 DSF 2 and 2490x1556 DSF 1.52, dark and light, the full
+  page and each state). Measured: every card's left edge equals the title's (453 and 752), every
+  card 1040 wide, no sideways scroll, no primary button while editing nothing.
+- Tests: `tests/test_memory_page.py` (replaces `test_profile_screen.py` and `test_profile_editor.py`,
+  whose tests it keeps), `tests/test_brain_erase.py`, `tests/test_memory_first_tailoring.py` and
+  `tests/test_derive_from_memory.py` rewritten for the assembled profile. E2E: `e2e-agent.mjs`
+  section 14.
 
 ### Phase 7: retire the legacy stores
 

@@ -115,3 +115,24 @@ def test_add_this_keyword_drafts_are_gated_too():
                               "Kubernetes and Airflow.", "rewrite", PROFILE,
                               "Deployed reporting services with Kubernetes and Airflow.", JD)
     assert any("AWS Certified" in p for p in problems)
+
+
+def test_the_session_gate_reads_the_assembled_profile_and_brain_facts_never_eeo(tmp_path, monkeypatch):
+    from intake.memory import ConversationMemory
+    from ui.records import CVRecords
+    from ui.session import WebIntake
+    s = WebIntake(JD, "x", FakeLLM(), ConversationMemory(":memory:"), CVRecords(":memory:"),
+                  tmp_path, jobname="cv", palace_dir=tmp_path / "p")
+    s.saved_profile = dict(PROFILE, certifications=["AWS Certified Data Engineer"])   # Phase 6 assembled
+
+    class _Brain:
+        def facts(self, store=None, status=None):
+            return [{"key": "certification", "subject": "", "value": "Licensed CPA"},
+                    {"key": "@gender", "subject": "", "value": "Prefersnotosay Zandoria"}]
+    monkeypatch.setattr(s, "_brain", lambda: _Brain())
+    material = s._brain_material()
+    assert material[0] is s.saved_profile
+    assert any("Licensed CPA" in m for m in material if isinstance(m, str))
+    assert not any("Zandoria" in m for m in material if isinstance(m, str))   # EEO never read
+    assert gate_rewrite(SOURCE, "AWS Certified engineer who built ETL pipelines in Python.",
+                        PROFILE, *material) == []
