@@ -398,3 +398,26 @@ def test_the_shell_helpers_ask_in_chunks_and_resume_parked_jobs():
     out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_agent_park.js")], capture_output=True, text=True,
                          timeout=60)
     assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stdout + out.stderr
+
+
+# --------------------------------------------------------------------------- Ready to send, page gone
+def test_a_job_left_ready_to_send_offers_send_on_its_row_and_clears_when_sent(A):
+    """After an unattended batch the person comes back to several Ready to send jobs whose pages
+    are gone: each row offers Send (the shell fills it again and submits it in one click, or
+    parks it when anything new comes up), with the review page's fingerprint to compare."""
+    mod, _sent, rid, _ = A
+    r = _post(mod, "/api/autoapply/agent/ready", {"record_id": rid, "sig": "1234:abcd", "accepted": ["Data Privacy Agreement"],
+                                                  "run": RUN})
+    assert r["ok"] and r["ready"]["sig"] == "1234:abcd"
+    row = _row(mod, rid)
+    assert row["action"] == "send" and row["ready_sig"] == "1234:abcd" and row["tile"] == "waiting"
+    assert row["stage_detail"].startswith("Ready to send.")
+    # a paused job is never offered Send
+    _post(mod, "/api/autoapply/agent/ask", {"id": "rs1", "question": "Years of experience?", "record_id": rid,
+                                            "park": _park(rid, batch=True), "no_wait": True})
+    assert _row(mod, rid)["action"] == "answer"
+    _post(mod, f"/api/autoapply/agent/parked/{rid}/take", {"drop": True})
+    assert _row(mod, rid)["action"] == "send"
+    assert _post(mod, "/api/autoapply/agent/ready", {"record_id": rid, "clear": True})["ok"]
+    assert _row(mod, rid)["action"] != "send"
+    assert _post(mod, "/api/autoapply/agent/ready", {"sig": "x"})["reason"] == "no-record"

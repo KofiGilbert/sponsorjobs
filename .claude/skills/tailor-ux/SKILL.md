@@ -354,3 +354,6 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   first" ghost), never mid-run and never ticked for the person. "Apply for me to all N" is a link
   button on Waiting on you beside Approve all; the batch ends with one bar line ("Done with 3
   applications: 1 ready to send, 2 paused, waiting on you.") and "See them" (Needs you).
+  A job left Ready to send keeps a "Send" row action on Waiting on you; when its page is gone, that
+  one Send fills it again and submits it ("Filling it in again to send it"), or pauses it, never a
+  second click.

@@ -38,6 +38,8 @@
  *  unknown required question; both park without waiting, job 3 reaches Ready to send, ONE digest
  *  lists the parked jobs, and answering both re-runs each of them to Ready to send.
  *  The first Apply for me asks the standing choice on terms once, before the run (section 4).
+ *  ... and (section 17) back from being away: Send on a Ready to send job whose page is gone fills
+ *  it again from the saved answers and submits it in one click, asking nothing.
  */
 import { _electron as electron } from "playwright";
 import { spawn, spawnSync } from "child_process";
@@ -195,6 +197,19 @@ const rowOf = async (id) => {
   return null;
 };
 const barText = () => win.evaluate(() => { const b = document.querySelector("#bbFill"); return b && !b.hidden ? b.textContent.trim() : ""; });
+// A row's button, with the bar cleared first: a waitBar right after the click must never read
+// the PREVIOUS run's "Ready to send" (the click's gates can take a moment before the bar moves).
+const clickRow = async (id) => {
+  await win.evaluate(() => { const b = document.querySelector("#bbFill"); if (b) { b.textContent = ""; b.hidden = true; } });
+  await win.click(`.aa-row[data-id="${id}"] [data-act]`);
+};
+// Wait for an event in the progress log (every event the shell sent since ``from``).
+const waitLog = async (pred, ms, from = 0) => {
+  const t0 = Date.now();
+  let log = [];
+  while (Date.now() - t0 < ms) { log = (await agentLog()).slice(from); if (log.some(pred)) return log; await sleep(500); }
+  return log;
+};
 const waitBar = async (re, ms) => {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) { const t = await barText(); if (re.test(t)) return t; await sleep(500); }
@@ -206,7 +221,7 @@ await win.click("[data-nav=autoapply]");
 await win.waitForSelector(`.aa-row[data-id="${RID}"]`, { timeout: 30_000 });
 const label = await win.locator(`.aa-row[data-id="${RID}"] [data-act]`).first().textContent();
 check("the row button says Apply for me", /apply for me/i.test(label || ""), label);
-await win.click(`.aa-row[data-id="${RID}"] [data-act]`);
+await clickRow(RID);
 // Answers every form asks are missing in the fresh data folder: the bar asks once first.
 const gate = await waitBar(/before i apply/i, 30_000);
 check("the bar asks for the form answers first", /before i apply/i.test(gate), gate);
@@ -240,7 +255,7 @@ check("the Submitted tile moved off zero", tile === false);
 
 // ---- 6. the captcha variant stops, and never submits -------------------------------------
 await win.waitForSelector(`.aa-row[data-id="${RID_CAPTCHA}"]`, { timeout: 30_000 });
-await win.click(`.aa-row[data-id="${RID_CAPTCHA}"] [data-act]`);
+await clickRow(RID_CAPTCHA);
 const stopped = await waitBar(/captcha|ready to send|stopped|have a look/i, 120_000);
 check("the captcha run stops with the captcha message", /captcha/i.test(stopped), stopped);
 const log3 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
@@ -252,7 +267,7 @@ check("nothing submitted on the captcha run", !log3.includes("submitted"), JSON.
 const deliver = (msg) => fetch("http://127.0.0.1:57000/api/inbox/dev/deliver", { method: "POST",
   headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" }, body: JSON.stringify(msg) }).then((r) => r.ok).catch(() => false);
 await win.waitForSelector(`.aa-row[data-id="${RID_CODE}"]`, { timeout: 30_000 });
-await win.click(`.aa-row[data-id="${RID_CODE}"] [data-act]`);
+await clickRow(RID_CODE);
 const waiting = await waitBar(/waiting for the site|ready to send|stopped|have a look|connect your email/i, 120_000);
 check("the code run waits for the site's email", /waiting for the site/i.test(waiting), waiting);
 const d1 = await deliver({ from: "Acme Careers <no-reply@acme-careers.test>", subject: "Acme Corp: your verification code",
@@ -265,7 +280,7 @@ check("the mock accepted the emailed code", log4.includes("code-ok") && !log4.in
 
 // ---- 8. the account already exists: forgot password, emailed reset link, new password ------
 await win.waitForSelector(`.aa-row[data-id="${RID_RESET}"]`, { timeout: 30_000 });
-await win.click(`.aa-row[data-id="${RID_RESET}"] [data-act]`);
+await clickRow(RID_RESET);
 const waiting2 = await waitBar(/waiting for the site|ready to send|stopped|have a look|connect your email/i, 120_000);
 check("the existing-account run asks for a reset and waits for the email", /waiting for the site/i.test(waiting2), waiting2);
 const d2 = await deliver({ from: "Acme Careers <no-reply@acme-careers.test>", subject: "Reset your Acme Corp password",
@@ -278,7 +293,7 @@ check("the mock saw the reset link opened and the password saved", log5.includes
 
 // ---- 9. a required question nobody answered: the agent asks on the bar, carries on, remembers --
 await win.waitForSelector(`.aa-row[data-id="${RID_ASK}"]`, { timeout: 30_000 });
-await win.click(`.aa-row[data-id="${RID_ASK}"] [data-act]`);
+await clickRow(RID_ASK);
 // Work authorization and sponsorship came from the migrated prefs, so they are never asked;
 // answer whatever does come, up to four questions, the way a person on the bar would.
 let asked = await waitBar(/the application asks|ready to send|stopped|have a look|needs/i, 120_000);
@@ -317,7 +332,7 @@ check("the answer is saved for next time", saved, JSON.stringify(lib).slice(0, 2
 
 // ---- 10. the next application with the same required question: answered from memory ---------
 await win.waitForSelector(`.aa-row[data-id="${RID_AGAIN}"]`, { timeout: 30_000 });
-await win.click(`.aa-row[data-id="${RID_AGAIN}"] [data-act]`);
+await clickRow(RID_AGAIN);
 const again = await waitBar(/the application asks|ready to send|stopped|have a look|needs/i, 120_000);
 const logAgain = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
 check("the years answer is reused on the next application without asking",
@@ -332,7 +347,7 @@ const savedCard = await win.evaluate(() => fetch("/api/answers/basics", { method
   body: JSON.stringify({ fields: { gender: "male", hispanic: "no", race: "black", veteran: "not", disability: "no" } }) }).then((r) => r.json()));
 check("the form answers card is saved", (savedCard.values || {}).gender === "male", JSON.stringify(savedCard.values || savedCard));
 await win.waitForSelector(`.aa-row[data-id="${RID_PHENOM}"]`, { timeout: 30_000 });
-await win.click(`.aa-row[data-id="${RID_PHENOM}"] [data-act]`);
+await clickRow(RID_PHENOM);
 const seen = [];
 const watch = async (re, ms) => {
   const t0 = Date.now();
@@ -373,7 +388,7 @@ const st2 = await post("/api/session/answer", { text: "My home address is 200 W 
 check("the intake chat took the address", st1 === 200 && st2 > 0, `start ${st1}, answer ${st2}`);
 await win.waitForSelector(`.aa-row[data-id="${RID_ADDRESS}"]`, { timeout: 30_000 });
 seen.length = 0;
-await win.click(`.aa-row[data-id="${RID_ADDRESS}"] [data-act]`);
+await clickRow(RID_ADDRESS);
 const addrDone = await watch(/ready to send|stopped|have a look|could not|the application asks/i, 150_000);
 check("the address run reaches Ready to send", /ready to send/i.test(addrDone), addrDone);
 const log8 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
@@ -393,7 +408,7 @@ check("the salary is saved on the form answers card", String((salCard.values || 
 const calls0 = (await mapperCalls()).calls || 0;
 await win.waitForSelector(`.aa-row[data-id="${RID_PAY}"]`, { timeout: 30_000 });
 seen.length = 0;
-await win.click(`.aa-row[data-id="${RID_PAY}"] [data-act]`);
+await clickRow(RID_PAY);
 const payDone = await watch(/ready to send|stopped|have a look|could not|the application asks/i, 150_000);
 const calls1 = (await mapperCalls()).calls || 0;
 const log9 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
@@ -403,7 +418,7 @@ check("the agent fills the saved salary after one mapping call", log9.includes("
       `calls ${calls0} -> ${calls1} | ${JSON.stringify(log9)}`);
 await win.waitForSelector(`.aa-row[data-id="${RID_PAY2}"]`, { timeout: 30_000 });
 seen.length = 0;
-await win.click(`.aa-row[data-id="${RID_PAY2}"] [data-act]`);
+await clickRow(RID_PAY2);
 const pay2Done = await watch(/ready to send|stopped|have a look|could not|the application asks/i, 150_000);
 const calls2 = (await mapperCalls()).calls || 0;
 const log10 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
@@ -438,7 +453,7 @@ const afterForget = await win.evaluate(() => fetch("/api/answers/basics").then((
 check("Forget clears the salary everywhere forms read it", !(afterForget.values || {}).salary, JSON.stringify(afterForget.values || afterForget));
 await win.click("[data-nav=autoapply]");
 await win.waitForSelector(`.aa-row[data-id="${RID_FORGOT}"]`, { timeout: 30_000 });
-await win.click(`.aa-row[data-id="${RID_FORGOT}"] [data-act]`);
+await clickRow(RID_FORGOT);
 const forgotAsk = await waitBar(/the application asks|ready to send|stopped|have a look|needs/i, 150_000);
 check("Forget the salary on the memory page, the next application asks for it",
       /the application asks/i.test(forgotAsk) && /base pay|salary/i.test(forgotAsk), forgotAsk);
@@ -455,7 +470,7 @@ check("the row says Paused: needs you, with the question, and offers Answer and 
       JSON.stringify(row14 && { tile: row14.tile, detail: row14.stage_detail, action: row14.action }));
 await win.click("[data-nav=autoapply]");
 await win.waitForSelector(`.aa-row[data-id="${RID_PAUSE}"]`, { timeout: 30_000 });
-await win.click(`.aa-row[data-id="${RID_PAUSE}"] [data-act]`);
+await clickRow(RID_PAUSE);
 const pauseAsk = await waitBar(/needs you to accept|ready to send|stopped|have a look/i, 120_000);
 check("the nobody-answers run asks to accept the agreement", /needs you to accept its Data Privacy Agreement/.test(pauseAsk), pauseAsk);
 const t0 = Date.now();
@@ -468,11 +483,13 @@ const parkedP = ((await api("/api/autoapply/agent/parked")) || {}).parked || [];
 const pe = parkedP.find((e) => String(e.record_id) === String(RID_PAUSE));
 check("the question stays open while the job is paused", pe && pe.state === "waiting" && pe.kind === "terms", JSON.stringify(pe));
 check("the bar still offers the three choices", (await win.locator("#bbFill .bb-opt").allTextContents()).join("|") === "Accept for all applications|Just this one|Stop");
+const mark15 = (await agentLog()).length;
 await win.locator("#bbFill .bb-opt", { hasText: /^Just this one$/ }).first().click();
-const answeredBar = await waitBar(/i carry on|carrying on|ready to send/i, 15_000);
-check("the late answer says the job carries on", /i carry on with the application|carrying on|ready to send/i.test(answeredBar), answeredBar);
-const pauseDone = await waitBar(/ready to send|stopped|have a look|could not|the application asks|^paused/i, 150_000);
-check("the paused run carries on from the same page and reaches Ready to send", /ready to send/i.test(pauseDone), pauseDone);
+const answeredBar = await waitBar(/^Got it: Just this one\.|Carrying on where I paused|ready to send/i, 15_000);
+check("the late answer says the job carries on", /I carry on with the application for|Carrying on where I paused|ready to send/i.test(answeredBar), answeredBar);
+const log15 = await waitLog((x) => x.r === RID_PAUSE && /^(ready|stopped|parked)$/.test(x.s), 150_000, mark15);
+const pauseDone = (log15.filter((x) => x.r === RID_PAUSE && /^(ready|stopped|parked)$/.test(x.s)).pop() || {}).m || await barText();
+check("the paused run carries on from the same page and reaches Ready to send", log15.some((x) => x.r === RID_PAUSE && x.s === "ready"), pauseDone);
 const logP2 = await agentLog();
 check("it carried on where it paused (the job was not opened again)",
       logP2.some((x) => x.r === RID_PAUSE && x.m === "Thanks. Carrying on where I paused")
@@ -494,6 +511,7 @@ for (const id of [RID_B1, RID_B2, RID_B3]) {
   jobs.push({ recordId: id, url: it.apply_url, resumePath: it.cv_path || "", lane: it.lane || "assisted", autonomous: false, company: it.company || "" });
 }
 const tB = Date.now();
+const markB = (await agentLog()).length;
 await win.evaluate((js) => { window.__batchR = null; window.tailorShell.agentBatch(js).then((r) => { window.__batchR = r; }); }, jobs);
 let batchR = null;
 for (let i = 0; i < 400 && !batchR; i++) { await sleep(750); batchR = await win.evaluate(() => window.__batchR); }
@@ -509,8 +527,11 @@ const dj = ((dg.last || {}).jobs || []).map(String);
 check("ONE digest lists the parked jobs with their questions", dg.count === digest0 + 1 && dj.includes(String(RID_B1)) && dj.includes(String(RID_B2))
       && /Paused: \d+ applications need you\./.test((dg.last || {}).text || "") && /Data Privacy Agreement/.test(dg.last.text) && /base pay/i.test(dg.last.text),
       JSON.stringify({ count: dg.count, before: digest0, last: dg.last }));
-const doneBar = await waitBar(/done with 3/i, 10_000);
-check("the bar sums the batch up", /Done with 3 applications: 1 ready to send, 2 paused, waiting on you\./.test(doneBar), doneBar);
+const doneEv = ((await waitLog((x) => x.s === "batch-done", 10_000, markB)).find((x) => x.s === "batch-done") || {}).m || "";
+check("the batch sums itself up", /^Done with 3 applications: 1 ready to send, 2 paused, waiting on you\./.test(doneEv), doneEv);
+const logB = (await agentLog()).slice(markB);
+check("job 3 was never asked about the agreement and nothing was accepted on it",
+      !logB.some((x) => x.r === RID_B3 && /accept/i.test(x.m || "")), JSON.stringify(logB.filter((x) => x.r === RID_B3)));
 const r1 = await rowOf(RID_B1), r2 = await rowOf(RID_B2);
 check("both parked rows say Paused with Answer and continue", r1 && r2 && r1.action === "answer" && r2.action === "answer"
       && /^Paused: needs you\./.test(r1.stage_detail) && /^Paused: needs you\./.test(r2.stage_detail),
@@ -536,6 +557,30 @@ check("each re-run opened its job again (the pane had moved on)",
 const pk2 = ((await api("/api/autoapply/agent/parked")) || {}).parked || [];
 check("the answered jobs left the paused list; the unanswered one stays", !pk2.some((e) => [String(RID_B1), String(RID_B2)].includes(String(e.record_id)))
       && pk2.some((e) => String(e.record_id) === String(RID_FORGOT) && e.state === "waiting"), JSON.stringify(pk2.map((e) => [e.record_id, e.state])));
+
+// ---- 17. back from being away: Send on a Ready to send job whose page is gone, in one click ------
+// B3 reached Ready to send in the batch, B1 after its answer; the pane moved on since (B2 ran
+// last). One Send each: the shell fills the job again from the saved answers, finds the same
+// review page and presses Submit as the person's Send. Nothing is asked.
+await win.click("[data-nav=autoapply]");
+await win.click('[data-aa-tile="waiting"]').catch(() => {});
+for (const id of [RID_B3, RID_B1]) {
+  await win.waitForSelector(`.aa-row[data-id="${id}"] [data-act="send"]`, { timeout: 30_000 }).catch(() => {});
+  const rowS = await rowOf(id);
+  check(`job ${id}: the row offers Send for a job left Ready to send`, rowS && rowS.action === "send" && !!rowS.ready_sig, JSON.stringify(rowS && { a: rowS.action, d: rowS.stage_detail }));
+  const markS = (await agentLog()).length;
+  await clickRow(id);
+  const logS = await waitLog((x) => x.r === id && /^(submitted|stopped|parked|ready)$/.test(x.s), 150_000, markS);
+  const mine = logS.filter((x) => x.r === id);
+  check(`job ${id}: one Send fills it again and submits it`, mine.some((x) => x.s === "submitted") && mine.some((x) => x.m === "Filling it in again to send it"),
+        JSON.stringify(mine.slice(-6)));
+  check(`job ${id}: nothing was asked on the way`, !mine.some((x) => /^(ask|parked)$/.test(x.s)), JSON.stringify(mine.filter((x) => /ask|parked/.test(x.s))));
+  const logSub = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+  check(`job ${id}: the mock received the submission`, logSub.includes("submitted"), JSON.stringify(logSub));
+  await sleep(1000);
+  const rowD = await rowOf(id);
+  check(`job ${id}: it is marked submitted`, rowD && rowD.tile === "submitted", JSON.stringify(rowD && { t: rowD.tile, a: rowD.action }));
+}
 
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

@@ -13695,6 +13695,36 @@ def autoapply_agent_parked_take(rid: int):
     return jsonify({"ok": True, "entry": e})
 
 
+@app.post("/api/autoapply/agent/ready")
+@_guard
+def autoapply_agent_ready():
+    """The agent left this application on its review page, Ready to send: body {record_id, sig,
+    accepted?, run} keeps it on the record (agent_ready) for the Auto-apply row's Send, which
+    also works once the page is gone (the shell fills it again and submits only when the review
+    page comes out the same: ``sig``). {record_id, clear: true} drops it (sent, or a new run)."""
+    b = request.json or {}
+    if b.get("record_id") in (None, ""):
+        return jsonify({"ok": False, "reason": "no-record"}), 400
+    recs = _records()
+    try:
+        rid = int(b.get("record_id"))
+        if recs.get(rid) is None:
+            return jsonify({"ok": False, "reason": "no-record"}), 404
+        if b.get("clear"):
+            recs.merge_data(rid, {"agent_ready": None})
+            return jsonify({"ok": True, "ready": None})
+        run = b.get("run") if isinstance(b.get("run"), dict) else {}
+        view = {"sig": str(b.get("sig") or "")[:80], "at": _now_iso(),
+                "accepted": [str(x)[:80] for x in (b.get("accepted") or [])][:10],
+                "run": {k: run.get(k) for k in ("url", "resume_path", "lane", "autonomous", "company")}}
+        recs.merge_data(rid, {"agent_ready": view})
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "reason": "no-record"}), 400
+    finally:
+        recs.close()
+    return jsonify({"ok": True, "ready": view})
+
+
 def _digest_text(rows: list) -> tuple[str, list | None]:
     """ONE message for every parked job: each with what it needs, numbered; buttons for up to
     three single-question jobs with up to three short choices (docs/notify.md: at most 3 rows of
@@ -15264,6 +15294,13 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
     else:
         park = None
         action = row_action(tile, st["reason"])
+    # Left on its review page by the agent: Send (one click, also once the page is gone).
+    ready = data.get("agent_ready") if isinstance(data.get("agent_ready"), dict) else None
+    if ready and not park and st["stage"] == "approved":
+        st = dict(st, detail="Ready to send. Press Send and I submit it, filling it in again if the page was closed.")
+        action = "send"
+    else:
+        ready = None
     return {
         "id": rec["id"], "role": (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0],
         "company": company, "location": location,
@@ -15275,6 +15312,7 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         "action": action,
         "paused": ({"state": park.get("state"), "kind": park.get("kind"), "questions": park.get("questions") or [],
                     "message": park.get("message") or ""} if park else None),
+        "ready_sig": (ready or {}).get("sig") or "",
         "lane": plan["tier"],
         "apply_url": _application_url(url, company) if url else "",
         "posting_url": url,

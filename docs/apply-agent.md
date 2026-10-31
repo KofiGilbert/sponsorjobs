@@ -324,6 +324,11 @@ died. Now nothing that only the person can give ever ends a run:
   takes it, and re-runs it one at a time, behind any run or batch: from the same page with its
   state when the pane is still there, else by opening the job again, the consent and answers
   applied on the way through. A fresh Apply for me on a parked job replaces the park.
+- **Send after being away.** A job left Ready to send keeps `agent_ready` on its record (the
+  review page's fingerprint, `reviewSig`), and its Auto-apply row offers Send. When its page is
+  gone (a batch moved on, a restart), ONE Send fills the job again from the saved answers
+  (`mode: "resend"`, asks never wait) and presses Submit as the person's own Send only when
+  nothing new came up and the review page is the same; otherwise it parks and nothing is sent.
 - **Late answers** (PR #143) never take a parked question: it is still open, so the late path
   skips it, and its answer trims the late-answer row.
 

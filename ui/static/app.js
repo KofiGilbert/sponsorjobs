@@ -9247,7 +9247,9 @@
   const AA_ACT = { review: ["aa.act.review", "Review"], fill: ["aa.act.fill", "Fill application"],
     signin: ["aa.act.signin", "Sign in and fill"], finish: ["aa.act.finish", "Open and finish"], view: ["aa.act.view", "View"],
     // a job the apply agent parked: its question, or Continue after a step on the page
-    answer: ["aa.act.answer", "Answer and continue"], continue: ["aa.act.continue", "Continue"] };
+    answer: ["aa.act.answer", "Answer and continue"], continue: ["aa.act.continue", "Continue"],
+    // left on its review page by the agent (also once the page is gone: Send fills it again)
+    send: ["aa.send", "Send"] };
   const AA_AGENT_ACT = { fill: ["aa.act.apply", "Apply for me"], signin: ["aa.act.apply", "Apply for me"],
     finish: ["aa.act.finish", "Open and finish"] };
   const aaActName = a => T(...((AA_HAS_AGENT() && AA_AGENT_ACT[a]) || AA_ACT[a] || AA_ACT.view));
@@ -9375,7 +9377,7 @@
     const [cls, text] = aaStageLine(it);
     const loc = usLocation(it.location);
     const act = it.action;
-    const primaryish = act === "fill" || act === "signin" || act === "finish" || act === "answer" || act === "continue";
+    const primaryish = act === "fill" || act === "signin" || act === "finish" || act === "answer" || act === "continue" || act === "send";
     return `<div class="aa-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(it.role)}, ${esc(coName(it))}">
       ${companyAvatar(it)}
       <div class="aa-row-main"><div class="aa-t">${esc(it.role || T("aa.role", "Role"))}</div>
@@ -9597,10 +9599,13 @@
   // choice: may the agent accept the privacy notice or terms a site requires to apply? One clear
   // question on the bar, before the run starts. Either answer is saved as their own; nothing is
   // assumed. With "No", a single run asks on the site and a batch parks that job for them.
+  let AA_TERMS_DECIDED = false;      // once made, no fetch before each run (the bar updates at once)
   async function aaTermsGate(go) {
+    if (AA_TERMS_DECIDED) return false;
     let d = null;
     try { d = await api("/api/answers/basics"); } catch { return false; }
-    if (!d || d.terms_decided) return false;
+    if (!d) return false;
+    if (d.terms_decided) { AA_TERMS_DECIDED = true; return false; }
     if (window.Panel && !window.Panel.isOpen("browser")) window.Panel.open("browser");
     aaAgentBar({ state: "terms-gate", go,
                  message: T("aa.termsGate.q", "Some sites ask you to accept their privacy notice or terms before you can apply. Should I accept those for you without asking?") });
@@ -9648,6 +9653,33 @@
     if (AA.open === id) aaClose();
     if (window.Panel && !window.Panel.isOpen("browser")) window.Panel.open("browser");
     aaAgentBar({ state: "parked", record_id: id, message: e.message, ask: e.ask_view, parked: { kind: e.kind } });
+  }
+  // Send on a job the agent left Ready to send. Its page may be gone (a batch moved on, or the
+  // app restarted): the shell then fills it again from the saved answers and submits it only when
+  // nothing new comes up and the review page is the same; otherwise it pauses and nothing is sent.
+  async function aaSendReady(id, b) {
+    if (!window.tailorShell || !window.tailorShell.agentSend) return;
+    if (AA_AGENT) { toast(T("aa.agentBusy", "One application at a time. Stop the current one first.")); return; }
+    const it = (AA.item && AA.item.id === id) ? AA.item : aaFind(id);
+    if (!it) return;
+    if (AA.open === id) aaClose();
+    if (window.Panel && !window.Panel.isOpen("browser")) window.Panel.open("browser");
+    if (b) b.disabled = true;
+    AA_AGENT = { id };
+    aaAgentBar({ state: "running", message: T("aa.send.start", "Sending") });
+    let r = null;
+    try {
+      r = await window.tailorShell.agentSend(id, { url: it.apply_url, resumePath: it.cv_path || "", lane: it.lane || "assisted",
+                                                    autonomous: false, company: it.company || "", sig: it.ready_sig || "" });
+    } catch { r = null; }
+    AA_AGENT = null;
+    if (b) b.disabled = false;
+    if (r && r.submitted) await api(`/api/record/${id}/status`, { status: "applied" }).catch(() => {});
+    else if (!r || (r.ok === false && !r.parked && /^(busy|not-ready|no-submit-button)$/.test(r.reason || ""))) {
+      aaAgentBar({ state: "stopped", message: r && r.reason === "busy" ? T("aa.agentBusy", "One application at a time. Stop the current one first.")
+                                            : T("aa.agent.nosend", "Could not find the Submit button. Press it on the page.") });
+    }
+    loadAutoApply();
   }
   async function aaContinueParked(id) {
     if (!window.tailorShell || !window.tailorShell.agentContinue) return;
@@ -9699,6 +9731,7 @@
       const after = (d) => {
         if (d && d.done && d.parked) {
           aaAgentBar({ state: "answered", message: d.reply || T("aa.parked.queued", "Thanks. I carry on with it as soon as the browser is free.") });
+          try { window.tailorShell && window.tailorShell.agentPoll && window.tailorShell.agentPoll(); } catch { /* the shell polls anyway */ }
           if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
           return;
         }
@@ -9754,10 +9787,12 @@
     } else if (info.state === "terms-gate") {
       const yes = btn(T("aa.termsGate.yes", "Yes, accept them for me"), "btn-primary bb-send", async () => {
         try { await api("/api/answers/basics", { fields: {}, accept_required_terms: "always" }); } catch { return; }
+        AA_TERMS_DECIDED = true;
         bar.hidden = true; info.go();
       });
       btn(T("aa.termsGate.no", "No, ask me first"), "btn-ghost bb-opt", async () => {
         try { await api("/api/answers/basics", { fields: {}, accept_required_terms: "ask" }); } catch { return; }
+        AA_TERMS_DECIDED = true;
         bar.hidden = true; info.go();
       });
       setTimeout(() => yes.focus(), 50);
@@ -9832,6 +9867,7 @@
     if (btn && /^(fill|signin|finish)$/.test(btn.dataset.act)) { aaFill(id, { btn }); return; }
     if (btn && btn.dataset.act === "answer") { aaAnswerParked(id); return; }
     if (btn && btn.dataset.act === "continue") { aaContinueParked(id); return; }
+    if (btn && btn.dataset.act === "send") { aaSendReady(id, btn); return; }
     aaOpen(id);
   });
   $("#aaApplyAll")?.addEventListener("click", () => aaApplyAll());

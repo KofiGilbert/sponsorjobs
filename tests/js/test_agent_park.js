@@ -3,7 +3,7 @@
 // pane is still on it, else from the job's link), and a batch with its one digest.
 "use strict";
 const path = require("path");
-const { createAgent } = require(path.join(__dirname, "..", "..", "shell-electron", "agent.js"));
+const { createAgent, reviewSig } = require(path.join(__dirname, "..", "..", "shell-electron", "agent.js"));
 const assert = (c, m) => { if (!c) throw new Error(m); };
 
 function fakeWc(url) {
@@ -122,5 +122,20 @@ function setup(extra) {
     assert(busy.reason === "busy", "busy during a batch");
     await p;
   }
+  // 7. Send on a ready job whose page is gone: one click fills it again ("resend") and submits;
+  //    while another run holds the pane it waits its turn
+  {
+    const s = setup({});
+    const r = await s.agent.send(21, { url: "https://jobs.example.com/job/21", sig: "x" });
+    assert(s.opened[0] === "https://jobs.example.com/job/21", "opened again " + JSON.stringify(s.opened));
+    assert(s.progress.some((x) => x.record_id === 21 && x.message === "Filling it in again to send it"), "said so");
+    assert(r && r.submitted, "submitted " + JSON.stringify(r));
+    assert(s.posts.some(([p, b]) => p === "/api/autoapply/agent/ready" && b.clear && b.record_id === 21), "ready cleared");
+    const none = await s.agent.send(22, {});
+    assert(none.reason === "not-ready", "no job, no send");
+  }
+  // 8. the review page's fingerprint ignores element numbers, never the values
+  assert(reviewSig("[3]<dd>Kofi</dd> [4]<button>Submit</button>") === reviewSig("[7]<dd>Kofi</dd>\n[9]<button>Submit</button>"), "same page");
+  assert(reviewSig("[3]<dd>Kofi</dd>") !== reviewSig("[3]<dd>Kofi T</dd>"), "a changed value differs");
   console.log("ok");
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });

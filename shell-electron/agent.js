@@ -69,6 +69,15 @@ const QUIET_JS = `(() => {
     .observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
   return true;
 })()`;
+// A fingerprint of the review page the agent left ready ("Ready to send"): the view's words and
+// values, without the element numbers. A Send whose page is gone fills the form again and
+// submits only when the review page comes out the same.
+function reviewSig(text) {
+  const t = String(text || "").replace(/\[\d+\]/g, "").replace(/\s+/g, " ").trim();
+  let h = 5381;
+  for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+  return t.length + ":" + h.toString(16);
+}
 const QUIET_READ = "(window.__tailorQuiet ? Date.now() - window.__tailorQuiet.at : 0) + '|' + document.readyState";
 
 function createAgent(deps) {
@@ -629,6 +638,11 @@ function createAgent(deps) {
     if (current) return { ok: false, reason: "busy" };
     if (batchOn && opts.mode !== "batch") return { ok: false, reason: "busy" };
     const batch = opts.mode === "batch";
+    // "resend": the person pressed Send on a Ready to send job whose page is gone. The form is
+    // filled again from their answers and submitted (their click is the consent) only when
+    // nothing new comes up; a new question parks it, without waiting, and nothing is sent.
+    const resend = opts.mode === "resend";
+    const quick = batch || resend;            // asks never wait: they park at once
     const R = opts.resume || null;
     const applyUrl = opts.url || "";
     if (!/^https?:/i.test(applyUrl)) return { ok: false, reason: "bad-url" };
@@ -643,6 +657,8 @@ function createAgent(deps) {
       parked.delete(String(recordId));
       await deps.postApp("/api/autoapply/agent/parked/" + encodeURIComponent(recordId) + "/take", { drop: true }).catch(() => null);
     }
+    ready.delete(recordId);
+    deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, clear: true }).catch(() => null);
     const S = (R && R.state) || null;     // the parked run's own state, when it carries on in place
     const hosts = await allowedHosts(applyUrl);
     if (S && S.hosts) for (const h of S.hosts) hosts.add(h);
@@ -658,7 +674,7 @@ function createAgent(deps) {
     const terms = (S && S.terms) || { recordId, company: String(opts.company || ""), termsTries: new Map(),
                                       termsOk: new Map(), accepted: [] };
     terms.st = st;
-    terms.batch = batch;
+    terms.batch = quick;
     // What a re-run brings in: the consent (also kept on the record, or as the standing choice),
     // and the answers a parked question got (the saved ones come back from the person's material
     // anyway; a job's own answer, never saved, only from here).
@@ -684,22 +700,23 @@ function createAgent(deps) {
       return finish({ ok: false, reason, steps: history.length });
     };
     const where = () => (wcNow && !wcNow.isDestroyed() ? wcNow.getURL() || "" : "");
-    terms.parkInfo = () => ({ page_url: where(), run: runOpts(opts), batch });
+    terms.parkInfo = () => ({ page_url: where(), run: runOpts(opts), batch: quick });
     const lead = batch && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "";
     // Park the job: the pane is released for the next one, the question (if any) stays open, and
     // an answer (or Continue) re-runs it. ``kind`` "questions" | "terms" (the engine already parked
     // the ask) or "captcha" | "person" (parked here, nothing to answer).
     const park = async (kind, message, extra) => {
       const pageUrl = where();
-      parked.set(String(recordId), { epoch: paneEpoch, pageUrl, opts: Object.assign({}, opts, { resume: null, mode: "single" }), kind,
+      parked.set(String(recordId), { epoch: paneEpoch, pageUrl, opts: Object.assign({}, opts, { resume: null, mode: "single", batchAt: null, expectSig: "" }), kind,
                                      state: { history, portals, startedAt, runAnswers, knownSeen, eeoTried, terms, page, hosts: Array.from(hosts) } });
       if (kind === "captcha" || kind === "person") {
-        await deps.postApp("/api/autoapply/agent/park", { record_id: recordId, kind, message, page_url: pageUrl, run: runOpts(opts), batch }).catch(() => null);
+        await deps.postApp("/api/autoapply/agent/park", { record_id: recordId, kind, message, page_url: pageUrl, run: runOpts(opts), batch: quick }).catch(() => null);
       }
       const onPage = kind === "captcha" || kind === "person";
       const said = batch ? lead + "Paused, it needs you: " + message + " Moving on."
-        : (onPage ? "Paused. " : "Paused: waiting on your answer. ") + message
-          + (onPage ? "" : " The question stays open: answer here or on Telegram any time and I carry on.");
+        : resend ? "Paused, not sent: " + message
+          : (onPage ? "Paused. " : "Paused: waiting on your answer. ") + message
+            + (onPage ? "" : " The question stays open, here and on Telegram, until you answer it.");
       progress(recordId, "parked", said, Object.assign({ parked: { kind, batch }, steps: history.length }, extra || {}));
       dlog("parked", kind + " " + message);
       startPolling();
@@ -717,7 +734,7 @@ function createAgent(deps) {
         progress(recordId, "running", "Thanks. Carrying on where I paused");
         { disarmSigning = armSigning(pane.webContents, hosts); st.disarmSigning = disarmSigning; }
       } else {
-        progress(recordId, "running", lead + (R ? "Thanks. Opening the job again" : "Opening the job"));
+        progress(recordId, "running", lead + (R ? "Thanks. Opening the job again" : resend ? "Filling it in again to send it" : "Opening the job"));
         paneEpoch++;
         deps.openInPane(applyUrl);
         { const p0 = deps.getPane(); if (p0) { disarmSigning = armSigning(p0.webContents, hosts); st.disarmSigning = disarmSigning; } }
@@ -849,7 +866,13 @@ function createAgent(deps) {
 
         // 4. done?
         const done = reply.done;
-        if (done && done.outcome === "ready_to_submit") return handOver(recordId, wc, url, opts, step, terms.accepted);
+        if (done && done.outcome === "ready_to_submit") {
+          // A Send whose page was gone: submit only when the review page came out the same.
+          if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
+            return park("person", "The review page is not the same as when I filled it. Check it on the page, then press Continue.", { url });
+          }
+          return handOver(recordId, wc, url, opts, step, terms.accepted, v.text);
+        }
         if (done && done.outcome === "blocked" && done.reason === "needs-consent") {
           // The model saw a notice to accept that the shell has not handled: the shell asks the
           // person and clicks, never the model.
@@ -923,10 +946,10 @@ function createAgent(deps) {
                  : (open[0].context ? "After “" + open[0].context + "”, the application asks: " : "The application asks: ") + open[0].question)
               : "The application asks " + open.length + " questions.";
             const ask = { id, question: open[0].question, options: open.length === 1 ? open[0].options : [], questions: open };
-            if (!batch) progress(recordId, "ask", shown, { step, ask });
+            if (!quick) progress(recordId, "ask", shown, { step, ask });
             const r = await askLong("/api/autoapply/agent/ask", {
               questions: open, record_id: recordId, id, force_questions: forced.map((it) => it.question),
-              park: terms.parkInfo(), no_wait: batch }, st);
+              park: terms.parkInfo(), no_wait: quick }, st);
             dlog("step " + step + " ask ->", r && { ok: r.ok, reason: r.reason, n: open.length });
             if (r && r.reason === "stopped") return stopped("stopped", "Stopped.");
             if (r && r.reason === "parked") return park("questions", shown, { url, left, ask: batch ? undefined : ask });
@@ -990,7 +1013,12 @@ function createAgent(deps) {
           if (a.placeholder === "email_code" && r && r.ok) emailCode = "";
           results.push(r && r.ok ? (r.note ? "ok, " + r.note : "ok") : "failed: " + ((r && r.note) || "?"));
           dlog("step " + step + " act " + h + " ->", r);
-          if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") return handOver(recordId, wc, url, opts, step, terms.accepted); continue; }
+          if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") {
+            if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
+              return park("person", "The review page is not the same as when I filled it. Check it on the page, then press Continue.", { url });
+            }
+            return handOver(recordId, wc, url, opts, step, terms.accepted, v.text);
+          } continue; }
           if (a.op === "click" || a.op === "wait") {
             const why = await settle(wc, before);
             if (why === "navigated" || (wc.getURL() || "") !== before) { results[results.length - 1] += ", page changed"; break; }
@@ -1135,19 +1163,24 @@ function createAgent(deps) {
   }
 
   // ---- Submit: the shell's decision, never the model's --------------------------------------
-  async function handOver(recordId, wc, url, opts, step, accepted) {
+  async function handOver(recordId, wc, url, opts, step, accepted, viewText) {
     if (current && current.disarmSigning) current.disarmSigning();
     const now = await deps.applyDecision(opts.url || url, url);
     const auto = !!opts.autonomous && now.click_submit === true;
-    ready.set(recordId, { url, lane: auto ? "auto" : "assisted", epoch: paneEpoch });
+    const sig = viewText ? reviewSig(viewText) : (opts.expectSig || "");
+    const keep = { url: opts.url || url, resumePath: opts.resumePath || "", lane: opts.lane || "assisted",
+                   autonomous: !!opts.autonomous, company: opts.company || "" };
+    ready.set(recordId, { url, lane: auto ? "auto" : "assisted", epoch: paneEpoch, sig, opts: keep });
     const said = acceptedLine(opts.company || "", accepted);
-    if (auto) {
+    // The person's own Send on a job whose page was gone: the form came out the same, so their
+    // click submits it (on every site: it is their Send, not an auto-submit).
+    if (auto || opts.mode === "resend") {
       progress(recordId, "running", "Sending" + (said ? ". " + said : ""), { step });
-      const r = await send(recordId);
       current = null;
-      return r;
+      return send(recordId);
     }
-    progress(recordId, "ready", (opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "")
+    deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep) }).catch(() => null);
+    progress(recordId, "ready", (opts.mode === "batch" && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "")
              + "Ready to send. " + (said ? said + " " : "") + "Check it, then press Send.",
              { step, ready: true, accepted: (accepted || []).slice() });
     current = null;
@@ -1157,12 +1190,23 @@ function createAgent(deps) {
 
   // Press the site's Submit for a package the agent left ready. A real input event at the
   // button's centre (not the in-page click, which refuses Submit on purpose).
-  async function send(recordId) {
+  // Send on a job whose page is gone (another application took the pane since, or the app
+  // restarted): ONE click fills it again from the person's answers and submits it, or parks it
+  // when anything new comes up. ``o``: the job's run options and the review page's fingerprint
+  // (from the Auto-apply row after a restart).
+  async function send(recordId, o) {
     const pane = deps.getPane();
     const r = ready.get(recordId);
-    if (!pane || !r) return { ok: false, reason: "not-ready" };
-    // Another application took the pane since (a batch, a parked job carrying on): its page is gone.
-    if (r.epoch !== paneEpoch) { ready.delete(recordId); return { ok: false, reason: "page-gone" }; }
+    if (!r || !pane || r.epoch !== paneEpoch) {
+      const job = (r && r.opts) || o || {};
+      if (!/^https?:/i.test(job.url || "")) return { ok: false, reason: "not-ready" };
+      if (current || batchOn) return { ok: false, reason: "busy" };
+      ready.delete(recordId);
+      return run(recordId, Object.assign({}, job, { mode: "resend", expectSig: (r && r.sig) || (o && o.sig) || "" }));
+    }
+    return pressSubmit(recordId, pane, r);
+  }
+  async function pressSubmit(recordId, pane, r) {
     const wc = pane.webContents;
     await ensureScripts(wc);
     const sig = (await signature(wc)) || {};
@@ -1193,6 +1237,7 @@ function createAgent(deps) {
       return { ok: false, reason: "captcha" };
     }
     await deps.postApp("/api/autofill/applied", { url: r.url, page_url: wc.getURL() || "", record_id: recordId });
+    deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, clear: true }).catch(() => null);
     progress(recordId, "submitted", confirmed ? "Sent, and the site confirmed it." : "Sent. The page showed no confirmation, so check it once.",
              { confirmed, clicked: box.label });
     return { ok: true, submitted: true, confirmed };
@@ -1497,4 +1542,4 @@ function blockedMessage(reason, left) {
 
 module.exports = { createAgent, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion,
                    optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, EEO_RE,
-                   TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove };
+                   TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig };
