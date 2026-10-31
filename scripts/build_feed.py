@@ -12,9 +12,9 @@ Reuses, never copies: sourcing.service.refresh_watchlist for the crawl and
 backend.feed.feed_jobs for the sponsor-tagging / US-only / freshness shaping. GREEN-lane sources only (CLAUDE.md §6).
 
 Aggregator policy (details + sources in docs/feed.md): keyless feeds whose API notices invite
-sharing with attribution (Remotive, Remote OK) or set no restriction (freehire) are always in, and
-so is Hacker News "Who is hiring?", whose rows carry only facts and a link back to the post (the
-poster's text is never copied; sourcing/hackernews.py).
+sharing with attribution (Remotive, Remote OK) or set no restriction (freehire) are always in.
+Hacker News "Who is hiring?" (facts plus a link back, sourcing/hackernews.py) is OFF unless
+HN_WHOISHIRING=1: Y Combinator's terms restrict commercial use of HN content.
 Keyed aggregators are governed by FEED_INCLUDE_AGGREGATORS: JSearch's publisher (OpenWeb Ninja)
 grants redistribution inside a broader product, so it is included by default when RAPIDAPI_KEY is
 set; Adzuna's developer terms forbid redistribution without written consent, so it is refused.
@@ -36,9 +36,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Always in the public file (terms permit sharing further, or, for hackernews, the rows are facts
-# plus a link back; see docs/feed.md).
-PUBLIC_OK_AGGREGATORS = ("remotive", "remoteok", "freehire", "hackernews")
+# Always in the public file (terms permit sharing further; see docs/feed.md).
+PUBLIC_OK_AGGREGATORS = ("remotive", "remoteok", "freehire")
+# Opt-in keyless sources: in the public file only when their switch is on (HN_WHOISHIRING=1).
+OPT_IN_AGGREGATORS = ("hackernews",)
 # Keyed aggregators that MAY be included when FEED_INCLUDE_AGGREGATORS names them.
 REDISTRIBUTABLE_KEYED = ("jsearch",)
 DEFAULT_INCLUDE = "jsearch"
@@ -318,7 +319,9 @@ def aggregators_for_feed(env=None, log=print) -> list[str]:
                     "redistributing results without written consent (docs/feed.md)")
             else:
                 log(f"[build_feed] ignoring unknown aggregator {name!r}")
-    return [*PUBLIC_OK_AGGREGATORS, *keyed]
+    from sourcing.hackernews import enabled as hn_enabled
+    opt_in = ["hackernews"] if hn_enabled(env) else []
+    return [*PUBLIC_OK_AGGREGATORS, *opt_in, *keyed]
 
 
 def freehire_sponsor_pass(w, data_dir, log=print, **kw) -> dict:

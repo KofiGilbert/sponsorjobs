@@ -237,10 +237,8 @@ def test_a_3000_board_watchlist_is_fully_crawled_within_a_day_of_runs(tmp_path):
 
 def test_aggregator_policy_refuses_adzuna_and_defaults_to_jsearch():
     from scripts import build_feed
-    assert build_feed.aggregators_for_feed({}, log=lambda *a: None) == ["remotive", "remoteok", "freehire", "hackernews",
-                                                                     "jsearch"]
-    assert build_feed.aggregators_for_feed({"FEED_INCLUDE_AGGREGATORS": "off"}) == ["remotive", "remoteok", "freehire",
-                                                                                  "hackernews"]
+    assert build_feed.aggregators_for_feed({}, log=lambda *a: None) == ["remotive", "remoteok", "freehire", "jsearch"]
+    assert build_feed.aggregators_for_feed({"FEED_INCLUDE_AGGREGATORS": "off"}) == ["remotive", "remoteok", "freehire"]
     msgs = []
     assert "adzuna" not in build_feed.aggregators_for_feed({"FEED_INCLUDE_AGGREGATORS": "adzuna,jsearch"}, log=msgs.append)
     assert any("adzuna" in m for m in msgs)

@@ -227,7 +227,7 @@ Checked 2026-09-30. `FEED_INCLUDE_AGGREGATORS` (a repository *variable*, comma l
 | **Remotive** | the API response's own `0-legal-notice`: "API documentation and access is granted so that developers can share our jobs further. Please do not submit Remotive jobs to third Party websites [job aggregators] ... Please link back to the URL found on Remotive AND mention Remotive as a source" (https://remotive.com/api/remote-jobs) | **yes**, with attribution; the file's `attribution` block carries the credit |
 | **Remote OK** | the API's first array element: "Please link back (with follow, and without nofollow!) to the URL on Remote OK and mention Remote OK as a source ... Please don't use the Remote OK logo" (https://remoteok.com/api) | **yes**, with attribution |
 | **JSearch** (RapidAPI, publisher OpenWeb Ninja) | [OpenWeb Ninja Terms](https://www.openwebninja.com/terms): "we additionally grant you a non-exclusive, non-transferable license to use, reproduce, and commercially exploit such API Data in your own products, services, applications, or business, including for resale or redistribution as part of a broader product offering, provided that you do not resell, sublicense, or redistribute API Data as a standalone data or API product that substantially replicates the Services themselves." RapidAPI's platform policy defers to the provider's terms. | **yes by default** (`jsearch`); our feed is part of the app, not a standalone data product |
-| **Hacker News "Who is hiring?"** (2026-10-30) | Read through the HN search API Hacker News links to (`hn.algolia.com/api/v1`, keyless; its robots.txt answers 404 = no rules). [Y Combinator's site terms](https://www.ycombinator.com/legal/) reserve HN content: "you agree not to display, distribute, license, perform, publish, reproduce, duplicate, copy ... for any commercial purposes, any portion of the Site" unless authorized; the official [HN API](https://github.com/HackerNews/API) makes the data available but grants no redistribution licence | **yes, facts only.** A row carries the employer, role, location, work mode, stated pay and sponsorship signal read from the post's first line, a description WE write from those facts, and a link to the post (its `url`); the poster's text is never copied into the feed or the app. Credited as "via Hacker News" (`attribution` block, `VIA_SOURCES`). `HN_WHOISHIRING=0` switches it off |
+| **Hacker News "Who is hiring?"** (2026-10-30) | Read through the HN search API Hacker News links to (`hn.algolia.com/api/v1`, keyless; its robots.txt answers 404 = no rules). [Y Combinator's site terms](https://www.ycombinator.com/legal/) reserve HN content: "you agree not to display, distribute, license, perform, publish, reproduce, duplicate, copy ... for any commercial purposes, any portion of the Site" unless authorized; the official [HN API](https://github.com/HackerNews/API) makes the data available but grants no redistribution licence | **no, off by default** (2026-10-30). Built and tested, but not crawled unless `HN_WHOISHIRING=1`: the terms restrict commercial use and it adds only ~15 sponsor rows a month. When on, a row carries only facts from the post's first line (employer, role, location, work mode, stated pay, sponsorship signal), a description WE write from them and a link to the post (its `url`); the poster's text is never copied. Its "via Hacker News" credit is sent with its rows (the feed file's `attribution` block, `/api/jobs` `attribution`), so nothing names Hacker News while it is off |
 | **Adzuna** | [Developer Terms of Service](https://developer.adzuna.com/docs/terms_of_service): beyond a 14-day trial, use by "a commercial, government or academic organisation ... may not be used in its original format or in aggregation ... to deliver any ongoing work or research ... without written consent"; also requires a "Jobs by Adzuna" label on every displayed advert, and the API returns only a ~500-char preview | **no.** `build_feed.py` refuses `adzuna` even if listed (and `sourcing/service.py` already prunes it). Needs written consent from Adzuna first. |
 
 Remotive's notice also mentions a daily request budget (~4/day) and a 24-hour listing delay; the crawl
@@ -236,11 +236,23 @@ budget. If Remotive objects, `FEED_INCLUDE_AGGREGATORS` is not the lever (Remoti
 it from `PUBLIC_OK_AGGREGATORS` in `scripts/build_feed.py`, or run the crawl less often.
 
 Attribution: `jobs.json.gz` carries an `attribution` map for every aggregator present, and the
-Jobs page prints a muted "via Remotive" / "via Remote OK" / "via Hacker News" on each such row (a fact on the card, a
+Jobs page prints a muted "via Remotive" / "via Remote OK" on each such row (and "via Hacker News"
+when that opt-in source is on; its credit comes with its rows in `/api/jobs`'s `attribution`) (a fact on the card, a
 plain `rel="noopener"` link to the listing in the detail view, never `nofollow`; `VIA_SOURCES` in
 `ui/static/app.js`).
 
 ### Hacker News "Who is hiring?" (`sourcing/hackernews.py`, 2026-10-30)
+
+**Off by default.** Nothing below runs unless `HN_WHOISHIRING=1` in the environment of the feed
+build or the app (`.github/workflows/feed.yml` does not pass it today, so the public feed cannot
+turn it on by accident). Why: Y Combinator's site terms restrict commercial use of
+HN content (see the terms row above), and the measured yield is small (~15 sponsor rows a month).
+While it is off: the crawl makes no HN request (`refresh_watchlist` step 3c), `build_feed`
+does not list it among the feed's aggregators, `backend.feed.feed_jobs` leaves out any HN rows a
+run with it on stored, the feed file's `attribution` names only sources whose rows are present,
+and the Jobs page has no built-in HN credit (it takes credits for opt-in sources from
+`/api/jobs`'s `attribution`, which `ui/app.py` fills from the rows on the page). Turning it on
+needs a decision on the terms first (written permission from Y Combinator would settle it).
 
 Each month the `whoishiring` account posts "Ask HN: Who is hiring? (Month Year)" and employers
 answer with one top-level comment each (the October 2026 thread: 261 posts). Many are US startups
@@ -254,7 +266,8 @@ that do not use one of our ATS boards, and the thread's convention is a first li
   state) and reused for `HN_CACHE_HOURS` (6), so the 3-hourly build asks at most 4 times a day. A
   failed refresh serves the older cache. The Firebase HN API is not used: it needs one request per
   comment. The step runs once per refresh (`service.refresh_watchlist` step 3c, like the freehire
-  bulk pull, not once per title term), on the first crawl shard only.
+  bulk pull, not once per title term), on the first crawl shard only, and only with
+  `HN_WHOISHIRING=1`.
 * **Parsing.** The header is split on `|` (else an em dash or " - "): the first part is the
   company (parentheses such as "(YC S24)" dropped, or read as the location when they name one),
   then a role, a location, a work mode (REMOTE / ONSITE / HYBRID), pay and a VISA tag are picked
@@ -277,7 +290,7 @@ that do not use one of our ATS boards, and the thread's convention is a first li
   rows first.
 * **Measured on the October 2026 thread** (offline, from one recorded read): 261 posts -> 222 rows
   -> 115 placed in the US -> 5 from employers we already watch -> about 15 pass the sponsor gate
-  (8 posts state sponsorship, 11 state they will not). Expect roughly 15-30 new feed rows a month,
+  (8 posts state sponsorship, 11 state they will not). With it switched on, expect roughly 15-30 new feed rows a month,
   mostly US startups with a stated VISA or an H-1B record, each linking back to its post.
 
 ### freehire: search by sponsor (`sourcing/freehire_sponsors.py`)

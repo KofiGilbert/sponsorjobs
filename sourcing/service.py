@@ -486,9 +486,10 @@ def refresh_watchlist(store: Watchlist, fetch=fetch_json, *, workday_max_detail:
             except Exception as exc:                     # best-effort: never let it kill the refresh
                 errors.append({"company": "freehire-sponsor", "error": str(exc)})
 
-    if include_aggregators and (aggs is None or "hackernews" in aggs) \
-            and os.environ.get("HN_WHOISHIRING", "1") != "0":
-        # 3c) Hacker News "Who is hiring?" (sourcing/hackernews.py): the month's thread, two
+    from .hackernews import enabled as hn_enabled
+    if include_aggregators and (aggs is None or "hackernews" in aggs) and hn_enabled():
+        # 3c) Hacker News "Who is hiring?" (sourcing/hackernews.py), OFF unless HN_WHOISHIRING=1
+        # (Y Combinator's terms restrict commercial use of HN content): the month's thread, two
         # requests at most every HN_CACHE_HOURS (cached beside the database). Rows from an
         # employer whose own board we already watch are dropped: the board carries the same roles
         # with full descriptions. Like the freehire pulls, only the accessibility check applies.

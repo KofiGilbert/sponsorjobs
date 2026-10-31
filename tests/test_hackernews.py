@@ -1,6 +1,9 @@
 """Hacker News "Ask HN: Who is hiring?" source (sourcing/hackernews.py). No network: the two API
 answers are recorded fixtures in tests/fixtures/hackernews (the real Algolia response shape; the
-employers are invented, so no poster's text is committed)."""
+employers are invented, so no poster's text is committed).
+
+The source is OFF by default (HN_WHOISHIRING=1 turns it on), so these tests switch it on
+explicitly, except the ones that pin the default."""
 
 from __future__ import annotations
 
@@ -35,6 +38,11 @@ class Api:
         if url.endswith("/items/49922569"):
             return ITEMS
         raise urllib.error.HTTPError(url, 404, "nf", {}, None)
+
+
+@pytest.fixture(autouse=True)
+def _hn_on(monkeypatch):
+    monkeypatch.setenv("HN_WHOISHIRING", "1")
 
 
 def rows(**kw):
@@ -200,10 +208,15 @@ def test_refresh_stores_hn_rows_and_skips_employers_whose_board_we_watch(tmp_pat
         w.close()
 
 
-def test_the_switch_turns_the_source_off(monkeypatch):
+@pytest.mark.parametrize("value", [None, "0", "", "yes"])
+def test_the_source_is_off_unless_switched_on(monkeypatch, value):
     from sourcing.service import refresh_watchlist
     from sourcing.watchlist import Watchlist
-    monkeypatch.setenv("HN_WHOISHIRING", "0")
+    if value is None:
+        monkeypatch.delenv("HN_WHOISHIRING", raising=False)
+    else:
+        monkeypatch.setenv("HN_WHOISHIRING", value)
+    assert not hn.enabled()
     api = Api()
     w = Watchlist(":memory:")
     try:
@@ -214,15 +227,61 @@ def test_the_switch_turns_the_source_off(monkeypatch):
         w.close()
 
 
-def test_public_feed_includes_and_credits_hacker_news():
+def test_public_feed_includes_hacker_news_only_when_switched_on():
     import importlib.util
     from sourcing import feedfile
     spec = importlib.util.spec_from_file_location(
         "build_feed_hn", Path(__file__).resolve().parents[1] / "scripts" / "build_feed.py")
     bf = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bf)
-    assert "hackernews" in bf.aggregators_for_feed(env={})
+    assert "hackernews" not in bf.aggregators_for_feed(env={})
+    assert "hackernews" not in bf.aggregators_for_feed(env={"HN_WHOISHIRING": "0"})
+    assert "hackernews" in bf.aggregators_for_feed(env={"HN_WHOISHIRING": "1"})
     assert feedfile.ATTRIBUTION["hackernews"]["name"] == "Hacker News"
+
+
+def test_nothing_names_hacker_news_without_its_rows(tmp_path):
+    """The feed file's credits and the page's credits list only sources whose rows are present,
+    and the Jobs page has no built-in Hacker News credit (it arrives with the rows)."""
+    from sourcing import feedfile
+    from ui.app import _page_attribution
+    board = {"source_id": "greenhouse:acme:1", "source": "greenhouse", "company": "Acme",
+             "title": "Engineer", "location": "Austin, TX", "url": "https://x.example/1"}
+    feedfile.write_feed(tmp_path, [board], {})
+    header = feedfile.loads_maybe_gz((tmp_path / "jobs.json.gz").read_bytes())
+    assert "hackernews" not in json.dumps(header.get("attribution") or {})
+    assert _page_attribution([board]) == {}
+    hn_row = rows()["Acme Robotics"]
+    assert _page_attribution([board, hn_row]) == {
+        "hackernews": {"name": "Hacker News", "url": "https://news.ycombinator.com"}}
+    js = (Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    block = js[js.index("const VIA_SOURCES = {"):js.index("const FEED_VIA")]
+    assert "hackernews" not in block.lower() and "hacker news" not in block.lower()
+
+
+def test_the_feed_leaves_out_stored_hn_rows_while_off(monkeypatch):
+    """Rows stored by a run with the source on stay out of the public list once it is off."""
+    import backend.feed as feed
+    from sourcing.watchlist import Watchlist
+    hn_row = {**rows()["Acme Robotics"], "visa": ["H-1B"]}
+    w = Watchlist(":memory:")
+    w.upsert_jobs([hn_row])
+    monkeypatch.setattr(feed, "_paths", lambda: (":memory:", ":memory:"))
+    monkeypatch.setattr(feed, "Watchlist", lambda p: w, raising=False)
+    import sourcing.watchlist as wl
+    monkeypatch.setattr(wl, "Watchlist", lambda p: w)
+    monkeypatch.setattr(w, "close", lambda: None)
+
+    class Sp:
+        def tag_jobs(self, jobs):
+            for j in jobs:
+                j["us"], j["visa"] = True, ["H-1B"]
+            return jobs
+    monkeypatch.setattr(feed, "_sponsors", lambda p: Sp())
+    on = [j["source"] for j in feed.feed_jobs()]
+    monkeypatch.setenv("HN_WHOISHIRING", "0")
+    off = [j["source"] for j in feed.feed_jobs()]
+    assert "hackernews" in on and "hackernews" not in off
 
 
 def test_a_board_row_wins_over_the_same_opening_from_hn():

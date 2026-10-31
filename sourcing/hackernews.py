@@ -21,6 +21,10 @@ first line (company, role, location, remote, a sponsorship signal, pay when stat
 back to the comment. The description is a few sentences WE write from those facts, never the
 poster's text; the person reads the full post on Hacker News (the row's `url`).
 
+OFF by default (2026-10-30): HN_WHOISHIRING=1 turns it on (`enabled()`). Y Combinator's terms
+restrict commercial use of HN content and the source adds only ~15 sponsor rows a month, so the
+public feed and the app leave it out unless a maintainer opts in.
+
 Sponsorship signal (`sponsorship_stated`): True when the post says it sponsors ("VISA" in the
 header, "visa sponsorship", "we sponsor visas", "H-1B sponsorship"); False when it says it will
 not ("no visa", "not able to sponsor", "no sponsorship"; a no beats a yes, so "H-1B transfers
@@ -52,6 +56,11 @@ CACHE_HOURS = 6.0               # env HN_CACHE_HOURS
 MAX_THREAD_DAYS = 45            # an older thread is stale (the feed drops 45-day-old rows anyway)
 REQUEST_GAP = 1.0               # seconds between the two requests
 MAX_TITLE = 120
+
+def enabled(env=None) -> bool:
+    """Is the source switched on? Off unless HN_WHOISHIRING=1 (see the module docstring)."""
+    return (os.environ if env is None else env).get("HN_WHOISHIRING", "0").strip() == "1"
+
 
 # -- the sponsorship signal ------------------------------------------------------------ #
 

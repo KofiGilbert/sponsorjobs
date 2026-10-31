@@ -103,9 +103,12 @@ classifier's wording list only.
   (marked `source=remoteintech` in `seed/watchlist_evidence.csv`). Only those facts were used; no
   text from the project was copied.
 - **Hacker News "Ask HN: Who is hiring?"** (https://news.ycombinator.com), read through the HN
-  search API (https://hn.algolia.com/api). Rows carry only facts from each post's first line and
-  link back to the post on Hacker News; the posts' text is not copied (`sourcing/hackernews.py`,
-  docs/feed.md). Credited as "via Hacker News" in the app and in the feed file's `attribution`.
+  search API (https://hn.algolia.com/api). **Off by default**: the adapter
+  (`sourcing/hackernews.py`) runs only with `HN_WHOISHIRING=1`, because Y Combinator's site terms
+  (https://www.ycombinator.com/legal/) restrict commercial use of HN content. When switched on,
+  rows carry only facts from each post's first line and link back to the post; the posts' text
+  is not copied, and the rows are credited "via Hacker News" (docs/feed.md). While it is off, no
+  HN data is fetched, stored, published or credited.
 
 ## Bundled brand icons (CC0)
 

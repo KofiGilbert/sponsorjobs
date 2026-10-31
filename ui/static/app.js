@@ -737,6 +737,7 @@
     if (!el) return;
     try {
       const r = await api("/api/jobs?home=1");   // server leaves out roles closed to a visa holder
+      noteVia(r);
       const foot = $(".home-roles-foot");
       if (r.loading) { if (foot) foot.hidden = true; el.innerHTML = feedLoadingHtml(r.feed); watchFeedDownload(loadHomeToday); return; }
       // The list scrolls under the fixed prompt, so it can hold more than a peek.
@@ -1395,14 +1396,24 @@
   // their listings on condition that each one names them and links back to the listing, Remote OK
   // with a FOLLOW link, so the detail link carries rel="noopener" only, never "nofollow". Company
   // boards need no credit. The card is a <button>, so it names the source as plain text (a nested
-  // link would be invalid markup) and the detail view carries the link. Hacker News rows hold
-  // only facts from a "Who is hiring?" post, so the detail link (the row's url) opens the post.
+  // link would be invalid markup) and the detail view carries the link. An opt-in source (Hacker
+  // News, off by default) is not listed here: its credit arrives with the rows, in /api/jobs'
+  // `attribution`, so nothing names it unless its rows are on the board.
   const VIA_SOURCES = {
     remotive: { name: "Remotive", url: "https://remotive.com" },
     remoteok: { name: "Remote OK", url: "https://remoteok.com" },
-    hackernews: { name: "Hacker News", url: "https://news.ycombinator.com" },
   };
-  function viaSource(j) { return VIA_SOURCES[String(j.source || "").toLowerCase()] || null; }
+  const FEED_VIA = {};
+  function noteVia(r) {
+    const a = (r && r.attribution) || {};
+    for (const k of Object.keys(a)) {
+      if (!VIA_SOURCES[k] && a[k] && a[k].name) FEED_VIA[k] = { name: String(a[k].name), url: String(a[k].url || "") };
+    }
+  }
+  function viaSource(j) {
+    const k = String(j.source || "").toLowerCase();
+    return VIA_SOURCES[k] || FEED_VIA[k] || null;
+  }
   function viaText(a) { return I18N.t("job.via", "via {source}").replace("{source}", a.name); }
   function viaFact(j) {
     const a = viaSource(j);
@@ -2350,6 +2361,7 @@
     try {
       const r = await api("/api/jobs?" + feedParams(JOBS_PAGE));
       if (my !== FEED_REQ) return;                 // a newer request already superseded this
+      noteVia(r);
       // The first download of the list is still running: show its progress and reload when it
       // lands (never the empty "no roles" pane, never the stale local fallback).
       if (r.loading) {
