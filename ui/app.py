@@ -3134,6 +3134,21 @@ def keyword_undo(cv_id):
     return jsonify(s.keyword_undo(term))
 
 
+@app.post("/api/cv/<cv_id>/trim/restore")
+@_guard
+def trim_restore(cv_id):
+    """Body {id}. Puts one thing the one-page fit cut back on the page and re-runs the fit
+    check (WebIntake.put_back). Returns the session state with put_back_ok, and what had to go
+    instead (moved), or put_back_error when it cannot fit on one page at all."""
+    s = _keyword_session(cv_id)
+    if s is None:
+        return jsonify({"error": "Open this resume in the builder first."}), 404
+    tid = str((request.json or {}).get("id") or "").strip()
+    if not tid:
+        return jsonify({"error": "No cut given."}), 400
+    return jsonify(s.put_back(tid))
+
+
 # ------------------------------------------------------------------ drafting (§5)
 @app.post("/api/session/cover_letter")
 @_guard
@@ -13839,7 +13854,8 @@ def autoapply_upnext():
     for j in res["jobs"]:
         rows_out.append({
             "source_id": j.get("source_id") or "", "title": j.get("title") or "",
-            "company": j.get("company") or "", "location": j.get("location") or "",
+            "company": j.get("company") or "", "display_name": j.get("display_name") or "",
+            "location": j.get("location") or "",
             "visa": j.get("visa") or [], "ad_stance": j.get("ad_stance"),
             "ad_sentence": j.get("ad_sentence"), "sponsorship_stated": j.get("sponsorship_stated"),
             "fit": j.get("fit"), "saved": bool(j.get("saved")), "url": j.get("url") or "",
@@ -14156,6 +14172,7 @@ def _board_card(j: dict, records: list[dict], today) -> dict:
     fu = date_of(j.get("follow_up_at"))
     return {
         "source_id": j["source_id"], "company": j.get("company") or "", "title": j.get("title") or "",
+        "display_name": j.get("display_name") or "",
         "location": j.get("location") or "", "url": j.get("url") or "", "source": j.get("source") or "",
         "stage": j.get("stage"), "stage_at": (j.get("stage_at") or "")[:10],
         "applied_at": (j.get("applied_at") or "")[:10] or None,

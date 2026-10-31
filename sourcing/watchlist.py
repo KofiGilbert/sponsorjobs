@@ -108,6 +108,11 @@ class Watchlist(BoardMixin):
             updated_at TEXT, rows INTEGER, PRIMARY KEY(ats, board_id))""")
         if "rows" not in {r[1] for r in c.execute("PRAGMA table_info(board_crawl)")}:
             c.execute("ALTER TABLE board_crawl ADD COLUMN rows INTEGER")
+        # `display_name` (added 2026-10-30): the brand a job card shows ("Kraken"), kept apart
+        # from `company`, the legal filing name the sponsor badge matches on ("Payward Inc").
+        # Blank means "tidy the legal name" (sourcing/brands.py).
+        if "display_name" not in {r[1] for r in c.execute("PRAGMA table_info(watchlist)")}:
+            c.execute("ALTER TABLE watchlist ADD COLUMN display_name TEXT DEFAULT ''")
         # A board on a disabled ATS (ats.DISABLED_ATS: SmartRecruiters, whose API robots.txt
         # disallows us, 2026-10-19) stays on the watchlist but inactive, so no crawl picks it up.
         from .ats import DISABLED_ATS
@@ -121,19 +126,24 @@ class Watchlist(BoardMixin):
         c.commit()
 
     # -- watchlist companies -------------------------------------------- #
-    def add_company(self, company: str, ats: str, board_id: str) -> None:
+    def add_company(self, company: str, ats: str, board_id: str, display_name: str = "") -> None:
         from .ats import ats_disabled, valid_board_id_for
         board_id = board_id.strip()
         if not valid_board_id_for(ats, board_id):   # never store a value that could escape the host on fetch
             raise ValueError(f"invalid board id {board_id!r}: must be a plain board slug")
         # A board on a disabled ATS (ats.DISABLED_ATS) is kept, but stored inactive: no crawl reads it.
         active = 0 if ats_disabled(ats) else 1
+        # A blank display_name never clears a brand already stored for the board.
         self._conn.execute(
-            "INSERT INTO watchlist(company, ats, board_id, active) VALUES(?,?,?,?) "
-            "ON CONFLICT(ats, board_id) DO UPDATE SET company=excluded.company, active=excluded.active",
-            (company.strip(), ats.strip().lower(), board_id.strip(), active),
+            "INSERT INTO watchlist(company, ats, board_id, active, display_name) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(ats, board_id) DO UPDATE SET company=excluded.company, active=excluded.active, "
+            "display_name=CASE WHEN excluded.display_name<>'' THEN excluded.display_name "
+            "ELSE watchlist.display_name END",
+            (company.strip(), ats.strip().lower(), board_id.strip(), active,
+             str(display_name or "").strip()),
         )
         self._conn.commit()
+        self._brands = None
 
     def remove_company(self, wid: int) -> None:
         self._conn.execute("DELETE FROM watchlist WHERE id=?", (wid,))
@@ -145,6 +155,21 @@ class Watchlist(BoardMixin):
             q += " WHERE active=1"
         q += " ORDER BY company COLLATE NOCASE"
         return [dict(r) for r in self._conn.execute(q).fetchall()]
+
+    _brands = None          # {legal name: brand} cache, reset by add_company (not a dataclass field)
+
+    def brand_names(self) -> dict:
+        """{legal company name: brand} for the watched boards that carry an explicit brand."""
+        if self._brands is None:
+            self._brands = {r[0]: r[1] for r in self._conn.execute(
+                "SELECT company, display_name FROM watchlist WHERE display_name IS NOT NULL "
+                "AND display_name <> ''")}
+        return self._brands
+
+    def _with_brand(self, d: dict, brands: dict) -> dict:
+        from .brands import display_name
+        d["display_name"] = display_name(d.get("company") or "", brands.get(d.get("company") or "", ""))
+        return d
 
     def is_empty(self) -> bool:
         return self._conn.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0] == 0
@@ -419,11 +444,12 @@ class Watchlist(BoardMixin):
         if limit:
             q += f" LIMIT {int(limit)}"
         out = []
+        brands = self.brand_names()
         for r in self._conn.execute(q, params).fetchall():
             d = dict(r)
             d["sponsorship_stated"] = _spon_bool(d.get("sponsorship_stated"))
             d["has_jd"] = bool(d.get("has_jd"))
-            out.append(d)
+            out.append(self._with_brand(d, brands))
         return out
 
     def get_job(self, source_id: str) -> dict | None:
@@ -434,7 +460,7 @@ class Watchlist(BoardMixin):
             return None
         d = dict(row)
         d["sponsorship_stated"] = _spon_bool(d.get("sponsorship_stated"))
-        return d
+        return self._with_brand(d, self.brand_names())
 
     def source_ids_with_jd(self, source: str) -> set[str]:
         """source_ids of one feed's rows that already hold a description -- what a list-only

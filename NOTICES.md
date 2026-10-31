@@ -95,6 +95,13 @@ OpenCATS (MPL-2.0 / CATS Public License) and PeelJobs (MIT) were reviewed; no co
 copied from either. OpenCATS's candidate status vocabulary informed the inbox
 classifier's wording list only.
 
+AienTech/dossier (AGPL-3.0) was studied for product ideas only; no code, text or assets were
+copied, and everything that came of it is our own Python and JavaScript. The ideas: a fact gate
+that also checks names, tools and credentials (`tailoring/fact_gate.py`), a "What changed" summary
+computed from the resume rather than written by a model (`tailoring/changes.py`), trims that can
+be put back (`tailoring/assembler.py`), refine actions made from coverage gaps, and showing a
+company's brand apart from its legal name (`sourcing/brands.py`).
+
 ## Job data sources (attribution)
 
 - **remoteintech/remote-jobs** (https://github.com/remoteintech/remote-jobs), ISC License,

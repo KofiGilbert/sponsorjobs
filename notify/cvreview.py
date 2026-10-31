@@ -220,7 +220,8 @@ class CVReview:
     def caption(self, ctx: dict) -> str:
         cov = (ctx["data"].get("coverage") or {})
         return cvdoc.change_summary(ctx["role"], ctx["company"], ctx["base"],
-                                    ctx["doc"]["profile"], cov)
+                                    ctx["doc"]["profile"], cov,
+                                    changes=ctx["data"].get("changes") or None)
 
     def preview_buttons(self, short: str, ctx: dict) -> list:
         rows = [[{"id": f"cv:chg:{short}", "label": BTN_CHANGES},
@@ -616,7 +617,7 @@ class CVReview:
     def _honesty(self, ctx, sid, span, new, instruction) -> list:
         """The fabrication gate for one edited span. Raises on a skill the person's entry does
         not show and they did not type; returns notes for what they typed and new figures."""
-        from tailoring.fact_gate import figures, source_figures
+        from tailoring.fact_gate import figures, new_claims, source_figures
         from tailoring.keywords import introduced_skills, profile_text, term_present
         kind = span.get("kind")
         if kind not in ("bullet", "summary", "skill", "interests"):
@@ -637,6 +638,17 @@ class CVReview:
                 f"{where} doesn't show anywhere, so I left it as it was. If it's true, say so "
                 f"in your own words, for example: use the word {untyped[0]} in "
                 f"{sid.replace('.new', '')}.", code="fabrication")
+        # The claim gate (tailoring/fact_gate.py): an employer, school, tool, acronym or
+        # credential that neither the person's material nor their own message states is
+        # never published; the span stays as it was.
+        named = new_claims(new, doc["profile"], base or {}, instruction, old)
+        if named:
+            where = sid.replace(".new", "")
+            raise cvdoc.EditRejected(
+                f"That rewrite of {where} named {', '.join(named[:3])}, which your saved "
+                f"material doesn't mention, so I left it as it was. If it's true, say so in "
+                f"your own words, for example: mention {named[0]} in {where}.",
+                code="fabrication")
         notes = []
         label = sid.replace(".new", " (new bullet)")
         for t in typed:

@@ -37,7 +37,7 @@ class _OverLongLLM(FakeLLM):
         return "Delivered value " * 60          # ~900 chars, over any budget
 
     def shorten_bullet(self, text, max_len_chars):
-        return "SHORTENED to budget."
+        return "Shortened to budget."   # plain prose: an all-caps word is a fact-gate claim
 
 
 def test_tailor_bullets_clamps_an_over_budget_rewrite():
@@ -45,7 +45,7 @@ def test_tailor_bullets_clamps_an_over_budget_rewrite():
         {"title": "Eng", "bullets": ["Managed the firm's quarterly reporting."]}]}]}
     out = _tailor_bullets(prof, "Data engineering role.", _OverLongLLM())
     got = out["experience"][0]["roles"][0]["bullets"][0]
-    assert got == "SHORTENED to budget."         # the clamp fired via shorten_bullet
+    assert got == "Shortened to budget."         # the clamp fired via shorten_bullet
     assert "Delivered value Delivered value" not in got
 
 

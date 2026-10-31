@@ -1786,6 +1786,23 @@
                  would change, with Accept / Ignore. Filled by app.js when a term's Add is clicked. -->
             <div class="kw-card" id="kwCard" hidden></div>
 
+            <!-- What tailoring did, worked out in code (tailoring/changes.py), never by the model:
+                 one-click refine chips from the coverage gaps the person's material supports
+                 ("Work in Kubernetes", runs Add this keyword), a one-line "What changed" that opens
+                 to the list, and everything the one-page fit cut, each with Put back. -->
+            <div class="tw" id="tailorWhat" hidden>
+              <div class="tw-refine" id="twRefine" hidden></div>
+              <button class="tw-head" id="twToggle" type="button" aria-expanded="false" aria-controls="twBody">
+                <span class="tw-title" data-i18n="tw.title">What changed</span>
+                <span class="tw-sum" id="twSum"></span>
+                <svg class="tw-caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <div class="tw-body" id="twBody" hidden>
+                <ul class="tw-points" id="twPoints"></ul>
+                <div class="tw-cuts" id="twCuts" hidden></div>
+              </div>
+            </div>
+
             <!-- Honest pre-send check: does every skill shown trace back to the person's own
                  profile (no tailor-introduced claim), plus easy wins, honest gaps, and page fit. -->
             <div class="presend" id="presendReview" hidden></div>

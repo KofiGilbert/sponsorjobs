@@ -761,7 +761,7 @@
           <div class="tc-head">
             ${companyAvatar(j)}
             <div class="fr-main">
-              <div class="tc-co">${esc(j.company)}</div>
+              <div class="tc-co">${esc(coName(j))}</div>
               <div class="tc-title">${esc(j.title)}</div>
               <div class="tc-loc">${esc(usLocation(j.location) || "Location not listed")}</div>
             </div>
@@ -1382,8 +1382,12 @@
     if (!words.length) return "?";
     return (words[0][0] + (words[1] ? words[1][0] : "")).toUpperCase();
   }
+  // The brand a card shows ("Kraken"), not the legal filing name the sponsor badge matches on
+  // ("Payward Inc"); the feed sends it as display_name (sourcing/brands.py). The legal name
+  // stays in j.company for matching, skips and the sponsor lookups.
+  function coName(j) { return (j && (j.display_name || j.company)) || ""; }
   function companyAvatar(j) {
-    const co = j.company || "?";
+    const co = coName(j) || "?";
     const hue = hashHue(co.toLowerCase());
     const mono = `<span class="av-mono" style="background:hsl(${hue} 62% 90%);color:hsl(${hue} 55% 32%)">${esc(initials(co))}</span>`;
     // The proxy 404s on a miss, so onerror cleanly reveals the monogram underneath.
@@ -1689,7 +1693,7 @@
         ${companyAvatar(j)}
         <div class="fr-main">
           <div class="fr-top">
-            <div class="fr-co-name">${esc(j.company)}</div>
+            <div class="fr-co-name">${esc(coName(j))}</div>
             ${f.label ? `<span class="fr-fresh ${f.cls}">${f.cls ? "● " : ""}${esc(f.label)}</span>` : ""}
           </div>
           <div class="fr-role">${esc(j.title)} ${isNew}</div>
@@ -1749,7 +1753,7 @@
         ${companyAvatar(j)}
         <div class="fd-stick-main">
           <div class="fd-stick-t">${esc(j.title)}</div>
-          <div class="fd-stick-c">${esc(j.company)} <span>·</span> ${esc(usLocation(j.location))}</div>
+          <div class="fd-stick-c">${esc(coName(j))} <span>·</span> ${esc(usLocation(j.location))}</div>
         </div>
         <button class="btn btn-primary btn-sm" data-fd-tailor="${esc(j.source_id)}" type="button">Tailor &amp; apply →</button>
       </div></div>
@@ -1758,7 +1762,7 @@
           ${companyAvatar(j)}
           <div class="fd-headmain">
             <div class="fd-title">${esc(j.title)}</div>
-            <div class="fd-co">${esc(j.company)} <span>·</span> ${esc(usLocation(j.location))}</div>
+            <div class="fd-co">${esc(coName(j))} <span>·</span> ${esc(usLocation(j.location))}</div>
             ${viaLink(j)}
           </div>
         </div>
@@ -3085,6 +3089,8 @@
       renderCovDetail(st.coverage);
     }
     if (st.review) renderReview(st.review);
+    if ("changes" in st || "trims" in st || "refine" in st) renderTailorWhat(st);
+    if (st.put_back_ok === false && st.put_back_error) twNote(st.put_back_error);
     if (st.pdf) {
       $("#pdfFrame").src = st.pdf + "&preview=1#toolbar=0&navpanes=0&view=FitH";
       const dl = $("#downloadBtn"); dl.href = st.pdf;
@@ -3241,6 +3247,67 @@
     if (add) { e.preventDefault(); kwPreview(add.dataset.term, add); }
     else if (undo) { e.preventDefault(); kwUndo(undo.dataset.term); }
   });
+  /* What changed (tailoring/changes.py, built in code from the page and the base resume), the
+     refine chips (the coverage gaps the person's material supports; each runs the Add this
+     keyword path, so no model call makes the chip) and the one-page cuts with Put back, which
+     re-runs the fit check on the server. */
+  const twT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  function renderTailorWhat(st) {
+    const box = $("#tailorWhat");
+    if (!box) return;
+    const ch = st.changes || {};
+    const pts = ch.points || [];
+    const cuts = st.trims || [];
+    const chips = st.refine || [];
+    box.hidden = !(pts.length || cuts.length || chips.length);
+    const rf = $("#twRefine");
+    rf.hidden = !chips.length;
+    rf.innerHTML = chips.length
+      ? `<span class="tw-lbl">${esc(twT("tw.refine", "Refine"))}</span>` + chips.map(c => { const lab = twT("tw.workIn", "Work in {t}").replace("{t}", c.term); return `<button type="button" class="tw-chip" data-term="${esc(c.term)}" title="${esc(lab)}">${esc(lab)}</button>`; }).join("")
+      : "";
+    const bits = [];
+    if ((ch.reworded || []).length) bits.push(twT("tw.reworded", "{n} reworded").replace("{n}", ch.reworded.length));
+    if ((ch.skills || {}).reordered && (ch.skills.reordered.length || ch.skills.lines_moved)) bits.push(twT("tw.skills", "skills reordered"));
+    if ((ch.hidden || []).length) bits.push(twT("tw.hidden", "{n} hidden by your choice").replace("{n}", ch.hidden.length));
+    if ((ch.terms_added || []).length) bits.push(twT("tw.terms", "{n} job terms added").replace("{n}", ch.terms_added.length));
+    if (cuts.length) bits.push(twT("tw.cut", "{n} cut to fit").replace("{n}", cuts.length));
+    $("#twSum").textContent = bits.join(" · ") || twT("tw.none", "Nothing reworded yet");
+    $("#twPoints").innerHTML = pts.map(p => `<li>${esc(unDash(p))}</li>`).join("");
+    const cw = $("#twCuts");
+    cw.hidden = !cuts.length;
+    cw.innerHTML = cuts.length
+      ? `<div class="tw-lbl">${esc(twT("tw.cuts", "Cut to fit one page"))}</div>` + cuts.map(c =>
+        `<div class="tw-cut"><span class="tw-cut-t"><span class="tw-cut-w">${esc(c.what)}${c.label ? ", " + esc(c.label) : ""}</span>${esc(unDash(c.text))}</span>`
+        + `<button type="button" class="btn btn-ghost btn-sm tw-back" data-id="${esc(c.id)}">${esc(twT("tw.putBack", "Put back"))}</button></div>`).join("")
+      : "";
+  }
+  function twNote(msg) {
+    const body = $("#twBody");
+    if (!body) return;
+    body.querySelector(".tw-note")?.remove();
+    const p = el("p", "tw-note"); p.textContent = unDash(msg);
+    body.prepend(p);
+    body.hidden = false; $("#twToggle").setAttribute("aria-expanded", "true");
+  }
+  $("#twToggle")?.addEventListener("click", () => {
+    const body = $("#twBody");
+    body.hidden = !body.hidden;
+    $("#twToggle").setAttribute("aria-expanded", String(!body.hidden));
+  });
+  $("#tailorWhat")?.addEventListener("click", async (e) => {
+    const chip = e.target.closest(".tw-chip");
+    const back = e.target.closest(".tw-back");
+    if (chip) { e.preventDefault(); kwPreview(chip.dataset.term, null); return; }
+    if (back) {
+      e.preventDefault();
+      back.disabled = true; back.textContent = twT("tw.putting", "Checking the fit");
+      let st;
+      try { st = await api("/api/cv/live/trim/restore", { id: back.dataset.id }); }
+      catch (err) { back.disabled = false; back.textContent = twT("tw.putBack", "Put back"); twNote(err.message || ""); return; }
+      applyState(st);
+    }
+  });
+
   $("#kwCard")?.addEventListener("click", (e) => {
     if (e.target.closest("#kwAccept")) kwApply();
     else if (e.target.closest("#kwIgnore")) { KW_PENDING = null; kwCard(""); }
@@ -3272,6 +3339,7 @@
     chat.innerHTML = ""; setStep("details"); setCoverage(0);
     $("#coverage").hidden = true; $("#editToggle").hidden = true;
     $("#covDetail").hidden = true;
+    if ($("#tailorWhat")) { $("#tailorWhat").hidden = true; $("#twBody").hidden = true; $("#twToggle").setAttribute("aria-expanded", "false"); }
     $("#acceptBtn").disabled = true;
     $("#downloadBtn").hidden = true;
     $("#acceptNote").textContent = "Answer a few questions and I’ll draft this for you.";
@@ -4447,7 +4515,7 @@
     panel.innerHTML = `
       <div class="trk-p-head">
         <div class="trk-p-head-main">
-          <div class="trk-card-co">${esc(j.company)}${j.location ? ` · ${esc(j.location)}` : ""}</div>
+          <div class="trk-card-co">${esc(coName(j))}${j.location ? ` · ${esc(j.location)}` : ""}</div>
           <h2 class="trk-p-title">${esc(j.title)}</h2>
           ${chips ? `<div class="trk-card-chips">${chips}</div>` : ""}
         </div>
@@ -8958,10 +9026,10 @@
     const loc = usLocation(it.location);
     const act = it.action;
     const primaryish = act === "fill" || act === "signin" || act === "finish";
-    return `<div class="aa-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(it.role)}, ${esc(it.company)}">
+    return `<div class="aa-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(it.role)}, ${esc(coName(it))}">
       ${companyAvatar(it)}
       <div class="aa-row-main"><div class="aa-t">${esc(it.role || T("aa.role", "Role"))}</div>
-        <div class="aa-s"><span class="co">${esc(it.company)}${it.location ? " · " + esc(loc) : ""}</span>${aaChip(it)}</div></div>
+        <div class="aa-s"><span class="co">${esc(coName(it))}${it.location ? " · " + esc(loc) : ""}</span>${aaChip(it)}</div></div>
       <span class="aa-stage ${cls}"><span class="pip"></span><span class="aa-stage-x">${esc(text)}</span></span>
       <span class="aa-match">${it.match != null ? `${it.match}%<small>${esc(T("aa.match", "match"))}</small>` : ""}</span>
       <div class="aa-act"><button class="btn btn-ghost btn-sm${primaryish ? " aa-fillbtn" : ""}" type="button" data-act="${act}">${esc(aaActName(act))}</button></div>
@@ -9009,7 +9077,7 @@
     const rec = b.recent || [];
     $("#aaRecent").innerHTML = rec.length ? rec.map(it => `<button class="aa-rec" type="button" data-id="${it.id}">${companyAvatar(it)}
         <span class="aa-rec-m"><span class="aa-rec-t" title="${esc(it.role)}">${esc(it.role)}</span>
-        <span class="aa-rec-s">${esc(it.company)} · ${esc(it.how === "auto" ? T("aa.forYou", "For you") : T("aa.byYou", "By you"))}</span></span>
+        <span class="aa-rec-s">${esc(coName(it))} · ${esc(it.how === "auto" ? T("aa.forYou", "For you") : T("aa.byYou", "By you"))}</span></span>
         <span class="aa-rec-w">${esc(aaAgo(it.submitted_at))}</span></button>`).join("")
       : `<div class="aa-rec-none">${esc(T("aa.recentNone", "Nothing sent yet."))}</div>`;
     const all = $("#aaSeeAll");
@@ -10099,7 +10167,7 @@
     host.innerHTML = jobs.map(j => `<div class="aa-row" data-sid="${esc(j.source_id)}">
         ${companyAvatar(j)}
         <div class="aa-row-main"><div class="aa-t">${esc(j.title)}</div>
-          <div class="aa-s"><span class="co">${esc(j.company)}${j.location ? " · " + esc(usLocation(j.location)) : ""}</span>${aaChip(j)}</div></div>
+          <div class="aa-s"><span class="co">${esc(coName(j))}${j.location ? " · " + esc(usLocation(j.location)) : ""}</span>${aaChip(j)}</div></div>
         <span class="aa-tag">${j.saved ? star + " " + esc(T("aa.saved", "Saved")) : j.priority ? esc(T("aa.priority", "Priority")) : ""}</span>
         <span class="aa-match">${j.fit != null ? `${j.fit}%<small>${esc(T("aa.match", "match"))}</small>` : ""}</span>
         <div class="aa-act"><button class="aa-x" type="button" data-skip="${esc(j.source_id)}" title="${esc(T("aa.skipNext", "Skip this role in the next run"))}" aria-label="${esc(T("aa.skipNext", "Skip this role in the next run"))}"><svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
@@ -10662,7 +10730,7 @@
       return;
     }
     list.innerHTML = jobs.map(j => `<button class="strat-new-row" data-new-sid="${esc(j.source_id)}" type="button">
-        <span class="strat-new-co">${esc(j.company)}</span>
+        <span class="strat-new-co">${esc(coName(j))}</span>
         <span class="strat-new-role">${esc(j.title)}</span>
         <span class="strat-new-loc">${esc(usLocation(j.location))}</span>
       </button>`).join("") + (d.count > jobs.length
