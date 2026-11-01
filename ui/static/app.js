@@ -9354,8 +9354,13 @@
         ? ["flag", T("aa.st.contact", "Add your {f} in Profile").replace("{f}", b.missing_contact.join(" and "))]
         : ["", T("aa.st.review", "Ready for a look")])(AA.board);
     }
+    // Left on its review page by the agent (Send): the engine's own words, its first sentence
+    // here ("Ready to send"); the whole line is the status's tooltip.
+    if (it.action === "send") return ["ready", aaFirst(it.stage_detail) || T("aa.st.readySend", "Ready to send")];
     if (it.tile === "waiting") return ["ready", it.queued ? T("aa.st.queued", "Queued to send for you") : T("aa.st.waiting", "Approved, ready to fill")];
-    if (it.tile === "needs" && it.reason === "paused") return ["flag", it.stage_detail || T("aa.st.paused", "Paused: needs you")];
+    // Paused by the agent: "Paused: needs you" here; what it needs (the exact question) is the
+    // row's own muted line under the company (aaRow), never cut short.
+    if (it.tile === "needs" && it.reason === "paused") return ["flag", aaFirst(it.stage_detail) || T("aa.st.paused", "Paused: needs you")];
     if (it.tile === "needs") return ["flag", T(...(AA_REASON[it.reason] || AA_REASON.site_error))];
     const when = aaAgo(it.submitted_at);
     return ["", (it.how === "auto" ? T("aa.st.forYou", "Sent for you") : T("aa.st.byYou", "You sent it")) + (when ? " · " + when : "")];
@@ -9373,16 +9378,20 @@
     return visaBadges(it, { primary: true });
   }
 
+  // The first sentence of an engine line, without its full stop ("Ready to send").
+  const aaFirst = (s) => String(s || "").trim().split(/(?<=\.)\s+/)[0].replace(/\.$/, "");
   function aaRow(it) {
     const [cls, text] = aaStageLine(it);
+    const q = it.paused && it.paused.state === "waiting" ? String(it.paused.message || "").trim() : "";
     const loc = usLocation(it.location);
     const act = it.action;
     const primaryish = act === "fill" || act === "signin" || act === "finish" || act === "answer" || act === "continue" || act === "send";
     return `<div class="aa-row${AA.open === it.id ? " is-active" : ""}" data-id="${it.id}" role="button" tabindex="0" aria-label="${esc(it.role)}, ${esc(coName(it))}">
       ${companyAvatar(it)}
       <div class="aa-row-main"><div class="aa-t">${esc(it.role || T("aa.role", "Role"))}</div>
-        <div class="aa-s"><span class="co">${esc(coName(it))}${it.location ? " · " + esc(loc) : ""}</span>${aaChip(it)}</div></div>
-      <span class="aa-stage ${cls}"><span class="pip"></span><span class="aa-stage-x">${esc(text)}</span></span>
+        <div class="aa-s"><span class="co">${esc(coName(it))}${it.location ? " · " + esc(loc) : ""}</span>${aaChip(it)}</div>${q ? `
+        <div class="aa-q">${esc(q)}</div>` : ""}</div>
+      <span class="aa-stage ${cls}"${it.stage_detail && it.stage_detail !== text ? ` title="${esc(it.stage_detail)}"` : ""}><span class="pip"></span><span class="aa-stage-x">${esc(text)}</span></span>
       <span class="aa-match">${it.match != null ? `${it.match}%<small>${esc(T("aa.match", "match"))}</small>` : ""}</span>
       <div class="aa-act"><button class="btn btn-ghost btn-sm${primaryish ? " aa-fillbtn" : ""}" type="button" data-act="${act}">${esc(aaActName(act))}</button></div>
     </div>`;
