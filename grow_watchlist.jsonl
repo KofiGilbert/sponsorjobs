@@ -7837,3 +7837,6 @@
 {"name": "Pinwheel Solutions Inc", "norm": "pinwheel solutions", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793284730}
 {"ats": "workday", "board_id": "quadient.wd3/External_Career_Site", "cap_exempt": 0, "h1b_approvals": 21, "jobs": 2, "name": "Quadient Inc", "norm": "quadient", "perm_certs": 3, "status": "hit", "ts": 1793370596, "url": "https://quadient.wd3.myworkdayjobs.com/External_Career_Site", "verified": "2026-10-30"}
 {"name": "Rassy Logistics Llc", "norm": "rassy logistics", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793454619}
+{"name": "Refyn Data Llc", "norm": "refyn data", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793543332}
+{"name": "Pender Community Hospital District", "norm": "pender community hospital district", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793543334}
+{"name": "Omni Family Health", "norm": "omni family health", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793543335}
