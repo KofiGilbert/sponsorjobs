@@ -1390,8 +1390,13 @@
     const co = coName(j) || "?";
     const hue = hashHue(co.toLowerCase());
     const mono = `<span class="av-mono" style="background:hsl(${hue} 62% 90%);color:hsl(${hue} 55% 32%)">${esc(initials(co))}</span>`;
-    // The proxy 404s on a miss, so onerror cleanly reveals the monogram underneath.
-    const img = `<img class="av-img" src="/api/logo?company=${encodeURIComponent(co)}" alt=""`
+    // The proxy 404s on a miss, so onerror cleanly reveals the monogram underneath. It gets the
+    // posting's HOST only (never the full link): when the job lives on the employer's own site
+    // (jobs.cisco.com) that is a confident domain; the server ignores ATS hosts. "v" retires
+    // logos the browser cached under the old, looser matcher ("Umbrella Labs" showed Cisco's).
+    let host = "";
+    try { host = new URL((j && (j.url || j.posting_url || j.apply_url || j.job_url)) || "").hostname; } catch (e) { host = ""; }
+    const img = `<img class="av-img" src="/api/logo?v=2&company=${encodeURIComponent(co)}${host ? `&host=${encodeURIComponent(host)}` : ""}" alt=""`
       + ` loading="lazy" onload="this.style.opacity=1" onerror="this.remove()" />`;
     return `<div class="fr-logo">${mono}${img}</div>`;
   }
