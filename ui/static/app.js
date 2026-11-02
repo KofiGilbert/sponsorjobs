@@ -10387,6 +10387,7 @@
     BAS.two = !!BAS.val.citizenship2;
     $("#ansEeo").checked = !!d.eeo_decline;
     if ($("#ansTerms")) $("#ansTerms").checked = d.accept_required_terms === "always";
+    if ($("#memTerms")) $("#memTerms").checked = d.accept_required_terms === "always";
     $("#ansSalary").value = BAS.val.salary || "";
     basPaint();
     basNeeds(d.conflicts || []);
@@ -10521,6 +10522,23 @@
   });
   // Terms a site requires to apply: "always" accepts them without asking; off asks the first
   // time on each site. Saved the moment it changes, like the decline choice above it.
+  // The always-visible copy on the memory page's Form answers card: same pref, kept in step.
+  $("#memTerms")?.addEventListener("change", async e => {
+    const box = e.target, want = box.checked;
+    box.disabled = true;
+    try {
+      const r = await api("/api/answers/basics", { fields: {}, accept_required_terms: want ? "always" : "ask" });
+      BAS.data = r;
+      box.checked = r.accept_required_terms === "always";
+      if ($("#ansTerms")) $("#ansTerms").checked = box.checked;
+      toast(box.checked ? T("ans.termsOn", "Saved. I accept the terms a site requires and name each one before you send.")
+                        : T("ans.termsOff", "Saved. I ask you first."));
+    } catch (err) {
+      box.checked = !want;
+      toast(err.message || T("profile.answers.failed", "Couldn't save."));
+    }
+    box.disabled = false;
+  });
   $("#ansTerms")?.addEventListener("change", async e => {
     const box = e.target, note = $("#ansBasicsNote"), want = box.checked;
     box.disabled = true;
@@ -10529,6 +10547,7 @@
       const r = await api("/api/answers/basics", { fields: {}, accept_required_terms: want ? "always" : "ask" });
       BAS.data = r;
       box.checked = r.accept_required_terms === "always";
+      if ($("#memTerms")) $("#memTerms").checked = box.checked;
       note.textContent = T("aa.saved", "Saved");
     } catch (err) {
       box.checked = !want;

@@ -1210,6 +1210,8 @@
   "aa.send": "Envoyer",
   "aa.stop": "Arrêter",
   "ans.termsAlways": "Accepter l'avis de confidentialité ou les conditions qu'un site exige pour postuler, sans me demander",
+  "ans.termsOn": "Enregistré. J'accepte les conditions qu'un site exige et je les nomme avant l'envoi.",
+  "ans.termsOff": "Enregistré. Je te demande d'abord.",
   "ans.termsNote": "Désactivé, je vous demande la première fois sur chaque site. Chacun que j'accepte est indiqué quand la candidature est prête à envoyer.",
   "choice.editNote": "Cliquez sur un texte pour le modifier. Désactivez un poste pour le retirer de ce CV.",
   "choice.title": "Choix du CV",
