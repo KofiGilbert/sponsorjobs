@@ -217,6 +217,30 @@ class AnthropicLLM:
         out = self._complete(system, user, max_tokens=400, effort="medium")
         return out or original_text
 
+    def fit_bullet(self, text: str, min_chars: int, max_chars: int, jd_text: str = "",
+                   context: str = "") -> str:
+        """Resize ONE bullet so its last line ends near the right margin (tailoring/linefit.py
+        measures the page and picks the character window). Real detail only: every rewrite is
+        checked again by the fact gate and the padding guard, and refused if it invents."""
+        system = (
+            "You resize ONE resume bullet so it fills its last printed line.\n"
+            f"- Write ONE complete sentence of {min_chars} to {max_chars} characters. Count "
+            "carefully: landing inside this window is the whole task.\n"
+            "- To LENGTHEN: add real detail that the ENTRY CONTEXT below states (a tool it "
+            "names, the scope, who the work was for, the result). Never invent a number, name, "
+            "tool, employer or credential the context does not state.\n"
+            "- To SHORTEN: drop the weakest words or a minor clause. Keep every number and "
+            "name.\n"
+            "- No filler ('demonstrating', 'ensuring', 'leveraging', 'robust', "
+            "'comprehensive', 'seamless'), no keyword lists, no em or en dashes.\n"
+            "Return ONLY the bullet text, no quotes, no markup."
+        )
+        user = (f"BULLET ({len(text)} characters now):\n{text}\n\n"
+                f"ENTRY CONTEXT (the person's own material for this role):\n{str(context)[:1500]}\n\n"
+                f"TARGET JOB (context only):\n{str(jd_text)[:800]}")
+        out = self._complete(system, user, max_tokens=300, effort="medium")
+        return out or text
+
     def shorten_bullet(self, text: str, max_len_chars: int) -> str:
         system = (
             "Shorten this résumé bullet so it fits a tighter space, while keeping "
@@ -815,12 +839,13 @@ class AnthropicLLM:
             "- Every bullet (real-expanded or drafted) is a complete sentence with "
             "varied opening verbs, at most 1-2 job terms each, NO keyword walls, "
             "nothing the role wouldn't plausibly support.\n"
-            "- Skills: a 'skills' object of 4 to 5 labeled lines (like the template's four "
-            "dense categories) grouped naturally from the person's own material (e.g. "
-            "'Languages & Tools', 'Data & Analytics', 'Domain Knowledge', 'Methods & "
-            "Frameworks', 'Certifications'). Prefer 4; use a 5th ONLY if the person has "
-            "enough genuine skills to fill it, never more than 5 (too many crowds the "
-            "page). Include ONLY skills, tools, and methods the person's OWN material "
+            "- Skills: a 'skills' object of 5 to 6 labeled lines grouped naturally from the "
+            "person's own material and ordered by what THIS job asks for most (e.g. "
+            "'Analytics & BI', 'Strategy & Performance', 'Leadership & Delivery', or the "
+            "standard 'Languages & Tools', 'Data & Analytics', 'Methods & Frameworks', "
+            "'Domain Knowledge', plus 'Certifications'). Each line is ONE printed line that runs to "
+            "the right margin, never wrapping and never stopping halfway; use fewer lines "
+            "only when the person's genuine skills cannot fill 5. Include ONLY skills, tools, and methods the person's OWN material "
             "(their stated skills, uploaded resume, experience, education, projects, and "
             "certifications) actually shows. PACK each line with as many of the person's "
             "GENUINE, relevant skills as naturally fit so it runs close to the right margin "

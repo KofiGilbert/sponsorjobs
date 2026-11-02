@@ -1,7 +1,8 @@
 """Regression tests for the user's CV hard rules (2026-07):
 
   1. Extracurricular + Interests are MANDATORY and collected BEFORE the first build.
-  2. Skills show 4-5 dense categories (never 2 skinny ones), packed to the page.
+  2. Skills show 5 to 6 full-width categories (never 2 skinny ones), packed to the page;
+     when the person's material can't fill them, the builder asks (tests/test_linefit.py).
   3. Project links are a minimal inline marker, never a blue-title takeover.
 
 See memories complete-cv-fills-page, skills-five-categories-fill-page, project-links-no-blue-title.
@@ -128,13 +129,20 @@ def test_stated_skills_are_captured_into_skills_input(template_source, fake_llm,
 
 
 @requires_latex
-def test_built_cv_has_four_to_five_skill_categories(template_source, fake_llm, workdir):
+def test_built_cv_has_five_to_six_skill_categories_or_asks_for_more(template_source, fake_llm, workdir):
+    """The owner's rule (2026-11): 5 to 6 one-line categories. A profile whose real skills
+    can't fill them is not padded: the builder asks for the JD's keywords instead."""
     s = _s(template_source, fake_llm, workdir)
     s.start()
     s.submit(SKELETON)
-    s.submit(EXTRAS)
+    st = s.submit(EXTRAS)
     n = len(s.profile.get("skills") or {})
-    assert 4 <= n <= 5, f"expected 4-5 skill categories, got {n}: {list((s.profile.get('skills') or {}).keys())}"
+    asked = " ".join(st["messages"])
+    assert 2 <= n <= 6, f"got {n} skill categories: {list((s.profile.get('skills') or {}).keys())}"
+    assert 5 <= n or "This role asks for" in asked or "tools, software or methods" in asked, \
+        f"{n} skill lines and no question for more: {asked}"
+    assert all(s_["lines"] == 1 for s_ in (s.assembled.line_fit or {}).get("skills", [])), \
+        "a skills line wraps"
 
 
 # -- Rule 1, measured: "fills the page" is a number, not a proxy ------------- #
@@ -373,11 +381,11 @@ def test_supported_material_yields_more_than_two_skill_rows():
     assert len(rows) >= 4, f"only {len(rows)} rows: {list(rows)}"
 
 
-def test_shrink_keeps_at_least_four_skill_categories():
-    """Skills shrink from 6 down to the 4-category floor, never below it."""
+def test_shrink_keeps_at_least_five_skill_categories():
+    """Skills shrink from 6 down to the 5-category floor, never below it."""
     profile = {"skills": {f"C{i}": "term one, term two" for i in range(6)},
                "experience": [{"org": "X", "roles": [{"title": "T", "dates": "2020", "bullets": []}]}]}
     for _ in range(40):
         if not _shrink_once(profile):
             break
-    assert len(profile["skills"]) == 4, f"skills floor breached: {list(profile['skills'])}"
+    assert len(profile["skills"]) == 5, f"skills floor breached: {list(profile['skills'])}"

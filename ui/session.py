@@ -87,7 +87,16 @@ def _essentials_from(saved_ess: dict, profile: dict) -> dict:
             # reloaded session, and the whole skills block starves to 1-2 terms.
             "skills_input": [str(s) for s in (saved_ess.get("skills_input") or [])],
             "certifications": [str(c) for c in (saved_ess.get("certifications") or [])],
+            # JD skills already asked about (the full-width line rule, tailoring/linefit.py)
+            # and the ones the person said they don't have: never asked twice.
+            "skills_asked": [str(s) for s in (saved_ess.get("skills_asked") or [])],
+            "skills_declined": [str(s) for s in (saved_ess.get("skills_declined") or [])],
             "declined": list(saved_ess.get("declined") or [])}
+
+
+# Roughly how many real skill terms fill 5 to 6 full-width Skills lines (tailoring/linefit.py).
+# Below this the enrichment interview asks for more tools and skills per area.
+SKILLS_FOR_FULL_LINES = 24
 
 
 # Phrases that mean "just use my saved profile", handled deterministically so a
@@ -793,6 +802,9 @@ class WebIntake:
         # profile a tailored build started from. None for a page drafted from the chat.
         self._change_base: dict | None = None
         self._last_reverted: list = []           # rewrites the fact gate kept in the person's words
+        # Build progress (tailoring/linefit.BUILD_STEPS): "Reading the job" ... "Checking every
+        # line", one entry per step of the current build, for a live feed to show.
+        self.activity: list[dict] = []
 
         saved = memory.load(profile_name)
         if saved:
@@ -824,6 +836,22 @@ class WebIntake:
         self.prior_history = _merge_turns(self.prior_history, self.palace.load_history())
 
     # ------------------------------------------------------------------ helpers
+    def _progress(self, step: str, reset: bool = False):
+        """Record one build step ("read", "match", "draft", "bullets", "fit", "check"; labels
+        in tailoring/linefit.BUILD_STEPS). A repeated step is not added twice in a row. Read
+        by /api/session/activity while the build runs; never fails the build."""
+        try:
+            import time as _t
+            from tailoring.linefit import BUILD_STEPS
+            labels = dict(BUILD_STEPS)
+            if reset:
+                self.activity = []
+            if step not in labels or (self.activity and self.activity[-1]["step"] == step):
+                return
+            self.activity.append({"step": step, "label": labels[step], "at": round(_t.time(), 3)})
+        except Exception:      # noqa: BLE001
+            pass
+
     def _append(self, role: str, content: str):
         """Record one turn in the session AND persist it verbatim to the diary,
         as it happens, the fix for 'nothing persisted until Accept'."""
@@ -2229,6 +2257,8 @@ class WebIntake:
             "can_autobuild": bool(self.returning and (self.saved_profile or {}).get("experience")
                                   and self.assembled is None and self.stage == "chatting"),
         }
+        if self.activity:
+            s["activity"] = list(self.activity)
         if self.recalled:
             s["recalled"] = self.recalled
         if self.rule_proposals:
@@ -2590,6 +2620,7 @@ class WebIntake:
                 if not str(recent.get("courses") or "").strip():
                     recent["courses"] = courses
         self._capture_skills(message)   # stated skills -> skills_input (else the extractor drops them)
+        self._absorb_skill_answers(message)   # "yes, I've used dbt" -> their own skill fact
         self._capture_locations(message)
         self._capture_dates(message)
         # Section router (control plane): the person's explicit placement wins over the
@@ -2686,6 +2717,9 @@ class WebIntake:
         self.stage = "drafting"
         self._change_base = None           # a page drafted from the chat has no base resume
         self._last_reverted = []
+        self._progress("read", reset=True)
+        self._progress("match")
+        self._progress("draft")
         drafted = normalize_profile(self.llm.draft_profile(self.jd, self.essentials))
         self.profile = drafted
         self.profile["identity"] = self.essentials.get("identity", {}) or self.profile.get("identity", {})
@@ -2701,6 +2735,7 @@ class WebIntake:
         self._apply_real_bullets()  # the person's REAL bullets win; flag drafted ones
         self._apply_essentials_locations()  # never drop an experience location (hard rule)
         date_flags = self._flag_placeholder_dates()  # year-only dates -> flagged placeholder months
+        self._progress("bullets")
         self._expand_terse_bullets()  # grow stubby fragments into full page-width sentences
         self._apply_user_skills()   # the person's own skills + certifications
         self._validate_skills()     # drop any drafted skill the person's material can't support
@@ -2709,7 +2744,9 @@ class WebIntake:
         self._dedupe_skill_groups() # one term, one line -- no duplicate Computing/Knowledge rows
         self._apply_memory_selection()  # P1: record why these belong (reasoning only, surfaced)
         self._new_build()
-        self._assemble()                # renders a constraint-filtered copy; durable profile stays whole
+        # renders a constraint-filtered copy; durable profile stays whole. fit_lines: every
+        # skills line and bullet measured on the PDF and filled to the right edge (linefit.py).
+        self._assemble(fit_lines=True)
         self.stage = "review"
         self._persist()   # the built profile is now remembered for next time
         msgs = list(lead or [])
@@ -2745,6 +2782,14 @@ class WebIntake:
         required Extracurricular / Interests sections, or flag a light CV once.
         Returns the `extra` flag for _state so the UI can surface it."""
         extra = self._light_extra()
+        # The full-width line rule: when the page lacks the real material for every line to
+        # run full, ask one targeted question (JD keywords first) instead of padding.
+        if not self.essentials.get("enrich_done"):
+            q = self._line_question()
+            if q:
+                msgs.append(q)
+                self._append("agent", q)
+                self._persist()
         invite = "" if self.essentials.get("enrich_done") else self._enrich_invite()
         if invite:
             msgs.append(invite)
@@ -2801,6 +2846,8 @@ class WebIntake:
             if missing:
                 return self._ask_missing(missing, critical=override)
             self.stage = "drafting"
+            self._progress("read", reset=True)
+            self._progress("match")
             self._apply_essentials_locations()  # never drop an experience location (hard rule)
             date_flags = self._flag_placeholder_dates()  # year-only -> flagged placeholder months
             self._validate_skills()  # drop any saved skill the person's material can't support
@@ -2812,11 +2859,13 @@ class WebIntake:
             self._new_build()
             import copy as _copy
             self._change_base = _copy.deepcopy(normalize_profile(self.saved_profile))
+            self._progress("draft")
             self.assembled = assemble_cv(
                 self.template, self._render_profile(), self.jd, self.llm, self.workdir,
                 jobname=self.jobname, tailor=True, sections=self.sections,
                 headings=self.headings, choices=self._choices_plan(),
-                keep=self.kept_trims, material=self._brain_material())
+                keep=self.kept_trims, material=self._fit_material(),
+                fit_lines=True, skill_pool=self._skill_pool(), progress=self._progress)
             self._last_reverted = list(getattr(self.assembled, "reverted", None) or [])
             self.profile = self._whole_profile_after_render(self.assembled.profile_used)
             self._pdf_v += 1
@@ -3016,6 +3065,7 @@ class WebIntake:
         reword, but never claim a skill that entry doesn't show (issue #279)."""
         from tailoring.textwidth import line_fraction, text_width_pt, BULLET_WIDTH_PT
         from tailoring.fact_gate import gate_rewrite, known_material
+        from tailoring.linefit import BULLET_LAST_LINE_TARGET as TARGET
         from tailoring.filler import is_padded
         from tailoring.keywords import introduced_skills, profile_text
         # The fact gate too (tailoring/fact_gate.py): a resize never names a tool, employer,
@@ -3032,17 +3082,19 @@ class WebIntake:
             grounding = profile_text(entry) + "\n" + grounding
 
         def score(frac):
-            # How cleanly the last line lands (higher = better; >=0.58 is "good"). A one-line
-            # bullet that is at least about half a line is a normal ragged line, not a defect:
-            # rewriting those to "fill the line" is what produced the padded sentences. Only a
-            # genuinely stubby fragment is reworked, and the filler guard still vets the result.
-            if frac < 0.85:
-                return 1.0 if frac >= 0.45 else frac * 0.5
+            # How cleanly the last line lands (higher = better; >= TARGET is "good"). The
+            # owner's rule (2026-11): every written line runs to the right edge, so a one-line
+            # bullet must reach TARGET of the line and a longer bullet's LAST line too (the old
+            # bars were 45% and 58%). Filling is only ever with the person's own detail: the
+            # filler guard and the fact gate below still vet every rewrite, and the measured
+            # loop on the real PDF (tailoring/linefit.py) settles what this estimate misses.
+            if frac < 1.0 - 0.015:
+                return 1.0 if frac >= TARGET else frac * 0.5
             part = frac - int(frac)
             if part <= 0.015:
                 return 1.0                             # ends right at a line boundary
-            if part >= 0.58:
-                return part                            # last line >=58% full (natural)
+            if part >= TARGET:
+                return part                            # last line runs close to the edge
             return part * 0.3                          # sparse last line / lone-word spill
 
         def chars_for(text, lines):
@@ -3058,13 +3110,13 @@ class WebIntake:
             asked: set[tuple[str, int]] = set()   # (text, target) requests already made
             nudge, rejected = 1.0, 0               # tighten the target after a rejection
             for _ in range(3):
-                if best_score >= 0.58:
+                if best_score >= TARGET:
                     break
                 frac = line_fraction(best)
                 whole, part = int(frac), frac - int(frac)
-                # Aim for the nearest full-line landing: trim a small overrun back, or
-                # fill out the current line when it's already well into it.
-                target = 1 if frac < 0.85 else (whole if part < 0.30 else whole + 1)
+                # Aim for the nearest full-line landing: trim a word-or-two spill back, or
+                # fill out the current line otherwise.
+                target = 1 if frac < 1.0 else (whole if part < 0.30 else whole + 1)
                 tgt = max(1, int(chars_for(best, target) * nudge))
                 if (best, tgt) in asked:
                     break                          # never re-issue an identical request
@@ -3096,53 +3148,189 @@ class WebIntake:
         return out
 
     def _fill_skills(self):
-        """Fill each skills line toward the template's full-page-width density using
-        JD keywords the person's material ACTUALLY supports (ATS alignment, CLAUDE.md
-        §8), so the Skills block reaches the right margin like the template, without
-        ever inventing a skill the person doesn't have."""
-        from tailoring.keywords import supported_skills
+        """Pack the Skills block into 5 to 6 one-line categories that each reach the right
+        margin (the owner's layout rule, tailoring/linefit.pack_skills), from the person's
+        OWN skills only: the block itself plus ``_skill_pool`` (stated skills, brain facts,
+        the saved profile, and JD terms their genuine material shows). JD terms go first
+        (ATS alignment, CLAUDE.md section 8); nothing is ever invented. This is the estimate
+        pass; the build then measures the real page and corrects it (assembler fit_lines)."""
         skills = self.profile.get("skills") or {}
         if not skills:
             return
-        from tailoring.textwidth import text_width_pt, TEXTWIDTH_PT
+        from tailoring.linefit import pack_skills
+        self.profile["skills"] = pack_skills(skills, self._skill_pool(), jd_text=self.jd).skills
+
+    def _brain_skills(self) -> list[str]:
+        """Skills the person told the brain they have (key ``skill``, active)."""
+        st = self._brain()
+        if st is None:
+            return []
+        try:
+            from applicant.store import ACTIVE
+            return [str(r["value"]) for r in st.facts(store="", key="skill", status=ACTIVE)
+                    if str(r["value"] or "").strip()]
+        except Exception:      # noqa: BLE001
+            return []
+
+    def _genuine_text(self) -> str:
+        """Everything the person's own material says, for vetting a skill: their stated
+        skills, real bullets, education, projects (``_skill_source_text``), plus the saved
+        profile and the brain's facts. Never a drafted placeholder bullet."""
+        from tailoring.keywords import profile_text
+        parts = [self._skill_source_text()]
+        for m in self._brain_material():
+            parts.append(profile_text(m) if isinstance(m, dict) else str(m))
+        parts += self._brain_skills()
+        return "\n".join(parts)
+
+    def _skill_pool(self) -> list[str]:
+        """More of the person's OWN skills the Skills packer may place: JD terms their
+        genuine material shows first, then their stated skills, brain skill facts and saved
+        profile skills. Each must appear in their genuine material (no drafted text)."""
+        from tailoring.keywords import supported_skills, term_present
+        from tailoring.linefit import split_terms
+        genuine = self._genuine_text()
+        cands = list(supported_skills(self.jd, self.profile))
+        cands += [str(x) for x in (self.essentials.get("skills_input") or [])]
+        cands += self._brain_skills()
+        sk = (self.saved_profile or {}).get("skills")
+        if isinstance(sk, dict):
+            for v in sk.values():
+                cands += split_terms(v)
+        elif isinstance(sk, list):
+            cands += [str(x) for x in sk]
+        declined = {str(x).lower() for x in (self.essentials.get("skills_declined") or [])}
+        avoid = self._avoid_token_sets()          # an active "do not mention X" wins
+        out, seen = [], set()
+        for t in cands:
+            t = str(t).strip()
+            if not t or t.lower() in seen or t.lower() in declined:
+                continue
+            if avoid and any(a & set(re.findall(r"[a-z0-9]+", t.lower())) for a in avoid):
+                continue
+            if term_present(t, genuine):
+                seen.add(t.lower())
+                out.append(t)
+        return out
+
+    def _fit_material(self) -> list:
+        """The fact gate's material for a fit build: the brain material plus the person's
+        stated skills and real bullets (``_skill_source_text``), so a skill they told us
+        about may be placed on the page."""
+        return list(self._brain_material()) + [self._skill_source_text()] + self._brain_skills()
+
+    # ------------------------------------------------------- full-width line questions
+    def _missing_jd_skills(self) -> list[str]:
+        """JD skills the person's genuine material does not show, in the ad's order, not yet
+        asked about or declined. These are what we ask about, never what we add."""
+        from tailoring.keywords import skill_terms, term_present
+        c = getattr(self.assembled, "coverage", None)
+        terms = list(c.jd_terms) if c is not None else skill_terms(self.jd)
+        role, company = _jd_label(self.jd)
+        drop = {w.lower() for seg in (role, company) for w in re.findall(r"[A-Za-z]+", seg or "")}
+        genuine = self._genuine_text()
+        asked = {str(x).lower() for x in (self.essentials.get("skills_asked") or [])}
+        asked |= {str(x).lower() for x in (self.essentials.get("skills_declined") or [])}
+        out = []
+        for t in terms:
+            t = str(t).strip()
+            words = set(re.findall(r"[a-z]+", t.lower()))
+            if (t and not (words and words <= drop) and t.lower() not in asked
+                    and not term_present(t, genuine) and t not in out):
+                out.append(t)
+        return out
+
+    def _line_question(self) -> str:
+        """One targeted question when the page lacks the real material for every line to run
+        full (tailoring/linefit.py ``line_gaps``): first the JD skills the person may have
+        ("This role asks for Looker and dbt. Have you used either?"), else more tools for a
+        short skills line, else one more detail for a bullet that stops short. Asked once per
+        item; the answer is saved as the person's own fact. Never pads instead of asking."""
+        gaps = getattr(self.assembled, "line_gaps", None) or {}
+        if not gaps or self.essentials.get("unattended"):
+            return ""
+        e = self.essentials
+        if gaps.get("skills_needed") or gaps.get("short_skills"):
+            terms = self._missing_jd_skills()[:2]
+            if terms:
+                e["skills_pending"] = list(terms)
+                e["skills_asked"] = list(dict.fromkeys(list(e.get("skills_asked") or []) + terms))
+                if len(terms) == 1:
+                    q = (f"This role asks for {terms[0]}. Have you used it? If you have, say so "
+                         "and I'll add it to your skills, with any other tools you use.")
+                else:
+                    q = (f"This role asks for {terms[0]} and {terms[1]}. Have you used either? "
+                         "Tell me which, plus any other tools you use, and I'll add them to "
+                         "your skills.")
+                return q
+            if "skills_more" not in (e.get("enrich_asked") or []):
+                e.setdefault("enrich_asked", []).append("skills_more")
+                short = (gaps.get("short_skills") or [{}])[0].get("label") or ""
+                where = f" for {short}" if short else ""
+                return ("Your skills section needs a little more to fill every line. What other "
+                        f"tools, software or methods do you use{where}?")
+        asked = set(e.get("bullets_asked") or [])
+        for b in gaps.get("short_bullets") or []:
+            text = str(b.get("text") or "")
+            key = text[:60].lower()
+            if not text or key in asked:
+                continue
+            e.setdefault("bullets_asked", []).append(key)
+            words = text.split()
+            clip = " ".join(words[:9]) + ("..." if len(words) > 9 else "")
+            org = str(b.get("label") or "").split(",")[0].strip() or "one role"
+            return (f"One bullet at {org} stops short: \"{clip}\". What else did that involve, "
+                    "a tool, a number or the result? I'll only use what you tell me.")
+        return ""
+
+    _YES_ALL = re.compile(r"^\s*(yes|yeah|yep|yup|sure|both|all of them|i have|i've used (?:both|all)|"
+                          r"i do|correct|definitely|absolutely)\b", re.I)
+    _NO_ALL = re.compile(r"^\s*(no|nope|neither|none|not really|never|i haven'?t|i have not)\b", re.I)
+    _NEG = re.compile(r"\b(not|never|no|haven'?t|hasn'?t|didn'?t|don'?t|neither|nor|without)\b", re.I)
+
+    def _absorb_skill_answers(self, message: str):
+        """The answer to "This role asks for Looker and dbt. Have you used either?": a skill
+        the person says they have becomes THEIR fact (stated skills, the brain with source
+        "you"), one they say they lack is never asked again. A message that is not about
+        them leaves the question closed (it is not asked again either)."""
+        e = self.essentials
+        pending = [str(t) for t in (e.get("skills_pending") or []) if str(t).strip()]
+        if not pending:
+            return
+        e["skills_pending"] = []
         from tailoring.keywords import term_present
-        present = {t.strip().lower() for v in skills.values()
-                   for t in str(v).split(",") if t.strip()}
-        # Draw the fill pool from the SAME genuine-material source _validate_skills uses
-        # (not profile_text, which includes drafted placeholder bullets), otherwise a JD
-        # skill the person doesn't have, echoed in a drafted bullet, would be packed onto
-        # the Skills line, re-opening the fabrication hole validation just closed (§8).
-        genuine = self._skill_source_text()
-        pool = [t for t in supported_skills(self.jd, self.profile)
-                if t.lower() not in present and term_present(t, genuine)]
-        SAFE = 2.0   # tiny right-margin guard; microtype + justify close the last sliver
-        for label in list(skills.keys()):
-            # Budget = the real text width available for the VALUE, measured in points:
-            # full text width minus the BOLD "Label:" minus a space minus safety.
-            budget_pt = (TEXTWIDTH_PT - text_width_pt(f"{label}:", bold=True)
-                         - text_width_pt(" ") - SAFE)
-            items = [s.strip() for s in str(skills[label] or "").split(",") if s.strip()]
-            val_w = lambda lst: text_width_pt(", ".join(lst))
-            # Self-healing word choice: at each step add the supported term that packs the
-            # line CLOSEST to the right margin without overflowing (best-fit), so the line
-            # fills as tightly as the real terms allow, a small residual, if any, is then
-            # taken up invisibly by microtype's glyph expansion at render time.
-            added = True
-            while added and pool:
-                added = False
-                best_k, best_w = -1, -1.0
-                for k, term in enumerate(pool):
-                    w = val_w(items + [term])
-                    if w <= budget_pt and w > best_w:
-                        best_k, best_w = k, w
-                if best_k >= 0:
-                    items.append(pool.pop(best_k))
-                    added = True
-            # Drop WHOLE trailing terms if the model over-supplied (never wrap).
-            while len(items) > 1 and val_w(items) > budget_pt:
-                items.pop()
-            skills[label] = ", ".join(items)
-        self.profile["skills"] = skills
+        msg = str(message or "")
+        low = msg.lower()
+        got, no = [], []
+        for t in pending:
+            if term_present(t, msg):
+                i = low.find(t.lower())
+                before = low[max(0, i - 28):i] if i >= 0 else ""
+                (no if self._NEG.search(before) else got).append(t)
+        if not got and not no:
+            if self._YES_ALL.search(msg) and not self._NO_ALL.search(msg):
+                got = list(pending)
+            elif self._NO_ALL.search(msg):
+                no = list(pending)
+        elif self._NO_ALL.search(msg):
+            no += [t for t in pending if t not in got and t not in no]
+        si = e.setdefault("skills_input", [])
+        for t in got:
+            if t.lower() not in {x.lower() for x in si}:
+                si.append(t)
+        if no:
+            e["skills_declined"] = list(dict.fromkeys(list(e.get("skills_declined") or []) + no))
+        if got:
+            st = self._brain()
+            if st is not None:
+                try:
+                    from applicant import facts as _F
+                    for t in got:
+                        _F.put(st, "skill", t, source="you", subject=f"skill:{t.lower()}",
+                               source_ref=self._last_user_ref or "builder",
+                               question=f"Have you used {t}?")
+                except Exception:      # noqa: BLE001 - stated skills still carry it
+                    pass
 
     def _dedupe_skill_groups(self):
         """Collapse duplicate skills across groups. _apply_user_skills adds
@@ -3250,6 +3438,15 @@ class WebIntake:
                 topics.append(("projects", "any real projects you'd like to feature"))
             if not (e.get("skills_input")) and "skills" not in declined:
                 topics.append(("skills", "the key skills you'd want highlighted"))
+            elif (len(e.get("skills_input") or []) < SKILLS_FOR_FULL_LINES
+                  and not (declined & {"skills", "skills_more"})):
+                # Thin: 5 to 6 full-width skills lines need roughly 30 real terms. Ask for
+                # more tools and skills per area, naming what this job asks for.
+                ask = self._missing_jd_skills()[:3] if self.jd else []
+                named = (f" (this role mentions {', '.join(ask[:-1])} and {ask[-1]})"
+                         if len(ask) > 1 else f" (this role mentions {ask[0]})" if ask else "")
+                topics.append(("skills_more", "more of the tools, software and methods you use, "
+                               "grouped by area, so every skills line runs full" + named))
             if not (e.get("certifications")) and "certifications" not in declined:
                 topics.append(("certifications", "any certifications you hold"))
         return topics
@@ -3498,14 +3695,19 @@ class WebIntake:
             pass
         self._conform_essentials()
 
-    def _assemble(self):
+    def _assemble(self, fit_lines: bool = False):
         # Render from a constraint-filtered COPY so a 'do not mention X' never reaches the CV,
         # while self.profile (persisted) stays whole; restore any hidden items into the durable
         # profile afterward. With no active constraints both are no-ops (behavior unchanged).
+        # ``fit_lines`` (a fresh build only, never a rebuild after the person's own edit, which
+        # must not be reworded behind their back) runs the full-width line loop.
         self.assembled = assemble_cv(
             self.template, self._render_profile(), self.jd, self.llm, self.workdir,
             jobname=self.jobname, tailor=False, sections=self.sections, headings=self.headings,
-            choices=self._choices_plan(), keep=self.kept_trims, material=self._brain_material(),
+            choices=self._choices_plan(), keep=self.kept_trims,
+            material=self._fit_material() if fit_lines else self._brain_material(),
+            fit_lines=fit_lines, skill_pool=self._skill_pool() if fit_lines else (),
+            progress=self._progress if fit_lines else None,
         )
         self.profile = self._whole_profile_after_render(self.assembled.profile_used)
         self._pdf_v += 1
