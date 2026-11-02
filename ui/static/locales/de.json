@@ -1210,6 +1210,8 @@
   "aa.send": "Senden",
   "aa.stop": "Stopp",
   "ans.termsAlways": "Die Datenschutzhinweise oder Bedingungen, die eine Website für die Bewerbung verlangt, ohne Rückfrage akzeptieren",
+  "ans.termsOn": "Gespeichert. Ich akzeptiere die Bedingungen, die eine Seite verlangt, und nenne jede vor dem Senden.",
+  "ans.termsOff": "Gespeichert. Ich frage dich vorher.",
   "ans.termsNote": "Wenn das aus ist, frage ich dich beim ersten Mal auf jeder Website. Alles, was ich akzeptiere, wird genannt, wenn die Bewerbung bereit zum Senden ist.",
   "choice.editNote": "Klicke auf einen Text, um ihn zu bearbeiten. Schalte eine Stelle aus, um sie aus diesem Lebenslauf zu nehmen.",
   "choice.title": "Lebenslauf-Auswahl",

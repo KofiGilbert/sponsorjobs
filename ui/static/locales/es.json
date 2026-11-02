@@ -1210,6 +1210,8 @@
   "aa.send": "Enviar",
   "aa.stop": "Detener",
   "ans.termsAlways": "Aceptar el aviso de privacidad o los términos que un sitio exige para postularse, sin preguntarme",
+  "ans.termsOn": "Guardado. Acepto los términos que exige un sitio y te digo cada uno antes de enviar.",
+  "ans.termsOff": "Guardado. Te pregunto antes.",
   "ans.termsNote": "Si está desactivado, te pregunto la primera vez en cada sitio. Cada uno que acepto aparece cuando la solicitud está lista para enviar.",
   "choice.editNote": "Haz clic en cualquier texto para editarlo. Desactiva un puesto para dejarlo fuera de este CV.",
   "choice.title": "Elecciones del CV",

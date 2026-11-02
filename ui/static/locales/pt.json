@@ -1210,6 +1210,8 @@
   "aa.send": "Enviar",
   "aa.stop": "Parar",
   "ans.termsAlways": "Aceitar o aviso de privacidade ou os termos que um site exige para se candidatar, sem me perguntar",
+  "ans.termsOn": "Salvo. Aceito os termos que um site exige e indico cada um antes do envio.",
+  "ans.termsOff": "Salvo. Pergunto a você antes.",
   "ans.termsNote": "Quando isto está desligado, pergunto a você na primeira vez em cada site. Cada um que aceito aparece quando a candidatura está pronta para enviar.",
   "choice.editNote": "Clique em qualquer texto para editá-lo. Desative um cargo para deixá-lo fora deste currículo.",
   "choice.title": "Escolhas do currículo",

@@ -526,6 +526,11 @@
             <div class="ans-card-h">
               <h2 class="ans-h" id="memAnswersH"><span data-i18n="mem.answers">Form answers</span> <span class="ans-count" id="memBasicsCount"></span></h2>
             </div>
+            <!-- Always visible: the standing choice about terms a site requires. The same pref as
+                 #ansTerms inside the card below (which hides once all seven answers are saved). -->
+            <label class="ans-check" id="memTermsRow"><input type="checkbox" id="memTerms" />
+              <span data-i18n="ans.termsAlways">Accept the privacy notice or terms a site requires to apply, without asking me</span></label>
+            <p class="ans-eeo-note" data-i18n="ans.termsNote">When this is off, I ask you first, and while you are away an application that needs it waits for your answer. Every one I accept is named when the application is ready to send.</p>
             <div class="mem-open" id="memOpen" hidden>
               <span class="mem-open-t" id="memOpenT"></span>
               <button class="btn btn-ghost btn-sm" id="memOpenBtn" type="button" data-i18n="mem.answerThem">Answer them</button>
