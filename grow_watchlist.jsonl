@@ -7840,3 +7840,4 @@
 {"name": "Refyn Data Llc", "norm": "refyn data", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793543332}
 {"name": "Pender Community Hospital District", "norm": "pender community hospital district", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793543334}
 {"name": "Omni Family Health", "norm": "omni family health", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793543335}
+{"name": "Rexel Usa Inc", "norm": "rexel", "probed_ats": ["greenhouse", "lever", "ashby", "workday"], "reason": "no live board at any slug", "status": "miss", "ts": 1793640260}
