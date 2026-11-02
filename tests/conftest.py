@@ -55,6 +55,18 @@ requires_latex = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_posting_checks_over_the_network(monkeypatch):
+    """The free open-or-closed check (sourcing/liveness.py) runs before tailoring and applying.
+    In tests it never reaches the network: every posting reads "unknown" (never closed) unless a
+    test hands the check its own answers (tests/test_liveness.py)."""
+    from sourcing import liveness
+    liveness.clear_cache()
+    monkeypatch.setattr(liveness, "http_get", lambda url, *a, **k: liveness.Resp(0, "", url))
+    yield
+    liveness.clear_cache()
+
+
 @pytest.fixture
 def template_source() -> str:
     return TEMPLATE_PATH.read_text(encoding="utf-8")

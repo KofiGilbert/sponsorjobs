@@ -21,6 +21,9 @@ const COST_CAP_USD = Number(process.env.SJ_AGENT_COST_CAP_USD) > 0 ? Number(proc
 const MAX_FAILED_STEPS = 4;          // in a row, then the recovery ladder (section 13)
 const STEP_BRAIN_MS = 90000;
 const ACTION_MS = 25000;
+// The engine's free open-or-closed check of the posting (sourcing/liveness.py): plain HTTP, at
+// most a couple of 10 s requests, before the page opens or the AI is asked anything.
+const PRECHECK_MS = 25000;
 // Every call into the pane is capped (section 13, the 2026-11-02 Nelnet hang: an await on a
 // skeleton Workday page never returned and the loop froze for 8 minutes with Stop dead). A call
 // that does not answer in PANE_MS is a hang observation and the ladder takes over.
@@ -965,6 +968,19 @@ function createAgent(deps) {
       progress(recordId, "stopped", message, Object.assign({ reason, steps: history.length }, extra));
       return finish({ ok: false, reason, steps: history.length });
     };
+    // A closed job: nothing was sent and nothing more is spent; the record is already in the
+    // closed-posting state ("Job closed") when `marked` (the engine's check did it).
+    const closedStop = async (phrase, url, marked) => {
+      dlog("closed:", phrase);
+      if (!marked) await deps.postApp("/api/autoapply/agent/closed", { record_id: recordId, url, phrase }).catch(() => null);
+      feed.close();
+      feed.push("closed", "Stopped", "the job is closed", { state: "done", detail: phrase });
+      progress(recordId, "stopped", (batch ? lead : "") + (marked
+        ? "This job is closed. Nothing was spent. I took it off your list."
+        : "This job is closed (\u201c" + phrase.slice(0, 90) + "\u201d). Nothing was sent; I took it off your list."),
+               { reason: "job-closed", closed: true, steps: history.length, url });
+      return finish({ ok: false, reason: "job-closed", closed: true, steps: history.length });
+    };
     const where = () => (wcNow && !wcNow.isDestroyed() ? wcNow.getURL() || "" : "");
     terms.parkInfo = () => ({ page_url: where(), run: runOpts(opts), batch: quick });
     const lead = batch && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "";
@@ -1194,6 +1210,13 @@ function createAgent(deps) {
     const HANG_MENU = ["wait_for form", "reload", "reopen_job"];
 
     try {
+      // (2026-11-02) Before the page opens or the AI is asked anything: the engine's free check of
+      // the posting (plain HTTP, no AI). A closed job stops here, and a batch moves on.
+      if (!R) {
+        const pc = await guard(deps.postApp("/api/autoapply/agent/precheck", { record_id: recordId, url: applyUrl }), PRECHECK_MS, "precheck")
+          .catch((e) => { if (e && e.stopped) throw e; return null; });
+        if (pc && pc.closed) return closedStop(String(pc.phrase || ""), applyUrl, true);
+      }
       let pane = null;
       if (R && R.samePage && deps.getPane()) {
         pane = deps.getPane();
@@ -1338,12 +1361,7 @@ function createAgent(deps) {
           const gone = closedJob(v.text);
           if (gone) {
             dlog("step " + step + " closed:", gone);
-            await deps.postApp("/api/autoapply/agent/closed", { record_id: recordId, url, phrase: gone }).catch(() => null);
-            feed.close();
-            feed.push("closed", "Stopped", "the job is closed", { state: "done", detail: gone });
-            progress(recordId, "stopped", (batch ? lead : "") + "This job is closed (\u201c" + gone.slice(0, 90) + "\u201d). Nothing was sent; I took it off your list.",
-                     { reason: "job-closed", closed: true, steps: history.length, url });
-            return finish({ ok: false, reason: "job-closed", closed: true, steps: history.length });
+            return closedStop(gone, url, false);
           }
           if (elementLines(v.text).some((ln) => /^\*?\[\d+\]<(input|select|textarea|combobox|radio|checkbox|file)\b/.test(ln) && !/search=true/.test(ln))) formReached = true;
         }
@@ -1478,6 +1496,8 @@ function createAgent(deps) {
         if (reply && reply.ok && Array.isArray(reply.plan) && reply.plan.length) { plan = reply.plan.slice(0, 12); feed.plan = plan; }
         if (!reply || reply.ok === false) {
           if (reply && reply.reason === "fill-by-hand") return stopped("fill-by-hand", "This site does not allow automated filling.");
+          // The engine's own check found the posting closed before the first brain call.
+          if (reply && reply.closed) return closedStop(String(reply.phrase || ""), url, true);
           if (reply && reply.ok === false && reply.cost) { spent += Number(reply.cost) || 0; feed.cost = spent; }
           // The model itself: out of credits, no key or access off is never the page's fault and
           // never "needs you"; the job stops with the reason and a batch stops too.
