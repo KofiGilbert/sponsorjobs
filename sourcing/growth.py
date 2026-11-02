@@ -906,25 +906,34 @@ def grow(ranked, checkpoint: Checkpoint, fetch, *, known_boards=(), atss=DISCOVE
                                             "board": f"{hit['ats']}:{hit['board_id']} — live but 0 jobs"})
                 checkpoint.record(norm, name=name, status="miss", reason="0 jobs", **extra)
             else:
-                summary["hits"] += 1
-                key = (hit["ats"], hit["board_id"])
-                cap = cap_exempt_likely(row)
-                summary["cap_exempt_hits"] += int(cap)
-                ev = {"url": board_url(hit["ats"], hit["board_id"]),
-                      "verified": date.today().isoformat(), "cap_exempt": int(cap),
-                      "h1b_approvals": _int(row.get("h1b_approvals")),
-                      "perm_certs": _int(row.get("perm_certs"))}
-                rec = checkpoint.record(norm, name=name, status="hit", ats=hit["ats"],
-                                        board_id=hit["board_id"], jobs=hit["jobs"], **ev, **extra)
-                if key in known:
-                    summary["duplicates"] += 1
+                try:
+                    url = board_url(hit["ats"], hit["board_id"])
+                except ValueError as e:                 # one odd id never ends the whole batch
+                    url, why = None, str(e)[:200]
+                if url is None:
+                    summary["skipped"] += 1
+                    checkpoint.record(norm, name=name, status="skipped", reason=why, **extra)
+                    status = "skipped"
                 else:
-                    known.add(key)
-                    summary["new_boards"].append({"company": name, "ats": hit["ats"],
-                                                  "board_id": hit["board_id"], "jobs": hit["jobs"],
-                                                  **ev})
-                    summary["per_ats"][hit["ats"]] = summary["per_ats"].get(hit["ats"], 0) + 1
-                why = f"{rec['ats']}:{rec['board_id']} ({rec['jobs']} jobs)"
+                    summary["hits"] += 1
+                    key = (hit["ats"], hit["board_id"])
+                    cap = cap_exempt_likely(row)
+                    summary["cap_exempt_hits"] += int(cap)
+                    ev = {"url": url,
+                          "verified": date.today().isoformat(), "cap_exempt": int(cap),
+                          "h1b_approvals": _int(row.get("h1b_approvals")),
+                          "perm_certs": _int(row.get("perm_certs"))}
+                    rec = checkpoint.record(norm, name=name, status="hit", ats=hit["ats"],
+                                            board_id=hit["board_id"], jobs=hit["jobs"], **ev, **extra)
+                    if key in known:
+                        summary["duplicates"] += 1
+                    else:
+                        known.add(key)
+                        summary["new_boards"].append({"company": name, "ats": hit["ats"],
+                                                      "board_id": hit["board_id"], "jobs": hit["jobs"],
+                                                      **ev})
+                        summary["per_ats"][hit["ats"]] = summary["per_ats"].get(hit["ats"], 0) + 1
+                    why = f"{rec['ats']}:{rec['board_id']} ({rec['jobs']} jobs)"
         else:
             summary["probed"] += 1
             prev = checkpoint.records.get(norm) or {}

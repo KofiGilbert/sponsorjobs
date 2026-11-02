@@ -920,7 +920,8 @@ def valid_board_id(board_id: str) -> bool:
 # A Workday board id names BOTH halves of the tenant's public URL: "{tenant}.wd{n}/{site}"
 # (host label / path segment). Each half is a plain slug; the tenant half must be a Workday
 # instance ("nvidia.wd5"), so the fetch can only ever land on *.myworkdayjobs.com.
-_WORKDAY_BOARD_ID_RE = re.compile(r"^([a-z0-9][a-z0-9-]{0,62})\.wd(\d{1,3})/([A-Za-z0-9][A-Za-z0-9._-]{0,98})$")
+# A site name may start with "_" (Penn Mutual's real board is pennmutual.wd1/_penn-careers).
+_WORKDAY_BOARD_ID_RE = re.compile(r"^([a-z0-9][a-z0-9-]{0,62})\.wd(\d{1,3})/([A-Za-z0-9_][A-Za-z0-9._-]{0,98})$")
 
 
 def valid_workday_board_id(board_id: str) -> bool:
