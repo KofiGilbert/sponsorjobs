@@ -14395,6 +14395,7 @@ def _mark_record_closed(rec: dict, url: str = "", phrase: str = "") -> None:
     patch = failed_patch({"reason": "posting_closed", "message": "Job closed" + (": " + phrase if phrase else ".")})
     patch["job_closed"] = {"at": time.time(), "url": str(url or "")[:1000], "phrase": phrase}
     patch["agent_ready"] = None
+    patch["agent_park"] = None
     _records().merge_data(rec["id"], patch)
 
 
@@ -14466,7 +14467,12 @@ def _liveness_recheck(rows: list[dict] | None = None, now: float | None = None) 
     todo = {}
     for r in rows:
         data = _record_data(r)
-        if tile_of(data) not in ("review", "waiting") or data.get("agent_park"):
+        # A paused run (agent_park) is still an unsent record: a posting that closed while it waited
+        # is exactly what the person should not be asked to finish.
+        tile = tile_of(data)
+        if tile == "submitted" or data.get("job_closed"):
+            continue
+        if tile not in ("review", "waiting") and not data.get("agent_park"):
             continue
         url, sid = _record_job(r)
         if url and _liveness_due(data, now):

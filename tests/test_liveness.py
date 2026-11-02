@@ -331,6 +331,22 @@ def test_the_queue_recheck_moves_closed_jobs_and_asks_once_in_12_hours(A, monkey
     assert mod._liveness_recheck(now=later)["checked"] == 1                               # only the open one is still queued
 
 
+def test_the_recheck_also_closes_a_paused_run(A, monkeypatch):
+    """A run paused on "needs you" whose posting then closed moves to Job closed, pause cleared."""
+    mod, c, ids = A
+    monkeypatch.setattr(mod, "_liveness_kick", lambda rows: False)
+    _verdicts(monkeypatch, closed=(CLOSED_URL, CLOSED_URL + "?x=1"))
+    recs = mod._records()
+    try:
+        recs.merge_data(ids["closed"], {"agent_park": {"kind": "person", "message": "This one needs you."}})
+    finally:
+        recs.close()
+    assert mod._liveness_recheck()["closed"] == 2
+    data = mod._record_data(mod._get_record(ids["closed"]))
+    assert data["submission"]["reason"] == "posting_closed" and not data.get("agent_park")
+    assert _row(c, ids["closed"])["action"] == "view"
+
+
 def test_the_board_starts_the_recheck_in_the_background(A, monkeypatch):
     mod, c, ids = A
     _verdicts(monkeypatch)
