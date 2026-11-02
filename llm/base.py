@@ -373,6 +373,23 @@ class FakeLLM:
     def shorten_bullet(self, text: str, max_len_chars: int) -> str:
         return _trim_to_len(text, max_len_chars)
 
+    def fit_bullet(self, text: str, min_chars: int, max_chars: int, jd_text: str = "",
+                   context: str = "") -> str:
+        """Resize a bullet into [min_chars, max_chars] (tailoring/linefit.py). Deterministic:
+        too long drops whole trailing clauses; too short is returned as is. Never pads."""
+        text = str(text or "").strip()
+        if len(text) > max_chars:
+            # Drop whole trailing clauses (never cut mid-sentence); no clause to drop, no trim.
+            parts = text.rstrip(".").split(", ")
+            while len(parts) > 1 and len(", ".join(parts)) + 1 > max_chars:
+                parts.pop()
+            cand = ", ".join(parts) + "."
+            return cand if len(cand) <= max_chars else text
+        # Too short: the stand-in has no new real detail to add (a model would draw one from
+        # the entry's own material). It never bolts the entry's tools on as a list
+        # ("..., using X and Y"), which is keyword stuffing (filler.tacked_on_terms).
+        return text
+
     def extract_jd_skills(self, jd_text: str) -> list[str]:
         from tailoring.keywords import skill_terms
         return skill_terms(jd_text)

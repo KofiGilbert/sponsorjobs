@@ -47,3 +47,49 @@ def is_padded(original: str, candidate: str) -> bool:
         return False
     grew = len(str(candidate or "")) > len(str(original or "")) * 1.1
     return grew or len(added) >= 2
+
+
+# --------------------------------------------------------------------------- #
+# Tacked-on term lists (CLAUDE.md section 8: no keyword stuffing)
+# --------------------------------------------------------------------------- #
+# A rewrite that reaches a length by bolting tools onto the end ("..., using Variance Analysis
+# and A/B Testing.", "..., leveraging SQL, Python and Tableau.") or by putting a keyword wall in
+# front ("SQL, Python, Tableau: Built ...") reads as stuffing to a recruiter, even when every
+# term is real. A term may come into a bullet only as part of what the sentence says happened.
+_CONNECTOR = re.compile(
+    r"(?:,\s*|\s+)(?:using|leveraging|utili[sz]ing|employing|applying|via|through|"
+    r"with tools such as|with tools like|with|including|such as|across)\s+(?P<tail>[^.;]*)$",
+    re.IGNORECASE)
+_LEAD_WALL = re.compile(r"^\s*(?:[A-Z][\w+#./&-]*(?:\s+[\w+#./&-]+){0,2}\s*,\s*)+"
+                        r"[A-Z][\w+#./&-]*(?:\s+[\w+#./&-]+){0,2}\s*:\s")
+_TAIL_LIST = re.compile(r",\s*(?P<tail>(?:[^,.;]{1,30},\s*)+(?:and\s+)?[^,.;]{1,30})\.?\s*$")
+
+
+def _terms(text: str) -> set[str]:
+    from .keywords import vocab_skills
+    from .fact_gate import claims
+    out = {t.lower() for t in vocab_skills(text)}
+    out |= {c.lower() for c in claims(text) if any(ch.isupper() for ch in c[1:]) or c.isupper()}
+    return {t for t in out if len(t) > 1}
+
+
+def tacked_on_terms(original: str, candidate: str) -> list[str]:
+    """Terms a rewrite bolts on as a list, rather than saying what happened: a leading keyword
+    wall, a trailing comma list, or a closing "using/leveraging/with ..." clause that names a
+    tool or skill the original bullet did not. Empty means the rewrite is clean."""
+    orig, cand = str(original or ""), str(candidate or "")
+    new_terms = _terms(cand) - _terms(orig)
+    if _LEAD_WALL.search(cand) and not _LEAD_WALL.search(orig):
+        return sorted(new_terms) or ["keyword list"]
+    if not new_terms:
+        return []
+    body = cand.rstrip().rstrip(".!")
+    hits: set[str] = set()
+    for pat in (_CONNECTOR, _TAIL_LIST):
+        m = pat.search(body)
+        if m and m.group("tail").strip() not in orig:
+            tail = m.group("tail").lower()
+            hits |= {t for t in new_terms if t in tail}
+    if len(new_terms) >= 3:            # a fill adds a real detail, never a set of keywords
+        hits |= new_terms
+    return sorted(hits)
