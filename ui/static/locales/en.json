@@ -1365,5 +1365,21 @@
   "mem.dec.address": "Address",
   "mem.dec.extracurricular": "Activities",
   "mem.dec.interests": "Interests",
-  "mem.diaryDay": "{n} lines kept, all from {a}. Forget a fact above to delete the lines it came from."
+  "mem.diaryDay": "{n} lines kept, all from {a}. Forget a fact above to delete the lines it came from.",
+  "act.steps": "Steps",
+  "act.stepsOf": "Steps {n} of {m}",
+  "act.nSteps": "{n} steps",
+  "act.nothingSent": "Nothing sent without you",
+  "act.pageOf": "page {n} of {m}",
+  "act.page": "page {n}",
+  "act.appOf": "Application {i} of {n}",
+  "act.took": "Took {s} s",
+  "act.for": "{s} s so far",
+  "act.built": "Built",
+  "act.stoppedB": "Stopped",
+  "act.st.done": "Done",
+  "act.st.retry": "Tried again",
+  "act.st.now": "Now",
+  "act.st.asking": "Waiting on you",
+  "act.st.parked": "Paused"
 }

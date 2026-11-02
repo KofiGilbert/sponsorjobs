@@ -1365,5 +1365,21 @@
   "mem.dec.address": "Adresse",
   "mem.dec.extracurricular": "Aktivitäten",
   "mem.dec.interests": "Interessen",
-  "mem.diaryDay": "{n} Zeilen gespeichert, alle vom {a}. Vergiss oben einen Fakt, um seine Zeilen zu löschen."
+  "mem.diaryDay": "{n} Zeilen gespeichert, alle vom {a}. Vergiss oben einen Fakt, um seine Zeilen zu löschen.",
+  "act.steps": "Schritte",
+  "act.stepsOf": "Schritte {n} von {m}",
+  "act.nSteps": "{n} Schritte",
+  "act.nothingSent": "Nichts wird ohne dich gesendet",
+  "act.pageOf": "Seite {n} von {m}",
+  "act.page": "Seite {n}",
+  "act.appOf": "Bewerbung {i} von {n}",
+  "act.took": "In {s} s",
+  "act.for": "{s} s bisher",
+  "act.built": "Fertig",
+  "act.stoppedB": "Gestoppt",
+  "act.st.done": "Erledigt",
+  "act.st.retry": "Neuer Versuch",
+  "act.st.now": "Jetzt",
+  "act.st.asking": "Wartet auf dich",
+  "act.st.parked": "Pausiert"
 }

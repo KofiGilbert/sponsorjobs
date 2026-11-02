@@ -1843,6 +1843,9 @@
                  profile (no tailor-introduced claim), plus easy wins, honest gaps, and page fit. -->
             <div class="presend" id="presendReview" hidden></div>
 
+            <!-- While a resume builds: one live line (what it is doing now) and its steps. -->
+            <div class="act-live build-live" id="buildLive" hidden></div>
+
             <div class="paper-stage">
               <div class="pdf-placeholder" id="pdfPlaceholder">
                 Your resume will appear here as a PDF, exactly the file you download, once I have enough to build it.
@@ -1886,6 +1889,9 @@
                 aria-label="Open in your browser">Open in browser &#8599;</button>
       </div>
       <div class="bb-fill" id="bbFill" role="status" aria-live="polite" hidden></div>
+      <!-- The apply agent's steps for the current run (the live activity feed): opened from the
+           bar's Steps toggle, in the page flow so the browser below gets shorter, never covered. -->
+      <div class="act-feed bb-feed" id="bbFeed" hidden></div>
       <div class="browser-slot" id="browserSlot"></div>
       <div class="pdf-placeholder" id="bbNoShell" hidden>The in-app browser needs the desktop app (shell-electron). Links open in your system browser instead.</div>
     </div>

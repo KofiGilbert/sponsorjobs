@@ -17,6 +17,7 @@ import shutil
 from pathlib import Path
 
 from intake.diary import Diary
+from ui import activity as _activity
 from tailoring.assembler import assemble_cv, normalize_profile
 from tailoring.conform import date_lacks_month, is_full_address
 
@@ -2675,7 +2676,23 @@ class WebIntake:
                                 self.essentials.get("projects", []))
 
     # ------------------------------------------------------------------ draft + assemble
+    def _build_feed(self):
+        """The live activity run for one build (ui/activity.py): the builder's own line, or the
+        unattended auto-apply tailoring's, so the builder never shows a background build."""
+        key = "unattended" if self.essentials.get("unattended") else "builder"
+        role, company = str(self.role or "").strip(), str(self.company or "").strip()
+        target = f"{role} at {company}" if role and company else (role or company)
+        return _activity.run("resume", key=key, target=target)
+
+    def _feed_read_job(self):
+        _activity.step("read", "Reading the job")
+
     def draft(self, lead=None):
+        with self._build_feed():
+            self._feed_read_job()
+            return self._draft(lead)
+
+    def _draft(self, lead=None):
         # Gate: never build while a template field is missing. Under an override we
         # still insist on the template-critical fields (locations/dates), because
         # their absence breaks the template, but skip the optional extras.
@@ -2686,6 +2703,7 @@ class WebIntake:
         self.stage = "drafting"
         self._change_base = None           # a page drafted from the chat has no base resume
         self._last_reverted = []
+        _activity.step("draft", "Drafting", "your resume from your experience")
         drafted = normalize_profile(self.llm.draft_profile(self.jd, self.essentials))
         self.profile = drafted
         self.profile["identity"] = self.essentials.get("identity", {}) or self.profile.get("identity", {})
@@ -2698,10 +2716,12 @@ class WebIntake:
         self.profile["projects"] = [dict(p) for p in self.essentials.get("projects", []) or []]
         self.profile["extracurricular"] = [dict(x) for x in self.essentials.get("extracurricular", []) or []]
         self.profile["interests"] = str(self.essentials.get("interests") or "").strip()
+        _activity.step("bullets", "Crafting bullets", "from what you told me, each sized to its line")
         self._apply_real_bullets()  # the person's REAL bullets win; flag drafted ones
         self._apply_essentials_locations()  # never drop an experience location (hard rule)
         date_flags = self._flag_placeholder_dates()  # year-only dates -> flagged placeholder months
         self._expand_terse_bullets()  # grow stubby fragments into full page-width sentences
+        _activity.step("match", "Matching your experience", "to the skills this job asks for")
         self._apply_user_skills()   # the person's own skills + certifications
         self._validate_skills()     # drop any drafted skill the person's material can't support
         self._ensure_richness()
@@ -2779,6 +2799,11 @@ class WebIntake:
     def build_from_saved(self):
         """Build directly from the saved profile, tailored to this job, the
         response to "use what you already know about me"."""
+        with self._build_feed():
+            self._feed_read_job()
+            return self._build_from_saved()
+
+    def _build_from_saved(self):
         if self.saved_profile and self.saved_profile.get("experience"):
             self.profile = normalize_profile(self.saved_profile)
             # HARD RULE (memory: complete-cv-fills-page): the template's page-filling
@@ -2803,6 +2828,7 @@ class WebIntake:
             self.stage = "drafting"
             self._apply_essentials_locations()  # never drop an experience location (hard rule)
             date_flags = self._flag_placeholder_dates()  # year-only -> flagged placeholder months
+            _activity.step("match", "Matching your experience", "to the skills this job asks for")
             self._validate_skills()  # drop any saved skill the person's material can't support
             self._fill_skills()   # foreground supported JD terms (no stretch, ragged if short)
             self._dedupe_skill_groups()  # one term, one line

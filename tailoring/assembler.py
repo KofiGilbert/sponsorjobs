@@ -25,6 +25,12 @@ from .fact_gate import flag_new_figures
 from .latex_text import escape_latex
 from .latex_template import LatexTemplate
 
+try:                                     # the live activity feed (ui/activity.py): a no-op off a run
+    from ui.activity import step as _say
+except Exception:                        # noqa: BLE001 - the engine builds without the app too
+    def _say(*_a, **_k):
+        return None
+
 DOC_START = r"\begin{document}"
 DOC_END = r"\end{document}"
 
@@ -1407,7 +1413,12 @@ def _fit_to_page(preamble, used: dict, sections, workdir: Path, jobname: str,
     Every cut is appended to ``trims``; ids in ``keep`` are never cut (``_shrink_once``)."""
     attempts = 0
     result: CompileResult | None = None
+    said_over = False
     for attempts in range(1, max_shrink + 2):
+        # The first compile is "fit"; when it comes out over a page that same line turns into
+        # the retry, and the shortening rounds after it are one "fit2" line.
+        _say("fit" if attempts == 1 else "fit2", "Fitting the page", "so every line stays inside the margins",
+             detail=f"{attempts} compiles" if attempts > 1 else "")
         tex = render_cv(preamble, used, sections, probe=True, headings=headings)
         result = compile_tex(tex, workdir, jobname=jobname)
         # A fill past MAX_FILL is a real overflow even at "1 page": with no bottom
@@ -1421,6 +1432,9 @@ def _fit_to_page(preamble, used: dict, sections, workdir: Path, jobname: str,
         # otherwise one-page CV is acceptable to ship.
         if result.ok and result.pages == 1 and attempts > 1 and not over_bottom:
             break
+        if not said_over:
+            said_over = True
+            _say("fit", "Shortening", "the longest bullets, it ran over one page", state="retry")
         if not _shrink_once(used, trims, keep, origins):
             break
     return attempts, result
@@ -1461,6 +1475,7 @@ def assemble_cv(
     # the strongest evidence ($60M exports, a 250-driver fleet) is the first thing cut.
     # Selecting first means the roles that survive get room to argue.
     report: dict = {}
+    _say("match", "Matching your experience", "to the roles this job cares about")
     profile = select_roles_for_jd(full_profile, jd_text, choices=choices, report=report)
     # What the person's choices left out never comes back through the grow pass below.
     full_profile = choice_pool(full_profile, report)
@@ -1475,6 +1490,8 @@ def assemble_cv(
     reverted: list = []
     origins: dict = {}
     gate_material = (source_material,) + tuple(material or ())
+    if tailor:
+        _say("bullets", "Crafting bullets", "in the job's own words")
     used = (_tailor_bullets(profile, jd_text, llm, material=gate_material, reverted=reverted,
                             origins=origins) if tailor else profile)
 
@@ -1491,8 +1508,11 @@ def assemble_cv(
     # nothing is padded.
     if (result and result.ok and result.pages == 1 and result.fill_ratio is not None
             and result.fill_ratio < TARGET_FILL and _dropped_material(full_profile, profile)):
+        _say("grow", "Trying again", "with more of your roles, the page came out short", state="retry")
         g_reverted: list = []
         g_origins: dict = {}
+        if tailor:
+            _say("bullets", "Crafting bullets", "for the roles that came back")
         grown = (_tailor_bullets(full_profile, jd_text, llm, material=gate_material,
                                  reverted=g_reverted, origins=g_origins) if tailor else full_profile)
         g_trims: list = []
@@ -1510,6 +1530,7 @@ def assemble_cv(
     # largest standard layout step that keeps one clean page, measured, not guessed. This is
     # what a person does with a thin resume (11pt, normal margins); padding sentences is not.
     layout = ""
+    _say("compile", "Compiling", "the PDF")
     if (result and result.ok and result.pages == 1 and result.fill_ratio is not None
             and result.fill_ratio < LAYOUT_FILL):
         best_fill = result.fill_ratio
@@ -1539,6 +1560,7 @@ def assemble_cv(
     strip_choice_marks(selected_source)
     tex = render_cv(preamble, used, sections, layout=layout, headings=headings)
     cv_text = _rendered_cv_text(used, sections)
+    _say("check", "Checking every line", "and the job's terms")
     # One model read of the ad gives the skill list the report is measured against; the curated
     # vocabulary stands in when there is no model (llm is None in a few offline callers).
     try:
