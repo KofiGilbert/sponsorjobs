@@ -219,9 +219,8 @@ def answer_rows(st: Store | None, lib, prefs: dict) -> list[dict]:
     p = prefs or {}
     for key, label, fld, kind in ANSWERS:
         if key == "accept_required_terms":
-            if p.get("accept_required_terms") == "always":
-                out.append({"id": f"key:{key}", "key": key, "kind": kind, "label": label,
-                            "value": "Accept without asking me", **meta(newest(st, key, ""))})
+            # a switch on the memory page's "What I may do for you" card, not a row here, so the
+            # page says it once (Kofi, 2026-11-01); the key stays editable and forgettable by id
             continue
         hit = lib.best(key) if lib is not None else None
         v = str((hit or {}).get("answer") or "").strip() or str(p.get(fld) or "").strip() if fld else \
