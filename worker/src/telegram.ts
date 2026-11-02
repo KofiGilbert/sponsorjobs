@@ -190,6 +190,17 @@ async function say(bot: Bot, chatId: number, text: string): Promise<void> {
   try { await tg(bot, "sendMessage", { chat_id: chatId, text }); } catch { /* ignored */ }
 }
 
+/** One plain message from the Worker itself to a chat (the owner's outage alert, src/outage.ts):
+ * no account, no rate-limit row, no link preview. Throws TelegramError on failure. */
+export async function sendText(bot: Bot, chatId: number, text: string): Promise<number> {
+  return messageId(await tg(bot, "sendMessage", { chat_id: chatId, text, disable_web_page_preview: true }));
+}
+
+/** The chat id linked to an account, or null when that account has no Telegram chat. */
+export async function linkedChatId(db: D1Database, account: string): Promise<number | null> {
+  return (await getChat(db, account))?.chat_id ?? null;
+}
+
 const messageId = (r: Record<string, unknown>): number => Number(r.message_id) || 0;
 
 // ---- storage ---------------------------------------------------------------------------------- //

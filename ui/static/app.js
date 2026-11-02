@@ -51,7 +51,21 @@
       h: "SponsorJobs' AI is briefly unavailable",
       p: "Our AI service is having a moment. Please try again in a minute.",
     },
+    // OUR outage: the company AI key failed (no credit, disabled). The broker has already alerted
+    // the owner. No button and no link: nothing the person can buy or add fixes it, and their pass
+    // and packages are untouched. The copy is translated (hk/pk), unlike the bring-your-own-key
+    // screens above, because every person on the bundled AI sees it.
+    ai_company: {
+      hk: "outage.aiCompany.h", h: "SponsorJobs' AI is temporarily unavailable",
+      pk: "outage.aiCompany.p", p: "Your pass and packages are not affected. We have been alerted; try again in a little while.",
+    },
+    // A passing failure (rate limit, overload). The app already tried again a few times.
+    ai_transient: {
+      hk: "outage.aiTransient.h", h: "The AI is busy",
+      pk: "outage.aiTransient.p", p: "The AI is busy, trying again in a moment usually works. Your pass and packages are not affected.",
+    },
   };
+  const outageText = (key, fallback) => (key && window.I18N ? I18N.t(key, fallback) : fallback);
   let lastCall = null;   // so "Try again" can actually retry the thing that failed
   let lastOutageReason = null;   // so the fix button knows which action to take
 
@@ -60,8 +74,8 @@
     const box = $("#downModal");
     if (!o || !box) return;
     lastOutageReason = reason;
-    $("#downH").textContent = o.h;
-    $("#downP").textContent = o.p;
+    $("#downH").textContent = outageText(o.hk, o.h);
+    $("#downP").textContent = outageText(o.pk, o.p);
     const link = $("#downFix"), btn = $("#downFixBtn");
     link.hidden = !o.link;
     if (o.link) { link.href = o.link; link.textContent = o.linkLabel || "Fix it"; }
@@ -3723,7 +3737,8 @@
   const MEM_BACK = { autoapply: ["nav.autoapply", "Auto-apply"], package: ["ans.backApp", "Application"],
                      builder: ["choice.backResume", "Resume"], settings: ["mem.backSettings", "Settings"] };
   const MEM_JUMP = [["about", "mem.about", "About you"], ["work", "mem.work", "Work and visa"],
-                    ["answers", "mem.answers", "Form answers"], ["eeo", "mem.eeo", "Self-identification"],
+                    ["answers", "mem.answers", "Form answers"], ["may", "consent.mayShort", "What I may do"],
+                    ["eeo", "mem.eeo", "Self-identification"],
                     ["career", "mem.career", "Career"], ["choices", "choice.title", "Resume choices"],
                     ["history", "mem.history", "History"]];
   const MEM_YN = [["Yes", "ans.yes", "Yes"], ["No", "ans.no", "No"]];
@@ -4002,8 +4017,9 @@
     showView("profile");
     document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("is-active"));
     if (!o.focus) window.scrollTo(0, 0);
-    await Promise.all([memLoad(), ansLoad(), loadLinkedinReview()]);
+    await Promise.all([memLoad(), ansLoad(), loadLinkedinReview(), memLoadMay()]);
     if (o.focus === "answers" || o.focus === "basics") $("#memAnswers")?.scrollIntoView({ block: "start" });
+    if (o.focus === "may") $("#memMay")?.scrollIntoView({ block: "start" });
     if (o.focus === "basics") { memBasicsOpen(); requestAnimationFrame(() => requestAnimationFrame(basFocusFirstOpen)); }
     if (o.focus === "choices") {
       const row = o.rule && document.querySelector(`#ansChoiceList [data-rule="${Number(o.rule)}"]`);
@@ -4032,9 +4048,6 @@
     const ask = wizBasicsAsk({ missing: ((MEM.data || {}).basics || {}).missing || [] });
     if (!ask.rows.length) return;
     basRows(card, ask);
-    // the terms switch is a Form answers row of its own here
-    card.querySelector("#ansTerms")?.closest(".ans-check")?.classList.add("wiz-off");
-    card.querySelector("#ansTerms")?.closest(".ans-check")?.nextElementSibling?.classList.add("wiz-off");
     card.classList.add("is-rows");
     const foot = card.querySelector(".ans-foot");
     if (foot && !$("#memBasicsCancel")) {
@@ -4246,7 +4259,7 @@
       await api("/api/memory/erase", { resumes: $("#memEraseResumes").checked });
       $("#memEraseBox").hidden = true; $("#memErase").hidden = false; $("#memEraseResumes").checked = false;
       toast(MT("mem.erased", "Erased. SponsorJobs no longer knows anything about you."));
-      await Promise.all([memLoad(), ansLoad(), loadLinkedinReview()]);
+      await Promise.all([memLoad(), ansLoad(), loadLinkedinReview(), memLoadMay()]);
       loadPhoto();
     } catch (err) { toast(err.message || MT("mem.eraseFail", "Couldn't erase.")); }
     btn.disabled = false;
@@ -8603,6 +8616,11 @@
     }
   }
 
+  // The assent line's Terms of Use link: the desktop app opens it in the person's own browser
+  // (the in-app pane would sit under this screen); the web build follows the link in a new tab.
+  $("#signinTermsLink")?.addEventListener("click", e => {
+    if (window.tailorShell && window.tailorShell.openTerms) { e.preventDefault(); window.tailorShell.openTerms(); }
+  });
   // Signed in (by code or Google): refresh who we are, then carry on with what they came for.
   async function signedIn() {
     const buy = pendingBuy;
@@ -9320,6 +9338,8 @@
 
   async function loadAutoApply() {
     aaPaintAnswers();
+    aaPaintMay();
+    aaTouNotice();
     aaRunLabel();
     loadInboxStatus();
     let b;
@@ -9546,10 +9566,6 @@
     // missing (aaBasicsGate). "Apply anyway" comes back here and runs as before.
     if (AA_HAS_AGENT() && !here && !AA_AGENT && !(opts && opts.basicsDone)
         && await aaBasicsGate(() => aaFill(id, Object.assign({}, opts, { basicsDone: true })))) return;
-    // The standing choice on terms a site requires, asked once before the first run (never in
-    // the middle of one, and never made for the person).
-    if (AA_HAS_AGENT() && !here && !AA_AGENT && !(opts && opts.termsDone)
-        && await aaTermsGate(() => aaFill(id, Object.assign({}, opts, { basicsDone: true, termsDone: true })))) return;
     const btn = opts && opts.btn && document.contains(opts.btn) && opts.btn.offsetParent ? opts.btn : null;
     if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = T("aa.filling", "Filling…"); }
     const auto = it.lane === "auto" && !!(AA.board && AA.board.today && AA.board.today.autonomous);
@@ -9620,21 +9636,80 @@
     }
     return r;
   }
-  // Before the first Apply for me (one job or a batch), while the person has not made the
-  // choice: may the agent accept the privacy notice or terms a site requires to apply? One clear
-  // question on the bar, before the run starts. Either answer is saved as their own; nothing is
-  // assumed. With "No", a single run asks on the site and a batch parks that job for them.
-  let AA_TERMS_DECIDED = false;      // once made, no fetch before each run (the bar updates at once)
-  async function aaTermsGate(go) {
-    if (AA_TERMS_DECIDED) return false;
-    let d = null;
-    try { d = await api("/api/answers/basics"); } catch { return false; }
-    if (!d) return false;
-    if (d.terms_decided) { AA_TERMS_DECIDED = true; return false; }
-    if (window.Panel && !window.Panel.isOpen("browser")) window.Panel.open("browser");
-    aaAgentBar({ state: "terms-gate", go,
-                 message: T("aa.termsGate.q", "Some sites ask you to accept their privacy notice or terms before you can apply. Should I accept those for you without asking?") });
-    return true;
+  /* What the agent may do for the person (Kofi, 2026-11-01): accept the notices and terms a job
+     site requires, create an account on a site that needs one. Covered by the Terms of Use the
+     person agrees to when they sign in (or, already signed in, by the one-line notice on this
+     page), so nothing asks before a run; each item is a switch on the memory page's "What I may
+     do for you" card, and a job that needs an item that is off parks as "needs you". */
+  const CS = { data: null };
+  async function aaConsentState() {
+    try { CS.data = await api("/api/autoapply/consent"); } catch { /* keep what we had */ }
+    return CS.data;
+  }
+  function csAccountsLine(d, el) {
+    if (!el) return;
+    el.textContent = d && !d.alias && d.email
+      ? T("consent.accountsMail", "With {email}. The password stays on this computer.").replace("{email}", d.email)
+      : T("consent.accountsS", "With your SponsorJobs email. The password stays on this computer.");
+  }
+  // The Terms of Use notice, for a person who agreed to an older version (or never signed in):
+  // ONE quiet line on this page, never a modal and never in the way of a run. Showing it records
+  // the version (continuing counts); it stays up for the rest of this app session.
+  let TOU_LINE = false;
+  async function aaTouNotice() {
+    const line = $("#aaTou");
+    if (!line) return;
+    if (!TOU_LINE) {
+      let st = null;
+      try { st = await api("/api/terms/status"); } catch { st = null; }
+      if (!st || st.accepted) { line.hidden = true; return; }
+      try { await api("/api/terms/notice", {}); } catch { return; }
+      TOU_LINE = true;
+      aaPaintMay();
+    }
+    line.hidden = false;
+  }
+  $("#aaTouOff")?.addEventListener("click", () => openMemory({ origin: "autoapply", focus: "may" }));
+  // The Today panel's "What I may do" row, a door to the memory page's card.
+  function aaMaySub(d) {
+    if (!d) return "";
+    const t = d.terms.on, a = d.accounts.on;
+    return t && a ? T("consent.sub.both", "Accepts site terms, creates accounts")
+      : t ? T("consent.sub.terms", "Accepts site terms") : a ? T("consent.sub.accounts", "Creates site accounts")
+      : T("consent.sub.none", "Asks you first");
+  }
+  async function aaPaintMay() {
+    const sub = $("#aaMaySub");
+    if (!sub) return;
+    sub.textContent = aaMaySub(await aaConsentState());
+  }
+  $("#aaMayBtn")?.addEventListener("click", () => openMemory({ origin: "autoapply", focus: "may" }));
+  // The memory page's card: each switch saves the moment it changes, and counts as decided.
+  function memPaintMay() {
+    const d = CS.data;
+    if (!d || !$("#memTerms")) return;
+    $("#memTerms").checked = !!d.terms.on;
+    $("#memAccounts").checked = !!d.accounts.on;
+    csAccountsLine(d, $("#memAccountsS"));
+  }
+  async function memLoadMay() { await aaConsentState(); memPaintMay(); }
+  for (const [sel, key] of [["#memTerms", "terms"], ["#memAccounts", "accounts"]]) {
+    $(sel)?.addEventListener("change", async e => {
+      const box = e.target, want = box.checked;
+      box.disabled = true;
+      try {
+        CS.data = await api("/api/autoapply/consent", { [key]: want });
+        memPaintMay();
+        // (#164's words for the terms switch)
+        toast(key !== "terms" ? T("aa.saved", "Saved") : want
+          ? T("ans.termsOn", "Saved. I accept the terms a site requires and name each one before you send.")
+          : T("ans.termsOff", "Saved. I ask you first."));
+      } catch (err) {
+        box.checked = !want;
+        toast(err.message || T("profile.answers.failed", "Couldn't save."));
+      }
+      box.disabled = false;
+    });
   }
 
   // Several jobs at once (the Waiting on you tile): one after another in the pane. A job that
@@ -9644,7 +9719,6 @@
     if (!AA_HAS_AGENT() || !window.tailorShell.agentBatch) return;
     if (AA_AGENT) { toast(T("aa.agentBusy", "One application at a time. Stop the current one first.")); return; }
     if (!(opts && opts.basicsDone) && await aaBasicsGate(() => aaApplyAll(Object.assign({}, opts, { basicsDone: true })))) return;
-    if (!(opts && opts.termsDone) && await aaTermsGate(() => aaApplyAll(Object.assign({}, opts, { basicsDone: true, termsDone: true })))) return;
     const autonomous = !!(AA.board && AA.board.today && AA.board.today.autonomous);
     const jobs = ((AA.board && AA.board.tiles.waiting) || [])
       .filter(x => (x.action === "fill" || x.action === "signin") && /^https?:\/\//i.test(x.apply_url || ""))
@@ -9830,7 +9904,7 @@
     if (info.activity) { AA_FEED.rid = info.record_id; AA_FEED.snap = info.activity; }
     // The bar's own lines (no record: "Thanks. Carrying on") keep the current run's steps; the
     // gates before a run and a batch's sum-up have none.
-    const mine = info.record_id == null ? !/^(terms-gate|basics|batch-done)$/.test(info.state || "")
+    const mine = info.record_id == null ? !/^(basics|batch-done)$/.test(info.state || "")
       : String(info.record_id) === String(AA_FEED.rid);
     const snap = mine ? AA_FEED.snap : null;
     const now = feedLast(snap && snap.events);
@@ -10014,18 +10088,6 @@
         if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
         else document.querySelector("[data-nav=autoapply]")?.click();
       });
-    } else if (info.state === "terms-gate") {
-      const yes = btn(T("aa.termsGate.yes", "Yes, accept them for me"), "btn-primary bb-send", async () => {
-        try { await api("/api/answers/basics", { fields: {}, accept_required_terms: "always" }); } catch { return; }
-        AA_TERMS_DECIDED = true;
-        bar.hidden = true; info.go();
-      });
-      btn(T("aa.termsGate.no", "No, ask me first"), "btn-ghost bb-opt", async () => {
-        try { await api("/api/answers/basics", { fields: {}, accept_required_terms: "ask" }); } catch { return; }
-        AA_TERMS_DECIDED = true;
-        bar.hidden = true; info.go();
-      });
-      setTimeout(() => yes.focus(), 50);
     } else if (info.state === "basics") {
       const answer = btn(T(info.missing === 1 ? "aa.basics.answer1" : "aa.basics.answer", info.missing === 1 ? "Answer it" : "Answer them"),
           "btn-primary bb-send", () => {
@@ -10040,11 +10102,11 @@
       btn(T("aa.stop", "Stop"), "btn-ghost bb-stop", () => { try { window.tailorShell.agentStop(); } catch {} });
     }
     bar.classList.toggle("is-wall", info.state === "stopped");
-    bar.classList.toggle("is-ready", /^(ready|ask|basics|parked|answered|terms-gate|batch-done)$/.test(info.state || ""));
+    bar.classList.toggle("is-ready", /^(ready|ask|basics|parked|answered|batch-done)$/.test(info.state || ""));
     // A question longer than a line (a new wording to confirm, "After ..., the application asks")
     // reads on its own row, the choices and the answer box under it: beside three choices it was
     // squeezed to a 200px column of five lines.
-    bar.classList.toggle("bb-stack", /^(ask|parked|terms-gate)$/.test(info.state || "") && String(info.message || "").length > 90);
+    bar.classList.toggle("bb-stack", /^(ask|parked)$/.test(info.state || "") && String(info.message || "").length > 90);
     bar.hidden = false;
   }
 
@@ -10603,8 +10665,6 @@
     BAS.orig = Object.assign({}, d.values || {});
     BAS.two = !!BAS.val.citizenship2;
     $("#ansEeo").checked = !!d.eeo_decline;
-    if ($("#ansTerms")) $("#ansTerms").checked = d.accept_required_terms === "always";
-    if ($("#memTerms")) $("#memTerms").checked = d.accept_required_terms === "always";
     $("#ansSalary").value = BAS.val.salary || "";
     basPaint();
     basNeeds(d.conflicts || []);
@@ -10729,42 +10789,6 @@
       if (ANS.data) ANS.data.eeo_decline = !!r.eeo_decline;
       box.checked = !!r.eeo_decline;
       basPaint();
-      note.textContent = T("aa.saved", "Saved");
-    } catch (err) {
-      box.checked = !want;
-      note.textContent = err.message || T("profile.answers.failed", "Couldn't save.");
-    }
-    box.disabled = false;
-    BAS.noteT = setTimeout(() => { note.textContent = ""; }, 4000);
-  });
-  // Terms a site requires to apply: "always" accepts them without asking; off asks the first
-  // time on each site. Saved the moment it changes, like the decline choice above it.
-  // The always-visible copy on the memory page's Form answers card: same pref, kept in step.
-  $("#memTerms")?.addEventListener("change", async e => {
-    const box = e.target, want = box.checked;
-    box.disabled = true;
-    try {
-      const r = await api("/api/answers/basics", { fields: {}, accept_required_terms: want ? "always" : "ask" });
-      BAS.data = r;
-      box.checked = r.accept_required_terms === "always";
-      if ($("#ansTerms")) $("#ansTerms").checked = box.checked;
-      toast(box.checked ? T("ans.termsOn", "Saved. I accept the terms a site requires and name each one before you send.")
-                        : T("ans.termsOff", "Saved. I ask you first."));
-    } catch (err) {
-      box.checked = !want;
-      toast(err.message || T("profile.answers.failed", "Couldn't save."));
-    }
-    box.disabled = false;
-  });
-  $("#ansTerms")?.addEventListener("change", async e => {
-    const box = e.target, note = $("#ansBasicsNote"), want = box.checked;
-    box.disabled = true;
-    clearTimeout(BAS.noteT);
-    try {
-      const r = await api("/api/answers/basics", { fields: {}, accept_required_terms: want ? "always" : "ask" });
-      BAS.data = r;
-      box.checked = r.accept_required_terms === "always";
-      if ($("#memTerms")) $("#memTerms").checked = box.checked;
       note.textContent = T("aa.saved", "Saved");
     } catch (err) {
       box.checked = !want;
@@ -11305,9 +11329,9 @@
     let d = null;
     try { d = await api("/api/answers/basics"); } catch { d = null; }
     const ask = wizBasicsAsk(d);
-    // The standing choice on terms a site requires is asked here too while it is not made (the
-    // box stays unticked until the person ticks it; leaving it unticked decides nothing).
-    if (!d || (!ask.rows.length && d.terms_decided) || !wizBasicsLend(ask)) { closeResumeBox(); return; }
+    // (The standing choice on terms a site requires is not asked here: the Terms of Use cover
+    // it, and the memory page's "What I may do for you" switch turns it off.)
+    if (!d || !ask.rows.length || !wizBasicsLend(ask)) { closeResumeBox(); return; }
     basTake(d);
     $("#wizBasMsg").hidden = true;
     showWizPanel("basics");

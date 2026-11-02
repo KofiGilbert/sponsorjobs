@@ -455,14 +455,16 @@ brain's `needs-person`, and the ready gate refused 4 times. Each rung shows on t
 1.5 s) and a "reply with JSON only" nudge before saying `no-reply`; the shell then counts a
 failed step (with the real error text on the feed: "Asking the AI again (bad reply: {oops)")
 and at four goes up the ladder. **The AI being down is never "needs you".** A call that fails
-for credits, a key or access (`BrokerUnavailable.reason` `upgrade_required`/`no_key`, the
-Anthropic "out of usage credits" / 401 / 402 wording) is `fatal` after ONE call: the step route
+for credits, a key or access (`BrokerUnavailable.reason` `ai_company` (the broker's own
+outage tag, PR #166), `upgrade_required`, `no_key`, the Anthropic "out of usage credits" / 401 /
+402 wording) is `fatal` after ONE call: the step route
 answers `{ok: false, fatal, message}`, the job stops with "SponsorJobs' AI is unavailable right
 now (credits). Nothing was changed; try again later" (reason `ai-unavailable`), the record gets
 an `agent_note` the Auto-apply row shows instead of "Approved, ready to fill", ONE Telegram line
 goes out per half hour (`/api/autoapply/agent/unavailable`), and a running batch stops after
-that job with the same words in its sum-up. Transient failures (429, 5xx, overloaded, timeouts,
-offline) are retried with backoff as above. The debug log and the history line carry the
+that job with the same words in its sum-up (for `ai_company` the words are the broker's
+`AI_COMPANY_TEXT`). Transient failures (`ai_transient`, 429, 5xx, overloaded, timeouts, offline)
+are retried with backoff as above. The debug log and the history line carry the
 broker's actual error text, not "no usable reply".
 
 **Email verification, end to end** (Nelnet's Workday flow). `await_email` waits

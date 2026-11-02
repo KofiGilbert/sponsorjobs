@@ -53,6 +53,12 @@ between the app and Telegram. It stays `503 telegram_not_configured` until the o
 `./scripts/telegram-setup.sh` once, which stores the three `TELEGRAM_*` secrets and points
 Telegram's webhook here.
 
+When the company Anthropic key fails (no credit, disabled, invalid), `src/outage.ts` answers the
+app with a structured `503 ai_unavailable` (reason `company` or `transient`), records it so
+`/health` says `company_outage since <time>`, and messages the owner once an hour through the
+Telegram bot with the billing link. Set `OWNER_TELEGRAM_CHAT_ID` (a secret) or rely on the first
+`ADMIN_EMAILS` account's linked chat; details in `docs/admin-dashboard.md`.
+
 Mail aliases (`src/mail.ts`, `docs/mail-alias.md`): each student gets `first.last@sponsorjobs.ai`
 to give job portals. Email Routing's catch-all delivers to this Worker's `email` handler, which
 keeps only the one-time code or verification link for 30 minutes (so the apply agent can poll it)

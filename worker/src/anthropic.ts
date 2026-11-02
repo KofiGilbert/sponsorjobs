@@ -31,9 +31,59 @@ export interface CompleteArgs {
 export interface Completion { text: string; input_tokens: number; output_tokens: number }
 
 export class UpstreamError extends Error {
-  constructor(readonly status: number, readonly body: string) {
+  constructor(readonly status: number, readonly body: string, readonly retryAfter: number | null = null) {
     super(`anthropic ${status}: ${body.slice(0, 500)}`);
   }
+}
+
+// ---- what an upstream failure MEANS (src/outage.ts turns it into the answer and the alert) ---- //
+
+/** Why the model is unavailable: "company" is OUR problem (the company key has no credit, is
+ * disabled, or is invalid: the owner must act and the person can do nothing); "transient" is a
+ * passing one (rate limit, overload, a 5xx, a dropped connection: trying again later works). */
+export type OutageReason = "company" | "transient";
+
+export interface Outage {
+  reason: OutageReason;
+  /** Seconds the app should wait before trying again (transient only, from Retry-After). */
+  retryAfter: number | null;
+  /** A short cause for the log, the owner's alert and /health. Never shown to a person. */
+  note: string;
+}
+
+// The words Anthropic uses when the ORGANIZATION, not the request, is the problem (seen 2026-11-01:
+// "Your credit balance is too low to access the Anthropic API"; also "organization has been
+// disabled", "usage limit", "billing"). Checked only on the statuses a billing problem comes with;
+// a 429 is a passing rate limit unless its body says the organization's limit is spent.
+const COMPANY_WORDS = /credit|billing|disabled|usage limit|spend(ing)? limit/i;
+const COMPANY_STATUSES = new Set([400, 402, 403, 429]);
+
+/** The upstream message, if the body is Anthropic's {error: {message}} JSON; else its start. */
+export function upstreamMessage(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: unknown } };
+    const m = parsed?.error?.message;
+    if (typeof m === "string" && m.trim()) return m.trim().slice(0, 200);
+  } catch { /* not JSON */ }
+  return body.replace(/\s+/g, " ").trim().slice(0, 200);
+}
+
+/** Classify a failed model call. null means it is not an outage at all (a malformed request,
+ * an unknown model name, ...): the caller keeps its plain "unavailable" answer for those. */
+export function classifyUpstream(err: unknown): Outage | null {
+  if (!(err instanceof UpstreamError)) {
+    // fetch itself failed (DNS, a reset, a timeout): nothing wrong with the key.
+    return { reason: "transient", retryAfter: 15,
+             note: err instanceof Error ? `network: ${err.name}` : "network error" };
+  }
+  const message = upstreamMessage(err.body);
+  if (err.status === 401) return { reason: "company", retryAfter: null, note: `invalid API key (401): ${message}` };
+  if (COMPANY_STATUSES.has(err.status) && COMPANY_WORDS.test(err.body)) {
+    return { reason: "company", retryAfter: null, note: `${err.status}: ${message}` };
+  }
+  if (err.status === 429) return { reason: "transient", retryAfter: err.retryAfter ?? 30, note: `rate limited (429): ${message}` };
+  if (err.status >= 500) return { reason: "transient", retryAfter: err.retryAfter ?? 15, note: `${err.status}: ${message}` };
+  return null;
 }
 
 // The Python broker uses the anthropic SDK, which retries twice on 408/409/429/5xx and on
@@ -43,9 +93,15 @@ const MAX_RETRIES = 2;
 const RETRYABLE = (s: number) => s === 408 || s === 409 || s === 429 || s >= 500;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function backoffMs(attempt: number, res?: Response): number {
+/** The Retry-After header in seconds, when it is a sane number of them. */
+function retryAfterOf(res?: Response): number | null {
   const after = Number(res?.headers.get("retry-after"));
-  if (Number.isFinite(after) && after >= 0 && after <= 60) return after * 1000;
+  return Number.isFinite(after) && after >= 0 && after <= 60 ? after : null;
+}
+
+function backoffMs(attempt: number, res?: Response): number {
+  const after = retryAfterOf(res);
+  if (after !== null) return after * 1000;
   return Math.min(8000, 500 * 2 ** attempt);
 }
 
@@ -66,7 +122,7 @@ async function post(apiKey: string, body: Record<string, unknown>): Promise<Reco
     if (res.ok) return (await res.json()) as Record<string, any>;
     const text = await res.text();
     if (RETRYABLE(res.status) && attempt < MAX_RETRIES) { await sleep(backoffMs(attempt, res)); continue; }
-    throw new UpstreamError(res.status, text);
+    throw new UpstreamError(res.status, text, retryAfterOf(res));
   }
 }
 

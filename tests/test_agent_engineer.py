@@ -180,6 +180,12 @@ def test_an_account_problem_is_fatal_at_once_never_needs_you():
     assert "credits" in out["message"] and "Nothing was changed" in out["message"]
     assert "needs you" not in out["message"].lower() and "no_credit: out of usage credits" == out["error"]
     assert classify_error(_Fails("x", reason="upgrade_required")) == "upgrade_required"
+    # the broker's own tags (PR #166): a company outage is fatal at once, a transient one is retried
+    out = step(_req(SIGNIN), _Scripted(_Fails("ours", reason="ai_company")), APPLICANT, PORTAL, placeholders=PH, sleep=lambda s: None)
+    assert out["fatal"] == "ai_company" and out["tries"] == 1 and "We have been alerted" in out["message"] and "needs you" not in out["message"]
+    out = step(_req(SIGNIN), _Scripted(_Fails("busy", reason="ai_transient"), _Fails("busy", reason="ai_transient"),
+                                       json.dumps({"actions": [{"op": "click", "index": 6}]})), APPLICANT, PORTAL, placeholders=PH, sleep=lambda s: None)
+    assert out["ok"] and out["tries"] == 3
     assert classify_error(RuntimeError("invalid x-api-key")) == "no_key"
     assert classify_error(RuntimeError("Your Claude API access is turned off: out of usage credits")) == "no_credit"
     assert classify_error(RuntimeError("rate limit hit")) == "rate_limited" and classify_error(RuntimeError("overloaded")) == "busy"

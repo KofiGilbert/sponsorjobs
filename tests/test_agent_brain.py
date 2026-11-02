@@ -264,6 +264,7 @@ WD = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Analyst_R123"
 
 def test_portal_account_create_stores_and_get_never_returns_the_password(A):
     mod, c, _, tmp = A
+    c.post("/api/autoapply/consent", json={"accounts": True})     # the person ticked it themselves
     g = c.get("/api/autoapply/agent/portal-account?host=acme.wd5.myworkdayjobs.com").get_json()
     assert g["exists"] is False and g["email"] == ""
     d = c.post("/api/autoapply/agent/portal-account",
@@ -287,7 +288,12 @@ def test_portal_account_create_stores_and_get_never_returns_the_password(A):
 
 def test_portal_account_creation_refused_when_the_pref_is_off(A):
     mod, c, _, tmp = A
-    assert c.get("/api/autoapply/prefs").get_json()["portal_accounts"] is True       # default on
+    # off until the person ticks it ("Before I apply for you"), never on by default
+    assert c.get("/api/autoapply/prefs").get_json()["portal_accounts"] is False
+    d = c.post("/api/autoapply/agent/portal-account", json={"host": "jobs.icims.com", "create": True}).get_json()
+    assert d["ok"] is False and d["reason"] == "portal_accounts_off"
+    c.post("/api/submit/settings", json={"portal_accounts": True})
+    assert c.get("/api/autoapply/prefs").get_json()["portal_accounts"] is True
     c.post("/api/submit/settings", json={"portal_accounts": False})
     assert c.get("/api/submit/settings").get_json()["portal_accounts"] is False
     d = c.post("/api/autoapply/agent/portal-account", json={"host": "jobs.icims.com", "create": True}).get_json()
@@ -312,6 +318,7 @@ def test_step_route_refuses_linkedin_and_runs_the_fake_brain(A):
                                                   "url": "https://www.linkedin.com/jobs/view/1",
                                                   "view": JOB_PAGE}).get_json()
     assert d["ok"] is False and d["reason"] == "fill-by-hand"
+    c.post("/api/autoapply/consent", json={"accounts": True})
     c.post("/api/autoapply/agent/portal-account", json={"host": "acme.wd5.myworkdayjobs.com", "create": True})
     d = c.post("/api/autoapply/agent/step", json={"record_id": rid, "step": 2, "max_steps": 40, "url": WD,
                                                   "view": SIGNIN_PAGE, "left": [{"ref": "f1", "label": "Veteran status"}],

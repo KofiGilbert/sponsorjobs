@@ -28,7 +28,7 @@ from autoapply.planner import is_fact_question
 SYSTEM_PROMPT = """You drive a web browser to apply for a job on behalf of a person. Each step you get the page as numbered lines ([12]<button>Next</button>) and you answer with the next few actions. The engine already filled every field it recognized before you see the page; your job is to move the application forward: dismiss popups, click Apply, sign in or create the portal account, pick what the engine could not, and get to the final review page. Work like an engineer: when something does not work, look closer with the read-only tools, then try another way. The shell tries other ways too (a reload, reopening the job); giving up is the last resort.
 
 Rules:
-1. Popups and cookie banners first: dismiss or accept them before anything else.
+1. Popups and cookie banners first, before anything else: close the popup; on a cookie banner choose Reject all, Decline, Necessary only or Close (never Accept all, never opt in to marketing). If the only way past a banner is Accept, close it if it has a close button; otherwise leave it and continue.
 2. On a job page click Apply. Prefer "Apply manually" or "Autofill with resume" over "Apply with LinkedIn" or any other third party sign-in.
 3. Comboboxes and autocompletes: type the value, then WAIT a step. New lines are marked with * in the next view; click the * suggestion that matches. Never press Enter.
 4. Put at most ONE action that changes the page (a click on Next, Continue, Sign in, Apply, a link; back, reload, reopen_job) LAST in the list. Anything after it would run on a page you have not seen.
@@ -717,8 +717,10 @@ def not_ready(view: str, lines: dict | None = None) -> str:
 
 # What a failed model call means (section 13): an account problem stops the job and the batch
 # plainly ("fatal"); a passing one is retried with backoff; anything else is a bad reply.
-FATAL_REASONS = ("no_key", "no_credit", "upgrade_required", "access_off")
-TRANSIENT_REASONS = ("rate_limited", "busy", "offline", "service_down")
+# ``ai_company`` / ``ai_transient`` are the broker's own tags (llm/broker_client.py, PR #166):
+# OUR key failed (stop plainly, nothing to buy) / the model is busy (retried there and here).
+FATAL_REASONS = ("no_key", "no_credit", "upgrade_required", "access_off", "ai_company")
+TRANSIENT_REASONS = ("rate_limited", "busy", "offline", "service_down", "ai_transient")
 
 
 def classify_error(exc) -> str:
@@ -742,6 +744,12 @@ def classify_error(exc) -> str:
 
 
 def unavailable_message(reason: str) -> str:
+    if reason == "ai_company":
+        try:
+            from llm.broker_client import AI_COMPANY_TEXT
+            return AI_COMPANY_TEXT
+        except Exception:                        # noqa: BLE001
+            return "SponsorJobs' AI is temporarily unavailable. Nothing was changed; try again in a little while."
     if reason in ("no_credit", "upgrade_required"):
         return "SponsorJobs' AI is unavailable right now (credits). Nothing was changed; try again later."
     if reason == "no_key":

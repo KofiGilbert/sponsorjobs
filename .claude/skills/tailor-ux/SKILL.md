@@ -370,3 +370,11 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   for four seconds; a request that only asked a question leaves no line. Measured at 1893x1183 DSF 2
   and 2490x1556 DSF 1.52, dark and light: the bar 759x37, the timeline 759 wide, the builder strip
   759 wide, no sideways scroll, no console errors. Screens: docs/design/activity/.
+- 2026-11-01: Consent lives in the Terms, not in clicks. "Applying on your behalf" (accept the notices a
+  site requires, create a site account with the SponsorJobs email, fill with saved answers) is in the Terms
+  of Use; the person agrees with one fine-print line under the sign-in buttons ("By continuing, you agree
+  to the Terms of Use, including ..."), recorded with its version when sign-in finishes. Someone who agreed
+  to an older version sees ONE quiet line on Auto-apply under the run bar, muted with an underlined "Turn
+  off", never a modal and never in the way of a run; showing it records the version. Every item is a
+  switch on the memory page's "What I may do for you" card. No up-front bar question, no setup checkbox,
+  no consent sheet (a sheet was built and dropped the same day: "people don't have time to be clicking around").

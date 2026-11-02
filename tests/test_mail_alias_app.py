@@ -101,6 +101,7 @@ def test_portal_accounts_are_created_with_the_alias(A, monkeypatch):
     _wire(A, monkeypatch, broker)
     c = A.app.test_client()
     c.post("/api/inbox/alias", json={}, headers={"X-Tailor-Extension": "1"})
+    c.post("/api/autoapply/consent", json={"accounts": True}, headers={"X-Tailor-Extension": "1"})
     r = c.post("/api/autoapply/agent/portal-account", json={"host": "acme.myworkdayjobs.com", "create": True},
                headers={"X-Tailor-Extension": "1"})
     assert r.get_json()["ok"] and r.get_json()["email"] == "kofi.test@sponsorjobs.ai"
