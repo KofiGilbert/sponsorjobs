@@ -86,8 +86,8 @@ MAX_OBSERVATION = 7000      # one tool's observation, as the model sees it
 MAX_OBSERVATIONS = 12000    # all of a step's observations together
 MAX_WAIT_FOR_S = 30
 # The reflection call's strategy menu (section 13): the shell runs the one the model picks.
-STRATEGIES = ("wait_for form", "reload", "back", "reopen_job", "sign in again", "fill the field myself",
-              "read more of the page", "use the other input form")
+STRATEGIES = ("wait_for form", "reload", "back", "reopen_job", "sign in again", "create account", "reset password",
+              "wait for the site's email", "fill the field myself", "read more of the page", "use the other input form")
 RETRIES = 3                 # calls on a bad or empty model reply, with backoff
 BACKOFF_S = (0.0, 0.5, 1.5)
 _SAFE_SELECTOR = re.compile(r"^[A-Za-z0-9_\-\s\[\]=\"'#.:*,>+~()^$|]{1,120}$")

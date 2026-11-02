@@ -483,6 +483,23 @@ Mock scenarios: `mock_ats.html?skeleton=1` (the form page is a skeleton until a 
 `?activate=1` (the "an email has been sent" banner, the activate link, the activated page,
 the sign-in that lands on the job search page); e2e sections 18 and 19.
 
+**The sign-in wall, deterministically** (the e2e of 2026-11-02 looped "Filling 2 boxes, then
+clicking Sign in" twenty times). The shell reads the wall itself instead of hoping the model
+follows rule 14: a click on Sign in that leaves the sign-in form (a password box and a Sign in
+button) on screen is a failed sign-in, counted per site. A page that says the account must be
+verified ("An email has been sent to you. Please verify your account.", "not verified") leads
+straight to the email wait, without a model call, once per site until its link was opened; so
+does the "check your email" page after a reset request. Two failed sign-ins: the shell clicks
+Create account when the site offers it (the account may be new to the site), the next failure
+Forgot password (then the reset mail); four go up the ladder, whose menu on a sign-in page
+starts with `create account`, `reset password` and `wait for the site's email`. The same step
+on the same page coming round a third time (even with other steps between) goes up the ladder
+too, and the same page three steps in a row (was four). After an emailed link, the shell opens
+the job again only from a page with no field of its own that reads like a job search ("Search
+for Jobs"), within 8 steps, never from the "account activated" page or a form under a header
+search box. `back` only ever returns to a page this application was on (Electron's history
+keeps the previous job's pages; the e2e's activation run once went back into the skeleton job).
+
 ## 14. The plan, page checks and the pre-submit critic (2026-11-02)
 
 - **Plan.** The brain's reply carries `plan`: short lines "done: Job page", "now: Sign in",

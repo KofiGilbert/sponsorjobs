@@ -1800,15 +1800,18 @@ class FakeLLM:
         apply_idx = _find(r"apply manually|autofill with resume") or _find(r"apply( now)?")
         if apply_idx is not None:
             return _reply([{"op": "click", "index": apply_idx}], memory="job page", evaluation="opening the form")
-        # (Section 11 of the prompt) A careers home or job search page after an emailed link or
-        # a sign-in: not where the application is. Open the job again.
-        if "opened the emailed link" in history and re.search(r"search for jobs|job search|search=true", words, re.I) \
-                and not _inputs("password") and not _inputs("email"):
-            return _reply([{"op": "reopen_job"}], memory="back to the job", evaluation="landed on the job search")
         # The activation page an emailed link opens: "activated", "verified", with Sign in.
         signin_btn = _find(r"sign ?in|log ?in")
         if signin_btn is not None and not _inputs("password") and re.search(r"activated|verified|confirmed", words, re.I):
             return _reply([{"op": "click", "index": signin_btn}], memory="account activated", evaluation="going to sign in")
+        # (Section 11 of the prompt) A job search page after an emailed link or a sign-in: not
+        # where the application is. Open the job again. A page of the form (any field that is
+        # not the site's own search box) is never that page, even under a header search box.
+        own_fields = [idx for idx, tag, attrs, _t in lines
+                      if tag in ("input", "select", "combobox", "textarea", "radio", "checkbox", "file") and "search=true" not in attrs]
+        if "opened the emailed link" in history and re.search(r"^\s*search for jobs\b|^\s*job search\b", words, re.I | re.M) \
+                and not own_fields and _find(r"apply( now| manually)?") is None:
+            return _reply([{"op": "reopen_job"}], memory="back to the job", evaluation="landed on the job search")
         # Email checks (docs/apply-agent.md milestone 3): a code box is typed from {{email_code}}
         # once the mailbox handed it over, else the brain asks the shell to wait for the mail.
         # A verification code box, never a ZIP, postal, area, country or promo "code" field
@@ -1828,7 +1831,7 @@ class FakeLLM:
             return _reply(done={"outcome": "await_email", "reason": "link"}, memory="a link was emailed")
         # Workday's "An email has been sent to you. Please verify your account." sits over the
         # sign-in form: the mail first, unless its link was already opened (then sign in).
-        if re.search(r"an e-?mail has been sent|verify your account|verification (e-?mail|link) (has been|was) sent", words, re.I) \
+        if re.search(r"an e-?mail has been sent|verify your account|not (yet )?verified|account is not verified|verification (e-?mail|link) (has been|was) sent", words, re.I) \
                 and "opened the emailed link" not in history:
             return _reply(done={"outcome": "await_email", "reason": "link"}, memory="a verification link was emailed")
         forgot = _find(r"forgot( your)? password\??|reset( your)? password")

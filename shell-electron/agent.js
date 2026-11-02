@@ -41,10 +41,15 @@ const SETTLE_CAP_MS = 8000;
 const LOOP_WINDOW = 12;
 // The ladder's strategy menu, in the order the shell tries them (the brain's reflection may
 // pick one out of order). The last three are hints to the brain, not page actions.
-const STRATEGIES = ["wait_for form", "reload", "back", "reopen_job", "sign in again", "fill the field myself",
-                    "read more of the page", "use the other input form"];
+const STRATEGIES = ["wait_for form", "reload", "back", "reopen_job", "sign in again", "create account", "reset password",
+                    "wait for the site's email", "fill the field myself", "read more of the page", "use the other input form"];
+// On a sign-in page the ladder works the account first (rule 14 of the prompt, deterministic
+// here): create it if the site offers that, reset the password, wait for the site's email.
+const SIGNIN_MENU = ["create account", "reset password", "wait for the site's email", "reload", "reopen_job"];
 const STRATEGY_WORDS = { "wait_for form": "waiting for the form", "reload": "reloading the page", "back": "going back a page",
                          "reopen_job": "opening the job again", "sign in again": "signing in again",
+                         "create account": "creating the account", "reset password": "resetting the password",
+                         "wait for the site's email": "waiting for the site's email",
                          "fill the field myself": "filling the field another way", "read more of the page": "reading more of the page",
                          "use the other input form": "trying the other input form" };
 // A page that can be handed over at Submit never looks like this (section 14, the Gartner
@@ -1016,7 +1021,15 @@ function createAgent(deps) {
     let observations = [];
     let waits = 0;                       // the brain's plain waits in a row
     let blank = null;                    // { hash, since } while the page shows nothing to do
-    let afterEmailLink = false;          // an emailed link was opened: a careers home is not the end
+    let afterEmailLink = 0;              // the step an emailed link was opened: a careers home soon after is not the end
+    let forcedNext = null;               // a step the shell decided itself (the ladder's "wait for the site's email")
+    let curV = null;                     // the current view, for the ladder's account strategies
+    let lastSignin = null;               // { host } after a click on Sign in: the next view says whether it worked
+    const authOf = new Map();            // host -> { fails, created, reset, waited }
+    const auth = (h) => { if (!authOf.has(h)) authOf.set(h, { fails: 0, created: false, reset: false, waited: false }); return authOf.get(h); };
+    const mailOpened = new Set();        // hosts whose emailed link was opened this run
+    const runUrls = new Set();           // every page this application has been on (back never leaves it)
+    const stepSeen = new Map();          // page + actions -> times: the same step again is no progress
     const ladderSay = (what, detail) => {
       feed.push("another", "Trying another way", what, { state: "retry", detail: detail || "" });
       progress(recordId, "running", lastMsg.get(fkey) || "Trying another way", { step: feed.step });
@@ -1061,6 +1074,7 @@ function createAgent(deps) {
           await settle(wc, "");
           note = "reloaded the page";
         } else if (name === "back") {
+          if (!backTarget(wc)) { note = "no earlier page of this application to go back to"; observations.push("Tried another way (back): " + note); return note; }
           navEpoch++;
           const nh = wc.navigationHistory;
           if (nh && typeof nh.goBack === "function") nh.goBack(); else if (typeof wc.goBack === "function") wc.goBack();
@@ -1077,6 +1091,23 @@ function createAgent(deps) {
           await settle(wc, before);
           note = "opened the job again";
           if (name === "sign in again") pendingNudges.push("Sign in again with the saved account ({{portal_email}}, {{portal_password}}) when the site asks, then carry on.");
+        } else if (name === "create account" || name === "reset password") {
+          const re = name === "create account" ? CREATE_NAME_RE : FORGOT_NAME_RE;
+          const idx = curV ? buttonIndex(curV.text, re) : 0;
+          const a = auth(hostOf(before));
+          if (name === "create account") a.created = true; else a.reset = true;
+          if (!idx) note = "the page offers no " + (name === "create account" ? "Create account" : "Forgot password");
+          else {
+            const r = await act(wc, fr, curV, { op: "click", index: idx }, "");
+            await settle(wc, before);
+            note = r && r.ok ? "clicked " + lineName(viewLine(curV.text, idx)) : "the click did not work";
+            if (name === "reset password") pendingNudges.push("Sign in failed. You are on the password reset: type {{portal_email}}, send the reset, then report await_email with reason link.");
+            else pendingNudges.push("Sign in failed. Create the account: {{portal_email}} and {{portal_password}} in every password box, then click Create account. If the site says the email already exists, use Forgot password.");
+          }
+        } else if (name === "wait for the site's email") {
+          auth(hostOf(before)).waited = true;
+          forcedNext = { done: { outcome: "await_email", reason: "link" }, why: "waiting for the site's email" };
+          note = "waiting for the site's email next";
         } else if (name === "fill the field myself") {
           toolFill = true;
           pendingNudges.push("The engine could not fill the open fields in <left>. Fill them yourself: type the matching placeholder from <placeholders> into each (for a list: type, wait a step, click the * suggestion), then Save or Next.");
@@ -1098,8 +1129,25 @@ function createAgent(deps) {
       history.push({ step: feed.step, evaluation: "", memory: "", actions: ["(shell) " + name], results: [note] });
       return note;
     }
+    // The page back would land on, when it is one of this application's own pages; else "".
+    function backTarget(wc) {
+      try {
+        const nh = wc.navigationHistory;
+        if (!(nh && nh.canGoBack && nh.canGoBack())) return "";
+        if (typeof nh.getActiveIndex === "function" && typeof nh.getEntryAtIndex === "function") {
+          const e = nh.getEntryAtIndex(nh.getActiveIndex() - 1);
+          const u = String((e && e.url) || "");
+          return runUrls.has(u) ? u : "";
+        }
+        return "";                         // cannot tell where back goes: never leave the application blind
+      } catch (e) { return ""; }
+    }
     const canDo = (wc, name) => {
-      if (name === "back") { try { const nh = wc.navigationHistory; return !!(nh && nh.canGoBack && nh.canGoBack()); } catch (e) { return false; } }
+      if (name === "back") return !!backTarget(wc);
+      const h = hostOf(where());
+      if (name === "create account") return !!(curV && buttonIndex(curV.text, CREATE_NAME_RE)) && !auth(h).created;
+      if (name === "reset password") return !!(curV && buttonIndex(curV.text, FORGOT_NAME_RE)) && !auth(h).reset;
+      if (name === "wait for the site's email") return !mailOpened.has(h) && !auth(h).waited;
       if (name === "sign in again") return portals.size > 0;
       if (name === "fill the field myself") return !toolFill;
       return true;
@@ -1133,7 +1181,7 @@ function createAgent(deps) {
         ladderSay("with a closer look at the page", "listing the likely causes");
         return { go: true };
       }
-      const menu = o.menu || STRATEGIES;
+      const menu = o.menu || (curV && isSigninView(curV.text) ? SIGNIN_MENU.concat(STRATEGIES.filter((n) => !SIGNIN_MENU.includes(n))) : STRATEGIES);
       const next = menu.find((n) => !ladder.tried.includes(n) && canDo(wc, n));
       if (next) { await runStrategy(wc, next); return { go: true }; }
       return { park: "I tried " + ladder.tried.join(", ") + " and could not get past this: " + problem + "." };
@@ -1173,10 +1221,13 @@ function createAgent(deps) {
         progress(recordId, "running", "Waiting for the site's email");
         const got = await guard(deps.postApp("/api/inbox/await", { kind: "any", host: awaitInfo.host || hostOf(applyUrl), company: opts.company || "",
                                                                    since: startedAt, timeout_s: 20 }), 60000, "inbox").catch(() => null);
+        const waitedHost = awaitInfo.host || hostOf(where());
         awaitInfo = null;
         if (got && got.ok && got.link) {
           hosts.add(hostOf(got.link));
-          afterEmailLink = true;
+          afterEmailLink = 1;
+          mailOpened.add(waitedHost);
+          mailOpened.add(hostOf(got.link));
           navEpoch++;
           deps.openInPane(got.link);
           await delay(400);
@@ -1274,8 +1325,10 @@ function createAgent(deps) {
         pageHashes.push(pageHash);
         ladder.lastHash = pageHash.slice(0, 60);
         if (filled) { ladder.key = ""; }                      // progress: a new problem starts a fresh ladder
-        if (pageHashes.length >= 4 && pageHashes.slice(-4).every((h) => h === pageHash) && !filled) {
-          const r = await recover(wc, "the page has not changed in 4 steps", { key: "same", hash: pageHash.slice(0, 60) });
+        runUrls.add(url);
+        curV = v;
+        if (pageHashes.length >= 3 && pageHashes.slice(-3).every((h) => h === pageHash) && !filled) {
+          const r = await recover(wc, "the page has not changed in 3 steps", { key: "same", hash: pageHash.slice(0, 60) });
           if (r.park) return park("person", r.park, { url });
           pageHashes.length = 0;
         }
@@ -1297,12 +1350,51 @@ function createAgent(deps) {
           }
         } else blank = null;
         // After an emailed link (or the sign-in it led to) a careers home or job search page is
-        // not where the application is: open the job again, once.
-        if (afterEmailLink && !sig.blocker && isBlank === false && shape && shape.fields <= 1 && /search=true/.test(v.text) && !/<button[^>]*>Apply/i.test(v.text)
-            && !/apply|login|activate|verify/i.test(url.replace(applyUrl, ""))) {
-          afterEmailLink = false;
+        // not where the application is: open the job again, once. Only a page with no field of
+        // its own (the site's search box aside), that reads like a job search, within a few
+        // steps of the link, and not the "account activated, sign in" page.
+        const words = pageWords(v.text);
+        if (afterEmailLink && step - afterEmailLink <= 8 && !sig.blocker && shape && shape.fields === 0
+            && SEARCH_PAGE_RE.test(words) && !DONE_ACCOUNT_RE.test(words) && !buttonIndex(v.text, /^apply( now| manually)?$/i)) {
+          afterEmailLink = 0;
           await runStrategy(wc, "reopen_job");
           continue;
+        }
+
+        // (Section 13) The sign-in wall, deterministically: a click on Sign in that leaves the
+        // sign-in form on screen failed. The site asks to verify the account by email -> wait for
+        // that mail (once per site, until its link was opened). Two failures -> Create account if
+        // the site offers it (the account may be new to the site), then Forgot password (the
+        // reset mail). Never the same sign-in over and over.
+        const hereHost = hostOf(url);
+        const signinHere = isSigninView(v.text);
+        if (lastSignin && lastSignin.host === hereHost && signinHere) auth(hereHost).fails++;
+        lastSignin = null;
+        let forced = forcedNext; forcedNext = null;
+        const A = auth(hereHost);
+        const codeBox = /<input[^>]*label="[^"]*\b(code|otp|passcode)\b/i.test(v.text) && !/label="[^"]*\b(zip|postal)\b/i.test(v.text);
+        if (!forced && !mailOpened.has(hereHost) && !A.waited && !codeBox && (signinHere || A.reset)
+            && (VERIFY_RE.test(words) || (A.reset && !signinHere && MAILED_RE.test(words) && shape && shape.fields <= 1))) {
+          A.waited = true;
+          forced = { done: { outcome: "await_email", reason: "link" },
+                     why: A.reset ? "the site emailed a reset link" : "the site says to verify the account by email" };
+        }
+        if (!forced && signinHere && A.fails >= 2) {
+          const create = buttonIndex(v.text, CREATE_NAME_RE), forgot = buttonIndex(v.text, FORGOT_NAME_RE);
+          if (create && !A.created) {
+            A.created = true;
+            forced = { actions: [{ op: "click", index: create }], why: "sign in failed twice: creating the account", say: "creating the account",
+                       nudge: "Sign in failed twice. Create the account: {{portal_email}} and {{portal_password}} in every password box, then click Create account. If the site says the email already exists, use Forgot password." };
+          } else if (forgot && !A.reset) {
+            A.reset = true;
+            forced = { actions: [{ op: "click", index: forgot }], why: "sign in failed: resetting the password", say: "resetting the password",
+                       nudge: "Sign in failed. Type {{portal_email}}, send the reset, then report await_email with reason link." };
+          } else if (A.fails >= 4) {
+            const r = await recover(wc, "signing in failed " + A.fails + " times", { key: "signin", hash: pageHash.slice(0, 60) });
+            if (r.park) return park("person", r.park, { url });
+            A.fails = 2;
+            continue;
+          }
         }
 
         // The engine's open list, plus the fields the page's own errors name: a value the engine
@@ -1345,7 +1437,14 @@ function createAgent(deps) {
         const reflect = pendingReflect; pendingReflect = null;
         const image = pendingImage; pendingImage = "";
         let reply = null;
-        try {
+        if (forced) {
+          // A step the shell decided (the sign-in wall, the ladder's email wait): no model call.
+          dlog("step " + step + " shell:", forced.why);
+          if (forced.say) ladderSay(forced.say, forced.why);
+          if (forced.nudge) pendingNudges.push(forced.nudge);
+          reply = { ok: true, memory: "", evaluation: "(shell) " + forced.why, summary: "", plan,
+                    actions: forced.actions || [], done: forced.done || null };
+        } else try {
           reply = await guard(deps.postApp("/api/autoapply/agent/step", {
             record_id: recordId, step, max_steps: MAX_STEPS, url, lane: opts.lane || "assisted",
             view: v.text, filled_this_step: filled, left, nudges, blocker: sig.blocker || "",
@@ -1569,7 +1668,9 @@ function createAgent(deps) {
           if (got.link) {
             const before = wc.getURL() || "";
             hosts.add(hostOf(got.link));                   // the link belongs to this site's mail
-            afterEmailLink = true;
+            afterEmailLink = step;
+            mailOpened.add(hostOf(url)); mailOpened.add(hostOf(got.link));
+            for (const hh of [hostOf(url), hostOf(got.link)]) auth(hh).fails = 0;
             navEpoch++;
             deps.openInPane(got.link);
             await delay(400);
@@ -1641,6 +1742,12 @@ function createAgent(deps) {
             }
           }
           const r = await act(wc, fr, v, a, opts.resumePath || "");
+          if (a.op === "click" && r && r.ok && !v.frameOf.has(a.index)) {
+            const nm = lineName(viewLine(v.text, a.index));
+            if (SIGNIN_NAME_RE.test(nm)) lastSignin = { host: hostOf(url) };
+            else if (CREATE_NAME_RE.test(nm)) auth(hostOf(url)).created = true;
+            else if (FORGOT_NAME_RE.test(nm)) auth(hostOf(url)).reset = true;
+          }
           if (a.placeholder === "email_code" && r && r.ok) emailCode = "";
           results.push(r && r.ok ? (r.note ? "ok, " + r.note : "ok") : "failed: " + ((r && r.note) || "?"));
           if (!(r && r.ok) && !(r && r.note === "submit-guard")) actFails.push(failWords(r && r.note));
@@ -1659,6 +1766,20 @@ function createAgent(deps) {
           if (a.op === "click" || a.op === "wait") {
             const why = await settle(wc, before);
             if (why === "navigated" || (wc.getURL() || "") !== before) { results[results.length - 1] += ", page changed"; break; }
+          }
+        }
+        // The same step on the same page a third time (even with other steps between, the way a
+        // sign-in loop goes round) is no progress: the ladder, before the step budget burns.
+        if (acts.length) {
+          const key = pageHash + "|" + acts.map((a) => [a.op, a.index, a.sensitive ? "(secret)" : (a.text || a.option || "")].join(":")).join(",");
+          const n = (stepSeen.get(key) || 0) + 1;
+          stepSeen.set(key, n);
+          if (n >= 3) {
+            stepSeen.set(key, 0);
+            history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: names, results });
+            const r = await recover(wc, "the same step on the same page came round " + n + " times", { key: "cycle", hash: pageHash.slice(0, 60) });
+            if (r.park) return park("person", r.park, { url });
+            continue;
           }
         }
         // A reflection reply's strategy, when its own actions did not already move the page.
@@ -1987,6 +2108,32 @@ function createAgent(deps) {
   return { run, batch, send, stop, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
            _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard } };
 }
+
+// ---- the sign-in wall, read deterministically (section 13, the e2e of 2026-11-02) ---------
+const SIGNIN_NAME_RE = /^(sign ?in|log ?in)$/i;
+const CREATE_NAME_RE = /^(create (an |my |your )?account|sign ?up|register)$/i;
+const FORGOT_NAME_RE = /forgot( your)? password|reset( your)? password/i;
+// The site says the account must be verified by email first (Workday: "An email has been sent to
+// you. Please verify your account."; "Your account is not verified yet").
+const VERIFY_RE = /verify your (account|e-?mail)|not (yet )?verified|account is not verified|an e-?mail has been sent|activate your account|confirm your e-?mail/i;
+// The page after a reset request: the mail is on its way.
+const MAILED_RE = /check your (e-?mail|inbox)|we('ve| have)? (sent|e-?mailed)|e-?mail (has been|was) sent|you will receive an e-?mail|reset link/i;
+// A careers home or job search page (where Workday lands after a sign-in from an emailed link).
+const SEARCH_PAGE_RE = /search for jobs|job search|browse (open )?(roles|jobs|positions)|find jobs|all jobs|open positions/i;
+const DONE_ACCOUNT_RE = /activated|verified|confirmed|sign ?in to continue/i;
+const elementLines = (t) => String(t || "").split("\n").filter((ln) => /^\*?\[\d+\]</.test(ln));
+// The page's own words: everything but the element lines and the URL/Title head.
+const pageWords = (t) => String(t || "").split("\n").filter((ln) => !/^\*?\[\d+\]</.test(ln) && !/^(URL|Title): /.test(ln)).join("\n");
+// The index of the first button or link whose own words match ``re`` (0 when none).
+function buttonIndex(viewText, re) {
+  for (const ln of elementLines(viewText)) {
+    if (!/^\*?\[\d+\]<(button|a)\b/.test(ln)) continue;
+    if (re.test(lineName(ln))) return Number((/^\*?\[(\d+)\]/.exec(ln) || [])[1] || 0);
+  }
+  return 0;
+}
+// A sign-in form: a password box and a Sign in button.
+const isSigninView = (t) => /^\*?\[\d+\]<input type=password\b/m.test(String(t || "")) && !!buttonIndex(t, SIGNIN_NAME_RE);
 
 // The brain's tools the shell runs itself (section 12); the rest go to the page's act().
 const TOOL_OPS = new Set(["read_page", "find", "inspect", "list_options", "read_errors", "screenshot", "wait_for", "back", "reload", "reopen_job"]);

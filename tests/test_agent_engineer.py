@@ -250,6 +250,32 @@ def test_fake_brain_runs_workdays_activation_end_to_end():
     assert out["actions"] == [{"op": "reopen_job"}]
 
 
+def test_fake_brain_never_reopens_a_form_page_under_a_header_search_box():
+    # The e2e of 2026-11-02: every mock page has the site's search box in its header, and the
+    # scripted brain reopened the job from the questions page after a reset link, round and round.
+    hist = [{"step": 3, "evaluation": "", "actions": ["await email"], "results": ["opened the emailed link"]}]
+    questions = ("URL: https://acme.example/apply?reset=tok1\nAcme Careers\n[1]<input type=search label=\"Search jobs\" value=\"\" search=true>\n"
+                 "[2]<button>Search</button>\nApplication Questions\n[6]<input type=text label=\"Years\" value=\"\">\n[8]<button>Save and Continue</button>")
+    out = step(_req(questions, 5, history=hist), FakeLLM(), APPLICANT, PORTAL, placeholders=PH, sleep=lambda s: None)
+    assert out["actions"] != [{"op": "reopen_job"}]
+    header_activated = ACTIVATED.replace("[2]<button>Sign In</button>", "[1]<input type=search label=\"Search jobs\" value=\"\" search=true>\n[2]<button>Sign In</button>")
+    out = step(_req(header_activated, 4, history=hist), FakeLLM(), APPLICANT, PORTAL, placeholders=PH, sleep=lambda s: None)
+    assert out["actions"] == [{"op": "click", "index": 2}]
+
+
+def test_fake_brain_waits_for_the_mail_when_the_account_is_not_verified():
+    unverified = SIGNIN.replace("Sign In\n[3]", "Sign In\nError: \"Your account is not verified yet. Check your email.\"\n[3]")
+    out = step(_req(unverified), FakeLLM(), APPLICANT, PORTAL, placeholders=PH, sleep=lambda s: None)
+    assert out["done"] == {"outcome": "await_email", "reason": "link"}
+
+
+def test_the_reflection_menu_has_the_account_strategies():
+    for name in ("create account", "reset password", "wait for the site's email"):
+        assert name in STRATEGIES
+        out = parse_reply(json.dumps({"strategy": name, "actions": []}), set())
+        assert out["strategy"] == name
+
+
 def test_fake_brain_creates_a_just_created_account_instead_of_signing_in():
     out = step(_req(SIGNIN, portal={"account": True, "new": True}), FakeLLM(), APPLICANT, PORTAL, placeholders=PH, sleep=lambda s: None)
     assert out["actions"] == [{"op": "click", "index": 7}]

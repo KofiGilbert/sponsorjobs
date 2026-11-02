@@ -45,15 +45,33 @@ const PAGES = {
             view: "Error: \"An email has been sent to you. Please verify your account.\"\n[3]<input type=email label=\"Email\" value=\"\">\n[4]<input type=password label=\"Password\" value=\"\">\n[5]<button>Sign in</button>" },
   review: { url: "https://jobs.example.com/apply/2", sig: { labels: ["Review"] }, shape: { fields: 0, buttons: 2, skeleton: false, words: 30 },
             view: "Review\nStep 2 of 2\n[20]<button>Submit</button>" },
+  // The sign-in wall's other pages (section 11 below).
+  wall: { url: "https://jobs.example.com/login", sig: { blocker: "auth", labels: ["Email", "Password"] }, shape: { fields: 2, buttons: 4, skeleton: false, words: 30 },
+          view: "Sign in\n[3]<input type=email label=\"Email\" value=\"\">\n[4]<input type=password label=\"Password\" value=\"\">\n[5]<button>Sign in</button>\n[6]<button>Create account</button>\n[7]<a>Forgot password?</a>" },
+  wallErr: { url: "https://jobs.example.com/login", sig: { blocker: "auth", labels: ["Email", "Password"] }, shape: { fields: 2, buttons: 4, skeleton: false, words: 36 },
+             view: "Sign in\nError: \"You may have entered the wrong email address or password.\"\n[3]<input type=email label=\"Email\" value=\"\">\n[4]<input type=password label=\"Password\" value=\"\">\n[5]<button>Sign in</button>\n[6]<button>Create account</button>\n[7]<a>Forgot password?</a>" },
+  create: { url: "https://jobs.example.com/login#create", sig: { blocker: "auth", labels: ["Email", "Password"] }, shape: { fields: 3, buttons: 1, skeleton: false, words: 20 },
+            view: "Create your account\n[3]<input type=email label=\"Email\" value=\"\">\n[4]<input type=password label=\"Create Password\" value=\"\">\n[5]<input type=password label=\"Verify Password\" value=\"\">\n[6]<button>Create Account</button>" },
+  forgot: { url: "https://jobs.example.com/login#forgot", sig: { labels: ["Email"] }, shape: { fields: 1, buttons: 1, skeleton: false, words: 20 },
+            view: "Reset your password\n[3]<input type=email label=\"Email Address\" value=\"\">\n[4]<button>Send reset link</button>" },
+  resetSent: { url: "https://jobs.example.com/login#forgot", sig: { labels: [] }, shape: { fields: 0, buttons: 0, skeleton: false, words: 20 },
+               view: "Check your email\nWe emailed you a link to reset your password. Click the link in the email to continue." },
+  newpw: { url: "https://jobs.example.com/reset?token=t1", sig: { blocker: "auth", labels: ["New Password"] }, shape: { fields: 2, buttons: 1, skeleton: false, words: 10 },
+           view: "Choose a new password\n[3]<input type=password label=\"New Password\" value=\"\">\n[4]<input type=password label=\"Confirm New Password\" value=\"\">\n[5]<button>Save password</button>" },
+  activated: { url: "https://jobs.example.com/activate/tok", sig: { labels: [] }, shape: { fields: 0, buttons: 2, skeleton: false, words: 20 },
+               view: "[1]<input type=search label=\"Search jobs\" value=\"\" search=true>\nYour account has been activated\nSign in to continue.\n[2]<button>Sign In</button>" },
+  search: { url: "https://jobs.example.com/search", sig: { labels: [] }, shape: { fields: 0, buttons: 2, skeleton: false, words: 20 },
+            view: "Search for Jobs\n[1]<input type=search label=\"Search for jobs\" value=\"\" search=true>\n[2]<button>Search</button>\nBrowse open roles at Acme Corp." },
 };
 function fakePane(start, hooks) {
   hooks = hooks || {};
-  const P = { at: start, hang: new Set(), reloads: 0, backs: 0, destroyed: false, checks: 0, acts: [], navs: [], listeners: {} };
+  const P = { at: start, hang: new Set(), reloads: 0, backs: 0, destroyed: false, checks: 0, acts: [], navs: [], listeners: {}, hist: [] };
   const wc = {
     getURL: () => PAGES[P.at].url, isDestroyed: () => P.destroyed,
     on: (ev, fn) => { (P.listeners[ev] = P.listeners[ev] || []).push(fn); }, removeListener: () => {}, session: null,
     reload: () => { P.reloads++; if (hooks.onReload) hooks.onReload(P); },
-    navigationHistory: { canGoBack: () => true, goBack: () => { P.backs++; if (hooks.onBack) hooks.onBack(P); } },
+    navigationHistory: { canGoBack: () => true, goBack: () => { P.backs++; if (hooks.onBack) hooks.onBack(P); },
+                         getActiveIndex: () => P.hist.length - 1, getEntryAtIndex: (i) => ({ url: P.hist[i] || "" }) },
     executeJavaScript: async (expr) => {
       if (P.hang.has("all")) return never();
       if (expr.includes("!!window.TailorAutofill && !!window.TailorAgent")) return true;
@@ -63,7 +81,11 @@ function fakePane(start, hooks) {
       if (expr.includes("crossOriginFrames")) return 0;
       if (expr.includes("hasResumeUpload")) return false;
       if (expr.includes("pageShape")) { if (P.hang.has("shape")) return never(); return PAGES[P.at].shape; }
-      if (expr.includes("TailorAgent.view(")) { if (P.hang.has("view") && P.at === "skeleton") return never(); return { text: "URL: " + PAGES[P.at].url + "\n" + PAGES[P.at].view }; }
+      if (expr.includes("TailorAgent.view(")) {
+        if (P.hang.has("view") && P.at === "skeleton") return never();
+        if (P.hist[P.hist.length - 1] !== PAGES[P.at].url) P.hist.push(PAGES[P.at].url);
+        return { text: "URL: " + PAGES[P.at].url + "\n" + PAGES[P.at].view };
+      }
       if (expr.includes("readPage(")) return { text: "[5]<input label=\"Extra\" value=\"\">\nMore of the page", more: 0, next: 0 };
       if (expr.includes("TailorAgent.find(")) return { lines: ["[8]<button>Next</button>"] };
       if (expr.includes("TailorAgent.inspect(")) return { index: 3, tag: "select", label: "Country", required: true, value: "", errors: ["Country is required"] };
@@ -243,7 +265,7 @@ const walk = (P, a) => {
       if (P.at === "form" && !P.waited) { P.waited = true; return ok([{ op: "wait_for", text: "Hello", seconds: 1 }, { op: "screenshot" }, { op: "back" }]); }
       if (P.at === "form" && !P.reopened) { P.reopened = true; return ok([{ op: "reopen_job" }]); }
       return plainBrain(P, b);
-    }, { onAct: walk, onBack: (p) => { p.at = "form"; }, onOpen: (p) => { p.at = "form"; } });
+    }, { onAct: walk, onBack: (p) => { p.at = "form"; }, onOpen: (p) => { p.opens = (p.opens || 0) + 1; p.at = p.opens === 1 ? "job" : "form"; } });
     const r = await agent.run(10, { url: PAGES.job.url });
     assert(r.ok && r.ready, "the tools run ends ready " + JSON.stringify(r));
     const bodies = stepBodies(posts);
@@ -254,7 +276,7 @@ const walk = (P, a) => {
            && /options for \[3\]: US \| CA \| GB/.test(o) && /errors on the page: ZIP code is required/.test(o), "each tool's observation " + o);
     const later = bodies.find((b) => (b.observations || []).some((x) => /wait_for "Hello": did not appear within 1 s/.test(x)));
     assert(later && later.observations.some((x) => /screenshot: the pane could not be captured/.test(x)) && later.observations.some((x) => /back: went back a page/.test(x)), "wait_for, screenshot and back " + JSON.stringify(later && later.observations));
-    assert(P.backs === 1 && opened.filter((u) => u === PAGES.job.url).length === 2, "back and reopen_job drove the pane " + P.backs + " " + JSON.stringify(opened));
+    assert(P.backs === 1 && opened.filter((u) => u === PAGES.job.url).length === 2, "back (to a page of this application) and reopen_job drove the pane " + P.backs + " " + JSON.stringify(opened));
     assert(bodies.some((b) => (b.plan || []).includes("now: My information")), "the plan rides along");
     const planned = bodies[bodies.length - 1];
     assert(planned.plan && planned.plan.length, "the last brain call still carries the plan");
@@ -348,6 +370,94 @@ const walk = (P, a) => {
     assert(/took too long \(0 minutes\): /.test(pk.message) && /Moving on/.test(pk.message), "took too long, with the last state " + pk.message);
     assert(posts.some(([p, b]) => p === "/api/autoapply/agent/park" && b.record_id === 14), "parked on the engine too");
     delete process.env.SJ_AGENT_JOB_CAP_MS;
+  }
+
+  console.log("section 11 at " + Math.round((Date.now() - T0) / 1000) + " s");
+  // ---- 11. the sign-in wall, deterministically (the e2e of 2026-11-02) --------------------
+  // A brain that signs in again and again (the loop the e2e saw): the shell counts the failed
+  // sign-ins, opens Create account after two, Forgot password after the next failure, sees the
+  // "check your email" page and waits for the mail itself, opens the reset link, and carries on.
+  {
+    let inbox = 0;
+    const brain = (P, b) => {
+      if (P.at === "job") return ok([{ op: "click", index: 1 }]);
+      if (P.at === "wall" || P.at === "wallErr") return ok([{ op: "type", index: 3, text: "kofi@example.com", sensitive: true, placeholder: "portal_email" },
+                                                            { op: "type", index: 4, text: "s3cretPW!", sensitive: true, placeholder: "portal_password" }, { op: "click", index: 5 }]);
+      if (P.at === "create") return ok([{ op: "type", index: 3, text: "kofi@example.com", sensitive: true }, { op: "type", index: 4, text: "s3cretPW!", sensitive: true },
+                                        { op: "type", index: 5, text: "s3cretPW!", sensitive: true }, { op: "click", index: 6 }]);
+      if (P.at === "forgot") return ok([{ op: "type", index: 3, text: "kofi@example.com", sensitive: true }, { op: "click", index: 4 }]);
+      if (P.at === "resetSent") return ok([{ op: "scroll", direction: "down" }]);       // the shell must not wait for the brain here
+      if (P.at === "newpw") return ok([{ op: "type", index: 3, text: "s3cretPW!", sensitive: true }, { op: "type", index: 4, text: "s3cretPW!", sensitive: true }, { op: "click", index: 5 }]);
+      return plainBrain(P, b);
+    };
+    const s = setup("job", brain, {
+      onAct: (P, a) => {
+        if (P.at === "job" && a.op === "click" && a.index === 1) P.at = "wall";
+        else if ((P.at === "wall" || P.at === "wallErr") && a.op === "click" && a.index === 5) P.at = P.resetDone ? "form" : "wallErr";
+        else if ((P.at === "wall" || P.at === "wallErr") && a.op === "click" && a.index === 6) P.at = "create";
+        else if ((P.at === "wall" || P.at === "wallErr") && a.op === "click" && a.index === 7) P.at = "forgot";
+        else if (P.at === "create" && a.op === "click" && a.index === 6) P.at = "wallErr";        // "this email is already registered"
+        else if (P.at === "forgot" && a.op === "click" && a.index === 4) P.at = "resetSent";
+        else if (P.at === "newpw" && a.op === "click" && a.index === 5) { P.resetDone = true; P.at = "form"; }
+        else walk(P, a);
+      },
+      onOpen: (P, u) => { if (/reset\?token/.test(u)) P.at = "newpw"; else P.at = "job"; },
+      post: (p) => { if (p === "/api/inbox/await") { inbox++; return { ok: true, kind: "reset", link: "https://jobs.example.com/reset?token=t1" }; } },
+    });
+    const r = await s.agent.run(20, { url: PAGES.job.url, company: "Acme" });
+    assert(r.ok && r.ready, "the sign-in wall run ends ready " + JSON.stringify(r));
+    const clicks = s.P.acts.filter((a) => a.op === "click").map((a) => a.index);
+    const signins = s.P.acts.filter((a) => a.op === "click" && a.index === 5).length;
+    assert(clicks.includes(6) && clicks.includes(7), "the shell opened Create account and Forgot password " + JSON.stringify(clicks));
+    assert(signins <= 4, "never the same sign-in over and over: " + signins + " sign-in clicks");
+    assert(clicks.indexOf(6) < clicks.indexOf(7), "Create account before Forgot password");
+    assert(inbox === 1 && s.opened.some((u) => /reset\?token=t1/.test(u)), "the shell waited for the reset mail itself and opened its link " + inbox);
+    const f = feedLines(s.progress, 20);
+    assert(f.some((l) => /Trying another way creating the account/.test(l)) && f.some((l) => /Trying another way resetting the password/.test(l)), "the feed says so " + f.join(" | "));
+    assert(f.some((l) => /Waiting for the site's email \(the link arrived\)/.test(l)), "the email wait shows " + f.join(" | "));
+    const shellSteps = stepBodies(s.posts).length;
+    assert(shellSteps < 25, "no step budget burnt: " + shellSteps + " brain calls");
+  }
+  // Workday's "An email has been sent to you. Please verify your account." over the sign-in form:
+  // the shell waits for the mail without asking the brain, opens the activate link, the brain
+  // signs in from the "activated" page, the sign-in lands on the job SEARCH page (a header search
+  // box on every page), the shell opens the job again, and the run carries on to Ready to send.
+  {
+    let inbox = 0;
+    const brain = (P, b) => {
+      if (P.at === "mailed") return ok([{ op: "wait", seconds: 1 }]);           // the shell, not the brain, must act on the banner
+      if (P.at === "activated") return ok([{ op: "click", index: 2 }]);
+      if (P.at === "search") return ok([{ op: "type", index: 1, text: "Analyst", sensitive: false }]);
+      return plainBrain(P, b);
+    };
+    const s = setup("job", brain, {
+      onAct: (P, a) => {
+        if (P.at === "job" && a.op === "click" && a.index === 1) P.at = P.activated ? "auth" : "mailed";
+        else if (P.at === "activated" && a.op === "click" && a.index === 2) P.at = "auth";
+        else if (P.at === "auth" && a.op === "click" && a.index === 5) { P.at = P.searched ? "form" : "search"; P.searched = true; }
+        else walk(P, a);
+      },
+      onOpen: (P, u) => { if (/activate\/tok/.test(u)) { P.activated = true; P.at = "activated"; } else P.at = "job"; },
+      post: (p) => { if (p === "/api/inbox/await") { inbox++; return { ok: true, kind: "verify", link: "https://jobs.example.com/activate/tok" }; } },
+    });
+    const r = await s.agent.run(21, { url: PAGES.job.url, company: "Acme" });
+    assert(r.ok && r.ready, "the activation run ends ready " + JSON.stringify(r));
+    assert(inbox === 1, "one wait for the verification mail " + inbox);
+    assert(s.opened.filter((u) => u === PAGES.job.url).length === 2 && s.opened.some((u) => /activate\/tok/.test(u)), "the link, then the job again " + JSON.stringify(s.opened));
+    assert(!s.P.acts.some((a) => a.op === "type" && a.text === "Analyst"), "the search page was left to the shell, never searched by hand");
+    const f = feedLines(s.progress, 21);
+    assert(f.some((l) => /Waiting for the site's email \(the link arrived\)/.test(l)) && f.some((l) => /opening the job again/.test(l)), "the feed " + f.join(" | "));
+  }
+  // The search-page reopen never fires on a page of the form under a header search box, nor on
+  // the activated page; and back never leaves this application (Electron's history holds the
+  // previous job's pages).
+  {
+    const { agent, P, posts, pane } = setup("job", (P, b) => (P.at === "form" && !P.backed ? (P.backed = true, ok([{ op: "back" }])) : plainBrain(P, b)), { onAct: walk });
+    pane.webContents.navigationHistory.getActiveIndex = () => 3;
+    pane.webContents.navigationHistory.getEntryAtIndex = () => ({ url: "https://jobs.example.com/other-job?skeleton=1" });
+    const r = await agent.run(22, { url: PAGES.job.url });
+    assert(r.ok && r.ready && P.backs === 0, "back refused when it would leave the application " + P.backs + " " + JSON.stringify(r));
+    assert(stepBodies(posts).some((b) => (b.observations || []).some((o) => /no earlier page of this application/.test(o))), "and the brain is told why");
   }
 
   console.log("section 10 at " + Math.round((Date.now() - T0) / 1000) + " s");

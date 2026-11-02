@@ -31,7 +31,11 @@
   const activate = q.get("activate") === "1";
   const activateToken = q.get("token") || "";
   const CODE = "482913";
-  const log = [];                                      // what happened, read by the test
+  // What happened, read by the test. The activation run spans several page loads (the
+  // emailed link, the job opened again), so its log is kept in the tab's sessionStorage.
+  const LOG_KEY = q.get("activate") === "1" ? "fx-log-activate" : "";
+  const log = LOG_KEY ? JSON.parse(sessionStorage.getItem(LOG_KEY) || "[]") : [];
+  if (LOG_KEY) { const push = log.push.bind(log); log.push = (...a) => { const n = push(...a); sessionStorage.setItem(LOG_KEY, JSON.stringify(log)); return n; }; }
   window.fxLog = () => log.slice();
   window.fx = {};
   let signinTries = 0;
