@@ -232,7 +232,11 @@ class AnthropicLLM:
             "- To SHORTEN: drop the weakest words or a minor clause. Keep every number and "
             "name.\n"
             "- No filler ('demonstrating', 'ensuring', 'leveraging', 'robust', "
-            "'comprehensive', 'seamless'), no keyword lists, no em or en dashes.\n"
+            "'comprehensive', 'seamless'), no em or en dashes.\n"
+            "- NEVER bolt tools or skills onto the end ('..., using SQL and Tableau', "
+            "'leveraging X, Y and Z') and never open with a keyword list. A tool may appear "
+            "only as part of what actually happened. If there is no real detail to add, "
+            "return the bullet unchanged.\n"
             "Return ONLY the bullet text, no quotes, no markup."
         )
         user = (f"BULLET ({len(text)} characters now):\n{text}\n\n"

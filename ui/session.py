@@ -3066,7 +3066,7 @@ class WebIntake:
         from tailoring.textwidth import line_fraction, text_width_pt, BULLET_WIDTH_PT
         from tailoring.fact_gate import gate_rewrite, known_material
         from tailoring.linefit import BULLET_LAST_LINE_TARGET as TARGET
-        from tailoring.filler import is_padded
+        from tailoring.filler import is_padded, tacked_on_terms
         from tailoring.keywords import introduced_skills, profile_text
         # The fact gate too (tailoring/fact_gate.py): a resize never names a tool, employer,
         # acronym or credential, nor states a figure, that the person's material does not.
@@ -3130,6 +3130,7 @@ class WebIntake:
                 if not cand:
                     break
                 if (introduced_skills(b, cand, grounding, self.jd) or is_padded(b, cand)
+                        or tacked_on_terms(b, cand)
                         or gate_rewrite(b, cand, self.profile or {}, self.essentials or {},
                                         entry or {}, known=known)):
                     # Fabricated a skill, or reached the target with hollow phrases: discard

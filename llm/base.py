@@ -376,9 +376,7 @@ class FakeLLM:
     def fit_bullet(self, text: str, min_chars: int, max_chars: int, jd_text: str = "",
                    context: str = "") -> str:
         """Resize a bullet into [min_chars, max_chars] (tailoring/linefit.py). Deterministic:
-        too long is trimmed on a word boundary; too short grows ONLY with tools its own entry
-        (``context``) names that the bullet does not, else it is returned as is. Never pads."""
-        from tailoring.keywords import vocab_skills
+        too long drops whole trailing clauses; too short is returned as is. Never pads."""
         text = str(text or "").strip()
         if len(text) > max_chars:
             # Drop whole trailing clauses (never cut mid-sentence); no clause to drop, no trim.
@@ -387,22 +385,10 @@ class FakeLLM:
                 parts.pop()
             cand = ", ".join(parts) + "."
             return cand if len(cand) <= max_chars else text
-        if len(text) >= min_chars:
-            return text
-        low = text.lower()
-        extra = [t for t in vocab_skills(str(context or "")) if t.lower() not in low][:1]
-        base = text.rstrip(".")
-        best = text
-        for n in range(1, len(extra) + 1):
-            tools = extra[:n]
-            joined = tools[0] if n == 1 else ", ".join(tools[:-1]) + " and " + tools[-1]
-            cand = f"{base}, using {joined}."
-            if len(cand) > max_chars:
-                break
-            best = cand
-            if len(cand) >= min_chars:
-                break
-        return best
+        # Too short: the stand-in has no new real detail to add (a model would draw one from
+        # the entry's own material). It never bolts the entry's tools on as a list
+        # ("..., using X and Y"), which is keyword stuffing (filler.tacked_on_terms).
+        return text
 
     def extract_jd_skills(self, jd_text: str) -> list[str]:
         from tailoring.keywords import skill_terms

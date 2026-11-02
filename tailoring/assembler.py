@@ -1367,6 +1367,10 @@ class AssembleResult:
     line_fit: dict | None = None
     line_fit_before: dict | None = None
     line_gaps: dict | None = None
+    # The page as it stood before the line fit (its profile and layout step), so a review can
+    # render the same build without the fit and compare.
+    pre_fit_profile: dict | None = None
+    layout: str = ""
 
     @property
     def underfull(self) -> bool:
@@ -1557,8 +1561,9 @@ def assemble_cv(
     # won: Skills packed into 5 to 6 one-line categories that reach the right margin, each
     # bullet's last line filled or a one-word spill trimmed. Each round must keep the page
     # clean and score better, so the result is never worse than the page above.
-    line_fit = line_before = line_gaps = None
+    line_fit = line_before = line_gaps = pre_fit = None
     if fit_lines and result and result.ok and result.pages == 1:
+        pre_fit = _copy.deepcopy(used)
         from . import linefit as _lf
         from .fact_gate import known_material, source_figures
 
@@ -1633,6 +1638,8 @@ def assemble_cv(
         line_fit=line_fit,
         line_fit_before=line_before,
         line_gaps=line_gaps,
+        pre_fit_profile=pre_fit,
+        layout=layout,
     )
 
 

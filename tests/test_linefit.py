@@ -312,3 +312,50 @@ def test_activity_endpoint_reads_the_live_builds_steps():
             A._SESSION.pop("s", None)
         else:
             A._SESSION["s"] = old
+
+
+# --------------------------------------------------------------------------- no tacked-on lists
+
+@pytest.mark.parametrize("new", [
+    "{o}, using Variance Analysis and A/B Testing.",
+    "SQL, Python, Tableau: {o}.",
+    "{o}, leveraging Snowflake.",
+    "{o}, with Airflow, AWS and Git.",
+])
+def test_a_rewrite_that_bolts_on_terms_is_refused(new):
+    from tailoring.filler import tacked_on_terms
+    o = "Built Power BI and Tableau dashboards tracking weekly sales for 120 stores"
+    assert tacked_on_terms(o + ".", new.format(o=o)), new
+
+
+@pytest.mark.parametrize("new", [
+    "Built Power BI and Tableau dashboards that tracked weekly sales, margin and stock for all "
+    "120 stores, used daily by regional managers.",
+    "Automated weekly freight cost reporting in SQL, saving the team 10 hours a week.",
+])
+def test_a_natural_rewrite_is_not_refused(new):
+    from tailoring.filler import tacked_on_terms
+    o = ("Built Power BI and Tableau dashboards tracking weekly sales for 120 stores."
+         if new.startswith("Built") else "Automated weekly freight cost reporting.")
+    assert tacked_on_terms(o, new) == []
+
+
+def test_the_stand_in_never_appends_tools():
+    llm = FakeLLM()
+    t = "Kept daily Excel reports."
+    assert llm.fit_bullet(t, 80, 100, JD, "Sunrise Bank SQL Power BI Tableau Excel") == t
+
+
+class _ToolListLLM(FakeLLM):
+    """Fills every short bullet by appending the role's own tools as a list."""
+
+    def fit_bullet(self, text, min_chars, max_chars, jd_text="", context=""):
+        return text.rstrip(".") + ", using SQL, Python and Tableau."
+
+
+@requires_latex
+def test_the_loop_refuses_tool_lists_even_from_the_roles_own_material(template_source, workdir):
+    res = _build(template_source, workdir, RICH, RICH_POOL, _ToolListLLM(), name="lists")
+    text = " ".join(b for e in res.profile_used["experience"] for r in e["roles"]
+                    for b in r["bullets"])
+    assert "using SQL, Python and Tableau" not in text

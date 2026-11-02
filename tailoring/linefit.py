@@ -756,7 +756,7 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     ``known`` (the fact gate's view of their material) before it can reach the page.
     """
     from .fact_gate import gate_rewrite
-    from .filler import is_padded
+    from .filler import is_padded, tacked_on_terms
     from .keywords import introduced_skills, supported_skills, term_present
 
     if progress:
@@ -819,6 +819,7 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                     continue
                 bad = (introduced_skills(text, new, grounding, jd_text)
                        or (["padding"] if is_padded(text, new) else [])
+                       or tacked_on_terms(text, new)
                        or gate_rewrite(text, new, known=known, known_figures=known_figures))
                 if bad:
                     out.rejected.append({"label": label, "bullet": text, "attempted": new,
