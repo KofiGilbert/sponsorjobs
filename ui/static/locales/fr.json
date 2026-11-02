@@ -1383,5 +1383,9 @@
   "act.st.retry": "Nouvel essai",
   "act.st.now": "En cours",
   "act.st.asking": "En attente de vous",
-  "act.st.parked": "En pause"
+  "act.st.parked": "En pause",
+  "act.spent": "environ ${s} dépensés sur ${m}",
+  "act.plan": "Plan",
+  "act.ladder": "Essaie autrement",
+  "aa.st.ai": "L'IA était indisponible, rien n'a changé. Réessayez."
 }

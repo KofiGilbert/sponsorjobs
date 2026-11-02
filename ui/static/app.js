@@ -9371,6 +9371,8 @@
     // Left on its review page by the agent (Send): the engine's own words, its first sentence
     // here ("Ready to send"); the whole line is the status's tooltip.
     if (it.action === "send") return ["ready", aaFirst(it.stage_detail) || T("aa.st.readySend", "Ready to send")];
+    // The AI itself was unavailable on the last run (out of credits, no key): said plainly, never "needs you".
+    if (it.tile === "waiting" && it.agent_note) return ["flag", T("aa.st.ai", "The AI was unavailable, nothing changed. Try again.")];
     if (it.tile === "waiting") return ["ready", it.queued ? T("aa.st.queued", "Queued to send for you") : T("aa.st.waiting", "Approved, ready to fill")];
     // Paused by the agent: "Paused: needs you" here; what it needs (the exact question) is the
     // row's own muted line under the company (aaRow), never cut short.
@@ -9811,8 +9813,13 @@
     if (!AA_FEED.open || !snap || !(snap.events || []).length) { box.hidden = true; return; }
     const foot = [];
     if (snap.max_steps) foot.push(T("act.stepsOf", "Steps {n} of {m}").replace("{n}", snap.step || 0).replace("{m}", snap.max_steps));
+    if (snap.cost_cap) foot.push(T("act.spent", "about ${s} spent of ${m}").replace("{s}", Number(snap.cost || 0).toFixed(2)).replace("{m}", Number(snap.cost_cap).toFixed(2)));
     if (!snap.autonomous) foot.push(T("act.nothingSent", "Nothing sent without you"));
-    box.innerHTML = feedListHTML(snap.events, foot);
+    // The plan the AI keeps (section 15): the pages done, the one now, the ones to come.
+    const plan = (snap.plan || []).map((p) => { const m = /^(done|now|todo):\s*(.*)$/.exec(String(p)); return m ? { st: m[1], t: m[2] } : null; }).filter(Boolean);
+    const planHTML = plan.length ? `<div class="act-plan"><span class="act-plan-h">${esc(T("act.plan", "Plan"))}</span>` + plan.map((p) =>
+      `<span class="act-plan-i is-${p.st}">${p.st === "done" ? "✓ " : p.st === "now" ? "→ " : ""}${esc(p.t)}</span>`).join("") + "</div>" : "";
+    box.innerHTML = planHTML + feedListHTML(snap.events, foot);
     box.hidden = false;
     const tl = box.querySelector(".act-tl");
     if (tl) tl.scrollTop = tl.scrollHeight;                  // the newest step stays in view

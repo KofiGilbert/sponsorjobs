@@ -40,6 +40,11 @@
  *  The first Apply for me asks the standing choice on terms once, before the run (section 4).
  *  ... and (section 17) back from being away: Send on a Ready to send job whose page is gone fills
  *  it again from the saved answers and submits it in one click, asking nothing.
+ *  ... and (sections 18 and 19, 2026-11-02, the Nelnet run) a ?skeleton=1 form page that never
+ *  renders is reloaded by the hang ladder (never waited on for ever, never parked "needs you"),
+ *  and a ?activate=1 Workday-style account activation goes end to end: the emailed activate
+ *  link is opened, the agent signs in from the "activated" page, and when the site lands it on
+ *  the job search page it opens the job again by itself and carries on to Ready to send.
  */
 /*  ... and (the live activity feed) the bar's timeline shows the run's steps in order (Opening the
  *  job, Signing in, Filled N fields from your memory, the AI's own "Clicking ..." summaries, Ready
@@ -115,7 +120,9 @@ for role, url in [("Business Intelligence Analyst", ${JSON.stringify(JOB)}),
                   ("Analyst (nobody answers)", ${JSON.stringify(JOB + "?phenom=1&again=4")}),
                   ("Analyst (batch, consent)", ${JSON.stringify(JOB + "?phenom=1&again=5")}),
                   ("Analyst (batch, a new question)", ${JSON.stringify(JOB + "?pay=1&again=6")}),
-                  ("Analyst (batch, plain)", ${JSON.stringify(JOB + "?again=7")})]:
+                  ("Analyst (batch, plain)", ${JSON.stringify(JOB + "?again=7")}),
+                  ("Analyst (skeleton page)", ${JSON.stringify(JOB + "?skeleton=1")}),
+                  ("Analyst (account activation)", ${JSON.stringify(JOB + "?activate=1")})]:
     rid = recs.add(role, "Acme Corp", 70, "", jd_label=role,
                    data={"status": "approved", "fit": 85, "render_profile": prof,
                          "source_job": {"url": url, "source_id": "mock:" + role, "location": "Bloomington, IL"},
@@ -129,9 +136,9 @@ print(json.dumps(ids))
 `], { encoding: "utf8" });
 if (seed.status !== 0) { console.error(seed.stderr); process.exit(1); }
 const [RID, RID_CAPTCHA, RID_CODE, RID_RESET, RID_ASK, RID_AGAIN, RID_PHENOM, RID_ADDRESS, RID_PAY, RID_PAY2, RID_FORGOT,
-       RID_PAUSE, RID_B1, RID_B2, RID_B3] = JSON.parse(seed.stdout.trim().split("\n").pop());
-check("seeded fifteen queued jobs", RID > 0 && RID_AGAIN > 0 && RID_PHENOM > 0 && RID_ADDRESS > 0 && RID_PAY2 > 0 && RID_FORGOT > 0
-      && RID_PAUSE > 0 && RID_B3 > 0, `ids ${RID}..${RID_B3}`);
+       RID_PAUSE, RID_B1, RID_B2, RID_B3, RID_SKEL, RID_ACT] = JSON.parse(seed.stdout.trim().split("\n").pop());
+check("seeded seventeen queued jobs", RID > 0 && RID_AGAIN > 0 && RID_PHENOM > 0 && RID_ADDRESS > 0 && RID_PAY2 > 0 && RID_FORGOT > 0
+      && RID_PAUSE > 0 && RID_B3 > 0 && RID_ACT > 0, `ids ${RID}..${RID_ACT}`);
 
 // ---- 3. the engine on the test model, then the real app ---------------------------------
 // The shell strips the test-model flags from any engine it spawns (real model only, CLAUDE.md
@@ -273,11 +280,11 @@ check("the pane shows the review page with the mock's Submit", onReview === true
   check("while it ran, the bar had a live step to show", live.some((x) => /^(running|retry)$/.test(x.a.events[x.a.events.length - 1].state)),
         String(live.length));
   const last = live.length ? live[live.length - 1].a : {};
-  check("the run's limits ride along (steps of 40, nothing sent without you)", last.max_steps === 40 && last.step >= 1 && last.autonomous === false,
+  check("the run's limits ride along (steps of 60, nothing sent without you)", last.max_steps === 60 && last.step >= 1 && last.autonomous === false,
         JSON.stringify({ step: last.step, max: last.max_steps, auto: last.autonomous }));
   await win.locator("#bbFill .act-toggle").first().click();
   const tl = await win.evaluate(() => { const b = document.querySelector("#bbFeed"); return b && !b.hidden ? b.innerText : ""; });
-  check("Steps opens the timeline under the bar", /Opened the job/.test(tl) && /Ready to send/.test(tl) && /Steps \d+ of 40/.test(tl)
+  check("Steps opens the timeline under the bar", /Opened the job/.test(tl) && /Ready to send/.test(tl) && /Steps \d+ of 60/.test(tl)
         && /Nothing sent without you/.test(tl), tl.slice(0, 400));
   await win.locator("#bbFill .act-toggle").first().click();
 }
@@ -631,6 +638,50 @@ for (const id of [RID_B3, RID_B1]) {
   await sleep(1000);
   const rowD = await rowOf(id);
   check(`job ${id}: it is marked submitted`, rowD && rowD.tile === "submitted", JSON.stringify(rowD && { t: rowD.tile, a: rowD.action }));
+}
+
+// ---- 18. (2026-11-02, Nelnet) the form page shows only a skeleton: the agent reloads, not waits --
+// After the sign-in the mock's form page is grey boxes with "Loading" that never render. The
+// run must not sit on "wait" nor park "needs you": the hang ladder waits for the form once,
+// reloads the page (the mock renders after a reload), and carries on to Ready to send.
+await win.click("[data-nav=autoapply]");
+await win.waitForSelector(`.aa-row[data-id="${RID_SKEL}"]`, { timeout: 30_000 });
+const markSkel = (await agentLog()).length;
+await clickRow(RID_SKEL);
+const skelDone = await waitBar(/ready to send|stopped|have a look|paused|took too long/i, 180_000);
+check("the skeleton run reaches Ready to send", /ready to send/i.test(skelDone), skelDone);
+{
+  const f = await feedOf(RID_SKEL, "ready");
+  check("the timeline shows the agent trying another way (reload) instead of waiting for ever",
+        feedHas(f, /^retry: Trying another way (reloading the page|waiting for the form)/), f.join(" | "));
+  const logSk = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+  check("the mock rendered the form after the reload and every page was walked", logSk.includes("rendered-after-reload")
+        && logSk.some((x) => String(x).startsWith("contact:")) && !logSk.includes("submitted"), JSON.stringify(logSk));
+  const mine = (await agentLog()).slice(markSkel).filter((x) => x.r === RID_SKEL);
+  check("the run never parked as needs you", !mine.some((x) => x.s === "parked"), JSON.stringify(mine.filter((x) => x.s === "parked")));
+}
+
+// ---- 19. (Nelnet) Workday's account activation: the emailed link, sign in, back to the job -----
+// Creating the account shows "An email has been sent to you. Please verify your account." over
+// the sign-in form. The agent waits for the mail, opens the activate link (the mock's
+// ?activate=1&token=), signs in from the "account activated" page, lands on the job SEARCH
+// page (not the job), opens the job again by itself, and carries on to Ready to send.
+await win.waitForSelector(`.aa-row[data-id="${RID_ACT}"]`, { timeout: 30_000 });
+await clickRow(RID_ACT);
+const waitingAct = await waitBar(/waiting for the site|ready to send|stopped|have a look|connect your email/i, 150_000);
+check("the activation run waits for the site's verification email", /waiting for the site/i.test(waitingAct), waitingAct);
+const dAct = await deliver({ from: "Acme Corp <acme@myworkday.com>", subject: "Please verify your account",
+                             body: `Thank you for creating an account. Click the link below to activate it:\n${JOB}?activate=1&token=tok9&redirect=%2Fjob%2F1\nThis link expires in 24 hours.` });
+check("the test delivered the activation email", dAct === true);
+const actDone = await waitBar(/ready to send|stopped|have a look|did not arrive|paused/i, 180_000);
+check("the activation run reaches Ready to send", /ready to send/i.test(actDone), actDone);
+{
+  const logAct = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
+  check("the mock saw the activate link opened, the sign-in, and the application started again from the job",
+        logAct.includes("activate-link-opened") && logAct.includes("signin") && logAct.some((x) => String(x).startsWith("contact:")) && !logAct.includes("submitted"),
+        JSON.stringify(logAct));
+  const f = await feedOf(RID_ACT, "ready");
+  check("the timeline shows the wait for the email and the job opened again", feedHas(f, /Waiting for the site's email \(the link arrived\)/) && feedHas(f, /opening the job again|Opening the job again/i), f.join(" | "));
 }
 
 const failed = results.filter((r) => !r.pass);

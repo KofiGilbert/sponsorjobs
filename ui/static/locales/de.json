@@ -1383,5 +1383,9 @@
   "act.st.retry": "Neuer Versuch",
   "act.st.now": "Jetzt",
   "act.st.asking": "Wartet auf dich",
-  "act.st.parked": "Pausiert"
+  "act.st.parked": "Pausiert",
+  "act.spent": "etwa ${s} von ${m} verbraucht",
+  "act.plan": "Plan",
+  "act.ladder": "Versucht einen anderen Weg",
+  "aa.st.ai": "Die KI war nicht erreichbar, nichts geändert. Versuch es noch einmal."
 }

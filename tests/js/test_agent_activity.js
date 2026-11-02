@@ -30,7 +30,7 @@ const assert = (c, m) => { if (!c) throw new Error(m); };
   f.readPages("Apply\nStep 2 of 4\n[3]<button>Next</button>");
   f.page = 2;
   const s = f.snap();
-  assert(s.page === 2 && s.pages === 4 && s.max_steps === 40 && s.autonomous === false, "snap " + JSON.stringify(s));
+  assert(s.page === 2 && s.pages === 4 && s.max_steps === 60 && s.autonomous === false, "snap " + JSON.stringify(s));
   f.readPages("no counter here");
   assert(f.snap().pages === 0, "no pages when the site shows none");
   const sp = splitSummary("Clicking Next to open page 3");
@@ -135,7 +135,7 @@ const deps = {
   assert(!evs.some((e) => e.transient), "no transient step is left");
   assert(!evs.some((e) => /kofi@example\.com/.test(JSON.stringify(e))), "no value on the feed");
   assert(evs.filter((e) => /^fill/.test(e.phase)).length === 1, "one fill line per page");
-  assert(last.activity.step === 4 && last.activity.max_steps === 40 && last.activity.autonomous === false, "limits " + JSON.stringify(last.activity));
+  assert(last.activity.step === 4 && last.activity.max_steps === 60 && last.activity.autonomous === false, "limits " + JSON.stringify(last.activity));
   // A live line while it ran: some running update showed the brain's verb with the site's page counter.
   assert(progress.some((p) => p.state === "running" && p.activity.pages === 3 && p.activity.page === 2), "page 2 of 3 while on the form");
   // The messages the bar and the e2e read are the same set as before (feed updates repeat the last one).

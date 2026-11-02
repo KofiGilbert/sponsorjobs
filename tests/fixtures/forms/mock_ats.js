@@ -21,6 +21,15 @@
   // ?pay=1: the questions page also asks the salary in words no rule knows (required), answered
   // from the saved salary through the applicant brain's label mapper (Phase 4).
   const pay = q.get("pay") === "1";
+  // ?skeleton=1 (2026-11-02, Nelnet's Workday form): after the sign-in the form page shows only
+  // grey skeleton boxes and never renders; a RELOAD renders it (the agent's hang ladder).
+  const skeleton = q.get("skeleton") === "1";
+  // ?activate=1 (Nelnet): creating the account shows "An email has been sent to you. Please
+  // verify your account." over the sign-in form; the emailed activate link (?activate=1&token=)
+  // shows "Your account has been activated", Sign in lands on the job SEARCH page (not the
+  // job), and the application starts over from the job page, signed in.
+  const activate = q.get("activate") === "1";
+  const activateToken = q.get("token") || "";
   const CODE = "482913";
   const log = [];                                      // what happened, read by the test
   window.fxLog = () => log.slice();
@@ -37,8 +46,9 @@
         + btn("apply", "Apply"));
       $("apply").onclick = () => { log.push("apply"); pages.account(); };
     },
-    account() {
+    account(notice) {
       page('<h2>Sign in to continue</h2>'
+        + (notice ? '<p id="notice" class="error">' + notice + '</p>' : '')
         + '<div class="field"><label for="ae">Email Address</label><input type="email" id="ae"></div>'
         + '<div class="field"><label for="pw">Password</label><input type="password" id="pw"></div>'
         + '<p id="err" class="error" hidden></p>'
@@ -47,8 +57,10 @@
         signinTries++;
         if (!$("ae").value || !$("pw").value) { $("err").textContent = "Email and password are required."; $("err").hidden = false; return; }
         if (signinFails && signinTries === 1) { $("err").textContent = "We could not find an account with that email."; $("err").hidden = false; log.push("signin-failed"); return; }
+        if (activate && !sessionStorage.getItem("fx-activated")) { $("err").textContent = "Your account is not verified yet. Check your email."; $("err").hidden = false; log.push("signin-unverified"); return; }
         log.push("signin");
-        if (verify) pages.code(); else pages.contact();
+        if (activate && !sessionStorage.getItem("fx-signed-in")) { sessionStorage.setItem("fx-signed-in", "1"); pages.search(); return; }
+        if (verify) pages.code(); else if (skeleton && !sessionStorage.getItem("fx-reloaded")) pages.skeleton(); else pages.contact();
       };
       $("create").onclick = () => { log.push("create-account-page"); pages.create(); };
       $("forgot").onclick = () => { log.push("forgot"); pages.reset(); };
@@ -91,8 +103,34 @@
       $("createbtn").onclick = () => {
         if (!$("ce").value || !$("cp").value) { $("err").textContent = "All fields are required."; $("err").hidden = false; return; }
         if ($("cp").value !== $("cp2").value) { $("err").textContent = "Passwords do not match."; $("err").hidden = false; return; }
-        log.push("account-created"); pages.contact();
+        log.push("account-created");
+        if (activate) { pages.account("An email has been sent to you. Please verify your account."); return; }
+        pages.contact();
       };
+    },
+    // Workday's activate page (the emailed link): the account is live, Sign in is offered.
+    activated() {
+      sessionStorage.setItem("fx-activated", "1");
+      log.push("activate-link-opened");
+      page('<h2>Your account has been activated</h2><p>Thank you for verifying your email address. Sign in to continue.</p>'
+        + btn("gosignin", "Sign In"));
+      $("gosignin").onclick = () => pages.account();
+    },
+    // The careers search page a Workday sign-in lands on (not the job).
+    search() {
+      log.push("search-page");
+      page('<h2>Search for Jobs</h2><form role="search"><label for="kw">Search for jobs</label><input type="search" id="kw" placeholder="Search for jobs">'
+        + btn("gosearch", "Search") + '</form><p>Browse open roles at Acme Corp.</p>');
+      $("gosearch").onclick = () => { log.push("searched"); };
+    },
+    // A form page that only ever shows grey skeleton placeholders (until a reload renders it).
+    skeleton() {
+      log.push("skeleton-page");
+      page('<h2>My Information</h2><div aria-busy="true" class="skeleton-wrap">'
+        + '<div class="skeleton" style="height:14px;width:60%;background:#e5e7eb;margin:10px 0"></div>'
+        + '<div class="skeleton" style="height:34px;width:100%;background:#e5e7eb;margin:10px 0"></div>'
+        + '<div class="skeleton" style="height:34px;width:100%;background:#e5e7eb;margin:10px 0"></div>'
+        + '<div class="skeleton" style="height:34px;width:80%;background:#e5e7eb;margin:10px 0"></div></div><p class="muted">Loading</p>');
     },
     contact() {
       page('<h2>My Information</h2><p class="muted">Step 1 of 3</p>'
@@ -188,4 +226,14 @@
   };
   function $(id) { return document.getElementById(id); }
   window.fxGo = (name) => { if (pages[name]) pages[name](); };      // tests jump to a page
-  if (resetToken) { log.push("reset-link-opened"); pages.newpw(); } else pages.job();
+  if (resetToken) { log.push("reset-link-opened"); pages.newpw(); }
+  else if (activate && activateToken) pages.activated();
+  else if (skeleton && sessionStorage.getItem("fx-reloaded") === "1") { log.push("rendered-after-reload"); pages.contact(); }
+  else if (skeleton && sessionStorage.getItem("fx-skeleton-seen") === "1") { sessionStorage.setItem("fx-reloaded", "1"); log.push("rendered-after-reload"); pages.contact(); }
+  else pages.job();
+  // The skeleton run: the first visit to the form page is remembered so that the NEXT load of
+  // this URL (a reload, or the job opened again) renders the form.
+  if (skeleton) {
+    const mark = () => { if (document.querySelector(".skeleton-wrap")) sessionStorage.setItem("fx-skeleton-seen", "1"); };
+    new MutationObserver(mark).observe(step, { childList: true, subtree: true });
+  }

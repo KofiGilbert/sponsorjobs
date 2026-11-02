@@ -441,6 +441,7 @@
   let _seen = new WeakSet();          // elements listed in the previous view, for the `*` mark
   let _everViewed = false;
   let _base = INDEX_BASE;             // the index base of the last view, so element() can undo it
+  let _lastLines = [];                // every line of the last view, past the cap too (the read-only tools)
   window.__tailorAgentRefs = window.__tailorAgentRefs || [];
 
   function scrollInfo() {
@@ -570,6 +571,7 @@
     _seen = seenNow;
     _everViewed = true;
     _base = base;
+    _lastLines = lines;
     return { text: out.join(""), count: refs.length, truncated, indexBase: base };
   }
 
@@ -857,6 +859,156 @@
     if (!el) return null;
     const r = el.getBoundingClientRect();
     return { x: r.left, y: r.top, width: r.width, height: r.height };
+  }
+
+
+  // ------------------------------------------------------------------ read-only tools
+  // What the model may ask for when the view is not enough (docs/apply-agent.md section 12):
+  // more of a long page, where a label is, one element's state and the error next to it, the
+  // page's errors, whether something has appeared, and the page's shape (a skeleton?). Every
+  // answer is text about the page, never a typed value: a filled text box reads "(filled)".
+  const lineIndex = (s) => { const m = /^\*?\[(\d+)\]/.exec(String(s || "")); return m ? Number(m[1]) : 0; };
+  function readPage(fromIndex, maxChars) {
+    const from = Number(fromIndex) || 0;
+    const cap = Math.max(1000, Math.min(8000, Number(maxChars) || 6000));
+    let start = 0;
+    if (from > 0) {
+      start = _lastLines.findIndex((l) => l.kind === "el" && lineIndex(l.s) >= from);
+      if (start < 0) return { text: "", more: 0, next: 0 };
+    }
+    const out = [];
+    let size = 0, i = start;
+    for (; i < _lastLines.length; i++) {
+      const s = _lastLines[i].s;
+      if (size + s.length + 1 > cap) break;
+      out.push(s); size += s.length + 1;
+    }
+    const rest = _lastLines.slice(i);
+    const more = rest.filter((l) => l.kind === "el").length;
+    const nextEl = rest.find((l) => l.kind === "el");
+    return { text: out.join("\n"), more, next: nextEl ? lineIndex(nextEl.s) : 0 };
+  }
+  function find(text) {
+    const w = norm(text);
+    if (!w) return { lines: [] };
+    const hits = [];
+    let lastEl = "";
+    for (const l of _lastLines) {
+      if (l.kind === "el") lastEl = l.s;
+      if (norm(l.s).includes(w)) hits.push(l.kind === "el" ? l.s : l.s + (lastEl ? "  (after " + lastEl.slice(0, 60) + ")" : ""));
+      if (hits.length >= 12) break;
+    }
+    if (!hits.length) {
+      const body = cleanText(document.body ? document.body.innerText : "");
+      const at = norm(body).indexOf(w);
+      if (at >= 0) hits.push("text: " + body.slice(Math.max(0, at - 80), at + w.length + 80));
+    }
+    return { lines: hits.map((s) => s.slice(0, 300)) };
+  }
+  function nearText(el) {
+    const at = _lastLines.findIndex((l) => l.el === el);
+    if (at < 0) return { before: "", after: "", errors: [] };
+    let before = "", after = "";
+    const errors = [];
+    for (let i = at - 1; i >= 0 && i >= at - 4; i--) { if (_lastLines[i].kind === "text") { if (/^Error: /.test(_lastLines[i].s)) errors.push(_lastLines[i].s); else if (!before) before = _lastLines[i].s; } }
+    for (let i = at + 1; i < _lastLines.length && i <= at + 4; i++) { if (_lastLines[i].kind === "text") { if (/^Error: /.test(_lastLines[i].s)) errors.push(_lastLines[i].s); else if (!after) after = _lastLines[i].s; } }
+    return { before: before.slice(0, 160), after: after.slice(0, 160), errors: errors.map((s) => s.slice(0, 200)) };
+  }
+  function inspect(index) {
+    const el = element(index);
+    if (!el) return null;
+    const kind = kindOf(el) || tagOf(el).toLowerCase();
+    const attrs = {};
+    for (const a of ["type", "name", "id", "role", "aria-label", "aria-required", "aria-invalid", "aria-expanded", "aria-haspopup",
+                     "aria-autocomplete", "autocomplete", "placeholder", "data-automation-id", "maxlength", "pattern", "inputmode", "href"]) {
+      const v = attrOf(el, a);
+      if (v != null && v !== "") attrs[a] = String(v).slice(0, 80);
+    }
+    const label = labelOf(el);
+    const o = { index: Number(index), tag: tagOf(el).toLowerCase(), kind, label, attrs,
+                required: isRequired(el), disabled: isDisabled(el) || !!el.readOnly,
+                visible: !selfHidden(el) && boxShown(el, isToggleInput(el)), covered: !!covered(el), connected: !!el.isConnected };
+    if (tagOf(el) === "SELECT") { o.value = selectValue(el); o.options = Array.from(el.options || []).length; }
+    else if (kind === "combobox") o.value = comboValue(el) ? "(filled)" : "";
+    else if (isToggleInput(el) || /^(checkbox|radio|switch)$/.test(norm(attrOf(el, "role")))) o.checked = tagOf(el) === "INPUT" ? !!el.checked : attrOf(el, "aria-checked") === "true";
+    else if (isFileInput(el)) o.file = el.files && el.files.length ? "chosen" : "none";
+    else if ("value" in el && tagOf(el) !== "BUTTON") o.value = String(el.value || "") !== "" ? "(filled)" : "";
+    else o.text = textOf(el).slice(0, 120);
+    if (SELF_ID_RE.test(label || "") || SELF_ID_RE.test(groupLabel(el) || "")) { if (o.value) o.value = "(filled)"; delete o.checked; }
+    const near = nearText(el);
+    o.errors = describedErrors(el).map((n) => cleanText(n.textContent).slice(0, 160)).concat(near.errors);
+    o.before = near.before; o.after = near.after;
+    return o;
+  }
+  function readErrors() {
+    const out = [];
+    const add = (t) => { t = cleanText(t).slice(0, 240); if (t && !out.includes(t)) out.push(t); };
+    for (const l of _lastLines) if (l.kind === "text" && /^Error: /.test(l.s)) add(l.s.replace(/^Error: "?|"$/g, ""));
+    for (const el of deepAll("[role='alert'], [aria-invalid='true'], [class*='error' i], [id*='error' i]")) {
+      if (selfHidden(el) || !boxShown(el, true)) continue;
+      if (attrOf(el, "aria-invalid") === "true") { for (const n of describedErrors(el)) add(n.textContent); continue; }
+      if (!errorBlock(el)) continue;
+      const t = cleanText(el.innerText != null ? el.innerText : el.textContent);
+      if (t && t.length < 400) add(t);
+      if (out.length >= 15) break;
+    }
+    return out.slice(0, 15);
+  }
+  // Before a page-changing click: the required fields still empty and the errors shown, so the
+  // shell can hold the click once and say so instead of letting the site refuse it.
+  function pageCheck() {
+    const empty = [];
+    const seen = new Set();
+    for (const l of _lastLines) {
+      const el = l.kind === "el" ? l.el : null;
+      if (!el || !el.isConnected) continue;
+      const kind = kindOf(el);
+      if (!kind || !/^(input|textarea|select|combobox|file)$/.test(kind)) continue;
+      if (kind === "input" && !TEXT_TYPES.has(String(el.type || "text").toLowerCase())) continue;
+      if (isDisabled(el) || !isRequired(el) || isSiteSearch(el)) continue;
+      if (selfHidden(el) && !isFileInput(el)) continue;
+      let filled;
+      if (kind === "select") { const v = selectValue(el); filled = !!v && !isPlaceholder(v); }
+      else if (kind === "combobox") filled = !!comboValue(el);
+      else if (kind === "file") filled = !!(el.files && el.files.length);
+      else filled = String(el.value != null ? el.value : el.textContent || "") !== "";
+      if (filled) continue;
+      const lab = cleanLabel(labelOf(el)).slice(0, 80) || kind;
+      if (!seen.has(lab)) { seen.add(lab); empty.push(lab); }
+    }
+    return { required_empty: empty.slice(0, 12), errors: readErrors().slice(0, 6) };
+  }
+  // Has a text or a selector appeared (visible)? The shell polls this for wait_for.
+  function has(what) {
+    what = what || {};
+    if (what.selector) {
+      try { for (const r of deepRoots()) { const el = r.querySelector(what.selector); if (el && !selfHidden(el) && boxShown(el, true)) return true; } }
+      catch (e) { /* not a selector */ }
+    }
+    if (what.text) {
+      const w = norm(what.text);
+      if (w && norm(document.body ? document.body.innerText : "").includes(w)) return true;
+    }
+    return false;
+  }
+  // The page's shape for the shell's hang detection: how many fields and buttons are on
+  // screen, whether a loading skeleton is showing, and how many words there are.
+  function pageShape() {
+    let fields = 0, buttons = 0;
+    for (const el of deepAll("input, select, textarea, [role='combobox'], button, a[href], [role='button'], [role='link']")) {
+      if (selfHidden(el) || !boxShown(el, isToggleInput(el))) continue;
+      const k = kindOf(el);
+      if (/^(input|textarea|select|combobox|checkbox|radio|file)$/.test(k || "")) {
+        if (!isSiteSearch(el) && !(k === "input" && /^(hidden|submit|button|image|reset)$/.test(String(el.type || "").toLowerCase()))) fields++;
+      } else if (k) buttons++;
+    }
+    let skeleton = false;
+    try {
+      skeleton = !!document.querySelector("[aria-busy='true'], [class*='skeleton' i], [data-automation-id='loadingIndicator'], [role='progressbar'], [class*='placeholder-glow' i]");
+    } catch (e) { skeleton = false; }
+    const text = cleanText(document.body ? document.body.innerText : "");
+    if (!skeleton && /(^|\s)loading(\.{3}|…)?(\s|$)/i.test(text.slice(0, 400)) && fields === 0) skeleton = true;
+    return { fields, buttons, skeleton, words: text ? text.split(/\s+/).length : 0 };
   }
 
   // ------------------------------------------------------------------ choices for an ask
@@ -1272,6 +1424,7 @@
   window.TailorAgent = {
     view, element, act, submitButton, rect, markPopups, popupOptions, popupOpen, closePopup, selectOptions,
     closeOthers, optionIndex, chosenIs, termsItems,
+    readPage, find, inspect, readErrors, pageCheck, has, pageShape,
     refs: () => window.__tailorAgentRefs || [],
     SUBMIT_RE,
   };

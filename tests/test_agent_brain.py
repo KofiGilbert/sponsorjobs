@@ -159,10 +159,19 @@ def test_submit_guard_turns_a_submit_click_into_ready_to_submit():
     assert "kofi@example.com" not in llm.calls[0] and "{{email}}" in llm.calls[0]
 
 
-def test_empty_reply_retries_once_then_blocks():
-    llm = _Scripted("", "")
-    out = step(_req(JOB_PAGE), llm, APPLICANT, None, placeholders=PLACEHOLDERS)
-    assert len(llm.calls) == 2 and out["done"] == {"outcome": "blocked", "reason": "needs-person"}
+def test_empty_reply_retries_three_times_with_backoff_then_says_no_reply():
+    # (Section 13) A bad or empty reply is retried, with backoff and a nudge, before anything
+    # else; the shell escalates on "no-reply", it never parks the job on it.
+    llm = _Scripted("", "", "")
+    naps = []
+    out = step(_req(JOB_PAGE), llm, APPLICANT, None, placeholders=PLACEHOLDERS, sleep=naps.append)
+    assert len(llm.calls) == 3 and out["ok"] is False and out["reason"] == "no-reply" and out["tries"] == 3
+    assert naps == [0.5, 1.5] and "not valid JSON" in llm.calls[1] and "not valid JSON" not in llm.calls[0]
+    assert "empty reply" in out["error"]
+    # the third call answers: the step goes on as usual
+    llm = _Scripted("", json.dumps({"actions": [{"op": "click", "index": 1}], "done": None}))
+    out = step(_req(JOB_PAGE), llm, APPLICANT, None, placeholders=PLACEHOLDERS, sleep=lambda s: None)
+    assert out["ok"] and out["actions"] == [{"op": "click", "index": 1}] and out["tries"] == 2 and out["cost"] > 0
 
 
 def test_loop_nudge_after_three_repeats_and_done_only_at_the_limit():

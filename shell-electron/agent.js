@@ -15,13 +15,43 @@
 // helpers it already has (`deps`), the same way frames.js takes a CDP adapter.
 "use strict";
 
-const MAX_STEPS = 40;
-const MAX_FAILED_STEPS = 4;          // in a row
-const STEP_BRAIN_MS = 60000;
+// Budgets (docs/apply-agent.md section 15): steps and dollars per application, both overridable.
+const MAX_STEPS = Math.max(10, Number(process.env.SJ_AGENT_MAX_STEPS) || 60);
+const COST_CAP_USD = Number(process.env.SJ_AGENT_COST_CAP_USD) > 0 ? Number(process.env.SJ_AGENT_COST_CAP_USD) : 0.80;
+const MAX_FAILED_STEPS = 4;          // in a row, then the recovery ladder (section 13)
+const STEP_BRAIN_MS = 90000;
 const ACTION_MS = 25000;
+// Every call into the pane is capped (section 13, the 2026-11-02 Nelnet hang: an await on a
+// skeleton Workday page never returned and the loop froze for 8 minutes with Stop dead). A call
+// that does not answer in PANE_MS is a hang observation and the ladder takes over.
+const PANE_MS = Math.max(1000, Number(process.env.SJ_AGENT_PANE_MS) || 20000);
+const FILL_MS = Number(process.env.SJ_AGENT_FILL_MS) > 0 ? Number(process.env.SJ_AGENT_FILL_MS) : Math.max(PANE_MS, 40000);
+// A page with nothing to do on it (a skeleton, "Loading", no fields) for this long is a hang.
+const HANG_MS = Math.max(1000, (Number(process.env.SJ_AGENT_HANG_S) || 45) * 1000);
+const MAX_WAITS = 3;                 // the brain's plain waits in a row before the shell escalates
+// A batch moves on from a job that takes longer than this (section 16): it parks, "took too long".
+const JOB_CAP_MS = Math.max(1000, Number(process.env.SJ_AGENT_JOB_CAP_MS) || 12 * 60 * 1000);
+const WAIT_FORM_S = Math.max(1, Number(process.env.SJ_AGENT_WAITFORM_S) || 15);
+const RETRY_MS = Math.max(10, Number(process.env.SJ_AGENT_RETRY_MS) || 1500);
+const EMAIL_WAIT_S = Math.max(5, Number(process.env.SJ_AGENT_EMAIL_WAIT_S) || 180);
+const EMAIL_RECHECK_S = Math.max(2, Number(process.env.SJ_AGENT_EMAIL_RECHECK_S) || 60);
+const MAX_LADDERS = 4;               // recovery ladders per application, then it parks
 const SETTLE_QUIET_MS = 600;
 const SETTLE_CAP_MS = 8000;
 const LOOP_WINDOW = 12;
+// The ladder's strategy menu, in the order the shell tries them (the brain's reflection may
+// pick one out of order). The last three are hints to the brain, not page actions.
+const STRATEGIES = ["wait_for form", "reload", "back", "reopen_job", "sign in again", "fill the field myself",
+                    "read more of the page", "use the other input form"];
+const STRATEGY_WORDS = { "wait_for form": "waiting for the form", "reload": "reloading the page", "back": "going back a page",
+                         "reopen_job": "opening the job again", "sign in again": "signing in again",
+                         "fill the field myself": "filling the field another way", "read more of the page": "reading more of the page",
+                         "use the other input form": "trying the other input form" };
+// A page that can be handed over at Submit never looks like this (section 14, the Gartner
+// 2026-11-02 run said ready on a sign-in page): a password box, a sign-in or create-account
+// form, or no submit-like control at all.
+const SIGNIN_BTN_RE = /^(sign ?in|log ?in|create (an )?account|sign ?up|register)$/i;
+const SUBMIT_ANY_RE = /\bsubmit\b|\bsend application\b|\breview and submit\b|\bcomplete application\b/i;
 // Asking the person (2026-10-31): an ask waits as long as the engine says (an hour by default,
 // with one Telegram reminder), in long-polls of ASK_CHUNK_S so Stop still ends it within seconds;
 // past the wait the job PARKS (the question stays open, the pane is released) and an answer
@@ -46,13 +76,35 @@ const ATS_HOSTS = ["greenhouse.io", "lever.co", "ashbyhq.com", "workable.com", "
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 // SJ_AGENT_DEBUG=1 writes each step's view and reply to <tmp>/sj-agent.log (the e2e reads it).
 const DEBUG = process.env.SJ_AGENT_DEBUG === "1";
+// A reply as it may be logged: a typed value the brain resolved from a placeholder is a
+// secret (a password, the person's email) and reads "(secret)" here, never the value.
+const safeReply = (r) => {
+  if (!r || typeof r !== "object") return r;
+  const o = Object.assign({}, r);
+  if (Array.isArray(o.actions)) o.actions = o.actions.map((a) => (a && a.sensitive ? Object.assign({}, a, { text: "(secret)" }) : a));
+  return o;
+};
 const dlog = (what, obj) => {
   if (!DEBUG) return;
   try {
     require("fs").appendFileSync(require("path").join(require("os").tmpdir(), "sj-agent.log"),
-      new Date().toISOString() + " " + what + " " + (typeof obj === "string" ? obj : JSON.stringify(obj)) + "\n");
+      new Date().toISOString() + " " + what + " " + (typeof obj === "string" ? obj : JSON.stringify(safeReply(obj))) + "\n");
   } catch (e) { /* debugging only */ }
 };
+// The deterministic ready gate (section 14): why a view cannot be the review page, or "".
+function notReady(viewText) {
+  const t = String(viewText || "");
+  if (/^\*?\[\d+\]<input type=password\b/m.test(t)) return "the page has a password box";
+  const lines = t.split("\n").filter((ln) => /^\*?\[\d+\]</.test(ln));
+  const name = (ln) => { const m = /^\*?\[\d+\]<(?:button|a|input)[^>]*>([^<]*)</.exec(ln); if (m) return m[1].trim();
+                         const l = /label="((?:[^"\\]|\\.)*)"/.exec(ln); return l ? l[1] : ""; };
+  const names = lines.map(name).filter(Boolean);
+  const hasSubmit = names.some((n) => SUBMIT_ANY_RE.test(n));
+  const hasEmail = /^\*?\[\d+\]<input type=email\b/m.test(t);
+  if (!hasSubmit && names.some((n) => SIGNIN_BTN_RE.test(n)) && hasEmail) return "the page is a sign-in or create-account form";
+  if (!hasSubmit) return "the page shows no Submit control";
+  return "";
+}
 const hostOf = (url) => { try { return (new URL(url).hostname || "").toLowerCase().replace(/^www\./, ""); } catch (e) { return ""; } };
 const withTimeout = (p, ms, what) => {
   let t = null;
@@ -97,6 +149,7 @@ function createFeed(opts) {
   const f = {
     events, step: 0, maxSteps: opts.maxSteps || MAX_STEPS, page: 1, sitePage: 0, pages: 0,
     autonomous: !!opts.autonomous, batchAt: opts.batchAt || null, startedAt: Date.now() / 1000,
+    plan: [], cost: 0, costCap: COST_CAP_USD,
     // push(phase, verb, summary, { state, detail, transient, target })
     push(phase, verb, summary, o) {
       o = o || {};
@@ -145,7 +198,8 @@ function createFeed(opts) {
     snap() {
       return { events: events.map((e) => { const o = Object.assign({}, e); delete o._n; delete o._cv; return o; }), step: f.step, max_steps: f.maxSteps,
                page: f.sitePage || f.page, pages: f.pages, autonomous: f.autonomous,
-               batch: f.batchAt ? { i: f.batchAt.i, n: f.batchAt.n } : null, started: f.startedAt };
+               batch: f.batchAt ? { i: f.batchAt.i, n: f.batchAt.n } : null, started: f.startedAt,
+               plan: (f.plan || []).slice(0, 12), cost: Math.round((f.cost || 0) * 100) / 100, cost_cap: f.costCap };
     },
   };
   return f;
@@ -187,6 +241,8 @@ function failWords(note) {
   if (/timed out/.test(n)) return "the page did not answer in time";
   if (/no resume/.test(n)) return "there was no resume file to attach";
   if (/option/.test(n)) return "the list did not have that choice";
+  if (/held/.test(n)) return "required fields were still empty";
+  if (/navigated/.test(n)) return "the page moved on";
   return "the page did not take it";
 }
 
@@ -225,6 +281,41 @@ function createAgent(deps) {
   };
   const feedOf = (recordId) => feeds.get(String(recordId)) || null;
 
+  // ---- every call into the pane is capped, and Stop preempts it ----------------------------
+  // guard(p, ms, what): the promise, or a rejection after ms ("<what> timed out", marked
+  // ``hang``), or at once when the run was stopped, or (nav) when the page navigated away so a
+  // call to the old document (Electron leaves those pending) never holds the loop.
+  let navEpoch = 0;
+  function guard(p, ms, what, o) {
+    const st = current;
+    const nav = navEpoch;
+    let t = null, iv = null;
+    const cap = new Promise((_r, rej) => {
+      t = setTimeout(() => { const e = new Error((what || "page") + " timed out"); e.hang = true; rej(e); }, ms || PANE_MS);
+      iv = setInterval(() => {
+        if (st && st.stop) { const e = new Error("stopped"); e.stopped = true; rej(e); }
+        else if (o && o.nav && navEpoch !== nav) { const e = new Error((what || "page") + " navigated"); e.navigated = true; rej(e); }
+      }, 150);
+      if (iv.unref) iv.unref();
+    });
+    return Promise.race([Promise.resolve(p), cap]).finally(() => { clearTimeout(t); clearInterval(iv); });
+  }
+  // The run's webContents behind a proxy whose executeJavaScript is guarded; everything else
+  // is the real thing (events, URL, debugger, reload).
+  function guardedWc(real) {
+    if (!real || real.__guarded) return real;
+    return new Proxy(real, {
+      get(t, k) {
+        if (k === "__guarded") return true;
+        if (k === "__real") return t;
+        if (k === "executeJavaScript") return (expr, ug) => guard(t.executeJavaScript(expr, ug), PANE_MS, "page", { nav: true });
+        const v = t[k];
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+  }
+  const cmd = (dbg, method, params, ms) => guard(dbg.sendCommand(method, params), ms || 6000, method);
+
   // ---- the pane's scripts ------------------------------------------------------------------
   async function ensureScripts(wc) {
     const has = await wc.executeJavaScript("!!window.TailorAutofill && !!window.TailorAgent", true);
@@ -253,7 +344,7 @@ function createAgent(deps) {
           return "navigated";
         }
         let q = "";
-        try { q = await wc.executeJavaScript(QUIET_READ, true); } catch (e) { continue; }
+        try { q = await guard((wc.__real || wc).executeJavaScript(QUIET_READ, true), 3000, "quiet", { nav: true }); } catch (e) { continue; }
         const [since, state] = String(q).split("|");
         if (state === "complete" && Number(since) >= SETTLE_QUIET_MS && Date.now() - t0 > 300) return "quiet";
       }
@@ -289,8 +380,11 @@ function createAgent(deps) {
   // ---- the page view, main frame + cross-origin frames --------------------------------------
   async function openFrames(wc) {
     let count = 0;
-    try { count = await wc.executeJavaScript("window.TailorAutofill.crossOriginFrames()", true); } catch (e) { count = 0; }
+    try { count = await wc.executeJavaScript("window.TailorAutofill.crossOriginFrames()", true); } catch (e) { if (e && e.stopped) throw e; count = 0; }
     if (!count) return null;
+    try { return await guard(openFramesNow(wc), PANE_MS, "frames"); } catch (e) { if (e && e.stopped) throw e; return null; }
+  }
+  async function openFramesNow(wc) {
     const release = deps.acquireDebugger(wc);
     if (!release) return null;
     const cdp = deps.frames.electronCdp(wc.debugger);
@@ -307,7 +401,7 @@ function createAgent(deps) {
         } catch (e) { /* the frame navigated away */ }
       }
       if (!ctxs.length) { close(); return null; }
-      return { cdp, ctxs, close, eval: (ctx, expr) => deps.frames.evalIn(cdp, ctx, expr).catch(() => null) };
+      return { cdp, ctxs, close, eval: (ctx, expr) => guard(deps.frames.evalIn(cdp, ctx, expr), PANE_MS, "frame").catch(() => null) };
     } catch (e) { close(); return null; }
   }
 
@@ -384,9 +478,9 @@ function createAgent(deps) {
         return { x, y, w: b.width, h: b.height }; })()`, true);
       if (!r || !(r.w > 0 && r.h > 0)) return null;
       const dbg = wc.debugger;
-      await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: r.x, y: r.y });
-      await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: r.x, y: r.y, button: "left", clickCount: 1 });
-      await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: r.x, y: r.y, button: "left", clickCount: 1 });
+      await cmd(dbg, "Input.dispatchMouseEvent", { type: "mouseMoved", x: r.x, y: r.y });
+      await cmd(dbg, "Input.dispatchMouseEvent", { type: "mousePressed", x: r.x, y: r.y, button: "left", clickCount: 1 });
+      await cmd(dbg, "Input.dispatchMouseEvent", { type: "mouseReleased", x: r.x, y: r.y, button: "left", clickCount: 1 });
       return { ok: true, note: "" };
     } catch (e) { return null; }
     finally { release(); }
@@ -402,13 +496,13 @@ function createAgent(deps) {
       if (!focused) return null;
       const dbg = wc.debugger;
       // Replace whatever is there, then type for real: every key raises the events a person's would.
-      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: process.platform === "darwin" ? 4 : 2, commands: ["selectAll"] });
-      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA" });
-      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
-      await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
+      await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: process.platform === "darwin" ? 4 : 2, commands: ["selectAll"] });
+      await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA" });
+      await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
+      await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
       for (const ch of String(text)) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
+        await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
+        await cmd(dbg, "Input.dispatchKeyEvent", { type: "keyUp", key: ch });
       }
       // Leave the box the way a person does (Tab away): Workday commits a textarea on blur.
       const now = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); if (!el) return "";
@@ -445,10 +539,19 @@ function createAgent(deps) {
                                : wc.executeJavaScript(TEXT_JS(a.index), true).catch(() => ""));
       if (SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
     }
+    if (a.op === "wait") {
+      // The shell sleeps, never the page: a renderer that is wedged cannot be asked to wait.
+      await delay(Math.max(1, Math.min(5, Number(a.seconds) || 1)) * 1000);
+      return { ok: true, note: "", changed: false };
+    }
     const run = ctx ? fr.eval(ctx, expr) : wc.executeJavaScript(expr, true);
     let out;
-    try { out = (await withTimeout(run, ACTION_MS, a.op)) || { ok: false, note: "no result" }; }
-    catch (e) { out = { ok: false, note: String(e && e.message || e).slice(0, 120) }; }
+    try { out = (await guard(run, ACTION_MS, a.op, { nav: true })) || { ok: false, note: "no result" }; }
+    catch (e) {
+      if (e && e.stopped) throw e;
+      if (e && e.navigated) return { ok: true, note: "page changed", changed: true };
+      out = { ok: false, note: String(e && e.message || e).slice(0, 120) };
+    }
     if (!ctx && a.op === "click" && out && /covered/.test(out.note || "")) {
       const real = await realClick(wc, a.index);              // the pointer lands where the eye does
       if (real) return real;
@@ -461,10 +564,10 @@ function createAgent(deps) {
     const finder = FILE_JS(index);
     if (ctx) {
       try {
-        const r = await fr.cdp.send("Runtime.evaluate", { expression: finder, contextId: ctx.contextId }, ctx.sessionId);
+        const r = await guard(fr.cdp.send("Runtime.evaluate", { expression: finder, contextId: ctx.contextId }, ctx.sessionId), 6000, "frame");
         const objectId = r && r.result && r.result.objectId;
         if (!objectId) return { ok: false, note: "no file input near " + index };
-        await fr.cdp.send("DOM.setFileInputFiles", { files: [resumePath], objectId }, ctx.sessionId);
+        await guard(fr.cdp.send("DOM.setFileInputFiles", { files: [resumePath], objectId }, ctx.sessionId), 10000, "frame upload");
         return { ok: true, note: "uploaded" };
       } catch (e) { return { ok: false, note: "upload failed" }; }
     }
@@ -472,11 +575,11 @@ function createAgent(deps) {
     if (!release) return { ok: false, note: "devtools holds the debugger" };
     try {
       const dbg = wc.debugger;
-      await dbg.sendCommand("DOM.enable");
-      const ev = await dbg.sendCommand("Runtime.evaluate", { expression: finder });
+      await cmd(dbg, "DOM.enable");
+      const ev = await cmd(dbg, "Runtime.evaluate", { expression: finder });
       const objectId = ev && ev.result && ev.result.objectId;
       if (!objectId) return { ok: false, note: "no file input near " + index };
-      await dbg.sendCommand("DOM.setFileInputFiles", { files: [resumePath], objectId });
+      await cmd(dbg, "DOM.setFileInputFiles", { files: [resumePath], objectId }, 10000);
       return { ok: true, note: "uploaded" };
     } catch (e) { return { ok: false, note: "upload failed" }; }
     finally { release(); }
@@ -506,7 +609,9 @@ function createAgent(deps) {
   // Every choice of a native <select> (the view prints only its first four), read from the
   // element itself, in its own frame. null when the field is not a select or cannot be read.
   async function selectChoices(wc, fr, v, label) {
-    const idx = indexFor(v.text, label);
+    return selectChoicesAt(wc, fr, v, indexFor(v.text, label));
+  }
+  async function selectChoicesAt(wc, fr, v, idx) {
     if (!idx || !/^\*?\[\d+\]<select\b/.test(viewLine(v.text, idx))) return null;
     const ctx = v.frameOf.get(idx);
     const expr = `window.TailorAgent.selectOptions(${idx})`;
@@ -522,8 +627,10 @@ function createAgent(deps) {
   // close it again. The person is then offered the page's own words. Main frame only; no
   // choices when it is not such a dropdown or nothing showed.
   async function dropdownOptions(wc, v, label) {
+    return dropdownOptionsAt(wc, v, indexFor(v.text, label));
+  }
+  async function dropdownOptionsAt(wc, v, idx) {
     const none = { options: [], partial: false };
-    const idx = indexFor(v.text, label);
     if (!idx || v.frameOf.has(idx)) return none;
     if (!/^\*?\[\d+\]<combobox\b/.test(viewLine(v.text, idx))) return none;
     const js = (expr) => wc.executeJavaScript(expr, true);
@@ -536,7 +643,7 @@ function createAgent(deps) {
       await js(`window.TailorAgent.markPopups(${idx}, ${!was})`).catch(() => null);
       if (!was) {
         const opened = await realClick(wc, idx);
-        if (!opened) await withTimeout(js(`window.TailorAgent.act(${JSON.stringify({ op: "click", index: idx })})`), ACTION_MS, "open");
+        if (!opened) await guard(js(`window.TailorAgent.act(${JSON.stringify({ op: "click", index: idx })})`), ACTION_MS, "open");
       }
       for (let i = 0; i < 8; i++) {
         await delay(i ? 350 : 500);
@@ -586,7 +693,7 @@ function createAgent(deps) {
     const want = JSON.stringify(String(option));
     const line = viewLine(v.text, idx);
     const chosen = async (i) => !!(await js(`window.TailorAgent.chosenIs(${i}, ${want})`).catch(() => false));
-    const inPage = (a) => withTimeout(js(`window.TailorAgent.act(${JSON.stringify(a)})`), ACTION_MS, a.op).catch(() => null);
+    const inPage = (a) => guard(js(`window.TailorAgent.act(${JSON.stringify(a)})`), ACTION_MS, a.op).catch(() => null);
     try {
       if (/^\*?\[\d+\]<select\b/.test(line)) {
         await inPage({ op: "select", index: idx, option: String(option) });
@@ -710,8 +817,8 @@ function createAgent(deps) {
       // The person said yes: click the accept button / tick the box like a person would.
       const before = url;
       let res = await realClick(wc, it.index);
-      if (!res) res = await withTimeout(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index: it.index })})`, true),
-                                        ACTION_MS, "accept").catch(() => null);
+      if (!res) res = await guard(wc.executeJavaScript(`window.TailorAgent.act(${JSON.stringify({ op: "click", index: it.index })})`, true),
+                                  ACTION_MS, "accept").catch(() => null);
       if (!(res && res.ok)) continue;                    // tried again on the next pass
       await settle(wc, before);
       try { await ensureScripts(wc); } catch (e) { /* the next step injects again */ }
@@ -729,8 +836,8 @@ function createAgent(deps) {
     const release = deps.acquireDebugger(wc);
     if (!release) return false;
     try {
-      await wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
-      await wc.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+      await cmd(wc.debugger, "Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+      await cmd(wc.debugger, "Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
       return true;
     } catch (e) { return false; }
     finally { release(); }
@@ -797,16 +904,24 @@ function createAgent(deps) {
     }
     ready.delete(recordId);
     deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, clear: true }).catch(() => null);
+    deps.postApp("/api/autoapply/agent/unavailable", { record_id: recordId, clear: true }).catch(() => null);
     const S = (R && R.state) || null;     // the parked run's own state, when it carries on in place
     const hosts = await allowedHosts(applyUrl);
     if (S && S.hosts) for (const h of S.hosts) hosts.add(h);
     const history = (S && S.history) || [];
     const portals = (S && S.portals) || new Set();   // hosts whose portal account was ensured this run
+    const portalNew = (S && S.portalNew) || new Set(); // hosts whose account was CREATED this run (the site does not know it yet)
     const startedAt = (S && S.startedAt) || Date.now() / 1000; // mail older than the run is never used
     let emailCode = "";                  // a code the mailbox handed over, for the next step only
     const runAnswers = (S && S.runAnswers) || {};    // question -> the person's answer this run (bar, Telegram)
     const knownSeen = (S && S.knownSeen) || new Set();  // questions answered from their material without asking
     const eeoTried = (S && S.eeoTried) || new Set();    // self-identification questions the shell tried to fill
+    // (Section 15) The plan the brain keeps (pages done, now, todo) and the dollars spent so far:
+    // both carry over a park, so a resumed run continues from where it was.
+    let plan = (S && S.plan) || [];
+    let spent = (S && S.spent) || 0;
+    const checkedPages = (S && S.checkedPages) || new Set();   // pages whose Next was held once for a check
+    let awaitInfo = (S && S.await) || null;  // the mail a parked run was waiting on (re-checked on resume)
     // Terms the site requires: per site, the person's yes this run (via "always" | "all" |
     // "once"), how often each notice was tried, and what was accepted (the Ready to send summary).
     const terms = (S && S.terms) || { recordId, company: String(opts.company || ""), termsTries: new Map(),
@@ -832,6 +947,8 @@ function createAgent(deps) {
     let fr = null;
     let disarmSigning = () => {};
     let wcNow = null;
+    const runStart = Date.now();
+    feed.plan = plan; feed.cost = spent;
     const finish = (res) => { if (fr) { fr.close(); fr = null; } disarmSigning(); current = null; return res; };
     const stopped = (reason, message, extra) => {
       feed.close();
@@ -842,13 +959,19 @@ function createAgent(deps) {
     const where = () => (wcNow && !wcNow.isDestroyed() ? wcNow.getURL() || "" : "");
     terms.parkInfo = () => ({ page_url: where(), run: runOpts(opts), batch: quick });
     const lead = batch && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "";
+    // The last thing the feed said the run was doing, for "took too long" and the ladder's park.
+    const lastState = () => {
+      const e = feed.events[feed.events.length - 1];
+      return e ? (e.verb + (e.summary ? " " + e.summary : "")).trim() : "";
+    };
     // Park the job: the pane is released for the next one, the question (if any) stays open, and
     // an answer (or Continue) re-runs it. ``kind`` "questions" | "terms" (the engine already parked
     // the ask) or "captcha" | "person" (parked here, nothing to answer).
     const park = async (kind, message, extra) => {
       const pageUrl = where();
       parked.set(String(recordId), { epoch: paneEpoch, pageUrl, opts: Object.assign({}, opts, { resume: null, mode: "single", batchAt: null, expectSig: "" }), kind,
-                                     state: { history, portals, startedAt, runAnswers, knownSeen, eeoTried, terms, page, hosts: Array.from(hosts) } });
+                                     state: { history, portals, portalNew, startedAt, runAnswers, knownSeen, eeoTried, terms, page, hosts: Array.from(hosts),
+                                              plan, spent, checkedPages, await: awaitInfo } });
       if (kind === "captcha" || kind === "person") {
         await deps.postApp("/api/autoapply/agent/park", { record_id: recordId, kind, message, page_url: pageUrl, run: runOpts(opts), batch: quick }).catch(() => null);
       }
@@ -869,6 +992,153 @@ function createAgent(deps) {
       reason === "captcha" ? "This page has a captcha. Solve it on the page, then press Continue."
         : reason === "phone-code" ? "The site wants a code from your phone. Enter it on the page, then press Continue."
           : String(message || "This page needs you.").replace(/ Have a look( at it| at the page)?\.?$/, "") + " Do the step on the page, then press Continue.", extra);
+    // (Section 13) The AI itself is unavailable (out of credits, no key, access off): that is
+    // never "needs you". The job stops with the plain reason, nothing on it changes, the Auto-apply
+    // row and one Telegram line say so, and a batch stops after the first such error.
+    const unavailable = async (message) => {
+      const msg = message || "SponsorJobs' AI is unavailable right now. Nothing was changed; try again later.";
+      await deps.postApp("/api/autoapply/agent/unavailable", { record_id: recordId, message: msg, batch }).catch(() => null);
+      if (batchOn) { batchOn.stop = true; batchOn.fatal = msg; }
+      return stopped("ai-unavailable", (batch ? lead : "") + msg, { url: where(), ai: true });
+    };
+
+    // ---- the recovery ladder (section 13) --------------------------------------------------
+    // Replaces every "stuck, have a look" stop. One problem at a time, keyed on the page it is
+    // about: (1) one nudge with the exact error and what was tried; (2) one reflection call with
+    // a screenshot ("list the likely causes, pick one, choose a strategy"); (3) the strategy menu
+    // in order, each once; (4) only then park, saying what was tried. A hang (the page did not
+    // answer, a skeleton that never loads) skips straight to the strategies.
+    const ladder = { key: "", stage: 0, tried: [], problem: "", runs: 0, lastHash: "" };
+    const pendingNudges = [];
+    let pendingReflect = null;
+    let pendingImage = "";
+    let toolFill = false;                // next step: the engine stands back, the brain fills
+    let observations = [];
+    let waits = 0;                       // the brain's plain waits in a row
+    let blank = null;                    // { hash, since } while the page shows nothing to do
+    let afterEmailLink = false;          // an emailed link was opened: a careers home is not the end
+    const ladderSay = (what, detail) => {
+      feed.push("another", "Trying another way", what, { state: "retry", detail: detail || "" });
+      progress(recordId, "running", lastMsg.get(fkey) || "Trying another way", { step: feed.step });
+    };
+    async function capture(wc) {
+      try {
+        if (!wc || typeof wc.capturePage !== "function") return "";
+        const img = await guard(wc.capturePage(), 8000, "screenshot");
+        if (!img || typeof img.toPNG !== "function") return "";
+        const small = typeof img.resize === "function" ? img.resize({ width: 900 }) : img;
+        return small.toPNG().toString("base64");
+      } catch (e) { if (e && e.stopped) throw e; return ""; }
+    }
+    async function waitForForm(wc, seconds) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < seconds * 1000) {
+        if (st.stop) return false;
+        let shape = null;
+        try { shape = await wc.executeJavaScript("window.TailorAgent && window.TailorAgent.pageShape ? window.TailorAgent.pageShape() : null", true); }
+        catch (e) { if (e && e.stopped) throw e; if (e && e.hang) return false; shape = null; }
+        if (shape && (shape.fields > 0 || shape.buttons > 3) && !shape.skeleton) return true;
+        await delay(500);
+      }
+      return false;
+    }
+    // Run one strategy from the menu. Returns what happened, as an observation line.
+    async function runStrategy(wc, name) {
+      ladder.tried.push(name);
+      const before = wc.getURL() || "";
+      ladderSay(STRATEGY_WORDS[name] || name);
+      dlog("ladder", name + " (" + ladder.problem + ")");
+      let note = "";
+      try {
+        if (name === "wait_for form") {
+          const ok = await waitForForm(wc, WAIT_FORM_S);
+          note = ok ? "the form appeared" : "nothing appeared in " + WAIT_FORM_S + " s";
+        } else if (name === "reload") {
+          navEpoch++;
+          wc.reload();
+          await delay(400);
+          await deps.waitPaneLoad(SETTLE_CAP_MS * 2);
+          await settle(wc, "");
+          note = "reloaded the page";
+        } else if (name === "back") {
+          navEpoch++;
+          const nh = wc.navigationHistory;
+          if (nh && typeof nh.goBack === "function") nh.goBack(); else if (typeof wc.goBack === "function") wc.goBack();
+          await delay(400);
+          await deps.waitPaneLoad(SETTLE_CAP_MS);
+          await settle(wc, before);
+          note = "went back a page";
+        } else if (name === "reopen_job" || name === "sign in again") {
+          navEpoch++;
+          paneEpoch++;
+          deps.openInPane(applyUrl);
+          await delay(400);
+          await deps.waitPaneLoad();
+          await settle(wc, before);
+          note = "opened the job again";
+          if (name === "sign in again") pendingNudges.push("Sign in again with the saved account ({{portal_email}}, {{portal_password}}) when the site asks, then carry on.");
+        } else if (name === "fill the field myself") {
+          toolFill = true;
+          pendingNudges.push("The engine could not fill the open fields in <left>. Fill them yourself: type the matching placeholder from <placeholders> into each (for a list: type, wait a step, click the * suggestion), then Save or Next.");
+          note = "the brain fills the open fields itself next step";
+        } else if (name === "read more of the page") {
+          pendingNudges.push("Use read_page and find to see the rest of the page before deciding; the control you need may be below the cut.");
+          note = "asked the brain to read more";
+        } else if (name === "use the other input form") {
+          pendingNudges.push("Use the other way to put the value in: the other input shape (digits only, the format the box names), the other control for the same question, or list_options then select.");
+          note = "asked the brain to try the other input form";
+        }
+      } catch (e) {
+        if (e && e.stopped) throw e;
+        note = name + " failed: " + String(e && e.message || e).slice(0, 80);
+      }
+      try { await ensureScripts(wc); } catch (e) { if (e && e.stopped) throw e; }
+      const line = "Tried another way (" + name + "): " + note;
+      observations.push(line);
+      history.push({ step: feed.step, evaluation: "", memory: "", actions: ["(shell) " + name], results: [note] });
+      return note;
+    }
+    const canDo = (wc, name) => {
+      if (name === "back") { try { const nh = wc.navigationHistory; return !!(nh && nh.canGoBack && nh.canGoBack()); } catch (e) { return false; } }
+      if (name === "sign in again") return portals.size > 0;
+      if (name === "fill the field myself") return !toolFill;
+      return true;
+    };
+    // One rung of the ladder for ``problem``. Returns { go: true } to carry on with the next
+    // step, or { park: message } when every rung is used up.
+    async function recover(wc, problem, o) {
+      o = o || {};
+      // One ladder per PAGE: whatever the problem is called, the rungs add up on the same page
+      // (a skeleton that hangs, then waits, is one problem: wait for the form, reload, reopen).
+      const key = hostOf(where()) + "|" + (o.hash || ladder.lastHash || "");
+      if (ladder.key !== key) {
+        if (ladder.runs >= MAX_LADDERS) return { park: "I tried another way " + ladder.runs + " times on this application and it is still stuck: " + problem + "." };
+        Object.assign(ladder, { key, stage: 0, tried: [], problem, runs: ladder.runs + 1 });
+      }
+      ladder.problem = problem;
+      ladder.stage++;
+      let stage = ladder.stage;
+      if (o.direct && stage <= 2) { ladder.stage = 3; stage = 3; }
+      if (stage === 1) {
+        const tried = history.slice(-3).map((h) => (h.actions || []).join(", ") + " -> " + (h.results || []).join(", ")).filter(Boolean);
+        pendingNudges.push("You are not making progress: " + problem + ". Last tried: " + (tried.join(" | ") || "nothing") + ". Do not repeat it: inspect the element, read_errors, find the control you need, and do it another way.");
+        ladder.tried.push("a hint to the AI");
+        ladderSay("with a hint about what went wrong", problem);
+        return { go: true };
+      }
+      if (stage === 2) {
+        pendingReflect = { problem, tried: ladder.tried.slice() };
+        pendingImage = await capture(wc);
+        ladder.tried.push("a closer look with a screenshot");
+        ladderSay("with a closer look at the page", "listing the likely causes");
+        return { go: true };
+      }
+      const menu = o.menu || STRATEGIES;
+      const next = menu.find((n) => !ladder.tried.includes(n) && canDo(wc, n));
+      if (next) { await runStrategy(wc, next); return { go: true }; }
+      return { park: "I tried " + ladder.tried.join(", ") + " and could not get past this: " + problem + "." };
+    }
+    const HANG_MENU = ["wait_for form", "reload", "reopen_job"];
 
     try {
       let pane = null;
@@ -889,16 +1159,45 @@ function createAgent(deps) {
         pane = deps.getPane();
       }
       if (!pane) return stopped("no-page", "The browser pane is closed.");
-      const wc = pane.webContents;
+      const wc = guardedWc(pane.webContents);
       wcNow = wc;
       wc.on("will-prevent-unload", (e) => e.preventDefault());    // "leave page?" never blocks the agent
+      const onNavigated = () => { navEpoch++; };
+      wc.on("did-navigate", onNavigated);
+      wc.on("render-process-gone", onNavigated);
+      st.disarmSigning = () => { disarmSigning(); try { wc.removeListener("did-navigate", onNavigated); wc.removeListener("render-process-gone", onNavigated); } catch (e) { /* gone */ } };
       await settle(wc, "");
+      // A run parked while waiting for the site's mail: one more look in the inbox first.
+      if (R && awaitInfo && awaitInfo.kind) {
+        feed.push("email", "Waiting", "for the site's email", { detail: "one more look in your inbox" });
+        progress(recordId, "running", "Waiting for the site's email");
+        const got = await guard(deps.postApp("/api/inbox/await", { kind: "any", host: awaitInfo.host || hostOf(applyUrl), company: opts.company || "",
+                                                                   since: startedAt, timeout_s: 20 }), 60000, "inbox").catch(() => null);
+        awaitInfo = null;
+        if (got && got.ok && got.link) {
+          hosts.add(hostOf(got.link));
+          afterEmailLink = true;
+          navEpoch++;
+          deps.openInPane(got.link);
+          await delay(400);
+          await settle(wc, "");
+          feed.mark("done", "the link arrived");
+          history.push({ step: 0, evaluation: "", memory: "", actions: ["await email"], results: ["opened the emailed link"] });
+        } else if (got && got.ok && got.code) { emailCode = String(got.code); feed.mark("done", "the code arrived"); }
+        else feed.mark("done", "no new mail; carrying on from the page");
+      }
 
       for (let step = 1; step <= MAX_STEPS; step++) {
         feed.step = step;
         feed.page = page;
+        feed.plan = plan; feed.cost = spent;
         if (st.stop) return stopped("stopped", "Stopped.");
         if (wc.isDestroyed() || deps.getPane() !== pane) return stopped("no-page", "The browser pane closed.");
+        // (Section 16) A batch moves on from a job that takes too long.
+        if (batch && Date.now() - runStart > JOB_CAP_MS) {
+          return park("person", "This one took too long (" + Math.round(JOB_CAP_MS / 60000) + " minutes): " + (lastState() || "no progress") + ".", { url: where() });
+        }
+        try {
         const url = wc.getURL() || "";
         if (!onSite(hosts, url)) return stopped("left-site", "The site sent me somewhere else (" + hostOf(url) + "). Stopped.");
         await ensureScripts(wc);
@@ -933,10 +1232,14 @@ function createAgent(deps) {
             portals.add(h);
             feed.push("signin", "Signing in", "with your account for this site");
             progress(recordId, "running", "Signing in", { step });
-            await deps.postApp("/api/autoapply/agent/portal-account", { host: h, create: true });
+            const acct = await guard(deps.postApp("/api/autoapply/agent/portal-account", { host: h, create: true }), 30000, "portal").catch(() => null);
+            if (acct && acct.ok && acct.created) portalNew.add(h);
           }
+        } else if (toolFill) {
+          toolFill = false;                                   // the brain fills this page itself
+          left = [];
         } else {
-          const rep = await deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true });
+          const rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true }), FILL_MS, "fill");
           dlog("step " + step + " fill:", rep);
           // "Could not plan this form" still names what is open: keep its left list either way.
           if (rep && rep.ok) filled = rep.filled || 0;
@@ -948,8 +1251,8 @@ function createAgent(deps) {
             // The page has a resume box the plan did not reach (a hidden input behind an
             // Upload button): attach the file to it directly, as assisted apply does.
             let wants = false;
-            try { wants = await wc.executeJavaScript("window.TailorAutofill.hasResumeUpload()", true); } catch (e) { wants = false; }
-            if (wants && await deps.attachResume(wc, opts.resumePath)) { filled += 1; attached = true; }
+            try { wants = await wc.executeJavaScript("window.TailorAutofill.hasResumeUpload()", true); } catch (e) { if (e && e.stopped) throw e; wants = false; }
+            if (wants && await guard(deps.attachResume(wc, opts.resumePath), 15000, "attach").catch((e) => { if (e && e.stopped) throw e; return false; })) { filled += 1; attached = true; }
           }
           if (filled > 0) feedFill(feed, page, fromMemory, attached) && say(recordId, "fill", "", "", { refresh: true });
         }
@@ -969,8 +1272,37 @@ function createAgent(deps) {
         dlog("step " + step + " url=" + url + " blocker=" + (sig.blocker || "") + " filled=" + filled + " view:", v.text.slice(0, 600));
         const pageHash = hostOf(url) + "|" + String(v.text.length) + "|" + v.text.slice(0, 400);
         pageHashes.push(pageHash);
+        ladder.lastHash = pageHash.slice(0, 60);
+        if (filled) { ladder.key = ""; }                      // progress: a new problem starts a fresh ladder
         if (pageHashes.length >= 4 && pageHashes.slice(-4).every((h) => h === pageHash) && !filled) {
-          return stopped("stuck", "I could not get past this page. Have a look at it.", { url });
+          const r = await recover(wc, "the page has not changed in 4 steps", { key: "same", hash: pageHash.slice(0, 60) });
+          if (r.park) return park("person", r.park, { url });
+          pageHashes.length = 0;
+        }
+
+        // (Section 13) Hang detection: a page with nothing to do on it (a skeleton, "Loading",
+        // no fields) that stays that way for HANG_MS, or the brain waiting on it MAX_WAITS
+        // times in a row, goes to the ladder's strategies: wait for the form, reload, reopen.
+        let shape = null;
+        try { shape = await wc.executeJavaScript("window.TailorAgent.pageShape ? window.TailorAgent.pageShape() : null", true); }
+        catch (e) { if (e && e.stopped) throw e; shape = null; }
+        const isBlank = !!(shape && shape.fields === 0 && (shape.skeleton || (shape.buttons <= 6 && shape.words < 60)));
+        if (isBlank) {
+          if (!blank || blank.hash !== pageHash) blank = { hash: pageHash, since: Date.now() };
+          if (Date.now() - blank.since > HANG_MS) {
+            const r = await recover(wc, "the page showed nothing to do for " + Math.round((Date.now() - blank.since) / 1000) + " s", { key: "hang", hash: pageHash.slice(0, 60), direct: true, menu: HANG_MENU });
+            if (r.park) return park("person", r.park, { url });
+            blank = null;
+            continue;
+          }
+        } else blank = null;
+        // After an emailed link (or the sign-in it led to) a careers home or job search page is
+        // not where the application is: open the job again, once.
+        if (afterEmailLink && !sig.blocker && isBlank === false && shape && shape.fields <= 1 && /search=true/.test(v.text) && !/<button[^>]*>Apply/i.test(v.text)
+            && !/apply|login|activate|verify/i.test(url.replace(applyUrl, ""))) {
+          afterEmailLink = false;
+          await runStrategy(wc, "reopen_job");
+          continue;
         }
 
         // The engine's open list, plus the fields the page's own errors name: a value the engine
@@ -994,44 +1326,98 @@ function createAgent(deps) {
         }
 
         // 3. the brain
-        const nudges = [];
+        const nudges = pendingNudges.splice(0);
         const last = hashes.slice(-LOOP_WINDOW);
         const repeats = (h) => last.filter((x) => x === h).length;
         const worst = Math.max(0, ...last.map(repeats));
-        if (worst >= 5) return stopped("stuck", "I kept repeating the same action without progress. Have a look.", { url });
-        if (worst >= 3) nudges.push("You repeated the same action " + worst + " times and it is not working. Try something else or report blocked.");
+        if (worst >= 5) {
+          const r = await recover(wc, "the same action was repeated " + worst + " times without progress", { key: "loop", hash: pageHash.slice(0, 60) });
+          if (r.park) return park("person", r.park, { url });
+          hashes.length = 0;
+        } else if (worst >= 3) nudges.push("You repeated the same action " + worst + " times and it is not working. Inspect it, read_errors, and do it another way.");
+        const overBudget = spent >= COST_CAP_USD;
+        if (overBudget) nudges.push("The budget for this application is used up.");
         feed.page = page;
         feed.readPages(v.text);
-        if (worst >= 3) feed.push("another", "Trying another way", "after the same action failed " + worst + " times");
-        else feed.push("read", "Reading", step === 1 && !R ? "the job page" : "the page and deciding what to do", { transient: true });
+        feed.push("read", "Reading", step === 1 && !R ? "the job page" : "the page and deciding what to do", { transient: true });
         progress(recordId, "running", lead + (step === 1 && !R ? "Reading the job page" : "Page " + page + ": deciding what to click"),
                  { step, filled });
+        const reflect = pendingReflect; pendingReflect = null;
+        const image = pendingImage; pendingImage = "";
         let reply = null;
         try {
-          reply = await withTimeout(deps.postApp("/api/autoapply/agent/step", {
+          reply = await guard(deps.postApp("/api/autoapply/agent/step", {
             record_id: recordId, step, max_steps: MAX_STEPS, url, lane: opts.lane || "assisted",
             view: v.text, filled_this_step: filled, left, nudges, blocker: sig.blocker || "",
             history: history.slice(-12), email_code: emailCode, answers: runAnswers,
+            plan, observations: observations.splice(0), reflect, image, last_step: overBudget || step >= MAX_STEPS,
+            portal_new: portalNew.has(hostOf(url)),
           }), STEP_BRAIN_MS, "brain");
-        } catch (e) { reply = null; }
+        } catch (e) { if (e && e.stopped) throw e; reply = null; }
         dlog("step " + step + " reply:", reply);
+        if (reply && reply.ok && reply.cost) { spent += Number(reply.cost) || 0; feed.cost = spent; }
+        if (reply && reply.ok && Array.isArray(reply.plan) && reply.plan.length) { plan = reply.plan.slice(0, 12); feed.plan = plan; }
         if (!reply || reply.ok === false) {
           if (reply && reply.reason === "fill-by-hand") return stopped("fill-by-hand", "This site does not allow automated filling.");
+          if (reply && reply.ok === false && reply.cost) { spent += Number(reply.cost) || 0; feed.cost = spent; }
+          // The model itself: out of credits, no key or access off is never the page's fault and
+          // never "needs you"; the job stops with the reason and a batch stops too.
+          if (reply && reply.fatal) return unavailable(reply.message || reply.error || "");
           failed++;
-          say(recordId, "think", "Asking the AI again", "", { state: "retry", detail: "no usable answer the first time" });
-          history.push({ step, evaluation: "", memory: "", actions: [], results: ["no reply from the brain"] });
-          if (failed >= MAX_FAILED_STEPS) return stopped("stuck", "I could not work out this page. Have a look at it.", { url });
+          const why = (reply && (reply.error || reply.reason)) || "no reply from the engine";
+          dlog("step " + step + " brain error:", why);
+          say(recordId, "think", "Asking the AI again", "", { state: "retry", detail: why.slice(0, 120) });
+          history.push({ step, evaluation: "", memory: "", actions: [], results: ["no usable reply from the AI: " + why.slice(0, 80)] });
+          if (failed >= MAX_FAILED_STEPS) {
+            const r = await recover(wc, "the AI gave no usable reply " + failed + " times (" + why.slice(0, 80) + ")", { key: "brain", hash: pageHash.slice(0, 60) });
+            if (r.park) return park("person", r.park, { url });
+            failed = 0;
+          } else await delay(Math.min(8000, RETRY_MS * failed));
           continue;
         }
+        if (reply.refused) pendingNudges.push("You reported ready_to_submit but " + reply.refused + ". Carry on with the application.");
 
         // 4. done?
         const done = reply.done;
         if (done && done.outcome === "ready_to_submit") {
+          // (Section 14) Deterministic first: a sign-in page, a password box or a page with no
+          // Submit control is never the review page, whatever the model said.
+          const no = notReady(v.text);
+          if (no) {
+            pendingNudges.push("You reported ready_to_submit but " + no + ". Carry on with the application.");
+            history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(ready_to_submit refused)"], results: [no] });
+            failed++;
+            if (failed >= MAX_FAILED_STEPS) {
+              const r = await recover(wc, "the AI keeps reporting ready on a page that is not the review page (" + no + ")", { key: "ready", hash: pageHash.slice(0, 60) });
+              if (r.park) return park("person", r.park, { url });
+              failed = 0;
+            }
+            continue;
+          }
           // A Send whose page was gone: submit only when the review page came out the same.
           if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
             return park("person", "The review page is not the same as when I filled it. Check it on the page, then press Continue.", { url });
           }
-          return handOver(recordId, wc, url, opts, step, terms.accepted, v.text);
+          // Then the critic (one cheap call): anything blank or suspicious gets the brain one
+          // more round; after that the hand-over goes ahead and names what was noted.
+          if (!checkedPages.has("critic|" + reviewSig(v.text))) {
+            checkedPages.add("critic|" + reviewSig(v.text));
+            feed.push("check", "Checking", "the application before handing it over", { transient: true });
+            progress(recordId, "running", lastMsg.get(fkey) || "Checking", { step });
+            const c = await guard(deps.postApp("/api/autoapply/agent/critic", { record_id: recordId, view: v.text, plan, left }), 45000, "critic").catch((e) => { if (e && e.stopped) throw e; return null; });
+            if (c && c.cost) { spent += Number(c.cost) || 0; feed.cost = spent; }
+            const issues = (c && Array.isArray(c.issues) ? c.issues : []).map((x) => String(x).slice(0, 160)).filter(Boolean);
+            if (issues.length) {
+              checkedPages.add("critic-issues|" + recordId);
+              terms.criticIssues = issues;
+              feed.push("check", "Checking", "the application before handing it over", { state: "retry", detail: issues[0] });
+              pendingNudges.push("Before I hand over, a check found: " + issues.join("; ") + ". Fix what you can on this page (never Submit); if nothing can be fixed, report ready_to_submit again.");
+              history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(pre-submit check)"], results: issues.slice(0, 3) });
+              continue;
+            }
+            feed.push("check", "Checked", "the application: nothing blank or wrong", { state: "done" });
+          }
+          return handOver(recordId, wc, url, opts, step, terms.accepted, v.text, terms.criticIssues || []);
         }
         if (done && done.outcome === "blocked" && done.reason === "needs-consent") {
           // The model saw a notice to accept that the shell has not handled: the shell asks the
@@ -1131,34 +1517,60 @@ function createAgent(deps) {
           continue;
         }
         if (done && done.outcome === "blocked") {
-          // What only the person can do on the page (a captcha, a phone code, a sign-in): the job
-          // parks with Continue, and the next job goes on.
-          if (PARK_REASONS.has(done.reason || "needs-person")) {
-            return parkFor(done.reason || "needs-person", blockedMessage(done.reason, stillOpen(left, runAnswers, knownSeen)), { url, left });
+          // What only the person can do on the page (a captcha, a phone code): the job parks with
+          // Continue, and the next job goes on. "needs-person" for a technical reason first goes
+          // up the ladder (a hint, a closer look, the strategies); it parks when that is used up.
+          const reason = done.reason || "needs-person";
+          if (reason === "needs-person" && !overBudget) {
+            const r = await recover(wc, "the AI reported it could not continue (" + String(done.reason || "") + (reply.evaluation ? ": " + reply.evaluation.slice(0, 120) : "") + ")", { key: "brain-blocked", hash: pageHash.slice(0, 60) });
+            if (r.park) return park("person", r.park, { url, left });
+            history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["(reported blocked)"], results: ["trying another way instead"] });
+            continue;
           }
-          return stopped(done.reason || "needs-person", blockedMessage(done.reason, stillOpen(left, runAnswers, knownSeen)), { url, left });
+          if (overBudget && reason === "needs-person") {
+            return park("person", "I spent the $" + COST_CAP_USD.toFixed(2) + " budget for this application: " + (lastState() || "no progress") + ".", { url, left });
+          }
+          if (PARK_REASONS.has(reason)) {
+            return parkFor(reason, blockedMessage(reason, stillOpen(left, runAnswers, knownSeen)), { url, left });
+          }
+          return stopped(reason, blockedMessage(reason, stillOpen(left, runAnswers, knownSeen)), { url, left });
         }
         if (done && done.outcome === "await_email") {
           // The site emailed a code or a link. With a mailbox connected the engine watches the
           // person's own inbox for THIS site's message (inbox/await, read-only, consent given in
-          // Settings); without one the run stops and says what to connect.
+          // Settings); without one the run stops and says what to connect. No mail in time: one
+          // more look after a minute, then the job parks with Continue (the resumed run looks
+          // in the inbox once more before anything else).
           feed.push("email", "Waiting", "for the site's email");
           progress(recordId, "running", "Waiting for the site's email", { step });
-          const got = await deps.postApp("/api/inbox/await", {
-            kind: "any", host: hostOf(url), company: opts.company || "", since: startedAt, timeout_s: 180 });
+          const askMail = (timeout) => guard(deps.postApp("/api/inbox/await", {
+            kind: "any", host: hostOf(url), company: opts.company || "", since: startedAt, timeout_s: timeout }), (timeout + 30) * 1000, "inbox").catch((e) => { if (e && e.stopped) throw e; return null; });
+          let got = await askMail(EMAIL_WAIT_S);
           dlog("step " + step + " await ->", got && { ok: got.ok, kind: got.kind, reason: got.reason, link: !!got.link, code: !!got.code });
+          if (got && got.ok === false && got.reason === "timeout") {
+            feed.push("email", "Waiting", "for the site's email", { detail: "nothing yet, one more look in a minute" });
+            progress(recordId, "running", "Waiting for the site's email", { step });
+            await delay(Math.min(EMAIL_RECHECK_S, 60) * 1000);
+            got = await askMail(EMAIL_RECHECK_S);
+            dlog("step " + step + " await again ->", got && { ok: got.ok, kind: got.kind, reason: got.reason, link: !!got.link, code: !!got.code });
+          }
           if (!got || got.ok === false) {
             if (got && got.reason === "not-connected") {
               return stopped("verify-email", "The site emailed you a " + (done.reason === "code" ? "code" : "link")
                 + ". Connect your email in Settings so this finishes by itself, or do that step yourself and press Apply for me again.", { url });
             }
-            return stopped("verify-email", "The site's email did not arrive in 3 minutes. Check your inbox, then press Apply for me again.", { url });
+            awaitInfo = { kind: done.reason === "code" ? "code" : "link", host: hostOf(url), since: startedAt };
+            feed.mark("done", "it did not arrive");
+            return park("person", "The " + (opts.company || "site") + " email (a " + (done.reason === "code" ? "code" : "link") + ") did not arrive in "
+              + Math.round((EMAIL_WAIT_S + EMAIL_RECHECK_S) / 60) + " minutes. Check your inbox and do the step on the page, then press Continue; I look for the mail once more first.", { url });
           }
           feed.mark("done", got.code ? "the code arrived" : got.link ? "the link arrived" : "");
           if (got.code) { emailCode = String(got.code); history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["await email"], results: ["got the code"] }); continue; }
           if (got.link) {
             const before = wc.getURL() || "";
             hosts.add(hostOf(got.link));                   // the link belongs to this site's mail
+            afterEmailLink = true;
+            navEpoch++;
             deps.openInPane(got.link);
             await delay(400);
             await settle(wc, before);
@@ -1172,52 +1584,188 @@ function createAgent(deps) {
         const results = [];
         const names = [];
         let stepFailed = false;
-        if ((reply.actions || []).length) {
+        const acts = reply.actions || [];
+        if (acts.length) {
           const sp = splitSummary(reply.summary || "");
           if (sp.verb) feed.push("act", sp.verb, sp.rest);
           else feed.push("act", "Working", "on the page");
           progress(recordId, "running", lastMsg.get(fkey) || "Working", { step, filled });
         }
+        // (Section 13) The brain's plain waits are capped: MAX_WAITS in a row and the shell
+        // takes over (wait for the form, reload, reopen the job).
+        const onlyWaits = acts.length > 0 && acts.every((a) => a.op === "wait" || a.op === "wait_for");
+        waits = onlyWaits ? waits + 1 : 0;
+        if (waits >= MAX_WAITS) {
+          waits = 0;
+          const r = await recover(wc, "waiting on this page " + MAX_WAITS + " times did not help", { key: "waits", hash: pageHash.slice(0, 60), direct: true, menu: HANG_MENU });
+          if (r.park) return park("person", r.park, { url });
+          history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: acts.map((a) => a.op), results: ["waited enough; the shell tried another way"] });
+          continue;
+        }
         const actFails = [];
-        for (const a of reply.actions || []) {
+        let strategyDone = false;
+        for (const a of acts) {
           if (st.stop) return stopped("stopped", "Stopped.");
-          const h = [a.op, a.index, a.sensitive ? "(secret)" : (a.text || a.option || a.direction || "")].join("|");
+          const h = [a.op, a.index, a.sensitive ? "(secret)" : (a.text || a.option || a.direction || a.selector || "")].join("|");
           hashes.push(h);
-          names.push(a.op + " " + (a.index || "") + (a.sensitive ? " (secret)" : a.text ? " " + JSON.stringify(a.text).slice(0, 40) : a.option ? " " + a.option : ""));
+          names.push(a.op + " " + (a.index || "") + (a.sensitive ? " (secret)" : a.text ? " " + JSON.stringify(a.text).slice(0, 40) : a.option ? " " + a.option : a.selector ? " " + a.selector.slice(0, 40) : ""));
           const before = wc.getURL() || "";
+          // The read-only tools and the page tools (section 12): an observation, never a stop.
+          if (TOOL_OPS.has(a.op)) {
+            const obs = await runTool(wc, fr, v, a);
+            observations.push(obs.text);
+            results.push(obs.ok ? "ok" + (obs.note ? ", " + obs.note : "") : "failed: " + (obs.note || "?"));
+            dlog("step " + step + " tool " + h + " ->", obs.text.slice(0, 200));
+            if (obs.pageChanged) { results[results.length - 1] += ", page changed"; strategyDone = true; break; }
+            continue;
+          }
+          // (Section 14) Before a click that moves on (Next, Continue, Save): once per page, a
+          // deterministic check that every required field has a value. Empty ones hold the
+          // click and go back as an observation; the brain fills them or asks the person.
+          if (a.op === "click" && !v.frameOf.has(a.index) && !checkedPages.has(pageHash)) {
+            const name = lineName(viewLine(v.text, a.index));
+            if (NEXT_RE.test(name)) {
+              checkedPages.add(pageHash);
+              let chk = null;
+              try { chk = await wc.executeJavaScript("window.TailorAgent.pageCheck ? window.TailorAgent.pageCheck() : null", true); }
+              catch (e) { if (e && e.stopped) throw e; chk = null; }
+              if (chk && Array.isArray(chk.required_empty) && chk.required_empty.length) {
+                const line = "Page check before " + name + ": required fields still empty: " + chk.required_empty.join(", ")
+                  + (chk.errors && chk.errors.length ? ". Errors shown: " + chk.errors.join(" | ") : "") + ". Fill them (or report needs-answers if the person must), then click " + name + ".";
+                observations.push(line);
+                results.push("held: required fields still empty");
+                actFails.push(failWords("held"));
+                dlog("step " + step + " check:", line);
+                break;
+              }
+            }
+          }
           const r = await act(wc, fr, v, a, opts.resumePath || "");
           if (a.placeholder === "email_code" && r && r.ok) emailCode = "";
           results.push(r && r.ok ? (r.note ? "ok, " + r.note : "ok") : "failed: " + ((r && r.note) || "?"));
           if (!(r && r.ok) && !(r && r.note === "submit-guard")) actFails.push(failWords(r && r.note));
+          if (!(r && r.ok)) {
+            const line = viewLine(v.text, a.index);
+            observations.push("Your " + a.op + " on [" + a.index + "] " + (line ? line.slice(0, 120) : "") + " did not work: " + ((r && r.note) || "no result")
+              + ". Inspect it or do it another way.");
+          }
           dlog("step " + step + " act " + h + " ->", r);
           if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") {
             if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
               return park("person", "The review page is not the same as when I filled it. Check it on the page, then press Continue.", { url });
             }
-            return handOver(recordId, wc, url, opts, step, terms.accepted, v.text);
+            pendingNudges.push("That was the Submit button: never click it. Report ready_to_submit when the application is complete.");
           } continue; }
           if (a.op === "click" || a.op === "wait") {
             const why = await settle(wc, before);
             if (why === "navigated" || (wc.getURL() || "") !== before) { results[results.length - 1] += ", page changed"; break; }
           }
         }
-        if (!(reply.actions || []).length) stepFailed = true;
+        // A reflection reply's strategy, when its own actions did not already move the page.
+        if (reply.strategy && !strategyDone && STRATEGIES.includes(reply.strategy) && !ladder.tried.includes(reply.strategy)) {
+          const line = "the AI's closer look: " + (reply.likeliest || (reply.causes || [])[0] || "") ;
+          dlog("step " + step + " reflect ->", { causes: reply.causes, likeliest: reply.likeliest, strategy: reply.strategy });
+          feed.mark("done", line.slice(0, 120));
+          await runStrategy(wc, reply.strategy);
+          names.push("(strategy) " + reply.strategy);
+          results.push("done");
+        }
+        if (!acts.length && !reply.strategy) stepFailed = true;
         if (actFails.length) {
           feed.mark("retry", actFails[0]);
           progress(recordId, "running", lastMsg.get(fkey) || "Working", { step, filled });
         }
         failed = stepFailed ? failed + 1 : 0;
-        if (failed >= MAX_FAILED_STEPS) return stopped("stuck", "I could not get past this page. Have a look at it.", { url });
+        if (failed >= MAX_FAILED_STEPS) {
+          const r = await recover(wc, MAX_FAILED_STEPS + " steps in a row failed (" + results.slice(-2).join("; ").slice(0, 120) + ")", { key: "failed", hash: pageHash.slice(0, 60) });
+          if (r.park) return park("person", r.park, { url });
+          failed = 0;
+        }
         // A new page of the form (new URL, or the fields changed) advances the page counter.
         const after = (await signature(wc)) || {};
         if (sig.labels && after.labels && deps.isNewPage(sig.labels, after)) page++;
         else if ((wc.getURL() || "") !== url && (after.labels || []).length) page++;
         history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: names, results });
+        } catch (e) {
+          if (st.stop || (e && e.stopped)) return stopped("stopped", "Stopped.");
+          if (!(e && (e.hang || e.navigated))) throw e;
+          // (Section 13) The pane did not answer: a hang observation, then the ladder's
+          // strategies (wait for the form, reload, reopen the job). Never a frozen loop.
+          dlog("step " + step + " hang:", String(e.message || e));
+          feed.mark("retry", "the page did not answer");
+          history.push({ step, evaluation: "", memory: "", actions: ["(shell) " + String(e.message || e).slice(0, 60)], results: ["the page did not answer"] });
+          const r = await recover(wc, "the page did not answer (" + String(e.message || e).slice(0, 60) + ")", { key: "hang", hash: "", direct: true, menu: HANG_MENU });
+          if (r.park) return park("person", r.park, { url: where() });
+          continue;
+        }
       }
-      return stopped("stuck", "I ran out of steps on this one. Have a look at it.", {});
+      return park("person", "I ran out of steps (" + MAX_STEPS + ") on this one: " + (lastState() || "no progress") + ".", { url: where() });
     } catch (e) {
+      if (st.stop || (e && e.stopped)) return stopped("stopped", "Stopped.");
       console.error("apply agent:", e && e.stack || e);
       return stopped("error", "Something went wrong: " + String(e && e.message || e).slice(0, 100));
+    }
+
+    // ---- the read-only tools and the page tools, as the brain's actions (section 12) -------
+    // Each returns { ok, text (the observation), note?, pageChanged? }. Only the page's own
+    // text comes back, never a typed value (the engine masks those on its side as well).
+    async function runTool(wc, fr, v, a) {
+      const js = (expr) => wc.executeJavaScript(expr, true);
+      try {
+        if (a.op === "read_page") {
+          const r = await js(`window.TailorAgent.readPage(${Number(a.offset) || 0}, 6000)`);
+          if (!r || !r.text) return { ok: true, text: "read_page from [" + (a.offset || 0) + "]: nothing there (the page has " + v.indices.size + " elements)", note: "nothing" };
+          return { ok: true, text: "read_page from [" + (a.offset || 0) + "]:\n" + r.text + (r.more ? "\n(" + r.more + " more elements below; next read_page offset " + r.next + ")" : "") };
+        }
+        if (a.op === "find") {
+          const r = await js(`window.TailorAgent.find(${JSON.stringify(String(a.text || ""))})`);
+          const lines = (r && r.lines) || [];
+          return { ok: true, text: "find " + JSON.stringify(a.text) + ": " + (lines.length ? "\n" + lines.join("\n") : "nothing on the page matches"), note: lines.length ? lines.length + " found" : "nothing" };
+        }
+        if (a.op === "inspect") {
+          const ctx = v.frameOf.get(a.index);
+          const expr = `window.TailorAgent.inspect(${Number(a.index)})`;
+          const r = ctx ? await fr.eval(ctx, expr) : await js(expr);
+          if (!r) return { ok: false, text: "inspect [" + a.index + "]: no such element any more", note: "gone" };
+          return { ok: true, text: "inspect [" + a.index + "]: " + JSON.stringify(r).slice(0, 1500) };
+        }
+        if (a.op === "list_options") {
+          const got = (await selectChoicesAt(wc, fr, v, a.index)) || (await dropdownOptionsAt(wc, v, a.index));
+          const all = cleanOptions(got.options, 60);
+          return { ok: true, text: "options for [" + a.index + "]: " + (all.length ? all.join(" | ") + (got.partial || all.length >= 60 ? " (and more)" : "") : "none could be read"), note: all.length + " options" };
+        }
+        if (a.op === "read_errors") {
+          const r = await js("window.TailorAgent.readErrors()");
+          const errs = Array.isArray(r) ? r : [];
+          return { ok: true, text: "errors on the page: " + (errs.length ? errs.join(" | ") : "none shown"), note: errs.length + " errors" };
+        }
+        if (a.op === "screenshot") {
+          pendingImage = await capture(wc);
+          return { ok: !!pendingImage, text: pendingImage ? "screenshot taken; it comes with your next step" : "screenshot: the pane could not be captured", note: pendingImage ? "" : "no picture" };
+        }
+        if (a.op === "wait_for") {
+          const secs = Math.max(1, Math.min(30, Number(a.seconds) || 10));
+          const what = { text: a.text || "", selector: a.selector || "" };
+          const t0 = Date.now();
+          let seen = false;
+          while (Date.now() - t0 < secs * 1000) {
+            if (st.stop) break;
+            try { seen = !!(await js(`window.TailorAgent.has(${JSON.stringify(what)})`)); } catch (e) { if (e && e.stopped) throw e; seen = false; }
+            if (seen) break;
+            await delay(500);
+          }
+          const label = [what.text && JSON.stringify(what.text), what.selector && "selector " + what.selector].filter(Boolean).join(" or ");
+          return { ok: seen, text: "wait_for " + label + ": " + (seen ? "appeared after " + Math.round((Date.now() - t0) / 100) / 10 + " s" : "did not appear within " + secs + " s"), note: seen ? "" : "not seen" };
+        }
+        if (a.op === "back" || a.op === "reload" || a.op === "reopen_job") {
+          const note = await runStrategy(wc, a.op);
+          return { ok: true, text: a.op + ": " + note, pageChanged: true };
+        }
+      } catch (e) {
+        if (e && e.stopped) throw e;
+        return { ok: false, text: a.op + " failed: " + String(e && e.message || e).slice(0, 100), note: String(e && e.message || e).slice(0, 60) };
+      }
+      return { ok: false, text: a.op + ": unknown tool", note: "unknown" };
     }
   }
 
@@ -1257,8 +1805,9 @@ function createAgent(deps) {
     if (stoppedN) parts.push(stoppedN + " stopped");
     const msg = (b.stop ? "Stopped after " : "Done with ") + results.length + " application" + (results.length === 1 ? "" : "s")
       + (parts.length ? ": " + parts.join(", ") + "." : ".")
+      + (b.fatal ? " " + b.fatal : "")
       + (parkedN ? " Answer them in Auto-apply, Needs you" + (d && d.sent ? " or on Telegram" : "") + ", and I carry on with each one." : "");
-    progress(null, "batch-done", msg, { batch: { results: results.length, ready: readyN, sent: sentN, parked: parkedN, stopped: stoppedN } });
+    progress(null, "batch-done", msg, { batch: { results: results.length, ready: readyN, sent: sentN, parked: parkedN, stopped: stoppedN, fatal: b.fatal || "" } });
     if (parkedN) startPolling();
     setTimeout(() => { pollParked().catch(() => {}); }, 50);
     return { ok: true, results, digest: d || null };
@@ -1344,7 +1893,7 @@ function createAgent(deps) {
   }
 
   // ---- Submit: the shell's decision, never the model's --------------------------------------
-  async function handOver(recordId, wc, url, opts, step, accepted, viewText) {
+  async function handOver(recordId, wc, url, opts, step, accepted, viewText, noted) {
     if (current && current.disarmSigning) current.disarmSigning();
     const now = await deps.applyDecision(opts.url || url, url);
     const auto = !!opts.autonomous && now.click_submit === true;
@@ -1363,10 +1912,12 @@ function createAgent(deps) {
       return send(recordId);
     }
     deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep) }).catch(() => null);
-    if (fd) { fd.close(); fd.push("ready", "Ready to send", "", { state: "done", detail: said || "check it, then press Send" }); }
+    const notes = (noted || []).slice(0, 3);
+    const notedLine = notes.length ? "A check noted: " + notes.join("; ") + "." : "";
+    if (fd) { fd.close(); fd.push("ready", "Ready to send", "", { state: "done", detail: notedLine || said || "check it, then press Send" }); }
     progress(recordId, "ready", (opts.mode === "batch" && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "")
-             + "Ready to send. " + (said ? said + " " : "") + "Check it, then press Send.",
-             { step, ready: true, accepted: (accepted || []).slice() });
+             + "Ready to send. " + (said ? said + " " : "") + (notedLine ? notedLine + " " : "") + "Check it, then press Send.",
+             { step, ready: true, accepted: (accepted || []).slice(), noted: notes });
     current = null;
     setTimeout(() => { pollParked().catch(() => {}); }, 50);     // a parked job may be waiting its turn
     return { ok: true, ready: true, steps: step };
@@ -1434,7 +1985,18 @@ function createAgent(deps) {
   const busy = () => !!(current || batchOn);
 
   return { run, batch, send, stop, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
-           _test: { askLong, parked, epoch: () => paneEpoch, feeds } };
+           _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard } };
+}
+
+// The brain's tools the shell runs itself (section 12); the rest go to the page's act().
+const TOOL_OPS = new Set(["read_page", "find", "inspect", "list_options", "read_errors", "screenshot", "wait_for", "back", "reload", "reopen_job"]);
+// A click that moves on to the next page: the page check runs before it, once per page.
+const NEXT_RE = /^(next|continue|save (and|&) continue|save and proceed|proceed|review|next step|save)$/i;
+// A view line's own words: a button's text, else a field's label.
+function lineName(line) {
+  const m = /^\*?\[\d+\]<(?:button|a|input)[^>]*>([^<]*)</.exec(String(line || ""));
+  if (m && m[1].trim()) return m[1].trim();
+  return lineLabel(line);
 }
 
 // ---- reading the view for an ask (pure, so the tests reach them) -----------------------------
@@ -1727,5 +2289,5 @@ function blockedMessage(reason, left) {
 }
 
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion,
-                   optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, EEO_RE,
-                   TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig };
+                   optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
+                   TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES };
