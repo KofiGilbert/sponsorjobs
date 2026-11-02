@@ -1968,11 +1968,64 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .bb-fill.bb-stack .bb-fill-text { flex-basis: 100%; }
 /* The bar sits on the in-app browser's chrome, dark in both themes, so its buttons and answer box
    take the dark tokens: in the light theme the near-black primary vanished into the bar and the
-   outline buttons' grey text could hardly be read. */
-.bb-fill {
+   outline buttons' grey text could hardly be read. The steps under it (#bbFeed) are the same chrome. */
+.bb-fill, .bb-feed {
   --bg: #131316; --surface: #17171b; --surface-2: #1c1c21; --ink: #e7e7ea; --ink-2: #b4b4bb;
   --muted: #82828c; --faint: #55555e; --border: #242429; --border-strong: #2f2f36;
   --accent: #e4e4e8; --accent-hover: #f4f4f6; --accent-ink: #16161a; --accent-ring: rgba(228, 228, 232, 0.22);
+}
+
+/* ---------------- the live activity feed (apply agent bar + resume builder) ----------------
+   One live line: a small spinner, the verb in the accent, the summary, then the job and page in
+   muted text; a Steps toggle opens the run's timeline (time, marker, text, muted detail) with the
+   run's limits in a hairline footer. Neutral greys only; the accent is the verb. */
+.act-spin { flex: 0 0 auto; width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%;
+  border: 1.5px solid var(--border-strong); border-top-color: var(--accent); animation: act-spin .9s linear infinite; }
+@keyframes act-spin { to { transform: rotate(360deg); } }
+.act-done { flex: 0 0 auto; width: 12px; text-align: center; color: var(--muted); font-size: 12px; }
+.act-now { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.act-verb { color: var(--accent); font-weight: 600; }
+.act-meta { flex: 0 1 auto; min-width: 0; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted); font-size: 12px; }
+.bb-fill .act-meta { display: inline-flex; min-width: 0; max-width: 36%; }
+.act-meta .act-job { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-meta .act-pg { flex: 0 0 auto; white-space: pre; }
+.act-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: transparent; color: var(--ink-2);
+  font: inherit; font-size: 12px; line-height: 1; cursor: pointer; }
+.act-toggle:hover { color: var(--ink); border-color: var(--faint); }
+.act-toggle:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.act-toggle .act-n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.act-caret { width: 12px; height: 12px; color: var(--muted); transition: transform var(--dur) var(--ease); }
+.act-toggle[aria-expanded="true"] .act-caret { transform: rotate(180deg); }
+.act-tl { list-style: none; margin: 0; padding: 6px 0; max-height: 34vh; overflow-y: auto; }
+.act-step { display: grid; grid-template-columns: 76px 14px minmax(0, 1fr); column-gap: 8px; padding: 3px 0;
+  font-size: 12.5px; line-height: 1.45; color: var(--ink-2); }
+.act-t { color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; padding-top: 1px; }
+.act-mk { text-align: center; color: var(--muted); }
+.act-step.is-running .act-mk { color: var(--accent); font-weight: 700; }
+.act-step.is-running .act-tx { color: var(--ink); }
+.act-step.is-retry .act-mk { color: var(--flag); }
+.act-step.is-asking .act-mk, .act-step.is-parked .act-mk { color: var(--ink-2); }
+.act-tx { min-width: 0; overflow-wrap: anywhere; }
+.act-sub { color: var(--muted); }
+.act-foot { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 7px 0 2px; border-top: 1px solid var(--border);
+  color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+/* On the agent bar: the running line is neutral chrome (the green stays for "ready" and fills). */
+.bb-fill.is-live { background: var(--surface); color: var(--ink-2); }
+.bb-fill .act-toggle { padding: 0 8px; }
+.bb-feed { padding: 0 12px 8px 12px; background: var(--surface); border-bottom: 1px solid #2a2a2a; color: var(--ink-2); }
+.bb-feed[hidden] { display: none; }
+/* In the builder: one quiet strip above the preview, in the "What changed" grammar. */
+.build-live { border-bottom: 1px solid var(--border); background: var(--surface); padding: 9px 24px; }
+.build-live[hidden] { display: none; }
+.build-live .act-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; min-height: 24px; }
+.build-live .act-feed { padding-top: 4px; }
+.build-live .act-feed[hidden] { display: none; }
+@media (max-width: 640px) { .build-live { padding: 9px 16px; } .act-step { grid-template-columns: 64px 14px minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) {
+  .act-spin { animation: none; width: 8px; height: 8px; border: 0; background: var(--accent); }
+  .act-caret { transition: none; }
 }
 
 /* ---------------- profile section editor ---------------- */
