@@ -30,17 +30,31 @@ from llm.anthropic_client import DEFAULT_MODEL, AnthropicLLM
 BROKER_USER_AGENT = "SponsorJobs/0.1 (+https://github.com/KofiGilbert/sponsorjobs)"
 
 
+# What the person reads when the failure is OURS (the company key has no credit, is disabled or is
+# invalid: the broker answers {error: "ai_unavailable", reason: "company"}). Never an upgrade, never
+# a key prompt: nothing they can buy fixes it, and the owner has already been alerted by the broker.
+AI_COMPANY_TEXT = ("SponsorJobs' AI is temporarily unavailable. Your pass and packages are not "
+                   "affected. We have been alerted; try again in a little while.")
+# A passing failure (rate limit, overload): worth a retry here, then a plain "busy".
+AI_TRANSIENT_TEXT = "The AI is busy right now. Try again in a moment."
+TRANSIENT_TRIES = 3            # attempts on a transient answer, with a short backoff between
+TRANSIENT_MAX_WAIT = 8         # seconds: the broker's retry_after is honoured up to this
+
+
 class BrokerUnavailable(RuntimeError):
     """The managed broker could not be reached, or refused the call (service down, or quota hit).
 
     Carries a user-facing message AND a machine-readable ``reason`` the app turns into the right
     screen: ``upgrade_required`` (out of plan allowance -> show the upgrade prompt, NOT the
-    'your Anthropic credit ran out' one, which is a different problem with a different fix) or
-    ``service_down`` (our managed AI is temporarily unreachable)."""
+    'your Anthropic credit ran out' one, which is a different problem with a different fix),
+    ``ai_company`` (OUR AI is down: the company key failed; the person is told plainly and never
+    asked to buy anything), ``ai_transient`` (the model is busy; retried here first) or
+    ``service_down`` (the broker itself is unreachable)."""
 
-    def __init__(self, message: str, reason: str = ""):
+    def __init__(self, message: str, reason: str = "", retry_after: float | None = None):
         super().__init__(message)
         self.reason = reason
+        self.retry_after = retry_after
 
 
 class BrokerLLM(AnthropicLLM):
@@ -92,21 +106,32 @@ class BrokerLLM(AnthropicLLM):
             f"{self.broker_url}/llm/complete", data=data, method="POST", headers=headers)
         # One retry on a dropped or stalled connection. A slow home connection stalls a long
         # answer (the whole-profile draft) now and then, and without this the person lost a
-        # build that had otherwise succeeded (2026-10-08). A 4xx/5xx answer is not retried
-        # here: the broker already retries the model, and a quota answer must not be re-sent.
+        # build that had otherwise succeeded (2026-10-08). A quota answer is never re-sent, and
+        # neither is a company outage (the key is dead until the owner acts); only the broker's
+        # "transient" answer (the model is rate limited or overloaded, after the broker's own
+        # retries) is tried again here, a few times with a short backoff, so a passing blip never
+        # reaches the person as a failure.
         last_exc = None
         out = None
-        for attempt in range(2):
+        attempt = 0
+        transient = 0
+        while attempt < 2:
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:   # nosec - our broker
                     out = json.loads(resp.read().decode() or "{}")
                 break
             except urllib.error.HTTPError as exc:
-                message, reason = self._error(exc)
-                raise BrokerUnavailable(message, reason) from exc
+                message, reason, retry_after = self._error(exc)
+                transient += 1
+                if reason == "ai_transient" and transient < TRANSIENT_TRIES:
+                    wait = retry_after if retry_after is not None else 2 * transient
+                    time.sleep(min(max(wait, 0), TRANSIENT_MAX_WAIT))
+                    continue
+                raise BrokerUnavailable(message, reason, retry_after) from exc
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 last_exc = exc
-                if attempt == 0:
+                attempt += 1
+                if attempt < 2:
                     time.sleep(2)
                     continue
         if out is None:
@@ -128,14 +153,27 @@ class BrokerLLM(AnthropicLLM):
         return text
 
     @staticmethod
-    def _error(exc: "urllib.error.HTTPError") -> "tuple[str, str]":
-        detail = ""
+    def _error(exc: "urllib.error.HTTPError") -> "tuple[str, str, float | None]":
+        """(message for the person, reason, retry_after seconds or None) for a broker answer."""
+        body: dict = {}
         try:
-            detail = (json.loads(exc.read().decode() or "{}") or {}).get("error", "")
+            body = json.loads(exc.read().decode() or "{}") or {}
+            if not isinstance(body, dict):
+                body = {}
         except Exception:   # noqa: BLE001 - best-effort read of an error body
-            detail = ""
+            body = {}
+        detail = str(body.get("error") or "")
+        if detail == "ai_unavailable":
+            # The broker's structured outage answer (worker/src/outage.ts). The person never sees
+            # Anthropic's words, and a company failure never reads as something to buy.
+            why = str(body.get("reason") or "")
+            retry_after = body.get("retry_after")
+            retry_after = float(retry_after) if isinstance(retry_after, (int, float)) else None
+            if why == "company":
+                return AI_COMPANY_TEXT, "ai_company", None
+            return AI_TRANSIENT_TEXT, "ai_transient", retry_after
         if exc.code == 402:   # out of plan allowance -> a paywall moment, not a hard error
             return (detail or "You have used up the AI included in your plan for this period.",
-                    "upgrade_required")
+                    "upgrade_required", None)
         return (detail or "Tailor's AI service is temporarily unavailable. Please try again.",
-                "service_down")
+                "service_down", None)

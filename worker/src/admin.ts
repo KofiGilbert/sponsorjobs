@@ -7,6 +7,7 @@
 
 import { verifyAccess } from "./access";
 import { type Env, intVar } from "./env";
+import { type AiState, aiStatus, BILLING_URL, describeAi } from "./outage";
 import { dayOf, FREE_MODEL, INTERVIEW_SECONDS, PASS_MODEL, PASSES, periodOf } from "./metering";
 import { FREE_POOL_USER } from "./store";
 
@@ -48,6 +49,15 @@ export interface RecentSignIn {
 
 export interface Stats {
   generated_at: number;
+  // Whether model calls on the company key are going through (src/outage.ts): the same line
+  // /health shows, plus the cause and when the owner was last messaged.
+  ai: {
+    state: AiState;
+    summary: string;                       // "ok" | "company_outage since <time>" | "transient"
+    since: number | null;                  // unix seconds the state began; null when ok
+    last_alert_at: number | null;          // unix seconds the owner was last messaged
+    note: string;                          // the short upstream cause (empty when ok)
+  };
   accounts: {
     total: number;
     with_email: number;
@@ -173,8 +183,12 @@ export async function collectStats(env: Env, nowMs: number): Promise<Stats> {
       plan: r.plan && PASSES.includes(r.plan) && (r.pass_until ?? 0) > now ? r.plan : "free",
     }));
 
+  const ai = await aiStatus(db);
+
   return {
     generated_at: now,
+    ai: { state: ai.state, summary: describeAi(ai), since: ai.state === "ok" ? null : ai.since,
+          last_alert_at: ai.last_alert_at, note: ai.note },
     accounts: { total, with_email: one(1), created_unknown: one(2), new_this_week: one(3), new_per_day },
     plans: {
       free: Math.max(0, total - activePasses),
@@ -287,6 +301,15 @@ td:first-child{white-space:normal;overflow-wrap:anywhere;min-width:14ch}
 details{margin-top:8px}summary{cursor:pointer;color:var(--ink2);font-size:13px}
 </style></head><body><main>
 <header><h1>SponsorJobs admin</h1><span class="muted">Signed in as ${esc(viewer)} · ${esc(date(s.generated_at))} · read-only</span></header>
+
+<h2>AI (company Anthropic key)</h2>
+<div class="card ${s.ai.state === "company_outage" ? "red" : s.ai.state === "transient" ? "amber" : ""}">
+<div class="label">${s.ai.state === "ok" ? "OK: model calls are going through." :
+  s.ai.state === "company_outage" ? `<strong class="flag">DOWN (ours): every model call is failing since ${esc(date(s.ai.since))}.</strong>` :
+  `<strong class="flag">Busy: the last model call failed (rate limit or overload) at ${esc(date(s.ai.since))}.</strong>`}</div>
+${s.ai.state === "ok" ? "" : `<div class="sub" style="margin-top:6px">Cause: ${esc(s.ai.note || "unknown")} · owner alerted: ${esc(date(s.ai.last_alert_at))}` +
+  (s.ai.state === "company_outage" ? ` · <a href="${BILLING_URL}" style="color:inherit">Anthropic billing</a>` : "") + `</div>`}
+<div class="sub" style="margin-top:6px">People see "SponsorJobs' AI is temporarily unavailable" while it is down; passes and packages are not touched. Also on /health as <code>ai</code>.</div></div>
 
 <h2>Accounts</h2>
 <div class="grid4">

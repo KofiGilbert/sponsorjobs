@@ -1383,5 +1383,9 @@
   "act.st.retry": "Neuer Versuch",
   "act.st.now": "Jetzt",
   "act.st.asking": "Wartet auf dich",
-  "act.st.parked": "Pausiert"
+  "act.st.parked": "Pausiert",
+  "outage.aiCompany.h": "Die KI von SponsorJobs ist vorübergehend nicht verfügbar",
+  "outage.aiCompany.p": "Dein Pass und deine Pakete sind nicht betroffen. Wir wurden benachrichtigt; versuche es in einer Weile noch einmal.",
+  "outage.aiTransient.h": "Die KI ist ausgelastet",
+  "outage.aiTransient.p": "Die KI ist ausgelastet, ein neuer Versuch in einem Moment klappt meistens. Dein Pass und deine Pakete sind nicht betroffen."
 }

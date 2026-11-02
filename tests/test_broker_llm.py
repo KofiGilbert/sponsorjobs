@@ -113,3 +113,130 @@ def test_app_classifies_the_broker_paywall_as_upgrade_required():
     import ui.app as A
     assert A._classify_outage(BrokerUnavailable("used up", "upgrade_required")) == "upgrade_required"
     assert A._classify_outage(BrokerUnavailable("down", "service_down")) == "service_down"
+
+
+# ---- a COMPANY-side outage (worker/src/outage.ts): ours, said plainly, never an upgrade ------- #
+
+def _http(code: int, body: bytes):
+    def fake_urlopen(req, timeout=None):
+        raise urllib.error.HTTPError("u", code, "err", {}, io.BytesIO(body))
+    return fake_urlopen
+
+
+def test_company_outage_is_tagged_ai_company_with_the_plain_message(monkeypatch):
+    # The broker's structured answer when the company key has no credit or is disabled.
+    monkeypatch.setattr(bc.urllib.request, "urlopen",
+                        _http(503, b'{"error":"ai_unavailable","reason":"company"}'))
+    with pytest.raises(BrokerUnavailable) as exc:
+        BrokerLLM()._post({"prompt": "p"})
+    assert exc.value.reason == "ai_company"
+    assert str(exc.value) == bc.AI_COMPANY_TEXT
+    assert "pass and packages are not affected" in str(exc.value)
+    assert exc.value.retry_after is None
+    # Nothing the person could buy or add, and none of the provider's words.
+    low = str(exc.value).lower()
+    for word in ("upgrade", "key", "credit", "billing", "anthropic", "connection"):
+        assert word not in low
+    assert "SponsorJobs' AI is temporarily unavailable" in str(exc.value)
+
+
+def test_transient_outage_is_retried_three_times_then_tagged_ai_transient(monkeypatch):
+    calls = []
+    def fake_urlopen(req, timeout=None):
+        calls.append(1)
+        raise urllib.error.HTTPError("u", 503, "err", {}, io.BytesIO(
+            b'{"error":"ai_unavailable","reason":"transient","retry_after":0}'))
+    slept = []
+    monkeypatch.setattr(bc.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(bc.time, "sleep", lambda s: slept.append(s))
+    with pytest.raises(BrokerUnavailable) as exc:
+        BrokerLLM()._post({"prompt": "p"})
+    assert len(calls) == bc.TRANSIENT_TRIES == 3
+    assert slept == [0, 0]                           # retry_after honoured (0 here)
+    assert exc.value.reason == "ai_transient"
+    assert exc.value.retry_after == 0
+    assert str(exc.value) == bc.AI_TRANSIENT_TEXT
+
+
+def test_transient_outage_that_clears_on_retry_succeeds_quietly(monkeypatch):
+    calls = []
+    def fake_urlopen(req, timeout=None):
+        calls.append(1)
+        if len(calls) < 2:
+            raise urllib.error.HTTPError("u", 503, "err", {}, io.BytesIO(
+                b'{"error":"ai_unavailable","reason":"transient","retry_after":30}'))
+        return _Resp(b'{"text":"fine"}')
+    slept = []
+    monkeypatch.setattr(bc.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(bc.time, "sleep", lambda s: slept.append(s))
+    assert BrokerLLM()._post({"prompt": "p"}) == "fine"
+    assert slept == [bc.TRANSIENT_MAX_WAIT]          # a long retry_after is capped
+
+
+def test_a_company_outage_is_never_retried(monkeypatch):
+    calls = []
+    def fake_urlopen(req, timeout=None):
+        calls.append(1)
+        raise urllib.error.HTTPError("u", 503, "err", {}, io.BytesIO(b'{"error":"ai_unavailable","reason":"company"}'))
+    monkeypatch.setattr(bc.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(BrokerUnavailable):
+        BrokerLLM()._post({"prompt": "p"})
+    assert len(calls) == 1
+
+
+def test_the_persons_own_cap_keeps_its_upgrade_reason(monkeypatch):
+    # A 402 token cap / package limit is the person's plan, not our outage: still the paywall.
+    monkeypatch.setattr(bc.urllib.request, "urlopen",
+                        _http(402, b'{"error":"this pass is used up","reason":"token_cap"}'))
+    with pytest.raises(BrokerUnavailable) as exc:
+        BrokerLLM()._post({})
+    assert exc.value.reason == "upgrade_required"
+
+
+def test_outage_texts_have_no_dashes_and_say_resume_not_cv():
+    import re
+    for text in (bc.AI_COMPANY_TEXT, bc.AI_TRANSIENT_TEXT):
+        assert not re.search(r"[–—]", text)
+        assert " CV" not in text
+
+
+def test_app_surfaces_pass_the_company_reason_through_untouched(monkeypatch):
+    import ui.app as A
+    exc = BrokerUnavailable(bc.AI_COMPANY_TEXT, "ai_company")
+    assert A._classify_outage(exc) == "ai_company"
+    assert A._classify_outage(BrokerUnavailable(bc.AI_TRANSIENT_TEXT, "ai_transient")) == "ai_transient"
+    # The Telegram "tailor and queue" reply and the file import use the same plain words.
+    msg = A._friendly_failure("Analyst at Acme", exc)
+    assert msg == "I couldn't tailor Analyst at Acme: " + bc.AI_COMPANY_TEXT
+    for word in ("upgrade", "key", "credit", "connection", "needs you"):
+        assert word not in msg.lower()
+    assert A._FAILURE_TEXT["ai_company"] == bc.AI_COMPANY_TEXT
+    # The app's error wrapper hands the UI the structured reason (the overlay keys off it).
+    @A._guard
+    def boom():
+        raise exc
+    with A.app.test_request_context():
+        resp, status = boom()
+    assert status == 503
+    assert resp.get_json() == {"error": bc.AI_COMPANY_TEXT, "reason": "ai_company"}
+
+
+def test_telegram_assistant_says_the_plain_message_on_a_company_outage(monkeypatch):
+    import ui.app as A
+    class Down:
+        def app_assistant(self, system, user):
+            raise BrokerUnavailable(bc.AI_COMPANY_TEXT, "ai_company")
+    monkeypatch.setattr(A, "_make_llm", lambda *a, **k: Down())
+    monkeypatch.setattr(A, "_palace", lambda: None)
+    monkeypatch.setattr(A, "_assistant_summary", lambda: "")
+    assert A._annalisa_reply("what jobs fit me?") == bc.AI_COMPANY_TEXT
+    class Busy(Down):
+        def app_assistant(self, system, user):
+            raise BrokerUnavailable(bc.AI_TRANSIENT_TEXT, "ai_transient")
+    monkeypatch.setattr(A, "_make_llm", lambda *a, **k: Busy())
+    assert A._annalisa_reply("what jobs fit me?") == bc.AI_TRANSIENT_TEXT
+    class Dead(Down):
+        def app_assistant(self, system, user):
+            raise RuntimeError("no key")
+    monkeypatch.setattr(A, "_make_llm", lambda *a, **k: Dead())
+    assert A._annalisa_reply("what jobs fit me?") == ""          # the old "help" path is unchanged

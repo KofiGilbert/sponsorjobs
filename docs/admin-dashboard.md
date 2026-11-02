@@ -21,6 +21,11 @@ The page never shows tokens, token hashes or sign-in code hashes, and it cannot 
 
 ## What it shows
 
+- **AI (company Anthropic key):** whether model calls are going through right now. "OK", or
+  "DOWN (ours)" with the cause, since when, and when the owner was last messaged (see
+  "When the company AI key fails" below). The same line is on the public
+  `https://api.sponsorjobs.ai/health` as `ai`: `ok`, `company_outage since <time>` or `transient`
+  (the cause stays on this page).
 - **Accounts:** total, how many signed in with an e-mail, new this week, and a bar chart of new
   accounts per day for the last 30 days (hover a bar for the number, or open "Show as a table").
 - **Plans:** free, active Job Hunt Pass, active Season Pass, purchases (passes and interview packs
@@ -126,6 +131,29 @@ the code goes live. Type `y` if wrangler asks to confirm the migration.
    `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `wrangler.jsonc` match step 3 exactly (and
    `ADMIN_EMAILS`, if set, has your e-mail), then deploy again.
 4. `https://api.sponsorjobs.ai/health` should still answer as before. The app is not affected.
+
+## When the company AI key fails (`worker/src/outage.ts`)
+
+On 2026-11-01 the company Anthropic organization ran out of credits: every model call failed, the
+app told people "this one needs you", and nobody was told. Now:
+
+- The broker classifies each failed model call. No credit, billing, a disabled organization or an
+  invalid key is **ours** ("company"); a rate limit, an overload or a 5xx is **transient**. The app
+  gets `503 {"error": "ai_unavailable", "reason": "company" | "transient", "retry_after"?: n}`, never
+  Anthropic's words. People see "SponsorJobs' AI is temporarily unavailable. Your pass and packages
+  are not affected." with no upgrade button; the person's own limits (packages, pass, token cap) keep
+  their usual messages. A transient answer is retried by the app a few times before it says "busy".
+- On the first company failure the owner gets ONE Telegram message through the official bot with
+  the cause and the billing link (`https://console.anthropic.com/settings/billing`), then one an
+  hour while it lasts, and one "back" message when a call goes through again. Every outage is also
+  in the Worker log (`npx wrangler tail`).
+- **Setup (once):** tell the Worker which chat to message. Either
+  `npx wrangler secret put OWNER_TELEGRAM_CHAT_ID` (your private chat id with the bot: message
+  @userinfobot on Telegram, or read `chat_id` from the `telegram_chats` row of your account), or
+  leave it unset and the first address in `ADMIN_EMAILS` is used, provided that account has
+  connected Telegram in the app (Settings, Notifications). With neither, only the log is written.
+- Apply the migration before deploying: `npx wrangler d1 migrations apply DB --remote`, then
+  `npx wrangler deploy` (both from the `worker` folder).
 
 ## Changing things later
 

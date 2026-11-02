@@ -51,6 +51,10 @@ export interface Env {
   TELEGRAM_BOT_TOKEN?: string;      // from @BotFather
   TELEGRAM_BOT_USERNAME?: string;   // e.g. "SponsorJobsBot" (a leading @ is fine)
   TELEGRAM_WEBHOOK_SECRET?: string; // proves a /telegram/webhook call came from Telegram
+  // Where the owner is told the company AI key has stopped working (src/outage.ts): the owner's
+  // Telegram chat id with the official bot (a secret: `wrangler secret put OWNER_TELEGRAM_CHAT_ID`).
+  // Without it, the first ADMIN_EMAILS address's linked chat is used; with neither, only the log.
+  OWNER_TELEGRAM_CHAT_ID?: string;
   // The founder's admin dashboard (src/admin.ts, docs/admin-dashboard.md). Plain vars. Without both
   // ACCESS_* values every request to the admin host answers 403.
   ACCESS_TEAM_DOMAIN?: string;      // the Cloudflare Zero Trust team, e.g. "sponsorjobs" (.cloudflareaccess.com)

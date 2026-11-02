@@ -51,7 +51,21 @@
       h: "SponsorJobs' AI is briefly unavailable",
       p: "Our AI service is having a moment. Please try again in a minute.",
     },
+    // OUR outage: the company AI key failed (no credit, disabled). The broker has already alerted
+    // the owner. No button and no link: nothing the person can buy or add fixes it, and their pass
+    // and packages are untouched. The copy is translated (hk/pk), unlike the bring-your-own-key
+    // screens above, because every person on the bundled AI sees it.
+    ai_company: {
+      hk: "outage.aiCompany.h", h: "SponsorJobs' AI is temporarily unavailable",
+      pk: "outage.aiCompany.p", p: "Your pass and packages are not affected. We have been alerted; try again in a little while.",
+    },
+    // A passing failure (rate limit, overload). The app already tried again a few times.
+    ai_transient: {
+      hk: "outage.aiTransient.h", h: "The AI is busy",
+      pk: "outage.aiTransient.p", p: "The AI is busy, trying again in a moment usually works. Your pass and packages are not affected.",
+    },
   };
+  const outageText = (key, fallback) => (key && window.I18N ? I18N.t(key, fallback) : fallback);
   let lastCall = null;   // so "Try again" can actually retry the thing that failed
   let lastOutageReason = null;   // so the fix button knows which action to take
 
@@ -60,8 +74,8 @@
     const box = $("#downModal");
     if (!o || !box) return;
     lastOutageReason = reason;
-    $("#downH").textContent = o.h;
-    $("#downP").textContent = o.p;
+    $("#downH").textContent = outageText(o.hk, o.h);
+    $("#downP").textContent = outageText(o.pk, o.p);
     const link = $("#downFix"), btn = $("#downFixBtn");
     link.hidden = !o.link;
     if (o.link) { link.href = o.link; link.textContent = o.linkLabel || "Fix it"; }

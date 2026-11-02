@@ -17,7 +17,8 @@
 
 import { allowRegistration, emailOf, identify, register } from "./accounts";
 import { handleAdmin, isAdminHost } from "./admin";
-import { complete } from "./anthropic";
+import { classifyUpstream, complete } from "./anthropic";
+import { aiStatus, describeAi, recordOk, recordOutage } from "./outage";
 import {
   type Billing, billingFor, billingFrom, grantFor, offeredPacks, offeredPasses, packCheckoutUrl, packPrice, passCheckoutUrl,
   UnknownProduct, verifySignature,
@@ -67,10 +68,15 @@ type Handler = (c: Ctx) => Promise<Response> | Response;
 
 // ---- phase 1 ---------------------------------------------------------------------------------- //
 
-const health: Handler = ({ env }) =>
+const health: Handler = async ({ env }) => {
   // Reports whether the LLM is REAL, not just whether the process is alive: the app only uses a
   // broker that says so. Without the key this Worker has no model at all (there is no fake).
-  json({ ok: true, real_providers: Boolean(env.ANTHROPIC_API_KEY) });
+  // `ai` says whether model calls are going through right now (src/outage.ts): "ok",
+  // "company_outage since <time>" or "transient". The cause stays on the admin page.
+  const ai = await aiStatus(env.DB);
+  return json({ ok: true, real_providers: Boolean(env.ANTHROPIC_API_KEY), ai: describeAi(ai),
+                ai_state: ai.state, ai_since: ai.state === "ok" ? null : ai.since });
+};
 
 const accountRegister: Handler = async ({ req, env, nowMs }) => {
   // On Cloudflare the edge sets CF-Connecting-IP itself, so a client cannot spoof it.
@@ -148,12 +154,24 @@ const llmComplete: Handler = async ({ req, env, now, nowMs }) => {
       effort: b.effort,
     });
   } catch (err) {
-    // Log before flattening: every upstream failure collapses into the same opaque 502 for the
-    // client, and without this line the only way to find the cause is to rebuild the call by
-    // hand. The log never includes the key; the client gets no detail at all.
+    // Log before flattening: the client never gets the upstream text (it can name the key's
+    // organization or its balance), and without this line the only way to find the cause is to
+    // rebuild the call by hand. The log never includes the key.
     console.error(`llm/complete failed for model ${model}:`, err instanceof Error ? err.message : err);
-    return json({ error: "the AI service is unavailable" }, 502);
+    const outage = classifyUpstream(err);
+    if (!outage) return json({ error: "the AI service is unavailable" }, 502);   // a bad request, not an outage
+    // OUR failure (no credit, a dead key) or a passing one: a distinct, structured answer, so the
+    // app never shows an upgrade for a problem that is not the person's, and the owner is told.
+    await recordOutage(env, outage, now);
+    const headers: Record<string, string> = {};
+    const payload: Record<string, unknown> = { error: "ai_unavailable", reason: outage.reason };
+    if (outage.retryAfter !== null) {
+      payload.retry_after = outage.retryAfter;
+      headers["Retry-After"] = String(outage.retryAfter);
+    }
+    return new Response(JSON.stringify(payload), { status: 503, headers: { "content-type": "application/json", ...headers } });
   }
+  await recordOk(env, now);
   const spent = out.input_tokens + out.output_tokens;
   const used = await recordLlm(env.DB, user, period, spent, free ? day : null);
   const cap = plan.llmTokenCap;
