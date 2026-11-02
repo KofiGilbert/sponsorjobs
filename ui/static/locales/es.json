@@ -1365,5 +1365,21 @@
   "mem.dec.address": "Dirección",
   "mem.dec.extracurricular": "Actividades",
   "mem.dec.interests": "Intereses",
-  "mem.diaryDay": "{n} líneas guardadas, todas del {a}. Olvida un dato arriba para borrar las líneas de donde salió."
+  "mem.diaryDay": "{n} líneas guardadas, todas del {a}. Olvida un dato arriba para borrar las líneas de donde salió.",
+  "act.steps": "Pasos",
+  "act.stepsOf": "Pasos {n} de {m}",
+  "act.nSteps": "{n} pasos",
+  "act.nothingSent": "No se envía nada sin ti",
+  "act.pageOf": "página {n} de {m}",
+  "act.page": "página {n}",
+  "act.appOf": "Solicitud {i} de {n}",
+  "act.took": "En {s} s",
+  "act.for": "{s} s hasta ahora",
+  "act.built": "Listo",
+  "act.stoppedB": "Detenido",
+  "act.st.done": "Hecho",
+  "act.st.retry": "Otro intento",
+  "act.st.now": "Ahora",
+  "act.st.asking": "Esperándote",
+  "act.st.parked": "En pausa"
 }

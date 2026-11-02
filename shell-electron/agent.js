@@ -80,6 +80,116 @@ function reviewSig(text) {
 }
 const QUIET_READ = "(window.__tailorQuiet ? Date.now() - window.__tailorQuiet.at : 0) + '|' + document.readyState";
 
+// ---- the live activity feed (OpenHands style; ui/activity.py has the same event shape) ---------
+// One run's steps as events: { phase, verb, target, summary, state, at, detail? }, state one of
+// running | done | retry | asking | parked. The bar shows the newest as one live line (a spinner,
+// the verb, the summary, the job and page) and all of them as a timeline. A step with the same
+// phase as the current one updates it in place; a new phase closes the current one as done (a
+// retry stays a retry). A ``transient`` step ("Reading page 2" while the AI decides) is shown
+// live and replaced by the next one, so the timeline holds what was DONE, not every wait. Only
+// for the screen: nothing here goes to Telegram, and nothing here changes what the run does.
+const FEED_MAX = 40;
+const FEED_STATES = new Set(["running", "done", "retry", "asking", "parked"]);
+const feedText = (s, n) => String(s == null ? "" : s).replace(/\s+/g, " ").replace(/\u2014/g, ", ").replace(/\u2013/g, "-").trim().slice(0, n || 140);
+function createFeed(opts) {
+  opts = opts || {};
+  const events = [];
+  const f = {
+    events, step: 0, maxSteps: opts.maxSteps || MAX_STEPS, page: 1, sitePage: 0, pages: 0,
+    autonomous: !!opts.autonomous, batchAt: opts.batchAt || null, startedAt: Date.now() / 1000,
+    // push(phase, verb, summary, { state, detail, transient, target })
+    push(phase, verb, summary, o) {
+      o = o || {};
+      const state = FEED_STATES.has(o.state) ? o.state : "running";
+      const ev = { phase: feedText(phase, 40), verb: feedText(verb, 60), target: feedText(o.target, 120),
+                   summary: feedText(summary), state, at: Math.round(Date.now() / 10) / 100 };
+      if (o.detail) ev.detail = feedText(o.detail);
+      let last = events[events.length - 1];
+      const popped = !!(last && last.transient);
+      if (popped) { events.pop(); last = events[events.length - 1]; }
+      // In place only when nothing came between (a loop of the same step); after a transient
+      // read, a new action is a new line even when the last one was an action too.
+      if (last && !popped && last.phase === ev.phase && /^(running|retry|asking)$/.test(last.state) && !o.transient) {
+        Object.assign(last, { verb: ev.verb, summary: ev.summary, state: ev.state });
+        if (ev.detail) last.detail = ev.detail;
+        return last;
+      }
+      if (last && /^(running|asking)$/.test(last.state)) last.state = "done";
+      if (o.transient) ev.transient = true;
+      events.push(ev);
+      if (events.length > FEED_MAX) events.splice(1, events.length - FEED_MAX);
+      return ev;
+    },
+    // Change the newest step (its state, a muted detail): "Ethnicity did not stick" -> retry.
+    mark(state, detail) {
+      const last = events[events.length - 1];
+      if (!last || last.transient) return null;
+      if (FEED_STATES.has(state)) last.state = state;
+      if (detail) last.detail = feedText(detail);
+      return last;
+    },
+    // Close the run: the current step done (or as given), nothing left spinning.
+    close(state) {
+      const last = events[events.length - 1];
+      if (last && last.transient) events.pop();
+      const now = events[events.length - 1];
+      if (now && /^(running|asking)$/.test(now.state)) now.state = state && FEED_STATES.has(state) ? state : "done";
+    },
+    // A site's own "Step 2 of 6" / "Page 2 of 4", for the live line only (the run's own page
+    // counter is unchanged).
+    readPages(text) {
+      const m = /\b(?:step|page)\s+(\d{1,2})\s*(?:of|\/)\s*(\d{1,2})\b/i.exec(String(text || ""));
+      if (m && Number(m[2]) >= Number(m[1]) && Number(m[2]) > 1) { f.sitePage = Number(m[1]); f.pages = Number(m[2]); }
+      else { f.sitePage = 0; f.pages = 0; }
+    },
+    snap() {
+      return { events: events.map((e) => { const o = Object.assign({}, e); delete o._n; delete o._cv; return o; }), step: f.step, max_steps: f.maxSteps,
+               page: f.sitePage || f.page, pages: f.pages, autonomous: f.autonomous,
+               batch: f.batchAt ? { i: f.batchAt.i, n: f.batchAt.n } : null, started: f.startedAt };
+    },
+  };
+  return f;
+}
+// The brain's ~10-word summary ("Clicking Next to open page 3") as a verb and the rest, so the
+// bar can show the verb in the accent colour.
+function splitSummary(s) {
+  const t = feedText(s, 120);
+  const m = /^(\S+)\s+(.*)$/.exec(t);
+  return m ? { verb: m[1], rest: m[2] } : { verb: t, rest: "" };
+}
+// What the fill engine did on a page, as ONE timeline line per page: "Filled 9 fields from your
+// memory" (and the resume). The engine runs every step, so a later fill on the same page adds to
+// that line instead of repeating it. True when the line changed.
+function feedFill(feed, page, fromMemory, attached) {
+  const phase = "fill:" + page;
+  let ev = null;
+  for (let i = feed.events.length - 1; i >= 0; i--) if (feed.events[i].phase === phase) { ev = feed.events[i]; break; }
+  const n = (ev ? ev._n || 0 : 0) + fromMemory;
+  const res = !!(attached || (ev && ev._cv));
+  const summary = n > 0 ? n + (n === 1 ? " field" : " fields") + " from your memory" : "your resume";
+  const verb = n > 0 ? "Filled" : "Attached";
+  const detail = n > 0 && res ? "and attached your resume" : "";
+  if (ev) {
+    if (ev._n === n && !!ev._cv === res) return false;
+    Object.assign(ev, { verb, summary, _n: n, _cv: res });
+    if (detail) ev.detail = detail;
+    return true;
+  }
+  ev = feed.push(phase, verb, summary, { state: "done", detail });
+  ev._n = n; ev._cv = res;
+  return true;
+}
+// An action's failure note, in words for the timeline.
+function failWords(note) {
+  const n = String(note || "");
+  if (/covered/.test(n)) return "something on the page was covering it";
+  if (/not found|no element|gone/.test(n)) return "it was no longer on the page";
+  if (/timed out/.test(n)) return "the page did not answer in time";
+  if (/no resume/.test(n)) return "there was no resume file to attach";
+  if (/option/.test(n)) return "the list did not have that choice";
+  return "the page did not take it";
+}
+
 function createAgent(deps) {
   // deps: { getPane, openInPane, waitPaneLoad, autofillCore, agentViewSource, runAutoApplyOnPane,
   //         postApp, getApp, sendProgress, acquireDebugger, frames, applyDecision, net, SERVER }
@@ -93,9 +203,27 @@ function createAgent(deps) {
   let paneEpoch = 0;
   let batchOn = null;                 // { stop } while a batch runs: resumes wait behind it
 
-  const progress = (recordId, state, message, extra) =>
-    deps.sendProgress(Object.assign({ agent: true, record_id: recordId == null ? null : recordId,
-                                      state, message }, extra || {}));
+  // The live activity feed of each record's latest run (createFeed), sent with every progress
+  // line so the bar can show the step and the timeline. ``lastMsg``: a feed-only update repeats
+  // the run's last message, so the messages themselves stay exactly what they were.
+  const feeds = new Map();
+  const lastMsg = new Map();
+  const progress = (recordId, state, message, extra) => {
+    const key = String(recordId);
+    if (state === "running" || state === "ask") lastMsg.set(key, message);
+    const feed = recordId == null ? null : feeds.get(key);
+    return deps.sendProgress(Object.assign({ agent: true, record_id: recordId == null ? null : recordId,
+                                             state, message }, feed ? { activity: feed.snap() } : {}, extra || {}));
+  };
+  // A step on the feed, sent at once as a running update.
+  const say = (recordId, phase, verb, summary, o) => {
+    const feed = feeds.get(String(recordId));
+    if (!feed) return;
+    if (!(o && o.refresh)) feed.push(phase, verb, summary, o);
+    const msg = lastMsg.get(String(recordId));
+    if (msg) progress(recordId, "running", msg);
+  };
+  const feedOf = (recordId) => feeds.get(String(recordId)) || null;
 
   // ---- the pane's scripts ------------------------------------------------------------------
   async function ensureScripts(wc) {
@@ -557,6 +685,7 @@ function createAgent(deps) {
           const question = (first && first.question) || termsQuestion(run.company, title);
           const options = (first && first.options) || TERMS_CHOICES;
           const ask = { id, question, options, questions: [{ question, options }], kind: "terms" };
+          { const fd = feedOf(run.recordId); if (fd) fd.push("ask", "Asking you", "about " + title, { state: "asking" }); }
           // In a batch the person is away: never wait, park the job and move on (the digest
           // asks). A single run asks on the bar and Telegram and waits, then parks.
           if (!run.batch) progress(run.recordId, "ask", question, { ask });
@@ -573,6 +702,7 @@ function createAgent(deps) {
                              + possessive(run.company, title) + ", so I did not apply." } };
           }
           via = r.via || "once";
+          { const fd = feedOf(run.recordId); if (fd) fd.mark("done", "you answered"); }
           progress(run.recordId, "running", "Thanks. Carrying on");
         }
         run.termsOk.set(host, via);
@@ -589,6 +719,8 @@ function createAgent(deps) {
         record_id: run.recordId, title, url, kind: it.kind, via, company: run.company }).catch(() => null);
       if (!run.accepted.includes(title)) run.accepted.push(title);
       accepted++;
+      say(run.recordId, "terms", "Accepted", "the " + title, { state: "done",
+        detail: via === "always" ? "you said yes to this in setup" : via === "all" ? "you said yes for every application" : "you said yes to this one" });
       dlog("terms", "accepted (" + it.kind + ", " + via + ")");
     }
     return { accepted };
@@ -652,6 +784,12 @@ function createAgent(deps) {
 
     const st = { recordId, stop: false, disarmSigning: () => {} };
     current = st;
+    // The live feed: a fresh one per run; a parked job carrying on keeps its timeline.
+    const fkey = String(recordId);
+    let feed = R ? feeds.get(fkey) : null;
+    if (!feed) { feed = createFeed({ autonomous: !!opts.autonomous, batchAt: batch ? opts.batchAt : null }); feeds.set(fkey, feed); }
+    else { feed.batchAt = batch ? opts.batchAt || null : null; feed.autonomous = !!opts.autonomous; }
+    while (feeds.size > 20) feeds.delete(feeds.keys().next().value);
     if (!R) {
       // A fresh Apply for me on a parked job replaces the park (its question closes).
       parked.delete(String(recordId));
@@ -696,6 +834,8 @@ function createAgent(deps) {
     let wcNow = null;
     const finish = (res) => { if (fr) { fr.close(); fr = null; } disarmSigning(); current = null; return res; };
     const stopped = (reason, message, extra) => {
+      feed.close();
+      feed.push("stop", "Stopped", reason === "stopped" ? "as you asked" : "", { state: "parked", detail: reason === "stopped" ? "" : message });
       progress(recordId, "stopped", message, Object.assign({ reason, steps: history.length }, extra));
       return finish({ ok: false, reason, steps: history.length });
     };
@@ -717,6 +857,9 @@ function createAgent(deps) {
         : resend ? "Paused, not sent: " + message
           : (onPage ? "Paused. " : "Paused: waiting on your answer. ") + message
             + (onPage ? "" : " The question stays open, here and on Telegram, until you answer it.");
+      feed.close("done");
+      feed.push("park", "Paused", "", { state: "parked",
+        detail: (onPage ? message : "waiting on your answer") + (batch ? ", moving on to the next job" : "") });
       progress(recordId, "parked", said, Object.assign({ parked: { kind, batch }, steps: history.length }, extra || {}));
       dlog("parked", kind + " " + message);
       startPolling();
@@ -731,9 +874,12 @@ function createAgent(deps) {
       let pane = null;
       if (R && R.samePage && deps.getPane()) {
         pane = deps.getPane();
+        feed.push("resume", "Carrying on", "where I paused");
         progress(recordId, "running", "Thanks. Carrying on where I paused");
         { disarmSigning = armSigning(pane.webContents, hosts); st.disarmSigning = disarmSigning; }
       } else {
+        if (resend) feed.push("open", "Filling", "it in again to send it");
+        else feed.push("open", "Opening", R ? "the job again" : "the job");
         progress(recordId, "running", lead + (R ? "Thanks. Opening the job again" : resend ? "Filling it in again to send it" : "Opening the job"));
         paneEpoch++;
         deps.openInPane(applyUrl);
@@ -749,6 +895,8 @@ function createAgent(deps) {
       await settle(wc, "");
 
       for (let step = 1; step <= MAX_STEPS; step++) {
+        feed.step = step;
+        feed.page = page;
         if (st.stop) return stopped("stopped", "Stopped.");
         if (wc.isDestroyed() || deps.getPane() !== pane) return stopped("no-page", "The browser pane closed.");
         const url = wc.getURL() || "";
@@ -756,6 +904,8 @@ function createAgent(deps) {
         await ensureScripts(wc);
         const sig = (await signature(wc)) || {};
         if (sig.success) {
+          feed.close();
+          feed.push("sent", "Sent", "and the site confirmed it", { state: "done" });
           progress(recordId, "submitted", "The site confirmed the application.", { steps: step });
           await deps.postApp("/api/autofill/applied", { url: applyUrl, page_url: url, record_id: recordId });
           return finish({ ok: true, submitted: true, steps: step });
@@ -781,6 +931,7 @@ function createAgent(deps) {
           const h = hostOf(url);
           if (!portals.has(h)) {
             portals.add(h);
+            feed.push("signin", "Signing in", "with your account for this site");
             progress(recordId, "running", "Signing in", { step });
             await deps.postApp("/api/autoapply/agent/portal-account", { host: h, create: true });
           }
@@ -790,14 +941,17 @@ function createAgent(deps) {
           // "Could not plan this form" still names what is open: keep its left list either way.
           if (rep && rep.ok) filled = rep.filled || 0;
           left = (rep && rep.left) || [];
-          if (rep && rep.uploaded) filled += 1;
+          const fromMemory = filled;
+          let attached = false;
+          if (rep && rep.uploaded) { filled += 1; attached = true; }
           else if (opts.resumePath) {
             // The page has a resume box the plan did not reach (a hidden input behind an
             // Upload button): attach the file to it directly, as assisted apply does.
             let wants = false;
             try { wants = await wc.executeJavaScript("window.TailorAutofill.hasResumeUpload()", true); } catch (e) { wants = false; }
-            if (wants && await deps.attachResume(wc, opts.resumePath)) filled += 1;
+            if (wants && await deps.attachResume(wc, opts.resumePath)) { filled += 1; attached = true; }
           }
+          if (filled > 0) feedFill(feed, page, fromMemory, attached) && say(recordId, "fill", "", "", { refresh: true });
         }
         if (st.stop) return stopped("stopped", "Stopped.");
         // The fill can open one too (Phenom's "Data Privacy Agreement" comes up when the resume
@@ -833,6 +987,7 @@ function createAgent(deps) {
             left = left.filter((x) => !got.some((q) => sameLabel(typeof x === "string" ? x : (x && x.label) || "", q)));
             filled += got.length;
             dlog("step " + step + " eeo:", got.length + " filled from saved answers");
+            feed.push("eeo", "Filled", got.length + (got.length === 1 ? " answer" : " answers") + " you saved", { state: "done" });
             progress(recordId, "running", "Filled from your saved answers", { step, filled });
             v = await view(wc, fr);
           }
@@ -845,6 +1000,10 @@ function createAgent(deps) {
         const worst = Math.max(0, ...last.map(repeats));
         if (worst >= 5) return stopped("stuck", "I kept repeating the same action without progress. Have a look.", { url });
         if (worst >= 3) nudges.push("You repeated the same action " + worst + " times and it is not working. Try something else or report blocked.");
+        feed.page = page;
+        feed.readPages(v.text);
+        if (worst >= 3) feed.push("another", "Trying another way", "after the same action failed " + worst + " times");
+        else feed.push("read", "Reading", step === 1 && !R ? "the job page" : "the page and deciding what to do", { transient: true });
         progress(recordId, "running", lead + (step === 1 && !R ? "Reading the job page" : "Page " + page + ": deciding what to click"),
                  { step, filled });
         let reply = null;
@@ -859,6 +1018,7 @@ function createAgent(deps) {
         if (!reply || reply.ok === false) {
           if (reply && reply.reason === "fill-by-hand") return stopped("fill-by-hand", "This site does not allow automated filling.");
           failed++;
+          say(recordId, "think", "Asking the AI again", "", { state: "retry", detail: "no usable answer the first time" });
           history.push({ step, evaluation: "", memory: "", actions: [], results: ["no reply from the brain"] });
           if (failed >= MAX_FAILED_STEPS) return stopped("stuck", "I could not work out this page. Have a look at it.", { url });
           continue;
@@ -885,6 +1045,8 @@ function createAgent(deps) {
           continue;
         }
         if (done && done.outcome === "submitted") {
+          feed.close();
+          feed.push("sent", "Sent", "and the site took it", { state: "done" });
           progress(recordId, "submitted", "Submitted.", { steps: step });
           await deps.postApp("/api/autofill/applied", { url: applyUrl, page_url: url, record_id: recordId });
           return finish({ ok: true, submitted: true, steps: step });
@@ -946,6 +1108,7 @@ function createAgent(deps) {
                  : (open[0].context ? "After “" + open[0].context + "”, the application asks: " : "The application asks: ") + open[0].question)
               : "The application asks " + open.length + " questions.";
             const ask = { id, question: open[0].question, options: open.length === 1 ? open[0].options : [], questions: open };
+            feed.push("ask", "Asking you", open.length === 1 ? "" : open.length + " questions", { state: "asking", detail: open.length === 1 ? open[0].question : "" });
             if (!quick) progress(recordId, "ask", shown, { step, ask });
             const r = await askLong("/api/autoapply/agent/ask", {
               questions: open, record_id: recordId, id, force_questions: forced.map((it) => it.question),
@@ -956,11 +1119,15 @@ function createAgent(deps) {
             if (!(r && r.ok)) return stopped("needs-answers", blockedMessage("needs-answers", open.map((it) => it.question)), { url, left });
             for (const [q, a] of Object.entries(r.answers || {})) runAnswers[q] = a;
             answered += open.length;
+            feed.mark("done", "you answered");
           }
           if (!answered) return stopped("needs-answers", blockedMessage("needs-answers", stillOpen(left, runAnswers, knownSeen)), { url, left });
           history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "",
                          actions: ["asked the person"], results: [answered + " answered"] });
-          if (open.length || fromPark) progress(recordId, "running", "Thanks. Carrying on", { step });
+          if (open.length || fromPark) {
+            feed.push("carry", "Carrying on", "with your answers", { transient: true });
+            progress(recordId, "running", "Thanks. Carrying on", { step });
+          }
           continue;
         }
         if (done && done.outcome === "blocked") {
@@ -975,6 +1142,7 @@ function createAgent(deps) {
           // The site emailed a code or a link. With a mailbox connected the engine watches the
           // person's own inbox for THIS site's message (inbox/await, read-only, consent given in
           // Settings); without one the run stops and says what to connect.
+          feed.push("email", "Waiting", "for the site's email");
           progress(recordId, "running", "Waiting for the site's email", { step });
           const got = await deps.postApp("/api/inbox/await", {
             kind: "any", host: hostOf(url), company: opts.company || "", since: startedAt, timeout_s: 180 });
@@ -986,6 +1154,7 @@ function createAgent(deps) {
             }
             return stopped("verify-email", "The site's email did not arrive in 3 minutes. Check your inbox, then press Apply for me again.", { url });
           }
+          feed.mark("done", got.code ? "the code arrived" : got.link ? "the link arrived" : "");
           if (got.code) { emailCode = String(got.code); history.push({ step, evaluation: reply.evaluation || "", memory: reply.memory || "", actions: ["await email"], results: ["got the code"] }); continue; }
           if (got.link) {
             const before = wc.getURL() || "";
@@ -1003,6 +1172,13 @@ function createAgent(deps) {
         const results = [];
         const names = [];
         let stepFailed = false;
+        if ((reply.actions || []).length) {
+          const sp = splitSummary(reply.summary || "");
+          if (sp.verb) feed.push("act", sp.verb, sp.rest);
+          else feed.push("act", "Working", "on the page");
+          progress(recordId, "running", lastMsg.get(fkey) || "Working", { step, filled });
+        }
+        const actFails = [];
         for (const a of reply.actions || []) {
           if (st.stop) return stopped("stopped", "Stopped.");
           const h = [a.op, a.index, a.sensitive ? "(secret)" : (a.text || a.option || a.direction || "")].join("|");
@@ -1012,6 +1188,7 @@ function createAgent(deps) {
           const r = await act(wc, fr, v, a, opts.resumePath || "");
           if (a.placeholder === "email_code" && r && r.ok) emailCode = "";
           results.push(r && r.ok ? (r.note ? "ok, " + r.note : "ok") : "failed: " + ((r && r.note) || "?"));
+          if (!(r && r.ok) && !(r && r.note === "submit-guard")) actFails.push(failWords(r && r.note));
           dlog("step " + step + " act " + h + " ->", r);
           if (!(r && r.ok)) { stepFailed = true; if (r && r.note === "submit-guard") {
             if (resend && opts.expectSig && reviewSig(v.text) !== opts.expectSig) {
@@ -1025,6 +1202,10 @@ function createAgent(deps) {
           }
         }
         if (!(reply.actions || []).length) stepFailed = true;
+        if (actFails.length) {
+          feed.mark("retry", actFails[0]);
+          progress(recordId, "running", lastMsg.get(fkey) || "Working", { step, filled });
+        }
         failed = stepFailed ? failed + 1 : 0;
         if (failed >= MAX_FAILED_STEPS) return stopped("stuck", "I could not get past this page. Have a look at it.", { url });
         // A new page of the form (new URL, or the fields changed) advances the page counter.
@@ -1174,12 +1355,15 @@ function createAgent(deps) {
     const said = acceptedLine(opts.company || "", accepted);
     // The person's own Send on a job whose page was gone: the form came out the same, so their
     // click submits it (on every site: it is their Send, not an auto-submit).
+    const fd = feedOf(recordId);
     if (auto || opts.mode === "resend") {
+      if (fd) fd.push("send", "Sending", "your application", { detail: said });
       progress(recordId, "running", "Sending" + (said ? ". " + said : ""), { step });
       current = null;
       return send(recordId);
     }
     deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep) }).catch(() => null);
+    if (fd) { fd.close(); fd.push("ready", "Ready to send", "", { state: "done", detail: said || "check it, then press Send" }); }
     progress(recordId, "ready", (opts.mode === "batch" && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "")
              + "Ready to send. " + (said ? said + " " : "") + "Check it, then press Send.",
              { step, ready: true, accepted: (accepted || []).slice() });
@@ -1233,11 +1417,13 @@ function createAgent(deps) {
     const after = (await signature(wc)) || {};
     if (!confirmed && after.blocker === "captcha") {
       ready.set(recordId, r);
+      { const fd = feedOf(recordId); if (fd) { fd.close(); fd.push("send", "Paused", "", { state: "parked", detail: "the submit hit a captcha" }); } }
       progress(recordId, "ready", "The submit hit a captcha. Solve it on the page, then press Send again.", { ready: true });
       return { ok: false, reason: "captcha" };
     }
     await deps.postApp("/api/autofill/applied", { url: r.url, page_url: wc.getURL() || "", record_id: recordId });
     deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, clear: true }).catch(() => null);
+    { const fd = feedOf(recordId); if (fd) { fd.close(); fd.push("sent", "Sent", confirmed ? "and the site confirmed it" : "", { state: "done", detail: confirmed ? "" : "the page showed no confirmation, check it once" }); } }
     progress(recordId, "submitted", confirmed ? "Sent, and the site confirmed it." : "Sent. The page showed no confirmation, so check it once.",
              { confirmed, clicked: box.label });
     return { ok: true, submitted: true, confirmed };
@@ -1248,7 +1434,7 @@ function createAgent(deps) {
   const busy = () => !!(current || batchOn);
 
   return { run, batch, send, stop, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
-           _test: { askLong, parked, epoch: () => paneEpoch } };
+           _test: { askLong, parked, epoch: () => paneEpoch, feeds } };
 }
 
 // ---- reading the view for an ask (pure, so the tests reach them) -----------------------------
@@ -1540,6 +1726,6 @@ function blockedMessage(reason, left) {
   }
 }
 
-module.exports = { createAgent, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion,
+module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion,
                    optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig };

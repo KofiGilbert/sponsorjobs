@@ -75,6 +75,13 @@
   function hideOutage() { const b = $("#downModal"); if (b) b.hidden = true; }
 
   async function api(url, body) {
+    // A build request (any POST on the session) shows the builder's live activity line while it
+    // runs (window.__buildFeed, set up next to the agent bar below).
+    const feed = body !== undefined && /^\/api\/session\//.test(url) ? window.__buildFeed : null;
+    if (feed) feed.start();
+    try { return await apiCall(url, body); } finally { if (feed) feed.stop(); }
+  }
+  async function apiCall(url, body) {
     lastCall = { url, body };
     const r = await fetch(url, {
       method: body === undefined ? "GET" : "POST",
@@ -1114,6 +1121,8 @@
       }
       const bar = $("#bbFill");
       if (bar) {
+        aaFeedHide();
+        bar.classList.remove("is-live");
         let text = info.message;
         if (!info.wall && info.left && info.left.length) {
           text += " " + info.left.slice(0, 4).join(", ") + (info.left.length > 4 ? ", and more." : ".");
@@ -9711,6 +9720,205 @@
     loadAutoApply();
   }
 
+
+  /* ---- the live activity feed (OpenHands style) --------------------------------------------
+     One event shape for the apply agent (shell-electron/agent.js createFeed) and the resume
+     builder (ui/activity.py): {phase, verb, target, summary, state, at, detail?}, state one of
+     running | done | retry | asking | parked. The newest event is ONE live line (a spinner, the
+     verb in the accent colour, the summary); every event is a step in the timeline (time,
+     marker, text, muted detail), with the run's limits in its footer. A done step reads in the
+     past tense ("Opened the job"). Only for the screen; nothing here goes to Telegram. */
+  const FEED_PAST = {
+    "Opening": "Opened", "Reading": "Read", "Signing in": "Signed in", "Filling": "Filled", "Filled": "Filled",
+    "Clicking": "Clicked", "Pressing": "Pressed", "Typing": "Typed", "Entering": "Entered", "Choosing": "Chose",
+    "Selecting": "Selected", "Picking": "Picked", "Ticking": "Ticked", "Uploading": "Uploaded", "Attaching": "Attached",
+    "Scrolling": "Scrolled", "Waiting": "Waited", "Checking": "Checked", "Dismissing": "Dismissed", "Closing": "Closed",
+    "Accepting": "Accepted", "Answering": "Answered", "Moving": "Moved", "Going": "Went", "Opening up": "Opened",
+    "Sending": "Sent", "Carrying on": "Carried on", "Asking you": "Asked you", "Asking the AI again": "Asked the AI again",
+    "Trying another way": "Tried another way", "Trying again": "Tried again", "Working": "Worked", "Saving": "Saved",
+    "Continuing": "Continued", "Creating": "Created", "Verifying": "Verified", "Resetting": "Reset",
+    "Reading the job": "Read the job", "Drafting": "Drafted", "Matching your experience": "Matched your experience",
+    "Crafting bullets": "Crafted bullets", "Fitting the page": "Fitted the page", "Shortening": "Shortened",
+    "Compiling": "Compiled", "Checking every line": "Checked every line",
+  };
+  const feedPast = (verb) => {
+    const v = String(verb || "");
+    if (FEED_PAST[v]) return FEED_PAST[v];
+    const sp = v.indexOf(" ");
+    const w = sp > 0 ? v.slice(0, sp) : v;
+    return FEED_PAST[w] ? FEED_PAST[w] + v.slice(w.length) : v;
+  };
+  const FEED_MARK = { done: "✓", retry: "↻", running: "•", asking: "?", parked: "‖" };
+  const feedMarkWord = (st) => ({ done: T("act.st.done", "Done"), retry: T("act.st.retry", "Tried again"),
+    running: T("act.st.now", "Now"), asking: T("act.st.asking", "Waiting on you"), parked: T("act.st.parked", "Paused") }[st] || "");
+  const feedClock = (at) => {
+    try { return new Date(Number(at) * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }); }
+    catch { return ""; }
+  };
+  // The live line's words: the verb (accent) then the summary, as one phrase.
+  const feedNowHTML = (ev) => `<span class="act-verb">${esc(ev.verb || "")}</span>${ev.summary ? " " + esc(ev.summary) : ""}`;
+  const feedLast = (events) => (events && events.length ? events[events.length - 1] : null);
+  function feedListHTML(events, foot) {
+    const items = (events || []).map((ev) => {
+      const st = ev.state || "running";
+      const words = (st === "done" ? feedPast(ev.verb) : ev.verb) + (ev.summary ? " " + ev.summary : "");
+      return `<li class="act-step is-${esc(st)}"><span class="act-t">${esc(feedClock(ev.at))}</span>`
+        + `<span class="act-mk" role="img" aria-label="${esc(feedMarkWord(st))}">${FEED_MARK[st] || ""}</span>`
+        + `<span class="act-tx">${esc(words)}${ev.detail ? ` <span class="act-sub">${esc(ev.detail)}</span>` : ""}</span></li>`;
+    }).join("");
+    const f = (foot || []).filter(Boolean).map((x) => `<span>${esc(x)}</span>`).join("");
+    return `<ol class="act-tl">${items}</ol>${f ? `<div class="act-foot">${f}</div>` : ""}`;
+  }
+  const feedChevron = '<svg class="act-caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function feedToggle(n, open, controls, onClick) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "act-toggle";
+    b.setAttribute("aria-expanded", String(!!open));
+    b.setAttribute("aria-controls", controls);
+    b.innerHTML = `<span>${esc(T("act.steps", "Steps"))}</span><span class="act-n">${esc(String(n))}</span>${feedChevron}`;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  // ---- the apply agent's run: the live line on the bar, the steps in #bbFeed under it
+  const AA_FEED = { rid: null, snap: null, open: false, jobs: {} };
+  // The run's job when the Auto-apply board is not loaded (a run started from Jobs or Home): read
+  // once per record; the next progress line shows it.
+  function aaFeedJob(rid) {
+    const k = String(rid);
+    if (k in AA_FEED.jobs) return AA_FEED.jobs[k];
+    AA_FEED.jobs[k] = null;
+    fetch(`/api/autoapply/item/${encodeURIComponent(k)}`).then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && (d.role || d.company)) AA_FEED.jobs[k] = { role: d.role || "", company: d.company || "" }; })
+      .catch(() => {});
+    return null;
+  }
+  function aaFeedMeta(rid, snap) {
+    const it = rid != null ? aaFind(Number(rid)) || aaFind(rid) || aaFeedJob(rid) : null;
+    const parts = [];
+    if (snap && snap.batch && snap.batch.n > 1) parts.push(T("act.appOf", "Application {i} of {n}").replace("{i}", snap.batch.i).replace("{n}", snap.batch.n));
+    if (it && it.role) parts.push(it.role);
+    // The company too when it fits beside the role; a long role keeps the line for the page.
+    if (it && it.company && String((it.role || "") + it.company).length <= 34) parts.push(it.company);
+    const pg = snap && Number(snap.page) || 0, of = snap && Number(snap.pages) || 0;
+    const page = pg && of ? T("act.pageOf", "page {n} of {m}").replace("{n}", pg).replace("{m}", of)
+      : pg > 1 ? T("act.page", "page {n}").replace("{n}", pg) : "";
+    return { job: parts.join(" · "), page };
+  }
+  function aaFeedRender(snap) {
+    const box = $("#bbFeed");
+    if (!box) return;
+    if (!AA_FEED.open || !snap || !(snap.events || []).length) { box.hidden = true; return; }
+    const foot = [];
+    if (snap.max_steps) foot.push(T("act.stepsOf", "Steps {n} of {m}").replace("{n}", snap.step || 0).replace("{m}", snap.max_steps));
+    if (!snap.autonomous) foot.push(T("act.nothingSent", "Nothing sent without you"));
+    box.innerHTML = feedListHTML(snap.events, foot);
+    box.hidden = false;
+    const tl = box.querySelector(".act-tl");
+    if (tl) tl.scrollTop = tl.scrollHeight;                  // the newest step stays in view
+  }
+  // Called by aaAgentBar: keeps the run's snapshot, draws the live line while it runs and the
+  // Steps toggle whenever the run has steps. Returns true when it drew the live line.
+  function aaFeedBar(bar, text, info) {
+    if (info.activity) { AA_FEED.rid = info.record_id; AA_FEED.snap = info.activity; }
+    // The bar's own lines (no record: "Thanks. Carrying on") keep the current run's steps; the
+    // gates before a run and a batch's sum-up have none.
+    const mine = info.record_id == null ? !/^(terms-gate|basics|batch-done)$/.test(info.state || "")
+      : String(info.record_id) === String(AA_FEED.rid);
+    const snap = mine ? AA_FEED.snap : null;
+    const now = feedLast(snap && snap.events);
+    let live = false;
+    if (info.state === "running" && info.activity && now && /^(running|retry)$/.test(now.state)) {
+      live = true;
+      const spin = document.createElement("span");
+      spin.className = "act-spin"; spin.setAttribute("aria-hidden", "true");
+      bar.insertBefore(spin, text);
+      text.classList.add("act-now");
+      text.innerHTML = feedNowHTML(now);
+      text.title = (now.verb || "") + (now.summary ? " " + now.summary : "");
+      // The job and the page, muted; when the bar is narrow the job's name gives way, the page
+      // ("page 2 of 4") never does.
+      const meta = aaFeedMeta(info.record_id, snap);
+      if (meta.job || meta.page) {
+        const m = document.createElement("span");
+        m.className = "act-meta bb-meta";
+        m.title = [meta.job, meta.page].filter(Boolean).join(" · ");
+        if (meta.job) { const j = document.createElement("span"); j.className = "act-job"; j.textContent = meta.job; m.appendChild(j); }
+        if (meta.page) { const g = document.createElement("span"); g.className = "act-pg"; g.textContent = (meta.job ? " · " : "") + meta.page; m.appendChild(g); }
+        bar.appendChild(m);
+      }
+    }
+    if (snap && (snap.events || []).length) {
+      bar.appendChild(feedToggle(snap.events.length, AA_FEED.open, "bbFeed", (e) => {
+        AA_FEED.open = !AA_FEED.open;
+        e.currentTarget.setAttribute("aria-expanded", String(AA_FEED.open));
+        aaFeedRender(snap);
+      }));
+    }
+    bar.classList.toggle("is-live", live);
+    aaFeedRender(snap);
+    return live;
+  }
+  const aaFeedHide = () => { const b = $("#bbFeed"); if (b) b.hidden = true; };
+
+  // ---- the resume builder: the same live line above the preview while it builds. Polls
+  // /api/activity while a session request is in flight (the build itself is one request).
+  (function buildFeed() {
+    const B = { inflight: 0, timer: null, since: 0, open: false, hideT: null, runId: "", sig: "" };
+    const box = () => $("#buildLive");
+    async function tick() {
+      let d = null;
+      try { d = await fetch("/api/activity?key=builder").then((r) => r.json()); } catch { d = null; }
+      render(d && d.run);
+    }
+    function hide() { const b = box(); if (b) { b.hidden = true; b.innerHTML = ""; } B.runId = ""; B.sig = ""; }
+    function render(run) {
+      const b = box();
+      if (!b) return;
+      if (!run || !(run.events || []).length || (run.started || 0) < B.since) { if (!B.inflight && !B.open) hide(); return; }
+      const ended = !!run.ended;
+      // A request that only asked a question (no page was built) leaves no line behind.
+      if (ended && run.ok !== false && !run.events.some((e) => e.phase === "check")) { if (!B.open) hide(); return; }
+      if (run.id !== B.runId) { B.runId = run.id; B.open = false; }
+      const now = feedLast(run.events);
+      const secs = Math.max(1, Math.round((run.ended || Date.now() / 1000) - run.started));
+      const foot = [T("act.nSteps", "{n} steps").replace("{n}", run.events.length),
+                    (ended ? T("act.took", "Took {s} s") : T("act.for", "{s} s so far")).replace("{s}", secs)];
+      const sig = JSON.stringify([run.id, run.ended, run.ok, run.events, B.open, B.open ? secs : 0]);
+      if (sig === B.sig && !b.hidden) return;          // unchanged: no repaint, no repeated announcement
+      B.sig = sig;
+      const head = ended
+        ? `<span class="act-done" aria-hidden="true">${FEED_MARK.done}</span><span class="act-now"><span class="act-verb">${esc(run.ok === false ? T("act.stoppedB", "Stopped") : T("act.built", "Built"))}</span>${run.target ? " " + esc(run.target) : ""}</span>`
+        : `<span class="act-spin" aria-hidden="true"></span><span class="act-now" role="status" aria-live="polite">${feedNowHTML(now)}</span>`
+          + (run.target ? `<span class="act-meta">${esc(run.target)}</span>` : "");
+      b.innerHTML = `<div class="act-row">${head}</div>`
+        + `<div class="act-feed" id="buildFeedList"${B.open ? "" : " hidden"}>${feedListHTML(run.events, foot)}</div>`;
+      b.querySelector(".act-row").appendChild(feedToggle(run.events.length, B.open, "buildFeedList", () => {
+        B.open = !B.open;
+        render(run);
+        if (!B.open && ended) hide();
+      }));
+      b.classList.toggle("is-live", !ended);
+      b.hidden = false;
+      clearTimeout(B.hideT);
+      if (ended && !B.inflight && !B.open) B.hideT = setTimeout(() => { if (!B.open && !B.inflight) hide(); }, 4000);
+    }
+    window.__buildFeed = {
+      start() {
+        if (!B.inflight) { B.since = Date.now() / 1000 - 2; clearTimeout(B.hideT); }
+        B.inflight++;
+        if (!B.timer) B.timer = setInterval(tick, 600);
+      },
+      stop() {
+        B.inflight = Math.max(0, B.inflight - 1);
+        if (B.inflight) return;
+        clearInterval(B.timer); B.timer = null;
+        tick();
+      },
+      _render: render,
+    };
+  })();
+
   function aaAgentBar(info) {
     const bar = $("#bbFill");
     if (!bar) return;
@@ -9719,6 +9927,7 @@
     text.className = "bb-fill-text";
     text.textContent = info.message || "";
     bar.appendChild(text);
+    aaFeedBar(bar, text, info);
     const btn = (label, cls, fn) => {
       const b = document.createElement("button");
       b.type = "button"; b.className = "btn btn-sm " + cls; b.textContent = label;
@@ -9843,7 +10052,8 @@
     }
     const bar = $("#bbFill");
     if (msg && bar && window.Panel && window.Panel.isOpen("browser")) {
-      bar.textContent = msg; bar.classList.remove("is-wall"); bar.hidden = false;
+      aaFeedHide();
+      bar.textContent = msg; bar.classList.remove("is-wall", "is-live"); bar.hidden = false;
       return;
     }
     if (msg) toast(msg);

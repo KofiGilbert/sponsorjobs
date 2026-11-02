@@ -41,6 +41,11 @@
  *  ... and (section 17) back from being away: Send on a Ready to send job whose page is gone fills
  *  it again from the saved answers and submits it in one click, asking nothing.
  */
+/*  ... and (the live activity feed) the bar's timeline shows the run's steps in order (Opening the
+ *  job, Signing in, Filled N fields from your memory, the AI's own "Clicking ..." summaries, Ready
+ *  to send), never a profile value, with the steps used of 40 and "Nothing sent without you"; the
+ *  captcha run ends Paused, the code run shows the wait for the email, the ask run shows Asking you.
+ */
 import { _electron as electron } from "playwright";
 import { spawn, spawnSync } from "child_process";
 import http from "http";
@@ -186,7 +191,7 @@ const paneEval = async (expr) => {
 };
 // Every progress event the shell sends, kept in the page (the bar shows only the latest).
 await win.evaluate(() => { window.__agentLog = []; window.tailorShell.onAutoApplyProgress((i) => {
-  if (i && i.agent) window.__agentLog.push({ s: i.state, r: i.record_id, m: i.message }); }); });
+  if (i && i.agent) window.__agentLog.push({ s: i.state, r: i.record_id, m: i.message, a: i.activity || null }); }); });
 const agentLog = () => win.evaluate(() => window.__agentLog.slice());
 const api = (url, body) => fetch("http://127.0.0.1:57000" + url, body === undefined ? { headers: { "X-Tailor-Extension": "1" } }
   : { method: "POST", headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" }, body: JSON.stringify(body) })
@@ -196,7 +201,22 @@ const rowOf = async (id) => {
   for (const t of Object.values((b && b.tiles) || {})) for (const it of t) if (it.id === id) return it;
   return null;
 };
-const barText = () => win.evaluate(() => { const b = document.querySelector("#bbFill"); return b && !b.hidden ? b.textContent.trim() : ""; });
+// The bar's words: the message (or, while running, the live step), without the job and page
+// beside it or the Steps toggle (a job named "Analyst (captcha)" must not read as the captcha).
+const barText = () => win.evaluate(() => {
+  const b = document.querySelector("#bbFill");
+  if (!b || b.hidden) return "";
+  const c = b.cloneNode(true);
+  c.querySelectorAll(".bb-meta, .act-toggle").forEach((x) => x.remove());
+  return c.textContent.trim();
+});
+// The live activity feed (ui/activity.py, agent.js createFeed): the run's steps as the last
+// progress line for that record carried them, as "state: verb summary" lines.
+const feedOf = async (id, state) => {
+  const hit = (await agentLog()).filter((x) => x.r === id && x.a && (!state || x.s === state)).pop();
+  return ((hit && hit.a && hit.a.events) || []).map((e) => e.state + ": " + e.verb + (e.summary ? " " + e.summary : "") + (e.detail ? " (" + e.detail + ")" : ""));
+};
+const feedHas = (lines, re) => lines.some((l) => re.test(l));
 // A row's button, with the bar cleared first: a waitBar right after the click must never read
 // the PREVIOUS run's "Ready to send" (the click's gates can take a moment before the bar moves).
 const clickRow = async (id) => {
@@ -242,6 +262,25 @@ check("every page was walked to Review", l1.some((x) => String(x).startsWith("qu
 check("nothing was submitted by the agent", !l1.includes("submitted"), log1);
 const onReview = await paneEval("!!document.getElementById('submit')");
 check("the pane shows the review page with the mock's Submit", onReview === true);
+// The live activity feed: every step of the run, OpenHands style, in plain words.
+{
+  const f = await feedOf(RID, "ready");
+  check("the timeline shows the run's steps in order", feedHas(f, /^done: Opening the job$/) && feedHas(f, /^done: Signing in /)
+        && feedHas(f, /^done: (Filled \d+ fields? from your memory|Attached your resume)/) && feedHas(f, /^(done|retry): Clicking /)
+        && /^done: Ready to send/.test(f[f.length - 1] || "") && !f.some((l) => /^running:/.test(l)), f.join(" | "));
+  check("the timeline never shows a value from the profile", !f.some((l) => /kofi\.test@example\.com|312-555-0100|Kofi Test/i.test(l)), f.join(" | "));
+  const live = (await agentLog()).filter((x) => x.r === RID && x.s === "running" && x.a && (x.a.events || []).length);
+  check("while it ran, the bar had a live step to show", live.some((x) => /^(running|retry)$/.test(x.a.events[x.a.events.length - 1].state)),
+        String(live.length));
+  const last = live.length ? live[live.length - 1].a : {};
+  check("the run's limits ride along (steps of 40, nothing sent without you)", last.max_steps === 40 && last.step >= 1 && last.autonomous === false,
+        JSON.stringify({ step: last.step, max: last.max_steps, auto: last.autonomous }));
+  await win.locator("#bbFill .act-toggle").first().click();
+  const tl = await win.evaluate(() => { const b = document.querySelector("#bbFeed"); return b && !b.hidden ? b.innerText : ""; });
+  check("Steps opens the timeline under the bar", /Opened the job/.test(tl) && /Ready to send/.test(tl) && /Steps \d+ of 40/.test(tl)
+        && /Nothing sent without you/.test(tl), tl.slice(0, 400));
+  await win.locator("#bbFill .act-toggle").first().click();
+}
 
 // ---- 5. Send: the shell presses Submit -------------------------------------------------------
 await win.click("#bbFill .bb-send");
@@ -258,6 +297,10 @@ await win.waitForSelector(`.aa-row[data-id="${RID_CAPTCHA}"]`, { timeout: 30_000
 await clickRow(RID_CAPTCHA);
 const stopped = await waitBar(/captcha|ready to send|stopped|have a look/i, 120_000);
 check("the captcha run stops with the captcha message", /captcha/i.test(stopped), stopped);
+{
+  const f = await feedOf(RID_CAPTCHA);
+  check("the captcha run's timeline ends Paused", /^parked: Paused/.test(f[f.length - 1] || "") && feedHas(f, /captcha/i), f.join(" | "));
+}
 const log3 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
 check("nothing submitted on the captcha run", !log3.includes("submitted"), JSON.stringify(log3));
 
@@ -275,6 +318,10 @@ const d1 = await deliver({ from: "Acme Careers <no-reply@acme-careers.test>", su
 check("the test delivered the code email", d1 === true);
 const codeDone = await waitBar(/ready to send|stopped|have a look|did not arrive/i, 120_000);
 check("the run typed the code and reached Ready to send", /ready to send/i.test(codeDone), codeDone);
+{
+  const f = await feedOf(RID_CODE, "ready");
+  check("the code run's timeline shows the wait for the email", feedHas(f, /^done: Waiting for the site's email \(the code arrived\)$/), f.join(" | "));
+}
 const log4 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
 check("the mock accepted the emailed code", log4.includes("code-ok") && !log4.includes("code-wrong"), JSON.stringify(log4));
 
@@ -324,6 +371,10 @@ check("the years question was among them", askedYears, asked);
 check("work authorization and sponsorship were never asked (they came from the migrated prefs)", !askedWorkAuth, asked);
 const askDone = asked;
 check("the run carries on with the answer and reaches Ready to send", /ready to send/i.test(askDone), askDone);
+{
+  const f = await feedOf(RID_ASK, "ready");
+  check("the ask run's timeline shows Asking you, answered", feedHas(f, /^done: Asking you.*you answered/), f.join(" | "));
+}
 const log6 = JSON.parse((await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null") || [];
 check("the mock saw the answer typed in", log6.includes("questions:5"), JSON.stringify(log6));
 const lib = await win.evaluate(() => fetch("/api/answers").then((r) => r.json()));
