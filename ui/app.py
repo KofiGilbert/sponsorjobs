@@ -3323,41 +3323,158 @@ def open_external():
 # of a 404 on a miss, so we detect that by size and send a real 404 -> the board falls back to
 # our own clean monogram instead of a foreign placeholder, and (3) an in-process cache means we
 # fetch each domain once. Uses apistemic's keyless logo API (no key, no signup, permissive).
+#
+# A WRONG logo is worse than the letter tile, so a domain is used only on a CONFIDENT match
+# (2026-11-01, after "Umbrella Labs" showed Cisco's logo: "Labs" was stripped as a suffix, and
+# umbrella.com is Cisco Umbrella's domain). Confident means one of: a maintainer-curated brand
+# below, the job's own host when it is the employer's site (never an ATS host such as
+# myworkdayjobs.com, which would give every Workday employer one logo), or the exact name with
+# only its LEGAL suffix dropped ("Taboola Inc" -> taboola.com). Descriptive words ("Labs",
+# "Systems", "Technologies", "Group") stay part of the name, and the favicon fallback first
+# checks that the guessed domain is still its own site (not a redirect to someone else's).
 _LOGO_CACHE: "OrderedDict[str, tuple]" = OrderedDict()   # domain -> (bytes, mimetype) | (None, None), LRU
 _LOGO_CACHE_MAX = 400          # the page caches each logo for a week, so this only spares refetches
 _LOGO_LOCK = threading.Lock()
 _LOGO_MISS_MAX = 1500          # a miss is a ~650B generated avatar; real logos are multi-kB
-_CO_SUFFIX_RE = re.compile(
-    r"\b(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|group|holdings?|"
-    r"plc|pbc|gmbh|lp|llp|pllc|ag|s\.?a|labs?|technolog(?:y|ies)|solutions?|systems?|the)\b", re.I)
-# A school's name usually ENDS in the academic word ("DePaul University"); that's the reliable
-# signal for a .edu domain AND the piece to drop from the slug (depaul.edu, not
-# depauluniversity.edu). A leading/middle one ("University Health") is a normal company word.
-_UNI_TAIL_RE = re.compile(r"\b(univers\w*|college|school|institut\w*|polytechnic|academy)\s*$", re.I)
+# Trailing words of a LEGAL filing name (sourcing/brands.py keeps the same idea for display).
+_CO_LEGAL = frozenset("""
+inc incorporated llc corp corporation co company ltd limited lp llp pllc plc pbc pc gmbh ag sa
+nv bv srl sas
+""".split())
+# A school's name usually ENDS in "University" ("DePaul University" -> depaul.edu). Only that
+# word is dropped: "Northwestern College" is not northwestern.edu (Northwestern University).
+_UNI_TAIL = "university"
+_UNI_WORDS = frozenset("university college school institute polytechnic academy".split())
+# Maintainer-curated brands whose domain is not the slug of their legal name. Keys are
+# normalised word tuples; a key in _BRAND_FAMILY also covers names that START with it as whole
+# words ("Cisco Meraki", "Amazon Web Services") -- only for distinctive brands, so "Apple
+# Leisure Group" never gets Apple's logo, and never on a substring ("Discord" is not "Cisco").
+_KNOWN_BRANDS = {
+    ("cisco",): "cisco.com", ("cisco", "systems"): "cisco.com",
+    ("amazon",): "amazon.com", ("google",): "google.com", ("microsoft",): "microsoft.com",
+    ("oracle",): "oracle.com", ("qualcomm",): "qualcomm.com", ("deloitte",): "deloitte.com",
+    ("cognizant",): "cognizant.com", ("payward",): "kraken.com", ("kraken",): "kraken.com",
+    ("meta", "platforms"): "meta.com", ("international", "business", "machines"): "ibm.com",
+    ("jpmorgan", "chase"): "jpmorganchase.com", ("tata", "consultancy", "services"): "tcs.com",
+    ("ernst", "young"): "ey.com",
+}
+_BRAND_FAMILY = frozenset({("cisco",), ("amazon",), ("google",), ("microsoft",), ("oracle",),
+                           ("qualcomm",), ("deloitte",), ("cognizant",), ("payward",)})
+_TRUSTED_LOGO_DOMAINS = frozenset(_KNOWN_BRANDS.values())
+# Hosts that carry MANY employers' jobs: their domain is never one employer's own.
+_SHARED_JOB_HOSTS = frozenset("""
+myworkdayjobs.com myworkdaysite.com workday.com greenhouse.io lever.co ashbyhq.com workable.com
+smartrecruiters.com recruitee.com icims.com taleo.net oraclecloud.com successfactors.com
+successfactors.eu jobvite.com bamboohr.com breezy.hr applytojob.com jazzhr.com eightfold.ai
+phenompeople.com dayforcehcm.com ultipro.com paylocity.com rippling.com rippling-ats.com gem.com
+teamtailor.com personio.de personio.com pinpointhq.com linkedin.com indeed.com glassdoor.com
+ziprecruiter.com monster.com dice.com remotive.com remoteok.com remoteok.io adzuna.com
+weworkremotely.com wellfound.com angel.co builtin.com ycombinator.com workatastartup.com
+""".split())
+_SECOND_LEVEL = frozenset("co com org net ac gov edu".split())
 
 
-def _guess_company_domain(company: str) -> str:
-    """Best-effort employer domain from a display name: strip legal suffixes, collapse to a
-    slug, and pick .edu (dropping the trailing 'University'/'College') for schools, .com
-    otherwise. Wrong guesses simply miss (the size check turns them into a 404), so an
-    over-eager guess never shows the wrong logo -- the board just keeps its monogram."""
-    name = _CO_SUFFIX_RE.sub(" ", (company or "").strip().lower())
-    if _UNI_TAIL_RE.search(name):
-        tld = ".edu"
-        name = _UNI_TAIL_RE.sub(" ", name)             # "depaul university" -> "depaul"
-    else:
-        tld = ".com"
-    slug = re.sub(r"[^a-z0-9]", "", name)
-    return slug + tld if slug else ""
+def _company_words(company: str) -> list:
+    """A company name as plain lower-case words, legal suffixes and a leading 'The' dropped:
+    "Cisco Systems, Inc." -> ['cisco', 'systems']; "Amazon.com Services LLC" -> ['amazon',
+    'services']; "Ernst & Young LLP" -> ['ernst', 'young']."""
+    s = (company or "").strip().lower()
+    s = re.sub(r"\.(com|net|org|io|ai)\b", " ", s)     # "amazon.com services" -> "amazon services"
+    s = s.replace(".", "")                              # "l.l.c." -> "llc", "s.a." -> "sa"
+    words = re.sub(r"[^a-z0-9]+", " ", s).split()
+    if len(words) > 1 and words[0] == "the":
+        words = words[1:]
+    while len(words) > 1 and words[-1] in _CO_LEGAL:
+        words.pop()
+    if words and words[-1] in _CO_LEGAL:                # a name that is ALL suffix -> nothing
+        return []
+    return words
+
+
+def _known_brand_domain(words: list) -> str:
+    """The curated domain for this name: an exact key, or a whole-word prefix of a family key."""
+    key = tuple(words)
+    if key in _KNOWN_BRANDS:
+        return _KNOWN_BRANDS[key]
+    for n in range(len(key) - 1, 0, -1):
+        if key[:n] in _BRAND_FAMILY:
+            return _KNOWN_BRANDS[key[:n]]
+    return ""
+
+
+def _registrable_domain(host: str) -> str:
+    """'jobs.cisco.com' -> 'cisco.com', 'careers.bbc.co.uk' -> 'bbc.co.uk'."""
+    parts = [p for p in (host or "").strip().lower().rstrip(".").split(".") if p]
+    if len(parts) < 2:
+        return ""
+    if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in _SECOND_LEVEL:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
+def _employer_host_domain(host: str, words: list) -> str:
+    """The job's own host as the employer's domain, but only when it IS the employer's site:
+    not a shared job host (an ATS or a board), and its name is the company's name or its first
+    word ("Cisco Systems" on jobs.cisco.com)."""
+    host = re.sub(r"^[a-z]+://", "", (host or "").strip().lower()).split("/")[0].split(":")[0]
+    dom = _registrable_domain(host)
+    if not dom or not words or dom in _SHARED_JOB_HOSTS:
+        return ""
+    label = dom.split(".")[0]
+    if label == "".join(words) or (len(words) > 1 and label == words[0] and len(label) >= 3):
+        return dom
+    return ""
+
+
+def _guess_company_domain(company: str, host: str = "") -> str:
+    """The employer's domain, or "" when there is no confident match (the board then keeps its
+    letter tile). In order: a curated brand, the job's own host when it is the employer's site,
+    then the exact name with only legal suffixes dropped -> .com, or .edu for "X University"."""
+    words = _company_words(company)
+    if not words:
+        return ""
+    known = _known_brand_domain(words)
+    if known:
+        return known
+    own = _employer_host_domain(host, words)
+    if own:
+        return own
+    if len(words) > 1 and words[-1] == _UNI_TAIL and words[-2] not in _UNI_WORDS:
+        return "".join(words[:-1]) + ".edu"             # "depaul university" -> depaul.edu
+    return "".join(words) + ".com"
+
+
+def _domain_is_its_own_site(domain: str) -> bool:
+    """True when https://domain answers as ITSELF: it does not redirect to another registrable
+    domain (umbrella.com -> umbrella.cisco.com) and is not a for-sale parking page. Used before
+    the favicon fallback, which would otherwise show whatever site the domain points at."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request("https://" + domain + "/",
+                                 headers={"User-Agent": "resume-agent/1.0 (job board logos)"})
+    body = b""
+    try:
+        with urllib.request.urlopen(req, timeout=6) as r:
+            final = r.geturl()
+            body = r.read(65536)
+    except urllib.error.HTTPError as e:              # a 403 from a bot wall still names the site
+        final = e.geturl() or ""
+    except Exception:                                # noqa: BLE001 - unreachable, bad TLS -> not confident
+        return False
+    final_host = re.sub(r"^[a-z]+://", "", (final or "").lower()).split("/")[0].split(":")[0]
+    if _registrable_domain(final_host) != _registrable_domain(domain):
+        return False
+    text = body.decode("utf-8", "ignore").lower()
+    return not any(m in text for m in ("domain is for sale", "buy this domain",
+                                        "domain may be for sale", "this domain is parked"))
 
 
 def _fetch_logo(domain: str):
     """A real logo for a domain, or (None, None) on a miss. Two keyless sources, best first:
     apistemic (clean multi-kB WebP logos, but returns a small generated placeholder on a miss, so
     we size-gate it), then DuckDuckGo's favicon service (broad coverage, smaller icons, a true 404
-    on a miss so no gate needed). Chaining the two lifts coverage on real domains apistemic lacks
-    (e.g. freshclinics.com) without ever risking a WRONG logo -- a miss just falls through to our
-    own monogram."""
+    on a miss so no gate needed). DuckDuckGo follows redirects, so for a guessed domain it is used
+    only when the domain is still its own site; a miss falls through to our own monogram."""
     import urllib.parse
     import urllib.request
     ua = {"User-Agent": "resume-agent/1.0 (job board logos)"}
@@ -3370,6 +3487,8 @@ def _fetch_logo(domain: str):
             return raw, "image/webp"
     except Exception:                                 # noqa: BLE001 - network blip / unknown domain
         pass
+    if domain not in _TRUSTED_LOGO_DOMAINS and not _domain_is_its_own_site(domain):
+        return None, None
     try:                                              # DuckDuckGo 404s on a genuine miss (raises here)
         req = urllib.request.Request(
             "https://icons.duckduckgo.com/ip3/" + domain + ".ico", headers=ua)
@@ -3384,7 +3503,7 @@ def _fetch_logo(domain: str):
 
 @app.get("/api/logo")
 def company_logo():
-    domain = _guess_company_domain(request.args.get("company", ""))
+    domain = _guess_company_domain(request.args.get("company", ""), request.args.get("host", ""))
     if not domain:
         return ("", 404)
     with _LOGO_LOCK:
