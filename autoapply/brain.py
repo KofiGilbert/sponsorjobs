@@ -50,6 +50,7 @@ Rules:
 Reply with JSON only, no prose, exactly this shape:
 {"memory": "what you know so far, under 40 words",
  "evaluation": "did the previous actions work, in one line",
+ "summary": "what these actions do, about 10 words, starting with an -ing verb (Clicking Next to open page 3); placeholders only, never a value",
  "actions": [{"op": "click", "index": 12},
              {"op": "type", "index": 3, "text": "{{email}}"},
              {"op": "select", "index": 5, "option": "Exact option label"},
@@ -351,7 +352,105 @@ def parse_reply(raw: str, view_indices: set) -> dict | None:
         return None
     return {"memory": str(data.get("memory") or "").strip()[:400],
             "evaluation": str(data.get("evaluation") or "").strip()[:300],
+            "summary": str(data.get("summary") or "").strip()[:200],
             "actions": actions, "done": done}
+
+
+# --------------------------------------------------------------------------- the live line
+# The reply's ``summary`` is what the person reads on the agent bar while it works ("Clicking
+# Next to open page 3", OpenHands V1's per-action summary). It goes to the screen, so it is held
+# to the same boundary as everything else: no personal value, no self-identification choice.
+_PH_ANY = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}", re.I)
+_PH_WORDS = {"portal_email": "your sign-in email", "portal_password": "your password",
+             "email_code": "the emailed code", "work_auth_note": "your work status note"}
+_EMAIL_RE = re.compile(r"\S+@\S+")
+_URL_RE = re.compile(r"https?://\S+|www\.\S+", re.I)
+_SUMMARY_MAX = 90
+
+
+def _ph_words(key: str) -> str:
+    key = key.lower()
+    if key in _PH_WORDS:
+        return _PH_WORDS[key]
+    if key.startswith("answer_"):
+        return "your answer"
+    return "your " + key.replace("_", " ")
+
+
+def _short(text: str, limit: int = _SUMMARY_MAX) -> str:
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return cut.rstrip(",;:") + "..."
+
+
+def derive_summary(actions: list, lines: dict, done: dict | None = None) -> str:
+    """A plain summary built from the actions alone, when the model gave none (or one that
+    could not be shown). Names the page's own button or field words, never a typed value and
+    never a chosen option."""
+    if done:
+        oc = done.get("outcome")
+        return {"ready_to_submit": "Stopping at the submit button for you",
+                "await_email": "Waiting for the site's email",
+                "submitted": "Checking the site's confirmation"}.get(oc, "Stopping here, this needs you")
+    acts = list(actions or [])
+    if not acts:
+        return ""
+    lead = next((a for a in reversed(acts) if a.get("op") == "click"), acts[0])
+    name = _short(_line_name(lines.get(lead.get("index")) or {}), 40)
+    op = lead.get("op")
+    if op == "click":
+        s = f"Clicking {name}" if name else "Clicking on the page"
+    elif op == "type":
+        m = PLACEHOLDER_RE.match(str(lead.get("text") or ""))
+        key = str(lead.get("placeholder") or "") or (m.group(1) if m else "")
+        s = f"Typing {_ph_words(key)}" if key else (f"Typing in {name}" if name else "Typing in a box")
+    elif op == "select":
+        s = f"Choosing an option for {name}" if name else "Choosing an option"
+    elif op == "upload":
+        s = "Uploading your resume"
+    elif op == "scroll":
+        s = "Scrolling to see more of the page"
+    else:
+        s = "Waiting for the page"
+    if len(acts) > 1 and op != "click":
+        s += f" and {len(acts) - 1} more"
+    elif len(acts) > 1:
+        s = f"Filling {len(acts) - 1} {'box' if len(acts) == 2 else 'boxes'}, then " + s[0].lower() + s[1:]
+    return s
+
+
+def clean_summary(summary: str, actions: list, lines: dict, done: dict | None = None, values: dict | None = None,
+                  withheld=()) -> str:
+    """The summary the bar may show. The model's own words when they pass: placeholders read as
+    words ("your email"), any personal value (even one the model was never sent) or long run of
+    digits drops it, and so does anything about self-identification or a chosen option. Else
+    the summary built from the actions (``derive_summary``). Never a dash, about 10 words."""
+    s = " ".join(str(summary or "").split())
+    if s:
+        s = _PH_ANY.sub(lambda m: _ph_words(m.group(1)), s)
+        s = s.replace(chr(0x2014), ", ").replace(chr(0x2013), "-")
+        bad = bool(_EMAIL_RE.search(s) or _URL_RE.search(s) or _DIGIT_RUN.search(s) or _SELF_ID.search(s))
+        low = s.lower()
+        for v in list((values or {}).values()) + [str(w) for w in (withheld or [])]:
+            v = str(v or "").strip()
+            if len(v) >= 3 and re.search(r"(?<![a-z0-9])" + re.escape(v.lower()) + r"(?![a-z0-9])", low):
+                bad = True
+                break
+        for a in actions or []:
+            opt = str(a.get("option") or "").strip().lower() if a.get("op") == "select" else ""
+            if len(opt) >= 2 and re.search(r"(?<![a-z0-9])" + re.escape(opt) + r"(?![a-z0-9])", low):
+                bad = True                       # the option chosen is the person's answer
+            if a.get("op") == "type" and a.get("sensitive") is False:
+                t = str(a.get("text") or "").strip().lower()
+                if len(t) >= 3 and t in low:
+                    bad = True
+        if bad:
+            s = ""
+    if not s:
+        s = derive_summary(actions, lines, done)
+    return _short(s[:1].upper() + s[1:]) if s else ""
 
 
 # --------------------------------------------------------------------------- resolution
@@ -428,7 +527,7 @@ def submit_guard(actions: list, lines: dict) -> bool:
 
 
 def _blocked(reason: str, memory: str = "", evaluation: str = "") -> dict:
-    return {"ok": True, "memory": memory, "evaluation": evaluation, "actions": [],
+    return {"ok": True, "memory": memory, "evaluation": evaluation, "actions": [], "summary": "",
             "done": {"outcome": "blocked", "reason": reason}, "notes": []}
 
 
@@ -471,5 +570,6 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
     for a in actions:
         if a.get("op") == "upload" and resume_path:
             a["path"] = resume_path
+    summary = clean_summary(reply.get("summary", ""), actions, lines, reply["done"], values, withheld)
     return {"ok": True, "memory": reply["memory"], "evaluation": reply["evaluation"],
-            "actions": actions, "done": reply["done"], "notes": notes}
+            "summary": summary, "actions": actions, "done": reply["done"], "notes": notes}

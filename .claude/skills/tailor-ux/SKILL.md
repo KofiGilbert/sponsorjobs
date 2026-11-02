@@ -357,3 +357,16 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   A job left Ready to send keeps a "Send" row action on Waiting on you; when its page is gone, that
   one Send fills it again and submits it ("Filling it in again to send it"), or pauses it, never a
   second click.
+- 2026-11-01: The live activity feed (OpenHands style). While the apply agent runs, the bar above the
+  pane is ONE live line: a 12px ring spinner (a still dot under prefers-reduced-motion), the verb in
+  the accent and bold ("Clicking"), the summary in ink-2, then the job and page in muted text; the
+  job's name truncates first, "page 2 of 4" never does, and a long role drops the company. The bar is
+  neutral surface while it runs (the green stays for Ready to send and fills). A "Steps 7" outline
+  toggle with a chevron opens the timeline UNDER the bar, in the page flow so the native pane gets
+  shorter instead of covering it: 76px time column, a 14px marker (✓ muted, ↻ --flag, • accent),
+  the step in the past tense when done ("Opened the job"), muted detail after it, and a hairline
+  footer "Steps 14 of 40 · Nothing sent without you". The resume builder shows the same line as a
+  quiet strip above the preview (the "What changed" grammar) while it builds, then "✓ Built <role>"
+  for four seconds; a request that only asked a question leaves no line. Measured at 1893x1183 DSF 2
+  and 2490x1556 DSF 1.52, dark and light: the bar 759x37, the timeline 759 wide, the builder strip
+  759 wide, no sideways scroll, no console errors. Screens: docs/design/activity/.

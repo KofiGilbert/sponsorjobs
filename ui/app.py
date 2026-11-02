@@ -2911,6 +2911,19 @@ def record_variant(rid: int):
         "Nothing new. Everything is in my saved profile, including my summary. Build it."))
 
 
+@app.get("/api/activity")
+def activity_feed():
+    """The live activity feed of the latest build (ui/activity.py): {ok, run} where run is
+    {id, kind, key, target, started, ended, ok, events} or null. The builder polls it while a
+    session request is in flight, so the person sees each step as it happens. Only the builder's
+    own run ("builder") or the unattended tailoring's ("unattended")."""
+    from ui import activity as _act
+    key = str(request.args.get("key") or "builder")
+    if key not in ("builder", "unattended"):
+        key = "builder"
+    return jsonify({"ok": True, "run": _act.snapshot(key)})
+
+
 @app.get("/api/session/state")
 def session_state():
     """Read the live session, so the person can leave a CV and come back to it.
