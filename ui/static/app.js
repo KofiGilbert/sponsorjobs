@@ -9883,7 +9883,7 @@
     if (info.activity) { AA_FEED.rid = info.record_id; AA_FEED.snap = info.activity; }
     // The bar's own lines (no record: "Thanks. Carrying on") keep the current run's steps; the
     // gates before a run and a batch's sum-up have none.
-    const mine = info.record_id == null ? !/^(terms-gate|basics|batch-done)$/.test(info.state || "")
+    const mine = info.record_id == null ? !/^(basics|batch-done)$/.test(info.state || "")
       : String(info.record_id) === String(AA_FEED.rid);
     const snap = mine ? AA_FEED.snap : null;
     const now = feedLast(snap && snap.events);
