@@ -28,19 +28,25 @@ Hard lines that do not move (CLAUDE.md section 7):
 ```
 runApplyAgent(recordId)                                   shell-electron/agent.js
   open the apply URL in the pane, wait for it to settle
-  for step in 1..MAX_STEPS (40):
+  for step in 1..MAX_STEPS (60, SJ_AGENT_MAX_STEPS) while under the dollar cap (section 15):
     1. settle(): URL changed OR DOM quiet for 600 ms OR 8 s cap (never a flat nap)
-    2. guard(): blocker (captcha -> stop "captcha"; auth -> section 4), host off the
+    2. guard(): blocker (captcha -> park "captcha"; auth -> section 4), host off the
                 allowlist -> stop "left-site", success page -> stop "submitted"
     3. fill(): the deterministic engine fills what it recognizes on this page
                 (recipes -> labels -> widgets -> /api/autoapply/plan), uploads the resume
-    4. view():  serialize the page for the model (section 3), main frame + cross-origin frames
-    5. brain(): POST /api/autoapply/agent/step {view, history, ...} -> {memory, actions, done}
-    6. act():   run the actions in order; stop the queue when the page changes
+    4. view():  serialize the page for the model (section 3), main frame + cross-origin frames;
+                hang detection (section 13): a page with nothing on it for 45 s goes to the ladder
+    5. brain(): POST /api/autoapply/agent/step {view, history, plan, observations, ...}
+                -> {memory, plan, actions, done, cost}
+    6. act():   run the actions in order; the read-only tools (section 12) return observations;
+                a page check holds a Next whose required fields are empty (section 14);
+                stop the queue when the page changes
     7. record(): one history line {memory, evaluation, actions, results}; loop detector
-    done.outcome == "ready_to_submit" -> hand over (section 6)
-    done.outcome == "blocked"         -> stop with reason, bar + Telegram
-  MAX_STEPS or 4 consecutive failed steps -> stop "stuck", package stays "waiting on you"
+    done.outcome == "ready_to_submit" -> ready gate, critic, then hand over (sections 14, 6)
+    done.outcome == "blocked"         -> captcha / phone code park; needs-person -> the ladder
+  every call into the pane is capped (20 s) and Stop preempts it (section 13)
+  nothing "stuck" ever stops the run: the recovery ladder (section 13), then a park that says
+  what was tried; a batch job also parks after 12 minutes ("took too long", section 16)
 ```
 
 The deterministic engine goes first on every page so the model is only ever asked WHAT TO
@@ -170,7 +176,11 @@ Data boundary:
   slipped into page text (a form echoing the email back) with its placeholder name.
 
 Guards in Python: unknown op or index not in the view -> dropped; `done` with other actions ->
-other actions dropped; empty reply -> one retry, then `blocked: needs-person`.
+other actions dropped; an empty or garbled reply -> up to three calls with backoff (0.5 s,
+1.5 s) and a "reply with JSON only" nudge, then `{ok: false, reason: "no-reply", error}` for the
+shell to escalate (section 13), never a park; a model call that fails for credits, a key or
+access (`BrokerUnavailable` reasons `upgrade_required`, `no_key`, `no_credit`) is `fatal` at
+once (section 13). `ready_to_submit` passes the deterministic ready gate first (section 14).
 
 ## 6. Submit, and who presses it
 
@@ -194,11 +204,14 @@ it is the Send path above. Belt and braces.
 - `settle()` after every page-changing action: resolve on URL change, or on no DOM mutation
   for 600 ms, or at 8 s; report which fired. (browser-use has no such wait; that is why the
   Workday page showed up blank on 2026-10-27.)
-- Per step: one brain call (60 s cap), actions 25 s each. `MAX_STEPS = 40`,
-  `MAX_FAILED_STEPS = 4` in a row (a failed step = an action error or an empty reply).
+- Per step: one brain call (90 s cap), actions 25 s each, every other call into the pane
+  20 s (`SJ_AGENT_PANE_MS`), the fill engine 40 s (`SJ_AGENT_FILL_MS`). `MAX_STEPS = 60`
+  (`SJ_AGENT_MAX_STEPS`), `MAX_FAILED_STEPS = 4` in a row (a failed step = an action error or
+  an empty reply) -> the recovery ladder, never a stop (section 13).
 - Loop detector: the hash of `(op, index, text)` over the last 12 actions; the same hash 3
-  times -> a nudge line in the next prompt ("you repeated X three times; it is not working"),
-  5 times -> stop `stuck`. The same `(url, view hash)` 4 steps in a row -> stop `stuck`.
+  times -> a nudge line in the next prompt ("you repeated X three times; inspect it, read the
+  errors, do it another way"), 5 times -> the ladder. The same `(url, view hash)` 4 steps in a
+  row with nothing filled -> the ladder.
 - Host allowlist per run: the apply URL's host, its registrable domain, and the known ATS
   hosts (`ATS_HOSTS`, new in `submit/allowlist.py`: the sourcing ATS domains plus myworkdayjobs.com, icims.com, taleo.net, successfactors.com, jobvite.com, bamboohr.com, paylocity.com, ultipro.com, adp.com). A navigation anywhere else stops the run
   (`left-site`); a `window.open` tab is closed after its URL is read. `about:blank` is fine.
@@ -361,8 +374,201 @@ auto-accept; forced single tool call with cache breakpoints on system prompt and
 
 Left out: automation-masking Chrome flags, UA override, proxies, captcha solver, bundled
 extensions, per-character "human" typing, screenshots on every step (DOM text only; a
-screenshot is attached only on a `stuck` nudge), todo/file-system actions, plan fields,
-history compaction, multi-tab as a model feature, LiteLLM pricing, client-side model fallback.
+screenshot goes with the ladder's reflection call and when the brain asks for one, section
+12), todo/file-system actions, history compaction, multi-tab as a model feature, LiteLLM
+pricing, client-side model fallback. (The plan field and the read-only tools came later, from
+the OpenHands study: sections 12 to 16.)
+
+## 12. Read-only tools: the brain investigates instead of guessing (2026-11-02)
+
+From the OpenHands and Devin study (`scratchpad/openhands-study.md`, phases 4 to 6): OpenHands
+never gets stuck because errors go back to the model as text and it can look closer. We give
+the brain fixed, read-only tools instead of free code on a live job page (the page is untrusted
+input and the person's data is on the machine):
+
+| op | what the shell does | the observation |
+|---|---|---|
+| `read_page(offset)` | `TailorAgent.readPage(offset, 6000)`: the view's lines past the 12 000-char cap, from that element index | the lines, "(N more elements below; next offset M)" |
+| `find(text)` | `TailorAgent.find`: lines whose words contain it, else the page text around it | up to 12 lines |
+| `inspect(index)` | `TailorAgent.inspect`: tag, kind, label, attributes (type, name, pattern, placeholder, inputmode, aria-*), required, disabled, visible, covered, the state (`(filled)` or empty, never a value), the text before and after, the errors next to it | one JSON line |
+| `list_options(index)` | a native select's options from the element, a custom dropdown's from its popup (the ask path's readers) | "a \| b \| c (and more)" |
+| `read_errors` | `TailorAgent.readErrors`: every `Error:` line plus live `role=alert`, `aria-invalid` and error blocks | the errors |
+| `screenshot` | `wc.capturePage()` at 900 px wide, base64 PNG | "it comes with your next step" (the next call is `agent_step_image`; never stored) |
+| `wait_for(text, selector, seconds<=30)` | polls `TailorAgent.has` every 500 ms | "appeared after 2.5 s" or "did not appear within 10 s" |
+| `back`, `reload`, `reopen_job` | the pane goes back, reloads, or opens the job's own apply URL again (no URL from the model, ever) | "went back", "reloaded", "opened the job again"; page-changing, so last in the list |
+
+Every observation goes back in the next user message's `<observations>` block (capped at 7 000
+chars each, 12 000 together, redacted like the view), as information, never as a reason to
+stop. A failed `click`/`type` adds its own observation ("your type on [12] did not work:
+covered. Inspect it or do it another way"). The prompt's rule 8 says what to do with that;
+"report blocked" is reserved for a captcha, a phone code, an identity check, or an answer only
+the person can give. A `wait_for` selector must match `^[A-Za-z0-9_\-\s\[\]="'#.:*,>+~()^$|]{1,120}$`
+(a plain CSS selector, read-only through `querySelector`).
+
+## 13. The recovery ladder, hangs, and the AI being down (2026-11-02)
+
+**Why.** The real batch of 2026-11-02: Nelnet's Workday form showed grey skeleton boxes and the
+brain answered `wait` for 10 minutes; then an `await` inside the loop never returned (an
+`executeJavaScript` on the skeleton page) and the loop froze for 8 minutes with Stop dead.
+Eliassen parked "needs you" on ONE garbled model reply. Barclays signed in with a just-created
+account, asked for a reset, and gave up when no mail came in 3 minutes. From 02:29 the company
+API key ran out of credits and every job parked "needs you" within 20 seconds.
+
+**Every call into the pane is capped.** `guard(promise, ms, what)` races the call with a
+timeout (`PANE_MS` 20 s; the fill 40 s; a brain call 90 s; CDP input events 6 s), with the
+run's Stop flag (polled every 150 ms, so Stop takes effect inside a hung call), and with a
+navigation (`did-navigate` bumps `navEpoch`; a call to the old document is rejected instead of
+left pending, which Electron otherwise does). The run's `webContents` is wrapped in a proxy
+whose `executeJavaScript` is guarded, so every helper (the view, the fill, `handleTerms`, the
+dropdown readers, `attachResume` in main.js) is covered without touching each call. A timeout
+is a `hang` observation: the step's `catch` sends it up the ladder's strategies and the loop
+goes on. Nothing in the loop can hold it any more.
+
+**Hang detection.** `TailorAgent.pageShape()` (fields, buttons, a skeleton marker, words) runs
+every step. A page with no fields and either a skeleton (`aria-busy`, a `skeleton` class, a
+loading indicator, "Loading" with nothing else) or almost nothing on it (at most 6 buttons, under
+60 words) that stays the same for `SJ_AGENT_HANG_S` (45 s) goes to the ladder's strategies.
+The brain's plain `wait` is capped: `MAX_WAITS` (3) in a row and the shell escalates the same
+way.
+
+**The ladder** (`recover()` in agent.js), one per page (keyed on the page's hash, so the rungs
+add up on the same page and a new page starts fresh; at most `MAX_LADDERS` 4 per application):
+1. one nudge in the next prompt with the exact problem and the last three steps' actions and
+   results ("do not repeat it: inspect, read_errors, find, do it another way");
+2. one reflection call: the same state plus a `<reflection>` block (the problem, what was tried,
+   "list 3 to 5 likely causes, rank them, pick the likeliest, choose ONE strategy from the menu")
+   and a screenshot through `agent_step_image` (medium effort). The reply's `strategy` is run
+   by the shell after its actions, when they did not already move the page;
+3. the strategy menu in order, each once: `wait_for form` (up to 15 s for fields or buttons
+   without a skeleton), `reload`, `back`, `reopen_job`, `sign in again` (reopen plus a sign-in
+   nudge), `fill the field myself` (the engine stands back one step; the brain types the
+   placeholders), `read more of the page`, `use the other input form` (the last three are hints);
+4. only then PARK, with "I tried a hint to the AI, a closer look with a screenshot, reload, ...
+   and could not get past this: <problem>".
+A hang (the page did not answer, a skeleton, too many waits) skips to rung 3 with the short
+menu wait_for form, reload, reopen_job. The ladder replaces every former "stuck, have a look"
+stop: the same page 4 times, the same action 5 times, 4 failed steps, 4 bad model replies, the
+brain's `needs-person`, and the ready gate refused 4 times. Each rung shows on the feed as
+"Trying another way: reloading the page" (state retry) and in the debug log as `ladder <name>`.
+
+**Bad model replies.** `brain.step` calls the model up to three times with backoff (0.5 s,
+1.5 s) and a "reply with JSON only" nudge before saying `no-reply`; the shell then counts a
+failed step (with the real error text on the feed: "Asking the AI again (bad reply: {oops)")
+and at four goes up the ladder. **The AI being down is never "needs you".** A call that fails
+for credits, a key or access (`BrokerUnavailable.reason` `ai_company` (the broker's own
+outage tag, PR #166), `upgrade_required`, `no_key`, the Anthropic "out of usage credits" / 401 /
+402 wording) is `fatal` after ONE call: the step route
+answers `{ok: false, fatal, message}`, the job stops with "SponsorJobs' AI is unavailable right
+now (credits). Nothing was changed; try again later" (reason `ai-unavailable`), the record gets
+an `agent_note` the Auto-apply row shows instead of "Approved, ready to fill", ONE Telegram line
+goes out per half hour (`/api/autoapply/agent/unavailable`), and a running batch stops after
+that job with the same words in its sum-up (for `ai_company` the words are the broker's
+`AI_COMPANY_TEXT`). Transient failures (`ai_transient`, 429, 5xx, overloaded, timeouts, offline)
+are retried with backoff as above. The debug log and the history line carry the
+broker's actual error text, not "no usable reply".
+
+**Email verification, end to end** (Nelnet's Workday flow). `await_email` waits
+`SJ_AGENT_EMAIL_WAIT_S` (180 s), then looks once more after `SJ_AGENT_EMAIL_RECHECK_S` (60 s);
+still nothing and the job parks with Continue ("The <company> email (a link) did not arrive in
+4 minutes. Check your inbox and do the step on the page, then press Continue; I look for the
+mail once more first"), remembering what it waited on, and the resumed run asks the inbox once
+more (20 s) before reading the page: a late mail still completes the run. An emailed link is
+opened in the pane (`afterEmailLink`); the "account activated, sign in" page is signed in by
+the brain (rule 13); a careers home or job search page right after that is not the end: the
+shell opens the job again by itself (and the brain has `reopen_job` for the same, rule 11).
+`<portal>` tells the brain whether the saved account was created THIS run (the shell's
+`portalNew`: the site does not know it yet, so Create account first, never a reset) or exists
+(sign in; on failure sign in once more, then Create account if offered, then Forgot password).
+Mock scenarios: `mock_ats.html?skeleton=1` (the form page is a skeleton until a reload) and
+`?activate=1` (the "an email has been sent" banner, the activate link, the activated page,
+the sign-in that lands on the job search page); e2e sections 18 and 19.
+
+**The sign-in wall, deterministically** (the e2e of 2026-11-02 looped "Filling 2 boxes, then
+clicking Sign in" twenty times). The shell reads the wall itself instead of hoping the model
+follows rule 14: a click on Sign in that leaves the sign-in form (a password box and a Sign in
+button) on screen is a failed sign-in, counted per site. A page that says the account must be
+verified ("An email has been sent to you. Please verify your account.", "not verified") leads
+straight to the email wait, without a model call, once per site until its link was opened; so
+does the "check your email" page after a reset request. Two failed sign-ins: the shell clicks
+Create account when the site offers it (the account may be new to the site), the next failure
+Forgot password (then the reset mail); four go up the ladder, whose menu on a sign-in page
+starts with `create account`, `reset password` and `wait for the site's email`. The same step
+on the same page coming round a third time (even with other steps between) goes up the ladder
+too, and the same page three steps in a row (was four). After an emailed link, the shell opens
+the job again only from a page with no field of its own that reads like a job search ("Search
+for Jobs"), within 8 steps, never from the "account activated" page or a form under a header
+search box. `back` only ever returns to a page this application was on (Electron's history
+keeps the previous job's pages; the e2e's activation run once went back into the skeleton job).
+
+**From the owner's real pages (2026-11-02, `tests/fixtures/forms/real/`).**
+- *A closed job* (Oracle "This job is no longer available", US Bank's Workday "The page you are
+  looking for doesn't exist", Amazon "Sorry, the job you're looking for isn't available") is
+  caught by `closedJob()` before any model call, while no form has been reached: a short line of
+  the page's own that says the posting is gone, no Apply control, no field of its own. The run
+  stops as `job-closed`, `/api/autoapply/agent/closed` moves the record to the closed-posting
+  state (the row reads "Job closed", its action is View, so no batch picks it again), nothing goes
+  to Telegram, and a batch counts it apart ("2 closed by the employer") and moves on. Zero AI cost.
+- *Live-region announcements are not errors*: Workday's aria-live announcer ("Research Analyst
+  page is loaded"), `role=status`/`log` and `aria-live=polite` regions without an error class are
+  left out of `Error:` lines, `readErrors` and `pageCheck`.
+- *The footer is honest*: the view walks the whole page, so it never says "N pages below" next to
+  `[End of page]`; a view the cap cut ends "(N more elements below; read_page offset M shows them)"
+  and `[End of view]`.
+- *Honeypots are invisible*: a text box labelled for robots (Barclays' Workday "This input is for
+  robots only") or parked off the canvas is never in the view, `pageShape` or `pageCheck`; the
+  fill engine already skipped it (its `HONEYPOT_RE`, now also "for robots" and "not human").
+- *LinkedIn is never clicked*: the shell refuses any click whose words name LinkedIn (and any
+  other social sign-in while the page offers an email or manual path); the brain drops such a
+  click too, and the prompt prefers Apply with Email or Apply manually.
+- *Chat-style apply* (Chewy's Phenom chatbot): the prompt says to open the chat and answer one
+  question at a time with placeholders; the cycle check keeps it from looping.
+
+## 14. The plan, page checks and the pre-submit critic (2026-11-02)
+
+- **Plan.** The brain's reply carries `plan`: short lines "done: Job page", "now: Sign in",
+  "todo: Review" (at most 12). The shell keeps it on the run, sends it back in `<plan>` every
+  step, saves it in the park state so a resumed run continues from it, and shows it above the
+  timeline (Steps) with the spend. No extra call.
+- **Page check.** Before a click that moves on (`NEXT_RE`: Next, Continue, Save and continue,
+  Review...), once per page, `TailorAgent.pageCheck()` lists the required fields still empty
+  (text, select, combobox, file; never the site's search box) and the errors shown. Any empty
+  one holds the click: the step's result reads "held: required fields still empty", the
+  observation says which, and the brain fills them (placeholders) or reports `needs-answers`
+  (the person is asked). The second time on the same page the click goes through.
+- **Ready gate, deterministic first.** `notReady(view)` in the shell and `brain.not_ready` in
+  the engine refuse `ready_to_submit` when the page has a password box, is a sign-in or
+  create-account form (an email box with a Sign in / Create account button and no Submit), or
+  shows no Submit-like control at all (Gartner, 2026-11-02: "ready" on the sign-in page). The
+  brain gets "You reported ready_to_submit but the page has a password box. Carry on"; four
+  refusals go up the ladder.
+- **Critic, second.** `/api/autoapply/agent/critic` (`brain.critic`, `agent_critic` on the
+  client: 300 tokens, low effort, Haiku-priced where the broker routes it) reads the review page
+  (values masked as always), the plan and the open fields and lists anything blank or
+  suspicious. Issues give the brain ONE more round ("Before I hand over, a check found: ... Fix
+  what you can; never Submit"); then the hand-over goes ahead and the Ready to send line names
+  what was noted ("A check noted: ..."). The critic never blocks a hand-over; a failed call is
+  "ok". FakeLLM's critic is deterministic (an error line or a required empty box is an issue).
+
+## 15. Budgets (2026-11-02)
+
+Steps: `MAX_STEPS` 60 (`SJ_AGENT_MAX_STEPS`). Dollars: every step route reply carries `cost`,
+estimated from the client's token counts (`llm.last_usage`) at the model family's list price
+(`brain.PRICES`: Sonnet 4.x $3/$15, Sonnet 5.x $2/$10, Haiku 4.5 $1/$5, Haiku 5.5 $0.10/$0.50
+per million; a plain high estimate, cache reads not discounted), else from characters (about
+four a token). The shell sums it (`spent`, kept over a park, shown as "about $0.12 spent of
+$0.80" under Steps); at `COST_CAP_USD` (0.80, `SJ_AGENT_COST_CAP_USD`) the next step is asked
+as the last ("done only") and a `needs-person` there parks with "I spent the $0.80 budget for
+this application: <last state>". Expected per application after this change (Sonnet 4.6): 20
+to 35 steps at about $0.018, 0 to 2 reflection calls with a screenshot at about $0.03 to $0.05,
+one critic under $0.01: roughly $0.45 to $0.75, most runs well under the cap; on Sonnet 5.5
+about two thirds of that.
+
+## 16. The batch's time cap (2026-11-02)
+
+A batch job that is still running after `JOB_CAP_MS` (12 minutes, `SJ_AGENT_JOB_CAP_MS`)
+parks at the next step with "This one took too long (12 minutes): <the feed's last step>" and
+the batch moves on; Continue re-runs it later. Single runs have no cap (the person is watching
+and can Stop; the pane caps above make a hang impossible anyway).
 
 ## 10. Milestones
 
@@ -385,6 +591,14 @@ history compaction, multi-tab as a model feature, LiteLLM pricing, client-side m
   the multipage fixture views reaches `ready_to_submit`.
 - `shell-electron/e2e-agent.mjs`: the real Electron app with `RESUME_AGENT_FAKE_LLM=1` on the
   mock ATS: one click on Apply for me ends on "Ready to send"; Send submits the mock; a
-  `?captcha=1` variant stops with the captcha message and no submit.
+  `?captcha=1` variant stops with the captcha message and no submit; `?skeleton=1` is reloaded
+  by the ladder; `?activate=1` runs the Workday activation mail end to end (sections 18, 19).
+- `tests/test_agent_engineer.py` and `tests/js/test_agent_engineer.js` (sections 12 to 16): the
+  tools, retries and error classes, the ready gate, the critic, the cost; and under node with a
+  fake pane: capped pane calls and Stop inside a hung call, the hang ladder (a view that never
+  resolves, a fill that never resolves, a skeleton with the brain waiting), bad replies
+  escalated, the account-problem stop that ends the batch, observations, the page check, the
+  critic round, the mail that never comes (park, then one more look on resume), the batch's
+  time cap, and a debug log that never carries a secret.
 - Quality: one real-model run per milestone on the fixture and on a live Greenhouse job page
   (stops before submit), logged step count and cost.

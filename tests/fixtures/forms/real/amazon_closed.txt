@@ -1,0 +1,53 @@
+URL: https://www.amazon.jobs/en/jobs/10582066/operations-manager
+Title: Amazon.jobs
+[Start of page]
+[1]<a>Skip to main content</a>
+[2]<button role=button>menu</button>
+[3]<a>Amazon Jobs home page</a>
+[4]<combobox label="Search for jobs by title or keyword" value="" expanded=false search=true>
+[5]<combobox label="search job by location" value="" expanded=false search=true>
+[6]<button>Search jobs</button>
+[7]<a>My career</a>
+Sorry, the job you're looking for isn't available.
+There are other opportunities you might be interested in. Check them out by searching for jobs below.
+Search for jobs
+Check out our openings by searching with job titles, teams, or locations.
+[8]<a>Search</a>
+Get to know us
+Learn about working at Amazon, and read the stories of our pioneers.
+[9]<a>Learn more</a>
+Learn how we hire
+Get answers from our FAQs on the hiring and interviewing process.
+[10]<a>Go to FAQs</a>
+JOIN US ON
+[11]<a>Join us on facebook</a>
+[12]<a>Join us on linkedin</a>
+[13]<a>Join us on instagram</a>
+[14]<a>Join us on twitter</a>
+DOWNLOAD OUR APP
+[15]<a>Download Amazon A to Z from App Store</a>
+[16]<a>Download Amazon A to Z from Google Play</a>
+Find Careers
+[17]<a>Job Categories</a>
+[18]<a>Teams</a>
+[19]<a>Locations</a>
+[20]<a>Military careers</a>
+[21]<a>Hourly</a>
+Working At Amazon
+[22]<a>Culture</a>
+[23]<a>Benefits</a>
+[24]<a>Amazon Newsletter</a>
+[25]<a>Inclusive experiences</a>
+[26]<a>Leadership Principles</a>
+Help
+[27]<a>FAQ</a>
+[28]<a>How We Hire</a>
+[29]<a>Application status</a>
+[30]<a>Accommodations</a>
+[31]<a>Legal disclosures and notices</a>
+[32]<button>English</button>
+Amazon is an equal opportunity employer and does not discriminate on the basis of protected veteran status, disability, or other legally protected status. Veterans, military spouses, and people with disabilities are encouraged to apply.
+[33]<a>Privacy and Data</a>
+[34]<a>Impressum</a>
+© 1996-2026, Amazon.com, Inc. or its affiliates
+[End of page] (0.7 pages below)

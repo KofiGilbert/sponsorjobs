@@ -14309,21 +14309,123 @@ def autoapply_agent_step():
         values[key] = value
         placeholders = placeholders + [key]
         left = [f"{x} (type {{{{{key}}}}})" if x == label else x for x in left]
+    # (Section 12 and 13) the plan the model keeps, the last step's tool observations, the
+    # shell's own nudges, a screenshot for a reflection call (never stored), and whether the
+    # saved portal account was created this run (the site does not know it yet).
+    image = str(b.get("image") or "")
+    if len(image) > 2_500_000:
+        image = ""
     req = {
         "step": b.get("step") or 1, "max_steps": b.get("max_steps") or 40,
         "url": url, "lane": b.get("lane") or "assisted", "view": view[:14000],
         "left": [x for x in left if x.strip()],
         "history": [h for h in (b.get("history") or [])[-brain.HISTORY_STEPS:] if isinstance(h, dict)],
         "job": {"role": (rec.get("role") if rec else "") or "", "company": (rec.get("company") if rec else "") or ""},
+        "plan": b.get("plan") or [], "observations": b.get("observations") or [],
+        "nudges": [str(n)[:300] for n in (b.get("nudges") or []) if str(n).strip()][:4],
+        "reflect": b.get("reflect") if isinstance(b.get("reflect"), dict) else None,
+        "last_step": bool(b.get("last_step")), "image": image,
+        "portal": {"account": bool(portal), "new": bool(b.get("portal_new"))},
     }
     resume = _resume_upload_path(rec) if rec else ""
     # (Phase 4) the redact guard on the page view: a control holding a stored legal or
     # self-identification value shows the model "(filled)", never the value
     from applicant import redact as _R
     withheld = _brain_do(_R.sensitive_values) or []
-    out = brain.step(req, _make_llm(), values, portal, placeholders=placeholders, resume_path=resume,
+    try:
+        llm = _make_llm()
+    except Exception as exc:                     # noqa: BLE001 - no key, no plan: say so, never "needs you"
+        kind = brain.classify_error(exc) or _classify_outage(exc) or "no_key"
+        return jsonify({"ok": False, "reason": "no-reply", "fatal": kind, "error": kind + ": " + str(exc)[:200],
+                        "message": brain.unavailable_message(kind), "tries": 0, "cost": 0.0})
+    out = brain.step(req, llm, values, portal, placeholders=placeholders, resume_path=resume,
                      withheld=withheld)
     out["placeholders"] = placeholders
+    return jsonify(out)
+
+
+@app.post("/api/autoapply/agent/closed")
+@_guard
+def autoapply_agent_closed():
+    """(2026-11-02) The apply agent found the job closed before any model call: body {record_id,
+    url, phrase}. The record moves off Waiting on you to the closed-posting state (the row reads
+    "Job closed", its action is View, so no batch picks it again). No Telegram line: nothing for
+    the person to do."""
+    from submit.stages import failed_patch
+    b = request.json or {}
+    rid = b.get("record_id")
+    rec = _get_record(rid) if rid not in (None, "") else None
+    if rec is None:
+        return jsonify({"ok": False, "reason": "no-record"})
+    phrase = " ".join(str(b.get("phrase") or "").split())[:160]
+    patch = failed_patch({"reason": "posting_closed", "message": "Job closed" + (": " + phrase if phrase else ".")})
+    patch["job_closed"] = {"at": time.time(), "url": str(b.get("url") or "")[:1000], "phrase": phrase}
+    patch["agent_ready"] = None
+    _records().merge_data(rec["id"], patch)
+    return jsonify({"ok": True})
+
+
+_AI_UNAVAILABLE_TOLD = {"at": 0.0}
+
+
+@app.post("/api/autoapply/agent/unavailable")
+@_guard
+def autoapply_agent_unavailable():
+    """(Section 13) The AI itself failed on an apply run (out of credits, no key, access off):
+    body {record_id, message, batch} notes it on the record (the Auto-apply row shows it, never
+    as "needs you") and says it ONCE on Telegram per half hour; {record_id, clear: true} clears
+    the note when a run starts again."""
+    b = request.json or {}
+    rid = b.get("record_id")
+    rec = _get_record(rid) if rid not in (None, "") else None
+    if rec is None:
+        return jsonify({"ok": False, "reason": "no-record"})
+    if b.get("clear"):
+        if (_record_data(rec) or {}).get("agent_note"):
+            _records().merge_data(rec["id"], {"agent_note": None})
+        return jsonify({"ok": True})
+    msg = " ".join(str(b.get("message") or "").split())[:300] or "SponsorJobs' AI is unavailable right now. Nothing was changed; try again later."
+    _records().merge_data(rec["id"], {"agent_note": {"kind": "ai", "message": msg, "at": time.time()}})
+    told = False
+    if time.time() - _AI_UNAVAILABLE_TOLD["at"] > 1800:
+        try:
+            ch = _active_channel()
+        except Exception:      # noqa: BLE001 - no Telegram is fine
+            ch = None
+        if ch is not None:
+            try:
+                ch.send(("Apply for me stopped: " if not b.get("batch") else "The batch stopped: ") + msg, None)
+                told = True
+                _AI_UNAVAILABLE_TOLD["at"] = time.time()
+            except Exception:  # noqa: BLE001
+                told = False
+    return jsonify({"ok": True, "told": told})
+
+
+@app.post("/api/autoapply/agent/critic")
+@_guard
+def autoapply_agent_critic():
+    """(Section 14) The pre-submit check: body {record_id, view, plan, left}. One cheap model
+    call over the review page (values masked as in every step) that lists anything blank or
+    suspicious: {ok, issues, cost}. The shell gives the brain one more round on the issues,
+    then hands over anyway and names them; the critic never blocks a hand-over."""
+    from autoapply import brain
+    b = request.json or {}
+    view = str(b.get("view") or "")
+    if not view.strip():
+        return jsonify({"ok": True, "issues": [], "cost": 0.0, "skipped": True})
+    rec = _get_record(b.get("record_id")) if b.get("record_id") not in (None, "") else None
+    data = _record_data(rec) if rec else {}
+    prof = data.get("render_profile") or data.get("profile") or {}
+    if not (prof.get("identity") or {}).get("name"):
+        prof = _saved_full_profile() or prof
+    applicant = _applicant_for(prof)
+    _ph, values = _agent_placeholders(applicant, prof, None)
+    from applicant import redact as _R
+    withheld = _brain_do(_R.sensitive_values) or []
+    left = [str(x.get("label") or "") if isinstance(x, dict) else str(x) for x in (b.get("left") or [])[:40]]
+    out = brain.critic({"view": view[:14000], "plan": b.get("plan") or [], "left": left}, _make_llm(),
+                       values=values, withheld=withheld)
     return jsonify(out)
 
 
@@ -15560,9 +15662,11 @@ def _aa_row(rec: dict, data: dict, jobs: dict[str, dict]) -> dict:
         action = "send"
     else:
         ready = None
+    note = data.get("agent_note") if isinstance(data.get("agent_note"), dict) else None
     return {
         "id": rec["id"], "role": (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0],
         "company": company, "location": location,
+        "agent_note": (note or {}).get("message") or "",
         "visa": tagged.get("visa") or [], "sponsorship_stated": job.get("sponsorship_stated"),
         **stance,
         "match": round(match) if match is not None else None,

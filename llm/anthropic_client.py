@@ -1842,7 +1842,38 @@ class AnthropicLLM:
         """One step of the apply agent (autoapply/brain.py). The brain owns the prompt and the
         validation; this is only the call: a short JSON reply, low effort, so a Workday run of
         twenty steps stays at a few cents. Goes through _complete, so BrokerLLM inherits it."""
-        return self._complete(system, user, max_tokens=700, effort="low")
+        return self._complete(system, user, max_tokens=900, effort="low")
+
+    def agent_step_image(self, system: str, user: str, image_b64: str) -> str:
+        """A reflection step of the apply agent (docs/apply-agent.md section 13) with a
+        screenshot of the pane: the page as the person would see it, when the text view was not
+        enough. Medium effort, once or twice an application at most. The picture is never
+        stored. BrokerLLM overrides the transport."""
+        create = {
+            "model": self.model, "max_tokens": 1100, "system": system,
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_b64}},
+                {"type": "text", "text": user}]}],
+        }
+        if supports_effort(self.model):
+            create["output_config"] = {"effort": "medium"}
+        try:
+            msg = self._client.messages.create(**create)
+        except Exception as exc:
+            if "output_config" in create and "effort" in str(exc).lower():
+                create.pop("output_config", None)
+                msg = self._client.messages.create(**create)
+            else:
+                raise
+        u = getattr(msg, "usage", None)
+        self.last_usage = ({"input": int(getattr(u, "input_tokens", 0) or 0),
+                            "output": int(getattr(u, "output_tokens", 0) or 0)} if u else None)
+        return "".join(block.text for block in msg.content if getattr(block, "type", "") == "text").strip()
+
+    def agent_critic(self, system: str, user: str) -> str:
+        """The pre-submit check (brain.critic): a short JSON list of what looks wrong on the
+        review page. Low effort, small reply. Goes through _complete, so BrokerLLM inherits it."""
+        return self._complete(system, user, max_tokens=300, effort="low")
 
     def app_assistant(self, system: str, user: str) -> str:
         """The SponsorJobs assistant's reply in the Telegram chat (notify/assistant.py owns the

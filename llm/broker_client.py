@@ -78,6 +78,12 @@ class BrokerLLM(AnthropicLLM):
         return self._post({"system": system, "prompt": user,
                            "max_tokens": max_tokens, "effort": effort or self.effort})
 
+    def agent_step_image(self, system: str, user: str, image_b64: str) -> str:
+        # The broker takes the screenshot as one base64 PNG next to the prompt; a broker that
+        # does not know the field answers from the text alone, which is still a valid step.
+        return self._post({"system": system, "prompt": user, "max_tokens": 1100, "effort": "medium",
+                           "image": {"media_type": "image/png", "data": image_b64}})
+
     def _complete_history(self, system, history, max_tokens: int = 1500,
                           effort: str | None = None) -> str:
         # Map the app's turn history (role 'agent' == the assistant) into the Anthropic message

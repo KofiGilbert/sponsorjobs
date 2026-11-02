@@ -1775,12 +1775,43 @@ class FakeLLM:
                                 "actions": actions or [], "done": done})
         if re.search(r"i'?m not a robot|verify (that )?you are human|captcha", words, re.I):
             return _reply(done={"outcome": "blocked", "reason": "captcha"}, memory="captcha wall")
-        apply_idx = _find(r"apply manually|autofill with resume") or _find(r"apply( now)?")
-        if apply_idx is not None:
-            return _reply([{"op": "click", "index": apply_idx}], memory="job page", evaluation="opening the form")
+        history = _block("history")
+        portal_block = _block("portal")
         def _inputs(kind):
             return [idx for idx, tag, attrs, _t in lines
                     if tag == "input" and (f"type={kind}" in attrs or re.search(rf'label="[^"]*{kind}', attrs, re.I))]
+        # (Section 13) A reflection call: the likely cause from the page's shape, and ONE
+        # strategy from the menu. A page with nothing on it has not rendered: reload; a page
+        # that shows errors wants the field filled another way; else open the job again.
+        if "<reflection>" in user:
+            if len(lines) <= 3:
+                strategy, cause = "reload", "the page has not rendered its form"
+            elif re.search(r"^Error: ", words, re.M):
+                strategy, cause = "fill the field myself", "the engine's value did not stick"
+            else:
+                strategy, cause = "reopen_job", "the application lost its place"
+            return _json.dumps({"memory": "reflecting", "evaluation": "stuck", "causes": [cause, "a slow page"],
+                                "likeliest": cause, "strategy": strategy, "actions": [], "done": None})
+        # (Section 13) Nothing to do on the page yet (a skeleton, "Loading"): wait for the form
+        # once; the shell escalates (reload, reopen) when waiting does not help.
+        if len(lines) <= 3 and re.search(r"loading|skeleton|please wait", words, re.I) and not _find(r"apply( now)?|apply manually"):
+            return _reply([{"op": "wait_for", "selector": "form input, form button, [data-form]", "seconds": 3}],
+                          memory="waiting for the form", evaluation="the page shows only a skeleton")
+        apply_idx = _find(r"apply manually|autofill with resume") or _find(r"apply( now)?")
+        if apply_idx is not None:
+            return _reply([{"op": "click", "index": apply_idx}], memory="job page", evaluation="opening the form")
+        # The activation page an emailed link opens: "activated", "verified", with Sign in.
+        signin_btn = _find(r"sign ?in|log ?in")
+        if signin_btn is not None and not _inputs("password") and re.search(r"activated|verified|confirmed", words, re.I):
+            return _reply([{"op": "click", "index": signin_btn}], memory="account activated", evaluation="going to sign in")
+        # (Section 11 of the prompt) A job search page after an emailed link or a sign-in: not
+        # where the application is. Open the job again. A page of the form (any field that is
+        # not the site's own search box) is never that page, even under a header search box.
+        own_fields = [idx for idx, tag, attrs, _t in lines
+                      if tag in ("input", "select", "combobox", "textarea", "radio", "checkbox", "file") and "search=true" not in attrs]
+        if "opened the emailed link" in history and re.search(r"^\s*search for jobs\b|^\s*job search\b", words, re.I | re.M) \
+                and not own_fields and _find(r"apply( now| manually)?") is None:
+            return _reply([{"op": "reopen_job"}], memory="back to the job", evaluation="landed on the job search")
         # Email checks (docs/apply-agent.md milestone 3): a code box is typed from {{email_code}}
         # once the mailbox handed it over, else the brain asks the shell to wait for the mail.
         # A verification code box, never a ZIP, postal, area, country or promo "code" field
@@ -1798,10 +1829,23 @@ class FakeLLM:
         if re.search(r"check your (e-?mail|inbox)|we('ve| have)? (sent|e-?mailed)|link (we|was) (sent|emailed)", words, re.I) \
                 and not _inputs("password"):
             return _reply(done={"outcome": "await_email", "reason": "link"}, memory="a link was emailed")
+        # Workday's "An email has been sent to you. Please verify your account." sits over the
+        # sign-in form: the mail first, unless its link was already opened (then sign in).
+        if re.search(r"an e-?mail has been sent|verify your account|not (yet )?verified|account is not verified|verification (e-?mail|link) (has been|was) sent", words, re.I) \
+                and "opened the emailed link" not in history:
+            return _reply(done={"outcome": "await_email", "reason": "link"}, memory="a verification link was emailed")
         forgot = _find(r"forgot( your)? password\??|reset( your)? password")
         if forgot is not None and re.search(r"could not find|already (registered|exists|in use)|incorrect|wrong password|invalid", words, re.I):
             return _reply([{"op": "click", "index": forgot}], memory="the account exists; resetting the password")
         pwds = _inputs("password")
+        # The create-account form (email, a password and its confirmation, Create account):
+        # the portal placeholders go in, then Create.
+        create_btn = _find(r"create (an |my )?account|sign ?up|register")
+        if len(pwds) >= 2 and _input("email") is not None and create_btn is not None and "portal_email" in placeholders:
+            acts = [{"op": "type", "index": _input("email"), "text": "{{portal_email}}"}]
+            acts += [{"op": "type", "index": i, "text": "{{portal_password}}"} for i in pwds[:2]]
+            acts.append({"op": "click", "index": create_btn})
+            return _reply(acts, memory="creating the portal account")
         if len(pwds) >= 2 and _input("email") is None:
             save = _find(r"save( new)? password|reset password|change password|set password|save|update|continue")
             acts = [{"op": "type", "index": i, "text": "{{portal_password}}"} for i in pwds[:2]]
@@ -1816,6 +1860,11 @@ class FakeLLM:
                 acts.append({"op": "click", "index": send})
             return _reply(acts, memory="asking for a reset link")
         signin = _find(r"sign ?in|log ?in")
+        # A saved account the site does not know yet (created just now): Create account first.
+        if email is not None and pwd is not None and "portal_email" in placeholders \
+                and "created just now" in portal_block and create_btn is not None and "account-created" not in history \
+                and not re.search(r"step \d+:.*creat", history, re.I):
+            return _reply([{"op": "click", "index": create_btn}], memory="new account: creating it")
         if email is not None and pwd is not None and signin is not None and "portal_email" in placeholders:
             return _reply([{"op": "type", "index": email, "text": "{{portal_email}}"},
                            {"op": "type", "index": pwd, "text": "{{portal_password}}"},
@@ -1858,6 +1907,21 @@ class FakeLLM:
             return _reply(done={"outcome": "ready_to_submit", "reason": "at the submit button"},
                           memory="review page")
         return _reply(done={"outcome": "blocked", "reason": "needs-person"}, memory="nothing I can do")
+
+    def agent_step_image(self, system: str, user: str, image_b64: str) -> str:
+        # The reflection call with a screenshot: the scripted brain reads the text alone.
+        return self.agent_step(system, user)
+
+    def agent_critic(self, system: str, user: str) -> str:
+        # The pre-submit check (autoapply/brain.critic), deterministically: an error shown on
+        # the review page or a required box still empty is an issue; else all clear.
+        import json as _json
+        issues = []
+        for m in re.finditer(r'^Error: "?([^"\n]+)', user, re.M):
+            issues.append("the page shows an error: " + m.group(1).strip()[:80])
+        for m in re.finditer(r'<(?:input|combobox|select|textarea)[^>]*label="([^"]*)"[^>]*value=""[^>]*required', user):
+            issues.append("required and still empty: " + m.group(1)[:60])
+        return _json.dumps({"ok": not issues, "issues": issues[:6]})
 
     def draft_sponsorship_answer(self, profile: dict, status: str = "", future_need: str = "",
                                  role: str = "", company: str = "") -> str:

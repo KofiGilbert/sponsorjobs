@@ -25,44 +25,77 @@ from autoapply.planner import is_fact_question
 
 # Under 60 lines, the short "flash" shape: rules first, then the exact output schema. The person
 # never reads this, but the model copies what it sees, so no dashes (tests/test_no_dashes.py).
-SYSTEM_PROMPT = """You drive a web browser to apply for a job on behalf of a person. Each step you get the page as numbered lines ([12]<button>Next</button>) and you answer with the next few actions. The engine already filled every field it recognized before you see the page; your job is to move the application forward: dismiss popups, click Apply, sign in or create the portal account, pick what the engine could not, and get to the final review page.
+SYSTEM_PROMPT = """You drive a web browser to apply for a job on behalf of a person. Each step you get the page as numbered lines ([12]<button>Next</button>) and you answer with the next few actions. The engine already filled every field it recognized before you see the page; your job is to move the application forward: dismiss popups, click Apply, sign in or create the portal account, pick what the engine could not, and get to the final review page. Work like an engineer: when something does not work, look closer with the read-only tools, then try another way. The shell tries other ways too (a reload, reopening the job); giving up is the last resort.
 
 Rules:
 1. Popups and cookie banners first, before anything else: close the popup; on a cookie banner choose Reject all, Decline, Necessary only or Close (never Accept all, never opt in to marketing). If the only way past a banner is Accept, close it if it has a close button; otherwise leave it and continue.
-2. On a job page click Apply. Prefer "Apply manually" or "Autofill with resume" over "Apply with LinkedIn" or any other third party sign-in.
+2. On a job page click Apply. Prefer "Apply manually", "Apply with Email" or "Autofill with resume". Never LinkedIn (Apply with LinkedIn, Sign in with LinkedIn: always refused), and no other social sign-in (Google, Indeed, Facebook) while an email or manual path exists. A chat-style apply (a chatbot that asks one question at a time; "Open Chatbot", "I'm interested"): open the chat, answer each question in its answer box with the matching placeholder and send it, one at a time; a question about the person with no placeholder is needs-answers.
 3. Comboboxes and autocompletes: type the value, then WAIT a step. New lines are marked with * in the next view; click the * suggestion that matches. Never press Enter.
-4. Put at most ONE action that changes the page (a click on Next, Continue, Sign in, Apply, a link) LAST in the list. Anything after it would run on a page you have not seen.
+4. Put at most ONE action that changes the page (a click on Next, Continue, Sign in, Apply, a link; back, reload, reopen_job) LAST in the list. Anything after it would run on a page you have not seen.
 5. NEVER click Submit, Send application, Review and submit, or Complete application. When the application is complete and the only step left is that button, report done with outcome ready_to_submit.
 6. Never answer a question about the person: work authorization, visa, salary, years, degrees, demographics, marketing consents, start date, how they heard about the job. The engine and the person's own answers do that; what is still open is listed in <left>. Leave those fields alone. A self-identification question shows answered=true or value="(filled)" in place of its choice: it is answered.
 7. Never invent a value. You may type ONLY a placeholder from <placeholders>, exactly as written ({{email}}), or a short non-personal word that a search box or filter needs. Nothing else.
-8. If the same action failed twice, do something different, or report blocked with the reason.
+8. An action that did not work is information, not a dead end: read <observations>, inspect the element, read_errors, or find the control you need, then do it another way (another control, the other input form, list_options then select, wait_for what you expect). Never repeat the same failed action more than once. Report blocked only for what a person must do in person: captcha, phone-code, an identity check, or needs-answers (rule 15).
 9. Ignore lines marked search=true (the site's own job search box). Do not type the person's data there.
 10. A captcha or a phone code: stop and report blocked with the reason captcha or phone-code. Never work around one.
-13. Email checks are handled for you. A page that says a code or a link was emailed: if {{email_code}} is in <placeholders>, type it into the code box and click Verify or Continue; otherwise report done with outcome await_email and reason code (a code box is shown) or link (it says to click the link in the email). After that the run continues on its own.
-14. Sign in failed because the account already exists or the password is wrong: click Forgot password, type {{portal_email}}, send the reset, then report await_email with reason link. On the new-password page type {{portal_password}} into both boxes and save.
-11. A page that is not a job application (a 404, a closed posting, a generic careers home): report blocked with the reason not-a-job.
+11. A 404, a closed posting or an unrelated page: report blocked with the reason not-a-job. A careers home or job search page right after signing in, creating the account or opening an emailed link is NOT a dead end: use reopen_job to get back to the job and carry on.
 12. When you are done or stuck, done goes alone: no actions with it.
+13. Email checks are handled for you. A page that says a code or a link was emailed: if {{email_code}} is in <placeholders>, type it into the code box and click Verify or Continue; otherwise report done with outcome await_email and reason code (a code box is shown) or link (it says to click the link in the email). After that the run continues on its own. A page that says the account is activated or verified and offers Sign in: sign in.
+14. <portal> says whether the saved account for this site is new (created just now, the site does not know it yet) or existing. New: use Create account or Sign up with {{portal_email}} and {{portal_password}}; the site may then email a verification (rule 13). Existing: sign in with {{portal_email}} and {{portal_password}}. If sign in fails: try it once more; if the page offers Create account, try that (the site may say the email already exists); then click Forgot password, type {{portal_email}}, send the reset, and report await_email with reason link. On the new-password page type {{portal_password}} into both boxes and save.
 15. <left> lists fields the engine left open. Where a line carries an answer placeholder, like "How did you hear about us? (type {{answer_1}})", the person has answered it: fill it yourself with that placeholder (for a list or combobox: type it, wait a step, click the matching suggestion). A resume or CV file box: use upload on it. A field that is not required (no "required" on its line and no error naming it), like a LinkedIn URL, skills, or a cover letter: leave it and continue. Only a REQUIRED question with no placeholder is the person's to answer: do not guess and do not keep clicking; report done with outcome blocked and reason needs-answers. The person is asked, and the run resumes with the answer.
+16. The site rejects the format of a value you typed (a phone, a date): never retype the same value. inspect the box (its pattern, placeholder, inputmode) and try the other form (digits only for a phone, the format the box names for a date). A box that reads (filled) while the page's error still says it is required: the site did not register the value. Retype it once with its placeholder from <left> (the typing then happens for real), then Save.
 17. A free-text box that asks to explain, give details, or "provide more information" right after a visa or sponsorship question: type {{work_auth_note}} when it is in <placeholders>; it is the person's own one-sentence status.
 18. Privacy notices and terms are the person's to accept, and that is done for you before you see the page. Never click a link to a privacy policy, privacy notice, terms, or a poster: it opens a document or a dialog, not the next step. Never tick a box that accepts terms or a privacy notice, and never click Accept, I Agree, I Acknowledge or Cancel in a dialog that asks to accept one. If such a box or dialog still blocks the way, report done with outcome blocked and reason needs-consent. A marketing box (job alerts, newsletters, a talent community, texts) is never required: leave it unticked.
-16. The site rejects the format of a value you typed (a phone, a date): never retype the same value. Try the other form once (digits only for a phone), then if it still fails report blocked with reason needs-person. A box that reads (filled) while the page's error still says it is required: the site did not register the value. Retype it once with its placeholder from <left> (the typing then happens for real), then Save.
+19. A page with nothing to do on it (a loading skeleton, "Loading", an empty form, grey boxes): wait_for the form once (up to 15 seconds); if it still shows nothing, reload; if it still shows nothing, reopen_job. Never answer with a plain wait more than twice in a row.
+20. Read-only tools, use them freely, they never change the page: read_page (more of a long page, from an element index), find (where a label, a button or a word is), inspect (one element's tag, attributes, state and the error next to it), list_options (a dropdown's choices), read_errors (every error on the page), screenshot (a picture of the page comes with your next step), wait_for (a text or a CSS selector, up to 30 seconds). What they found comes back in <observations> next step.
+21. Keep <plan> up to date: the pages of this application as short lines, each starting with "done:", "now:" or "todo:" (Job page, Sign in, My information, Experience, Questions, Disclosures, Review). Change it when you learn more; it is kept for you.
 
 Reply with JSON only, no prose, exactly this shape:
 {"memory": "what you know so far, under 40 words",
  "evaluation": "did the previous actions work, in one line",
  "summary": "what these actions do, about 10 words, starting with an -ing verb (Clicking Next to open page 3); placeholders only, never a value",
+ "plan": ["done: Job page", "now: Sign in", "todo: My information", "todo: Review"],
  "actions": [{"op": "click", "index": 12},
              {"op": "type", "index": 3, "text": "{{email}}"},
              {"op": "select", "index": 5, "option": "Exact option label"},
              {"op": "upload", "index": 9},
              {"op": "scroll", "direction": "down"},
-             {"op": "wait", "seconds": 2}],
+             {"op": "wait", "seconds": 2},
+             {"op": "read_page", "offset": 40},
+             {"op": "find", "text": "Next"},
+             {"op": "inspect", "index": 12},
+             {"op": "list_options", "index": 5},
+             {"op": "read_errors"},
+             {"op": "screenshot"},
+             {"op": "wait_for", "text": "My Information", "selector": "form input", "seconds": 15},
+             {"op": "back"}, {"op": "reload"}, {"op": "reopen_job"}],
  "done": null}
 or, to finish: "done": {"outcome": "ready_to_submit" | "blocked" | "await_email", "reason": "short reason"}
 with actions empty. blocked reasons: captcha, phone-code, needs-person, needs-answers, needs-consent, not-a-job, left-site. await_email reasons: code, link.
 At most 5 actions per step. Use only indices shown in the current view."""
 
-ALLOWED_OPS = ("click", "type", "select", "upload", "scroll", "wait")
+ALLOWED_OPS = ("click", "type", "select", "upload", "scroll", "wait",
+               "read_page", "find", "inspect", "list_options", "read_errors", "screenshot", "wait_for",
+               "back", "reload", "reopen_job")
+# Tools that only read the page (section 12): no index needed, nothing changes, an observation
+# comes back next step. ``PAGE_OPS`` change the page and go last, like a click on Next.
+READ_OPS = ("read_page", "find", "read_errors", "screenshot", "wait_for")
+PAGE_OPS = ("back", "reload", "reopen_job")
+MAX_PLAN = 12
+MAX_OBSERVATION = 7000      # one tool's observation, as the model sees it
+MAX_OBSERVATIONS = 12000    # all of a step's observations together
+MAX_WAIT_FOR_S = 30
+# The reflection call's strategy menu (section 13): the shell runs the one the model picks.
+STRATEGIES = ("wait_for form", "reload", "back", "reopen_job", "sign in again", "create account", "reset password",
+              "wait for the site's email", "fill the field myself", "read more of the page", "use the other input form")
+RETRIES = 3                 # calls on a bad or empty model reply, with backoff
+BACKOFF_S = (0.0, 0.5, 1.5)
+_SAFE_SELECTOR = re.compile(r"^[A-Za-z0-9_\-\s\[\]=\"'#.:*,>+~()^$|]{1,120}$")
+# Anthropic list prices per million tokens, by model family, for the per-application budget.
+# Cache reads are cheaper; this is the plain estimate, on the high side on purpose.
+PRICES = (("haiku-5", (0.10, 0.50)), ("haiku-4", (1.0, 5.0)), ("sonnet-5", (2.0, 10.0)), ("sonnet-4", (3.0, 15.0)),
+          ("opus-4-8", (5.0, 25.0)), ("opus", (15.0, 75.0)))
+DEFAULT_PRICE = (3.0, 15.0)
 OUTCOMES = ("ready_to_submit", "submitted", "blocked", "await_email")
 BLOCKED_REASONS = ("captcha", "verify-email", "phone-code", "needs-person", "needs-answers", "needs-consent",
                    "not-a-job", "left-site")
@@ -231,6 +264,36 @@ def _action_key(a) -> str:
     return str(a or "").strip()
 
 
+def clean_plan(plan) -> list[str]:
+    """The model's plan lines, kept only in the "done: | now: | todo: <page>" shape."""
+    out: list[str] = []
+    for p in (plan or []) if isinstance(plan, list) else []:
+        t = " ".join(str(p or "").split())[:60]
+        m = re.match(r"^(done|now|todo)\s*:\s*(.+)$", t, re.I)
+        if not m:
+            continue
+        out.append(f"{m.group(1).lower()}: {m.group(2).strip()}")
+        if len(out) >= MAX_PLAN:
+            break
+    return out
+
+
+def observation_lines(observations) -> list[str]:
+    """The last step's tool observations, each capped, all capped together."""
+    out: list[str] = []
+    total = 0
+    for o in (observations or []) if isinstance(observations, list) else []:
+        t = str(o or "").strip()[:MAX_OBSERVATION]
+        if not t:
+            continue
+        if total + len(t) > MAX_OBSERVATIONS:
+            out.append("(more observations cut)")
+            break
+        out.append(t)
+        total += len(t)
+    return out
+
+
 def build_user_message(req: dict, placeholders: list, nudges: list, values: dict | None = None,
                        withheld=()) -> str:
     """The single state message. <step_info> goes LAST so everything before it is a stable
@@ -251,17 +314,45 @@ def build_user_message(req: dict, placeholders: list, nudges: list, values: dict
     step = int(req.get("step") or 1)
     max_steps = int(req.get("max_steps") or 40)
     today = str(req.get("today") or _dt.date.today().isoformat())
+    plan = clean_plan(req.get("plan"))
+    obs = observation_lines(req.get("observations"))
+    if values:
+        obs = [redact(o, values) for o in obs]
+    portal = req.get("portal") if isinstance(req.get("portal"), dict) else {}
+    if portal.get("account"):
+        portal_s = "saved account for this site: " + ("new, created just now: the site does not know it yet, create it"
+                                                     if portal.get("new") else "existing: sign in with it")
+    else:
+        portal_s = "no saved account for this site"
     parts = [
         f"<job>\nrole: {role or '(unknown)'}\ncompany: {company or '(unknown)'}\nlane: {lane}\n</job>",
+        "<portal>\n" + portal_s + "\n</portal>",
+        "<plan>\n" + ("\n".join(plan) if plan else "(none yet: write one)") + "\n</plan>",
         "<history>\n" + ("\n".join(hist) if hist else "(first step)") + "\n</history>",
         "<placeholders>\n" + (", ".join(ph) if ph else "(none)") + "\n</placeholders>",
         "<left>\n" + ("\n".join(left) if left else "(nothing)") + "\n</left>",
         "<view>\n" + (view or "(empty page)") + "\n</view>",
     ]
+    if obs:
+        parts.append("<observations>\n" + "\n".join(obs) + "\n</observations>")
     if nudges:
         parts.append("<nudges>\n" + "\n".join(str(n) for n in nudges) + "\n</nudges>")
+    if req.get("reflect"):
+        parts.append(reflection_block(req.get("reflect")))
     parts.append(f"<step_info>\nstep {step} of {max_steps}. Today is {today}.\n</step_info>")
     return "\n\n".join(parts)
+
+
+def reflection_block(r) -> str:
+    """(Section 13) The deeper look the shell asks for after a nudge did not help: what went
+    wrong and what was tried, with the strategy menu; a screenshot rides along when taken."""
+    r = r if isinstance(r, dict) else {}
+    problem = " ".join(str(r.get("problem") or "the last steps made no progress").split())[:400]
+    tried = [str(t)[:80] for t in (r.get("tried") or []) if str(t).strip()]
+    return ("<reflection>\nYou are stuck: " + problem + "\nWhat was tried: " + (", ".join(tried) if tried else "nothing yet")
+            + "\nStep back. List 3 to 5 likely causes, rank them, pick the likeliest, and choose ONE strategy from this menu: "
+            + ", ".join(STRATEGIES) + ".\nAdd to your JSON reply: \"causes\": [\"...\"], \"likeliest\": \"...\", \"strategy\": \"<one of the menu>\". "
+            + "You may still give actions (read-only tools first) or done.\n</reflection>")
 
 
 # --------------------------------------------------------------------------- the reply
@@ -316,7 +407,7 @@ def parse_reply(raw: str, view_indices: set) -> dict | None:
         op = str(a.get("op") or "").strip().lower()
         if op not in ALLOWED_OPS:
             continue
-        if op in ("click", "type", "select", "upload"):
+        if op in ("click", "type", "select", "upload", "inspect", "list_options"):
             try:
                 idx = int(a.get("index"))
             except (TypeError, ValueError):
@@ -337,23 +428,63 @@ def parse_reply(raw: str, view_indices: set) -> dict | None:
         elif op == "scroll":
             d = str(a.get("direction") or "down").strip().lower()
             item = {"op": "scroll", "direction": d if d in ("up", "down") else "down"}
-        else:
+        elif op == "wait":
             try:
                 secs = float(a.get("seconds") or 1)
             except (TypeError, ValueError):
                 secs = 1
             item = {"op": "wait", "seconds": max(1, min(5, int(secs)))}
+        elif op == "read_page":
+            try:
+                off = int(a.get("offset") or 0)
+            except (TypeError, ValueError):
+                off = 0
+            item = {"op": "read_page", "offset": max(0, off)}
+        elif op == "find":
+            text = " ".join(str(a.get("text") or "").split())[:80]
+            if not text:
+                continue
+            item = {"op": "find", "text": text}
+        elif op == "wait_for":
+            text = " ".join(str(a.get("text") or "").split())[:80]
+            sel = str(a.get("selector") or "").strip()
+            if sel and not _SAFE_SELECTOR.match(sel):
+                sel = ""
+            if not text and not sel:
+                continue
+            try:
+                secs = float(a.get("seconds") or 10)
+            except (TypeError, ValueError):
+                secs = 10
+            item = {"op": "wait_for", "seconds": max(1, min(MAX_WAIT_FOR_S, int(secs)))}
+            if text:
+                item["text"] = text
+            if sel:
+                item["selector"] = sel
+        else:
+            item = {"op": op}                    # read_errors, screenshot, back, reload, reopen_job
         actions.append(item)
         if len(actions) >= MAX_ACTIONS:
             break
     if done:
         actions = []                             # done goes alone
-    if not actions and not done:
+    # A page-changing tool goes last, like a click on Next (rule 4); only one of them.
+    page_at = [i for i, a in enumerate(actions) if a["op"] in PAGE_OPS]
+    if page_at:
+        actions = actions[:page_at[0] + 1]
+    strategy = str(data.get("strategy") or "").strip().lower()
+    out = {"memory": str(data.get("memory") or "").strip()[:400],
+           "evaluation": str(data.get("evaluation") or "").strip()[:300],
+           "summary": str(data.get("summary") or "").strip()[:200],
+           "plan": clean_plan(data.get("plan")),
+           "actions": actions, "done": done}
+    if strategy or data.get("causes"):
+        out["causes"] = [str(c)[:160] for c in (data.get("causes") or []) if str(c).strip()][:5] if isinstance(data.get("causes"), list) else []
+        out["likeliest"] = str(data.get("likeliest") or "").strip()[:160]
+        out["strategy"] = strategy if strategy in STRATEGIES else ""
+    if not actions and not done and not out.get("strategy"):
         return None
-    return {"memory": str(data.get("memory") or "").strip()[:400],
-            "evaluation": str(data.get("evaluation") or "").strip()[:300],
-            "summary": str(data.get("summary") or "").strip()[:200],
-            "actions": actions, "done": done}
+    return out
 
 
 # --------------------------------------------------------------------------- the live line
@@ -412,6 +543,16 @@ def derive_summary(actions: list, lines: dict, done: dict | None = None) -> str:
         s = "Uploading your resume"
     elif op == "scroll":
         s = "Scrolling to see more of the page"
+    elif op in ("read_page", "find", "inspect", "list_options", "read_errors", "screenshot"):
+        s = "Looking closer at the page"
+    elif op == "wait_for":
+        s = "Waiting for the page to show the form"
+    elif op == "back":
+        s = "Going back a page"
+    elif op == "reload":
+        s = "Reloading the page"
+    elif op == "reopen_job":
+        s = "Opening the job again"
     else:
         s = "Waiting for the page"
     if len(acts) > 1 and op != "click":
@@ -527,15 +668,117 @@ def submit_guard(actions: list, lines: dict) -> bool:
 
 
 def _blocked(reason: str, memory: str = "", evaluation: str = "") -> dict:
-    return {"ok": True, "memory": memory, "evaluation": evaluation, "actions": [], "summary": "",
+    return {"ok": True, "memory": memory, "evaluation": evaluation, "actions": [], "summary": "", "plan": [],
             "done": {"outcome": "blocked", "reason": reason}, "notes": []}
 
 
+def price_of(model: str) -> tuple[float, float]:
+    """(input, output) dollars per million tokens for a model name, the high plain estimate."""
+    m = str(model or "").lower()
+    for key, price in PRICES:
+        if key in m:
+            return price
+    return DEFAULT_PRICE
+
+
+def estimate_cost(usage: dict | None, prompt_chars: int, reply_chars: int, model: str = "") -> float:
+    """Dollars for one call: from the real token counts when the client kept them
+    (``llm.last_usage``), else about four characters a token. Never 0 for a real call."""
+    pi, po = price_of(model)
+    if isinstance(usage, dict) and (usage.get("input") or usage.get("output")):
+        i, o = float(usage.get("input") or 0), float(usage.get("output") or 0)
+    else:
+        i, o = max(1, int(prompt_chars)) / 4.0, max(1, int(reply_chars)) / 4.0
+    return round((i * pi + o * po) / 1_000_000, 5)
+
+
+# (Section 14) The deterministic ready gate, the same rule as the shell's notReady(): a page
+# with a password box, a sign-in or create-account form, or no Submit control is never the
+# review page, whatever the model said (Gartner, 2026-11-02: "ready" on the sign-in page).
+_SIGNIN_BTN = re.compile(r"^(sign ?in|log ?in|create (an )?account|sign ?up|register)$", re.I)
+_SUBMIT_ANY = re.compile(r"\bsubmit\b|\bsend application\b|\breview and submit\b|\bcomplete application\b", re.I)
+
+
+def not_ready(view: str, lines: dict | None = None) -> str:
+    """Why this view cannot be handed over at Submit, or "" when it can."""
+    text = str(view or "")
+    if re.search(r"^\*?\[\d+\]<input type=password\b", text, re.M):
+        return "the page has a password box"
+    lines = lines if lines is not None else view_lines(text)
+    names = [_line_name(ln) for ln in lines.values()]
+    has_submit = any(_SUBMIT_ANY.search(n) for n in names if n)
+    has_email = bool(re.search(r"^\*?\[\d+\]<input type=email\b", text, re.M))
+    if not has_submit and has_email and any(_SIGNIN_BTN.match(n) for n in names if n):
+        return "the page is a sign-in or create-account form"
+    if not has_submit:
+        return "the page shows no Submit control"
+    return ""
+
+
+# What a failed model call means (section 13): an account problem stops the job and the batch
+# plainly ("fatal"); a passing one is retried with backoff; anything else is a bad reply.
+# ``ai_company`` / ``ai_transient`` are the broker's own tags (llm/broker_client.py, PR #166):
+# OUR key failed (stop plainly, nothing to buy) / the model is busy (retried there and here).
+FATAL_REASONS = ("no_key", "no_credit", "upgrade_required", "access_off", "ai_company")
+TRANSIENT_REASONS = ("rate_limited", "busy", "offline", "service_down", "ai_transient")
+
+
+def classify_error(exc) -> str:
+    """A reason code for a model call's exception, from its own tag or its words."""
+    reason = str(getattr(exc, "reason", "") or "")
+    if reason:
+        return reason
+    low = str(exc or "").lower()
+    status = getattr(exc, "status_code", None)
+    if status == 401 or "authentication" in low or "invalid x-api-key" in low or "api key" in low:
+        return "no_key"
+    if status in (402, 403) or "credit" in low or "billing" in low or "quota" in low or "turned off" in low or "usage limit" in low:
+        return "no_credit"
+    if status == 429 or "rate limit" in low or "rate_limit" in low:
+        return "rate_limited"
+    if status in (500, 502, 503, 529) or "overloaded" in low:
+        return "busy"
+    if "timed out" in low or "timeout" in low or "connection" in low or "network" in low or "getaddrinfo" in low:
+        return "offline"
+    return ""
+
+
+def unavailable_message(reason: str) -> str:
+    if reason == "ai_company":
+        try:
+            from llm.broker_client import AI_COMPANY_TEXT
+            return AI_COMPANY_TEXT
+        except Exception:                        # noqa: BLE001
+            return "SponsorJobs' AI is temporarily unavailable. Nothing was changed; try again in a little while."
+    if reason in ("no_credit", "upgrade_required"):
+        return "SponsorJobs' AI is unavailable right now (credits). Nothing was changed; try again later."
+    if reason == "no_key":
+        return "SponsorJobs' AI is not set up (no working key). Nothing was changed; check Settings, then try again."
+    return "SponsorJobs' AI is unavailable right now. Nothing was changed; try again later."
+
+
+_LINKEDIN = re.compile(r"linked ?in", re.I)
+
+
+def _call(llm, user: str, image: str = "") -> str:
+    """One model call: with a picture when the shell took one and the client can take it."""
+    if image and hasattr(llm, "agent_step_image"):
+        try:
+            return llm.agent_step_image(SYSTEM_PROMPT, user, image)
+        except Exception:                        # noqa: BLE001 - the picture is a bonus, never a blocker
+            pass
+    return llm.agent_step(SYSTEM_PROMPT, user)
+
+
 def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeholders: list | None = None,
-         resume_path: str = "", withheld=()) -> dict:
-    """One step of the agent: build the prompt, ask the model (one retry on an empty reply),
-    validate, guard, resolve. Returns {ok, memory, evaluation, actions, done, notes}."""
+         resume_path: str = "", withheld=(), sleep=None) -> dict:
+    """One step of the agent: build the prompt, ask the model (up to RETRIES calls on an empty or
+    garbled reply, with backoff and a nudge), validate, guard, resolve. Returns {ok, memory,
+    evaluation, plan, actions, done, notes, cost, tries}; {ok: False, reason: "no-reply"} when
+    the model gave nothing usable RETRIES times (the shell escalates, it never parks on that)."""
+    import time as _time
     req = req or {}
+    sleep = sleep or _time.sleep
     lines = view_lines(req.get("view") or "")
     labels = {i: _line_name(ln) for i, ln in lines.items()}
     step_n = int(req.get("step") or 1)
@@ -544,32 +787,109 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
     if portal:
         values.update({k: v for k, v in (("portal_email", portal.get("email")),
                                          ("portal_password", portal.get("password"))) if v})
-    nudges = loop_nudges(req.get("history") or [])
-    if step_n >= max_steps:
+    nudges = loop_nudges(req.get("history") or []) + [str(n) for n in (req.get("nudges") or []) if str(n).strip()]
+    if step_n >= max_steps or req.get("last_step"):
         nudges.append("This is the last step. Reply with done only: ready_to_submit if the "
                       "application is complete up to the submit button, else blocked with the reason.")
-    user = build_user_message(req, placeholders or [], nudges, values=values, withheld=withheld)
+    image = str(req.get("image") or "")
     reply = None
-    for _ in range(2):                           # one retry on an empty or garbled reply
+    cost = 0.0
+    tries = 0
+    errors: list[str] = []
+    fatal = ""
+    for n in range(RETRIES):
+        if n:
+            try:
+                sleep(BACKOFF_S[min(n, len(BACKOFF_S) - 1)])
+            except Exception:                    # noqa: BLE001 - a test's sleep may refuse
+                pass
+        extra = nudges + (["Your last reply was not valid JSON in the required shape (or named an index not "
+                           "in the view). Reply with JSON only, exactly the shape given, indices from this view."] if n else [])
+        user = build_user_message(req, placeholders or [], extra, values=values, withheld=withheld)
+        tries += 1
+        raw = ""
         try:
-            raw = llm.agent_step(SYSTEM_PROMPT, user)
-        except Exception:                        # noqa: BLE001 - model/broker blip -> retry once
-            raw = ""
+            raw = _call(llm, user, image if n == 0 else "")
+        except Exception as exc:                 # noqa: BLE001 - the model or the broker failed
+            kind = classify_error(exc)
+            errors.append((kind + ": " if kind else "") + " ".join(str(exc).split())[:200])
+            if kind in FATAL_REASONS:            # out of credits, no key: no retry can fix that
+                fatal = kind
+                break
+            continue
+        cost += estimate_cost(getattr(llm, "last_usage", None), len(SYSTEM_PROMPT) + len(user), len(raw or ""),
+                              getattr(llm, "model", ""))
         reply = parse_reply(raw, set(lines))
         if reply is not None:
             break
+        errors.append("bad reply: " + " ".join(str(raw or "").split())[:120] if raw else "empty reply")
     if reply is None:
-        return _blocked("needs-person", evaluation="The model gave no usable reply.")
-    if step_n >= max_steps and not reply.get("done"):
-        return _blocked("needs-person", reply["memory"], reply["evaluation"])
+        out = {"ok": False, "reason": "no-reply", "tries": tries, "cost": cost, "errors": errors,
+               "error": errors[-1] if errors else "no reply",
+               "evaluation": "The model gave no usable reply: " + (errors[-1] if errors else "nothing came back")}
+        if fatal:
+            out.update({"fatal": fatal, "message": unavailable_message(fatal)})
+        return out
+    if reply.get("done") and reply["done"].get("outcome") == "ready_to_submit":
+        why = not_ready(req.get("view") or "", lines)
+        if why:                                  # the gate, before anything else
+            return {"ok": True, "memory": reply["memory"], "evaluation": reply["evaluation"], "summary": "",
+                    "plan": reply.get("plan") or [], "actions": [], "done": None, "notes": ["ready_to_submit refused: " + why],
+                    "refused": why, "cost": cost, "tries": tries}
+    if (step_n >= max_steps or req.get("last_step")) and not reply.get("done"):
+        out = _blocked("needs-person", reply["memory"], reply["evaluation"])
+        out.update({"cost": cost, "tries": tries, "plan": reply.get("plan") or []})
+        return out
     if submit_guard(reply["actions"], lines):   # the model never presses Submit
         reply["actions"] = []
         reply["done"] = {"outcome": "ready_to_submit", "reason": "the application is at its submit button"}
     notes: list[str] = []
+    # LinkedIn is never driven (CLAUDE.md section 7): a click on it is dropped here as well as
+    # refused in the shell.
+    kept = []
+    for a in reply["actions"]:
+        if a.get("op") == "click" and _LINKEDIN.search(_line_name(lines.get(a.get("index")) or {})):
+            notes.append("a click on LinkedIn was dropped; apply with email or manually")
+            continue
+        kept.append(a)
+    reply["actions"] = kept
     actions = resolve_actions(reply["actions"], applicant, portal, labels, notes)
     for a in actions:
         if a.get("op") == "upload" and resume_path:
             a["path"] = resume_path
     summary = clean_summary(reply.get("summary", ""), actions, lines, reply["done"], values, withheld)
-    return {"ok": True, "memory": reply["memory"], "evaluation": reply["evaluation"],
-            "summary": summary, "actions": actions, "done": reply["done"], "notes": notes}
+    out = {"ok": True, "memory": reply["memory"], "evaluation": reply["evaluation"],
+           "summary": summary, "plan": reply.get("plan") or [], "actions": actions, "done": reply["done"],
+           "notes": notes, "cost": cost, "tries": tries}
+    for k in ("causes", "likeliest", "strategy"):
+        if k in reply:
+            out[k] = reply[k]
+    return out
+
+
+# --------------------------------------------------------------------------- the critic
+CRITIC_PROMPT = """You check a job application just before it is handed to the person at its Submit button. You get the review page as numbered lines (a filled box reads value="(filled)", never its contents), the plan of pages, and the fields the engine left open. List anything blank, wrong or suspicious: a required field still empty, an error shown on the page, no resume attached where one was asked, a page of the plan still todo, a box that reads (filled) under an error that says it is required. Do not list what is fine. Never mention a personal value. Reply with JSON only: {"ok": true|false, "issues": ["short line", "..."]}. ok is true when nothing is wrong."""
+
+
+def critic(req: dict, llm, values: dict | None = None, withheld=()) -> dict:
+    """(Section 14) One cheap call over the review page before ready_to_submit: {ok, issues,
+    cost}. A failed call is ok with no issues: the critic never blocks a hand-over."""
+    req = req or {}
+    view = mask_values(mask_self_id(str(req.get("view") or "")), withheld)
+    if values:
+        view = redact(view, values)
+    plan = clean_plan(req.get("plan"))
+    left = [str(x) for x in (req.get("left") or []) if str(x).strip()]
+    user = ("<plan>\n" + ("\n".join(plan) if plan else "(none)") + "\n</plan>\n\n<left>\n"
+            + ("\n".join(left) if left else "(nothing)") + "\n</left>\n\n<view>\n" + (view or "(empty page)") + "\n</view>")
+    try:
+        raw = llm.agent_critic(CRITIC_PROMPT, user) if hasattr(llm, "agent_critic") else llm.agent_step(CRITIC_PROMPT, user)
+    except Exception:                            # noqa: BLE001
+        return {"ok": True, "issues": [], "cost": 0.0, "skipped": True}
+    cost = estimate_cost(getattr(llm, "last_usage", None), len(CRITIC_PROMPT) + len(user), len(raw or ""),
+                         getattr(llm, "model", ""))
+    data = _json_object(raw) or {}
+    issues = [" ".join(str(i).split())[:160] for i in (data.get("issues") or []) if str(i).strip()] if isinstance(data.get("issues"), list) else []
+    issues = [i for i in issues if not (_EMAIL_RE.search(i) or _DIGIT_RUN.search(i))][:6]
+    ok = bool(data.get("ok")) and not issues
+    return {"ok": ok, "issues": issues, "cost": cost}

@@ -70,7 +70,7 @@ test("indices run in document order from indexBase, with and without the engine"
     assert.ok(/<combobox label="Country" value="" expanded=false/.test(v.text), "react-select input is a combobox");
     assert.ok(/<checkbox label="I agree to the candidate privacy notice" checked=false required>/.test(v.text), v.text);
     assert.ok(/\]<button required>Submit application<\/button>|\]<button>Submit application<\/button>/.test(v.text), "submit button listed");
-    assert.ok(v.text.trim().endsWith("[End of page]") || /\[End of page\] \(/.test(v.text), "ends with the end marker");
+    assert.ok(v.text.trim().endsWith("[End of page]") || v.text.trim().endsWith("[End of view]"), "ends with the end marker");
     assert.ok(starred(v.text).length === 0, "nothing is starred on the first view");
     assert.ok(!v.truncated);
     const b = await page.evaluate("window.TailorAgent.view({indexBase: 2001})");
@@ -126,10 +126,45 @@ test("no personal value in value=: a filled email reads (filled), a password nev
   const b = await p2.evaluate("window.TailorAgent.view()");
   assert.ok(!b.text.includes("Hunter2"), "a password's contents never appear");
   assert.ok(/value="(\(filled\))?"/.test(line(b.text, pw)), line(b.text, pw));
-  // The anti-spam trap is listed like any input (the brain is told not to answer questions
-  // about the person); its label says what it is.
-  assert.ok(/robots only/.test(a.text));
+  // The anti-spam trap (Barclays' Workday, 2026-11-02: "This input is for robots only") is never
+  // listed, so the model can never type into it; the engine never fills it either.
+  assert.ok(!/robots only/.test(a.text), "the honeypot is left out of the view");
+  assert.strictEqual(await p2.evaluate(`[...document.querySelectorAll("input")].filter((x) => window.TailorAgent.honeypotField(x)).length >= 1`), true);
   await p2.close();
+});
+
+test("Workday's live announcer is not an error; a real error still is (2026-11-02)", async ({ open }) => {
+  const page = await open("job_page.html");
+  await page.evaluate(AGENT);
+  await page.evaluate(`(() => {
+    const live = document.createElement("div"); live.setAttribute("aria-live", "polite"); live.setAttribute("role", "alert");
+    live.textContent = "Research Analyst page is loaded"; document.body.prepend(live);
+    const st = document.createElement("div"); st.setAttribute("role", "status"); st.textContent = "3 results found"; document.body.appendChild(st);
+    const err = document.createElement("div"); err.className = "error-message"; err.textContent = "The field Email is required"; document.body.appendChild(err);
+  })()`);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  assert.ok(!/page is loaded/.test(v.text.split("\n").filter((l) => l.startsWith("Error:")).join(" ")), v.text.slice(0, 400));
+  assert.ok(/Error: "The field Email is required"/.test(v.text), "a real error stays");
+  const errs = await page.evaluate("window.TailorAgent.readErrors()");
+  assert.ok(errs.includes("The field Email is required") && !errs.some((e) => /page is loaded|results found/.test(e)), JSON.stringify(errs));
+  await page.close();
+});
+
+test("a text box parked off the canvas or labelled for robots is never in the view", async ({ open }) => {
+  const page = await open("job_page.html");
+  await page.evaluate(AGENT);
+  await page.evaluate(`(() => {
+    const f = document.createElement("form"); document.body.appendChild(f);
+    f.innerHTML = '<label for="em2">Email Address</label><input id="em2" type="text" required>'
+      + '<label for="hp">Enter website. This input is for robots only, do not enter if you are human.</label><input id="hp" type="text">'
+      + '<input id="off" name="website" type="text" style="position:absolute;left:-9999px" tabindex="-1">';
+  })()`);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  assert.ok(/label="Email Address"/.test(v.text), "the real box stays");
+  assert.ok(!/robots only/.test(v.text) && !/label="website"/i.test(v.text), v.text.slice(-400));
+  const chk = await page.evaluate("window.TailorAgent.pageCheck()");
+  assert.ok(chk.required_empty.includes("Email Address") && chk.required_empty.length === 1, JSON.stringify(chk));
+  await page.close();
 });
 
 test("select shows its options count and first four; select() picks by text, lists options on a miss", async ({ open }) => {
@@ -286,10 +321,11 @@ test("the view is capped at 12000 chars with a tail saying how many elements wer
   assert.ok(v.text.length <= 12000, "length " + v.text.length);
   assert.strictEqual(v.truncated, true);
   assert.ok(v.count > 700);
-  const m = v.text.match(/\((\d+) more elements below\)\n\[End of page\]/);
+  const m = v.text.match(/\((\d+) more elements below; read_page offset (\d+) shows them\)\n\[End of view\]$/);
   assert.ok(m, v.text.slice(-200));
   assert.strictEqual(Number(m[1]), v.count - indices(v.text).length);
-  assert.ok(/\[End of page\] \([\d.]+ pages below\)$/.test(v.text.trim()), v.text.slice(-80));
+  assert.strictEqual(Number(m[2]), Math.max(...indices(v.text)) + 1, "the offset is the first element cut");
+  assert.ok(!/pages below/.test(v.text), "never pages below next to the end marker");
   // Every index that was shown still resolves; the cut ones do too (refs hold them all).
   assert.ok(await page.evaluate(`window.TailorAgent.element(${v.count}) !== null`));
   await page.close();
@@ -338,14 +374,14 @@ test("scroll and wait: scroll moves 0.8 of a viewport, wait is capped at 5 s", a
   await page.evaluate(AGENT);
   await page.evaluate("document.body.style.height = '5000px'");
   const v = await page.evaluate("window.TailorAgent.view()");
-  assert.ok(/\[End of page\] \([\d.]+ pages below\)$/.test(v.text.trim()), v.text.slice(-60));
+  assert.ok(/\[End of page\]$/.test(v.text.trim()) && !/pages below/.test(v.text), v.text.slice(-60));   // the whole page is in the view
   const r = await page.evaluate("window.TailorAgent.act({op: 'scroll', direction: 'down'})");
   assert.strictEqual(r.ok, true);
   const y = await page.evaluate("window.scrollY");
   const vh = await page.evaluate("window.innerHeight");
   assert.ok(Math.abs(y - Math.round(vh * 0.8)) <= 2, `scrolled ${y} of ${vh}`);
   const w = await page.evaluate("window.TailorAgent.view()");
-  assert.ok(/pages above/.test(w.text), w.text.slice(-80));
+  assert.ok(!/pages (above|below)/.test(w.text) && /\[End of page\]$/.test(w.text.trim()), w.text.slice(-80));   // scrolled or not, the whole page is in the view
   const t0 = Date.now();
   await page.evaluate("window.TailorAgent.act({op: 'wait', seconds: 60})");
   assert.ok(Date.now() - t0 < 7000, "capped");
