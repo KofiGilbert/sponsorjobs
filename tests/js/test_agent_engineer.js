@@ -473,4 +473,4 @@ const walk = (P, a) => {
   console.log("ok");
   // The fake panes' never-resolving promises keep guard timers armed; nothing else is pending.
   process.exit(0);
-})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+})().catch((e) => { console.error(e && e.stack || e); try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (x) { /* gone */ } process.exit(1); });
