@@ -34,6 +34,8 @@ DOC_END = r"\end{document}"
 # to grow up to a full template line, giving every bullet a complete, page-width
 # sentence. The one-page self-heal loop remains the guardrail against overflow.
 LENGTH_BUDGET = 1.10
+# The Skills block never shrinks below this many lines to fit the page (linefit.SKILL_LINES_MIN).
+SKILL_LINES_FLOOR = 5
 FULL_LINE_CHARS = 165   # ~ one full template bullet line
 
 def _bullet_budget(original: str) -> int:
@@ -1203,9 +1205,9 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
             projects.pop(idx)
             return True
 
-    # 7. Skills must keep 4-5 dense categories (hard rule) — drop a line ONLY when there
-    # are more than the 4-category floor, so it can go 5 -> 4 but never below 4.
-    if len(profile.get("skills", {})) > 4:
+    # 7. Skills keep 5 to 6 full-width categories (the owner's layout rule, linefit.py):
+    # drop a line ONLY above the 5-category floor, so it can go 6 -> 5 but never below 5.
+    if len(profile.get("skills", {})) > SKILL_LINES_FLOOR:
         last = next((k for k in reversed(list(profile["skills"]))
                      if not cuts.kept("skills_line", str(k), str(k))), None)
         if last is not None:
@@ -1359,6 +1361,12 @@ class AssembleResult:
     # Rewrites the fact gate refused (a name, tool, acronym, credential or figure the person's
     # material never states): the bullet kept the person's own wording.
     reverted: list = field(default_factory=list)
+    # The full-width line check (tailoring/linefit.py), measured on the compiled PDF: every
+    # skills line and every bullet, before and after the fix loop, and what real material is
+    # still missing for every line to run full (the builder asks the person about it).
+    line_fit: dict | None = None
+    line_fit_before: dict | None = None
+    line_gaps: dict | None = None
 
     @property
     def underfull(self) -> bool:
@@ -1440,6 +1448,10 @@ def assemble_cv(
     choices: dict | None = None,
     keep=None,
     material: tuple | list = (),
+    fit_lines: bool = False,
+    skill_pool=(),
+    progress=None,
+    fit_rounds: int | None = None,
 ) -> AssembleResult:
     """Assemble a one-page CV from ``profile`` in the template's shape.
 
@@ -1451,7 +1463,20 @@ def assemble_cv(
     they changed is in ``choices_report``. ``keep`` holds the ids of cuts the person put back
     (``trims``), never cut again; ``material`` is more of the person's own words (brain facts)
     the fact gate may trace a rewrite to.
+
+    ``fit_lines`` runs the full-width line loop (tailoring/linefit.py) on the finished page:
+    5 to 6 one-line Skills categories that reach the right margin, and every bullet's last
+    line close to the edge, measured on the PDF, never worse than before. ``skill_pool`` is
+    more of the person's own skills it may place (the caller vets them; the fact gate checks
+    them again). ``progress(step)`` is told each build step (linefit.BUILD_STEPS keys).
     """
+    def _step(key):
+        if progress:
+            try:
+                progress(key)
+            except Exception:                        # noqa: BLE001 - progress never fails a build
+                pass
+
     workdir = Path(workdir)
     preamble = extract_preamble(template_source)
     full_profile = normalize_profile(profile)  # tolerate loose LLM-drafted shapes
@@ -1475,10 +1500,13 @@ def assemble_cv(
     reverted: list = []
     origins: dict = {}
     gate_material = (source_material,) + tuple(material or ())
+    if tailor:
+        _step("bullets")
     used = (_tailor_bullets(profile, jd_text, llm, material=gate_material, reverted=reverted,
                             origins=origins) if tailor else profile)
 
     trims: list = []
+    _step("fit")
     attempts, result = _fit_to_page(preamble, used, sections, workdir, jobname, max_shrink,
                                     headings=headings, trims=trims, keep=keep, origins=origins)
 
@@ -1524,6 +1552,33 @@ def assemble_cv(
             layout, result, best_fill = step, r, r.fill_ratio
             if best_fill >= LAYOUT_FILL:
                 break
+
+    # FULL-WIDTH LINES (tailoring/linefit.py). Measured on the real page, at the layout that
+    # won: Skills packed into 5 to 6 one-line categories that reach the right margin, each
+    # bullet's last line filled or a one-word spill trimmed. Each round must keep the page
+    # clean and score better, so the result is never worse than the page above.
+    line_fit = line_before = line_gaps = None
+    if fit_lines and result and result.ok and result.pages == 1:
+        from . import linefit as _lf
+        from .fact_gate import known_material, source_figures
+
+        def _clean(r):
+            return bool(r and r.ok and r.pages == 1 and r.overfull_count == 0
+                        and not (r.fill_ratio and r.fill_ratio > MAX_FILL))
+        fo = _lf.fit_lines(
+            used, result,
+            render=lambda p: render_cv(preamble, p, sections, probe=True, layout=layout,
+                                       headings=headings),
+            compile_fn=lambda tex, name: compile_tex(tex, workdir, jobname=name),
+            is_clean=_clean, llm=llm, jd_text=jd_text, skill_pool=skill_pool,
+            known=known_material(*gate_material), known_figures=source_figures(*gate_material),
+            origins=origins, rounds=_lf.FIT_ROUNDS if fit_rounds is None else fit_rounds,
+            fit_bullets=llm is not None, progress=progress, jobname=jobname)
+        if fo.result is not result:
+            used, result = fo.profile, fo.result
+        # A fit rewrite the guards refused never reached the page, so there is nothing for
+        # the person to confirm: the bullet simply kept its wording.
+        line_fit, line_before, line_gaps = fo.after.as_dict(), fo.before.as_dict(), fo.gaps()
 
     # The grow passes compile under side jobnames (-full, -lN). Whatever won must also exist
     # under the REAL jobname, because that is the file the app serves (/api/cv.pdf?job=...);
@@ -1575,6 +1630,9 @@ def assemble_cv(
         choices_report=report,
         trims=trims,
         reverted=reverted,
+        line_fit=line_fit,
+        line_fit_before=line_before,
+        line_gaps=line_gaps,
     )
 
 

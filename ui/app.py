@@ -2935,6 +2935,16 @@ def session_state():
     return jsonify(state)
 
 
+@app.get("/api/session/activity")
+def session_activity():
+    """The current resume build's progress steps ("Reading the job" ... "Checking every
+    line", tailoring/linefit.BUILD_STEPS), cheap to poll while a build POST is running, so a
+    live feed can show them. Read-only; an empty list when nothing is building."""
+    s = _SESSION.get("s")
+    return jsonify({"activity": list(getattr(s, "activity", None) or []) if s else [],
+                    "stage": getattr(s, "stage", "") if s else ""})
+
+
 @app.post("/api/session/answer")
 @_guard
 def answer():
