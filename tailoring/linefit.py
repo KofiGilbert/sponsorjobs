@@ -35,6 +35,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+try:                                     # the live activity feed (ui/activity.py): a no-op off a run
+    from ui.activity import step as _say
+except Exception:                        # noqa: BLE001 - the engine builds without the app too
+    def _say(*_a, **_k):
+        return None
+
 # --------------------------------------------------------------------------- #
 # Targets
 # --------------------------------------------------------------------------- #
@@ -57,18 +63,6 @@ FIT_ROUNDS = 3
 # Labels whose line is the person's list as given (credentials, spoken languages): the packer
 # never adds to, splits, merges or drops them.
 _FIXED_LABEL = re.compile(r"certif|licen|clearance|spoken|award", re.I)
-
-# Progress steps for the resume build, in order. ui/session.py emits these so a later live
-# feed can show them; the keys are stable, the labels are what the person reads.
-BUILD_STEPS: tuple[tuple[str, str], ...] = (
-    ("read", "Reading the job"),
-    ("match", "Matching your experience"),
-    ("draft", "Drafting"),
-    ("bullets", "Crafting bullets"),
-    ("fit", "Fitting the page"),
-    ("check", "Checking every line"),
-)
-
 
 # --------------------------------------------------------------------------- #
 # Reading lines out of the compiled PDF
@@ -741,7 +735,6 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
               llm=None, jd_text: str = "", skill_pool=(), known: dict | None = None,
               known_figures: set | None = None, origins: dict | None = None,
               rounds: int = FIT_ROUNDS, fit_bullets: bool = True,
-              progress: Callable[[str], None] | None = None,
               jobname: str = "cv") -> FitOutcome:
     """Measure the compiled page and fix the lines that stop short, for up to ``rounds``
     rounds. Each round: repack the Skills block with widths calibrated to the real page, and
@@ -759,11 +752,6 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     from .filler import is_padded, tacked_on_terms
     from .keywords import introduced_skills, supported_skills, term_present
 
-    if progress:
-        try:
-            progress("check")
-        except Exception:          # noqa: BLE001
-            pass
     before = measure(getattr(result, "pdf_path", None), profile)
     out = FitOutcome(profile=profile, result=result, before=before, after=before)
     if not before.items or not before.width:
@@ -834,6 +822,12 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
         if not round_changes:
             break
         out.rounds = rnd + 1
+        n_sk = sum(1 for c in round_changes if c["kind"] == "skills")
+        n_b = sum(1 for c in round_changes if c["kind"] == "bullet")
+        what = ", ".join(x for x in (("the skills lines" if n_sk else ""),
+                                     (f"{n_b} bullet{'s' if n_b != 1 else ''}" if n_b else "")) if x)
+        _say("linefit", "Fitting the page", f"filling {what} to the right edge",
+             detail=f"round {rnd + 1} of {rounds}")
 
         def trial(p, tag):
             r = compile_fn(render(p), f"{jobname}-fit{rnd}{tag}")
@@ -842,6 +836,9 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
             return r, measure(r.pdf_path, p)
 
         r, rep = trial(cand, "")
+        if rep is None:
+            _say("linefit", "Fitting the page", "that ran over one page, trying a smaller change",
+                 state="retry", detail=f"round {rnd + 1} of {rounds}")
         if rep is None and (grow or pack is not None):
             # The round cost the page (it overflowed): keep only the changes that take no
             # height, the trims, and a skills repack that adds no line.
@@ -894,7 +891,12 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
             r, rep = trial(cand, "m")
             if rep is None:
                 continue
-        if rep.score(fixed_n(rep)) > best_rep.score(fixed_n(best_rep)):
+        if rep.score(fixed_n(rep)) <= best_rep.score(fixed_n(best_rep)):
+            _say("linefit", "Fitting the page", "no better than before, keeping the last version",
+                 state="retry", detail=f"round {rnd + 1} of {rounds}")
+        else:
+            _say("linefit", "Fitting the page", "kept: more lines reach the right edge",
+                 detail=f"round {rnd + 1} of {rounds}")
             best_p, best_r, best_rep = cand, r, rep
             out.changes.extend(round_changes)
             if origins is not None:

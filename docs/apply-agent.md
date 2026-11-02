@@ -214,6 +214,21 @@ it is the Send path above. Belt and braces.
   "Stopped: this site asks you to verify your email". The pane stays visible; the drawer
   closes before the run (the 10-27 lesson).
 - The person can press **Stop** at any time; the run ends after the current action.
+- **Live activity feed (2026-11-01, OpenHands style).** Every progress line carries the run's
+  steps as events, `{phase, verb, target, summary, state, at, detail?}` with state
+  running | done | retry | asking | parked (`createFeed` in agent.js; the resume builder uses the
+  same shape from `ui/activity.py`). While it runs the bar is ONE live line: a spinner, the verb
+  in the accent, the summary, the job and "page 2 of 4" (the site's own "Step 2 of 4" when it
+  shows one). **Steps** opens the timeline under the bar (time, marker ✓ done, ↻ retry, • now,
+  muted detail) with "Steps 14 of 40" and "Nothing sent without you" in its footer. The shell
+  adds its own steps (Opening the job, Signing in, Filled N fields from your memory, Accepted the
+  X, Asking you, Waiting for the site's email, Trying another way, Paused, Ready to send, Sent);
+  each brain step adds the model's own `summary` (about 10 words, "Clicking Next to open page
+  3"), and an action that fails turns that line into a retry with the reason in words. The
+  summary is screen text, so `brain.clean_summary` reads placeholders as words ("your email")
+  and drops any summary that names a profile value, a withheld value, a chosen option or a
+  self-identification topic, building one from the actions instead. The messages themselves
+  are unchanged, nothing here goes to Telegram, and the run does exactly what it did before.
 - "Needs you" tile counts packages stopped on `blocked`; each row says why in one line.
 
 ### Asking the person (`/api/autoapply/agent/ask`, autoapply/asks.py)

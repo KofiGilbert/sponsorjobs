@@ -17,6 +17,7 @@ import shutil
 from pathlib import Path
 
 from intake.diary import Diary
+from ui import activity as _activity
 from tailoring.assembler import assemble_cv, normalize_profile
 from tailoring.conform import date_lacks_month, is_full_address
 
@@ -802,9 +803,6 @@ class WebIntake:
         # profile a tailored build started from. None for a page drafted from the chat.
         self._change_base: dict | None = None
         self._last_reverted: list = []           # rewrites the fact gate kept in the person's words
-        # Build progress (tailoring/linefit.BUILD_STEPS): "Reading the job" ... "Checking every
-        # line", one entry per step of the current build, for a live feed to show.
-        self.activity: list[dict] = []
 
         saved = memory.load(profile_name)
         if saved:
@@ -836,22 +834,6 @@ class WebIntake:
         self.prior_history = _merge_turns(self.prior_history, self.palace.load_history())
 
     # ------------------------------------------------------------------ helpers
-    def _progress(self, step: str, reset: bool = False):
-        """Record one build step ("read", "match", "draft", "bullets", "fit", "check"; labels
-        in tailoring/linefit.BUILD_STEPS). A repeated step is not added twice in a row. Read
-        by /api/session/activity while the build runs; never fails the build."""
-        try:
-            import time as _t
-            from tailoring.linefit import BUILD_STEPS
-            labels = dict(BUILD_STEPS)
-            if reset:
-                self.activity = []
-            if step not in labels or (self.activity and self.activity[-1]["step"] == step):
-                return
-            self.activity.append({"step": step, "label": labels[step], "at": round(_t.time(), 3)})
-        except Exception:      # noqa: BLE001
-            pass
-
     def _append(self, role: str, content: str):
         """Record one turn in the session AND persist it verbatim to the diary,
         as it happens, the fix for 'nothing persisted until Accept'."""
@@ -2257,8 +2239,6 @@ class WebIntake:
             "can_autobuild": bool(self.returning and (self.saved_profile or {}).get("experience")
                                   and self.assembled is None and self.stage == "chatting"),
         }
-        if self.activity:
-            s["activity"] = list(self.activity)
         if self.recalled:
             s["recalled"] = self.recalled
         if self.rule_proposals:
@@ -2706,7 +2686,23 @@ class WebIntake:
                                 self.essentials.get("projects", []))
 
     # ------------------------------------------------------------------ draft + assemble
+    def _build_feed(self):
+        """The live activity run for one build (ui/activity.py): the builder's own line, or the
+        unattended auto-apply tailoring's, so the builder never shows a background build."""
+        key = "unattended" if self.essentials.get("unattended") else "builder"
+        role, company = str(self.role or "").strip(), str(self.company or "").strip()
+        target = f"{role} at {company}" if role and company else (role or company)
+        return _activity.run("resume", key=key, target=target)
+
+    def _feed_read_job(self):
+        _activity.step("read", "Reading the job")
+
     def draft(self, lead=None):
+        with self._build_feed():
+            self._feed_read_job()
+            return self._draft(lead)
+
+    def _draft(self, lead=None):
         # Gate: never build while a template field is missing. Under an override we
         # still insist on the template-critical fields (locations/dates), because
         # their absence breaks the template, but skip the optional extras.
@@ -2717,9 +2713,7 @@ class WebIntake:
         self.stage = "drafting"
         self._change_base = None           # a page drafted from the chat has no base resume
         self._last_reverted = []
-        self._progress("read", reset=True)
-        self._progress("match")
-        self._progress("draft")
+        _activity.step("draft", "Drafting", "your resume from your experience")
         drafted = normalize_profile(self.llm.draft_profile(self.jd, self.essentials))
         self.profile = drafted
         self.profile["identity"] = self.essentials.get("identity", {}) or self.profile.get("identity", {})
@@ -2732,11 +2726,12 @@ class WebIntake:
         self.profile["projects"] = [dict(p) for p in self.essentials.get("projects", []) or []]
         self.profile["extracurricular"] = [dict(x) for x in self.essentials.get("extracurricular", []) or []]
         self.profile["interests"] = str(self.essentials.get("interests") or "").strip()
+        _activity.step("bullets", "Crafting bullets", "from what you told me, each sized to its line")
         self._apply_real_bullets()  # the person's REAL bullets win; flag drafted ones
         self._apply_essentials_locations()  # never drop an experience location (hard rule)
         date_flags = self._flag_placeholder_dates()  # year-only dates -> flagged placeholder months
-        self._progress("bullets")
         self._expand_terse_bullets()  # grow stubby fragments into full page-width sentences
+        _activity.step("match", "Matching your experience", "to the skills this job asks for")
         self._apply_user_skills()   # the person's own skills + certifications
         self._validate_skills()     # drop any drafted skill the person's material can't support
         self._ensure_richness()
@@ -2824,6 +2819,11 @@ class WebIntake:
     def build_from_saved(self):
         """Build directly from the saved profile, tailored to this job, the
         response to "use what you already know about me"."""
+        with self._build_feed():
+            self._feed_read_job()
+            return self._build_from_saved()
+
+    def _build_from_saved(self):
         if self.saved_profile and self.saved_profile.get("experience"):
             self.profile = normalize_profile(self.saved_profile)
             # HARD RULE (memory: complete-cv-fills-page): the template's page-filling
@@ -2846,10 +2846,9 @@ class WebIntake:
             if missing:
                 return self._ask_missing(missing, critical=override)
             self.stage = "drafting"
-            self._progress("read", reset=True)
-            self._progress("match")
             self._apply_essentials_locations()  # never drop an experience location (hard rule)
             date_flags = self._flag_placeholder_dates()  # year-only -> flagged placeholder months
+            _activity.step("match", "Matching your experience", "to the skills this job asks for")
             self._validate_skills()  # drop any saved skill the person's material can't support
             self._fill_skills()   # foreground supported JD terms (no stretch, ragged if short)
             self._dedupe_skill_groups()  # one term, one line
@@ -2859,13 +2858,12 @@ class WebIntake:
             self._new_build()
             import copy as _copy
             self._change_base = _copy.deepcopy(normalize_profile(self.saved_profile))
-            self._progress("draft")
             self.assembled = assemble_cv(
                 self.template, self._render_profile(), self.jd, self.llm, self.workdir,
                 jobname=self.jobname, tailor=True, sections=self.sections,
                 headings=self.headings, choices=self._choices_plan(),
                 keep=self.kept_trims, material=self._fit_material(),
-                fit_lines=True, skill_pool=self._skill_pool(), progress=self._progress)
+                fit_lines=True, skill_pool=self._skill_pool())
             self._last_reverted = list(getattr(self.assembled, "reverted", None) or [])
             self.profile = self._whole_profile_after_render(self.assembled.profile_used)
             self._pdf_v += 1
@@ -3708,7 +3706,6 @@ class WebIntake:
             choices=self._choices_plan(), keep=self.kept_trims,
             material=self._fit_material() if fit_lines else self._brain_material(),
             fit_lines=fit_lines, skill_pool=self._skill_pool() if fit_lines else (),
-            progress=self._progress if fit_lines else None,
         )
         self.profile = self._whole_profile_after_render(self.assembled.profile_used)
         self._pdf_v += 1

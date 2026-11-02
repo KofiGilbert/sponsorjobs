@@ -223,10 +223,11 @@ def test_builder_asks_about_the_jobs_keywords_and_saves_the_answer(template_sour
     assert "This role asks for" in msg and "Have you used either?" in msg, msg
     asked = list(s.essentials["skills_pending"])
     assert len(asked) == 2
-    # Progress for a later live feed, in build order.
-    steps = [a["step"] for a in st["activity"]]
-    assert steps == [k for k, _l in LF.BUILD_STEPS if k in steps]
-    assert {"read", "match", "draft", "fit", "check"} <= set(steps)
+    # The live activity feed (ui/activity.py) shows the line check with its real numbers.
+    from ui import activity as ACT
+    verbs = [e["verb"] for e in ACT.snapshot("builder")["events"]]
+    assert "Fitting the page" in verbs and verbs[-1] == "Checking every line", verbs
+    assert "skills lines full" in ACT.snapshot("builder")["events"][-1]["summary"]
 
     st2 = s.submit(f"Yes, I've used {asked[0]} at the bank, not {asked[1]} though.")
     si = [x.lower() for x in s.essentials["skills_input"]]
@@ -292,28 +293,6 @@ def test_enrichment_asks_for_more_skills_when_the_profile_is_thin(template_sourc
     assert "skills_more" not in dict(s._enrich_topics())
 
 
-def test_activity_endpoint_reads_the_live_builds_steps():
-    import ui.app as A
-
-    class _S:
-        stage = "drafting"
-        activity = [{"step": "read", "label": "Reading the job", "at": 1.0},
-                    {"step": "check", "label": "Checking every line", "at": 2.0}]
-
-    old = A._SESSION.get("s")
-    A._SESSION["s"] = _S()
-    try:
-        r = A.app.test_client().get("/api/session/activity")
-        assert r.status_code == 200
-        assert [a["label"] for a in r.get_json()["activity"]] == ["Reading the job",
-                                                                  "Checking every line"]
-    finally:
-        if old is None:
-            A._SESSION.pop("s", None)
-        else:
-            A._SESSION["s"] = old
-
-
 # --------------------------------------------------------------------------- no tacked-on lists
 
 @pytest.mark.parametrize("new", [
@@ -359,3 +338,23 @@ def test_the_loop_refuses_tool_lists_even_from_the_roles_own_material(template_s
     text = " ".join(b for e in res.profile_used["experience"] for r in e["roles"]
                     for b in r["bullets"])
     assert "using SQL, Python and Tableau" not in text
+
+
+def test_a_rejected_round_shows_as_a_retry_in_the_feed(monkeypatch):
+    """fit_lines reports each round on the live feed; a round that is no better is a retry."""
+    from ui import activity as ACT
+    rep = LF.LineReport(items=[LF.ItemFit("skill", "Tools", "Excel, SQL", lines=1, last_fill=0.3,
+                                          last_text="Tools: Excel, SQL", last_width=100)],
+                        left=72, right=540)
+    monkeypatch.setattr(LF, "measure", lambda *a, **k: rep)
+
+    class R:
+        ok, pages, overfull_count, fill_ratio, pdf_path = True, 1, 0, 0.8, "x.pdf"
+    with ACT.run("resume", key="lf-test"):
+        LF.fit_lines({"skills": {"Tools": "Excel, SQL"}}, R(), render=lambda p: "",
+                     compile_fn=lambda tex, name: R(), is_clean=lambda r: True,
+                     skill_pool=["Power BI", "Tableau"], rounds=1,
+                     known={"words": {"power", "bi", "tableau"}, "creds": []})
+    evs = ACT.snapshot("lf-test")["events"]
+    assert [e["verb"] for e in evs] == ["Fitting the page"]
+    assert evs[0]["state"] == "retry" and "round 1 of 1" in evs[0].get("detail", "")
