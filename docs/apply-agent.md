@@ -500,6 +500,29 @@ for Jobs"), within 8 steps, never from the "account activated" page or a form un
 search box. `back` only ever returns to a page this application was on (Electron's history
 keeps the previous job's pages; the e2e's activation run once went back into the skeleton job).
 
+**From the owner's real pages (2026-11-02, `tests/fixtures/forms/real/`).**
+- *A closed job* (Oracle "This job is no longer available", US Bank's Workday "The page you are
+  looking for doesn't exist", Amazon "Sorry, the job you're looking for isn't available") is
+  caught by `closedJob()` before any model call, while no form has been reached: a short line of
+  the page's own that says the posting is gone, no Apply control, no field of its own. The run
+  stops as `job-closed`, `/api/autoapply/agent/closed` moves the record to the closed-posting
+  state (the row reads "Job closed", its action is View, so no batch picks it again), nothing goes
+  to Telegram, and a batch counts it apart ("2 closed by the employer") and moves on. Zero AI cost.
+- *Live-region announcements are not errors*: Workday's aria-live announcer ("Research Analyst
+  page is loaded"), `role=status`/`log` and `aria-live=polite` regions without an error class are
+  left out of `Error:` lines, `readErrors` and `pageCheck`.
+- *The footer is honest*: the view walks the whole page, so it never says "N pages below" next to
+  `[End of page]`; a view the cap cut ends "(N more elements below; read_page offset M shows them)"
+  and `[End of view]`.
+- *Honeypots are invisible*: a text box labelled for robots (Barclays' Workday "This input is for
+  robots only") or parked off the canvas is never in the view, `pageShape` or `pageCheck`; the
+  fill engine already skipped it (its `HONEYPOT_RE`, now also "for robots" and "not human").
+- *LinkedIn is never clicked*: the shell refuses any click whose words name LinkedIn (and any
+  other social sign-in while the page offers an email or manual path); the brain drops such a
+  click too, and the prompt prefers Apply with Email or Apply manually.
+- *Chat-style apply* (Chewy's Phenom chatbot): the prompt says to open the chat and answer one
+  question at a time with placeholders; the cycle check keeps it from looping.
+
 ## 14. The plan, page checks and the pre-submit critic (2026-11-02)
 
 - **Plan.** The brain's reply carries `plan`: short lines "done: Job page", "now: Sign in",

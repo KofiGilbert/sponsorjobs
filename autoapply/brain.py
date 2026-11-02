@@ -29,7 +29,7 @@ SYSTEM_PROMPT = """You drive a web browser to apply for a job on behalf of a per
 
 Rules:
 1. Popups and cookie banners first, before anything else: close the popup; on a cookie banner choose Reject all, Decline, Necessary only or Close (never Accept all, never opt in to marketing). If the only way past a banner is Accept, close it if it has a close button; otherwise leave it and continue.
-2. On a job page click Apply. Prefer "Apply manually" or "Autofill with resume" over "Apply with LinkedIn" or any other third party sign-in.
+2. On a job page click Apply. Prefer "Apply manually", "Apply with Email" or "Autofill with resume". Never LinkedIn (Apply with LinkedIn, Sign in with LinkedIn: always refused), and no other social sign-in (Google, Indeed, Facebook) while an email or manual path exists. A chat-style apply (a chatbot that asks one question at a time; "Open Chatbot", "I'm interested"): open the chat, answer each question in its answer box with the matching placeholder and send it, one at a time; a question about the person with no placeholder is needs-answers.
 3. Comboboxes and autocompletes: type the value, then WAIT a step. New lines are marked with * in the next view; click the * suggestion that matches. Never press Enter.
 4. Put at most ONE action that changes the page (a click on Next, Continue, Sign in, Apply, a link; back, reload, reopen_job) LAST in the list. Anything after it would run on a page you have not seen.
 5. NEVER click Submit, Send application, Review and submit, or Complete application. When the application is complete and the only step left is that button, report done with outcome ready_to_submit.
@@ -757,6 +757,9 @@ def unavailable_message(reason: str) -> str:
     return "SponsorJobs' AI is unavailable right now. Nothing was changed; try again later."
 
 
+_LINKEDIN = re.compile(r"linked ?in", re.I)
+
+
 def _call(llm, user: str, image: str = "") -> str:
     """One model call: with a picture when the shell took one and the client can take it."""
     if image and hasattr(llm, "agent_step_image"):
@@ -841,6 +844,15 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
         reply["actions"] = []
         reply["done"] = {"outcome": "ready_to_submit", "reason": "the application is at its submit button"}
     notes: list[str] = []
+    # LinkedIn is never driven (CLAUDE.md section 7): a click on it is dropped here as well as
+    # refused in the shell.
+    kept = []
+    for a in reply["actions"]:
+        if a.get("op") == "click" and _LINKEDIN.search(_line_name(lines.get(a.get("index")) or {})):
+            notes.append("a click on LinkedIn was dropped; apply with email or manually")
+            continue
+        kept.append(a)
+    reply["actions"] = kept
     actions = resolve_actions(reply["actions"], applicant, portal, labels, notes)
     for a in actions:
         if a.get("op") == "upload" and resume_path:

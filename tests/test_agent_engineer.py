@@ -343,3 +343,40 @@ def test_shell_loop_under_node():
                          cwd=str(ROOT), timeout=300)
     assert out.returncode == 0, out.stdout + out.stderr
     assert out.stdout.strip().endswith("ok")
+
+
+# --- the owner's real pages of 2026-11-02 (tests/fixtures/forms/real/) ---------------------------
+
+REAL = ROOT / "tests" / "fixtures" / "forms" / "real"
+
+
+def test_the_brain_drops_a_click_on_linkedin_from_the_real_eliassen_options():
+    view = (REAL / "eliassen_apply_options.txt").read_text(encoding="utf-8")
+    li = next(i for i, ln in brain.view_lines(view).items() if ln["text"] == "Apply with LinkedIn")
+    em = next(i for i, ln in brain.view_lines(view).items() if ln["text"] == "Apply with Email")
+    out = step(_req(view), _Scripted(json.dumps({"actions": [{"op": "click", "index": li}]})), APPLICANT, None,
+               placeholders=PH, sleep=lambda s: None)
+    assert out["actions"] == [] and any("LinkedIn" in n for n in out["notes"])
+    out = step(_req(view), _Scripted(json.dumps({"actions": [{"op": "click", "index": em}]})), APPLICANT, None,
+               placeholders=PH, sleep=lambda s: None)
+    assert out["actions"] == [{"op": "click", "index": em}]
+    assert "Never LinkedIn" in SYSTEM_PROMPT and "chat-style apply" in SYSTEM_PROMPT
+
+
+def test_closed_route_takes_the_job_off_waiting_and_out_of_a_batch(A):
+    mod, c, rid = A
+    r = c.post("/api/autoapply/agent/closed", headers=H, json={"record_id": rid, "url": "https://eeho.fa.us2.oraclecloud.com/x",
+                                                               "phrase": "This job is no longer available."}).get_json()
+    assert r["ok"] is True
+    row = next(it for t in c.get("/api/autoapply/board", headers=H).get_json()["tiles"].values() for it in t if it["id"] == rid)
+    assert row["tile"] == "needs" and row["reason"] == "posting_closed" and row["action"] == "view"   # never "fill": no batch picks it
+    data = mod._record_data(mod._get_record(rid))
+    assert data["job_closed"]["phrase"] == "This job is no longer available." and data["submission"]["message"].startswith("Job closed")
+    assert c.post("/api/autoapply/agent/closed", headers=H, json={"record_id": 999999}).get_json()["ok"] is False
+
+
+def test_real_pages_under_node():
+    out = subprocess.run(["node", str(ROOT / "tests" / "js" / "test_agent_real_pages.js")], capture_output=True, text=True,
+                         cwd=str(ROOT), timeout=120)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert out.stdout.strip().endswith("ok")

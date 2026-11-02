@@ -9288,7 +9288,7 @@
   const AA_REASON = { needs_signin: ["aa.reason.signin", "Needs your sign-in"],
     form_blocker: ["aa.reason.form", "A form question needs you"],
     site_error: ["aa.reason.site", "The site had an error"],
-    posting_closed: ["aa.reason.closed", "The posting is closed"] };
+    posting_closed: ["aa.reason.closed", "Job closed"] };
 
   // Per-viewer convenience only: the focus fields come back as you left them.
   (function aaRestoreFocus() {

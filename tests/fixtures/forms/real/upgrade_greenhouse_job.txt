@@ -1,0 +1,74 @@
+URL: https://job-boards.greenhouse.io/upgrade/jobs/4745526005
+Title: Job Application for Product Manager, Operations at Upgrade
+[Start of page]
+[1]<a>Upgrade Logo</a>
+[2]<a>Back to jobs</a>
+Product Manager, Operations
+Phoenix
+[3]<button>Apply</button>
+About the Role:
+We’re looking for a Product Manager, Operations to help improve the systems, tools, and workflows that power Upgrade’s day-to-day operations. In this role, you’ll partner closely with Operations, Engineering, and Product teams to identify opportunities for automation, streamline internal processes, and deliver scalable solutions that improve efficiency and the customer experience.
+You'll play a hands-on role in gathering business requirements, translating operational needs into technical specifications, coordinating cross-functional initiatives, and supporting projects from planning through implementation. You'll also help evaluate the impact of these initiatives through data and performance metrics.
+This is a great opportunity for an analytical, technically curious Product Manager who enjoys solving complex problems, working with diverse stakeholders, and leveraging emerging technologies to drive meaningful business improvements. This is a hybrid position based in our Phoenix office What You’ll Do:
+Partner with Operations stakeholders across customer support, servicing, and verifications to identify inefficiencies, understand business needs, and uncover opportunities for process improvement and automation.
+Gather, document, and translate business requirements into clear product specifications, user stories, and actionable deliverables for Engineering teams.
+Support the planning, prioritization, and execution of operational product initiatives, ensuring alignment between business stakeholders and technical teams.
+Improve contact center workflows and customer communication channels, including voice, chat, email, and AI-powered customer support solutions.
+Collaborate on automation and AI initiatives designed to reduce manual processes, optimize agent workflows, and improve operational efficiency.
+Work with cross-functional teams to track project progress, manage dependencies, troubleshoot issues, and ensure successful delivery of product enhancements.
+Leverage data and analytics to evaluate product performance, measure business impact, and identify opportunities for continuous improvement.
+Utilize product management and operational technologies including Jira and Confluence.
+What We Look For:
+2-4 years of Product Management experience, ideally within Financial Services, Fintech, or operational environments.
+Experience with Contact Center, Customer Support, or Servicing operations.
+Strong ability to gather requirements, write product specifications, and collaborate with Engineering teams to deliver technical solutions.
+Working knowledge of SQL, data analysis, and using insights to drive business decisions.
+Experience with third-party APIs, system integrations, and operational platforms such as Genesys. Familiarity with Enterprise Data Warehouses, Sumo Logic, SendGrid, or Heap is a plus.
+Experience leveraging AI tools (ChatGPT, Claude, Gemini, etc.) to improve productivity, analysis, or workflows. Exposure to conversational AI platforms such as Sierra is a plus.
+Strong analytical, problem-solving, communication, and stakeholder management skills.
+What We Offer You:
+Competitive salary and stock option plan
+Paid coverage of medical, dental and vision insurance
+Flexible PTO
+Opportunities for professional growth and development
+Paid parental leave
+Health & wellness initiatives
+Create a Job Alert
+Interested in building your career at Upgrade? Get future opportunities sent straight to your email.
+[4]<a>Create alert</a>
+Apply for this job
+indicates a required field
+[5]<button>Autofill my application</button>
+[6]<input type=text label="First Name" value="" required>
+[7]<input type=text label="Last Name" value="" required>
+[8]<input type=text label="Email" value="" required>
+Phone
+[9]<combobox label="Country" value="" expanded=false>
+[10]<button>Toggle flyout</button>
+[11]<input type=tel label="Phone" value="">
+[12]<button>Attach</button>
+[13]<file label="Attach" file=none accept=".pdf,.doc,.docx,.txt,.rtf">
+[14]<button>Dropbox</button>
+[15]<button>Google Drive</button>
+[16]<button>Enter manually</button>
+Accepted file types: pdf, doc, docx, txt, rtf
+[17]<button>Attach</button>
+[18]<file label="Attach" file=none accept=".pdf,.doc,.docx,.txt,.rtf">
+[19]<button>Dropbox</button>
+[20]<button>Google Drive</button>
+[21]<button>Enter manually</button>
+[22]<input type=text label="LinkedIn Profile" value="">
+[23]<input type=text label="Website" value="">
+[24]<combobox label="Are you legally authorized to work in the United States?" value="" expanded=false required>
+[25]<button>Toggle flyout</button>
+[26]<input type=text label="Will you now, OR IN THE FUTURE, require sponsorship for employment visa status (" value="" required>
+[27]<input type=text label="Where in the US do you currently reside?" value="" required>
+Demographic Questions & Categorizations
+Upgrade is dedicated to building a diverse team and an inclusive culture. We believe that it’s crucial to Upgrade’s long-term success to create an environment where all employees feel like they belong and have an equal opportunity to succeed.
+For this reason, we are asking candidates to voluntarily self-identify through a few demographic questions. Our purpose in collecting this information is to help us assess our outreach efforts and diversity representation goals. Your responses will not be linked to your identity or your application, and neither recruiters nor hiring managers can see this information at an individual level. Your ...
+[28]<combobox label="How you do you identify? (Gender identity)" value="" expanded=false>
+[29]<button>Toggle flyout</button>
+[30]<combobox label="Do you identify as LGBTQ+?" value="" expanded=false>
+[31]<button>Toggle flyout</button>
+(cut for the fixture)
+[End of page]

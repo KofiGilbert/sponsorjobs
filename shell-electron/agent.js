@@ -530,6 +530,8 @@ function createAgent(deps) {
     if (!ctx && a.op === "click") {
       const label = await wc.executeJavaScript(TEXT_JS(a.index), true).catch(() => "");
       if (SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
+      const social = socialRefused(label || lineName(line), v.text);
+      if (social) return { ok: false, note: "refused: " + social };
       if (/^\*?\[\d+\]<(option|menuitem|li|div|span)\b/.test(line) || /role=(option|menuitem)/.test(line)) {
         const real = await realClick(wc, a.index);
         if (real) return real;
@@ -543,6 +545,8 @@ function createAgent(deps) {
       const label = await (ctx ? fr.eval(ctx, TEXT_JS(a.index))
                                : wc.executeJavaScript(TEXT_JS(a.index), true).catch(() => ""));
       if (SUBMIT_RE.test(String(label || "").trim())) return { ok: false, note: "submit-guard" };
+      const social = socialRefused(label || lineName(line), v.text);
+      if (social) return { ok: false, note: "refused: " + social };
     }
     if (a.op === "wait") {
       // The shell sleeps, never the page: a renderer that is wedged cannot be asked to wait.
@@ -976,7 +980,7 @@ function createAgent(deps) {
       const pageUrl = where();
       parked.set(String(recordId), { epoch: paneEpoch, pageUrl, opts: Object.assign({}, opts, { resume: null, mode: "single", batchAt: null, expectSig: "" }), kind,
                                      state: { history, portals, portalNew, startedAt, runAnswers, knownSeen, eeoTried, terms, page, hosts: Array.from(hosts),
-                                              plan, spent, checkedPages, await: awaitInfo } });
+                                              plan, spent, checkedPages, await: awaitInfo, formReached } });
       if (kind === "captcha" || kind === "person") {
         await deps.postApp("/api/autoapply/agent/park", { record_id: recordId, kind, message, page_url: pageUrl, run: runOpts(opts), batch: quick }).catch(() => null);
       }
@@ -1030,6 +1034,7 @@ function createAgent(deps) {
     const mailOpened = new Set();        // hosts whose emailed link was opened this run
     const runUrls = new Set();           // every page this application has been on (back never leaves it)
     const stepSeen = new Map();          // page + actions -> times: the same step again is no progress
+    let formReached = !!(S && S.formReached); // a page with fields of its own was seen: a closed-job check is moot
     const ladderSay = (what, detail) => {
       feed.push("another", "Trying another way", what, { state: "retry", detail: detail || "" });
       progress(recordId, "running", lastMsg.get(fkey) || "Trying another way", { step: feed.step });
@@ -1327,6 +1332,21 @@ function createAgent(deps) {
         if (filled) { ladder.key = ""; }                      // progress: a new problem starts a fresh ladder
         runUrls.add(url);
         curV = v;
+        // (2026-11-02) A closed job, before any model call: the posting's own short line says it
+        // is gone and there is no Apply control and no field. Zero AI cost, no "needs you".
+        if (!formReached) {
+          const gone = closedJob(v.text);
+          if (gone) {
+            dlog("step " + step + " closed:", gone);
+            await deps.postApp("/api/autoapply/agent/closed", { record_id: recordId, url, phrase: gone }).catch(() => null);
+            feed.close();
+            feed.push("closed", "Stopped", "the job is closed", { state: "done", detail: gone });
+            progress(recordId, "stopped", (batch ? lead : "") + "This job is closed (\u201c" + gone.slice(0, 90) + "\u201d). Nothing was sent; I took it off your list.",
+                     { reason: "job-closed", closed: true, steps: history.length, url });
+            return finish({ ok: false, reason: "job-closed", closed: true, steps: history.length });
+          }
+          if (elementLines(v.text).some((ln) => /^\*?\[\d+\]<(input|select|textarea|combobox|radio|checkbox|file)\b/.test(ln) && !/search=true/.test(ln))) formReached = true;
+        }
         if (pageHashes.length >= 3 && pageHashes.slice(-3).every((h) => h === pageHash) && !filled) {
           const r = await recover(wc, "the page has not changed in 3 steps", { key: "same", hash: pageHash.slice(0, 60) });
           if (r.park) return park("person", r.park, { url });
@@ -1917,18 +1937,19 @@ function createAgent(deps) {
     const d = await digest();
     batchOn = null;
     const n = (pred) => results.filter(pred).length;
-    const readyN = n((r) => r.ready), sentN = n((r) => r.submitted), parkedN = n((r) => r.parked);
-    const stoppedN = results.length - readyN - sentN - parkedN;
+    const readyN = n((r) => r.ready), sentN = n((r) => r.submitted), parkedN = n((r) => r.parked), closedN = n((r) => r.closed);
+    const stoppedN = results.length - readyN - sentN - parkedN - closedN;
     const parts = [];
     if (sentN) parts.push(sentN + " sent");
     if (readyN) parts.push(readyN + " ready to send");
     if (parkedN) parts.push(parkedN + " paused, waiting on you");
+    if (closedN) parts.push(closedN + " closed by the employer");
     if (stoppedN) parts.push(stoppedN + " stopped");
     const msg = (b.stop ? "Stopped after " : "Done with ") + results.length + " application" + (results.length === 1 ? "" : "s")
       + (parts.length ? ": " + parts.join(", ") + "." : ".")
       + (b.fatal ? " " + b.fatal : "")
       + (parkedN ? " Answer them in Auto-apply, Needs you" + (d && d.sent ? " or on Telegram" : "") + ", and I carry on with each one." : "");
-    progress(null, "batch-done", msg, { batch: { results: results.length, ready: readyN, sent: sentN, parked: parkedN, stopped: stoppedN, fatal: b.fatal || "" } });
+    progress(null, "batch-done", msg, { batch: { results: results.length, ready: readyN, sent: sentN, parked: parkedN, closed: closedN, stopped: stoppedN, fatal: b.fatal || "" } });
     if (parkedN) startPolling();
     setTimeout(() => { pollParked().catch(() => {}); }, 50);
     return { ok: true, results, digest: d || null };
@@ -2134,6 +2155,45 @@ function buttonIndex(viewText, re) {
 }
 // A sign-in form: a password box and a Sign in button.
 const isSigninView = (t) => /^\*?\[\d+\]<input type=password\b/m.test(String(t || "")) && !!buttonIndex(t, SIGNIN_NAME_RE);
+
+// ---- a closed job (2026-11-02: Oracle, US Bank, Amazon) --------------------------------------
+// A posting that is gone says so in a short line of its own; a job description never does that
+// on a page without an Apply control. Checked before any model call while no form was reached.
+const CLOSED_RE = new RegExp([
+  "(this|the) (job|position|posting|role|requisition|vacancy|opening)( you('|\u2019| a)re looking for| you are looking for)? (is )?(no longer|not) (available|open|active|accepting)",
+  "(job|position|posting|role|page|opening) you('|\u2019| a)re looking for (isn'?t|is not|doesn'?t|does not|no longer|can'?t|cannot)( be)? (available|exist|found)",
+  "page you are looking for (doesn'?t|does not|no longer) exist",
+  "no longer accepting applications",
+  "(job|position|posting|role|vacancy|requisition) (has|was) (been )?(filled|closed|expired|removed|taken down)",
+  "(job|posting|position|vacancy) (has )?expired",
+  "(job|position|posting) is (closed|no longer (open|available))",
+  "this (job|position|posting|requisition) (is )?(closed|unavailable)",
+  "applications? (for this (job|position|role) )?(are|is) (now )?closed",
+].join("|"), "i");
+const APPLY_CTRL_RE = /^(apply( now| manually| online| for this (job|position|role))?|i'?m interested|start (your |my )?application|easy apply|apply with e-?mail)$/i;
+// The phrase that says the job is closed (the page's own short line), or "".
+function closedJob(viewText) {
+  const t = String(viewText || "");
+  if (buttonIndex(t, APPLY_CTRL_RE)) return "";
+  if (elementLines(t).some((ln) => /^\*?\[\d+\]<(input|select|textarea|combobox|radio|checkbox|file)\b/.test(ln) && !/search=true/.test(ln))) return "";
+  for (const ln of pageWords(t).split("\n")) {
+    const line = ln.replace(/^Error: "?|"$/g, "").trim();
+    if (line && line.length <= 200 && CLOSED_RE.test(line)) return line.slice(0, 160);
+  }
+  return "";
+}
+// LinkedIn is never driven (CLAUDE.md section 7): any click on it is refused. Another social
+// sign-in (Indeed, Google, Facebook, Apple...) only when the page offers no email or manual path.
+const LINKEDIN_RE = /linked ?in/i;
+const SOCIAL_RE = /\b(with|via|using|continue with|sign (in|up) with|log ?in with|apply with) (indeed|google|facebook|apple|github|microsoft|seek|glassdoor|x|twitter)\b|^(indeed|google|facebook|apple)$/i;
+const MANUAL_PATH_RE = /apply (with|by|via) e-?mail|apply manually|continue with e-?mail|(sign|log) ?(in|up) with e-?mail|create (an |my )?account|^apply$|^sign ?in$/i;
+function socialRefused(label, viewText) {
+  const l = String(label || "").replace(/\s+/g, " ").trim();
+  if (LINKEDIN_RE.test(l)) return "LinkedIn is never used: apply with email or manually";
+  if (SOCIAL_RE.test(l) && (buttonIndex(viewText, MANUAL_PATH_RE) || /^\*?\[\d+\]<input type=email\b/m.test(String(viewText || ""))))
+    return "use the email or manual path, not a social sign-in";
+  return "";
+}
 
 // The brain's tools the shell runs itself (section 12); the rest go to the page's act().
 const TOOL_OPS = new Set(["read_page", "find", "inspect", "list_options", "read_errors", "screenshot", "wait_for", "back", "reload", "reopen_job"]);
@@ -2437,4 +2497,5 @@ function blockedMessage(reason, left) {
 
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion,
                    optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
-                   TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES };
+                   TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
+                   closedJob, socialRefused };

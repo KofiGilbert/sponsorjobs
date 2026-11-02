@@ -398,7 +398,44 @@
   // Visible validation errors tell the model WHY Next did nothing. Three shapes cover the
   // ATSs: role=alert, aria-invalid controls with aria-describedby / aria-errormessage text, and
   // a block whose class or id says "error" and that has text.
+  // A field a person cannot see or must not fill: the engine's honeypot rule (a label that says
+  // it is for robots: Barclays' Workday "Enter website. This input is for robots only, do not
+  // enter if you're human."), or a text box parked off the canvas. Never in the view, so the
+  // model can never type into it (the fill engine skips the same fields).
+  const ROBOT_RE = /robots? only|for robots|if you('|\u2019| a)re (a )?human|not (a )?human|leave (this|it)( field)? (blank|empty)|honey ?pot/i;
+  function honeypotField(el) {
+    const tag = tagOf(el);
+    if (tag !== "INPUT" && tag !== "TEXTAREA") return false;
+    const type = tag === "INPUT" ? String(el.type || "text").toLowerCase() : "textarea";
+    if (/^(checkbox|radio|file|hidden|submit|button|image|reset)$/.test(type)) return false;
+    const E = T();
+    try { if (E && typeof E.honeypot === "function" && E.honeypot(el)) return true; } catch (e) { /* fall through */ }
+    const words = [labelOf(el), attrOf(el, "name"), attrOf(el, "placeholder"), attrOf(el, "aria-label")].filter(Boolean).join(" ");
+    if (ROBOT_RE.test(words)) return true;
+    try {
+      const r = el.getBoundingClientRect();
+      if (E && typeof E.parkedOffCanvas === "function") { if (E.parkedOffCanvas(el, r)) return true; }
+      else {
+        const w = viewOf(el);
+        if (r.right + Number(w.scrollX || 0) <= 0 || r.bottom + Number(w.scrollY || 0) <= 0) return true;
+      }
+    } catch (e) { /* no box */ }
+    return !!(el.closest && el.closest("[aria-hidden='true']"));
+  }
+
+  // A live-region announcement is not an error: Workday's aria-live announcer reads "Research
+  // Analyst page is loaded" on every job page, which the view printed as an Error line.
+  const ANNOUNCE_RE = /\bpage (is |has )?(loaded|finished loading)\b|^(loading|loaded|done loading|loading complete)\.?$|^\d+ (results?|jobs?) (found|available|loaded)\b|\bresults? (are )?(loaded|updated)\b/i;
+  function announcement(el) {
+    const t = cleanText(el.textContent).slice(0, 200);
+    if (t && ANNOUNCE_RE.test(t)) return true;
+    const role = attrOf(el, "role"), live = attrOf(el, "aria-live");
+    const idc = String(el.id || "") + " " + String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className || "");
+    return (role === "status" || role === "log" || live === "polite" || live === "off") && role !== "alert" && !/error|invalid/i.test(idc);
+  }
+
   function errorBlock(el) {
+    if (announcement(el)) return false;
     if (attrOf(el, "role") === "alert") return true;
     const idc = String(el.id || "") + " " + String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className || "");
     return /error|invalid/i.test(idc) && !/no-?error|error-?free/i.test(idc);
@@ -516,6 +553,7 @@
       const file = isFileInput(el);
       if (!file && selfHidden(el)) return;
       const kind = kindOf(el);
+      if (kind && honeypotField(el)) return;            // a honeypot: never listed, never filled
       if (kind) {
         if (file || boxShown(el, isToggleInput(el))) { pushEl(el, kind); return; }
         if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") return;
@@ -553,19 +591,28 @@
     let url = "";
     try { url = String(location.href || ""); } catch (e) { url = ""; }
     const head = `URL: ${url}\nTitle: ${cleanText(document.title).slice(0, 120)}\n[Start of page]\n`;
-    const foot = `[End of page]${scrollInfo()}`;
+    // The view walks the WHOLE page, scrolled or not, so "N pages below" next to "End of page"
+    // only ever contradicted itself (2026-11-02: "(4.9 pages below)" on every site). What can
+    // be missing is what the character cap cut, and that is said in elements, with the
+    // read_page offset that shows it.
+    const foot = "[End of page]";
     const out = [head];
     let size = head.length + foot.length + 40;
     let shownEls = 0, truncated = false;
+    let cutAt = -1;
     for (let i = 0; i < lines.length; i++) {
       const ln = lines[i];
-      if (size + ln.s.length + 1 > MAX_CHARS) { truncated = true; break; }
+      if (size + ln.s.length + 1 > MAX_CHARS) { truncated = true; cutAt = i; break; }
       out.push(ln.s + "\n");
       size += ln.s.length + 1;
       if (ln.kind === "el") shownEls++;
     }
-    if (truncated) out.push(`(${refs.length - shownEls} more elements below)\n`);
-    out.push(foot);
+    if (truncated) {
+      const next = lines.slice(cutAt).find((l) => l.kind === "el");
+      const at = next ? (/^\*?\[(\d+)\]/.exec(next.s) || [])[1] : "";
+      out.push(`(${refs.length - shownEls} more elements below${at ? "; read_page offset " + at + " shows them" : ""})\n`);
+      out.push("[End of view]");
+    } else out.push(foot);
 
     window.__tailorAgentRefs = refs;
     _seen = seenNow;
@@ -946,7 +993,7 @@
     for (const l of _lastLines) if (l.kind === "text" && /^Error: /.test(l.s)) add(l.s.replace(/^Error: "?|"$/g, ""));
     for (const el of deepAll("[role='alert'], [aria-invalid='true'], [class*='error' i], [id*='error' i]")) {
       if (selfHidden(el) || !boxShown(el, true)) continue;
-      if (attrOf(el, "aria-invalid") === "true") { for (const n of describedErrors(el)) add(n.textContent); continue; }
+      if (attrOf(el, "aria-invalid") === "true") { for (const n of describedErrors(el)) if (!announcement(n)) add(n.textContent); continue; }
       if (!errorBlock(el)) continue;
       const t = cleanText(el.innerText != null ? el.innerText : el.textContent);
       if (t && t.length < 400) add(t);
@@ -965,7 +1012,7 @@
       const kind = kindOf(el);
       if (!kind || !/^(input|textarea|select|combobox|file)$/.test(kind)) continue;
       if (kind === "input" && !TEXT_TYPES.has(String(el.type || "text").toLowerCase())) continue;
-      if (isDisabled(el) || !isRequired(el) || isSiteSearch(el)) continue;
+      if (isDisabled(el) || !isRequired(el) || isSiteSearch(el) || honeypotField(el)) continue;
       if (selfHidden(el) && !isFileInput(el)) continue;
       let filled;
       if (kind === "select") { const v = selectValue(el); filled = !!v && !isPlaceholder(v); }
@@ -996,7 +1043,7 @@
   function pageShape() {
     let fields = 0, buttons = 0;
     for (const el of deepAll("input, select, textarea, [role='combobox'], button, a[href], [role='button'], [role='link']")) {
-      if (selfHidden(el) || !boxShown(el, isToggleInput(el))) continue;
+      if (selfHidden(el) || !boxShown(el, isToggleInput(el)) || honeypotField(el)) continue;
       const k = kindOf(el);
       if (/^(input|textarea|select|combobox|checkbox|radio|file)$/.test(k || "")) {
         if (!isSiteSearch(el) && !(k === "input" && /^(hidden|submit|button|image|reset)$/.test(String(el.type || "").toLowerCase()))) fields++;
@@ -1424,7 +1471,7 @@
   window.TailorAgent = {
     view, element, act, submitButton, rect, markPopups, popupOptions, popupOpen, closePopup, selectOptions,
     closeOthers, optionIndex, chosenIs, termsItems,
-    readPage, find, inspect, readErrors, pageCheck, has, pageShape,
+    readPage, find, inspect, readErrors, pageCheck, has, pageShape, honeypotField, announcement,
     refs: () => window.__tailorAgentRefs || [],
     SUBMIT_RE,
   };

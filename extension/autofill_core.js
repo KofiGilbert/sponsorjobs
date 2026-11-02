@@ -401,7 +401,7 @@
 
   // An anti-spam trap that says so in its label (Workday: "Enter website. This input is for
   // robots only, do not enter if you're human."). A value in it marks the application as a bot's.
-  const HONEYPOT_RE = /robots? only|if you('|\u2019| a)re (a )?human|leave (this|it)( field)? (blank|empty)/i;
+  const HONEYPOT_RE = /robots? only|for robots|if you('|\u2019| a)re (a )?human|not (a )?human|leave (this|it)( field)? (blank|empty)|honey ?pot/i;
   function honeypot(el) {
     const bits = [el.getAttribute("aria-label"), el.placeholder, el.name];
     if (el.id) { const l = labelFor(el); if (l) bits.push(l.textContent); }
@@ -1781,5 +1781,7 @@
     // recipes: the per-system table, success detection, continue hints, corrections
     setRecipes, recipes: () => RECIPES, recipeFor, globToRe, highlightSubmit, continueButton,
     detectSuccess, watchSuccess, stopSuccessWatch, watchCorrections, takeCorrections,
+    // the agent's page view leaves out what a person cannot see or must not fill
+    honeypot, parkedOffCanvas,
   };
 })();

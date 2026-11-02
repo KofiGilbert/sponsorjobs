@@ -14344,6 +14344,27 @@ def autoapply_agent_step():
     return jsonify(out)
 
 
+@app.post("/api/autoapply/agent/closed")
+@_guard
+def autoapply_agent_closed():
+    """(2026-11-02) The apply agent found the job closed before any model call: body {record_id,
+    url, phrase}. The record moves off Waiting on you to the closed-posting state (the row reads
+    "Job closed", its action is View, so no batch picks it again). No Telegram line: nothing for
+    the person to do."""
+    from submit.stages import failed_patch
+    b = request.json or {}
+    rid = b.get("record_id")
+    rec = _get_record(rid) if rid not in (None, "") else None
+    if rec is None:
+        return jsonify({"ok": False, "reason": "no-record"})
+    phrase = " ".join(str(b.get("phrase") or "").split())[:160]
+    patch = failed_patch({"reason": "posting_closed", "message": "Job closed" + (": " + phrase if phrase else ".")})
+    patch["job_closed"] = {"at": time.time(), "url": str(b.get("url") or "")[:1000], "phrase": phrase}
+    patch["agent_ready"] = None
+    _records().merge_data(rec["id"], patch)
+    return jsonify({"ok": True})
+
+
 _AI_UNAVAILABLE_TOLD = {"at": 0.0}
 
 

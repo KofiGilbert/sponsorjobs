@@ -859,7 +859,7 @@
   "aa.reason.signin": "Needs your sign-in",
   "aa.reason.form": "A form question needs you",
   "aa.reason.site": "The site had an error",
-  "aa.reason.closed": "The posting is closed",
+  "aa.reason.closed": "Job closed",
   "aa.termMiss": "The job asks for this; your resume does not show it",
   "aa.terms": "{k} of {n} job terms",
   "aa.page": "1 page",
