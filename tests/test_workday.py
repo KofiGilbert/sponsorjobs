@@ -156,6 +156,15 @@ def test_adapter_is_registered_and_the_board_id_names_tenant_instance_and_site()
     assert not valid_board_id_for("greenhouse", BOARD)          # a slash is still wrong elsewhere
 
 
+def test_a_site_name_may_start_with_an_underscore():
+    """Penn Mutual's real board is pennmutual.wd1/_penn-careers (13 jobs on 2026-11-02); rejecting
+    it crashed the nightly grow-boards run five days running."""
+    assert workday.parse_board_id("pennmutual.wd1/_penn-careers") == (
+        "pennmutual", "pennmutual.wd1.myworkdayjobs.com", "_penn-careers")
+    assert valid_board_id_for("workday", "pennmutual.wd1/_penn-careers")
+    assert not valid_board_id_for("workday", "pennmutual.wd1/../x")
+
+
 def test_watchlist_accepts_a_workday_board_and_rejects_a_malformed_one():
     w = Watchlist(":memory:")
     w.add_company("NVIDIA", "workday", BOARD)
