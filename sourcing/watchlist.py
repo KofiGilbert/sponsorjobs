@@ -113,6 +113,12 @@ class Watchlist(BoardMixin):
         # Blank means "tidy the legal name" (sourcing/brands.py).
         if "display_name" not in {r[1] for r in c.execute("PRAGMA table_info(watchlist)")}:
             c.execute("ALTER TABLE watchlist ADD COLUMN display_name TEXT DEFAULT ''")
+        # `closed_job` (added 2026-11-02): postings the free open-or-closed check
+        # (sourcing/liveness.py) found closed by the employer. The Jobs board leaves them out, so
+        # nobody tailors a resume for a dead posting twice.
+        c.execute("""CREATE TABLE IF NOT EXISTS closed_job (
+            source_id TEXT PRIMARY KEY, url TEXT DEFAULT '', phrase TEXT DEFAULT '',
+            at TEXT DEFAULT CURRENT_TIMESTAMP)""")
         # A board on a disabled ATS (ats.DISABLED_ATS: SmartRecruiters, whose API robots.txt
         # disallows us, 2026-10-19) stays on the watchlist but inactive, so no crawl picks it up.
         from .ats import DISABLED_ATS
@@ -419,6 +425,8 @@ class Watchlist(BoardMixin):
         conds.append("source<>?")           # board-only rows (resume tailored from a pasted JD)
         if not include_dismissed:
             conds.append("dismissed=0")
+            if not saved_only:          # a posting found closed leaves the board (not Saved)
+                conds.append("source_id NOT IN (SELECT source_id FROM closed_job)")
         if saved_only:
             conds.append("saved=1")
         if since_days:
@@ -527,6 +535,19 @@ class Watchlist(BoardMixin):
         # un-saving. A role already past Saved (applied, interviewing...) is history and stays.
         if self.stage_of(source_id) == "saved":
             self.untrack(source_id, note="Dismissed on the Jobs page")
+
+    def mark_closed(self, source_id: str, url: str = "", phrase: str = "") -> None:
+        """Note a posting the open-or-closed check found closed (sourcing/liveness.py)."""
+        if not source_id:
+            return
+        self._conn.execute(
+            "INSERT OR REPLACE INTO closed_job (source_id, url, phrase) VALUES (?, ?, ?)",
+            (source_id, str(url or "")[:1000], str(phrase or "")[:200]))
+        self._conn.commit()
+
+    def closed_ids(self) -> set[str]:
+        """The source_ids found closed, to drop from a kitchen-sourced feed."""
+        return {r[0] for r in self._conn.execute("SELECT source_id FROM closed_job")}
 
     def dismissed_ids(self) -> set[str]:
         """The source_ids the person dismissed, to drop from a feed whose rows come from the

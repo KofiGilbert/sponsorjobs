@@ -3762,7 +3762,7 @@ def jobs_list():
                 a = request.args
                 facets = _facets(a)
                 filtered = _jobs_personal(apply_facets(jobs, **facets), home=a.get("home") == "1")
-                hidden = _dismissed_ids()                    # the person's own Dismiss, kept locally
+                hidden = _dismissed_ids() | _closed_job_ids()   # the person's own Dismiss, and closed postings
                 if hidden:
                     filtered = [j for j in filtered if j.get("source_id") not in hidden]
                 page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1),
@@ -11560,6 +11560,8 @@ class _JobAlertActions:
         except Exception as exc:   # noqa: BLE001 - say so instead of going silent
             traceback.print_exc()
             return _friendly_failure(who, exc)
+        if out.get("closed"):
+            return f"{who} is closed by the employer. Nothing was spent."
         if not out.get("ok"):
             return f"I couldn't finish {who}: {out.get('reason') or 'it needs your review'}."
         self._ready = out["id"]
@@ -11575,6 +11577,8 @@ class _JobAlertActions:
         except Exception as exc:   # noqa: BLE001
             traceback.print_exc()
             return _friendly_failure(who, exc)
+        if out.get("closed"):
+            return f"{who} is closed by the employer. Nothing was spent."
         if not out.get("ok"):
             return f"I couldn't finish {who}: {out.get('reason') or 'it needs your review'}."
         self._ready = out["id"]
@@ -12377,6 +12381,10 @@ def start_from_job():
         job = _job_from_feed(sid)
     if not job:
         return jsonify({"error": "job not found, try refreshing"}), 404
+    # (2026-11-02) A closed posting is never tailored: the free check runs before any model call
+    # or package count, and the job leaves the board.
+    if _job_closed_check({**job, "source_id": sid}):
+        return jsonify({"error": JOB_CLOSED_MSG, "closed": True}), 409
     jd = (job.get("jd_text") or "").strip() or (
         f"{job.get('title', '')} at {job.get('company', '')}. {job.get('location', '')}.")
     llm = _count_package(_make_llm())   # one tailoring run = one package
@@ -14268,6 +14276,16 @@ def autoapply_agent_step():
         return jsonify({"ok": False, "reason": "no-view", "message": "The page view is empty."})
     rec = _get_record(b.get("record_id")) if b.get("record_id") not in (None, "") else None
     data = _record_data(rec) if rec else {}
+    # (2026-11-02) Before the first brain call of a run: the free open-or-closed check on the
+    # record's posting (cached, so the shell's precheck already paid for it). A closed job costs
+    # no model call; the in-pane check (agent.js closedJob) stays as the backstop.
+    if rec and not (b.get("history") or []):
+        p_url, p_sid = _record_job(rec)
+        res = _posting_check(p_url, p_sid) if p_url else {}
+        if res.get("status") == "closed":
+            _mark_record_closed(rec, p_url, res.get("why") or "")
+            return jsonify({"ok": False, "reason": "job-closed", "closed": True,
+                            "phrase": res.get("why") or "", "message": JOB_CLOSED_MSG, "cost": 0.0})
     prof = data.get("render_profile") or data.get("profile") or {}
     if not (prof.get("identity") or {}).get("name"):
         prof = _saved_full_profile() or prof             # fall back to the saved profile's identity
@@ -14344,6 +14362,189 @@ def autoapply_agent_step():
     return jsonify(out)
 
 
+# ---- is the posting still open? (sourcing/liveness.py, 2026-11-02) ----------------------------
+# A free check (plain HTTP, no AI, no login) before anything spends the person's AI credits on a
+# job: before tailoring a resume for it, before the apply agent's first brain call, and in the
+# background over the jobs waiting in Auto-apply. Only "closed" acts; "unknown" never does.
+JOB_CLOSED_MSG = "This job is closed. Nothing was spent."
+LIVENESS_RECHECK_S = 12 * 3600          # a queued job is checked again after this long
+_LIVENESS_RUN = {"running": False, "closed": 0, "checked": 0, "at": 0.0}
+_LIVENESS_LOCK = threading.Lock()
+
+
+def _posting_check(url: str, source_id: str = "") -> dict:
+    """{status, why, at} for one posting link; never raises (a failure is "unknown")."""
+    from sourcing import liveness
+    try:
+        return liveness.check(url or "", source_id or "")
+    except Exception as exc:   # noqa: BLE001 - a failed check never blocks the person
+        return {"status": "unknown", "why": f"check failed: {type(exc).__name__}", "at": time.time()}
+
+
+def _record_job(rec: dict) -> tuple[str, str]:
+    """(posting url, source_id) of one record."""
+    sj = _record_data(rec).get("source_job") or {}
+    return str(sj.get("url") or ""), str(sj.get("source_id") or "")
+
+
+def _mark_record_closed(rec: dict, url: str = "", phrase: str = "") -> None:
+    """Move a record to the closed-posting state the Auto-apply board shows as "Job closed" (its
+    action is View, so no batch picks it again)."""
+    from submit.stages import failed_patch
+    phrase = " ".join(str(phrase or "").split())[:160]
+    patch = failed_patch({"reason": "posting_closed", "message": "Job closed" + (": " + phrase if phrase else ".")})
+    patch["job_closed"] = {"at": time.time(), "url": str(url or "")[:1000], "phrase": phrase}
+    patch["agent_ready"] = None
+    _records().merge_data(rec["id"], patch)
+
+
+def _closed_job_ids() -> set:
+    """The source_ids found closed, left off the Jobs board."""
+    w = _watchlist()
+    try:
+        return w.closed_ids()
+    except Exception:   # noqa: BLE001 - the board still shows; nothing is hidden by mistake
+        return set()
+    finally:
+        w.close()
+
+
+def _mark_job_closed(source_id: str, url: str = "", phrase: str = "") -> None:
+    """A job found closed before it was tailored: it leaves the Jobs board, and any unsent record
+    of it moves to the closed-posting state."""
+    from submit.stages import app_stage
+    if source_id:
+        w = _watchlist()
+        try:
+            w.mark_closed(source_id, url, phrase)
+        except Exception:   # noqa: BLE001 - best effort; the person was told already
+            pass
+        finally:
+            w.close()
+    recs = _records()
+    try:
+        rows = recs.list(limit=10000)
+    finally:
+        recs.close()
+    for r in rows:
+        r_url, r_sid = _record_job(r)
+        if (source_id and r_sid == source_id) or (url and r_url == url):
+            if app_stage(_record_data(r))["stage"] in ("queued", "approved"):
+                _mark_record_closed(r, url or r_url, phrase)
+
+
+def _job_closed_check(job: dict) -> dict | None:
+    """The tailor guard: {why} when the job's posting is closed (and it is marked so), else None."""
+    url, sid = str(job.get("url") or ""), str(job.get("source_id") or "")
+    if not url:
+        return None
+    res = _posting_check(url, sid)
+    if res.get("status") != "closed":
+        return None
+    _mark_job_closed(sid, url, res.get("why") or "")
+    return res
+
+
+def _liveness_due(data: dict, now: float) -> bool:
+    last = data.get("liveness") if isinstance(data.get("liveness"), dict) else {}
+    return now - float(last.get("at") or 0) >= LIVENESS_RECHECK_S
+
+
+def _liveness_recheck(rows: list[dict] | None = None, now: float | None = None) -> dict:
+    """Check every unsent record (To review, Waiting on you) not checked in LIVENESS_RECHECK_S,
+    a few at a time, and move the closed ones to the closed-posting state. Each record keeps
+    {liveness: {status, at}} so the next page load does not ask again. Returns {checked, closed}."""
+    from sourcing import liveness
+    from submit.stages import tile_of
+    now = time.time() if now is None else now
+    if rows is None:
+        recs = _records()
+        try:
+            rows = recs.list(limit=10000)
+        finally:
+            recs.close()
+    todo = {}
+    for r in rows:
+        data = _record_data(r)
+        if tile_of(data) not in ("review", "waiting") or data.get("agent_park"):
+            continue
+        url, sid = _record_job(r)
+        if url and _liveness_due(data, now):
+            todo[r["id"]] = (r, url, sid)
+    if not todo:
+        return {"checked": 0, "closed": 0}
+    res = liveness.check_many([(rid, url, sid) for rid, (_r, url, sid) in todo.items()])
+    closed = 0
+    recs = _records()
+    try:
+        for rid, out in res.items():
+            rec, url, _sid = todo[rid]
+            if out.get("status") == "closed":
+                _mark_record_closed(rec, url, out.get("why") or "")
+                closed += 1
+            recs.merge_data(rid, {"liveness": {"status": out.get("status"), "at": now}})
+    finally:
+        recs.close()
+    return {"checked": len(res), "closed": closed}
+
+
+def _liveness_kick(rows: list[dict]) -> bool:
+    """Start the background re-check when a queued record is due; True while one runs."""
+    now = time.time()
+    with _LIVENESS_LOCK:
+        if _LIVENESS_RUN["running"]:
+            return True
+        from submit.stages import tile_of
+        due = any(tile_of(_record_data(r)) in ("review", "waiting") and _record_job(r)[0]
+                  and _liveness_due(_record_data(r), now) for r in rows)
+        if not due:
+            return False
+        _LIVENESS_RUN.update(running=True, closed=0, checked=0, at=now)
+
+    def work():
+        out = {"checked": 0, "closed": 0}
+        try:
+            out = _liveness_recheck()
+        except Exception:   # noqa: BLE001 - a failed sweep changes nothing
+            traceback.print_exc()
+        finally:
+            with _LIVENESS_LOCK:
+                _LIVENESS_RUN.update(running=False, closed=out["closed"], checked=out["checked"])
+
+    threading.Thread(target=work, name="liveness-recheck", daemon=True).start()
+    return True
+
+
+@app.get("/api/autoapply/liveness")
+@_guard
+def autoapply_liveness():
+    """Whether the background open-or-closed sweep is still running, and what it found."""
+    with _LIVENESS_LOCK:
+        return jsonify({"ok": True, **_LIVENESS_RUN})
+
+
+@app.post("/api/autoapply/agent/precheck")
+@_guard
+def autoapply_agent_precheck():
+    """The apply agent's cheap first look, before it opens the page or asks the AI anything:
+    body {record_id, url}. {closed: true, phrase} when the posting is closed (the record moves to
+    the closed-posting state), else {closed: false}. Free: no AI, no login."""
+    b = request.json or {}
+    rid = b.get("record_id")
+    rec = _get_record(rid) if rid not in (None, "") else None
+    r_url, sid = _record_job(rec) if rec else ("", "")
+    url = r_url or str(b.get("url") or "")
+    if not url:
+        return jsonify({"ok": True, "closed": False, "status": "unknown"})
+    res = _posting_check(url, sid)
+    if res.get("status") == "closed" and rec is not None:
+        _mark_record_closed(rec, url, res.get("why") or "")
+    if rec is not None:
+        _records().merge_data(rec["id"], {"liveness": {"status": res.get("status"), "at": time.time()}})
+    return jsonify({"ok": True, "closed": res.get("status") == "closed", "status": res.get("status"),
+                    "phrase": res.get("why") or ""})
+
+
 @app.post("/api/autoapply/agent/closed")
 @_guard
 def autoapply_agent_closed():
@@ -14351,17 +14552,12 @@ def autoapply_agent_closed():
     url, phrase}. The record moves off Waiting on you to the closed-posting state (the row reads
     "Job closed", its action is View, so no batch picks it again). No Telegram line: nothing for
     the person to do."""
-    from submit.stages import failed_patch
     b = request.json or {}
     rid = b.get("record_id")
     rec = _get_record(rid) if rid not in (None, "") else None
     if rec is None:
         return jsonify({"ok": False, "reason": "no-record"})
-    phrase = " ".join(str(b.get("phrase") or "").split())[:160]
-    patch = failed_patch({"reason": "posting_closed", "message": "Job closed" + (": " + phrase if phrase else ".")})
-    patch["job_closed"] = {"at": time.time(), "url": str(b.get("url") or "")[:1000], "phrase": phrase}
-    patch["agent_ready"] = None
-    _records().merge_data(rec["id"], patch)
+    _mark_record_closed(rec, str(b.get("url") or ""), str(b.get("phrase") or ""))
     return jsonify({"ok": True})
 
 
@@ -14515,6 +14711,10 @@ def _tailor_job_unattended(job: dict, llm, tex: str, tname: str, scratch: str) -
     Returns {ok, id, role, company, coverage} or {ok: False, role, reason}. Never submits.
     Each role is one package on the bundled AI (counted here, before any model call)."""
     from llm.broker_client import BrokerUnavailable
+    # (2026-11-02) A closed posting is never tailored: checked before the package is counted.
+    if _job_closed_check(job):
+        return {"ok": False, "role": job.get("title") or "a role", "reason": JOB_CLOSED_MSG,
+                "closed": True}
     try:
         llm = _count_package(llm)
     except BrokerUnavailable as exc:
@@ -14961,6 +15161,12 @@ def _aa_run(count: int, min_fit: int, focus: dict, *, ctrl=None) -> tuple[dict, 
     tailored, skipped = [], []
     ctrl = ctrl or _control()  # P3: the person can stop/skip this run from Telegram while it runs
     halted = upgrade = False
+    try:                    # the open-or-closed check for every candidate, a few at a time
+        from sourcing import liveness
+        liveness.check_many([(i, j.get("url") or "", j.get("source_id") or "")
+                             for i, j in enumerate(jobs) if j.get("url")])
+    except Exception:       # noqa: BLE001 - each job is checked again on its own below
+        pass
     for job in jobs:
         # Cooperate with Telegram control between items: /stop halts the run gracefully after the
         # current one; /skip (no id) drops just the next item. Checked fresh each iteration.
@@ -14985,7 +15191,8 @@ def _aa_run(count: int, min_fit: int, focus: dict, *, ctrl=None) -> tuple[dict, 
             tailored.append(item)
         else:
             skipped.append({"role": out.get("role") or job.get("title", "a role"),
-                            "reason": out.get("reason") or "held for your review"})
+                            "reason": out.get("reason") or "held for your review",
+                            **({"closed": True} if out.get("closed") else {})})
             if out.get("upgrade"):          # the pass is used up: every next role would be too
                 upgrade = True
                 break
@@ -15181,7 +15388,7 @@ def _autopilot_tick() -> dict:
         st["failures"] = 0
     elif payload.get("upgrade"):
         st["paused"] = {"code": "no_packages", "text": AUTOPILOT_PAUSE_TEXT["no_packages"]}
-    elif payload.get("skipped"):
+    elif [x for x in payload.get("skipped") or [] if not x.get("closed")]:   # a closed job is no failure
         st["failures"] = int(st.get("failures") or 0) + 1
         if st["failures"] >= AUTOPILOT_MAX_FAILURES:
             st["paused"] = {"code": "failures", "text": AUTOPILOT_PAUSE_TEXT["failures"]}
@@ -15708,6 +15915,7 @@ def autoapply_board():
     finally:
         recs.close()
     jobs = _aa_job_index(rows)
+    rechecking = _liveness_kick(rows)      # closed postings leave Waiting on you (background)
     tiles: dict[str, list[dict]] = {t: [] for t in TILES}
     for r in rows:
         data = _record_data(r)
@@ -15737,6 +15945,7 @@ def autoapply_board():
         "approve_all": bool(p.get("approve_all")),
         "min_fit": _aa_min_fit(),
         "autopilot": _autopilot_status(),
+        "rechecking": rechecking,
     })
 
 

@@ -43,10 +43,11 @@ const page = (name) => fs.readFileSync(path.join(REAL, name + ".txt"), "utf8");
   // ---- 3. a run on Oracle's closed page: stopped, no brain call, taken off the list ---------
   const oracle = page("oracle_closed");
   const url = /^URL: (.*)$/m.exec(oracle)[1];
-  const mk = (views) => {
+  const mk = (views, hooks) => {
+    hooks = hooks || {};
     let at = 0;
     const wc = {
-      getURL: () => url, isDestroyed: () => false, on: () => {}, removeListener: () => {}, session: null,
+      getURL: () => hooks.url || url, isDestroyed: () => false, on: () => {}, removeListener: () => {}, session: null,
       executeJavaScript: async (expr) => {
         if (expr.includes("!!window.TailorAutofill && !!window.TailorAgent")) return true;
         if (expr.includes("__tailorQuiet.at")) return "5000|complete";
@@ -62,12 +63,12 @@ const page = (name) => fs.readFileSync(path.join(REAL, name + ".txt"), "utf8");
     const posts = [], progress = [];
     const pane = { webContents: wc };
     const agent = createAgent({
-      noPolling: true, getPane: () => pane, openInPane: () => {}, waitPaneLoad: async () => {},
+      noPolling: true, getPane: () => pane, openInPane: hooks.openInPane || (() => {}), waitPaneLoad: async () => {},
       autofillCore: () => "", agentViewSource: () => "", runAutoApplyOnPane: async () => ({ ok: false, reason: "no-fields" }),
       sendProgress: (i) => progress.push(JSON.parse(JSON.stringify(i))), acquireDebugger: () => null, frames: {},
       applyDecision: async () => ({ fill: true }), isNewPage: () => false, attachResume: async () => false,
       getApp: async () => ({ hosts: [], parked: [] }),
-      postApp: async (p, b) => { posts.push([p, b]); return { ok: true }; },
+      postApp: async (p, b) => { posts.push([p, b]); const h = hooks.post && hooks.post(p, b); return h !== undefined ? h : { ok: true }; },
     });
     return { agent, posts, progress };
   };
@@ -86,6 +87,37 @@ const page = (name) => fs.readFileSync(path.join(REAL, name + ".txt"), "utf8");
     const { agent, progress } = mk([oracle]);
     const res = await agent.batch([{ recordId: 9, url }, { recordId: 8, url }]);
     assert(res.ok && res.results.length === 2 && res.results.every((x) => x.closed), "both ran " + JSON.stringify(res.results));
+    const done = progress.find((x) => x.state === "batch-done");
+    assert(/2 closed by the employer/.test(done.message) && done.batch.closed === 2 && done.batch.stopped === 0, done.message);
+  }
+  {
+    // ---- 4. the engine's free check first (sourcing/liveness.py, 2026-11-02) ------------------
+    // US Bank's taken-down posting is caught by the plain HTTP check before the page opens, and
+    // Gartner's (open in the pane) by the engine's check on the first step: neither costs a brain
+    // call, the batch moves on, and its sum-up counts both as closed.
+    const usbank = /^URL: (.*)$/m.exec(page("usbank_workday_closed"))[1];
+    const gartnerView = page("gartner_workday_job");
+    const gartner = /^URL: (.*)$/m.exec(gartnerView)[1];
+    const opened = [];
+    const { agent, posts, progress } = mk([gartnerView], {
+      url: gartner,
+      openInPane: (u) => opened.push(u),
+      post: (p, b) => {
+        if (p === "/api/autoapply/agent/precheck") return b.record_id === 7
+          ? { ok: true, closed: true, status: "closed", phrase: "Workday: the posting was taken down" }
+          : { ok: true, closed: false, status: "unknown" };
+        if (p === "/api/autoapply/agent/step") return { ok: false, reason: "job-closed", closed: true, phrase: "Workday: the posting was taken down", cost: 0 };
+        return undefined;
+      },
+    });
+    const res = await agent.batch([{ recordId: 7, url: usbank }, { recordId: 6, url: gartner }]);
+    assert(res.ok && res.results.length === 2 && res.results.every((x) => x.closed && x.reason === "job-closed"), "both closed " + JSON.stringify(res.results));
+    assert(!opened.includes(usbank) && opened.includes(gartner), "the closed posting never opened " + JSON.stringify(opened));
+    const steps = posts.filter(([p]) => p === "/api/autoapply/agent/step");
+    assert(steps.length === 1 && steps[0][1].record_id === 6 && steps[0][1].history.length === 0, "one step, the engine said closed before any brain call");
+    assert(!posts.some(([p]) => p === "/api/autoapply/agent/closed"), "the engine already marked both");
+    const st7 = progress.filter((x) => x.record_id === 7).pop();
+    assert(st7.reason === "job-closed" && /This job is closed\. Nothing was spent\./.test(st7.message), st7.message);
     const done = progress.find((x) => x.state === "batch-done");
     assert(/2 closed by the employer/.test(done.message) && done.batch.closed === 2 && done.batch.stopped === 0, done.message);
   }

@@ -2632,7 +2632,12 @@
       wk.remove();
       applyState(st);
       $("#composerInput").focus();
-    } catch (e) { wk.remove(); if (!e.reason || !OUTAGE[e.reason]) bubble("agent", `<span style="color:var(--flag)">${esc(e.message)}</span>`); }
+    } catch (e) {
+      wk.remove();
+      // A closed posting is never tailored: the engine checked it first (free, no AI).
+      const msg = e.data && e.data.closed ? I18N.t("job.closedNothingSpent", "This job is closed. Nothing was spent.") : e.message;
+      if (!e.reason || !OUTAGE[e.reason]) bubble("agent", `<span style="color:var(--flag)">${esc(msg)}</span>`);
+    }
   }
 
   // Go to a page by its nav name. A destination that moved still lands in the right place: the
@@ -9357,6 +9362,25 @@
     aaLoadNext();
     aaLoadPrefs();
     if (AA.open != null) aaOpen(AA.open, { keep: true });   // refresh an open drawer
+    if (b.rechecking) aaWatchRecheck();
+  }
+
+  // (2026-11-02) The engine checks the queued jobs' postings in the background (free, no AI).
+  // When it finds closed ones, the list loads again once and they read "Job closed".
+  let AA_RECHECK = null;
+  function aaWatchRecheck() {
+    if (AA_RECHECK) return;
+    let tries = 0;
+    AA_RECHECK = setInterval(async () => {
+      let r = null;
+      try { r = await api("/api/autoapply/liveness"); } catch { r = null; }
+      if (++tries < 60 && r && r.running) return;
+      clearInterval(AA_RECHECK); AA_RECHECK = null;
+      if (r && !r.running && r.closed) {
+        toast(T("aa.closedFound", "{n} closed by the employer. Nothing was spent on them.").replace("{n}", r.closed));
+        loadAutoApply();
+      }
+    }, 3000);
   }
 
   function aaRender() {

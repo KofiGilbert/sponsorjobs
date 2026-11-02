@@ -1,0 +1,354 @@
+{
+ "recorded": "2026-11-02",
+ "cases": [
+  {
+   "name": "workday_usbank_closed",
+   "url": "https://usbank.wd1.myworkdayjobs.com/US_Bank_Careers/job/Minneapolis-MN/Business-Intelligence-Analyst_2026-0019717",
+   "source_id": "workday:usbank.wd1/US_Bank_Careers:2026-0019717",
+   "expect": "closed",
+   "why": "Workday: the posting was taken down",
+   "responses": {
+    "https://usbank.wd1.myworkdayjobs.com/wday/cxs/usbank/US_Bank_Careers/job/Minneapolis-MN/Business-Intelligence-Analyst_2026-0019717": {
+     "status": 403,
+     "body": "{\"errorCode\": \"S22\", \"errorCaseId\": \"CCC348MVZB5768\", \"httpStatus\": 403, \"message\": \"permission denied\", \"messageParams\": {}}",
+     "url": "https://usbank.wd1.myworkdayjobs.com/wday/cxs/usbank/US_Bank_Careers/job/Minneapolis-MN/Business-Intelligence-Analyst_2026-0019717",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "workday_usbank_open",
+   "url": "https://usbank.wd1.myworkdayjobs.com/US_Bank_Careers/job/Irving-TX/Software-Engineer--Multiple-openings--in-Irving--TX_2026-0034197",
+   "expect": "open",
+   "why": "Workday lists the posting",
+   "responses": {
+    "https://usbank.wd1.myworkdayjobs.com/wday/cxs/usbank/US_Bank_Careers/job/Irving-TX/Software-Engineer--Multiple-openings--in-Irving--TX_2026-0034197": {
+     "status": 200,
+     "body": "{\"jobPostingInfo\": {\"id\": \"e58fc6c7e4191001f4c03bfaacec0000\", \"title\": \"Software Engineer (Multiple openings) in Irving, TX.\", \"jobDescription\": \"<p>\\u00a0</p><p style=\\\"text-align:left\\\">At U.S. Bank, we\\u2019re on a journey to do our be\", \"location\": \"Irving, TX\", \"postedOn\": \"Posted Today\", \"startDate\": \"2026-11-02\", \"timeType\": \"\", \"jobReqId\": \"2026-0034197\", \"jobPostingId\": \"Software-Engineer--Multiple-openings--in-Irving--TX_2026-0034197\", \"jobPostingSiteId\": \"US_Bank_Careers\", \"country\": {\"descriptor\": \"United States of America\", \"id\": \"bc33aa3152ec42d4995f4791a106ed09\"}, \"canApply\": true, \"posted\": true, \"includeResumeParsing\": true}, \"hiringOrganization\": {\"name\": \"\", \"url\": \"\"}, \"similarJobs\": [], \"userAuthenticated\": false}",
+     "url": "https://usbank.wd1.myworkdayjobs.com/wday/cxs/usbank/US_Bank_Careers/job/Irving-TX/Software-Engineer--Multiple-openings--in-Irving--TX_2026-0034197",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "workday_gartner_open",
+   "url": "https://gartner.wd5.myworkdayjobs.com/EXT/job/Irving-TX/Business-Analyst_113018",
+   "expect": "open",
+   "why": "Workday lists the posting",
+   "responses": {
+    "https://gartner.wd5.myworkdayjobs.com/wday/cxs/gartner/EXT/job/Irving-TX/Business-Analyst_113018": {
+     "status": 200,
+     "body": "{\"jobPostingInfo\": {\"id\": \"b300eff5d7fa1000c7573561ba210000\", \"title\": \"Business Analyst\", \"jobDescription\": \"<p><b>Planning &amp; Performance Business Analyst, Conferences</b></p><p></p><p>\", \"location\": \"Irving, TX\", \"postedOn\": \"Posted 24 Days Ago\", \"startDate\": \"2026-10-09\", \"timeType\": \"Full time\", \"jobReqId\": \"113018\", \"jobPostingId\": \"Business-Analyst_113018\", \"jobPostingSiteId\": \"EXT\", \"country\": {\"descriptor\": \"United States of America\", \"id\": \"bc33aa3152ec42d4995f4791a106ed09\"}, \"canApply\": true, \"posted\": true, \"includeResumeParsing\": true}, \"hiringOrganization\": {\"name\": \"\", \"url\": \"\"}, \"similarJobs\": [], \"userAuthenticated\": false}",
+     "url": "https://gartner.wd5.myworkdayjobs.com/wday/cxs/gartner/EXT/job/Irving-TX/Business-Analyst_113018",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "oracle_closed",
+   "url": "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/jobsearch/job/347651?utm_source=freehire.me",
+   "expect": "closed",
+   "why": "Oracle: the site no longer lists this requisition",
+   "responses": {
+    "https://eeho.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?onlyData=true&finder=ById;Id=%22347651%22,siteNumber=jobsearch": {
+     "status": 200,
+     "body": "{\"items\": [], \"count\": 0, \"hasMore\": false, \"limit\": 499, \"offset\": 0, \"links\": [{\"rel\": \"self\", \"href\": \"https://eeho.fa.us2.oraclecloud.com:443/hcmRestApi/resources/11.13.18.05/recruit\", \"name\": \"recruitingCEJobRequisitionDetails\", \"kind\": \"collection\"}]}",
+     "url": "https://eeho.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?onlyData=true&finder=ById;Id=%22347651%22,siteNumber=jobsearch",
+     "location": ""
+    },
+    "https://eeho.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&expand=requisitionList&finder=findReqs;siteNumber=jobsearch,limit=1": {
+     "status": 200,
+     "body": "{\"items\": [{\"SearchId\": 1, \"Keyword\": null, \"CorrectedKeyword\": null, \"UseExactKeywordFlag\": false, \"SuggestedKeyword\": null, \"ExecuteSpellCheckFlag\": true, \"Location\": null, \"LocationId\": null, \"Radius\": 0, \"RadiusUnit\": \"MI\", \"SelectedTitlesFacet\": null, \"SelectedCategoriesFacet\": null, \"SelectedPostingDatesFacet\": null, \"SelectedLocationsFacet\": null, \"TotalJobsCount\": 2720, \"requisitionList\": [{\"Id\": \"344708\", \"Title\": \"Principal Software Engineer(Hybrid)\", \"PostedDate\": \"2026-11-01\", \"PostingEndDate\": null, \"Language\": \"US\", \"PrimaryLocationCountry\": \"US\", \"GeographyId\": 100000000726870, \"HotJobFlag\": true, \"WorkplaceTypeCode\": null, \"JobFamily\": null, \"JobFunction\": null, \"WorkerType\": null, \"ContractType\": null, \"ManagerLevel\": null}]}], \"count\": 1, \"hasMore\": false, \"limit\": 200, \"offset\": 0, \"links\": [{\"rel\": \"self\", \"href\": \"https://eeho.fa.us2.oraclecloud.com:443/hcmRestApi/resources/11.13.18.05/recruit\", \"name\": \"recruitingCEJobRequisitions\", \"kind\": \"collection\"}, {\"rel\": \"action\", \"href\": \"https://eeho.fa.us2.oraclecloud.com:443/hcmRestApi/resources/11.13.18.05/recruit\", \"name\": \"getRequisitionsLocationCoordinates\", \"kind\": \"other\"}]}",
+     "url": "https://eeho.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&expand=requisitionList&finder=findReqs;siteNumber=jobsearch,limit=1",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "oracle_open",
+   "url": "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/jobsearch/job/348538",
+   "expect": "open",
+   "why": "Oracle lists the requisition",
+   "responses": {
+    "https://eeho.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?onlyData=true&finder=ById;Id=%22348538%22,siteNumber=jobsearch": {
+     "status": 200,
+     "body": "{\"items\": [{\"Id\": \"348538\", \"Title\": \"Oracle Open Technologies Renewal Account Manager- Government, Defense & Intellig\", \"Category\": \"Sales\", \"RequisitionType\": \"Professional\", \"JobGrade\": null, \"RequisitionId\": 302970690975058, \"ExternalPostedStartDate\": \"2026-10-30T19:01:36+00:00\", \"JobLevel\": null, \"JobSchedule\": \"Full time\", \"JobShift\": null, \"StudyLevel\": null, \"InternationalTravelRequired\": null, \"ExternalContactName\": null, \"ExternalContactEmail\": null}], \"count\": 1, \"hasMore\": false, \"limit\": 499, \"offset\": 0, \"links\": [{\"rel\": \"self\", \"href\": \"https://eeho.fa.us2.oraclecloud.com:443/hcmRestApi/resources/11.13.18.05/recruit\", \"name\": \"recruitingCEJobRequisitionDetails\", \"kind\": \"collection\"}]}",
+     "url": "https://eeho.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?onlyData=true&finder=ById;Id=%22348538%22,siteNumber=jobsearch",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "amazon_closed",
+   "url": "https://www.amazon.jobs/en/jobs/10582066/operations-manager",
+   "source_id": "amazonjobs:USA:10582066",
+   "expect": "closed",
+   "why": "Sorry, the job you're looking for isn't available.",
+   "responses": {
+    "https://www.amazon.jobs/en/jobs/10582066/operations-manager": {
+     "status": 404,
+     "body": "<html><head><title>Amazon.jobs</title></head><body><main><p>Sorry, the job you&#39;re looking for isn&#39;t available.</p></main></body></html>",
+     "url": "https://www.amazon.jobs/en/jobs/10582066/operations-manager",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "amazon_open",
+   "url": "https://www.amazon.jobs/en/jobs/10576324/network-deployment-lead-dcc-communities",
+   "expect": "open",
+   "why": "amazon.jobs shows the job",
+   "responses": {
+    "https://www.amazon.jobs/en/jobs/10576324/network-deployment-lead-dcc-communities": {
+     "status": 200,
+     "body": "<html><head><title>Network Deployment Lead, DCC Communities  - Job ID: 10576324 | Amazon.jobs</title></head><body></body></html>",
+     "url": "https://www.amazon.jobs/en/jobs/10576324/network-deployment-lead-dcc-communities",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "greenhouse_upgrade_open",
+   "url": "https://job-boards.greenhouse.io/upgrade/jobs/4745526005",
+   "source_id": "greenhouse:upgrade:4745526005",
+   "expect": "open",
+   "why": "Greenhouse lists the job",
+   "responses": {
+    "https://boards-api.greenhouse.io/v1/boards/upgrade/jobs/4745526005": {
+     "status": 200,
+     "body": "{\"absolute_url\": \"https://job-boards.greenhouse.io/upgrade/jobs/4745526005\", \"data_compliance\": [{\"type\": \"gdpr\", \"requires_consent\": false, \"requires_processing_consent\": false, \"requires_retention_consent\": false, \"retention_period\": null, \"demographic_data_consent_applies\": false}], \"internal_job_id\": 4460011005, \"location\": {\"name\": \"Phoenix\"}, \"metadata\": null, \"id\": 4745526005, \"updated_at\": \"2026-10-30T08:34:12-04:00\", \"requisition_id\": \"JR102071\", \"title\": \"Product Manager, Operations\", \"company_name\": \"Upgrade\", \"first_published\": \"2026-10-20T12:47:29-04:00\", \"language\": \"en\", \"application_deadline\": null, \"content\": \"&lt;p&gt;&lt;span style=&quot;color: #000000;&quot;&gt;&lt;strong&gt;About the R\"}",
+     "url": "https://boards-api.greenhouse.io/v1/boards/upgrade/jobs/4745526005",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "greenhouse_company_domain_open",
+   "url": "https://octane.co/o/who-we-are/careers/jobs-open?gh_jid=8015779003",
+   "source_id": "greenhouse:octanelending:8015779003",
+   "expect": "open",
+   "why": "Greenhouse lists the job",
+   "responses": {
+    "https://boards-api.greenhouse.io/v1/boards/octanelending/jobs/8015779003": {
+     "status": 200,
+     "body": "{\"absolute_url\": \"https://octane.co/o/who-we-are/careers/jobs-open?gh_jid=8015779003\", \"data_compliance\": [{\"type\": \"gdpr\", \"requires_consent\": false, \"requires_processing_consent\": false, \"requires_retention_consent\": false, \"retention_period\": null, \"demographic_data_consent_applies\": false}], \"internal_job_id\": 5894584003, \"location\": {\"name\": \"New York, New York, United States\"}, \"metadata\": null, \"id\": 8015779003, \"updated_at\": \"2026-10-29T12:16:17-04:00\", \"requisition_id\": \"663\", \"title\": \"Analyst, Business Intelligence\", \"company_name\": \"Octane\", \"first_published\": \"2026-10-07T13:14:00-04:00\", \"language\": \"en\", \"application_deadline\": null, \"content\": \"&lt;p&gt;Octane is unlocking the power of financial products for merchants and c\"}",
+     "url": "https://boards-api.greenhouse.io/v1/boards/octanelending/jobs/8015779003",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "greenhouse_gone",
+   "url": "https://job-boards.greenhouse.io/airbnb/jobs/1000001",
+   "expect": "closed",
+   "why": "Greenhouse: the board no longer has this job",
+   "responses": {
+    "https://boards-api.greenhouse.io/v1/boards/airbnb/jobs/1000001": {
+     "status": 404,
+     "body": "{\"status\": 404, \"error\": \"Job not found\"}",
+     "url": "https://boards-api.greenhouse.io/v1/boards/airbnb/jobs/1000001",
+     "location": ""
+    },
+    "https://boards-api.greenhouse.io/v1/boards/airbnb": {
+     "status": 200,
+     "body": "{\"name\": \"Airbnb\", \"content\": \"\"}",
+     "url": "https://boards-api.greenhouse.io/v1/boards/airbnb",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "lever_open",
+   "url": "https://jobs.lever.co/15five/e155aa0e-6327-49d4-b601-854174cad3ba",
+   "expect": "open",
+   "why": "Lever lists the posting",
+   "responses": {
+    "https://api.lever.co/v0/postings/15five/e155aa0e-6327-49d4-b601-854174cad3ba?mode=json": {
+     "status": 200,
+     "body": "{\"additionalPlain\": \"We offer amazing benefits that align with our values and culture at 15Five.\\n\\u00a0\\nYo\", \"additional\": \"<div><span style=\\\"font-size: 10.5pt;\\\">We offer amazing benefits that align with \", \"categories\": {\"commitment\": \"Full Time Exempt\", \"department\": \"R&D\", \"location\": \"US, Remote\", \"team\": \"Engineering\", \"allLocations\": [\"US, Remote\"]}, \"createdAt\": 1792170792681, \"descriptionPlain\": \"15Five is the AI-powered performance management platform built for business impa\", \"description\": \"<div><span style=\\\"font-size: 16px;\\\">15Five is the AI-powered performance managem\", \"id\": \"e155aa0e-6327-49d4-b601-854174cad3ba\", \"lists\": [{\"text\": \"Role & Responsibilities\", \"content\": \"<div>\\n\\n<li>\\n<p><strong>Cloud infrastructure:</strong> design, build, secure and \"}, {\"text\": \"Experience Required\", \"content\": \"\\n<li>\\n<p>5+ years in DevOps, SRE or infrastructure engineering for Senior (3+ ye\"}], \"salaryRange\": {\"min\": 115000, \"max\": 140000, \"currency\": \"USD\", \"interval\": \"per-year-salary\"}, \"salaryDescription\": \"<div>\\n<p>Annual Base Pay Range, US Full-Time Senior DevOps Engineer.&nbsp;</p>\\n<\", \"salaryDescriptionPlain\": \"Annual Base Pay Range, US Full-Time Senior DevOps Engineer.\\u00a0\\nThis role's Total R\", \"text\": \"Senior DevOps Engineer\", \"country\": \"US\", \"workplaceType\": \"remote\"}",
+     "url": "https://api.lever.co/v0/postings/15five/e155aa0e-6327-49d4-b601-854174cad3ba?mode=json",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "lever_gone",
+   "url": "https://jobs.lever.co/15five/00000000-0000-0000-0000-000000000000",
+   "expect": "closed",
+   "why": "Lever: the site no longer has this posting",
+   "responses": {
+    "https://api.lever.co/v0/postings/15five/00000000-0000-0000-0000-000000000000?mode=json": {
+     "status": 404,
+     "body": "{\"ok\": false, \"error\": \"Document not found\"}",
+     "url": "https://api.lever.co/v0/postings/15five/00000000-0000-0000-0000-000000000000?mode=json",
+     "location": ""
+    },
+    "https://api.lever.co/v0/postings/15five?mode=json&limit=1": {
+     "status": 200,
+     "body": "[{\"additionalPlain\": \"We offer amazing benefits that align with our values and culture at 15Five.\\n\\u00a0\\nYo\", \"additional\": \"<div><span style=\\\"font-size: 10.5pt;\\\">We offer amazing benefits that align with \", \"categories\": {\"commitment\": \"Full Time Exempt\", \"department\": \"R&D\", \"location\": \"US, Remote\", \"team\": \"Engineering\", \"allLocations\": [\"US, Remote\"]}, \"createdAt\": 1792170792681, \"descriptionPlain\": \"15Five is the AI-powered performance management platform built for business impa\", \"description\": \"<div><span style=\\\"font-size: 16px;\\\">15Five is the AI-powered performance managem\", \"id\": \"e155aa0e-6327-49d4-b601-854174cad3ba\", \"lists\": [{\"text\": \"Role & Responsibilities\", \"content\": \"<div>\\n\\n<li>\\n<p><strong>Cloud infrastructure:</strong> design, build, secure and \"}, {\"text\": \"Experience Required\", \"content\": \"\\n<li>\\n<p>5+ years in DevOps, SRE or infrastructure engineering for Senior (3+ ye\"}], \"salaryRange\": {\"min\": 115000, \"max\": 140000, \"currency\": \"USD\", \"interval\": \"per-year-salary\"}, \"salaryDescription\": \"<div>\\n<p>Annual Base Pay Range, US Full-Time Senior DevOps Engineer.&nbsp;</p>\\n<\", \"salaryDescriptionPlain\": \"Annual Base Pay Range, US Full-Time Senior DevOps Engineer.\\u00a0\\nThis role's Total R\", \"text\": \"Senior DevOps Engineer\", \"country\": \"US\", \"workplaceType\": \"remote\"}]",
+     "url": "https://api.lever.co/v0/postings/15five?mode=json&limit=1",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "ashby_open",
+   "url": "https://jobs.ashbyhq.com/1password/febe5d7f-25c9-4d77-a184-0f99e748fe7f",
+   "expect": "open",
+   "why": "Ashby shows the posting",
+   "responses": {
+    "https://jobs.ashbyhq.com/1password/febe5d7f-25c9-4d77-a184-0f99e748fe7f": {
+     "status": 200,
+     "body": "<html><head><title>Senior Commercial Account Executive (San Francisco/Bay Area) @ 1Password</title><script type=\"application/ld+json\">{\"@context\": \"https://schema.org/\", \"@type\": \"JobPosting\", \"title\": \"Senior Commercial Account Executive (San Francisco/Bay Area)\", \"description\": \"<p style=\\\"min-height:1.5em\\\"><em><strong>1Password is growing.</strong> We\\u2019ve sur\", \"directApply\": true, \"identifier\": {\"@type\": \"PropertyValue\", \"name\": \"1Password\", \"value\": \"febe5d7f-25c9-4d77-a184-0f99e748fe7f\"}, \"datePosted\": \"2026-10-29\", \"hiringOrganization\": {\"@type\": \"Organization\", \"name\": \"1Password\", \"sameAs\": \"https://1password.com/\", \"logo\": \"https://app.ashbyhq.com/api/images/org-theme-logo/b8833a99-53c9-4b1c-9e2d-dd2b79\"}, \"jobLocation\": {\"@type\": \"Place\", \"address\": {\"@type\": \"PostalAddress\", \"addressCountry\": \"US\"}}, \"employmentType\": \"FULL_TIME\", \"jobLocationType\": \"TELECOMMUTE\", \"applicantLocationRequirements\": {\"@type\": \"Country\", \"name\": \"US\"}}</script><script>window.__appData = {\"organization\":{\"organizationId\":\"b8833a99-53c9-4b1c-9e2d-dd};</script><script>window.__posting = {\"posting\":{\"id\":\"febe5d7f-25c9-4d77-a184-0f99e748fe7f\"}};</script></head><body></body></html>",
+     "url": "https://jobs.ashbyhq.com/1password/febe5d7f-25c9-4d77-a184-0f99e748fe7f",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "ashby_gone",
+   "url": "https://jobs.ashbyhq.com/1password/00000000-0000-0000-0000-000000000000",
+   "expect": "closed",
+   "why": "Ashby: the board no longer has this posting",
+   "responses": {
+    "https://jobs.ashbyhq.com/1password/00000000-0000-0000-0000-000000000000": {
+     "status": 404,
+     "body": "<html><head><title>Jobs</title><script>window.__appData = {\"organization\":null};</script><script>window.__posting = {\"posting\":null};</script></head><body></body></html>",
+     "url": "https://jobs.ashbyhq.com/1password/00000000-0000-0000-0000-000000000000",
+     "location": ""
+    },
+    "https://jobs.ashbyhq.com/1password": {
+     "status": 200,
+     "body": "<html><head><title>1Password Jobs</title><script>window.__appData = {\"organization\":{\"organizationId\":\"b8833a99-53c9-4b1c-9e2d-dd};</script><script>window.__posting = {\"posting\":null};</script></head><body></body></html>",
+     "url": "https://jobs.ashbyhq.com/1password",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "workable_open",
+   "url": "https://apply.workable.com/j/81B46579FE",
+   "expect": "open",
+   "why": "Workable lists the job",
+   "responses": {
+    "https://apply.workable.com/j/81B46579FE": {
+     "status": 301,
+     "body": "<html><head></head><body></body></html>",
+     "url": "https://apply.workable.com/j/81B46579FE",
+     "location": "/huggingface/j/81B46579FE"
+    },
+    "https://apply.workable.com/api/v2/accounts/huggingface/jobs/81B46579FE": {
+     "status": 200,
+     "body": "{\"id\": 5851152, \"shortcode\": \"81B46579FE\", \"title\": \"Open-Source Machine Learning Engineer - EMEA Remote\", \"remote\": true, \"location\": {\"city\": \"Paris\", \"country\": \"France\", \"countryCode\": \"FR\", \"region\": \"\\u00cele-de-France\"}, \"locations\": [{\"city\": \"Paris\", \"country\": \"France\", \"countryCode\": \"FR\", \"hidden\": false, \"region\": \"\\u00cele-de-France\"}], \"state\": \"published\", \"isInternal\": false, \"code\": \"\", \"published\": \"2026-05-29T00:00:00.000Z\", \"type\": \"full\", \"language\": \"en\", \"department\": [\"Open Source\"], \"accountUid\": \"940cf17f-c078-40ac-95e8-07704e754048\"}",
+     "url": "https://apply.workable.com/api/v2/accounts/huggingface/jobs/81B46579FE",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "workable_gone",
+   "url": "https://apply.workable.com/j/0000000000",
+   "expect": "closed",
+   "why": "Workable: the link goes to its not-found page",
+   "responses": {
+    "https://apply.workable.com/j/0000000000": {
+     "status": 302,
+     "body": "<html><head></head><body></body></html>",
+     "url": "https://apply.workable.com/j/0000000000",
+     "location": "/oops"
+    }
+   }
+  },
+  {
+   "name": "recruitee_open",
+   "url": "https://jobs.channable.com/o/senior-engineering-manager-core",
+   "source_id": "recruitee:channable:2793226",
+   "expect": "open",
+   "why": "Recruitee lists the offer",
+   "responses": {
+    "https://channable.recruitee.com/api/offers/senior-engineering-manager-core": {
+     "status": 200,
+     "body": "{\"offer\": {\"position\": 620, \"postal_code\": \"3512 HL\", \"max_hours\": 40, \"careers_url\": \"https://jobs.channable.com/o/senior-engineering-manager-core\", \"state_name\": \"Utrecht\", \"state_code\": \"UT\", \"careers_apply_url\": \"https://jobs.channable.com/o/senior-engineering-manager-core/c/new\", \"education_code\": \"bachelor_degree\", \"created_at\": \"2026-10-22 06:17:49 UTC\", \"experience_code\": \"senior_manager\", \"min_hours\": 32, \"location_question_visible\": false, \"close_at\": null, \"cover_image\": null, \"id\": 2793226}}",
+     "url": "https://channable.recruitee.com/api/offers/senior-engineering-manager-core",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "recruitee_gone",
+   "url": "https://channable.recruitee.com/o/no-such-offer-xyz",
+   "expect": "closed",
+   "why": "Recruitee: the company no longer has this offer",
+   "responses": {
+    "https://channable.recruitee.com/api/offers/no-such-offer-xyz": {
+     "status": 404,
+     "body": "{\"error\": \"Not Found\"}",
+     "url": "https://channable.recruitee.com/api/offers/no-such-offer-xyz",
+     "location": ""
+    },
+    "https://channable.recruitee.com/api/offers/": {
+     "status": 200,
+     "body": "{\"offers\": [{\"sharing_image\": null, \"country_code\": \"NL\", \"position\": 620, \"close_at\": null, \"published_at\": \"2026-10-22 12:11:23 UTC\", \"department\": \"Engineering\", \"locations_question_required\": true, \"employment_type_code\": \"fulltime_permanent\", \"city\": \"Utrecht\", \"sharing_description\": \"At Channable, we're building the future of eCommerce automation - and at the cor\", \"min_hours\": 32, \"education_code\": \"bachelor_degree\", \"careers_url\": \"https://jobs.channable.com/o/senior-engineering-manager-core\", \"company_name\": \"Channable\", \"id\": 2793226}, {\"sharing_image\": null, \"country_code\": \"NL\", \"position\": 618, \"close_at\": null, \"published_at\": \"2026-10-20 09:26:03 UTC\", \"department\": \"Engineering\", \"locations_question_required\": true, \"employment_type_code\": \"fulltime_permanent\", \"city\": \"Utrecht\", \"sharing_description\": \"What\\u2019s in it for you (to start with):Gross monthly salary ranging from \\u20ac 4.000 t\", \"min_hours\": 32, \"education_code\": \"bachelor_degree\", \"careers_url\": \"https://jobs.channable.com/o/haskell-software-engineer-creatives-team\", \"company_name\": \"Channable\", \"id\": 2789218}]}",
+     "url": "https://channable.recruitee.com/api/offers/",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "jibe_open",
+   "url": "https://se.jibeapply.com/careers-home/jobs/135287?utm_source=freehire.me",
+   "expect": "open",
+   "why": "the page carries the job",
+   "responses": {
+    "https://se.jibeapply.com/careers-home/jobs/135287": {
+     "status": 200,
+     "body": "<html><head><title>Assistant Operations Manager in Multiple Locations | Schneider Electric</title><script type=\"application/ld+json\">{\"@context\": \"http://schema.org\", \"@type\": \"JobPosting\", \"url\": \"https://se.jibeapply.com/jobs/135287?\", \"directApply\": true, \"title\": \"Assistant Operations Manager\", \"description\": \"<p style=\\\"margin: 0px;\\\">We are seeking an experienced and motivated <strong>Assi\", \"qualifications\": \"<p style=\\\"margin: 0px;\\\"><strong><span>Qualifications</span></strong></p><p style\", \"responsibilities\": \"<p style=\\\"margin: 0px;\\\">We are seeking an experienced and motivated <strong>Assi\", \"skills\": \"UNAVAILABLE\", \"workHours\": \"UNAVAILABLE\", \"jobBenefits\": \"\", \"datePosted\": \"2026-09-28T20:47:00+0000\", \"employmentType\": \"FULL_TIME\", \"educationRequirements\": \"UNAVAILABLE\"}</script></head><body></body></html>",
+     "url": "https://se.jibeapply.com/jobs/135287",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "jibe_gone",
+   "url": "https://se.jibeapply.com/jobs/999999999",
+   "expect": "closed",
+   "why": "the page answered 404",
+   "responses": {
+    "https://se.jibeapply.com/jobs/999999999": {
+     "status": 404,
+     "body": "<html><head><title>Schneider Electric</title></head><body><main><p>The page you are looking for no longer exists.</p></main></body></html>",
+     "url": "https://se.jibeapply.com/jobs/999999999",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "phenom_chewy_open",
+   "url": "https://careers.chewy.com/us/en/job/R31111/Business-Intelligence-Analyst-I",
+   "expect": "open",
+   "why": "the page carries the job",
+   "responses": {
+    "https://careers.chewy.com/us/en/job/R31111/Business-Intelligence-Analyst-I": {
+     "status": 200,
+     "body": "<html><head><script type=\"application/ld+json\">{\"identifier\": {\"@type\": \"PropertyValue\", \"name\": \"Chewy\", \"value\": \"R31111\"}, \"hiringOrganization\": {\"@type\": \"Organization\", \"name\": \"Chewy\", \"sameAs\": \"https://careers.chewy.com/us/en\", \"url\": \"https://careers.chewy.com/us/en/job/R31111/Business-Intelligence-Analyst-I\", \"logo\": \"https://assets.phenompeople.com/CareerConnectResources/prod/CHINUS/images/job_lo\"}, \"jobLocation\": {\"geo\": {\"@type\": \"GeoCoordinates\", \"latitude\": \"41.24591\", \"longitude\": \"-75.88131\"}, \"address\": {\"@type\": \"PostalAddress\", \"postalCode\": \"18706\", \"addressCountry\": \"United States of America\", \"addressLocality\": \"Wilkes-Barre\", \"addressRegion\": \"Pennsylvania\"}, \"@type\": \"Place\"}, \"employmentType\": [\"FULL_TIME\"], \"@type\": \"JobPosting\", \"workHours\": \"40 hours per week\", \"description\": \"&lt;p&gt;Job Description:&lt;/p&gt;&lt;p&gt;&lt;/p&gt;&lt;h1&gt;&lt;b&gt;Our Opp\", \"title\": \"Business Intelligence Analyst I\", \"datePosted\": \"2026-10-31\", \"@context\": \"http://schema.org\", \"occupationalCategory\": \"Technology\", \"directApply\": false}</script></head><body></body></html>",
+     "url": "https://careers.chewy.com/us/en/job/R31111/Business-Intelligence-Analyst-I",
+     "location": ""
+    }
+   }
+  },
+  {
+   "name": "career_site_silent",
+   "url": "https://careers.capgemini.com/job/New-York%2C-NY-Business-Analyst-NY-10001/1452293433/?utm_source=freehire.me",
+   "expect": "unknown",
+   "why": "the page does not say",
+   "responses": {
+    "https://careers.capgemini.com/job/New-York%2C-NY-Business-Analyst-NY-10001/1452293433/": {
+     "status": 200,
+     "body": "<html><head><title>Business Analyst Job Details | Capgemini</title></head><body></body></html>",
+     "url": "https://careers.capgemini.com/job/New-York%2C-NY-Business-Analyst-NY-10001/1452293433/",
+     "location": ""
+    }
+   }
+  }
+ ]
+}
