@@ -1087,6 +1087,9 @@ ipcMain.on("update:open", (_e, url) => {
 ipcMain.on("support:mail", (_e, url) => {
   if (isSupportMailto(url)) shell.openExternal(url);
 });
+// The Terms of Use the sign-in line links to: one fixed address, opened in the person's own
+// browser (the pane would sit under the sign-in screen). The page sends no URL, so nothing else opens.
+ipcMain.on("terms:open", () => { shell.openExternal("https://sponsorjobs.ai/terms.html#applying"); });
 ipcMain.handle("app:version", () => app.getVersion());
 ipcMain.on("pane:external", () => {
   const url = pane && pane.webContents.getURL();

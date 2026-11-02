@@ -567,9 +567,6 @@
                             <div class="ans-field"><span data-i18n="ans.disability">Disability</span>
                               <div class="ans-seg" data-basic="disability" role="group" aria-label="Disability" data-i18n-aria="ans.disability"></div></div>
                           </div>
-                          <label class="ans-check"><input type="checkbox" id="ansTerms" />
-                            <span data-i18n="ans.termsAlways">Accept the privacy notice or terms a site requires to apply, without asking me</span></label>
-                          <p class="ans-eeo-note" data-i18n="ans.termsNote">When this is off, I ask you first, and while you are away an application that needs it waits for your answer. Every one I accept is named when the application is ready to send.</p>
                           <div class="ans-foot">
                             <button class="btn btn-ghost btn-sm" id="ansBasicsSave" type="button" data-i18n="ans.save">Save</button>
                             <span class="ans-note" id="ansBasicsNote" role="status"></span>
@@ -586,6 +583,26 @@
               <input class="jf-input" id="ansQ" type="search" autocomplete="off" placeholder="Search your answers" data-i18n-ph="ans.search" aria-label="Search your answers" />
             </label>
             <div class="ans-list" id="ansList"></div>
+          </section>
+
+          <!-- What I may do for you: what the Terms of Use cover when Auto-apply applies (accepting
+               the notices a site requires, creating a site account), a switch each, changeable any
+               time. Each saves the moment it changes (/api/autoapply/consent). -->
+          <section class="ans-card mem-card mem-may" id="memMay" data-jump="may" aria-labelledby="memMayH">
+            <div class="ans-card-h">
+              <h2 class="ans-h" id="memMayH" data-i18n="consent.mayH">What I may do for you</h2>
+            </div>
+            <p class="mem-note" data-i18n="consent.mayNote">Covered by the Terms of Use. Turn off any you want to do yourself.</p>
+            <label class="ans-check mem-may-row"><input type="checkbox" id="memTerms" />
+              <span data-i18n="consent.terms">Accept the privacy notices and terms a site requires to apply</span></label>
+            <p class="ans-eeo-note" data-i18n="consent.termsS">Off, I ask you on each site. Each one I accept is named before you send.</p>
+            <label class="ans-check mem-may-row"><input type="checkbox" id="memAccounts" />
+              <span data-i18n="consent.accounts">Create an account on a job site that needs one</span></label>
+            <p class="ans-eeo-note" id="memAccountsS">With your SponsorJobs email. The password stays on this computer.</p>
+            <div class="mem-may-info">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 8.4l2.8 2.8 6.2-6.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span data-i18n="consent.answers">Fill forms with your saved answers</span>
+            </div>
           </section>
 
           <!-- Self-identification: "Saved" or "Prefer not to say" until the person taps Show. -->
@@ -783,6 +800,10 @@
             </select>
           </div>
           <div class="aa-msg" id="aaMsg" hidden></div>
+          <!-- The Terms of Use notice (Kofi, 2026-11-01): one quiet line for a person who agreed to an
+               older version, never a modal, never in the way of a run. "Turn off" opens the switch. -->
+          <p class="aa-tou" id="aaTou" hidden><span data-i18n="tou.notice">Our Terms now cover accepting site notices for you.</span>
+            <button class="link-btn" id="aaTouOff" type="button" data-i18n="tou.off">Turn off</button></p>
 
           <!-- Four stage tiles. The selected one fills the list below. -->
           <div class="aa-pipe" role="group" aria-label="Application stages">
@@ -843,6 +864,10 @@
               <div class="aa-set" id="aaAnsRow">
                 <div><div class="aa-set-t" data-i18n="ans.title">Your answers</div><div class="aa-set-s" id="aaAnsSub"></div></div>
                 <button class="btn btn-ghost btn-sm" id="aaAnsBtn" type="button" data-i18n="aa.open">Open</button>
+              </div>
+              <div class="aa-set" id="aaMayRow">
+                <div><div class="aa-set-t" data-i18n="consent.mayShort">What I may do</div><div class="aa-set-s" id="aaMaySub"></div></div>
+                <button class="btn btn-ghost btn-sm" id="aaMayBtn" type="button" data-i18n="aa.pf.change">Change</button>
               </div>
               <div class="aa-set" id="aaInboxRow" hidden>
                 <div><div class="aa-set-t" data-i18n="aa.inbox">Email inbox</div><div class="aa-set-s" id="inboxStatus"></div></div>
@@ -1264,6 +1289,10 @@
         </form>
         <p class="signin-err" id="signinErr" role="alert" hidden></p>
         <p class="signin-fine" data-i18n="signin.fine">We'll email you a 6-digit code. No password needed.</p>
+        <!-- Assent where the person already clicks: continuing (Google or email) agrees to the Terms
+             of Use, recorded with its version when sign-in finishes (/api/account/*). -->
+        <p class="signin-terms" id="signinTerms"><span data-i18n="signin.terms1">By continuing, you agree to the</span>
+          <a href="https://sponsorjobs.ai/terms.html#applying" target="_blank" rel="noopener" id="signinTermsLink" data-i18n="signin.termsLink">Terms of Use</a><span data-i18n="signin.terms2">, including letting SponsorJobs accept the notices job sites require when it applies for you.</span></p>
       </div>
       <!-- Step 2: the code -->
       <div class="signin-step" id="signinCode" hidden>

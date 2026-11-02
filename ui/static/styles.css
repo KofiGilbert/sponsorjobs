@@ -4705,3 +4705,19 @@ body.panel-open .trk-panel { right: calc(var(--panel-w) + 42px); }
   .mem-car-g, .mem-add-g { grid-template-columns: 1fr; }
   .mem-data-row { flex-wrap: wrap; }
 }
+
+/* ============ What I may do for you, and the Terms of Use lines ============
+   The memory page's card: a switch per item the Terms of Use cover, changeable any time. */
+.mem-may .ans-check:first-of-type { margin-top: 0; }
+.mem-may .ans-check input { accent-color: var(--accent); }
+.mem-may-info { display: flex; align-items: center; gap: 9px; margin-top: 18px; font-size: 13px; color: var(--muted); }
+.mem-may-info svg { flex: none; margin: 0 1px; }
+/* Auto-apply's one-line Terms notice: quiet muted text under the run bar, the link in ink. */
+.aa-tou { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.aa-tou[hidden] { display: none; }
+.aa-tou .link-btn { font-size: 12.5px; padding: 0; color: var(--ink-2); text-decoration: underline; text-underline-offset: 2px; }
+.aa-tou .link-btn:hover { color: var(--ink); }
+/* The sign-in screen's assent line, under the buttons, in the fine-print voice. */
+.signin-terms { margin-top: 10px; font-size: 12px; line-height: 1.5; color: var(--faint); }
+.signin-terms a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
+.signin-terms a:hover { color: var(--ink); }

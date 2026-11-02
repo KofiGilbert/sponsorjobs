@@ -37,7 +37,10 @@
  *  page to Ready to send. Then a 3-job BATCH: job 1 needs consent that is not given, job 2 has an
  *  unknown required question; both park without waiting, job 3 reaches Ready to send, ONE digest
  *  lists the parked jobs, and answering both re-runs each of them to Ready to send.
- *  The first Apply for me asks the standing choice on terms once, before the run (section 4).
+ *  The Terms of Use cover applying on the person's behalf (section 4): the first Auto-apply visit
+ *  shows ONE line (no modal) and records the version; the person turns site notices off on the
+ *  memory page's "What I may do for you" (so later sections still ask per site), and the first
+ *  Apply for me never meets a terms question.
  *  ... and (section 17) back from being away: Send on a Ready to send job whose page is gone fills
  *  it again from the saved answers and submits it in one click, asking nothing.
  */
@@ -218,6 +221,26 @@ const waitBar = async (re, ms) => {
 
 // ---- 4. one click: the whole application ------------------------------------------------
 await win.click("[data-nav=autoapply]");
+// The Terms of Use: one quiet line on the first visit (never a modal), and showing it records the version.
+await win.waitForSelector("#aaTou:not([hidden])", { timeout: 30_000 });
+const touLine = await win.locator("#aaTou").textContent();
+check("the first visit shows the one-line Terms notice", /Our Terms now cover accepting site notices for you\.\s*Turn off/.test(touLine || ""), touLine);
+const tou = await api("/api/terms/status");
+check("showing the notice records the Terms version", tou && tou.accepted === true && tou.via === "notice" && !!tou.accepted_version, JSON.stringify(tou));
+const on = await api("/api/autoapply/consent");
+check("the Terms turn on accepting notices and creating accounts", on && on.terms.on === true && on.accounts.on === true, JSON.stringify(on));
+check("no modal stands in the way", await win.evaluate(() => [...document.querySelectorAll("[aria-modal=true], .wiz")].every((el) => !el.getClientRects().length)));
+// The person turns site notices off from the line's Turn off (the memory page switch): the later
+// sections need the per-site question. Accounts stay on (the mock's sign-in wall needs one).
+await win.click("#aaTouOff");
+await win.waitForSelector("#memTerms", { state: "visible", timeout: 30_000 });
+await win.waitForFunction(() => document.querySelector("#memTerms").checked === true, null, { timeout: 15_000 });
+await win.uncheck("#memTerms");
+let offNow = null;
+for (let k = 0; k < 20; k++) { offNow = await api("/api/autoapply/consent"); if (offNow && offNow.terms.on === false) break; await sleep(300); }
+check("Turn off on the memory page is the person's own choice", offNow && offNow.terms.on === false && offNow.terms.decided === true && offNow.accounts.on === true,
+      JSON.stringify(offNow));
+await win.click("[data-nav=autoapply]");
 await win.waitForSelector(`.aa-row[data-id="${RID}"]`, { timeout: 30_000 });
 const label = await win.locator(`.aa-row[data-id="${RID}"] [data-act]`).first().textContent();
 check("the row button says Apply for me", /apply for me/i.test(label || ""), label);
@@ -226,11 +249,8 @@ await clickRow(RID);
 const gate = await waitBar(/before i apply/i, 30_000);
 check("the bar asks for the form answers first", /before i apply/i.test(gate), gate);
 await win.locator("#bbFill button", { hasText: /apply anyway/i }).first().click();
-// The standing choice on terms a site requires: asked once, before the run, never made for the person.
-const termsGate = await waitBar(/privacy notice or terms/i, 30_000);
-check("the first run asks the standing choice on terms, before it starts", /should i accept those for you/i.test(termsGate), termsGate);
-await win.locator("#bbFill button", { hasText: /no, ask me first/i }).first().click();
-const ready = await waitBar(/ready to send|stopped|could not|needs you|have a look/i, 120_000);
+const ready = await waitBar(/ready to send|stopped|could not|needs you|have a look|privacy notice or terms/i, 120_000);
+check("the first run never asks about terms up front", !/should i accept those for you|privacy notice or terms/i.test(ready), ready);
 check("the run ends on Ready to send", /ready to send/i.test(ready), ready);
 const log1 = (await paneEval("JSON.stringify(window.fxLog ? window.fxLog() : null)")) || "null";
 const l1 = JSON.parse(log1) || [];

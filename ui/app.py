@@ -2052,7 +2052,13 @@ _PREFS_DEFAULT = {"approve_all": False, "daily_cap": 40, "min_gap": 45.0,
                   "aa_focus": {},     # the page's focus fields (titles, locations, sponsor_only)
                   "autopilot": False, # tailor new matches on a schedule while the person is away
                   "autopilot_per_day": 2,   # at most this many packages a day (1..10)
-                  "portal_accounts": True,  # the apply agent may create employer portal accounts
+                  # The apply agent may create employer portal accounts: on once the person agreed
+                  # to the Terms of Use that cover it (_tou_accept), unless they turned it off
+                  "portal_accounts": False,
+                  "portal_accounts_decided": False,
+                  # The Terms of Use version the person agreed to, when, and how ("signin": they
+                  # continued on the sign-in screen; "notice": Auto-apply's one-line notice)
+                  "tou_version": "", "tou_at": 0.0, "tou_via": "",
                   "mail_alias": "",         # the person's SponsorJobs address (docs/mail-alias.md)
                   "apply_with_alias": True, # apply with it, so codes and links reach the agent
                   # How long the apply agent waits on a question before it parks the job (minutes)
@@ -2101,6 +2107,9 @@ def _set_prefs(patch: dict) -> dict:
                                                  cur.get("autopilot_per_day", 2))
     if "portal_accounts" in patch:           # "Create portal accounts for me" (docs/apply-agent.md 4)
         cur["portal_accounts"] = bool(patch["portal_accounts"])
+        cur["portal_accounts_decided"] = True     # the person's own choice, either way
+    if "portal_accounts_decided" in patch:
+        cur["portal_accounts_decided"] = bool(patch["portal_accounts_decided"])
     if "mail_alias" in patch:
         cur["mail_alias"] = str(patch["mail_alias"] or "").strip()[:120]
     if "apply_with_alias" in patch:
@@ -2112,9 +2121,22 @@ def _set_prefs(patch: dict) -> dict:
             pass
     if "terms_decided" in patch:
         cur["terms_decided"] = bool(patch["terms_decided"])
+    if "tou_version" in patch:
+        cur["tou_version"] = str(patch["tou_version"] or "")[:40]
+        cur["tou_at"] = float(patch.get("tou_at") or 0)
+        cur["tou_via"] = str(patch.get("tou_via") or "")[:20]
     _PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
     _PREFS_FILE.write_text(_json_prefs.dumps(cur), encoding="utf-8")
     return cur
+
+
+def _portal_accounts_on() -> bool:
+    """May the apply agent create an employer portal account? Only once the person agreed to the
+    Terms of Use that cover it (which turns it on, _tou_accept) or switched it on themselves: an
+    older prefs file that carries portal_accounts true without the decided flag (the old default,
+    never agreed to) is off until then."""
+    p = _prefs()
+    return bool(p.get("portal_accounts_decided")) and bool(p.get("portal_accounts"))
 
 
 def _rate_limiter():
@@ -2145,7 +2167,7 @@ def submit_settings():
         "inbox_auto_verify": bool(p.get("inbox_auto_verify")),
         "autopilot": bool(p.get("autopilot")),
         "autopilot_per_day": clamp_per_day(p.get("autopilot_per_day")),
-        "portal_accounts": bool(p.get("portal_accounts", True)),
+        "portal_accounts": _portal_accounts_on(),
         "telegram_configured": _active_channel() is not None,
         "rate": _rate_limiter().status(ts, today),
     })
@@ -6050,8 +6072,7 @@ def _basics_payload(prefs: dict | None = None) -> dict:
             # (Phase 3) Needs a look: two saved salaries that disagree, as ONE question
             "conflicts": [{k: c[k] for k in ("key", "field", "text", "choices")}] if c else [],
             "accept_required_terms": "always" if p.get("accept_required_terms") == "always" else "ask",
-            # False until the person made the choice: setup's last step and the first Apply for
-            # me ask it (never ticked for them)
+            # True once the Terms of Use covered it (sign-in) or the person set the switch
             "terms_decided": p.get("accept_required_terms") == "always" or bool(_prefs().get("terms_decided")),
             "countries": list(countries.NAMES),
             "choices": {f: [{"code": c, "label": w} for c, w in ch] for f, ch in basics.CHOICES.items()}}
@@ -6897,7 +6918,7 @@ def _forget_key(key: str, refs: list) -> int:
         n += 1
     if key == "accept_required_terms":
         _merge_prefs({"accept_required_terms": "ask"})
-        _set_prefs({"terms_decided": False})                  # forgotten: asked again, up front
+        _set_prefs({"terms_decided": False})                  # forgotten: back to asking on each site
     if key == "relocate":
         wa = _work_auth()
         if wa.get("relocate"):
@@ -10356,6 +10377,7 @@ def account_adopt():
     if r.status_code != 200:
         return jsonify({"error": "That sign-in didn't work. Please try again."}), 400
     _save_cred("TAILOR_ACCOUNT_TOKEN", token)   # this device is now that account
+    _tou_accept("signin")                       # "By continuing, you agree to the Terms of Use"
     return jsonify({"ok": True})
 
 
@@ -10403,6 +10425,7 @@ def account_email_verify():
                         "error_code": "unreachable"}), 503
     if st == 200 and data and data.get("token"):
         _save_cred("TAILOR_ACCOUNT_TOKEN", data["token"])   # this device is now that account
+        _tou_accept("signin")                               # "By continuing, you agree to ..."
         return jsonify({"ok": True, "email": data.get("email") or email,
                         "account_id": data.get("account_id")})
     reason = (data or {}).get("reason")
@@ -13997,8 +14020,93 @@ def _terms_company(rec, b: dict) -> str:
 
 def _terms_decided() -> bool:
     """Whether the person made the standing choice on terms a site requires (either way). Never
-    made for them: until they do, the first Apply for me asks it once, before the run starts."""
+    made for them by guesswork: the Terms of Use they agree to turn it on (_tou_accept), and their
+    own switch on the memory page ("What I may do for you") decides it either way."""
     return _terms_pref() == "always" or bool(_prefs().get("terms_decided"))
+
+
+# ---- Applying on your behalf (Kofi, 2026-11-01: "put it in the terms and conditions of use").
+# The Terms of Use (site/terms.html#applying) say that, when the person uses Auto-apply, the agent
+# may accept the privacy notices and terms a job site requires, create an account on a site with
+# their SponsorJobs email, and fill forms with their saved answers. The person agrees where they
+# already click: the sign-in screen's "By continuing, you agree to the Terms of Use" line, recorded
+# here with its version when sign-in finishes; a person who agreed to an older version (or never
+# signed in) sees one quiet line on Auto-apply, and showing it records the version. Agreeing turns
+# on each item the person has not decided themselves; one they turned off stays off, and a job
+# that needs it parks with the usual "needs you" flow. Nothing ever asks before a run.
+TERMS_VERSION = "2026-11-01"
+
+
+def _tou_status() -> dict:
+    p = _prefs()
+    return {"version": TERMS_VERSION, "accepted": p.get("tou_version") == TERMS_VERSION,
+            "accepted_version": p.get("tou_version") or "", "at": p.get("tou_at") or 0,
+            "via": p.get("tou_via") or ""}
+
+
+def _tou_accept(via: str) -> bool:
+    """Record that the person agreed to this version of the Terms of Use (once per version), and
+    turn on what they cover unless the person decided it themselves. True when newly recorded."""
+    import time
+    if _prefs().get("tou_version") == TERMS_VERSION:
+        return False
+    _set_prefs({"tou_version": TERMS_VERSION, "tou_at": time.time(), "tou_via": via})
+    if not _terms_decided():          # never chose "ask me on each site": the Terms cover it
+        _merge_prefs({"accept_required_terms": "always"}, source="onboarding")
+        _set_prefs({"terms_decided": True})
+    if not _prefs().get("portal_accounts_decided"):
+        _set_prefs({"portal_accounts": True})
+    return True
+
+
+@app.get("/api/terms/status")
+@_guard
+def terms_status():
+    """The Terms of Use version and whether the person agreed to it: {version, accepted,
+    accepted_version, at, via}. Auto-apply shows its one-line notice while accepted is false."""
+    return _nostore(jsonify(_tou_status()))
+
+
+@app.post("/api/terms/notice")
+@_guard
+def terms_notice():
+    """Auto-apply showed the one-line notice ("Our Terms now cover accepting site notices for
+    you"): continuing counts, so the version is recorded. Never blocks anything."""
+    _tou_accept("notice")
+    return jsonify(_tou_status())
+
+
+# What the agent may do, as the memory page's switches ("What I may do for you").
+def _consent_payload() -> dict:
+    terms = {"decided": _terms_decided(), "on": _terms_pref() == "always"}
+    accounts = {"decided": bool(_prefs().get("portal_accounts_decided")), "on": _portal_accounts_on()}
+    return {"ok": True, "decided": terms["decided"] and accounts["decided"],
+            "terms": terms, "accounts": accounts, "tou": _tou_status(),
+            "alias": bool(_mail_alias()), "email": _application_email()}
+
+
+@app.get("/api/autoapply/consent")
+@_guard
+def autoapply_consent():
+    """What the apply agent may do: {terms: {decided, on}, accounts: {decided, on}, tou, alias,
+    email}, for the memory page's "What I may do for you" switches and Auto-apply's side row."""
+    return _nostore(jsonify(_consent_payload()))
+
+
+@app.post("/api/autoapply/consent")
+@_guard
+def autoapply_consent_save():
+    """A switch changed {terms?: bool, accounts?: bool}: the person's own choice, kept over what
+    the Terms of Use turn on. Only true or false counts; an item left out keeps what it had."""
+    b = request.json or {}
+    if not any(isinstance(b.get(k), bool) for k in ("terms", "accounts")):
+        return jsonify({"error": "Send terms or accounts as true or false."}), 400
+    if isinstance(b.get("terms"), bool):
+        _merge_prefs({"accept_required_terms": "always" if b["terms"] else "ask"}, source="card")
+        _set_prefs({"terms_decided": True})
+    if isinstance(b.get("accounts"), bool):
+        _set_prefs({"portal_accounts": b["accounts"]})
+    return jsonify(_consent_payload())
 
 
 def _terms_consent_add(record_id, title: str, host: str = "") -> None:
@@ -14244,7 +14352,7 @@ def autoapply_agent_portal_account_create():
                         "message": "No portal account on this site."})
     if not b.get("create"):
         return jsonify({"ok": False, "reason": "no-create", "message": "Send create: true."})
-    if not _prefs().get("portal_accounts", True):
+    if not _portal_accounts_on():
         return jsonify({"ok": False, "reason": "portal_accounts_off",
                         "message": "Creating portal accounts is turned off in Auto-apply settings."})
     existing = _portal_account(host)
@@ -15660,7 +15768,7 @@ def _learn_view(state: dict | None = None) -> dict:
     return {"ok": True, "exclude": names("exclude"), "prioritize": names("prioritize"),
             "learned": rules, "skips": sum(1 for s in st.get("skips", []) if s.get("reason")),
             "needs_sponsorship": needs_sponsorship(_load_prefs()),
-            "portal_accounts": bool(_prefs().get("portal_accounts", True))}
+            "portal_accounts": _portal_accounts_on()}
 
 
 @app.get("/api/autoapply/prefs")
