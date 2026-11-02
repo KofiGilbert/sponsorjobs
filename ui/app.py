@@ -1359,8 +1359,15 @@ def _annalisa_reply(text: str) -> str:
         try:
             user = AS.build_user(_assistant_summary(), AS.scrub_history(history), text)
             reply = AS.honest(str(_make_llm().app_assistant(AS.SYSTEM, user) or ""))
-        except Exception:      # noqa: BLE001 - no key, offline: help instead of a stack trace
+        except Exception as exc:   # noqa: BLE001 - no key, offline: help instead of a stack trace
             traceback.print_exc()
+            # OUR AI being down is said plainly (the same words as the app), never as "help".
+            from llm.broker_client import AI_COMPANY_TEXT, AI_TRANSIENT_TEXT
+            reason = _classify_outage(exc)
+            if reason == "ai_company":
+                return AI_COMPANY_TEXT
+            if reason == "ai_transient":
+                return AI_TRANSIENT_TEXT
             return ""
     if palace is not None:
         try:
@@ -1426,6 +1433,11 @@ _FAILURE_TEXT = {
     "busy": "your AI provider is overloaded right now. Try again in a few minutes.",
     "offline": "this computer looks offline. I'll be able to do it once it's back online.",
     "upgrade_required": "you've used the AI allowance on your plan. Open SponsorJobs to see the passes, or add your own AI key.",
+    # OUR outage (the company AI key failed) and a passing one: plain words, nothing to buy,
+    # nothing about the person's key or connection (llm/broker_client.py).
+    "ai_company": ("SponsorJobs' AI is temporarily unavailable. Your pass and packages are not "
+                   "affected. We have been alerted; try again in a little while."),
+    "ai_transient": "the AI is busy right now. Try again in a moment.",
 }
 
 
@@ -8446,6 +8458,9 @@ def _run_build(pid: str, llm, generate: bool = True) -> None:
         reason = _classify_outage(exc)
         msg = ("Your AI allowance ran out partway through. Top it up, then build again."
                if reason in ("upgrade_required", "no_credit") else
+               # Ours, not theirs: no top-up, no key, no connection talk (llm/broker_client.py).
+               _FAILURE_TEXT["ai_company"] if reason == "ai_company" else
+               "The AI is busy right now. Build again in a moment." if reason == "ai_transient" else
                "The AI could not finish this build." if not reason else
                "SponsorJobs could not reach the AI. Check your connection.")
         progress(state="failed", error=msg, stage="write", tokens=meter.as_dict(), finished=time.time())

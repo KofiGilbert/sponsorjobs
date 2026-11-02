@@ -1383,5 +1383,9 @@
   "act.st.retry": "Nouvel essai",
   "act.st.now": "En cours",
   "act.st.asking": "En attente de vous",
-  "act.st.parked": "En pause"
+  "act.st.parked": "En pause",
+  "outage.aiCompany.h": "L'IA de SponsorJobs est momentanément indisponible",
+  "outage.aiCompany.p": "Votre pass et vos dossiers ne sont pas touchés. Nous avons été prévenus ; réessayez dans un petit moment.",
+  "outage.aiTransient.h": "L'IA est occupée",
+  "outage.aiTransient.p": "L'IA est occupée, réessayer dans un instant suffit en général. Votre pass et vos dossiers ne sont pas touchés."
 }

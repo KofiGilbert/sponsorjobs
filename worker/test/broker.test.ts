@@ -12,9 +12,9 @@ const period = () => periodOf(Date.now());
 
 describe("health", () => {
   it("reports a real provider only when the Anthropic key is set", async () => {
-    expect((await call("/health")).data).toEqual({ ok: true, real_providers: true });
+    expect((await call("/health")).data).toMatchObject({ ok: true, real_providers: true, ai: "ok" });
     expect((await call("/health", { env: { ANTHROPIC_API_KEY: "" } })).data)
-      .toEqual({ ok: true, real_providers: false });
+      .toMatchObject({ ok: true, real_providers: false });
   });
 });
 
@@ -182,17 +182,20 @@ describe("/llm/complete", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("an upstream failure is a 502 that leaks nothing, and nothing is metered", async () => {
+  it("an invalid key is a company outage (503 ai_unavailable) that leaks nothing; nothing is metered", async () => {
+    // The full outage behaviour (the owner's alert, /health) is in outage.test.ts.
     const { id, token } = await newAccount();
+    await env.DB.prepare("DELETE FROM ai_status").run();
     stubAnthropic({ status: 401, body: { error: { message: "invalid x-api-key sk-ant-leak" } } });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const r = await call("/llm/complete", { token, body: { prompt: "hi" } });
-    expect(r.status).toBe(502);
-    expect(r.data).toEqual({ error: "the AI service is unavailable" });
+    expect(r.status).toBe(503);
+    expect(r.data).toEqual({ error: "ai_unavailable", reason: "company" });
     expect(r.text).not.toContain("sk-ant");
     expect(log).toHaveBeenCalled();                          // logged for the operator
     const mine = await env.DB.prepare("SELECT llm_tokens FROM usage WHERE user = ?").bind(id).first();
     expect(mine).toBeNull();
+    await env.DB.prepare("DELETE FROM ai_status").run();
   });
 
   it("retries an overloaded upstream (like the SDK) before giving up", async () => {

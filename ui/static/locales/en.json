@@ -1383,5 +1383,9 @@
   "act.st.retry": "Tried again",
   "act.st.now": "Now",
   "act.st.asking": "Waiting on you",
-  "act.st.parked": "Paused"
+  "act.st.parked": "Paused",
+  "outage.aiCompany.h": "SponsorJobs' AI is temporarily unavailable",
+  "outage.aiCompany.p": "Your pass and packages are not affected. We have been alerted; try again in a little while.",
+  "outage.aiTransient.h": "The AI is busy",
+  "outage.aiTransient.p": "The AI is busy, trying again in a moment usually works. Your pass and packages are not affected."
 }
