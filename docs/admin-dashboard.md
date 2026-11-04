@@ -1,6 +1,6 @@
 # Admin dashboard (admin.sponsorjobs.ai)
 
-A private, read-only page that shows how SponsorJobs is doing: accounts, sign-ins, plans, this
+A private page, read-only apart from one test button, that shows how SponsorJobs is doing: accounts, sign-ins, plans, this
 month's usage and what it roughly costs, the free AI pool, and sign-in e-mails against Resend's free
 plan. It lives in the same Cloudflare Worker as the broker (`worker/src/admin.ts`) and only answers
 on `admin.sponsorjobs.ai`.
@@ -152,6 +152,10 @@ app told people "this one needs you", and nobody was told. Now:
   @userinfobot on Telegram, or read `chat_id` from the `telegram_chats` row of your account), or
   leave it unset and the first address in `ADMIN_EMAILS` is used, provided that account has
   connected Telegram in the app (Settings, Notifications). With neither, only the log is written.
+- **Check it works:** press **Send test alert** on the dashboard's AI card. It sends one Telegram
+  message the same way an outage alert is sent and shows "Test alert sent" or the reason it was not
+  (for example "telegram failed: ... chat not found" when the id is wrong or you have never pressed
+  Start in a chat with the bot; a bot cannot message someone first).
 - Apply the migration before deploying: `npx wrangler d1 migrations apply DB --remote`, then
   `npx wrangler deploy` (both from the `worker` folder).
 

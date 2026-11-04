@@ -94,6 +94,21 @@ async function tell(env: Env, text: string): Promise<string> {
   }
 }
 
+// The admin dashboard's "Send test alert" button: the same path a real alert takes (the bot, the
+// owner chat, sendMessage), so "sent" proves an outage would reach the owner. One per 30 seconds
+// per isolate, so a double click is one message.
+export const TEST_ALERT_TEXT =
+  "SponsorJobs test alert: outage alerts reach you here. Nothing is wrong; this was sent from the admin dashboard.";
+let lastTestAt = 0;
+
+/** Send the test alert. Returns "sent", or why it was not sent (the same strings as a real alert). */
+export async function sendTestAlert(env: Env, now: number): Promise<string> {
+  if (now - lastTestAt < 30) return "a test was sent a moment ago; wait 30 seconds";
+  const result = await tell(env, TEST_ALERT_TEXT);
+  if (result === "sent") lastTestAt = now;
+  return result;
+}
+
 /** Record a failed model call. For a company failure, alert the owner once an hour. */
 export async function recordOutage(env: Env, outage: Outage, now: number): Promise<void> {
   knownOk = false;

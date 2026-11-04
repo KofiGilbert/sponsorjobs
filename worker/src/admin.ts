@@ -1,13 +1,15 @@
-// The founder's private, READ-ONLY admin dashboard at https://admin.sponsorjobs.ai.
+// The founder's private admin dashboard at https://admin.sponsorjobs.ai. Read-only, with one action.
 //
-// Two routes on the admin host only: GET / (one server-rendered HTML page) and GET /admin/api/stats
-// (the same numbers as JSON). Every request is checked by src/access.ts first; nothing here writes
-// to the database. Output never contains a token, a token hash, a code hash or a salt: the queries
+// Routes on the admin host only: GET / (one server-rendered HTML page), GET /admin/api/stats (the
+// same numbers as JSON) and POST /admin/test-alert (the page's "Send test alert" button: one
+// Telegram message to the owner, the way a real outage alert goes; accepted only with this host's
+// own Origin, so another site cannot press it). Every request is checked by src/access.ts first;
+// nothing here writes to the database. Output never contains a token, a token hash, a code hash or a salt: the queries
 // below select only the columns they show.
 
 import { verifyAccess } from "./access";
 import { type Env, intVar } from "./env";
-import { type AiState, aiStatus, BILLING_URL, describeAi } from "./outage";
+import { type AiState, aiStatus, BILLING_URL, describeAi, sendTestAlert } from "./outage";
 import { dayOf, FREE_MODEL, INTERVIEW_SECONDS, PASS_MODEL, PASSES, periodOf } from "./metering";
 import { FREE_POOL_USER } from "./store";
 
@@ -309,7 +311,8 @@ details{margin-top:8px}summary{cursor:pointer;color:var(--ink2);font-size:13px}
   `<strong class="flag">Busy: the last model call failed (rate limit or overload) at ${esc(date(s.ai.since))}.</strong>`}</div>
 ${s.ai.state === "ok" ? "" : `<div class="sub" style="margin-top:6px">Cause: ${esc(s.ai.note || "unknown")} · owner alerted: ${esc(date(s.ai.last_alert_at))}` +
   (s.ai.state === "company_outage" ? ` · <a href="${BILLING_URL}" style="color:inherit">Anthropic billing</a>` : "") + `</div>`}
-<div class="sub" style="margin-top:6px">People see "SponsorJobs' AI is temporarily unavailable" while it is down; passes and packages are not touched. Also on /health as <code>ai</code>.</div></div>
+<div class="sub" style="margin-top:6px">People see "SponsorJobs' AI is temporarily unavailable" while it is down; passes and packages are not touched. Also on /health as <code>ai</code>.</div>
+<form method="post" action="/admin/test-alert" style="margin-top:10px"><button type="submit">Send test alert</button> <span class="sub">One Telegram message to you, the way an outage alert is sent.</span></form></div>
 
 <h2>Accounts</h2>
 <div class="grid4">
@@ -370,6 +373,18 @@ const security = {
   "x-robots-tag": "noindex, nofollow",
 };
 
+const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
+/** The page after "Send test alert": what happened, and the way back. */
+function renderTestResult(result: string): string {
+  const ok = result === "sent";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test alert</title><style>body{font:15px/1.5 system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px}</style></head><body>
+<h1>${ok ? "Test alert sent" : "Test alert not sent"}</h1>
+<p>${ok ? "Check Telegram: the message should be there now." : `Reason: ${esc(result)}`}</p>
+<p><a href="/">Back to the dashboard</a></p></body></html>`;
+}
+
 /** Is this request for the admin host? (Only routes it here; the JWT is what lets it in.) */
 export function isAdminHost(req: Request, env: Env): boolean {
   const want = (env.ADMIN_HOST || ADMIN_HOST_DEFAULT).toLowerCase();
@@ -381,10 +396,18 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
   if (!who) {
     return new Response("Forbidden", { status: 403, headers: { "content-type": "text/plain", ...security } });
   }
+  const url = new URL(req.url);
+  const path = url.pathname;
+  if (req.method === "POST" && path === "/admin/test-alert") {
+    if (req.headers.get("origin") !== url.origin) {
+      return new Response("Forbidden", { status: 403, headers: { "content-type": "text/plain", ...security } });
+    }
+    const result = await sendTestAlert(env, Math.floor(nowMs / 1000));
+    return new Response(renderTestResult(result), { headers: { "content-type": "text/html; charset=utf-8", ...security, "content-security-policy": PAGE_CSP } });
+  }
   if (req.method !== "GET" && req.method !== "HEAD") {
     return new Response("Method not allowed", { status: 405, headers: { "content-type": "text/plain", ...security } });
   }
-  const path = new URL(req.url).pathname;
   if (path === "/admin/api/stats") {
     return new Response(JSON.stringify(await collectStats(env, nowMs)),
       { headers: { "content-type": "application/json", ...security } });
@@ -393,7 +416,7 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
     return new Response(renderPage(await collectStats(env, nowMs), who.email), {
       headers: {
         "content-type": "text/html; charset=utf-8", ...security,
-        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        "content-security-policy": PAGE_CSP,
       },
     });
   }
