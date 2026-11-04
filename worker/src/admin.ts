@@ -427,7 +427,7 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
     return page("users", "Users", usersPage({ rows, total, q, filter, sort, page: pg, now }), { query: q, sub: filter });
   }
   const um = USER_PATH.exec(path);
-  if (um && !um[2]) return userResponse(env, idOf(um[1]!), nowMs, admin, prefs, here, { flash: flashOf(url) });
+  if (um && !um[2]) return userResponse(env, idOf(um[1]!), nowMs, admin, prefs, here, { flash: flashOf(url), act: url.searchParams.get("act") });
   if (path === "/revenue") {
     const [rd, granted30] = await Promise.all([railData(env, nowMs), grantedSince(env.DB, now - 30 * 86_400)]);
     return page("revenue", "Revenue", revenuePage({ revenue: rd.revenue, granted30, now }), { rd });
@@ -465,7 +465,7 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
 type AuditRowT = { id: number; at: number; admin: string; action: string; target: string; detail: string; reason: string };
 
 async function userResponse(env: Env, id: string, nowMs: number, admin: string, prefs: Prefs, here: string,
-                            o: { revealed?: boolean; flash?: Shell["flash"] }): Promise<Response> {
+                            o: { revealed?: boolean; flash?: Shell["flash"]; act?: string | null }): Promise<Response> {
   const now = Math.floor(nowMs / 1000);
   const [u, history, rd] = await Promise.all([userDetail(env.DB, id, now), auditLog(env.DB, { target: id, limit: 20 }), railData(env, nowMs)]);
   const base = { viewer: admin, generatedAt: now, flash: o.flash ?? null, rail: rd.rail, badges: badgesFor(rd.att), here };
@@ -473,7 +473,8 @@ async function userResponse(env: Env, id: string, nowMs: number, admin: string, 
   const masked = u.email ? maskEmail(u.email) : "Anonymous account";
   const p2 = visited(prefs, `/users/${encodeURIComponent(id)}`, masked);          // never the revealed e-mail
   return html(shell({ ...base, prefs: p2, page: "users", title: u.email && o.revealed ? u.email : masked,
-    crumbs: [{ label: "Users", href: "/users" }], body: userPage({ u, history, revealed: Boolean(o.revealed), now }) }), 200, prefsCookie(p2));
+    crumbs: [{ label: "Users", href: "/users" }], body: userPage({ u, history, revealed: Boolean(o.revealed), now,
+      act: (["pass", "interviews", "suspend"] as const).find((k) => k === o.act) ?? "pass" }) }), 200, prefsCookie(p2));
 }
 
 const suspendedCount = async (db: D1Database) =>

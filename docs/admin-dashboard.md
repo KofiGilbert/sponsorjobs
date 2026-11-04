@@ -12,6 +12,9 @@ Icons: Phosphor, the kit's set (MIT, `worker/src/admin_icons.ts`). Where the kit
 have no use for (the theme switch, the favourites list, the "Today" range), it is left out rather
 than shown as a button that does nothing.
 
+How it must look (the kit's measurements, colours, blocks, wording and how to check against the
+Figma file) is in `docs/admin-design.md`; read it before changing anything on screen.
+
 **Cost: $0.** Cloudflare Access (Zero Trust) is free for up to 50 users, and the Worker route uses
 the plan you already have.
 

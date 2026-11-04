@@ -4,23 +4,19 @@
 
 import type { Stats } from "./admin";
 import {
-  ACTION_LABEL, type Activity, type AuditRow, type Feed, FEED_STALE_HOURS, type PoolSetting, RANGES, type RangeKey, type Revenue,
+  ACTION_LABEL, type Activity, lastMonths, type AuditRow, type Feed, FEED_STALE_HOURS, type PoolSetting, RANGES, type RangeKey, type Revenue,
   type Runs, type Spender, type UserDetail, type UserFilter, type UserRow, type UserSort, USERS_PER_PAGE, netSince,
 } from "./admin_data";
 import { MAX_INTERVIEWS } from "./admin_actions";
 import type { Env } from "./env";
 import { INTERVIEW_SECONDS, PLANS } from "./metering";
 import {
-  ago, badge, barChart, card, date, day, donut, esc, facts, kpi, lineBlock, maskEmail, menu, meter, num,
+  ago, badge, barChart, card, date, day, donut, esc, facts, kpi, lineBlock, maskEmail, menu, meter, mini, num,
   PASS_LABEL, pageTitle, railList, shortNum, siteBars, table, usd,
 } from "./admin_ui";
 
 const userHref = (id: string) => `/users/${encodeURIComponent(id)}`;
 const planBadge = (plan: string) => badge(PASS_LABEL[plan] ?? plan, plan === "free" ? "plain" : "ok");
-const daysLeft = (until: number, now: number) => {
-  const d = Math.ceil((until - now) / 86_400);
-  return d <= 1 ? "ends within a day" : `${d} days left`;
-};
 /** "pass30" -> "Job Hunt Pass", "pack_3" -> "3-interview pack". */
 const productLabel = (k: string) => PASS_LABEL[k] ?? (k.startsWith("pack_") ? `${k.slice(5)}-interview pack` : "Other amount");
 const title = pageTitle;
@@ -168,47 +164,60 @@ export function usersPage(o: { rows: UserRow[]; total: number; q: string; filter
 
 // ---- one person --------------------------------------------------------------------------------- //
 
-export function userPage(o: { u: UserDetail; history: AuditRow[]; revealed: boolean; now: number }): string {
+export type UserAct = "pass" | "interviews" | "suspend";
+
+/** One person, in the kit's grammar: four number cards, a chart, a short details list, one action
+ * at a time behind the kit's tabs, then tables. */
+export function userPage(o: { u: UserDetail; history: AuditRow[]; revealed: boolean; now: number; act: UserAct }): string {
   const { u, now } = o;
-  const plan = PLANS[u.plan];
-  const head = title(u.email ? (o.revealed ? u.email : maskEmail(u.email)) : "Anonymous account",
-    `<span class="filters">${planBadge(u.plan)}<span class="fsep"></span>${u.suspended_at ? badge(`Suspended ${day(u.suspended_at)}`, "bad") : badge("Active", "ok")}` +
-    (u.email && !o.revealed ? `<span class="fsep"></span><form method="post" action="${userHref(u.account_id)}/reveal"><button class="btn" type="submit">Show full e-mail</button></form>` : "") + `</span>`);
-  const account = card("Account", facts([
-    ["Account id", `<span class="mono">${esc(u.account_id)}</span>`],
-    ["E-mail", u.email ? esc(o.revealed ? u.email : maskEmail(u.email)) : `<span class="muted">none (anonymous)</span>`],
-    ["Created", esc(date(u.created_at))],
-    ["E-mail added", esc(date(u.email_at))],
-    ["Plan", `${esc(PASS_LABEL[u.plan] ?? u.plan)}${u.plan !== "free" ? ` until ${esc(date(u.pass_until))} (${esc(daysLeft(u.pass_until, now))})` : u.stored_plan && u.stored_plan !== "free" ? ` <span class="muted small">(${esc(PASS_LABEL[u.stored_plan] ?? u.stored_plan)} ended ${esc(day(u.pass_until))})</span>` : ""}`],
-    ["Left on the pass", u.plan !== "free" ? `${num(u.pass_packages)} packages, ${num(u.pass_seconds / INTERVIEW_SECONDS)} live interviews` : `<span class="muted">n/a</span>`],
-    ["Extra interviews", num(u.credit_seconds / INTERVIEW_SECONDS)],
-    ["Signed-in devices", num(u.sessions)],
-    ["Telegram", u.telegram.linked ? `linked${u.telegram.paused ? ", paused" : ""}${u.telegram.linked_at ? ` <span class="muted small">since ${esc(u.telegram.linked_at.slice(0, 10))}</span>` : ""}` : `<span class="muted">not linked</span>`],
-    ["Application e-mail", u.alias ? `<span class="mono">${esc(o.revealed ? u.alias.address : maskEmail(u.alias.address))}</span> <span class="muted small">${num(u.alias.mails_30d)} mail${u.alias.mails_30d === 1 ? "" : "s"} in 30 days</span>` : `<span class="muted">none</span>`],
-    ["Monthly AI limit", plan?.llmTokenCap ? `${num(plan.llmTokenCap)} tokens` : "n/a"],
-  ]), { span: 2 });
-  const reasonField = `<input type="text" name="reason" required minlength="3" maxlength="300" placeholder="Reason" aria-label="Reason">`;
   const id = userHref(u.account_id);
-  const actions = card("Actions",
-    `<form class="act" method="post" action="${id}/give-pass"><h3>Give a pass</h3><div class="row">` +
-      `<select name="pass" aria-label="Pass"><option value="pass30">Job Hunt Pass (30 days)</option><option value="pass90">Season Pass (90 days)</option></select>` +
-      `${reasonField}<button class="btn primary" type="submit">Give pass</button></div></form>` +
-    `<form class="act" method="post" action="${id}/add-interviews"><h3>Add live interviews</h3><div class="row">` +
+  const onPass = u.plan !== "free";
+  const daysLeftN = onPass ? Math.max(0, Math.ceil((u.pass_until - now) / 86_400)) : 0;
+  const interviewsLeft = (onPass ? u.pass_seconds : 0) / INTERVIEW_SECONDS + u.credit_seconds / INTERVIEW_SECONDS;
+  const freeUsed = u.months.find((m) => m.period === new Date(now * 1000).toISOString().slice(0, 7))?.packages ?? 0;
+  const head = title(u.email ? (o.revealed ? u.email : maskEmail(u.email)) : "Anonymous account",
+    `<span class="filters">${planBadge(u.plan)}<span class="fsep"></span>${u.suspended_at ? badge("Suspended", "bad") : badge("Active", "ok")}` +
+    (u.email && !o.revealed ? `<span class="fsep"></span><form method="post" action="${id}/reveal"><button class="btn" type="submit">Show full e-mail</button></form>` : "") + `</span>`);
+
+  const months = lastMonths(now * 1000, 6).map((m) => ({ label: m.label, value: u.months.find((x) => x.period === m.period)?.tokens ?? 0 }));
+  const details = mini([
+    ["Account", `<span class="mono">${esc(u.account_id.slice(0, 13))}</span>`],
+    ["Joined", esc(day(u.created_at))],
+    ["Sign-in", u.email ? "E-mail" : "Anonymous"],
+    ["Devices", num(u.sessions)],
+    ["Telegram", u.telegram.linked ? (u.telegram.paused ? "Paused" : "Linked") : "No"],
+    ["Alias", u.alias ? `${esc((o.revealed ? u.alias.address : maskEmail(u.alias.address)).split("@")[0]!)}` : "No"],
+  ]);
+
+  const reason = `<input type="text" name="reason" required minlength="3" maxlength="300" placeholder="Reason" aria-label="Reason">`;
+  const forms: Record<UserAct, string> = {
+    pass: `<form class="act" method="post" action="${id}/give-pass"><div class="row">` +
+      `<select name="pass" aria-label="Pass"><option value="pass30">Job Hunt Pass</option><option value="pass90">Season Pass</option></select>` +
+      `${reason}<button class="btn primary" type="submit">Give pass</button></div></form>`,
+    interviews: `<form class="act" method="post" action="${id}/add-interviews"><div class="row">` +
       `<select name="interviews" aria-label="Interviews">${Array.from({ length: MAX_INTERVIEWS }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join("")}</select>` +
-      `${reasonField}<button class="btn" type="submit">Add</button></div></form>` +
-    (u.suspended_at
-      ? `<form class="act" method="post" action="${id}/unsuspend"><h3>Restore</h3><div class="row">${reasonField}` +
-        `<button class="btn" type="submit">Restore</button></div></form>`
-      : `<form class="act" method="post" action="${id}/suspend"><h3>Suspend</h3><div class="row">${reasonField}` +
-        `<input type="text" name="confirm" required placeholder="Type SUSPEND" aria-label="Type SUSPEND to confirm" style="flex:0 1 140px">` +
-        `<button class="btn danger" type="submit">Suspend</button></div></form>`), { span: 2 });
-  const months = card("Usage by Month", table(["Month", "AI tokens", "Free packages", "Pass packages"],
-    u.months.map((r) => [esc(r.period), num(r.tokens), num(r.packages), num(r.pass_packages)]), "None."), { span: 2 });
-  const interviews = card("Live Interviews", table(["Started", "Used", "Ended"],
-    u.interviews.map((r) => [esc(date(r.started)), `${num(r.used / 60)} min`, r.ended ? esc(date(r.ended)) : `<span class="muted">open</span>`]),
-    "None."), { span: 2 });
-  const history = card("History", auditTable(o.history, false), { aside: `<a class="muted small" href="/audit">Audit log</a>` });
-  return head + account + actions + months + interviews + history;
+      `${reason}<button class="btn primary" type="submit">Add</button></div></form>`,
+    suspend: u.suspended_at
+      ? `<form class="act" method="post" action="${id}/unsuspend"><div class="row">${reason}<button class="btn primary" type="submit">Restore</button></div></form>`
+      : `<form class="act" method="post" action="${id}/suspend"><div class="row">${reason}` +
+        `<input type="text" name="confirm" required placeholder="Type SUSPEND" aria-label="Type SUSPEND to confirm" style="flex:0 1 130px">` +
+        `<button class="btn danger" type="submit">Suspend</button></div></form>`,
+  };
+  const tabs = ([["pass", "Give Pass"], ["interviews", "Add Interviews"], ["suspend", u.suspended_at ? "Restore" : "Suspend"]] as const)
+    .map(([k, l]) => `<a class="ltab${o.act === k ? " on" : ""}" href="${id}?act=${k}">${l}</a>`).join("");
+
+  return head +
+    kpi("Plan", ({ free: "Free", pass30: "Job Hunt", pass90: "Season" } as Record<string, string>)[u.plan] ?? u.plan, { tone: "a" }) +
+    kpi(onPass ? "Days Left" : "Free Packages", onPass ? num(daysLeftN) : `${num(freeUsed)} / ${num(PLANS.free!.packages)}`, { tone: "b" }) +
+    kpi("Packages Left", onPass ? num(u.pass_packages) : num(Math.max(0, PLANS.free!.packages - freeUsed)), { tone: "a" }) +
+    kpi("Interviews Left", num(interviewsLeft), { tone: "b" }) +
+    card("AI Use", barChart(months.map((m) => ({ label: m.label, value: m.value, display: `${num(m.value)} tokens` })),
+      { aria: "AI tokens per month, last 6 months", single: true }), { span: 3 }) +
+    card("Details", details, { span: 1 }) +
+    `<section class="block s2"><div class="ltabs">${tabs}</div>${forms[o.act]}</section>` +
+    card("Live Interviews", table(["Date", "Minutes"],
+      u.interviews.map((r) => [esc(day(r.started)), num(r.used / 60)]), "None yet"), { span: 2 }) +
+    card("History", auditTable(o.history, false), { aside: `<a class="muted small" href="/audit">Audit log</a>` });
 }
 
 // ---- Revenue ------------------------------------------------------------------------------------ //

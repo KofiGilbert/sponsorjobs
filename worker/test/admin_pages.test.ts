@@ -154,16 +154,25 @@ describe("users", () => {
       env.DB.prepare("INSERT INTO mail_events(user, kind, code, link, subject, sender, at) VALUES(?, 'code', '918273', 'https://secret.example/verify', 's', 'f', ?)").bind(a.id, now),
     ]);
     const page = await get(`/users/${a.id}`);
-    expect(page.text).toContain("zo***@mail.sponsorjobs.ai");     // the alias carries a name: masked too
-    expect(page.text).not.toContain("zoe.test@");
-    expect(page.text).toContain("1 mail in 30 days");
-    expect((await post(`/users/${a.id}/reveal`, {})).text).toContain("zoe.test@mail.sponsorjobs.ai");
+    expect(page.text).toContain('<span class="lv">zo***</span>');   // the alias carries a name: masked too
+    expect(page.text).not.toContain("zoe.test");
+    expect((await post(`/users/${a.id}/reveal`, {})).text).toContain('<span class="lv">zoe.test</span>');
     expect(page.text).not.toContain("918273");
     expect(page.text).not.toContain("secret.example");
   });
 });
 
 describe("support actions", () => {
+  it("shows one action at a time behind the kit's tabs", async () => {
+    const a = await newAccount();
+    const pass = await get(`/users/${a.id}`);
+    expect(pass.text).toContain(`action="/users/${a.id}/give-pass"`);
+    expect(pass.text).not.toContain(`action="/users/${a.id}/suspend"`);
+    const sus = await get(`/users/${a.id}?act=suspend`);
+    expect(sus.text).toContain(`action="/users/${a.id}/suspend"`);
+    expect(sus.text).toContain('<a class="ltab on" href="/users/' + a.id + '?act=suspend">Suspend</a>');
+  });
+
   it("give a pass: starts it, says so, logs it, and is not counted as a Stripe purchase", async () => {
     const a = await signedInAccount();
     const r = await post(`/users/${a.id}/give-pass`, { pass: "pass90", reason: "beta tester" });

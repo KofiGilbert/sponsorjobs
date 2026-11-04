@@ -369,6 +369,10 @@ export function hbars(rows: Array<{ label: string; value: number; display?: stri
   }).join("")}</ul>`;
 }
 
+/** A short list in the kit's legend style: a 12px label in 40% and its value on the right. */
+export const mini = (rows: Array<[string, string]>) =>
+  `<ul class="dleg mini">${rows.map(([k, v]) => `<li><span class="ll muted">${esc(k)}</span><span class="lv">${v}</span></li>`).join("")}</ul>`;
+
 /** A labelled field list (label left in 40%, value right), as on a person's page. */
 export const facts = (rows: Array<[string, string]>) =>
   `<dl class="facts">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
@@ -486,7 +490,7 @@ ul{list-style:none;margin:0;padding:0}h1,h2,h3{margin:0}
 .seg{stroke-width:6;stroke-linejoin:round}
 .ringempty{fill:none;stroke:var(--fill);stroke-width:30}.ringfull{fill:none;stroke-width:30}.ringfull.p3{stroke:var(--p3s)}.ringfull.p4{stroke:var(--p4)}.ringfull.p6{stroke:var(--p6)}.ringfull.p1{stroke:var(--p1)}
 .dleg{display:flex;flex-direction:column;gap:16px;flex:1;min-width:0;font-size:12px;line-height:16px}
-.dleg li{display:flex;align-items:center}.ldot{width:12px;height:12px;display:grid;place-items:center;flex:none}.ldot .ld{margin:0}
+.dleg li{display:flex;align-items:center}.dleg.mini{gap:20px;padding-top:4px}.dleg.mini .lv{text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%}.ldot{width:12px;height:12px;display:grid;place-items:center;flex:none}.ldot .ld{margin:0}
 .ll{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dleg .lv{margin-left:12px}
 .sbars{display:flex;flex-direction:column;gap:27px;padding-top:8px}
 .sbars li{display:grid;grid-template-columns:57px minmax(0,1fr);align-items:center;gap:16px;font-size:12px;line-height:16px}
