@@ -178,8 +178,125 @@ function detectOS() {
   return null;
 }
 
-// The page ships with macOS as the main button. A Windows visitor gets Windows first; a Linux
-// visitor is pointed at running it from source.
+// ---- 3a. the hero download control --------------------------------------------------------
+// Three OS tabs over a pill, the way jetbrains.com/idea/download does it. Windows and Linux get
+// one "Download" button that opens a menu of files; macOS gets a split pill: "Download" on the
+// left fetches whatever the right half has picked. The visitor's own OS is selected first.
+// Links start at the GitHub releases page and are swapped for the exact files once the release
+// API answers (setDownloadUrls, called from releaseInfo).
+const DL_URLS = {
+  "win-x64": REPO_URL + "/releases/latest",
+  "mac-arm64": REPO_URL + "/releases/latest",
+  "src-zip": REPO_URL + "/archive/refs/heads/main.zip",
+  "src-tgz": REPO_URL + "/archive/refs/heads/main.tar.gz",
+  "src-intel": "open-source.html",
+};
+const DL_MENU = {
+  win: { split: false, hint: 'Windows 10 or later, 64-bit. <a href="download.html">Install steps</a>',
+    items: [{ key: "win-x64", label: ".exe installer (64-bit)" }, { key: "src-zip", label: "Source code (.zip)" }] },
+  mac: { split: true,
+    items: [
+      { key: "mac-arm64", label: ".dmg (Apple Silicon)", hint: 'Apple Silicon installer. <a href="download.html">Install steps</a>' },
+      { key: "src-intel", label: "Intel Mac: run from source", hint: 'No Intel installer yet. <a href="open-source.html">Run it from source</a>.' },
+    ] },
+  linux: { split: false, hint: 'No Linux installer yet. <a href="open-source.html">Run it from source</a>.',
+    items: [{ key: "src-zip", label: "Source code (.zip)" }, { key: "src-tgz", label: "Source code (.tar.gz)" }] },
+};
+const dlState = { os: "mac", picked: { mac: "mac-arm64" }, render: null };
+
+function setDownloadUrls(urls) {
+  Object.assign(DL_URLS, urls);
+  if (dlState.render) dlState.render();
+}
+
+function wireDownloadControl() {
+  const root = $("dlc");
+  if (!root) return;
+  const tabs = [...root.querySelectorAll(".dlc-tab")];
+  const pill = root.querySelector(".dlc-pill");
+  const main = $("dlc-main");
+  const pick = $("dlc-pick");
+  const label = $("dlc-pick-label");
+  const menu = $("dlc-menu");
+  const hint = $("dlc-hint-text");
+  const detected = detectOS();
+  if (detected && DL_MENU[detected]) dlState.os = detected;
+
+  const check = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+  const closeMenu = () => { menu.hidden = true; pick.setAttribute("aria-expanded", "false"); };
+  const openMenu = () => {
+    menu.hidden = false; pick.setAttribute("aria-expanded", "true");
+    const first = menu.querySelector('[aria-checked="true"]') || menu.querySelector(".dlc-item");
+    if (first) first.focus();
+  };
+
+  function render() {
+    const os = dlState.os;
+    const spec = DL_MENU[os];
+    tabs.forEach((t) => {
+      const on = t.dataset.os === os;
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      t.tabIndex = on ? 0 : -1;
+    });
+    pill.classList.toggle("is-split", spec.split);
+    menu.textContent = "";
+    if (spec.split) {
+      const picked = spec.items.find((i) => i.key === dlState.picked[os]) || spec.items[0];
+      label.textContent = picked.label;
+      main.href = DL_URLS[picked.key];
+      main.setAttribute("aria-label", "Download " + picked.label);
+      hint.innerHTML = picked.hint || spec.hint || "";
+      spec.items.forEach((item) => {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "dlc-item"; b.setAttribute("role", "menuitemradio");
+        b.setAttribute("aria-checked", item.key === picked.key ? "true" : "false");
+        b.innerHTML = "<span></span>" + check;
+        b.firstChild.textContent = item.label;
+        b.addEventListener("click", () => { dlState.picked[os] = item.key; closeMenu(); render(); pick.focus(); });
+        menu.append(b);
+      });
+    } else {
+      label.textContent = "Download";
+      main.removeAttribute("aria-label");
+      hint.innerHTML = spec.hint || "";
+      spec.items.forEach((item) => {
+        const a = document.createElement("a");
+        a.className = "dlc-item"; a.setAttribute("role", "menuitem"); a.href = DL_URLS[item.key];
+        a.innerHTML = "<span></span>";
+        a.firstChild.textContent = item.label;
+        a.addEventListener("click", () => closeMenu());
+        menu.append(a);
+      });
+    }
+  }
+  dlState.render = render;
+
+  tabs.forEach((t, i) => {
+    t.addEventListener("click", () => { closeMenu(); dlState.os = t.dataset.os; render(); });
+    t.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+      e.preventDefault();
+      const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+      dlState.os = next.dataset.os; render(); next.focus();
+    });
+  });
+  pick.addEventListener("click", () => (menu.hidden ? openMenu() : closeMenu()));
+  pick.addEventListener("keydown", (e) => { if (e.key === "ArrowDown") { e.preventDefault(); openMenu(); } });
+  menu.addEventListener("keydown", (e) => {
+    const items = [...menu.querySelectorAll(".dlc-item")];
+    const at = items.indexOf(document.activeElement);
+    if (e.key === "Escape") { e.preventDefault(); closeMenu(); pick.focus(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); items[(at + 1) % items.length].focus(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); items[(at - 1 + items.length) % items.length].focus(); }
+    else if (e.key === "Tab") closeMenu();
+  });
+  document.addEventListener("click", (e) => { if (!menu.hidden && !pill.contains(e.target)) closeMenu(); });
+  render();
+}
+
+// Older download buttons (the card at the foot of the home page and download.html) still ship
+// with macOS as the main button. A Windows visitor gets Windows first; a Linux visitor is pointed
+// at running it from source.
 function markPrimaryForThisOS() {
   const os = detectOS();
   if (os !== "win" && os !== "linux") return;
@@ -212,7 +329,7 @@ function mb(bytes) {
 async function releaseInfo() {
   const links = document.querySelectorAll("a[data-os]");
   const meta = $("dl-meta");
-  if (!links.length || !meta) return;
+  if (!links.length && !$("dlc")) return;
   const rel = await getJSON("https://api.github.com/repos/" + REPO + "/releases/latest", 8000);
   if (!rel || !Array.isArray(rel.assets)) return;   // the links already point at releases/latest
   const version = String(rel.tag_name || "").replace(/^v/, "");
@@ -226,6 +343,15 @@ async function releaseInfo() {
     const asset = assets[a.dataset.os];
     if (asset && asset.browser_download_url) a.href = asset.browser_download_url;
   });
+  const urls = {};
+  if (assets.mac && assets.mac.browser_download_url) urls["mac-arm64"] = assets.mac.browser_download_url;
+  if (assets.win && assets.win.browser_download_url) urls["win-x64"] = assets.win.browser_download_url;
+  if (rel.tag_name) {
+    urls["src-zip"] = REPO_URL + "/archive/refs/tags/" + encodeURIComponent(rel.tag_name) + ".zip";
+    urls["src-tgz"] = REPO_URL + "/archive/refs/tags/" + encodeURIComponent(rel.tag_name) + ".tar.gz";
+  }
+  setDownloadUrls(urls);
+  if (!meta) return;
   const primary = $("dl-primary");
   const asset = primary ? assets[primary.dataset.os] : null;
   const parts = [];
@@ -322,6 +448,7 @@ wireTabs();
 wireClips();
 wireHeaderEdge();
 wireEmployerPanel();
+wireDownloadControl();
 markPrimaryForThisOS();
 liveNumbers();
 releaseInfo();
