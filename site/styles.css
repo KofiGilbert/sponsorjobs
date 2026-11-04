@@ -206,22 +206,23 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 /* ---------- hero ---------- */
 .hero { text-align: center; padding: 88px 0 56px; }
 .hero h1 { margin: 0 auto; text-wrap: balance; }
-.hero .lede { max-width: 34ch; margin: 20px auto 0; }
+.hero .lede { max-width: 64ch; margin: 20px auto 0; }
 .hero .cta { margin-top: 32px; display: flex; justify-content: center; }
 .hero .cta .btn { min-height: 52px; padding: 0 28px; font-size: 17px; }
 .hero .alt { margin-top: 14px; }
 .hero .alt a { color: var(--text-2); }
 
 /* ---------- pastel bands with a screenshot ---------- */
-.band { border-radius: var(--r-l); background: var(--band-a); padding: 40px 48px 0; overflow: hidden; }
+.band { border-radius: var(--r-l); background: var(--band-a); padding: 40px 48px 48px; overflow: hidden; }
 .band-b { background: var(--band-b); }
 .band-c { background: var(--band-c); }
 .band-d { background: var(--band-d); }
 .band-title { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 24px; color: #19191C; }
 :root[data-theme="dark"] .band-title { color: #F3F3F5; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .band-title { color: #F3F3F5; } }
-.shot { margin: 0; border-radius: 12px 12px 0 0; overflow: hidden; box-shadow: var(--shadow); background: #1B1B1F; }
-.shot img { width: 100%; }
+.shot { margin: 0; border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); background: #1B1B1F; }
+.shot img, .shot video { width: 100%; height: auto; display: block; }
+.shot video { aspect-ratio: 16 / 10; object-fit: cover; }
 
 /* ---------- proof strip ---------- */
 .proof { padding: 72px 0 8px; text-align: center; }
@@ -451,9 +452,9 @@ table.compare { width: 100%; border-collapse: collapse; margin-top: 64px; font-s
   .nav-links > a:not(.btn) { padding: 8px; }
   .wordmark { gap: 8px; }
   .hero { padding: 56px 0 40px; }
-  .band { padding: 24px 16px 0; border-radius: 16px; }
+  .band { padding: 24px 16px 24px; border-radius: 16px; }
   .band-title { font-size: 17px; margin-bottom: 16px; }
-  .shot { border-radius: 8px 8px 0 0; }
+  .shot { border-radius: 8px; }
   .section { padding-top: 72px; }
   .proof { padding-top: 48px; }
   .proof .cells { gap: 20px 32px; }

@@ -270,6 +270,8 @@ function wireTabs() {
       const panel = $(t.getAttribute("aria-controls"));
       if (!panel) return;
       panel.hidden = !on;
+      // Only the open panel's clip plays; the others pause (and rewind) so four videos never run at once.
+      panel.querySelectorAll("video").forEach((v) => { if (on) { if (!reducedMotion) v.play().catch(() => {}); } else { v.pause(); v.currentTime = 0; } });
       // The panel arrives from its tab: a short rise that a second click re-targets (restart the
       // animation from the current frame rather than waiting for it to finish).
       if (on && !was) {
@@ -296,6 +298,15 @@ function wireTabs() {
   });
 }
 
+// ---- 7. feature clips: still frames for people who asked for less motion ---------------------
+const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function wireClips() {
+  document.querySelectorAll(".panel video").forEach((v) => {
+    if (reducedMotion) { v.removeAttribute("autoplay"); v.pause(); }
+    else if (!v.closest(".panel").hidden) v.play().catch(() => {});
+  });
+}
+
 // ---- 6. the header's scroll edge -------------------------------------------------------------
 // The header is a floating layer; its edge shows only once content has scrolled under it.
 function wireHeaderEdge() {
@@ -308,6 +319,7 @@ function wireHeaderEdge() {
 }
 
 wireTabs();
+wireClips();
 wireHeaderEdge();
 wireEmployerPanel();
 markPrimaryForThisOS();
