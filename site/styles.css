@@ -212,6 +212,62 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .hero .alt { margin-top: 14px; }
 .hero .alt a { color: var(--text-2); }
 
+/* ---------- hero download control: OS tabs over a pill, a split pill on macOS ---------- */
+/* Geometry read off jetbrains.com/idea/download: tabs 16px/24px with 8px vertical padding and
+   24px between them, a 2px underline under the chosen one; the pill is 40px tall, 20px radius,
+   24px side padding, 16px text, a 24px chevron box; notes are 13px/20px, muted. */
+.dlc { margin-top: 32px; display: flex; flex-direction: column; align-items: center; }
+.dlc-tabs { display: flex; gap: 24px; }
+.dlc-tab {
+  appearance: none; background: none; border: 0; margin: 0; padding: 8px 0; position: relative;
+  font: 400 16px/24px var(--sans); color: var(--text-2); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: color var(--dur) var(--ease);
+}
+.dlc-tab::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 1px; background: var(--text); opacity: 0; transition: opacity var(--dur) var(--ease); }
+.dlc-tab:hover, .dlc-tab[aria-selected="true"] { color: var(--text); }
+.dlc-tab[aria-selected="true"]::after { opacity: 1; }
+.dlc-tab:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; border-radius: 4px; }
+/* The pill sits exactly under the tabs; the note hangs off its right edge (a 1fr / auto / 1fr grid). */
+.dlc-row { margin-top: 32px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; column-gap: 24px; width: 100%; }
+.dlc-row .dlc-pill { grid-column: 2; }
+.dlc-row .dlc-note { grid-column: 3; justify-self: start; }
+.dlc-pill { position: relative; display: inline-flex; height: 40px; border-radius: 20px; transition: transform var(--press) ease-out; }
+.dlc-pill:active { transform: scale(.97); }
+.dlc-main, .dlc-pick {
+  display: inline-flex; align-items: center; height: 40px; padding: 0 24px; margin: 0; border: 0;
+  background: var(--pill-bg); color: var(--pill-fg); font: 400 16px/1 var(--sans); text-decoration: none; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; transition: background-color var(--dur) var(--ease);
+}
+.dlc-main:hover, .dlc-pick:hover { background: var(--pill-hover); }
+.dlc-main { border-radius: 20px; }
+.dlc-pick { border-radius: 20px; gap: 8px; padding-right: 20px; }
+.dlc-pill.is-split .dlc-main { border-radius: 20px 0 0 20px; }
+.dlc-pill.is-split .dlc-pick { border-radius: 0 20px 20px 0; border-left: 1px solid var(--bg); }
+.dlc-pill:not(.is-split) .dlc-main { display: none; }
+.dlc-chev { width: 24px; height: 24px; flex: none; transition: transform var(--dur) var(--ease); }
+.dlc-pick[aria-expanded="true"] .dlc-chev { transform: rotate(180deg); }
+.dlc-main:focus-visible, .dlc-pick:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.dlc-menu {
+  position: absolute; z-index: 20; top: calc(100% + 8px); left: 0; min-width: 100%; padding: 6px; margin: 0; text-align: left;
+  background: var(--bg); border: 1px solid var(--card-line); border-radius: 12px; box-shadow: var(--shadow);
+  animation: dlc-in .18s var(--ease) both;
+}
+.dlc-pill.is-split .dlc-menu { left: auto; right: 0; min-width: 0; }
+@keyframes dlc-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.dlc-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; box-sizing: border-box;
+  min-height: 40px; padding: 0 12px 0 14px; border: 0; border-radius: 8px; margin: 0; background: none; text-align: left;
+  font: 400 16px/1.2 var(--sans); color: var(--text); text-decoration: none; cursor: pointer; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent; transition: background-color var(--dur) var(--ease);
+}
+.dlc-item:hover, .dlc-item:focus-visible { background: var(--bg-soft); outline: none; }
+.dlc-item svg { width: 18px; height: 18px; flex: none; opacity: 0; }
+.dlc-item[aria-checked="true"] svg { opacity: 1; }
+.dlc-note { margin: 0; font-size: 13px; line-height: 20px; color: var(--text-3); }
+.dlc-hint { margin: 16px 0 0; display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 20px; color: var(--text-3); }
+.dlc-hint svg { width: 16px; height: 16px; flex: none; opacity: .7; }
+.dlc-hint a { color: var(--text-2); }
+
 /* ---------- pastel bands with a screenshot ---------- */
 .band { border-radius: var(--r-l); background: var(--band-a); padding: 40px 48px 48px; overflow: hidden; }
 .band-b { background: var(--band-b); }
@@ -452,6 +508,9 @@ table.compare { width: 100%; border-collapse: collapse; margin-top: 64px; font-s
   .nav-links > a:not(.btn) { padding: 8px; }
   .wordmark { gap: 8px; }
   .hero { padding: 56px 0 40px; }
+  .dlc { margin-top: 28px; }
+  .dlc-row { margin-top: 24px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .dlc-hint { text-align: left; }
   .band { padding: 24px 16px 24px; border-radius: 16px; }
   .band-title { font-size: 17px; margin-bottom: 16px; }
   .shot { border-radius: 8px; }
@@ -471,8 +530,9 @@ table.compare { width: 100%; border-collapse: collapse; margin-top: 64px; font-s
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: 0s !important; }
-  .btn:active, .tab:active, .theme-toggle:active, .nav-links > a:not(.btn):active, .emp .try button:active { transform: none; }
+  .btn:active, .tab:active, .theme-toggle:active, .nav-links > a:not(.btn):active, .emp .try button:active, .dlc-pill:active { transform: none; }
   .panel.is-entering { animation: fade-in .16s ease both; }
+  .dlc-menu { animation: fade-in .16s ease both; }
   .faq details p { animation: fade-in .16s ease both; }
   .faq summary::after { transition: none; }
   @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
