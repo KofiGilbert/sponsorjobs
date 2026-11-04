@@ -264,10 +264,20 @@ function wireTabs() {
   const select = (tab, focus) => {
     tabs.forEach((t) => {
       const on = t === tab;
+      const was = t.getAttribute("aria-selected") === "true";
       t.setAttribute("aria-selected", String(on));
       t.tabIndex = on ? 0 : -1;
       const panel = $(t.getAttribute("aria-controls"));
-      if (panel) panel.hidden = !on;
+      if (!panel) return;
+      panel.hidden = !on;
+      // The panel arrives from its tab: a short rise that a second click re-targets (restart the
+      // animation from the current frame rather than waiting for it to finish).
+      if (on && !was) {
+        panel.classList.remove("is-entering");
+        void panel.offsetWidth;
+        panel.classList.add("is-entering");
+        panel.addEventListener("animationend", () => panel.classList.remove("is-entering"), { once: true });
+      }
     });
     if (focus) tab.focus();
   };
@@ -286,7 +296,19 @@ function wireTabs() {
   });
 }
 
+// ---- 6. the header's scroll edge -------------------------------------------------------------
+// The header is a floating layer; its edge shows only once content has scrolled under it.
+function wireHeaderEdge() {
+  const head = document.querySelector(".site-head");
+  if (!head) return;
+  let ticking = false;
+  const update = () => { head.classList.toggle("is-scrolled", window.scrollY > 2); ticking = false; };
+  window.addEventListener("scroll", () => { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
+  update();
+}
+
 wireTabs();
+wireHeaderEdge();
 wireEmployerPanel();
 markPrimaryForThisOS();
 liveNumbers();
