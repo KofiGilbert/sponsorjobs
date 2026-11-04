@@ -25,6 +25,9 @@
     label(btn);
     btn.addEventListener("click", function () {
       var next = current() === "dark" ? "light" : "dark";
+      // Ease the brightness change (styles.css transitions while .theme-anim is on), never a flash.
+      root.classList.add("theme-anim");
+      setTimeout(function () { root.classList.remove("theme-anim"); }, 400);
       root.setAttribute("data-theme", next);
       try { localStorage.setItem(KEY, next); } catch (_e) { /* private window: the choice lasts this page only */ }
       label(btn);
