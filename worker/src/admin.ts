@@ -21,7 +21,7 @@ import { dayOf, FREE_MODEL, INTERVIEW_SECONDS, PASS_MODEL, PASSES, periodOf } fr
 import { FREE_POOL_CAP_KEY, FREE_POOL_USER, poolCapOverride } from "./store";
 import { ActionError, accountAction, formOf, logReveal, sameOrigin, setFreePool, testAlert } from "./admin_actions";
 import {
-  aiCostSeries, aiStatusRow, auditLog, emailDomains, expiredPasses, feed, githubRuns, listUsers, monthly, poolDays, poolSetting,
+  aiCostSeries, aiStatusRow, auditCounts, auditLog, emailDays, emailDomains, expiredPasses, feed, githubRuns, listUsers, monthly, poolDays, poolSetting,
   RANGES, type RangeKey, rangeBounds, rangeCounts, recentActivity, revenue, revenueSeries, signupNetworks, spend, totalUsersSeries,
   userDetail,
 } from "./admin_data";
@@ -438,11 +438,13 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
     const [rd, days, sp, months, networks, domains] = await Promise.all([
       railData(env, nowMs), poolDays(env.DB, todayStart), spend(env.DB, periodOf(nowMs), now),
       monthly(env.DB, nowMs), signupNetworks(env.DB, today, env), emailDomains(env.DB)]);
-    return page("usage", "Usage & costs", usagePage({ stats: rd.stats, pool: rd.pool, poolDays: days, spend: sp, months, networks, domains, now }), { rd });
+    const act = (["limit", "default", "pause"] as const).find((k) => k === url.searchParams.get("act")) ?? "limit";
+    return page("usage", "Usage & costs", usagePage({ stats: rd.stats, pool: rd.pool, poolDays: days, spend: sp, months, networks, domains, now, act }), { rd });
   }
   if (path === "/health") {
-    const rd = await railData(env, nowMs);
-    return page("health", "Health", healthPage({ stats: rd.stats, revenue: rd.revenue, env, now }), { rd });
+    const todayStart = Math.floor(Date.parse(`${dayOf(nowMs)}T00:00:00Z`) / 1000);
+    const [rd, eDays] = await Promise.all([railData(env, nowMs), emailDays(env.DB, todayStart, 7)]);
+    return page("health", "Health", healthPage({ stats: rd.stats, revenue: rd.revenue, env, now, emailDays: eDays }), { rd });
   }
   if (path === "/feed") {
     const rd = await railData(env, nowMs);
@@ -455,8 +457,9 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
   }
   if (path === "/audit") {
     const before = Number.parseInt(url.searchParams.get("before") ?? "", 10);
-    const rows = await auditLog(env.DB, { limit: 51, before: Number.isFinite(before) && before > 0 ? before : undefined });
-    return page("audit", "Audit log", auditPage({ rows: rows.slice(0, 50), more: rows.length > 50 }));
+    const [rows, counts] = await Promise.all([auditLog(env.DB, { limit: 51, before: Number.isFinite(before) && before > 0 ? before : undefined }),
+      auditCounts(env.DB, now - 30 * 86_400)]);
+    return page("audit", "Audit log", auditPage({ rows: rows.slice(0, 50), more: rows.length > 50, now, counts }));
   }
   const rd = await railData(env, nowMs);
   return html(shell({ page: "overview", title: "Not found", body: notFound(), viewer: admin, generatedAt: now, prefs, here, rail: rd.rail }), 404);

@@ -11,14 +11,14 @@ import { MAX_INTERVIEWS } from "./admin_actions";
 import type { Env } from "./env";
 import { INTERVIEW_SECONDS, PLANS } from "./metering";
 import {
-  ago, badge, barChart, card, date, day, donut, esc, facts, kpi, lineBlock, maskEmail, menu, meter, mini, num,
-  PASS_LABEL, pageTitle, railList, shortNum, siteBars, table, usd,
+  ago, badge, barChart, card, day, donut, esc, kpi, lineBlock, maskEmail, menu, mini, num,
+  PASS_LABEL, pageTitle, railList, shortNum, siteBars, table, usd, when,
 } from "./admin_ui";
 
 const userHref = (id: string) => `/users/${encodeURIComponent(id)}`;
 const planBadge = (plan: string) => badge(PASS_LABEL[plan] ?? plan, plan === "free" ? "plain" : "ok");
 /** "pass30" -> "Job Hunt Pass", "pack_3" -> "3-interview pack". */
-const productLabel = (k: string) => PASS_LABEL[k] ?? (k.startsWith("pack_") ? `${k.slice(5)}-interview pack` : "Other amount");
+const productLabel = (k: string) => PASS_LABEL[k] ?? (k.startsWith("pack_") ? `Pack of ${k.slice(5)}` : "Other");
 const title = pageTitle;
 const pct = (a: number, b: number) => (b > 0 ? (100 * (a - b)) / b : null);
 const shortName = (email: string | null, id: string) => (email ? maskEmail(email).split("@")[0]! : id.slice(5, 11));
@@ -144,12 +144,12 @@ export function usersPage(o: { rows: UserRow[]; total: number; q: string; filter
   const sortMenu = menu(({ newest: "Newest", oldest: "Oldest", tokens: "AI use this month" } as const)[o.sort],
     ([["newest", "Newest"], ["oldest", "Oldest"], ["tokens", "AI use this month"]] as const).map(([k, l]) => ({ label: l, href: link({ sort: k }) })));
   const rows = o.rows.map((r) => [
-    `<a href="${userHref(r.account_id)}">${r.email ? esc(maskEmail(r.email)) : `<span class="mono">${esc(r.account_id.slice(0, 14))}</span>`}</a>`,
-    planBadge(r.plan) + (r.suspended_at ? " " + badge("Suspended", "bad") : ""),
-    r.plan === "free" ? `<span class="muted">none</span>` : esc(day(r.pass_until)),
+    `<a href="${userHref(r.account_id)}">${r.email ? esc(maskEmail(r.email)) : `Anonymous <span class="muted">${esc(r.account_id.slice(5, 11))}</span>`}</a>`,
+    r.suspended_at ? badge("Suspended", "bad") : planBadge(r.plan),
+    r.plan === "free" ? `<span class="muted">none</span>` : esc(when(r.pass_until, o.now)),
     num(r.tokens_month), num(r.packages_month),
     r.credit_seconds > 0 ? num(r.credit_seconds / INTERVIEW_SECONDS) : `<span class="muted">0</span>`,
-    esc(r.created_at ? day(r.created_at) : "unknown"),
+    esc(when(r.created_at, o.now)),
   ]);
   const pages = Math.max(1, Math.ceil(o.total / USERS_PER_PAGE));
   const pager = pages <= 1 ? "" : `<div class="pager"><span class="muted small">Page ${o.page} of ${pages}</span>` +
@@ -157,9 +157,8 @@ export function usersPage(o: { rows: UserRow[]; total: number; q: string; filter
     (o.page < pages ? `<a class="btn" href="${esc(link({ page: o.page + 1 }))}">Next</a>` : "") + `</div>`;
   const name = ({ all: "All users", pass: "On a pass", free: "Free", email: "E-mail sign-in", suspended: "Suspended" } as const)[o.filter];
   return title("Users", sortMenu) +
-    card(name, table(["Person", "Plan", "Pass ends", "AI tokens", "Packages", "Extra interviews", "Created"], rows,
-        o.q ? "No account matches that search." : "No accounts here.") + pager,
-      { aside: `<span class="muted small">${num(o.total)}${o.q ? ` matching "${esc(o.q)}"` : ""}</span>` });
+    card(o.q ? `${name}: "${o.q}"` : name, table(["Person", "Plan", "Pass ends", "AI tokens", "Packages", "Interviews", "Joined"], rows,
+        o.q ? "No match" : "None yet") + pager);
 }
 
 // ---- one person --------------------------------------------------------------------------------- //
@@ -215,9 +214,9 @@ export function userPage(o: { u: UserDetail; history: AuditRow[]; revealed: bool
       { aria: "AI tokens per month, last 6 months", single: true }), { span: 3 }) +
     card("Details", details, { span: 1 }) +
     `<section class="block s2"><div class="ltabs">${tabs}</div>${forms[o.act]}</section>` +
-    card("Live Interviews", table(["Date", "Minutes"],
-      u.interviews.map((r) => [esc(day(r.started)), num(r.used / 60)]), "None yet"), { span: 2 }) +
-    card("History", auditTable(o.history, false), { aside: `<a class="muted small" href="/audit">Audit log</a>` });
+    card("Live Interviews", table(["Date", "Minutes", "Ended"],
+      u.interviews.map((r) => [esc(when(r.started, now)), num(r.used / 60), r.ended ? badge("Yes", "ok") : badge("Open", "plain")]), "None yet"), { span: 2 }) +
+    card("History", auditTable(o.history, false, now), { aside: `<a class="muted small" href="/audit">Audit log</a>` });
 }
 
 // ---- Revenue ------------------------------------------------------------------------------------ //
@@ -244,76 +243,85 @@ export function revenuePage(o: { revenue: Revenue; granted30: number; now: numbe
     kpi("Net, 90 Days", usd(n90), { tone: "a" }) +
     kpi("Refunded, 90 Days", usd(refunds90), { tone: "b" }) +
     card("Payments", table(["Date", "Product", "Amount", "Refunded", "Buyer", ""],
-      p90.map((p) => [esc(date(p.created)), esc(productLabel(p.product)),
+      p90.map((p) => [esc(when(p.created, now)), esc(productLabel(p.product)),
         usd(p.amount / 100), p.refunded ? usd(p.refunded / 100) : `<span class="muted">0</span>`, esc(maskEmail(p.email)),
         (p.disputed ? badge("Disputed", "bad") + " " : "") + `<a href="${esc(link(p.id))}">Stripe</a>`]),
       "None in 90 days."), { span: 4, id: "payments", aside: `<a class="muted small" href="${esc(r.dashboard)}">Open Stripe</a>` }) +
     card("Products", donut(byProduct, { aria: "Payments by product, last 90 days" }), { span: 2, id: "products" }) +
-    card("Checks", facts([["Paid in Stripe, 30 days", num(paid30)], ["Granted by webhook", `${num(o.granted30)} ${paid30 === o.granted30 ? badge("Match", "ok") : badge("Differs", "bad")}`],
-             ["Repeat buyers", num(repeat)]]), { span: 2, id: "checks" });
+    card("Checks", mini([["Stripe, 30 days", num(paid30)], ["Webhook, 30 days", num(o.granted30)],
+      ["Match", paid30 === o.granted30 ? badge("Yes", "ok") : badge("No", "bad")], ["Repeat buyers", num(repeat)]]), { span: 2, id: "checks" });
 }
 
 // ---- Usage & costs ------------------------------------------------------------------------------ //
+
+export type PoolAct = "limit" | "default" | "pause";
 
 export function usagePage(o: { stats: Stats; pool: PoolSetting; poolDays: Array<{ label: string; value: number }>;
                                spend: { top: Spender[]; accounts: number; mean: number; p95: number; total: number };
                                months: Array<{ period: string; tokens: number; packages: number; minutes: number }>;
                                networks: { rows: Array<{ net: string; n: number }>; limit: number };
-                               domains: Array<{ domain: string; n: number }>; now: number }): string {
+                               domains: Array<{ domain: string; n: number }>; now: number; act: PoolAct }): string {
   const s = o.stats, m = s.usage_month;
   const hoursIntoDay = ((o.now % 86_400) / 3600) || 0.01;
   const burnPerHour = s.free_pool_today.tokens / hoursIntoDay;
   const left = o.pool.cap - s.free_pool_today.tokens;
-  const empties = o.pool.cap === 0 ? "Paused" : left <= 0 ? "Used up" : burnPerHour > 0 && left / burnPerHour < 24 - hoursIntoDay
-    ? `Runs out in about ${Math.max(1, Math.round(left / burnPerHour))} h` : "Lasts the day";
-  const poolForm = `<form class="act sep" method="post" action="/settings/free-pool"><h3>Free AI limit</h3><div class="row">` +
-    `<select name="mode" aria-label="Setting"><option value="custom">Set a daily limit</option><option value="default">Use the deploy's value (${shortNum(o.pool.deployCap)})</option><option value="paused">Pause the free AI</option></select>` +
-    `<input type="text" name="tokens" inputmode="numeric" placeholder="Tokens a day" aria-label="Tokens a day" style="flex:0 1 140px">` +
-    `<input type="text" name="reason" required minlength="3" maxlength="300" placeholder="Reason" aria-label="Reason">` +
-    `<input type="text" name="confirm" placeholder="Type PAUSE to pause" aria-label="Type PAUSE to pause" style="flex:0 1 150px">` +
-    `<button class="btn primary" type="submit">Apply</button></div>` +
-    (o.pool.override !== null ? `<span class="muted small">${o.pool.override === 0 ? "Paused" : `${num(o.pool.override)} a day`} by ${esc(o.pool.updated_by ?? "")}, ${esc(ago(o.pool.updated_at, o.now))}</span>` : "") +
-    `</form>`;
+  const pace = o.pool.cap === 0 ? badge("Paused", "warn") : left <= 0 ? badge("Used up", "bad")
+    : burnPerHour > 0 && left / burnPerHour < 24 - hoursIntoDay ? badge(`Runs out in ${Math.max(1, Math.round(left / burnPerHour))} h`, "warn") : badge("On pace", "ok");
+  const reason = `<input type="text" name="reason" required minlength="3" maxlength="300" placeholder="Reason" aria-label="Reason">`;
+  const forms: Record<PoolAct, string> = {
+    limit: `<form class="act" method="post" action="/settings/free-pool"><input type="hidden" name="mode" value="custom"><div class="row">` +
+      `<input type="text" name="tokens" inputmode="numeric" placeholder="Tokens a day" aria-label="Tokens a day" style="flex:0 1 140px">${reason}` +
+      `<button class="btn primary" type="submit">Apply</button></div></form>`,
+    default: `<form class="act" method="post" action="/settings/free-pool"><input type="hidden" name="mode" value="default"><div class="row">${reason}` +
+      `<button class="btn primary" type="submit">Use ${shortNum(o.pool.deployCap)}</button></div></form>`,
+    pause: `<form class="act" method="post" action="/settings/free-pool"><input type="hidden" name="mode" value="paused"><div class="row">${reason}` +
+      `<input type="text" name="confirm" required placeholder="Type PAUSE" aria-label="Type PAUSE to confirm" style="flex:0 1 120px">` +
+      `<button class="btn danger" type="submit">Pause</button></div></form>`,
+  };
+  const tabs = ([["limit", "Set Limit"], ["default", "Default"], ["pause", "Pause"]] as const)
+    .map(([k, l]) => `<a class="ltab${o.act === k ? " on" : ""}" href="/usage?act=${k}#free-ai">${l}</a>`).join("");
+  const set = o.pool.override !== null ? `<span class="muted small">${o.pool.override === 0 ? "Paused" : `${shortNum(o.pool.override)} a day`}, ${esc(ago(o.pool.updated_at, o.now))}</span>` : "";
+  const prev = o.months[o.months.length - 2], cur = o.months[o.months.length - 1];
   return title("Usage & costs") +
-    kpi("AI Cost", usd(m.ai_cost_usd.total), { tone: "a" }) +
-    kpi("Interview Cost", usd(m.interviews.cost_usd), { tone: "b" }) +
+    kpi("AI Cost", usd(m.ai_cost_usd.total), { tone: "a", delta: prev && cur ? pct(cur.tokens, prev.tokens) : null }) +
+    kpi("Interview Cost", usd(m.interviews.cost_usd), { tone: "b", delta: prev && cur ? pct(cur.minutes, prev.minutes) : null }) +
     kpi("Cost per User", usd(o.spend.accounts ? o.spend.total / o.spend.accounts : 0), { tone: "a" }) +
-    kpi("Free AI Today", o.pool.cap === 0 ? "Paused" : `${shortNum(s.free_pool_today.tokens)} / ${shortNum(o.pool.cap)}`, { tone: "b" }) +
+    kpi("Top User Cost", usd(o.spend.p95), { tone: "b" }) +
     card("Free AI", barChart(o.poolDays.map((d) => ({ label: d.label.slice(5), value: d.value, display: shortNum(d.value) })),
-      { aria: "Free AI tokens per day, last 14 days", single: true }) + poolForm,
-      { span: 3, id: "free-ai", aside: `<span class="muted small">${esc(empties)}</span>` }) +
+      { aria: "Free AI tokens per day, last 14 days", single: true }), { span: 3, aside: pace }) +
     card("Top AI Users", siteBars(o.spend.top.slice(0, 6).map((t) => ({ label: shortName(t.email, t.account_id), value: t.cost, display: usd(t.cost), href: userHref(t.account_id) })), "None yet"),
       { span: 1, id: "top" }) +
+    `<section class="block s2" id="free-ai"><div class="bhead"><div class="ltabs">${tabs}</div>${set}</div>${forms[o.act]}</section>` +
+    card("Sign-ups Today", siteBars(o.networks.rows.map((r) => ({ label: r.net.slice(0, 6), value: r.n, display: `${num(r.n)} of ${num(o.networks.limit)}` })), "None yet"),
+      { span: 1, id: "signups" }) +
+    card("E-mail Domains", siteBars(o.domains.map((d) => ({ label: d.domain.split(".")[0]!, value: d.n, display: `${esc(d.domain)}: ${num(d.n)}` })), "None yet"), { span: 1 }) +
     card("Monthly Totals", table(["Month", "AI tokens", "Packages", "Interview min"],
-      o.months.slice().reverse().map((x) => [esc(x.period), num(x.tokens), num(x.packages), num(x.minutes)]), ""),
-      { span: 2, aside: `<span class="muted small">mean ${usd(o.spend.mean)}, p95 ${usd(o.spend.p95)}</span>` }) +
-    card("Sign-ups Today", table(["Network", "New", ""],
-      o.networks.rows.map((r) => [`<span class="mono">${esc(r.net)}</span>`, num(r.n),
-        r.n >= o.networks.limit ? badge("At the limit", "bad") : r.n >= 0.5 * o.networks.limit ? badge("Busy", "warn") : ""]),
-      "None."), { span: 1, id: "signups", aside: `<span class="muted small">limit ${num(o.networks.limit)}</span>` }) +
-    card("E-mail Domains", siteBars(o.domains.map((d) => ({ label: d.domain, value: d.n })), "None yet"), { span: 1 });
+      o.months.slice().reverse().map((x) => [esc(x.period), num(x.tokens), num(x.packages), num(x.minutes)]), ""), { span: 4 });
 }
 
 // ---- Health ------------------------------------------------------------------------------------- //
 
-export function healthPage(o: { stats: Stats; revenue: Revenue; env: Env; now: number }): string {
+export function healthPage(o: { stats: Stats; revenue: Revenue; env: Env; now: number; emailDays: Array<{ label: string; value: number }> }): string {
   const { stats: s, env } = o;
-  const row = (name: string, status: string, detail: string) => [esc(name), status, detail];
   const e = s.sign_in_emails;
+  const ok = (v: unknown) => (v ? badge("On", "ok") : badge("Off", "bad"));
   const rows: string[][] = [
-    row("Company AI key (Anthropic)", s.ai.state === "ok" ? badge("Working", "ok") : s.ai.state === "transient" ? badge("Busy", "warn") : badge("Down", "bad"),
-      s.ai.state === "ok" ? "" : `${esc(s.ai.note || s.ai.summary)} <a href="https://platform.claude.com/settings/billing">Billing</a>`),
-    row("Stripe", o.revenue.mode === "live" ? badge("Live", "ok") : o.revenue.mode === "test" ? badge("Test mode", "warn") : badge("Off", "bad"),
-      o.revenue.ok ? `${num(o.revenue.payments.length)} payments in 400 days` : esc(o.revenue.why ?? "")),
-    row("Sign-in e-mails (Resend)", e.level === "ok" ? badge("OK", "ok") : badge(e.level === "red" ? "Nearly full" : "Filling up", e.level === "red" ? "bad" : "warn"),
-      `${num(e.today)} of ${num(e.daily_cap)} today, ${num(e.month)} of ${num(e.monthly_cap)} this month${meter((100 * e.today) / e.daily_cap, e.level === "red" ? "bad" : e.level === "amber" ? "warn" : "ok")}`),
-    row("Telegram bot", env.TELEGRAM_BOT_TOKEN ? badge("Configured", "ok") : badge("Off", "warn"), env.OWNER_TELEGRAM_CHAT_ID ? "Alerts go to your chat" : "No owner chat"),
-    row("Live interviews (Tavus)", env.TAVUS_API_KEY ? badge("Configured", "ok") : badge("Off", "bad"), `${num(s.usage_month.interviews.minutes)} min this month`),
-    row("Google sign-in", env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? badge("Configured", "ok") : badge("Off", "warn"), ""),
-    row("Apply agent signing key", env.AGENT_SIGNING_KEY ? badge("Configured", "ok") : badge("Off", "bad"),
-      `<a href="https://sponsorjobs.ai/.well-known/http-message-signatures-directory">Key directory</a>`),
+    ["AI key", s.ai.state === "ok" ? badge("Working", "ok") : s.ai.state === "transient" ? badge("Busy", "warn") : badge("Down", "bad")],
+    ["Stripe", o.revenue.mode === "live" ? badge("Live", "ok") : o.revenue.mode === "test" ? badge("Test", "warn") : badge("Off", "bad")],
+    ["E-mails", e.level === "ok" ? badge("OK", "ok") : badge(e.level === "red" ? "Full" : "Busy", e.level === "red" ? "bad" : "warn")],
+    ["Telegram", ok(env.TELEGRAM_BOT_TOKEN && env.OWNER_TELEGRAM_CHAT_ID)],
+    ["Tavus", ok(env.TAVUS_API_KEY)],
+    ["Google sign-in", ok(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET)],
+    ["Signing key", ok(env.AGENT_SIGNING_KEY)],
   ];
-  return title("Health") + card("Services", table(["Service", "Status", "Detail"], rows, ""));
+  return title("Health") +
+    kpi("AI Key", s.ai.state === "ok" ? "Working" : s.ai.state === "transient" ? "Busy" : "Down", { tone: "a" }) +
+    kpi("Stripe", o.revenue.mode === "live" ? "Live" : o.revenue.mode === "test" ? "Test" : "Off", { tone: "b" }) +
+    kpi("E-mails Today", `${num(e.today)} / ${num(e.daily_cap)}`, { tone: "a" }) +
+    kpi("Interview Min", num(s.usage_month.interviews.minutes), { tone: "b" }) +
+    card("Services", table(["Service", "Status"], rows, ""), { span: 2 }) +
+    card("Sign-in E-mails", barChart(o.emailDays.map((d) => ({ label: d.label.slice(5), value: d.value })),
+      { aria: "Sign-in e-mails sent per day, last 14 days", single: true }), { span: 2, aside: `<span class="muted small">limit ${num(e.daily_cap)} a day</span>` });
 }
 
 // ---- Job feed ----------------------------------------------------------------------------------- //
@@ -327,9 +335,9 @@ export function feedPage(o: { feed: Feed; runs: Runs; now: number }): string {
     kpi("Sponsors", f.employers !== null ? num(f.employers) : "n/a", { tone: "b" }) +
     kpi("Feed Built", f.generated_at ? ago(f.generated_at, now) : "n/a", { tone: "a" }) +
     kpi("Index Built", f.sponsors_at ? ago(f.sponsors_at, now) : "n/a", { tone: "b" }) +
-    card("GitHub Jobs", table(["Job", "Result", "When", ""], o.runs.latest.map((r) => [esc(r.workflow),
+    card("GitHub Jobs", table(["Job", "Result", "When", "Run"], o.runs.latest.map((r) => [esc(r.workflow),
       r.status !== "completed" ? badge("Running", "plain") : r.conclusion === "success" ? badge("Passed", "ok") : badge(r.conclusion || "unknown", "bad"),
-      esc(ago(r.at, now)) + (r.branch ? ` <span class="muted small">${esc(r.branch)}</span>` : ""), `<a href="${esc(r.url)}">Open</a>`]),
+      esc(when(r.at, now)), `<a href="${esc(r.url)}">Open</a>`]),
       o.runs.ok ? "No runs found." : `GitHub could not be read: ${o.runs.why ?? ""}`));
 }
 
@@ -345,29 +353,34 @@ export function alertsPage(o: { stats: Stats; env: Env; ai: { state: string; sin
     kpi("Last Alert", o.ai?.last_alert_at ? ago(o.ai.last_alert_at, now) : "Never", { tone: "b" }) +
     kpi("E-mails Today", `${num(e.today)} / ${num(e.daily_cap)}`, { tone: "a" }) +
     kpi("Telegram", env.OWNER_TELEGRAM_CHAT_ID && env.TELEGRAM_BOT_TOKEN ? "On" : "Off", { tone: "b" }) +
-    card("Company AI Key", facts([
+    card("Company AI Key", mini([
       ["State", stateBadge],
-      ["Since", o.ai ? esc(date(o.ai.since)) : "unknown"], ["Last failure", o.ai && o.ai.state !== "ok" ? esc(date(o.ai.last_seen)) : "none"],
-      ["Cause", o.ai?.note ? esc(o.ai.note) : `<span class="muted">none</span>`],
-      ["Owner alerted", o.ai?.last_alert_at ? esc(date(o.ai.last_alert_at)) : "never"],
+      ["Since", o.ai ? esc(when(o.ai.since, now)) : "Unknown"], ["Last failure", o.ai && o.ai.state !== "ok" ? esc(when(o.ai.last_seen, now)) : "None"],
+      ["Cause", o.ai?.note ? esc(o.ai.note.slice(0, 40)) : "None"],
+      ["Owner alerted", o.ai?.last_alert_at ? esc(when(o.ai.last_alert_at, now)) : "Never"],
     ]), { span: 2 }) +
-    card("Test Alert", `<form method="post" action="/admin/test-alert" class="act"><div class="row"><button class="btn primary" type="submit">Send test alert</button></div></form>` +
-      table(["When", "Result"], o.tests.map((t) => [esc(date(t.at)), t.detail === "sent" ? badge("Sent", "ok") : badge(t.detail, "bad")]), "None sent yet."), { span: 2 });
+    card("Test Alerts", table(["When", "Result"], o.tests.map((t) => [esc(when(t.at, now)), t.detail === "sent" ? badge("Sent", "ok") : badge("Failed", "bad")]), "None yet"),
+      { span: 2, aside: `<form method="post" action="/admin/test-alert"><button class="btn primary" type="submit">Send test alert</button></form>` });
 }
 
 // ---- Audit log ---------------------------------------------------------------------------------- //
 
-function auditTable(rows: AuditRow[], withTarget: boolean): string {
+function auditTable(rows: AuditRow[], withTarget: boolean, now: number): string {
   return table(["When", "Who", "Action", ...(withTarget ? ["Account"] : []), "Detail", "Reason"], rows.map((r) => [
-    esc(date(r.at)), esc(r.admin), esc(ACTION_LABEL[r.action] ?? r.action),
-    ...(withTarget ? [r.target ? `<a class="mono" href="${userHref(r.target)}">${esc(r.target.slice(0, 14))}</a>` : `<span class="muted">none</span>`] : []),
-    esc(r.detail), esc(r.reason)]), "None yet.");
+    esc(when(r.at, now)), esc(r.admin.split("@")[0]!), esc(ACTION_LABEL[r.action] ?? r.action),
+    ...(withTarget ? [r.target ? `<a class="mono" href="${userHref(r.target)}">${esc(r.target.slice(5, 11))}</a>` : `<span class="muted">none</span>`] : []),
+    esc(r.detail), `<span class="wrapc">${esc(r.reason)}</span>`]), "None yet");
 }
 
-export function auditPage(o: { rows: AuditRow[]; more: boolean }): string {
+export function auditPage(o: { rows: AuditRow[]; more: boolean; now: number;
+                               counts: { total: number; passes: number; suspends: number; last: number | null } }): string {
   const last = o.rows[o.rows.length - 1];
   return title("Audit log") +
-    card("Actions", auditTable(o.rows, true) +
+    kpi("Actions, 30 Days", num(o.counts.total), { tone: "a" }) +
+    kpi("Passes Given", num(o.counts.passes), { tone: "b" }) +
+    kpi("Suspensions", num(o.counts.suspends), { tone: "a" }) +
+    kpi("Last Action", o.counts.last ? when(o.counts.last, o.now) : "None", { tone: "b" }) +
+    card("Actions", auditTable(o.rows, true, o.now) +
       (o.more && last ? `<div class="pager"><a class="btn" href="/audit?before=${last.id}">Older</a></div>` : ""));
 }
 

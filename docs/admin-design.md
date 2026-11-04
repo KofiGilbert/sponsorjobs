@@ -32,6 +32,7 @@ required by the licence; keep it.
 | Page title row | 28 high: title Semibold 14 (padding 4 8) left, a small control right; the grid starts 16 below |
 | KPI card | 202x112, radius 20, padding 24, gap 8; fills alternate #edeefc / #e6f1fd (same in dark, black text) |
 | Block | radius 20, padding 24, gap 16; #f9f9fa (dark: white at 4%); title Semibold 14 |
+| Sidebars | the grid cell carries the border and stretches the full page; only its inner column is sticky |
 | Sidebar row | 36 high, padding 8, radius 12, rows 4 apart; active row #000 at 4% (dark white at 10%) |
 | Sidebar row parts | slot 16 (dot or chevron), gap 4, icon 20, gap 8, text (text at x 72) |
 | Group label | 28 high, padding 4 12, Regular 14 at 40% |
@@ -83,6 +84,18 @@ required by the licence; keep it.
   never stacked.
 - **Facts are a short list in the legend style** (12px label at 40%, value on the right), six rows
   at most. Longer detail goes in a table.
+- **Dates the kit's way:** "Just now", "3 hours ago", then "Nov 4, 2026". Never "2026-11-04 17:06 UTC"
+  in a table.
+- **Placeholders are words, capitalised:** "None", "Never", "Unknown". Never a lower-case placeholder
+  or a sentence ("No one has signed in yet").
+- **A table cell never wraps.** Dates, names and statuses are short enough to stay on one line; a
+  typed reason is the one cell allowed to wrap, in its own narrow column.
+- **Controls never sit under a chart.** A form gets its own block, behind the kit's tabs when there
+  is more than one (Set Limit / Default / Pause), and its button may sit in the block's head
+  (Send test alert).
+- **A bar list's smallest segment is 8px**, as in the kit, so a small value never reads as a dash.
+- **Every page opens with the four KPI cards**, including Audit log and Health.
+- **The footer is the licence credit only.** No timestamps, no "costs are estimates".
 - **No em or en dashes. "Resume", not "CV".**
 
 ## 6. Privacy on screen

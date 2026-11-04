@@ -329,6 +329,23 @@ export async function auditLog(db: D1Database, o: { target?: string; limit?: num
     .bind(...args, o.limit ?? 50).all<AuditRow>()).results;
 }
 
+/** The audit log's four numbers for the last `days` days. */
+export async function auditCounts(db: D1Database, since: number): Promise<{ total: number; passes: number; suspends: number; last: number | null }> {
+  const r = await db.prepare("SELECT COUNT(*) AS total, SUM(action = 'give_pass') AS passes, SUM(action = 'suspend') AS suspends, " +
+    "(SELECT MAX(at) FROM admin_actions) AS last FROM admin_actions WHERE at >= ?").bind(since)
+    .first<{ total: number; passes: number | null; suspends: number | null; last: number | null }>();
+  return { total: Number(r?.total ?? 0), passes: Number(r?.passes ?? 0), suspends: Number(r?.suspends ?? 0), last: r?.last ?? null };
+}
+
+/** Sign-in e-mails sent per UTC day for the last `days` days, oldest first (email_sends). */
+export async function emailDays(db: D1Database, todayStart: number, days = 14): Promise<Array<{ label: string; value: number }>> {
+  const keys = Array.from({ length: days }, (_, i) => new Date((todayStart - (days - 1 - i) * DAY_SECONDS) * 1000).toISOString().slice(0, 10));
+  const rows = (await db.prepare(`SELECT day, n FROM email_sends WHERE day IN (${keys.map(() => "?").join(", ")})`).bind(...keys)
+    .all<{ day: string; n: number }>()).results;
+  const by = new Map(rows.map((r) => [r.day, r.n]));
+  return keys.map((k) => ({ label: k, value: by.get(k) ?? 0 }));
+}
+
 // ---- recent activity (the overview's right rail) ------------------------------------------------- //
 
 export interface Activity { at: number; kind: "signup" | "signin" | "purchase" | "admin"; text: string; href?: string }
@@ -348,15 +365,14 @@ export async function recentActivity(db: D1Database, limit = 8): Promise<Activit
       ({ at: r.at, kind: "signin", text: "Added an e-mail sign-in", href: `/users/${encodeURIComponent(r.account_id)}` })),
     ...(buys!.results as Array<{ at: number }>).map((r): Activity => ({ at: r.at, kind: "purchase", text: "Stripe checkout paid", href: "/revenue" })),
     ...(admin!.results as Array<{ at: number; action: string; target: string }>).map((r): Activity =>
-      ({ at: r.at, kind: "admin", text: `Admin: ${ACTION_LABEL[r.action] ?? r.action}`, href: r.target ? `/users/${encodeURIComponent(r.target)}` : "/audit" })),
+      ({ at: r.at, kind: "admin", text: ACTION_LABEL[r.action] ?? r.action, href: r.target ? `/users/${encodeURIComponent(r.target)}` : "/audit" })),
   ];
   return out.sort((a, b) => b.at - a.at).slice(0, limit);
 }
 
 export const ACTION_LABEL: Record<string, string> = {
-  give_pass: "gave a pass", add_interviews: "added interviews", suspend: "suspended an account",
-  unsuspend: "restored an account", test_alert: "sent a test alert", set_free_pool: "changed the free AI limit",
-  reveal_email: "revealed an e-mail",
+  give_pass: "Give pass", add_interviews: "Add interviews", suspend: "Suspend", unsuspend: "Restore", test_alert: "Test alert",
+  set_free_pool: "Free AI limit", reveal_email: "Reveal e-mail",
 };
 
 // ---- outside sources (cached, never fatal) ------------------------------------------------------ //

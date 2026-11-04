@@ -128,7 +128,7 @@ describe("users", () => {
     expect(all.text).not.toContain(FREE_POOL_USER);
     const found = await get("/users?q=findme");
     expect(found.text).toContain(`/users/${a.id}`);
-    expect(found.text).toContain("1 matching");
+    expect(found.text).toContain("All users: &quot;findme&quot;");
     const byId = await get(`/users?q=${a.id.slice(0, 10)}`);
     expect(byId.text).toContain(`/users/${a.id}`);
     expect(tbody((await get("/users?filter=email")).text)).toContain(`/users/${a.id}`);
@@ -253,7 +253,7 @@ describe("the free AI limit (kill switch)", () => {
     expect(busy.status).toBe(503);
     expect(busy.data.reason).toBe("free_busy");
     expect((await get("/")).text).toContain("The free AI is paused");
-    expect((await get("/usage")).text).toContain(`Paused by ${ADMIN}`);
+    expect((await get("/usage")).text).toContain("Paused, Just now");
     await post("/settings/free-pool", { mode: "default", reason: "back to normal" });
     expect((await freeCall()).status).toBe(200);
     const log = (await env.DB.prepare("SELECT action, detail FROM admin_actions WHERE action = 'set_free_pool' ORDER BY id").all()).results;
@@ -286,13 +286,13 @@ describe("revenue (Stripe)", () => {
     const r = await get("/revenue", { STRIPE_TEST_SECRET_KEY: "sk_test_x" });
     expect(r.text).toContain("$53.00");                            // 30 days: 29 + (69 - 69) + 24
     expect(r.text).toContain("Job Hunt Pass");
-    expect(r.text).toContain("3-interview pack");
+    expect(r.text).toContain("Pack of 3");
     expect(r.text).toContain("bu***@example.com");
     expect(r.text).not.toContain("buyer.one@example.com");
     expect(r.text).toContain("Disputed");
     expect(r.text).toContain("Test mode");
     expect(r.text).toContain("https://dashboard.stripe.com/test/payments/ch_1");
-    expect(r.text).toContain("Differs");                          // 3 paid, 0 granted by the webhook here
+    expect(r.text).toContain('<span class="dot bad"></span>No');   // 3 paid, 0 granted by the webhook here
     expect((await get("/", { STRIPE_TEST_SECRET_KEY: "sk_test_x" })).text).toContain("1 payment is disputed");
     expect(outside.stripe).toBe(1);                                 // cached for 5 minutes
   });
@@ -337,7 +337,7 @@ describe("audit log", () => {
     const a = await newAccount();
     await post(`/users/${a.id}/add-interviews`, { interviews: "1", reason: "goodwill <b>gesture</b>" });
     const r = await get("/audit");
-    expect(r.text).toContain("added interviews");
+    expect(r.text).toContain("Add interviews");
     expect(r.text).toContain(ADMIN);
     expect(r.text).toContain("goodwill &lt;b&gt;gesture&lt;/b&gt;");
     expect(r.text).not.toContain("<b>gesture</b>");

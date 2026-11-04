@@ -244,7 +244,7 @@ describe("stats", () => {
     expect(page.text).not.toContain("old@example.com");
     expect((await admin("/users", await jwt({}))).text).toContain("unknown");   // legacy rows are labelled, not invented
     const health = await admin("/health", await jwt({}));
-    expect(health.text).toContain("12 of 100 today");
+    expect(health.text).toContain("12 / 100");
     expect(page.headers.get("cache-control")).toBe("no-store");
   });
 
@@ -309,11 +309,11 @@ describe("sign-in code e-mails against Resend's free plan", () => {
     expect((await emails(69)).s.level).toBe("ok");
     const amber = await emails(70);
     expect(amber.s.level).toBe("amber");
-    expect(amber.page).toContain('<span class="dot warn"></span>Filling up');
+    expect(amber.page).toContain('<span class="dot warn"></span>Busy');
     expect((await emails(89)).s.level).toBe("amber");
     const red = await emails(90);
     expect(red.s.level).toBe("red");
-    expect(red.page).toContain('<span class="dot bad"></span>Nearly full');
+    expect(red.page).toContain('<span class="dot bad"></span>Full');
   });
 
   it("every code e-mail actually sent adds one to today's count; a failed send does not", async () => {

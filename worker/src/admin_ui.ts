@@ -52,9 +52,17 @@ export function ago(s: number | null | undefined, now: number): string {
   if (!s) return "never";
   const d = Math.max(0, now - s);
   if (d < 60) return "Just now";
-  if (d < 3600) return `${Math.floor(d / 60)} minutes ago`;
-  if (d < 86_400) return `${Math.floor(d / 3600)} hours ago`;
-  return `${Math.floor(d / 86_400)} days ago`;
+  const unit = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"} ago`;
+  if (d < 3600) return unit(Math.floor(d / 60), "minute");
+  if (d < 86_400) return unit(Math.floor(d / 3600), "hour");
+  return unit(Math.floor(d / 86_400), "day");
+}
+
+/** A table date the kit's way: "Just now", "3 hours ago", then "Nov 4, 2026". */
+export function when(s: number | null | undefined, now: number): string {
+  if (!s) return "unknown";
+  if (now - s >= 0 && now - s < 86_400) return ago(s, now);
+  return new Date(s * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
 export const PASS_LABEL: Record<string, string> = { free: "Free", pass30: "Job Hunt Pass", pass90: "Season Pass" };
@@ -166,8 +174,8 @@ export function shell(s: Shell): string {
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap">
 <style>${CSS}</style></head><body>
 <div class="app${showRail ? " withrail" : ""}${p.sideHidden ? " noside" : ""}">
-<aside class="side"><a class="brand" href="/"><span class="logo">S</span><span>SponsorJobs</span></a>${favs}${nav}
-<div class="who">${esc(s.viewer)}</div></aside>
+<aside class="side"><div class="sidein"><a class="brand" href="/"><span class="logo">S</span><span>SponsorJobs</span></a>${favs}${nav}
+<div class="who">${esc(s.viewer)}</div></div></aside>
 <div class="main">
 <header class="top"><div class="hl">
 <a class="hbtn" href="${pref(s, "toggle=side")}" title="${p.sideHidden ? "Show" : "Hide"} the sidebar" aria-label="${p.sideHidden ? "Show" : "Hide"} the sidebar">${icon("sidebar")}</a>
@@ -181,9 +189,9 @@ export function shell(s: Shell): string {
 <a class="hbtn" href="${pref(s, "toggle=rail")}" title="${p.railHidden ? "Show" : "Hide"} the right sidebar" aria-label="${p.railHidden ? "Show" : "Hide"} the right sidebar">${icon("sidebar")}</a>
 </div></div></header>
 <main class="content">${flash}${s.body}
-<footer class="foot">Design: ByeWind SnowUI (CC BY 4.0), Phosphor icons. Costs are estimates. ${esc(date(s.generatedAt))}</footer>
+<footer class="foot">Design: ByeWind SnowUI (CC BY 4.0). Icons: Phosphor.</footer>
 </main></div>
-${showRail ? `<aside class="rail">${s.rail}</aside>` : ""}
+${showRail ? `<aside class="rail"><div class="railin">${s.rail}</div></aside>` : ""}
 </div><script>${KEY_SCRIPT}</script></body></html>`;
 }
 
@@ -304,7 +312,7 @@ const PALETTE = ["p1", "p2", "p3", "p4", "p5", "p6"];
 export function barChart(points: Array<{ label: string; value: number; display?: string }>, o: { aria: string; unit?: "" | "$"; single?: boolean }): string {
   const max = steps3(Math.max(1, ...points.map((p) => p.value)));
   const ticks = [3, 2, 1, 0].map((k) => `<span>${fmtTick((k * max) / 3, o.unit ?? "")}</span>`).join("");
-  const bars = points.map((p, i) => `<div class="bcol"><div class="bar ${o.single ? "p1" : PALETTE[i % PALETTE.length]}" style="height:${((100 * Math.max(0, p.value)) / max).toFixed(1)}%" ` +
+  const bars = points.map((p, i) => `<div class="bcol"><div class="bar ${o.single ? "p1" : PALETTE[i % PALETTE.length]}${p.value > 0 ? "" : " zero"}" style="height:${((100 * Math.max(0, p.value)) / max).toFixed(1)}%" ` +
     `title="${esc(p.label)}: ${esc(p.display ?? fmtTick(p.value, o.unit ?? ""))}"></div></div>`).join("");
   return `<div class="bchart" role="img" aria-label="${esc(o.aria)}"><div class="by">${ticks}</div><div class="bplot"><div class="bars">${bars}</div>` +
     `<div class="bx">${points.map((p) => `<span>${esc(p.label)}</span>`).join("")}</div></div></div>`;
@@ -350,7 +358,7 @@ export function siteBars(rows: Array<{ label: string; value: number; display?: s
   if (!rows.length) return `<p class="muted small">${esc(empty)}</p>`;
   const max = Math.max(1, ...rows.map((r) => r.value));
   return `<ul class="sbars">${rows.map((r) => {
-    const w = Math.max(3, Math.round((25 * r.value) / max));
+    const w = Math.max(8, Math.round((25 * r.value) / max));
     const seg = (cls: string) => `<span class="${cls}" style="width:${w}px"></span>`;
     return `<li title="${esc(r.label)}: ${esc(r.display ?? num(r.value))}"><span class="sl">${r.href ? `<a href="${r.href}">${esc(r.label)}</a>` : esc(r.label)}</span>` +
       `<span class="st">${seg("s1")}${seg("s2")}${seg("s3")}</span></li>`;
@@ -413,7 +421,7 @@ ul{list-style:none;margin:0;padding:0}h1,h2,h3{margin:0}
 .app.withrail{grid-template-columns:212px minmax(0,1fr) 280px}
 .app.noside{grid-template-columns:minmax(0,1fr)}.app.noside.withrail{grid-template-columns:minmax(0,1fr) 280px}.app.noside .side{display:none}
 .ic{flex:none;display:block}
-.side{border-right:1px solid var(--ln);padding:16px;display:flex;flex-direction:column;gap:8px;position:sticky;top:0;height:100vh;overflow-y:auto}
+.side{border-right:1px solid var(--ln)}.sidein{padding:16px;display:flex;flex-direction:column;gap:8px;position:sticky;top:0;height:100vh;overflow-y:auto}
 .group{display:flex;flex-direction:column;gap:4px;padding-bottom:12px}
 .brand{display:flex;align-items:center;gap:8px;height:40px;padding:8px;border-radius:8px;margin-bottom:4px}
 .logo{width:24px;height:24px;border-radius:80px;background:var(--t1);color:var(--bg);display:grid;place-items:center;font-size:12px;font-weight:600}
@@ -459,7 +467,7 @@ ul{list-style:none;margin:0;padding:0}h1,h2,h3{margin:0}
 .delta{display:inline-flex;align-items:center;gap:4px;font-size:12px;line-height:16px;white-space:nowrap}
 .block{background:var(--block);border-radius:20px;padding:24px;display:flex;flex-direction:column;gap:16px;min-width:0}
 .block.s1{grid-column:span 1}.block.s2{grid-column:span 2}.block.s3{grid-column:span 3}.block.s4{grid-column:1/-1}
-.bhead{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:20px;flex-wrap:wrap}
+.bhead{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:20px;flex-wrap:wrap}.bhead form{margin:-4px 0}
 .block h2{font-size:14px;line-height:20px;font-weight:600}
 .muted{color:var(--t2)}.small{font-size:12px;line-height:16px}
 .ltabs{display:flex;align-items:center;gap:16px;min-height:20px;flex-wrap:wrap}
@@ -482,7 +490,7 @@ ul{list-style:none;margin:0;padding:0}h1,h2,h3{margin:0}
 .bplot{flex:1;min-width:0;display:flex;flex-direction:column}
 .bars{height:168px;display:flex;align-items:flex-end;margin-top:8px}
 .bcol{flex:1;display:flex;justify-content:center;align-items:flex-end;height:100%;min-width:0}
-.bar{width:28px;max-width:80%;border-radius:8px 8px 0 0;min-height:2px}
+.bar{width:28px;max-width:80%;border-radius:8px 8px 0 0;min-height:2px}.bar.zero{min-height:0}
 .bar.p1{background:var(--p1)}.bar.p2{background:var(--p2)}.bar.p3{background:var(--p3)}.bar.p4{background:var(--p4)}.bar.p5{background:var(--p5)}.bar.p6{background:var(--p6)}
 .bx{display:flex;height:16px;margin-top:4px}.bx span{flex:1;text-align:center;font-size:12px;line-height:16px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .donut{display:flex;align-items:center;gap:40px;padding:38px 20px 38px 20px;min-width:0}
@@ -508,11 +516,12 @@ ul{list-style:none;margin:0;padding:0}h1,h2,h3{margin:0}
 .tablewrap{overflow-x:auto;margin:0 -8px}
 table{width:100%;border-collapse:separate;border-spacing:0 4px}
 th{text-align:left;font-weight:400;font-size:12px;line-height:16px;color:var(--t2);padding:12px 16px;white-space:nowrap}
-td{padding:16px;line-height:20px;vertical-align:middle}
+td{padding:16px;line-height:20px;vertical-align:middle;white-space:nowrap}td.wrap{white-space:normal}
 tbody tr:nth-child(odd) td{background:var(--stripe)}
 tbody tr:hover td{background:var(--fill)}
 td a{text-decoration:underline;text-decoration-color:var(--t3);text-underline-offset:3px}td a:hover{text-decoration-color:var(--t1)}
 td:first-child{overflow-wrap:anywhere}
+.wrapc{white-space:normal;display:block;max-width:28ch}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 .flash{display:flex;align-items:center;gap:8px;border-radius:12px;padding:8px 12px;background:var(--fill)}
 .filters{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
@@ -526,7 +535,7 @@ td:first-child{overflow-wrap:anywhere}
 .act select,.act input[type=text]{font:inherit;color:var(--t1);background:var(--fill);border:0;border-radius:8px;height:28px;padding:4px 8px}
 .act input[type=text]{flex:1;min-width:160px}.act input::placeholder{color:var(--t3)}
 .facts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:12px 24px;margin:0}.facts dt{color:var(--t2)}.facts dd{margin:0;overflow-wrap:anywhere}
-.rail{border-left:1px solid var(--ln);padding:16px;display:flex;flex-direction:column;gap:16px;position:sticky;top:0;height:100vh;overflow-y:auto}
+.rail{border-left:1px solid var(--ln)}.railin{padding:16px;display:flex;flex-direction:column;gap:16px;position:sticky;top:0;height:100vh;overflow-y:auto}
 .rsec{display:flex;flex-direction:column;gap:4px}
 .rsec h2{font-size:14px;line-height:20px;font-weight:400;padding:8px 4px}
 .ri{display:flex;gap:8px;padding:8px;border-radius:12px;position:relative;min-width:0}
@@ -539,11 +548,11 @@ td:first-child{overflow-wrap:anywhere}
 .rx{display:flex;flex-direction:column;min-width:0}.r1{overflow-wrap:anywhere}.r1 a:hover{text-decoration:underline}.r2{font-size:12px;line-height:16px;color:var(--t2)}
 .foot{color:var(--t2);font-size:12px;line-height:16px}
 details.more summary{cursor:pointer;color:var(--t2);font-size:12px;line-height:16px}
-@media (max-width:1280px){.app.withrail{grid-template-columns:212px minmax(0,1fr)}.app.noside.withrail{grid-template-columns:minmax(0,1fr)}.rail{grid-column:1/-1;position:static;height:auto;border-left:0;border-top:1px solid var(--ln);padding:28px}}
+@media (max-width:1280px){.app.withrail{grid-template-columns:212px minmax(0,1fr)}.app.noside.withrail{grid-template-columns:minmax(0,1fr)}.rail{grid-column:1/-1;border-left:0;border-top:1px solid var(--ln)}.railin{position:static;height:auto;padding:28px}}
 @media (max-width:1100px){.content{grid-template-columns:repeat(2,minmax(0,1fr))}.block.s3,.block.s2{grid-column:1/-1}.block.s1{grid-column:span 1}.hicons{display:none}}
 @media (max-width:760px){.app,.app.withrail{grid-template-columns:minmax(0,1fr)}
-.side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;gap:4px;border-right:0;border-bottom:1px solid var(--ln);padding:12px 16px}
-.side .group{flex-direction:row;flex-wrap:wrap;padding:0}.glabel,.who,.slot,.ftabs,.nav.fav,.nav.subi{display:none}.navd{display:contents}
-.rail{grid-column:1;padding:20px 16px}.top{padding:16px;height:auto;flex-wrap:wrap}.hr{width:100%}.search{width:100%}.content{padding:20px 16px;gap:16px;grid-template-columns:minmax(0,1fr)}
+.side{border-right:0;border-bottom:1px solid var(--ln)}.sidein{position:static;height:auto;flex-direction:row;flex-wrap:wrap;gap:4px;padding:12px 16px}
+.sidein .group{flex-direction:row;flex-wrap:wrap;padding:0}.glabel,.who,.slot,.ftabs,.nav.fav,.nav.subi{display:none}.navd{display:contents}
+.rail{grid-column:1}.railin{padding:20px 16px}.top{padding:16px;height:auto;flex-wrap:wrap}.hr{width:100%}.search{width:100%}.content{padding:20px 16px;gap:16px;grid-template-columns:minmax(0,1fr)}
 .kpi,.block.s1{grid-column:1/-1}.donut{padding:16px 0;gap:24px;flex-wrap:wrap}}
 `;
