@@ -57,7 +57,8 @@ function parse(signatureInput: string, signature: string) {
   const [, label, params] = m;
   const s = new RegExp(`^${label}=:([A-Za-z0-9+/=]+):$`).exec(signature);
   if (!s) throw new Error(`bad Signature: ${signature}`);
-  const components = /^\(([^)]*)\)/.exec(params!)![1]!.split(" ").map((c) => c.replace(/^"|"$/g, ""));
+  // Each identifier as serialized, e.g. "@authority" or "@authority";req.
+  const components = /^\(([^)]*)\)/.exec(params!)![1]!.split(" ");
   const param = (name: string) => {
     const q = new RegExp(`;${name}="([^"]*)"`).exec(params!);
     if (q) return q[1]!;
@@ -70,7 +71,8 @@ function parse(signatureInput: string, signature: string) {
 /** Rebuild the base from the covered components and verify, as RFC 9421 section 3.2 says. */
 async function verifies(key: CryptoKey, values: Record<string, string>, signatureInput: string, signature: string) {
   const p = parse(signatureInput, signature);
-  const base = p.components.map((c) => `"${c}": ${values[c] ?? ""}`).concat(`"@signature-params": ${p.params}`).join("\n");
+  const name = (c: string) => c.replace(/^"([^"]*)".*$/, "$1");
+  const base = p.components.map((c) => `${c}: ${values[name(c)] ?? ""}`).concat(`"@signature-params": ${p.params}`).join("\n");
   return crypto.subtle.verify({ name: "Ed25519" }, key, p.bytes, enc.encode(base));
 }
 
@@ -101,15 +103,15 @@ describe("the key directory", () => {
     expect(a.kid).toBe(b.kid);
   });
 
-  it("is signed over its own @authority with the directory tag, and the signature verifies", async () => {
+  it("is signed over the requested @authority with the req flag and the directory tag, and verifies", async () => {
     const { key, kid } = await publicKey();
     const r = await raw(DIRECTORY_PATH, { env: KEYED });
     const input = r.headers.get("signature-input")!;
     const signature = r.headers.get("signature")!;
-    expect(input).toMatch(/^sig1=\("@authority"\);alg="ed25519";keyid="[^"]+";nonce="[^"]+";created=\d+;expires=\d+;tag="http-message-signatures-directory"$/);
+    expect(input).toMatch(/^sig1=\("@authority";req\);alg="ed25519";keyid="[^"]+";nonce="[^"]+";created=\d+;expires=\d+;tag="http-message-signatures-directory"$/);
     expect(signature).toMatch(/^sig1=:[A-Za-z0-9+/]+=*:$/);
     const p = parse(input, signature);
-    expect(p.components).toEqual(["@authority"]);
+    expect(p.components).toEqual(['"@authority";req']);
     expect(p.param("keyid")).toBe(kid);
     expect(p.param("alg")).toBe("ed25519");
     const now = Math.floor(Date.now() / 1000);
@@ -215,6 +217,11 @@ describe("the pieces", () => {
     expect(params).toBe('("@authority" "signature-agent");created=1;keyid="k";tag="web-bot-auth"');
     expect(signatureBase([["@authority", "a.test"], ["signature-agent", '"https://sponsorjobs.ai"']], params)).toBe(
       '"@authority": a.test\n"signature-agent": "https://sponsorjobs.ai"\n"@signature-params": ' + params);
+    // A flagged component keeps its flag in both places (RFC 9421 section 2.4).
+    const flagged = signatureParams(["@authority;req"], [["tag", "http-message-signatures-directory"]]);
+    expect(flagged).toBe('("@authority";req);tag="http-message-signatures-directory"');
+    expect(signatureBase([["@authority;req", "sponsorjobs.ai"]], flagged)).toBe(
+      '"@authority";req: sponsorjobs.ai\n"@signature-params": ' + flagged);
   });
 
   it("helpers.call sees the same routes (plain JSON, no headers needed)", async () => {
