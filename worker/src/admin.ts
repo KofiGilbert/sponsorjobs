@@ -19,7 +19,7 @@ import { dayOf, FREE_MODEL, INTERVIEW_SECONDS, PASS_MODEL, PASSES, periodOf } fr
 import { FREE_POOL_CAP_KEY, FREE_POOL_USER, poolCapOverride } from "./store";
 import { ActionError, accountAction, formOf, logReveal, sameOrigin, setFreePool, testAlert } from "./admin_actions";
 import {
-  auditLog, emailDomains, feed, githubRuns, listUsers, monthly, poolDays, poolSetting, recentActivity, revenue, signupNetworks,
+  accountsPerDay, auditLog, emailDomains, feed, githubRuns, listUsers, monthly, poolDays, poolSetting, recentActivity, revenue, signupNetworks,
   spend, userDetail,
 } from "./admin_data";
 import {
@@ -237,7 +237,9 @@ const security = {
   "x-robots-tag": "noindex, nofollow",
 };
 
-const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+// Inter comes from Google Fonts (the kit's typeface); nothing else is loaded from outside.
+const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; " +
+  "img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 const text = (body: string, status: number) =>
   new Response(body, { status, headers: { "content-type": "text/plain", ...security } });
@@ -319,11 +321,14 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
   }
   const base = { viewer: admin, generatedAt: now, flash: flashOf(url) };
   if (path === "/" || path === "/admin") {
-    const [stats, pool, rev, fd, runs, activity, suspended] = await Promise.all([
+    const today = dayOf(nowMs);
+    const todayStart = Math.floor(Date.parse(`${today}T00:00:00Z`) / 1000);
+    const [stats, pool, rev, fd, runs, activity, suspended, prevDays, sp, pDays] = await Promise.all([
       collectStats(env, nowMs), poolSetting(env), revenue(env, nowMs), feed(nowMs), githubRuns(env, nowMs),
-      recentActivity(env.DB), suspendedCount(env.DB)]);
+      recentActivity(env.DB, 6), suspendedCount(env.DB), accountsPerDay(env.DB, todayStart - 29 * 86_400, 30),
+      spend(env.DB, periodOf(nowMs), now, 6), poolDays(env.DB, todayStart)]);
     const att = attention({ stats, pool, revenue: rev, feed: fd, runs, env, now, suspended });
-    const { body, rail } = overviewPage({ stats, pool, revenue: rev, attention: att, activity, now });
+    const { body, rail } = overviewPage({ stats, pool, revenue: rev, attention: att, activity, prevDays, spend: sp, poolDays: pDays, now });
     return html(shell({ ...base, page: "overview", title: "Overview", body, rail, badges: badgesFor(att) }));
   }
   if (path === "/users") {

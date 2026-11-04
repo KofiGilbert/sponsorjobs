@@ -200,6 +200,16 @@ export async function monthly(db: D1Database, nowMs: number, n = 6): Promise<Arr
   return periods.map((p) => ({ period: p, tokens: u.get(p)?.tokens ?? 0, packages: u.get(p)?.packages ?? 0, minutes: (v.get(p) ?? 0) / 60 }));
 }
 
+/** New accounts per UTC day for `days` days ending the day before `endStart` (exclusive), oldest
+ * first: the overview's comparison line (the 30 days before the chart's 30). */
+export async function accountsPerDay(db: D1Database, endStart: number, days: number): Promise<number[]> {
+  const start = endStart - days * DAY_SECONDS;
+  const rows = (await db.prepare("SELECT date(created_at, 'unixepoch') AS day, COUNT(*) AS n FROM accounts " +
+    "WHERE created_at >= ? AND created_at < ? GROUP BY day").bind(start, endStart).all<{ day: string; n: number }>()).results;
+  const by = new Map(rows.map((r) => [r.day, r.n]));
+  return Array.from({ length: days }, (_, i) => by.get(new Date((start + i * DAY_SECONDS) * 1000).toISOString().slice(0, 10)) ?? 0);
+}
+
 // ---- sign-up pressure (abuse signals, counts only) ---------------------------------------------- //
 
 /** Today's new-account counts per network (the registration limiter's salted IP hash, never an

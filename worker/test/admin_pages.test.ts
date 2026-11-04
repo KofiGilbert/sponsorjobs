@@ -126,7 +126,7 @@ describe("users", () => {
     expect(all.text).not.toContain(FREE_POOL_USER);
     const found = await get("/users?q=findme");
     expect(found.text).toContain(`/users/${a.id}`);
-    expect(found.text).toContain("1 account matching");
+    expect(found.text).toContain("1 matching");
     const byId = await get(`/users?q=${a.id.slice(0, 10)}`);
     expect(byId.text).toContain(`/users/${a.id}`);
     expect((await get("/users?filter=email")).text).toContain(`/users/${a.id}`);
@@ -242,7 +242,7 @@ describe("the free AI limit (kill switch)", () => {
     expect(busy.status).toBe(503);
     expect(busy.data.reason).toBe("free_busy");
     expect((await get("/")).text).toContain("The free AI is paused");
-    expect((await get("/usage")).text).toContain(`Set to paused by ${ADMIN}`);
+    expect((await get("/usage")).text).toContain(`Paused by ${ADMIN}`);
     await post("/settings/free-pool", { mode: "default", reason: "back to normal" });
     expect((await freeCall()).status).toBe(200);
     const log = (await env.DB.prepare("SELECT action, detail FROM admin_actions WHERE action = 'set_free_pool' ORDER BY id").all()).results;
@@ -281,7 +281,7 @@ describe("revenue (Stripe)", () => {
     expect(r.text).toContain("Disputed");
     expect(r.text).toContain("Test mode");
     expect(r.text).toContain("https://dashboard.stripe.com/test/payments/ch_1");
-    expect(r.text).toContain("These differ");                     // 3 paid, 0 granted by the webhook here
+    expect(r.text).toContain("Differs");                          // 3 paid, 0 granted by the webhook here
     expect((await get("/", { STRIPE_TEST_SECRET_KEY: "sk_test_x" })).text).toContain("1 payment is disputed");
     expect(outside.stripe).toBe(1);                                 // cached for 5 minutes
   });
@@ -310,7 +310,7 @@ describe("health", () => {
     const o = await get("/");
     expect(o.text).toContain("The job feed is out of date");
     expect(o.text).toContain('GitHub &quot;grow-boards&quot; failed');
-    expect(o.text).toContain('class="navbadge"');                  // a count beside Health
+    expect(o.text).toContain('class="nbadge"');                  // a count beside Health
   });
 
   it("the test alert is logged with its result", async () => {

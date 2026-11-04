@@ -4,8 +4,13 @@ A private dashboard that shows how SponsorJobs is doing and lets the founder han
 jobs that come up: revenue, users, AI and interview costs, the free AI limit, and the health of every
 outside service. It lives in the same Cloudflare Worker as the broker (`worker/src/admin.ts`, with
 `admin_ui.ts`, `admin_pages.ts`, `admin_data.ts`, `admin_actions.ts`) and only answers on
-`admin.sponsorjobs.ai`. The look follows ByeWind's free "Dashboard UI Kit" (SnowUI) from Figma
-Community, CC BY 4.0, rebuilt in our own markup and credited in the page footer.
+`admin.sponsorjobs.ai`. The look is ByeWind's free "Dashboard UI Kit" (SnowUI) from Figma
+Community, CC BY 4.0, credited in the page footer. Every size, colour, radius, gap and type style
+was read from the kit's own Figma file (its "Dashboard Overview" light and dark frames) through
+Figma's plugin API and is listed at the top of `worker/src/admin_ui.ts`. Font: Inter (Google Fonts).
+Icons: Phosphor, the kit's set (MIT, `worker/src/admin_icons.ts`). Where the kit shows a control we
+have no use for (the theme switch, the favourites list, the "Today" range), it is left out rather
+than shown as a button that does nothing.
 
 **Cost: $0.** Cloudflare Access (Zero Trust) is free for up to 50 users, and the Worker route uses
 the plan you already have.
