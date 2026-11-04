@@ -91,8 +91,11 @@
   --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
 
   --sidebar-w: 232px;
-  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Motion (apple-design skill, 2026-11): an ease that settles without overshoot, short durations,
+     and feedback on the press (pointer-down), never only on release. */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --dur: 200ms;
+  --press: 100ms;
 }
 
 /* --- LIGHT: the same colourless system inverted. The accent becomes near-BLACK on
@@ -243,8 +246,9 @@ button { font-family: inherit; cursor: pointer; }
      out of the sidebar instead of ellipsing. Fixed nav labels never showed it; a live CV
      title ("Senior Staff Engineer · Northwind") does. */
   min-width: 0;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), transform var(--press) ease-out;
 }
+.nav-item:active { transform: scale(0.98); }
 .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-ic { width: 20px; height: 20px; flex: none; opacity: 0.9; }
 .nav-item:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); color: var(--ink-2); }
@@ -389,9 +393,10 @@ button { font-family: inherit; cursor: pointer; }
   font-size: 13.5px; font-weight: 550; line-height: 1; text-decoration: none;
   padding: 9px 14px; border-radius: var(--r-sm); border: 1px solid transparent;
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
-              color var(--dur) var(--ease), transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+              color var(--dur) var(--ease), transform var(--press) ease-out, box-shadow var(--dur) var(--ease);
+  -webkit-tap-highlight-color: transparent;
 }
-.btn:active { transform: translateY(1px); }
+.btn:active { transform: scale(0.97); }
 .btn-primary { background: var(--accent); color: var(--accent-ink); box-shadow: var(--shadow-sm); }
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
@@ -575,6 +580,11 @@ button { font-family: inherit; cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  /* Gentler, not dead: the drawer and scrim still cross-fade; nothing moves or shrinks. */
+  .view-autoapply .aa-drawer { transform: none; opacity: 0; transition: opacity 160ms ease !important; }
+  .view-autoapply .aa-drawer.is-in { opacity: 1; }
+  .view-autoapply .aa-scrim { transition: opacity 160ms ease !important; }
+  .btn:active, .nav-item:active, .jf-toggle-btn:active, .view-autoapply .aa-tile:active, .view-autoapply .aa-x:active, .view-autoapply .aa-close:active { transform: none; }
 }
 
 @media (max-width: 1080px) {
@@ -1180,6 +1190,7 @@ button { font-family: inherit; cursor: pointer; }
   border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); cursor: pointer;
   white-space: nowrap; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
 .jf-toggle-btn:hover { border-color: var(--border-strong); color: var(--ink); }
+.jf-toggle-btn:active { transform: scale(0.97); transition: transform var(--press) ease-out; }
 .jf-toggle-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 /* Active-filter chips (removable), shown below the bar. */
 .active-filters { max-width: 1320px; margin: 0 auto 10px; display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
@@ -1699,8 +1710,9 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .view-autoapply .aa-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; cursor: pointer;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
   padding: 13px 16px 14px; color: inherit; font: inherit; min-width: 0;
-  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), transform var(--press) ease-out; }
 .view-autoapply .aa-tile:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.view-autoapply .aa-tile:active { transform: scale(0.985); }
 .view-autoapply .aa-tile.is-selected, .view-autoapply .aa-tile.is-selected:hover { background: var(--surface-2); border-color: var(--ink-2); }
 .view-autoapply .aa-tile-top { display: flex; width: 100%; align-items: center; justify-content: space-between;
   font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
@@ -1724,6 +1736,8 @@ mark.jd-gap { text-decoration-color: var(--flag); }
   padding: 10px 16px; cursor: pointer; transition: background var(--dur) var(--ease); position: relative; }
 .view-autoapply .aa-row + .aa-row { border-top: 1px solid var(--border); }
 .view-autoapply .aa-row:hover { background: var(--surface-2); }
+/* The press shows the instant the pointer goes down; the drawer follows on release. */
+.view-autoapply .aa-row:active { background: color-mix(in srgb, var(--ink) 7%, var(--surface)); transition: none; }
 .view-autoapply .aa-row:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
 .view-autoapply .aa-row.is-active { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--ink-2); }
 .view-autoapply .aa-row .fr-logo { width: 36px; height: 36px; border-radius: 8px; }
@@ -1754,6 +1768,7 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .view-autoapply .aa-tag { font-size: 12.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 .view-autoapply .aa-x { width: 28px; height: 28px; display: grid; place-items: center; border: 0; background: none; color: var(--faint); border-radius: var(--r-xs); cursor: pointer; }
 .view-autoapply .aa-x:hover { color: var(--ink); background: var(--surface-2); }
+.view-autoapply .aa-x:active, .view-autoapply .aa-close:active { transform: scale(0.92); transition: transform var(--press) ease-out; }
 .view-autoapply .aa-more { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--border);
   font-size: 12.5px; color: var(--muted); background: color-mix(in srgb, var(--surface-2) 45%, var(--surface)); }
 .view-autoapply .aa-empty { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 16px; }
@@ -1843,11 +1858,19 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .feed-row.is-excluded:hover, .feed-row.is-excluded.is-active { opacity: 1; }
 
 /* the detail drawer */
-.view-autoapply .aa-scrim { position: fixed; inset: 0; z-index: 80; background: rgba(15, 18, 24, 0.28); }
+.view-autoapply .aa-scrim { position: fixed; inset: 0; z-index: 80; background: rgba(15, 18, 24, 0.28); opacity: 0; transition: opacity 320ms var(--ease); }
 :root:not([data-theme="light"]) .view-autoapply .aa-scrim { background: rgba(0, 0, 0, 0.5); }
+.view-autoapply .aa-scrim.is-in { opacity: 1; }
 .view-autoapply .aa-drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 90; width: 720px; max-width: calc(100vw - 48px);
-  background: var(--surface); border-left: 1px solid var(--border); box-shadow: -12px 0 40px rgba(0, 0, 0, 0.12);
-  display: flex; flex-direction: column; outline: none; }
+  background: color-mix(in srgb, var(--surface) 92%, transparent); border-left: 1px solid var(--border); box-shadow: -12px 0 40px rgba(0, 0, 0, 0.12);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4);
+  display: flex; flex-direction: column; outline: none;
+  /* Enters from the right edge and leaves by the same path; a second click mid-way reverses from
+     wherever it is (a CSS transition re-targets from the current value). */
+  transform: translateX(100%); will-change: transform;
+  transition: transform 360ms var(--ease), box-shadow 360ms var(--ease); }
+.view-autoapply .aa-drawer.is-in { transform: none; }
+@media (prefers-reduced-transparency: reduce) { .view-autoapply .aa-drawer { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } }
 .view-autoapply .aa-dr-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .view-autoapply .aa-close { position: absolute; top: 18px; right: 18px; z-index: 1; width: 32px; height: 32px; display: grid; place-items: center; cursor: pointer;
   border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: var(--r-md); }
