@@ -333,10 +333,11 @@ describe("Send test alert (the one action on the dashboard)", () => {
   const OWNER_CHAT = 424242;
   const BOT: Partial<Env> = { ...CFG, TELEGRAM_BOT_TOKEN: "123456:TEST-not-real", TELEGRAM_BOT_USERNAME: "@SponsorJobsBot",
     TELEGRAM_WEBHOOK_SECRET: "whsec-test_not-real", OWNER_TELEGRAM_CHAT_ID: String(OWNER_CHAT) };
-  const press = async (token: string | undefined, origin: string | null, e: Partial<Env> = BOT) => {
+  const press = async (token: string | undefined, origin: string | null, e: Partial<Env> = BOT, fetchSite?: string) => {
     const headers: Record<string, string> = {};
     if (token !== undefined) headers["Cf-Access-Jwt-Assertion"] = token;
     if (origin !== null) headers.Origin = origin;
+    if (fetchSite) headers["Sec-Fetch-Site"] = fetchSite;
     const res = await worker.fetch(new Request("https://admin.sponsorjobs.ai/admin/test-alert", { method: "POST", headers }),
       { ...env, ...e } as Env);
     return { status: res.status, text: await res.text() };
@@ -381,10 +382,21 @@ describe("Send test alert (the one action on the dashboard)", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("works the way Chrome really posts it: Origin null (no-referrer page) with Sec-Fetch-Site same-origin", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-04T14:00:00Z"));
+      const r = await press(await jwt({}), "null", BOT, "same-origin");
+      expect(r.status).toBe(200);
+      expect(r.text).toContain("Test alert sent");
+      expect(sent).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("says why when Telegram is not set up, and sends nothing", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
-      vi.setSystemTime(new Date("2026-11-04T13:00:00Z"));
+      vi.setSystemTime(new Date("2026-11-04T15:00:00Z"));
       const r = await press(await jwt({}), "https://admin.sponsorjobs.ai", { ...CFG, TELEGRAM_BOT_TOKEN: "" });
       expect(r.text).toContain("telegram not configured");
       expect(sent).toHaveLength(0);
@@ -394,6 +406,9 @@ describe("Send test alert (the one action on the dashboard)", () => {
   it("another site cannot press it, and nobody can without Access", async () => {
     expect((await press(await jwt({}), "https://evil.example")).status).toBe(403);
     expect((await press(await jwt({}), null)).status).toBe(403);
+    expect((await press(await jwt({}), "null")).status).toBe(403);
+    expect((await press(await jwt({}), "null", BOT, "cross-site")).status).toBe(403);
+    expect((await press(await jwt({}), "https://evil.example", BOT, "same-site")).status).toBe(403);
     expect((await press(undefined, "https://admin.sponsorjobs.ai")).status).toBe(403);
     expect(sent).toHaveLength(0);
   });

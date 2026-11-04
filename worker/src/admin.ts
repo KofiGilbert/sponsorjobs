@@ -3,7 +3,7 @@
 // Routes on the admin host only: GET / (one server-rendered HTML page), GET /admin/api/stats (the
 // same numbers as JSON) and POST /admin/test-alert (the page's "Send test alert" button: one
 // Telegram message to the owner, the way a real outage alert goes; accepted only with this host's
-// own Origin, so another site cannot press it). Every request is checked by src/access.ts first;
+// own origin (Origin, or Sec-Fetch-Site: same-origin), so another site cannot press it). Every request is checked by src/access.ts first;
 // nothing here writes to the database. Output never contains a token, a token hash, a code hash or a salt: the queries
 // below select only the columns they show.
 
@@ -399,7 +399,10 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
   const url = new URL(req.url);
   const path = url.pathname;
   if (req.method === "POST" && path === "/admin/test-alert") {
-    if (req.headers.get("origin") !== url.origin) {
+    // The page's Referrer-Policy is no-referrer, so a browser posts its form with "Origin: null";
+    // Sec-Fetch-Site (set by the browser, never by a page) then says whether it came from here.
+    const sameSite = req.headers.get("origin") === url.origin || req.headers.get("sec-fetch-site") === "same-origin";
+    if (!sameSite) {
       return new Response("Forbidden", { status: 403, headers: { "content-type": "text/plain", ...security } });
     }
     const result = await sendTestAlert(env, Math.floor(nowMs / 1000));
