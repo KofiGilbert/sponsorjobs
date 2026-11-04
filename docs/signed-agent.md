@@ -47,18 +47,16 @@ origin, the one Cloudflare reads) and, for testing, from api.sponsorjobs.ai as w
 HTTP/1.1 200 OK
 Content-Type: application/http-message-signatures-directory+json
 Cache-Control: max-age=3600
-Signature-Input: sig1=("@authority");alg="ed25519";keyid="<kid>";nonce="<base64>";created=<now>;expires=<now+3600>;tag="http-message-signatures-directory"
+Signature-Input: sig1=("@authority";req);alg="ed25519";keyid="<kid>";nonce="<base64>";created=<now>;expires=<now+3600>;tag="http-message-signatures-directory"
 Signature: sig1=:<base64>:
 
 {"keys":[{"kty":"OKP","crv":"Ed25519","kid":"<kid>","x":"<x>"}]}
 ```
 
-The response is itself signed over `@authority`, the host it was requested from. Cloudflare's page
-writes that component as `("@authority";req)` in its directory section and, in its limitations
-section, says the `req` parameter is unsupported and fails verification; we emit the plain
-`("@authority")`, so a verifier that does not understand `req` is never tripped. If Cloudflare's
-`http-signature-directory` checker ever insists on `req`, that one string in `signDirectory` is the
-change.
+The response is itself signed over `("@authority";req)`, the host the directory was requested from.
+The `req` flag binds the response's signature to that request, so the directory cannot be replayed
+from another origin. Cloudflare's review required it (2026-11-02). The "`req` is not supported" line
+in Cloudflare's limitations section applies to the bot's request signatures, not to this one.
 
 Why it is routed on the broker and not served by the site: the site at sponsorjobs.ai is the
 separate `sponsorjobs-site` Worker (`site-worker/wrangler.jsonc`, static files on a custom domain).

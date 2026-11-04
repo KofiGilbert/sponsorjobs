@@ -22,11 +22,11 @@
 // The method and path are accepted in the body for forward compatibility but are not covered:
 // Cloudflare asks for @authority (and signature-agent) and warns against components an intermediary
 // may rewrite. A signature is good for 60 seconds; Cloudflare relies on that, not the nonce, against
-// replay. The directory response is signed the same way, over "@authority" alone, with the tag
-// "http-message-signatures-directory". Cloudflare's page shows that component as ("@authority";req)
-// in the directory section and, in its limitations section, says the `req` parameter is not
-// supported and fails verification; the plain ("@authority") form is used here, so a verifier that
-// does not understand `req` is never tripped. Everything emitted is ASCII.
+// replay. The directory response is signed over ("@authority";req), the host the directory was
+// requested from, with the tag "http-message-signatures-directory". The req flag binds the
+// response's signature to that request, so the directory cannot be replayed from another origin.
+// Cloudflare's review required it (2026-11-02); the "req is not supported" line in its docs is
+// about the bot's request signatures, not this one. Everything emitted is ASCII.
 //
 // Keys. The secret is the Ed25519 private key's 32-byte seed as base64url (wrangler.jsonc says how
 // to make one). The public key is the JWK {kty:"OKP", crv:"Ed25519", x}, and the keyid is its
@@ -137,9 +137,16 @@ export function keyFrom(env: Env): Promise<SigningKey> | null {
 
 // ---- RFC 9421 ---------------------------------------------------------------------------------- //
 
+/** A component identifier as serialized: "@authority" -> "\"@authority\"", "@authority;req" ->
+ * "\"@authority\";req" (RFC 9421 section 2.4: a flag rides after the quoted name). */
+const componentId = (c: string) => {
+  const [name, ...flags] = c.split(";");
+  return [`"${name}"`, ...flags].join(";");
+};
+
 /** The signature-params value: the covered components in order, then the parameters. */
 export function signatureParams(components: string[], params: Array<[string, string | number]>): string {
-  const list = components.map((c) => `"${c}"`).join(" ");
+  const list = components.map(componentId).join(" ");
   const tail = params.map(([k, v]) => (typeof v === "number" ? `;${k}=${v}` : `;${k}="${v}"`)).join("");
   return `(${list})${tail}`;
 }
@@ -147,7 +154,7 @@ export function signatureParams(components: string[], params: Array<[string, str
 /** The signature base (RFC 9421 section 2.5): one line per covered component, "name": value, then
  * the "@signature-params" line. Lines are joined with LF and there is no trailing newline. */
 export function signatureBase(components: Array<[name: string, value: string]>, params: string): string {
-  const lines = components.map(([name, value]) => `"${name}": ${value}`);
+  const lines = components.map(([name, value]) => `${componentId(name)}: ${value}`);
   lines.push(`"@signature-params": ${params}`);
   return lines.join("\n");
 }
@@ -183,13 +190,13 @@ export async function signRequest(key: SigningKey, authority: string, now: numbe
   };
 }
 
-/** The directory's own signature, over the host it is served from. */
+/** The directory's own signature, over the host it was requested from (the req flag). */
 export async function signDirectory(key: SigningKey, authority: string, now: number): Promise<{ input: string; signature: string }> {
-  const params = signatureParams(["@authority"], [
+  const params = signatureParams(["@authority;req"], [
     ["alg", "ed25519"], ["keyid", key.kid], ["nonce", nonce()], ["created", now],
     ["expires", now + DIRECTORY_TTL_SECONDS], ["tag", "http-message-signatures-directory"],
   ]);
-  const base = signatureBase([["@authority", authority]], params);
+  const base = signatureBase([["@authority;req", authority]], params);
   return { input: `${DIRECTORY_LABEL}=${params}`, signature: `${DIRECTORY_LABEL}=:${await sign(key, base)}:` };
 }
 
