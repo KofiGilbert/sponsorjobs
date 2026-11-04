@@ -1,9 +1,19 @@
 # Admin dashboard (admin.sponsorjobs.ai)
 
-A private page, read-only apart from one test button, that shows how SponsorJobs is doing: accounts, sign-ins, plans, this
-month's usage and what it roughly costs, the free AI pool, and sign-in e-mails against Resend's free
-plan. It lives in the same Cloudflare Worker as the broker (`worker/src/admin.ts`) and only answers
-on `admin.sponsorjobs.ai`.
+A private dashboard that shows how SponsorJobs is doing and lets the founder handle the few support
+jobs that come up: revenue, users, AI and interview costs, the free AI limit, and the health of every
+outside service. It lives in the same Cloudflare Worker as the broker (`worker/src/admin.ts`, with
+`admin_ui.ts`, `admin_pages.ts`, `admin_data.ts`, `admin_actions.ts`) and only answers on
+`admin.sponsorjobs.ai`. The look is ByeWind's free "Dashboard UI Kit" (SnowUI) from Figma
+Community, CC BY 4.0, credited in the page footer. Every size, colour, radius, gap and type style
+was read from the kit's own Figma file (its "Dashboard Overview" light and dark frames) through
+Figma's plugin API and is listed at the top of `worker/src/admin_ui.ts`. Font: Inter (Google Fonts).
+Icons: Phosphor, the kit's set (MIT, `worker/src/admin_icons.ts`). Where the kit shows a control we
+have no use for (the theme switch, the favourites list, the "Today" range), it is left out rather
+than shown as a button that does nothing.
+
+How it must look (the kit's measurements, colours, blocks, wording and how to check against the
+Figma file) is in `docs/admin-design.md`; read it before changing anything on screen.
 
 **Cost: $0.** Cloudflare Access (Zero Trust) is free for up to 50 users, and the Worker route uses
 the plan you already have.
@@ -17,34 +27,97 @@ the plan you already have.
    and answers **403 Forbidden** if anything is off, or if the two settings below are still empty.
    So the page is closed by default, and a mistake in the Access policy alone cannot open it.
 
-The page never shows tokens, token hashes or sign-in code hashes, and it cannot change anything.
+The pages never show tokens, token hashes, sign-in code hashes, or a forwarded mail's code or link.
+E-mails are masked (`ka***@gmail.com`) everywhere except one person's page after **Show full e-mail**,
+and that reveal is written to the audit log. The application e-mail alias is masked the same way,
+because it carries the person's name.
 
 ## What it shows
 
-- **AI (company Anthropic key):** whether model calls are going through right now. "OK", or
-  "DOWN (ours)" with the cause, since when, and when the owner was last messaged (see
-  "When the company AI key fails" below). The same line is on the public
-  `https://api.sponsorjobs.ai/health` as `ai`: `ok`, `company_outage since <time>` or `transient`
-  (the cause stays on this page).
-- **Accounts:** total, how many signed in with an e-mail, new this week, and a bar chart of new
-  accounts per day for the last 30 days (hover a bar for the number, or open "Show as a table").
-- **Plans:** free, active Job Hunt Pass, active Season Pass, purchases (passes and interview packs
-  together: Stripe's records here do not say which was which), and unused extra-interview credits.
-- **This month:** active accounts, tailored packages, AI tokens with an estimated cost, live
-  interviews and minutes with an estimated Tavus cost ($0.35 a minute).
-- **Free AI pool today:** tokens used against the daily cap (`FREE_POOL_DAILY_TOKENS`).
-- **E-mails sent:** sign-in codes and mail forwarded from students' aliases (`docs/mail-alias.md`),
-  today against Resend's free 100 a day, and the month against 3,000. Amber at 70 a day, red at 90.
-- **Recent sign-ins:** the last 20 accounts with an e-mail, their plan and dates.
-- The same numbers as JSON at `https://admin.sponsorjobs.ai/admin/api/stats`.
+The layout is the kit's, item for item.
 
-Cost estimates use list prices: Haiku 4.5 ($1 in / $5 out per million tokens) for the free plan,
-Sonnet 5.5 ($2 / $10) for passes, assuming 80% of tokens are input. Check the Anthropic and Tavus
-consoles for the real bill.
+**Left sidebar**
+- **Favorites / Recently.** Favorites are the pages you starred with the header's star; Recently
+  is the last six pages you opened, with people shown masked.
+- **Dashboards.** Overview; Revenue (Payments, Products, Checks); Usage & costs (Free AI, Top users,
+  Sign-ups).
+- **Pages.** Users (Overview, On a pass, Free, E-mail sign-in, Suspended); Health; Job feed; Audit
+  log; Alerts.
 
-**Dates start now.** The database did not record when an account was created or when someone
-signed in, or count pass packages and sign-in e-mails per month. This release starts recording
-them. Older accounts show "unknown" and are left out of the chart; nothing is made up.
+**Header**
+- **Left:** the sidebar button (hide or show it), the star (favorite this page), the breadcrumb.
+- **Search:** the search box finds a person by e-mail or id, and ⌘K focuses it.
+- **Right:** the sun (switch light, dark or follow the Mac), the clock (Audit log), the bell
+  (Alerts; a red dot when something is failing), the right-sidebar button.
+
+These choices live in one cookie (`sj_admin`) and never touch the database.
+
+**Right sidebar (every page)**
+- **Notifications:** what needs you (AI key, feed, GitHub runs, free AI, Resend, disputes, Stripe
+  mode, Telegram chat, suspended accounts).
+- **Activities:** sign-ups, e-mail sign-ins, paid checkouts, admin actions.
+- **Contacts:** recent e-mail sign-ins, masked.
+
+**The pages**
+- **Overview**, the kit's frame block for block:
+  - The **"Today" menu** sets the range for the four cards (Revenue, New Users, Sign-ins,
+    Purchases), each compared with the range before it.
+  - The **line chart** has the kit's tabs (Total Users, Revenue, AI Cost), drawn by month, this
+    year against last year.
+  - The **"Traffic by Website" list** is Top AI Users.
+  - The **"Traffic by Device" bars** are this month's revenue, free and pass AI, Tavus, refunds and
+    margin.
+  - The **"Traffic by Location" donut** is users by plan.
+  - The **"Marketing & SEO" bars** are free AI per day.
+- **Users and a person:** as before, with the support actions.
+- **Revenue:** net over 7, 30 and 90 days, payments with Stripe links, products, the
+  Stripe-against-webhook check.
+- **Usage & costs:** costs, cost per user with p95, the free AI chart and its limit control, top
+  users, monthly totals, sign-ups per hashed network, e-mail domains.
+- **Health:** each outside service.
+- **Job feed:** jobs and sponsors in the published feed, when each was built, and the latest GitHub
+  `feed`, `grow-boards`, `tests` and `release` runs.
+- **Alerts:** the company AI key's state, when you were last alerted, and the test alert with its
+  history.
+- **Audit log:** every action.
+- The overview numbers as JSON at `https://admin.sponsorjobs.ai/admin/api/stats`.
+
+Stripe (last 400 days), the feed and GitHub are fetched at most every 5 to 10 minutes per Worker
+instance, and a page still loads when any of them is down.
+
+## Actions
+
+Every action:
+- is a form on the dashboard
+- is accepted only from the dashboard itself (another site's form gets 403)
+- needs a typed reason
+- writes an audit row in the same database transaction as the change
+
+| Action | Where | What it does |
+|---|---|---|
+| Give a pass | a person | Starts a Job Hunt or Season Pass now, or adds to an active one. No charge; not counted as a Stripe purchase. |
+| Add live interviews | a person | 1 to 10 interviews (20 minutes each) as credit that never expires. |
+| Suspend | a person | Type `SUSPEND`. The account's tokens stop working, so the app is signed out everywhere and cannot use AI, until restored. Nothing is deleted. |
+| Restore | a person | The same tokens work again. |
+| Show full e-mail | a person | Shows the full e-mail and alias once, and logs it. |
+| Free AI limit | Usage & costs | Set a daily token limit, go back to the deploy's `FREE_POOL_DAILY_TOKENS`, or pause the free AI (type `PAUSE`). Takes effect on the next request with no deploy; pass holders are never affected. |
+| Send test alert | Health | One Telegram message to the owner, logged with the result. |
+
+A suspended anonymous account can register a new anonymous one. Suspension is meant for e-mail
+accounts and obvious abuse. The free AI limit and the per-network sign-up limit are what stop
+scripts.
+
+## Deploying a change that adds tables
+
+Migration `0011_admin_actions.sql` adds `admin_actions`, `admin_settings` and
+`accounts.suspended_at`, and the Worker reads them on every request. **Apply the migration BEFORE
+deploying the code**, or every AI request and every sign-in fails until it is applied:
+
+```
+cd ~/sponsorjobs/worker
+npx wrangler d1 migrations apply DB --remote
+npx wrangler deploy
+```
 
 ## Setup, step by step
 

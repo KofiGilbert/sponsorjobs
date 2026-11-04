@@ -76,9 +76,9 @@ describe("Cloudflare Access check", () => {
     const r = await admin("/", await jwt({}));
     expect(r.status).toBe(200);
     expect(r.headers.get("content-type")).toContain("text/html");
-    expect(r.text).toContain("SponsorJobs admin");
+    expect(r.text).toContain("Overview · SponsorJobs Admin");
     expect(r.text).toContain(ADMIN);
-    expect(certFetches).toEqual([`${ISS}/cdn-cgi/access/certs`]);
+    expect(certFetches.filter((u) => u.startsWith(ISS))).toEqual([`${ISS}/cdn-cgi/access/certs`]);
     const j = await admin("/admin/api/stats", await jwt({}));
     expect(j.status).toBe(200);
     expect(JSON.parse(j.text).accounts).toBeTruthy();
@@ -127,9 +127,13 @@ describe("Cloudflare Access check", () => {
   it("takes no other POST and serves nothing else on the admin host", async () => {
     const t = await jwt({});
     const post = await worker.fetch(new Request("https://admin.sponsorjobs.ai/admin/api/stats",
-      { method: "POST", headers: { "Cf-Access-Jwt-Assertion": t } }), { ...env, ...CFG } as Env);
+      { method: "POST", headers: { "Cf-Access-Jwt-Assertion": t, "Sec-Fetch-Site": "same-origin" } }), { ...env, ...CFG } as Env);
     expect(post.status).toBe(405);
-    expect((await admin("/health", t)).status).toBe(404);          // broker routes are not on this host
+    const foreign = await worker.fetch(new Request("https://admin.sponsorjobs.ai/users/acct_x/suspend",
+      { method: "POST", headers: { "Cf-Access-Jwt-Assertion": t, Origin: "https://evil.example" } }), { ...env, ...CFG } as Env);
+    expect(foreign.status).toBe(403);                               // no write from another site
+    expect((await admin("/billing/webhook", t)).status).toBe(404); // broker routes are not on this host
+    expect((await admin("/v1/messages", t)).status).toBe(404);
     expect((await admin("/health")).status).toBe(403);             // and nothing at all without a token
   });
 
@@ -236,10 +240,11 @@ describe("stats", () => {
         expect(out).not.toContain(secret);
       }
     }
-    expect(page.text).toContain("old@example.com");
-    expect(page.text).toContain("12 of 100 today");
-    expect(page.text).toContain("Upgrade to Pro ($20/month, no daily cap) before this fills.");
-    expect(page.text).toContain("unknown");                         // legacy rows are labelled, not invented
+    expect(page.text).toContain("ol***@example.com");              // masked on the overview
+    expect(page.text).not.toContain("old@example.com");
+    expect((await admin("/users", await jwt({}))).text).toContain("unknown");   // legacy rows are labelled, not invented
+    const health = await admin("/health", await jwt({}));
+    expect(health.text).toContain("12 / 100");
     expect(page.headers.get("cache-control")).toBe("no-store");
   });
 
@@ -247,9 +252,14 @@ describe("stats", () => {
     await wipe();
     await DB().prepare("INSERT INTO accounts(account_id, email, created_at) VALUES('acct_x', '<script>x</script>@e.com', ?)")
       .bind(Math.floor(Date.now() / 1000)).run();
-    const page = await admin("/", await jwt({}));
-    expect(page.text).not.toContain("<script>x</script>");
-    expect(page.text).toContain("&lt;script&gt;");
+    for (const path of ["/", "/users", "/users?q=%3Cb%3E", "/users/acct_x", "/usage"]) {
+      const page = await admin(path, await jwt({}));
+      expect(page.status).toBe(200);
+      expect(page.text).not.toContain("<script>x</script>");
+      expect(page.text).not.toContain("<b>");
+    }
+    expect((await admin("/users?q=%3Cb%3E", await jwt({}))).text).toContain("&lt;b&gt;");
+    expect((await admin("/", await jwt({}))).text).toContain("&lt;s***@e.com");
   });
 
   it("new accounts and e-mail sign-ins are dated from now on", async () => {
@@ -292,18 +302,18 @@ describe("sign-in code e-mails against Resend's free plan", () => {
       await env.DB.prepare("INSERT INTO email_sends(day, n) VALUES(?, ?)").bind(dayOf(Date.now()), today).run();
     }
     const r = await admin("/admin/api/stats", await jwt({}));
-    return { s: JSON.parse(r.text).sign_in_emails, page: (await admin("/", await jwt({}))).text };
+    return { s: JSON.parse(r.text).sign_in_emails, page: (await admin("/health", await jwt({}))).text };
   }
 
   it("is ok below 70 a day, amber from 70, red from 90", async () => {
     expect((await emails(69)).s.level).toBe("ok");
     const amber = await emails(70);
     expect(amber.s.level).toBe("amber");
-    expect(amber.page).toContain('class="card amber"');
+    expect(amber.page).toContain('<span class="dot warn"></span>Busy');
     expect((await emails(89)).s.level).toBe("amber");
     const red = await emails(90);
     expect(red.s.level).toBe("red");
-    expect(red.page).toContain('class="card red"');
+    expect(red.page).toContain('<span class="dot bad"></span>Full');
   });
 
   it("every code e-mail actually sent adds one to today's count; a failed send does not", async () => {
@@ -358,7 +368,7 @@ describe("Send test alert (the one action on the dashboard)", () => {
   });
 
   it("the dashboard shows the button, and the page may post only to itself", async () => {
-    const r = await admin("/", await jwt({}), BOT);
+    const r = await admin("/alerts", await jwt({}), BOT);
     expect(r.text).toContain('<form method="post" action="/admin/test-alert"');
     expect(r.headers.get("content-security-policy")).toContain("form-action 'self'");
   });

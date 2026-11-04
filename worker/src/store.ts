@@ -11,15 +11,25 @@ export const FREE_POOL_USER = "__free_pool__"; // the free tier's shared daily b
 interface UserRow { plan: string; pass_until: number; pass_seconds: number; pass_packages: number; credit_seconds: number }
 interface UsageRow { llm_tokens: number; packages: number }
 
-/** Everything one request needs about an account, plus today's free-pool spend, in one batch
- * (one round trip to D1 instead of three). */
+/** The admin dashboard's free-pool override (admin_settings "free_pool_cap"): a token count, or
+ * null for the deploy's FREE_POOL_DAILY_TOKENS. 0 pauses the free AI. */
+export const FREE_POOL_CAP_KEY = "free_pool_cap";
+export function poolCapOverride(raw: string | null | undefined): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** Everything one request needs about an account, plus today's free-pool spend and the pool's
+ * override, in one batch (one round trip to D1 instead of four). */
 export async function loadState(db: D1Database, user: string, period: string, day: string):
-    Promise<{ state: AccountState; freePoolTokens: number }> {
-  const [u, use, pool] = await db.batch([
+    Promise<{ state: AccountState; freePoolTokens: number; freePoolCap: number | null }> {
+  const [u, use, pool, cap] = await db.batch([
     db.prepare("SELECT plan, pass_until, pass_seconds, pass_packages, credit_seconds FROM users WHERE user = ?")
       .bind(user),
     db.prepare("SELECT llm_tokens, packages FROM usage WHERE user = ? AND period = ?").bind(user, period),
     db.prepare("SELECT llm_tokens, packages FROM usage WHERE user = ? AND period = ?").bind(FREE_POOL_USER, day),
+    db.prepare("SELECT value FROM admin_settings WHERE key = ?").bind(FREE_POOL_CAP_KEY),
   ]);
   const ur = (u!.results[0] as UserRow | undefined);
   const us = (use!.results[0] as UsageRow | undefined);
@@ -29,7 +39,8 @@ export async function loadState(db: D1Database, user: string, period: string, da
         passPackages: ur.pass_packages, creditSeconds: ur.credit_seconds,
         llmTokens: us?.llm_tokens ?? 0, packagesUsed: us?.packages ?? 0 }
     : { ...EMPTY_STATE, llmTokens: us?.llm_tokens ?? 0, packagesUsed: us?.packages ?? 0 };
-  return { state, freePoolTokens: pr?.llm_tokens ?? 0 };
+  const capRow = (cap!.results[0] as { value: string } | undefined);
+  return { state, freePoolTokens: pr?.llm_tokens ?? 0, freePoolCap: poolCapOverride(capRow?.value) };
 }
 
 /** Add the tokens a completion spent; returns the account's new monthly total. The free pool is

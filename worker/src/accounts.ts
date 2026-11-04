@@ -49,13 +49,16 @@ export async function register(db: D1Database): Promise<{ account_id: string; to
 }
 
 /** Bearer token -> account id, or null. The lookup is by hash; the stored hash is then compared
- * in constant time as well, so nothing about a near-miss token can be learned from timing. */
+ * in constant time as well, so nothing about a near-miss token can be learned from timing. A
+ * suspended account (admin dashboard) resolves to null, so every route treats it as signed out. */
 export async function resolve(db: D1Database, token: string): Promise<string | null> {
   if (!token) return null;
   const h = await sha256Hex(token);
-  const row = await db.prepare("SELECT token_hash, account_id FROM tokens WHERE token_hash = ?")
-    .bind(h).first<{ token_hash: string; account_id: string }>();
-  if (!row) return null;
+  const row = await db.prepare(
+    "SELECT t.token_hash, t.account_id, a.suspended_at FROM tokens t " +
+    "LEFT JOIN accounts a ON a.account_id = t.account_id WHERE t.token_hash = ?")
+    .bind(h).first<{ token_hash: string; account_id: string; suspended_at: number | null }>();
+  if (!row || row.suspended_at) return null;
   const a = enc.encode(row.token_hash);
   const b = enc.encode(h);
   return a.byteLength === b.byteLength && crypto.subtle.timingSafeEqual(a, b) ? row.account_id : null;
