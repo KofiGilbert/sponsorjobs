@@ -124,7 +124,7 @@ describe("Cloudflare Access check", () => {
     expect((await admin("/", await jwt({ email: "KOFI@example.com" }), { ...CFG, ADMIN_EMAILS: ` ${ADMIN} ` })).status).toBe(200);
   });
 
-  it("is read-only (no POST) and serves nothing else on the admin host", async () => {
+  it("takes no other POST and serves nothing else on the admin host", async () => {
     const t = await jwt({});
     const post = await worker.fetch(new Request("https://admin.sponsorjobs.ai/admin/api/stats",
       { method: "POST", headers: { "Cf-Access-Jwt-Assertion": t } }), { ...env, ...CFG } as Env);
@@ -326,5 +326,75 @@ describe("sign-in code e-mails against Resend's free plan", () => {
     const s = JSON.parse((await admin("/admin/api/stats", await jwt({}))).text).sign_in_emails;
     expect(s.today).toBe(2);
     expect(s.month).toBe(2);
+  });
+});
+
+describe("Send test alert (the one action on the dashboard)", () => {
+  const OWNER_CHAT = 424242;
+  const BOT: Partial<Env> = { ...CFG, TELEGRAM_BOT_TOKEN: "123456:TEST-not-real", TELEGRAM_BOT_USERNAME: "@SponsorJobsBot",
+    TELEGRAM_WEBHOOK_SECRET: "whsec-test_not-real", OWNER_TELEGRAM_CHAT_ID: String(OWNER_CHAT) };
+  const press = async (token: string | undefined, origin: string | null, e: Partial<Env> = BOT) => {
+    const headers: Record<string, string> = {};
+    if (token !== undefined) headers["Cf-Access-Jwt-Assertion"] = token;
+    if (origin !== null) headers.Origin = origin;
+    const res = await worker.fetch(new Request("https://admin.sponsorjobs.ai/admin/test-alert", { method: "POST", headers }),
+      { ...env, ...e } as Env);
+    return { status: res.status, text: await res.text() };
+  };
+  let sent: Array<{ chat_id: number; text: string }> = [];
+  beforeEach(() => {
+    sent = [];
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const req = new Request(input as RequestInfo, init as RequestInit);
+      if (req.url === `${ISS}/cdn-cgi/access/certs`) return new Response(JSON.stringify(jwks), { status: 200 });
+      if (req.url.startsWith("https://api.telegram.org/")) {
+        sent.push(await req.json());
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 7 } }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${req.url}`);
+    });
+  });
+
+  it("the dashboard shows the button, and the page may post only to itself", async () => {
+    const r = await admin("/", await jwt({}), BOT);
+    expect(r.text).toContain('<form method="post" action="/admin/test-alert"');
+    expect(r.headers.get("content-security-policy")).toContain("form-action 'self'");
+  });
+
+  it("pressing it sends one message to the owner chat and says so; a double press is one message", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-04T12:00:00Z"));
+      const r = await press(await jwt({}), "https://admin.sponsorjobs.ai");
+      expect(r.status).toBe(200);
+      expect(r.text).toContain("Test alert sent");
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.chat_id).toBe(OWNER_CHAT);
+      expect(sent[0]!.text).toContain("SponsorJobs test alert");
+      const again = await press(await jwt({}), "https://admin.sponsorjobs.ai");
+      expect(again.text).toContain("Test alert not sent");
+      expect(sent).toHaveLength(1);
+      vi.setSystemTime(new Date("2026-11-04T12:01:00Z"));
+      expect((await press(await jwt({}), "https://admin.sponsorjobs.ai")).text).toContain("Test alert sent");
+      expect(sent).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("says why when Telegram is not set up, and sends nothing", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-04T13:00:00Z"));
+      const r = await press(await jwt({}), "https://admin.sponsorjobs.ai", { ...CFG, TELEGRAM_BOT_TOKEN: "" });
+      expect(r.text).toContain("telegram not configured");
+      expect(sent).toHaveLength(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("another site cannot press it, and nobody can without Access", async () => {
+    expect((await press(await jwt({}), "https://evil.example")).status).toBe(403);
+    expect((await press(await jwt({}), null)).status).toBe(403);
+    expect((await press(undefined, "https://admin.sponsorjobs.ai")).status).toBe(403);
+    expect(sent).toHaveLength(0);
   });
 });
