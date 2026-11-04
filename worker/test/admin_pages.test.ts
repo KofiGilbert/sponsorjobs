@@ -77,6 +77,8 @@ const flashOf = (location: string) => {
   const u = new URL(location, HOST);
   return { ok: u.searchParams.get("ok"), err: u.searchParams.get("err"), path: u.pathname };
 };
+/** The page's main table only (the right sidebar's Contacts also link to people). */
+const tbody = (html: string) => html.slice(html.indexOf("<tbody>"), html.indexOf("</tbody>"));
 const auditRows = async (target: string) =>
   (await env.DB.prepare("SELECT admin, action, detail, reason FROM admin_actions WHERE target = ? ORDER BY id").bind(target)
     .all<{ admin: string; action: string; detail: string; reason: string }>()).results;
@@ -91,7 +93,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("every page renders behind Access", () => {
   it("overview, users, a person, revenue, usage, health and audit all answer 200, and nothing without a token", async () => {
     const a = await signedInAccount();
-    for (const path of ["/", "/users", `/users/${a.id}`, "/revenue", "/usage", "/health", "/audit"]) {
+    for (const path of ["/", "/users", `/users/${a.id}`, "/revenue", "/usage", "/health", "/feed", "/alerts", "/audit"]) {
       const r = await get(path);
       expect(r.status, path).toBe(200);
       expect(r.headers.get("content-security-policy")).toContain("default-src 'none'");
@@ -112,7 +114,7 @@ describe("every page renders behind Access", () => {
       return new Response("down", { status: 500 });
     });
     for (const path of ["/", "/revenue", "/health"]) expect((await get(path, { STRIPE_TEST_SECRET_KEY: "sk_test_x" })).status).toBe(200);
-    expect((await get("/health")).text).toContain("Unreadable");
+    expect((await get("/feed")).text).toContain("Unreadable");
   });
 });
 
@@ -129,8 +131,8 @@ describe("users", () => {
     expect(found.text).toContain("1 matching");
     const byId = await get(`/users?q=${a.id.slice(0, 10)}`);
     expect(byId.text).toContain(`/users/${a.id}`);
-    expect((await get("/users?filter=email")).text).toContain(`/users/${a.id}`);
-    expect((await get("/users?filter=suspended")).text).not.toContain(`/users/${a.id}`);
+    expect(tbody((await get("/users?filter=email")).text)).toContain(`/users/${a.id}`);
+    expect(tbody((await get("/users?filter=suspended")).text)).not.toContain(`/users/${a.id}`);
   });
 
   it("a person's page masks the e-mail until 'Show full e-mail', which is logged", async () => {
@@ -302,11 +304,11 @@ describe("health", () => {
       { name: "grow-boards", conclusion: "failure", status: "completed", updated_at: new Date().toISOString(), html_url: "https://github.com/x/1", head_branch: "main" },
       { name: "tests", conclusion: "success", status: "completed", updated_at: new Date().toISOString(), html_url: "https://github.com/x/2", head_branch: "main" },
     ];
-    const h = await get("/health");
-    expect(h.text).toContain("248,256 jobs");
+    const h = await get("/feed");
+    expect(h.text).toContain("248,256");
     expect(h.text).toContain("Stale");
-    expect(h.text).toContain("578,979 employers");
-    expect(h.text).toContain("GitHub: grow-boards");
+    expect(h.text).toContain("578,979");
+    expect(h.text).toContain("grow-boards");
     const o = await get("/");
     expect(o.text).toContain("The job feed is out of date");
     expect(o.text).toContain('GitHub &quot;grow-boards&quot; failed');
@@ -330,5 +332,50 @@ describe("audit log", () => {
     expect(r.text).toContain(ADMIN);
     expect(r.text).toContain("goodwill &lt;b&gt;gesture&lt;/b&gt;");
     expect(r.text).not.toContain("<b>gesture</b>");
+  });
+});
+
+describe("the kit's controls", () => {
+  async function getWith(path: string, cookie: string) {
+    const res = await worker.fetch(new Request(`${HOST}${path}`, { headers: { "Cf-Access-Jwt-Assertion": await jwt(), cookie } }), { ...env, ...CFG } as Env);
+    return { status: res.status, text: await res.text(), headers: res.headers };
+  }
+  const cookieOf = (h: Headers) => (h.get("set-cookie") ?? "").split(";")[0]!;
+
+  it("the header's sun, sidebar and star buttons set a cookie and come back; the page follows it", async () => {
+    const theme = await getWith("/prefs?theme=dark&back=%2Fusage", "");
+    expect(theme.status).toBe(303);
+    expect(theme.headers.get("location")).toBe("/usage");
+    expect(theme.headers.get("set-cookie")).toContain("HttpOnly");
+    const c1 = cookieOf(theme.headers);
+    expect((await getWith("/usage", c1)).text).toContain('<html lang="en" data-theme="dark">');
+    const side = await getWith("/prefs?toggle=side&back=%2F", c1);
+    const c2 = cookieOf(side.headers);
+    expect((await getWith("/", c2)).text).toContain('class="app withrail noside"');
+    const rail = await getWith("/prefs?toggle=rail&back=%2F", c2);
+    expect((await getWith("/", cookieOf(rail.headers))).text).not.toContain('<aside class="rail">');
+    const fav = await getWith("/prefs?fav=1&label=Job%20feed&back=%2Ffeed", "");
+    const page = await getWith("/", cookieOf(fav.headers));
+    expect(page.text).toContain('<a class="nav fav" href="/feed">');
+  });
+
+  it("never sends you to another site, and Recently remembers masked names only", async () => {
+    const evil = await getWith("/prefs?theme=dark&back=%2F%2Fevil.example", "");
+    expect(evil.headers.get("location")).toBe("/");
+    const a = await signedInAccount("recent.person@example.com");
+    const visit = await getWith(`/users/${a.id}`, "");
+    const tabbed = await getWith("/prefs?tab=recently&back=%2F", cookieOf(visit.headers));
+    const home = await getWith("/", cookieOf(tabbed.headers));
+    expect(home.text).toContain("re***@example.com");
+    expect(home.text).not.toContain("recent.person@example.com");
+  });
+
+  it("the overview's Today menu and chart tabs are links that change the page", async () => {
+    const r = await get("/?range=7d&chart=revenue");
+    expect(r.text).toContain('<summary class="tbtn">Last 7 days');
+    expect(r.text).toContain('<a class="ltab on" href="/?range=7d&amp;chart=revenue">Revenue</a>');
+    expect(r.text).toContain("This year");
+    expect(r.headers.get("content-security-policy")).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+'/);
+    expect(r.text.match(/<script>/g)).toHaveLength(1);                // only the ⌘K shortcut
   });
 });

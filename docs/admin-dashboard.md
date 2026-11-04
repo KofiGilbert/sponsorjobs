@@ -31,62 +31,56 @@ because it carries the person's name.
 
 ## What it shows
 
-Left sidebar: **Overview, Users, Revenue, Usage & costs** (dashboards) and **Health, Audit log**
-(system). The search box at the top finds a person by e-mail or account id.
+The layout is the kit's, item for item.
 
-- **Overview:** revenue over 30 days (after refunds, from Stripe), active passes, accounts active this
-  month, new this week with the share that ever bought a pass; new accounts per day (30 days); plans
-  as a donut; this month's revenue, estimated AI and Tavus cost and margin; today's free AI use
-  against its limit; recent e-mail sign-ins. The right column lists **Needs attention**:
-  - the company AI key failing
-  - the job feed unreadable or older than 8 hours
-  - a failed GitHub `feed`, `grow-boards` or `tests` run
-  - the free AI paused or 75% used
-  - Resend near its limit
-  - a disputed payment
-  - Stripe in test mode or unreadable
-  - no Telegram chat for alerts
-  - suspended accounts
+**Left sidebar**
+- **Favorites / Recently.** Favorites are the pages you starred with the header's star; Recently
+  is the last six pages you opened, with people shown masked.
+- **Dashboards.** Overview; Revenue (Payments, Products, Checks); Usage & costs (Free AI, Top users,
+  Sign-ups).
+- **Pages.** Users (Overview, On a pass, Free, E-mail sign-in, Suspended); Health; Job feed; Audit
+  log; Alerts.
 
-  Below that, **Recent activity** shows sign-ups, e-mail sign-ins, paid checkouts and admin actions.
-  Health gets a red count in the sidebar when something is failing.
-- **Users:** every account, newest first. E-mails are masked. You can filter (Free, On a pass,
-  E-mail sign-in, Suspended), sort by AI use this month, and page through 50 at a time.
-- **A person** (`/users/<id>`) shows:
-  - the plan and when it ends, with what is left on the pass
-  - extra interviews, signed-in devices (a count), Telegram linked or not
-  - the application e-mail and how many mails it got (never their content)
-  - usage by month, live interviews, and every admin action on this account
+**Header**
+- **Left:** the sidebar button (hide or show it), the star (favorite this page), the breadcrumb.
+- **Search:** the search box finds a person by e-mail or id, and ⌘K focuses it.
+- **Right:** the sun (switch light, dark or follow the Mac), the clock (Audit log), the bell
+  (Alerts; a red dot when something is failing), the right-sidebar button.
 
-  The support actions are below.
-- **Revenue:** net revenue over 7, 30 and 90 days, refunds and repeat buyers. Each payment shows its
-  product (worked out from the price), the masked buyer and a link to it in Stripe, and disputes are
-  flagged. There is a by-product donut and a check that payments in Stripe match passes granted by
-  the webhook. Passes are one-time, so there is no MRR or churn. Refunds and disputes are handled
-  in Stripe, never here.
-- **Usage & costs:** this month's AI and interview cost, cost per active user with the 95th
-  percentile (a runaway account shows there even when the average is calm), and the free AI for the
-  last 14 days against its limit. It also has the **free AI limit control**, top AI users this month
-  (free users show their share of the monthly cap), monthly totals, sign-ups today per network
-  (salted hash, never an address, against the per-network limit), and e-mail domains.
-- **Health:** a status for each service:
-  - the Anthropic key
-  - the job feed (job count and age, from `feed.sponsorjobs.ai/feed/manifest.json`)
-  - the sponsor index
-  - the latest GitHub `feed`, `grow-boards`, `tests` and `release` runs
-  - Stripe mode
-  - Resend e-mails
-  - the Telegram bot and owner chat
-  - Tavus, Google sign-in, and the apply agent's signing key
+These choices live in one cookie (`sj_admin`) and never touch the database.
 
-  The **Send test alert** button is here too.
-- **Audit log:** every action, newest first, with who (the Access e-mail), what, which account, the
-  detail, and the reason. Rows are never edited or deleted by the app.
+**Right sidebar (every page)**
+- **Notifications:** what needs you (AI key, feed, GitHub runs, free AI, Resend, disputes, Stripe
+  mode, Telegram chat, suspended accounts).
+- **Activities:** sign-ups, e-mail sign-ins, paid checkouts, admin actions.
+- **Contacts:** recent e-mail sign-ins, masked.
+
+**The pages**
+- **Overview**, the kit's frame block for block:
+  - The **"Today" menu** sets the range for the four cards (Revenue, New Users, Sign-ins,
+    Purchases), each compared with the range before it.
+  - The **line chart** has the kit's tabs (Total Users, Revenue, AI Cost), drawn by month, this
+    year against last year.
+  - The **"Traffic by Website" list** is Top AI Users.
+  - The **"Traffic by Device" bars** are this month's revenue, free and pass AI, Tavus, refunds and
+    margin.
+  - The **"Traffic by Location" donut** is users by plan.
+  - The **"Marketing & SEO" bars** are free AI per day.
+- **Users and a person:** as before, with the support actions.
+- **Revenue:** net over 7, 30 and 90 days, payments with Stripe links, products, the
+  Stripe-against-webhook check.
+- **Usage & costs:** costs, cost per user with p95, the free AI chart and its limit control, top
+  users, monthly totals, sign-ups per hashed network, e-mail domains.
+- **Health:** each outside service.
+- **Job feed:** jobs and sponsors in the published feed, when each was built, and the latest GitHub
+  `feed`, `grow-boards`, `tests` and `release` runs.
+- **Alerts:** the company AI key's state, when you were last alerted, and the test alert with its
+  history.
+- **Audit log:** every action.
 - The overview numbers as JSON at `https://admin.sponsorjobs.ai/admin/api/stats`.
 
-Stripe, the feed and GitHub are fetched at most every 5 to 10 minutes per Worker instance. A page
-still loads when any of them is down; it says "Unreadable" in that row. The GitHub repo is public, so
-no token is needed. An optional `GITHUB_TOKEN` secret raises GitHub's rate limit.
+Stripe (last 400 days), the feed and GitHub are fetched at most every 5 to 10 minutes per Worker
+instance, and a page still loads when any of them is down.
 
 ## Actions
 

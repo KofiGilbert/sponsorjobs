@@ -1,16 +1,18 @@
-// The founder's private admin dashboard at https://admin.sponsorjobs.ai.
+// The founder's private admin dashboard at https://admin.sponsorjobs.ai, built to ByeWind's
+// Dashboard UI Kit (see src/admin_ui.ts).
 //
-// Pages (GET): / overview, /users (search, filters), /users/<id> (one person), /revenue (Stripe),
-// /usage (AI and interview use, costs, the free AI limit), /health (outside services), /audit
-// (every admin action), and /admin/api/stats (the overview numbers as JSON). The look is in
-// src/admin_ui.ts, the pages in src/admin_pages.ts, the extra reads in src/admin_data.ts.
+// Pages (GET): / overview (range and chart tabs in the query), /revenue, /usage, /users (filters,
+// search, sort), /users/<id>, /health, /feed (job feed and GitHub jobs), /audit, /alerts, and
+// /admin/api/stats (the overview numbers as JSON). /prefs sets the dashboard's own cookie (theme,
+// sidebar and right sidebar shown or hidden, Favorites / Recently tab, starred pages) and returns.
+// The pages are in src/admin_pages.ts, the extra reads in src/admin_data.ts.
 //
 // Actions (POST, src/admin_actions.ts): give a pass, add interviews, suspend or restore an account,
 // reveal a person's full e-mail, change or pause the free AI limit, send a test alert. Each needs
 // this host's own origin (Origin, or Sec-Fetch-Site: same-origin), a typed reason, and writes an
-// admin_actions row; nothing else on this host writes. Every request is checked by src/access.ts
-// first. Output never contains a token, a token hash, a code hash, a salt, or a forwarded mail's
-// code or link: the queries select only the columns they show.
+// admin_actions row; nothing else on this host writes data. Every request is checked by
+// src/access.ts first. Output never contains a token, a token hash, a code hash, a salt, or a
+// forwarded mail's code or link: the queries select only the columns they show.
 
 import { verifyAccess } from "./access";
 import { type Env, intVar } from "./env";
@@ -19,13 +21,15 @@ import { dayOf, FREE_MODEL, INTERVIEW_SECONDS, PASS_MODEL, PASSES, periodOf } fr
 import { FREE_POOL_CAP_KEY, FREE_POOL_USER, poolCapOverride } from "./store";
 import { ActionError, accountAction, formOf, logReveal, sameOrigin, setFreePool, testAlert } from "./admin_actions";
 import {
-  accountsPerDay, auditLog, emailDomains, feed, githubRuns, listUsers, monthly, poolDays, poolSetting, recentActivity, revenue, signupNetworks,
-  spend, userDetail,
+  aiCostSeries, aiStatusRow, auditLog, emailDomains, expiredPasses, feed, githubRuns, listUsers, monthly, poolDays, poolSetting,
+  RANGES, type RangeKey, rangeBounds, rangeCounts, recentActivity, revenue, revenueSeries, signupNetworks, spend, totalUsersSeries,
+  userDetail,
 } from "./admin_data";
 import {
-  type Attention, attention, auditPage, healthPage, notFound, overviewPage, revenuePage, usagePage, userPage, usersPage,
+  type Attention, alertsPage, attention, auditPage, type ChartKey, feedPage, healthPage, notFound, overviewPage, rail, revenuePage,
+  usagePage, userPage, usersPage,
 } from "./admin_pages";
-import { esc, maskEmail, type Shell, shell } from "./admin_ui";
+import { DEFAULT_FAVS, esc, KEY_SCRIPT, maskEmail, type PageId, type Prefs, type Shell, shell } from "./admin_ui";
 import { blendedPerToken, INPUT_SHARE, RATES, round2, TAVUS_PER_MINUTE } from "./admin_data";
 
 export const ADMIN_HOST_DEFAULT = "admin.sponsorjobs.ai";
@@ -237,15 +241,30 @@ const security = {
   "x-robots-tag": "noindex, nofollow",
 };
 
-// Inter comes from Google Fonts (the kit's typeface); nothing else is loaded from outside.
-const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; " +
-  "img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+// Inter comes from Google Fonts (the kit's typeface); the one script is the kit's ⌘K shortcut,
+// allowed by its hash. Nothing else loads from anywhere.
+let scriptHash = "";
+async function pageCsp(): Promise<string> {
+  if (!scriptHash) {
+    const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(KEY_SCRIPT));
+    scriptHash = btoa(String.fromCharCode(...new Uint8Array(d)));
+  }
+  return "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; " +
+    `script-src 'sha256-${scriptHash}'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
+}
 
 const text = (body: string, status: number) =>
   new Response(body, { status, headers: { "content-type": "text/plain", ...security } });
-const html = (body: string, status = 200) =>
-  new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...security, "content-security-policy": PAGE_CSP } });
-const back = (to: string) => new Response(null, { status: 303, headers: { location: to, ...security } });
+async function html(body: string, status = 200, cookie?: string): Promise<Response> {
+  const h = new Headers({ "content-type": "text/html; charset=utf-8", ...security, "content-security-policy": await pageCsp() });
+  if (cookie) h.append("set-cookie", cookie);
+  return new Response(body, { status, headers: h });
+}
+const back = (to: string, cookie?: string) => {
+  const h = new Headers({ location: to, ...security });
+  if (cookie) h.append("set-cookie", cookie);
+  return new Response(null, { status: 303, headers: h });
+};
 
 /** A flash line carried on a redirect: our own messages only, so a crafted link cannot put
  * arbitrary words on the page (it is escaped either way). */
@@ -258,6 +277,49 @@ function flashOf(url: URL): Shell["flash"] {
 }
 const withFlash = (path: string, kind: "ok" | "err", msg: string) => `${path}?${kind}=${encodeURIComponent(msg)}`;
 
+// ---- the dashboard's own preferences (one cookie, nothing in the database) ----------------------- //
+
+const PREFS_COOKIE = "sj_admin";
+const LOCAL = /^\/(?!\/)[^\s]{0,300}$/;          // a path on this host, never "//other.host"
+function readPrefs(req: Request): Prefs {
+  const base: Prefs = { theme: "", sideHidden: false, railHidden: false, tab: "favorites", favs: DEFAULT_FAVS, recent: [] };
+  const raw = (req.headers.get("cookie") ?? "").split(/;\s*/).find((c) => c.startsWith(`${PREFS_COOKIE}=`))?.slice(PREFS_COOKIE.length + 1);
+  if (!raw) return base;
+  try {
+    const j = JSON.parse(decodeURIComponent(atob(raw.replace(/-/g, "+").replace(/_/g, "/"))));
+    const links = (v: unknown) => Array.isArray(v) ? v.filter((x): x is { href: string; label: string } =>
+      x && typeof x.href === "string" && LOCAL.test(x.href) && typeof x.label === "string").map((x) => ({ href: x.href, label: x.label.slice(0, 40) })) : [];
+    return { theme: j.theme === "dark" || j.theme === "light" ? j.theme : "", sideHidden: j.side === 1, railHidden: j.rail === 1,
+             tab: j.tab === "recently" ? "recently" : "favorites", favs: Array.isArray(j.favs) ? links(j.favs).slice(0, 8) : DEFAULT_FAVS,
+             recent: links(j.recent).slice(0, 6) };
+  } catch { return base; }
+}
+function prefsCookie(p: Prefs): string {
+  const j = JSON.stringify({ theme: p.theme, side: p.sideHidden ? 1 : 0, rail: p.railHidden ? 1 : 0, tab: p.tab, favs: p.favs, recent: p.recent });
+  const v = btoa(encodeURIComponent(j)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${PREFS_COOKIE}=${v}; Path=/; Max-Age=31536000; Secure; HttpOnly; SameSite=Lax`;
+}
+/** Remember a page in "Recently" (newest first, six at most). Labels are the masked titles. */
+function visited(p: Prefs, href: string, label: string): Prefs {
+  return { ...p, recent: [{ href, label: label.slice(0, 40) }, ...p.recent.filter((r) => r.href !== href)].slice(0, 6) };
+}
+/** GET /prefs?...&back=/path : change one preference and go back. Only the cookie changes. */
+function prefsResponse(url: URL, p: Prefs): Response {
+  const q = url.searchParams;
+  const to = LOCAL.test(q.get("back") ?? "") ? q.get("back")! : "/";
+  let n: Prefs = { ...p };
+  if (q.get("toggle") === "side") n.sideHidden = !p.sideHidden;
+  if (q.get("toggle") === "rail") n.railHidden = !p.railHidden;
+  const t = q.get("theme");
+  if (t === "dark" || t === "light") n.theme = t;
+  if (t === "system") n.theme = "";
+  const tab = q.get("tab");
+  if (tab === "favorites" || tab === "recently") n.tab = tab;
+  if (q.get("fav") === "1") n = { ...n, tab: "favorites", favs: [{ href: to, label: (q.get("label") ?? to).slice(0, 40) }, ...p.favs.filter((f) => f.href !== to)].slice(0, 8) };
+  if (q.get("unfav") === "1") n.favs = p.favs.filter((f) => f.href !== to);
+  return back(to, prefsCookie(n));
+}
+
 /** The page after "Send test alert": what happened, and the way back. */
 function renderTestResult(result: string): string {
   const ok = result === "sent";
@@ -265,7 +327,7 @@ function renderTestResult(result: string): string {
 <title>Test alert</title><style>body{font:15px/1.5 system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px}</style></head><body>
 <h1>${ok ? "Test alert sent" : "Test alert not sent"}</h1>
 <p>${ok ? "Check Telegram: the message should be there now." : `Reason: ${esc(result)}`}</p>
-<p><a href="/health">Back to the dashboard</a></p></body></html>`;
+<p><a href="/alerts">Back to the dashboard</a></p></body></html>`;
 }
 
 /** Is this request for the admin host? (Only routes it here; the JWT is what lets it in.) */
@@ -278,6 +340,17 @@ const USER_PATH = /^\/users\/([^/]{1,200})(?:\/(give-pass|add-interviews|suspend
 /** The account id in a /users/<id> path, or "" when the escape is malformed (then nothing matches). */
 const idOf = (raw: string) => { try { return decodeURIComponent(raw); } catch { return ""; } };
 
+/** What every page's right sidebar and badges need. Stripe, the feed and GitHub are cached. */
+async function railData(env: Env, nowMs: number, stats?: Stats) {
+  const now = Math.floor(nowMs / 1000);
+  const [st, pool, rev, fd, runs, activity, suspended] = await Promise.all([
+    stats ? Promise.resolve(stats) : collectStats(env, nowMs), poolSetting(env), revenue(env, nowMs), feed(nowMs), githubRuns(env, nowMs),
+    recentActivity(env.DB, 6), suspendedCount(env.DB)]);
+  const att = attention({ stats: st, pool, revenue: rev, feed: fd, runs, env, now, suspended });
+  const contacts = st.recent_sign_ins.map((r) => ({ account_id: r.account_id, email: r.email }));
+  return { stats: st, pool, revenue: rev, feed: fd, runs, att, rail: rail({ attention: att, activity, contacts, now }) };
+}
+
 export async function handleAdmin(req: Request, env: Env, nowMs: number): Promise<Response> {
   const who = await verifyAccess(req, env, Math.floor(nowMs / 1000));
   if (!who) return text("Forbidden", 403);
@@ -285,6 +358,7 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const now = Math.floor(nowMs / 1000);
   const admin = who.email;
+  const prefs = readPrefs(req);
 
   if (req.method === "POST") {
     if (!sameOrigin(req)) return text("Forbidden", 403);
@@ -304,7 +378,7 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
       try {
         if (m[2] === "reveal") {
           await logReveal(env, admin, id, now);
-          return userResponse(env, id, now, admin, { revealed: true });
+          return userResponse(env, id, nowMs, admin, prefs, home, { revealed: true });
         }
         return back(withFlash(home, "ok", await accountAction(env, admin, id, m[2], await formOf(req), now)));
       } catch (e) {
@@ -319,60 +393,87 @@ export async function handleAdmin(req: Request, env: Env, nowMs: number): Promis
   if (path === "/admin/api/stats") {
     return new Response(JSON.stringify(await collectStats(env, nowMs)), { headers: { "content-type": "application/json", ...security } });
   }
-  const base = { viewer: admin, generatedAt: now, flash: flashOf(url) };
+  if (path === "/prefs") return prefsResponse(url, prefs);
+
+  const here = path + url.search.replace(/([?&])(ok|err)=[^&]*/g, "$1").replace(/[?&]+$/, "");
+  /** Render a page with the right sidebar, remember it in "Recently", and keep the flash. */
+  const page = async (id: PageId, ttl: string, body: string, o: Partial<Shell> & { stats?: Stats; rd?: Awaited<ReturnType<typeof railData>> } = {}) => {
+    const rd = o.rd ?? await railData(env, nowMs, o.stats);
+    const p2 = visited(prefs, here, ttl);
+    return html(shell({ page: id, title: ttl, body, viewer: admin, generatedAt: now, flash: flashOf(url), prefs: p2, here, rail: rd.rail,
+      badges: badgesFor(rd.att), ...o }), 200, prefsCookie(p2));
+  };
+
   if (path === "/" || path === "/admin") {
+    const range = (RANGES.find((r) => r.key === url.searchParams.get("range"))?.key ?? "30d") as RangeKey;
+    const chart = (["users", "revenue", "ai"] as const).find((c) => c === url.searchParams.get("chart")) ?? "users" as ChartKey;
     const today = dayOf(nowMs);
     const todayStart = Math.floor(Date.parse(`${today}T00:00:00Z`) / 1000);
-    const [stats, pool, rev, fd, runs, activity, suspended, prevDays, sp, pDays] = await Promise.all([
-      collectStats(env, nowMs), poolSetting(env), revenue(env, nowMs), feed(nowMs), githubRuns(env, nowMs),
-      recentActivity(env.DB, 6), suspendedCount(env.DB), accountsPerDay(env.DB, todayStart - 29 * 86_400, 30),
-      spend(env.DB, periodOf(nowMs), now, 6), poolDays(env.DB, todayStart)]);
-    const att = attention({ stats, pool, revenue: rev, feed: fd, runs, env, now, suspended });
-    const { body, rail } = overviewPage({ stats, pool, revenue: rev, attention: att, activity, prevDays, spend: sp, poolDays: pDays, now });
-    return html(shell({ ...base, page: "overview", title: "Overview", body, rail, badges: badgesFor(att) }));
+    const bounds = rangeBounds(range, nowMs);
+    const rd = await railData(env, nowMs);
+    const [counts, sp, pDays, expired, series] = await Promise.all([
+      rangeCounts(env.DB, bounds), spend(env.DB, periodOf(nowMs), now, 6), poolDays(env.DB, todayStart, 12), expiredPasses(env.DB, now),
+      chart === "users" ? totalUsersSeries(env.DB, nowMs) : chart === "ai" ? aiCostSeries(env.DB, nowMs) : Promise.resolve(revenueSeries(rd.revenue, nowMs))]);
+    const body = overviewPage({ stats: rd.stats, pool: rd.pool, revenue: rd.revenue, now, range, counts, bounds, chart, series,
+      spend: sp, poolDays: pDays, expired });
+    return page("overview", "Overview", body, { rd });
   }
   if (path === "/users") {
     const filter = (["all", "free", "pass", "email", "suspended"] as const).find((f) => f === url.searchParams.get("filter")) ?? "all";
     const sort = (["newest", "oldest", "tokens"] as const).find((s) => s === url.searchParams.get("sort")) ?? "newest";
-    const page = Math.max(1, Math.min(10_000, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1));
+    const pg = Math.max(1, Math.min(10_000, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1));
     const q = (url.searchParams.get("q") ?? "").slice(0, 120);
-    const { rows, total } = await listUsers(env.DB, { q, filter, sort, page, period: periodOf(nowMs), now });
-    return html(shell({ ...base, page: "users", title: "Users", query: q, body: usersPage({ rows, total, q, filter, sort, page, now }) }));
+    const { rows, total } = await listUsers(env.DB, { q, filter, sort, page: pg, period: periodOf(nowMs), now });
+    return page("users", "Users", usersPage({ rows, total, q, filter, sort, page: pg, now }), { query: q, sub: filter });
   }
   const um = USER_PATH.exec(path);
-  if (um && !um[2]) return userResponse(env, idOf(um[1]!), now, admin, { flash: base.flash });
+  if (um && !um[2]) return userResponse(env, idOf(um[1]!), nowMs, admin, prefs, here, { flash: flashOf(url) });
   if (path === "/revenue") {
-    const [rev, granted30] = await Promise.all([revenue(env, nowMs), grantedSince(env.DB, now - 30 * 86_400)]);
-    return html(shell({ ...base, page: "revenue", title: "Revenue", body: revenuePage({ revenue: rev, granted30, now }) }));
+    const [rd, granted30] = await Promise.all([railData(env, nowMs), grantedSince(env.DB, now - 30 * 86_400)]);
+    return page("revenue", "Revenue", revenuePage({ revenue: rd.revenue, granted30, now }), { rd });
   }
   if (path === "/usage") {
     const today = dayOf(nowMs);
     const todayStart = Math.floor(Date.parse(`${today}T00:00:00Z`) / 1000);
-    const [stats, pool, days, sp, months, networks, domains] = await Promise.all([
-      collectStats(env, nowMs), poolSetting(env), poolDays(env.DB, todayStart), spend(env.DB, periodOf(nowMs), now),
+    const [rd, days, sp, months, networks, domains] = await Promise.all([
+      railData(env, nowMs), poolDays(env.DB, todayStart), spend(env.DB, periodOf(nowMs), now),
       monthly(env.DB, nowMs), signupNetworks(env.DB, today, env), emailDomains(env.DB)]);
-    return html(shell({ ...base, page: "usage", title: "Usage & costs",
-      body: usagePage({ stats, pool, poolDays: days, spend: sp, months, networks, domains, now }) }));
+    return page("usage", "Usage & costs", usagePage({ stats: rd.stats, pool: rd.pool, poolDays: days, spend: sp, months, networks, domains, now }), { rd });
   }
   if (path === "/health") {
-    const [stats, fd, runs, rev] = await Promise.all([collectStats(env, nowMs), feed(nowMs), githubRuns(env, nowMs), revenue(env, nowMs)]);
-    return html(shell({ ...base, page: "health", title: "Health", body: healthPage({ stats, feed: fd, runs, revenue: rev, env, now }) }));
+    const rd = await railData(env, nowMs);
+    return page("health", "Health", healthPage({ stats: rd.stats, revenue: rd.revenue, env, now }), { rd });
+  }
+  if (path === "/feed") {
+    const rd = await railData(env, nowMs);
+    return page("feed", "Job feed", feedPage({ feed: rd.feed, runs: rd.runs, now }), { rd });
+  }
+  if (path === "/alerts") {
+    const [rd, ai, tests] = await Promise.all([railData(env, nowMs), aiStatusRow(env.DB),
+      env.DB.prepare("SELECT id, at, admin, action, target, detail, reason FROM admin_actions WHERE action = 'test_alert' ORDER BY id DESC LIMIT 5").all<AuditRowT>()]);
+    return page("alerts", "Alerts", alertsPage({ stats: rd.stats, env, ai, tests: tests.results, now }), { rd });
   }
   if (path === "/audit") {
     const before = Number.parseInt(url.searchParams.get("before") ?? "", 10);
     const rows = await auditLog(env.DB, { limit: 51, before: Number.isFinite(before) && before > 0 ? before : undefined });
-    return html(shell({ ...base, page: "audit", title: "Audit log", body: auditPage({ rows: rows.slice(0, 50), more: rows.length > 50 }) }));
+    return page("audit", "Audit log", auditPage({ rows: rows.slice(0, 50), more: rows.length > 50 }));
   }
-  return html(shell({ ...base, page: "overview", title: "Not found", body: notFound() }), 404);
+  const rd = await railData(env, nowMs);
+  return html(shell({ page: "overview", title: "Not found", body: notFound(), viewer: admin, generatedAt: now, prefs, here, rail: rd.rail }), 404);
 }
 
-async function userResponse(env: Env, id: string, now: number, admin: string,
+type AuditRowT = { id: number; at: number; admin: string; action: string; target: string; detail: string; reason: string };
+
+async function userResponse(env: Env, id: string, nowMs: number, admin: string, prefs: Prefs, here: string,
                             o: { revealed?: boolean; flash?: Shell["flash"] }): Promise<Response> {
-  const [u, history] = await Promise.all([userDetail(env.DB, id, now), auditLog(env.DB, { target: id, limit: 20 })]);
-  const base = { viewer: admin, generatedAt: now, flash: o.flash ?? null };
-  if (!u) return html(shell({ ...base, page: "users", title: "Not found", crumbs: [{ label: "Users", href: "/users" }], body: notFound() }), 404);
-  return html(shell({ ...base, page: "users", title: u.email ? (o.revealed ? u.email : maskEmail(u.email)) : "Anonymous account",
-    crumbs: [{ label: "Users", href: "/users" }], body: userPage({ u, history, revealed: Boolean(o.revealed), now }) }));
+  const now = Math.floor(nowMs / 1000);
+  const [u, history, rd] = await Promise.all([userDetail(env.DB, id, now), auditLog(env.DB, { target: id, limit: 20 }), railData(env, nowMs)]);
+  const base = { viewer: admin, generatedAt: now, flash: o.flash ?? null, rail: rd.rail, badges: badgesFor(rd.att), here };
+  if (!u) return html(shell({ ...base, prefs, page: "users", title: "Not found", crumbs: [{ label: "Users", href: "/users" }], body: notFound() }), 404);
+  const masked = u.email ? maskEmail(u.email) : "Anonymous account";
+  const p2 = visited(prefs, `/users/${encodeURIComponent(id)}`, masked);          // never the revealed e-mail
+  return html(shell({ ...base, prefs: p2, page: "users", title: u.email && o.revealed ? u.email : masked,
+    crumbs: [{ label: "Users", href: "/users" }], body: userPage({ u, history, revealed: Boolean(o.revealed), now }) }), 200, prefsCookie(p2));
 }
 
 const suspendedCount = async (db: D1Database) =>

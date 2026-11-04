@@ -368,7 +368,7 @@ describe("Send test alert (the one action on the dashboard)", () => {
   });
 
   it("the dashboard shows the button, and the page may post only to itself", async () => {
-    const r = await admin("/health", await jwt({}), BOT);
+    const r = await admin("/alerts", await jwt({}), BOT);
     expect(r.text).toContain('<form method="post" action="/admin/test-alert"');
     expect(r.headers.get("content-security-policy")).toContain("form-action 'self'");
   });

@@ -210,6 +210,95 @@ export async function accountsPerDay(db: D1Database, endStart: number, days: num
   return Array.from({ length: days }, (_, i) => by.get(new Date((start + i * DAY_SECONDS) * 1000).toISOString().slice(0, 10)) ?? 0);
 }
 
+// ---- the overview's ranges and monthly series ---------------------------------------------------- //
+
+export type RangeKey = "today" | "7d" | "30d" | "year";
+export const RANGES: Array<{ key: RangeKey; label: string }> = [
+  { key: "today", label: "Today" }, { key: "7d", label: "Last 7 days" }, { key: "30d", label: "Last 30 days" }, { key: "year", label: "This year" },
+];
+/** [start, end) of a range and of the same-length range just before it (unix seconds). */
+export function rangeBounds(key: RangeKey, nowMs: number): { start: number; end: number; prevStart: number } {
+  const now = Math.floor(nowMs / 1000);
+  const d = new Date(nowMs);
+  const today = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000);
+  const start = key === "today" ? today : key === "7d" ? now - 7 * DAY_SECONDS : key === "30d" ? now - 30 * DAY_SECONDS
+    : Math.floor(Date.UTC(d.getUTCFullYear(), 0, 1) / 1000);
+  return { start, end: now, prevStart: start - (now - start) };
+}
+
+/** New accounts, e-mail sign-ins and paid checkouts in [start, end) and in [prevStart, start). */
+export async function rangeCounts(db: D1Database, r: { start: number; end: number; prevStart: number }) {
+  const q = (sql: string) => db.prepare(sql);
+  const res = await db.batch([
+    q("SELECT COUNT(*) AS n FROM accounts WHERE created_at >= ? AND created_at < ?").bind(r.start, r.end),
+    q("SELECT COUNT(*) AS n FROM accounts WHERE created_at >= ? AND created_at < ?").bind(r.prevStart, r.start),
+    q("SELECT COUNT(*) AS n FROM accounts WHERE email_at >= ? AND email_at < ?").bind(r.start, r.end),
+    q("SELECT COUNT(*) AS n FROM accounts WHERE email_at >= ? AND email_at < ?").bind(r.prevStart, r.start),
+    q("SELECT COUNT(*) AS n FROM processed_events WHERE key LIKE 'checkout:%' AND at >= ? AND at < ?").bind(r.start, r.end),
+    q("SELECT COUNT(*) AS n FROM processed_events WHERE key LIKE 'checkout:%' AND at >= ? AND at < ?").bind(r.prevStart, r.start),
+  ]);
+  const n = (i: number) => Number((res[i]!.results[0] as { n: number } | undefined)?.n ?? 0);
+  return { signups: [n(0), n(1)] as const, signins: [n(2), n(3)] as const, checkouts: [n(4), n(5)] as const };
+}
+
+/** The last `n` calendar months (UTC), oldest first, as "YYYY-MM", with the kit's short labels. */
+export function lastMonths(nowMs: number, n = 7, yearsBack = 0): Array<{ period: string; label: string; end: number }> {
+  const d = new Date(nowMs);
+  return Array.from({ length: n }, (_, i) => {
+    const m = new Date(Date.UTC(d.getUTCFullYear() - yearsBack, d.getUTCMonth() - (n - 1 - i), 1));
+    const next = Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 1) / 1000;
+    return { period: m.toISOString().slice(0, 7), label: m.toLocaleString("en-US", { month: "short", timeZone: "UTC" }), end: next };
+  });
+}
+
+/** Accounts that existed at the end of each month (the kit's "Total Users"), for the last 7
+ * months and the same months a year earlier. */
+export async function totalUsersSeries(db: D1Database, nowMs: number): Promise<{ labels: string[]; series: number[]; compare: number[] }> {
+  const a = lastMonths(nowMs), b = lastMonths(nowMs, 7, 1);
+  const stmts = [...a, ...b].map((m) => db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE account_id != ? AND COALESCE(created_at, 0) < ?").bind(FREE_POOL_USER, m.end));
+  const res = await db.batch(stmts);
+  const n = res.map((r) => Number((r.results[0] as { n: number } | undefined)?.n ?? 0));
+  // Accounts from before dates were recorded have created_at NULL: they count as always there,
+  // which is the truth for every month this dashboard can show.
+  return { labels: a.map((m) => m.label), series: n.slice(0, 7), compare: n.slice(7) };
+}
+
+/** Estimated AI cost per month (the kit's second tab), this year and a year earlier. */
+export async function aiCostSeries(db: D1Database, nowMs: number): Promise<{ labels: string[]; series: number[]; compare: number[] }> {
+  const a = lastMonths(nowMs), b = lastMonths(nowMs, 7, 1);
+  const periods = [...a, ...b].map((m) => m.period);
+  const [use, pool] = await db.batch([
+    db.prepare(`SELECT period, COALESCE(SUM(llm_tokens), 0) AS t FROM usage WHERE user != ? AND period IN (${periods.map(() => "?").join(", ")}) GROUP BY period`).bind(FREE_POOL_USER, ...periods),
+    db.prepare("SELECT substr(period, 1, 7) AS period, COALESCE(SUM(llm_tokens), 0) AS t FROM usage WHERE user = ? AND length(period) = 10 GROUP BY substr(period, 1, 7)").bind(FREE_POOL_USER),
+  ]);
+  const all = new Map((use!.results as Array<{ period: string; t: number }>).map((r) => [r.period, r.t]));
+  const free = new Map((pool!.results as Array<{ period: string; t: number }>).map((r) => [r.period, r.t]));
+  const cost = (p: string) => { const t = all.get(p) ?? 0, f = Math.min(t, free.get(p) ?? 0);
+    return round2(f * blendedPerToken(RATES.free) + (t - f) * blendedPerToken(RATES.pass)); };
+  return { labels: a.map((m) => m.label), series: a.map((m) => cost(m.period)), compare: b.map((m) => cost(m.period)) };
+}
+
+/** Net revenue per month from Stripe (the kit's third tab), this year and a year earlier. */
+export function revenueSeries(r: Revenue, nowMs: number): { labels: string[]; series: number[]; compare: number[] } {
+  const a = lastMonths(nowMs), b = lastMonths(nowMs, 7, 1);
+  const by = new Map<string, number>();
+  for (const p of r.payments) { const k = new Date(p.created * 1000).toISOString().slice(0, 7); by.set(k, (by.get(k) ?? 0) + (p.amount - p.refunded) / 100); }
+  return { labels: a.map((m) => m.label), series: a.map((m) => round2(by.get(m.period) ?? 0)), compare: b.map((m) => round2(by.get(m.period) ?? 0)) };
+}
+
+/** Accounts whose pass has ended (the donut's fourth slice). */
+export async function expiredPasses(db: D1Database, now: number): Promise<number> {
+  const list = PASSES.map(() => "?").join(", ");
+  return Number((await db.prepare(`SELECT COUNT(*) AS n FROM users WHERE user != ? AND plan IN (${list}) AND pass_until > 0 AND pass_until <= ?`)
+    .bind(FREE_POOL_USER, ...PASSES, now).first<{ n: number }>())?.n ?? 0);
+}
+
+/** The company AI key's stored state, for the Alerts page. */
+export async function aiStatusRow(db: D1Database): Promise<{ state: string; since: number; last_seen: number; last_alert_at: number | null; note: string } | null> {
+  return db.prepare("SELECT state, since, last_seen, last_alert_at, note FROM ai_status WHERE key = 'ai'")
+    .first<{ state: string; since: number; last_seen: number; last_alert_at: number | null; note: string }>();
+}
+
 // ---- sign-up pressure (abuse signals, counts only) ---------------------------------------------- //
 
 /** Today's new-account counts per network (the registration limiter's salted IP hash, never an
@@ -300,7 +389,7 @@ export interface Payment {
 }
 export interface Revenue {
   ok: boolean; why?: string; mode: "live" | "test" | "off";
-  payments: Payment[];                          // newest first, last 90 days, up to 100
+  payments: Payment[];                          // newest first, last 400 days, up to 100
   dashboard: string;                            // the Stripe dashboard's payments page for this mode
 }
 
@@ -320,7 +409,7 @@ export async function revenue(env: Env, nowMs: number): Promise<Revenue> {
   if (!key) return { ok: false, why: "no Stripe key is set", mode, payments: [], dashboard };
   return cached(`stripe:${mode}`, 5 * 60_000, nowMs, async () => {
     try {
-      const since = Math.floor(nowMs / 1000) - 90 * DAY_SECONDS;
+      const since = Math.floor(nowMs / 1000) - 400 * DAY_SECONDS;   // this year and last, for the monthly chart
       const data = await getJson(`https://api.stripe.com/v1/charges?limit=100&created[gte]=${since}`,
         { Authorization: `Bearer ${key}` }) as { data?: Array<Record<string, any>> };
       const payments = (data.data ?? []).filter((c) => c.paid || c.status === "succeeded").map((c): Payment => ({
