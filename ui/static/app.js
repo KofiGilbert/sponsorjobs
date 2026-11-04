@@ -10348,7 +10348,7 @@
       if (AA.open == null) AA.back = document.activeElement;
       AA.open = id; AA.item = null;
       $("#aaDrBody").innerHTML = aaDrawerHtml(row, true);
-      $("#aaScrim").hidden = false; $("#aaDrawer").hidden = false;
+      aaSheet(true);
       document.querySelectorAll("#aaList .aa-row").forEach(r => r.classList.toggle("is-active", Number(r.dataset.id) === id));
       $("#aaDrClose").focus();
     }
@@ -10361,8 +10361,26 @@
     $("#aaDrBody").innerHTML = aaDrawerHtml(it, false);
     if (note) { $("#aaDrNote").textContent = note; $("#aaDrNote").hidden = false; }
   }
+  // Show or hide the drawer and its scrim with their transitions (styles.css .aa-drawer): unhide,
+  // then add .is-in on the next frame so the slide plays; on close, drop .is-in and hide once the
+  // slide ends (or after its duration, whichever first). A reopen mid-close just re-targets.
+  let aaHideTimer = null;
+  function aaSheet(open) {
+    const dr = $("#aaDrawer"), sc = $("#aaScrim");
+    if (!dr || !sc) return;
+    clearTimeout(aaHideTimer);
+    if (open) {
+      sc.hidden = false; dr.hidden = false;
+      requestAnimationFrame(() => requestAnimationFrame(() => { dr.classList.add("is-in"); sc.classList.add("is-in"); }));
+      return;
+    }
+    dr.classList.remove("is-in"); sc.classList.remove("is-in");
+    const done = () => { if (!dr.classList.contains("is-in")) { dr.hidden = true; sc.hidden = true; } };
+    dr.addEventListener("transitionend", done, { once: true });
+    aaHideTimer = setTimeout(done, 400);
+  }
   function aaClose() {
-    $("#aaScrim").hidden = true; $("#aaDrawer").hidden = true;
+    aaSheet(false);
     AA.open = null; AA.item = null;
     document.querySelectorAll("#aaList .aa-row.is-active").forEach(r => r.classList.remove("is-active"));
     if (AA.back && document.contains(AA.back)) AA.back.focus();
