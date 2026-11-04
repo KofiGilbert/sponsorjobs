@@ -1,33 +1,39 @@
-// The founder's private admin dashboard at https://admin.sponsorjobs.ai. Read-only, with one action.
+// The founder's private admin dashboard at https://admin.sponsorjobs.ai.
 //
-// Routes on the admin host only: GET / (one server-rendered HTML page), GET /admin/api/stats (the
-// same numbers as JSON) and POST /admin/test-alert (the page's "Send test alert" button: one
-// Telegram message to the owner, the way a real outage alert goes; accepted only with this host's
-// own origin (Origin, or Sec-Fetch-Site: same-origin), so another site cannot press it). Every request is checked by src/access.ts first;
-// nothing here writes to the database. Output never contains a token, a token hash, a code hash or a salt: the queries
-// below select only the columns they show.
+// Pages (GET): / overview, /users (search, filters), /users/<id> (one person), /revenue (Stripe),
+// /usage (AI and interview use, costs, the free AI limit), /health (outside services), /audit
+// (every admin action), and /admin/api/stats (the overview numbers as JSON). The look is in
+// src/admin_ui.ts, the pages in src/admin_pages.ts, the extra reads in src/admin_data.ts.
+//
+// Actions (POST, src/admin_actions.ts): give a pass, add interviews, suspend or restore an account,
+// reveal a person's full e-mail, change or pause the free AI limit, send a test alert. Each needs
+// this host's own origin (Origin, or Sec-Fetch-Site: same-origin), a typed reason, and writes an
+// admin_actions row; nothing else on this host writes. Every request is checked by src/access.ts
+// first. Output never contains a token, a token hash, a code hash, a salt, or a forwarded mail's
+// code or link: the queries select only the columns they show.
 
 import { verifyAccess } from "./access";
 import { type Env, intVar } from "./env";
-import { type AiState, aiStatus, BILLING_URL, describeAi, sendTestAlert } from "./outage";
+import { type AiState, aiStatus, describeAi } from "./outage";
 import { dayOf, FREE_MODEL, INTERVIEW_SECONDS, PASS_MODEL, PASSES, periodOf } from "./metering";
-import { FREE_POOL_USER } from "./store";
+import { FREE_POOL_CAP_KEY, FREE_POOL_USER, poolCapOverride } from "./store";
+import { ActionError, accountAction, formOf, logReveal, sameOrigin, setFreePool, testAlert } from "./admin_actions";
+import {
+  auditLog, emailDomains, feed, githubRuns, listUsers, monthly, poolDays, poolSetting, recentActivity, revenue, signupNetworks,
+  spend, userDetail,
+} from "./admin_data";
+import {
+  type Attention, attention, auditPage, healthPage, notFound, overviewPage, revenuePage, usagePage, userPage, usersPage,
+} from "./admin_pages";
+import { esc, maskEmail, type Shell, shell } from "./admin_ui";
+import { blendedPerToken, INPUT_SHARE, RATES, round2, TAVUS_PER_MINUTE } from "./admin_data";
 
 export const ADMIN_HOST_DEFAULT = "admin.sponsorjobs.ai";
 
-// ---- cost assumptions (estimates; the real bills are in the Anthropic and Tavus consoles) ------ //
-//
-// Anthropic list prices, $ per 1M tokens (platform.claude.com/docs/en/about-claude/pricing,
-// checked 2026-10-10): claude-haiku-4-5 $1 in / $5 out, claude-sonnet-5-5 $2 in / $10 out.
-// The broker stores only input+output together, so a blend is assumed: tailoring prompts are
-// long and replies short, so 80% of tokens are taken as input. Prompt caching would lower this.
-export const RATES = {
-  free: { model: FREE_MODEL, inPerM: 1, outPerM: 5 },
-  pass: { model: PASS_MODEL, inPerM: 2, outPerM: 10 },
-} as const;
-export const INPUT_SHARE = 0.8;
-// Tavus conversational video, $ per minute of live interview (tavus.io/pricing, overage rate).
-export const TAVUS_PER_MINUTE = 0.35;
+// Cost assumptions (estimates; the real bills are in the Anthropic and Tavus consoles) live in
+// src/admin_data.ts: Anthropic list prices blended at 80% input, Tavus at $0.35 a minute.
+export { INPUT_SHARE, RATES, TAVUS_PER_MINUTE } from "./admin_data";
+
 // Resend free plan (resend.com/pricing): 100 e-mails a day, 3,000 a month. Pro is $20/month with no
 // daily cap. The dashboard turns amber at 70 a day and red at 90.
 export const RESEND_DAILY_CAP = 100;
@@ -36,10 +42,6 @@ export const RESEND_AMBER = 70;
 export const RESEND_RED = 90;
 export const RESEND_ADVICE = "Resend free plan: 100 a day. Upgrade to Pro ($20/month, no daily cap) before this fills.";
 
-const blendedPerToken = (r: { inPerM: number; outPerM: number }) =>
-  (INPUT_SHARE * r.inPerM + (1 - INPUT_SHARE) * r.outPerM) / 1_000_000;
-
-const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export interface RecentSignIn {
   email: string;
@@ -144,6 +146,7 @@ export async function collectStats(env: Env, nowMs: number): Promise<Stats> {
       "ORDER BY COALESCE(a.email_at, a.created_at, 0) DESC, a.rowid DESC LIMIT 20"),
     /* 15 */ db.prepare("SELECT COALESCE(SUM(n), 0) AS n FROM email_sends WHERE day = ?").bind(today),
     /* 16 */ db.prepare("SELECT COALESCE(SUM(n), 0) AS n FROM email_sends WHERE day LIKE ?").bind(`${period}-%`),
+    /* 17 */ db.prepare("SELECT value FROM admin_settings WHERE key = ?").bind(FREE_POOL_CAP_KEY),
   ]);
   const one = (i: number) => Number((res[i]!.results[0] as N | undefined)?.n ?? 0);
   const rows = <T>(i: number) => res[i]!.results as T[];
@@ -170,7 +173,8 @@ export async function collectStats(env: Env, nowMs: number): Promise<Stats> {
   const av = rows<{ count: number; used: number }>(12)[0] ?? { count: 0, used: 0 };
   const minutes = av.used / 60;
 
-  const cap = intVar(env.FREE_POOL_DAILY_TOKENS, 5_000_000);
+  const cap = poolCapOverride((res[17]!.results[0] as { value: string } | undefined)?.value)
+    ?? intVar(env.FREE_POOL_DAILY_TOKENS, 5_000_000);
   const poolToday = one(13);
 
   const mailsToday = one(15);
@@ -222,146 +226,6 @@ export async function collectStats(env: Env, nowMs: number): Promise<Stats> {
   };
 }
 
-// ---- HTML -------------------------------------------------------------------------------------- //
-
-const esc = (v: unknown): string => String(v ?? "").replace(/[&<>"']/g, (c) =>
-  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-const num = (n: number) => n.toLocaleString("en-US");
-const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const date = (s: number | null) => (s ? new Date(s * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "unknown");
-const PASS_LABEL: Record<string, string> = { free: "Free", pass30: "Job Hunt Pass", pass90: "Season Pass" };
-
-function tile(label: string, value: string, sub = ""): string {
-  return `<div class="tile"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div>` +
-         (sub ? `<div class="sub">${esc(sub)}</div>` : "") + `</div>`;
-}
-
-/** 30 daily bars, one series, inline SVG. Each bar carries a <title> as its hover tooltip, and a
- * table of the same numbers sits under the chart for screen readers. */
-function barChart(days: Array<{ day: string; count: number }>): string {
-  const W = 600, H = 160, top = 12, bottom = 22, left = 28;
-  const max = Math.max(1, ...days.map((d) => d.count));
-  const plotH = H - top - bottom;
-  const slot = (W - left) / days.length;
-  const bw = Math.max(2, slot - 2);                     // 2px gap between bars
-  const y = (v: number) => top + plotH - (v / max) * plotH;
-  const bars = days.map((d, i) => {
-    const x = left + i * slot + 1;
-    const h = Math.max(d.count > 0 ? 2 : 0, (d.count / max) * plotH);
-    const r = Math.min(4, bw / 2, h);
-    // Rounded top, square baseline.
-    const path = h <= 0 ? "" :
-      `<path class="bar" d="M${x},${top + plotH} V${top + plotH - h + r} Q${x},${top + plotH - h} ${x + r},${top + plotH - h} ` +
-      `H${x + bw - r} Q${x + bw},${top + plotH - h} ${x + bw},${top + plotH - h + r} V${top + plotH} Z"/>`;
-    return `<g><title>${esc(d.day)}: ${d.count} new</title>` +
-           `<rect class="hit" x="${x - 1}" y="${top}" width="${slot}" height="${plotH}"/>${path}</g>`;
-  }).join("");
-  const label = (i: number, anchor: "start" | "middle" | "end") => {
-    const x = anchor === "start" ? left + i * slot + 1 : anchor === "end" ? left + (i + 1) * slot - 1 : left + i * slot + slot / 2;
-    return `<text class="axis" x="${x}" y="${H - 6}" text-anchor="${anchor}">${esc(days[i]!.day.slice(5))}</text>`;
-  };
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="New accounts per day, last 30 days">` +
-    `<line class="grid" x1="${left}" x2="${W}" y1="${y(max)}" y2="${y(max)}"/>` +
-    `<line class="base" x1="${left}" x2="${W}" y1="${top + plotH}" y2="${top + plotH}"/>` +
-    `<text class="axis" x="${left - 6}" y="${y(max) + 4}" text-anchor="end">${max}</text>` +
-    `<text class="axis" x="${left - 6}" y="${top + plotH + 4}" text-anchor="end">0</text>` +
-    bars + label(0, "start") + label(14, "middle") + label(days.length - 1, "end") + `</svg>`;
-}
-
-export function renderPage(s: Stats, viewer: string): string {
-  const a = s.accounts, p = s.plans, m = s.usage_month, f = s.free_pool_today, e = s.sign_in_emails;
-  const ePct = Math.min(100, (100 * e.today) / e.daily_cap);
-  const everList = Object.entries(p.accounts_ever_on_pass).map(([k, v]) => `${PASS_LABEL[k] ?? k} ${num(v)}`).join(", ") || "none";
-  const rows = s.recent_sign_ins.map((r) => `<tr><td>${esc(r.email)}</td><td>${esc(PASS_LABEL[r.plan] ?? r.plan)}</td>` +
-    `<td>${esc(date(r.email_at))}</td><td>${esc(date(r.created_at))}</td></tr>`).join("") ||
-    `<tr><td colspan="4" class="muted">No one has signed in with an e-mail yet.</td></tr>`;
-  const dayRows = a.new_per_day.map((d) => `<tr><td>${esc(d.day)}</td><td>${d.count}</td></tr>`).join("");
-  const r = s.assumptions.rates_per_million;
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow"><title>SponsorJobs Admin</title>
-<style>
-:root{--bg:#f6f6f5;--card:#fff;--ink:#1d1d1f;--ink2:#55555a;--muted:#8a8a8f;--line:#e4e4e2;--bar:#6e6e73;--bar-hover:#1d1d1f;--warn:#a15c00;--bad:#c0362c;color-scheme:light dark}
-@media (prefers-color-scheme:dark){:root{--bg:#141415;--card:#1d1d1f;--ink:#f2f2f2;--ink2:#b4b4b8;--muted:#86868b;--line:#2e2e31;--bar:#a1a1a6;--bar-hover:#f2f2f2;--warn:#e0a040;--bad:#ff6b5e}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-main{max-width:960px;margin:0 auto;padding:24px 16px 48px}
-header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
-h1{font-size:20px;margin:0}h2{font-size:15px;margin:28px 0 10px;color:var(--ink2);font-weight:600}
-.muted,.sub{color:var(--muted);font-size:13px}
-.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-.tile,.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
-.label{font-size:13px;color:var(--ink2)}.value{font-size:24px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
-.chart{width:100%;height:auto;display:block}.chart .bar{fill:var(--bar)}.chart g:hover .bar{fill:var(--bar-hover)}
-.chart .hit{fill:transparent}.chart .grid{stroke:var(--line);stroke-dasharray:3 3}.chart .base{stroke:var(--line)}
-.chart .axis{fill:var(--muted);font-size:11px}
-.meter{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:8px}.meter span{display:block;height:100%;background:var(--bar)}
-.meter.hot span,.amber .meter span{background:var(--warn)}.red .meter span{background:var(--bad)}
-.amber .flag{color:var(--warn)}.red .flag{color:var(--bad)}.amber{border-color:var(--warn)}.red{border-color:var(--bad)}
-.tablewrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}
-th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--ink2);font-weight:600}
-td:first-child{white-space:normal;overflow-wrap:anywhere;min-width:14ch}
-details{margin-top:8px}summary{cursor:pointer;color:var(--ink2);font-size:13px}
-</style></head><body><main>
-<header><h1>SponsorJobs admin</h1><span class="muted">Signed in as ${esc(viewer)} · ${esc(date(s.generated_at))} · read-only</span></header>
-
-<h2>AI (company Anthropic key)</h2>
-<div class="card ${s.ai.state === "company_outage" ? "red" : s.ai.state === "transient" ? "amber" : ""}">
-<div class="label">${s.ai.state === "ok" ? "OK: model calls are going through." :
-  s.ai.state === "company_outage" ? `<strong class="flag">DOWN (ours): every model call is failing since ${esc(date(s.ai.since))}.</strong>` :
-  `<strong class="flag">Busy: the last model call failed (rate limit or overload) at ${esc(date(s.ai.since))}.</strong>`}</div>
-${s.ai.state === "ok" ? "" : `<div class="sub" style="margin-top:6px">Cause: ${esc(s.ai.note || "unknown")} · owner alerted: ${esc(date(s.ai.last_alert_at))}` +
-  (s.ai.state === "company_outage" ? ` · <a href="${BILLING_URL}" style="color:inherit">Anthropic billing</a>` : "") + `</div>`}
-<div class="sub" style="margin-top:6px">People see "SponsorJobs' AI is temporarily unavailable" while it is down; passes and packages are not touched. Also on /health as <code>ai</code>.</div>
-<form method="post" action="/admin/test-alert" style="margin-top:10px"><button type="submit">Send test alert</button> <span class="sub">One Telegram message to you, the way an outage alert is sent.</span></form></div>
-
-<h2>Accounts</h2>
-<div class="grid4">
-${tile("Total accounts", num(a.total), a.created_unknown ? `${num(a.created_unknown)} from before sign-up dates were recorded` : "")}
-${tile("Signed in with e-mail", num(a.with_email), a.total ? `${Math.round((100 * a.with_email) / a.total)}% of accounts` : "")}
-${tile("New this week", num(a.new_this_week), "last 7 days")}
-</div>
-<div class="card" style="margin-top:10px"><div class="label">New accounts per day, last 30 days (UTC)</div>
-${barChart(a.new_per_day)}
-<details><summary>Show as a table</summary><div class="tablewrap"><table><tr><th>Day</th><th>New</th></tr>${dayRows}</table></div></details>
-</div>
-
-<h2>Plans</h2>
-<div class="grid4">
-${tile("Free", num(p.free))}
-${tile("Job Hunt Pass (active)", num(p.active_pass30))}
-${tile("Season Pass (active)", num(p.active_pass90))}
-${tile("Purchases", num(p.checkout_purchases), `passes and interview packs together; ever on a pass: ${everList}`)}
-${tile("Extra-interview credits", num(Math.floor(p.extra_interview_credits.interviews)), `interviews unused (${num(Math.round(p.extra_interview_credits.seconds / 60))} min)`)}
-</div>
-
-<h2>This month (${esc(m.period)})</h2>
-<div class="grid4">
-${tile("Active accounts", num(m.active_accounts))}
-${tile("Tailored packages", num(m.packages.total), `free ${num(m.packages.free)} · pass ${num(m.packages.pass)}`)}
-${tile("AI tokens", num(m.ai_tokens.total), `free ${num(m.ai_tokens.free)} · pass ${num(m.ai_tokens.pass)}`)}
-${tile("AI cost (estimate)", usd(m.ai_cost_usd.total), `free ${usd(m.ai_cost_usd.free)} · pass ${usd(m.ai_cost_usd.pass)}`)}
-${tile("Live interviews", num(m.interviews.count), `${num(Math.round(m.interviews.minutes))} min used`)}
-${tile("Interview cost (estimate)", usd(m.interviews.cost_usd), `at ${usd(s.assumptions.tavus_per_minute)}/min (Tavus)`)}
-</div>
-
-<h2>Free AI pool today (${esc(f.day)})</h2>
-<div class="card"><div class="label">${num(f.tokens)} of ${num(f.cap)} tokens (${f.percent}%)</div>
-<div class="meter${f.percent >= 80 ? " hot" : ""}"><span style="width:${Math.min(100, f.percent)}%"></span></div>
-<div class="sub" style="margin-top:6px">Past the cap, free requests get "busy, try tomorrow"; pass holders are unaffected.</div></div>
-
-<h2>E-mails sent (sign-in codes and forwarded alias mail, ${esc(e.day)})</h2>
-<div class="card ${e.level}"><div class="label">${num(e.today)} of ${num(e.daily_cap)} today · ${num(e.month)} of ${num(e.monthly_cap)} this month</div>
-<div class="meter"><span style="width:${ePct}%"></span></div>
-<div class="sub" style="margin-top:6px">${e.level === "ok" ? "" : `<strong class="flag">${e.level === "red" ? "Nearly full." : "Filling up."}</strong> `}${esc(e.advice)}</div></div>
-
-<h2>Recent sign-ins (last 20 with an e-mail)</h2>
-<div class="card tablewrap"><table><tr><th>E-mail</th><th>Plan</th><th>Signed in</th><th>Account created</th></tr>${rows}</table></div>
-
-<p class="muted" style="margin-top:24px">Cost estimates: ${esc(r.free.model)} $${r.free.inPerM}/$${r.free.outPerM} per 1M tokens (free plan),
-${esc(r.pass.model)} $${r.pass.inPerM}/$${r.pass.outPerM} (passes), ${Math.round(s.assumptions.input_share * 100)}% of tokens assumed input.
-${esc(s.assumptions.note)} JSON: <a href="/admin/api/stats" style="color:inherit">/admin/api/stats</a></p>
-</main></body></html>`;
-}
 
 // ---- routing ----------------------------------------------------------------------------------- //
 
@@ -375,6 +239,23 @@ const security = {
 
 const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
+const text = (body: string, status: number) =>
+  new Response(body, { status, headers: { "content-type": "text/plain", ...security } });
+const html = (body: string, status = 200) =>
+  new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...security, "content-security-policy": PAGE_CSP } });
+const back = (to: string) => new Response(null, { status: 303, headers: { location: to, ...security } });
+
+/** A flash line carried on a redirect: our own messages only, so a crafted link cannot put
+ * arbitrary words on the page (it is escaped either way). */
+const FLASH_OK = /^[A-Za-z0-9 .,'"()%-]{1,200}$/;
+function flashOf(url: URL): Shell["flash"] {
+  const ok = url.searchParams.get("ok"), err = url.searchParams.get("err");
+  if (ok && FLASH_OK.test(ok)) return { kind: "ok", text: ok };
+  if (err && FLASH_OK.test(err)) return { kind: "bad", text: err };
+  return null;
+}
+const withFlash = (path: string, kind: "ok" | "err", msg: string) => `${path}?${kind}=${encodeURIComponent(msg)}`;
+
 /** The page after "Send test alert": what happened, and the way back. */
 function renderTestResult(result: string): string {
   const ok = result === "sent";
@@ -382,7 +263,7 @@ function renderTestResult(result: string): string {
 <title>Test alert</title><style>body{font:15px/1.5 system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px}</style></head><body>
 <h1>${ok ? "Test alert sent" : "Test alert not sent"}</h1>
 <p>${ok ? "Check Telegram: the message should be there now." : `Reason: ${esc(result)}`}</p>
-<p><a href="/">Back to the dashboard</a></p></body></html>`;
+<p><a href="/health">Back to the dashboard</a></p></body></html>`;
 }
 
 /** Is this request for the admin host? (Only routes it here; the JWT is what lets it in.) */
@@ -391,37 +272,110 @@ export function isAdminHost(req: Request, env: Env): boolean {
   return new URL(req.url).hostname.toLowerCase() === want;
 }
 
+const USER_PATH = /^\/users\/([^/]{1,200})(?:\/(give-pass|add-interviews|suspend|unsuspend|reveal))?$/;
+/** The account id in a /users/<id> path, or "" when the escape is malformed (then nothing matches). */
+const idOf = (raw: string) => { try { return decodeURIComponent(raw); } catch { return ""; } };
+
 export async function handleAdmin(req: Request, env: Env, nowMs: number): Promise<Response> {
   const who = await verifyAccess(req, env, Math.floor(nowMs / 1000));
-  if (!who) {
-    return new Response("Forbidden", { status: 403, headers: { "content-type": "text/plain", ...security } });
-  }
+  if (!who) return text("Forbidden", 403);
   const url = new URL(req.url);
-  const path = url.pathname;
-  if (req.method === "POST" && path === "/admin/test-alert") {
-    // The page's Referrer-Policy is no-referrer, so a browser posts its form with "Origin: null";
-    // Sec-Fetch-Site (set by the browser, never by a page) then says whether it came from here.
-    const sameSite = req.headers.get("origin") === url.origin || req.headers.get("sec-fetch-site") === "same-origin";
-    if (!sameSite) {
-      return new Response("Forbidden", { status: 403, headers: { "content-type": "text/plain", ...security } });
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const now = Math.floor(nowMs / 1000);
+  const admin = who.email;
+
+  if (req.method === "POST") {
+    if (!sameOrigin(req)) return text("Forbidden", 403);
+    if (path === "/admin/test-alert") return html(renderTestResult(await testAlert(env, admin, now)));
+    if (path === "/settings/free-pool") {
+      try {
+        return back(withFlash("/usage", "ok", await setFreePool(env, admin, await formOf(req), now)));
+      } catch (e) {
+        if (e instanceof ActionError) return back(withFlash("/usage", "err", e.message));
+        throw e;
+      }
     }
-    const result = await sendTestAlert(env, Math.floor(nowMs / 1000));
-    return new Response(renderTestResult(result), { headers: { "content-type": "text/html; charset=utf-8", ...security, "content-security-policy": PAGE_CSP } });
+    const m = USER_PATH.exec(path);
+    if (m && m[2]) {
+      const id = idOf(m[1]!);
+      const home = `/users/${encodeURIComponent(id)}`;
+      try {
+        if (m[2] === "reveal") {
+          await logReveal(env, admin, id, now);
+          return userResponse(env, id, now, admin, { revealed: true });
+        }
+        return back(withFlash(home, "ok", await accountAction(env, admin, id, m[2], await formOf(req), now)));
+      } catch (e) {
+        if (e instanceof ActionError) return back(withFlash(home, "err", e.message));
+        throw e;
+      }
+    }
+    return text("Method not allowed", 405);
   }
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    return new Response("Method not allowed", { status: 405, headers: { "content-type": "text/plain", ...security } });
-  }
+  if (req.method !== "GET" && req.method !== "HEAD") return text("Method not allowed", 405);
+
   if (path === "/admin/api/stats") {
-    return new Response(JSON.stringify(await collectStats(env, nowMs)),
-      { headers: { "content-type": "application/json", ...security } });
+    return new Response(JSON.stringify(await collectStats(env, nowMs)), { headers: { "content-type": "application/json", ...security } });
   }
-  if (path === "/" || path === "/admin" || path === "/admin/") {
-    return new Response(renderPage(await collectStats(env, nowMs), who.email), {
-      headers: {
-        "content-type": "text/html; charset=utf-8", ...security,
-        "content-security-policy": PAGE_CSP,
-      },
-    });
+  const base = { viewer: admin, generatedAt: now, flash: flashOf(url) };
+  if (path === "/" || path === "/admin") {
+    const [stats, pool, rev, fd, runs, activity, suspended] = await Promise.all([
+      collectStats(env, nowMs), poolSetting(env), revenue(env, nowMs), feed(nowMs), githubRuns(env, nowMs),
+      recentActivity(env.DB), suspendedCount(env.DB)]);
+    const att = attention({ stats, pool, revenue: rev, feed: fd, runs, env, now, suspended });
+    const { body, rail } = overviewPage({ stats, pool, revenue: rev, attention: att, activity, now });
+    return html(shell({ ...base, page: "overview", title: "Overview", body, rail, badges: badgesFor(att) }));
   }
-  return new Response("Not found", { status: 404, headers: { "content-type": "text/plain", ...security } });
+  if (path === "/users") {
+    const filter = (["all", "free", "pass", "email", "suspended"] as const).find((f) => f === url.searchParams.get("filter")) ?? "all";
+    const sort = (["newest", "oldest", "tokens"] as const).find((s) => s === url.searchParams.get("sort")) ?? "newest";
+    const page = Math.max(1, Math.min(10_000, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1));
+    const q = (url.searchParams.get("q") ?? "").slice(0, 120);
+    const { rows, total } = await listUsers(env.DB, { q, filter, sort, page, period: periodOf(nowMs), now });
+    return html(shell({ ...base, page: "users", title: "Users", query: q, body: usersPage({ rows, total, q, filter, sort, page, now }) }));
+  }
+  const um = USER_PATH.exec(path);
+  if (um && !um[2]) return userResponse(env, idOf(um[1]!), now, admin, { flash: base.flash });
+  if (path === "/revenue") {
+    const [rev, granted30] = await Promise.all([revenue(env, nowMs), grantedSince(env.DB, now - 30 * 86_400)]);
+    return html(shell({ ...base, page: "revenue", title: "Revenue", body: revenuePage({ revenue: rev, granted30, now }) }));
+  }
+  if (path === "/usage") {
+    const today = dayOf(nowMs);
+    const todayStart = Math.floor(Date.parse(`${today}T00:00:00Z`) / 1000);
+    const [stats, pool, days, sp, months, networks, domains] = await Promise.all([
+      collectStats(env, nowMs), poolSetting(env), poolDays(env.DB, todayStart), spend(env.DB, periodOf(nowMs), now),
+      monthly(env.DB, nowMs), signupNetworks(env.DB, today, env), emailDomains(env.DB)]);
+    return html(shell({ ...base, page: "usage", title: "Usage & costs",
+      body: usagePage({ stats, pool, poolDays: days, spend: sp, months, networks, domains, now }) }));
+  }
+  if (path === "/health") {
+    const [stats, fd, runs, rev] = await Promise.all([collectStats(env, nowMs), feed(nowMs), githubRuns(env, nowMs), revenue(env, nowMs)]);
+    return html(shell({ ...base, page: "health", title: "Health", body: healthPage({ stats, feed: fd, runs, revenue: rev, env, now }) }));
+  }
+  if (path === "/audit") {
+    const before = Number.parseInt(url.searchParams.get("before") ?? "", 10);
+    const rows = await auditLog(env.DB, { limit: 51, before: Number.isFinite(before) && before > 0 ? before : undefined });
+    return html(shell({ ...base, page: "audit", title: "Audit log", body: auditPage({ rows: rows.slice(0, 50), more: rows.length > 50 }) }));
+  }
+  return html(shell({ ...base, page: "overview", title: "Not found", body: notFound() }), 404);
 }
+
+async function userResponse(env: Env, id: string, now: number, admin: string,
+                            o: { revealed?: boolean; flash?: Shell["flash"] }): Promise<Response> {
+  const [u, history] = await Promise.all([userDetail(env.DB, id, now), auditLog(env.DB, { target: id, limit: 20 })]);
+  const base = { viewer: admin, generatedAt: now, flash: o.flash ?? null };
+  if (!u) return html(shell({ ...base, page: "users", title: "Not found", crumbs: [{ label: "Users", href: "/users" }], body: notFound() }), 404);
+  return html(shell({ ...base, page: "users", title: u.email ? (o.revealed ? u.email : maskEmail(u.email)) : "Anonymous account",
+    crumbs: [{ label: "Users", href: "/users" }], body: userPage({ u, history, revealed: Boolean(o.revealed), now }) }));
+}
+
+const suspendedCount = async (db: D1Database) =>
+  Number((await db.prepare("SELECT COUNT(*) AS n FROM accounts WHERE suspended_at IS NOT NULL").first<{ n: number }>())?.n ?? 0);
+const grantedSince = async (db: D1Database, since: number) =>
+  Number((await db.prepare("SELECT COUNT(*) AS n FROM processed_events WHERE key LIKE 'checkout:%' AND at >= ?").bind(since)
+    .first<{ n: number }>())?.n ?? 0);
+const badgesFor = (att: Attention[]): Shell["badges"] => {
+  const bad = att.filter((a) => a.level === "bad").length;
+  return bad ? { health: String(bad) } : {};
+};

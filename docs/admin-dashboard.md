@@ -1,9 +1,11 @@
 # Admin dashboard (admin.sponsorjobs.ai)
 
-A private page, read-only apart from one test button, that shows how SponsorJobs is doing: accounts, sign-ins, plans, this
-month's usage and what it roughly costs, the free AI pool, and sign-in e-mails against Resend's free
-plan. It lives in the same Cloudflare Worker as the broker (`worker/src/admin.ts`) and only answers
-on `admin.sponsorjobs.ai`.
+A private dashboard that shows how SponsorJobs is doing and lets the founder handle the few support
+jobs that come up: revenue, users, AI and interview costs, the free AI limit, and the health of every
+outside service. It lives in the same Cloudflare Worker as the broker (`worker/src/admin.ts`, with
+`admin_ui.ts`, `admin_pages.ts`, `admin_data.ts`, `admin_actions.ts`) and only answers on
+`admin.sponsorjobs.ai`. The look follows ByeWind's free "Dashboard UI Kit" (SnowUI) from Figma
+Community, CC BY 4.0, rebuilt in our own markup and credited in the page footer.
 
 **Cost: $0.** Cloudflare Access (Zero Trust) is free for up to 50 users, and the Worker route uses
 the plan you already have.
@@ -17,34 +19,103 @@ the plan you already have.
    and answers **403 Forbidden** if anything is off, or if the two settings below are still empty.
    So the page is closed by default, and a mistake in the Access policy alone cannot open it.
 
-The page never shows tokens, token hashes or sign-in code hashes, and it cannot change anything.
+The pages never show tokens, token hashes, sign-in code hashes, or a forwarded mail's code or link.
+E-mails are masked (`ka***@gmail.com`) everywhere except one person's page after **Show full e-mail**,
+and that reveal is written to the audit log. The application e-mail alias is masked the same way,
+because it carries the person's name.
 
 ## What it shows
 
-- **AI (company Anthropic key):** whether model calls are going through right now. "OK", or
-  "DOWN (ours)" with the cause, since when, and when the owner was last messaged (see
-  "When the company AI key fails" below). The same line is on the public
-  `https://api.sponsorjobs.ai/health` as `ai`: `ok`, `company_outage since <time>` or `transient`
-  (the cause stays on this page).
-- **Accounts:** total, how many signed in with an e-mail, new this week, and a bar chart of new
-  accounts per day for the last 30 days (hover a bar for the number, or open "Show as a table").
-- **Plans:** free, active Job Hunt Pass, active Season Pass, purchases (passes and interview packs
-  together: Stripe's records here do not say which was which), and unused extra-interview credits.
-- **This month:** active accounts, tailored packages, AI tokens with an estimated cost, live
-  interviews and minutes with an estimated Tavus cost ($0.35 a minute).
-- **Free AI pool today:** tokens used against the daily cap (`FREE_POOL_DAILY_TOKENS`).
-- **E-mails sent:** sign-in codes and mail forwarded from students' aliases (`docs/mail-alias.md`),
-  today against Resend's free 100 a day, and the month against 3,000. Amber at 70 a day, red at 90.
-- **Recent sign-ins:** the last 20 accounts with an e-mail, their plan and dates.
-- The same numbers as JSON at `https://admin.sponsorjobs.ai/admin/api/stats`.
+Left sidebar: **Overview, Users, Revenue, Usage & costs** (dashboards) and **Health, Audit log**
+(system). The search box at the top finds a person by e-mail or account id.
 
-Cost estimates use list prices: Haiku 4.5 ($1 in / $5 out per million tokens) for the free plan,
-Sonnet 5.5 ($2 / $10) for passes, assuming 80% of tokens are input. Check the Anthropic and Tavus
-consoles for the real bill.
+- **Overview:** revenue over 30 days (after refunds, from Stripe), active passes, accounts active this
+  month, new this week with the share that ever bought a pass; new accounts per day (30 days); plans
+  as a donut; this month's revenue, estimated AI and Tavus cost and margin; today's free AI use
+  against its limit; recent e-mail sign-ins. The right column lists **Needs attention**:
+  - the company AI key failing
+  - the job feed unreadable or older than 8 hours
+  - a failed GitHub `feed`, `grow-boards` or `tests` run
+  - the free AI paused or 75% used
+  - Resend near its limit
+  - a disputed payment
+  - Stripe in test mode or unreadable
+  - no Telegram chat for alerts
+  - suspended accounts
 
-**Dates start now.** The database did not record when an account was created or when someone
-signed in, or count pass packages and sign-in e-mails per month. This release starts recording
-them. Older accounts show "unknown" and are left out of the chart; nothing is made up.
+  Below that, **Recent activity** shows sign-ups, e-mail sign-ins, paid checkouts and admin actions.
+  Health gets a red count in the sidebar when something is failing.
+- **Users:** every account, newest first. E-mails are masked. You can filter (Free, On a pass,
+  E-mail sign-in, Suspended), sort by AI use this month, and page through 50 at a time.
+- **A person** (`/users/<id>`) shows:
+  - the plan and when it ends, with what is left on the pass
+  - extra interviews, signed-in devices (a count), Telegram linked or not
+  - the application e-mail and how many mails it got (never their content)
+  - usage by month, live interviews, and every admin action on this account
+
+  The support actions are below.
+- **Revenue:** net revenue over 7, 30 and 90 days, refunds and repeat buyers. Each payment shows its
+  product (worked out from the price), the masked buyer and a link to it in Stripe, and disputes are
+  flagged. There is a by-product donut and a check that payments in Stripe match passes granted by
+  the webhook. Passes are one-time, so there is no MRR or churn. Refunds and disputes are handled
+  in Stripe, never here.
+- **Usage & costs:** this month's AI and interview cost, cost per active user with the 95th
+  percentile (a runaway account shows there even when the average is calm), and the free AI for the
+  last 14 days against its limit. It also has the **free AI limit control**, top AI users this month
+  (free users show their share of the monthly cap), monthly totals, sign-ups today per network
+  (salted hash, never an address, against the per-network limit), and e-mail domains.
+- **Health:** a status for each service:
+  - the Anthropic key
+  - the job feed (job count and age, from `feed.sponsorjobs.ai/feed/manifest.json`)
+  - the sponsor index
+  - the latest GitHub `feed`, `grow-boards`, `tests` and `release` runs
+  - Stripe mode
+  - Resend e-mails
+  - the Telegram bot and owner chat
+  - Tavus, Google sign-in, and the apply agent's signing key
+
+  The **Send test alert** button is here too.
+- **Audit log:** every action, newest first, with who (the Access e-mail), what, which account, the
+  detail, and the reason. Rows are never edited or deleted by the app.
+- The overview numbers as JSON at `https://admin.sponsorjobs.ai/admin/api/stats`.
+
+Stripe, the feed and GitHub are fetched at most every 5 to 10 minutes per Worker instance. A page
+still loads when any of them is down; it says "Unreadable" in that row. The GitHub repo is public, so
+no token is needed. An optional `GITHUB_TOKEN` secret raises GitHub's rate limit.
+
+## Actions
+
+Every action:
+- is a form on the dashboard
+- is accepted only from the dashboard itself (another site's form gets 403)
+- needs a typed reason
+- writes an audit row in the same database transaction as the change
+
+| Action | Where | What it does |
+|---|---|---|
+| Give a pass | a person | Starts a Job Hunt or Season Pass now, or adds to an active one. No charge; not counted as a Stripe purchase. |
+| Add live interviews | a person | 1 to 10 interviews (20 minutes each) as credit that never expires. |
+| Suspend | a person | Type `SUSPEND`. The account's tokens stop working, so the app is signed out everywhere and cannot use AI, until restored. Nothing is deleted. |
+| Restore | a person | The same tokens work again. |
+| Show full e-mail | a person | Shows the full e-mail and alias once, and logs it. |
+| Free AI limit | Usage & costs | Set a daily token limit, go back to the deploy's `FREE_POOL_DAILY_TOKENS`, or pause the free AI (type `PAUSE`). Takes effect on the next request with no deploy; pass holders are never affected. |
+| Send test alert | Health | One Telegram message to the owner, logged with the result. |
+
+A suspended anonymous account can register a new anonymous one. Suspension is meant for e-mail
+accounts and obvious abuse. The free AI limit and the per-network sign-up limit are what stop
+scripts.
+
+## Deploying a change that adds tables
+
+Migration `0011_admin_actions.sql` adds `admin_actions`, `admin_settings` and
+`accounts.suspended_at`, and the Worker reads them on every request. **Apply the migration BEFORE
+deploying the code**, or every AI request and every sign-in fails until it is applied:
+
+```
+cd ~/sponsorjobs/worker
+npx wrangler d1 migrations apply DB --remote
+npx wrangler deploy
+```
 
 ## Setup, step by step
 

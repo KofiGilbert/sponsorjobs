@@ -123,7 +123,7 @@ const llmComplete: Handler = async ({ req, env, now, nowMs }) => {
       }
     }
   }
-  const { state, freePoolTokens } = await loadState(env.DB, user, period, day);
+  const { state, freePoolTokens, freePoolCap } = await loadState(env.DB, user, period, day);
   try {
     requireLlm(state, now, Math.max(1, Math.floor(estChars / 4)));
   } catch (e) {
@@ -136,7 +136,8 @@ const llmComplete: Handler = async ({ req, env, now, nowMs }) => {
   const free = !isPass(plan);
   // The whole free tier shares a daily token budget; past it free requests get a polite "busy"
   // and paid users are untouched. Keeps a script of anonymous accounts from running up the bill.
-  if (free && freePoolTokens >= intVar(env.FREE_POOL_DAILY_TOKENS, 5_000_000)) {
+  // The admin dashboard can lower, raise or pause (0) it without a deploy (admin_settings).
+  if (free && freePoolTokens >= (freePoolCap ?? intVar(env.FREE_POOL_DAILY_TOKENS, 5_000_000))) {
     return json({ error: "the free AI is very busy today; try again tomorrow, or get a pass",
                   reason: "free_busy", tier: tierFor(state, now) }, 503);
   }
