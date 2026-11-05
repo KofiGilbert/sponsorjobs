@@ -140,11 +140,14 @@ def test_prices_agree_with_the_broker():
 
 
 # ---- the home page stays short and plain ---------------------------------------------------
-HOME_WORD_BUDGET = 180
+# The features section (five blocks, each a heading of at most eight words and one line of at
+# most twenty) is the bulk of this. The phone's Telegram chat is a picture of the product, not
+# page copy, and is left out of the count.
+HOME_WORD_BUDGET = 270
 
 
 class _HomeWords(HTMLParser):
-    """Words a visitor reads inside <main>, minus the employer panel's live data."""
+    """Words a visitor reads inside <main>, minus the employer panel's live data and the phone mock."""
 
     VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 
@@ -159,7 +162,8 @@ class _HomeWords(HTMLParser):
         if tag in self.VOID:
             return
         a = dict(attrs)
-        skip = tag in ("script", "style") or a.get("id") == "employer" or tag == "footer"
+        skip = (tag in ("script", "style") or a.get("id") == "employer" or tag == "footer"
+                or "phone" in (a.get("class") or "").split())
         self._stack.append(skip)
         if skip:
             self._skip += 1
@@ -217,11 +221,24 @@ def test_no_kicker_labels_or_display_italics():
     assert "text-transform: uppercase" not in css and "background-clip: text" not in css
 
 
-def test_home_tabs_work_without_script():
+def test_home_features_section_is_whole():
+    """Five blocks of text scroll past five pinned clips; the first of each shows without JS, and
+    every clip ships as webm, mp4 and a poster at double resolution so it stays sharp on retina."""
     html = (SITE / "index.html").read_text(encoding="utf-8")
-    panels = re.findall(r'<div class="panel" role="tabpanel" id="(panel-[a-z]+)"[^>]*?( hidden)?>', html)
-    assert [p for p, _ in panels] == ["panel-find", "panel-tailor", "panel-apply", "panel-practise"]
-    assert panels[0][1] == "" and all(h == " hidden" for _, h in panels[1:]), "only the first tab shows without JS"
+    blocks = re.findall(r'<div class="val( is-on)?">\s*<h3>([^<]+)</h3>\s*<p>([^<]+)</p>', html)
+    assert len(blocks) == 5, "five feature blocks"
+    assert blocks[0][0] == " is-on" and all(on == "" for on, _, _ in blocks[1:]), "only the first block is live without JS"
+    for _, h3, p in blocks:
+        assert len(h3.split()) <= 8, f"heading too long: {h3}"
+        assert len(p.split()) <= 20, f"line too long: {p}"
+    frames = re.findall(r'<figure class="vals-frame( is-on)?"><video [^>]*poster="img/([a-z]+)-poster\.webp" width="3000" height="2050"', html)
+    assert [n for _, n in frames] == ["find", "tailor", "apply", "projects", "practise"]
+    assert frames[0][0] == " is-on" and all(on == "" for on, _ in frames[1:]), "only the first clip shows without JS"
+    for _, name in frames:
+        for ext in ("webm", "mp4", "-poster.webp"):
+            f = SITE / "img" / (name + ("." + ext if not ext.startswith("-") else ext))
+            assert f.is_file(), f"missing {f.name}"
+    assert html.count('class="vals-tag"') == 1 and html.count('class="phone"') == 1
 
 
 def test_employer_lookup_is_wired():
