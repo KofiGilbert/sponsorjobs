@@ -200,7 +200,10 @@ JD match: 95%<span class="tg-time">8:59 PM</span></div>
       </div>
       <aside class="emp" id="employer" aria-label="Employer record">
         <form id="emp-form" role="search" aria-label="Check an employer's sponsorship record">
-          <input type="search" id="emp-q" name="q" value="Databricks" autocomplete="organization" spellcheck="false" aria-label="Employer name" placeholder="Employer name">
+          <div class="emp-field">
+            <input type="search" id="emp-q" name="q" value="Databricks" autocomplete="organization" spellcheck="false" aria-label="Employer name" placeholder="Employer name">
+            <span class="emp-caret" id="emp-caret" hidden aria-hidden="true"></span>
+          </div>
           <button class="btn" type="submit">Check</button>
         </form>
         <div class="verdict">

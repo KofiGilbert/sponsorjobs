@@ -163,10 +163,55 @@ function wireEmployerPanel() {
   const form = $("emp-form");
   const input = $("emp-q");
   if (!form || !input) return;
-  form.addEventListener("submit", (e) => { e.preventDefault(); checkEmployer(input.value); });
+  form.addEventListener("submit", (e) => { e.preventDefault(); stopDemo(); checkEmployer(input.value); });
   document.querySelectorAll("[data-emp]").forEach((b) => {
-    b.addEventListener("click", () => { input.value = b.dataset.emp; checkEmployer(b.dataset.emp); input.focus(); });
+    b.addEventListener("click", () => { stopDemo(); input.value = b.dataset.emp; checkEmployer(b.dataset.emp); input.focus(); });
   });
+
+  // The typed demo: while nobody has touched the field, it types a sponsor's name letter by letter
+  // with a blinking caret, runs the lookup so the record changes, holds, clears, and types the next.
+  // It runs only while the panel is on screen, stops for good at the first click or key in the
+  // field, and never runs for people who asked for less motion.
+  const caret = $("emp-caret");
+  const panel = $("employer");
+  const NAMES = ["Stripe", "Epic Systems", "Mayo Clinic", "Netflix", "Databricks"];
+  const lessMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let demo = !lessMotion && !!caret && !!panel;
+  let visible = false, running = false, timer = 0;
+  const wait = (ms) => new Promise((r) => { timer = setTimeout(r, ms); });
+  const measure = (() => {
+    const canvas = document.createElement("canvas");
+    return (text) => { const c = canvas.getContext("2d"); if (!c) return 0; c.font = getComputedStyle(input).font; return c.measureText(text).width; };
+  })();
+  const show = (text) => { input.value = text; caret.style.setProperty("--w", measure(text) + "px"); };
+  let whole = input.value;   // the name being typed or cleared, so a click mid-word leaves a whole name behind
+  function stopDemo() { if (!demo) return; demo = false; clearTimeout(timer); caret.hidden = true; if (whole && whole.startsWith(input.value)) input.value = whole; }
+  async function run() {
+    if (running) return;
+    running = true;
+    try {
+      await wait(1400);
+      let i = 0;
+      while (demo && visible) {
+        const current = input.value;
+        whole = current; caret.hidden = false;
+        for (let n = current.length - 1; n >= 0 && demo && visible; n--) { show(current.slice(0, n)); await wait(28); }
+        if (!demo || !visible) break;
+        await wait(420);
+        const name = NAMES[i % NAMES.length]; i++;
+        whole = name;
+        for (let n = 1; n <= name.length && demo && visible; n++) { show(name.slice(0, n)); await wait(55 + Math.random() * 50); }
+        if (!demo || !visible) break;
+        await wait(350);
+        checkEmployer(name);
+        await wait(2800);
+      }
+    } finally { running = false; if (demo) caret.hidden = true; }
+  }
+  ["pointerdown", "keydown", "focus", "input"].forEach((ev) => input.addEventListener(ev, stopDemo));
+  if (demo && "IntersectionObserver" in window) {
+    new IntersectionObserver((entries) => entries.forEach((e) => { visible = e.isIntersecting; if (visible && demo) run(); }), { threshold: 0.6 }).observe(panel);
+  }
 }
 
 // ---- 3. downloads ------------------------------------------------------------------------
