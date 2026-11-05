@@ -419,17 +419,16 @@ async function githubCard() {
   if (!stars) return;
   const d = await getJSON("https://api.github.com/repos/" + REPO, 8000);
   if (!d) return;   // keeps the non-numeric fallback already in the HTML
+  const pushed = $("gh-pushed");
+  const when = d.pushed_at ? relativeTime(String(d.pushed_at)) : null;
   if (Number(d.stargazers_count) > 0) {
     stars.textContent = fmt(d.stargazers_count);
     stars.classList.remove("v-text");
+    if (pushed && when) pushed.textContent = when;
   } else {
-    stars.textContent = "Just published";
-    stars.classList.add("v-text");
-  }
-  const pushed = $("gh-pushed");
-  if (pushed && d.pushed_at) {
-    const when = relativeTime(String(d.pushed_at));
-    if (when) pushed.textContent = when;
+    // No stars yet: the line says when the code last moved, nothing about stars.
+    const line = stars.closest(".gh-line");
+    if (line) line.textContent = when ? "Just published. Last commit " + when + "." : "Just published.";
   }
 }
 
