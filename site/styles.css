@@ -326,62 +326,44 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .vals-tag svg[hidden] { display: none; }   /* the UA's [hidden] rule covers HTML elements only, not SVG */
 .vals-tag span { display: none; }
 .vals-tag span.is-on { display: inline; }
-/* The phone beside the Apply window: Telegram on a Galaxy S21 Ultra, rebuilt from the screen's own
-   element tree (1440x3200: status bar, a 9.8% app bar, bubbles with inline button rows 5.2% tall,
-   the input bar at 88%, the nav bar). Telegram's light "Blue" theme. Sizes in cqw are fractions of
-   the phone's width, so it scales with the window. */
+/* The phone beside the Apply window: the Telegram chat, static, in a plain white device the way
+   jetbrains.com/air shows a phone: no bezel, a deep corner radius, a soft shadow, a status bar and
+   a home indicator with real insets. Sizes in cqw are fractions of the phone's width. */
 .phone {
-  position: absolute; left: -7%; bottom: -7%; z-index: 3; width: 31%; aspect-ratio: 9 / 20;
-  border-radius: 11% / 5%; background: #FFFFFF; border: 1.4% solid #121214; box-shadow: var(--shadow), 0 0 0 1px rgba(0,0,0,.65), inset 0 0 0 1px rgba(255,255,255,.08);
+  position: absolute; left: -7%; bottom: -7%; z-index: 3; width: 31%; aspect-ratio: 9 / 19.5;
+  border-radius: 14% / 6.5%; background: #FFFFFF;   /* an element's own cqw units resolve against its ancestor, so the corner is a percentage */ box-shadow: 0 2px 4px rgba(0,0,0,.18), 0 40px 90px -20px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.12);
   overflow: hidden; opacity: 0; transform: translateY(16px); transition: opacity .35s var(--ease), transform .35s var(--ease);
   container-type: inline-size; display: flex; flex-direction: column; font-family: var(--sans); color: #000;
 }
 .vals-frame.is-on + .phone { opacity: 1; transform: none; }
-.ph-status { position: relative; display: flex; align-items: center; justify-content: space-between; height: 7cqw; padding: 0 5cqw 0 6cqw; background: #FFFFFF; font: 600 3.6cqw/1 var(--sans); color: #000; }
-.ph-cam { position: absolute; left: 50%; top: 1.4cqw; width: 4.2cqw; height: 4.2cqw; margin-left: -2.1cqw; border-radius: 50%; background: #0A0A0C; box-shadow: inset 0 0 0 .6cqw #1C1D22; }
-.ph-sig { display: flex; align-items: center; gap: 1.2cqw; }
-.ph-sig > span { width: 2.6cqw; height: 2.6cqw; border-radius: 50%; border: .4cqw solid #000; box-sizing: border-box; }
-.ph-sig strong { font-weight: 700; font-size: 3cqw; padding: .3cqw 1.1cqw; border-radius: 2cqw; background: #000; color: #fff; }
-.ph-bar { display: flex; align-items: center; gap: 2.4cqw; height: 13cqw; padding: 0 3cqw 0 3.6cqw; background: #FFFFFF; box-shadow: 0 1px 0 rgba(0,0,0,.1); position: relative; z-index: 1; }
-.ph-bar > svg { width: 6cqw; height: 6cqw; flex: none; }
-.ph-bar > svg:last-child { margin-left: auto; width: 5cqw; }
-.ph-ava { width: 9.4cqw; height: 9.4cqw; border-radius: 50%; overflow: hidden; background: #19191C; display: grid; place-items: center; flex: none; }
+.ph-status { display: flex; align-items: center; justify-content: space-between; height: 12cqw; padding: 2cqw 7.5cqw 0; background: #FFFFFF; font: 600 3.7cqw/1 var(--sans); color: #000; letter-spacing: -.01em; }
+.ph-sig { display: flex; align-items: center; gap: 1.6cqw; }
+.ph-sig svg { height: 3.2cqw; width: auto; display: block; }
+.ph-bar { display: flex; align-items: center; gap: 2.6cqw; height: 13cqw; padding: 0 5cqw 0 5.5cqw; background: #FFFFFF; box-shadow: 0 1px 0 rgba(0,0,0,.08); position: relative; z-index: 1; }
+.ph-bar > svg { width: 5.4cqw; height: 5.4cqw; flex: none; }
+.ph-bar > svg:last-child { margin-left: auto; width: 4.6cqw; }
+.ph-ava { width: 9cqw; height: 9cqw; border-radius: 50%; overflow: hidden; background: #19191C; display: grid; place-items: center; flex: none; }
 .ph-ava img { width: 100%; height: 100%; display: block; }
-.ph-title { font: 600 4.3cqw/1.15 var(--sans); color: #000; }
-.ph-title small { display: block; font: 400 3.2cqw/1.3 var(--sans); color: #8A9AA9; }
-.ph-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 1.6cqw; padding: 3cqw 2.7cqw 2.4cqw; overflow: hidden;
-  background: #D6E4EE radial-gradient(circle at 20% 15%, #E3EEF6 0 18%, transparent 19%) 0 0 / 22cqw 22cqw; }
+.ph-title { font: 600 4.1cqw/1.15 var(--sans); color: #000; }
+.ph-title small { display: block; font: 400 3.1cqw/1.3 var(--sans); color: #8A9AA9; }
+.ph-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 1.8cqw; padding: 3cqw 3.5cqw 2.6cqw; overflow: hidden;
+  background: #D9E6EF radial-gradient(circle at 20% 15%, #E4EEF5 0 18%, transparent 19%) 0 0 / 22cqw 22cqw; }
 .ph-chat > * { flex: none; }
-.tg-msg { position: relative; max-width: 82%; padding: 2.1cqw 2.8cqw 2.4cqw; border-radius: 4.2cqw; border-bottom-left-radius: 1cqw; background: #FFFFFF; color: #000; font: 400 3.5cqw/1.38 var(--sans); white-space: pre-line; box-shadow: 0 1px 1px rgba(0,0,0,.1); align-self: flex-start; opacity: 0; transform: translateY(8px); }
-.tg-time { display: block; text-align: right; margin: .4cqw -1cqw -1.2cqw 0; font: 400 2.8cqw/1 var(--sans); color: #A1AAB3; }
-.tg-photo { padding: 0 2.8cqw 2.4cqw; overflow: hidden; }
-.tg-photo .tg-pic { margin: 0 -2.8cqw 2cqw; }
-.tg-pic { height: 70cqw; margin: 0 -2.8cqw 2cqw; background: #FFFFFF url(img/resume-preview.webp) top center / 100% auto no-repeat; }
-.tg-keys { display: flex; gap: 1.2cqw; width: 82%; margin-top: -.4cqw; opacity: 0; transform: translateY(8px); }
-.tg-keys span { flex: 1; min-height: 9cqw; display: grid; place-items: center; border-radius: 2.4cqw; background: rgba(72, 98, 118, .68); color: #fff; font: 500 3.3cqw/1.2 var(--sans); text-align: center; padding: 1cqw 1.6cqw; backdrop-filter: blur(2px); }
-.tg-keys.two { width: 82%; }
-.ph-input { display: flex; align-items: center; gap: 2.4cqw; height: 12.6cqw; padding: 0 3cqw; background: #FFFFFF; box-shadow: 0 -1px 0 rgba(0,0,0,.08); }
-.ph-menu { display: inline-flex; align-items: center; gap: 1.2cqw; height: 7.6cqw; padding: 0 2.6cqw 0 2cqw; border-radius: 3.8cqw; background: #3390EC; color: #fff; font: 600 3.3cqw/1 var(--sans); }
-.ph-menu svg { width: 4cqw; height: 4cqw; }
-.ph-input > svg { width: 6.2cqw; height: 6.2cqw; flex: none; }
-.ph-field { flex: 1; font: 400 3.8cqw/1 var(--sans); color: #A1AAB3; }
-.ph-nav { display: flex; align-items: center; justify-content: space-around; height: 11cqw; padding: 0 12cqw; background: #FFFFFF; }
-.ph-nav span { display: block; width: 4.6cqw; height: 4.6cqw; border: .5cqw solid #4A4D55; box-sizing: border-box; }
-.ph-recent { border-top: 0 !important; border-bottom: 0 !important; width: 3.6cqw !important; background: linear-gradient(90deg, #4A4D55 0 .5cqw, transparent .5cqw calc(50% - .25cqw), #4A4D55 calc(50% - .25cqw) calc(50% + .25cqw), transparent calc(50% + .25cqw)); border-left: .5cqw solid #4A4D55; border-right: .5cqw solid #4A4D55; }
-.ph-home { border-radius: 1.3cqw; }
-.ph-back { border-top: 0 !important; border-right: 0 !important; border-bottom-left-radius: .3cqw; transform: rotate(45deg) scale(.8); }
-/* The chat fills in while the Apply step is live: the alert, its buttons, the batch, the package,
-   its buttons, a tap on Approve, the reply. */
-.phone.is-on .tg-msg, .phone.is-on .tg-keys { animation: msg-in .35s var(--ease) both; }
-.phone.is-on .tg-msg:nth-child(1) { animation-delay: .5s; }
-.phone.is-on .tg-keys:nth-child(2) { animation-delay: .8s; }
-.phone.is-on .tg-msg:nth-child(3) { animation-delay: 2.2s; }
-.phone.is-on .tg-msg:nth-child(4) { animation-delay: 3.6s; }
-.phone.is-on .tg-keys:nth-child(5) { animation-delay: 3.9s; }
-.phone.is-on .tg-msg:nth-child(6) { animation-delay: 6.2s; }
-.phone.is-on .tg-keys .is-tapped { animation: tap .4s ease 5.4s both; }
-@keyframes msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@keyframes tap { from { background: rgba(72, 98, 118, .68); } to { background: rgba(51, 144, 236, .9); } }
+.tg-msg { position: relative; max-width: 84%; padding: 2.2cqw 3cqw 2.6cqw; border-radius: 4.4cqw; border-bottom-left-radius: 1.2cqw; background: #FFFFFF; color: #000; font: 400 3.4cqw/1.4 var(--sans); white-space: pre-line; box-shadow: 0 1px 1px rgba(0,0,0,.08); align-self: flex-start; }
+.tg-time { display: block; text-align: right; margin: .4cqw -1cqw -1.2cqw 0; font: 400 2.7cqw/1 var(--sans); color: #A1AAB3; }
+.tg-photo { padding: 0 3cqw 2.6cqw; overflow: hidden; }
+.tg-photo .tg-pic { margin: 0 -3cqw 2.2cqw; }
+.tg-pic { height: 64cqw; background: #FFFFFF url(img/resume-preview.webp) top center / 100% auto no-repeat; }
+.tg-keys { display: flex; gap: 1.4cqw; width: 84%; margin-top: -.4cqw; }
+.tg-keys span { flex: 1; min-height: 9cqw; display: grid; place-items: center; border-radius: 2.6cqw; background: rgba(72, 98, 118, .62); color: #fff; font: 500 3.2cqw/1.2 var(--sans); text-align: center; padding: 1cqw 1.6cqw; backdrop-filter: blur(2px); }
+.tg-keys .is-tapped { background: rgba(51, 144, 236, .9); }
+.ph-input { display: flex; align-items: center; gap: 2.4cqw; height: 13cqw; padding: 0 4cqw; background: #FFFFFF; box-shadow: 0 -1px 0 rgba(0,0,0,.06); }
+.ph-menu { display: inline-flex; align-items: center; gap: 1.2cqw; height: 7.6cqw; padding: 0 2.8cqw 0 2.2cqw; border-radius: 3.8cqw; background: #3390EC; color: #fff; font: 600 3.2cqw/1 var(--sans); }
+.ph-menu svg { width: 3.8cqw; height: 3.8cqw; }
+.ph-input > svg { width: 5.8cqw; height: 5.8cqw; flex: none; }
+.ph-field { flex: 1; font: 400 3.7cqw/1 var(--sans); color: #A1AAB3; }
+.ph-nav { height: 8cqw; background: #FFFFFF; display: grid; place-items: center; }
+.ph-nav span { display: block; width: 34cqw; height: 1.3cqw; border-radius: 1cqw; background: #19191C; }
 
 /* ---------- colour: the site's own pastel band under the window, one lavender accent ----------
    The app window sits on the same gradient card the hero uses (--band-a), the way Apple and Stripe
