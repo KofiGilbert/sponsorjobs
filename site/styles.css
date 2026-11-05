@@ -399,6 +399,10 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .vals-tag svg { color: var(--accent); }
 .phone { left: -9%; bottom: -2%; }
 @media (max-width: 960px) {
+  .check-card::before { display: none; }
+  .emp-stat b { font-size: 40px; }
+  .val:last-child { padding-bottom: 0; }
+  #check::before { margin-bottom: 48px; }
   .vals-h { font-size: 32px; line-height: 38px; }
   .vals-big { font-size: 56px; line-height: 52px; vertical-align: -4px; }
   /* One card per block, each with its own clip (jetbrains.com does the same under 1000px). */
@@ -418,11 +422,33 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 }
 
 /* ---------- check an employer ---------- */
+/* The handover from the features section: a hairline across the column (JetBrains separates its
+   sections the same way) and less dead air under the last feature block. */
+.val:last-child { padding-bottom: 150px; }
+@media (max-width: 960px) { .val:last-child { padding-bottom: 0; } }   /* after the desktop rule, so it wins */
+#check { padding-top: 0; }
+#check::before { content: ""; display: block; max-width: var(--wrap); margin: 0 auto 88px; border-top: 1px solid var(--card-line); }
 .check-card {
+  position: relative; overflow: hidden; isolation: isolate;
   display: grid; grid-template-columns: 1fr 1.25fr; gap: 48px; align-items: center;
   background: var(--card); border: 1px solid var(--card-line); border-radius: var(--r-l); padding: 48px;
 }
+.check-card > * { position: relative; z-index: 1; }
 .check-card .lede { margin-top: 12px; }
+/* A faint dot grid (the texture Vercel and Linear put behind product panels) rings the text: one mask
+   cuts a soft hole where the heading and the number sit, another fades it out before the lookup panel. */
+.check-card::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; opacity: .2;
+  background-image: radial-gradient(circle, var(--text) 1.2px, transparent 1.7px); background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(48% 62% at 22% 56%, transparent 30%, #000 72%), linear-gradient(90deg, #000 0 42%, transparent 60%);
+  -webkit-mask-composite: source-in;
+  mask-image: radial-gradient(48% 62% at 22% 56%, transparent 30%, #000 72%), linear-gradient(90deg, #000 0 42%, transparent 60%);
+  mask-composite: intersect;
+}
+/* The sponsor count, live from the feed, as the card's own proof. */
+.emp-stat { margin: 28px 0 0; }
+.emp-stat b { display: block; font-size: 56px; line-height: 1; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--text); }
+.emp-stat span { display: block; margin-top: 8px; font-size: 15px; color: var(--text-3); }
 .emp { min-width: 0; background: var(--bg); border: 1px solid var(--card-line); border-radius: var(--r); padding: 24px; }
 .emp form { display: flex; gap: 8px; }
 .emp input {
