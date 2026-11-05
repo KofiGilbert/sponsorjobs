@@ -354,12 +354,7 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .tg-time { display: block; text-align: right; margin: .4cqw -1cqw -1.2cqw 0; font: 400 2.8cqw/1 var(--sans); color: #A1AAB3; }
 .tg-photo { padding: 0 2.8cqw 2.4cqw; overflow: hidden; }
 .tg-photo .tg-pic { margin: 0 -2.8cqw 2cqw; }
-.tg-pic { position: relative; height: 44cqw; margin: 0 0 2cqw; background: #F4F5F7; display: flex; flex-direction: column; gap: 2.2cqw; padding: 5cqw 7cqw 0; box-sizing: border-box; }
-.tg-pic .h { height: 3.2cqw; width: 42%; border-radius: 1cqw; background: #19191C; margin-bottom: 1.2cqw; }
-.tg-pic .r { height: 1.5cqw; border-radius: 1cqw; background: #C9CBD1; }
-.tg-pic .r:nth-child(4n) { width: 74%; }
-.tg-pic .s { display: block; height: 2.2cqw; width: 36%; border-radius: 1cqw; background: #6E7178; margin-top: 1.6cqw; }
-.tg-photo { padding: 0 2.8cqw 2.4cqw; overflow: hidden; }
+.tg-pic { height: 70cqw; margin: 0 -2.8cqw 2cqw; background: #FFFFFF url(img/resume-preview.webp) top center / 100% auto no-repeat; }
 .tg-keys { display: flex; gap: 1.2cqw; width: 82%; margin-top: -.4cqw; opacity: 0; transform: translateY(8px); }
 .tg-keys span { flex: 1; min-height: 9cqw; display: grid; place-items: center; border-radius: 2.4cqw; background: rgba(72, 98, 118, .68); color: #fff; font: 500 3.3cqw/1.2 var(--sans); text-align: center; padding: 1cqw 1.6cqw; backdrop-filter: blur(2px); }
 .tg-keys.two { width: 82%; }
