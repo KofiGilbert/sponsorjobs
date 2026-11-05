@@ -354,6 +354,36 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .phone.is-on .msg .btns span.is-tapped { animation: tap .5s ease 4.3s both; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes tap { from { background: rgba(255,255,255,.1); } to { background: rgba(255,255,255,.28); } }
+
+/* ---------- colour: one hue per step, carried by a halo behind the window, the thumb and the tab ----------
+   The hues come from the site's own pastel bands, pushed to mid strength so they read on near-black and
+   on white. Text stays neutral. #product[data-i] is the live step, set by wireValues(). The pattern is
+   the one Linear and Raycast use (a glow behind the product), with JetBrains' coloured thumb and tab. */
+#product {
+  --h0: 206 88% 62%;   /* Find: sky */
+  --h1: 262 78% 68%;   /* Tailor: violet */
+  --h2: 30 95% 60%;    /* Apply: amber */
+  --h3: 158 62% 46%;   /* Projects: green */
+  --h4: 336 82% 64%;   /* Interview: pink */
+  --h: var(--h0);
+  --halo: .38;
+}
+#product[data-i="1"] { --h: var(--h1); }
+#product[data-i="2"] { --h: var(--h2); }
+#product[data-i="3"] { --h: var(--h3); }
+#product[data-i="4"] { --h: var(--h4); }
+.val:nth-child(1) { --vh: var(--h0); } .val:nth-child(2) { --vh: var(--h1); } .val:nth-child(3) { --vh: var(--h2); } .val:nth-child(4) { --vh: var(--h3); } .val:nth-child(5) { --vh: var(--h4); }
+:root[data-theme="dark"] #product { --halo: .55; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #product { --halo: .55; } }
+.vals-big { color: hsl(var(--h)); transition: color .35s var(--ease); }   /* the digit takes the live step's hue (gradient text is off limits on this site) */
+.vals-thumb { background: hsl(var(--h)); box-shadow: 0 0 12px hsl(var(--h) / .55); transition: top .2s var(--ease), background-color .35s var(--ease), box-shadow .35s var(--ease); }
+.vals-tag { border-color: hsl(var(--h)); color: hsl(var(--h)); background: color-mix(in srgb, hsl(var(--h)) 12%, var(--bg)); transition: border-color .35s var(--ease), color .35s var(--ease), background-color .35s var(--ease); }
+.vals-tag span { color: var(--text); }
+.vals-media { isolation: isolate; }
+.vals-frames, .vals-tag { z-index: 1; }
+.vals-tag { z-index: 2; }
+.vals-media::before { content: ""; position: absolute; inset: -4% -6% -8%; z-index: 0; border-radius: 40px; background: hsl(var(--h) / var(--halo)); filter: blur(56px); transition: background-color .5s var(--ease); pointer-events: none; }
+.vals-frame { box-shadow: var(--shadow), 0 0 0 1px hsl(var(--h) / .45); transition: opacity .35s var(--ease), box-shadow .35s var(--ease); }
 @media (max-width: 960px) {
   .vals-h { font-size: 32px; line-height: 38px; }
   .vals-big { font-size: 56px; line-height: 52px; vertical-align: -4px; }
@@ -364,7 +394,7 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
   .val { padding: 0; margin-top: 48px; opacity: 1; position: relative; }
   .val h3 { font-size: 26px; line-height: 32px; }
   .val p { font-size: 17px; line-height: 25px; margin-top: 14px; }
-  .val .vals-frame { position: relative; inset: auto; margin-top: 20px; aspect-ratio: 750 / 512.5; opacity: 1; border-radius: 12px; }
+  .val .vals-frame { position: relative; inset: auto; margin-top: 20px; aspect-ratio: 750 / 512.5; opacity: 1; border-radius: 12px; box-shadow: var(--shadow), 0 0 0 1px hsl(var(--vh) / .45), 0 24px 70px -20px hsl(var(--vh) / .6); }
   .val .phone { position: absolute; left: 2%; bottom: -4%; width: 26%; opacity: 1; transform: none; }
 }
 
