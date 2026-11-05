@@ -402,6 +402,8 @@ function wireValues() {
   const show = (i) => {
     if (i === current) return;
     current = i;
+    const section = root.closest("#product");
+    if (section) section.dataset.i = String(i);   // the step's hue (halo, thumb, tab) follows this
     blocks.forEach((b, k) => b.classList.toggle("is-on", k === i));
     names.forEach((n, k) => n.classList.toggle("is-on", k === i));
     icons.forEach((s, k) => { if (k === i) s.removeAttribute("hidden"); else s.setAttribute("hidden", ""); });   // SVG has no .hidden property
