@@ -486,12 +486,12 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 /* Open source, the way browser-use.com sells it: one block on the home page with the licence
    named, the source one click away, and the live GitHub numbers. */
 .oss { text-align: center; }
-.nobr { white-space: nowrap; }
 .oss .oss-k { font-size: 14px; font-weight: 600; color: var(--text-3); margin: 0 0 12px; }
-.oss h2 { max-width: 22ch; margin: 0 auto; text-wrap: balance; }
-.oss .lede { max-width: 56ch; margin: 16px auto 0; }
+.oss h2 { max-width: 32ch; margin: 0 auto; text-wrap: balance; }
+.oss .oss-dim { color: var(--text-3); }
+.nav-gh { display: inline-flex; align-items: center; gap: 6px; }
+.nav-gh svg { width: 16px; height: 16px; }
 .oss .head-cta { margin-top: 28px; display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
-.oss .gh-line { margin-top: 16px; }
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .card { background: var(--card); border: 1px solid var(--card-line); border-radius: var(--r); padding: 28px; transition: border-color var(--dur) var(--ease); }
 .card:hover { border-color: var(--ghost-line); }

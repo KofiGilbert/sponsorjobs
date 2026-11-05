@@ -415,18 +415,13 @@ async function releaseInfo() {
 
 // ---- 4. GitHub card ----------------------------------------------------------------------
 async function githubCard() {
-  const stars = $("gh-stars");
-  if (!stars) return;
+  // The header's GitHub link shows the star count, the way browser-use.com does, once it is worth
+  // showing (100 or more); until then it just says GitHub.
+  const label = $("nav-gh-n");
+  if (!label) return;
   const d = await getJSON("https://api.github.com/repos/" + REPO, 8000);
-  if (!d) return;   // the line stays hidden
-  // The star count is social proof only once it is worth showing; below that it says "small",
-  // so the line stays hidden. A commit time means nothing to a student and is not shown.
-  const n = Number(d.stargazers_count);
-  if (n >= 100) {
-    stars.textContent = fmt(n);
-    const line = stars.closest(".gh-line");
-    if (line) line.hidden = false;
-  }
+  const n = d ? Number(d.stargazers_count) : 0;
+  if (n >= 100) label.textContent = n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : fmt(n);
 }
 
 // ---- 5. feature tabs ---------------------------------------------------------------------
