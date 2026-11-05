@@ -418,17 +418,14 @@ async function githubCard() {
   const stars = $("gh-stars");
   if (!stars) return;
   const d = await getJSON("https://api.github.com/repos/" + REPO, 8000);
-  if (!d) return;   // keeps the non-numeric fallback already in the HTML
-  const pushed = $("gh-pushed");
-  const when = d.pushed_at ? relativeTime(String(d.pushed_at)) : null;
-  if (Number(d.stargazers_count) > 0) {
-    stars.textContent = fmt(d.stargazers_count);
-    stars.classList.remove("v-text");
-    if (pushed && when) pushed.textContent = when;
-  } else {
-    // No stars yet: the line says when the code last moved, nothing about stars.
+  if (!d) return;   // the line stays hidden
+  // The star count is social proof only once it is worth showing; below that it says "small",
+  // so the line stays hidden. A commit time means nothing to a student and is not shown.
+  const n = Number(d.stargazers_count);
+  if (n >= 100) {
+    stars.textContent = fmt(n);
     const line = stars.closest(".gh-line");
-    if (line) line.textContent = when ? "Just published. Last commit " + when + "." : "Just published.";
+    if (line) line.hidden = false;
   }
 }
 
