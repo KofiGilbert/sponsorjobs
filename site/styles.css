@@ -324,37 +324,67 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .vals-tag svg[hidden] { display: none; }   /* the UA's [hidden] rule covers HTML elements only, not SVG */
 .vals-tag span { display: none; }
 .vals-tag span.is-on { display: inline; }
-/* The phone beside the Apply window: a Telegram chat that fills in as the agent works. */
+/* The phone beside the Apply window: Telegram on a Galaxy S21 Ultra, rebuilt from the screen's own
+   element tree (1440x3200: status bar, a 9.8% app bar, bubbles with inline button rows 5.2% tall,
+   the input bar at 88%, the nav bar). Telegram's light "Blue" theme. Sizes in cqw are fractions of
+   the phone's width, so it scales with the window. */
 .phone {
-  position: absolute; left: -7%; bottom: -7%; z-index: 3; width: 31%; aspect-ratio: 9 / 19.5;
-  border-radius: 13% / 6%; background: #FFFFFF; border: 1.6% solid #1C1C1F; box-shadow: var(--shadow), 0 0 0 1px rgba(0,0,0,.6);
+  position: absolute; left: -7%; bottom: -7%; z-index: 3; width: 31%; aspect-ratio: 9 / 20;
+  border-radius: 11% / 5%; background: #FFFFFF; border: 1.4% solid #121214; box-shadow: var(--shadow), 0 0 0 1px rgba(0,0,0,.65), inset 0 0 0 1px rgba(255,255,255,.08);
   overflow: hidden; opacity: 0; transform: translateY(16px); transition: opacity .35s var(--ease), transform .35s var(--ease);
-  container-type: inline-size;
+  container-type: inline-size; display: flex; flex-direction: column; font-family: var(--sans); color: #000;
 }
 .vals-frame.is-on + .phone { opacity: 1; transform: none; }
-/* Telegram's day theme: white bar, pale blue-grey chat, white and pale green bubbles. */
-.phone-top { height: 4cqw; background: #FFFFFF; }
-.phone-head { display: flex; align-items: center; gap: 2.4cqw; padding: 1.6cqw 3.2cqw 2.4cqw; background: #FFFFFF; color: #000; font: 600 4.2cqw/1.3 var(--sans); box-shadow: 0 1px 0 rgba(0,0,0,.08); position: relative; z-index: 1; }
-.phone-head .ava { width: 9.6cqw; height: 9.6cqw; border-radius: 50%; background: #2AABEE; display: grid; place-items: center; }
-.phone-head .ava svg { width: 60%; height: 60%; }
-.phone-head small { display: block; font: 400 3.2cqw/1.3 var(--sans); color: #707579; }
-.phone-chat { background: #E7EBF0; padding: 2.4cqw 2.8cqw; display: flex; flex-direction: column; gap: 2.2cqw; min-height: 100%; }
-.msg { max-width: 88%; padding: 2cqw 2.8cqw; border-radius: 3.4cqw; background: #FFFFFF; color: #000; font: 400 3.5cqw/1.35 var(--sans); white-space: pre-line; opacity: 0; transform: translateY(8px); align-self: flex-start; box-shadow: 0 1px 1px rgba(0,0,0,.08); }
-.msg.me { align-self: flex-end; background: #EFFDDE; border-bottom-right-radius: 1cqw; }
-.msg .preview { height: 22cqw; margin: -2cqw -2.8cqw 2cqw; border-radius: 3.4cqw 3.4cqw 0 0; background: linear-gradient(180deg, #F3F3F5 0 18%, #fff 18%); position: relative; }
-.msg .preview::before, .msg .preview::after { content: ""; position: absolute; left: 10%; right: 10%; height: 1.4cqw; border-radius: 1cqw; background: #C9CBD1; top: 36%; box-shadow: 0 3.2cqw 0 #D9DBE0, 0 6.4cqw 0 #D9DBE0, 0 9.6cqw 0 #E3E5EA; }
-.msg .preview::after { top: 24%; left: 10%; right: 55%; background: #19191C; box-shadow: none; height: 2cqw; }
-.msg .btns { display: flex; gap: 1.6cqw; margin: 2cqw -1.4cqw -1cqw; }
-.msg .btns span { flex: 1; text-align: center; padding: 1.6cqw 0; border-radius: 2cqw; background: #EEF1F5; color: #2481CC; font-size: 3.2cqw; }
-.msg .btns span.is-tapped { background: #D5E6F6; }
-.phone.is-on .msg { animation: msg-in .35s var(--ease) both; }
-.phone.is-on .msg:nth-child(1) { animation-delay: .6s; }
-.phone.is-on .msg:nth-child(2) { animation-delay: 2.2s; }
-.phone.is-on .msg:nth-child(3) { animation-delay: 4.6s; }
-.phone.is-on .msg:nth-child(4) { animation-delay: 5.6s; }
-.phone.is-on .msg .btns span.is-tapped { animation: tap .5s ease 4.3s both; }
+.ph-status { position: relative; display: flex; align-items: center; justify-content: space-between; height: 7cqw; padding: 0 5cqw 0 6cqw; background: #FFFFFF; font: 600 3.6cqw/1 var(--sans); color: #000; }
+.ph-cam { position: absolute; left: 50%; top: 1.4cqw; width: 4.2cqw; height: 4.2cqw; margin-left: -2.1cqw; border-radius: 50%; background: #0A0A0C; box-shadow: inset 0 0 0 .6cqw #1C1D22; }
+.ph-sig { display: flex; align-items: center; gap: 1.2cqw; }
+.ph-sig > span { width: 2.6cqw; height: 2.6cqw; border-radius: 50%; border: .4cqw solid #000; box-sizing: border-box; }
+.ph-sig strong { font-weight: 700; font-size: 3cqw; padding: .3cqw 1.1cqw; border-radius: 2cqw; background: #000; color: #fff; }
+.ph-bar { display: flex; align-items: center; gap: 2.4cqw; height: 13cqw; padding: 0 3cqw 0 3.6cqw; background: #FFFFFF; box-shadow: 0 1px 0 rgba(0,0,0,.1); position: relative; z-index: 1; }
+.ph-bar > svg { width: 6cqw; height: 6cqw; flex: none; }
+.ph-bar > svg:last-child { margin-left: auto; width: 5cqw; }
+.ph-ava { width: 9.4cqw; height: 9.4cqw; border-radius: 50%; overflow: hidden; background: #19191C; display: grid; place-items: center; flex: none; }
+.ph-ava img { width: 100%; height: 100%; display: block; }
+.ph-title { font: 600 4.3cqw/1.15 var(--sans); color: #000; }
+.ph-title small { display: block; font: 400 3.2cqw/1.3 var(--sans); color: #8A9AA9; }
+.ph-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 1.6cqw; padding: 3cqw 2.7cqw 2.4cqw; overflow: hidden;
+  background: #D6E4EE radial-gradient(circle at 20% 15%, #E3EEF6 0 18%, transparent 19%) 0 0 / 22cqw 22cqw; }
+.ph-chat > * { flex: none; }
+.tg-msg { position: relative; max-width: 82%; padding: 2.1cqw 2.8cqw 2.4cqw; border-radius: 4.2cqw; border-bottom-left-radius: 1cqw; background: #FFFFFF; color: #000; font: 400 3.5cqw/1.38 var(--sans); white-space: pre-line; box-shadow: 0 1px 1px rgba(0,0,0,.1); align-self: flex-start; opacity: 0; transform: translateY(8px); }
+.tg-time { display: block; text-align: right; margin: .4cqw -1cqw -1.2cqw 0; font: 400 2.8cqw/1 var(--sans); color: #A1AAB3; }
+.tg-photo { padding: 0 2.8cqw 2.4cqw; overflow: hidden; }
+.tg-photo .tg-pic { margin: 0 -2.8cqw 2cqw; }
+.tg-pic { position: relative; height: 44cqw; margin: 0 0 2cqw; background: #F4F5F7; display: flex; flex-direction: column; gap: 2.2cqw; padding: 5cqw 7cqw 0; box-sizing: border-box; }
+.tg-pic .h { height: 3.2cqw; width: 42%; border-radius: 1cqw; background: #19191C; margin-bottom: 1.2cqw; }
+.tg-pic .r { height: 1.5cqw; border-radius: 1cqw; background: #C9CBD1; }
+.tg-pic .r:nth-child(4n) { width: 74%; }
+.tg-pic .s { display: block; height: 2.2cqw; width: 36%; border-radius: 1cqw; background: #6E7178; margin-top: 1.6cqw; }
+.tg-photo { padding: 0 2.8cqw 2.4cqw; overflow: hidden; }
+.tg-keys { display: flex; gap: 1.2cqw; width: 82%; margin-top: -.4cqw; opacity: 0; transform: translateY(8px); }
+.tg-keys span { flex: 1; min-height: 9cqw; display: grid; place-items: center; border-radius: 2.4cqw; background: rgba(72, 98, 118, .68); color: #fff; font: 500 3.3cqw/1.2 var(--sans); text-align: center; padding: 1cqw 1.6cqw; backdrop-filter: blur(2px); }
+.tg-keys.two { width: 82%; }
+.ph-input { display: flex; align-items: center; gap: 2.4cqw; height: 12.6cqw; padding: 0 3cqw; background: #FFFFFF; box-shadow: 0 -1px 0 rgba(0,0,0,.08); }
+.ph-menu { display: inline-flex; align-items: center; gap: 1.2cqw; height: 7.6cqw; padding: 0 2.6cqw 0 2cqw; border-radius: 3.8cqw; background: #3390EC; color: #fff; font: 600 3.3cqw/1 var(--sans); }
+.ph-menu svg { width: 4cqw; height: 4cqw; }
+.ph-input > svg { width: 6.2cqw; height: 6.2cqw; flex: none; }
+.ph-field { flex: 1; font: 400 3.8cqw/1 var(--sans); color: #A1AAB3; }
+.ph-nav { display: flex; align-items: center; justify-content: space-around; height: 11cqw; padding: 0 12cqw; background: #FFFFFF; }
+.ph-nav span { display: block; width: 4.6cqw; height: 4.6cqw; border: .5cqw solid #4A4D55; box-sizing: border-box; }
+.ph-recent { border-top: 0 !important; border-bottom: 0 !important; width: 3.6cqw !important; background: linear-gradient(90deg, #4A4D55 0 .5cqw, transparent .5cqw calc(50% - .25cqw), #4A4D55 calc(50% - .25cqw) calc(50% + .25cqw), transparent calc(50% + .25cqw)); border-left: .5cqw solid #4A4D55; border-right: .5cqw solid #4A4D55; }
+.ph-home { border-radius: 1.3cqw; }
+.ph-back { border-top: 0 !important; border-right: 0 !important; border-bottom-left-radius: .3cqw; transform: rotate(45deg) scale(.8); }
+/* The chat fills in while the Apply step is live: the alert, its buttons, the batch, the package,
+   its buttons, a tap on Approve, the reply. */
+.phone.is-on .tg-msg, .phone.is-on .tg-keys { animation: msg-in .35s var(--ease) both; }
+.phone.is-on .tg-msg:nth-child(1) { animation-delay: .5s; }
+.phone.is-on .tg-keys:nth-child(2) { animation-delay: .8s; }
+.phone.is-on .tg-msg:nth-child(3) { animation-delay: 2.2s; }
+.phone.is-on .tg-msg:nth-child(4) { animation-delay: 3.6s; }
+.phone.is-on .tg-keys:nth-child(5) { animation-delay: 3.9s; }
+.phone.is-on .tg-msg:nth-child(6) { animation-delay: 6.2s; }
+.phone.is-on .tg-keys .is-tapped { animation: tap .4s ease 5.4s both; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@keyframes tap { from { background: #EEF1F5; } to { background: #D5E6F6; } }
+@keyframes tap { from { background: rgba(72, 98, 118, .68); } to { background: rgba(51, 144, 236, .9); } }
 
 /* ---------- colour: the site's own pastel band under the window, one lavender accent ----------
    The app window sits on the same gradient card the hero uses (--band-a), the way Apple and Stripe
@@ -387,7 +417,7 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
   .val .vals-frame video, .val .vals-frame img { border-radius: 10px; }
   .val .vals-frame::after { content: ""; position: absolute; inset: -14px; z-index: -1; border-radius: 18px; background: var(--band-a); }
   .val .phone { left: 0; bottom: -2%; }
-  .val .phone { position: absolute; left: 2%; bottom: -4%; width: 26%; opacity: 1; transform: none; }
+  .val .phone { position: absolute; left: 2%; bottom: -4%; width: 34%; opacity: 1; transform: none; }
 }
 
 /* ---------- check an employer ---------- */

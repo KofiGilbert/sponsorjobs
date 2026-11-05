@@ -157,20 +157,38 @@
           <figure class="vals-frame is-on"><video muted loop playsinline preload="metadata" poster="img/find-poster.webp" width="3000" height="2050" aria-label="The Jobs screen: a search for Analytics Engineer, then a role opened with its sponsor record and fit report."><source src="img/find.webm" type="video/webm"><source src="img/find.mp4" type="video/mp4"></video></figure>
           <figure class="vals-frame"><video muted loop playsinline preload="none" poster="img/tailor-poster.webp" width="3000" height="2050" aria-label="The Home screen with a job description typed in, then the resume templates."><source src="img/tailor.webm" type="video/webm"><source src="img/tailor.mp4" type="video/mp4"></video></figure>
           <figure class="vals-frame"><video muted loop playsinline preload="none" poster="img/apply-poster.webp" width="3000" height="2050" aria-label="The Auto-apply screen: tailored packages waiting for review, one opened to show what will be sent."><source src="img/apply.webm" type="video/webm"><source src="img/apply.mp4" type="video/mp4"></video></figure>
-          <div class="phone" aria-label="Telegram on a phone: the packages arrive, one is approved">
-            <div class="phone-top"></div>
-            <div class="phone-head"><span class="ava"><svg viewBox="0 0 24 24" fill="#fff"><path d="M21.9 4.6 18.8 19c-.2 1-.8 1.3-1.7.8l-4.6-3.4-2.2 2.1c-.3.3-.5.5-1 .5l.3-4.7 8.6-7.8c.4-.3-.1-.5-.6-.2L7 13.1l-4.6-1.4c-1-.3-1-1 .2-1.5L20.6 3.4c.8-.3 1.6.2 1.3 1.2z"/></svg></span><div>SponsorJobs<small>bot</small></div></div>
-            <div class="phone-chat">
-              <div class="msg">📥 2 application(s) ready for your review:
-• #118 Research Analyst at Barclays Services Corp
-• #121 Product Analyst at Eliassen Group</div>
-              <div class="msg"><div class="preview"></div>🏢 Research Analyst at Barclays Services Corp
-Lane: assisted
-Package: resume · 3 screening answer(s) · cover letter ✓
-JD match: 100%<div class="btns"><span class="is-tapped">✅ Approve</span><span>⏭ Skip</span></div></div>
-              <div class="msg me">✅ Approve</div>
-              <div class="msg">Approved: Research Analyst at Barclays Services Corp. Open the application and submit it.</div>
+          <!-- The Telegram chat as it is on a Galaxy S21 Ultra, rebuilt from the screen's own element tree:
+               status bar, app bar, the bot's messages with their inline button rows, the input bar, the nav bar. -->
+          <div class="phone" aria-label="Telegram on a phone: the agent's messages arrive, one package is approved">
+            <div class="ph-status"><span>9:37</span><span class="ph-cam"></span><span class="ph-sig"><span></span><span></span><strong>100</strong></span></div>
+            <div class="ph-bar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+              <span class="ph-ava"><img src="icon.svg" alt="" width="28" height="28"></span>
+              <div class="ph-title">SponsorJobs<small>bot</small></div>
+              <svg viewBox="0 0 24 24" fill="#000" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
             </div>
+            <div class="ph-chat">
+              <div class="tg-msg">I found 1 role you are qualified for and tailored your resume for it. 1 is ready and waiting for your click (Barclays). 1 of 5 for today.<span class="tg-time">5:39 PM</span></div>
+              <div class="tg-keys"><span>Approve all</span><span>Review</span><span>Skip</span></div>
+              <div class="tg-msg">📥 1 application(s) ready for your review:
+• #118 Research Analyst at Barclays Services Corp
+
+Each one below has the resume preview, what it includes, and Approve / Skip.<span class="tg-time">8:59 PM</span></div>
+              <div class="tg-msg tg-photo"><div class="tg-pic"><span class="h"></span><span class="r"></span><span class="r"></span><span class="r"></span><span class="s"></span><span class="r"></span><span class="r"></span><span class="r"></span><span class="r"></span><span class="s"></span><span class="r"></span><span class="r"></span><span class="r"></span></div>🏢 Research Analyst at Barclays Services Corp
+Lane: Assisted (you review and click submit)
+Package: resume · 3 screening answer(s) · cover letter ✓
+JD match: 100%<span class="tg-time">8:59 PM</span></div>
+              <div class="tg-keys two"><span class="is-tapped">✅ Approve</span><span>⏭ Skip</span></div>
+              <div class="tg-msg">Approved: Research Analyst at Barclays Services Corp. Open the application and submit it.<span class="tg-time">8:59 PM</span></div>
+            </div>
+            <div class="ph-input">
+              <span class="ph-menu"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>Menu</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="#8A9AA9" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.2 2 3.5 2 3.5-2 3.5-2M9 10h.01M15 10h.01"/></svg>
+              <span class="ph-field">Message</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="#8A9AA9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11.5-8.6 8.6a5 5 0 0 1-7-7L14 4.5a3.3 3.3 0 0 1 4.7 4.7L10.2 17.7a1.7 1.7 0 0 1-2.4-2.4L15.6 7.5"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="#8A9AA9" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+            </div>
+            <div class="ph-nav"><span class="ph-recent"></span><span class="ph-home"></span><span class="ph-back"></span></div>
           </div>
           <figure class="vals-frame"><video muted loop playsinline preload="none" poster="img/projects-poster.webp" width="3000" height="2050" aria-label="The Projects screen: ideas aimed at the role, then a project in progress with its Learn it and Defend it stages."><source src="img/projects.webm" type="video/webm"><source src="img/projects.mp4" type="video/mp4"></video></figure>
           <figure class="vals-frame"><video muted loop playsinline preload="none" poster="img/practise-poster.webp" width="3000" height="2050" aria-label="The Interview prep screen: the recorded round set up in the HireVue format, and the live interviewer."><source src="img/practise.webm" type="video/webm"><source src="img/practise.mp4" type="video/mp4"></video></figure>
