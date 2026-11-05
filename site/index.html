@@ -79,18 +79,18 @@
       </div>
       <div class="dlc-row">
         <div class="dlc-pill">
-          <a class="dlc-main" id="dlc-main" href="download.html">Download</a>
-          <button class="dlc-pick" id="dlc-pick" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="dlc-menu">
-            <span class="dlc-pick-label" id="dlc-pick-label"></span>
+          <a class="dlc-main" href="download.html">Download</a>
+          <button class="dlc-pick" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span class="dlc-pick-label"></span>
             <svg class="dlc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
           </button>
-          <div class="dlc-menu" id="dlc-menu" role="menu" hidden></div>
+          <div class="dlc-menu" role="menu" hidden></div>
         </div>
         <p class="dlc-note">Free and open source.</p>
       </div>
-      <p class="dlc-hint" id="dlc-hint">
+      <p class="dlc-hint">
         <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 1.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zm0 4a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2zM8.75 9h2v5.5h-2z"/></svg>
-        <span id="dlc-hint-text"></span>
+        <span class="dlc-hint-text"></span>
       </p>
     </div>
   </div>
@@ -242,8 +242,27 @@ JD match: 95%<span class="tg-time">8:59 PM</span></div>
         <p>Free for macOS and Windows.</p>
       </div>
       <div class="actions">
-        <a class="btn" id="dl-get" href="download.html">Download for macOS</a>
-        <span class="small" id="dl-get-note">Apple Silicon. <a href="download.html">Other systems</a></span>
+        <div class="dlc dlc-card">
+          <div class="dlc-tabs" role="tablist" aria-label="Operating system">
+            <button class="dlc-tab" type="button" role="tab" data-os="win" aria-selected="false" tabindex="-1">Windows</button>
+            <button class="dlc-tab" type="button" role="tab" data-os="mac" aria-selected="true">macOS</button>
+            <button class="dlc-tab" type="button" role="tab" data-os="linux" aria-selected="false" tabindex="-1">Linux</button>
+          </div>
+          <div class="dlc-row">
+            <div class="dlc-pill">
+              <a class="dlc-main" href="download.html">Download</a>
+              <button class="dlc-pick" type="button" aria-haspopup="menu" aria-expanded="false">
+                <span class="dlc-pick-label"></span>
+                <svg class="dlc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="dlc-menu" role="menu" hidden></div>
+            </div>
+          </div>
+          <p class="dlc-hint">
+            <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 1.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zm0 4a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2zM8.75 9h2v5.5h-2z"/></svg>
+            <span class="dlc-hint-text"></span>
+          </p>
+        </div>
       </div>
     </div>
   </div>

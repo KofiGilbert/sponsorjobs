@@ -247,23 +247,29 @@ const DL_MENU = {
   linux: { split: false, hint: 'No Linux installer yet. <a href="open-source.html">Run it from source</a>.',
     items: [{ key: "src-zip", label: "Source code (.zip)" }, { key: "src-tgz", label: "Source code (.tar.gz)" }] },
 };
-const dlState = { os: "mac", picked: { mac: "mac-arm64" }, render: null };
+const dlRenders = [];   // one render per control on the page (the hero and the download card)
 
 function setDownloadUrls(urls) {
   Object.assign(DL_URLS, urls);
-  if (dlState.render) dlState.render();
+  dlRenders.forEach((render) => render());
 }
 
+// Every ".dlc" on the page becomes a download control; each keeps its own chosen OS and file.
 function wireDownloadControl() {
-  const root = $("dlc");
-  if (!root) return;
+  document.querySelectorAll(".dlc").forEach((root, n) => wireOneDownloadControl(root, n));
+}
+
+function wireOneDownloadControl(root, n) {
   const tabs = [...root.querySelectorAll(".dlc-tab")];
   const pill = root.querySelector(".dlc-pill");
-  const main = $("dlc-main");
-  const pick = $("dlc-pick");
-  const label = $("dlc-pick-label");
-  const menu = $("dlc-menu");
-  const hint = $("dlc-hint-text");
+  const main = root.querySelector(".dlc-main");
+  const pick = root.querySelector(".dlc-pick");
+  const label = root.querySelector(".dlc-pick-label");
+  const menu = root.querySelector(".dlc-menu");
+  const hint = root.querySelector(".dlc-hint-text");
+  if (!tabs.length || !pill || !main || !pick || !label || !menu || !hint) return;
+  menu.id = "dlc-menu-" + n; pick.setAttribute("aria-controls", menu.id);
+  const dlState = { os: "mac", picked: { mac: "mac-arm64" } };
   const detected = detectOS();
   if (detected && DL_MENU[detected]) dlState.os = detected;
 
@@ -314,7 +320,7 @@ function wireDownloadControl() {
       });
     }
   }
-  dlState.render = render;
+  dlRenders.push(render);
 
   tabs.forEach((t, i) => {
     t.addEventListener("click", () => { closeMenu(); dlState.os = t.dataset.os; render(); });
