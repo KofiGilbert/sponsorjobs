@@ -124,16 +124,31 @@ jobs:
       - name: List the assets
         run: ls -la assets
 
+      # The release notes are written for the people who install the app, not generated from
+      # pull-request titles: docs/release-notes/<tag>.md when there is one, else a plain line.
+      - uses: actions/checkout@v4
+        with:
+          path: src
+          sparse-checkout: docs/release-notes
+      - name: Pick the release notes
+        run: |
+          f="src/docs/release-notes/${TAG}.md"
+          if [ -f "$f" ]; then cp "$f" notes.md; else
+            printf 'SponsorJobs %s for macOS (Apple Silicon) and Windows. Install steps: https://sponsorjobs.ai/download\n' "$TAG" > notes.md
+          fi
+          cat notes.md
+
       # Creates the release for the tag if it does not exist yet, else adds the assets to it.
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
           name: SponsorJobs ${{ env.TAG }}
+          body_path: notes.md
           files: |
             assets/*.exe
             assets/*.dmg
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          generate_release_notes: false
           draft: false
           # A tag with a suffix (v0.1.0-rc2) is a test build, never the download students get.
           prerelease: ${{ contains(env.TAG, '-') }}
