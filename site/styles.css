@@ -505,6 +505,18 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .get-card h2 { color: #19191C; }
 .get-card p { color: #3B3E45; margin-top: 10px; }
 .get-card .actions { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+/* The same download control as the hero, sitting on the card's right, lined up to its right edge. */
+.get-card .dlc { margin-top: 0; align-items: flex-end; }
+.get-card .dlc-row { display: flex; width: auto; margin-top: 20px; }
+.get-card .dlc-hint { margin: 14px 0 0; justify-content: flex-end; }
+.get-card .dlc-hint a { color: inherit; }
+@media (max-width: 640px) {
+  /* The card is narrower than the page on a phone: tighter pill, left-aligned, label on one line. */
+  .get-card .dlc { align-items: flex-start; width: 100%; }
+  .get-card .dlc-main, .get-card .dlc-pick { padding: 0 16px; }
+  .get-card .dlc-pick { padding-right: 12px; white-space: nowrap; }
+  .get-card .dlc-hint { justify-content: flex-start; }
+}
 .get-card .small { color: #4A4D55; }
 .get-card .small a { color: inherit; }
 .get-card .btn { background: #19191C; border-color: #19191C; color: #FFFFFF; min-height: 52px; font-size: 17px; }
