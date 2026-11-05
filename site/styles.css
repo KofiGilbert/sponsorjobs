@@ -47,7 +47,7 @@
   --band-c: linear-gradient(120deg, #FFE6C4 0%, #FFD3E2 50%, #DCD4FF 100%);
   --band-d: linear-gradient(120deg, #D6D9FF 0%, #C6EEFF 50%, #CDF7E2 100%);
   --sans: "Inter", "Inter Fallback", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-  --wrap: 1200px;
+  --wrap: 1341px;   /* the column's right edge is the features window's right edge: 1200 + the 11.7% it ran past */
   --gut: 24px;
   --r: 16px;
   --r-l: 24px;
@@ -270,9 +270,8 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 
 /* ---------- pastel bands with a screenshot ---------- */
 .band { border-radius: var(--r-l); background: var(--band-a); padding: 40px 48px 48px; overflow: hidden; }
-/* The app band runs past the column's right edge by the same amount as the pinned window in the features
-   section below (the window is 60.9% of the column, starting at 50.8%), so the two line up. */
-.band-app { width: 111.7%; }
+/* One column down the whole page: the nav, hero, app band, features window, cards and footer all share
+   --wrap, whose right edge is where the features window ends. Nothing overhangs. */
 .band-b { background: var(--band-b); }
 .band-c { background: var(--band-c); }
 .band-d { background: var(--band-d); }
@@ -308,12 +307,12 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .vals-rail { position: sticky; top: 170px; height: 500px; width: 0; flex: none; }
 .vals-rail::before { content: ""; position: absolute; left: 0; top: 0; width: 4px; height: 100%; border-radius: 2px; background: var(--card-line); }
 .vals-thumb { position: absolute; left: 0; top: 0; width: 4px; height: 100px; border-radius: 2px; background: var(--text); transition: top .2s var(--ease); }
-.vals-text { width: 50.8%; flex: none; padding: 0 98px 0 48px; min-width: 0; }
+.vals-text { flex: 1; padding: 0 98px 0 48px; min-width: 0; }
 .val { padding: 64px 0 296px; opacity: .35; transition: opacity .3s var(--ease); }
 .val.is-on { opacity: 1; }
 .val h3 { font-size: 35px; line-height: 42px; font-weight: 600; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
 .val p { font-size: 20px; line-height: 28px; margin: 24px 0 0; color: var(--text); }
-.vals-media { position: sticky; top: 170px; width: 60.9%; flex: none; aspect-ratio: 750 / 512.5; height: fit-content; }
+.vals-media { position: sticky; top: 170px; width: min(731px, 60.9%); flex: none; aspect-ratio: 750 / 512.5; height: fit-content; }   /* 731px: JetBrains' 750 less our band's own corners; it ends on the column's right edge */
 .vals-frames { position: relative; width: 100%; aspect-ratio: 750 / 512.5; }
 .vals-frame { position: absolute; inset: 0; margin: 0; border-radius: 16px; overflow: hidden; background: #1B1B1F; box-shadow: var(--shadow); opacity: 0; transition: opacity .35s var(--ease); }
 .vals-frame.is-on { opacity: 1; }
@@ -400,7 +399,6 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .vals-tag svg { color: var(--accent); }
 .phone { left: -9%; bottom: -2%; }
 @media (max-width: 960px) {
-  .band-app { width: 100%; }
   .vals-h { font-size: 32px; line-height: 38px; }
   .vals-big { font-size: 56px; line-height: 52px; vertical-align: -4px; }
   /* One card per block, each with its own clip (jetbrains.com does the same under 1000px). */
