@@ -270,6 +270,9 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 
 /* ---------- pastel bands with a screenshot ---------- */
 .band { border-radius: var(--r-l); background: var(--band-a); padding: 40px 48px 48px; overflow: hidden; }
+/* The app band runs past the column's right edge by the same amount as the pinned window in the features
+   section below (the window is 60.9% of the column, starting at 50.8%), so the two line up. */
+.band-app { width: 111.7%; }
 .band-b { background: var(--band-b); }
 .band-c { background: var(--band-c); }
 .band-d { background: var(--band-d); }
@@ -397,6 +400,7 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .vals-tag svg { color: var(--accent); }
 .phone { left: -9%; bottom: -2%; }
 @media (max-width: 960px) {
+  .band-app { width: 100%; }
   .vals-h { font-size: 32px; line-height: 38px; }
   .vals-big { font-size: 56px; line-height: 52px; vertical-align: -4px; }
   /* One card per block, each with its own clip (jetbrains.com does the same under 1000px). */
