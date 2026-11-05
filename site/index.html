@@ -119,44 +119,61 @@
 
 <section class="section" id="product" aria-labelledby="product-h">
   <div class="wrap">
-    <div class="section-head">
-      <h2 id="product-h" class="h-l">Search to interview, in one app.</h2>
-    </div>
-    <div class="tabs">
-      <div class="tablist" role="tablist" aria-label="What it does" aria-orientation="vertical">
-        <button class="tab" role="tab" id="tab-find" aria-controls="panel-find" aria-selected="true">Find</button>
-        <button class="tab" role="tab" id="tab-tailor" aria-controls="panel-tailor" aria-selected="false" tabindex="-1">Tailor</button>
-        <button class="tab" role="tab" id="tab-apply" aria-controls="panel-apply" aria-selected="false" tabindex="-1">Apply</button>
-        <button class="tab" role="tab" id="tab-practise" aria-controls="panel-practise" aria-selected="false" tabindex="-1">Practise</button>
+    <h2 id="product-h" class="vals-h">Search to interview, in <span class="vals-big">1</span> app.</h2>
+    <div class="vals">
+      <div class="vals-rail" aria-hidden="true"><span class="vals-thumb"></span></div>
+      <div class="vals-text">
+        <div class="val is-on">
+          <h3>Only jobs at employers that sponsor.</h3>
+          <p>Every role comes from the employer's own board, with its real H-1B and green card record.</p>
+        </div>
+        <div class="val">
+          <h3>A resume rebuilt for each posting.</h3>
+          <p>Paste the job. Your history is rewritten in the posting's own words and compiled to one clean page.</p>
+        </div>
+        <div class="val">
+          <h3>It applies. Your phone keeps you in charge.</h3>
+          <p>The agent fills each form itself. Every package lands in Telegram to approve or skip.</p>
+        </div>
+        <div class="val">
+          <h3>Projects that prove the skills.</h3>
+          <p>Pick an idea for the role. The agent builds it on your GitHub. You learn it, then pass a quiz.</p>
+        </div>
+        <div class="val">
+          <h3>Practise the interview you will get.</h3>
+          <p>A recorded round in the HireVue format, timed and on camera, then a live interviewer who talks back.</p>
+        </div>
       </div>
-      <div>
-        <div class="panel" role="tabpanel" id="panel-find" aria-labelledby="tab-find" tabindex="0">
-          <div class="band band-b">
-            <h3 class="h-m">Only roles at employers with a record.</h3>
-            <p>Jobs from 1,375 employer boards, marked with each employer's visa filings.</p>
-            <figure class="shot"><video autoplay muted loop playsinline preload="metadata" poster="img/find-poster.webp" width="1600" height="1000" aria-label="The Jobs screen: a search for Analytics Engineer, then a role opened with its sponsor record and fit report."><source src="img/find.webm" type="video/webm"><source src="img/find.mp4" type="video/mp4"></video></figure>
-          </div>
+      <div class="vals-media">
+        <div class="vals-tag" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M21 12a8 8 0 0 1-11.6 7.1L4 21l1.9-5.4A8 8 0 1 1 21 12z"/><path d="M8 11h8M8 14h5"/></svg>
+          <span class="is-on">Find</span><span>Tailor</span><span>Apply</span><span>Projects</span><span>Interview</span>
         </div>
-        <div class="panel" role="tabpanel" id="panel-tailor" aria-labelledby="tab-tailor" tabindex="0" hidden>
-          <div class="band band-c">
-            <h3 class="h-m">One page, in the job's own words.</h3>
-            <p>Your experience, rewritten toward the posting, always on one page.</p>
-            <figure class="shot"><video autoplay muted loop playsinline preload="metadata" poster="img/tailor-poster.webp" width="1600" height="1000" aria-label="The Home screen with a job description typed in, then the resume templates."><source src="img/tailor.webm" type="video/webm"><source src="img/tailor.mp4" type="video/mp4"></video></figure>
+        <div class="vals-frames">
+          <figure class="vals-frame is-on"><video muted loop playsinline preload="metadata" poster="img/find-poster.webp" width="3000" height="2050" aria-label="The Jobs screen: a search for Analytics Engineer, then a role opened with its sponsor record and fit report."><source src="img/find.webm" type="video/webm"><source src="img/find.mp4" type="video/mp4"></video></figure>
+          <figure class="vals-frame"><video muted loop playsinline preload="none" poster="img/tailor-poster.webp" width="3000" height="2050" aria-label="The Home screen with a job description typed in, then the resume templates."><source src="img/tailor.webm" type="video/webm"><source src="img/tailor.mp4" type="video/mp4"></video></figure>
+          <figure class="vals-frame"><video muted loop playsinline preload="none" poster="img/apply-poster.webp" width="3000" height="2050" aria-label="The Auto-apply screen: tailored packages waiting for review, one opened to show what will be sent."><source src="img/apply.webm" type="video/webm"><source src="img/apply.mp4" type="video/mp4"></video></figure>
+          <div class="phone" aria-label="Telegram on a phone: the packages arrive, one is approved">
+            <div class="phone-top"></div>
+            <div class="phone-head"><span class="ava"><svg viewBox="0 0 24 24" fill="#fff"><path d="M21.9 4.6 18.8 19c-.2 1-.8 1.3-1.7.8l-4.6-3.4-2.2 2.1c-.3.3-.5.5-1 .5l.3-4.7 8.6-7.8c.4-.3-.1-.5-.6-.2L7 13.1l-4.6-1.4c-1-.3-1-1 .2-1.5L20.6 3.4c.8-.3 1.6.2 1.3 1.2z"/></svg></span><div>SponsorJobs<small>bot</small></div></div>
+            <div class="phone-chat">
+              <div class="msg">📥 2 application(s) ready for your review:
+• #118 Research Analyst at Barclays Services Corp
+• #121 Product Analyst at Eliassen Group</div>
+              <div class="msg"><div class="preview"></div>🏢 Research Analyst at Barclays Services Corp
+Lane: assisted
+Package: resume · 3 screening answer(s) · cover letter ✓
+JD match: 100%<div class="btns"><span class="is-tapped">✅ Approve</span><span>⏭ Skip</span></div></div>
+              <div class="msg me">✅ Approve</div>
+              <div class="msg">Approved: Research Analyst at Barclays Services Corp. Open the application and submit it.</div>
+            </div>
           </div>
-        </div>
-        <div class="panel" role="tabpanel" id="panel-apply" aria-labelledby="tab-apply" tabindex="0" hidden>
-          <div class="band band-d">
-            <h3 class="h-m">It fills the form. You click Submit.</h3>
-            <p>Auto-submit only where sites allow it. Off by default.</p>
-            <figure class="shot"><video autoplay muted loop playsinline preload="metadata" poster="img/apply-poster.webp" width="1600" height="1000" aria-label="The Auto-apply screen: tailored packages waiting for review, one opened to show what will be sent."><source src="img/apply.webm" type="video/webm"><source src="img/apply.mp4" type="video/mp4"></video></figure>
-          </div>
-        </div>
-        <div class="panel" role="tabpanel" id="panel-practise" aria-labelledby="tab-practise" tabindex="0" hidden>
-          <div class="band">
-            <h3 class="h-m">Rehearse the interview for this job.</h3>
-            <p>Questions from the posting, then a live AI interviewer.</p>
-            <figure class="shot"><video autoplay muted loop playsinline preload="metadata" poster="img/practise-poster.webp" width="1600" height="1000" aria-label="The Interview prep screen: a full mock interview started and the role typed in."><source src="img/practise.webm" type="video/webm"><source src="img/practise.mp4" type="video/mp4"></video></figure>
-          </div>
+          <figure class="vals-frame"><video muted loop playsinline preload="none" poster="img/projects-poster.webp" width="3000" height="2050" aria-label="The Projects screen: ideas aimed at the role, then a project in progress with its Learn it and Defend it stages."><source src="img/projects.webm" type="video/webm"><source src="img/projects.mp4" type="video/mp4"></video></figure>
+          <figure class="vals-frame"><video muted loop playsinline preload="none" poster="img/practise-poster.webp" width="3000" height="2050" aria-label="The Interview prep screen: the recorded round set up in the HireVue format, and the live interviewer."><source src="img/practise.webm" type="video/webm"><source src="img/practise.mp4" type="video/mp4"></video></figure>
         </div>
       </div>
     </div>

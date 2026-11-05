@@ -292,31 +292,80 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 .section-head { text-align: center; max-width: 720px; margin: 0 auto 40px; }
 .section-head .lede { margin-top: 12px; }
 
-/* ---------- tabbed features ---------- */
-.tabs { display: grid; grid-template-columns: 260px 1fr; gap: 32px; align-items: start; }
-.tablist { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 88px; }
-.tab {
-  display: block; width: 100%; text-align: left;
-  padding: 14px 18px; border-radius: 12px; border: 0;
-  background: transparent; color: var(--text-2);
-  font: 500 18px/1.3 var(--sans); letter-spacing: -0.01em; cursor: pointer;
-  transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), transform var(--press) ease-out;
+/* ---------- features: text scrolls past a pinned app window (the jetbrains.com "values" block) ----------
+   Geometry read off jetbrains.com with a script: heading 43px/49px 600 with 79px/71px digits; a 96px gap;
+   a 4px rail pinned 170px from the top, 500px tall, its thumb one fifth of that; text 480px wide at 48px
+   from the rail, 35px/42px headings and 20px/28px copy with 24px between; each block 64px down and
+   296px of air below; the window 750px wide (ratio 1.4634), 16px corners, pinned at 170px, allowed to
+   run off the right edge of the viewport; a small product tab sits on its top left corner. */
+#product { overflow-x: clip; }
+.vals-h { font-size: 43px; line-height: 49px; font-weight: 600; letter-spacing: -0.001em; margin: 0; text-wrap: balance; }
+.vals-big { font-size: 79px; line-height: 71px; font-weight: 500; vertical-align: -6px; padding: 0 2px; font-variant-numeric: tabular-nums; }
+.vals { position: relative; display: flex; margin-top: 96px; }
+.vals-rail { position: sticky; top: 170px; height: 500px; width: 0; flex: none; }
+.vals-rail::before { content: ""; position: absolute; left: 0; top: 0; width: 4px; height: 100%; border-radius: 2px; background: var(--card-line); }
+.vals-thumb { position: absolute; left: 0; top: 0; width: 4px; height: 100px; border-radius: 2px; background: var(--text); transition: top .2s var(--ease); }
+.vals-text { width: 50.8%; flex: none; padding: 0 98px 0 48px; min-width: 0; }
+.val { padding: 64px 0 296px; opacity: .35; transition: opacity .3s var(--ease); }
+.val.is-on { opacity: 1; }
+.val h3 { font-size: 35px; line-height: 42px; font-weight: 600; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+.val p { font-size: 20px; line-height: 28px; margin: 24px 0 0; color: var(--text); }
+.vals-media { position: sticky; top: 170px; width: 60.9%; flex: none; aspect-ratio: 750 / 512.5; height: fit-content; }
+.vals-frames { position: relative; width: 100%; aspect-ratio: 750 / 512.5; }
+.vals-frame { position: absolute; inset: 0; margin: 0; border-radius: 16px; overflow: hidden; background: #1B1B1F; box-shadow: var(--shadow); opacity: 0; transition: opacity .35s var(--ease); }
+.vals-frame.is-on { opacity: 1; }
+.vals-frame video, .vals-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.vals-tag {
+  position: absolute; left: 24px; bottom: 100%; z-index: 2; display: flex; align-items: center; gap: 12px;
+  padding: 5px 11px; border: 1px solid var(--text); border-bottom: 0; border-radius: 6px 6px 0 0;
+  background: var(--card); color: var(--text); font: 600 16px/24px var(--sans); white-space: nowrap;
 }
-.tab:hover { color: var(--text); background: var(--bg-soft); }
-.tab:active { transform: scale(.98); }
-.tab[aria-selected="true"] { color: var(--text); background: var(--card); box-shadow: inset 3px 0 0 var(--text); }
-.panel { border-radius: var(--r-l); overflow: hidden; transform-origin: 0 24px; }
-.panel[hidden] { display: none; }
-.panel.is-entering { animation: panel-in .32s var(--ease) both; }
-@keyframes panel-in { from { opacity: 0; transform: translateY(10px) scale(.992); } to { opacity: 1; transform: none; } }
-.panel .band { padding-top: 36px; }
-.panel h3 { color: #19191C; }
-.panel p { color: #3B3E45; margin: 8px 0 28px; max-width: 52ch; font-size: 17px; }
-:root[data-theme="dark"] .panel h3 { color: #F3F3F5; }
-:root[data-theme="dark"] .panel p { color: #C9CCD3; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .panel h3 { color: #F3F3F5; }
-  :root:not([data-theme="light"]) .panel p { color: #C9CCD3; }
+.vals-tag svg { width: 28px; height: 28px; flex: none; }
+.vals-tag svg[hidden] { display: none; }   /* the UA's [hidden] rule covers HTML elements only, not SVG */
+.vals-tag span { display: none; }
+.vals-tag span.is-on { display: inline; }
+/* The phone beside the Apply window: a Telegram chat that fills in as the agent works. */
+.phone {
+  position: absolute; left: -7%; bottom: -7%; z-index: 3; width: 31%; aspect-ratio: 9 / 19.5;
+  border-radius: 13% / 6%; background: #0B0B0D; border: 1.6% solid #2A2B30; box-shadow: var(--shadow), 0 0 0 1px rgba(0,0,0,.6);
+  overflow: hidden; opacity: 0; transform: translateY(16px); transition: opacity .35s var(--ease), transform .35s var(--ease);
+  container-type: inline-size;
+}
+.vals-frame.is-on + .phone { opacity: 1; transform: none; }
+.phone-top { height: 4cqw; background: #0B0B0D; }
+.phone-head { display: flex; align-items: center; gap: 2.4cqw; padding: 1.6cqw 3.2cqw 2.4cqw; background: #17212B; color: #fff; font: 600 4.2cqw/1.3 var(--sans); }
+.phone-head .ava { width: 9.6cqw; height: 9.6cqw; border-radius: 50%; background: #2AABEE; display: grid; place-items: center; }
+.phone-head .ava svg { width: 60%; height: 60%; }
+.phone-head small { display: block; font: 400 3.2cqw/1.3 var(--sans); color: #8FA3B6; }
+.phone-chat { background: #0E1621; padding: 2.4cqw 2.8cqw; display: flex; flex-direction: column; gap: 2.2cqw; min-height: 100%; }
+.msg { max-width: 88%; padding: 2cqw 2.8cqw; border-radius: 3.4cqw; background: #182533; color: #fff; font: 400 3.5cqw/1.35 var(--sans); white-space: pre-line; opacity: 0; transform: translateY(8px); align-self: flex-start; }
+.msg.me { align-self: flex-end; background: #2B5278; border-bottom-right-radius: 1cqw; }
+.msg .preview { height: 22cqw; margin: -2cqw -2.8cqw 2cqw; border-radius: 3.4cqw 3.4cqw 0 0; background: linear-gradient(180deg, #F3F3F5 0 18%, #fff 18%); position: relative; }
+.msg .preview::before, .msg .preview::after { content: ""; position: absolute; left: 10%; right: 10%; height: 1.4cqw; border-radius: 1cqw; background: #C9CBD1; top: 36%; box-shadow: 0 3.2cqw 0 #D9DBE0, 0 6.4cqw 0 #D9DBE0, 0 9.6cqw 0 #E3E5EA; }
+.msg .preview::after { top: 24%; left: 10%; right: 55%; background: #19191C; box-shadow: none; height: 2cqw; }
+.msg .btns { display: flex; gap: 1.6cqw; margin: 2cqw -1.4cqw -1cqw; }
+.msg .btns span { flex: 1; text-align: center; padding: 1.6cqw 0; border-radius: 2cqw; background: rgba(255,255,255,.1); font-size: 3.2cqw; }
+.msg .btns span.is-tapped { background: rgba(255,255,255,.28); }
+.phone.is-on .msg { animation: msg-in .35s var(--ease) both; }
+.phone.is-on .msg:nth-child(1) { animation-delay: .6s; }
+.phone.is-on .msg:nth-child(2) { animation-delay: 2.2s; }
+.phone.is-on .msg:nth-child(3) { animation-delay: 4.6s; }
+.phone.is-on .msg:nth-child(4) { animation-delay: 5.6s; }
+.phone.is-on .msg .btns span.is-tapped { animation: tap .5s ease 4.3s both; }
+@keyframes msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes tap { from { background: rgba(255,255,255,.1); } to { background: rgba(255,255,255,.28); } }
+@media (max-width: 960px) {
+  .vals-h { font-size: 32px; line-height: 38px; }
+  .vals-big { font-size: 56px; line-height: 52px; vertical-align: -4px; }
+  /* One card per block, each with its own clip (jetbrains.com does the same under 1000px). */
+  .vals { display: block; margin-top: 48px; }
+  .vals-rail, .vals-media { display: none; }
+  .vals-text { width: 100%; padding: 0; }
+  .val { padding: 0; margin-top: 48px; opacity: 1; position: relative; }
+  .val h3 { font-size: 26px; line-height: 32px; }
+  .val p { font-size: 17px; line-height: 25px; margin-top: 14px; }
+  .val .vals-frame { position: relative; inset: auto; margin-top: 20px; aspect-ratio: 750 / 512.5; opacity: 1; border-radius: 12px; }
+  .val .phone { position: absolute; left: 2%; bottom: -4%; width: 26%; opacity: 1; transform: none; }
 }
 
 /* ---------- check an employer ---------- */

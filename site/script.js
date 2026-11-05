@@ -383,54 +383,91 @@ async function githubCard() {
 }
 
 // ---- 5. feature tabs ---------------------------------------------------------------------
-function wireTabs() {
-  const list = document.querySelector('[role="tablist"]');
-  if (!list) return;
-  const tabs = Array.from(list.querySelectorAll('[role="tab"]'));
-  const select = (tab, focus) => {
-    tabs.forEach((t) => {
-      const on = t === tab;
-      const was = t.getAttribute("aria-selected") === "true";
-      t.setAttribute("aria-selected", String(on));
-      t.tabIndex = on ? 0 : -1;
-      const panel = $(t.getAttribute("aria-controls"));
-      if (!panel) return;
-      panel.hidden = !on;
-      // Only the open panel's clip plays; the others pause (and rewind) so four videos never run at once.
-      panel.querySelectorAll("video").forEach((v) => { if (on) { if (!reducedMotion) v.play().catch(() => {}); } else { v.pause(); v.currentTime = 0; } });
-      // The panel arrives from its tab: a short rise that a second click re-targets (restart the
-      // animation from the current frame rather than waiting for it to finish).
-      if (on && !was) {
-        panel.classList.remove("is-entering");
-        void panel.offsetWidth;
-        panel.classList.add("is-entering");
-        panel.addEventListener("animationend", () => panel.classList.remove("is-entering"), { once: true });
-      }
-    });
-    if (focus) tab.focus();
-  };
-  tabs.forEach((tab, i) => {
-    tab.addEventListener("click", () => select(tab, false));
-    tab.addEventListener("keydown", (e) => {
-      let j = null;
-      if (e.key === "ArrowDown" || e.key === "ArrowRight") j = (i + 1) % tabs.length;
-      else if (e.key === "ArrowUp" || e.key === "ArrowLeft") j = (i - 1 + tabs.length) % tabs.length;
-      else if (e.key === "Home") j = 0;
-      else if (e.key === "End") j = tabs.length - 1;
-      if (j === null) return;
-      e.preventDefault();
-      select(tabs[j], true);
-    });
-  });
-}
-
-// ---- 7. feature clips: still frames for people who asked for less motion ---------------------
+// ---- 5. features: text blocks scroll past a pinned app window --------------------------------
+// The block nearest the middle of the pinned zone is the live one: its text is full strength, the
+// rail's thumb sits on its fifth, its clip shows and plays, the tab names it. People who asked for
+// less motion get the still frame of each clip instead.
 const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-function wireClips() {
-  document.querySelectorAll(".panel video").forEach((v) => {
-    if (reducedMotion) { v.removeAttribute("autoplay"); v.pause(); }
-    else if (!v.closest(".panel").hidden) v.play().catch(() => {});
-  });
+function wireValues() {
+  const root = document.querySelector(".vals");
+  if (!root) return;
+  const blocks = [...root.querySelectorAll(".val")];
+  const frames = [...root.querySelectorAll(".vals-frame")];
+  const names = [...root.querySelectorAll(".vals-tag span")];
+  const icons = [...root.querySelectorAll(".vals-tag svg")];
+  const thumb = root.querySelector(".vals-thumb");
+  const phone = root.querySelector(".phone");
+  const media = root.querySelector(".vals-media");
+  let current = -1;
+  const show = (i) => {
+    if (i === current) return;
+    current = i;
+    blocks.forEach((b, k) => b.classList.toggle("is-on", k === i));
+    names.forEach((n, k) => n.classList.toggle("is-on", k === i));
+    icons.forEach((s, k) => { if (k === i) s.removeAttribute("hidden"); else s.setAttribute("hidden", ""); });   // SVG has no .hidden property
+    frames.forEach((f, k) => {
+      const on = k === i;
+      f.classList.toggle("is-on", on);
+      const v = f.querySelector("video");
+      if (!v) return;
+      if (on) { if (!reducedMotion) { if (v.preload === "none") v.preload = "auto"; v.currentTime = 0; v.play().catch(() => {}); } }
+      else { v.pause(); }
+    });
+    if (thumb) { thumb.style.height = (100 / blocks.length) + "%"; thumb.style.top = (i * 100 / blocks.length) + "%"; }
+    if (phone) {
+      const on = frames[i] && frames[i].nextElementSibling === phone;
+      phone.classList.remove("is-on");
+      if (on) { void phone.offsetWidth; phone.classList.add("is-on"); }
+    }
+  };
+  // The live block, by the same rule jetbrains.com uses (read from its page script): a block is
+  // live while its top is above the bottom of the pinned window and its bottom is more than 100px
+  // below the window's top; the first block also while its bottom is below the window's top. When
+  // several qualify, the last one wins.
+  const pick = () => {
+    if (!media || narrow.matches) return;
+    const stickyTop = parseFloat(getComputedStyle(media).top) || 170;
+    const winH = media.getBoundingClientRect().height || 500;
+    let i = 0;
+    blocks.forEach((b, k) => {
+      const r = b.getBoundingClientRect();
+      const on = k === 0 ? r.bottom >= stickyTop : (r.top < winH && r.bottom > stickyTop + 100);
+      if (on) i = k;
+    });
+    show(i);
+  };
+  let ticking = false;
+  const onScroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(() => { pick(); ticking = false; }); } };
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll);
+  if (reducedMotion) frames.forEach((f) => { const v = f.querySelector("video"); if (v) { v.removeAttribute("autoplay"); v.pause(); } });
+
+  // Narrow screens: jetbrains.com swaps the pinned layout for one card per block, each with its own
+  // picture. Here each block takes its own clip (and the Apply block its phone), and a clip plays
+  // while its card is mostly on screen.
+  const narrow = window.matchMedia("(max-width: 960px)");
+  const framesHome = root.querySelector(".vals-frames");
+  let io = null;
+  const layout = () => {
+    if (narrow.matches) {
+      frames.forEach((f, k) => { const b = blocks[k]; if (b && f.parentElement !== b) { b.append(f); if (phone && k === 2) b.append(phone); } });
+      frames.forEach((f) => f.classList.add("is-on"));
+      if (phone) phone.classList.add("is-on");
+      if (!io && "IntersectionObserver" in window) {
+        io = new IntersectionObserver((entries) => entries.forEach((e) => { const v = e.target.querySelector("video"); if (!v) return; if (e.isIntersecting && !reducedMotion) { if (v.preload === "none") v.preload = "auto"; v.play().catch(() => {}); } else v.pause(); }), { threshold: 0.5 });
+        frames.forEach((f) => io.observe(f));
+      }
+    } else {
+      frames.forEach((f) => { if (f.parentElement !== framesHome) framesHome.append(f); });
+      if (phone && phone.parentElement !== framesHome) framesHome.insertBefore(phone, frames[3] || null);
+      if (io) { io.disconnect(); io = null; }
+      current = -1;
+      pick();
+    }
+  };
+  narrow.addEventListener("change", layout);
+  layout();
+  if (!narrow.matches) pick();
 }
 
 // ---- 6. the header's scroll edge -------------------------------------------------------------
@@ -444,8 +481,7 @@ function wireHeaderEdge() {
   update();
 }
 
-wireTabs();
-wireClips();
+wireValues();
 wireHeaderEdge();
 wireEmployerPanel();
 wireDownloadControl();
