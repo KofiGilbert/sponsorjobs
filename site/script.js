@@ -413,16 +413,6 @@ async function releaseInfo() {
   if (parts.length) meta.textContent = parts.join(", ") + ".";
 }
 
-// ---- 4. GitHub card ----------------------------------------------------------------------
-async function githubCard() {
-  // The header's GitHub link shows the star count, the way browser-use.com does, once it is worth
-  // showing (100 or more); until then it just says GitHub.
-  const label = $("nav-gh-n");
-  if (!label) return;
-  const d = await getJSON("https://api.github.com/repos/" + REPO, 8000);
-  const n = d ? Number(d.stargazers_count) : 0;
-  if (n >= 100) label.textContent = n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : fmt(n);
-}
 
 // ---- 5. feature tabs ---------------------------------------------------------------------
 // ---- 5. features: text blocks scroll past a pinned app window --------------------------------
@@ -532,4 +522,3 @@ wireDownloadControl();
 markPrimaryForThisOS();
 liveNumbers();
 releaseInfo();
-githubCard();
