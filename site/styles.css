@@ -621,11 +621,15 @@ table.compare { width: 100%; border-collapse: collapse; margin-top: 64px; font-s
 .footer .cols { display: grid; grid-template-columns: 1.4fr repeat(4, 1fr); gap: 32px; }
 .footer .brand .wordmark { color: #FFFFFF; }
 .footer .brand p { margin-top: 12px; max-width: 30ch; }
+/* The parent lockup, the way devin.ai names Cognition: small, under the tagline, linking out. */
+.footer .brand .parent { display: inline-block; margin-top: 16px; padding: 5px 10px; border: 1px solid #26272B; border-radius: 6px; font-size: 12px; color: #8E929B; }
+.footer .brand .parent:hover { color: #FFFFFF; border-color: #45474E; }
+.footer .fine .legal-line { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 12px; }
 .footer h2 { font-size: 14px; font-weight: 600; color: #FFFFFF; margin-bottom: 12px; }
 .footer ul { list-style: none; margin: 0; padding: 0; }
 .footer li { margin: 8px 0; }
-.footer .fine { margin-top: 48px; padding-top: 24px; border-top: 1px solid #26272B; display: flex; justify-content: space-between; gap: 16px 32px; flex-wrap: wrap; color: #8E929B; font-size: 13px; }
-.footer .fine p { max-width: 80ch; }
+.footer .fine { margin-top: 48px; padding-top: 24px; border-top: 1px solid #26272B; display: flex; flex-direction: column; gap: 10px; color: #8E929B; font-size: 13px; }
+.footer .fine p { max-width: 96ch; margin: 0; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 960px) {
