@@ -218,6 +218,40 @@ test("a custom dropdown is picked through the engine when present, by clicking o
   await p2.close();
 });
 
+test("a saved answer never lands on a choice that adds a qualifier (Phoenix Contact, 2026-11-05)", async ({ open }) => {
+  const page = await open("react_select.html");
+  await page.evaluate(CORE);
+  await page.evaluate(AGENT);
+  await page.evaluate(() => {
+    const s = document.createElement("select");
+    s.id = "heard"; s.setAttribute("aria-label", "How did you hear about this specific opening?");
+    for (const o of ["Select...", "College Job Board", "Indeed", "LinkedIn", "Company Website", "Employee Referral", "Other"]) {
+      const e = document.createElement("option"); e.textContent = o; e.value = o === "Select..." ? "" : o; s.appendChild(e);
+    }
+    document.body.prepend(s);
+  });
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const sel = indices(v.text).find((i) => /<select label="How did you hear/.test(line(v.text, i)));
+  assert.ok(sel, v.text);
+  // the person's saved answer: no choice says the same, so nothing is picked and no list is offered
+  const miss = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "Job board", answer: true})`);
+  assert.strictEqual(miss.ok, false);
+  assert.ok(/^no choice on this list says the same/.test(miss.note), miss.note);
+  assert.strictEqual(await page.evaluate(() => document.getElementById("heard").value), "");
+  // without the flag (the brain's own select), a miss still lists the choices
+  const m2 = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "Job board"})`);
+  assert.ok(/^no such option; options: .*College Job Board/.test(m2.note), m2.note);
+  const hit = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${sel}, option: "Other", answer: true})`);
+  assert.strictEqual(hit.ok, true, JSON.stringify(hit));
+  assert.strictEqual(await page.evaluate(() => document.getElementById("heard").value), "Other");
+  // a react-select: "States" is not "United States" (the loose contains match took it)
+  const c = indices(v.text).find((i) => /<combobox label="Country"/.test(line(v.text, i)));
+  const r = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${c}, option: "States", answer: true})`);
+  assert.strictEqual(r.ok, false, JSON.stringify(r));
+  assert.notStrictEqual((await page.evaluate("window.fxValues()")).country, "United States");
+  await page.close();
+});
+
 test("a file input at opacity 0 (the upload button pattern) is still listed; click says use upload", async ({ open }) => {
   const page = await open("icims_inner.html");
   await page.evaluate(AGENT);

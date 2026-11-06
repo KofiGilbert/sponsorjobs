@@ -264,7 +264,14 @@ about 15 minutes; then the job PARKS (see "Parked jobs and batches" below).
   `options` (at most 8 to offer, the decline choice first on EEO questions), `all_options` (up to
   40, for matching) and `partial` (the page has more than were read).
 - **Known answers first.** Work authorization, the answer library and the standing
-  `eeo_decline` choice answer what they can (`known_only`); only the rest is asked. An EEO
+  `eeo_decline` choice answer what they can (`known_only`); only the rest is asked. A saved
+  answer maps only to a choice that says the same (`planner.literal_for`: equal, or the same
+  words plus only neutral ones like "Online"), never one that adds a qualifier ("College Job
+  Board" for "Job board", Phoenix Contact 2026-11-05); on "How did you hear" a choice that
+  names no source ("Job Board", "Internet", "Other") stands in, else the person is asked. The
+  in-page pickers use the same rule (`autofill_core.answerScorer`), and the shell PICKS a saved
+  `{{answer_N}}` typed into a list with it instead of typing it for the brain to click
+  whatever the list's own filter leaves. An EEO
   answer fits only the choice it names, or the page's decline choice for a saved decline; never
   a Yes/No or prefix guess. A question whose known answer did not stick is sent in
   `force_questions` and asked for real; the others still get their known answers.
@@ -278,7 +285,18 @@ about 15 minutes; then the job PARKS (see "Parked jobs and batches" below).
   choices (with any answers in the same message taken); an unclear reply is asked again once;
   when the model fails, the plain reading answers and the failure does not count against the
   person. Slash commands are never answers: `/stop`, `/pause` and `/skip` also end the wait.
-  Only a question whose Telegram message was delivered takes Telegram text.
+  Only a question whose Telegram message was delivered takes Telegram text. A BARE answer ("no":
+  one short value, no number, `asks.is_bare`) while several questions are open answers ONLY the
+  first one still open, never a later one; when that question does not take it, the reply says
+  so with its choices and how to number an answer for another question (2026-11-05, Phoenix
+  Contact: a bare "no" landed on a background-check consent further down the list).
+- **The bar, several questions.** ONE question at a time: "Question 2 of 4", the question on its
+  own line, its choices as buttons, a box, Answer, and Back; the answers given so far sit under
+  it as links back to change them. Every answer sends the question's `index` and words
+  (`/api/autoapply/agent/answer` resolves a stale index by the words, `_ask_pick`), so a tap or a
+  typed answer lands on that question only; the reply carries `items` (each question's number
+  and answer) so the bar moves on to the next open one. A parked job's `ask_view` keeps each
+  open question's number `n` and the answers already given (`answered`).
 - **Saved.** The person's answers are saved to the answer library (never a question back, never
   a paragraph for a one-choice question). A raw reply saved before replies were read stays in
   the library, unused, until the person replaces or deletes it.

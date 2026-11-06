@@ -540,6 +540,29 @@ function createAgent(deps) {
         if (real) return real;
       }
     }
+    // The person's saved answer ({{answer_N}}) typed into a list: PICKED from the list by the
+    // strict match (the same words, or the same words with only neutral ones like "Online"),
+    // never typed for the brain to click whatever the list's own filter leaves. On Phoenix
+    // Contact's Greenhouse form (2026-11-05) "Job board" typed into "How did you hear about this
+    // specific opening?" left only "College Job Board", and that got clicked. No choice says the
+    // same: nothing is picked, and the field goes to the person (the ask route then offers the
+    // page's choices, or picks a choice like "Other" that names no particular source).
+    if (a.op === "type" && /^answer_\d+$/.test(String(a.placeholder || "")) && /<(combobox|select)\b/.test(line) && !/search=true/.test(line)) {
+      // A list the page would not show this way (Workday's prompt opens only to real keys):
+      // typed for real as before, and the brain is told to click only the suggestion that says
+      // the same (autoapply/brain.py rule 15).
+      const pick = { op: "select", index: a.index, option: String(a.text || ""), answer: true };
+      const pexpr = `window.TailorAgent.act(${JSON.stringify(pick)})`;
+      let r = null;
+      try {
+        r = await guard(ctx ? fr.eval(ctx, pexpr) : wc.executeJavaScript(pexpr, true), ACTION_MS, "select", { nav: true });
+      } catch (e) {
+        if (e && e.stopped) throw e;
+        if (e && e.navigated) return { ok: true, note: "page changed", changed: true };
+        r = null;
+      }
+      if (r && (r.ok || /^no choice on this list/.test(String(r.note || "")))) return r;
+    }
     if (!ctx && a.op === "type" && typeof a.text === "string" && /<combobox\b|<textarea\b|aria-autocomplete|search=true/.test(line)) {
       const real = await realType(wc, a.index, a.text);
       if (real) return real;

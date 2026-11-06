@@ -12751,12 +12751,42 @@ def _ask_set(ask: dict, i: int, value: str):
         ask["answer"] = value                      # the older single-question shape
 
 
+def _ask_item_view(items: list, i: int) -> dict:
+    """Question ``i`` with the number the person saw (kept, never renumbered)."""
+    it = items[i]
+    return {"n": i + 1, "question": it["question"], "options": list(it.get("options") or []),
+            "all_options": list(it.get("all_options") or it.get("options") or []),
+            "partial": bool(it.get("partial"))}
+
+
 def _ask_open_items(items: list) -> list:
     """The questions still open, each with the number the person saw (kept, never renumbered)."""
-    return [{"n": i + 1, "question": it["question"], "options": list(it.get("options") or []),
-             "all_options": list(it.get("all_options") or it.get("options") or []),
-             "partial": bool(it.get("partial"))}
-            for i, it in enumerate(items) if not it.get("answer")]
+    return [_ask_item_view(items, i) for i, it in enumerate(items) if not it.get("answer")]
+
+
+def _ask_progress(items: list) -> list:
+    """[{n, question, answer}] for every question of an ask, answered or not: the bar shows one
+    question at a time and keeps the answers already given in view (and changeable)."""
+    return [{"n": i + 1, "question": it["question"], "answer": it.get("answer") or None}
+            for i, it in enumerate(items)]
+
+
+def _ask_pick(items: list, index, question: str = "") -> int | None:
+    """The question the bar means: ``index`` into the ask's questions, checked against the
+    question's own words when the bar sent them (a parked bar lists only the open ones, so its
+    positions can differ from the ask's). None when neither names a question."""
+    from autoapply import asks as AK
+    try:
+        i = int(index)
+    except (TypeError, ValueError):
+        i = None
+    if question:
+        if i is not None and 0 <= i < len(items) and AK.same_question(items[i]["question"], question):
+            return i
+        hit = next((k for k, it in enumerate(items) if AK.same_question(it["question"], question)), None)
+        if hit is not None:
+            return hit
+    return i if i is not None and 0 <= i < len(items) else None
 
 
 def _ask_reader():
@@ -12772,18 +12802,26 @@ def _ask_reader():
     return llm
 
 
-def _ask_take_reply(aid: str, text: str, parked: bool = False) -> tuple[str | None, bool]:
+def _ask_take_reply(aid: str, text: str, parked: bool = False, only: int | None = None) -> tuple[str | None, bool]:
     """Read a typed reply to an open ask. Returns (the message to send back, done). Only the
     part of the reply that answers each question is kept; a question back gets the options.
     ``parked``: the reply may not be meant for this (parked) question at all, so (None, False)
-    when it answers nothing, and the text goes on to the chat."""
+    when it answers nothing, and the text goes on to the chat. ``only``: the question the bar
+    showed when the person typed (its index in the ask): the reply answers that one alone, and
+    may change an answer given before. Without it, a bare answer ("no") while several questions
+    are open answers ONLY the first one still open (asks.is_bare); a numbered or longer reply is
+    read against every open question, by its numbers."""
     from autoapply import asks as AK
     text = str(text or "").strip()[:1500]
     with _ASKS_LOCK:
         ask = _ASKS.get(aid)
         if not ask or not ask.get("open", True):
             return "That question is no longer open.", False
-        pending = _ask_open_items(_ask_items(ask))
+        items = _ask_items(ask)
+        pending = _ask_open_items(items)
+        if only is not None and not 0 <= only < len(items):
+            only = None
+        target = [_ask_item_view(items, only)] if only is not None else None
         if pending and text and ask.get("kind") == "terms":
             # Consent is read strictly, never by a model: a choice's words or number, yes or no.
             choice = AK.read_terms_reply(text)
@@ -12795,7 +12833,9 @@ def _ask_take_reply(aid: str, text: str, parked: bool = False) -> tuple[str | No
             return f"Got it: {choice}.", True
     if not pending or not text:
         return ("", not pending)
-    got = AK.read_reply(_ask_reader(), pending, text)
+    bare = only is None and len(pending) > 1 and AK.is_bare(text)
+    reading = target or (pending[:1] if bare else pending)
+    got = AK.read_reply(_ask_reader(), reading, text)
     with _ASKS_LOCK:
         ask = _ASKS.get(aid)
         if not ask or not ask.get("open", True):
@@ -12804,8 +12844,8 @@ def _ask_take_reply(aid: str, text: str, parked: bool = False) -> tuple[str | No
         tag = (lambda n: f"{n}. ") if len(items) > 1 else (lambda n: "")
         took = []
         for j, val in got["answers"].items():
-            i = pending[j]["n"] - 1
-            if not items[i].get("answer"):
+            i = reading[j]["n"] - 1
+            if only is not None or not items[i].get("answer"):
                 _ask_set(ask, i, val)
                 took.append(i)
         if _ask_done(ask):
@@ -12820,13 +12860,19 @@ def _ask_take_reply(aid: str, text: str, parked: bool = False) -> tuple[str | No
         if parked:
             return None, False
         if got["question"]:
-            return AK.options_reply(left), False
+            return AK.options_reply(target or left), False
         if got.get("error"):
             # The reader failed or stalled, not the person: it does not count as unclear.
             return "I could not read that just now. Tap a choice, or send just the answer.", False
+        if bare:
+            # Not an answer to the first open question: say so, and how to answer another one.
+            # Never moved on to a later question by guesswork.
+            first = reading[0]
+            other = next((x["n"] for x in left if x["n"] != first["n"]), None)
+            return AK.bare_miss_reply(first, first["n"], text, other), False
         ask["unclear"] = int(ask.get("unclear") or 0) + 1
         if ask["unclear"] == 1:
-            return AK.unclear_reply(left), False
+            return AK.unclear_reply(target or left), False
         return "I still could not tell. Type just the answer, or answer on the page yourself.", False
 
 
@@ -13663,10 +13709,11 @@ def _ask_view(ask: dict) -> dict:
     """The bar's copy of an ask (the same shape the shell's progress carries)."""
     items = _ask_items(ask)
     open_ = _ask_open_items(items)
-    qs = [{"question": it["question"], "options": it["options"]} for it in open_]
+    qs = [{"n": it["n"], "question": it["question"], "options": it["options"]} for it in open_]
     one = qs[0] if qs else {"question": "", "options": []}
     return {"id": ask["id"], "question": one["question"], "options": one["options"] if len(qs) == 1 else [],
-            "questions": qs, "kind": ask.get("kind") or ""}
+            "questions": qs, "kind": ask.get("kind") or "",
+            "answered": [x for x in _ask_progress(items) if x["answer"]]}
 
 
 def _park_from_ask(aid: str) -> dict | None:
@@ -13797,9 +13844,16 @@ def _parked_list() -> list:
     rows = _parked_load()
     out = []
     for e in sorted(rows.values(), key=lambda r: float(r.get("parked_at") or 0)):
-        out.append({k: e.get(k) for k in ("record_id", "ask_id", "kind", "questions", "message", "title",
-                                          "company", "role", "page_url", "run", "parked_at", "expires_at",
-                                          "state", "decision", "via", "batch", "ask_view")})
+        row = {k: e.get(k) for k in ("record_id", "ask_id", "kind", "questions", "message", "title",
+                                     "company", "role", "page_url", "run", "parked_at", "expires_at",
+                                     "state", "decision", "via", "batch", "ask_view")}
+        # The bar's copy as it is now: answers given on the bar since the job parked are shown
+        # as answered, not asked again.
+        with _ASKS_LOCK:
+            live = _ASKS.get(e.get("ask_id") or "")
+            if live and live.get("open", True) and row.get("ask_view") and not _ask_done(live):
+                row["ask_view"] = _ask_view(live)
+        out.append(row)
     return out
 
 
@@ -14011,11 +14065,10 @@ def autoapply_agent_answer():
         ask["via"] = "bar"
         items = _ask_items(ask)
         exact = None
+        # The question the bar showed: its index, checked against its words when sent.
+        only = _ask_pick(items, b.get("index"), q) if (b.get("index") is not None or q) else None
         if b.get("exact"):
-            try:
-                i = int(b.get("index") or 0)
-            except (TypeError, ValueError):
-                i = 0
+            i = only if only is not None else (0 if b.get("index") is None else -1)
             if not 0 <= i < len(items):
                 return jsonify({"ok": False, "error": "No such question."}), 400
             if ask.get("kind") == "terms" and ans not in AK.TERMS_CHOICES:
@@ -14028,13 +14081,19 @@ def autoapply_agent_answer():
         done, parked, reply = exact
         if done and parked:
             return jsonify({"ok": True, "id": aid, "done": True, "parked": True, "reply": _parked_reply(aid, reply)})
-        return jsonify({"ok": True, "id": aid, "done": done, "reply": reply})
+        return jsonify({"ok": True, "id": aid, "done": done, "reply": reply, "items": _ask_progress_of(aid)})
     with _ASKS_LOCK:
         parked = bool((_ASKS.get(aid) or {}).get("parked"))
-    reply, done = _ask_take_reply(aid, ans)
+    reply, done = _ask_take_reply(aid, ans, only=only)
     if done and parked:
         return jsonify({"ok": True, "id": aid, "done": True, "parked": True, "reply": _parked_reply(aid, reply)})
-    return jsonify({"ok": True, "id": aid, "done": done, "reply": reply})
+    return jsonify({"ok": True, "id": aid, "done": done, "reply": reply, "items": _ask_progress_of(aid)})
+
+
+def _ask_progress_of(aid: str) -> list:
+    with _ASKS_LOCK:
+        ask = _ASKS.get(aid)
+        return _ask_progress(_ask_items(ask)) if ask else []
 
 
 # ---- Terms a site requires to apply (docs/apply-agent.md): a privacy notice, a data privacy
