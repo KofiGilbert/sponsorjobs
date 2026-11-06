@@ -751,7 +751,7 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     resized.
     """
     from .fact_gate import gate_rewrite
-    from .filler import is_padded, repeats_sibling, tacked_on_terms
+    from .filler import borrows_from_sibling, is_padded, repeats_sibling, tacked_on_terms
     from .keywords import introduced_skills, supported_skills, term_present
 
     before = measure(getattr(result, "pdf_path", None), profile)
@@ -814,6 +814,8 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                        or (["padding"] if is_padded(text, new) else [])
                        or (["repeats another bullet"] if repeats_sibling(text, new, siblings)
                            else [])
+                       or (["takes another bullet's point"]
+                           if borrows_from_sibling(text, new, siblings) else [])
                        or tacked_on_terms(text, new)
                        or gate_rewrite(text, new, known=known, known_figures=known_figures))
                 if bad:

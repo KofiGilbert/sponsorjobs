@@ -2118,8 +2118,9 @@ def assemble_cv(
             render=lambda p: render_cv(preamble, p, sections, probe=True, headings=headings),
             compile_fn=lambda tex, name: compile_tex(tex, workdir, jobname=name),
             is_clean=_clean, llm=llm, jd_text=jd_text, skill_pool=skill_pool,
-            # A written bullet stays exactly as the gate passed it and the person reviews it.
-            frozen={a["bullet"] for a in added if a.get("kind") == "written"},
+            # A written bullet stays exactly as the gate passed it and the person reviews it; the
+            # parts of a split stay as split (lengthening one pulled its partner's clause back).
+            frozen={a["bullet"] for a in added if a.get("kind") in ("written", "split")},
             known=known_material(*gate_material), known_figures=source_figures(*gate_material),
             origins=origins, rounds=_lf.FIT_ROUNDS if fit_rounds is None else fit_rounds,
             fit_bullets=llm is not None, jobname=jobname)

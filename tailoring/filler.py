@@ -156,14 +156,52 @@ def same_fact(a: str, b: str) -> bool:
             and _content_overlap(ta, tb) >= SAME_FACT_OVERLAP)
 
 
+# A rewrite that BORROWS this many words in a row from a sibling (more than the bullet it
+# replaces already shared with it) takes that sibling's clause. Seen on a real build
+# (2026-11-06): a bullet split into "...track growth, usage, and unit costs." and "Turn the
+# reporting results into roadmap and spend decisions." was then lengthened line by line until
+# each part carried the other's clause ("...then turn those results into roadmap and spend
+# decisions", "...results on growth, usage and unit costs into roadmap and spend decisions").
+BORROWED_RUN = 5
+
+
 def repeats_sibling(before: str, candidate: str, siblings) -> bool:
     """True when a rewrite restates a sibling bullet's clause that the bullet it replaces did
-    not. The rewrite is then refused and the bullet keeps its wording."""
+    not: a shared run of ``SHARED_RUN`` words, or a run of ``BORROWED_RUN`` words longer than
+    the bullet it replaces shared with that sibling. The rewrite is then refused and the bullet
+    keeps its wording."""
+    cand, bef = _fact_tokens(candidate), _fact_tokens(before)
     for sib in siblings or ():
         sib = str(sib or "")
-        if sib.strip() and shares_a_clause(candidate, sib) and not shares_a_clause(before, sib):
+        if not sib.strip():
+            continue
+        if shares_a_clause(candidate, sib) and not shares_a_clause(before, sib):
+            return True
+        st = _fact_tokens(sib)
+        run = _longest_shared_run(cand, st)
+        if run >= BORROWED_RUN and run > _longest_shared_run(bef, st):
             return True
     return False
+
+
+# A resize that adds this many content words a sibling already has (and the bullet did not)
+# has taken that sibling's point, even in other connecting words (``borrows_from_sibling``).
+BORROWED_WORDS = 3
+
+
+def _content_stems(text: str) -> set[str]:
+    return {t.rstrip("s") for t in _fact_tokens(text) if t not in _FACT_STOP}
+
+
+def borrows_from_sibling(before: str, candidate: str, siblings) -> bool:
+    """True when a resize ADDS ``BORROWED_WORDS`` or more content words that one sibling bullet
+    already says ("...so company leaders can make better roadmap and spend decisions" next to
+    "Turn the reporting results into roadmap and spend decisions", a real build, 2026-11-06).
+    For the line fit, which lengthens a bullet from its entry's context: the added detail must
+    be the bullet's own, never the next bullet's point."""
+    added = _content_stems(candidate) - _content_stems(before)
+    return any(len(added & _content_stems(str(sib or ""))) >= BORROWED_WORDS
+               for sib in siblings or ())
 
 
 def dedupe_bullets(bullets: list) -> list:

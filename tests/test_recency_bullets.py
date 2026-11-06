@@ -359,3 +359,81 @@ def test_when_no_room_can_be_made_the_page_stays_clean_and_says_so(template_sour
     assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
     assert res.fill_ratio <= MAX_FILL
     assert any("would not fit on one page" in n for n in res.bullet_notes), res.bullet_notes
+
+
+# --------------------------------------------------------------------------- a split stays split
+# A real build (2026-11-06): the first bullet was split into its two parts, then the line fit
+# lengthened each part with the other's clause, so the page printed the whole original again
+# next to its own second half.
+_SRC = ("Lead business intelligence across the company's products, building KPI dashboards and "
+        "automated Python and SQL reporting that track growth, usage, and unit costs, and turn "
+        "the results into roadmap and spend decisions.")
+_PART1 = ("Lead business intelligence across the company's products, building KPI dashboards and "
+          "automated Python and SQL reporting that track growth, usage, and unit costs.")
+_PART2 = "Turn the reporting results into roadmap and spend decisions."
+_GROWN1 = ("Lead business intelligence across the company's products, building KPI dashboards and "
+           "automated Python and SQL reporting that track growth, usage, and unit costs, then turn "
+           "those results into roadmap and spend decisions for leadership.")
+_GROWN2 = ("Turned KPI dashboard and automated reporting results on growth, usage and unit costs "
+           "into roadmap and spend decisions.")
+
+
+def test_the_sibling_guard_catches_a_part_that_takes_back_its_partners_clause():
+    from tailoring.filler import borrows_from_sibling, repeats_sibling
+    # the second real build said it in other connecting words (a 4-word run only)
+    grown = ("Lead business intelligence across the company's products, building KPI dashboards and "
+             "automated Python and SQL reporting that track growth, usage, and unit costs, so company "
+             "leaders can make better roadmap and spend decisions.")
+    assert borrows_from_sibling(_PART1, grown, [_PART2])
+    assert borrows_from_sibling(_PART2, _GROWN2, [_PART1])
+    assert not borrows_from_sibling(_PART2, "Turned the reporting results into roadmap and spend "
+                                            "decisions for the leadership team.", [_PART1])
+    assert repeats_sibling(_PART1, _GROWN1, [_PART2])
+    assert repeats_sibling(_PART2, _GROWN2, [_PART1])
+    assert repeats_sibling("", _GROWN2, [_GROWN1])        # the exact pair that printed
+    # an ordinary resize that adds its own detail still passes
+    assert not repeats_sibling(_PART2, "Turned the reporting results into roadmap and spend "
+                                       "decisions for the leadership team.", [_PART1])
+
+
+class _SplitThenRegrow(FakeLLM):
+    """Rewords every bullet (tailoring), splits the long one in two, writes nothing, and on a
+    resize hands back the bullet with its sibling's clause glued on, as the real model did."""
+
+    def __init__(self):
+        super().__init__()
+        self.regrows = 0
+
+    def write_role_bullet(self, *a, **k):
+        return ""
+
+    def split_bullet(self, role_title, text, parts, jd_text=""):
+        return [_PART1, _PART2] if "roadmap" in text else [text]
+
+    def fit_bullet(self, text, min_chars, max_chars, jd_text="", context=""):
+        self.regrows += 1
+        if text.startswith("Lead business"):
+            return _GROWN1
+        if text.startswith("Turn the"):
+            return _GROWN2
+        return text
+
+
+@requires_latex
+def test_a_tailored_then_split_bullet_never_leaves_its_original_clause_on_the_page(
+        template_source, workdir):
+    from tailoring.filler import _fact_tokens, _longest_shared_run
+    prof = copy.deepcopy(_near_full())
+    prof["experience"][0]["roles"][0]["bullets"] = [
+        _SRC, "Built weekly SQL and Tableau dashboards that track on-time delivery for 14 regional depots."]
+    llm = _SplitThenRegrow()
+    res = assemble_cv(template_source, prof, JD, llm, workdir, tailor=True, fit_lines=True)
+    assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
+    first = res.profile_used["experience"][0]["roles"][0]["bullets"]
+    split = [a for a in res.added if a["kind"] == "split"]
+    assert len(split) == 2 and len(first) >= 3
+    # the source (in any wording) is gone: no bullet carries both halves
+    assert not any("roadmap" in b and "unit costs" in b for b in first), first
+    for i, a in enumerate(first):                      # no two bullets share a main clause
+        for b in first[i + 1:]:
+            assert _longest_shared_run(_fact_tokens(a), _fact_tokens(b)) < 5, (a, b)
