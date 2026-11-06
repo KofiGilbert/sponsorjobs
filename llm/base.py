@@ -79,11 +79,14 @@ class LLMBackend(Protocol):
         dates, employer/product names); it re-presents the person's own content.
         """
 
-    def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "") -> list[str]:
+    def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "",
+                     tense: str = "past") -> list[str]:
         """Rewrite ONE bullet that packs several accomplishments as exactly ``parts`` bullets
         (tailoring/assembler.py ``_recency_fill``, making room for one more bullet on a recent
-        role). Every fact comes from ``text``; no phrase repeats across the parts. Return the
-        bullet unchanged in a one-item list when it does not hold that many distinct things."""
+        role). Each part is a complete achievement sentence opening with a verb in ``tense``
+        ("past" or "present"); every fact comes from ``text``; no phrase repeats across the
+        parts. Return the bullet unchanged in a one-item list when it does not hold that many
+        distinct achievements."""
 
     def write_role_bullet(self, role_label: str, material: str, existing: list[str],
                           jd_terms: list[str], max_chars: int, jd_text: str = "") -> str:
@@ -387,9 +390,11 @@ class FakeLLM:
         # produces merged comma-lists in the offline suite, so a no-op is faithful.
         return [str(b).strip() for b in bullets if str(b).strip()]
 
-    def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "") -> list[str]:
+    def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "",
+                     tense: str = "past") -> list[str]:
         """Deterministic: split at a semicolon, else at the last ", and ", into ``parts``
-        sentences of the bullet's own words; the bullet unchanged when it has no such joint."""
+        sentences of the bullet's own words; the bullet unchanged when it has no such joint.
+        It never changes a verb, so the assembler's tense check decides whether it stands."""
         t = str(text or "").strip().rstrip(".")
         bits = [b.strip() for b in t.split(";") if b.strip()]
         if len(bits) < 2 and ", and " in t:

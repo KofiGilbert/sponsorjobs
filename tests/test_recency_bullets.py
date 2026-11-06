@@ -172,10 +172,8 @@ class _Splitter(FakeLLM):
 
 def test_a_split_that_repeats_a_phrase_across_parts_is_refused():
     from tailoring.assembler import _split_ok
-    src = ("Lead business intelligence across the company's products, building KPI dashboards "
-           "and automated Python and SQL reporting that track growth, usage, and unit costs.")
-    good = ["Led business intelligence across the company's products.",
-            "Built KPI dashboards and automated Python and SQL reporting on growth, usage, and unit costs."]
+    src = _SRC
+    good = [_PART1, _PART2]
     echo = ["Built KPI dashboards that track growth, usage, and unit costs.",
             "Automated Python and SQL reporting that tracks growth, usage, and unit costs."]
     assert _split_ok(good, src, src, [], JD)
@@ -362,78 +360,153 @@ def test_when_no_room_can_be_made_the_page_stays_clean_and_says_so(template_sour
 
 
 # --------------------------------------------------------------------------- a split stays split
-# A real build (2026-11-06): the first bullet was split into its two parts, then the line fit
-# lengthened each part with the other's clause, so the page printed the whole original again
-# next to its own second half.
+# Real builds (2026-11-06): the most recent role's first bullet was split in two, then the line
+# fit lengthened each part with the other's clause, so the page printed the whole original
+# again beside its own second half; the second part alone was a thin present-tense half line.
 _SRC = ("Lead business intelligence across the company's products, building KPI dashboards and "
         "automated Python and SQL reporting that track growth, usage, and unit costs, and turn "
         "the results into roadmap and spend decisions.")
-_PART1 = ("Lead business intelligence across the company's products, building KPI dashboards and "
+_PART1 = ("Led business intelligence across the company's products, building KPI dashboards and "
           "automated Python and SQL reporting that track growth, usage, and unit costs.")
-_PART2 = "Turn the reporting results into roadmap and spend decisions."
-_GROWN1 = ("Lead business intelligence across the company's products, building KPI dashboards and "
-           "automated Python and SQL reporting that track growth, usage, and unit costs, then turn "
-           "those results into roadmap and spend decisions for leadership.")
-_GROWN2 = ("Turned KPI dashboard and automated reporting results on growth, usage and unit costs "
-           "into roadmap and spend decisions.")
+_PART2 = ("Turned the dashboard and reporting results into decisions on the product roadmap and "
+          "company spend.")
+_THIN2 = "Turn the reporting results into roadmap and spend decisions."
+# what the line fit made of the parts on the real builds, word for word
+_REAL4_1 = ("Lead business intelligence across the company's products, building KPI dashboards and "
+            "automated Python and SQL reporting that track growth, usage, and unit costs, then turn "
+            "those results into roadmap and spend decisions for leadership.")
+_REAL4_2 = ("Turned KPI dashboard and automated reporting results on growth, usage and unit costs "
+            "into roadmap and spend decisions.")
+_REAL5_1 = ("Lead business intelligence across the company's products, building KPI dashboards and "
+            "automated Python and SQL reporting that track growth, usage, and unit costs, so company "
+            "leaders can make better roadmap and spend decisions.")
+_REAL1 = ("Lead business intelligence across the company's products, building KPI dashboards and "
+          "automated Python and SQL reporting that track growth, usage, and unit costs.")
 
 
-def test_the_sibling_guard_catches_a_part_that_takes_back_its_partners_clause():
+def test_the_sibling_guards_catch_a_part_that_takes_back_its_partners_clause():
     from tailoring.filler import borrows_from_sibling, repeats_sibling
-    # the second real build said it in other connecting words (a 4-word run only)
-    grown = ("Lead business intelligence across the company's products, building KPI dashboards and "
-             "automated Python and SQL reporting that track growth, usage, and unit costs, so company "
-             "leaders can make better roadmap and spend decisions.")
-    assert borrows_from_sibling(_PART1, grown, [_PART2])
-    assert borrows_from_sibling(_PART2, _GROWN2, [_PART1])
-    assert not borrows_from_sibling(_PART2, "Turned the reporting results into roadmap and spend "
-                                            "decisions for the leadership team.", [_PART1])
-    assert repeats_sibling(_PART1, _GROWN1, [_PART2])
-    assert repeats_sibling(_PART2, _GROWN2, [_PART1])
-    assert repeats_sibling("", _GROWN2, [_GROWN1])        # the exact pair that printed
+    assert repeats_sibling("", _REAL4_2, [_REAL4_1])         # the pair that printed
+    assert borrows_from_sibling(_REAL1, _REAL5_1, [_THIN2])  # said again in other words
+    assert borrows_from_sibling(_THIN2, _REAL4_2, [_REAL1])
     # an ordinary resize that adds its own detail still passes
-    assert not repeats_sibling(_PART2, "Turned the reporting results into roadmap and spend "
-                                       "decisions for the leadership team.", [_PART1])
+    assert not borrows_from_sibling(_THIN2, "Turned the reporting results into roadmap and spend "
+                                            "decisions for the leadership team.", [_REAL1])
+
+
+def test_a_split_part_must_be_a_whole_achievement_in_the_roles_tense():
+    from tailoring.assembler import _role_tense, _split_ok
+    ended = {"dates": "Feb 2018 - Sept 2024"}
+    current = {"dates": "March 2026 - Present"}
+    assert _role_tense(ended, {}, ["Lead the team."]) == "past"
+    assert _role_tense(current, {}, ["Built an AI-assisted pipeline."]) == "past"
+    assert _role_tense(current, {}, ["Lead the BI team.", "Own the KPI framework."]) == "present"
+    assert _split_ok([_PART1, _PART2], _SRC, _SRC, [], JD, "past")
+    assert not _split_ok([_PART1, _THIN2], _SRC, _SRC, [], JD, "past")      # thin, present
+    assert not _split_ok([_PART1, _PART2], _SRC, _SRC, [], JD, "present")   # wrong tense
 
 
 class _SplitThenRegrow(FakeLLM):
-    """Rewords every bullet (tailoring), splits the long one in two, writes nothing, and on a
-    resize hands back the bullet with its sibling's clause glued on, as the real model did."""
+    """Splits the long bullet in two, writes nothing, and on every resize hands back the part
+    with its partner's clause glued on, as the real model did."""
 
-    def __init__(self):
+    def __init__(self, parts=(_PART1, _PART2)):
         super().__init__()
-        self.regrows = 0
+        self.parts = list(parts)
+        self.resized = []
 
     def write_role_bullet(self, *a, **k):
         return ""
 
-    def split_bullet(self, role_title, text, parts, jd_text=""):
-        return [_PART1, _PART2] if "roadmap" in text else [text]
+    def split_bullet(self, role_title, text, parts, jd_text="", tense="past"):
+        return list(self.parts) if "roadmap" in text else [text]
 
     def fit_bullet(self, text, min_chars, max_chars, jd_text="", context=""):
-        self.regrows += 1
-        if text.startswith("Lead business"):
-            return _GROWN1
-        if text.startswith("Turn the"):
-            return _GROWN2
+        self.resized.append(text)
+        if text.startswith("Led business"):
+            return text.rstrip(".") + ", then turned the dashboard and reporting results into decisions on the product roadmap."
+        if text.startswith("Turned the dashboard"):
+            return ("Turned KPI dashboard and automated reporting results on growth, usage and unit "
+                    "costs into decisions on the product roadmap and company spend.")
         return text
+
+
+def _first_role(res):
+    return res.profile_used["experience"][0]["roles"][0]["bullets"]
+
+
+def _src_profile():
+    prof = copy.deepcopy(_near_full())
+    prof["experience"][0]["roles"][0]["bullets"] = [
+        _SRC, "Built weekly SQL and Tableau dashboards that track on-time delivery for 14 regional depots."]
+    return prof
 
 
 @requires_latex
 def test_a_tailored_then_split_bullet_never_leaves_its_original_clause_on_the_page(
         template_source, workdir):
     from tailoring.filler import _fact_tokens, _longest_shared_run
-    prof = copy.deepcopy(_near_full())
-    prof["experience"][0]["roles"][0]["bullets"] = [
-        _SRC, "Built weekly SQL and Tableau dashboards that track on-time delivery for 14 regional depots."]
     llm = _SplitThenRegrow()
-    res = assemble_cv(template_source, prof, JD, llm, workdir, tailor=True, fit_lines=True)
+    res = assemble_cv(template_source, _src_profile(), JD, llm, workdir, tailor=True, fit_lines=True)
     assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
-    first = res.profile_used["experience"][0]["roles"][0]["bullets"]
-    split = [a for a in res.added if a["kind"] == "split"]
-    assert len(split) == 2 and len(first) >= 3
-    # the source (in any wording) is gone: no bullet carries both halves
+    first = _first_role(res)
+    assert len([a for a in res.added if a["kind"] == "split"]) == 2 and len(first) >= 3
     assert not any("roadmap" in b and "unit costs" in b for b in first), first
     for i, a in enumerate(first):                      # no two bullets share a main clause
         for b in first[i + 1:]:
             assert _longest_shared_run(_fact_tokens(a), _fact_tokens(b)) < 5, (a, b)
+    assert all(_opens(b) for b in first)                 # one tense: past
+
+
+def _opens(b):
+    from tailoring.assembler import _opens_in_past
+    return _opens_in_past(b) or b.split(":")[0].count(",") >= 1   # FakeLLM's term prefix
+
+
+@requires_latex
+def test_a_thin_second_part_keeps_the_bullet_whole(template_source, workdir):
+    res = assemble_cv(template_source, _src_profile(), JD, _SplitThenRegrow((_PART1, _THIN2)),
+                      workdir, tailor=True)
+    assert [a for a in res.added if a["kind"] == "split"] == []
+    assert not any(b.endswith(_THIN2) for b in _first_role(res))
+    assert any("Lead business intelligence" in b for b in _first_role(res))    # kept whole
+
+
+def test_the_line_fit_never_takes_the_point_of_a_bullet_cut_to_fit(monkeypatch):
+    """Putting a cut bullet back must not print its point twice: a resize that borrows it is
+    refused, even though the fact gate knows the words (they are the person's own)."""
+    from types import SimpleNamespace
+    from tailoring import linefit as LF
+    from tailoring.fact_gate import known_material, source_figures
+    kept = "Built SQL data management pipelines at CSIR for structured querying and analytical reporting."
+    cut = "Reviewed the lab's survey records each week and corrected entry errors at the source."
+    grown = kept.rstrip(".") + ", and reviewed the lab's survey records each week."
+    p = {"identity": {"name": "T"}, "experience": [{"org": "CSIR", "roles": [
+        {"title": "Research Assistant", "bullets": [kept]}]}]}
+    short = LF.LineReport(items=[LF.ItemFit("bullet", "CSIR", kept, lines=1, last_fill=0.5, slot=0)],
+                          left=0.0, right=400.0)
+    full = LF.LineReport(items=[LF.ItemFit("bullet", "CSIR", grown, lines=1, last_fill=0.97, slot=0)],
+                         left=0.0, right=400.0)
+    calls = {"n": 0}
+
+    def fake_measure(*_a, **_k):
+        calls["n"] += 1
+        return short if calls["n"] == 1 else full
+
+    class _Grow(FakeLLM):
+        def fit_bullet(self, text, min_chars, max_chars, jd_text="", context=""):
+            return grown
+
+    def run(trimmed):
+        calls["n"] = 0
+        return LF.fit_lines(copy.deepcopy(p), SimpleNamespace(pdf_path="x.pdf"),
+                            render=lambda _p: "", compile_fn=lambda _t, _n: SimpleNamespace(pdf_path="y.pdf"),
+                            is_clean=lambda _r: True, llm=_Grow(), jd_text="", rounds=1,
+                            known=known_material(p, cut), known_figures=source_figures(p),
+                            trimmed=trimmed)
+    monkeypatch.setattr(LF, "measure", fake_measure)
+    out = run({"CSIR, Research Assistant": [cut]})
+    assert out.profile["experience"][0]["roles"][0]["bullets"] == [kept]
+    assert any("cut to fit" in str(r["claims"]) for r in out.rejected)
+    # without the cut on record the same resize goes through: the test exercises the real path
+    assert run({}).profile["experience"][0]["roles"][0]["bullets"] == [grown]

@@ -735,7 +735,7 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
               llm=None, jd_text: str = "", skill_pool=(), known: dict | None = None,
               known_figures: set | None = None, origins: dict | None = None,
               rounds: int = FIT_ROUNDS, fit_bullets: bool = True,
-              jobname: str = "cv", frozen=()) -> FitOutcome:
+              jobname: str = "cv", trimmed: dict | None = None) -> FitOutcome:
     """Measure the compiled page and fix the lines that stop short, for up to ``rounds``
     rounds. Each round: repack the Skills block with widths calibrated to the real page, and
     ask the model to fill or trim each short bullet to a measured character window; compile;
@@ -746,9 +746,10 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     ``render(profile) -> tex`` and ``compile_fn(tex, jobname) -> CompileResult`` come from the
     assembler (so this module needs no layout knowledge); ``is_clean(result)`` is its page
     check. ``skill_pool`` is more of the person's own skills; each is re-checked here against
-    ``known`` (the fact gate's view of their material) before it can reach the page. A bullet
-    whose text is in ``frozen`` (one the assembler wrote for the person to review) is never
-    resized.
+    ``known`` (the fact gate's view of their material) before it can reach the page.
+    ``trimmed`` ({entry label: [bullet text]}) holds what the one-page fit cut from each entry:
+    a resize may not take a cut bullet's point either, so putting it back never prints the
+    same thing twice.
     """
     from .fact_gate import gate_rewrite
     from .filler import borrows_from_sibling, is_padded, repeats_sibling, tacked_on_terms
@@ -794,8 +795,6 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                     continue
                 bl, idx, grounding, section, label = slots[it.slot]
                 text = str(bl[idx])
-                if text in frozen:
-                    continue
                 done = tried.setdefault(it.slot, set())
                 spill = it.lines >= 2 and it.last_fill < SPILL_TRIM
                 order = ["trim", "fill"] if spill else (["fill", "trim"] if it.lines >= 2 else ["fill"])
@@ -816,6 +815,9 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                            else [])
                        or (["takes another bullet's point"]
                            if borrows_from_sibling(text, new, siblings) else [])
+                       or (["takes the point of a bullet cut to fit"]
+                           if borrows_from_sibling(text, new, (trimmed or {}).get(label) or ())
+                           else [])
                        or tacked_on_terms(text, new)
                        or gate_rewrite(text, new, known=known, known_figures=known_figures))
                 if bad:

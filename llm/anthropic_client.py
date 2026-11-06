@@ -396,7 +396,8 @@ class AnthropicLLM:
                 pass
         return [str(b).strip() for b in bullets if str(b).strip()]
 
-    def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "") -> list[str]:
+    def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "",
+                     tense: str = "past") -> list[str]:
         """Rewrite ONE dense bullet as exactly ``parts`` bullets, from its own words only
         (tailoring/assembler.py ``_recency_fill``). The assembler checks every part again: no
         new figure, name or skill, no phrase repeated across parts."""
@@ -404,16 +405,19 @@ class AnthropicLLM:
         system = (
             f"You rewrite ONE resume bullet as EXACTLY {n} bullets, because it packs several "
             "accomplishments into one line and the page has room for one more line.\n"
-            f"- Group what the bullet says into {n} distinct accomplishments, each its own plain, "
-            "complete sentence starting with a concrete action verb.\n"
+            f"- Group what the bullet says into {n} distinct accomplishments. Each is a complete "
+            "achievement sentence of 90 to 170 characters that stands on its own: what was done, "
+            "with what or for whom, and the result where the bullet states one.\n"
+            f"- Start every bullet with a concrete action verb in the {tense} tense"
+            + (" (Led, Built, Turned)" if tense == "past" else " (Lead, Build, Turn)") + ".\n"
             "- Use ONLY what the bullet states. Keep every number and name it states, and add "
             "none: no new figure, tool, employer, product, purpose or result.\n"
             "- Each bullet says something the others do not. Never repeat a phrase, a scope or "
             "a result across bullets (do not end every bullet with the same list).\n"
             "- No filler (demonstrating, ensuring, leveraging, robust, comprehensive, seamless), "
             "no em or en dashes.\n"
-            f"- If the bullet does not hold {n} distinct accomplishments, return it unchanged as "
-            "the only item.\n"
+            f"- If the bullet does not hold {n} accomplishments that can each stand alone as a "
+            "full sentence, return it unchanged as the only item.\n"
             "Return ONLY a JSON array of strings."
         )
         user = (f"ROLE TITLE: {role_title}\n\nBULLET:\n{text}\n\n"

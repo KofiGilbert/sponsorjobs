@@ -1619,24 +1619,64 @@ def _looks_merged(text: str) -> bool:
                              or (len(t) >= 120 and " and " in t))
 
 
-def _split_call(llm, title: str, src: str, jd_text: str, room: int) -> list:
-    """One bullet split for the recency fill: ``llm.split_bullet`` into exactly two parts (one
-    more bullet, the least room it takes), or, for a backend without it, ``llm.expand_bullets``
-    (the caller drops a split with more parts than ``room``)."""
+def _split_call(llm, title: str, src: str, jd_text: str, tense: str) -> list:
+    """One bullet split for the recency fill: ``llm.split_bullet`` into exactly two parts in
+    ``tense`` (one more bullet, the least room it takes), or, for a backend without it,
+    ``llm.expand_bullets`` (the caller drops a split with the wrong number of parts)."""
     if callable(getattr(llm, "split_bullet", None)):
-        return llm.split_bullet(title, src, 2, jd_text)
+        return llm.split_bullet(title, src, 2, jd_text, tense=tense)
     return llm.expand_bullets(title, [src], jd_text)
 
 
-def _split_ok(parts: list, src: str, role_text: str, siblings, jd_text: str) -> bool:
+_IRREGULAR_PAST = frozenset("""
+built led ran made drove wrote grew cut set won began took gave brought sought taught held kept
+met spent sold bought found chose saw oversaw understood rebuilt rewrote overhauled shipped put
+became sent told thought upheld undertook withdrew
+""".split())
+
+
+def _opens_in_past(text: str) -> bool:
+    """Does the bullet open with a past-tense verb ("Built", "Analyzed")?"""
+    m = re.match(r"\s*([A-Za-z]+)", str(text or ""))
+    w = m.group(1).lower() if m else ""
+    return w in _IRREGULAR_PAST or (len(w) > 3 and w.endswith("ed"))
+
+
+def _role_tense(role: dict, entry: dict, others) -> str:
+    """The tense a new bullet of this role takes: "past" for a role that has ended; for a
+    current role, the tense most of its other bullets on the page open in (past on a tie or
+    with none to go by, which is how a resume reads)."""
+    if not _PRESENT_RE.search(str(role.get("dates") or entry.get("dates") or "")):
+        return "past"
+    others = [o for o in others or () if str(o).strip()]
+    present = sum(1 for o in others if not _opens_in_past(o))
+    return "present" if present > len(others) - present else "past"
+
+
+# A part of a split that is shorter than this, or says fewer content words, is too thin to
+# stand as its own achievement ("Turn the reporting results into roadmap and spend decisions.",
+# a real build): the bullet is kept whole instead.
+SPLIT_MIN_CHARS = 80
+SPLIT_MIN_WORDS = 7
+
+
+def _split_ok(parts: list, src: str, role_text: str, siblings, jd_text: str,
+              tense: str = "") -> bool:
     """Every part of a split restates only its source bullet: no new figure, name or skill,
-    no filler, no repeat of another bullet or of another part."""
+    no filler, no repeat of another bullet or of another part. Each part is a complete
+    achievement of its own (``SPLIT_MIN_CHARS``, ``SPLIT_MIN_WORDS``) and opens in ``tense``."""
     from .fact_gate import figures, known_material, new_claims
     from .filler import _fact_tokens, _longest_shared_run, filler_added, shares_a_clause
     from .keywords import introduced_skills
 
+    from .filler import _content_stems
+
     known = known_material(src, role_text)
     for n, part in enumerate(parts):
+        if len(part) < SPLIT_MIN_CHARS or len(_content_stems(part)) < SPLIT_MIN_WORDS:
+            return False
+        if tense and _opens_in_past(part) != (tense == "past"):
+            return False
         if (figures(part) - figures(src) or new_claims(part, known=known)
                 or introduced_skills(src, part, role_text, jd_text) or filler_added(src, part)
                 or len(part) > _bullet_budget(src)):
@@ -1744,16 +1784,17 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                 if src in st["tried"] or not _looks_merged(src):
                     continue
                 st["tried"].add(src)
+                others = [x for k, x in enumerate(bl) if k != i]
+                tense = _role_tense(role, entry, others)
                 try:
-                    parts = _split_call(llm, str(role.get("title") or ""), src, jd_text, room)
+                    parts = _split_call(llm, str(role.get("title") or ""), src, jd_text, tense)
                 except Exception:                              # noqa: BLE001 - a split is optional
                     continue
                 parts = [str(x).strip() for x in parts or [] if str(x).strip()]
                 if len(parts) < 2 or len(bl) - 1 + len(parts) > most:
                     continue
-                if not _split_ok(parts, src, role_text, [x for k, x in enumerate(bl) if k != i],
-                                 jd_text):
-                    continue
+                if not _split_ok(parts, src, role_text, others, jd_text, tense):
+                    continue                                   # too thin or off: keep it whole
                 for x in parts:
                     origins[x] = src
                 return (bl[:i] + parts + bl[i + 1:],
@@ -1919,6 +1960,16 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list):
                 forget(rec)
             return undo
     return None
+
+
+def _trimmed_by_label(trims) -> dict:
+    """{entry label: [text]} of the bullets and sentences the one-page fit cut."""
+    out: dict = {}
+    for t in trims or ():
+        if t.get("kind") in ("bullet", "sentence"):
+            text = str(t.get("cut") or t.get("text") or "")
+            out.setdefault(str(t.get("label") or ""), []).append(text)
+    return out
 
 
 def _resolve_added(used: dict, added: list, origins: dict) -> list:
@@ -2118,9 +2169,8 @@ def assemble_cv(
             render=lambda p: render_cv(preamble, p, sections, probe=True, headings=headings),
             compile_fn=lambda tex, name: compile_tex(tex, workdir, jobname=name),
             is_clean=_clean, llm=llm, jd_text=jd_text, skill_pool=skill_pool,
-            # A written bullet stays exactly as the gate passed it and the person reviews it; the
-            # parts of a split stay as split (lengthening one pulled its partner's clause back).
-            frozen={a["bullet"] for a in added if a.get("kind") in ("written", "split")},
+            # A resize never takes the point of a bullet cut to fit (Put back would print it twice).
+            trimmed=_trimmed_by_label(trims),
             known=known_material(*gate_material), known_figures=source_figures(*gate_material),
             origins=origins, rounds=_lf.FIT_ROUNDS if fit_rounds is None else fit_rounds,
             fit_bullets=llm is not None, jobname=jobname)
