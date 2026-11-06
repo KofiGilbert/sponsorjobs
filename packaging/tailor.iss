@@ -11,6 +11,9 @@
 #define AppVersion     "0.1.0"
 #define AppPublisher   "Black Origin"
 #define AppExeName     "SponsorJobs.exe"
+; True when this build carries its own LaTeX (packaging/install_tinytex.py, copied into
+; dist\SponsorJobs\tinytex). Then there is no prerequisite to check for.
+#define BundledLatex   FileExists(AddBackslash(SourcePath) + "..\dist\SponsorJobs\tinytex\bin\windows\pdflatex.exe")
 
 [Setup]
 AppId={{8E5A1C74-3B2D-4E96-9A1F-7C6B0D2E4F13}
@@ -72,6 +75,12 @@ Filename: "{app}\{#AppExeName}"; Description: "Open SponsorJobs"; Flags: nowait 
 ; that folder alone.
 
 [Code]
+#if BundledLatex
+// This build carries its own LaTeX (dist\SponsorJobs\tinytex, a pinned TinyTeX): the app
+// finds it next to SponsorJobs.exe before looking for a system TeX, so there is nothing for
+// the person to install and nothing to warn about.
+#else
+// A build WITHOUT the bundled LaTeX (packaging/install_tinytex.py was not run).
 // SponsorJobs renders CVs with LaTeX and cannot make a single PDF without it. Checked BEFORE
 // installing rather than after: finding out at first run, when the person is trying to
 // build their first CV, is the worst possible moment to learn about a prerequisite.
@@ -99,10 +108,11 @@ begin
   Result := True;
   if not LatexFound() then
   begin
-    if MsgBox('SponsorJobs uses LaTeX to typeset your CV, and it looks like LaTeX is not installed yet.'
+    if MsgBox('SponsorJobs uses LaTeX to typeset your resume, and it looks like LaTeX is not installed yet.'
       + #13#10#13#10 'You can continue and install it afterwards from miktex.org, but SponsorJobs will not'
       + ' be able to produce a PDF until you do.'
       + #13#10#13#10 'Continue anyway?', mbConfirmation, MB_YESNO) = IDNO then
       Result := False;
   end;
 end;
+#endif

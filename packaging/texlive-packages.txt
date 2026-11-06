@@ -1,0 +1,65 @@
+# TeX Live packages the resume templates load, installed into the bundled TinyTeX by
+# packaging/install_tinytex.py (TinyTeX-1 already carries most; tlmgr skips those).
+#
+# Every name here owns at least one file pdflatex actually opened while building all 16
+# template previews (the .fls recorder output), so this is the measured set, not a guess.
+# Regenerate after changing a template's preamble, with a FULL TeX Live (e.g. Homebrew's):
+#
+#   python packaging/latex_check.py --pdflatex /opt/homebrew/bin/pdflatex --deps
+#
+# and replace the list below with what it prints. Then rebuild the bundle and run
+#   python packaging/latex_check.py --pdflatex <bundle>/bin/<platform>/pdflatex --reference /opt/homebrew/bin/pdflatex
+#
+# l3backend was folded into l3kernel in TeX Live 2026; l3kernel covers it.
+
+# The engine and its LaTeX format (the format itself is prebuilt in the release).
+latex-bin
+latex
+l3kernel
+latexconfig
+kpathsea
+
+# Packages the templates' preambles load, and what they load in turn.
+amscls
+amsmath
+amsfonts
+bbm-macros
+bigintcalc
+bitset
+blindtext
+enumitem
+epstopdf-pkg
+etoolbox
+geometry
+gettitlestring
+graphics
+graphics-cfg
+graphics-def
+hycolor
+hyperref
+iftex
+infwarerr
+intcalc
+kvdefinekeys
+kvoptions
+kvsetkeys
+listings
+ltxcmds
+microtype
+mptopdf
+pdfescape
+pdftexcmds
+refcount
+rerunfilecheck
+stringenc
+tools
+uniquecounter
+url
+xcolor
+
+# Fonts: Computer Modern (cm, amsfonts), the T1 European Modern metrics (ec) and their
+# Type 1 outlines (cm-super), and the font-name map pdflatex consults.
+cm
+ec
+cm-super
+fontname

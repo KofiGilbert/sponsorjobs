@@ -134,3 +134,32 @@ company's brand apart from its legal name (`sourcing/brands.py`).
   colour the code excerpts in Projects, Learn it and Defend it. No highlight.js theme CSS is shipped;
   the colours are our own tokens in `styles.css`. Nothing is fetched at runtime. Full license text:
   `ui/static/vendor/highlight-LICENSE.txt`.
+
+## Bundled LaTeX (TinyTeX, a minimal TeX Live)
+
+The desktop installers carry their own LaTeX so resumes typeset with no separate install:
+**TinyTeX v2026.11** (https://github.com/rstudio/tinytex-releases), a minimal build of
+**TeX Live 2026** (https://tug.org/texlive/), with only the TeX Live packages the resume
+templates load (`packaging/texlive-packages.txt`). It is installed by
+`packaging/install_tinytex.py` into `resources/engine/tinytex` and runs as separate programs
+(pdflatex, kpsewhich) that the app starts; none of it is linked into the app's own code.
+
+- **TinyTeX** (Yihui Xie and Posit), **GPL-2**. The bundle is TinyTeX's TeX Live tree; its
+  helper scripts are stripped out.
+- **TeX Live** is a collection of separately licensed free software. Each package keeps its
+  own licence; the bundle ships TeX Live's `LICENSE.TL` and `LICENSE.CTAN` and a
+  `tinytex-manifest.txt` naming every installed package with its revision and licence.
+  The main ones:
+  - **pdfTeX** (the pdflatex program) and **fontname**, GPL-2; **kpathsea** (file lookup
+    library), LGPL-2.1.
+  - **LaTeX** kernel and most macro packages (amsmath, amscls, geometry, graphics,
+    hyperref, listings, microtype, tools, xcolor, etoolbox, the Oberdiek utilities and
+    others), **LaTeX Project Public License 1.3c** or earlier 1.x; **enumitem** and
+    **hyph-utf8**, MIT; **graphics-cfg** and **tex-ini-files**, public domain.
+  - Fonts: **Computer Modern** (cm, Knuth's licence), **AMS fonts** (SIL Open Font
+    License 1.1), **EC fonts** (free, see the package), **CM-Super** Type 1 fonts (GPL, which
+    permits embedding the fonts in documents such as the resumes the app makes).
+  - **mptopdf** (ConTeXt), GPL.
+- Source code for every program in the bundle is TeX Live 2026's, published at
+  https://tug.org/texlive/ (and https://ctan.org/tex-archive/systems/texlive/Source); the
+  exact package revisions are listed in `tinytex-manifest.txt` inside the install.

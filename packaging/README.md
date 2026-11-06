@@ -9,6 +9,7 @@ desktop icon, and no terminal window.
 pip install pyinstaller
 python packaging/bundle_sponsor_db.py      # vet + stage the visa-data snapshot (55MB)
 pyinstaller packaging/tailor.spec          # -> dist/SponsorJobs/SponsorJobs.exe
+python packaging/install_tinytex.py dist/SponsorJobs/tinytex   # the bundled LaTeX
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\tailor.iss
                                            # -> dist/installer/SponsorJobsSetup.exe
 ```
@@ -24,6 +25,7 @@ machine it runs on, so an Apple Silicon Mac makes an `arm64` build.
 pip install pyinstaller
 python packaging/bundle_sponsor_db.py
 pyinstaller packaging/tailor.spec --noconfirm        # -> dist/SponsorJobs/SponsorJobs
+python packaging/install_tinytex.py dist/SponsorJobs/tinytex   # the bundled LaTeX
 cd shell-electron
 npm install
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac -- \
@@ -37,22 +39,51 @@ The build is **not signed or notarized**. macOS will refuse to open it on first 
 person opens **System Settings > Privacy & Security** and clicks **Open Anyway**, once.
 Signing needs an Apple Developer account ($99 a year); add it before a wide launch.
 
-LaTeX is a prerequisite on macOS too. `tailoring/compiler.py` looks in MacTeX's
-`/Library/TeX/texbin` and Homebrew's bin directories itself, because an app opened from
-the Finder does not inherit the shell's PATH.
+The LaTeX ships inside the app (next section), so nothing else needs installing on macOS
+either.
 
 ## The decisions, and why
 
-**The CV templates are untouched.** We render with the same pdflatex, at the same settings,
-so an installed CV is byte-for-byte the CV the dev run makes. Tectonic (a 20MB self-
+**The resume templates are untouched.** We render with the same pdflatex, at the same
+settings, so an installed resume is the resume the dev run makes. Tectonic (a 20MB self-
 contained LaTeX) was measured as a way to shrink the download, and it would have forced
 `microtype` font expansion off. That was rejected: the download size is not worth any
 change to the output.
 
-**LaTeX is a prerequisite, not a bundle.** It is a ~600MB toolchain with its own installer;
-PyInstaller is the wrong tool for relocating it. `tailor.iss` checks for MiKTeX/TeX Live
-*before* installing and says so plainly, because discovering a missing prerequisite while
-trying to build your first CV is the worst possible moment.
+**LaTeX ships inside the installer (decided 2026-11-06).** Until then LaTeX was a
+prerequisite: the person installed MacTeX or MiKTeX (a ~600MB toolchain with its own
+installer) before the app could make a single PDF, and `tailor.iss` warned when it was
+missing. Now both installers carry a pinned **TinyTeX** in `resources/engine/tinytex`.
+
+Why TinyTeX: it is not another engine, it is a minimal, relocatable TeX Live. Its pdflatex
+is TeX Live's pdflatex (pdfTeX 1.40.29, TeX Live 2026, the same as a MacTeX or Homebrew
+install), so the templates, `microtype` expansion included, run unchanged. We add only the
+packages the templates load (`texlive-packages.txt`, measured from the files pdflatex
+actually opens) and strip docs, sources, tlmgr and the other engines.
+
+- `install_tinytex.py <dir>` downloads the pinned release (`TINYTEX_VERSION`, SHA-256
+  checked), installs the package list with tlmgr, strips it, and writes
+  `tinytex-manifest.txt` (release, checksum, every package with revision and licence).
+- `release.yml` runs it on the macOS arm64 and Windows x64 jobs (cached), copies it to
+  `dist/SponsorJobs/tinytex` after PyInstaller, and compiles every template with it before
+  building the installer.
+- `tailoring/compiler.py` looks for the bundle FIRST in an installed app, beside the engine
+  executable (`.../SponsorJobs.app/Contents/Resources/engine/tinytex/bin/universal-darwin/`
+  on macOS, `<install dir>\resources\engine\tinytex\bin\windows\` on Windows), then
+  falls back to a system TeX as before. No PATH involved. `PDFLATEX` still overrides both.
+- `latex_check.py --pdflatex <bundle> --reference <system pdflatex>` builds all 16 templates
+  with both and compares page count, text, a pixel diff and the PDF streams. Against
+  Homebrew's TeX Live 2026 on 2026-11-06: identical on all 16 (0 differing pixels, same
+  text, same page content and font subsets). The one difference is invisible: TinyTeX's
+  newer LaTeX kernel (2026-06-01 vs 2025-11-01) adds a copy-and-paste Unicode mapping for
+  one unused math glyph. `tests/test_bundled_latex.py` runs the comparison when a local
+  TinyTeX exists. `.github/workflows/latex-bundle.yml` compiles every template with the
+  bundle on macOS and Windows for every change to packaging or the templates.
+- Size: about 120MB on disk, about 80MB more in each download (the Type 1 fonts, mostly
+  cm-super, are most of it and barely compress).
+- To move to a newer TinyTeX: change `TINYTEX_VERSION` and the four `PINS`, rebuild, and
+  re-run the comparison. The bundle is read-only at run time: nothing writes into it, which
+  matters on macOS where it sits inside the signed app.
 
 **One folder, not one file.** A `--onefile` exe unpacks ~60MB to a temp dir on every
 launch: a visible pause each time, and the toolchain lands somewhere different on each run.

@@ -1,0 +1,99 @@
+name: bundled-latex
+
+# Proves the LaTeX the installers carry (packaging/install_tinytex.py) still builds every
+# resume template, on the two platforms we ship: macOS Apple Silicon and Windows x64. It
+# installs the pinned TinyTeX exactly as .github/workflows/release.yml does, then compiles
+# every template as the INSTALLED engine would find it, and fails if any template fails or is
+# not exactly one page.
+#
+# A check only: it creates no tag, no release and no installer.
+
+on:
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "tailoring/compiler.py"
+      - "config/resume_*.tex"
+      - "config/templates/**"
+      - ".github/workflows/latex-bundle.yml"
+  # On main too, so the cached bundle lives on the default branch, where a release's tag
+  # build can restore it (a cache saved on a pull request is visible to that PR only).
+  push:
+    branches: [main]
+    paths:
+      - "packaging/**"
+      - "tailoring/compiler.py"
+      - "config/resume_*.tex"
+      - "config/templates/**"
+      - ".github/workflows/latex-bundle.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  check:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: macos-arm64
+          - os: windows-latest
+            label: windows-x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install SponsorJobs
+        shell: bash
+        run: python -m pip install -e ".[llm]"
+
+      # Same key as release.yml.
+      - name: Cache the bundled LaTeX
+        id: tinytex-cache
+        uses: actions/cache@v4
+        with:
+          path: .tinytex/tinytex
+          key: tinytex-${{ matrix.label }}-${{ hashFiles('packaging/install_tinytex.py', 'packaging/texlive-packages.txt') }}
+
+      - name: Install the bundled LaTeX (TinyTeX)
+        if: steps.tinytex-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: python packaging/install_tinytex.py .tinytex/tinytex --cache .tinytex/download
+
+      - name: Show what the bundle holds
+        shell: bash
+        run: |
+          head -2 .tinytex/tinytex/tinytex-manifest.txt
+          ls .tinytex/tinytex/bin/*
+          du -sh .tinytex/tinytex
+
+      # Lay it out the way the installed app has it (engine folder with tinytex/ inside) and
+      # let the app's own lookup find it: no PATH help, no PDFLATEX override.
+      - name: Compile every resume template with the bundled LaTeX
+        shell: bash
+        run: |
+          rm -rf .tinytex/engine && mkdir -p .tinytex/engine
+          cp -R .tinytex/tinytex .tinytex/engine/tinytex
+          python packaging/latex_check.py --as-installed .tinytex/engine \
+            --out .tinytex/check --json .tinytex/check.json
+
+      - name: Keep the PDFs for a look
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: latex-check-${{ matrix.label }}
+          path: .tinytex/check/bundle/preview-*.pdf
+          if-no-files-found: ignore
+          retention-days: 7
