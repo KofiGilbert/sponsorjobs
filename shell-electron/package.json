@@ -25,11 +25,7 @@
       "output": "release"
     },
     "files": [
-      "main.js",
-      "frames.js",
-      "pagewatch.js",
-      "links.js",
-      "preload.js",
+      "*.js",
       "package.json"
     ],
     "extraResources": [
