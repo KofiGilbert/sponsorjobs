@@ -234,7 +234,7 @@ const DL_URLS = {
   "mac-arm64": REPO_URL + "/releases/latest",
   "src-zip": REPO_URL + "/archive/refs/heads/main.zip",
   "src-tgz": REPO_URL + "/archive/refs/heads/main.tar.gz",
-  "src-intel": "open-source.html",
+  "src-intel": "https://github.com/KofiGilbert/sponsorjobs#install",
 };
 const DL_MENU = {
   win: { split: false, hint: 'Windows 10 or later, 64-bit. <a href="download.html">Install steps</a>',
@@ -242,9 +242,9 @@ const DL_MENU = {
   mac: { split: true,
     items: [
       { key: "mac-arm64", label: ".dmg (Apple Silicon)", hint: 'Apple Silicon installer. <a href="download.html">Install steps</a>' },
-      { key: "src-intel", label: "Intel Mac: run from source", hint: 'No Intel installer yet. <a href="open-source.html">Run it from source</a>.' },
+      { key: "src-intel", label: "Intel Mac: run from source", hint: 'No Intel installer yet. <a href="https://github.com/KofiGilbert/sponsorjobs#install" rel="noopener">Run it from source</a>.' },
     ] },
-  linux: { split: false, hint: 'No Linux installer yet. <a href="open-source.html">Run it from source</a>.',
+  linux: { split: false, hint: 'No Linux installer yet. <a href="https://github.com/KofiGilbert/sponsorjobs#install" rel="noopener">Run it from source</a>.',
     items: [{ key: "src-zip", label: "Source code (.zip)" }, { key: "src-tgz", label: "Source code (.tar.gz)" }] },
 };
 const dlRenders = [];   // one render per control on the page (the hero and the download card)
@@ -360,7 +360,7 @@ function markPrimaryForThisOS() {
   if (alt) {
     alt.textContent = "";
     const a = document.createElement("a");
-    a.href = os === "win" ? "download.html" : "open-source.html";
+    a.href = os === "win" ? "download.html" : "https://github.com/KofiGilbert/sponsorjobs#install";
     a.textContent = os === "win" ? "Also on macOS" : "On Linux, run it from source";
     alt.append("Free and open source. ", a, ".");
   }
