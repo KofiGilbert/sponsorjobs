@@ -418,6 +418,23 @@ _DECLINE_VERB = (r"(?:no\b|not\b|n['’]?t\b|do ?n['’]?t|dont|without|skip|omi
                  r"haven['’]?t got|have none|none\b)")
 
 
+# A bare "none" with no section named. It only means something in context: while the
+# required-sections question (Extracurricular / Interests) is open, it declines exactly
+# those open sections, the same as the "None, leave it off" button. Kept to whole-message
+# matches so an answer that merely contains "no" is never read as a decline.
+_BARE_DECLINE = re.compile(
+    r"^\s*(?:none|no|nope|nothing|n/?a|"
+    r"(?:i\s+)?(?:have|got)\s+none|"
+    r"(?:i\s+)?(?:do\s*n['’]?t|dont)\s+have\s+(?:any|one|those|them)(?:\s+of\s+(?:those|them))?|"
+    r"nothing\s+to\s+add|none\s+of\s+(?:those|them)|"
+    r"(?:none,?\s+)?leave\s+(?:it|them|both)\s+off|skip(?:\s+(?:it|them|both))?|"
+    r"(?:none|no),?\s+(?:thanks|thank\s+you))\s*[.!]*\s*$", re.I)
+
+
+def _bare_decline(message: str) -> bool:
+    return bool(_BARE_DECLINE.match(message or ""))
+
+
 def _note_declines(message: str, declined: set) -> set:
     """Detect 'I don't have a GitHub / no blog / skip courses / no projects' and
     record the declined element so the gate stops asking for it."""
@@ -2239,6 +2256,14 @@ class WebIntake:
             "can_autobuild": bool(self.returning and (self.saved_profile or {}).get("experience")
                                   and self.assembled is None and self.stage == "chatting"),
         }
+        # While the required-sections question is open, the build button can do nothing but
+        # ask again, so it is not offered. The UI offers "None, leave it off" instead (a real
+        # decline of exactly these sections) and keeps the text box for a real answer.
+        req_open = self._required_question_open()
+        if req_open:
+            s["can_autobuild"] = False
+            s["required_open"] = [{"key": k, "label": lbl} for k, lbl
+                                  in zip(req_open, self._required_labels(req_open))]
         if self.recalled:
             s["recalled"] = self.recalled
         if self.rule_proposals:
@@ -2324,6 +2349,7 @@ class WebIntake:
         # opts out in the same breath ("…just build with what you have"), extract
         # before acting on the override so the build uses what they just gave, not
         # an empty profile.
+        declined_now: list[str] = []
         prior_projects = [dict(p) for p in (self.essentials.get("projects") or [])]
         prior_education = [dict(d) for d in (self.essentials.get("education") or [])]
         out = self.llm.extract_intake(self.jd, self.essentials, self.history)
@@ -2357,9 +2383,15 @@ class WebIntake:
         # asked before the first draft) is REAL material the skeleton extractor doesn't
         # capture, fold it in here so the required-sections gate below sees it.
         if self.assembled is None and self.essentials.get("asked_required"):
+            # Absorb any real material in this message FIRST (absorb-then-finalize).
             self._absorb_enrichment(message)
-            # Content given alongside "that's everything" is absorbed, THEN, once the
-            # required sections are addressed, finalizes (absorb-then-finalize, pre-build).
+            # Then a bare "none" / "skip", or "that's everything" (which the question itself
+            # invites), answers the open question: it declines exactly the required sections
+            # STILL empty, recorded like any named decline (and reused next job). A section
+            # that just got real content stays. Re-asking here was the same loop as the build
+            # button in other words.
+            if _bare_decline(message) or _wants_done(message):
+                declined_now = self._decline_open_required()
             if _wants_done(message) and not self._open_required_sections():
                 self.essentials["enrich_done"] = True
         reply = str(out.get("reply", "")).strip()
@@ -2387,6 +2419,13 @@ class WebIntake:
             self.essentials["override"] = True
             return self._build_now()
 
+        # A bare "none" that just closed the required-sections question: carry on down the
+        # path the person was on (their saved profile, or the chat draft), with no model
+        # reply in front of it, since the extractor's line could thank them for material
+        # they never gave.
+        if declined_now and not self._open_required_sections():
+            return self._resume_after_required()
+
         # P1 (Task 1): a free-form turn (context, goals, preferences, a question to the copilot)
         # gets a conversational reply grounded in full history + recalled + facts, instead of a
         # CV-field question, and is already remembered above. Pre-build only; the build/tailor
@@ -2409,6 +2448,10 @@ class WebIntake:
             if _wants_done(message) and not self._open_required_sections():
                 self.essentials["enrich_done"] = True
 
+        return self._funnel_tail(reply)
+
+    def _funnel_tail(self, reply: str = ""):
+        """The end of a conversation turn: ask for what the gate still needs, or build."""
         # The gate drives the flow: build when nothing's left to ask for; otherwise
         # ask conversationally for exactly what's missing (the extractor's readiness
         # reply is suppressed so it doesn't contradict the follow-up question). Under
@@ -2439,6 +2482,68 @@ class WebIntake:
             self._append("agent", reply)
         lead = [reply] if reply else None
         return self.draft(lead=lead)
+
+    # -- the required-sections question (Extracurricular / Interests) ------------------ #
+    def _required_labels(self, keys) -> list[str]:
+        """The open required sections as the person reads them ("Extracurricular")."""
+        heads = self.headings if isinstance(self.headings, dict) else {}
+        out = []
+        for k in keys:
+            h = str(heads.get(k) or "").replace("\\&", "&").replace("\\", "").strip()
+            out.append(h or k.replace("_", " ").capitalize())
+        return out
+
+    def _required_question_open(self) -> list[str]:
+        """The required sections the person has been ASKED for and not yet answered or
+        declined, pre-build. Empty when no such question is waiting on them."""
+        if self.assembled is not None or not self.essentials.get("asked_required"):
+            return []
+        if self.essentials.get("unattended"):
+            return []
+        return self._open_required_sections()
+
+    def _decline_open_required(self) -> list[str]:
+        """Record a real decline of every required section still open, in the same
+        ``declined`` list a typed "I have no extracurriculars" writes to (so it is saved
+        and reused for the next job, §4b). Returns what was declined."""
+        open_req = self._open_required_sections()
+        if open_req:
+            dec = set(self.essentials.get("declined", []) or [])
+            dec.update(open_req)
+            self.essentials["declined"] = sorted(dec)
+        return open_req
+
+    def _resume_after_required(self):
+        """The required sections are settled: carry on down the path the person was on.
+        A returning person who asked to build from their saved profile gets exactly that;
+        everyone else continues the chat funnel (which builds once nothing is missing)."""
+        if self.essentials.get("override") and (self.saved_profile or {}).get("experience"):
+            return self.build_from_saved()
+        return self._funnel_tail()
+
+    def decline_required(self):
+        """The "None, leave it off" button under the required-sections question: decline
+        every open required section, then build. Deterministic, no model call."""
+        self._append("user", "None, leave it off")
+        self._decline_open_required()
+        self._persist()
+        if self.assembled is not None:     # a stale click after the build: nothing to do
+            return self._state()
+        return self._resume_after_required()
+
+    def _nudge_required(self, open_req):
+        """The build was asked for AGAIN while the required-sections question is already
+        open. Re-asking the same question verbatim is the loop the person hit (2026-11-05),
+        so this is one short, plain line pointing at the two ways forward. Deterministic:
+        never a model line, so it can never thank them for material they did not give."""
+        labels = self._required_labels(open_req)
+        what = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+        them = "it" if len(labels) == 1 else "them"
+        note = (f"Before I build, I need your {what}. Tell me below, or choose "
+                f"<b>None, leave it off</b> and I'll build without {them}.")
+        self._append("agent", note)
+        self._persist()
+        return self._state([note])
 
     def _build_now(self):
         """Build immediately with whatever's on hand, per an explicit user override, leaving out any template elements they didn't provide, without re-asking."""
@@ -2825,7 +2930,15 @@ class WebIntake:
 
     def _build_from_saved(self):
         if self.saved_profile and self.saved_profile.get("experience"):
-            self.profile = normalize_profile(self.saved_profile)
+            # The required-section answers given in THIS chat (asked before the first build)
+            # live in essentials; the saved profile may not have them yet. Without this, a
+            # returning person's "I enjoy chess and hiking" was asked for and then dropped.
+            base = dict(self.saved_profile)
+            for k in ("extracurricular", "interests"):
+                if not base.get(k) and self.essentials.get(k):
+                    v = self.essentials[k]
+                    base[k] = [dict(x) for x in v if isinstance(x, dict)] if isinstance(v, list) else v
+            self.profile = normalize_profile(base)
             # HARD RULE (memory: complete-cv-fills-page): the template's page-filling
             # sections are collected BEFORE the first build and never deferred to post-build
             # enrichment. Deferring is exactly what shipped half pages: the CV appeared, and
@@ -2837,6 +2950,11 @@ class WebIntake:
             if not self.essentials.get("unattended"):
                 open_req = self._open_required_sections()
                 if open_req:
+                    # Asked already and the build was requested again (the build button,
+                    # "just build it"): one plain line with the two ways forward, never
+                    # the same question again. That repeat was a silent loop (2026-11-05).
+                    if self.essentials.get("asked_required"):
+                        return self._nudge_required(open_req)
                     return self._ask_required_sections(open_req)
             # Gate the saved profile too, critical tier only under an override.
             override = bool(self.essentials.get("override"))
@@ -3484,8 +3602,15 @@ class WebIntake:
             phrases.append(leads[0] if leads else f"your {sec}")
         guidance = self._enrich_guidance(list(open_req))
         already_asked = bool(self.essentials.get("asked_required"))
+        # ANSWERED tells the model to thank the person for what they just added, so it holds
+        # only sections that were really filled since the last ask. It used to be a constant
+        # ["earlier"] on every re-ask, and the model duly said "Thanks for adding that" when
+        # nothing had been added (2026-11-05).
+        before = set(self.essentials.get("required_open_at_ask") or [])
+        answered = sorted(sec for sec in before - set(open_req)
+                          if sec not in set(self.essentials.get("declined") or []))
         try:
-            ask = str(self.llm.ask_enrich(phrases, ["earlier"] if already_asked else [],
+            ask = str(self.llm.ask_enrich(phrases, answered,
                                           self.role, guidance,
                                           person=self._who_we_are_asking()) or "").strip()
         except Exception:
@@ -3496,6 +3621,7 @@ class WebIntake:
             ask = (f"{opener}, the resume isn't complete without it: {joined}. "
                    "(If there's genuinely none, tell me and I'll leave that section off.)")
         self.essentials["asked_required"] = True
+        self.essentials["required_open_at_ask"] = list(open_req)
         self._persist()
         msgs = list(lead or [])
         msgs.append(ask)
@@ -3908,7 +4034,9 @@ class WebIntake:
         missing_sup = keep(c.missing_supported)
         total = len(present) + len(missing) + len(missing_sup)
         ratio = round(len(present) / total * 100) if total else 100
-        return {"ratio": ratio, "present": present,
+        # ``terms`` is the denominator. With no measurable terms the ratio means nothing, so
+        # the Keywords bar is hidden (app.js) rather than claiming 0% or 100% of nothing.
+        return {"ratio": ratio, "terms": total, "present": present,
                 "missing": missing, "missing_supported": missing_sup}
 
     def review_dict(self):

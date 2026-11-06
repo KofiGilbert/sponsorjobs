@@ -885,7 +885,7 @@
     }
 
     const cov = p.coverage || {};
-    $("#pkgCovNum").textContent = (cov.ratio != null ? cov.ratio + "%" : "");
+    $("#pkgCovNum").textContent = (cov.ratio != null && cov.terms !== 0 ? cov.ratio + "%" : "");
     $("#pkgCov").innerHTML = pkgCoverage(cov);
 
     const visa = p.visa || [];
@@ -2866,7 +2866,10 @@
     if (!st) return;
     CHOICES = st.choices || null;
     if (st.preview) renderPreview(st.preview, st.template_sections || null);
-    if (st.coverage) { setCoverage(st.coverage.ratio); renderCovDetail(st.coverage); }
+    if (st.coverage) {
+      $("#coverage").hidden = st.coverage.terms === 0;
+      setCoverage(st.coverage.ratio); renderCovDetail(st.coverage);
+    }
     if (st.pdf) {
       $("#pdfFrame").src = st.pdf + "&preview=1#toolbar=0&navpanes=0&view=FitH";
       $("#downloadBtn").href = st.pdf;
@@ -3093,6 +3096,29 @@
     chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
   }
 
+  // The required sections (Extracurricular, Interests) are asked for before the first build.
+  // While that question is open the build button could only ask again, so it is replaced by
+  // one ghost button that declines exactly those sections and builds. The text box stays the
+  // way to give a real answer.
+  function renderDeclineRequired(open) {
+    document.getElementById("declineRequiredAction")?.remove();
+    const wrap = el("div", "autobuild-action");
+    wrap.id = "declineRequiredAction";
+    const names = open.map(o => esc(o.label)).join(" and ");
+    wrap.innerHTML = `<button class="btn btn-ghost" type="button">None, leave it off</button>
+      <span class="autobuild-hint">Builds without ${names}. Or answer below.</span>`;
+    wrap.querySelector("button").addEventListener("click", async () => {
+      if (composerBusy) return;
+      composerBusy = true;
+      wrap.remove();
+      bubble("user", "None, leave it off");
+      try {
+        await withWorking(async () => applyState(await api("/api/session/decline_required", {})), "…");
+      } finally { composerBusy = false; }
+    });
+    chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
+  }
+
   function applyState(st) {
     // The CV workspace lives in the side panel now. A NEW pdf (fresh build or
     // recompile after an edit) reveals the panel once - Claude-Code behavior: the
@@ -3107,6 +3133,8 @@
     if (st.question) bubble("agent", chatText(st.question));
     if (st.can_autobuild) renderAutobuild();
     else document.getElementById("autobuildAction")?.remove();
+    if (Array.isArray(st.required_open) && st.required_open.length) renderDeclineRequired(st.required_open);
+    else document.getElementById("declineRequiredAction")?.remove();
     if (st.role) $("#builderRole").textContent = st.role + (st.company ? " · " + st.company : "");
     if (st.step) setStep(st.step);
     if ("choices" in st || st.pdf) CHOICES = st.choices || null;
@@ -3116,7 +3144,8 @@
     if (st.choice_saved) toast(st.choice_saved);
 
     if (st.coverage) {
-      $("#coverage").hidden = false;
+      // No measurable job terms: the percentage would be of nothing, so the bar stays hidden.
+      $("#coverage").hidden = st.coverage.terms === 0;
       setCoverage(st.coverage.ratio);
       if (Array.isArray(st.keyword_actions)) KW_ACTIONS = st.keyword_actions;
       renderCovDetail(st.coverage);

@@ -98,20 +98,23 @@ def test_skills_and_certifications_from_the_person_render(template_source, fake_
 
 
 @requires_latex
-def test_that_is_everything_does_not_finalize_while_page_sections_open(
+def test_that_is_everything_at_the_required_question_declines_them_never_invents(
         template_source, fake_llm, workdir):
-    """A half page is not a CV: the mandatory Extracurricular / Interests sections are
-    collected BEFORE the build, so 'that's everything' can't even produce a CV while they
-    are still blank and undeclined — the tool keeps insisting (never fabricating)."""
+    """The mandatory Extracurricular / Interests sections are ASKED before the build, never
+    deferred. That question itself offers "that's everything", so saying it answers the
+    question: the still-empty sections are declined (as a typed "I have none" would) and
+    the CV builds without them. Re-asking here was a loop (2026-11-05). Nothing is invented."""
     s = _s(template_source, fake_llm, workdir)
     s.start()
-    s.submit(SKELETON)   # skeleton declines github/projects/... but NOT extras/interests
-    st = s.submit("that's everything")
-    assert st["phase"] == "chatting"                            # NO CV while the sections are open
-    assert s.assembled is None                                  # nothing built to accept
-    assert s.essentials.get("enrich_done") is not True          # NOT finalized
-    invite = " ".join(st["messages"]).lower()
+    st0 = s.submit(SKELETON)   # skeleton declines github/projects/... but NOT extras/interests
+    assert s.assembled is None and st0["phase"] == "chatting"      # asked BEFORE any build
+    invite = " ".join(st0["messages"]).lower()
     assert any(w in invite for w in ("outside", "volunteer", "club", "team", "interest", "hobb"))
+    st = s.submit("that's everything")
+    assert {"extracurricular", "interests"} <= set(s.essentials.get("declined") or [])
+    assert st["phase"] == "review"
+    assert not s.profile.get("extracurricular")                    # never fabricated
+    assert not str(s.profile.get("interests") or "").strip()
 
 
 @requires_latex

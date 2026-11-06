@@ -378,6 +378,13 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   off", never a modal and never in the way of a run; showing it records the version. Every item is a
   switch on the memory page's "What I may do for you" card. No up-front bar question, no setup checkbox,
   no consent sheet (a sheet was built and dropped the same day: "people don't have time to be clicking around").
+- 2026-11-05: No button that cannot act. While the builder's required-sections question (Extracurricular,
+  Interests) is open, "Tailor from my profile, build it for me" is not offered: it could only ask again,
+  and a person pressed it in a loop. One ghost button sits under the question instead, "None, leave it
+  off" (hint "Builds without Extracurricular and Interests. Or answer below."), which records a real
+  decline of exactly those sections and builds; the text box stays the way to answer. A build request
+  typed anyway gets one plain line naming both ways forward, never the same question again and never a
+  thank-you for material nobody gave. The Keywords bar hides when the job ad has no measurable terms.
 - 2026-11-06: the apply agent's bar asks SEVERAL questions one at a time, never as one paragraph
   with one box ("1. first answer, 2. second answer" let a bare "no" land on a background-check
   consent). `bb-qhead`: "Question 2 of 4" muted at 11.5px over the question in ink, the engine's

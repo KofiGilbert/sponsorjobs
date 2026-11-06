@@ -446,6 +446,37 @@ class CoverageReport:
         return "\n".join(lines)
 
 
+# Things a job ad REQUIRES that are not keywords a resume can carry. Counting them made the
+# Keywords bar measure noise: the Phoenix Contact ad (2026-11-05) scored "high school
+# graduate", "G.E.D", "1+ year of experience", "personal computers" and "related business
+# systems" as missing keywords, and the curated fallback added "LI-AF1" (a recruiter hashtag)
+# and "NOT" (a shouted word). None of these is a term an ATS scores or a person can "add".
+_NOT_KEYWORD = re.compile(
+    r"\b\d+\s*\+?\s*(?:years?|yrs?|months?)\b"          # 1+ year of experience, 3 years
+    r"|\byears?\s+of\s+experience\b|^experience$"
+    r"|\bhigh\s+school\b|\bg\.?\s?e\.?\s?d\b\.?"        # minimum schooling
+    r"|^#?li-[a-z0-9]+$"                                    # LinkedIn recruiter tags
+    r"|^(?:personal\s+)?computers?$"
+    r"|^(?:related|other|various|associated|general)\s",   # "related business systems"
+    re.I)
+_SHOUTED_WORDS = frozenset({"NOT", "AND", "OR", "THE", "ALL", "ANY", "MUST", "AM", "PM",
+                            "HR", "EOE", "USA", "US", "NOTE"})
+
+
+def is_jd_keyword(term: str) -> bool:
+    """False for a requirement that is not a keyword a resume can carry (years of experience,
+    minimum schooling, a recruiter hashtag, a generic phrase, a shouted English word)."""
+    t = str(term or "").strip()
+    if not t or (t.isupper() and t in _SHOUTED_WORDS):
+        return False
+    return not _NOT_KEYWORD.search(t)
+
+
+def clean_jd_terms(terms) -> list[str]:
+    """``terms`` without the non-keywords (see ``is_jd_keyword``), order kept."""
+    return [t for t in (terms or []) if is_jd_keyword(t)]
+
+
 def build_coverage_report(
     jd_text: str, cv_text: str, profile: dict, terms: list[str] | None = None
 ) -> CoverageReport:
@@ -453,7 +484,7 @@ def build_coverage_report(
     skill list to measure (the model-read list from llm.extract_jd_skills, or the curated
     skill_terms); the old capitalized-word walk is not used here any more, since it reported
     sentence words ("These", "Responsible") as skills the person lacks."""
-    terms = list(terms) if terms is not None else skill_terms(jd_text)
+    terms = clean_jd_terms(list(terms) if terms is not None else skill_terms(jd_text))
     prof = profile_text(profile)
     report = CoverageReport()
     for t in terms:
