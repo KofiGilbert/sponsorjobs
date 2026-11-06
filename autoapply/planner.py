@@ -193,10 +193,55 @@ def _n(s: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9+#$ ]+", " ", str(s or "").lower())).strip()
 
 
-def match_option(answer: str, options) -> str | None:
+# Words that add nothing to a choice: "Online job board" says what "Job board" says, and
+# "Bachelor's degree" what "Bachelor" says. Any other word an option has beyond the answer's is a
+# qualifier the answer did not give ("College" in "College Job Board"). Mirrored in
+# extension/autofill_core.js NEUTRAL_WORDS and extension/agent_view.js.
+_NEUTRAL = frozenset("a an the and or s job jobs online internet web website websites site sites posting postings "
+                     "general etc eg ie degree".split())
+
+# "How did you hear about us?": choices that name no particular source, best first. A saved
+# answer no choice says the same as lands on one of these, never on a choice that adds a source
+# the person did not give ("College Job Board" for "Job board", Phoenix Contact on Greenhouse,
+# 2026-11-05). The job board ones only for an answer that is itself a board or the web.
+_GENERIC_BOARD = re.compile(r"^((online|internet|web) )?job (board|site|website|posting)s?( (site|website))?$"
+                            r"|^(online|internet|web) (job )?(board|site|posting|search)s?$|^(the )?(internet|online|web)$")
+_GENERIC_OTHER = re.compile(r"^other( source| sources| please specify)?$")
+_BOARDISH = frozenset("job jobs board boards online internet web website websites site sites posting postings "
+                      "search engine".split())
+
+
+def adds_qualifier(answer: str, option: str) -> bool:
+    """Does ``option`` carry a word ``answer`` does not, other than a neutral one? ("College Job
+    Board" for "Job board": yes. "Online job board": no.)"""
+    have = set(_n(answer).split())
+    return any(w not in have and w not in _NEUTRAL for w in _n(option).split())
+
+
+def generic_source(answer: str, options) -> str | None:
+    """For a how-did-you-hear question: the choice that names no particular source, when no
+    choice says the same as the saved answer. A generic job board or "Internet" choice for an
+    answer that is itself a job board or the web, else "Other". None when the list has neither
+    (the person is asked)."""
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    words = set(_n(answer).split())
+    if words and words <= _BOARDISH:
+        hit = next((o for o in opts if _GENERIC_BOARD.match(_n(o))), None)
+        if hit:
+            return hit
+    return next((o for o in opts if _GENERIC_OTHER.match(_n(o))), None)
+
+
+def match_option(answer: str, options, *, strict: bool = False) -> str | None:
     """The option a saved text answer names: equal after normalizing, else the one option the
     answer and the option share as a prefix; a Yes/No answer picks the option that says it.
-    None when no single option fits (the field is then left for the person)."""
+    None when no single option fits (the field is then left for the person).
+
+    ``strict`` (a SAVED answer meeting the page's choices, literal_for): a shared prefix counts
+    only when the option adds no qualifier ("Bachelor" is "Bachelor's degree"; "Job board" is
+    not "Job board for students"), and an option that holds the answer's words plus only
+    neutral ones counts too ("Online job board"). Never an option that adds a qualifier the
+    answer did not have, the way "College Job Board" was picked for "Job board"."""
     opts = [str(o) for o in (options or []) if str(o).strip()]
     a = _n(answer)
     if not opts or not a:
@@ -208,8 +253,14 @@ def match_option(answer: str, options) -> str | None:
     if yn is not None:
         return workauth.pick_yes_no(yn, opts)
     pre = [o for o in opts if _n(o) and (_n(o).startswith(a) or a.startswith(_n(o)))]
+    if strict:
+        pre = [o for o in pre if not adds_qualifier(a, o)]
     if len(pre) == 1:
         return pre[0]
+    if strict and not pre:
+        same = [o for o in opts if set(a.split()) <= set(_n(o).split()) and not adds_qualifier(a, o)]
+        if len(same) == 1:
+            return same[0]
     return None
 
 
@@ -243,12 +294,17 @@ def eeo_option(answer: str, options, key: str = "", answers: dict | None = None,
 
 def literal_for(key: str, text: str, options) -> str | None:
     """A saved answer on a choice field: a country by name or alias on a country question,
-    else match_option."""
+    else the option that says the same (match_option, strict: never one that adds a qualifier),
+    else, on a how-did-you-hear question, the choice that names no particular source
+    (generic_source). None leaves the field for the person."""
     if key in _COUNTRY_KEYS:
         v = country_option(text, options)
         if v:
             return v
-    return match_option(text, options)
+    v = match_option(text, options, strict=True)
+    if v is None and key == "@heard_about":
+        v = generic_source(text, options)
+    return v
 
 
 def _op_for(f: FormField) -> str:

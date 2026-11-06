@@ -385,3 +385,11 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   decline of exactly those sections and builds; the text box stays the way to answer. A build request
   typed anyway gets one plain line naming both ways forward, never the same question again and never a
   thank-you for material nobody gave. The Keywords bar hides when the job ad has no measurable terms.
+- 2026-11-06: the apply agent's bar asks SEVERAL questions one at a time, never as one paragraph
+  with one box ("1. first answer, 2. second answer" let a bare "no" land on a background-check
+  consent). `bb-qhead`: "Question 2 of 4" muted at 11.5px over the question in ink, the engine's
+  reply only when it took nothing (`bb-note`, ink-2), the choices as ghost buttons (the picked one
+  outlined in ink, `aria-pressed`), the box, Answer (the bar's one primary), Back (ghost). Under it
+  "Your answers:" with each answer a quiet underlined link back to its question. No new colour.
+  The bar stacks (`bb-stack`) whenever there are several questions. Checked in a 483px browser
+  pane and at 560px, dark (the bar is dark in both themes).

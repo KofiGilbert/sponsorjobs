@@ -9911,6 +9911,9 @@
 
   // ---- the apply agent's run: the live line on the bar, the steps in #bbFeed under it
   const AA_FEED = { rid: null, snap: null, open: false, jobs: {} };
+  // The bar's place in an ask with several questions (aaAgentBar): which one shows, the answers
+  // given so far, the engine's last reply. Kept across a repaint of the same ask.
+  const AA_ASK = new Map();
   // The run's job when the Auto-apply board is not loaded (a run started from Jobs or Home): read
   // once per record; the next progress line shows it.
   function aaFeedJob(rid) {
@@ -10067,55 +10070,138 @@
       b.type = "button"; b.className = "btn btn-sm " + cls; b.textContent = label;
       b.addEventListener("click", fn); bar.appendChild(b); return b;
     };
+    let stack = false;
     if ((info.state === "ask" || info.state === "parked") && info.ask) {
-      // The agent needs answers: one question shows the page's choices as buttons plus a box;
-      // several show as numbered lines with one box. A typed reply is read by the engine (only
-      // the part that answers counts, and a question back gets the choices), so its reply is
-      // shown here until every question is answered. Saved for next time.
+      // The agent needs answers. One question shows the page's choices as buttons plus a box.
+      // Several show ONE AT A TIME ("Question 2 of 4", the question on its own line, its
+      // choices, a box), moving to the next open one after each answer, with the answers given
+      // so far under it, each one a link back to change it (2026-11-05: four questions in one
+      // paragraph with one box, and a bare "no" landed on a background-check question). Every
+      // answer names its question (index and words), so it lands on that question only. A
+      // typed reply is read by the engine (only the part that answers counts, and a question
+      // back gets the choices); its reply shows here when it took nothing. Saved for next time.
       const ask = info.ask;
-      const qs = (ask.questions || []).length ? ask.questions : [{ question: ask.question, options: ask.options || [] }];
+      const qs0 = (ask.questions || []).length ? ask.questions : [{ question: ask.question, options: ask.options || [] }];
+      // Each question at its index in the ask (``n`` from a parked job's copy, which lists only
+      // the open ones), with the ones a parked job already has answers for.
+      const all = qs0.map((q, i) => Object.assign({}, q, { ix: q.n ? q.n - 1 : i }));
+      for (const a of (ask.answered || [])) {
+        if (a.n && !all.some((q) => q.ix === a.n - 1)) all.push({ question: a.question, options: [], ix: a.n - 1 });
+      }
+      all.sort((a, b) => a.ix - b.ix);
+      const key = ask.id || all[0].question;
+      let st = AA_ASK.get(key);
+      if (!st) {
+        st = { answers: {}, cur: null, note: "" };
+        for (const a of (ask.answered || [])) if (a.n && a.answer) st.answers[a.n - 1] = a.answer;
+        AA_ASK.clear();                            // one ask on the bar at a time
+        AA_ASK.set(key, st);
+      }
+      const many = all.length > 1;
+      const open = () => all.filter((q) => !st.answers[q.ix]);
+      if (st.cur == null || !all.some((q) => q.ix === st.cur)) st.cur = (open()[0] || all[0]).ix;
+      const pos = all.findIndex((q) => q.ix === st.cur);
+      const q = all[pos];
       const post = async (body) => {
-        let r = await fetch("/api/autoapply/agent/answer", { method: "POST", headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify(Object.assign({ id: ask.id || "" }, body)) }).catch(() => null);
+        const send = (extra) => fetch("/api/autoapply/agent/answer", { method: "POST", headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify(Object.assign({ id: ask.id || "", index: q.ix, question: q.question }, body, extra)) }).catch(() => null);
+        let r = await send({});
         if (!r || !r.ok) {
-          // The engine may not have registered the question yet; find the open one by text.
+          // The engine may not have registered the question yet; it finds the open one by text.
           await new Promise((res) => setTimeout(res, 800));
-          r = await fetch("/api/autoapply/agent/answer", { method: "POST", headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify(Object.assign({ id: ask.id || "", question: qs[0].question }, body)) }).catch(() => null);
+          r = await send({});
         }
         return r && r.ok ? r.json().catch(() => null) : null;
       };
-      const after = (d) => {
+      const after = (d, sent) => {
         if (d && d.done && d.parked) {
+          AA_ASK.delete(key);
           aaAgentBar({ state: "answered", message: d.reply || T("aa.parked.queued", "Thanks. I carry on with it as soon as the browser is free.") });
           try { window.tailorShell && window.tailorShell.agentPoll && window.tailorShell.agentPoll(); } catch { /* the shell polls anyway */ }
           if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
           return;
         }
-        if (!d || d.done) { aaAgentBar({ state: "running", message: T("aa.agent.thanks", "Thanks. Carrying on") }); return; }
-        text.textContent = d.reply || info.message || "";
+        if (!d || d.done) { AA_ASK.delete(key); aaAgentBar({ state: "running", message: T("aa.agent.thanks", "Thanks. Carrying on") }); return; }
+        const before = st.answers[q.ix];
+        for (const it of (d.items || [])) {
+          if (it && it.n) { if (it.answer) st.answers[it.n - 1] = it.answer; else delete st.answers[it.n - 1]; }
+        }
+        const got = /^Got it/.test(d.reply || "");
+        if (!(d.items || []).length && got && sent) st.answers[q.ix] = sent;     // an older engine: no list back
+        const took = !!st.answers[q.ix] && (st.answers[q.ix] !== before || got);
+        if (took && many) {
+          // On to the next open question after this one, else the first still open.
+          const rest = open();
+          const next = rest.find((x) => x.ix > q.ix) || rest[0];
+          st.cur = next ? next.ix : q.ix;
+          st.note = "";
+        } else {
+          st.note = d.reply || "";
+        }
+        if (!many) { text.textContent = d.reply || info.message || ""; return; }
+        aaAgentBar(info);
       };
-      if (qs.length > 1) {
-        const list = document.createElement("span");
-        list.className = "bb-fill-text bb-asks";
-        list.textContent = qs.map((q, i) => (i + 1) + ". " + q.question + ((q.options || []).length ? " (" + q.options.join(", ") + ")" : "")).join("  ");
-        bar.appendChild(list);
-      } else {
-        for (const o of (qs[0].options || [])) btn(o, "btn-ghost bb-opt", async () => after(await post({ answer: o, exact: true, index: 0 })));
+      if (many) {
+        stack = true;
+        text.textContent = "";
+        text.classList.add("bb-qhead");
+        const n = document.createElement("span");
+        n.className = "bb-qn";
+        n.textContent = T("aa.agent.qOf", "Question {k} of {n}").replace("{k}", pos + 1).replace("{n}", all.length);
+        const w = document.createElement("span");
+        w.className = "bb-q";
+        w.textContent = q.say || q.question;
+        text.append(n, w);
+        text.setAttribute("aria-live", "polite");
+        if (st.note) {
+          const note = document.createElement("span");
+          note.className = "bb-note";
+          note.textContent = st.note;
+          bar.appendChild(note);
+        }
+      }
+      for (const o of (q.options || [])) {
+        const b = btn(o, "btn-ghost bb-opt" + (many && st.answers[q.ix] === o ? " is-picked" : ""),
+                      async () => after(await post({ answer: o, exact: true }), o));
+        if (many && st.answers[q.ix] === o) b.setAttribute("aria-pressed", "true");
       }
       const inp = document.createElement("input");
       inp.className = "fld bb-answer"; inp.type = "text";
-      inp.placeholder = qs.length > 1 ? T("aa.agent.answers", "1. first answer, 2. second answer") : T("aa.agent.answer", "Your answer");
+      inp.placeholder = T("aa.agent.answer", "Your answer");
+      if (many && st.answers[q.ix] && !(q.options || []).includes(st.answers[q.ix])) inp.value = st.answers[q.ix];
       const typed = async () => {
         const v = inp.value.trim();
         if (!v) return;
         inp.value = "";
-        after(await post({ answer: v }));
+        after(await post({ answer: v }), "");
       };
       inp.addEventListener("keydown", (e) => { if (e.key === "Enter") typed(); });
       bar.appendChild(inp);
       btn(T("aa.agent.sendAnswer", "Answer"), "btn-primary bb-send", typed);
-      if (!(qs.length === 1 && (qs[0].options || []).length)) setTimeout(() => inp.focus(), 50);
+      if (many && pos > 0) {
+        btn(T("aa.agent.back", "Back"), "btn-ghost bb-back", () => { st.cur = all[pos - 1].ix; st.note = ""; aaAgentBar(info); });
+      }
+      if (many && all.some((x) => st.answers[x.ix])) {
+        // The answers given so far, each a link back to its question to change it.
+        const done = document.createElement("div");
+        done.className = "bb-done";
+        const lead = document.createElement("span");
+        lead.textContent = T("aa.agent.yourAnswers", "Your answers:");
+        done.appendChild(lead);
+        all.forEach((x, k) => {
+          if (!st.answers[x.ix]) return;
+          const a = document.createElement("button");
+          a.type = "button"; a.className = "bb-done-a" + (x.ix === q.ix ? " is-cur" : "");
+          const words = String(x.question || "");
+          a.textContent = (k + 1) + ". " + st.answers[x.ix];
+          a.title = T("aa.agent.change", "Change") + ": " + words;
+          a.setAttribute("aria-label", T("aa.agent.changeA", "Change your answer to {q}").replace("{q}", words));
+          a.addEventListener("click", () => { st.cur = x.ix; st.note = ""; aaAgentBar(info); });
+          done.appendChild(a);
+        });
+        bar.appendChild(done);
+      }
+      if (!(q.options || []).length) setTimeout(() => inp.focus(), 50);
     } else if (info.state === "ready" && info.record_id != null) {
       btn(T("aa.send", "Send"), "btn-primary bb-send", async (e) => {
         e.target.disabled = true;
@@ -10159,7 +10245,7 @@
     // A question longer than a line (a new wording to confirm, "After ..., the application asks")
     // reads on its own row, the choices and the answer box under it: beside three choices it was
     // squeezed to a 200px column of five lines.
-    bar.classList.toggle("bb-stack", /^(ask|parked)$/.test(info.state || "") && String(info.message || "").length > 90);
+    bar.classList.toggle("bb-stack", stack || (/^(ask|parked)$/.test(info.state || "") && String(info.message || "").length > 90));
     bar.hidden = false;
   }
 

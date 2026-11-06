@@ -409,6 +409,37 @@ def _accept(it: dict, raw) -> str | None:
     return val
 
 
+def is_bare(reply) -> bool:
+    """One short answer with no question number ("no", "Yes", "Job board"). When several
+    questions are open it answers ONLY the first one still open, never a later one: on
+    2026-11-05 a bare "no" typed on the bar landed on a background-check question further down
+    the list (where No sinks the application), read there by the model. A question back ("what
+    are the options?") is not bare, and neither is a reply of several sentences or lines, which
+    the reader may split across the questions as before."""
+    s = str(reply or "").strip()
+    return bool(s) and not _NUMBERED.search(s) and not s.endswith("?") and _one_choice(s)
+
+
+def _short(text, n: int = 60) -> str:
+    s = " ".join(str(text or "").split())
+    return s if len(s) <= n else s[:n - 1].rstrip() + "…"
+
+
+def bare_miss_reply(it: dict, n: int, reply: str, other: int | None = None) -> str:
+    """A bare reply that does not answer the first open question (number ``n``): say so, give
+    that question's choices, and how to answer another open question (number ``other``)
+    instead. Never a guess."""
+    v = _short(reply, 40)
+    head = f"\u201c{v}\u201d does not answer question {n}, \u201c{_short(it.get('question'), 120)}\u201d."
+    every = _every(it)
+    if every:
+        shown = order_options(it.get("question") or "", every)
+        head += " Its choices: " + "; ".join(shown) + _more(it, len(shown)) + "."
+    if other:
+        head += f" To answer another question, start with its number, like \u201c{other}. {v}\u201d."
+    return fit_text(head)
+
+
 def _read_exact(items: list[dict], reply: str) -> dict | None:
     """A tap-like reply to ONE question with choices: a choice's own words, or its number in the
     list the message showed. No model is needed for that."""

@@ -821,3 +821,183 @@ def test_e_answers_given_this_run_reach_the_brain(A):
         "record_id": None, "step": 2, "max_steps": 40, "url": "https://acme.test/apply", "view": view,
         "left": ["Gender"], "history": [], "answers": {"Gender": "I don't wish to answer"}}, headers=H).get_json()
     assert "answer_1" in r["placeholders"], r
+
+
+# --------------------------------------------------------------------------- F: several questions, one at a time
+# 2026-11-05, Phoenix Contact on Greenhouse: four required questions asked at once, and a bare
+# "no" typed on the bar landed on the background-check consent (question 2), where No sinks the
+# application. A bare answer now answers ONLY the first question still open; a numbered one
+# goes by its number; the bar names the question it showed.
+PHX_QS = ["Are you willing to relocate for this role?",
+          "Do you consent to a background check?",
+          "Are you willing to travel up to 25%?",
+          "GDPR Acknowledgement"]
+
+
+def _phx_ask(mod, aid):
+    qs = [{"question": q, "options": ["Yes", "No"]} for q in PHX_QS[:3]] + \
+         [{"question": PHX_QS[3], "options": ["Acknowledge"]}]
+    return _ask_in_thread(mod, {"id": aid, "timeout_s": 15, "force": True, "questions": qs})
+
+
+def _answers_of(mod, aid):
+    with mod._ASKS_LOCK:
+        return [it.get("answer") for it in mod._ASKS[aid]["items"]]
+
+
+def test_f_is_bare():
+    assert AK.is_bare("no") and AK.is_bare("Job board") and AK.is_bare("Yes, Male")
+    assert not AK.is_bare("2. no") and not AK.is_bare("1) Yes")
+    assert not AK.is_bare("what are the options?") and not AK.is_bare("Yes. Male")
+    assert not AK.is_bare("1. Yes\n2. No") and not AK.is_bare("")
+
+
+def test_f_a_bare_answer_goes_to_the_first_open_question_only(A):
+    mod, sent = A
+    th, out = _phx_ask(mod, "f1")
+    # "no" names Yes/No questions 1, 2 and 3 alike: it answers question 1 alone.
+    reply = mod._agent_ask_event("text", "no")
+    assert reply == f"Got it: 1. No. Still open: 2. {PHX_QS[1]}; 3. {PHX_QS[2]}; 4. {PHX_QS[3]}."
+    assert _answers_of(mod, "f1") == ["No", None, None, None]
+    # the bar's typed answer with no question named: the first one still open, question 2
+    c = mod.app.test_client()
+    d = c.post("/api/autoapply/agent/answer", json={"id": "f1", "answer": "yes"}, headers=H).get_json()
+    assert d["ok"] and not d["done"] and d["reply"].startswith("Got it: 2. Yes. Still open: 3.")
+    assert [x["answer"] for x in d["items"]] == ["No", "Yes", None, None]
+    assert mod._agent_ask_event("text", "no") == f"Got it: 3. No. Still open: 4. {PHX_QS[3]}."
+    reply = mod._agent_ask_event("text", "no")                 # the last one does not take "no"
+    assert reply == "I could not tell your answer from that. The choices for “GDPR Acknowledgement” are: Acknowledge."
+    assert _answers_of(mod, "f1") == ["No", "Yes", "No", None]
+    assert mod._agent_ask_event("text", "Acknowledge") == "Got it: 1. No; 2. Yes; 3. No; 4. Acknowledge."
+    th.join(20)
+    assert out["r"]["ok"] and out["r"]["answers"][PHX_QS[1]] == "Yes"
+
+
+def test_f_a_bare_answer_the_first_question_does_not_take_is_never_moved_on(A):
+    mod, sent = A
+    th, out = _ask_in_thread(mod, {"id": "f4", "timeout_s": 15, "force": True, "questions": [
+        {"question": PHX_QS[3], "options": ["Acknowledge"]}, {"question": PHX_QS[1], "options": ["Yes", "No"]}]})
+    reply = mod._agent_ask_event("text", "no")
+    assert reply == ("“no” does not answer question 1, “GDPR Acknowledgement”. Its choices: "
+                     "Acknowledge. To answer another question, start with its number, like “2. no”.")
+    assert _answers_of(mod, "f4") == [None, None]
+    assert mod._agent_ask_event("text", "2. Yes") == f"Got it: 2. Yes. Still open: 1. {PHX_QS[3]}."
+    assert mod._agent_ask_event("text", "Acknowledge") == "Got it: 1. Acknowledge; 2. Yes."
+    th.join(20)
+
+
+def test_f_numbered_answers_still_go_by_their_numbers(A):
+    mod, sent = A
+    th, out = _phx_ask(mod, "f2")
+    assert mod._agent_ask_event("text", "4. Acknowledge") == \
+        f"Got it: 4. Acknowledge. Still open: 1. {PHX_QS[0]}; 2. {PHX_QS[1]}; 3. {PHX_QS[2]}."
+    assert mod._agent_ask_event("text", "2. Yes\n3. No") == \
+        f"Got it: 2. Yes; 3. No. Still open: 1. {PHX_QS[0]}."
+    assert _answers_of(mod, "f2") == [None, "Yes", "No", "Acknowledge"]
+    # with one question left, a bare answer is simply its answer
+    assert mod._agent_ask_event("text", "yes") == "Got it: 1. Yes; 2. Yes; 3. No; 4. Acknowledge."
+    th.join(20)
+    assert out["r"]["ok"]
+
+
+def test_f_the_bar_names_the_question_it_showed(A):
+    mod, sent = A
+    th, out = _phx_ask(mod, "f3")
+    c = mod.app.test_client()
+    # typed on question 3 (index 2): lands there, never on 1 or 2
+    d = c.post("/api/autoapply/agent/answer", json={"id": "f3", "answer": "no", "index": 2,
+                                                    "question": PHX_QS[2]}, headers=H).get_json()
+    assert d["ok"] and d["reply"].startswith("Got it: 3. No. Still open: 1.")
+    assert _answers_of(mod, "f3") == [None, None, "No", None]
+    # a tapped choice with a stale index (a parked bar lists only the open ones) goes by its words
+    d = c.post("/api/autoapply/agent/answer", json={"id": "f3", "answer": "Yes", "exact": True, "index": 0,
+                                                    "question": PHX_QS[1]}, headers=H).get_json()
+    assert d["reply"] == "Got it: Yes." and _answers_of(mod, "f3") == [None, "Yes", "No", None]
+    assert [x["n"] for x in d["items"]] == [1, 2, 3, 4]
+    # an answer given can be changed while others are open
+    d = c.post("/api/autoapply/agent/answer", json={"id": "f3", "answer": "Yes", "exact": True, "index": 2,
+                                                    "question": PHX_QS[2]}, headers=H).get_json()
+    assert _answers_of(mod, "f3") == [None, "Yes", "Yes", None]
+    # a typed answer the question does not take says so for THAT question
+    d = c.post("/api/autoapply/agent/answer", json={"id": "f3", "answer": "no", "index": 3,
+                                                    "question": PHX_QS[3]}, headers=H).get_json()
+    assert not d["done"] and "Acknowledge" in d["reply"] and _answers_of(mod, "f3")[3] is None
+    # the parked bar's copy keeps each question's number and the answers given
+    with mod._ASKS_LOCK:
+        view = mod._ask_view(mod._ASKS["f3"])
+    assert [q["n"] for q in view["questions"]] == [1, 4]
+    assert [(a["n"], a["answer"]) for a in view["answered"]] == [(2, "Yes"), (3, "Yes")]
+    c.post("/api/autoapply/agent/answer", json={"id": "f3", "answer": "No", "exact": True, "index": 0,
+                                                "question": PHX_QS[0]}, headers=H)
+    d = c.post("/api/autoapply/agent/answer", json={"id": "f3", "answer": "Acknowledge", "exact": True, "index": 3,
+                                                    "question": PHX_QS[3]}, headers=H).get_json()
+    assert d["done"] and d["reply"] == "Got it: 1. No; 2. Yes; 3. Yes; 4. Acknowledge."
+    th.join(20)
+    assert out["r"]["answers"] == dict(zip(PHX_QS, ["No", "Yes", "Yes", "Acknowledge"]))
+
+
+# --------------------------------------------------------------------------- G: a saved answer meets a dropdown
+# 2026-11-05, Phoenix Contact: "How did you hear about this specific opening?" was set to "College
+# Job Board" from the saved "Job board". A saved answer maps only to a choice that adds no
+# qualifier it did not have; on a how-did-you-hear question, else a choice that names no
+# particular source; else the person is asked.
+HEARD_Q = "How did you hear about this specific opening?"
+PHX_HEARD = ["College Job Board", "Indeed", "LinkedIn", "Company Website", "Employee Referral", "Other"]
+
+
+@pytest.mark.parametrize("options,want", [
+    (PHX_HEARD, "Other"),
+    (["College Job Board", "Indeed", "LinkedIn"], None),                       # nothing safe: asked
+    (["College Job Board", "Job Board", "Other"], "Job Board"),
+    (["Select...", "College Job Board", "Online Job Board", "Other"], "Online Job Board"),
+    (["College Job Board", "Internet", "Referral", "Other"], "Internet"),
+    (["Job board for students", "Indeed", "Other"], "Other"),
+    (["Career Fair", "Job Boards (Indeed, Glassdoor)", "Other (please specify)"], "Other (please specify)"),
+])
+def test_g_a_saved_source_never_lands_on_a_qualified_choice(options, want):
+    from autoapply.planner import literal_for
+    lib = Lib({"@heard_about": "Job board"})
+    got = AK.known_answer(HEARD_Q, options, library=lib)
+    assert (got[0] if got else None) == want
+    assert literal_for(normalize(HEARD_Q), "Job board", options) == want
+
+
+def test_g_matching_rules():
+    from autoapply.planner import adds_qualifier, generic_source, literal_for, match_option
+    assert adds_qualifier("Job board", "College Job Board")
+    assert not adds_qualifier("Job board", "Online job board") and not adds_qualifier("Bachelor", "Bachelor's degree")
+    k = normalize(HEARD_Q)
+    assert literal_for(k, "LinkedIn", PHX_HEARD) == "LinkedIn"
+    assert literal_for(k, "linkedin", ["LinkedIn Job Posting", "Other"]) == "LinkedIn Job Posting"
+    assert literal_for(k, "A friend told me", ["LinkedIn", "Other"]) == "Other"
+    assert generic_source("LinkedIn", ["College Job Board", "Internet"]) is None   # a named source is not "the web"
+    # a saved answer elsewhere: a prefix that adds a qualifier is not the answer, a neutral one is
+    assert literal_for("highest degree", "Bachelor", ["Bachelor's Degree", "Master's Degree"]) == "Bachelor's Degree"
+    assert literal_for("which board", "Job board", ["Job board for students", "Other"]) is None
+    # the person's own typed reply to the question keeps the plain reading
+    assert match_option("Job board", ["Job board for students", "Other"]) == "Job board for students"
+
+
+def test_g_the_pickers_never_choose_a_qualified_choice():
+    """The in-page pickers (extension/autofill_core.js answerScorer, used by the agent's select
+    and the shell's pick of a saved answer): the same rule as the planner."""
+    if not shutil.which("node"):
+        pytest.skip("needs node")
+    root = Path(__file__).resolve().parents[1]
+    js = r"""
+global.window = {};
+require(%r);
+const A = window.TailorAutofill;
+const s = A.answerScorer('Job board'), loose = A.valueScorer('Job board');
+const eq = (a, b, m) => { if (a !== b) throw new Error(m + ': ' + a + ' != ' + b); };
+eq(s('College Job Board'), 0, 'qualified choice');
+eq(loose('College Job Board') > 0, true, 'the loose scorer is unchanged');
+eq(s('Online job board') > 0, true, 'neutral words');
+eq(s('Job Board') > s('Online job board'), true, 'exact first');
+eq(s('Indeed'), 0, 'other choice');
+eq(A.answerScorer('Chicago, IL')('Chicago, Illinois') > 0, true, 'a value with a comma keeps its first part');
+eq(A.addsQualifier('Job board', 'College Job Board'), true, 'addsQualifier');
+console.log('ok');
+""" % str(root / "extension" / "autofill_core.js")
+    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and out.stdout.strip() == "ok", out.stderr

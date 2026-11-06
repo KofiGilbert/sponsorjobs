@@ -1400,9 +1400,22 @@
     return [...out];
   }
   const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Words that add nothing to a choice ("Online job board" says what "Job board" says). Any other
+  // word an option has beyond the answer's is a qualifier the answer did not give ("College" in
+  // "College Job Board"). Mirrored in autoapply/planner.py _NEUTRAL and extension/agent_view.js.
+  const NEUTRAL_WORDS = new Set(["a", "an", "the", "and", "or", "s", "job", "jobs", "online", "internet", "web",
+    "website", "websites", "site", "sites", "posting", "postings", "general", "etc", "eg", "ie", "degree"]);
+  function addsQualifier(value, text) {
+    const have = new Set(canon(value).split(" "));
+    return canon(text).split(" ").some((w) => w && !have.has(w) && !NEUTRAL_WORDS.has(w));
+  }
   // Score an option's text for a wanted value: exact > starts with > is a prefix of > contains
   // as whole words > shares the first part ("Chicago" of "Chicago, IL"). Shorter wins a tie.
-  function valueScorer(value) {
+  // ``strict`` (answerScorer: a saved ANSWER against a list of choices): "contains" counts only
+  // when the option's other words add nothing ("Online job board"), never a qualifier the answer
+  // did not have ("College Job Board" for "Job board": Phoenix Contact on Greenhouse,
+  // 2026-11-05), and the first-part tier only for a value with a comma ("Chicago, IL").
+  function valueScorer(value, strict) {
     const vs = variants(value);
     const first = canon(String(value || "").split(",")[0]);
     const rest = String(value || "").split(",").slice(1).map((x) => x.trim()).filter(Boolean);
@@ -1415,9 +1428,9 @@
         if (t === v) s = Math.max(s, 100);
         else if (new RegExp("^" + reEsc(v) + "\\b").test(t)) s = Math.max(s, 80);
         else if (t.length >= 4 && new RegExp("^" + reEsc(t) + "\\b").test(v)) s = Math.max(s, 70);
-        else if (v.length >= 3 && new RegExp("\\b" + reEsc(v) + "\\b").test(t)) s = Math.max(s, 60);
+        else if (v.length >= 3 && new RegExp("\\b" + reEsc(v) + "\\b").test(t) && !(strict && addsQualifier(v, t))) s = Math.max(s, 60);
       }
-      if (!s && first && first.length >= 3 && new RegExp("\\b" + reEsc(first) + "\\b").test(t)) {
+      if (!s && first && first.length >= 3 && (!strict || rest.length) && new RegExp("\\b" + reEsc(first) + "\\b").test(t)) {
         s = 40;
         // "Chicago, IL": the state (or country) after the comma breaks a tie between Chicagos.
         for (const part of rest) {
@@ -1427,6 +1440,7 @@
       return s ? s - Math.min(9, t.length / 20) : 0;
     };
   }
+  const answerScorer = (value) => valueScorer(value, true);
   function regexScorer(re) {
     return (text) => (re.test(norm(text)) ? 50 - Math.min(9, norm(text).length / 20) : 0);
   }
@@ -1659,13 +1673,17 @@
       if (r === null) continue;
       if (r === undefined) {
         let value = "";
+        let answer = false;
         if (/\blocation\b/.test(q)) value = f.location;
         else {
           const key = categorize(el, signature(el) || q);
           if (key) value = f[key];
+          // A saved answer ("How did you hear about us?": "Job board") is matched strictly: never
+          // a choice that adds a qualifier it did not have ("College Job Board").
+          answer = TEXT_ANSWERS.some((a) => a.key === key);
         }
         if (!value) continue;
-        r = { kind: "fields", text: value, score: valueScorer(value), freeText: true };
+        r = { kind: "fields", text: value, score: answer ? answerScorer(value) : valueScorer(value), freeText: true };
       }
       const res = await pickCombo(el, r);
       if (res.ok) { out[r.kind]++; out.filled++; markFilled(controlOf(el)); }
@@ -1777,7 +1795,7 @@
     extractForm, applyOps, fieldRef,                                         // AI-planned autoapply
     // deep DOM + custom widgets + multi-page (desktop shell)
     fillAsync, fillWidgets, extractFormAsync, applyOpsAsync, leftover, pageSignature, setRefPrefix,
-    crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer,
+    crossOriginFrames, comboboxes, comboValue, pickCombo, valueScorer, answerScorer, addsQualifier,
     // recipes: the per-system table, success detection, continue hints, corrections
     setRecipes, recipes: () => RECIPES, recipeFor, globToRe, highlightSubmit, continueButton,
     detectSuccess, watchSuccess, stopSuccessWatch, watchCorrections, takeCorrections,
