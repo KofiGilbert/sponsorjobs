@@ -396,6 +396,39 @@ class AnthropicLLM:
                 pass
         return [str(b).strip() for b in bullets if str(b).strip()]
 
+    def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "") -> list[str]:
+        """Rewrite ONE dense bullet as exactly ``parts`` bullets, from its own words only
+        (tailoring/assembler.py ``_recency_fill``). The assembler checks every part again: no
+        new figure, name or skill, no phrase repeated across parts."""
+        n = int(parts)
+        system = (
+            f"You rewrite ONE resume bullet as EXACTLY {n} bullets, because it packs several "
+            "accomplishments into one line and the page has room for one more line.\n"
+            f"- Group what the bullet says into {n} distinct accomplishments, each its own plain, "
+            "complete sentence starting with a concrete action verb.\n"
+            "- Use ONLY what the bullet states. Keep every number and name it states, and add "
+            "none: no new figure, tool, employer, product, purpose or result.\n"
+            "- Each bullet says something the others do not. Never repeat a phrase, a scope or "
+            "a result across bullets (do not end every bullet with the same list).\n"
+            "- No filler (demonstrating, ensuring, leveraging, robust, comprehensive, seamless), "
+            "no em or en dashes.\n"
+            f"- If the bullet does not hold {n} distinct accomplishments, return it unchanged as "
+            "the only item.\n"
+            "Return ONLY a JSON array of strings."
+        )
+        user = (f"ROLE TITLE: {role_title}\n\nBULLET:\n{text}\n\n"
+                f"TARGET JOB (context only, do not copy facts from it):\n{str(jd_text)[:1000]}")
+        out = self._complete(system, user, max_tokens=500, effort="low") or ""
+        if "[" in out and "]" in out:
+            try:
+                data = json.loads(out[out.find("["): out.rfind("]") + 1])
+                cleaned = [str(b).strip() for b in data if str(b).strip()]
+                if cleaned:
+                    return cleaned
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return [str(text or "").strip()]
+
     def write_role_bullet(self, role_label: str, material: str, existing: list[str],
                           jd_terms: list[str], max_chars: int, jd_text: str = "") -> str:
         """ONE more bullet for one role, from that role's own material only, for a page that

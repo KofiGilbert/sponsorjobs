@@ -136,11 +136,15 @@ def test_overflow_cuts_the_oldest_roles_first_and_protects_the_two_most_recent()
 # --------------------------------------------------------------------------- the gate
 def test_a_written_bullet_with_an_invented_number_or_tool_is_rejected():
     role_text = ("Lakeshore Logistics\nData Analyst\nBuilt weekly SQL and Tableau dashboards that "
-                 "track on-time delivery for 14 regional depots.")
+                 "track on-time delivery for 14 regional depots.\nAt Lakeshore Logistics I also "
+                 "trained the new analysts to maintain the SQL dashboards.")
     listed = ["SQL", "Tableau", "Kubernetes", "Power BI"]
     sib = ["Built weekly SQL and Tableau dashboards that track on-time delivery for 14 regional depots."]
-    ok = "Shared the SQL delivery dashboards with each regional depot every week."
+    ok = "Trained the new analysts to maintain and extend the SQL dashboards."
     assert written_problems(ok, role_text, sib, JD, listed) == []
+    # says nothing the sibling does not (a real build wrote one like this, 2026-11-06)
+    assert "restates the role's other bullets" in written_problems(
+        "Shared the weekly SQL delivery dashboards with each regional depot.", role_text, sib, JD, listed)
     assert "40" in " ".join(written_problems("Cut delivery delays by 40 percent with SQL dashboards.",
                                              role_text, sib, JD, listed))
     assert written_problems("Moved the depot dashboards onto Kubernetes for the team.",
@@ -160,16 +164,23 @@ class _Inventive(FakeLLM):
 
 
 class _Splitter(FakeLLM):
-    """Splits a bullet that joins two accomplishments with a semicolon."""
-
-    def expand_bullets(self, role_title, bullets, jd_text):
-        out = []
-        for b in bullets:
-            out += [p.strip().rstrip(".") + "." for p in str(b).split(";") if p.strip()]
-        return out
+    """Splits a bullet at its semicolon (FakeLLM.split_bullet) and writes nothing."""
 
     def write_role_bullet(self, *a, **k):
         return ""
+
+
+def test_a_split_that_repeats_a_phrase_across_parts_is_refused():
+    from tailoring.assembler import _split_ok
+    src = ("Lead business intelligence across the company's products, building KPI dashboards "
+           "and automated Python and SQL reporting that track growth, usage, and unit costs.")
+    good = ["Led business intelligence across the company's products.",
+            "Built KPI dashboards and automated Python and SQL reporting on growth, usage, and unit costs."]
+    echo = ["Built KPI dashboards that track growth, usage, and unit costs.",
+            "Automated Python and SQL reporting that tracks growth, usage, and unit costs."]
+    assert _split_ok(good, src, src, [], JD)
+    assert not _split_ok(echo, src, src, [], JD)
+    assert not _split_ok(["Led BI for 40 products.", "Built KPI dashboards."], src, src, [], JD)
 
 
 @requires_latex
@@ -191,7 +202,7 @@ def test_a_merged_bullet_is_split_into_its_own_accomplishments(template_source, 
     assert len(split) == 2 and all(a["label"] == "Lakeshore Logistics, Data Analyst" for a in split)
     first = res.profile_used["experience"][0]["roles"][0]["bullets"]
     assert any(b.startswith("Built weekly SQL") for b in first)
-    assert any(b.startswith("cleaned shipment data") for b in first)
+    assert any(b.startswith("Cleaned shipment data") for b in first)
 
 
 # --------------------------------------------------------------------------- the fill
@@ -264,3 +275,87 @@ def test_the_builder_says_what_it_wrote_and_still_invites_more_when_short(templa
     assert s._written == [w for w in before if w["bullet"] in
                           {b for _r, _e, r in ranked_roles(s.assembled.profile_used) for b in r["bullets"]}]
     assert s.assembled.written == []
+
+
+# --------------------------------------------------------------------------- recency comes first
+def test_make_room_cuts_older_material_in_kofis_order_and_can_undo():
+    from tailoring.assembler import _Cuts, _make_room
+    page = normalize_profile({
+        "summary": "Analyst.",
+        "skills": {f"Line {i}": "SQL, Excel" for i in range(6)},
+        "projects": [{"org": "P1", "title": "Creator", "bullets": ["p1 a.", "p1 b.", "p1 c."]},
+                     {"org": "P2", "title": "Creator", "bullets": ["p2 a.", "p2 b."]}],
+        "experience": [_role("Acme", "2021 - Present", 2), _role("Beta", "2019 - 2021", 2),
+                       _role("Cobalt", "2017 - 2019", 3), _role("Delta", "2015 - 2017", 3)]})
+    whole = copy.deepcopy(page)
+    trims: list = []
+    cuts = _Cuts(trims, (), {})
+    seen, undo = [], []
+
+    def shape(p):
+        return (_counts(p), [len(x["bullets"]) for x in p["projects"]], len(p["skills"]))
+    while True:
+        u = _make_room(page, cuts, sorted(ranked_roles(page), key=lambda x: x[0]))
+        if u is None:
+            break
+        undo.append(u)
+        seen.append(shape(page))
+    assert seen == [
+        ([2, 2, 3, 2], [3, 2], 6),      # (1) older roles beyond two, oldest first
+        ([2, 2, 2, 2], [3, 2], 6),
+        ([2, 2, 2, 2], [3, 1], 6),      # (2) project bullets beyond one, last project first
+        ([2, 2, 2, 2], [2, 1], 6),
+        ([2, 2, 2, 2], [1, 1], 6),
+        ([2, 2, 2, 1], [1, 1], 6),      # (3) the oldest role down to one
+        ([2, 2, 2, 1], [1, 1], 5),      # (4) skills lines beyond the minimum
+    ]
+    assert len(trims) == 7 and page["summary"] == "Analyst." and len(page["experience"]) == 4
+    for u in reversed(undo):
+        u()
+    assert page == whole and trims == []
+
+
+def _near_full():
+    p = copy.deepcopy(THIN)
+    p["education"][0]["courses"] = ("Regression, Probability, Data Mining, Database Systems, "
+                                    "Survey Methods, Statistical Computing")
+    p["extracurricular"].append({"title": "Treasurer, UIC Statistics Club", "date": "2016 - 2018", "bullets": [
+        "Kept the club budget in a shared spreadsheet and reported spending to members each term.",
+        "Organized a yearly data challenge with a local hospital that drew forty student teams."]})
+    p["skills"]["Reporting"] = "Monthly reporting, KPI tracking, Excel pivot tables"
+    p["projects"] = [
+        {"org": "Depot Delay Tracker", "title": "Creator", "dates": "2024", "bullets": [
+            "Built a Python and SQL tracker that pulls public freight delay data each night and charts late arrivals by depot and weekday.",
+            "Wrote a short guide so other analysts could rerun the tracker against their own depots without changing the code.",
+            "Shared weekly Tableau charts from the tracker with a local logistics meetup and took requests for new views."]},
+        {"org": "Clinic Wait Time Study", "title": "Volunteer Analyst", "dates": "2022", "bullets": [
+            "Cleaned two years of anonymized clinic visit logs in Excel and SQL and reported median waits by hour to the clinic board.",
+            "Ran a simple A/B comparison of two check-in layouts and wrote up the result for the front desk team."]}]
+    return p
+
+
+@requires_latex
+def test_on_a_near_full_page_the_recent_roles_still_get_three_by_trimming_older_material(
+        template_source, workdir):
+    prof = _near_full()
+    plain = assemble_cv(template_source, prof, JD, None, workdir, jobname="plain", tailor=False)
+    assert _counts(plain.profile_used) == [2, 2, 2, 2] and plain.fill_ratio > 0.88   # nearly full
+    res = assemble_cv(template_source, prof, JD, FakeLLM(), workdir, jobname="cv", tailor=True)
+    assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
+    assert res.fill_ratio <= MAX_FILL
+    c = _counts(res.profile_used)
+    assert c[0] >= 3 and c[1] >= 3 and len(c) == 4                  # no role dropped
+    # room came from project bullets beyond one each (no older role had more than two)
+    assert res.trims and all(t["kind"] == "bullet" and t["section"] == "projects" for t in res.trims)
+    assert all(len(p["bullets"]) >= 1 for p in res.profile_used["projects"])
+    assert len(res.profile_used["projects"]) == 2
+
+
+@requires_latex
+def test_when_no_room_can_be_made_the_page_stays_clean_and_says_so(template_source, workdir,
+                                                                   monkeypatch):
+    monkeypatch.setattr(A, "_make_room", lambda *a, **k: None)
+    res = assemble_cv(template_source, _near_full(), JD, FakeLLM(), workdir, tailor=True)
+    assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
+    assert res.fill_ratio <= MAX_FILL
+    assert any("would not fit on one page" in n for n in res.bullet_notes), res.bullet_notes

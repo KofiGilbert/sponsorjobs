@@ -79,6 +79,12 @@ class LLMBackend(Protocol):
         dates, employer/product names); it re-presents the person's own content.
         """
 
+    def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "") -> list[str]:
+        """Rewrite ONE bullet that packs several accomplishments as exactly ``parts`` bullets
+        (tailoring/assembler.py ``_recency_fill``, making room for one more bullet on a recent
+        role). Every fact comes from ``text``; no phrase repeats across the parts. Return the
+        bullet unchanged in a one-item list when it does not hold that many distinct things."""
+
     def write_role_bullet(self, role_label: str, material: str, existing: list[str],
                           jd_terms: list[str], max_chars: int, jd_text: str = "") -> str:
         """ONE new bullet for one role, written ONLY from ``material`` (that role's own
@@ -381,12 +387,26 @@ class FakeLLM:
         # produces merged comma-lists in the offline suite, so a no-op is faithful.
         return [str(b).strip() for b in bullets if str(b).strip()]
 
+    def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "") -> list[str]:
+        """Deterministic: split at a semicolon, else at the last ", and ", into ``parts``
+        sentences of the bullet's own words; the bullet unchanged when it has no such joint."""
+        t = str(text or "").strip().rstrip(".")
+        bits = [b.strip() for b in t.split(";") if b.strip()]
+        if len(bits) < 2 and ", and " in t:
+            head, _, tail = t.rpartition(", and ")
+            bits = [head.strip(), tail.strip()]
+        if len(bits) != int(parts):
+            return [str(text or "").strip()]
+        return [b[0].upper() + b[1:] + "." for b in bits]
+
+    # Each frame shares as few words as possible with the others, so a later written bullet
+    # never restates an earlier one (assembler.written_problems).
     _WRITE_FRAMES = (
         "Worked with {ab} as {title} at {org}.",
-        "Used {ab} in day-to-day work at {org}.",
-        "Applied {ab} to the regular work of the {title} role.",
-        "Relied on {ab} as part of the {title} role at {org}.",
-        "Brought {ab} into the {title} work at {org}.",
+        "Used {ab} in day-to-day tasks.",
+        "Applied {ab} to recurring requests.",
+        "Relied on {ab} for routine checks.",
+        "Brought {ab} into weekly reviews.",
     )
 
     def write_role_bullet(self, role_label: str, material: str, existing: list[str],

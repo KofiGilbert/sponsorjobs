@@ -1574,7 +1574,8 @@ def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
     that this role never shows, no filler, no keyword list, and nothing a sibling bullet
     already says (tailoring/filler.py: one fact, one bullet)."""
     from .fact_gate import figures, known_material, new_claims, source_figures
-    from .filler import filler_added, repeats_sibling, same_fact, tacked_on_terms
+    from .filler import (_FACT_STOP, _fact_tokens, filler_added, repeats_sibling, same_fact,
+                         tacked_on_terms)
     from .keywords import introduced_skills, term_present
 
     new = str(new or "").strip()
@@ -1589,9 +1590,26 @@ def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
     sibs = [str(s) for s in siblings or () if str(s).strip()]
     if repeats_sibling("", new, sibs) or any(same_fact(new, s) for s in sibs):
         bad.append("repeats a bullet of this role")
+    else:
+        # Says nothing new: most of its content words are already on the role's other bullets.
+        # A real build (2026-11-06) wrote "Gathered enterprise CRM requirements ... process
+        # improvement ... two roles" under a bullet that already said exactly that.
+        def stems(text):
+            return [t.rstrip("s") for t in _fact_tokens(text) if t not in _FACT_STOP]
+        said = {t for x in sibs for t in stems(x)}
+        mine = stems(new)
+        if mine and sum(t in said for t in mine) / len(mine) >= WRITTEN_SAID_SHARE:
+            bad.append("restates the role's other bullets")
     if max_chars and len(new) > max_chars:
         bad.append("too long")
     return list(dict.fromkeys(bad))
+
+
+# A written bullet whose content words are this share or more already on the role's other
+# bullets restates them, and is refused (``written_problems``).
+WRITTEN_SAID_SHARE = 0.5
+# Two parts of a split may not share this many words in a row.
+SPLIT_SHARED_RUN = 5
 
 
 def _looks_merged(text: str) -> bool:
@@ -1601,11 +1619,20 @@ def _looks_merged(text: str) -> bool:
                              or (len(t) >= 120 and " and " in t))
 
 
+def _split_call(llm, title: str, src: str, jd_text: str, room: int) -> list:
+    """One bullet split for the recency fill: ``llm.split_bullet`` into exactly two parts (one
+    more bullet, the least room it takes), or, for a backend without it, ``llm.expand_bullets``
+    (the caller drops a split with more parts than ``room``)."""
+    if callable(getattr(llm, "split_bullet", None)):
+        return llm.split_bullet(title, src, 2, jd_text)
+    return llm.expand_bullets(title, [src], jd_text)
+
+
 def _split_ok(parts: list, src: str, role_text: str, siblings, jd_text: str) -> bool:
     """Every part of a split restates only its source bullet: no new figure, name or skill,
     no filler, no repeat of another bullet or of another part."""
     from .fact_gate import figures, known_material, new_claims
-    from .filler import filler_added, same_fact, shares_a_clause
+    from .filler import _fact_tokens, _longest_shared_run, filler_added, shares_a_clause
     from .keywords import introduced_skills
 
     known = known_material(src, role_text)
@@ -1616,7 +1643,11 @@ def _split_ok(parts: list, src: str, role_text: str, siblings, jd_text: str) -> 
             return False
         if any(shares_a_clause(part, str(s)) for s in siblings or ()):
             return False
-        if any(same_fact(part, other) for other in parts[n + 1:]):
+        # Parts of one sentence each say their own thing: a phrase repeated across parts
+        # ("growth, usage, and unit costs" three times, a real split on 2026-11-06) reads as
+        # padding on the page.
+        if any(_longest_shared_run(_fact_tokens(part), _fact_tokens(other)) >= SPLIT_SHARED_RUN
+               for other in parts[n + 1:]):
             return False
     return True
 
@@ -1624,20 +1655,29 @@ def _split_ok(parts: list, src: str, role_text: str, siblings, jd_text: str) -> 
 def _recency_fill(preamble: str, used: dict, result, *, sections, headings, workdir: Path,
                   jobname: str, llm, jd_text: str, tailor: bool, write: bool, source: dict,
                   material=(), gate_material=(), origins: dict | None = None,
-                  reverted: list | None = None):
-    """Fill a short page with more bullets, the most recent roles first, re-measuring the real
-    page after every bullet. Returns (result, added, notes).
+                  reverted: list | None = None, trims: list | None = None, keep=()):
+    """Give the most recent roles their bullets, then fill a short page with more, re-measuring
+    the real page after every bullet. Returns (result, added, notes).
 
-    Two passes over the roles in recency order (``ranked_roles``): first every role up to its
-    fewest bullets (``bullet_budget``), then every role up to its most, so the most recent role
-    is brought toward five first, then the second toward four, then older ones toward three.
-    It stops when the page reaches ``FILL_GOAL`` or the next bullet would overflow (two pages,
-    a new overfull line, or past ``MAX_FILL``); that bullet is taken back off.
+    Recency comes first (Kofi, 2026-11-06). The two most recent roles (and a role the person
+    leads with) reach their fewest bullets (three) even on a page that is already full: when a
+    bullet does not fit, room is made from OLDER material, one cut at a time and re-measured
+    after each (``_make_room``), stopping as soon as the page is one clean page again. If even
+    that cannot fit it, the bullet and the cuts are undone (the best clean page stays) and a
+    note says so. Every cut is recorded in ``trims`` (Put back), and a cut the person put back
+    (``keep``) is never made again.
+
+    Then, while the page is short of ``FILL_GOAL``, two passes over the roles in recency order
+    (``ranked_roles``): every older role up to its fewest bullets, then every role up to its
+    most, so the most recent role is brought toward five first, then the second toward four,
+    then older ones toward three. This part never cuts anything: it stops when the page
+    reaches ``FILL_GOAL`` or the next bullet would overflow (two pages, a new overfull line, or
+    past ``MAX_FILL``); that bullet is taken back off.
 
     Each bullet comes from, in order: (a) the person's own bullet for that role that selection
     left out (``_reserve``), put back in the author's order and, with ``tailor``, reworded
     toward the job like any other; (b) a split of one of the role's bullets that merges several
-    accomplishments (``llm.expand_bullets``, each part checked against its source bullet);
+    accomplishments (``llm.split_bullet``, each part checked against its source bullet);
     (c) a NEW bullet written from that role's own material only (``llm.write_role_bullet``),
     refused by ``written_problems`` if it states anything the material does not or repeats a
     sibling. (b) and (c) need ``write`` and a model (a fresh build, never a rebuild after the
@@ -1650,8 +1690,7 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
     added: list = []
     notes: list = []
     origins = origins if origins is not None else {}
-    if not (result and result.ok and result.pages == 1 and result.fill_ratio is not None
-            and result.fill_ratio < FILL_GOAL):
+    if not (result and result.ok and result.pages == 1 and result.fill_ratio is not None):
         return result, added, notes
     reword = bool(tailor and llm is not None)
     use_llm = bool(write and llm is not None)
@@ -1669,6 +1708,8 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                     and r.fill_ratio is not None and r.fill_ratio <= MAX_FILL)
 
     def next_step(entry: dict, role: dict, most: int):
+        # ``most`` caps how many bullets the role may reach with this step: a split that would
+        # carry it past the bullet the caller asked for is not taken.
         # A role whose bullets were drafted as placeholders (not the person's words) is never
         # split or written from: only the person's own material may seed a new bullet.
         own = not (role.get("drafted_bullets") or entry.get("drafted_bullets"))
@@ -1696,14 +1737,15 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                       and order.index(_norm_text(origins.get(b, b))) < at)
             return bl[:pos] + [text] + bl[pos:], [dict(rec, bullet=text, kind="saved", source=src)]
         role_text = _role_material(entry, role, src_role, source, material)
-        if use_llm and own:                                    # (b) split a merged bullet
+        room = most - len(bl) + 1                             # parts one bullet may become
+        if use_llm and own and room >= 2:                      # (b) split a merged bullet
             for i, b in enumerate(bl):
                 src = str(origins.get(b, b))
                 if src in st["tried"] or not _looks_merged(src):
                     continue
                 st["tried"].add(src)
                 try:
-                    parts = llm.expand_bullets(str(role.get("title") or ""), [src], jd_text)
+                    parts = _split_call(llm, str(role.get("title") or ""), src, jd_text, room)
                 except Exception:                              # noqa: BLE001 - a split is optional
                     continue
                 parts = [str(x).strip() for x in parts or [] if str(x).strip()]
@@ -1734,20 +1776,67 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
         return None
 
     order = sorted(ranked_roles(used), key=lambda x: x[0])
-    stop = False
+    cuts = _Cuts(trims, keep, origins)
+
+    def lead(entry: dict, role: dict) -> bool:
+        return bool(role.get("_lead") or entry.get("_lead"))
+
+    def measure():
+        _say("fill", "Filling the page", "with more of your most recent work")
+        return compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
+                           workdir, jobname=f"{jobname}-fill")
+
+    # 1. The two most recent roles reach their fewest bullets, making room from older material.
+    blocked: set = set()
+    for rank, entry, role in order:
+        if rank >= len(RECENCY_BUDGETS) and not lead(entry, role):
+            continue
+        fewest, most = bullet_budget(rank, lead(entry, role))
+        role.setdefault("bullets", [])
+        while len(role["bullets"]) < fewest:
+            step = next_step(entry, role, fewest)
+            if step is None:
+                break
+            before = list(role["bullets"])
+            role["bullets"][:] = step[0]
+            undo: list = []
+            r = measure()
+            while not clean(r):
+                u = _make_room(used, cuts, order)
+                if u is None:
+                    break
+                undo.append(u)
+                r = measure()
+            if not clean(r):                   # no room even after every allowed cut
+                role["bullets"][:] = before
+                for u in reversed(undo):
+                    u()
+                blocked.add(id(role))
+                n = len(role["bullets"])
+                notes.append(f"{entry_label(entry, role)} shows {n} bullet{'' if n == 1 else 's'}: "
+                             f"a {'third' if n == 2 else 'further'} one would not fit on one page, "
+                             "even after trimming older material.")
+                break
+            result = r
+            added += step[1]
+        if blocked:
+            break
+
+    # 2. A short page gets more, most recent first, without cutting anything.
+    stop = bool(blocked) or result.fill_ratio >= FILL_GOAL
     for phase in (0, 1):                     # 0: up to the fewest, 1: up to the most
         for rank, entry, role in order:
-            fewest, most = bullet_budget(rank, bool(role.get("_lead") or entry.get("_lead")))
+            if id(role) in blocked:
+                continue
+            fewest, most = bullet_budget(rank, lead(entry, role))
             role.setdefault("bullets", [])
             while not stop and len(role["bullets"]) < (fewest if phase == 0 else most):
-                step = next_step(entry, role, most)
+                step = next_step(entry, role, fewest if phase == 0 else most)
                 if step is None:
                     break
                 before = list(role["bullets"])
                 role["bullets"][:] = step[0]
-                _say("fill", "Filling the page", "with more of your most recent work")
-                r = compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
-                                workdir, jobname=f"{jobname}-fill")
+                r = measure()
                 if not clean(r):
                     role["bullets"][:] = before        # this bullet would overflow: stop here
                     stop = True
@@ -1760,7 +1849,7 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
         if stop:
             break
     for rank, entry, role in order:
-        fewest, _most = bullet_budget(rank, bool(role.get("_lead") or entry.get("_lead")))
+        fewest, _most = bullet_budget(rank, lead(entry, role))
         n = len(role.get("bullets") or [])
         drafted = role.get("drafted_bullets") or entry.get("drafted_bullets")
         if n < fewest and not drafted and state.get(id(role), {}).get("dry"):
@@ -1768,6 +1857,68 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                          "there is no more of your material for that role yet. Tell me more "
                          "about it and I will add it.")
     return result, added, notes
+
+
+def _make_room(profile: dict, cuts: "_Cuts", order: list):
+    """Make room for the most recent roles' fewest bullets with ONE cut of older material, in
+    the order Kofi set (2026-11-06): (1) an older role's bullets beyond two, oldest role first;
+    (2) a project's bullets beyond one, last project first; (3) the oldest role down to one
+    bullet; (4) a skills line beyond the template's minimum (``SKILL_LINES_FLOOR``). Never a
+    whole role, never the summary, never type or margins. The cut is recorded in ``cuts`` (Put
+    back) and a cut the person put back is skipped. Returns a function that undoes the cut, or
+    None when nothing is left to cut."""
+    trims = cuts.trims
+
+    def forget(rec):
+        if trims is not None and rec in trims:
+            trims.remove(rec)
+
+    def pop(bl: list, section: str, label: str, keep_n: int):
+        idx = next((i for i in range(len(bl) - 1, keep_n - 1, -1)
+                    if not cuts.kept("bullet", label, str(bl[i]))), None)
+        if idx is None:
+            return None
+        text = bl.pop(idx)
+        cuts.add("bullet", section, label, str(text), index=idx)
+        rec = trims[-1] if trims else None
+
+        def undo():
+            bl.insert(idx, text)
+            forget(rec)
+        return undo
+
+    older = sorted((x for x in order if x[0] >= len(RECENCY_BUDGETS)
+                    and not (x[2].get("_lead") or x[1].get("_lead"))), key=lambda x: -x[0])
+    for _rank, e, r in older:                                         # (1)
+        u = pop(r["bullets"], "experience", entry_label(e, r), OLDER_BUDGET[0])
+        if u:
+            return u
+    for p in reversed(profile.get("projects") or []):                # (2)
+        if isinstance(p, dict) and isinstance(p.get("bullets"), list):
+            u = pop(p["bullets"], "projects", entry_label(p), 1)
+            if u:
+                return u
+    if older:                                                         # (3)
+        _rank, e, r = older[0]
+        u = pop(r["bullets"], "experience", entry_label(e, r), 1)
+        if u:
+            return u
+    skills = profile.get("skills")                                    # (4)
+    if isinstance(skills, dict) and len(skills) > SKILL_LINES_FLOOR:
+        last = next((k for k in reversed(list(skills))
+                     if not cuts.kept("skills_line", str(k), str(k))), None)
+        if last is not None:
+            before = dict(skills)
+            cuts.add("skills_line", "skills", str(last), str(last), value=skills[last])
+            rec = trims[-1] if trims else None
+            del skills[last]
+
+            def undo():
+                skills.clear()
+                skills.update(before)
+                forget(rec)
+            return undo
+    return None
 
 
 def _resolve_added(used: dict, added: list, origins: dict) -> list:
@@ -1938,7 +2089,8 @@ def assemble_cv(
             preamble, used, result, sections=sections, headings=headings, workdir=workdir,
             jobname=jobname, llm=llm, jd_text=jd_text, tailor=tailor,
             write=tailor if fill_writes is None else fill_writes, source=source_material,
-            material=material, gate_material=gate_material, origins=origins, reverted=reverted)
+            material=material, gate_material=gate_material, origins=origins, reverted=reverted,
+            trims=trims, keep=keep)
         # The review's "before" side gets the person's own bullets the fill brought back.
         keys = {entry_label(e, r): _role_key(e, r) for _rank, e, r in ranked_roles(used)}
         sources = {_role_key(e, r): r for e, r in _experience_roles(selected_source)}
@@ -1966,6 +2118,8 @@ def assemble_cv(
             render=lambda p: render_cv(preamble, p, sections, probe=True, headings=headings),
             compile_fn=lambda tex, name: compile_tex(tex, workdir, jobname=name),
             is_clean=_clean, llm=llm, jd_text=jd_text, skill_pool=skill_pool,
+            # A written bullet stays exactly as the gate passed it and the person reviews it.
+            frozen={a["bullet"] for a in added if a.get("kind") == "written"},
             known=known_material(*gate_material), known_figures=source_figures(*gate_material),
             origins=origins, rounds=_lf.FIT_ROUNDS if fit_rounds is None else fit_rounds,
             fit_bullets=llm is not None, jobname=jobname)
