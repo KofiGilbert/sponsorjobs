@@ -83,6 +83,9 @@ STRIP = [
     "texmf-var/web2c/updmap.log",
     "tlpkg",
 ]
+# Windows DLLs that belong to the other engines (LuaTeX, XeTeX, Knuth's TeX, dvipdfmx) and
+# ICU, which only XeTeX and LuaHBTeX load. pdftex.dll, kpathsea and the C runtime stay.
+DROP_DLL_PREFIXES = ("luatex", "luahbtex", "xetex", "lua5", "dvipdfmx", "icu", "tex.dll")
 # Formats in texmf-var/web2c/pdftex: only pdflatex.fmt is used.
 KEEP_FMT = {"pdflatex.fmt"}
 
@@ -232,7 +235,10 @@ def strip(root: Path) -> None:
     for f in bindir.iterdir():
         stem = f.name[:-4] if f.name.lower().endswith((".exe", ".dll")) else f.name
         if f.name.lower().endswith(".dll"):
-            continue                                    # Windows: the engines need these
+            # Windows: pdftex.dll is the engine itself; keep it, kpathsea and the C runtime.
+            if f.name.lower().startswith(DROP_DLL_PREFIXES):
+                f.unlink()
+            continue
         if stem not in KEEP_BIN:
             if f.is_dir() and not f.is_symlink():
                 shutil.rmtree(f)

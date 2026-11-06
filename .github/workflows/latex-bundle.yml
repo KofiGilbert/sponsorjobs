@@ -43,7 +43,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # The same Apple Silicon runner release.yml builds the .dmg on. (macos-14 was asked
+          # for first; GitHub no longer accepts that label: "macos-14-arm64 is not supported".)
+          - os: macos-latest
             label: macos-arm64
           - os: windows-latest
             label: windows-x64
