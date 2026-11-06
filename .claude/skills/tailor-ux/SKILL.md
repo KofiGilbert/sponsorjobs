@@ -378,3 +378,11 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   off", never a modal and never in the way of a run; showing it records the version. Every item is a
   switch on the memory page's "What I may do for you" card. No up-front bar question, no setup checkbox,
   no consent sheet (a sheet was built and dropped the same day: "people don't have time to be clicking around").
+- 2026-11-06: the apply agent's bar asks SEVERAL questions one at a time, never as one paragraph
+  with one box ("1. first answer, 2. second answer" let a bare "no" land on a background-check
+  consent). `bb-qhead`: "Question 2 of 4" muted at 11.5px over the question in ink, the engine's
+  reply only when it took nothing (`bb-note`, ink-2), the choices as ghost buttons (the picked one
+  outlined in ink, `aria-pressed`), the box, Answer (the bar's one primary), Back (ghost). Under it
+  "Your answers:" with each answer a quiet underlined link back to its question. No new colour.
+  The bar stacks (`bb-stack`) whenever there are several questions. Checked in a 483px browser
+  pane and at 560px, dark (the bar is dark in both themes).

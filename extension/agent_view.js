@@ -765,17 +765,41 @@
     return { ok: true, note: got ? "" : "value differs", changed: fingerprint() !== before };
   }
 
-  async function doSelect(el, option) {
+  // Words that add nothing to a choice ("Online job board" says what "Job board" says). An option
+  // that holds the wanted words among others is picked only when the others are these: never
+  // one that adds a qualifier ("College Job Board" for "Job board": Phoenix Contact on
+  // Greenhouse, 2026-11-05). Mirrored in autoapply/planner.py _NEUTRAL and autofill_core.js.
+  const NEUTRAL_WORDS = new Set(["a", "an", "the", "and", "or", "s", "job", "jobs", "online", "internet", "web",
+    "website", "websites", "site", "sites", "posting", "postings", "general", "etc", "eg", "ie", "degree"]);
+  const words = (s) => norm(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").filter(Boolean);
+  function holdsOnly(text, want) {
+    const t = words(text), have = new Set(words(want));
+    if (!have.size || ![...have].every((x) => t.includes(x))) return false;
+    return t.every((x) => have.has(x) || NEUTRAL_WORDS.has(x));
+  }
+  function choiceFor(opts, want, textOf) {
+    const w = norm(want);
+    if (!w) return null;
+    return opts.find((o) => norm(textOf(o)) === w || (tagOf(o) === "OPTION" && norm(o.value) === w))
+        || opts.find((o) => norm(textOf(o)).startsWith(w))
+        || opts.find((o) => w.length >= 3 && holdsOnly(textOf(o), want))
+        || null;
+  }
+
+  // ``opts.answer``: the person's saved answer (the shell's {{answer_N}}), so a list that holds
+  // no choice saying the same says so and lists nothing to pick instead.
+  async function doSelect(el, option, opts0) {
     if (tagOf(el) === "LABEL") { const c = controlOfLabel(el); if (c) el = c; }
     const want = String(option == null ? "" : option);
-    const w = norm(want);
+    const answer = !!(opts0 && opts0.answer);
+    const miss = (list) => answer
+      ? "no choice on this list says the same as the person's answer; do not pick one for them, report needs-answers"
+      : "no such option; options: " + list;
     const before = fingerprint();
     if (tagOf(el) === "SELECT") {
       const opts = Array.from(el.options || []);
-      let hit = opts.find((o) => norm(o.textContent) === w || norm(o.value) === w)
-             || opts.find((o) => w && norm(o.textContent).startsWith(w))
-             || opts.find((o) => w.length >= 3 && norm(o.textContent).includes(w));
-      if (!hit) return { ok: false, note: "no such option; options: " + optionList(opts), changed: false };
+      const hit = choiceFor(opts, want, (o) => o.textContent);
+      if (!hit) return { ok: false, note: miss(optionList(opts)), changed: false };
       setValue(el, hit.value);
       await sleep(40);
       const ok = el.value === hit.value;
@@ -788,7 +812,9 @@
     const E = T();
     if (E && typeof E.pickCombo === "function" && typeof E.valueScorer === "function") {
       let r = null;
-      try { r = await E.pickCombo(el, { text: want, score: E.valueScorer(want) }); } catch (e) { r = null; }
+      // The strict scorer: a choice that holds the words plus a qualifier is never picked.
+      const score = typeof E.answerScorer === "function" ? E.answerScorer(want) : E.valueScorer(want);
+      try { r = await E.pickCombo(el, { text: want, score }); } catch (e) { r = null; }
       if (r && r.ok) return { ok: true, note: "", changed: fingerprint() !== before };
       // "answered" means the engine will not touch a widget that already has a value; the
       // model asked for a change, so fall through to the plain path.
@@ -809,12 +835,11 @@
       await sleep(400);
       opts = visibleOptions();
     }
-    const hit = opts.find((o) => norm(o.textContent) === w)
-             || opts.find((o) => w && norm(o.textContent).startsWith(w))
-             || opts.find((o) => w.length >= 3 && norm(o.textContent).includes(w));
+    const hit = choiceFor(opts, want, (o) => o.textContent);
     if (!hit) {
       fire(el, "keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27 });
-      return { ok: false, note: opts.length ? "no such option; options: " + optionList(opts) : "no options shown", changed: false };
+      if (answer && tagOf(el) === "INPUT" && String(el.value || "") === want) setValue(el, "");   // no stray filter text
+      return { ok: false, note: opts.length ? miss(optionList(opts)) : "no options shown", changed: false };
     }
     try { if (hit.scrollIntoView) hit.scrollIntoView({ block: "nearest" }); } catch (e) { /* fine */ }
     fire(hit, "mouseover"); fire(hit, "mousemove");
@@ -860,7 +885,7 @@
     try {
       if (op === "click") return await doClick(el);
       if (op === "type") return await doType(el, action.text);
-      if (op === "select") return await doSelect(el, action.option != null ? action.option : action.text);
+      if (op === "select") return await doSelect(el, action.option != null ? action.option : action.text, { answer: !!action.answer });
       if (op === "upload") return { ok: false, note: "upload is done by the shell", changed: false };
     } catch (e) {
       return { ok: false, note: "failed: " + String(e && e.message || e).slice(0, 80), changed: false };
