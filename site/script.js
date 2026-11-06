@@ -369,7 +369,7 @@ function markPrimaryForThisOS() {
   const other = $("dl-other");
   if (other && os === "win") { other.dataset.os = "mac"; other.textContent = "Download for macOS (Apple Silicon)"; }
   const req = $("dl-req");
-  if (req && os === "win") req.textContent = "Windows 10 or later, 64-bit. You also need LaTeX, step 1 below.";
+  if (req && os === "win") req.textContent = "Windows 10 or later, 64-bit.";
 }
 
 function mb(bytes) {
