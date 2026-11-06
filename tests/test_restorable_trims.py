@@ -18,10 +18,25 @@ from conftest import requires_latex
 JD = "Senior Data Engineer. Python, SQL, AWS, Airflow, Kubernetes, data pipelines, dashboards."
 
 
+# Distinct facts of similar length: the assembler drops a bullet that repeats another in the same
+# entry (tailoring/filler.same_fact), so near-copies would no longer overflow the page.
+_WORK = [
+    "Rebuilt the nightly revenue pipeline in Python and SQL on AWS, cutting the finance close from three days to one and giving the controller a daily view of booked revenue.",
+    "Moved forty legacy cron jobs into Airflow with retries and alerting, ending the weekly manual reruns for operations and paging the owner within five minutes of any failure.",
+    "Designed a dbt model layer for marketing attribution that analysts now query directly instead of exporting to Excel, with tests and documentation on every model in the marketing schema.",
+    "Cut warehouse spend by a fifth by partitioning the largest event tables and dropping unused nightly snapshots, then publishing a monthly cost report broken down by owning team.",
+    "Wrote data quality checks on order and refund feeds that caught a billing bug before quarter end reporting and now block bad loads automatically until an engineer reviews them.",
+    "Led the migration from Redshift to Snowflake for twelve teams, with a parallel run and a signed off cutover plan, finishing two weeks early with no missed reports for any downstream team.",
+    "Built a Kafka consumer that streams shipment scans into the warehouse within a minute for the logistics team, replacing an hourly batch export that dispatchers had called too slow for years.",
+    "Trained six analysts on SQL window functions and code review, and wrote the team's style guide for queries, which new hires now read during their first week on the job.",
+    "Automated the monthly board deck numbers with a tested Python job, replacing a two day spreadsheet process with a reviewed pull request that finance signs off each month.",
+    "Set up on call runbooks and dashboards for the data platform, halving the time to resolve pipeline incidents and cutting repeat incidents by adding a short post review.",
+]
+
+
 def _role(org, title, dates, n):
     return {"org": org, "location": "Chicago, IL", "roles": [{"title": title, "dates": dates, "bullets": [
-        f"{org} work item {i}: built and ran Python and SQL data pipelines on AWS with Airflow for the "
-        f"analytics, finance and operations teams, with monitoring, alerting and clear runbooks." for i in range(1, n + 1)]}]}
+        f"At {org}: {_WORK[(i + len(org)) % len(_WORK)]}" for i in range(n)]}]}
 
 
 LONG = {
