@@ -75,4 +75,7 @@ def test_shell_allows_only_the_support_mailto():
         assert got is cases[url], url
     main = (ROOT / "shell-electron" / "main.js").read_text("utf-8")
     assert 'ipcMain.on("support:mail"' in main and "isSupportMailto(url)) shell.openExternal(url)" in main
-    assert '"links.js"' in (ROOT / "shell-electron" / "package.json").read_text("utf-8")
+    # links.js must ship in the installer (packed by build.files; see tests/test_shell_packaging.py).
+    import fnmatch
+    files = json.loads((ROOT / "shell-electron" / "package.json").read_text("utf-8"))["build"]["files"]
+    assert any(fnmatch.fnmatch("links.js", f) for f in files if not f.startswith("!"))
