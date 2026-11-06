@@ -13,7 +13,9 @@ pieces are all facts the build already holds:
 * terms added: job terms the page shows that the base resume did not (the coverage report),
   plus the keywords the person added one by one;
 * what the one-page fit cut (assembler ``trims``) and what the fact gate refused to publish
-  (``reverted``).
+  (``reverted``);
+* bullets the recency fill WROTE from a role's own material to fill a short page (assembler
+  ``written``), each listed with its role so the person checks it before sending.
 
 Deterministic and offline: the same inputs always give the same words.
 """
@@ -154,18 +156,24 @@ def terms_added(base: dict, coverage: dict | None, keyword_terms=()) -> list[str
 
 
 def what_changed(base: dict | None, page: dict | None, *, coverage: dict | None = None,
-                 hidden=(), shown=(), trims=(), reverted=(), keyword_terms=()) -> dict:
+                 hidden=(), shown=(), trims=(), reverted=(), keyword_terms=(),
+                 written=()) -> dict:
     """The structured diff. ``hidden`` / ``shown`` are the labels of the roles and projects the
-    person's choices left off or put on this page; ``trims`` and ``reverted`` come straight
-    from the build (assembler.AssembleResult)."""
+    person's choices left off or put on this page; ``trims``, ``reverted`` and ``written`` come
+    straight from the build (assembler.AssembleResult). A written bullet is listed only under
+    ``written``, never as a reword of a bullet it does not come from."""
     base = base or {}
     page = page or {}
     summary_changed = bool(base and page and _norm(page.get("summary")) != _norm(base.get("summary"))
                            and str(page.get("summary") or "").strip())
-    rew = reworded_bullets(base, page) if base else []
+    wrote = [{"label": str(w.get("label") or ""), "text": str(w.get("bullet") or "")}
+             for w in written or () if str(w.get("bullet") or "").strip()]
+    mine = {_norm(w["text"]) for w in wrote}
+    rew = [r for r in (reworded_bullets(base, page) if base else []) if _norm(r["after"]) not in mine]
     return {
         "reworded": [r for r in rew if r["before"]],
         "added_bullets": [r for r in rew if not r["before"]],
+        "written": wrote,
         "summary_updated": summary_changed,
         "skills": skills_change(base, page) if base else {"reordered": [], "added": [], "lines_moved": False},
         "hidden": [str(x) for x in hidden or () if str(x).strip()],
@@ -221,6 +229,11 @@ def points(ch: dict) -> list[str]:
         out.append("Job terms now on the page: " + _names(ch["terms_added"], 6) + ".")
     if ch.get("added_bullets"):
         out.append(_plural(len(ch["added_bullets"]), "new bullet", "new bullets") + " from your material.")
+    if ch.get("written"):
+        n = len(ch["written"])
+        out.append(_plural(n, "bullet", "bullets") + " written from your own material to fill the page, for "
+                   + _names(list(dict.fromkeys(w["label"] for w in ch["written"]))) + ". Check "
+                   + ("it" if n == 1 else "them") + " before you send.")
     if ch.get("trimmed"):
         n = len(ch["trimmed"])
         out.append(_plural(n, "item", "items") + " cut to fit one page. You can put "
@@ -247,6 +260,8 @@ def summary_line(ch: dict, role: str = "", company: str = "", limit: int = 1024)
         bits.append(_names(ch["hidden"], 2) + " hidden by your choice")
     if ch.get("trimmed"):
         bits.append(_plural(len(ch["trimmed"]), "item", "items") + " cut to fit")
+    if ch.get("written"):
+        bits.append(_plural(len(ch["written"]), "bullet", "bullets") + " written for you to check")
     text = f"Tailored for {who}" + (": " + ", ".join(bits) if bits else "") + "."
     if ch.get("terms_added"):
         text += " Added the job's terms: " + ", ".join(ch["terms_added"][:8]) + "."

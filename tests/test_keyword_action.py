@@ -227,7 +227,7 @@ def test_overflow_is_rolled_back_to_the_previous_page(template_source, workdir):
     llm = FakeLLM()
     built = assemble_cv(template_source, PROFILE, JD, llm, workdir, tailor=False, jobname="cv")
     t = _target(built.tex_source, built.profile_used)
-    wall = " ".join(["Python reporting work for the operations and finance teams."] * 60)
+    wall = " ".join(["Python reporting work for the operations and finance teams."] * 200)
     res = ka.apply_keyword_action(built.tex_source, "new", t.id, wall, "Python", "",
                                   workdir, llm, jobname="cv")
     assert not res.ok and "one page" in res.reason

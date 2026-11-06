@@ -3333,8 +3333,20 @@
     if ((ch.hidden || []).length) bits.push(twT("tw.hidden", "{n} hidden by your choice").replace("{n}", ch.hidden.length));
     if ((ch.terms_added || []).length) bits.push(twT("tw.terms", "{n} job terms added").replace("{n}", ch.terms_added.length));
     if (cuts.length) bits.push(twT("tw.cut", "{n} cut to fit").replace("{n}", cuts.length));
+    const wrote = ch.written || [];
+    if (wrote.length) bits.push(twT("tw.written", "{n} written for you").replace("{n}", wrote.length));
     $("#twSum").textContent = bits.join(" · ") || twT("tw.none", "Nothing reworded yet");
     $("#twPoints").innerHTML = pts.map(p => `<li>${esc(unDash(p))}</li>`).join("");
+    /* Bullets the builder WROTE from the person's own material to fill a short page: each shown
+       with its role, so the person reads every one before sending (edit or delete it on the page). */
+    const ww = $("#twWritten");
+    if (ww) {
+      ww.hidden = !wrote.length;
+      ww.innerHTML = wrote.length
+        ? `<div class="tw-lbl">${esc(twT("tw.writtenHead", "Written from your material, check these"))}</div>` + wrote.map(w =>
+          `<div class="tw-cut"><span class="tw-cut-t"><span class="tw-cut-w">${esc(w.label || "")}</span>${esc(unDash(w.text || ""))}</span></div>`).join("")
+        : "";
+    }
     const cw = $("#twCuts");
     cw.hidden = !cuts.length;
     cw.innerHTML = cuts.length

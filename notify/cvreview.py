@@ -151,8 +151,10 @@ class CVReview:
         base = data.get("base_profile") or {}
         if not page:
             # Records from before the page was persisted: rebuild the same selection.
-            from tailoring.assembler import normalize_profile, select_roles_for_jd
-            page = select_roles_for_jd(normalize_profile(data.get("render_profile") or {}), jd)
+            from tailoring.assembler import (normalize_profile, select_roles_for_jd,
+                                             strip_choice_marks)
+            page = strip_choice_marks(
+                select_roles_for_jd(normalize_profile(data.get("render_profile") or {}), jd))
             base = {}
         sections = data.get("sections")
         heads = data.get("headings")

@@ -396,6 +396,82 @@ class AnthropicLLM:
                 pass
         return [str(b).strip() for b in bullets if str(b).strip()]
 
+    def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "",
+                     tense: str = "past") -> list[str]:
+        """Rewrite ONE dense bullet as exactly ``parts`` bullets, from its own words only
+        (tailoring/assembler.py ``_recency_fill``). The assembler checks every part again: no
+        new figure, name or skill, no phrase repeated across parts."""
+        n = int(parts)
+        system = (
+            f"You rewrite ONE resume bullet as EXACTLY {n} bullets, because it packs several "
+            "accomplishments into one line and the page has room for one more line.\n"
+            f"- Group what the bullet says into {n} distinct accomplishments. Each is a complete "
+            "achievement sentence of 90 to 170 characters that stands on its own: what was done, "
+            "with what or for whom, and the result where the bullet states one.\n"
+            f"- Start every bullet with a concrete action verb in the {tense} tense"
+            + (" (Led, Built, Turned)" if tense == "past" else " (Lead, Build, Turn)") + ".\n"
+            "- Use ONLY what the bullet states. Keep every number and name it states, and add "
+            "none: no new figure, tool, employer, product, purpose or result.\n"
+            "- Each bullet says something the others do not. Never repeat a phrase, a scope or "
+            "a result across bullets (do not end every bullet with the same list).\n"
+            "- No filler (demonstrating, ensuring, leveraging, robust, comprehensive, seamless), "
+            "no em or en dashes.\n"
+            f"- If the bullet does not hold {n} accomplishments that can each stand alone as a "
+            "full sentence, return it unchanged as the only item.\n"
+            "Return ONLY a JSON array of strings."
+        )
+        user = (f"ROLE TITLE: {role_title}\n\nBULLET:\n{text}\n\n"
+                f"TARGET JOB (context only, do not copy facts from it):\n{str(jd_text)[:1000]}")
+        out = self._complete(system, user, max_tokens=500, effort="low") or ""
+        if "[" in out and "]" in out:
+            try:
+                data = json.loads(out[out.find("["): out.rfind("]") + 1])
+                cleaned = [str(b).strip() for b in data if str(b).strip()]
+                if cleaned:
+                    return cleaned
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return [str(text or "").strip()]
+
+    def write_role_bullet(self, role_label: str, material: str, existing: list[str],
+                          jd_terms: list[str], max_chars: int, jd_text: str = "") -> str:
+        """ONE more bullet for one role, from that role's own material only, for a page that
+        is short (tailoring/assembler.py ``_recency_fill``). The assembler checks the answer
+        again (``written_problems``: the fact gate scoped to this role, no repeat of a sibling)
+        and the person sees every written bullet under What changed. Low effort: this is
+        faithful rephrasing of what the material says, not invention."""
+        system = (
+            "You add ONE bullet to ONE role on a person's resume, using ONLY the ROLE MATERIAL "
+            "given (their own words about this role). The page is short and this role is "
+            "recent, so a further true bullet helps.\n"
+            "Hard rules:\n"
+            "- Every fact must be stated in ROLE MATERIAL. Never add a number, percentage, "
+            "amount, date, team size, employer, client, product, tool, technology, "
+            "certification or result that ROLE MATERIAL does not state for this role. Do not "
+            "borrow anything from other jobs.\n"
+            "- Say something the EXISTING BULLETS do not: a different task, tool or piece of "
+            "work the material shows (for example one part of a long bullet, a skill the "
+            "material ties to this role, or work their answers describe). Never restate an "
+            "existing bullet in other words.\n"
+            "- Use the target job's wording (SUPPORTED JOB TERMS) only where the material "
+            "supports it, as part of what actually happened, never as a list of keywords.\n"
+            f"- One plain, complete sentence of at most {int(max_chars)} characters, starting "
+            "with a concrete action verb. No filler (demonstrating, ensuring, leveraging, "
+            "robust, comprehensive, seamless, cross-functional), no em or en dashes.\n"
+            "- If the material does not support another distinct, true bullet, return exactly "
+            "NONE.\n"
+            "Return ONLY the bullet text (or NONE), no quotes, no markup."
+        )
+        user = (f"ROLE: {role_label}\n\n"
+                f"ROLE MATERIAL (the only facts you may use):\n{str(material)[:3000]}\n\n"
+                "EXISTING BULLETS (do not repeat):\n"
+                + "\n".join(f"- {b}" for b in existing or []) + "\n\n"
+                f"SUPPORTED JOB TERMS: {', '.join(jd_terms or []) or '(none)'}\n\n"
+                f"TARGET JOB (context only, do not copy facts from it):\n{str(jd_text)[:1200]}")
+        out = (self._complete(system, user, max_tokens=300, effort="low") or "").strip()
+        out = out.strip().strip('"').strip()
+        return "" if not out or out.strip(". ").upper() == "NONE" else out
+
     def ask_missing(self, missing: list[str], answered: list[str], role: str = "",
                     declined: list[str] | None = None) -> str:
         system = (

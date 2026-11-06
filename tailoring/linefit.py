@@ -7,9 +7,9 @@ The rule. Every written line on the resume runs to the right edge of the page:
     Tableau, advanced Excel, data visualization, dashboard design"), each ONE line whose last
     item ends in the final ~10% of the text width. Never wrapping to a second line, never
     stopping halfway.
-  * BULLETS: the number of bullets per role is untouched. Each bullet's LAST line runs close
-    to the right edge: a short last line is filled, a bullet that spills a word or two onto
-    a new line is trimmed back.
+  * BULLETS: the number of bullets per role is untouched (the assembler's recency budget
+    sets it before this runs). Each bullet's LAST line runs close to the right edge: a short
+    last line is filled, a bullet that spills a word or two onto a new line is trimmed back.
   * Only the person's own material (CLAUDE.md section 8). Nothing here invents a skill or a
     detail: every rewrite passes the fact gate (tailoring/fact_gate.py), the skill guard
     (keywords.introduced_skills) and the padding guard (tailoring/filler.py). When there is
@@ -17,12 +17,12 @@ The rule. Every written line on the resume runs to the right edge of the page:
   * One page, no overfull box, and never worse than before: every round is compiled and
     measured, and only a round that keeps the page clean AND scores better is kept.
 
-Measured, not estimated. Character-width estimates (tailoring/textwidth.py) are only good at
-the template's own 10pt; the layout ladder (assembler.LAYOUT_STEPS) changes the font size and
-margins, so a line sized by estimate can wrap on the real page. ``measure`` reads the glyph
-boxes from the compiled PDF with pypdfium2 (a core dependency, the same renderer the previews
-use) and reports, for each skills line and each bullet, how many lines it takes and how far
-its last glyph reaches toward the right margin.
+Measured, not estimated. Character-width estimates (tailoring/textwidth.py) are only
+approximate (the templates differ in font and margins), so a line sized by estimate can wrap
+on the real page. ``measure`` reads the glyph boxes from the compiled PDF with pypdfium2 (a
+core dependency, the same renderer the previews use) and reports, for each skills line and
+each bullet, how many lines it takes and how far its last glyph reaches toward the right
+margin.
 """
 
 from __future__ import annotations
@@ -735,7 +735,7 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
               llm=None, jd_text: str = "", skill_pool=(), known: dict | None = None,
               known_figures: set | None = None, origins: dict | None = None,
               rounds: int = FIT_ROUNDS, fit_bullets: bool = True,
-              jobname: str = "cv") -> FitOutcome:
+              jobname: str = "cv", trimmed: dict | None = None) -> FitOutcome:
     """Measure the compiled page and fix the lines that stop short, for up to ``rounds``
     rounds. Each round: repack the Skills block with widths calibrated to the real page, and
     ask the model to fill or trim each short bullet to a measured character window; compile;
@@ -747,9 +747,12 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     assembler (so this module needs no layout knowledge); ``is_clean(result)`` is its page
     check. ``skill_pool`` is more of the person's own skills; each is re-checked here against
     ``known`` (the fact gate's view of their material) before it can reach the page.
+    ``trimmed`` ({entry label: [bullet text]}) holds what the one-page fit cut from each entry:
+    a resize may not take a cut bullet's point either, so putting it back never prints the
+    same thing twice.
     """
     from .fact_gate import gate_rewrite
-    from .filler import is_padded, repeats_sibling, tacked_on_terms
+    from .filler import borrows_from_sibling, is_padded, repeats_sibling, tacked_on_terms
     from .keywords import introduced_skills, supported_skills, term_present
 
     before = measure(getattr(result, "pdf_path", None), profile)
@@ -809,6 +812,11 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                 bad = (introduced_skills(text, new, grounding, jd_text)
                        or (["padding"] if is_padded(text, new) else [])
                        or (["repeats another bullet"] if repeats_sibling(text, new, siblings)
+                           else [])
+                       or (["takes another bullet's point"]
+                           if borrows_from_sibling(text, new, siblings) else [])
+                       or (["takes the point of a bullet cut to fit"]
+                           if borrows_from_sibling(text, new, (trimmed or {}).get(label) or ())
                            else [])
                        or tacked_on_terms(text, new)
                        or gate_rewrite(text, new, known=known, known_figures=known_figures))
