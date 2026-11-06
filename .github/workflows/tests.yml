@@ -12,9 +12,49 @@ permissions:
   contents: read
 
 jobs:
-  pytest:
+  # What changed decides how much runs. A pull request that only touches the website, the docs or
+  # the site worker runs the site's own tests (seconds); anything else runs the full suite split
+  # across four machines at once. A push to main always runs everything.
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 60     # the suite takes 25 to 30 min on the runner; at 30 it timed out 3 times in 2 days (shown as cancelled)
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          changed=$(git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}")
+          echo "$changed"
+          other=$(echo "$changed" | grep -vE '^(site/|site-worker/|docs/|scripts/site_partials/|scripts/build_site\.py$|tests/test_site_copy\.py$|tests/test_support_contact\.py$|[^/]+\.md$)' || true)
+          if [ -n "$other" ]; then echo "code=true" >> "$GITHUB_OUTPUT"; else echo "code=false" >> "$GITHUB_OUTPUT"; fi
+
+  site:
+    needs: changes
+    if: needs.changes.outputs.code == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install pytest
+      - name: Site tests
+        run: python scripts/build_site.py --check && python -m pytest -q tests/test_site_copy.py tests/test_support_contact.py tests/test_no_dashes.py
+
+  shard:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    name: pytest shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -79,5 +119,21 @@ jobs:
           sudo mkdir -p /mnt/pytest && sudo chown "$USER" /mnt/pytest
           df -h / /mnt | tail -2
 
-      - name: Run tests
-        run: python -m pytest -q -n auto --dist loadfile --basetemp=/mnt/pytest/run
+      # Each machine takes every fourth test file (sorted by name), four at a time with
+      # pytest-xdist; --dist loadfile keeps each file on one worker, because several files write a
+      # fixed-name helper script.
+      - name: Run tests (shard ${{ matrix.shard }} of 4)
+        run: |
+          files=$(ls tests/test_*.py | sort | awk -v n=4 -v k=${{ matrix.shard }} 'NR % n == k')
+          echo "$files" | wc -l
+          python -m pytest -q -n auto --dist loadfile --basetemp=/mnt/pytest/run $files
+
+  # The one check branch protection requires: green when the site tests or every shard passed.
+  pytest:
+    needs: [changes, site, shard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "site=${{ needs.site.result }} shard=${{ needs.shard.result }}"
+          if [ "${{ needs.changes.outputs.code }}" = "true" ]; then [ "${{ needs.shard.result }}" = "success" ]; else [ "${{ needs.site.result }}" = "success" ]; fi
