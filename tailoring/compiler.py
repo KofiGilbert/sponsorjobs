@@ -53,11 +53,79 @@ def no_window_kwargs() -> dict:
     return {}
 
 
+# The LaTeX that ships inside the installers (packaging/install_tinytex.py): a TinyTeX, i.e.
+# TeX Live's own pdflatex with only the packages the templates use. The release workflow puts
+# it in a folder called this, next to the frozen engine executable:
+#   macOS:   SponsorJobs.app/Contents/Resources/engine/tinytex/bin/universal-darwin/pdflatex
+#   Windows: <install dir>\resources\engine\tinytex\bin\windows\pdflatex.exe
+BUNDLED_TEX_DIRNAME = "tinytex"
+
+# Variables that point kpathsea at ANOTHER TeX tree. A bundled pdflatex finds its own tree from
+# its own location; one of these left over from a person's TeX install would mix the two.
+_TEX_TREE_VARS = ("TEXMFCNF", "TEXMFROOT", "TEXMFDIST", "TEXMFMAIN", "TEXMFLOCAL",
+                  "TEXMFSYSVAR", "TEXMFSYSCONFIG", "TEXMFVAR", "TEXMFCONFIG", "TEXMFHOME",
+                  "TEXINPUTS", "TFMFONTS", "T1FONTS", "ENCFONTS", "TEXFONTMAPS")
+
+
+def bundled_tex_roots() -> list[Path]:
+    """Where a bundled TinyTeX can be: beside the frozen engine, and in its data folder.
+
+    Only a frozen (installed) engine has one. sys.executable is resources/engine/SponsorJobs
+    (.exe) on both OSes; PyInstaller's data folder (_MEIPASS, engine/_internal) is checked too.
+    """
+    if not getattr(sys, "frozen", False):
+        return []
+    roots = [Path(sys.executable).parent / BUNDLED_TEX_DIRNAME]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(meipass) / BUNDLED_TEX_DIRNAME)
+    return roots
+
+
+def bundled_pdflatex(roots: list[Path] | None = None) -> str | None:
+    """The bundled pdflatex, or None. TinyTeX keeps it in bin/<platform>/ (universal-darwin,
+    windows, x86_64-linux, ...), one platform folder per install."""
+    name = "pdflatex.exe" if sys.platform == "win32" else "pdflatex"
+    for root in bundled_tex_roots() if roots is None else roots:
+        bindir = root / "bin"
+        if not bindir.is_dir():
+            continue
+        for plat in sorted(bindir.iterdir()):
+            exe = plat / name
+            if exe.is_file():
+                return str(exe)
+    return None
+
+
+def is_bundled(exe: str) -> bool:
+    """True when ``exe`` lives inside a bundled TinyTeX."""
+    try:
+        p = Path(exe).absolute()
+    except OSError:
+        return False
+    for root in bundled_tex_roots():
+        try:
+            p.relative_to(root.absolute())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def find_pdflatex() -> str:
-    """Locate a pdflatex executable, honouring PDFLATEX / common install dirs."""
+    """Locate a pdflatex executable.
+
+    Order: the PDFLATEX env var (an explicit override, for development and tests), then the
+    LaTeX bundled inside the installed app, then the system's (PATH and the standard install
+    folders). An installed app therefore always renders with the TeX it shipped with, the
+    same on every machine, and a dev checkout keeps using the developer's own TeX.
+    """
     env = os.environ.get("PDFLATEX")
     if env and Path(env).exists():
         return env
+    bundled = bundled_pdflatex()
+    if bundled:
+        return bundled
     found = shutil.which("pdflatex")
     if found:
         return found
@@ -83,6 +151,29 @@ def find_pdflatex() -> str:
         "pdflatex not found. Install MiKTeX (Windows), MacTeX (macOS), or TeX Live, "
         "or set the PDFLATEX env var."
     )
+
+
+def tex_env(exe: str) -> dict | None:
+    """The environment to run ``exe`` in, or None to inherit ours unchanged.
+
+    pdflatex spawns helpers (kpsewhich, mktextfm, ...) by name, so its own bin dir goes first
+    on PATH whenever it is not already the pdflatex PATH finds: a Finder-launched macOS app
+    has no TeX on PATH at all, and a bundled TeX must never pick up the system's helpers.
+    A bundled TeX also drops the variables that would point it at another TeX tree.
+    """
+    exe_dir = os.path.dirname(exe)
+    on_path = shutil.which("pdflatex")
+    bundled = is_bundled(exe)
+    own_path = bool(exe_dir) and (on_path is None or os.path.dirname(on_path) != exe_dir)
+    if not bundled and not own_path:
+        return None
+    env = dict(os.environ)
+    if bundled:
+        for var in _TEX_TREE_VARS:
+            env.pop(var, None)
+    if own_path:
+        env["PATH"] = exe_dir + os.pathsep + env.get("PATH", "")
+    return env
 
 
 @dataclass
@@ -171,12 +262,7 @@ def compile_tex(
         "--enable-installer",
         str(tex_path.name),
     ]
-    # pdflatex spawns helpers (kpsewhich, mktextfm, ...) by name. When we found it outside
-    # PATH (a Finder-launched macOS app), put its own bin dir first so they resolve too.
-    env = None
-    exe_dir = os.path.dirname(exe)
-    if exe_dir and shutil.which("pdflatex") is None:
-        env = {**os.environ, "PATH": exe_dir + os.pathsep + os.environ.get("PATH", "")}
+    env = tex_env(exe)   # its own bin dir first on PATH; see the helper
     try:
         proc = subprocess.run(
             cmd,

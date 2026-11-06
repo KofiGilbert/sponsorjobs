@@ -11,11 +11,11 @@
 # console=False: no black terminal window behind the app. This is the difference between
 # "I run a Python command" and "I installed an app".
 #
-# LaTeX is NOT bundled here. It is a separate 600MB toolchain with its own installer, and
-# PyInstaller is the wrong tool for relocating it. The Inno Setup script
-# (packaging/tailor.iss) handles it as an install-time prerequisite, so the person still
-# only ever runs ONE installer. compiler.find_pdflatex() already searches PATH and the
-# standard MiKTeX location, so a bundled or system TeX both just work.
+# LaTeX is not collected BY PyInstaller, but it does ship in this folder: after this build,
+# packaging/install_tinytex.py's pinned TinyTeX (TeX Live's pdflatex, ~115MB) is copied to
+# dist/SponsorJobs/tinytex (.github/workflows/release.yml). PyInstaller is the wrong tool to
+# relocate a TeX tree, and it empties dist/SponsorJobs on every run, hence the copy after.
+# compiler.find_pdflatex() looks there (beside the executable) first, then for a system TeX.
 
 import os
 import sys

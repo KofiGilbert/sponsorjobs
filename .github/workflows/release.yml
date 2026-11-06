@@ -83,6 +83,40 @@ jobs:
           test -d dist/SponsorJobs
           test -f packaging/seed/sponsors.db
 
+      # The installer carries its own LaTeX, so nobody installs MacTeX or MiKTeX: a pinned
+      # TinyTeX (TeX Live's own pdflatex, only the packages the templates use; see
+      # packaging/README.md). It goes in dist/SponsorJobs/tinytex, next to the engine
+      # executable, which is where tailoring/compiler.py looks first in an installed app.
+      # Cached per OS until the pin, the package list or the installer script changes, so a
+      # release does not depend on a TeX Live mirror being up.
+      - name: Cache the bundled LaTeX
+        id: tinytex-cache
+        uses: actions/cache@v4
+        with:
+          path: .tinytex/tinytex
+          key: tinytex-${{ matrix.label }}-${{ hashFiles('packaging/install_tinytex.py', 'packaging/texlive-packages.txt') }}
+
+      - name: Install the bundled LaTeX (TinyTeX)
+        if: steps.tinytex-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: python packaging/install_tinytex.py .tinytex/tinytex --cache .tinytex/download
+
+      # Copied AFTER PyInstaller, which empties dist/SponsorJobs on every build. electron-builder
+      # then ships the whole folder as resources/engine (shell-electron/package.json).
+      - name: Put the LaTeX inside the engine
+        shell: bash
+        run: |
+          rm -rf dist/SponsorJobs/tinytex
+          cp -R .tinytex/tinytex dist/SponsorJobs/tinytex
+          head -2 dist/SponsorJobs/tinytex/tinytex-manifest.txt
+          du -sh dist/SponsorJobs/tinytex
+
+      # Every template must compile to one page with the bundle, found the way the installed
+      # engine finds it (no PATH, no PDFLATEX). A release never ships a LaTeX that fails.
+      - name: Check every resume template with the bundled LaTeX
+        shell: bash
+        run: python packaging/latex_check.py --as-installed dist/SponsorJobs --out .tinytex/check
+
       # The installer file names carry package.json's version (SponsorJobs-Setup-<v>.exe,
       # SponsorJobs-<v>-arm64.dmg). Make that the tag's version so the asset matches the release.
       - name: Set the shell version from the tag
