@@ -393,3 +393,14 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   "Your answers:" with each answer a quiet underlined link back to its question. No new colour.
   The bar stacks (`bb-stack`) whenever there are several questions. Checked in a 483px browser
   pane and at 560px, dark (the bar is dark in both themes).
+- 2026-11-06 (reverses 2026-10-09): a short resume page keeps the template's own type size,
+  margins and spacing, always. The page-filling layout ladder (up to 12pt type, 2.54cm margins,
+  \flushbottom with stretch glue between sections) is removed; Kofi compared it with his own
+  resume and rejected it. A short page simply ends earlier, white space at the bottom. What fills
+  a short page now is bullets by recency: the most recent role shows 3 to 5, the second 3 to 4,
+  older roles 2 to 3, filled most recent first (the person's own left-out bullets, then splits of
+  merged bullets, then bullets written from that role's own material only) and re-measured after
+  each one; overflow cuts the oldest roles' bullets first. Every written bullet is listed under
+  What changed ("Written from your material, check these", `#twWritten`) and named in the build
+  message, so the person checks it before sending. The "lighter side" invite still appears when
+  even the filled page is short.

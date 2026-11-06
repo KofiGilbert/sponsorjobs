@@ -357,6 +357,8 @@
   "tw.hidden": "{n} masqués par ton choix",
   "tw.terms": "{n} termes de l'offre ajoutés",
   "tw.cut": "{n} retirés pour tenir",
+  "tw.written": "{n} rédigées pour vous",
+  "tw.writtenHead": "Rédigées à partir de vos informations, vérifiez-les",
   "tw.none": "Rien de reformulé pour l'instant",
   "tw.cuts": "Retiré pour tenir sur une page",
   "tw.putBack": "Remettre",

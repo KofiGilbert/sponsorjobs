@@ -79,6 +79,18 @@ class LLMBackend(Protocol):
         dates, employer/product names); it re-presents the person's own content.
         """
 
+    def write_role_bullet(self, role_label: str, material: str, existing: list[str],
+                          jd_terms: list[str], max_chars: int, jd_text: str = "") -> str:
+        """ONE new bullet for one role, written ONLY from ``material`` (that role's own
+        material: its title, employer, bullets, the skills it shows, the summary and answers
+        that name it), for a page that is short (tailoring/assembler.py ``_recency_fill``).
+
+        It must state a different accomplishment from every bullet in ``existing``, use the
+        job's wording (``jd_terms``) only where the material supports it, and stay within
+        ``max_chars``. It must NOT invent a number, date, employer, product, tool or claim the
+        material does not state; the assembler's gate (``written_problems``) rejects one that
+        does. Return "" (or "NONE") when the material supports no further distinct bullet."""
+
     def extract_intake(self, jd_text: str, known: dict, history: list[dict]) -> dict:
         """Run one turn of the intelligent intake conversation (CLAUDE.md §4a).
 
@@ -368,6 +380,31 @@ class FakeLLM:
         # nothing). The real backend does the splitting/expanding; FakeLLM never
         # produces merged comma-lists in the offline suite, so a no-op is faithful.
         return [str(b).strip() for b in bullets if str(b).strip()]
+
+    _WRITE_FRAMES = (
+        "Worked with {ab} as {title} at {org}.",
+        "Used {ab} in day-to-day work at {org}.",
+        "Applied {ab} to the regular work of the {title} role.",
+        "Relied on {ab} as part of the {title} role at {org}.",
+        "Brought {ab} into the {title} work at {org}.",
+    )
+
+    def write_role_bullet(self, role_label: str, material: str, existing: list[str],
+                          jd_terms: list[str], max_chars: int, jd_text: str = "") -> str:
+        """Deterministic test double: one plain sentence naming the job terms the role's
+        material supports (a different pair and frame per call, so it never restates a
+        sibling), the role's title and employer, and nothing else. "" when the material
+        supports no job term, so a thin role with no matching material gets nothing."""
+        terms = [t for t in dict.fromkeys(str(x).strip() for x in jd_terms or []) if t]
+        if not terms:
+            return ""
+        n = len(existing or [])
+        a, b = terms[n % len(terms)], terms[(n + 1) % len(terms)]
+        org, _, title = str(role_label or "").partition(", ")
+        title = title or org
+        text = self._WRITE_FRAMES[n % len(self._WRITE_FRAMES)].format(
+            ab=a if a == b else f"{a} and {b}", title=title, org=org)
+        return text if len(text) <= max(int(max_chars or 0), 1) else ""
 
     # -- self-heal ------------------------------------------------------- #
     def shorten_bullet(self, text: str, max_len_chars: int) -> str:

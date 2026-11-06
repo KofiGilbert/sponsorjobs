@@ -1,0 +1,266 @@
+"""Bullets by recency, at the template's own size (Kofi, 2026-11-06).
+
+A short page keeps the template's own type size, margins and spacing: the layout ladder that
+enlarged it (12pt, one-inch margins, stretch glue between sections) is gone, so a short page
+ends earlier. What fills it is bullets by recency: the most recent role shows 3 to 5, the second
+3 to 4, older roles 2 to 3, filled most recent first and re-measured after every bullet. An
+overflow cuts the oldest roles' bullets first. A bullet WRITTEN from a role's own material must
+pass the fact gate scoped to that role (no new figure, tool, name or claim, no repeat of a
+sibling) and is listed for the person to check (CLAUDE.md sections 8 and 9).
+"""
+
+from __future__ import annotations
+
+import copy
+import inspect
+
+from intake.memory import ConversationMemory
+from llm.base import FakeLLM
+from tailoring import assembler as A
+from tailoring.assembler import (MAX_FILL, _drop_trailing_bullet, assemble_cv, bullet_budget,
+                                 normalize_profile, ranked_roles, recency_ranks, render_cv,
+                                 select_roles_for_jd, written_problems)
+from tailoring.changes import points, what_changed
+from ui.records import CVRecords
+from ui.session import WebIntake
+from conftest import requires_latex
+
+JD = ("Data Analyst. SQL, Python, Tableau, Excel, dashboards, reporting, data cleaning, "
+      "A/B testing.")
+
+# 4 roles, 2 bullets each, no projects: the thin shape the recency fill exists for.
+THIN = {
+    "identity": {"name": "Ama Mensah", "address": "Chicago, IL", "phone": "(312) 555-0100",
+                 "email": "ama@example.com"},
+    "education": [{"school": "University of Illinois Chicago", "location": "Chicago, IL",
+                   "degree": "Bachelor of Science in Statistics", "date": "May 2018"}],
+    "skills": {"Data": "SQL, Python, pandas, Excel", "Visualization": "Tableau, Power BI",
+               "Methods": "A/B testing, forecasting, data cleaning", "Tools": "Git, Jira, Snowflake",
+               "Communication": "Stakeholder reporting, documentation"},
+    "experience": [
+        {"org": "Lakeshore Logistics", "location": "Chicago, IL", "roles": [{
+            "title": "Data Analyst", "dates": "March 2023 - Present", "bullets": [
+                "Built weekly SQL and Tableau dashboards that track on-time delivery for 14 regional depots.",
+                "Cleaned shipment data in Python and pandas, cutting report preparation from two days to four hours."]}]},
+        {"org": "Northside Health", "location": "Chicago, IL", "roles": [{
+            "title": "Reporting Analyst", "dates": "June 2021 - February 2023", "bullets": [
+                "Produced monthly Excel and SQL reports on clinic wait times for the operations director.",
+                "Ran an A/B test of appointment reminder texts that lowered no-shows by 9 percent."]}]},
+        {"org": "Brightway Retail", "location": "Evanston, IL", "roles": [{
+            "title": "Operations Associate", "dates": "July 2019 - May 2021", "bullets": [
+                "Tracked store inventory in Excel and flagged stock gaps to the regional manager each week.",
+                "Forecast holiday staffing from two years of sales data for three stores."]}]},
+        {"org": "Campus Library", "location": "Chicago, IL", "roles": [{
+            "title": "Student Assistant", "dates": "September 2016 - May 2018", "bullets": [
+                "Answered research questions and kept the circulation database up to date.",
+                "Trained new student staff on the checkout system."]}]},
+    ],
+    "extracurricular": [{"title": "Volunteer Tutor, Chicago Public Library", "date": "2019 - Present",
+                         "bullets": ["Tutor adult learners in spreadsheet basics every other Saturday."]}],
+    "interests": "Running, chess, cooking",
+}
+
+_LAYOUT_MARKS = ("\\newgeometry", "\\fontsize", "\\flushbottom", "plus 1fill", "\\setlist")
+
+
+def _body(tex: str) -> str:
+    return tex.split("\\begin{document}", 1)[1]
+
+
+def _counts(profile: dict) -> list[int]:
+    return [len(r.get("bullets") or []) for _rank, _e, r in ranked_roles(profile)]
+
+
+def _role(org, dates, n, words="Delivered"):
+    return {"org": org, "location": "Chicago, IL", "roles": [{"title": "Analyst", "dates": dates,
+            "bullets": [f"{words} {org} result number {i} for the team." for i in range(n)]}]}
+
+
+# --------------------------------------------------------------------------- no layout ladder
+def test_the_layout_ladder_and_stretch_glue_are_gone():
+    assert not hasattr(A, "LAYOUT_STEPS") and not hasattr(A, "_STRETCH")
+    assert "layout" not in inspect.signature(render_cv).parameters
+    tex = render_cv("\\documentclass{article}\\begin{document}", normalize_profile(THIN))
+    assert not any(k in _body(tex) for k in _LAYOUT_MARKS)
+
+
+@requires_latex
+def test_no_render_carries_a_layout_step_or_stretch_glue(template_source, workdir):
+    from ui.app import _placeholder_profile
+    for name, prof, llm, tailor in (("doe", _placeholder_profile(), None, False),
+                                    ("thin", THIN, FakeLLM(), True)):
+        res = assemble_cv(template_source, prof, JD, llm, workdir, jobname=name, tailor=tailor,
+                          fit_lines=True)
+        assert res.ok, res.summary()
+        assert not any(k in _body(res.tex_source) for k in _LAYOUT_MARKS), name
+        assert not hasattr(res, "layout")
+
+
+# --------------------------------------------------------------------------- recency
+def test_recency_ranks_present_first_then_by_end_date_and_undated_keep_their_place():
+    roles = [({"dates": "2014 - 2016"}, {}), ({"dates": "Jan 20XX - Dec 20XX"}, {}),
+             ({"dates": "June 2021 - Present"}, {}), ({"dates": "March 2017 - May 2021"}, {})]
+    assert recency_ranks(roles) == [2, 3, 0, 1]
+    assert [bullet_budget(r) for r in range(4)] == [(3, 5), (3, 4), (2, 3), (2, 3)]
+    assert bullet_budget(3, lead=True) == (3, 5)
+
+
+def test_selection_starts_each_role_at_its_fewest_and_keeps_the_rest_waiting():
+    p = normalize_profile({"experience": [_role("Acme", "2021 - Present", 6), _role("Beta", "2019 - 2021", 6),
+                                          _role("Cobalt", "2017 - 2019", 6), _role("Delta", "2015 - 2017", 6)]})
+    out = select_roles_for_jd(p, "analyst")
+    assert _counts(out) == [3, 3, 2, 2]
+    reserves = [len(r.get("_reserve") or []) for _rank, _e, r in ranked_roles(out)]
+    assert reserves == [3, 3, 4, 4]
+    # the person's material itself is untouched
+    assert _counts(p) == [6, 6, 6, 6]
+
+
+# --------------------------------------------------------------------------- overflow
+def test_overflow_cuts_the_oldest_roles_first_and_protects_the_two_most_recent():
+    page = {"projects": [], "experience": [_role("Acme", "2021 - Present", 5), _role("Beta", "2019 - 2021", 4),
+                                           _role("Cobalt", "2017 - 2019", 3), _role("Delta", "2015 - 2017", 3)]}
+    seen = []
+    while _drop_trailing_bullet(page):
+        seen.append(_counts(page))
+    # extras above the fewest go first, oldest role first, the most recent role last
+    assert seen[:4] == [[5, 4, 3, 2], [5, 4, 2, 2], [5, 3, 2, 2], [4, 3, 2, 2]]
+    assert seen[4] == [3, 3, 2, 2]
+    # then older roles give up bullets before either recent role goes below three
+    assert seen[5:7] == [[3, 3, 2, 1], [3, 3, 1, 1]]
+    for c in seen:
+        if c[0] < 3 or c[1] < 3:
+            assert all(x <= 2 for x in c[2:]), c
+
+
+# --------------------------------------------------------------------------- the gate
+def test_a_written_bullet_with_an_invented_number_or_tool_is_rejected():
+    role_text = ("Lakeshore Logistics\nData Analyst\nBuilt weekly SQL and Tableau dashboards that "
+                 "track on-time delivery for 14 regional depots.")
+    listed = ["SQL", "Tableau", "Kubernetes", "Power BI"]
+    sib = ["Built weekly SQL and Tableau dashboards that track on-time delivery for 14 regional depots."]
+    ok = "Shared the SQL delivery dashboards with each regional depot every week."
+    assert written_problems(ok, role_text, sib, JD, listed) == []
+    assert "40" in " ".join(written_problems("Cut delivery delays by 40 percent with SQL dashboards.",
+                                             role_text, sib, JD, listed))
+    assert written_problems("Moved the depot dashboards onto Kubernetes for the team.",
+                            role_text, sib, JD, listed)                      # tool from another part
+    assert written_problems("Built dashboards in Power BI for the depots.", role_text, sib, JD, listed)
+    assert written_problems("Partnered with Amazon on depot reporting.", role_text, sib, JD, listed)
+    assert written_problems(sib[0], role_text, sib, JD, listed)            # repeats a sibling
+    assert written_problems("Leveraging SQL, ensuring robust delivery tracking for depots.",
+                            role_text, sib, JD, listed)                      # filler
+
+
+class _Inventive(FakeLLM):
+    """Writes bullets that state things the role's material does not."""
+
+    def write_role_bullet(self, role_label, material, existing, jd_terms, max_chars, jd_text=""):
+        return f"Grew revenue by 40 percent using Kubernetes at {role_label.split(', ')[0]}."
+
+
+class _Splitter(FakeLLM):
+    """Splits a bullet that joins two accomplishments with a semicolon."""
+
+    def expand_bullets(self, role_title, bullets, jd_text):
+        out = []
+        for b in bullets:
+            out += [p.strip().rstrip(".") + "." for p in str(b).split(";") if p.strip()]
+        return out
+
+    def write_role_bullet(self, *a, **k):
+        return ""
+
+
+@requires_latex
+def test_the_fill_never_publishes_an_invented_bullet(template_source, workdir):
+    res = assemble_cv(template_source, THIN, JD, _Inventive(), workdir, tailor=True)
+    assert res.ok and res.compile.pages == 1
+    assert res.written == []
+    assert "Kubernetes" not in res.tex_source and "40 percent" not in res.tex_source
+
+
+@requires_latex
+def test_a_merged_bullet_is_split_into_its_own_accomplishments(template_source, workdir):
+    prof = copy.deepcopy(THIN)
+    prof["experience"][0]["roles"][0]["bullets"] = [
+        "Built weekly SQL and Tableau dashboards that track on-time delivery for 14 regional depots; "
+        "cleaned shipment data in Python and pandas, cutting report preparation from two days to four hours."]
+    res = assemble_cv(template_source, prof, JD, _Splitter(), workdir, tailor=False, fill_writes=True)
+    split = [a for a in res.added if a["kind"] == "split"]
+    assert len(split) == 2 and all(a["label"] == "Lakeshore Logistics, Data Analyst" for a in split)
+    first = res.profile_used["experience"][0]["roles"][0]["bullets"]
+    assert any(b.startswith("Built weekly SQL") for b in first)
+    assert any(b.startswith("cleaned shipment data") for b in first)
+
+
+# --------------------------------------------------------------------------- the fill
+@requires_latex
+def test_a_thin_profile_gets_more_bullets_on_its_most_recent_roles(template_source, workdir):
+    res = assemble_cv(template_source, THIN, JD, FakeLLM(), workdir, tailor=True, fit_lines=True)
+    assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
+    assert res.fill_ratio is not None and res.fill_ratio <= MAX_FILL
+    c = _counts(res.profile_used)
+    assert c[0] > c[2] and c[0] > c[3]                       # more on the most recent role
+    assert 3 <= c[0] <= 5 and 3 <= c[1] <= 4
+    assert all(2 <= x <= 3 for x in c[2:])
+    assert c[0] >= c[1] >= c[2]
+    # The page keeps the template's own size: a thin page stays short (the invite asks for more)
+    assert res.underfull
+    # every written bullet is on the page and listed for the person to check
+    assert res.written
+    on_page = {b for _r, _e, r in ranked_roles(res.profile_used) for b in r["bullets"]}
+    assert all(w["bullet"] in on_page for w in res.written)
+    ch = what_changed(normalize_profile(THIN), res.profile_used, written=res.written)
+    assert [w["text"] for w in ch["written"]] == [w["bullet"] for w in res.written]
+    assert not ({r["after"] for r in ch["added_bullets"] + ch["reworded"]}
+                & {w["bullet"] for w in res.written})
+    assert any("written from your own material" in p for p in points(ch))
+
+
+@requires_latex
+def test_the_person_s_own_left_out_bullets_come_back_first_in_their_order(template_source, workdir):
+    prof = copy.deepcopy(THIN)
+    own = ["Automated the depot scorecard refresh with a scheduled Python job.",
+           "Documented the delivery metrics so new analysts could rebuild each dashboard."]
+    prof["experience"][0]["roles"][0]["bullets"] += own
+    prof["experience"][0]["roles"][0]["bullets"].insert(1, "Answered depot questions about the SQL reports.")
+    res = assemble_cv(template_source, prof, JD, None, workdir, tailor=False)
+    first = res.profile_used["experience"][0]["roles"][0]["bullets"]
+    assert len(first) == 5 and res.written == []
+    assert first == prof["experience"][0]["roles"][0]["bullets"]      # author's order kept
+    assert {a["kind"] for a in res.added} == {"saved"}
+
+
+@requires_latex
+def test_a_full_page_gets_nothing_added_and_stays_clean(template_source, workdir):
+    from test_restorable_trims import JD as LONG_JD
+    from test_restorable_trims import LONG
+    res = assemble_cv(template_source, LONG, LONG_JD, FakeLLM(), workdir, tailor=True)
+    assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
+    assert res.fill_ratio <= MAX_FILL and res.added == []
+    c = _counts(res.profile_used)
+    assert c[0] >= 3 and c[1] >= 3 and c[0] >= c[-1]
+
+
+# --------------------------------------------------------------------------- the builder
+@requires_latex
+def test_the_builder_says_what_it_wrote_and_still_invites_more_when_short(template_source, workdir):
+    mem = ConversationMemory(":memory:")
+    mem.save("default", copy.deepcopy(THIN), {}, [])
+    s = WebIntake(JD, template_source, FakeLLM(), mem, CVRecords(":memory:"), workdir,
+                  jobname="cv", palace_dir=workdir / "p")
+    s.start()
+    s.essentials["declined"] = ["address", "github", "linkedin", "blog", "projects", "courses"]
+    st = s.build_from_saved()
+    assert st["phase"] == "review", st.get("messages")
+    said = " ".join(st["messages"])
+    assert "To fill the page I wrote" in said and "What changed" in said
+    assert st["changes"]["written"] and all(w["label"] and w["text"] for w in st["changes"]["written"])
+    assert s.assembled.underfull and (st.get("light_cv") or {}).get("light") is True
+    # A rebuild after the person's own edit writes nothing new, and keeps listing what is still there
+    before = list(s._written)
+    s._assemble()
+    assert s._written == [w for w in before if w["bullet"] in
+                          {b for _r, _e, r in ranked_roles(s.assembled.profile_used) for b in r["bullets"]}]
+    assert s.assembled.written == []

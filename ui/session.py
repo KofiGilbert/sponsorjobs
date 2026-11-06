@@ -19,6 +19,7 @@ from pathlib import Path
 from intake.diary import Diary
 from ui import activity as _activity
 from tailoring.assembler import assemble_cv, normalize_profile
+from tailoring.assembler import ranked_roles as _ranked
 from tailoring.conform import date_lacks_month, is_full_address
 
 
@@ -820,6 +821,10 @@ class WebIntake:
         # profile a tailored build started from. None for a page drafted from the chat.
         self._change_base: dict | None = None
         self._last_reverted: list = []           # rewrites the fact gate kept in the person's words
+        # Bullets the recency fill WROTE from a role's own material on the last fresh build
+        # (assembler.AssembleResult.written), kept while they are on the page unedited, so
+        # "What changed" lists them for the person to check.
+        self._written: list = []
 
         saved = memory.load(profile_name)
         if saved:
@@ -2861,6 +2866,9 @@ class WebIntake:
         cut_note = self._trims_note()
         if cut_note:
             msgs.append(cut_note)
+        fill_note = self._fill_note()
+        if fill_note:
+            msgs.append(fill_note)
         if self.title_flags():
             msgs.append("I aligned a job <b>title</b> to the role, it's highlighted; click it to "
                         "confirm or revert.")
@@ -2983,6 +2991,7 @@ class WebIntake:
                 keep=self.kept_trims, material=self._fit_material(),
                 fit_lines=True, skill_pool=self._skill_pool())
             self._last_reverted = list(getattr(self.assembled, "reverted", None) or [])
+            self._written = list(getattr(self.assembled, "written", None) or [])
             self.profile = self._whole_profile_after_render(self.assembled.profile_used)
             self._pdf_v += 1
             self.dirty = False
@@ -2998,6 +3007,9 @@ class WebIntake:
             cut_note = self._trims_note()
             if cut_note:
                 msgs.append(cut_note)
+            fill_note = self._fill_note()
+            if fill_note:
+                msgs.append(fill_note)
             if self.title_flags():
                 msgs.append("I aligned a job <b>title</b> to the role, it's highlighted; "
                             "click it to confirm or revert.")
@@ -3832,7 +3844,16 @@ class WebIntake:
             choices=self._choices_plan(), keep=self.kept_trims,
             material=self._fit_material() if fit_lines else self._brain_material(),
             fit_lines=fit_lines, skill_pool=self._skill_pool() if fit_lines else (),
+            # A fresh build may write bullets for a short page; a rebuild after the person's
+            # own edit never writes behind their back.
+            fill_writes=fit_lines,
         )
+        if fit_lines:
+            self._written = list(getattr(self.assembled, "written", None) or [])
+        else:
+            on_page = {str(b) for _r, _e, r in _ranked(self.assembled.profile_used)
+                       for b in r.get("bullets") or []}
+            self._written = [w for w in self._written if w.get("bullet") in on_page]
         self.profile = self._whole_profile_after_render(self.assembled.profile_used)
         self._pdf_v += 1
         self.dirty = False
@@ -4065,9 +4086,24 @@ class WebIntake:
         ch = what_changed(self._change_base, getattr(a, "profile_used", None) or {},
                           coverage=self.coverage_dict(), hidden=hidden, shown=shown,
                           trims=getattr(a, "trims", None) or [], reverted=self._last_reverted,
-                          keyword_terms=[k["term"] for k in self.keyword_actions])
+                          keyword_terms=[k["term"] for k in self.keyword_actions],
+                          written=self._written)
         ch["points"] = points(ch)
         return ch
+
+    def _fill_note(self) -> str:
+        """One line when the recency fill WROTE bullets to fill a short page (the person checks
+        them: What changed lists each with its role), plus any role left with fewer bullets than
+        its recency budget because there was no more of their material for it."""
+        a = self.assembled
+        parts = []
+        n = len(self._written)
+        if n:
+            parts.append(f"To fill the page I wrote {n} new bullet{'' if n == 1 else 's'} from your "
+                         f"own material. Check {'it' if n == 1 else 'them'} under "
+                         "<b>What changed</b> before you send.")
+        parts += [str(x) for x in (getattr(a, "bullet_notes", None) or []) if str(x).strip()]
+        return " ".join(parts)
 
     def _trims_note(self) -> str:
         """One line when the one-page fit cut something: nothing is cut silently."""
@@ -4366,7 +4402,7 @@ class WebIntake:
         try:
             ch = self.changes_dict()
             data["changes"] = {k: ch.get(k) for k in ("hidden", "shown", "trimmed", "points",
-                                                        "terms_added", "reverted")}
+                                                        "terms_added", "reverted", "written")}
         except Exception:  # noqa: BLE001 - the record saves without its change list
             pass
         rep = self._report()

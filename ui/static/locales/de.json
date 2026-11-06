@@ -357,6 +357,8 @@
   "tw.hidden": "{n} nach deiner Wahl ausgeblendet",
   "tw.terms": "{n} Begriffe aus der Stelle ergänzt",
   "tw.cut": "{n} gekürzt, damit es passt",
+  "tw.written": "{n} für dich geschrieben",
+  "tw.writtenHead": "Aus deinem Material geschrieben, bitte prüfen",
   "tw.none": "Noch nichts umformuliert",
   "tw.cuts": "Gekürzt für eine Seite",
   "tw.putBack": "Zurückholen",

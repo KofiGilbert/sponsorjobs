@@ -465,8 +465,14 @@ def change_summary(role: str, company: str, base: dict, page: dict, coverage: di
     edit made after the build is counted too."""
     from tailoring.changes import summary_line, what_changed
     saved = changes or {}
+    # The written bullets still on the page, so the caption says there are some to check.
+    on_page = {str(b) for sec in ("experience", "projects") for e in (page or {}).get(sec) or []
+               if isinstance(e, dict) for r in (e.get("roles") or [e]) if isinstance(r, dict)
+               for b in r.get("bullets") or []}
+    written = [{"label": w.get("label"), "bullet": w.get("text")}
+               for w in saved.get("written") or [] if w.get("text") in on_page]
     ch = what_changed(base, page, coverage=coverage, hidden=saved.get("hidden") or (),
-                      shown=saved.get("shown") or ())
+                      shown=saved.get("shown") or (), written=written)
     ch["trimmed"] = list(saved.get("trimmed") or [])
     return summary_line(ch, role, company)
 

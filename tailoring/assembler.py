@@ -14,6 +14,7 @@ to the profile) -> compile -> shrink to one page if needed -> coverage report.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -116,19 +117,11 @@ def _label(key: str, default: str) -> str:
     return str(v).strip() if v and str(v).strip() else default
 
 
-# Flush-fill. When a layout step is active the page is set \flushbottom and every section
-# heading is preceded by stretchable glue, so whatever height the natural text leaves over is
-# shared evenly between the sections and the last line lands on the bottom margin. This is
-# what a person does with a thin resume: a little more air between sections, never padding
-# sentences. Second-order stretch (fill) so the end-of-document filler gets none of it. Off
-# for the raw template (its geometry has no bottom margin to flush to).
-_STRETCH: _cv.ContextVar[bool] = _cv.ContextVar("cv_stretch", default=False)
-
-
+# Headings sit exactly where the template puts them: no stretch glue between sections, ever.
+# A short page ends earlier and leaves white space at the bottom (Kofi, 2026-11-06).
 def _heading(title: str) -> str:
-    glue = "\\vspace{0pt plus 1fill}" if _STRETCH.get() else ""
     return (
-        f"\n{glue}\\noindent \\textbf{{\\textsc{{\\large {title}}}}}\n\n"
+        f"\n\\noindent \\textbf{{\\textsc{{\\large {title}}}}}\n\n"
         f"\\noindent \\rule[3pt]{{\\textwidth}}{{1pt}}\n"
     )
 
@@ -427,7 +420,94 @@ def _norm_skills(s) -> dict:
 
 
 MAX_ROLES_ON_PAGE = 4
-MAX_BULLETS_PER_ROLE = 3
+
+# Bullets per role by recency (Kofi, 2026-11-06): the more recent the job, the more bullets.
+# (fewest, most) for the most recent role, then the second; every older role takes
+# OLDER_BUDGET. Selection starts each role at its fewest; the recency fill (``_recency_fill``)
+# brings the most recent role up toward its most first while the page is short, and the
+# one-page fit cuts from the oldest roles first (``_drop_trailing_bullet``).
+RECENCY_BUDGETS: tuple[tuple[int, int], ...] = ((3, 5), (3, 4))
+OLDER_BUDGET = (2, 3)
+
+
+def bullet_budget(rank: int, lead: bool = False) -> tuple[int, int]:
+    """(fewest, most) bullets for the role at recency ``rank`` (0 is the most recent). A role
+    the person leads with (``_lead``) gets the most recent role's budget."""
+    if lead:
+        return RECENCY_BUDGETS[0]
+    return RECENCY_BUDGETS[rank] if rank < len(RECENCY_BUDGETS) else OLDER_BUDGET
+
+
+_PRESENT_RE = re.compile(r"\b(?:present|current|currently|now|today|ongoing)\b", re.I)
+_DATE_TOKEN = re.compile(r"(?:\b([A-Za-z]{3,9})\.?\s+)?\b((?:19|20)\d\d)\b")
+_MONTH3 = {m: i for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split(), 1)}
+
+
+def _end_ordinal(dates) -> float | None:
+    """A comparable end date for a role's date range: infinity for a current role, else
+    year * 12 + month of the LAST date in the range, or None when it states no year."""
+    s = str(dates or "")
+    if _PRESENT_RE.search(s):
+        return math.inf
+    hits = list(_DATE_TOKEN.finditer(s))
+    if not hits:
+        return None
+    month, year = hits[-1].group(1), int(hits[-1].group(2))
+    return year * 12 + _MONTH3.get((month or "")[:3].lower(), 0)
+
+
+def recency_ranks(roles) -> list[int]:
+    """The recency rank of each role in ``roles`` ([(role, entry)] in page order): 0 for the
+    most recent. A current ("Present") role comes first, then by end date, latest first. An
+    undated role keeps the place the page gives it (it ranks just after the role above it),
+    and ties keep page order."""
+    keys, prev = [], math.inf
+    for i, (role, entry) in enumerate(roles):
+        end = _end_ordinal((role or {}).get("dates") or (entry or {}).get("dates"))
+        if end is None:
+            end = prev
+        keys.append((-end, i))
+        prev = end
+    ranks = [0] * len(keys)
+    for rank, i in enumerate(sorted(range(len(keys)), key=keys.__getitem__)):
+        ranks[i] = rank
+    return ranks
+
+
+def _experience_roles(profile: dict) -> list:
+    """(entry, role) for every experience role, nested or flat, in page order."""
+    out = []
+    for entry in profile.get("experience") or []:
+        if not isinstance(entry, dict):
+            continue
+        roles = entry["roles"] if isinstance(entry.get("roles"), list) else [entry]
+        out += [(entry, r) for r in roles if isinstance(r, dict)]
+    return out
+
+
+def ranked_roles(profile: dict) -> list:
+    """(rank, entry, role) for every experience role on ``profile``, in page order."""
+    pairs = _experience_roles(profile)
+    ranks = recency_ranks([(r, e) for e, r in pairs])
+    return [(ranks[i], e, r) for i, (e, r) in enumerate(pairs)]
+
+
+def _budget_trim(role: dict, fewest: int, jd_terms: set) -> dict:
+    """``role`` showing its ``fewest`` best bullets for the job; the rest wait in ``_reserve``
+    (best match first) for the recency fill. Ranked by job overlap but re-emitted in the
+    author's order: the bullets a person writes first are usually the ones they want read
+    first. ``_reserve`` is a private mark, stripped before the page leaves the assembler."""
+    role = dict(role)
+    role.pop("_reserve", None)
+    bullets = list(role.get("bullets") or [])
+    if len(bullets) > fewest:
+        ranked = sorted(range(len(bullets)), key=lambda i: len(jd_terms & _terms(bullets[i])),
+                        reverse=True)
+        role["_reserve"] = [bullets[i] for i in ranked[fewest:]]
+        bullets = [bullets[i] for i in sorted(ranked[:fewest])]
+    role["bullets"] = bullets
+    return role
+
 
 # Words that carry no signal about whether a role matches a job.
 _STOP = frozenset("""
@@ -444,22 +524,23 @@ def _terms(text: str) -> set:
 
 def select_roles_for_jd(profile: dict, jd_text: str, *,
                         max_roles: int = MAX_ROLES_ON_PAGE,
-                        max_bullets: int = MAX_BULLETS_PER_ROLE,
                         choices: dict | None = None,
                         report: dict | None = None) -> dict:
-    """Keep the roles that argue for THIS job, and cap how much each one says.
+    """Keep the roles that argue for THIS job, and set how much each one says.
 
     A long career does not shrink gracefully. Rendering every role forces the fitter to
     trim all of them to one line each, which throws away the specific, quantified
     evidence that makes a resume persuasive and leaves a uniform grey list. Choosing a
-    few relevant roles and letting them keep up to three bullets is what a person does
-    when they tailor by hand.
+    few relevant roles is what a person does when they tailor by hand.
 
     Selection is by term overlap with the job description, with the most recent role
     always kept (recruiters read the top of the page first and a missing current role
     reads as a gap). Output stays in the profile's original order, so chronology is never
-    rearranged to flatter the score. Nothing is invented or rewritten here -- this only
-    decides what is shown, which is the person's own material either way.
+    rearranged to flatter the score. Each kept role shows the fewest bullets its recency
+    allows (``bullet_budget``: 3 for the two most recent roles, 2 for older ones), its best
+    matches for the job; the rest of its bullets wait in ``_reserve`` for the recency fill.
+    Nothing is invented or rewritten here -- this only decides what is shown, which is the
+    person's own material either way.
 
     ``choices`` (applicant/rules.py ``plan``) are the person's own choices for this kind of
     job (docs/applicant-brain.md, section 6), applied BEFORE the scoring: hidden items go,
@@ -468,7 +549,7 @@ def select_roles_for_jd(profile: dict, jd_text: str, *,
     ``report`` (a dict) is filled with what was shown and which choices changed it.
     """
     if choices and any(choices.get(k) for k in ("hide", "show", "lead", "prefer", "apart")):
-        return _select_with_choices(profile, jd_text, choices, max_roles, max_bullets, report)
+        return _select_with_choices(profile, jd_text, choices, max_roles, report)
     experience = profile.get("experience") or []
     if report is not None:
         report.update(_report_shown(profile))
@@ -488,36 +569,17 @@ def select_roles_for_jd(profile: dict, jd_text: str, *,
     for ei, entry in enumerate(experience):
         for ri, role in enumerate(_roles_of(entry)):
             flat.append((ei, ri, role, entry))
-    if len(flat) <= max_roles:
-        selected = {(ei, ri) for ei, ri, _, _ in flat}
-    else:
-        scored = []
-        for ei, ri, role, entry in flat:
-            text = " ".join([str(role.get("title", "")), str(entry.get("org", "")),
-                             " ".join(map(str, role.get("bullets") or []))])
-            overlap = len(jd_terms & _terms(text))
-            scored.append((overlap, -ei, -ri, ei, ri))
-        scored.sort(reverse=True)
-        selected = {(ei, ri) for _, _, _, ei, ri in scored[:max_roles]}
-        selected.add((flat[0][0], flat[0][1]))   # the most recent role always survives
-
-    def _trim(role: dict) -> dict:
-        role = dict(role)
-        bullets = list(role.get("bullets") or [])
-        if len(bullets) > max_bullets:
-            # Rank by JD overlap but re-emit in the author's order: the bullets a
-            # person writes first are usually the ones they want read first.
-            ranked = sorted(range(len(bullets)),
-                            key=lambda i: len(jd_terms & _terms(bullets[i])),
-                            reverse=True)[:max_bullets]
-            bullets = [bullets[i] for i in sorted(ranked)]
-        role["bullets"] = bullets
-        return role
+    selected = _scorer_pick([(ei, ri, role, entry, None) for ei, ri, role, entry in flat],
+                            jd_terms, max_roles)
+    shown = [(ei, ri, role, entry) for ei, ri, role, entry in flat if (ei, ri) in selected]
+    rank_of = dict(zip([(ei, ri) for ei, ri, _r, _e in shown],
+                       recency_ranks([(role, entry) for _ei, _ri, role, entry in shown])))
 
     kept = []
     for ei, entry in enumerate(experience):
         nested = isinstance(entry.get("roles"), list)
-        roles = [_trim(role) for ri, role in enumerate(_roles_of(entry)) if (ei, ri) in selected]
+        roles = [_budget_trim(role, bullet_budget(rank_of[(ei, ri)])[0], jd_terms)
+                 for ri, role in enumerate(_roles_of(entry)) if (ei, ri) in selected]
         if not roles:
             continue
         if nested:
@@ -570,8 +632,15 @@ def _scorer_pick(flat: list, jd_terms: set, max_roles: int) -> set:
         scored.append((len(jd_terms & _terms(text)), -ei, -ri, ei, ri))
     scored.sort(reverse=True)
     selected = {(ei, ri) for _, _, _, ei, ri in scored[:max_roles]}
-    selected.add((flat[0][0], flat[0][1]))
+    selected.add(_most_recent(flat))             # the most recent role always survives
     return selected
+
+
+def _most_recent(flat: list) -> tuple:
+    """(employer_index, role_index) of the most recent role among ``flat`` entries."""
+    ranks = recency_ranks([(x[2], x[3]) for x in flat])
+    x = flat[ranks.index(0)]
+    return (x[0], x[1])
 
 
 def _rank_beats(a, b) -> bool:
@@ -628,7 +697,7 @@ def choice_exclusions(ids: list, scores: dict, choices: dict, base: set) -> tupl
 
 
 def _select_with_choices(profile: dict, jd_text: str, choices: dict, max_roles: int,
-                         max_bullets: int, report: dict | None) -> dict:
+                         report: dict | None) -> dict:
     """``select_roles_for_jd`` with the person's choices (see its docstring). Chronological
     order is kept; a pinned role over the limit is reported, the most recent ones kept."""
     from applicant.rules import project_id
@@ -659,19 +728,16 @@ def _select_with_choices(profile: dict, jd_text: str, choices: dict, max_roles: 
     elif room > 0:
         ranked = sorted(candidates, key=lambda x: (scores[x[4]][0], -x[0], -x[1]), reverse=True)
         keep |= {(x[0], x[1]) for x in ranked[:room]}
-        first = next((x for x in flat if x[4] not in excluded), None)
-        if first is not None:
-            keep.add((first[0], first[1]))               # the most recent role still survives
+        open_roles = [x for x in flat if x[4] not in excluded]
+        if open_roles:
+            keep.add(_most_recent(open_roles))           # the most recent role still survives
     lead_ids = {i for i, src in pins.items() if src.get("how") == "lead"}
+    shown_flat = [x for x in flat if (x[0], x[1]) in keep]
+    rank_of = dict(zip([(x[0], x[1]) for x in shown_flat],
+                       recency_ranks([(x[2], x[3]) for x in shown_flat])))
 
-    def _trim(role: dict, iid: str) -> dict:
-        role = dict(role)
-        bullets = list(role.get("bullets") or [])
-        if len(bullets) > max_bullets:
-            ranked = sorted(range(len(bullets)), key=lambda i: len(jd_terms & _terms(bullets[i])),
-                            reverse=True)[:max_bullets]
-            bullets = [bullets[i] for i in sorted(ranked)]
-        role["bullets"] = bullets
+    def _trim(role: dict, iid: str, key: tuple) -> dict:
+        role = _budget_trim(role, bullet_budget(rank_of[key], lead=iid in lead_ids)[0], jd_terms)
         if iid in lead_ids:
             role["_lead"] = True
         return role
@@ -679,7 +745,8 @@ def _select_with_choices(profile: dict, jd_text: str, choices: dict, max_roles: 
     kept = []
     for ei, entry in enumerate(profile.get("experience") or []):
         nested = isinstance(entry.get("roles"), list)
-        roles = [_trim(role, iid) for (e2, ri, role, _en, iid) in flat if e2 == ei and (e2, ri) in keep]
+        roles = [_trim(role, iid, (e2, ri)) for (e2, ri, role, _en, iid) in flat
+                 if e2 == ei and (e2, ri) in keep]
         if not roles:
             continue
         if nested:
@@ -764,13 +831,16 @@ def lead_summary(summary: str, names: list) -> str:
 
 
 def strip_choice_marks(profile: dict) -> dict:
-    """Remove the selection's private marks (``_lead``) before the page leaves the assembler."""
+    """Remove the selection's private marks (``_lead``, ``_reserve``) before the page leaves
+    the assembler."""
     for e in (profile.get("projects") or []) + (profile.get("experience") or []):
         if isinstance(e, dict):
             e.pop("_lead", None)
+            e.pop("_reserve", None)
             for r in e.get("roles") or []:
                 if isinstance(r, dict):
                     r.pop("_lead", None)
+                    r.pop("_reserve", None)
     return profile
 
 
@@ -839,37 +909,8 @@ def normalize_profile(profile: dict) -> dict:
 _FILL_PROBE = r"\AtEndDocument{\par\typeout{TAILORFILL=\the\pagetotal:\the\textheight}}"
 
 
-# Layout steps for a page that is still short once every piece of the person's material is on
-# it. A template set at 10pt with 0.7cm margins is sized for a 15-year career; a human laying
-# out a 9-bullet resume would simply use 11pt and normal margins, not pad the sentences. Each
-# step is a bounded, standard resume layout (letter paper), applied in the BODY so the template
-# preamble stays verbatim (CLAUDE.md sec 8). Step 0 is the template as designed.
-LAYOUT_STEPS: tuple[str, ...] = (
-    "",
-    # Same type as the raw template, plus a bottom margin to flush to: a page that is already
-    # 91 to 94 percent full gets its last few lines of empty paper shared between sections.
-    r"\newgeometry{left=0.7cm,right=0.7cm,top=0.7cm,bottom=0.7cm}",
-    r"\fontsize{10.5}{12.6}\selectfont\newgeometry{left=0.7cm,right=0.7cm,top=0.7cm,bottom=0.7cm}",
-    r"\fontsize{11}{13.2}\selectfont\newgeometry{left=1.3cm,right=1.3cm,top=1.1cm,bottom=1.1cm}",
-    r"\fontsize{11.5}{13.8}\selectfont\newgeometry{left=1.8cm,right=1.8cm,top=1.5cm,bottom=1.5cm}",
-    # From here the type stays at 12pt (the largest a US resume uses) and the page fills the
-    # way a person would fill a thin resume by hand: one-inch margins, a little more leading,
-    # more air between sections and between bullets. Every step is a normal-looking resume.
-    r"\fontsize{12}{14.4}\selectfont\newgeometry{left=2.0cm,right=2.0cm,top=1.6cm,bottom=1.6cm}"
-    r"\renewcommand{\vs}{\vspace{0.4cm}}",
-    r"\fontsize{12}{15}\selectfont\newgeometry{left=2.3cm,right=2.3cm,top=1.9cm,bottom=1.9cm}"
-    r"\renewcommand{\vs}{\vspace{0.5cm}}\setlist{itemsep=2pt,topsep=1pt}",
-    r"\fontsize{12}{15.6}\selectfont\newgeometry{left=2.54cm,right=2.54cm,top=2.2cm,bottom=2.2cm}"
-    r"\renewcommand{\vs}{\vspace{0.6cm}}\setlist{itemsep=3pt,topsep=2pt}",
-    r"\fontsize{12}{16.2}\selectfont\newgeometry{left=2.54cm,right=2.54cm,top=2.54cm,bottom=2.54cm}"
-    r"\renewcommand{\vs}{\vspace{0.75cm}}\setlist{itemsep=4pt,topsep=3pt}\setlength{\parskip}{3pt}",
-    r"\fontsize{12}{17}\selectfont\newgeometry{left=2.54cm,right=2.54cm,top=2.54cm,bottom=2.54cm}"
-    r"\renewcommand{\vs}{\vspace{0.9cm}}\setlist{itemsep=6pt,topsep=4pt}\setlength{\parskip}{5pt}",
-)
-
-
 def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False,
-              layout: str = "", headings: dict | None = None) -> str:
+              headings: dict | None = None) -> str:
     """Render a full CV `.tex` from ``profile`` using the template's preamble.
 
     ``sections`` is the selected template's ordered section list (from its manifest); each
@@ -884,7 +925,6 @@ def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False,
     order = list(sections) if sections else list(_DEFAULT_SECTION_ORDER)
     body = [_header(profile)]
     token = _HEADINGS.set(dict(headings or {}))
-    stoken = _STRETCH.set(bool(layout))
     try:
         for name in order:
             renderer = _SECTION_RENDERERS.get(name)
@@ -892,10 +932,10 @@ def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False,
                 body.append(renderer(profile))
     finally:
         _HEADINGS.reset(token)
-        _STRETCH.reset(stoken)
     head = f"{preamble}\n{_FILL_PROBE}" if probe else preamble
-    lead = f"{layout}\\flushbottom\n" if layout else ""
-    return f"{head}\n{lead}{''.join(body)}\n{DOC_END}\n"
+    # The template's own type size, margins and spacing, always: nothing in the body changes
+    # them (CLAUDE.md sec 8; the page-enlarging layout steps were removed on 2026-11-06).
+    return f"{head}\n{''.join(body)}\n{DOC_END}\n"
 
 
 # --------------------------------------------------------------------------- #
@@ -1018,9 +1058,7 @@ def _tailor_bullets(profile: dict, jd_text: str, llm: LLMBackend, *,
     traced back to the person's own bullet.
     """
     import copy
-    from .fact_gate import gate_rewrite, known_material, source_figures
-    from .filler import repeats_sibling
-    from .keywords import term_present
+    from .fact_gate import known_material, source_figures
 
     tailored = copy.deepcopy(profile)
     # Weave only real supported SKILLS into bullets — never company/location terms.
@@ -1029,47 +1067,60 @@ def _tailor_bullets(profile: dict, jd_text: str, llm: LLMBackend, *,
     known = known_material(*sources)
     known_figs = source_figures(*sources)
     for bl, i, grounding, section, label in _iter_bullet_slots_with_grounding(tailored, with_label=True):
-        original = str(bl[i])
-        budget = _bullet_budget(original)
-        # Offer the model only the JD skills THIS role/project demonstrates, so it is never
-        # invited to carry a skill from one part of the person's history onto another.
-        role_terms = [t for t in supported if term_present(t, grounding)]
-        new = llm.reword_bullet(
-            original_text=original,
-            supported_jd_terms=role_terms,
-            target_len_chars=budget,
-            jd_text=jd_text,
-        ).strip()
-        if not new:
-            continue
-        # (1) Discard a reword that fabricated a skill for this role — keep the real bullet.
-        if _reword_smuggled_unsupported(original, new, jd_text, grounding):
-            continue
-        # (1b) Discard a reword that restates a sibling bullet's clause (the sibling is in
-        # its grounding, so a reword can copy it): one fact, one bullet per entry.
-        siblings = [bl[k] for k in range(len(bl)) if k != i]
-        if repeats_sibling(original, new, siblings):
-            continue
-        # (2) Enforce the per-bullet length ceiling. Only fires on a wild over-expansion
-        # past the budget (floor 165 chars); a normal one-line bullet never trips it.
-        if len(new) > budget:
-            shorter = str(llm.shorten_bullet(new, budget) or "").strip()
-            if shorter and (_reword_smuggled_unsupported(original, shorter, jd_text, grounding)
-                            or repeats_sibling(original, shorter, siblings)):
-                continue                 # the shortening fabricated: keep the real bullet
-            if shorter:
-                new = shorter
-        # (3) The fact gate: nothing on the page the person's material does not state.
-        bad = gate_rewrite(original, new, known=known, known_figures=known_figs)
-        if bad:
-            if reverted is not None:
-                reverted.append({"section": section, "label": label, "bullet": original,
-                                 "attempted": new, "claims": bad, "action": "reverted"})
-            continue
-        if origins is not None and new != original:
-            origins[new] = original
-        bl[i] = new
+        bl[i] = _tailor_one(str(bl[i]), [bl[k] for k in range(len(bl)) if k != i], grounding,
+                            jd_text, llm, supported=supported, known=known, known_figs=known_figs,
+                            section=section, label=label, reverted=reverted, origins=origins)
     return tailored
+
+
+def _tailor_one(original: str, siblings: list, grounding: str, jd_text: str, llm: LLMBackend, *,
+                supported: list, known: dict, known_figs: set, section: str = "", label: str = "",
+                reverted: list | None = None, origins: dict | None = None) -> str:
+    """ONE bullet reworded toward the JD, or ``original`` when any safety net refuses the
+    reword (see ``_tailor_bullets``). ``siblings`` are the other bullets of its entry and
+    ``grounding`` everything that entry says."""
+    from .fact_gate import gate_rewrite
+    from .filler import repeats_sibling
+    from .keywords import term_present
+
+    budget = _bullet_budget(original)
+    # Offer the model only the JD skills THIS role/project demonstrates, so it is never
+    # invited to carry a skill from one part of the person's history onto another.
+    role_terms = [t for t in supported if term_present(t, grounding)]
+    new = llm.reword_bullet(
+        original_text=original,
+        supported_jd_terms=role_terms,
+        target_len_chars=budget,
+        jd_text=jd_text,
+    ).strip()
+    if not new:
+        return original
+    # (1) Discard a reword that fabricated a skill for this role — keep the real bullet.
+    if _reword_smuggled_unsupported(original, new, jd_text, grounding):
+        return original
+    # (1b) Discard a reword that restates a sibling bullet's clause (the sibling is in
+    # its grounding, so a reword can copy it): one fact, one bullet per entry.
+    if repeats_sibling(original, new, siblings):
+        return original
+    # (2) Enforce the per-bullet length ceiling. Only fires on a wild over-expansion
+    # past the budget (floor 165 chars); a normal one-line bullet never trips it.
+    if len(new) > budget:
+        shorter = str(llm.shorten_bullet(new, budget) or "").strip()
+        if shorter and (_reword_smuggled_unsupported(original, shorter, jd_text, grounding)
+                        or repeats_sibling(original, shorter, siblings)):
+            return original              # the shortening fabricated: keep the real bullet
+        if shorter:
+            new = shorter
+    # (3) The fact gate: nothing on the page the person's material does not state.
+    bad = gate_rewrite(original, new, known=known, known_figures=known_figs)
+    if bad:
+        if reverted is not None:
+            reverted.append({"section": section, "label": label, "bullet": original,
+                             "attempted": new, "claims": bad, "action": "reverted"})
+        return original
+    if origins is not None and new != original:
+        origins[new] = original
+    return new
 
 
 # --------------------------------------------------------------------------- #
@@ -1126,29 +1177,45 @@ def _role_lists(profile: dict):
 
 
 def _drop_trailing_bullet(profile: dict, cuts: "_Cuts | None" = None) -> bool:
-    """Drop the last bullet of the entry that has the most bullets (>1).
+    """Drop the last bullet of one entry that still has more than one, by recency.
+
+    Order (Kofi, 2026-11-06: the more recent the job, the more bullets): first the extra
+    bullets of experience roles above their fewest (``bullet_budget``), oldest role first, so
+    the most recent role keeps its extras longest; then a project or activity, the fullest
+    first; only then a role below its fewest, again oldest first, so neither of the two most
+    recent roles goes below three while an older role still has more than two.
 
     Never truncates text — a dropped bullet is removed whole, so every surviving
     bullet stays a complete sentence. Returns True if something was dropped. A bullet the
-    person put back is skipped: the next one up goes instead.
+    person put back is skipped: the next one up goes instead. A role the person leads with
+    keeps its bullets while any other entry can give one up.
     """
     cuts = cuts or _Cuts(None, (), None)
     lists = list(_role_lists(profile))
-    # Prefer trimming an entry that still has more than one bullet. A role the person leads
-    # with keeps its full bullet budget while any other entry can give one up.
+    rank_of = {id(r.get("bullets")): rank for rank, _e, r in ranked_roles(profile)}
+
     def droppable(bl, label):
         return [i for i in range(len(bl) - 1, 0, -1) if not cuts.kept("bullet", label, str(bl[i]))]
     candidates = [x for x in lists if len(x[0]) > 1 and droppable(x[0], x[2])]
     others = [x for x in candidates if not x[3]]
     if others:
         candidates = others
-    if candidates:
-        bl, section, label, _lead = max(candidates, key=lambda x: sum(len(str(b)) for b in x[0]))
-        i = droppable(bl, label)[0]
-        cuts.add("bullet", section, label, str(bl[i]), index=i)
-        bl.pop(i)
-        return True
-    return False
+    if not candidates:
+        return False
+    roles = [x for x in candidates if x[1] == "experience" and id(x[0]) in rank_of]
+    rest = [x for x in candidates if not (x[1] == "experience" and id(x[0]) in rank_of)]
+    extra = [x for x in roles if len(x[0]) > bullet_budget(rank_of[id(x[0])], x[3])[0]]
+    if extra:
+        pick = max(extra, key=lambda x: rank_of[id(x[0])])
+    elif rest:
+        pick = max(rest, key=lambda x: sum(len(str(b)) for b in x[0]))
+    else:
+        pick = max(roles, key=lambda x: rank_of[id(x[0])])
+    bl, section, label, _lead = pick
+    i = droppable(bl, label)[0]
+    cuts.add("bullet", section, label, str(bl[i]), index=i)
+    bl.pop(i)
+    return True
 
 
 def _all_roles(profile: dict):
@@ -1183,7 +1250,7 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
             cuts.add("sentence", section, label, before, cut=sentences[-1], after=bl[i])
             return True
 
-    # 2. Drop the last bullet of the fullest role that still has more than one.
+    # 2. Drop a trailing bullet: the oldest role's extras first (``_drop_trailing_bullet``).
     if _drop_trailing_bullet(profile, cuts):
         return True
 
@@ -1360,11 +1427,12 @@ TARGET_FILL = 0.90
 # fill > MAX_FILL is therefore an overflow the healer must shrink, not ship;
 # 0.97 of \textheight leaves ~0.8cm of real clearance above the edge.
 MAX_FILL = 0.97
-# The layout ladder runs whenever the natural page is short of THIS, a stricter bar than
-# TARGET_FILL: a page at 91 percent is not "underfull" enough to ask the person for more
-# material, but it still shows a band of empty paper, and a larger layout step (which also
-# flushes the text to the bottom margin) removes it at no cost to the content.
-LAYOUT_FILL = 0.95
+# The recency fill (``_recency_fill``) adds bullets while the page is short of THIS, a stricter
+# bar than TARGET_FILL: a page at 91 percent is not "underfull" enough to ask the person for
+# more material, but it still shows a band of empty paper that one more bullet on a recent
+# role can use. The template's type size, margins and spacing never change to fill a page
+# (the layout steps that did were removed on 2026-11-06).
+FILL_GOAL = 0.95
 
 
 @dataclass
@@ -1400,10 +1468,23 @@ class AssembleResult:
     line_fit: dict | None = None
     line_fit_before: dict | None = None
     line_gaps: dict | None = None
-    # The page as it stood before the line fit (its profile and layout step), so a review can
-    # render the same build without the fit and compare.
+    # The page as it stood before the line fit, so a review can render the same build without
+    # the fit and compare.
     pre_fit_profile: dict | None = None
-    layout: str = ""
+    # What the recency fill added to a short page, one record per bullet: {section, label,
+    # bullet, kind, source}. ``kind`` is "saved" (the person's own bullet that selection left
+    # out), "split" (one of the parts of a bullet that merged several accomplishments) or
+    # "written" (a new bullet written from that role's own material; the person checks these,
+    # see ``written``).
+    added: list = field(default_factory=list)
+    # Plain notes about bullet counts, e.g. a role left below its fewest bullets because the
+    # person gave no more material for it.
+    bullet_notes: list = field(default_factory=list)
+
+    @property
+    def written(self) -> list:
+        """The bullets the recency fill WROTE (not the person's own wording), for review."""
+        return [a for a in self.added if a.get("kind") == "written"]
 
     @property
     def underfull(self) -> bool:
@@ -1439,9 +1520,273 @@ def _count_material(profile: dict) -> tuple[int, int]:
     return roles, bullets
 
 
-def _dropped_material(full: dict, selected: dict) -> bool:
-    """Did role selection leave out any of the person's roles or bullets?"""
-    return _count_material(full) != _count_material(selected)
+def _dropped_roles(full: dict, selected: dict) -> bool:
+    """Did role selection leave out any of the person's roles?"""
+    return _count_material(full)[0] != _count_material(selected)[0]
+
+
+# --------------------------------------------------------------------------- #
+# The recency fill: a short page gets more bullets on its most recent roles (Kofi, 2026-11-06).
+# --------------------------------------------------------------------------- #
+
+def _role_key(entry: dict, role: dict) -> tuple:
+    return (_norm_text(entry.get("org") or entry.get("name") or entry.get("company") or ""),
+            _norm_text(role.get("title") or ""))
+
+
+def _role_material(entry: dict, role: dict, source_role: dict | None, profile: dict,
+                   material=()) -> str:
+    """Everything the person's own material says about THIS role, and nothing about another:
+    the employer line, the role's title and dates, all of its bullets (shown, waiting, and as
+    first written), the sentences of their summary and saved answers that name the employer,
+    and the skills they listed that this text shows. A written bullet may draw only on this."""
+    from .fact_gate import _strings
+    from .keywords import term_present
+
+    head = {k: v for k, v in entry.items() if k not in ("roles", "bullets", "_reserve", "_lead")}
+    parts = _strings(head) + _strings({k: v for k, v in role.items() if k != "_lead"})
+    if source_role:
+        parts += _strings(source_role.get("bullets") or [])
+    org = str(entry.get("org") or entry.get("name") or entry.get("company") or "").strip().lower()
+    if len(org) >= 3:
+        said = _split_sentences(str(profile.get("summary") or ""))
+        said += [s for m in material or () for t in _strings(m) for s in _split_sentences(t)]
+        parts += [s for s in said if org in s.lower()]
+    text = "\n".join(dict.fromkeys(p for p in parts if str(p).strip()))
+    tied = [x for x in _listed_skills(profile) if term_present(x, text)]
+    if tied:
+        text += "\nSkills shown in this role: " + ", ".join(tied)
+    return text
+
+
+def _listed_skills(profile: dict) -> list[str]:
+    """Every skill the person listed, once, in their order."""
+    lines = (_norm_skills(profile.get("skills")) or {}).values()
+    return list(dict.fromkeys(x.strip() for v in lines for x in str(v).split(",") if x.strip()))
+
+
+def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
+                     listed_skills=(), max_chars: int = 0) -> list[str]:
+    """Why a bullet WRITTEN for one role may not go on the page; empty means it may.
+
+    The fact gate (tailoring/fact_gate.py) scoped to that role's own material: no figure, name,
+    acronym, tool or credential the role's material does not state, no skill the person listed
+    that this role never shows, no filler, no keyword list, and nothing a sibling bullet
+    already says (tailoring/filler.py: one fact, one bullet)."""
+    from .fact_gate import figures, known_material, new_claims, source_figures
+    from .filler import filler_added, repeats_sibling, same_fact, tacked_on_terms
+    from .keywords import introduced_skills, term_present
+
+    new = str(new or "").strip()
+    if not new:
+        return ["empty"]
+    bad = sorted(figures(new) - source_figures(role_text), key=lambda s: (len(s), s))
+    bad += new_claims(new, known=known_material(role_text))
+    bad += introduced_skills("", new, role_text, jd_text)
+    bad += [s for s in listed_skills or ()
+            if term_present(s, new) and not term_present(s, role_text)]
+    bad += filler_added(role_text, new) + tacked_on_terms(role_text, new)
+    sibs = [str(s) for s in siblings or () if str(s).strip()]
+    if repeats_sibling("", new, sibs) or any(same_fact(new, s) for s in sibs):
+        bad.append("repeats a bullet of this role")
+    if max_chars and len(new) > max_chars:
+        bad.append("too long")
+    return list(dict.fromkeys(bad))
+
+
+def _looks_merged(text: str) -> bool:
+    """A bullet that may hold several accomplishments (worth asking to split)."""
+    t = str(text or "")
+    return len(t) >= 80 and (";" in t or t.count(",") >= 2 or ", and " in t
+                             or (len(t) >= 120 and " and " in t))
+
+
+def _split_ok(parts: list, src: str, role_text: str, siblings, jd_text: str) -> bool:
+    """Every part of a split restates only its source bullet: no new figure, name or skill,
+    no filler, no repeat of another bullet or of another part."""
+    from .fact_gate import figures, known_material, new_claims
+    from .filler import filler_added, same_fact, shares_a_clause
+    from .keywords import introduced_skills
+
+    known = known_material(src, role_text)
+    for n, part in enumerate(parts):
+        if (figures(part) - figures(src) or new_claims(part, known=known)
+                or introduced_skills(src, part, role_text, jd_text) or filler_added(src, part)
+                or len(part) > _bullet_budget(src)):
+            return False
+        if any(shares_a_clause(part, str(s)) for s in siblings or ()):
+            return False
+        if any(same_fact(part, other) for other in parts[n + 1:]):
+            return False
+    return True
+
+
+def _recency_fill(preamble: str, used: dict, result, *, sections, headings, workdir: Path,
+                  jobname: str, llm, jd_text: str, tailor: bool, write: bool, source: dict,
+                  material=(), gate_material=(), origins: dict | None = None,
+                  reverted: list | None = None):
+    """Fill a short page with more bullets, the most recent roles first, re-measuring the real
+    page after every bullet. Returns (result, added, notes).
+
+    Two passes over the roles in recency order (``ranked_roles``): first every role up to its
+    fewest bullets (``bullet_budget``), then every role up to its most, so the most recent role
+    is brought toward five first, then the second toward four, then older ones toward three.
+    It stops when the page reaches ``FILL_GOAL`` or the next bullet would overflow (two pages,
+    a new overfull line, or past ``MAX_FILL``); that bullet is taken back off.
+
+    Each bullet comes from, in order: (a) the person's own bullet for that role that selection
+    left out (``_reserve``), put back in the author's order and, with ``tailor``, reworded
+    toward the job like any other; (b) a split of one of the role's bullets that merges several
+    accomplishments (``llm.expand_bullets``, each part checked against its source bullet);
+    (c) a NEW bullet written from that role's own material only (``llm.write_role_bullet``),
+    refused by ``written_problems`` if it states anything the material does not or repeats a
+    sibling. (b) and (c) need ``write`` and a model (a fresh build, never a rebuild after the
+    person's own edit). A role whose (c) is refused gets no more written bullets in this build.
+    """
+    from .fact_gate import known_material, source_figures
+    from .filler import same_fact
+    from .keywords import profile_text, term_present
+
+    added: list = []
+    notes: list = []
+    origins = origins if origins is not None else {}
+    if not (result and result.ok and result.pages == 1 and result.fill_ratio is not None
+            and result.fill_ratio < FILL_GOAL):
+        return result, added, notes
+    reword = bool(tailor and llm is not None)
+    use_llm = bool(write and llm is not None)
+    can_write = use_llm and callable(getattr(llm, "write_role_bullet", None))
+    supported = supported_skills(jd_text, source) if ((reword or use_llm) and jd_text) else []
+    known = known_material(*gate_material) if reword else None
+    known_figs = source_figures(*gate_material) if reword else None
+    source_roles = {_role_key(e, r): r for e, r in _experience_roles(source)}
+    listed = _listed_skills(source)
+    base_overfull = result.overfull_count
+    state: dict = {}
+
+    def clean(r) -> bool:
+        return bool(r and r.ok and r.pages == 1 and r.overfull_count <= base_overfull
+                    and r.fill_ratio is not None and r.fill_ratio <= MAX_FILL)
+
+    def next_step(entry: dict, role: dict, most: int):
+        # A role whose bullets were drafted as placeholders (not the person's words) is never
+        # split or written from: only the person's own material may seed a new bullet.
+        own = not (role.get("drafted_bullets") or entry.get("drafted_bullets"))
+        st = state.setdefault(id(role), {"tried": set(), "write": can_write and own, "dry": False})
+        bl = role["bullets"]
+        label = entry_label(entry, role)
+        rec = {"section": "experience", "label": label}
+        src_role = source_roles.get(_role_key(entry, role))
+        reserve = role.get("_reserve") or []
+        while reserve:                                         # (a) their own, left out
+            src = str(reserve.pop(0))
+            if any(same_fact(src, str(origins.get(b, b))) for b in bl):
+                continue
+            text = src
+            if reword:
+                text = _tailor_one(src, list(bl), profile_text(entry), jd_text, llm,
+                                   supported=supported, known=known, known_figs=known_figs,
+                                   section="experience", label=label, reverted=reverted,
+                                   origins=origins)
+            # Back in the author's order, so the page reads as they wrote it and a rebuild
+            # does not shuffle it.
+            order = [_norm_text(x) for x in (src_role or {}).get("bullets") or []]
+            at = order.index(_norm_text(src)) if _norm_text(src) in order else len(order)
+            pos = sum(1 for b in bl if _norm_text(origins.get(b, b)) in order
+                      and order.index(_norm_text(origins.get(b, b))) < at)
+            return bl[:pos] + [text] + bl[pos:], [dict(rec, bullet=text, kind="saved", source=src)]
+        role_text = _role_material(entry, role, src_role, source, material)
+        if use_llm and own:                                    # (b) split a merged bullet
+            for i, b in enumerate(bl):
+                src = str(origins.get(b, b))
+                if src in st["tried"] or not _looks_merged(src):
+                    continue
+                st["tried"].add(src)
+                try:
+                    parts = llm.expand_bullets(str(role.get("title") or ""), [src], jd_text)
+                except Exception:                              # noqa: BLE001 - a split is optional
+                    continue
+                parts = [str(x).strip() for x in parts or [] if str(x).strip()]
+                if len(parts) < 2 or len(bl) - 1 + len(parts) > most:
+                    continue
+                if not _split_ok(parts, src, role_text, [x for k, x in enumerate(bl) if k != i],
+                                 jd_text):
+                    continue
+                for x in parts:
+                    origins[x] = src
+                return (bl[:i] + parts + bl[i + 1:],
+                        [dict(rec, bullet=x, kind="split", source=src) for x in parts])
+        if st["write"]:                                        # (c) written from the role
+            budget = _bullet_budget(max(map(str, bl), key=len) if bl else "")
+            terms = [t for t in supported if term_present(t, role_text)]
+            try:
+                new = str(llm.write_role_bullet(label, role_text, list(bl), terms, budget,
+                                                jd_text=jd_text) or "").strip()
+            except Exception:                                  # noqa: BLE001
+                new = ""
+            if new.strip(". ").upper() == "NONE":
+                new = ""
+            if new and not written_problems(new, role_text, bl, jd_text, listed, budget):
+                origins[new] = new                             # traced through the line fit
+                return bl + [new], [dict(rec, bullet=new, kind="written", source="")]
+            st["write"] = False
+        st["dry"] = True
+        return None
+
+    order = sorted(ranked_roles(used), key=lambda x: x[0])
+    stop = False
+    for phase in (0, 1):                     # 0: up to the fewest, 1: up to the most
+        for rank, entry, role in order:
+            fewest, most = bullet_budget(rank, bool(role.get("_lead") or entry.get("_lead")))
+            role.setdefault("bullets", [])
+            while not stop and len(role["bullets"]) < (fewest if phase == 0 else most):
+                step = next_step(entry, role, most)
+                if step is None:
+                    break
+                before = list(role["bullets"])
+                role["bullets"][:] = step[0]
+                _say("fill", "Filling the page", "with more of your most recent work")
+                r = compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
+                                workdir, jobname=f"{jobname}-fill")
+                if not clean(r):
+                    role["bullets"][:] = before        # this bullet would overflow: stop here
+                    stop = True
+                    break
+                result = r
+                added += step[1]
+                stop = r.fill_ratio >= FILL_GOAL
+            if stop:
+                break
+        if stop:
+            break
+    for rank, entry, role in order:
+        fewest, _most = bullet_budget(rank, bool(role.get("_lead") or entry.get("_lead")))
+        n = len(role.get("bullets") or [])
+        drafted = role.get("drafted_bullets") or entry.get("drafted_bullets")
+        if n < fewest and not drafted and state.get(id(role), {}).get("dry"):
+            notes.append(f"{entry_label(entry, role)} shows {n} bullet{'' if n == 1 else 's'}: "
+                         "there is no more of your material for that role yet. Tell me more "
+                         "about it and I will add it.")
+    return result, added, notes
+
+
+def _resolve_added(used: dict, added: list, origins: dict) -> list:
+    """Each added bullet as it reads on the final page (the line fit may have resized it,
+    and ``origins`` traces every rewrite back), dropping any that is no longer there."""
+    page: dict = {}
+    for _rank, e, r in ranked_roles(used):
+        page.setdefault(entry_label(e, r), []).extend(str(b) for b in r.get("bullets") or [])
+    taken: set = set()
+    out = []
+    for rec in added:
+        want = {rec.get("bullet"), rec.get("source")} - {"", None}
+        for n, b in enumerate(page.get(rec.get("label"), [])):
+            key = (rec.get("label"), n)
+            if key not in taken and (b in want or origins.get(b) in want):
+                taken.add(key)
+                out.append(dict(rec, bullet=b))
+                break
+    return out
 
 
 def _fit_to_page(preamble, used: dict, sections, workdir: Path, jobname: str,
@@ -1496,6 +1841,7 @@ def assemble_cv(
     fit_lines: bool = False,
     skill_pool=(),
     fit_rounds: int | None = None,
+    fill_writes: bool | None = None,
 ) -> AssembleResult:
     """Assemble a one-page CV from ``profile`` in the template's shape.
 
@@ -1514,6 +1860,12 @@ def assemble_cv(
     more of the person's own skills it may place (the caller vets them; the fact gate checks
     them again). Its rounds show in the live activity feed (ui/activity.py) as "Fitting the
     page", a rejected round as a retry.
+
+    The page always keeps the template's own type size, margins and spacing. A page still
+    short after the fit gets more bullets, the most recent roles first (``_recency_fill``):
+    the person's own bullets first, then, when ``fill_writes`` (default: ``tailor``) and a
+    model are given, splits of merged bullets and bullets written from each role's own
+    material, listed in ``added`` (``written``) so the person can check them.
     """
 
     workdir = Path(workdir)
@@ -1530,10 +1882,6 @@ def assemble_cv(
     profile = select_roles_for_jd(full_profile, jd_text, choices=choices, report=report)
     # What the person's choices left out never comes back through the grow pass below.
     full_profile = choice_pool(full_profile, report)
-    if report.get("lead"):
-        # The grow pass keeps the lead item's bullet budget and summary order too.
-        full_profile = select_roles_for_jd(full_profile, jd_text, max_roles=10 ** 6,
-                                           max_bullets=10 ** 6, choices=choices)
     import copy as _copy
     selected_source = _copy.deepcopy(profile)
 
@@ -1550,22 +1898,23 @@ def assemble_cv(
     attempts, result = _fit_to_page(preamble, used, sections, workdir, jobname, max_shrink,
                                     headings=headings, trims=trims, keep=keep, origins=origins)
 
-    # THE GROW PASS. Selection trims a career to 4 roles x 3 bullets so a long one is not
-    # squeezed into an index. For a THIN profile that trim is backwards: Kofi's own CV
-    # (5 roles, 9 bullets) rendered at about half a page with a role and bullets cut while
-    # the bottom half sat empty (2026-10-07). When the page comes out short and selection
-    # dropped material, rebuild with everything the person gave and keep whichever version
-    # fills the page better without overflowing. Only their own material comes back;
-    # nothing is padded.
+    # THE GROW PASS. Selection keeps a career to 4 roles so a long one is not squeezed into
+    # an index. For a THIN profile that is backwards: Kofi's own CV (5 roles, 9 bullets)
+    # rendered at about half a page with a role cut while the bottom half sat empty
+    # (2026-10-07). When the page comes out short and selection left roles out, rebuild with
+    # every role the person gave (each at its recency budget) and keep whichever version fills
+    # the page better without overflowing. Only their own material comes back.
     if (result and result.ok and result.pages == 1 and result.fill_ratio is not None
-            and result.fill_ratio < TARGET_FILL and _dropped_material(full_profile, profile)):
+            and result.fill_ratio < TARGET_FILL and _dropped_roles(full_profile, profile)):
         _say("grow", "Trying again", "with more of your roles, the page came out short", state="retry")
         g_reverted: list = []
         g_origins: dict = {}
+        g_source = select_roles_for_jd(full_profile, jd_text, max_roles=10 ** 6, choices=choices)
         if tailor:
             _say("bullets", "Crafting bullets", "for the roles that came back")
-        grown = (_tailor_bullets(full_profile, jd_text, llm, material=gate_material,
-                                 reverted=g_reverted, origins=g_origins) if tailor else full_profile)
+        grown = (_tailor_bullets(g_source, jd_text, llm, material=gate_material,
+                                 reverted=g_reverted, origins=g_origins)
+                 if tailor else _copy.deepcopy(g_source))
         g_trims: list = []
         g_attempts, g_result = _fit_to_page(preamble, grown, sections, workdir,
                                             jobname + "-full", max_shrink, headings=headings,
@@ -1574,33 +1923,35 @@ def assemble_cv(
                 and (g_result.fill_ratio or 0) > result.fill_ratio
                 and (g_result.fill_ratio or 0) <= MAX_FILL):
             used, result, attempts = grown, g_result, attempts + g_attempts
-            selected_source = _copy.deepcopy(full_profile)
-            trims, reverted = g_trims, g_reverted
+            selected_source = _copy.deepcopy(g_source)
+            trims, reverted, origins = g_trims, g_reverted, g_origins
 
-    # LAYOUT GROW. All of the person's material is on the page and it is still short: pick the
-    # largest standard layout step that keeps one clean page, measured, not guessed. This is
-    # what a person does with a thin resume (11pt, normal margins); padding sentences is not.
-    layout = ""
+    # THE RECENCY FILL. The page keeps the template's own type size, margins and spacing; a page
+    # still short of FILL_GOAL gets more bullets, the most recent roles first (3 to 5 on the
+    # latest, 3 to 4 on the second, 2 to 3 on older ones), re-measured after every bullet.
+    # ``attempts`` stays the one-page fit's count: a caller reads attempts > 1 as "the builder
+    # had to cut", which a fill never does.
+    added: list = []
+    bullet_notes: list = []
+    if result and result.ok and result.pages == 1:
+        result, added, bullet_notes = _recency_fill(
+            preamble, used, result, sections=sections, headings=headings, workdir=workdir,
+            jobname=jobname, llm=llm, jd_text=jd_text, tailor=tailor,
+            write=tailor if fill_writes is None else fill_writes, source=source_material,
+            material=material, gate_material=gate_material, origins=origins, reverted=reverted)
+        # The review's "before" side gets the person's own bullets the fill brought back.
+        keys = {entry_label(e, r): _role_key(e, r) for _rank, e, r in ranked_roles(used)}
+        sources = {_role_key(e, r): r for e, r in _experience_roles(selected_source)}
+        for rec in added:
+            src_role = sources.get(keys.get(rec["label"]))
+            if rec.get("kind") == "saved" and src_role is not None:
+                src_role.setdefault("bullets", []).append(rec["source"])
     _say("compile", "Compiling", "the PDF")
-    if (result and result.ok and result.pages == 1 and result.fill_ratio is not None
-            and result.fill_ratio < LAYOUT_FILL):
-        best_fill = result.fill_ratio
-        for step in LAYOUT_STEPS[1:]:
-            tex = render_cv(preamble, used, sections, probe=True, layout=step, headings=headings)
-            r = compile_tex(tex, workdir, jobname=f"{jobname}-l{LAYOUT_STEPS.index(step)}")
-            if not (r.ok and r.pages == 1 and r.overfull_count == 0
-                    and r.fill_ratio is not None and r.fill_ratio <= MAX_FILL):
-                break                                     # this step overflows; keep the last good one
-            if r.fill_ratio <= best_fill:
-                continue                                  # no gain (a size the font lacks): skip it
-            layout, result, best_fill = step, r, r.fill_ratio
-            if best_fill >= LAYOUT_FILL:
-                break
 
-    # FULL-WIDTH LINES (tailoring/linefit.py). Measured on the real page, at the layout that
-    # won: Skills packed into 5 to 6 one-line categories that reach the right margin, each
-    # bullet's last line filled or a one-word spill trimmed. Each round must keep the page
-    # clean and score better, so the result is never worse than the page above.
+    # FULL-WIDTH LINES (tailoring/linefit.py). Measured on the real page: Skills packed into 5
+    # to 6 one-line categories that reach the right margin, each bullet's last line filled or a
+    # one-word spill trimmed. Each round must keep the page clean and score better, so the
+    # result is never worse than the page above.
     line_fit = line_before = line_gaps = pre_fit = None
     if fit_lines and result and result.ok and result.pages == 1:
         pre_fit = _copy.deepcopy(used)
@@ -1612,8 +1963,7 @@ def assemble_cv(
                         and not (r.fill_ratio and r.fill_ratio > MAX_FILL))
         fo = _lf.fit_lines(
             used, result,
-            render=lambda p: render_cv(preamble, p, sections, probe=True, layout=layout,
-                                       headings=headings),
+            render=lambda p: render_cv(preamble, p, sections, probe=True, headings=headings),
             compile_fn=lambda tex, name: compile_tex(tex, workdir, jobname=name),
             is_clean=_clean, llm=llm, jd_text=jd_text, skill_pool=skill_pool,
             known=known_material(*gate_material), known_figures=source_figures(*gate_material),
@@ -1625,19 +1975,20 @@ def assemble_cv(
         # the person to confirm: the bullet simply kept its wording.
         line_fit, line_before, line_gaps = fo.after.as_dict(), fo.before.as_dict(), fo.gaps()
 
-    # The grow passes compile under side jobnames (-full, -lN). Whatever won must also exist
-    # under the REAL jobname, because that is the file the app serves (/api/cv.pdf?job=...);
+    # The grow and fill passes compile under side jobnames (-full, -fill). Whatever won must also
+    # exist under the REAL jobname, because that is the file the app serves (/api/cv.pdf?job=...);
     # without this the chat reported the grown page's fill while the viewer showed the first,
     # small compile (seen 2026-10-07).
     if result and result.pdf_path and Path(result.pdf_path).stem != jobname:
-        result = compile_tex(render_cv(preamble, used, sections, probe=True, layout=layout, headings=headings),
+        result = compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
                              workdir, jobname=jobname)
 
     # Ship without the probe: it has no layout effect, so the measurement above still
     # describes this render exactly (see _FILL_PROBE).
+    added = _resolve_added(used, added, origins)
     strip_choice_marks(used)
     strip_choice_marks(selected_source)
-    tex = render_cv(preamble, used, sections, layout=layout, headings=headings)
+    tex = render_cv(preamble, used, sections, headings=headings)
     cv_text = _rendered_cv_text(used, sections)
     if line_fit:
         _say("check", "Checking every line",
@@ -1685,7 +2036,8 @@ def assemble_cv(
         line_fit_before=line_before,
         line_gaps=line_gaps,
         pre_fit_profile=pre_fit,
-        layout=layout,
+        added=added,
+        bullet_notes=bullet_notes,
     )
 
 

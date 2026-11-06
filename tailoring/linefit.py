@@ -7,9 +7,9 @@ The rule. Every written line on the resume runs to the right edge of the page:
     Tableau, advanced Excel, data visualization, dashboard design"), each ONE line whose last
     item ends in the final ~10% of the text width. Never wrapping to a second line, never
     stopping halfway.
-  * BULLETS: the number of bullets per role is untouched. Each bullet's LAST line runs close
-    to the right edge: a short last line is filled, a bullet that spills a word or two onto
-    a new line is trimmed back.
+  * BULLETS: the number of bullets per role is untouched (the assembler's recency budget
+    sets it before this runs). Each bullet's LAST line runs close to the right edge: a short
+    last line is filled, a bullet that spills a word or two onto a new line is trimmed back.
   * Only the person's own material (CLAUDE.md section 8). Nothing here invents a skill or a
     detail: every rewrite passes the fact gate (tailoring/fact_gate.py), the skill guard
     (keywords.introduced_skills) and the padding guard (tailoring/filler.py). When there is
@@ -17,12 +17,12 @@ The rule. Every written line on the resume runs to the right edge of the page:
   * One page, no overfull box, and never worse than before: every round is compiled and
     measured, and only a round that keeps the page clean AND scores better is kept.
 
-Measured, not estimated. Character-width estimates (tailoring/textwidth.py) are only good at
-the template's own 10pt; the layout ladder (assembler.LAYOUT_STEPS) changes the font size and
-margins, so a line sized by estimate can wrap on the real page. ``measure`` reads the glyph
-boxes from the compiled PDF with pypdfium2 (a core dependency, the same renderer the previews
-use) and reports, for each skills line and each bullet, how many lines it takes and how far
-its last glyph reaches toward the right margin.
+Measured, not estimated. Character-width estimates (tailoring/textwidth.py) are only
+approximate (the templates differ in font and margins), so a line sized by estimate can wrap
+on the real page. ``measure`` reads the glyph boxes from the compiled PDF with pypdfium2 (a
+core dependency, the same renderer the previews use) and reports, for each skills line and
+each bullet, how many lines it takes and how far its last glyph reaches toward the right
+margin.
 """
 
 from __future__ import annotations

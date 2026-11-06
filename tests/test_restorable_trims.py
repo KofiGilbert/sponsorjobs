@@ -49,10 +49,16 @@ LONG = {
                    _role("Beacon Health", "Data Engineer", "June 2019 - May 2021", 3),
                    _role("Cobalt Retail", "Data Analyst", "June 2017 - May 2019", 3),
                    _role("Delta Freight", "Junior Analyst", "June 2016 - May 2017", 3)],
+    # Enough projects that the page overflows at the recency budget (3, 3, 2 and 2 bullets on
+    # the four roles), so the fit loop has to cut.
     "projects": [{"org": "Open Pipeline Kit", "title": "Creator", "dates": "2023",
-                  "bullets": ["Built an open-source Python toolkit for testing SQL data pipelines."]},
+                  "bullets": ["Built an open-source Python toolkit for testing SQL data pipelines.",
+                              "Wrote fixtures and a command line runner so other teams can check their own dbt models before a deploy, with docs."]},
                  {"org": "Budget Dashboard", "title": "Creator", "dates": "2022",
-                  "bullets": ["Built a Tableau dashboard that tracks household spending by month."]}],
+                  "bullets": ["Built a Tableau dashboard that tracks household spending by month.",
+                              "Pulled bank exports into a small Postgres database every night with a scheduled Python job and simple checks."]},
+                 {"org": "Transit Delay Map", "title": "Creator", "dates": "2021",
+                  "bullets": ["Mapped city bus delays from the public feed in a Python notebook and shared the weekly charts with a local transit group."]}],
     "extracurricular": [{"title": "Meetup Organizer", "date": "2021 - Present",
                          "bullets": ["Run a monthly data engineering meetup with talks and demos."]}],
     "interests": "Cycling, chess",
@@ -118,7 +124,11 @@ def test_the_fit_loop_keeps_every_cut_and_ships_one_clean_page(template_source, 
     every = {b for sec in ("experience", "projects", "extracurricular")
              for e in normalize_profile(LONG).get(sec) or [] for r in (e.get("roles") or [e])
              for b in r.get("bullets") or []}
-    assert every <= on_page | cut                                  # each bullet: on the page or listed
+    # Each bullet is on the page or listed, except what the recency budget held back: an OLDER
+    # role shows 2 to 3 bullets, and on a page this full it shows 2. Nothing of the two most
+    # recent roles is ever held back silently.
+    held = every - on_page - cut
+    assert all(b.startswith(("At Cobalt Retail", "At Delta Freight")) for b in held), held
 
 
 def _session(template_source, workdir):
@@ -141,7 +151,8 @@ def test_put_back_reruns_the_fit_and_lists_what_went_instead(template_source, wo
     assert out["put_back_ok"] is True, out.get("put_back_error")
     a = s.assembled
     assert a.ok and a.compile.pages == 1 and a.compile.overfull_count == 0
-    page = [b for e in a.profile_used["experience"] for r in e["roles"] for b in r["bullets"]]
+    page = [b for sec in ("experience", "projects") for e in a.profile_used[sec]
+            for r in (e.get("roles") or [e]) for b in r["bullets"]]
     assert target["text"] in page                                  # it is back on the page
     assert all(t["id"] != target["id"] for t in a.trims)           # and not cut again
     assert out["messages"] and out["messages"][0].startswith("Put back:")

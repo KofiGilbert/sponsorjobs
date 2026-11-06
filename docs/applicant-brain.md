@@ -276,9 +276,9 @@ word-overlap scoring:
 5. The scorer fills the remaining places as today.
 
 Chronological order is kept, as the function already promises. `lead` does not move a role up
-the page; it gives it the full bullet budget and makes the summary name it first. If pinned
-items alone exceed the limit, the most recent ones are kept and the builder says which rule
-could not be honored. A rule only ever chooses among the person's own items. It never adds
+the page; it gives it the full bullet budget (the most recent role's, 3 to 5 bullets, from
+`bullet_budget`) and makes the summary name it first. If pinned items alone exceed the limit,
+the most recent ones are kept and the builder says which rule could not be honored. A rule only ever chooses among the person's own items. It never adds
 words.
 
 The rules also go to `select_for_cv` as plain text, so its "why" explanation agrees with what
@@ -1082,7 +1082,11 @@ checks.
   drops the weaker match (a `prefer` or a pin settles which); a pin made for a narrower kind of
   job keeps an item a broader `prefer` or `apart` would drop. Projects take hide, prefer and
   apart too. The grow pass builds from the person's material MINUS what the choices left out
-  (`choice_pool`), so a hidden role never comes back to fill a short page. `lead` marks the item
+  (`choice_pool`), so a hidden role never comes back to fill a short page. Bullets per role
+  follow recency (2026-11-06, `bullet_budget`): the most recent role shows 3 to 5, the second
+  3 to 4, older roles 2 to 3; selection starts each at its fewest and the recency fill
+  (`_recency_fill`) adds bullets to a short page most recent first. The template's own type
+  size, margins and spacing never change to fill a page. `lead` marks the item
   (`_lead`, stripped before the page leaves): the shrinker takes bullets from other entries
   first, and the summary's sentence naming it moves to the front (reordered, never reworded).
   `AssembleResult.choices_report` says what was shown, what was left out and why, and which

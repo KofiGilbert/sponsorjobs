@@ -89,10 +89,13 @@ def _fill_tools():
 
 
 @requires_latex
-def test_previews_are_full_page_not_half(tmp_path, monkeypatch):
-    """The user's hard rule: a CV must FILL the page. A preview whose content stops
-    halfway is a half-page CV, regression guard. Measures how far down page 1 the rendered
-    content reaches; must be a nearly-full page for EVERY template."""
+def test_previews_keep_the_template_size_and_fill_with_bullets(tmp_path, monkeypatch):
+    """Every preview keeps its template's own type size, margins and spacing (Kofi, 2026-11-06:
+    the layout ladder that enlarged a short page to 12pt with one-inch margins is gone), and a
+    short page is filled with bullets by recency instead, so the classic-shaped templates still
+    reach the bottom. Templates with no Projects section render the same John Doe sample shorter;
+    white space at the bottom of those is the accepted look, not a failure. Measures how far
+    down page 1 the rendered content reaches."""
     import subprocess
 
     import numpy as np
@@ -107,12 +110,16 @@ def test_previews_are_full_page_not_half(tmp_path, monkeypatch):
     # 2026-10-09 were in templates this test did not look at).
     names = [t["name"] for t in app._templates()]
     assert len(names) >= 16
+    # The templates that render the sample's projects reach the bottom through the recency fill;
+    # the rest end where their content ends, but never as an empty or broken page.
+    full_shape = {"shetty", "software", "data", "engineering", "experienced", "summary", "product",
+                  "operations", "switcher"}
     short = {}
     for name in names:
         r = app.app.test_client().get(f"/api/templates/{name}/preview.pdf")
         assert r.status_code == 200
         # The exact file the app serves. A glob also matched the layout trials the fit loop
-        # compiles under side names (-l3, -full), and measured one of those instead.
+        # compiles under side names (-full, -fill), and measured one of those instead.
         pdf = app._template_preview_pdf(name)
         png = tmp_path / f"{name}.png"
         subprocess.run([pdftocairo, "-png", "-singlefile", "-r", "150", "-f", "1", "-l", "1",
@@ -121,6 +128,8 @@ def test_previews_are_full_page_not_half(tmp_path, monkeypatch):
         im = np.asarray(Image.open(png).convert("L"))
         dark = np.where((im < 200).any(axis=1))[0]
         reaches = (dark.max() / im.shape[0]) if len(dark) else 0.0
-        if reaches < 0.88:
+        if reaches < (0.88 if name in full_shape else 0.5):
             short[name] = round(reaches, 2)
+        body = pdf.with_suffix(".tex").read_text(encoding="utf-8").split("\\begin{document}", 1)[-1]
+        assert not any(k in body for k in ("\\newgeometry", "\\fontsize", "\\flushbottom", "plus 1fill")), name
     assert not short, f"previews that stop short of the page bottom: {short}"
