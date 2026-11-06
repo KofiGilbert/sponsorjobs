@@ -510,3 +510,48 @@ def test_the_line_fit_never_takes_the_point_of_a_bullet_cut_to_fit(monkeypatch):
     assert any("cut to fit" in str(r["claims"]) for r in out.rejected)
     # without the cut on record the same resize goes through: the test exercises the real path
     assert run({}).profile["experience"][0]["roles"][0]["bullets"] == [grown]
+
+
+# --------------------------------------------------------------------------- restore what fits
+def _room_build(template_source, workdir):
+    res = assemble_cv(template_source, _near_full(), JD, FakeLLM(), workdir, jobname="cv",
+                      tailor=True, fit_lines=True)
+    assert res.ok and any(t.get("room") for t in res.trims), res.trims
+    return res
+
+
+def _measure(template_source, workdir, page, name):
+    from tailoring.assembler import extract_preamble
+    from tailoring.compiler import compile_tex
+    pre = extract_preamble(template_source)
+    return pre, compile_tex(render_cv(pre, page, probe=True), workdir, jobname=name)
+
+
+@requires_latex
+def test_a_room_cut_that_a_later_height_change_made_unnecessary_is_put_back(template_source, workdir):
+    from tailoring.assembler import _restore_room
+    res = _room_build(template_source, workdir)
+    cut = next(t for t in res.trims if t.get("room"))
+    page = copy.deepcopy(res.profile_used)
+    page["extracurricular"] = page["extracurricular"][:1]          # a later change frees lines
+    pre, r0 = _measure(template_source, workdir, page, "shorter")
+    page, r, trims = _restore_room(pre, page, r0, res.trims, sections=None, headings=None,
+                                   workdir=workdir, jobname="t")
+    assert r.ok and r.pages == 1 and r.overfull_count == 0 and r.fill_ratio <= MAX_FILL
+    assert r.fill_ratio > r0.fill_ratio
+    assert cut not in trims                                         # off the Put back list
+    on_page = {b for p in page["projects"] for b in p["bullets"]}
+    assert cut["text"] in on_page
+    assert _counts(page)[:2] == _counts(res.profile_used)[:2]       # minimums untouched
+
+
+@requires_latex
+def test_a_restore_that_would_overflow_is_skipped(template_source, workdir):
+    from tailoring.assembler import _restore_room
+    res = _room_build(template_source, workdir)      # the build's own restore pass already ran
+    page = copy.deepcopy(res.profile_used)
+    pre, r0 = _measure(template_source, workdir, page, "same")
+    after, r, trims = _restore_room(pre, page, r0, res.trims, sections=None, headings=None,
+                                    workdir=workdir, jobname="t")
+    assert trims == res.trims and after == res.profile_used      # nothing fit, nothing changed
+    assert r is r0

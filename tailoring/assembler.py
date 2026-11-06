@@ -1906,7 +1906,8 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list):
     (2) a project's bullets beyond one, last project first; (3) the oldest role down to one
     bullet; (4) a skills line beyond the template's minimum (``SKILL_LINES_FLOOR``). Never a
     whole role, never the summary, never type or margins. The cut is recorded in ``cuts`` (Put
-    back) and a cut the person put back is skipped. Returns a function that undoes the cut, or
+    back, marked ``room`` so ``_restore_room`` can try it again at the end) and a cut the
+    person put back is skipped. Returns a function that undoes the cut, or
     None when nothing is left to cut."""
     trims = cuts.trims
 
@@ -1920,7 +1921,7 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list):
         if idx is None:
             return None
         text = bl.pop(idx)
-        cuts.add("bullet", section, label, str(text), index=idx)
+        cuts.add("bullet", section, label, str(text), index=idx, room=True)
         rec = trims[-1] if trims else None
 
         def undo():
@@ -1950,7 +1951,7 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list):
                      if not cuts.kept("skills_line", str(k), str(k))), None)
         if last is not None:
             before = dict(skills)
-            cuts.add("skills_line", "skills", str(last), str(last), value=skills[last])
+            cuts.add("skills_line", "skills", str(last), str(last), value=skills[last], room=True)
             rec = trims[-1] if trims else None
             del skills[last]
 
@@ -1960,6 +1961,36 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list):
                 forget(rec)
             return undo
     return None
+
+
+def _restore_room(preamble: str, used: dict, result, trims: list, *, sections, headings,
+                  workdir: Path, jobname: str):
+    """Put back what ``_make_room`` cut, in the reverse of the cut order (an older role's
+    bullet before a project bullet before a skills line, the last cut first), one at a time,
+    re-measuring the real page. A restore is kept only if the page stays one clean page: one
+    page, no new overfull line, fill at most ``MAX_FILL``. A kept restore leaves ``trims``
+    (nothing to put back any more). Only adds material, so the recency minimums stand, and a
+    cut the person put back was never made. Returns (used, result, trims)."""
+    import copy
+    room = [t for t in trims or () if t.get("room")]
+    if not room:
+        return used, result, trims
+    base_overfull = result.overfull_count
+    trims = list(trims)
+    for t in reversed(room):
+        before = copy.deepcopy(used)
+        if not restore_trim(used, t):
+            continue
+        _say("fill", "Filling the page", "putting back what fits after all")
+        r = compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
+                        workdir, jobname=f"{jobname}-restore")
+        if (r.ok and r.pages == 1 and r.overfull_count <= base_overfull
+                and r.fill_ratio is not None and r.fill_ratio <= MAX_FILL):
+            result = r
+            trims.remove(t)
+        else:
+            used = before
+    return used, result, trims
 
 
 def _trimmed_by_label(trims) -> dict:
@@ -2180,8 +2211,15 @@ def assemble_cv(
         # the person to confirm: the bullet simply kept its wording.
         line_fit, line_before, line_gaps = fo.after.as_dict(), fo.before.as_dict(), fo.gaps()
 
-    # The grow and fill passes compile under side jobnames (-full, -fill). Whatever won must also
-    # exist under the REAL jobname, because that is the file the app serves (/api/cv.pdf?job=...);
+    # RESTORE. The line fit and the resized splits change heights after the room was made, so a
+    # cut made for the recency minimums may no longer be needed: put those back, the last cut
+    # first, each kept only if the page stays one clean page.
+    if result and result.ok and result.pages == 1:
+        used, result, trims = _restore_room(preamble, used, result, trims, sections=sections,
+                                            headings=headings, workdir=workdir, jobname=jobname)
+
+    # The grow, fill and restore passes compile under side jobnames (-full, -fill, -restore).
+    # Whatever won must also exist under the REAL jobname, because that is the file the app serves (/api/cv.pdf?job=...);
     # without this the chat reported the grown page's fill while the viewer showed the first,
     # small compile (seen 2026-10-07).
     if result and result.pdf_path and Path(result.pdf_path).stem != jobname:
