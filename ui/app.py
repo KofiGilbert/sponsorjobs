@@ -2805,7 +2805,7 @@ def _template_preview_pdf(name):
     # data: an improved page-fitting pass otherwise never reached the gallery, and three
     # previews kept showing half-empty pages rendered before it (Kofi, 2026-10-08).
     from tailoring import assembler as _asm
-    builder = Path(_asm.__file__).read_bytes()
+    builder = _module_fingerprint(_asm)
     key = hashlib.sha1((tex + _json.dumps(profile, sort_keys=True)
                         + repr(secs) + repr(sorted(heads.items()))).encode("utf-8") + builder).hexdigest()[:10]
     out_pdf = WORKDIR / f"preview-{tname}-{key}.pdf"
@@ -2814,6 +2814,24 @@ def _template_preview_pdf(name):
         assemble_cv(tex, profile, "", None, WORKDIR,
                     jobname=out_pdf.stem, tailor=False, sections=secs, headings=heads)
     return out_pdf if out_pdf.exists() else None
+
+
+def _module_fingerprint(mod) -> bytes:
+    """Bytes that change whenever a module's code changes: its source file in a dev run, else its
+    compiled code. The installed app (PyInstaller) ships no .py sources, and reading
+    tailoring/assembler.py there failed every template preview from 2026-10-08 on (blank gallery)."""
+    try:
+        return Path(mod.__file__).read_bytes()
+    except (OSError, TypeError):
+        pass
+    try:
+        import marshal
+        code = mod.__loader__.get_code(mod.__name__)
+        if code is not None:
+            return marshal.dumps(code)
+    except Exception:
+        pass
+    return repr(getattr(mod, "__name__", "")).encode("utf-8")
 
 
 @app.get("/api/templates/<name>/preview.pdf")
