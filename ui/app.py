@@ -3055,6 +3055,14 @@ def remove_suggested():
     return jsonify(_session().remove_suggested_projects())
 
 
+@app.post("/api/session/decline_required")
+@_guard
+def decline_required():
+    """The "None, leave it off" button: decline the template's open required sections
+    (Extracurricular / Interests) and build, the same decline a typed "I have none" records."""
+    return jsonify(_session().decline_required())
+
+
 @app.post("/api/session/title")
 @_guard
 def title():

@@ -951,6 +951,27 @@ def _iter_bullet_slots_with_grounding(profile: dict, with_label: bool = False):
                     yield bl, i, grounding
 
 
+def _dedupe_entry_bullets(profile: dict) -> int:
+    """Drop, in place, any bullet that repeats an earlier bullet of the SAME entry (role,
+    project, or activity), so one fact never prints twice (tailoring/filler.same_fact).
+    Returns how many were dropped."""
+    from .filler import dedupe_bullets
+
+    dropped = 0
+    lists = []
+    for e in (profile.get("projects") or []) + (profile.get("experience") or []):
+        for r in (e.get("roles") or [e]) if isinstance(e, dict) else ():
+            if isinstance(r, dict) and isinstance(r.get("bullets"), list):
+                lists.append(r)
+    lists += [it for it in (profile.get("extracurricular") or [])
+              if isinstance(it, dict) and isinstance(it.get("bullets"), list)]
+    for holder in lists:
+        kept = dedupe_bullets(holder["bullets"])
+        dropped += len(holder["bullets"]) - len(kept)
+        holder["bullets"][:] = kept
+    return dropped
+
+
 def entry_label(entry: dict, role: dict | None = None) -> str:
     """"Acme Analytics, Data Engineer": the employer or project, then the role title."""
     org = str(entry.get("org") or entry.get("name") or entry.get("company") or "").strip()
@@ -998,6 +1019,7 @@ def _tailor_bullets(profile: dict, jd_text: str, llm: LLMBackend, *,
     """
     import copy
     from .fact_gate import gate_rewrite, known_material, source_figures
+    from .filler import repeats_sibling
     from .keywords import term_present
 
     tailored = copy.deepcopy(profile)
@@ -1023,12 +1045,17 @@ def _tailor_bullets(profile: dict, jd_text: str, llm: LLMBackend, *,
         # (1) Discard a reword that fabricated a skill for this role — keep the real bullet.
         if _reword_smuggled_unsupported(original, new, jd_text, grounding):
             continue
+        # (1b) Discard a reword that restates a sibling bullet's clause (the sibling is in
+        # its grounding, so a reword can copy it): one fact, one bullet per entry.
+        siblings = [bl[k] for k in range(len(bl)) if k != i]
+        if repeats_sibling(original, new, siblings):
+            continue
         # (2) Enforce the per-bullet length ceiling. Only fires on a wild over-expansion
         # past the budget (floor 165 chars); a normal one-line bullet never trips it.
         if len(new) > budget:
             shorter = str(llm.shorten_bullet(new, budget) or "").strip()
-            if shorter and _reword_smuggled_unsupported(original, shorter, jd_text,
-                                                        grounding):
+            if shorter and (_reword_smuggled_unsupported(original, shorter, jd_text, grounding)
+                            or repeats_sibling(original, shorter, siblings)):
                 continue                 # the shortening fabricated: keep the real bullet
             if shorter:
                 new = shorter
@@ -1492,6 +1519,7 @@ def assemble_cv(
     workdir = Path(workdir)
     preamble = extract_preamble(template_source)
     full_profile = normalize_profile(profile)  # tolerate loose LLM-drafted shapes
+    _dedupe_entry_bullets(full_profile)      # one fact, one bullet, per entry
     source_material = full_profile           # every figure the person actually supplied
     # Pick the roles this JD actually cares about BEFORE tailoring. A full career on one
     # page is not a resume, it is an index: every role gets squeezed to a single line and

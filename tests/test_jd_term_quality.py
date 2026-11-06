@@ -109,3 +109,60 @@ def test_model_side_notes_in_a_profile_are_not_evidence():
             "notes_for_candidate": {"gaps_vs_jd": ["CBAP certification: Not currently held"]}}
     t = profile_text(prof)
     assert term_present("SQL", t) and not term_present("CBAP", t)
+
+
+# -- The Keywords bar at 0% (2026-11-05, Phoenix Contact "Distribution Center Team Leader") -- #
+# The model's term list for that ad was the exact list below. Five of its fourteen items are
+# requirements, not keywords: no resume carries "high school graduate" or "1+ year of
+# experience" as an ATS term, so they only padded the denominator.
+PHOENIX_TERMS = ["warehouse management systems", "WMS", "high school graduate", "G.E.D",
+                 "personal computers", "related business systems", "1+ year of experience",
+                 "ASRS", "Viastore WMS", "cycle counting", "picking", "packing", "receiving",
+                 "shipping"]
+
+
+def test_requirements_that_are_not_keywords_are_not_measured():
+    from tailoring.keywords import build_coverage_report, clean_jd_terms
+    kept = clean_jd_terms(PHOENIX_TERMS + ["LI-AF1", "NOT"])
+    for junk in ("high school graduate", "G.E.D", "personal computers",
+                 "related business systems", "1+ year of experience", "LI-AF1", "NOT"):
+        assert junk not in kept, junk
+    for real in ("WMS", "ASRS", "Viastore WMS", "cycle counting", "picking", "shipping"):
+        assert real in kept, real
+    # Real skills of every shape survive (acronyms, one letter, digits, degrees).
+    for real in ("SQL", "R", "Go", "5S", "Six Sigma", "Power BI", "CPA", "Bachelor's degree"):
+        assert clean_jd_terms([real]) == [real], real
+    rep = build_coverage_report("", "Ran WMS cycle counting and shipping.", {}, terms=PHOENIX_TERMS)
+    assert rep.present == ["WMS", "cycle counting", "shipping"]
+    assert "high school graduate" not in rep.jd_terms
+
+
+def _cov_session(jd):
+    from types import SimpleNamespace
+
+    from tailoring.keywords import build_coverage_report
+    from ui.session import WebIntake
+    s = WebIntake.__new__(WebIntake)
+    s.jd = jd
+    s.assembled = SimpleNamespace(coverage=build_coverage_report(jd, "", {}, terms=[]))
+    return s
+
+
+def test_no_measurable_terms_reports_zero_terms_so_the_bar_hides():
+    """A JD with no measurable terms must not show a percentage at all (app.js hides the bar
+    on terms == 0), neither 0% nor a made-up 100%."""
+    cov = _cov_session("Team Leader\nBe a role model and lead by example.").coverage_dict()
+    assert cov["terms"] == 0
+    js = open("ui/static/app.js", encoding="utf-8").read()
+    assert 'coverage.terms === 0' in js
+
+
+def test_coverage_dict_counts_the_terms_it_measured():
+    from types import SimpleNamespace
+
+    from tailoring.keywords import build_coverage_report
+    s = _cov_session("Analyst")
+    s.assembled = SimpleNamespace(coverage=build_coverage_report(
+        "", "SQL and Python dashboards", {}, terms=["SQL", "Python", "Tableau", "1+ year of experience"]))
+    cov = s.coverage_dict()
+    assert cov["terms"] == 3 and cov["ratio"] == 67

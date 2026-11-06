@@ -93,3 +93,85 @@ def tacked_on_terms(original: str, candidate: str) -> list[str]:
     if len(new_terms) >= 3:            # a fill adds a real detail, never a set of keywords
         hits |= new_terms
     return sorted(hits)
+
+
+# --------------------------------------------------------------------------- #
+# One fact, one bullet (an entry never says the same thing twice)
+# --------------------------------------------------------------------------- #
+# A rewrite that has to reach a length will borrow from the entry's own sibling bullets (the
+# grounding it is given), and the result can restate a sibling's whole opening: the Phoenix
+# Contact resume (2026-11-05) showed "Last-Mile Operations Simulator" with two bullets that
+# both began "Built/Used a Python discrete-event simulation of a 5,000-order-a-day,
+# 250-driver delivery operation". Each bullet is one fact; a second copy of a fact wastes a
+# line and reads as padding to a recruiter.
+_FACT_TOKEN = re.compile(r"[a-z0-9$%+]+(?:[-,.'/][a-z0-9$%+]+)*")
+_FACT_STOP = frozenset("a an and as at by for from in into of on or the to via with while "
+                       "over under across its their his her our my this that these those "
+                       "is was were be been it".split())
+SHARED_RUN = 7          # this many words in a row, shared with a sibling, is the same fact
+SAME_FACT_OVERLAP = 0.8  # or this share of the content words (near-identical sentences)
+
+
+def _fact_tokens(text: str) -> list[str]:
+    return _FACT_TOKEN.findall(str(text or "").lower())
+
+
+def _longest_shared_run(a: list[str], b: list[str]) -> int:
+    best = 0
+    prev = [0] * (len(b) + 1)
+    for x in a:
+        cur = [0] * (len(b) + 1)
+        for j, y in enumerate(b, 1):
+            if x == y:
+                cur[j] = prev[j - 1] + 1
+                if cur[j] > best:
+                    best = cur[j]
+        prev = cur
+    return best
+
+
+def _content_overlap(a: list[str], b: list[str]) -> float:
+    ca = {t for t in a if t not in _FACT_STOP}
+    cb = {t for t in b if t not in _FACT_STOP}
+    if not ca or not cb:
+        return 0.0
+    return len(ca & cb) / min(len(ca), len(cb))
+
+
+def shares_a_clause(a: str, b: str) -> bool:
+    """True when two bullets share a run of ``SHARED_RUN`` words: one restates the other's
+    clause ("a Python discrete-event simulation of a 5,000-order-a-day, 250-driver delivery
+    operation"), whatever verb each opens with."""
+    return _longest_shared_run(_fact_tokens(a), _fact_tokens(b)) >= SHARED_RUN
+
+
+def same_fact(a: str, b: str) -> bool:
+    """True when two bullets are near-identical: a shared clause AND most content words in
+    common, or one is (almost) contained in the other. Strict on purpose: it decides whether
+    a bullet of the person's own is dropped as a repeat."""
+    ta, tb = _fact_tokens(a), _fact_tokens(b)
+    if not ta or not tb:
+        return False
+    return (_longest_shared_run(ta, tb) >= SHARED_RUN
+            and _content_overlap(ta, tb) >= SAME_FACT_OVERLAP)
+
+
+def repeats_sibling(before: str, candidate: str, siblings) -> bool:
+    """True when a rewrite restates a sibling bullet's clause that the bullet it replaces did
+    not. The rewrite is then refused and the bullet keeps its wording."""
+    for sib in siblings or ():
+        sib = str(sib or "")
+        if sib.strip() and shares_a_clause(candidate, sib) and not shares_a_clause(before, sib):
+            return True
+    return False
+
+
+def dedupe_bullets(bullets: list) -> list:
+    """``bullets`` with any bullet that repeats an EARLIER one in the same entry dropped
+    (``same_fact``). Order kept; the first wording of a fact wins."""
+    out: list = []
+    for b in bullets or []:
+        if isinstance(b, str) and any(isinstance(k, str) and same_fact(b, k) for k in out):
+            continue
+        out.append(b)
+    return out

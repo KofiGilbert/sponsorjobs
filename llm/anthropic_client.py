@@ -324,7 +324,9 @@ class AnthropicLLM:
             "of study when named as requirements.\n"
             "Do NOT list: job titles or role words (analyst, architect, manager), soft skills "
             "(communication, leadership), duties or verbs (manages, mentors, engages), company "
-            "or product names, locations, benefits, or generic words.\n"
+            "or product names, locations, benefits, or generic words. Also never list years of "
+            "experience (1+ year of experience), minimum schooling (high school, GED), or vague "
+            "phrases (personal computers, related business systems).\n"
             "Order by importance to the ad (required before nice-to-have). At most 25 items. "
             "Each item 1 to 4 words. Return ONLY a JSON array of strings, nothing else."
         )
@@ -350,7 +352,8 @@ class AnthropicLLM:
                 continue
             seen.add(t.lower())
             skills.append(t)
-        return skills[:25] or fallback
+        from tailoring.keywords import clean_jd_terms
+        return clean_jd_terms(skills)[:25] or clean_jd_terms(fallback)
 
     def expand_bullets(
         self, role_title: str, bullets: list[str], jd_text: str

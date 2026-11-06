@@ -102,6 +102,96 @@ def test_just_build_it_still_collects_the_page_filling_sections(template_source,
     assert st["phase"] == "chatting"
 
 
+BUILD_BUTTON = "just build it from my saved profile"   # what the chat's build button sends
+
+
+def test_build_button_twice_while_required_open_does_not_loop(template_source, fake_llm, workdir):
+    """The loop seen 2026-11-05: a returning person pressed "Tailor from my profile, build it
+    for me", was asked for Extracurricular / Interests, pressed it again and got the same
+    question again, forever, with a model line thanking them for material never given. Now:
+    the first press asks; while that question is open the button is not offered (a decline
+    choice is, instead); a second press gets one plain line naming both ways forward."""
+    s = _returning(template_source, fake_llm, workdir)
+    s.start()
+    st1 = s.submit(BUILD_BUTTON)
+    assert s.assembled is None and st1["phase"] == "chatting"
+    assert st1["can_autobuild"] is False, "the build button cannot do anything while asked"
+    keys = [o["key"] for o in st1.get("required_open") or []]
+    assert set(keys) == set(s.required_fill), keys
+    first = " ".join(st1["messages"])
+
+    st2 = s.submit(BUILD_BUTTON)
+    assert s.assembled is None, "pressing build must not skip the required sections"
+    second = " ".join(st2["messages"])
+    assert second and second != first, "the same question was re-asked verbatim (the loop)"
+    low = second.lower()
+    assert "none, leave it off" in low
+    assert "thank" not in low and "added" not in low, "thanked them for nothing"
+    assert st2["can_autobuild"] is False and st2.get("required_open")
+    # Nothing was invented for the open sections while nudging.
+    assert not s.essentials.get("extracurricular")
+    assert not str(s.essentials.get("interests") or "").strip()
+    # A third press stays the same short line: bounded, never a new interrogation.
+    st3 = s.submit(BUILD_BUTTON)
+    assert " ".join(st3["messages"]) == second
+
+
+def test_reask_never_claims_material_was_added(template_source, fake_llm, workdir):
+    """ANSWERED was a constant ["earlier"] on every re-ask of the required sections, so the
+    model thanked the person for adding something they had not. It is now only the sections
+    really filled since the last ask."""
+    seen = []
+    real = fake_llm.ask_enrich
+
+    def spy(topics, answered, *a, **kw):
+        seen.append(list(answered))
+        return real(topics, answered, *a, **kw)
+
+    fake_llm.ask_enrich = spy
+    s = _returning(template_source, fake_llm, workdir)
+    s.start()
+    s.build_from_saved()                                   # first ask
+    s._ask_required_sections(s._open_required_sections())  # a re-ask with nothing new
+    assert seen and all(a == [] for a in seen), seen
+
+
+@requires_latex
+def test_decline_button_records_a_real_decline_and_builds(template_source, fake_llm, workdir):
+    """"None, leave it off" declines exactly the open required sections (the same
+    ``declined`` list a typed "I have none" fills, so it is reused next job) and builds."""
+    s = _returning(template_source, fake_llm, workdir)
+    s.start()
+    s.submit(BUILD_BUTTON)
+    s.submit(BUILD_BUTTON)                                 # the second press: no loop, no build
+    assert s.assembled is None
+    st = s.decline_required()
+    assert {"extracurricular", "interests"} <= set(s.essentials.get("declined") or [])
+    assert s.assembled is not None and st["phase"] == "review"
+    assert not st.get("required_open")
+    assert not s.profile.get("extracurricular"), "a decline must never invent content"
+
+
+@requires_latex
+def test_typed_bare_none_declines_the_open_required_sections(template_source, fake_llm, workdir):
+    """A bare "none" answers the open question exactly like the button does."""
+    s = _returning(template_source, fake_llm, workdir)
+    s.start()
+    s.submit(BUILD_BUTTON)
+    st = s.submit("None")
+    assert {"extracurricular", "interests"} <= set(s.essentials.get("declined") or [])
+    assert s.assembled is not None and st["phase"] == "review"
+
+
+def test_bare_none_outside_the_question_declines_nothing(template_source, fake_llm, workdir):
+    """'none' only means something while the required question is open."""
+    from ui.session import _bare_decline
+    assert _bare_decline("None") and _bare_decline("none, leave it off")
+    assert _bare_decline("I don't have any") and _bare_decline("nothing to add.")
+    assert _bare_decline("skip")             # the ask itself offers "skip"
+    assert not _bare_decline("No, I coach a youth football team on weekends")
+    assert not _bare_decline("I enjoy chess and hiking")
+
+
 @requires_latex
 def test_unattended_autoapply_is_the_only_path_past_the_gate(template_source, fake_llm, workdir):
     """Auto-apply runs with nobody there to answer, so it alone may build without asking.
