@@ -18,7 +18,7 @@ data/
 *.synctex.gz
 
 # Python
-.venv/
+.venv
 __pycache__/
 *.pyc
 .pytest_cache/

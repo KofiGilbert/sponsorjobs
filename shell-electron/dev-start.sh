@@ -14,7 +14,27 @@ cd "$(dirname "$0")"
 
 unset ELECTRON_RUN_AS_NODE
 
-export TAILOR_PYTHON="${TAILOR_PYTHON:-$(cd .. && pwd)/.venv/bin/python}"
+# Pick the engine's Python: TAILOR_PYTHON if set, else the repo's .venv (a real venv or a symlink
+# to one), else a python3 that can import Flask. Fail loudly here: a missing interpreter used to
+# start the window, fail to start the engine, and quit with nothing in the terminal.
+if [ -z "${TAILOR_PYTHON:-}" ]; then
+  repo_py="$(cd .. && pwd)/.venv/bin/python"
+  if [ -x "$repo_py" ]; then
+    TAILOR_PYTHON="$repo_py"
+  elif command -v python3 >/dev/null 2>&1 && python3 -c "import flask" >/dev/null 2>&1; then
+    TAILOR_PYTHON="$(command -v python3)"
+  else
+    echo "SponsorJobs dev: no Python with the engine's packages found." >&2
+    echo "  Create one:  python3 -m venv ../.venv && ../.venv/bin/pip install -r ../requirements.txt" >&2
+    echo "  or point at one:  TAILOR_PYTHON=/path/to/python ./dev-start.sh" >&2
+    exit 1
+  fi
+fi
+if [ ! -x "$TAILOR_PYTHON" ]; then
+  echo "SponsorJobs dev: TAILOR_PYTHON is not runnable: $TAILOR_PYTHON" >&2
+  exit 1
+fi
+export TAILOR_PYTHON
 export TAILOR_OWN_KEY="${TAILOR_OWN_KEY:-1}"   # run on the saved Anthropic key
 
 # TAILOR_LIVE_BROKER=1 runs the dev app against the LIVE broker (https://api.sponsorjobs.ai), the
