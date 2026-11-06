@@ -4670,7 +4670,6 @@
   window.addEventListener("resize", trkFitBoard);
   function renderTrackerBoard() {
     const host = $("#trkBoard");
-    const none = !TRK_CARDS.length;
     const cols = TRK_COLS.filter(c => !c.optional || TRK_CARDS.some(x => c.stages.includes(x.stage)));
     host.style.setProperty("--trk-cols", cols.length);
     host.innerHTML = cols.map(col => {
@@ -4680,12 +4679,7 @@
         <div class="trk-col-h"><span>${esc(name)}</span><span class="trk-col-n">${cards.length}</span></div>
         <div class="trk-col-cards">${cards.length ? cards.map(trkCardHtml).join("") : `<div class="trk-col-hint">${esc(trkT(col.hint[0], col.hint[1]))}</div>`}</div>
       </div>`;
-    }).join("") + (none ? `<div class="trk-welcome">
-        <div class="trk-welcome-h">${esc(trkT("tracker.welcomeH", "Every application, in one place"))}</div>
-        <p class="trk-welcome-p">${esc(trkT("tracker.welcomeP", "Save a job or tailor a resume and it lands in Saved. Drag it along as you hear back."))}</p>
-        <div class="trk-welcome-acts"><button class="btn btn-primary" type="button" data-go="jobs">${esc(trkT("tracker.findJobs", "Find jobs"))}</button>
-          <button class="btn btn-ghost" type="button" data-go="autoapply">${esc(trkT("tracker.seeAuto", "See auto-apply"))}</button></div></div>` : "");
-    host.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => document.querySelector(`[data-nav="${b.dataset.go}"]`)?.click()));
+    }).join("");
     requestAnimationFrame(trkFitBoard);
     host.querySelectorAll(".trk-card").forEach(card => {
       card.addEventListener("click", (e) => { if (e.target.closest("a")) return; openTrackerPanel(card.dataset.sid); });
