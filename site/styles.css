@@ -493,6 +493,20 @@ h1, h2, h3 { font-weight: 600; color: var(--text); }
 
 /* ---------- download block ---------- */
 .get { padding: 96px 0 112px; }
+/* The audience line above the download card: the visa path a US graduate usually climbs, drawn as a
+   stepper on a hairline that warms into the lavender accent at the steps the app filters for. */
+.aud { --accent: #6F5BD6; text-align: center; max-width: 880px; margin: 0 auto 88px; }
+:root[data-theme="dark"] .aud { --accent: #B4A6FF; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .aud { --accent: #B4A6FF; } }
+.aud-em { color: var(--accent); }
+.aud-sub { margin: 18px auto 0; max-width: 720px; color: var(--text-2); font-size: 20px; line-height: 28px; text-wrap: balance; }
+.aud-path { list-style: none; position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); max-width: 760px; margin: 56px auto 0; padding: 0; }
+.aud-path::before { content: ""; position: absolute; top: 8px; left: 10%; right: 10%; height: 2px; border-radius: 1px; background: linear-gradient(90deg, var(--card-line) 0%, var(--card-line) 30%, var(--accent) 60%, var(--accent) 100%); }
+.aud-path li { position: relative; display: flex; flex-direction: column; align-items: center; gap: 16px; font-size: 16px; line-height: 20px; font-weight: 500; color: var(--text-3); }
+.aud-path li::before { content: ""; box-sizing: border-box; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--card-line); background: var(--bg); }
+.aud-path li.on { color: var(--text); }
+.aud-path li.on::before { border-color: var(--accent); }
+.aud-path li.end::before { background: var(--accent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }
 .get-card {
   display: flex; align-items: center; justify-content: space-between; gap: 32px; flex-wrap: wrap;
   border-radius: var(--r-l); padding: 56px; background: var(--band-a);
@@ -661,6 +675,10 @@ table.compare { width: 100%; border-collapse: collapse; margin-top: 64px; font-s
   .emp { padding: 16px; }
   .get-card { padding: 32px 20px; }
   .get { padding: 72px 0 80px; }
+  .aud { margin-bottom: 56px; }
+  .aud-sub { font-size: 17px; line-height: 24px; }
+  .aud-path { margin-top: 40px; }
+  .aud-path li { font-size: 13px; line-height: 16px; gap: 12px; text-align: center; }
   .compare { font-size: 14px; }
   .compare th, .compare td { padding: 12px 6px; }
 }
