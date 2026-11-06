@@ -2383,13 +2383,15 @@ class WebIntake:
         # asked before the first draft) is REAL material the skeleton extractor doesn't
         # capture, fold it in here so the required-sections gate below sees it.
         if self.assembled is None and self.essentials.get("asked_required"):
-            # A bare "none" answers the open question: it declines exactly the required
-            # sections still open, recorded like any named decline (and reused next job).
-            if _bare_decline(message):
-                declined_now = self._decline_open_required()
+            # Absorb any real material in this message FIRST (absorb-then-finalize).
             self._absorb_enrichment(message)
-            # Content given alongside "that's everything" is absorbed, THEN, once the
-            # required sections are addressed, finalizes (absorb-then-finalize, pre-build).
+            # Then a bare "none" / "skip", or "that's everything" (which the question itself
+            # invites), answers the open question: it declines exactly the required sections
+            # STILL empty, recorded like any named decline (and reused next job). A section
+            # that just got real content stays. Re-asking here was the same loop as the build
+            # button in other words.
+            if _bare_decline(message) or _wants_done(message):
+                declined_now = self._decline_open_required()
             if _wants_done(message) and not self._open_required_sections():
                 self.essentials["enrich_done"] = True
         reply = str(out.get("reply", "")).strip()
@@ -2928,7 +2930,15 @@ class WebIntake:
 
     def _build_from_saved(self):
         if self.saved_profile and self.saved_profile.get("experience"):
-            self.profile = normalize_profile(self.saved_profile)
+            # The required-section answers given in THIS chat (asked before the first build)
+            # live in essentials; the saved profile may not have them yet. Without this, a
+            # returning person's "I enjoy chess and hiking" was asked for and then dropped.
+            base = dict(self.saved_profile)
+            for k in ("extracurricular", "interests"):
+                if not base.get(k) and self.essentials.get(k):
+                    v = self.essentials[k]
+                    base[k] = [dict(x) for x in v if isinstance(x, dict)] if isinstance(v, list) else v
+            self.profile = normalize_profile(base)
             # HARD RULE (memory: complete-cv-fills-page): the template's page-filling
             # sections are collected BEFORE the first build and never deferred to post-build
             # enrichment. Deferring is exactly what shipped half pages: the CV appeared, and

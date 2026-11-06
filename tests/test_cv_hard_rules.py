@@ -10,6 +10,8 @@ See memories complete-cv-fills-page, skills-five-categories-fill-page, project-l
 
 from __future__ import annotations
 
+import pytest
+
 from intake.memory import ConversationMemory
 from tailoring.assembler import TARGET_FILL, _shrink_once, assemble_cv
 from ui.records import CVRecords
@@ -180,6 +182,38 @@ def test_typed_bare_none_declines_the_open_required_sections(template_source, fa
     st = s.submit("None")
     assert {"extracurricular", "interests"} <= set(s.essentials.get("declined") or [])
     assert s.assembled is not None and st["phase"] == "review"
+
+
+@requires_latex
+@pytest.mark.parametrize("msg", ["that's everything", "That's all.", "that's it", "skip"])
+def test_thats_everything_while_required_open_declines_and_builds(msg, template_source,
+                                                                 fake_llm, workdir):
+    """The question itself invites "that's everything" / "skip". Saying it while the required
+    sections are open used to re-ask: the same loop as the build button, in other words. It
+    now declines exactly the open sections (the button's path) and builds."""
+    s = _returning(template_source, fake_llm, workdir)
+    s.start()
+    s.submit(BUILD_BUTTON)
+    st = s.submit(msg)
+    assert {"extracurricular", "interests"} <= set(s.essentials.get("declined") or [])
+    assert s.assembled is not None and st["phase"] == "review"
+    assert not s.profile.get("extracurricular"), "a decline must never invent content"
+
+
+@requires_latex
+def test_content_with_thats_everything_is_kept_and_only_the_empty_section_declined(
+        template_source, fake_llm, workdir):
+    """Absorb, then finalize: a section that got real content in the same message stays;
+    only the one still empty is declined."""
+    s = _returning(template_source, fake_llm, workdir)
+    s.start()
+    s.submit(BUILD_BUTTON)
+    st = s.submit("I enjoy chess and hiking. That's everything.")
+    assert "chess" in str(s.essentials.get("interests") or "")
+    dec = set(s.essentials.get("declined") or [])
+    assert "interests" not in dec and "extracurricular" in dec
+    assert s.assembled is not None and st["phase"] == "review"
+    assert "chess" in str(s.profile.get("interests") or "")
 
 
 def test_bare_none_outside_the_question_declines_nothing(template_source, fake_llm, workdir):
