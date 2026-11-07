@@ -100,8 +100,12 @@ class LLMBackend(Protocol):
         material does not state; the assembler's gate (``written_problems``) rejects one that
         does. Return "" (or "NONE") when the material supports no further distinct bullet."""
 
-    def extract_intake(self, jd_text: str, known: dict, history: list[dict]) -> dict:
+    def extract_intake(self, jd_text: str, known: dict, history: list[dict],
+                       with_projects: bool = False) -> dict:
         """Run one turn of the intelligent intake conversation (CLAUDE.md §4a).
+
+        ``with_projects`` (an uploaded resume) also returns ``essentials["projects"]``
+        ([{org, tools, dates, link, bullets}]) read from the file's Projects section.
 
         Given the target job, what's already known (``known`` = essentials:
         identity/education/experience), and the full chat ``history`` (a list of
@@ -113,6 +117,14 @@ class LLMBackend(Protocol):
         Returns ``{"essentials": {...full merged...}, "reply": str, "ready": bool}``.
         Companies, dates, and schools are kept exactly as the person stated them.
         """
+
+    def converse(self, jd_text: str, history: list[dict], recalled: list[dict],
+                 facts: list[dict], app_context: str = "") -> str:
+        """A free-form chat reply grounded in the history, recalled memories and facts.
+        ``app_context`` is the app's true statement of what it can do and holds now (files
+        uploaded this session and what was read from them, the GitHub connection, the
+        Projects page). The reply must never contradict it, e.g. by claiming it cannot
+        read files the app has just read."""
 
     def draft_profile(self, jd_text: str, essentials: dict) -> dict:
         """Draft the *content-heavy* parts of a PROFILE from the JD + essentials.
@@ -625,13 +637,15 @@ class FakeLLM:
         ]
 
     # -- intelligent intake --------------------------------------------- #
-    def extract_intake(self, jd_text: str, known: dict, history: list[dict]) -> dict:
+    def extract_intake(self, jd_text: str, known: dict, history: list[dict],
+                       with_projects: bool = False) -> dict:
         """Deterministic stand-in for a conversational extractor.
 
         Parses only the *latest* user message and merges it into ``known``, so
         it never re-parses old turns, using simple, predictable rules that the
         acceptance tests can rely on. The real backend understands free text far
-        better; this just proves the plumbing offline.
+        better; this just proves the plumbing offline. ``with_projects`` (an uploaded
+        resume) also reads the text's Projects section, as the real backend does.
         """
         ess = {
             "identity": dict(known.get("identity", {})),
@@ -643,6 +657,11 @@ class FakeLLM:
             if h.get("role") == "user":
                 msg = h.get("content", "")
                 break
+        if with_projects:
+            # The file's link list is for matching addresses to anchors, not chat links.
+            msg = msg.split("\n\nLINKS IN THIS FILE")[0]
+            from intake.links import projects_from_text
+            ess["projects"] = projects_from_text(msg)
 
         # Links anywhere in the message → routed to the right identity slot.
         for url in re.findall(r"(?:https?://|www\.)\S+|\b(?:github|linkedin)\.com/\S+", msg, re.I):
@@ -777,9 +796,17 @@ class FakeLLM:
 
     # -- P1 memory: deterministic stand-ins (real backend does the real work) ----------- #
     def converse(self, jd_text: str, history: list[dict], recalled: list[dict],
-                 facts: list[dict]) -> str:
+                 facts: list[dict], app_context: str = "") -> str:
         last = next((t.get("content", "") for t in reversed(history or [])
                      if t.get("role") == "user"), "")
+        self.last_app_context = app_context
+        # Mirrors the real prompt's rule: a question about an upload is answered from what the
+        # app read (the APP FACTS line naming the file), never with "I can't read files".
+        if app_context and re.search(r"\b(upload|file|pdf|projects?)\b", str(last), re.I):
+            line = next((ln.strip("- ").strip() for ln in app_context.splitlines()
+                         if ln.strip().startswith("- Uploaded")), "")
+            if line:
+                return f"Yes. {line}"
         return f"Got it, I'll remember that. ({str(last)[:60]})".strip()
 
     def distill_memory(self, history: list[dict], known_keys: list[str]) -> dict:

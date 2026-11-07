@@ -213,8 +213,11 @@ def write_contact(st: Store, identity: dict | None, *, source: str, source_ref: 
     ident = identity if isinstance(identity, dict) else {}
     n = 0
     done = set()
+    from intake.links import link_ok
     for fld, key in CONTACT:
         v = " ".join(str(ident.get(fld) or "").split())[:300]
+        if v and key in _LINK_KEYS and not link_ok(fld, v):
+            continue            # a resume's anchor text ("In", "GitHub") is not a link
         if v and key not in done:
             done.add(key)
             if put(st, key, v, source=source, source_ref=source_ref, confirm=confirm) is not None:
@@ -248,6 +251,9 @@ def write_contact(st: Store, identity: dict | None, *, source: str, source_ref: 
     return n
 
 
+_LINK_KEYS = {"@linkedin", "github", "@portfolio"}
+
+
 def contact(st: Store | None, min_conf: float = 0.9) -> dict:
     """The contact values a form takes, from facts at ``min_conf`` or more (APPLICANT_KEYS names):
     {full_name, email, phone, address, street, city, state, postal_code, country, linkedin,
@@ -259,6 +265,10 @@ def contact(st: Store | None, min_conf: float = 0.9) -> dict:
                       ("linkedin", "@linkedin"), ("github", "github"), ("website", "@portfolio"),
                       ("location", "location")):
         v = _current_value(st, key, "", min_conf)
+        if v and key in _LINK_KEYS:
+            from intake.links import link_ok
+            if not link_ok(name, v):
+                continue        # an older import kept anchor text ("In") as the link: not one
         if v:
             out[name] = v
     for p in PARTS:

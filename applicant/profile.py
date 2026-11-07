@@ -43,10 +43,14 @@ def assemble(profile: dict | None, st: Store | None) -> dict:
     has_material = bool(p.get("experience") or p.get("education") or (p.get("identity") or {}).get("name"))
     try:
         ident = p.get("identity") if isinstance(p.get("identity"), dict) else {}
+        from intake.links import LINK_FIELDS, clean_identity_links, link_ok
         for fld, key in _CONTACT:
             mine = _theirs(st, key)
+            if mine and fld in LINK_FIELDS and not link_ok(fld, mine):
+                continue        # anchor text ("In", "GitHub") is never a link
             if mine:
                 ident[fld] = mine
+        clean_identity_links(ident)
         from ui.session import brain_backfill
         brain_backfill(ident, [], [], [], st)          # contact facts at 0.9 or more, empties only
         if ident:

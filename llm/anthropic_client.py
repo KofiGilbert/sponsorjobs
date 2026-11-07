@@ -693,7 +693,14 @@ class AnthropicLLM:
         )
         return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
 
-    def extract_intake(self, jd_text: str, known: dict, history: list[dict]) -> dict:
+    def extract_intake(self, jd_text: str, known: dict, history: list[dict],
+                       with_projects: bool = False) -> dict:
+        """One intake turn. ``with_projects`` (an uploaded resume) also reads the file's
+        Projects section into essentials.projects, with a larger output budget so a full
+        resume's bullets are not cut off mid-JSON."""
+        proj_schema = (", \"projects\": [{org: the project's name, tools: the tools or "
+                       "stack printed beside it, dates, link: its real address from LINKS IN "
+                       "THIS FILE when one is given, bullets: [verbatim]}]" if with_projects else "")
         system = (
             "You are a sharp, warm resume coach talking with a job applicant, sound like a "
             "helpful friend who's genuinely into their story, never a corporate form.\n"
@@ -719,21 +726,29 @@ class AnthropicLLM:
             "fields, and MERGE them into what you already know. Ask a short, warm "
             "follow-up ONLY for what's genuinely missing or ambiguous, never "
             "interrogate field by field, and accept multiple items at once. If a URL "
-            "appears, treat it as a profile link (linkedin/github/blog). Put the "
+            "appears, treat it as a profile link (linkedin/github/blog). A link field "
+            "holds a real web address, never a link's anchor text: 'In', 'GitHub', "
+            "'LinkedIn' or 'Portfolio' alone is NOT a link, so leave the field empty unless "
+            "the real address is given. Put the "
             "person's FULL mailing address (street, city, state, ZIP) in "
             "identity.address, the template header shows the whole address, not just "
             "a city. Keep every company, "
             "employment date, school, degree, AND their existing bullet points EXACTLY "
             "as written, copy real bullets verbatim, never paraphrase or invent them.\n"
             "Set ready=true once you have their name, at least one degree, and at "
-            "least one job, or if they say to just build it.\n\n"
+            "least one job, or if they say to just build it.\n"
+            "You are the resume chat inside the SponsorJobs app. When the person uploads a "
+            "file, the app reads it and its text appears in the conversation, so you HAVE "
+            "read it: never say you cannot read files, cannot see an upload, or that they "
+            "must paste it.\n\n"
             f"TARGET JOB:\n{jd_text[:2500]}\n\n"
             f"ALREADY KNOWN (merge new info into this):\n{json.dumps(known)}\n\n"
             "Return ONLY a JSON object: {\"essentials\": {\"identity\": {name, email, "
             "phone, address, linkedin, github, blog}, \"education\": [{school, degree, "
             "date, location}], \"experience\": [{org, title, dates, location, bullets: "
-            "[verbatim real bullet strings, or [] if the source listed none]}]}, "
-            "\"reply\": \"your short chat reply\", \"ready\": true|false}. essentials "
+            "[verbatim real bullet strings, or [] if the source listed none]}]"
+            + proj_schema + "}, "
+            "\"reply\":\"your short chat reply\", \"ready\": true|false}. essentials "
             "must be the FULL merged set; preserve bullets already present in ALREADY KNOWN."
         )
         # Run extraction over the conversation as a TRANSCRIPT (a pure extraction
@@ -744,7 +759,7 @@ class AnthropicLLM:
             for h in (history or []) if str(h.get("content") or "").strip())
         raw = self._complete(system, "CONVERSATION SO FAR:\n" + transcript +
                              "\n\nExtract everything the applicant has stated and return the JSON now.",
-                             max_tokens=1500, effort="medium")
+                             max_tokens=4000 if with_projects else 1500, effort="medium")
         data = self._parse_json_object(raw)
         if not isinstance(data, dict) or "essentials" not in data:
             # Never dead-end on a parse hiccup: if we already have enough to build,
@@ -762,10 +777,13 @@ class AnthropicLLM:
                 "ready": bool(data.get("ready"))}
 
     def converse(self, jd_text: str, history: list[dict], recalled: list[dict],
-                 facts: list[dict]) -> str:
+                 facts: list[dict], app_context: str = "") -> str:
         """A free-form conversational reply, so the person can chat like they would with a
         collaborator that remembers everything about them (P1, Task 1). Grounded in their full
-        history, the recalled memories, and the distilled facts; never invents facts about them."""
+        history, the recalled memories, and the distilled facts; never invents facts about them.
+        ``app_context`` is the app's own true statement of what it can do and holds right now
+        (the files uploaded this session and what was read from them, the GitHub connection,
+        the Projects page), so the reply never claims a limit the app does not have."""
         system = (
             "You are the applicant's career copilot in an ongoing chat. Reply naturally to what "
             "they just said, like a sharp, warm collaborator who genuinely remembers them. Use "
@@ -774,6 +792,17 @@ class AnthropicLLM:
             "them. If they ask you to build or tailor a resume, say you're on it. Be concise and "
             "genuine, no filler, no clichés."
         )
+        if app_context:
+            system += (
+                "\n\nYou are the resume chat inside the SponsorJobs desktop app. The APP FACTS "
+                "below are true; rely on them and never contradict them. Never say you cannot "
+                "read files, cannot see an upload, or that the person must paste a file's "
+                "contents: the app reads every file they upload. When they ask about something "
+                "they uploaded, answer from what the APP FACTS say was read from it. Never claim "
+                "you cannot access GitHub when the APP FACTS say it is connected; when it is not "
+                "connected and they ask about it, say so plainly and tell them exactly where to "
+                "connect it, in the APP FACTS' words. Use plain words, no dashes as punctuation, "
+                "and say resume, never CV.\n\nAPP FACTS:\n" + app_context.strip())
         from tailoring.conform import strip_ai_dashes
         convo = "\n".join(f"[{t.get('role')}] {t.get('content')}" for t in (history or [])[-12:])
         mem = "\n".join(f"- {r.get('text', '')}" for r in (recalled or [])[:6])
@@ -983,7 +1012,12 @@ class AnthropicLLM:
             "the résumé lists them, else \"\".\n"
             "- skills: an object of labeled lines grouping the skills the résumé lists "
             "(e.g. {\"Languages\": \"Python, SQL\", \"Cloud\": \"AWS, Docker\"}); {} if none.\n"
-            "- projects: [{title, dates, bullets:[verbatim]}] if the résumé lists projects, else [].\n"
+            "- projects: [{title, tools, dates, link, bullets:[verbatim]}] if the résumé lists "
+            "projects, else []. title is the project's name; tools is the stack printed beside "
+            "it; link is its real address from LINKS IN THIS FILE when one is given.\n"
+            "- A link field holds a real web address, never anchor text: 'In', 'GitHub' or "
+            "'LinkedIn' alone is not a link, so use the address from LINKS IN THIS FILE or "
+            "leave it empty.\n"
             "- experience: [{org, location, roles:[{title, dates, bullets:[verbatim real "
             "bullets]}]}], keep every company, title, employment date, location, and "
             "bullet EXACTLY as written; copy bullets verbatim, never paraphrase or invent.\n"
@@ -991,7 +1025,7 @@ class AnthropicLLM:
             "- interests: a one-line string if the résumé lists interests, else \"\".\n"
             "Return ONLY the JSON object."
         )
-        raw = self._complete(system, f"RÉSUMÉ TEXT:\n{cv_text[:12000]}", max_tokens=3000, effort="medium")
+        raw = self._complete(system, f"RÉSUMÉ TEXT:\n{cv_text[:14000]}", max_tokens=3000, effort="medium")
         data = self._parse_json_object(raw)
         return data if isinstance(data, dict) else {}
 
