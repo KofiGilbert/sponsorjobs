@@ -90,3 +90,9 @@ class OpenAILLM(AnthropicLLM):
             model=self.model, max_tokens=max_tokens, temperature=0.3, messages=messages,
         )
         return (resp.choices[0].message.content or "").strip()
+
+    def agent_turn(self, system: str, messages: list[dict], tools: list[dict],
+                   max_tokens: int = 900) -> dict:
+        # No native tool use through this client yet: the JSON protocol stands in.
+        from .agent_protocol import json_agent_turn
+        return json_agent_turn(self._complete_history, system, messages, tools, max_tokens)

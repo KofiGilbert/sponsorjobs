@@ -100,6 +100,14 @@ class BrokerLLM(AnthropicLLM):
         return self._post({"system": system, "messages": messages,
                            "max_tokens": max_tokens, "effort": effort or self.effort})
 
+    def agent_turn(self, system: str, messages: list[dict], tools: list[dict],
+                   max_tokens: int = 900) -> dict:
+        # The broker (worker/src/anthropic.ts complete) returns text only and drops tool use
+        # blocks, so the agent speaks the JSON protocol through it until the broker passes tools
+        # through (a later piece). Then this becomes native like AnthropicLLM.agent_turn.
+        from .agent_protocol import json_agent_turn
+        return json_agent_turn(self._complete_history, system, messages, tools, max_tokens)
+
     # -- transport -------------------------------------------------------------------------- #
     def _post(self, payload: dict) -> str:
         data = json.dumps(payload).encode()
