@@ -2999,7 +2999,11 @@ class WebIntake:
         """Fold natural-language declines, inline course lists, stated skills, and per-entry
         locations ('BlackOrigin is in Accra, Ghana') into essentials."""
         declined = set(self.essentials.get("declined", []))
-        _note_declines(message, declined)
+        # A question about the upload or GitHub is not a decline: "didn't you see the
+        # projects ... or can't you check my github" declined both and wiped the projects
+        # the upload had just added (2026-11-07 proof run).
+        if not self._asks_about_upload(message):
+            _note_declines(message, declined)
         self.essentials["declined"] = sorted(declined)
         # Declining projects ('I don't have projects' / 'skip this project') removes
         # any project entries so nothing incomplete renders and the gate won't re-ask

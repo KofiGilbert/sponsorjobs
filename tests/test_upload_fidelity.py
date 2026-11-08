@@ -259,6 +259,18 @@ def test_a_reply_that_denies_reading_files_is_replaced(template_source, fake_llm
     assert "—" not in reply and "–" not in reply
 
 
+def test_the_question_does_not_decline_projects_or_github(template_source, fake_llm, workdir):
+    """The proof run: the question itself read as "declined projects and GitHub", which wiped
+    the projects the upload had just added."""
+    s = _uploaded(template_source, fake_llm, workdir)
+    s.essentials["projects"] = [{"org": "Route Planner", "bullets": ["Modeled a fleet."]}]
+    s.submit("didn't you see the projects on the resume i uploaded? or can't you check my github")
+    assert not {"projects", "github"} & set(s.essentials.get("declined") or [])
+    assert [p["org"] for p in s.essentials["projects"]] == ["Route Planner"]
+    s.submit("I don't have a github")                 # a real decline still counts
+    assert "github" in s.essentials["declined"]
+
+
 def test_connected_github_is_said_as_connected(template_source, fake_llm, workdir):
     s = _uploaded(template_source, fake_llm, workdir, connected=True)
     ans = s._capability_answer("can you check my github?")
