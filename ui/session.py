@@ -889,6 +889,9 @@ class WebIntake:
         # () -> {"connected": bool, "login": str}. None in tests and bare sessions.
         self.uploads: list[dict] = []
         self.github_status = None
+        # The stored GitHub token, () -> str, set by the app beside github_status. Only the
+        # agent's list_repos callable holds it (ui/github_repos.py); it is never shown or logged.
+        self.github_token = None
         self.last_cover_letter = ""        # most recent drafted cover letter (bundled on accept)
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
         self.source_job = {}               # {url, source, source_id} when started from a sourced job
@@ -1135,6 +1138,99 @@ class WebIntake:
         self._append("agent", reply)
         self._persist()
         return self._state([reply])
+
+    # -- the resume chat agent (TAILOR_CHAT_AGENT, agent/resume_chat.py) --------------- #
+    def _agent_on(self) -> bool:
+        from agent.resume_chat import enabled
+        return enabled() and callable(getattr(self.llm, "agent_turn", None))
+
+    def _chat_reply(self, message: str):
+        """A conversational turn: the agent when its flag is on, else today's _converse."""
+        return self._agent_reply(message) if self._agent_on() else self._converse(message)
+
+    def _github_view(self) -> dict:
+        from ui.github_repos import login_from
+        gh = self._github() or {}
+        ident = dict((self.profile or {}).get("identity") or {})
+        ident.update({k: v for k, v in (self.essentials.get("identity") or {}).items() if v})
+        return {"connected": bool(gh.get("connected")), "login": str(gh.get("login") or ""),
+                "resume_login": login_from(ident.get("github") or "")}
+
+    def _token(self) -> str:
+        try:
+            return str(self.github_token() or "") if callable(self.github_token) else ""
+        except Exception:      # noqa: BLE001 - no token reads as not connected
+            return ""
+
+    def _snapshot(self) -> dict:
+        """The resume being built, compact, for the agent's resume_snapshot tool."""
+        used = getattr(self.assembled, "profile_used", None) or self.profile or {}
+        ident = dict(used.get("identity") or {})
+        ident.update({k: v for k, v in (self.essentials.get("identity") or {}).items() if v})
+
+        def label(e):
+            return str(e.get("org") or e.get("title") or e.get("name") or "").strip()
+
+        def first_bullet(e):
+            for b in e.get("bullets") or []:
+                t = b.get("text") if isinstance(b, dict) else b
+                if str(t or "").strip():
+                    return str(t).strip()[:180]
+            return ""
+
+        exp = [{"title": str(e.get("title") or ""), "org": str(e.get("org") or ""),
+                "dates": str(e.get("dates") or e.get("date") or "")}
+               for e in (used.get("experience") or self.essentials.get("experience") or [])
+               if isinstance(e, dict)][:8]
+        projs = [e for e in (used.get("projects") or []) if isinstance(e, dict) and label(e)]
+        names = {label(e).lower() for e in projs}
+        projs += [e for e in (self.essentials.get("projects") or [])
+                  if isinstance(e, dict) and label(e) and label(e).lower() not in names]
+        skills = used.get("skills") or {}
+        if isinstance(skills, dict):
+            skills = {str(k): str(v)[:200] for k, v in list(skills.items())[:8]}
+        return {
+            "role": self.role, "company": self.company,
+            "draft_built": self.assembled is not None,
+            "name": str(ident.get("name") or ""),
+            "links": {k: str(ident[k]) for k in ("github", "linkedin", "website", "portfolio")
+                      if ident.get(k)},
+            "experience": exp,
+            "projects": [{"name": label(e), "link": str(e.get("link") or e.get("url") or ""),
+                          "first_bullet": first_bullet(e),
+                          **({"placeholder": True} if e.get("suggested") else {})}
+                         for e in projs][:12],
+            "skills": skills,
+            "education": [{"school": str(e.get("school") or ""), "degree": str(e.get("degree") or "")}
+                          for e in (used.get("education") or self.essentials.get("education") or [])
+                          if isinstance(e, dict)][:4],
+        }
+
+    def _agent_ctx(self):
+        from agent.resume_chat import AppContext
+        from ui import github_repos
+        return AppContext(
+            llm=self.llm, resume_snapshot=self._snapshot,
+            upload_summary=lambda: (self.uploads[-1] if self.uploads else None),
+            github_status=self._github_view,
+            list_repos=lambda login: github_repos.list_repos(login, token=self._token()),
+            history=lambda: self.prior_history + self.history,
+            secrets=lambda: [t for t in (self._token(),) if t],
+            role=self.role or "", company=self.company or "")
+
+    def _agent_reply(self, message: str):
+        from agent.resume_chat import run_turn
+        try:
+            out = run_turn(self, self._agent_ctx(), message)
+        except Exception:      # noqa: BLE001 - the agent failing falls back to today's reply
+            return self._converse(message)
+        text = str(out.get("text") or "").strip() or "Noted."
+        cards = list(out.get("cards") or [])
+        self._append("agent", text)
+        if cards:
+            self.history[-1]["card"] = cards[0]
+        self._persist()
+        return self._state([text], cards=cards[:1])
 
     # -- what the app can do (2026-11-06) ----------------------------------------------- #
     # Kofi uploaded his resume, then asked "didn't you see the projects that were on the resume
@@ -2546,9 +2642,12 @@ class WebIntake:
                 "ask about anything that's missing.")
 
     # ------------------------------------------------------------------ client state
-    def _state(self, messages=None, extra=None):
+    def _state(self, messages=None, extra=None, cards=None):
         s = {
             "phase": self.stage,
+            # Chat cards (agent/resume_chat.py) under this turn's messages; each is also kept
+            # on its history turn ("card") so a restored chat shows it again.
+            "cards": list(cards or []),
             "role": self.role, "company": self.company,
             # Which template this CV is in. The person is no longer asked to choose one up
             # front (we read the JD, so we already know), which only works if the answer is
@@ -2744,11 +2843,21 @@ class WebIntake:
         # CV-field question, and is already remembered above. Pre-build only; the build/tailor
         # funnel below is unchanged for everything else.
         if self.assembled is None and self._wants_freeform_chat(message):
-            return self._converse(message)
+            return self._chat_reply(message)
         # A question about a file they uploaded, its projects or links, or their GitHub, before
         # or after the build: answered from what the app really read and holds (2026-11-06).
         if self._asks_about_upload(message):
-            return self._converse(message)
+            return self._chat_reply(message)
+        # With the agent on, GitHub, repositories, portfolio, projects without an explicit list,
+        # relevance, the quiz, connecting and "what can you do" go to it too. Field capture
+        # above has already run; a turn whose projects it just captured stays on the funnel.
+        if self._agent_on():
+            from agent.resume_chat import wants_agent
+            captured = ([p.get("org") or p.get("title") for p in prior_projects]
+                        != [p.get("org") or p.get("title") for p in (self.essentials.get("projects") or [])
+                            if isinstance(p, dict)])
+            if not captured and wants_agent(message):
+                return self._agent_reply(message)
 
         # Enrichment: once a first draft exists, a substantive message is REAL
         # material to fold in (accomplishments/projects/skills/…), not a gate answer;

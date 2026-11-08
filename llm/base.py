@@ -10,6 +10,7 @@ deterministic string logic so the acceptance tests never touch the network.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Protocol, runtime_checkable
 
@@ -125,6 +126,13 @@ class LLMBackend(Protocol):
         uploaded this session and what was read from them, the GitHub connection, the
         Projects page). The reply must never contradict it, e.g. by claiming it cannot
         read files the app has just read."""
+
+    def agent_turn(self, system: str, messages: list[dict], tools: list[dict],
+                   max_tokens: int = 900) -> dict:
+        """One turn of the resume chat agent: {"text", "tool_calls": [{"id", "name", "input"}],
+        "stop"}. Native tool use where the client has it, else the JSON protocol
+        (llm/agent_protocol.py)."""
+        ...
 
     def draft_profile(self, jd_text: str, essentials: dict) -> dict:
         """Draft the *content-heavy* parts of a PROFILE from the JD + essentials.
@@ -808,6 +816,59 @@ class FakeLLM:
             if line:
                 return f"Yes. {line}"
         return f"Got it, I'll remember that. ({str(last)[:60]})".strip()
+
+    def agent_turn(self, system: str, messages: list[dict], tools: list[dict],
+                   max_tokens: int = 900) -> dict:
+        """Scripted: ``agent_script`` (a list of turns, popped in order, or a callable
+        ``(system, messages, tools) -> turn``) when a test sets one. Otherwise a fixed rule:
+        the first round calls the read tools the message names (GitHub words call github_status
+        and list_repos, project or resume words call resume_snapshot), and the next round
+        replies with what came back."""
+        self.agent_calls = getattr(self, "agent_calls", 0) + 1
+        self.last_agent_system, self.last_agent_tools = system, list(tools or [])
+        script = getattr(self, "agent_script", None)
+        if callable(script):
+            return script(system, messages, tools)
+        if isinstance(script, list) and script:
+            turn = dict(script.pop(0))
+            turn.setdefault("text", "")
+            turn.setdefault("tool_calls", [])
+            turn.setdefault("stop", "tool_use" if turn["tool_calls"] else "end_turn")
+            return turn
+        names = {t["name"] for t in tools or []}
+        last = messages[-1] if messages else {}
+        if last.get("role") == "tool":
+            bits = []
+            for r in last.get("results") or []:
+                try:
+                    obj = json.loads(r.get("content") or "")
+                except (TypeError, ValueError):
+                    obj = None
+                if not isinstance(obj, dict):
+                    bits.append(str(r.get("content") or "")[:120])
+                    continue
+                names = [str(x.get("name")) for k in ("projects", "repos")
+                         for x in obj.get(k) or [] if isinstance(x, dict) and x.get("name")]
+                if names:
+                    bits.append(f"{r.get('name')}: " + ", ".join(names) + ".")
+                elif obj.get("error"):
+                    bits.append(str(obj["error"]))
+                elif "connected" in obj:
+                    bits.append("GitHub is " + ("connected." if obj["connected"] else "not connected."))
+            return {"text": "Here is what I found. " + " ".join(bits), "tool_calls": [],
+                    "stop": "end_turn"}
+        said = str(last.get("content") or "")
+        calls = []
+        if re.search(r"\b(github|repos?|repositor\w*|portfolio)\b", said, re.I):
+            calls += [c for c in ("github_status", "list_repos") if c in names]
+        if re.search(r"\b(projects?|resume)\b", said, re.I) and "resume_snapshot" in names:
+            calls.append("resume_snapshot")
+        if calls:
+            return {"text": "", "stop": "tool_use",
+                    "tool_calls": [{"id": f"f{i + 1}", "name": n, "input": {}}
+                                   for i, n in enumerate(calls)]}
+        return {"text": "I can look at your resume, your last upload and your public GitHub "
+                        "repositories.", "tool_calls": [], "stop": "end_turn"}
 
     def distill_memory(self, history: list[dict], known_keys: list[str]) -> dict:
         """Deterministic distillation: detect the few preference/constraint shapes the offline

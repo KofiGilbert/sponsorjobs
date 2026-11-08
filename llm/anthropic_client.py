@@ -693,6 +693,34 @@ class AnthropicLLM:
         )
         return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
 
+    def agent_turn(self, system: str, messages: list[dict], tools: list[dict],
+                   max_tokens: int = 900) -> dict:
+        """One turn of the resume chat agent with native tool use (llm/agent_protocol.py has
+        the shape). The system prompt and tools are marked for prompt caching, so the rounds
+        of one turn reuse them."""
+        from .agent_protocol import anthropic_messages, from_anthropic
+        create = {
+            "model": self.model, "max_tokens": max_tokens,
+            "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+            "messages": anthropic_messages(messages),
+        }
+        if tools:
+            create["tools"] = list(tools)
+        if supports_effort(self.model):
+            create["output_config"] = {"effort": "low"}
+        try:
+            msg = self._client.messages.create(**create)
+        except Exception as exc:
+            if "output_config" in create and "effort" in str(exc).lower():
+                create.pop("output_config", None)
+                msg = self._client.messages.create(**create)
+            else:
+                raise
+        u = getattr(msg, "usage", None)
+        self.last_usage = ({"input": int(getattr(u, "input_tokens", 0) or 0),
+                            "output": int(getattr(u, "output_tokens", 0) or 0)} if u else None)
+        return from_anthropic(msg)
+
     def extract_intake(self, jd_text: str, known: dict, history: list[dict],
                        with_projects: bool = False) -> dict:
         """One intake turn. ``with_projects`` (an uploaded resume) also reads the file's

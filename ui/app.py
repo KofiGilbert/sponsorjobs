@@ -1386,6 +1386,9 @@ def _session() -> WebIntake:
         raise RuntimeError("No active session. Start a new resume first.")
     if getattr(s, "github_status", None) is None:
         s.github_status = _github_connection   # the chat says truly whether GitHub is connected
+    if getattr(s, "github_token", None) is None:
+        # Only the chat agent's repo lookup holds it (ui/github_repos.py); never shown or logged.
+        s.github_token = lambda: _cred("GITHUB_TOKEN") or ""
     return s
 
 
@@ -3005,7 +3008,9 @@ def session_state():
     # The transcript lives server-side in session.history; the chat bubbles were only ever
     # in the browser. Hand it back or the CV returns to an empty conversation, which still
     # reads as "we weren't working on anything".
-    state["history"] = [{"role": t.get("role"), "content": t.get("content")}
+    # A turn's chat card (agent/resume_chat.py) comes back with it, so restore re-renders it.
+    state["history"] = [{"role": t.get("role"), "content": t.get("content"),
+                         **({"card": t["card"]} if t.get("card") else {})}
                         for t in (s.history or [])]
     return jsonify(state)
 

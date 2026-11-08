@@ -3082,6 +3082,37 @@
     .replace(/&lt;\/b&gt;/g, "</b>")
     .replace(/\n/g, "<br>");
 
+  // A chat card from the resume chat agent (agent/resume_chat.py), under its reply. "buttons"
+  // is the first type: ghost buttons that go to a page or send a fixed turn, nothing else (no
+  // card can change the resume yet). The same look as the Home agent's buttons (agentReply).
+  const CARD_NAV = {
+    projects: () => document.querySelector('[data-nav="projects"]')?.click(),
+    cvs: () => document.querySelector('[data-nav="cvs"]')?.click(),
+    jobs: () => document.querySelector('[data-nav="jobs"]')?.click(),
+    connections: async () => {
+      await openSettings();
+      document.querySelector('.set-tab[data-set="connections"]')?.click();
+    },
+  };
+  function renderCard(card) {
+    if (!card || card.type !== "buttons") return;
+    const acts = (card.buttons || []).filter(b => b && b.label && (CARD_NAV[b.nav] || b.send));
+    if (!acts.length) return;
+    const wrap = el("div", "agent-acts chat-card");
+    acts.forEach(b => {
+      const btn = el("button", "btn btn-sm btn-ghost");
+      btn.type = "button"; btn.textContent = unDash(b.label);
+      btn.addEventListener("click", () => {
+        if (b.nav) { CARD_NAV[b.nav](); return; }
+        if (composerBusy) return;
+        wrap.remove();
+        sendTurn(b.send, esc(unDash(b.label)));
+      });
+      wrap.appendChild(btn);
+    });
+    chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
+  }
+
   // One-click autonomous build for a returning user (their saved profile → tailored CV).
   function renderAutobuild() {
     if (document.getElementById("autobuildAction")) return;   // show once
@@ -3130,6 +3161,7 @@
     paintTemplateUsed(st);
     paintLiveNav(st);
     (st.messages || []).forEach(m => bubble("agent", chatText(m)));
+    (st.cards || []).forEach(renderCard);
     if (st.question) bubble("agent", chatText(st.question));
     if (st.can_autobuild) renderAutobuild();
     else document.getElementById("autobuildAction")?.remove();
@@ -3439,8 +3471,10 @@
     if (!st || !st.active) return false;
     resetBuilder();
     $("#jdGate").hidden = true;          // a session exists, don't ask for the JD again
-    (st.history || []).forEach(t => bubble(t.role === "user" ? "user" : "agent",
-                                           chatText(t.content || "")));
+    (st.history || []).forEach(t => {
+      bubble(t.role === "user" ? "user" : "agent", chatText(t.content || ""));
+      if (t.card) renderCard(t.card);
+    });
     applyState(st);
     return true;
   }
