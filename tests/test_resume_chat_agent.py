@@ -123,6 +123,11 @@ def test_honest_removes_an_unbacked_claim():
     assert "I added" not in out and "two repositories" in out and rc.NOT_CHANGED in out
     assert rc.honest("I added it.", did=["add_projects"]) == "I added it."
     assert rc.honest("I've saved that.", did=[]) == rc.NOT_CHANGED
+    listed = "Your repos:\n1. route-planner\n2. dock-scheduler\nI added both to your resume."
+    assert rc.honest(listed, did=[]) == ("Your repos:\n1. route-planner\n2. dock-scheduler "
+                                         + rc.NOT_CHANGED)
+    assert rc.honest("Repos:\n1. a\n2. b", did=[]) == "Repos:\n1. a\n2. b"
+    assert rc._clean("**Projects:** none\n## Repos") == "<b>Projects:</b> none\nRepos"
 
 
 def test_cards_are_checked_and_merged():

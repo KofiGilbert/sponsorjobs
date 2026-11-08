@@ -177,8 +177,9 @@ def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "") -> 
         "wants a change, tell them to say it in this chat with the details, or point them to "
         "the button you were given.",
         "- If a tool says something failed or was rate limited, say so in one plain line.",
-        "- Be short and warm: a few sentences, or a short list when listing things. Use plain "
-        "words, no dashes as punctuation, and say resume, never CV.",
+        "- Be short and warm: a few sentences, or a short list (one item per line) when listing "
+        "things. Plain text, no markdown headings or tables. Use plain words, no dashes as "
+        "punctuation, and say resume, never CV.",
         "- Never describe a capability that is not in the list above.",
     ]
     return "\n".join(lines)
@@ -195,16 +196,19 @@ def honest(text: str, did: list | None) -> str:
     this turn (the precedent is notify/assistant.py). Never empty."""
     if did:
         return text
-    from notify.assistant import _CLAIM, _NEG, _SENT
-    kept, dropped = [], False
-    for s in _SENT.split(str(text or "").strip()):
-        if not s.strip():
-            continue
-        if _CLAIM.search(s) and not _NEG.search(s):
-            dropped = True
-            continue
-        kept.append(s.strip())
-    out = " ".join(kept).strip()
+    from notify.assistant import _CLAIM, _NEG
+    lines, dropped = [], False
+    for line in str(text or "").strip().split("\n"):       # a list keeps its lines
+        kept = []
+        for s in re.split(r"(?<=[.!?])\s+", line):
+            if s.strip() and _CLAIM.search(s) and not _NEG.search(s):
+                dropped = True
+                continue
+            kept.append(s)
+        joined = " ".join(kept).rstrip()
+        if joined.strip() or not line.strip():
+            lines.append(joined)
+    out = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
     if dropped:
         out = (out + " " + NOT_CHANGED).strip()
     return out or POLITE_FAIL
@@ -213,7 +217,11 @@ def honest(text: str, did: list | None) -> str:
 def _clean(text: str) -> str:
     from tailoring.conform import strip_ai_dashes
     t = strip_ai_dashes(str(text or "").strip())
-    return re.sub(r"\bCVs\b", "resumes", re.sub(r"\bCV\b", "resume", t))
+    t = re.sub(r"\bCVs\b", "resumes", re.sub(r"\bCV\b", "resume", t))
+    # The chat shows plain text and re-allows only a bare <b> (ui/static/app.js chatText), so
+    # markdown bold becomes that and a markdown heading becomes a plain line.
+    t = re.sub(r"\*\*([^*\n]+?)\*\*", r"<b>\1</b>", t)
+    return re.sub(r"(?m)^#{1,6}\s+", "", t)
 
 
 # ----------------------------------------------------------------------------- cards
