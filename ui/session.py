@@ -522,6 +522,86 @@ def _dedup_entries(entries: list, keys: tuple) -> list:
     return out
 
 
+_LINK_NAMES = {"linkedin": "LinkedIn", "github": "GitHub", "blog": "website"}
+
+
+def _and_list(items: list) -> str:
+    items = [str(x) for x in items if str(x).strip()]
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _upload_project(p: dict) -> dict:
+    """One project read from an uploaded resume, in the essentials' project shape. Its name is
+    the heading (``org``); the arrow a PDF shows after the name is dropped from it."""
+    from intake.links import _clean_title
+    name = _clean_title(p.get("org") or p.get("name") or p.get("title") or "")
+    link = str(p.get("link") or p.get("url") or "").strip()
+    from intake.links import link_ok
+    return {"org": name, "title": "", "location": str(p.get("location") or "").strip(),
+            "dates": str(p.get("dates") or p.get("date") or "").strip(),
+            "link": link if link_ok("link", link) else "",
+            "tools": str(p.get("tools") or "").strip(),
+            "bullets": [str(b).strip() for b in (p.get("bullets") or []) if str(b).strip()],
+            "suggested": False}
+
+
+def _entry_match(old: list, e: dict, keys: tuple):
+    """The saved entry that is the same as ``e`` (fuzzy on each key, so "Stanbic Bank" is
+    "Stanbic Bank Ghana" and a re-spaced title still matches), or None. At least one key
+    must agree and none may disagree; a key blank on either side neither agrees nor
+    disagrees (so a degree read without its school still finds its saved school)."""
+    from intake.links import same_title
+    for o in old or []:
+        if not isinstance(o, dict):
+            continue
+        agree = disagree = 0
+        for k in keys:
+            a, b = str(o.get(k) or "").strip(), str(e.get(k) or "").strip()
+            if a and b:
+                if same_title(a, b):
+                    agree += 1
+                else:
+                    disagree += 1
+        if agree and not disagree:
+            return o
+    return None
+
+
+def _merge_upload(saved: dict, up: dict) -> dict:
+    """Fold a freshly uploaded resume (``up``) over the session's essentials (``saved``): the
+    upload is the newer truth for this application. Its contact details win where it has
+    them; its roles, schools and projects are this application's set, each gap-filled from the
+    same saved entry (a bullet, a location, transcript courses the upload leaves blank); a
+    section the upload has nothing for keeps the saved one. Everything else the session holds
+    (skills, declines, interests, extracurricular) is kept."""
+    out = {k: v for k, v in (saved or {}).items()}
+    ident = dict((saved or {}).get("identity") or {})
+    for k, v in (up.get("identity") or {}).items():
+        if str(v or "").strip():
+            ident[k] = v
+    out["identity"] = ident
+    for section, keys in (("experience", ("org", "title")), ("education", ("school", "degree")),
+                          ("projects", ("org",))):
+        new = [dict(e) for e in (up.get(section) or []) if isinstance(e, dict)
+               and any(str(e.get(k) or "").strip() for k in keys)]
+        if not new:
+            out.setdefault(section, list((saved or {}).get(section) or []))
+            continue
+        old = (saved or {}).get(section) or []
+        for e in new:
+            m = _entry_match(old, e, keys)
+            if not m:
+                continue
+            for f, v in m.items():
+                blank_new = e.get(f) in (None, "", [], {})
+                if blank_new and v not in (None, "", [], {}):
+                    e[f] = v
+        out[section] = new
+    return out
+
+
 def _flatten_profile(profile: dict) -> tuple[dict, list, list, list]:
     exp = []
     for e in profile.get("experience", []):
@@ -679,6 +759,11 @@ def _normalize_identity(ident: dict) -> dict:
             if str(ident.get(alt) or "").strip():
                 ident["address"] = ident[alt]
                 break
+    # A link field holding a resume's anchor TEXT ("In", "GitHub") is not a link: an older
+    # import stored those, and the letterhead turned them into dead links. Blank them so the
+    # gate asks for (or the next upload fills) the real address.
+    from intake.links import clean_identity_links
+    clean_identity_links(ident)
     return ident
 
 
@@ -798,6 +883,12 @@ class WebIntake:
         self.stage = "chatting"            # chatting | review | done
         self.returning = False
         self.saved_profile = {}
+        # The files the person uploaded in THIS session and what was read from them, so the
+        # chat answers "did you see my projects?" from what it really parsed (never "I can't
+        # read files"). And a hook the app sets to report its GitHub connection:
+        # () -> {"connected": bool, "login": str}. None in tests and bare sessions.
+        self.uploads: list[dict] = []
+        self.github_status = None
         self.last_cover_letter = ""        # most recent drafted cover letter (bundled on accept)
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
         self.source_job = {}               # {url, source, source_id} when started from a sourced job
@@ -837,6 +928,11 @@ class WebIntake:
                 self.saved_profile = assemble(self.saved_profile, self._brain())
             except Exception:      # noqa: BLE001 - the saved material always stands on its own
                 pass
+            # An older import stored a resume's anchor text ("In", "GitHub") as the links;
+            # never carry those to the letterhead as dead links.
+            from intake.links import clean_identity_links
+            if isinstance(self.saved_profile.get("identity"), dict):
+                clean_identity_links(self.saved_profile["identity"])
             # Seed the built profile FROM the saved one, so the first autosave of a returning
             # session writes the real profile back instead of clobbering the durable saved
             # profile (bullets, projects, extracurricular, skills) with the empty skeleton a
@@ -1030,13 +1126,166 @@ class WebIntake:
         facts = self.memory.list_facts(self.profile_name, status="active")
         try:
             reply = str(self.llm.converse(self.jd, self.prior_history + self.history,
-                                          self.recalled, facts) or "").strip()
+                                          self.recalled, facts,
+                                          app_context=self._app_context()) or "").strip()
         except Exception:
             reply = ""
+        reply = self._no_false_limits(reply, message)
         reply = reply or "Noted, I'll remember that."
         self._append("agent", reply)
         self._persist()
         return self._state([reply])
+
+    # -- what the app can do (2026-11-06) ----------------------------------------------- #
+    # Kofi uploaded his resume, then asked "didn't you see the projects that were on the resume
+    # i uploaded? or can't you check my github", and the chat answered "I can't access files
+    # or GitHub directly, only what you paste into our chat": false on both counts. The reply
+    # model now gets the app's true facts, and a reply that still denies them is replaced by
+    # one written from what the app really holds.
+    GITHUB_CONNECT_STEPS = ("click your name at the bottom of the left sidebar, choose "
+                            "Settings, then Connections, and click Connect next to GitHub")
+    _ASKS_FILES = re.compile(r"\b(upload(?:ed|s|ing)?|attach(?:ed|ment)?|the file|my file|that file|"
+                             r"pdf|github|repos?|repositor(?:y|ies))\b", re.I)
+    _ASKS_SEEN = re.compile(r"\b(see|saw|seen|read|notice\w*|miss\w*|pick\w* up|pull\w*|includ\w*|"
+                            r"happened|find|found|got|check\w*|look\w*)\b", re.I)
+    _ASKS_ITEMS = re.compile(r"\b(projects?|links?|linkedin)\b", re.I)
+    _QUESTION = re.compile(r"\?|\b(did(?:n['’]?t| not)?|can(?:['’]?t|not)?|could(?:n['’]?t)?|"
+                           r"do(?:n['’]?t)?|does(?:n['’]?t)?|why|have(?:n['’]?t)?|were(?:n['’]?t)?|"
+                           r"was(?:n['’]?t)?|where|what happened|are you able|is it possible)\b", re.I)
+    _DENIES = re.compile(
+        r"(?:can(?:no|['’])?t|cannot|can not|unable to|not able to|no (?:way|ability) to|"
+        r"(?:do|does)(?: not|n['’]t) have (?:the ability|access))\b[^.!?\n]{0,60}?"
+        r"\b(?:access|see|read|open|view|check|look at|browse|reach)\b[^.!?\n]{0,60}?"
+        r"\b(?:files?|uploads?|attach\w*|pdfs?|documents?|resumes?|github|repos?|repositor\w*)"
+        r"|only (?:see |read |work with |use )?what you (?:paste|type|share)", re.I)
+
+    def _asks_about_upload(self, message: str) -> bool:
+        """A question to the chat about a file it was given, its projects or links, or the
+        person's GitHub ("didn't you see the projects on the resume I uploaded?", "can't you
+        check my github?"). Answered in conversation from what the app holds, never fed to the
+        build funnel. A message carrying a link is material to add, not a question."""
+        m = message or ""
+        if re.search(r"https?://|www\.|\b[\w-]+\.(?:com|io|dev|app|org)/", m, re.I):
+            return False
+        if not (re.search(r"\byou\b", m, re.I) or "?" in m) or not self._QUESTION.search(m):
+            return False
+        if self._ASKS_FILES.search(m):
+            return True
+        return bool(self.uploads and self._ASKS_SEEN.search(m) and self._ASKS_ITEMS.search(m))
+
+    def _github(self) -> dict | None:
+        """{"connected", "login"} from the app's hook, or None when this session has none."""
+        try:
+            got = self.github_status() if callable(self.github_status) else None
+        except Exception:      # noqa: BLE001 - an unknown status is said as unknown
+            got = None
+        return got if isinstance(got, dict) else None
+
+    def _shown_projects(self) -> list[str]:
+        used = getattr(self.assembled, "profile_used", None) or self.profile or {}
+        return [str(p.get("org") or p.get("name") or "").strip() for p in (used.get("projects") or [])
+                if isinstance(p, dict) and str(p.get("org") or p.get("name") or "").strip()]
+
+    def _app_context(self) -> str:
+        """The app's true, short statement of what it can do and what it holds right now, for
+        the reply model (``llm.converse``): this session's uploads and what was read from them,
+        the projects on the resume, the GitHub connection and where to make it, and the
+        Projects page."""
+        lines = ["- This chat has an upload button. The app reads any file the person uploads "
+                 "(PDF, Word, PowerPoint or a photo) and gives you what it read."]
+        for u in self.uploads:
+            bits = []
+            if u.get("roles"):
+                bits.append("roles: " + "; ".join(u["roles"][:6]))
+            if u.get("projects"):
+                bits.append("projects: " + "; ".join(
+                    p + (f" ({u['project_links'][p]})" if u.get("project_links", {}).get(p) else "")
+                    for p in u["projects"]))
+            elif u.get("kind") == "resume":
+                bits.append("projects: none found in the file")
+            links = u.get("links") or {}
+            if links:
+                bits.append("links: " + ", ".join(
+                    f"{_LINK_NAMES.get(k, k)} {v}" for k, v in links.items()))
+            lines.append(f"- Uploaded {u.get('name')} ({u.get('kind')}) in this chat. Read from it: "
+                         + ("; ".join(bits) if bits else "nothing usable") + ".")
+        if not self.uploads:
+            lines.append("- No file has been uploaded in this chat yet.")
+        shown = self._shown_projects()
+        if self.assembled is not None or self.profile.get("projects"):
+            lines.append("- Projects on the resume being built now: "
+                         + (_and_list(shown) if shown else "none") + ".")
+        gh = self._github()
+        mine = str((self.essentials.get("identity") or {}).get("github") or "").strip()
+        if gh and gh.get("connected"):
+            who = f" as {gh['login']}" if gh.get("login") else ""
+            lines.append(f"- GitHub is connected{who} (Settings, Connections).")
+        elif gh is not None:
+            lines.append("- GitHub is NOT connected. To connect it: " + self.GITHUB_CONNECT_STEPS + ".")
+        if mine:
+            lines.append(f"- Their GitHub profile link: {mine}.")
+        lines.append("- This chat cannot list or browse all of the person's GitHub repositories. "
+                     "It adds a project when they paste the repository link or describe it.")
+        lines.append("- The Projects page (Projects in the left sidebar) can build a project for "
+                     "this job with them, then check they can explain it with a short quiz "
+                     "(Defend it) before it goes on the resume.")
+        return "\n".join(lines)
+
+    def _capability_answer(self, message: str) -> str:
+        """A plain answer written from what the app really holds, for when the model's reply
+        denied a capability the app has. Never claims what did not happen."""
+        m = message or ""
+        out = []
+        resumes = [u for u in self.uploads if u.get("kind") == "resume"]
+        if re.search(r"\b(upload\w*|attach\w*|file|pdf|resume|projects?|links?|linkedin)\b", m, re.I):
+            if resumes:
+                u = resumes[-1]
+                found = []
+                if u.get("projects"):
+                    found.append(("your projects " if len(u["projects"]) > 1 else "your project ")
+                                 + _and_list(u["projects"]))
+                names = [_LINK_NAMES.get(k, k) for k in (u.get("links") or {})]
+                if names:
+                    found.append(f"your {_and_list(names)} link" + ("s" if len(names) > 1 else ""))
+                out.append(f"Yes, I read {u.get('name')}" + (f" and found {' and '.join(found)}."
+                                                              if found else "."))
+                shown = self._shown_projects()
+                from intake.links import same_title
+                on = [p for p in u.get("projects") or [] if any(same_title(p, x) for x in shown)]
+                if on:
+                    out.append(f"{_and_list(on)} {'is' if len(on) == 1 else 'are'} on this resume now.")
+                elif u.get("projects"):
+                    out.append("They are saved to your profile.")
+            elif self.uploads:
+                out.append(f"I read {self.uploads[-1].get('name')}.")
+            else:
+                out.append("I don't have a file from you in this chat yet. Use the upload button "
+                           "here and I'll read it.")
+        if re.search(r"\b(github|repos?|repositor\w*)\b", m, re.I):
+            gh = self._github()
+            if gh and gh.get("connected"):
+                who = f" as {gh['login']}" if gh.get("login") else ""
+                out.append(f"Your GitHub is connected{who}. I can't list all your repositories from "
+                           "this chat yet, so paste a repository link or tell me about a project and "
+                           "I'll add it.")
+            else:
+                out.append("GitHub isn't connected yet. To connect it, "
+                           + self.GITHUB_CONNECT_STEPS + ". Until then, paste a repository link or "
+                           "tell me about a project and I'll add it.")
+            out.append("The Projects page can also build a project for this job with you and check "
+                       "you can explain it with a short quiz before it goes on your resume.")
+        return " ".join(out)
+
+    def _no_false_limits(self, reply: str, message: str) -> str:
+        """Replace a reply that claims the app cannot read files or GitHub (when it can, or
+        when the honest answer is "not connected yet, here is where") with one written from
+        the app's own state."""
+        hit = self._DENIES.search(reply or "")
+        if hit:
+            fixed = self._capability_answer(f"{message} {hit.group(0)}")
+            if fixed:
+                return fixed
+        return reply
 
     def _apply_memory_selection(self):
         """Recall -> decide (P1, Task 3). Record which of the person's experiences/projects/skills
@@ -1886,22 +2135,27 @@ class WebIntake:
         return self._state(msgs)
 
     # ------------------------------------------------------------------ upload
-    def ingest_document(self, text: str, filename: str = ""):
+    def ingest_document(self, text: str, filename: str = "", links: list | None = None):
         """ONE upload path: read the file, decide what it is (CV / transcript /
         certificate), and route it, the person never has to say which button. Every
-        upload is just an upload; we read it and figure out the rest."""
+        upload is just an upload; we read it and figure out the rest. ``links`` are the
+        file's link annotations (intake.cv_import.pdf_links), the real addresses behind
+        anchor text such as "In" or "GitHub"."""
         kind = classify_document(text or "", filename)
         if kind == "transcript":
             return self.ingest_transcript(text, filename)
         if kind == "certificate":
             return self.ingest_certificate(text, filename)
-        return self.ingest_resume(text, filename)
+        return self.ingest_resume(text, filename, links=links)
 
     def ingest_certificate(self, text: str, filename: str = ""):
         """Record an uploaded certificate as a real credential (added to the skills
         block's certifications). Raw file kept; clean summary to the diary."""
         self._append("user", f"[Uploaded certificate: {filename}]")
         name = _certificate_name(text, filename)
+        self.uploads.append({"name": filename or "a certificate", "kind": "certificate",
+                             "roles": [], "projects": [], "links": {}, "project_links": {},
+                             "read": name or ""})
         if name:
             certs = self.essentials.setdefault("certifications", [])
             if name.lower() not in {c.lower() for c in certs}:
@@ -1919,20 +2173,47 @@ class WebIntake:
                  "certification name you'd like on the resume?"])
         return self.draft(lead=lead)
 
-    def ingest_resume(self, text: str, filename: str = ""):
+    def ingest_resume(self, text: str, filename: str = "", links: list | None = None):
         """Pre-fill the profile from an uploaded CV's extracted text: merge the
         structured facts into memory (the real store), write a CLEAN summary into
-        the diary (never the raw/OCR'd text), then gate on the required skeleton."""
+        the diary (never the raw/OCR'd text), then gate on the required skeleton.
+
+        The upload is the NEWER truth for this application (2026-11-06: a returning person's
+        older saved titles and empty projects outranked the resume they had just uploaded).
+        So the file is read on its own, not merged by the model into the saved profile, and
+        then folded in by code: the upload's roles, schools and projects are this
+        application's; the saved profile only fills what the upload leaves blank. Projects
+        and the real link addresses (from the PDF's link annotations, never the anchor
+        text) come along. The session autosaves, so it is the saved profile next time."""
+        from intake.links import (attach_project_links, clean_identity_links, links_note,
+                                  projects_from_text, resume_links)
         self._append("user", f"[Uploaded resume: {filename}]")
+        found = resume_links(links)
+        blank = {"identity": {}, "education": [], "experience": []}
+        source = (text or "") + links_note(links)
         try:
-            out = self.llm.extract_intake("", self.essentials, [{"role": "user", "content": text or ""}])
-            merged = _canonicalize_essentials(out.get("essentials") or self.essentials)
+            out = self.llm.extract_intake("", blank, [{"role": "user", "content": source}],
+                                          with_projects=True)
+            up = _canonicalize_essentials(out.get("essentials") or {})
         except Exception:
-            merged = self.essentials
-        for k in ("identity", "education", "experience"):
-            merged.setdefault(k, self.essentials.get(k, {} if k == "identity" else []))
-        merged.setdefault("declined", self.essentials.get("declined", []))
-        merged.setdefault("projects", self.essentials.get("projects", []))
+            up = {}
+        up = up if isinstance(up, dict) else {}
+        # Projects: the model's reading, else the file's own Projects section read by code.
+        projects = [_upload_project(p) for p in (up.get("projects") or []) if isinstance(p, dict)]
+        projects = [p for p in projects if p.get("org")] or \
+            [_upload_project(p) for p in projects_from_text(text or "")]
+        attach_project_links(projects, found["projects"])
+        for p in projects:
+            if str(p.get("tools") or "").strip() and not str(p.get("location") or "").strip():
+                p["location"] = p["tools"]    # the template's right-hand slot, as on the page
+        up["projects"] = projects
+        ident = dict(up.get("identity") or {})
+        clean_identity_links(ident)
+        ident.update({k: v for k, v in found["identity"].items() if v})
+        up["identity"] = ident
+        merged = _merge_upload(self.essentials, up)
+        if merged.get("projects") and "projects" in (merged.get("declined") or []):
+            merged["declined"] = [d for d in merged["declined"] if d != "projects"]
         # Drop fully-empty entries that extraction noise can introduce (so the gate
         # never asks about a phantom role/degree), and de-dupe so re-uploading or
         # uploading-then-retyping the same facts can't double an entry.
@@ -1954,6 +2235,7 @@ class WebIntake:
         self._attach_cv_skills(text or "")
         self._conform_essentials()
         self._persist()
+        read = self._note_upload(filename or "your resume", "resume", up, found)
 
         # Clean, tool-authored summary -> the diary. Raw text is NOT kept there.
         from datetime import date
@@ -1963,9 +2245,33 @@ class WebIntake:
         except Exception:
             pass
 
-        lead = [f"I read {filename} and pulled in your details."] if filename else \
-               ["I read your resume and pulled in your details."]
+        lead = [f"I read {filename} and pulled in your details{read}." if filename else
+                f"I read your resume and pulled in your details{read}.",
+                "I saved them to your profile, so the next resume starts from them too."]
         return self.draft(lead=lead)   # draft() applies the tiered gate
+
+    def _note_upload(self, name: str, kind: str, up: dict, found: dict | None = None) -> str:
+        """Remember what this session's upload held (the chat answers "did you see my
+        projects?" from it), and return a short ", including ..." clause for the reply."""
+        projects = [str(p.get("org") or "").strip() for p in (up.get("projects") or [])
+                    if str(p.get("org") or "").strip()]
+        ident = up.get("identity") or {}
+        links = {k: ident.get(k) for k in ("linkedin", "github", "blog") if str(ident.get(k) or "").strip()}
+        roles = [" at ".join(x for x in (str(j.get("title") or "").strip(), str(j.get("org") or "").strip()) if x)
+                 for j in (up.get("experience") or []) if isinstance(j, dict)]
+        self.uploads.append({"name": name, "kind": kind, "roles": [r for r in roles if r],
+                             "projects": projects, "links": links,
+                             "project_links": {str(p.get("org")): p.get("link")
+                                               for p in (up.get("projects") or [])
+                                               if p.get("link") and p.get("org")}})
+        bits = []
+        if projects:
+            bits.append(("your projects " + _and_list(projects)) if len(projects) > 1
+                        else f"your project {projects[0]}")
+        names = [_LINK_NAMES.get(k, k) for k in links]
+        if names:
+            bits.append(f"your {_and_list(names)} link" + ("s" if len(names) > 1 else ""))
+        return (", including " + " and ".join(bits)) if bits else ""
 
     def _attach_cv_bullets(self, text: str):
         """Pull each role's REAL bullet points out of the uploaded CV text and attach
@@ -2111,6 +2417,8 @@ class WebIntake:
         from datetime import date
 
         self._append("user", f"[Uploaded transcript: {filename}]")
+        self.uploads.append({"name": filename or "a transcript", "kind": "transcript",
+                             "roles": [], "projects": [], "links": {}, "project_links": {}})
         try:
             courses = self.llm.select_courses(self.jd, text or "")
         except Exception:
@@ -2399,7 +2707,7 @@ class WebIntake:
                 declined_now = self._decline_open_required()
             if _wants_done(message) and not self._open_required_sections():
                 self.essentials["enrich_done"] = True
-        reply = str(out.get("reply", "")).strip()
+        reply = self._no_false_limits(str(out.get("reply", "")).strip(), message)
         self._persist()   # remember what was shared, without waiting for Accept
 
         # P1: distill durable facts/preferences/constraints from this turn into the authoritative
@@ -2436,6 +2744,10 @@ class WebIntake:
         # CV-field question, and is already remembered above. Pre-build only; the build/tailor
         # funnel below is unchanged for everything else.
         if self.assembled is None and self._wants_freeform_chat(message):
+            return self._converse(message)
+        # A question about a file they uploaded, its projects or links, or their GitHub, before
+        # or after the build: answered from what the app really read and holds (2026-11-06).
+        if self._asks_about_upload(message):
             return self._converse(message)
 
         # Enrichment: once a first draft exists, a substantive message is REAL
@@ -2687,7 +2999,11 @@ class WebIntake:
         """Fold natural-language declines, inline course lists, stated skills, and per-entry
         locations ('BlackOrigin is in Accra, Ghana') into essentials."""
         declined = set(self.essentials.get("declined", []))
-        _note_declines(message, declined)
+        # A question about the upload or GitHub is not a decline: "didn't you see the
+        # projects ... or can't you check my github" declined both and wiped the projects
+        # the upload had just added (2026-11-07 proof run).
+        if not self._asks_about_upload(message):
+            _note_declines(message, declined)
         self.essentials["declined"] = sorted(declined)
         # Declining projects ('I don't have projects' / 'skip this project') removes
         # any project entries so nothing incomplete renders and the gate won't re-ask

@@ -140,14 +140,43 @@ def _ocr_pdf(path: Path) -> str:
     return "\n".join(out)
 
 
-def _from_pdf(path: Path) -> str:
-    text = ""
+def _pdfium_text(path: Path) -> str:
+    """PDFium's text layer. It keeps kerned words whole ("Stanbic", "Summary") where pypdf
+    splits them ("St anbic", "Summar y"), so a company or project name is read as printed."""
     try:
-        from pypdf import PdfReader
-        reader = PdfReader(str(path))
-        text = "\n".join((page.extract_text() or "") for page in reader.pages)
+        import pypdfium2 as pdfium
     except Exception:
-        text = ""
+        return ""
+    from tailoring.preview import PDFIUM_LOCK          # PDFium is not thread-safe
+    out = []
+    with PDFIUM_LOCK:
+        try:
+            pdf = pdfium.PdfDocument(str(path))
+        except Exception:
+            return ""
+        try:
+            for i in range(min(len(pdf), _MAX_OCR_PAGES)):
+                try:
+                    out.append(pdf[i].get_textpage().get_text_range() or "")
+                except Exception:
+                    continue
+        finally:
+            try:
+                pdf.close()
+            except Exception:
+                pass
+    return "\n".join(out).replace("\r\n", "\n").replace("\r", "\n").replace("\ufffe", "-")
+
+
+def _from_pdf(path: Path) -> str:
+    text = _pdfium_text(path)
+    if len(text.replace(" ", "").strip()) < _SCANNED_TEXT_THRESHOLD:
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(path))
+            text = "\n".join((page.extract_text() or "") for page in reader.pages)
+        except Exception:
+            text = text or ""
     # Image-only / scanned PDF → OCR.
     if len(text.replace(" ", "").strip()) < _SCANNED_TEXT_THRESHOLD:
         ocr_text = _ocr_pdf(path)
@@ -175,6 +204,75 @@ def extract_text(path) -> str:
     except Exception:
         return ""
     return ""
+
+
+def pdf_links(path) -> list[dict]:
+    """Every web or mail link a PDF carries, in page order: [{url, anchor, before, after, page,
+    header}]. ``anchor`` is the text under the link ("In", "GitHub", an arrow), ``before`` and
+    ``after`` the text to its left and right on the same line (a project row's name and its
+    tools), ``header`` True for a link in the top band of page one (the contact line). The
+    page shows only the anchor text; the real address is in the link annotation, which plain
+    text extraction never sees. Never raises; [] for a non-PDF or a PDF without links."""
+    path = Path(path)
+    if path.suffix.lower() != ".pdf":
+        return []
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(str(path))
+    except Exception:
+        return []
+    raw: list[tuple] = []
+    for pno, page in enumerate(reader.pages[:_MAX_OCR_PAGES]):
+        try:
+            annots = page.get("/Annots") or []
+            annots = annots.get_object() if hasattr(annots, "get_object") else annots
+        except Exception:
+            continue
+        for a in annots:
+            try:
+                a = a.get_object()
+                if a.get("/Subtype") != "/Link":
+                    continue
+                act = a.get("/A")
+                act = act.get_object() if act is not None else None
+                url = str(act.get("/URI") or "").strip() if act is not None else ""
+                if not url:
+                    continue
+                rect = [float(x) for x in a.get("/Rect")]
+                raw.append((pno, url, min(rect[0], rect[2]), min(rect[1], rect[3]),
+                            max(rect[0], rect[2]), max(rect[1], rect[3])))
+            except Exception:
+                continue
+    if not raw:
+        return []
+    texts: dict = {}
+    try:
+        import pypdfium2 as pdfium
+
+        from tailoring.preview import PDFIUM_LOCK
+        with PDFIUM_LOCK:
+            pdf = pdfium.PdfDocument(str(path))
+            try:
+                for pno, url, l, b, r, t in raw:
+                    page = pdf[pno]
+                    w, h = page.get_size()
+                    tp = page.get_textpage()
+                    mid_b, mid_t = b + (t - b) * 0.25, t - (t - b) * 0.25
+                    texts[(pno, url, l, b)] = (
+                        tp.get_text_bounded(l, b, r, t) or "",
+                        tp.get_text_bounded(0, mid_b, l, mid_t) or "",
+                        tp.get_text_bounded(r, mid_b, w, mid_t) or "",
+                        t >= h * 0.86 and pno == 0)
+            finally:
+                pdf.close()
+    except Exception:
+        pass
+    out = []
+    for pno, url, l, b, r, t in sorted(raw, key=lambda x: (x[0], -x[5], x[2])):
+        anchor, before, after, header = texts.get((pno, url, l, b), ("", "", "", pno == 0 and t >= 680))
+        out.append({"url": url, "anchor": " ".join(anchor.split()), "before": " ".join(before.split()),
+                    "after": " ".join(after.split()), "page": pno + 1, "header": bool(header)})
+    return out
 
 
 def extract_profile(path, llm, known: dict | None = None) -> dict:

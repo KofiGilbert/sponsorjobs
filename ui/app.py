@@ -1384,7 +1384,14 @@ def _session() -> WebIntake:
     s = _SESSION.get("s")
     if s is None:
         raise RuntimeError("No active session. Start a new resume first.")
+    if getattr(s, "github_status", None) is None:
+        s.github_status = _github_connection   # the chat says truly whether GitHub is connected
     return s
+
+
+def _github_connection() -> dict:
+    """Whether the person's own GitHub is connected (Settings, Connections), for the chat."""
+    return {"connected": bool(_cred("GITHUB_TOKEN")), "login": _cred("GITHUB_LOGIN") or ""}
 
 
 class Unavailable(RuntimeError):
@@ -3012,25 +3019,27 @@ def answer():
 
 def _receive_upload():
     """Validate an uploaded file, save the raw copy under data/uploads (kept, never
-    deleted, not indexed), and return (session, extracted_text, filename)."""
+    deleted, not indexed), and return (session, extracted_text, filename, links): ``links`` are
+    a PDF's link annotations (intake.cv_import.pdf_links), the real addresses behind anchor
+    text like "In" or "GitHub" that the text alone never carries."""
     from datetime import datetime
 
     from werkzeug.utils import secure_filename
 
-    from intake.cv_import import SUPPORTED_EXTS, extract_text
+    from intake.cv_import import SUPPORTED_EXTS, extract_text, pdf_links
 
     f = request.files.get("file")
     if f is None or not f.filename:
-        return None, None, ("No file uploaded.", 400)
+        return None, None, ("No file uploaded.", 400), []
     name = secure_filename(f.filename) or "upload"
     if Path(name).suffix.lower() not in SUPPORTED_EXTS:
         return None, None, (f"Unsupported file type '{Path(name).suffix.lower()}'. "
-                            "Use Word, PDF, PowerPoint, or an image.", 400)
+                            "Use Word, PDF, PowerPoint, or an image.", 400), []
     session = _session()   # a JD must already be loaded (raises a clear error otherwise)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     dest = UPLOADS_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{name}"
     f.save(str(dest))       # raw backup, kept, never deleted
-    return session, extract_text(dest), name
+    return session, extract_text(dest), name, pdf_links(dest)
 
 
 @app.post("/api/session/upload")
@@ -3039,22 +3048,22 @@ def upload():
     """ONE upload endpoint. Read any document (Word/PDF/PowerPoint/image), then let
     the session decide what it is, CV, transcript, or certificate, and route it.
     The person never has to say which; every upload is just an upload."""
-    session, text, name = _receive_upload()
+    session, text, name, links = _receive_upload()
     if session is None:
         msg, code = name
         return jsonify({"error": msg}), code
-    return jsonify(session.ingest_document(text, name))
+    return jsonify(session.ingest_document(text, name, links=links))
 
 
 @app.post("/api/session/upload_cv")
 @_guard
 def upload_cv():
     """Prefill the profile from an uploaded CV (.docx/.pdf/.pptx/image), fully local."""
-    session, text, name = _receive_upload()
+    session, text, name, links = _receive_upload()
     if session is None:
         msg, code = name
         return jsonify({"error": msg}), code
-    return jsonify(session.ingest_resume(text, name))
+    return jsonify(session.ingest_resume(text, name, links=links))
 
 
 @app.post("/api/session/upload_transcript")
@@ -3062,7 +3071,7 @@ def upload_cv():
 def upload_transcript():
     """Read the real courses off an academic transcript and populate the most-recent
     degree's courses with the JD-relevant ones. Same local extraction/OCR + storage."""
-    session, text, name = _receive_upload()
+    session, text, name, _links = _receive_upload()
     if session is None:
         msg, code = name
         return jsonify({"error": msg}), code
@@ -5011,10 +5020,26 @@ def _import_resume_file(dest: Path, channel: str = "app") -> dict:
     text = extract_text(dest)
     if not (text or "").strip():
         return {"error": "no_text"}
+    from intake.cv_import import pdf_links
+    from intake.links import attach_project_links, clean_identity_links, links_note, resume_links
+    links = pdf_links(dest)
     llm = _make_llm()       # real model; raises a clear error if the key/connectivity is missing
-    profile = _coerce_profile(llm.extract_profile(text))
+    profile = _coerce_profile(llm.extract_profile(text + links_note(links)))
     if not (profile.get("identity") or profile.get("experience")):
         return {"error": "no_profile"}
+    # The real link addresses come from the PDF's link annotations; the page shows only anchor
+    # text ("In", "GitHub"), which is never kept as a link (2026-11-06).
+    found = resume_links(links)
+    ident = profile.get("identity") if isinstance(profile.get("identity"), dict) else {}
+    clean_identity_links(ident)
+    ident.update({k: v for k, v in found["identity"].items() if v})
+    profile["identity"] = ident
+    attach_project_links([p for p in profile.get("projects") or [] if isinstance(p, dict)],
+                         found["projects"])
+    for pr in profile.get("projects") or []:
+        if isinstance(pr, dict) and str(pr.get("tools") or "").strip() \
+                and not str(pr.get("location") or "").strip():
+            pr["location"] = pr["tools"]     # the template's right-hand slot, as on the page
     # Projects conventionally carry a "Personal Project" location (matches the rest of the
     # pipeline) so a one-click autonomous build isn't stopped by a missing project location.
     for pr in profile.get("projects") or []:
