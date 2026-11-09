@@ -39,8 +39,21 @@ NAV_TARGETS = ("projects", "connections", "github", "cvs", "jobs")   # github: C
 POLITE_FAIL = "I could not finish that just now. Ask me again in a moment."
 TOOL_FAIL = "This lookup did not work just now."
 NOT_CHANGED = "I have not changed your resume."
-GITHUB_CONNECT_STEPS = ("click your name at the bottom of the left sidebar, choose Settings, then "
-                        "Connections, click Connect next to GitHub, and approve the code on GitHub")
+# GitHub not connected and no username known: one short line, and the card carries the Connect
+# GitHub button (one click, ui/static/app.js connectFromChat). Never menu paths in the chat: once
+# it is connected, the chat checks the repositories by itself (WebIntake.github_connected).
+CONNECT_LABEL = "Connect GitHub"
+CONNECT_LINE = "Connect your GitHub and I'll check your repos for one that fits."
+CHECK_GITHUB_SEND = "Check my GitHub for projects that fit this job"
+NO_GITHUB_SAY = ("GitHub is not connected and there is no GitHub username. The person sees a "
+                 f"{CONNECT_LABEL} button under your reply. Say one short line, for example: "
+                 f"\"{CONNECT_LINE}\" Never describe menus, settings or steps. Once they connect, "
+                 "the chat checks their repositories by itself, so never ask them to ask again.")
+
+
+def connect_card() -> dict:
+    """The card under a not-connected reply: one Connect GitHub button."""
+    return {"type": "buttons", "buttons": [{"label": CONNECT_LABEL, "nav": "github"}]}
 
 
 def enabled() -> bool:
@@ -108,12 +121,16 @@ def _t_github_status(ctx: AppContext, inp: dict) -> dict:
     gh = dict(ctx.github_status() or {})
     out = {"connected": bool(gh.get("connected")), "login": str(gh.get("login") or ""),
            "username_on_resume": str(gh.get("resume_login") or "")}
-    if not out["connected"]:
-        out["how_to_connect"] = GITHUB_CONNECT_STEPS
-        out["card"] = {"type": "buttons", "buttons": [{"label": "Connect GitHub", "nav": "github"}]}
     if out["connected"] or out["username_on_resume"]:
         out["public_repos_readable"] = True
+    else:
+        out["say"] = NO_GITHUB_SAY
+        out["card"] = connect_card()
     return out
+
+
+def _no_github() -> dict:
+    return {"ok": False, "github_connected": False, "say": NO_GITHUB_SAY, "card": connect_card()}
 
 
 def _t_list_repos(ctx: AppContext, inp: dict) -> dict:
@@ -122,9 +139,7 @@ def _t_list_repos(ctx: AppContext, inp: dict) -> dict:
         gh = dict(ctx.github_status() or {})
         login = str(gh.get("resume_login") or gh.get("login") or "")
     if not login:
-        return {"ok": False, "repos": [],
-                "error": "There is no GitHub username on the resume and GitHub is not connected. "
-                         "Ask the person for their GitHub username or profile link."}
+        return {**_no_github(), "repos": []}
     got = dict(ctx.list_repos(login) or {})
     repos = list(got.get("repos") or [])
     out = {"ok": bool(got.get("ok")), "login": got.get("login") or login,
@@ -200,6 +215,8 @@ def _ranked(ctx: AppContext, inp: dict) -> dict:
 
 
 def _t_rank_repos(ctx: AppContext, inp: dict) -> dict:
+    if not _login(ctx, inp):
+        return _no_github()
     got = _ranked(ctx, inp)
     if not got.get("ok"):
         return {"ok": False, "error": got.get("error") or TOOL_FAIL}
@@ -229,6 +246,8 @@ def _t_propose_add(ctx: AppContext, inp: dict) -> dict:
     names = [str(n).strip().lower() for n in (inp or {}).get("names") or [] if str(n).strip()]
     if not names:
         return {"ok": False, "error": "Say which repositories to add, by name."}
+    if not _login(ctx, inp):
+        return _no_github()
     got = _ranked(ctx, inp)
     if not got.get("ok"):
         return {"ok": False, "error": got.get("error") or TOOL_FAIL}
@@ -367,6 +386,11 @@ def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "") -> 
         "wants a change, tell them to say it in this chat with the details, or point them to "
         "the button you were given. When a tool gave them a card with checkboxes, tell them to "
         "tick what they want and click its button.",
+        "- When GitHub is not connected and there is no GitHub username, call github_status: "
+        "it gives the person a Connect GitHub button. Say one short line, for example: "
+        f"\"{CONNECT_LINE}\" Never describe menus, settings or steps to connect, and never tell "
+        "them to ask again: once they connect, the chat checks their repositories by itself. "
+        "If they give a GitHub username instead, pass it as login.",
         "- When you judge repositories, say plainly that you read names, descriptions and "
         "READMEs, not the code, and name the job skills each fit really shows.",
         "- If a tool says something failed or was rate limited, say so in one plain line.",

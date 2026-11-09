@@ -350,8 +350,9 @@ def test_flag_off_keeps_todays_reply(template_source, fake_llm, workdir, gh):
     s = _session(template_source, fake_llm, workdir)
     st = s.submit("can't you check my github for more projects?")
     assert getattr(fake_llm, "agent_calls", 0) == 0 and not gh
-    assert st["cards"] == []
-    assert "card" not in s.history[-1]
+    # no agent, no repo lookup: at most the Connect GitHub button, never steps to Settings
+    assert all(b.get("nav") == "github" for c in st["cards"] for b in c["buttons"])
+    assert "Settings" not in st["messages"][0] and "approve the code" not in st["messages"][0]
 
 
 def test_flag_on_answers_from_the_repos_with_a_card(template_source, fake_llm, workdir, gh, monkeypatch):
@@ -361,7 +362,8 @@ def test_flag_on_answers_from_the_repos_with_a_card(template_source, fake_llm, w
     reply = st["messages"][0]
     assert "route-planner" in reply and "Route Planner" in reply and "forked-lib" not in reply
     labels = [b["label"] for b in st["cards"][0]["buttons"]]
-    assert "Connect GitHub" in labels and len(labels) <= rc.MAX_BUTTONS
+    # the username on the resume reads the public repos: no Connect GitHub button is needed
+    assert labels and "Connect GitHub" not in labels and len(labels) <= rc.MAX_BUTTONS
     assert s.history[-1]["card"] == st["cards"][0]
 
 

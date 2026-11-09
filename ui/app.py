@@ -3131,6 +3131,19 @@ def session_action():
     return jsonify(_session().apply_action(token, str(body.get("choice") or ""), args))
 
 
+@app.post("/api/session/github_connected")
+@_guard
+def session_github_connected():
+    """GitHub became connected (any path: the chat's card, Settings, a pasted token). When the
+    open resume chat's last word on GitHub was "not connected", it carries on by itself: the
+    repo ranking for this job, with no turn from the person (WebIntake.github_connected). Once
+    per connect; with no resume chat open, nothing happens."""
+    s = _SESSION.get("s")
+    if s is None:
+        return jsonify({"resumed": False})
+    return jsonify(_session().github_connected(pending=bool((request.json or {}).get("pending"))))
+
+
 def _receive_upload():
     """Validate an uploaded file, save the raw copy under data/uploads (kept, never
     deleted, not indexed), and return (session, extracted_text, filename, links): ``links`` are
@@ -6747,7 +6760,7 @@ def github_status():
     return jsonify({"configured": bool(_cred("GITHUB_TOKEN")), "login": conn.get("login") or "",
                     "connected": bool(conn.get("connected")), "device_flow": available(),
                     "app_flow": app_flow, "manage_url": github_app.manage_url(BROKER_URL),
-                    # a GitHub App user token (ghu_...), so "Choose repos on GitHub" applies
+                    # a GitHub App user token (ghu_...): after Disconnect, "remove the app on GitHub"
                     "via_app": (_cred("GITHUB_TOKEN") or "").startswith("ghu_"),
                     **({"reason": conn["reason"]} if conn.get("reason") else {})})
 
