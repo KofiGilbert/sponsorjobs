@@ -78,6 +78,8 @@ hiddenimports = [
     "ui.shell", "tailoring.compiler", "tailoring.assembler", "tailoring.keywords",
     "sourcing.sponsors", "sourcing.ats", "sourcing.service", "sourcing.watchlist",
     "submit.allowlist", "intake.memory", "intake.template_manifest", "llm.anthropic_client",
+    # Sign in with GitHub: the device flow and its public Client ID (config/ is also a data dir).
+    "ui.github_device", "config", "config.github_oauth",
     # The applicant brain (docs/applicant-brain.md), imported inside functions in ui/app.py.
     "applicant", "applicant.keys", "applicant.store", "applicant.library", "applicant.migrate",
     "applicant.redact", "applicant.facts", "applicant.mapper", "applicant.expiry", "applicant.rules",

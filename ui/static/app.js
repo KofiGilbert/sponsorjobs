@@ -3093,6 +3093,11 @@
       await openSettings();
       document.querySelector('.set-tab[data-set="connections"]')?.click();
     },
+    github: async () => {
+      await openSettings();
+      document.querySelector('.set-tab[data-set="connections"]')?.click();
+      await connectGitHub();
+    },
   };
   // repo_fit: which of the person's GitHub repositories fit this job (ui/repo_rank.py). Fits get
   // a checkbox; doesn't fit and couldn't judge are one line each, collapsed. Only the person's
@@ -6460,10 +6465,7 @@
   async function openGitHubSettings() {
     await openSettings();
     document.querySelector('[data-set="connections"]')?.click();
-    const f = $("#ghForm");
-    if (f && f.hidden && !IDEAS.github?.connected) { f.hidden = false; if ($("#ghMsg")) $("#ghMsg").hidden = true; }
-    f?.scrollIntoView?.({ block: "nearest" });
-    $("#ghToken")?.focus();
+    await connectGitHub();
   }
   // The toolbar's GitHub slot: an outline Connect button while not connected, a quiet state once it is.
   function renderIdeaGitHub() {
@@ -9169,6 +9171,74 @@
   });
 
   // ---- Connections settings pane: Telegram (connect in-app), browser extension, Gmail ----
+  // Sign in with GitHub (device flow). GH_DEVICE: this build has the company's Client ID.
+  let GH_DEVICE = false, GH_ON = false, GH_POLL = null, GH_RUN = 0;
+  function ghDeviceUi(state, text) {
+    const box = $("#ghDevice"); if (!box) return;
+    box.hidden = state === "off";
+    const waiting = state === "code";
+    if ($("#ghCodeWrap")) $("#ghCodeWrap").hidden = !waiting;
+    if ($("#ghOpen")) $("#ghOpen").hidden = !waiting;
+    if ($("#ghWait")) $("#ghWait").hidden = !waiting;
+    if ($("#ghRetry")) $("#ghRetry").hidden = state !== "error";
+    const msg = $("#ghDevMsg");
+    if (msg) { msg.textContent = text || ""; msg.hidden = !text; }
+  }
+  function ghDeviceStop(tellServer) {
+    GH_RUN++; clearTimeout(GH_POLL); GH_POLL = null;
+    ghDeviceUi("off");
+    if (tellServer) fetch("/api/github/device/cancel", { method: "POST" }).catch(() => {});
+  }
+  async function ghCopyCode() {
+    const code = $("#ghCode")?.textContent || "", b = $("#ghCopy");
+    if (!code) return;
+    try { await navigator.clipboard.writeText(code); if (b) { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1600); } }
+    catch { /* the code is on screen and selectable */ }
+  }
+  async function ghDeviceStart() {
+    ghDeviceStop(false);
+    const run = GH_RUN, f = $("#ghForm");
+    if (f) { f.reset(); f.hidden = true; }
+    if ($("#ghCode")) $("#ghCode").textContent = "";
+    ghDeviceUi("busy");
+    let d = {}, ok = false;
+    try {
+      const r = await fetch("/api/github/device/start", { method: "POST" });
+      d = await r.json().catch(() => ({})); ok = r.ok && !!d.user_code;
+    } catch { /* offline: said below */ }
+    if (run !== GH_RUN) return;
+    if (!ok) return ghDeviceUi("error", d.error || "Couldn't reach GitHub. Check your connection and try again.");
+    $("#ghCode").textContent = d.user_code;
+    if ($("#ghOpen")) $("#ghOpen").href = d.verification_uri || "https://github.com/login/device";
+    ghDeviceUi("code");
+    ghCopyCode();
+    ghDevicePoll(run, d.interval);
+  }
+  function ghDevicePoll(run, interval) {
+    GH_POLL = setTimeout(async () => {
+      if (run !== GH_RUN) return;
+      let d = null;
+      try { d = await fetch("/api/github/device/poll", { method: "POST" }).then(r => r.json()); }
+      catch { /* a dropped connection: keep checking */ }
+      if (run !== GH_RUN) return;
+      if (!d || d.state === "pending") return ghDevicePoll(run, (d && d.interval) || interval);
+      if (d.connected) {
+        ghDeviceStop(false);
+        await renderConnections();
+        document.dispatchEvent(new CustomEvent("tailor:github"));   // the ideas toolbar and Start follow
+        return;
+      }
+      ghDeviceUi("error", d.error || "Couldn't connect GitHub. Try again.");
+    }, Math.max(1, Number(interval) || 5) * 1000);
+  }
+  // Settings and the chat's Connect GitHub button both land here: Connections, and the sign-in
+  // already started when it is available.
+  async function connectGitHub() {
+    await renderConnections();
+    if (GH_ON) return;
+    if (GH_DEVICE) { if ($("#ghDevice")?.hidden) ghDeviceStart(); $("#ghDevice")?.scrollIntoView?.({ block: "nearest" }); return; }
+    const f = $("#ghForm"); if (f) { f.hidden = false; if ($("#ghMsg")) $("#ghMsg").hidden = true; f.scrollIntoView?.({ block: "nearest" }); $("#ghToken")?.focus(); }
+  }
   function connPill(el, ok, onText, offText) {
     if (!el) return;
     el.textContent = ok ? (onText || "Connected") : (offText || "Not connected");
@@ -9197,9 +9267,13 @@
     } catch { /* leave */ }
     try {
       const gh = await fetch("/api/github/status").then(r => r.json());
+      GH_DEVICE = !!gh.device_flow; GH_ON = !!gh.configured;
       connPill($("#ghStatus"), gh.configured, gh.login ? `Connected as ${gh.login}` : "Connected", "Not connected");
       if ($("#ghDisconnect")) $("#ghDisconnect").hidden = !gh.configured;
-      if ($("#ghToggle")) $("#ghToggle").textContent = gh.configured ? "Manage" : "Connect";
+      // Sign in with GitHub is the way to connect; the token box is the advanced path behind a
+      // link. A build without the company's Client ID keeps the token box as before.
+      if ($("#ghToggle")) $("#ghToggle").textContent = gh.configured ? (GH_DEVICE ? "Disconnect" : "Manage") : "Connect";
+      if ($("#ghAdvWrap")) $("#ghAdvWrap").hidden = !GH_DEVICE || gh.configured;
     } catch { /* leave */ }
   }
   // The SponsorJobs address (docs/mail-alias.md): one click to take it, one to stop using it.
@@ -9348,8 +9422,25 @@
   }
   ["pointerdown", "keydown"].forEach(ev => document.addEventListener(ev, ntPresence, { passive: true }));
   ntPresence();
-  // GitHub connect (token), mirroring Telegram. Lets a verified project be published.
-  $("#ghToggle")?.addEventListener("click", () => { const f = $("#ghForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { if ($("#ghMsg")) $("#ghMsg").hidden = true; $("#ghToken")?.focus(); } } });
+  // GitHub connect. Lets a verified project be published. The default is Sign in with GitHub
+  // (the device flow): one short code, approved on github.com in the person's own browser,
+  // checked here at the interval GitHub asks for. The token box stays as the advanced path.
+  $("#ghToggle")?.addEventListener("click", async () => {
+    if (GH_DEVICE) {
+      if (!GH_ON) return ghDeviceStart();
+      await ghDisconnect();
+      return;
+    }
+    const f = $("#ghForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { if ($("#ghMsg")) $("#ghMsg").hidden = true; $("#ghToken")?.focus(); } }
+  });
+  $("#ghAdvanced")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    ghDeviceStop(true);
+    const f = $("#ghForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { if ($("#ghMsg")) $("#ghMsg").hidden = true; $("#ghToken")?.focus(); } }
+  });
+  $("#ghCopy")?.addEventListener("click", () => ghCopyCode());
+  $("#ghRetry")?.addEventListener("click", () => ghDeviceStart());
+  $("#ghDevCancel")?.addEventListener("click", () => ghDeviceStop(true));
   $("#ghCancel")?.addEventListener("click", () => { const f = $("#ghForm"); if (f) { f.reset(); f.hidden = true; } });
   $("#ghForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -9364,12 +9455,13 @@
     renderConnections();
     document.dispatchEvent(new CustomEvent("tailor:github"));   // the ideas toolbar and Start follow
   });
-  $("#ghDisconnect")?.addEventListener("click", async () => {
+  async function ghDisconnect() {
     await fetch("/api/github/disconnect", { method: "POST" });
     const f = $("#ghForm"); if (f) { f.reset(); f.hidden = true; }
-    renderConnections();
+    await renderConnections();
     document.dispatchEvent(new CustomEvent("tailor:github"));
-  });
+  }
+  $("#ghDisconnect")?.addEventListener("click", ghDisconnect);
   $("#extHelp")?.addEventListener("click", () => { const d = $("#extDetail"); if (d) d.hidden = !d.hidden; });
   $("#gmHelp")?.addEventListener("click", () => { const d = $("#gmDetail"); if (d) d.hidden = !d.hidden; });
   $("#menuSettings")?.addEventListener("click", openSettings);

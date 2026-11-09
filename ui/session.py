@@ -1595,7 +1595,8 @@ class WebIntake:
     # model now gets the app's true facts, and a reply that still denies them is replaced by
     # one written from what the app really holds.
     GITHUB_CONNECT_STEPS = ("click your name at the bottom of the left sidebar, choose "
-                            "Settings, then Connections, and click Connect next to GitHub")
+                            "Settings, then Connections, click Connect next to GitHub, and "
+                            "approve the code on GitHub")
     _ASKS_FILES = re.compile(r"\b(upload(?:ed|s|ing)?|attach(?:ed|ment)?|the file|my file|that file|"
                              r"pdf|github|repos?|repositor(?:y|ies))\b", re.I)
     _ASKS_SEEN = re.compile(r"\b(see|saw|seen|read|notice\w*|miss\w*|pick\w* up|pull\w*|includ\w*|"

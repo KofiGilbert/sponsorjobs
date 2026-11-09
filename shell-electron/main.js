@@ -211,11 +211,21 @@ const OWN_BROWSER_HOSTS = [
   // address bar), never in the in-app pane behind the Passes window (Kofi, 2026-10-23).
   "checkout.stripe.com", "billing.stripe.com",
 ];
+// Sign-in pages on a host whose other pages may open in the pane. Sign in with GitHub (the
+// device flow, ui/github_device.py) sends the person to github.com/login/device: approving there
+// belongs in their own browser, where they are already signed in to GitHub.
+const OWN_BROWSER_PATHS = [
+  ["github.com", "/login"], ["github.com", "/sessions"],
+];
 
 function opensInOwnBrowser(url) {
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    return OWN_BROWSER_HOSTS.some((h) => host === h || host.endsWith("." + h));
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    if (OWN_BROWSER_HOSTS.some((h) => host === h || host.endsWith("." + h))) return true;
+    const path = u.pathname.toLowerCase();
+    return OWN_BROWSER_PATHS.some(([h, p]) => (host === h || host === "www." + h)
+                                            && (path === p || path.startsWith(p + "/")));
   } catch (e) { return false; }
 }
 
