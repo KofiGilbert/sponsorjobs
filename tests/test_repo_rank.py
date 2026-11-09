@@ -366,3 +366,21 @@ def test_the_chat_status_agrees_with_the_token_the_lookup_uses(template_source, 
     s.github_token = lambda: TOKEN
     out = rc.TOOLS["github_status"].run(s._agent_ctx(), {})
     assert out["connected"] is True and "how_to_connect" not in out
+
+
+def test_a_repo_already_on_the_resume_is_not_offered_again(template_source, fake_llm, workdir, gh):
+    # Found in the proof on real data: "gatecheck" is the resume's "Gate Check (JavaScript, OCR,
+    # Firebase)", and "last-mile-ops-simulator" its "Last-Mile Operations Simulator (...)".
+    assert repo_rank.same_project("gatecheck", "Gate Check (JavaScript, OCR, Firebase)")
+    assert repo_rank.same_project("last-mile-ops-simulator",
+                                  "Last-Mile Operations Simulator (Python, simulation, operations analytics)")
+    assert not repo_rank.same_project("sql-notes", "SQL Dashboard")
+    s = _session(template_source, fake_llm, workdir)
+    s.essentials["projects"] = [{"org": "KPI Dashboard (Power BI, SQL)", "bullets": ["Built KPI dashboards."]}]
+    got = s._rank_for_job("janedoe")
+    kpi = next(r for r in got["repos"] if r["name"] == "kpi-dashboard")
+    assert kpi["on_resume"]
+    card = rc.repo_fit_card(got, "t" * 24)
+    assert next(f for f in card["fits"] if f["name"] == "kpi-dashboard")["on_resume"]
+    out = s.add_projects([repo_rank.entry_for(kpi)])
+    assert out["added"] == [] and out["skipped"] == ["kpi-dashboard"]

@@ -3123,17 +3123,19 @@
       const list = el("div", "rf-list");
       fits.forEach(f => {
         const row = el("label", "rf-row");
+        row.dataset.name = f.name || "";
         const box = document.createElement("input");
         box.type = "checkbox"; box.value = f.key || "";
+        const added = used && (card.added || []).includes(f.name);
         box.disabled = used || f.on_resume || !card.token;
-        box.checked = !f.on_resume && picked.has(f.key);
+        box.checked = added || (!f.on_resume && picked.has(f.key));
         if (!box.disabled) boxes.push(box);
         const name = f.url
           ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(unDash(f.name))}</a>`
           : esc(unDash(f.name));
         const body = el("div", "rf-body");
         body.innerHTML = `<div class="rf-head"><span class="rf-name">${name}</span>`
-          + `<span class="rf-fit">${esc(f.on_resume ? "On your resume" : (FIT_LABEL[f.fit] || ""))}</span></div>`
+          + `<span class="rf-fit">${esc(added ? "Added" : f.on_resume ? "On your resume" : (FIT_LABEL[f.fit] || ""))}</span></div>`
           + (f.why ? `<div class="rf-why">${esc(unDash(f.why))}</div>` : "")
           + (f.terms && f.terms.length ? `<div class="rf-terms">${f.terms.map(t => `<span>${esc(t)}</span>`).join("")}</div>` : "")
           + (f.note ? `<div class="rf-why">${esc(unDash(f.note))}</div>` : "");
@@ -3163,6 +3165,9 @@
           const st = await api("/api/session/action", { token: card.token, choice: "add", args: { keys } });
           if (st.action_ok) {
             boxes.forEach(b => { b.disabled = true; });
+            wrap.querySelectorAll(".rf-row").forEach(r => {
+              if ((st.added || []).includes(r.dataset.name)) r.querySelector(".rf-fit").textContent = "Added";
+            });
             add.textContent = (st.added && st.added.length) ? `Added ${st.added.join(", ")}` : "Used";
           } else if (st.action_error) {
             bubble("agent", chatText(st.action_error));

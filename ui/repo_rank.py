@@ -84,6 +84,22 @@ def _words_of(name: str) -> str:
     return re.sub(r"[-_.]+", " ", str(name or ""))
 
 
+def same_project(a: str, b: str) -> bool:
+    """A repository and a resume project are the same thing: "gatecheck" and "Gate Check
+    (JavaScript, OCR, Firebase)", "last-mile-ops-simulator" and "Last-Mile Operations Simulator".
+    The bracketed tech list a resume adds is ignored."""
+    from intake.links import same_title
+
+    def core(x):
+        return _words_of(re.sub(r"\([^)]*\)", " ", str(x or ""))).strip()
+    x, y = core(a), core(b)
+    if not x or not y:
+        return False
+    if re.sub(r"[^a-z0-9]", "", x.lower()) == re.sub(r"[^a-z0-9]", "", y.lower()):
+        return True
+    return same_title(x, y)
+
+
 def full_name(card: dict, login: str = "") -> str:
     m = re.search(r"github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9._-]+)", str(card.get("url") or ""), re.I)
     if m:

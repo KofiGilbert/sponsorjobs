@@ -1248,7 +1248,7 @@ class WebIntake:
         return out
 
     def _on_resume(self, repo: dict) -> bool:
-        from intake.links import same_title
+        from ui.repo_rank import same_project as same_title
         for p in self._resume_projects(github_too=True):
             name = str(p.get("org") or p.get("title") or p.get("name") or "")
             link = str(p.get("link") or p.get("url") or "").rstrip("/").lower()
@@ -1356,7 +1356,7 @@ class WebIntake:
         essentials and page, the brain (source ``source``) and the saved profile (section 4b),
         then rebuild the page. An entry already there by name, link or repo is skipped, so
         adding twice changes nothing. Returns {"added": [names], "skipped": [names], "saved"}."""
-        from intake.links import same_title
+        from ui.repo_rank import same_project as same_title
 
         def there(e, lst):
             for p in lst or []:
