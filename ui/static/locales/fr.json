@@ -702,6 +702,8 @@
   "projects.quizSubmit": "Envoyer",
   "projects.quizScore": "{s} sur {m}",
   "projects.quizPassed": "Réussi. {t} est vérifié.",
+  "projects.quizAdded": "Réussi. Ajouté à ton CV pour {j}.",
+  "projects.backResume": "Retour à ton CV",
   "projects.quizMissed": "Il faut {p} pour réussir. Revois celles que tu as manquées, puis recommence.",
   "projects.yourAnswer": "Ta réponse",
   "projects.correctAnswer": "Correcte",

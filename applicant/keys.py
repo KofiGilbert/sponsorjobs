@@ -18,7 +18,9 @@ SENSITIVITIES = (NORMAL, LEGAL, EEO)
 # Where a fact came from (docs section 5.1). ``you`` and ``drafted`` are the answer library's
 # own two sources, kept as they are.
 SOURCES = ("you", "card", "onboarding", "ask_bar", "ask_telegram", "late_telegram", "extension",
-           "resume", "chat", "telegram_chat", "drafted", "derived", "migration", "github")
+           "resume", "chat", "telegram_chat", "drafted", "derived", "migration", "github",
+           # a project the AI built that the person learned and defended (passed its quiz)
+           "built")
 # A self-identification value only ever comes from the person's own direct choice (section 9).
 EEO_REFUSED_SOURCES = frozenset({"chat", "telegram_chat", "resume", "drafted", "derived", "model"})
 # A legal value proposed by these waits as needs_check (unconfirmed_legal) and never fills a form.

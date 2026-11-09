@@ -1389,7 +1389,19 @@ def _session() -> WebIntake:
     if getattr(s, "github_token", None) is None:
         # Only the chat agent's repo lookup holds it (ui/github_repos.py); never shown or logged.
         s.github_token = lambda: _cred("GITHUB_TOKEN") or ""
+    if getattr(s, "ideas_for", None) is None:
+        s.ideas_for = lambda: _session_ideas(s)               # ideas for THIS job (plan PR 7)
+    if getattr(s, "start_build", None) is None:
+        s.start_build = _chat_start_build                     # Build from a chat card (plan PR 8)
     return s
+
+
+def _chat_start_build(idea: dict, for_resume: dict) -> dict:
+    """The build a chat card's click starts: the Projects page's own start path (one package),
+    marked for this resume. Returns the project as the Projects page sees it."""
+    p = _start_ai_build(idea, False, for_resume=for_resume)
+    p = next((x for x in _load_projects() if x.get("id") == p["id"]), p)
+    return _project_public(p)
 
 
 def _github_connection() -> dict:
@@ -8063,32 +8075,31 @@ def _ideas_key(role: str, query: str) -> str:
     return f"{k}|q:{query.lower()}" if query else k
 
 
-@app.post("/api/projects/ideas")
-@_guard
-def projects_ideas():
-    """GitHub project ideas for the target role, with no typing needed. Body (all optional):
-    {role: a different target, refresh: true to skip the cache, query: a topic to search ideas
-    for (still aimed at the role), exclude: titles already shown, which asks for ANOTHER batch to
-    append}. Ideas are cached per (role, query), so reopening is instant and costs nothing. New
-    batches count against a local daily cap; a cache hit never does."""
-    b = request.json or {}
-    role, terms, source = _project_target(str(b.get("role") or ""))
-    query = re.sub(r"\s+", " ", str(b.get("query") or "")).strip()[:80]
-    exclude = [str(t).strip()[:80] for t in (b.get("exclude") or []) if str(t).strip()][:60] \
-        if isinstance(b.get("exclude"), list) else []
+def _ideas_for(role: str, terms: list[str], query: str = "", exclude: list | None = None,
+               refresh: bool = False, source: str = "", jd_key: str = "") -> tuple[dict, int]:
+    """GitHub project ideas aimed at ``role`` and the job's skill ``terms``: (body, status). The
+    Projects page passes the role it targets; the resume chat passes the open job's role and
+    ``skill_terms(session.jd)``, with ``jd_key`` (a digest of that job) so its ideas are cached
+    for that job and never served from another job of the same title. ``exclude`` (titles
+    already shown) asks for ANOTHER batch to append. A new batch counts against the local daily
+    cap; a cache hit never does. 429 with code "ideas_cap" when the cap is used up."""
+    query = re.sub(r"\s+", " ", str(query or "")).strip()[:80]
+    exclude = [str(t).strip()[:80] for t in (exclude or []) if str(t).strip()][:60] \
+        if isinstance(exclude, list) else []
+    terms = [str(t) for t in terms or [] if str(t).strip()]
     more = bool(exclude)
-    key = _ideas_key(role, query)
+    key = _ideas_key(role, query) + (f"|jd:{jd_key}" if jd_key else "")
     gh = {"connected": bool(_cred("GITHUB_TOKEN")), "login": _cred("GITHUB_LOGIN") or ""}
     base = {"role": role, "source": source, "query": query, "github": gh}
     hit = _ideas_cache().get(key)
-    if not b.get("refresh") and not more and hit and hit.get("ideas"):
+    if not refresh and not more and hit and hit.get("ideas"):
         ideas = _heal_examples(key, hit)
-        return jsonify({**base, "ideas": ideas, "batches": hit.get("batches") or [len(ideas)],
-                        "cached": True, "cap": _ideas_cap_state()})
+        return {**base, "ideas": ideas, "batches": hit.get("batches") or [len(ideas)],
+                "cached": True, "cap": _ideas_cap_state()}, 200
     cap = _ideas_cap_state()
     if cap["left"] <= 0:
-        return jsonify({**base, "error": f"You've reached today's {cap['limit']} idea batches. More tomorrow.",
-                        "code": "ideas_cap", "cap": cap}), 429
+        return {**base, "error": f"You've reached today's {cap['limit']} idea batches. More tomorrow.",
+                "code": "ideas_cap", "cap": cap}, 429
     saved = _memory().load("default") or {}
     profile = saved.get("profile") or saved.get("essentials") or {}
     prof_text = _profile_skill_text(profile)
@@ -8120,8 +8131,36 @@ def projects_ideas():
         else:
             _ideas_cache_put(key, {"role": role, "query": query, "ideas": ideas, "batches": [len(ideas)],
                                    "at": time.time()})
-    return jsonify({**base, "ideas": ideas, "batches": [len(ideas)], "append": more, "cached": False,
-                    "cap": _ideas_cap_state()})
+    return {**base, "ideas": ideas, "batches": [len(ideas)], "append": more, "cached": False,
+            "cap": _ideas_cap_state()}, 200
+
+
+def _session_ideas(s) -> dict:
+    """Project ideas for the job open in the resume chat: its role and the skills its JD names,
+    not the last saved application's (``_project_target``)."""
+    import hashlib
+    from tailoring.keywords import skill_terms
+    jd = str(getattr(s, "jd", "") or "")
+    role = re.sub(r"\s+", " ", str(getattr(s, "role", "") or "")).strip()[:120]
+    body, status = _ideas_for(role, skill_terms(jd)[:12] if jd else [], source="chat",
+                              jd_key=hashlib.sha1(jd.encode("utf-8")).hexdigest()[:12] if jd else "")
+    return {**body, "ok": status == 200}
+
+
+@app.post("/api/projects/ideas")
+@_guard
+def projects_ideas():
+    """GitHub project ideas for the target role, with no typing needed. Body (all optional):
+    {role: a different target, refresh: true to skip the cache, query: a topic to search ideas
+    for (still aimed at the role), exclude: titles already shown, which asks for ANOTHER batch to
+    append}. Ideas are cached per (role, query), so reopening is instant and costs nothing. New
+    batches count against a local daily cap; a cache hit never does."""
+    b = request.json or {}
+    role, terms, source = _project_target(str(b.get("role") or ""))
+    body, status = _ideas_for(role, terms, str(b.get("query") or ""),
+                              b.get("exclude") if isinstance(b.get("exclude"), list) else [],
+                              refresh=bool(b.get("refresh")), source=source)
+    return jsonify(body), status
 
 
 # Saved ideas: a small local bookmark list, kept across searches, refreshes and restarts.
@@ -8340,6 +8379,8 @@ def projects_grade(pid):
     p["result"] = result
     p["status"] = "verified" if result.get("pass") else "draft"
     _save_projects(projects)
+    if result.get("pass"):
+        result = {**result, **_on_project_verified(p)}
     return jsonify(result)
 
 
@@ -8379,6 +8420,14 @@ def projects_publish(pid):
     if entry is not None and not entry.get("link") and p["repo_url"]:
         entry["link"] = p["repo_url"]
         mem.save("default", prof, saved.get("essentials") or {}, saved.get("history") or [])
+    # And the resume open in the chat, when the project is on it: the link reaches that page too.
+    live = _SESSION.get("s")
+    if live is not None and p["repo_url"]:
+        try:
+            with live.lock:
+                live.link_project(p.get("id") or "", p.get("title") or "", p["repo_url"])
+        except Exception:      # noqa: BLE001 - the repo is public either way
+            traceback.print_exc()
     return jsonify({"ok": True, "url": p["repo_url"]})
 
 
@@ -8415,33 +8464,81 @@ def _publish_ai_prepare(token: str, p: dict):
     return None
 
 
+def _project_tools(p: dict, n: int = 3) -> str:
+    """The first few tools of a project's stack, for the resume line's right-hand slot."""
+    parts = [t.strip() for t in re.split(r"[,;/]| and ", str(p.get("tech") or "")) if t.strip()]
+    if not parts:
+        parts = [str(k).strip() for k in p.get("skills") or [] if str(k).strip()]
+    return ", ".join(parts[:n])[:80]
+
+
+def _verified_cv_entry(p: dict) -> dict:
+    """The resume entry for a VERIFIED project, built from what the person defended: the summary
+    bullet, plus the tech stack (recruiters and ATS look for it). A public repo carries its link;
+    a private one would 404 for a recruiter, so it has none until /publish fills it in."""
+    bullets = []
+    if str(p.get("summary") or "").strip():
+        bullets.append(p["summary"].strip())
+    if str(p.get("tech") or "").strip():
+        bullets.append(f"Built with {p['tech'].strip()}.")
+    return {"org": p["title"], "location": "Personal Project", "dates": "",
+            "link": "" if p.get("repo_private") else (p.get("repo_url") or ""),
+            "tools": _project_tools(p), "bullets": bullets, "suggested": False,
+            "project_id": p.get("id") or ""}
+
+
+def _save_verified_to_profile(p: dict) -> None:
+    """The verified project on the saved profile's projects (section 4b), once by title."""
+    mem = _memory()
+    saved = mem.load("default") or {}
+    prof = saved.get("profile") or {}
+    projects = prof.setdefault("projects", [])
+    if not any(isinstance(pr, dict) and pr.get("org") == p["title"] for pr in projects):
+        projects.append(_verified_cv_entry(p))
+    mem.save("default", prof, saved.get("essentials") or {}, saved.get("history") or [])
+
+
+def _on_project_verified(p: dict, score=None, total=None) -> dict:
+    """A project just passed its defence. It always goes on the saved profile. When it was built
+    for the resume open in the chat (``p.for_resume.jobname`` is the live session's), it is also
+    added to that resume, the page is rebuilt, and the chat says so with a card: under the
+    session's lock, because this runs on the quiz request's thread. ``p.on_resume`` records the
+    resumes it was added to, so a second pass never adds it twice. Returns {"added_to": {role,
+    company} or None}."""
+    try:
+        _save_verified_to_profile(p)
+    except Exception:      # noqa: BLE001 - the pass stands even if the profile write fails
+        traceback.print_exc()
+    want = p.get("for_resume") if isinstance(p.get("for_resume"), dict) else {}
+    s = _SESSION.get("s")
+    job = str(want.get("jobname") or "")
+    if not (s is not None and job and job == getattr(s, "jobname", None)
+            and job not in (p.get("on_resume") or [])):
+        return {"added_to": None}
+    try:
+        with s.lock:
+            s.add_verified_project(_verified_cv_entry(p), title=p.get("title") or "",
+                                   score=score, total=total, project_id=p.get("id") or "")
+    except Exception:      # noqa: BLE001 - the saved profile has it; the chat keeps working
+        traceback.print_exc()
+        return {"added_to": None}
+    _update_project(p["id"], lambda x: x.update(
+        on_resume=list(dict.fromkeys(list(x.get("on_resume") or []) + [job]))))
+    return {"added_to": {"role": str(getattr(s, "role", "") or want.get("role") or ""),
+                         "company": str(getattr(s, "company", "") or want.get("company") or "")}}
+
+
 @app.post("/api/projects/<pid>/tocv")
 @_guard
 def projects_to_cv(pid):
     """Add a VERIFIED project to the saved profile's projects. THE GATE: refuses unless the
-    person passed the defense test, so nothing reaches the CV they can't defend."""
+    person passed the defense test, so nothing reaches the resume they can't defend."""
     p = next((x for x in _load_projects() if x.get("id") == pid), None)
     if not p:
         return jsonify({"error": "Project not found."}), 404
     if p.get("status") != "verified":
         return jsonify({"error": "Pass the understanding test before adding this to your resume."}), 400
-    mem = _memory()
-    saved = mem.load("default") or {}
-    prof = saved.get("profile") or {}
-    projects = prof.setdefault("projects", [])
-    if not any(pr.get("org") == p["title"] for pr in projects):
-        # Build the CV entry from what they defended: the summary bullet, plus the tech
-        # stack (recruiters and ATS look for it). If published, carry the repo link too.
-        bullets = []
-        if str(p.get("summary") or "").strip():
-            bullets.append(p["summary"].strip())
-        if str(p.get("tech") or "").strip():
-            bullets.append(f"Built with {p['tech'].strip()}.")
-        projects.append({"org": p["title"], "location": "Personal Project", "dates": "",
-                         # a private repo would 404 for a recruiter, so only a public one is linked
-                         "link": "" if p.get("repo_private") else (p.get("repo_url") or ""),
-                         "bullets": bullets, "suggested": False})
-    mem.save("default", prof, saved.get("essentials") or {}, saved.get("history") or [])
+    _save_verified_to_profile(p)
     return jsonify({"ok": True})
 
 
@@ -8621,8 +8718,10 @@ def _spawn_build(pid: str, llm, generate: bool = True) -> None:
                      name=f"project-build-{pid}").start()
 
 
-def _start_ai_build(idea: dict, local: bool) -> dict:
-    """Create the AI-built project, count its package, and start the build job."""
+def _start_ai_build(idea: dict, local: bool, for_resume: dict | None = None) -> dict:
+    """Create the AI-built project, count its package, and start the build job. ``for_resume``
+    ({jobname, role, company, jd_sha}) marks a build started from the resume chat for that
+    resume: passing its quiz adds it there (``_on_project_verified``)."""
     from ui.github_publish import slugify
     title = str(idea.get("title") or "").strip()[:80]
     target = "local" if (local or not _cred("GITHUB_TOKEN")) else "github"
@@ -8635,6 +8734,8 @@ def _start_ai_build(idea: dict, local: bool) -> dict:
          "target": target, "ai_credit": True,
          "package": {"counted_at": time.time(), "generations": 1},
          "build": {"state": "queued", "done": 0, "total": 0, "error": "", "started": time.time(), "rev": 1}}
+    if isinstance(for_resume, dict) and for_resume.get("jobname"):
+        p["for_resume"] = {k: str(for_resume.get(k) or "")[:160] for k in ("jobname", "role", "company", "jd_sha")}
     with _PROJ_LOCK:
         projects = _load_projects()
         projects.append(p)
@@ -8948,7 +9049,9 @@ def projects_quiz_submit(pid):
             x["result"] = {"pass": True, "via": "quiz",
                            "summary": f"Passed the Defend it quiz, {res['score']} of {res['total']}."}
     p = _update_project(pid, save)
-    return jsonify({**res, "project": _project_public(p)})
+    extra = _on_project_verified(p, res["score"], res["total"]) if res["passed"] else {"added_to": None}
+    p = _project_or_404(pid)[0] or p
+    return jsonify({**res, **extra, "project": _project_public(p)})
 
 
 # ---- Interview prep (Feature 3): help someone who has LANDED an interview practice BEFOREHAND,

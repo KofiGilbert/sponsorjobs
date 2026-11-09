@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import threading
 from pathlib import Path
 
 from intake.diary import Diary
@@ -897,6 +898,16 @@ class WebIntake:
         # spends (POST /api/session/action); only the person's click uses one, never a tool.
         self.rank_state: dict = {"count": 0, "cache": {}}
         self.action_tokens: dict = {}
+        # The app's hooks for project ideas aimed at THIS job (() -> ui/app._ideas_for's body) and
+        # for starting an AI build from a chat card ((idea, for_resume) -> the project), set by
+        # ui/app._session(). None in tests and bare sessions.
+        self.ideas_for = None
+        self.start_build = None
+        # One person's resume is changed from more than one request thread: the chat, a card's
+        # click, and a passed quiz on the Projects page (which adds the project here). Every
+        # change to this session runs under this lock; an RLock, so a change that calls
+        # another (a click that rebuilds) does not wait on itself.
+        self.lock = threading.RLock()
         self.last_cover_letter = ""        # most recent drafted cover letter (bundled on accept)
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
         self.source_job = {}               # {url, source, source_id} when started from a sourced job
@@ -1227,6 +1238,8 @@ class WebIntake:
             history=lambda: self.prior_history + self.history,
             secrets=lambda: [t for t in (self._token(),) if t],
             rank_repos=self._rank_for_job, offer=self._offer,
+            suggest_ideas=self._ideas if callable(self.ideas_for) else None,
+            offer_build=self._offer_build if callable(self.start_build) else None,
             role=self.role or "", company=self.company or "")
 
     # -- repo ranking and adding (plan PRs 3 and 4) ------------------------------------- #
@@ -1297,10 +1310,123 @@ class WebIntake:
             self.action_tokens.pop(old, None)
         return tok
 
+    def _ideas(self) -> dict:
+        """Project ideas for this job, from the app (ui/app._session_ideas: this session's role
+        and JD skills, the daily cap, the cache)."""
+        return dict(self.ideas_for() or {})
+
+    def _for_resume(self) -> dict:
+        import hashlib
+        return {"jobname": self.jobname, "role": self.role or "", "company": self.company or "",
+                "jd_sha": hashlib.sha1(str(self.jd or "").encode("utf-8")).hexdigest()[:12]}
+
+    def _offer_build(self, ideas: list) -> str:
+        """A single-use token for an ideas card: one click on one idea's "Build this for this
+        job" starts that build (one package) for this resume. The ideas are kept as shown."""
+        import secrets as _secrets
+        import time as _time
+        keep = {}
+        for i in ideas or []:
+            if isinstance(i, dict) and str(i.get("title") or "").strip():
+                k = str(i.get("repo") or i["title"]).strip()[:80]
+                keep[k] = {f: i.get(f) for f in ("title", "pitch", "skills", "gaps", "tech", "repo")}
+        if not keep:
+            return ""
+        tok = _secrets.token_urlsafe(18)
+        self.action_tokens[tok] = {"kind": "build", "ideas": keep, "used": False, "at": _time.time()}
+        for old in list(self.action_tokens)[:-20]:
+            self.action_tokens.pop(old, None)
+        return tok
+
+    BUILD_STARTED = ("I started building {title} for this job. It takes a few minutes. When it is "
+                     "built, learn it and pass its quiz, and I will add it to this resume.")
+
+    def _apply_build(self, token: str, rec: dict, args: dict) -> dict:
+        key = str(args.get("key") or "")
+        idea = rec["ideas"].get(key)
+        if idea is None or not callable(self.start_build):
+            st = self._state([])
+            st.update({"action_ok": False, "action_error": "Pick one of the ideas on the card."})
+            return st
+        rec["used"] = True          # before the start: a second click can never count a package
+        try:
+            proj = dict(self.start_build(dict(idea), self._for_resume()) or {})
+        except Exception as exc:   # noqa: BLE001 - e.g. no packages left: nothing was built
+            rec["used"] = False
+            st = self._state([])
+            st.update({"action_ok": False,
+                       "action_error": str(exc) or "I could not start that build. Try again in a moment."})
+            return st
+        title = str(proj.get("title") or idea.get("title") or "")
+        msg = self.BUILD_STARTED.format(title=title)
+        self._append("agent", msg)
+        card = {"type": "project_progress", "project_id": str(proj.get("id") or ""), "title": title}
+        self.history[-1]["card"] = card
+        for t in reversed(self.history):
+            c = t.get("card")
+            if isinstance(c, dict) and c.get("token") == token:
+                c["used"] = True
+                c["built"] = key
+        self._persist()
+        st = self._state([msg], cards=[card])
+        st.update({"action_ok": True, "project": proj})
+        return st
+
+    def add_verified_project(self, entry: dict, title: str = "", score=None, total=None,
+                             project_id: str = "") -> dict:
+        """A project the person built for this resume passed its quiz (ui/app._on_project_verified,
+        on the quiz request's thread, under ``self.lock``): add it (source "built"), rebuild the
+        page, and say so in the chat with a card."""
+        with self.lock:
+            got = self.add_projects([entry], source="built")
+            if not got.get("added"):
+                return got
+            title = title or entry.get("org") or ""
+            where = f" for {self.role}" if self.role else ""
+            where += f" at {self.company}" if self.company else ""
+            score_s = f", {score} of {total}" if score is not None and total else ""
+            msg = f"You passed {title}{score_s}. I added it to your resume{where}."
+            cut = self._trims_note() if self.assembled is not None else ""
+            self._append("agent", msg + (f" {cut}" if cut else ""))
+            self.history[-1]["card"] = {"type": "project_progress", "project_id": project_id,
+                                        "title": title, "added": True}
+            self._persist()
+            return got
+
+    def link_project(self, project_id: str, title: str, url: str) -> bool:
+        """A project on this resume went public (/publish): its entry gets the link, and the page
+        is rebuilt when it shows. Only an entry with no link yet."""
+        from ui.repo_rank import same_project as same_title
+        if not url:
+            return False
+        with self.lock:
+            hit = False
+            bags = [self.essentials.get("projects") or [], (self.profile or {}).get("projects") or []]
+            used = getattr(self.assembled, "profile_used", None)
+            if isinstance(used, dict):
+                bags.append(used.get("projects") or [])
+            for bag in bags:
+                for e in bag:
+                    if not isinstance(e, dict) or e.get("link") or e.get("url"):
+                        continue
+                    if (project_id and e.get("project_id") == project_id) or \
+                            (e.get("source") == "built" and same_title(title, str(e.get("org") or ""))):
+                        e["link"] = url
+                        hit = True
+            if hit:
+                if self.assembled is not None:
+                    self._assemble()
+                self._persist()
+            return hit
+
     ACTION_USED = "That card was already used. Ask me again to see your repositories now."
     ACTION_GONE = "That card is from an earlier chat. Ask me again to check your repositories."
 
     def apply_action(self, token: str, choice: str, args: dict | None = None) -> dict:
+        with self.lock:
+            return self._apply_action(token, choice, args)
+
+    def _apply_action(self, token: str, choice: str, args: dict | None = None) -> dict:
         """The person's click on a card (POST /api/session/action): the only way a card changes
         the resume. ``choice`` "add" adds the ticked repositories (``args.keys``). A token works
         once; a used or unknown one changes nothing. Returns the session state with
@@ -1315,6 +1441,8 @@ class WebIntake:
             st = self._state([])
             st.update({"action_ok": False, "action_error": self.ACTION_USED})
             return st
+        if choice == "build" and rec.get("kind") == "build":
+            return self._apply_build(token, rec, args)
         if choice != "add" or rec.get("kind") != "add_projects":
             st = self._state([])
             st.update({"action_ok": False, "action_error": "I can't do that from this card."})
@@ -1407,7 +1535,7 @@ class WebIntake:
             for e in entries:
                 val = {k: e.get(k) for k in ("org", "dates", "link") if e.get(k)}
                 _F.put(st, "project", val, source=source, subject=f"project:{_norm(e['org'])}",
-                       source_ref=f"github:{e.get('repo') or e['org']}")
+                       source_ref=f"{source}:{e.get('repo') or e.get('project_id') or e['org']}")
         except Exception:      # noqa: BLE001 - the brain never breaks the chat
             pass
 
@@ -2950,6 +3078,10 @@ class WebIntake:
 
     # ------------------------------------------------------------------ conversation turn
     def submit(self, message: str):
+        with self.lock:
+            return self._submit(message)
+
+    def _submit(self, message: str):
         message = (message or "").strip()
         if not message:
             return self._state()
@@ -2959,6 +3091,10 @@ class WebIntake:
         if _wants_remove_suggested(message) and self._suggested_projects():
             return self.remove_suggested_projects()
         if _wants_project_ideas(message):
+            # With the agent on, ideas for THIS job come as a card the person builds from
+            # (suggest_projects_for_jd); no placeholder project goes on the page.
+            if self._agent_on():
+                return self._agent_reply(message)
             return self.suggest_projects_flow()
 
         # A read request, answered FROM STATE before anything can consume it as an

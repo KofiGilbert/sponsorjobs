@@ -63,6 +63,11 @@ class AppContext:
     # ranked repos the person may add -> a single-use action token for the card's button. Only
     # POST /api/session/action spends it (the person's click); no tool can.
     offer: Callable[[list], str] | None = None
+    # () -> project ideas for THIS job (ui/app._session_ideas: the open job's role and JD skills,
+    # the daily ideas cap, the cache), and ideas -> a single-use token for the ideas card's
+    # "Build this for this job" buttons. Only the person's click starts a build (one package).
+    suggest_ideas: Callable[[], dict] | None = None
+    offer_build: Callable[[list], str] | None = None
     role: str = ""
     company: str = ""
 
@@ -242,6 +247,49 @@ def _t_propose_add(ctx: AppContext, inp: dict) -> dict:
     return out
 
 
+BUILD_LABEL_IDEA = "Build this for this job"
+IDEAS_HINT = ("The person sees these ideas in a card. Each has a \"" + BUILD_LABEL_IDEA + "\" button: "
+              "one click has the AI build a small working project for this job (it uses one package "
+              "and takes a few minutes). Then they learn it and pass its quiz, and it is added to "
+              "this resume. You cannot start a build yourself, and nothing is on the resume yet.")
+
+
+def _idea_key(i: dict) -> str:
+    return str(i.get("repo") or i.get("title") or "").strip()[:80]
+
+
+def ideas_card(ideas: list, token: str, role: str = "") -> dict:
+    """The ideas card: each idea as the Projects page shows it (ui/static/app.js ideaCard,
+    compact), with its own "Build this for this job" button spending the card's token."""
+    rows = []
+    for i in ideas or []:
+        if not isinstance(i, dict) or not str(i.get("title") or "").strip():
+            continue
+        rows.append({"key": _idea_key(i), "title": i.get("title"), "pitch": i.get("pitch") or "",
+                     "skills": list(i.get("skills") or [])[:5], "gaps": list(i.get("gaps") or [])[:5],
+                     "tech": i.get("tech") or "", "repo": i.get("repo") or "",
+                     "examples": list(i.get("examples") or [])[:3]})
+    return {"type": "ideas", "token": token, "role": role, "ideas": rows}
+
+
+def _t_suggest_ideas(ctx: AppContext, inp: dict) -> dict:
+    if ctx.suggest_ideas is None:
+        raise RuntimeError("ideas are not wired")
+    got = dict(ctx.suggest_ideas() or {})
+    ideas = [i for i in got.get("ideas") or [] if isinstance(i, dict) and i.get("title")][:6]
+    if not ideas:
+        return {"ok": False, "error": got.get("error") or "I could not come up with ideas just now.",
+                **({"daily_limit_reached": True} if got.get("code") == "ideas_cap" else {})}
+    token = ctx.offer_build(ideas) if ctx.offer_build else ""
+    out = {"ok": True, "for_role": got.get("role") or ctx.role,
+           "ideas": [{"title": i.get("title"), "pitch": i.get("pitch") or "",
+                      "skills": list(i.get("skills") or [])[:5],
+                      "job_skills_your_resume_lacks": list(i.get("gaps") or [])[:5]} for i in ideas],
+           "how_to_build": IDEAS_HINT}
+    out["card"] = ideas_card(ideas, token, str(got.get("role") or ctx.role or ""))
+    return out
+
+
 TOOLS: dict[str, Tool] = {t.name: t for t in (
     Tool("resume_snapshot",
          "See the resume being built now: the person's name and links (GitHub, LinkedIn), their "
@@ -288,6 +336,11 @@ TOOLS: dict[str, Tool] = {t.name: t for t in (
              "names": {"type": "array", "items": {"type": "string"},
                        "description": "The repository names the person asked to add."}},
              "required": ["names"]}),
+    Tool("suggest_projects_for_jd",
+         "When the person wants a project to build for this job (or has none that fits), suggest "
+         "small GitHub projects aimed at this job's role and the skills its description asks for. "
+         "They get a card where one click has the AI build the one they pick for this job.",
+         _t_suggest_ideas),
 )}
 
 
@@ -322,6 +375,12 @@ def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "") -> 
         "punctuation, and say resume, never CV.",
         "- Never describe a capability that is not in the list above.",
     ]
+    if "suggest_projects_for_jd" in tools:
+        lines.append(
+            "- When the person wants a project to build for this job, call suggest_projects_for_jd. "
+            "Say these are ideas for this job, that one click on an idea's button has the AI build "
+            "it (one package), and that it reaches the resume only after they learn it and pass "
+            "its quiz. Never present an idea as something the person has done.")
     return "\n".join(lines)
 
 
@@ -404,9 +463,52 @@ def _valid_repo_fit(card: dict) -> dict | None:
     return out
 
 
+def _gh_url(u) -> str:
+    u = str(u or "")
+    return u if u.startswith("https://github.com/") and len(u) < 200 else ""
+
+
+def _valid_ideas(card: dict) -> dict | None:
+    tok = str(card.get("token") or "")
+    rows = []
+    for i in card.get("ideas") or []:
+        if not isinstance(i, dict) or not str(i.get("title") or "").strip():
+            continue
+        ex = [{"full_name": _s(e.get("full_name"), 120), "url": _gh_url(e.get("url")),
+               "stars": int(e.get("stars") or 0) if str(e.get("stars") or "0").isdigit() else 0,
+               "description": _s(e.get("description"))}
+              for e in i.get("examples") or [] if isinstance(e, dict) and _gh_url(e.get("url"))][:3]
+        rows.append({"key": _s(i.get("key") or i.get("repo") or i.get("title"), 80),
+                     "title": _s(i.get("title"), 80), "pitch": _s(i.get("pitch")),
+                     "skills": [_s(k, 40) for k in (i.get("skills") or [])[:5]],
+                     "gaps": [_s(k, 40) for k in (i.get("gaps") or [])[:5]],
+                     "tech": _s(i.get("tech")), "repo": _s(i.get("repo"), 100), "examples": ex})
+    if not rows:
+        return None
+    out = {"type": "ideas", "token": tok if _TOKEN.match(tok) else "", "role": _s(card.get("role"), 120),
+           "ideas": rows[:6]}
+    if card.get("used"):
+        out["used"] = True
+    if card.get("built"):
+        out["built"] = _s(card["built"], 80)
+    return out
+
+
+def _valid_progress(card: dict) -> dict | None:
+    pid = str(card.get("project_id") or "")
+    if not re.match(r"^[A-Za-z0-9_-]{4,40}$", pid):
+        return None
+    return {"type": "project_progress", "project_id": pid, "title": _s(card.get("title"), 80),
+            **({"added": True} if card.get("added") else {})}
+
+
 def _valid_card(card) -> dict | None:
     if isinstance(card, dict) and card.get("type") == "repo_fit":
         return _valid_repo_fit(card)
+    if isinstance(card, dict) and card.get("type") == "ideas":
+        return _valid_ideas(card)
+    if isinstance(card, dict) and card.get("type") == "project_progress":
+        return _valid_progress(card)
     if not isinstance(card, dict) or card.get("type") != "buttons":
         return None
     buttons = []
@@ -422,13 +524,16 @@ def _valid_card(card) -> dict | None:
 
 
 def merge_cards(cards: list[dict]) -> list[dict]:
-    """At most one repo_fit card (the last one a tool gave) and one buttons card per turn: the
-    tools' buttons together, each label once."""
-    seen, buttons, fit = set(), [], None
+    """At most one repo_fit card and one ideas card (the last of each a tool gave) and one
+    buttons card per turn: the tools' buttons together, each label once."""
+    seen, buttons, fit, ideas = set(), [], None, None
     for c in cards:
         v = _valid_card(c) or {}
         if v.get("type") == "repo_fit":
             fit = v
+            continue
+        if v.get("type") == "ideas":
+            ideas = v
             continue
         for b in v.get("buttons", []):
             if b["label"].lower() not in seen:
@@ -436,7 +541,7 @@ def merge_cards(cards: list[dict]) -> list[dict]:
                 buttons.append(b)
     if fit is not None:       # the card has its own Projects button; the list one repeats it
         buttons = [b for b in buttons if not b.get("send", "").lower().startswith("which of my github")]
-    out = [fit] if fit is not None else []
+    out = ([fit] if fit is not None else []) + ([ideas] if ideas is not None else [])
     return out + ([{"type": "buttons", "buttons": buttons[:MAX_BUTTONS]}] if buttons else [])
 
 
@@ -460,10 +565,19 @@ def _conversation(ctx: AppContext, message: str, limit: int = 10) -> list[dict]:
     return out
 
 
+def tools_for(ctx: AppContext) -> dict[str, Tool]:
+    """The tools this context can really run: a tool whose app piece is not wired is not offered,
+    so the chat never describes it."""
+    out = dict(TOOLS)
+    if ctx.suggest_ideas is None:
+        out.pop("suggest_projects_for_jd", None)
+    return out
+
+
 def run_turn(session, ctx: AppContext, message: str, tools: dict[str, Tool] | None = None) -> dict:
     """One chat turn: {"text", "cards", "did", "tools"}. ``tools`` lists the tool names called,
     for logs and tests; it never carries their results."""
-    tools = dict(TOOLS if tools is None else tools)
+    tools = dict(tools_for(ctx) if tools is None else tools)
     role = ctx.role or str(getattr(session, "role", "") or "")
     company = ctx.company or str(getattr(session, "company", "") or "")
     system = system_prompt(tools, role, company)
