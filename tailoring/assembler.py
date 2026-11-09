@@ -269,13 +269,77 @@ def _entry_blocks(entries: list[dict], allow_link: bool = False,
     return "".join(out)
 
 
+# A project's right-hand slot never prints a bare "Personal Project": every project on the page is
+# one, so it says nothing, and (before 2026-11-08) a project stored with only a ``title`` printed it
+# on its own line ABOVE the name. Kofi's own resume is the reference: ONE line per project, the name
+# (with the link arrow) on the left and its tools on the right, then the bullets.
+_GENERIC_PROJECT_PLACES = frozenset({"personal project", "personal projects", "personal",
+                                     "side project", "project", "projects", "personal work"})
+_TRAILING_TOOLS = re.compile(r"^(?P<name>.*\S)\s*\((?P<tools>[^()]{2,120})\)\s*$")
+_DATEY = re.compile(r"^\s*(?:(?:19|20)\d\d|present|current|ongoing|jan|feb|mar|apr|may|jun|jul|aug|"
+                    r"sep|oct|nov|dec|spring|summer|fall|autumn|winter)\b", re.I)
+
+
+def project_row(e: dict) -> dict:
+    """How one project prints: {"name", "right", "role", "dates"}. The name is ``org`` or
+    ``name``, else a title-only entry's ``title`` (then it is not a role line). Tools in brackets
+    at the end of the name ("Gate Check (JavaScript, OCR, Firebase)") move to the right slot. The
+    right slot is the tools, else a real place (never a generic "Personal Project"), else the
+    dates. A role line prints only for a real role title."""
+    name = str(e.get("org") or e.get("name") or "").strip()
+    role = str(e.get("title") or "").strip()
+    if not name:
+        name, role = role, ""
+    tools = str(e.get("tools") or e.get("tech") or "").strip()
+    m = _TRAILING_TOOLS.match(name)
+    if m and not _DATEY.match(m.group("tools")):
+        name = m.group("name").strip()
+        tools = tools or m.group("tools").strip()
+    place = str(e.get("location") or "").strip()
+    if place.lower() in _GENERIC_PROJECT_PLACES:
+        place = ""
+    dates = str(e.get("dates") or "").strip()
+    right = tools or place
+    if dates and not role:
+        right = f"{right} | {dates}" if right else dates
+        dates = ""
+    return {"name": name, "right": right, "role": role, "dates": dates}
+
+
+def _project_blocks(entries: list[dict], bold: bool = False) -> str:
+    """Each project as ONE heading line (name and link arrow left, tools right), then its
+    bullets; an entry with a real role title keeps that title's own line under it."""
+    out: list[str] = []
+    for e in entries:
+        row = project_row(e)
+        url = str(e.get("link") or e.get("url") or "").strip()
+        # Minimal blue: a small linked arrow after the (black) name, never the name itself.
+        link_marker = f"~\\href{{{_link_url(url)}}}{{$\\nearrow$}}" if url else ""
+        # A flagged placeholder is marked in the .tex too, so even a preview PDF
+        # cannot present an invented project as real.
+        suggested = " \\textit{[SUGGESTED: replace before finalizing]}" if e.get("suggested") else ""
+        right = f" \\hfill \\textbf{{{_esc(row['right'])}}}" if row["right"] else ""
+        out.append(f"\n\\noindent \\textbf{{\\textsc{{{_esc(row['name'])}}}}}{link_marker}{suggested}{right}\n")
+        roles = e.get("roles") if isinstance(e.get("roles"), list) and e.get("roles") else None
+        if roles is None:
+            if row["role"] or row["dates"]:
+                out.append(f"\n\\noindent \\textbf{{{_esc(row['role'])}}} \\hfill \\textbf{{{_esc(row['dates'])}}}\n")
+            out.append(_bullets(e.get("bullets", []), bold=bold))
+            continue
+        for r in roles:
+            title, dates = _esc(r.get("title", "")), _esc(r.get("dates", ""))
+            if title or dates:
+                out.append(f"\n\\noindent \\textbf{{{title}}} \\hfill \\textbf{{{dates}}}\n")
+            out.append(_bullets(r.get("bullets", []), bold=bold))
+    return "".join(out)
+
+
 def _projects(profile: dict) -> str:
     entries = profile.get("projects", [])
     if not entries:
         return ""
     return (_heading(_label("projects", "Projects"))
-            + _entry_blocks(entries, allow_link=True,
-                            bold=bool(profile.get("bold_metrics")))
+            + _project_blocks(entries, bold=bool(profile.get("bold_metrics")))
             + "\\vs\n")
 
 

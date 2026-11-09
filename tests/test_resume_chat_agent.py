@@ -110,8 +110,10 @@ def test_the_system_prompt_lists_exactly_the_registered_tools(fake_llm, gh):
     rc.run_turn(None, _ctx(llm=fake_llm), "what's on my github?")
     listed = [ln[2:].split(":", 1)[0] for ln in fake_llm.last_agent_system.splitlines()
               if ln.startswith("- ") and ":" in ln and ln[2:].split(":", 1)[0] in rc.TOOLS]
-    assert listed == list(rc.TOOLS)
-    assert [t["name"] for t in fake_llm.last_agent_tools] == list(rc.TOOLS)
+    # A tool whose app piece is not wired (here the ideas) is not offered or described.
+    wired = [n for n in rc.TOOLS if n != "suggest_projects_for_jd"]
+    assert listed == wired
+    assert [t["name"] for t in fake_llm.last_agent_tools] == wired
     only = {"github_status": rc.TOOLS["github_status"]}
     sysp = rc.system_prompt(only)
     assert "- github_status:" in sysp and "list_repos" not in sysp and "resume_snapshot" not in sysp

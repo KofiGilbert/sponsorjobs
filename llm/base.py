@@ -856,7 +856,10 @@ class FakeLLM:
                     continue
                 names = [str(x.get("name")) for k in ("projects", "repos")
                          for x in obj.get(k) or [] if isinstance(x, dict) and x.get("name")]
-                if "fits" in obj:
+                if obj.get("ideas"):
+                    bits.append("Here are ideas you could build for this job: "
+                                + ", ".join(str(i.get("title")) for i in obj["ideas"]) + ".")
+                elif "fits" in obj:
                     fits = [f"{x.get('name')} ({x.get('fit')})" for x in obj.get("fits") or []]
                     bits.append(("These fit this job: " + ", ".join(fits) + ".") if fits
                                 else "None of your repositories fit this job.")
@@ -872,6 +875,10 @@ class FakeLLM:
                     "stop": "end_turn"}
         said = str(last.get("content") or "")
         calls = []
+        if re.search(r"\b(build|ideas?|suggest\w*)\b", said, re.I) and re.search(r"\bprojects?\b", said, re.I) \
+                and "suggest_projects_for_jd" in names:
+            return {"text": "", "stop": "tool_use",
+                    "tool_calls": [{"id": "f1", "name": "suggest_projects_for_jd", "input": {}}]}
         if re.search(r"\b(fits?|match\w*|relevant)\b", said, re.I) and "rank_repos_for_jd" in names:
             calls.append("rank_repos_for_jd")
         elif re.search(r"\b(github|repos?|repositor\w*|portfolio)\b", said, re.I):
