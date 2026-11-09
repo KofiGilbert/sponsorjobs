@@ -152,6 +152,52 @@ def test_routing_words():
     assert not rc.wants_agent("I worked at Acme from 2020 to 2022")
 
 
+ANSWERS = ["No github, no projects", "no github. no projects.", "I don't have projects",
+           "I dont have any projects yet", "None, skip projects", "Not on GitHub",
+           "My github is janedoe", "I built two projects at school", "Yes, add my projects",
+           "Projects:\n1. Route Planner\n2. Dock Scheduler"]
+QUESTIONS = ["what's on my github?", "Which repos fit this job?", "can you check my github",
+             "what can you do", "Do any of my projects fit?"]
+ASKS = ["check my github", "Check my GitHub for projects that fit this job",
+        "Build me a project for this job", "look at my repos", "connect my github"]
+
+
+@pytest.mark.parametrize("pending", [True, False])
+def test_answers_stay_on_the_intake(pending):
+    for m in ANSWERS:
+        assert not rc.wants_agent(m, pending=pending), m
+
+
+def test_questions_go_to_the_agent_even_while_an_answer_is_pending():
+    for m in QUESTIONS:
+        assert rc.wants_agent(m, pending=True) and rc.wants_agent(m), m
+
+
+def test_asks_go_to_the_agent_only_when_no_intake_answer_is_pending():
+    for m in ASKS:
+        assert rc.wants_agent(m), m
+        assert not rc.wants_agent(m, pending=True), m
+
+
+def test_an_intake_answer_never_reaches_the_agent(template_source, fake_llm, workdir, gh, monkeypatch):
+    monkeypatch.setenv(rc.FLAG, "1")
+    s = _session(template_source, fake_llm, workdir)
+    fake_llm.agent_script = lambda *a: pytest.fail("an intake answer reached the agent")
+    for m in ("No github, no projects", "I don't have projects", "check my github"):
+        st = s.submit(m)
+        assert not st["cards"], m
+
+
+def test_a_question_during_intake_reaches_the_agent(template_source, fake_llm, workdir, gh, monkeypatch):
+    monkeypatch.setenv(rc.FLAG, "1")
+    s = _session(template_source, fake_llm, workdir)
+    seen = []
+    fake_llm.agent_script = lambda sys_, msgs, tools: seen.append(1) or {
+        "text": "Here is what I found.", "tool_calls": [], "stop": "end_turn"}
+    s.submit("Which of my repos fit this job?")
+    assert seen
+
+
 # -- protocol ---------------------------------------------------------------------------- #
 
 def test_native_messages_alternate_and_carry_tool_blocks():

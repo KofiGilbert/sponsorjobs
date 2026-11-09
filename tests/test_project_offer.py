@@ -27,7 +27,7 @@ SKELETON = (
     "graduated June 2019. Data Analyst at BlackOrigin in Accra, Ghana since Feb 2021. "
     "Analyst at Stanbic Bank in Accra, Ghana from Jan 2018 to Dec 2020. "
     "Skills: SQL, Python, Tableau. "
-    "No blog, no linkedin. No address. Skip courses."
+    "No github, no blog, no linkedin. No address. Skip courses. No projects."
 )
 EXTRAS = "Outside work I volunteer coaching a youth team, and I enjoy chess and hiking."
 

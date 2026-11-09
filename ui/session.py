@@ -3228,15 +3228,17 @@ class WebIntake:
         # or after the build: answered from what the app really read and holds (2026-11-06).
         if self._asks_about_upload(message):
             return self._chat_reply(message)
-        # With the agent on, GitHub, repositories, portfolio, projects without an explicit list,
-        # relevance, the quiz, connecting and "what can you do" go to it too. Field capture
+        # With the agent on, questions and requests about GitHub, repositories, portfolio,
+        # projects, relevance, the quiz, connecting and "what can you do" go to it too. Field capture
         # above has already run; a turn whose projects it just captured stays on the funnel.
         if self._agent_on():
             from agent.resume_chat import wants_agent
             captured = ([p.get("org") or p.get("title") for p in prior_projects]
                         != [p.get("org") or p.get("title") for p in (self.essentials.get("projects") or [])
                             if isinstance(p, dict)])
-            if not captured and wants_agent(message):
+            # Before the first build the intake's question is pending: only a clear question
+            # leaves the funnel; an answer ("no github, no projects") stays on it.
+            if not captured and wants_agent(message, pending=self.assembled is None):
                 return self._agent_reply(message)
 
         # Enrichment: once a first draft exists, a substantive message is REAL
