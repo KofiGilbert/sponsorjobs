@@ -12,6 +12,7 @@ already knows the background and asks only about what's new or changed.
 
 from __future__ import annotations
 
+import functools
 import re
 import shutil
 import threading
@@ -837,6 +838,18 @@ def _certificate_name(text: str, filename: str = "") -> str:
     return ""
 
 
+def _locked(fn):
+    """Run a session-changing method under the session's lock (WebIntake.lock), so the chat, a
+    card's click, an upload, the page's own edits and a passed quiz on another request thread
+    never change the session at the same time."""
+    @functools.wraps(fn)
+    def run(self, *a, **kw):
+        with self.lock:
+            return fn(self, *a, **kw)
+    run._session_locked = True
+    return run
+
+
 class WebIntake:
     def __init__(self, jd_text, template_source, llm, memory, records, workdir,
                  profile_name="default", jobname="cv", palace_dir=None,
@@ -908,6 +921,7 @@ class WebIntake:
         # change to this session runs under this lock; an RLock, so a change that calls
         # another (a click that rebuilds) does not wait on itself.
         self.lock = threading.RLock()
+        self._project_offered = False      # the one proactive projects offer (_project_offer)
         self.last_cover_letter = ""        # most recent drafted cover letter (bundled on accept)
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
         self.source_job = {}               # {url, source, source_id} when started from a sourced job
@@ -2054,6 +2068,7 @@ class WebIntake:
         self.overlap_ask = None
         self._choice_asked = True
 
+    @_locked
     def set_shown(self, item_id: str, show: bool):
         """The builder's "Show on this resume" switch: this resume shows (or leaves off) one of
         the person's roles or projects, then rebuilds. One line may ask to keep it for similar
@@ -2074,6 +2089,7 @@ class WebIntake:
         self._assemble()
         return self._state()
 
+    @_locked
     def swap_role(self, from_id: str, to_id: str):
         """"Swap for ...": this resume shows ``to_id`` instead of ``from_id`` (two roles whose
         dates overlap), then rebuilds; the line asks whether to do the same on similar jobs."""
@@ -2088,6 +2104,7 @@ class WebIntake:
         self._assemble()
         return self._state()
 
+    @_locked
     def answer_choice(self, answer: str):
         """The person's tap on the one line: ``scope`` (Yes, bank and finance jobs), ``company``
         (Only Acme Bank) or ``once`` (Just this time)."""
@@ -2115,6 +2132,7 @@ class WebIntake:
             out["choice_saved"] = saved
         return out
 
+    @_locked
     def answer_overlap(self, answer: str):
         """"Show both, or one per job?" ``both`` keeps both (never asked again for the pair);
         ``one`` saves an apart choice for every job and rebuilds."""
@@ -2139,6 +2157,7 @@ class WebIntake:
             out["choice_saved"] = saved
         return out
 
+    @_locked
     def answer_proposal(self, token: str, save: bool, option: int = 0):
         """Save (or not) a choice read in this chat. Saved, it applies to this page at once."""
         st = self._rules_store()
@@ -2572,6 +2591,7 @@ class WebIntake:
         return self._state(msgs)
 
     # ------------------------------------------------------------------ upload
+    @_locked
     def ingest_document(self, text: str, filename: str = "", links: list | None = None):
         """ONE upload path: read the file, decide what it is (CV / transcript /
         certificate), and route it, the person never has to say which button. Every
@@ -2610,6 +2630,7 @@ class WebIntake:
                  "certification name you'd like on the resume?"])
         return self.draft(lead=lead)
 
+    @_locked
     def ingest_resume(self, text: str, filename: str = "", links: list | None = None):
         """Pre-fill the profile from an uploaded CV's extracted text: merge the
         structured facts into memory (the real store), write a CLEAN summary into
@@ -2847,6 +2868,7 @@ class WebIntake:
                 cleaned[label] = ", ".join(dict.fromkeys(kept))
         self.profile["skills"] = cleaned
 
+    @_locked
     def ingest_transcript(self, text: str, filename: str = ""):
         """Read the REAL courses from an academic transcript and populate the
         most-recent degree's courses with the JD-relevant ones. Same storage rules
@@ -2896,7 +2918,15 @@ class WebIntake:
     def suggest_projects_flow(self):
         """Draft JD-matching sample projects as FLAGGED suggestions (persona
         reference) and offer help to actually build one. Flagged projects block
-        finalization until the person replaces, builds, or removes them."""
+        finalization until the person replaces, builds, or removes them.
+
+        Flag-off only, and retired with the flag (plan PR 10): with TAILOR_CHAT_AGENT on, ideas
+        for this job come as a card the person builds from, and no placeholder ("suggested")
+        project is ever written onto the page."""
+        if self._agent_on():
+            last = next((t.get("content") for t in reversed(self.history)
+                         if t.get("role") == "user"), "") or "Build me a project for this job"
+            return self._agent_reply(str(last))
         try:
             projs = self.llm.suggest_projects(self.jd) or []
         except Exception:
@@ -2919,6 +2949,7 @@ class WebIntake:
             return self._ask_missing(missing, lead=lead)
         return self.draft(lead=lead)
 
+    @_locked
     def remove_suggested_projects(self):
         """Drop all flagged placeholder projects and unblock finalization."""
         self.essentials["projects"] = [p for p in self.essentials.get("projects", [])
@@ -3296,6 +3327,7 @@ class WebIntake:
             return self.build_from_saved()
         return self._funnel_tail()
 
+    @_locked
     def decline_required(self):
         """The "None, leave it off" button under the required-sections question: decline
         every open required section, then build. Deterministic, no model call."""
@@ -3589,6 +3621,7 @@ class WebIntake:
     def _feed_read_job(self):
         _activity.step("read", "Reading the job")
 
+    @_locked
     def draft(self, lead=None):
         with self._build_feed():
             self._feed_read_job()
@@ -3664,7 +3697,7 @@ class WebIntake:
         # interests, until each has been offered once (then _enrich_invite stops).
         # This runs whether or not the CV is "light"; opting out (override/done) skips it.
         extra = self._post_build_invite(msgs)
-        return self._state(msgs, extra=extra)
+        return self._state(msgs, extra=extra, cards=self._project_offer(msgs))
 
     def _post_build_invite(self, msgs):
         """Shared review-message tail for both build paths (draft + build_from_saved):
@@ -3693,6 +3726,65 @@ class WebIntake:
             self._append("agent", note)
         return extra
 
+    # -- one proactive offer after the first build (plan PR 10) ------------------------- #
+    PROJECT_OFFER = "projects"
+    PROJECT_OFFER_BUTTONS = (
+        {"label": "Check my GitHub", "send": "Check my GitHub for projects that fit this job"},
+        {"label": "Build a project for this job", "send": "Build me a project for this job"},
+    )
+
+    def _project_offer(self, msgs: list) -> list:
+        """At the first build in this chat (agent flag on): when the job asks for skills the
+        resume does not show and its projects are weak for this job (none of them names a skill
+        the job asks for, or there are none), ONE message with two buttons, "Check my GitHub"
+        and "Build a project for this job". Decided from what the session holds, so no model
+        call is made until a click (a button sends its line as the person's next message). Never
+        repeated in this session. Returns the cards for this turn's state."""
+        if self._project_offered or not self._agent_on() or self.assembled is None \
+                or self.essentials.get("unattended"):
+            return []
+        self._project_offered = True       # judged at the first build only, offered or not
+        if any((t.get("card") or {}).get("offer") == self.PROJECT_OFFER for t in self.history
+               if isinstance(t, dict)):
+            return []
+        try:
+            cov = self.coverage_dict()
+        except Exception:      # noqa: BLE001 - no coverage, no offer
+            return []
+        missing = [str(t) for t in cov.get("missing") or [] if str(t).strip()]
+        if not missing or not self._projects_weak_for_job(
+                list(cov.get("present") or []) + list(cov.get("missing_supported") or []) + missing):
+            return []
+        named = missing[:2]
+        skills = named[0] if len(named) == 1 else f"{named[0]} and {named[1]}"
+        text = (f"This job asks for {skills}, and your resume does not show "
+                f"{'it' if len(named) == 1 else 'them'} yet. A project can. I can check your "
+                "GitHub for one that fits, or help you build one for this job.")
+        card = {"type": "buttons", "offer": self.PROJECT_OFFER,
+                "buttons": [dict(b) for b in self.PROJECT_OFFER_BUTTONS]}
+        msgs.append(text)
+        self._append("agent", text)
+        self.history[-1]["card"] = card
+        self._persist()
+        return [card]
+
+    def _projects_weak_for_job(self, terms: list) -> bool:
+        """True when this resume has no project, or none of its projects names any of the job's
+        skills (``terms``) in its name, tools or bullets."""
+        projs = self._resume_projects(github_too=True)
+        if not projs:
+            return True
+        pats = [re.compile(r"(?<![A-Za-z0-9])" + re.escape(str(t).strip()) + r"(?![A-Za-z0-9])", re.I)
+                for t in terms if str(t).strip()]
+
+        def text(p):
+            bits = [p.get(k) for k in ("org", "title", "name", "tools", "description")]
+            for b in p.get("bullets") or []:
+                bits.append(b.get("text") if isinstance(b, dict) else b)
+            return " ".join(str(x) for x in bits if x)
+
+        return not any(pat.search(text(p)) for p in projs for pat in pats)
+
     def undated_projects_note(self) -> str:
         """One honest line when this template shows project dates and a rendered project has
         none (project dates are SOFT, so the build went ahead): "Without dates, X reads as
@@ -3711,6 +3803,7 @@ class WebIntake:
             return f"Without dates, {who} reads as undated; recruiters may weigh it less."
         return f"Without dates, {who} read as undated; recruiters may weigh them less."
 
+    @_locked
     def build_from_saved(self):
         """Build directly from the saved profile, tailored to this job, the
         response to "use what you already know about me"."""
@@ -3804,7 +3897,7 @@ class WebIntake:
             if undated:
                 msgs.append(undated)
             extra = self._post_build_invite(msgs)
-            return self._state(msgs, extra=extra)
+            return self._state(msgs, extra=extra, cards=self._project_offer(msgs))
         if self.essentials.get("experience"):
             return self.draft(lead=["Using what I already have on file."])
         note = ("I don't have a saved profile yet, tell me your name and work history "
@@ -4655,6 +4748,7 @@ class WebIntake:
             for rid, _e, r in self._roles() if r.get("title_suggested")
         ]
 
+    @_locked
     def set_title(self, role_id: str, decision: str, custom: str = ""):
         from intake.conversation import apply_title_decision
         for rid, _e, r in self._roles():
@@ -4664,6 +4758,7 @@ class WebIntake:
         self._assemble()
         return self._state()
 
+    @_locked
     def edit_bullet(self, ref: str, text: str):
         import copy as _copy
         slots = self._bullet_slots()
@@ -4728,6 +4823,7 @@ class WebIntake:
                 slots[f"extra-{xi}-title"] = (it, "title")
         return slots
 
+    @_locked
     def edit_field(self, ref: str, text: str):
         """Set one field, rebuild, and keep the change only if the page still fits. Returns the
         state plus ``edit_ok`` and, when refused, ``edit_error``."""
@@ -4807,6 +4903,7 @@ class WebIntake:
                 slots[f"extra-{xi}"] = (it, "date")
         return slots
 
+    @_locked
     def edit_date(self, ref: str, text: str):
         """Set a CV date from the edit-view picker: run it through the same template
         pipeline (abbreviated months + chronological validation), and if it's a real,
@@ -4913,6 +5010,7 @@ class WebIntake:
                 break
         return out
 
+    @_locked
     def put_back(self, trim_id: str) -> dict:
         """Put one cut back on the page and re-run the one-page fit. When it fits (perhaps by
         cutting something else, which is then listed with its own Put back) it stays; when it
@@ -4988,6 +5086,7 @@ class WebIntake:
             self._keyword_previews[term.lower()] = pv
         return pv.to_dict()
 
+    @_locked
     def keyword_apply(self, term: str, draft: str = "") -> dict:
         from tailoring.keyword_action import (apply_keyword_action, check_draft_for,
                                               render_interior)
@@ -5025,6 +5124,7 @@ class WebIntake:
         self._persist()
         return self._keyword_result(term, True, "", res)
 
+    @_locked
     def keyword_undo(self, term: str) -> dict:
         from tailoring.keyword_action import remove_added_bullet, restore_bullet
         term = " ".join(str(term or "").split())
@@ -5123,6 +5223,7 @@ class WebIntake:
         self.last_screening = out.get("answers", [])
         return out
 
+    @_locked
     def accept(self):
         # Idempotent: once this session has produced a record, a second accept() (a
         # double-click, or a client retry on a slow first response) must return the SAME
