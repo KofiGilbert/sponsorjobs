@@ -40,6 +40,7 @@ MAX_PATHS = 20
 README_CHARS = 1500
 MAX_RANKINGS = 3              # model calls per chat session
 MAX_BULLETS = 2
+FLOOR_TERMS = 2               # job skills in a repo's own text that rule out "doesn't fit"
 WHY_CHARS = 160
 DETAIL_TTL = 7 * 86400
 
@@ -342,9 +343,19 @@ def rank(llm, jd: str, repos: list[dict], resume_projects: list[dict], *, login:
         text = repo_text(r, details.get(fn))
         got_terms = checked_terms(j.get("terms"), text, jd)
         fit = _fit(j.get("fit"), got_terms)
+        why = _line(j.get("why"))
+        # The model's call on a borderline repo varies run to run (seen 2026-11-09: a SQL and Python
+        # analytics portfolio was "some fit" twice, then "doesn't fit"). A repo whose own text shows
+        # FLOOR_TERMS or more of the job's skills is never "doesn't fit": that is the rubric's own
+        # definition of "some", checked in code, so the same repo gets the same verdict every time.
+        own = checked_terms(terms, text, jd)
+        if fit == "none" and len(own) >= FLOOR_TERMS:
+            fit = "some"
+            got_terms = (got_terms + [t for t in own if t.lower() not in {g.lower() for g in got_terms}])[:8]
+            why = _line(f"Its own files show {', '.join(own[:3])}, which this job asks for.")
         material = " ".join([str(r.get("description") or ""), (details.get(fn) or {}).get("readme") or ""])
         bullets = checked_bullets(j.get("bullets"), material) if fit in ("strong", "some") else []
-        why = _line(j.get("why")) or (NOT_READ if fit == "none" else "")
+        why = why or (NOT_READ if fit == "none" else "")
         out_repos.append({**base(r, fn), "fit": fit, "terms": got_terms, "why": why, "bullets": bullets})
     for r in unjudgeable:
         fn = full_name(r, login)

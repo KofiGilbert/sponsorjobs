@@ -441,3 +441,47 @@ def test_a_long_readme_does_not_list_the_folders(monkeypatch):
     monkeypatch.setattr(github_publish, "FETCH", fetch)
     _rank(FakeLLM())
     assert not [u for u in seen if u.endswith("/contents")]
+
+
+def test_a_repo_showing_two_job_skills_is_never_doesnt_fit(monkeypatch):
+    """Seen 2026-11-09 in test build 13: Data-Analytics-Projects (SQL and Python in its own files)
+    was "some fit" in two runs and "doesn't fit" in the third. The floor makes it the same each time."""
+    repo_rank.clear_cache()
+    card = _repo("Data-Analytics-Projects", description="All my data analytics projects")
+    card["language"] = "Jupyter Notebook"
+
+    def fetch(method, url, token="", body=None, params=None):
+        if url.endswith("/users/janedoe/repos"):
+            return 200, [card]
+        if url.endswith("/readme"):
+            return 200, {"content": base64.b64encode(b"# Data Analytics Projects").decode()}
+        if url.endswith("/contents"):
+            return 200, [{"name": "SQL Projects", "type": "dir"}]
+        return 404, {}
+    monkeypatch.setattr(github_publish, "FETCH", fetch)
+    llm = FakeLLM()
+    llm.rank_script = lambda jd, terms, repos, projects: {
+        "repos": [{"id": c["id"], "fit": "none", "terms": [], "why": "Unrelated to BI.", "bullets": []}
+                  for c in repos], "projects": []}
+    r = _rank(llm)["repos"][0]
+    assert r["fit"] == "some"
+    assert {"SQL", "Python"} <= set(r["terms"])
+    assert "Unrelated" not in r["why"]
+
+
+def test_one_job_skill_alone_does_not_lift_a_doesnt_fit(monkeypatch):
+    repo_rank.clear_cache()
+    card = _repo("game-of-life", description="Conway's game of life")
+
+    def fetch(method, url, token="", body=None, params=None):
+        if url.endswith("/users/janedoe/repos"):
+            return 200, [card]
+        if url.endswith("/readme"):
+            return 200, {"content": base64.b64encode(("A cellular automaton. " * 30).encode()).decode()}
+        return 404, {}
+    monkeypatch.setattr(github_publish, "FETCH", fetch)
+    llm = FakeLLM()
+    llm.rank_script = lambda jd, terms, repos, projects: {
+        "repos": [{"id": c["id"], "fit": "none", "terms": [], "why": "A game.", "bullets": []}
+                  for c in repos], "projects": []}
+    assert _rank(llm)["repos"][0]["fit"] == "none"
