@@ -1529,8 +1529,16 @@
               <div class="conn-name">GitHub <span class="conn-status" id="ghStatus"></span></div>
               <div class="conn-desc">Start project ideas as private repos on your own GitHub. They go public once you've defended them.</div>
             </div>
-            <button class="btn btn-ghost" id="ghToggle" type="button">Connect</button>
+            <div class="conn-act">
+              <!-- Connect GitHub, one click (ui/github_app.py): the person finishes in their own
+                   browser and comes straight back connected. -->
+              <span class="gh-wait" id="ghAppWait" hidden><span class="gh-spin" aria-hidden="true"></span>Finish in your browser</span>
+              <button class="btn btn-ghost btn-sm" id="ghAppCancel" type="button" hidden>Cancel</button>
+              <button class="btn btn-ghost" id="ghToggle" type="button">Connect</button>
+            </div>
           </div>
+          <p class="conn-msg err gh-app-msg" id="ghAppMsg" hidden></p>
+          <p class="conn-detail" id="ghManageWrap" hidden><span id="ghManageLead"></span><a id="ghManage" href="https://github.com/settings/installations" target="_blank" rel="noopener">Choose repos on GitHub</a></p>
           <!-- Sign in with GitHub (device flow, ui/github_device.py): a short code the person
                approves on github.com in their own browser. No token to find or paste. -->
           <div class="gh-device" id="ghDevice" hidden>

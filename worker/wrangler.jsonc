@@ -23,6 +23,9 @@
 //                         openssl genpkey -algorithm ed25519 -outform DER | tail -c 32 | basenc --base64url -w0
 //                       Without it /agent/sign and the key directory answer 503 not_configured and
 //                       the agent's page requests simply go out unsigned.
+//   GITHUB_APP_CLIENT_SECRET
+//                       "Connect GitHub" (src/github.ts, docs/github-app.md), with the two
+//                       GITHUB_APP_* vars below; until all three are set /github/* answers 503.
 //   TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_WEBHOOK_SECRET
 //                       the official Telegram bot (src/telegram.ts, docs/notify.md). Set all three
 //                       with ./scripts/telegram-setup.sh (it also sets Telegram's webhook); until
@@ -79,6 +82,11 @@
     "ACCESS_TEAM_DOMAIN": "sponsorjobs",
     "ACCESS_AUD": "de6e7ffefd4c65fc94bbf637a366a6374bb0c865bbca1264d735bfed03fce867",
     // Optional extra lock, comma-separated: only these e-mails get in, even if Access lets more through.
-    "ADMIN_EMAILS": ""
+    "ADMIN_EMAILS": "",
+    // Connect GitHub (src/github.ts, docs/github-app.md). Not secrets: the GitHub App's Client ID
+    // (starts "Iv"), and its URL name from github.com/apps/<slug>. The client secret is set with
+    // `npx wrangler secret put GITHUB_APP_CLIENT_SECRET`. Empty = /github/* answers 503.
+    "GITHUB_APP_CLIENT_ID": "",
+    "GITHUB_APP_SLUG": ""
   }
 }

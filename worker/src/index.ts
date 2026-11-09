@@ -36,6 +36,7 @@ import {
   recordAvatarSession, recordLlm, takeFreePackage, takePassPackage,
 } from "./store";
 import { emailStart, emailVerify, googleCallback, googleStart } from "./signin";
+import { githubAvailable, githubCallback, githubClaim, githubConnect, githubRefresh } from "./github";
 import * as tg from "./telegram";
 import { createConversation, endConversation, transcript } from "./tavus";
 
@@ -440,6 +441,13 @@ const ROUTES: Route[] = [
   ["POST", /^\/account\/email\/verify$/, ({ req, env, now }) => emailVerify(req, env, now)],
   ["GET", /^\/account\/google\/start$/, ({ req, env, now }) => googleStart(req, env, now)],
   ["GET", /^\/account\/google\/callback$/, ({ req, env, now }) => googleCallback(req, env, now)],
+  // Connect GitHub through the SponsorJobs GitHub App (src/github.ts, docs/github-app.md). Every
+  // route answers 503 not_configured until the GITHUB_APP_* settings are set.
+  ["GET", /^\/github\/available$/, ({ req, env }) => githubAvailable(req, env)],
+  ["GET", /^\/github\/connect$/, ({ req, env, now }) => githubConnect(req, env, now)],
+  ["GET", /^\/github\/callback$/, ({ req, env, now }) => githubCallback(req, env, now)],
+  ["POST", /^\/github\/claim$/, ({ req, env, now }) => githubClaim(req, env, now)],
+  ["POST", /^\/github\/refresh$/, ({ req, env, now }) => githubRefresh(req, env, now)],
   ["POST", /^\/avatar\/session\/start$/, avatarStart],
   ["POST", /^\/avatar\/heartbeat$/, avatarHeartbeat],
   ["POST", /^\/avatar\/session\/end$/, avatarEnd],

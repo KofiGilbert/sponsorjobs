@@ -52,9 +52,21 @@ def _default_fetch(method: str, url: str, token: str = "", body: dict | None = N
 
 FETCH = _default_fetch
 
+# Set by ui/app.py: given a token GitHub just refused (401), return a renewed one (an 8-hour
+# GitHub App token is refreshed through the Worker), or the same token when nothing changed.
+ON_401 = None
+
 
 def _fetch(method, url, token="", body=None, params=None):
-    return FETCH(method, url, token, body, params)
+    status, data = FETCH(method, url, token, body, params)
+    if status == 401 and token and ON_401 is not None:
+        try:
+            fresh = ON_401(token)
+        except Exception:      # noqa: BLE001 - a failed renewal leaves the 401 as it was
+            fresh = ""
+        if fresh and fresh != token:
+            return FETCH(method, url, fresh, body, params)
+    return status, data
 
 
 def slugify(title: str) -> str:

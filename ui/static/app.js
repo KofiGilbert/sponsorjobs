@@ -9171,6 +9171,60 @@
   });
 
   // ---- Connections settings pane: Telegram (connect in-app), browser extension, Gmail ----
+  // Connect GitHub, one click (the SponsorJobs GitHub App, ui/github_app.py). GH_APP: the Worker
+  // has the App's settings. The person finishes in their own browser and lands back connected;
+  // this row just waits, checking the engine every 1.5 seconds. Without the App, the device
+  // flow below (GH_DEVICE: this build has the OAuth Client ID) and then the token box take over.
+  let GH_APP = false, GH_VIA_APP = false, GH_GONE = false, GH_APP_POLL = null, GH_APP_RUN = 0;
+  function ghAppUi(state, text) {
+    const waiting = state === "waiting";
+    if ($("#ghAppWait")) $("#ghAppWait").hidden = !waiting;
+    if ($("#ghAppCancel")) $("#ghAppCancel").hidden = !waiting;
+    if ($("#ghToggle")) $("#ghToggle").hidden = waiting;
+    const msg = $("#ghAppMsg");
+    if (msg) { msg.textContent = text || ""; msg.hidden = !text; }
+  }
+  function ghAppStop(tellServer) {
+    GH_APP_RUN++; clearTimeout(GH_APP_POLL); GH_APP_POLL = null;
+    ghAppUi("idle");
+    if (tellServer) fetch("/api/github/app/cancel", { method: "POST" }).catch(() => {});
+  }
+  async function ghAppStart() {
+    ghAppStop(false); ghDeviceStop(false);
+    GH_GONE = false;
+    const run = GH_APP_RUN, f = $("#ghForm");
+    if (f) { f.reset(); f.hidden = true; }
+    if ($("#ghManageWrap")) $("#ghManageWrap").hidden = true;
+    ghAppUi("waiting");
+    let d = {};
+    try { d = await fetch("/api/github/app/start", { method: "POST" }).then(r => r.json()); }
+    catch { /* offline: said below */ }
+    if (run !== GH_APP_RUN) return;
+    if (d.fallback) {          // the App isn't set up after all: the device flow or the token box
+      ghAppUi("idle"); GH_APP = false;
+      await renderConnections();
+      return connectGitHub();
+    }
+    if (!d.ok) return ghAppUi("idle", d.error || "Couldn't reach GitHub. Check your connection and try again.");
+    ghAppPoll(run);
+  }
+  function ghAppPoll(run) {
+    GH_APP_POLL = setTimeout(async () => {
+      if (run !== GH_APP_RUN) return;
+      let d = null;
+      try { d = await fetch("/api/github/app/poll").then(r => r.json()); }
+      catch { /* a dropped connection: keep checking */ }
+      if (run !== GH_APP_RUN) return;
+      if (!d || d.state === "waiting") return ghAppPoll(run);
+      ghAppStop(false);
+      if (d.state === "connected") {
+        await renderConnections();
+        document.dispatchEvent(new CustomEvent("tailor:github"));   // the ideas toolbar and Start follow
+        return;
+      }
+      if (d.state !== "idle") ghAppUi("idle", d.error || "Couldn't connect GitHub. Try again.");
+    }, 1500);
+  }
   // Sign in with GitHub (device flow). GH_DEVICE: this build has the company's Client ID.
   let GH_DEVICE = false, GH_ON = false, GH_POLL = null, GH_RUN = 0;
   function ghDeviceUi(state, text) {
@@ -9236,6 +9290,7 @@
   async function connectGitHub() {
     await renderConnections();
     if (GH_ON) return;
+    if (GH_APP) { if ($("#ghAppWait")?.hidden) ghAppStart(); $("#ghToggle")?.closest(".conn-row")?.scrollIntoView?.({ block: "nearest" }); return; }
     if (GH_DEVICE) { if ($("#ghDevice")?.hidden) ghDeviceStart(); $("#ghDevice")?.scrollIntoView?.({ block: "nearest" }); return; }
     const f = $("#ghForm"); if (f) { f.hidden = false; if ($("#ghMsg")) $("#ghMsg").hidden = true; f.scrollIntoView?.({ block: "nearest" }); $("#ghToken")?.focus(); }
   }
@@ -9267,13 +9322,27 @@
     } catch { /* leave */ }
     try {
       const gh = await fetch("/api/github/status").then(r => r.json());
-      GH_DEVICE = !!gh.device_flow; GH_ON = !!gh.configured;
+      GH_DEVICE = !!gh.device_flow; GH_APP = !!gh.app_flow; GH_ON = !!gh.configured; GH_VIA_APP = !!gh.via_app;
       connPill($("#ghStatus"), gh.configured, gh.login ? `Connected as ${gh.login}` : "Connected", "Not connected");
       if ($("#ghDisconnect")) $("#ghDisconnect").hidden = !gh.configured;
-      // Sign in with GitHub is the way to connect; the token box is the advanced path behind a
-      // link. A build without the company's Client ID keeps the token box as before.
-      if ($("#ghToggle")) $("#ghToggle").textContent = gh.configured ? (GH_DEVICE ? "Disconnect" : "Manage") : "Connect";
-      if ($("#ghAdvWrap")) $("#ghAdvWrap").hidden = !GH_DEVICE || gh.configured;
+      // Connect GitHub (one click) is the way to connect, then the device flow; the token box is
+      // the advanced path behind a link. With neither, the token box stays as before.
+      const tg = $("#ghToggle");
+      if (tg) {
+        tg.textContent = gh.configured ? ((GH_APP || GH_DEVICE) ? "Disconnect" : "Manage")
+                                       : (GH_APP ? "Connect GitHub" : "Connect");
+        const primary = GH_APP && !gh.configured;      // the one primary action on this pane
+        tg.classList.toggle("btn-primary", primary); tg.classList.toggle("btn-ghost", !primary);
+      }
+      if ($("#ghAdvWrap")) $("#ghAdvWrap").hidden = !(GH_APP || GH_DEVICE) || gh.configured;
+      // The App stays installed on GitHub until the person removes it there: say where.
+      const mw = $("#ghManageWrap"), showManage = GH_APP && ((gh.configured && GH_VIA_APP) || (!gh.configured && GH_GONE));
+      if (mw) mw.hidden = !showManage;
+      if ($("#ghManage")) {
+        $("#ghManage").href = gh.manage_url || "https://github.com/settings/installations";
+        $("#ghManage").textContent = gh.configured ? "Choose repos on GitHub" : "remove the app on GitHub";
+      }
+      if ($("#ghManageLead")) $("#ghManageLead").textContent = gh.configured ? "" : "Disconnected here. To end access, ";
     } catch { /* leave */ }
   }
   // The SponsorJobs address (docs/mail-alias.md): one click to take it, one to stop using it.
@@ -9426,6 +9495,11 @@
   // (the device flow): one short code, approved on github.com in the person's own browser,
   // checked here at the interval GitHub asks for. The token box stays as the advanced path.
   $("#ghToggle")?.addEventListener("click", async () => {
+    if (GH_APP) {
+      if (!GH_ON) return ghAppStart();
+      await ghDisconnect();
+      return;
+    }
     if (GH_DEVICE) {
       if (!GH_ON) return ghDeviceStart();
       await ghDisconnect();
@@ -9433,8 +9507,10 @@
     }
     const f = $("#ghForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { if ($("#ghMsg")) $("#ghMsg").hidden = true; $("#ghToken")?.focus(); } }
   });
+  $("#ghAppCancel")?.addEventListener("click", () => ghAppStop(true));
   $("#ghAdvanced")?.addEventListener("click", (e) => {
     e.preventDefault();
+    ghAppStop(true);
     ghDeviceStop(true);
     const f = $("#ghForm"); if (f) { f.hidden = !f.hidden; if (!f.hidden) { if ($("#ghMsg")) $("#ghMsg").hidden = true; $("#ghToken")?.focus(); } }
   });
@@ -9456,6 +9532,7 @@
     document.dispatchEvent(new CustomEvent("tailor:github"));   // the ideas toolbar and Start follow
   });
   async function ghDisconnect() {
+    GH_GONE = GH_VIA_APP;      // then the row says where to remove the App on GitHub
     await fetch("/api/github/disconnect", { method: "POST" });
     const f = $("#ghForm"); if (f) { f.reset(); f.hidden = true; }
     await renderConnections();

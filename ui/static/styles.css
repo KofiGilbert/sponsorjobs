@@ -2909,6 +2909,16 @@ body.cv-dragging * { cursor: grabbing !important; }
 .conn-msg.ok { color: var(--muted); }
 .conn-hint, .conn-detail { font-size: 11.5px; color: var(--faint); line-height: 1.5; max-width: 60ch; margin-top: 2px; }
 .conn-detail { margin: 0 0 10px; }
+/* Connect GitHub (one click): while the person finishes in their browser, the row's button
+   becomes one quiet line and a Cancel. */
+.conn-act { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.gh-wait { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.gh-spin { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--border);
+  border-top-color: var(--ink-2); animation: gh-spin .9s linear infinite; }
+@keyframes gh-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .gh-spin { animation: none; border-top-color: var(--faint); } }
+.gh-app-msg { margin: -6px 0 10px; }
+#ghManageWrap a { color: var(--ink-2); text-decoration: underline; text-underline-offset: 2px; }
 /* Sign in with GitHub: the code the person types on github.com, large and monospaced. */
 .gh-device { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 2px 0 14px; }
 .gh-device-code { display: flex; align-items: center; gap: 12px; }

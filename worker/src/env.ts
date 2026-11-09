@@ -55,6 +55,15 @@ export interface Env {
   // Telegram chat id with the official bot (a secret: `wrangler secret put OWNER_TELEGRAM_CHAT_ID`).
   // Without it, the first ADMIN_EMAILS address's linked chat is used; with neither, only the log.
   OWNER_TELEGRAM_CHAT_ID?: string;
+  // "Connect GitHub" through the SponsorJobs GitHub App (src/github.ts, docs/github-app.md). The
+  // Client ID and the App's URL name (slug) are plain vars; the client secret is a secret
+  // (`wrangler secret put GITHUB_APP_CLIENT_SECRET`). Until all three are set every /github/*
+  // route answers 503 not_configured and the desktop app keeps its fallback.
+  GITHUB_APP_CLIENT_ID?: string;
+  GITHUB_APP_CLIENT_SECRET?: string;
+  GITHUB_APP_SLUG?: string;         // github.com/apps/<slug>
+  // Optional: the callback registered on the App. Defaults to <this host>/github/callback.
+  GITHUB_APP_REDIRECT_URI?: string;
   // The founder's admin dashboard (src/admin.ts, docs/admin-dashboard.md). Plain vars. Without both
   // ACCESS_* values every request to the admin host answers 403.
   ACCESS_TEAM_DOMAIN?: string;      // the Cloudflare Zero Trust team, e.g. "sponsorjobs" (.cloudflareaccess.com)
