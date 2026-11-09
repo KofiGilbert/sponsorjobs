@@ -59,3 +59,12 @@ def test_the_graph_reaches_the_apply_agent():
     # Guard the walker itself: main.js loads agent.js and panegeom.js today.
     graph = _local_graph("main.js")
     assert {"agent.js", "panegeom.js"} <= graph
+
+
+def test_shell_switches_the_chat_agent_on():
+    """The installed app runs the one-brain resume chat (agent/resume_chat.py). The engine reads
+    TAILOR_CHAT_AGENT from its environment and the shell is what sets it; a person can still set
+    it to 0 before launching to get the older chat."""
+    from agent import resume_chat
+    main = (SHELL / "main.js").read_text(encoding="utf-8")
+    assert f'env.{resume_chat.FLAG} = env.{resume_chat.FLAG} || "1"' in main
