@@ -374,6 +374,11 @@ def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "") -> 
         "things. Plain text, no markdown headings or tables. Use plain words, no dashes as "
         "punctuation, and say resume, never CV.",
         "- Never describe a capability that is not in the list above.",
+        "- A tool that returns a card shows it under your reply, with every item and its details. "
+        "Do not list those items again: give the takeaway in one or two sentences (for example "
+        "which one fits best and why, or that none fits well) and point to the card.",
+        "- Name every repository, project and idea exactly as the tool returned it, spelled the "
+        "same, and describe it only with what the tool said about it.",
     ]
     if "suggest_projects_for_jd" in tools:
         lines.append(

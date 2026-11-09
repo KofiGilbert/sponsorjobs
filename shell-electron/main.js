@@ -111,6 +111,10 @@ async function ensureServer() {
   // there (measured 2026-10-21). Off, a freed block goes straight back to the system. Other
   // platforms ignore the variable.
   if (process.platform === "darwin" && env.MallocLargeCache === undefined) env.MallocLargeCache = "0";
+  // The resume chat runs as one agent across uploads, GitHub, Projects and the quiz
+  // (agent/resume_chat.py). On for everyone who runs the app; set TAILOR_CHAT_AGENT=0 to fall
+  // back to the older chat. Tests and the bare engine keep it off unless they set it.
+  env.TAILOR_CHAT_AGENT = env.TAILOR_CHAT_AGENT || "1";
   delete env.RESUME_AGENT_DEV;                        // real model only (CLAUDE.md 13)
   delete env.RESUME_AGENT_FAKE_LLM;
   if (app.isPackaged) {
