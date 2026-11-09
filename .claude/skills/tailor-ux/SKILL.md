@@ -423,3 +423,11 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   buttons, "Check my GitHub" and "Build a project for this job". Nothing is fetched or asked of
   the model until a click; it never repeats in that chat. "Suggest projects" no longer drops
   flagged sample projects on the page: ideas come as the ideas card (2026-11-08 above).
+- **Connect GitHub is Sign in with GitHub, never a token box (2026-11-09).** Kofi: no normal
+  user should ever see a personal access token field. Connect starts GitHub's device flow (the
+  `gh auth login` pattern): the code shows large and monospaced with Copy (copied on show too),
+  "Open GitHub" is the one primary and opens github.com/login/device in the person's own browser,
+  one quiet "Waiting for you to approve on GitHub" line, then the pill reads "Connected as
+  <login>" and the row button becomes Disconnect. Errors are one plain line ("That code expired.
+  Try again.", "You cancelled on GitHub.") with Try again. The token box survives only behind
+  "Advanced: use a token instead", and as the fallback in a build without the Client ID.

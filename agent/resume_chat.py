@@ -34,13 +34,13 @@ MAX_REPOS_TO_MODEL = 40
 MAX_BUTTONS = 3
 
 # Where a card button may take the person (ui/static/app.js renderCard knows the same names).
-NAV_TARGETS = ("projects", "connections", "cvs", "jobs")
+NAV_TARGETS = ("projects", "connections", "github", "cvs", "jobs")   # github: Connections + sign-in started
 
 POLITE_FAIL = "I could not finish that just now. Ask me again in a moment."
 TOOL_FAIL = "This lookup did not work just now."
 NOT_CHANGED = "I have not changed your resume."
 GITHUB_CONNECT_STEPS = ("click your name at the bottom of the left sidebar, choose Settings, then "
-                        "Connections, and click Connect next to GitHub")
+                        "Connections, click Connect next to GitHub, and approve the code on GitHub")
 
 
 def enabled() -> bool:
@@ -110,7 +110,7 @@ def _t_github_status(ctx: AppContext, inp: dict) -> dict:
            "username_on_resume": str(gh.get("resume_login") or "")}
     if not out["connected"]:
         out["how_to_connect"] = GITHUB_CONNECT_STEPS
-        out["card"] = {"type": "buttons", "buttons": [{"label": "Connect GitHub", "nav": "connections"}]}
+        out["card"] = {"type": "buttons", "buttons": [{"label": "Connect GitHub", "nav": "github"}]}
     if out["connected"] or out["username_on_resume"]:
         out["public_repos_readable"] = True
     return out

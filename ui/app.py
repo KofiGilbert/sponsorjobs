@@ -963,6 +963,16 @@ def _save_cred(name: str, value: str) -> None:
     if not found:
         out.append(new_line)
     _CRED_FILE.write_text("\n".join(out).rstrip("\n") + "\n", encoding="utf-8")
+    _private_file(_CRED_FILE)
+
+
+def _private_file(path: Path) -> None:
+    """Only the person's own account may read the plaintext creds file (chmod 600). Best effort:
+    Windows has no POSIX modes, and a failed chmod must never lose the saved value."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def _remove_cred(name: str) -> None:
@@ -6662,8 +6672,9 @@ def telegram_disconnect():
 @_guard
 def github_status():
     conn = _github_connection()      # the same answer the chat gives
+    from ui.github_device import available
     return jsonify({"configured": bool(_cred("GITHUB_TOKEN")), "login": conn.get("login") or "",
-                    "connected": bool(conn.get("connected")),
+                    "connected": bool(conn.get("connected")), "device_flow": available(),
                     **({"reason": conn["reason"]} if conn.get("reason") else {})})
 
 
@@ -6688,6 +6699,52 @@ def github_save():
 def github_disconnect():
     _revoke_cred("GITHUB_TOKEN")
     _revoke_cred("GITHUB_LOGIN")
+    return jsonify({"ok": True})
+
+
+# ---- Sign in with GitHub (the default way to connect): GitHub's OAuth device flow, the way
+# `gh auth login` works. The page shows a short code, the person approves it on github.com in
+# their own browser, and the token lands in the same local credential as a pasted one. The
+# device code and the token stay on this side: neither is ever in a response or a log line.
+# ui/github_device.py has the protocol; the token box above stays as the advanced path. ----
+@app.post("/api/github/device/start")
+@_guard
+def github_device_start():
+    from ui import github_device as D
+    res = D.start()
+    if not res.get("ok"):
+        return jsonify({"ok": False, "error": res.get("error") or D.FAILED}), 400
+    return jsonify({k: res[k] for k in ("ok", "user_code", "verification_uri", "expires_in",
+                                        "interval")})
+
+
+@app.post("/api/github/device/poll")
+@_guard
+def github_device_poll():
+    from ui import github_device as D
+    from ui.github_publish import validate_token
+    res = D.poll()
+    state = res.get("state")
+    if state == "pending":
+        return jsonify({"ok": True, "connected": False, "state": "pending",
+                        "interval": res.get("interval")})
+    if state != "ok":
+        return jsonify({"ok": False, "connected": False, "state": state,
+                        "error": res.get("error") or D.FAILED})
+    token = res["token"]
+    check = validate_token(token)
+    if not check.get("ok"):
+        return jsonify({"ok": False, "connected": False, "state": "error", "error": D.FAILED})
+    _save_cred("GITHUB_TOKEN", token)
+    _save_cred("GITHUB_LOGIN", check.get("login", ""))
+    return jsonify({"ok": True, "connected": True, "state": "ok", "login": check.get("login", "")})
+
+
+@app.post("/api/github/device/cancel")
+@_guard
+def github_device_cancel():
+    from ui import github_device as D
+    D.cancel()
     return jsonify({"ok": True})
 
 

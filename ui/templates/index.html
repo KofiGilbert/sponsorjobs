@@ -1531,6 +1531,22 @@
             </div>
             <button class="btn btn-ghost" id="ghToggle" type="button">Connect</button>
           </div>
+          <!-- Sign in with GitHub (device flow, ui/github_device.py): a short code the person
+               approves on github.com in their own browser. No token to find or paste. -->
+          <div class="gh-device" id="ghDevice" hidden>
+            <div class="gh-device-code" id="ghCodeWrap">
+              <code class="gh-code" id="ghCode" aria-label="Your GitHub code"></code>
+              <button class="btn btn-ghost btn-sm" id="ghCopy" type="button">Copy</button>
+            </div>
+            <div class="conn-form-foot">
+              <a class="btn btn-primary btn-sm" id="ghOpen" href="https://github.com/login/device" target="_blank" rel="noopener">Open GitHub</a>
+              <button class="btn btn-primary btn-sm" id="ghRetry" type="button" hidden>Try again</button>
+              <button class="btn btn-ghost btn-sm" id="ghDevCancel" type="button">Cancel</button>
+            </div>
+            <p class="conn-hint" id="ghWait">Waiting for you to approve on GitHub</p>
+            <p class="conn-msg err" id="ghDevMsg" hidden></p>
+          </div>
+          <p class="conn-detail" id="ghAdvWrap" hidden><a href="#" id="ghAdvanced">Advanced: use a token instead</a></p>
           <form class="conn-form" id="ghForm" hidden>
             <input class="fld" id="ghToken" type="password" placeholder="Personal access token with 'repo' scope" autocomplete="off" spellcheck="false">
             <div class="conn-form-foot">
