@@ -86,7 +86,7 @@
     // Connect GitHub (src/github.ts, docs/github-app.md). Not secrets: the GitHub App's Client ID
     // (starts "Iv"), and its URL name from github.com/apps/<slug>. The client secret is set with
     // `npx wrangler secret put GITHUB_APP_CLIENT_SECRET`. Empty = /github/* answers 503.
-    "GITHUB_APP_CLIENT_ID": "",
-    "GITHUB_APP_SLUG": ""
+    "GITHUB_APP_CLIENT_ID": "Iv23liNCdQ0JXEWABKeE",
+    "GITHUB_APP_SLUG": "sponsorjobs"
   }
 }
