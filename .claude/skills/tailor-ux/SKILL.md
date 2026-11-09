@@ -404,3 +404,15 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   What changed ("Written from your material, check these", `#twWritten`) and named in the build
   message, so the person checks it before sending. The "lighter side" invite still appears when
   even the filled page is short.
+- **2026-11-08 Build from the resume chat; one line per project.** "Build me a project for this
+  job" gives an ideas card under the reply: the Projects page's own compact idea cards (no example
+  repos, no bookmark), three shown and "Show 3 more", each with a ghost "Build this for this job"
+  (the composer keeps the one primary), and one muted line saying a build reaches the resume only
+  after Learn it and the quiz. A click starts the build (one package) and a slim progress card
+  follows it (title, state on the right, a 3px bar while building, then ghost Learn it / Defend it
+  that open that project's step on Projects). A pass on a project built for the open resume adds it
+  there, says "You passed X, N of 20. I added it to your resume for ROLE at COMPANY." in the chat,
+  and the quiz result reads "Passed. Added to your resume for ..." with "Back to your resume". On
+  the resume every project is ONE line like Kofi's own: small-caps name with the link arrow left,
+  tools bold right, never a "Personal Project" line; tools in brackets after an old stored name
+  move to the right slot.

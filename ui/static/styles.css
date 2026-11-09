@@ -4870,3 +4870,5 @@ body.panel-open .trk-panel { right: calc(var(--panel-w) + 42px); }
 .proj-progress .pp-bar span { display: block; height: 100%; width: 0; background: var(--ink-2); transition: width var(--dur) var(--ease); }
 .proj-progress .pp-acts { display: flex; flex-wrap: wrap; gap: 8px; }
 .proj-progress .pp-acts:empty { display: none; }
+.chat-ideas .proj-idea[hidden] { display: none; }
+.chat-ideas .ci-more { align-self: flex-start; }

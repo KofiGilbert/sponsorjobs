@@ -3197,13 +3197,17 @@
       <div class="ci-list">${ideas.map((s, i) => ideaCard(s, i, { compact: true, still: true })).join("")}</div>
       <div class="rf-note">${esc("A built project reaches your resume only after you learn it and pass its quiz.")}</div>`;
     const btns = [];
+    // The chat stays short: three ideas, the rest one click away; example repos stay on Projects.
+    const SHOWN = 3;
     wrap.querySelectorAll(".proj-idea").forEach((art, i) => {
       art.querySelector("[data-save]")?.remove();
+      art.querySelector(".proj-idea-ex")?.remove();
       const s = ideas[i], b = art.querySelector("[data-start]");
       if (!b || !s) return;
       b.classList.remove("btn-primary"); b.classList.add("btn-ghost");
       const started = card.used && card.built === s.key;
-      b.textContent = started ? "Building for this job" : "Build this for this job";
+      if (i >= SHOWN && !started) art.hidden = true;
+      b.textContent = started ? "Started for this job" : "Build this for this job";
       b.disabled = !!card.used || !card.token;
       btns.push(b);
       b.addEventListener("click", async () => {
@@ -3213,7 +3217,7 @@
         try {
           await withWorking(async () => {
             const st = await api("/api/session/action", { token: card.token, choice: "build", args: { key: s.key } });
-            if (st.action_ok) { ok = true; b.textContent = "Building for this job"; }
+            if (st.action_ok) { ok = true; b.textContent = "Started for this job"; }
             else if (st.action_error) bubble("agent", chatText(st.action_error));
             applyState(st);
           }, "Starting the build…");
@@ -3223,6 +3227,13 @@
         }
       });
     });
+    const hidden = wrap.querySelectorAll(".proj-idea[hidden]");
+    if (hidden.length) {
+      const more = el("button", "btn btn-sm btn-quiet ci-more");
+      more.type = "button"; more.textContent = `Show ${hidden.length} more`;
+      more.addEventListener("click", () => { hidden.forEach(a => { a.hidden = false; }); more.remove(); });
+      wrap.querySelector(".ci-list").after(more);
+    }
     chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
   }
   // project_progress: a project built from the chat. It follows the build, then opens that
