@@ -1579,6 +1579,7 @@ class WebIntake:
             return self._converse(message)
         text = str(out.get("text") or "").strip() or "Noted."
         cards = list(out.get("cards") or [])
+        self._agent_spoke = True       # a follow-up question stays with the agent (_submit)
         self._append("agent", text)
         if cards:
             self.history[-1]["card"] = cards[0]
@@ -3116,6 +3117,10 @@ class WebIntake:
         message = (message or "").strip()
         if not message:
             return self._state()
+        # Did the agent answer the last turn? Then a follow-up question ("None of them is strong.
+        # What do you suggest?") is part of that conversation, even without a GitHub or project
+        # word in it, and must not fall back to the intake's next field question.
+        followup, self._agent_spoke = bool(getattr(self, "_agent_spoke", False)), False
         self._append("user", message)
 
         # Flagged-placeholder project controls.
@@ -3238,7 +3243,9 @@ class WebIntake:
                             if isinstance(p, dict)])
             # Before the first build the intake's question is pending: only a clear question
             # leaves the funnel; an answer ("no github, no projects") stays on it.
-            if not captured and wants_agent(message, pending=self.assembled is None):
+            from agent.resume_chat import is_question
+            if not captured and (wants_agent(message, pending=self.assembled is None)
+                                 or (followup and is_question(message))):
                 return self._agent_reply(message)
 
         # Enrichment: once a first draft exists, a substantive message is REAL
