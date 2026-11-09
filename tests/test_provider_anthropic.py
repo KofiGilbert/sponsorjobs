@@ -97,3 +97,29 @@ def test_composite_routes_avatar_and_llm_to_the_right_backends():
     comp = CompositeProvider(avatar=FakeAvatar(), llm=AnthropicProvider(client=FakeAnthropic(text="ok")))
     assert comp.start_avatar_session("u1")["who"] == "tavus"
     assert comp.complete("claude-haiku-4-5", "hi")["text"] == "ok"
+
+
+def test_tools_pass_through_and_content_blocks_come_back():
+    class _Tool:
+        type = "tool_use"; id = "tu_1"; name = "github_status"; input = {"login": "jane"}
+
+    class _U:
+        input_tokens = 10; output_tokens = 4
+        cache_creation_input_tokens = 100; cache_read_input_tokens = 50
+
+    class _M:
+        content = [_Block("Checking."), _Tool()]; usage = _U(); stop_reason = "tool_use"
+
+    fake = FakeAnthropic(); fake._msg = _M()
+    p = AnthropicProvider(client=fake)
+    tools = [{"name": "github_status", "input_schema": {"type": "object"}}]
+    system = [{"type": "text", "text": "S", "cache_control": {"type": "ephemeral"}}]
+    out = p.complete("claude-haiku-4-5", messages=[{"role": "user", "content": "hi"}], system=system,
+                     tools=tools, tool_choice={"type": "auto"})
+    call = fake.calls[0]
+    assert call["tools"] == tools and call["tool_choice"] == {"type": "auto"} and call["system"] == system
+    assert out["content"] == [{"type": "text", "text": "Checking."},
+                              {"type": "tool_use", "id": "tu_1", "name": "github_status",
+                               "input": {"login": "jane"}}]
+    assert out["stop_reason"] == "tool_use" and out["text"] == "Checking."
+    assert out["input_tokens"] == 160                      # cache writes and reads metered as input

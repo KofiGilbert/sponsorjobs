@@ -41,6 +41,24 @@ TRANSIENT_TRIES = 3            # attempts on a transient answer, with a short ba
 TRANSIENT_MAX_WAIT = 8         # seconds: the broker's retry_after is honoured up to this
 
 
+# Whether the broker at an address passes tools through (True), answered without content blocks
+# (False: an older Worker, so the JSON protocol is used), or is not known yet (missing).
+_NATIVE_TOOLS: dict[str, bool] = {}
+
+
+def _no_fake(text: str) -> None:
+    """Last line of defence against shipping a test double as product. FakeProvider answers with
+    "[fake:<model>] tailored from: ..." -- text that compiles into a perfectly normal-looking
+    resume made entirely of placeholder. Whatever misconfiguration produced it (a missing key, a
+    broker wired to the fake), the honest outcome is to stop and say so, not to hand the person a
+    resume they might send to an employer. CLAUDE.md section 13."""
+    if str(text or "").startswith("[fake:"):
+        raise BrokerUnavailable(
+            "Tailor's AI is not configured with a real model, so it cannot write your "
+            "resume. Check your API key in Settings, then try again.",
+            "no_key")
+
+
 class BrokerUnavailable(RuntimeError):
     """The managed broker could not be reached, or refused the call (service down, or quota hit).
 
@@ -102,14 +120,36 @@ class BrokerLLM(AnthropicLLM):
 
     def agent_turn(self, system: str, messages: list[dict], tools: list[dict],
                    max_tokens: int = 900) -> dict:
-        # The broker (worker/src/anthropic.ts complete) returns text only and drops tool use
-        # blocks, so the agent speaks the JSON protocol through it until the broker passes tools
-        # through (a later piece). Then this becomes native like AnthropicLLM.agent_turn.
-        from .agent_protocol import json_agent_turn
+        """One turn of the resume chat agent (llm/agent_protocol.py has the shape). Native tool
+        use when the broker passes tools through (it answers with ``content`` blocks); an older
+        broker answers text only, and then this speaks the JSON protocol instead, remembered per
+        broker address so later turns do not pay for the native try again. The system prompt
+        and the tools are marked for prompt caching, as AnthropicLLM.agent_turn does."""
+        from .agent_protocol import anthropic_messages, from_blocks, json_agent_turn
+        if tools and _NATIVE_TOOLS.get(self.broker_url) is not False:
+            spec = [dict(t) for t in tools]
+            spec[-1]["cache_control"] = {"type": "ephemeral"}
+            out = self._send({
+                "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                "messages": anthropic_messages(messages), "tools": spec,
+                "max_tokens": max_tokens, "effort": "low"})
+            content = out.get("content")
+            if isinstance(content, list) and content:
+                _NATIVE_TOOLS[self.broker_url] = True
+                turn = from_blocks(content, out.get("stop_reason"))
+                _no_fake(turn["text"])
+                return turn
+            _NATIVE_TOOLS[self.broker_url] = False      # an older broker: tools were ignored
         return json_agent_turn(self._complete_history, system, messages, tools, max_tokens)
 
     # -- transport -------------------------------------------------------------------------- #
     def _post(self, payload: dict) -> str:
+        text = (self._send(payload).get("text") or "").strip()
+        _no_fake(text)
+        return text
+
+    def _send(self, payload: dict) -> dict:
+        """POST /llm/complete and return the broker's whole JSON answer."""
         data = json.dumps(payload).encode()
         headers = {"Content-Type": "application/json", "User-Agent": BROKER_USER_AGENT}
         if self.auth_token:
@@ -152,19 +192,7 @@ class BrokerLLM(AnthropicLLM):
             raise BrokerUnavailable(
                 "SponsorJobs' AI took too long to answer. Check your connection and try again.",
                 "service_down") from last_exc
-        text = (out.get("text") or "").strip()
-        # Last line of defence against shipping a test double as product. FakeProvider
-        # answers with "[fake:<model>] tailored from: ..." -- text that compiles into a
-        # perfectly normal-looking resume made entirely of placeholder. Whatever
-        # misconfiguration produced it (a missing key, a broker wired to the fake), the
-        # honest outcome is to stop and say so, not to hand the person a CV they might
-        # send to an employer. CLAUDE.md §13.
-        if text.startswith("[fake:"):
-            raise BrokerUnavailable(
-                "Tailor's AI is not configured with a real model, so it cannot write your "
-                "resume. Check your API key in Settings, then try again.",
-                "no_key")
-        return text
+        return out if isinstance(out, dict) else {}
 
     @staticmethod
     def _error(exc: "urllib.error.HTTPError") -> "tuple[str, str, float | None]":

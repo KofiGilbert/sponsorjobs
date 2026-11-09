@@ -18,6 +18,7 @@
 import { allowRegistration, emailOf, identify, register } from "./accounts";
 import { handleAdmin, isAdminHost } from "./admin";
 import { classifyUpstream, complete } from "./anthropic";
+import { BadRequest, type ToolArgs, toolArgs } from "./tools";
 import { aiStatus, describeAi, recordOk, recordOutage } from "./outage";
 import {
   type Billing, billingFor, billingFrom, grantFor, offeredPacks, offeredPasses, packCheckoutUrl, packPrice, passCheckoutUrl,
@@ -110,11 +111,22 @@ const llmComplete: Handler = async ({ req, env, now, nowMs }) => {
   const day = dayOf(nowMs);
   const b = await body(req);
   const prompt = b.prompt == null ? "" : String(b.prompt);
-  const system = b.system == null ? "" : String(b.system);
   const messages = Array.isArray(b.messages) ? b.messages : null;
+  // Tool use (src/tools.ts): the app's own tools, a tool_choice and a system prompt as cached
+  // text blocks. Checked before anything is metered or sent; a caller that sends none of them
+  // gets exactly the old request and the old answer.
+  let ta: ToolArgs;
+  try {
+    ta = toolArgs(b);
+  } catch (e) {
+    if (e instanceof BadRequest) return json({ error: e.message }, 400);
+    throw e;
+  }
+  const system = ta.system;
   // Estimate the input up front (~1 token / 4 chars) so one oversized prompt or history cannot
   // blow past a capped plan on the company key; the plain check only sees usage AFTER the spend.
-  let estChars = prompt.length + system.length;
+  // The tool definitions are input too, so they count.
+  let estChars = prompt.length + ta.chars;
   if (messages) {
     for (const m of messages) {
       if (m && typeof m === "object" && !Array.isArray(m)) {
@@ -153,6 +165,7 @@ const llmComplete: Handler = async ({ req, env, now, nowMs }) => {
       model, prompt, system, messages,
       maxTokens: pyInt(b.max_tokens) || null,
       effort: b.effort,
+      tools: ta.tools, toolChoice: ta.toolChoice,
     });
   } catch (err) {
     // Log before flattening: the client never gets the upstream text (it can name the key's
@@ -176,7 +189,11 @@ const llmComplete: Handler = async ({ req, env, now, nowMs }) => {
   const spent = out.input_tokens + out.output_tokens;
   const used = await recordLlm(env.DB, user, period, spent, free ? day : null);
   const cap = plan.llmTokenCap;
-  return json({ text: out.text, model, tokens: { used, cap, over_cap: cap !== null && used > cap } });
+  const tokens = { used, cap, over_cap: cap !== null && used > cap };
+  // Tool-use callers get the content blocks and the stop reason too (llm/broker_client.py
+  // BrokerLLM.agent_turn reads tool calls from them); everyone else, the same answer as before.
+  if (ta.tools) return json({ text: out.text, content: out.content, stop_reason: out.stop_reason, model, tokens });
+  return json({ text: out.text, model, tokens });
 };
 
 const llmPackage: Handler = async ({ req, env, now, nowMs }) => {

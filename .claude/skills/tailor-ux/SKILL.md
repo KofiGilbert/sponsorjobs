@@ -416,3 +416,10 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   the resume every project is ONE line like Kofi's own: small-caps name with the link arrow left,
   tools bold right, never a "Personal Project" line; tools in brackets after an old stored name
   move to the right slot.
+- **2026-11-08 One proactive projects offer; no placeholder projects (agent flag on).** At the
+  first build in a resume chat, when the job asks for skills the resume does not show and its
+  projects name none of the job's skills (or there are none), the chat adds ONE line ("This job
+  asks for X and Y, and your resume does not show them yet. A project can. ...") with two ghost
+  buttons, "Check my GitHub" and "Build a project for this job". Nothing is fetched or asked of
+  the model until a click; it never repeats in that chat. "Suggest projects" no longer drops
+  flagged sample projects on the page: ideas come as the ideas card (2026-11-08 above).

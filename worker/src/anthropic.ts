@@ -1,6 +1,8 @@
 // The Anthropic call, ported from backend/provider_anthropic.py, over plain fetch (the SDK is
 // not needed for one endpoint and would only grow the bundle).
 
+import type { TextBlock, ToolDef } from "./tools";
+
 const API_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MAX_TOKENS = 1024;
 
@@ -22,13 +24,24 @@ export function supportsEffort(model: string): boolean {
 export interface CompleteArgs {
   model: string;
   prompt: string;
-  system?: string;
+  /** Plain text, or text blocks that may carry cache_control (src/tools.ts checked them). */
+  system?: string | TextBlock[];
   messages?: unknown[] | null;
   maxTokens?: number | null;
   effort?: unknown;
+  tools?: ToolDef[];
+  toolChoice?: Record<string, unknown>;
 }
 
-export interface Completion { text: string; input_tokens: number; output_tokens: number }
+export interface Completion {
+  text: string;
+  /** Every input token billed: uncached, cache writes and cache reads (metered alike). */
+  input_tokens: number;
+  output_tokens: number;
+  /** The model's content blocks (text, tool_use) and why it stopped, for tool-use callers. */
+  content: unknown[];
+  stop_reason: string | null;
+}
 
 export class UpstreamError extends Error {
   constructor(readonly status: number, readonly body: string, readonly retryAfter: number | null = null) {
@@ -136,7 +149,11 @@ export async function complete(apiKey: string, a: CompleteArgs): Promise<Complet
     max_tokens: a.maxTokens || DEFAULT_MAX_TOKENS,
     messages,
   };
-  if (a.system) body.system = a.system;
+  if (Array.isArray(a.system) ? a.system.length : a.system) body.system = a.system;
+  if (a.tools && a.tools.length) {
+    body.tools = a.tools;
+    if (a.toolChoice) body.tool_choice = a.toolChoice;
+  }
   if (a.effort && supportsEffort(a.model)) body.output_config = { effort: a.effort };
 
   let msg: Record<string, any>;
@@ -155,9 +172,15 @@ export async function complete(apiKey: string, a: CompleteArgs): Promise<Complet
   }
   const content: any[] = Array.isArray(msg.content) ? msg.content : [];
   const text = content.filter((b) => b?.type === "text").map((b) => String(b.text ?? "")).join("").trim();
+  const u = msg.usage ?? {};
   return {
     text,
-    input_tokens: Number(msg.usage?.input_tokens) || 0,
-    output_tokens: Number(msg.usage?.output_tokens) || 0,
+    // Cached input is still input on the company key: a cache write costs more than plain input
+    // and a read less, so counting both as input keeps the plan caps on the safe side.
+    input_tokens: (Number(u.input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0) +
+                  (Number(u.cache_read_input_tokens) || 0),
+    output_tokens: Number(u.output_tokens) || 0,
+    content,
+    stop_reason: typeof msg.stop_reason === "string" ? msg.stop_reason : null,
   };
 }

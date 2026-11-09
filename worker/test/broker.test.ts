@@ -270,6 +270,106 @@ describe("/llm/complete", () => {
   });
 });
 
+describe("/llm/complete tool use (the resume chat agent)", () => {
+  const TOOL = { name: "github_status", description: "Is GitHub connected?",
+                 input_schema: { type: "object", properties: {} } };
+  const toolReply = (input_tokens = 20, output_tokens = 5, usage: Record<string, number> = {}) => ({
+    body: { content: [{ type: "text", text: "Let me look." },
+                      { type: "tool_use", id: "tu_1", name: "github_status", input: {} }],
+            stop_reason: "tool_use", usage: { input_tokens, output_tokens, ...usage } },
+  });
+
+  it("passes tools, tool_choice and cache_control through and returns content and stop_reason", async () => {
+    const { token } = await newAccount();
+    const { sent } = stubAnthropic(toolReply());
+    const system = [{ type: "text", text: "You help.", cache_control: { type: "ephemeral" } }];
+    const tools = [{ ...TOOL, cache_control: { type: "ephemeral" }, extra: "dropped" }];
+    const msgs = [{ role: "user", content: [{ type: "text", text: "hi" }] }];
+    const r = await call("/llm/complete", { token, body: { system, messages: msgs, tools,
+      tool_choice: { type: "auto" }, max_tokens: 900, effort: "low" } });
+    expect(r.status).toBe(200);
+    expect(r.data.text).toBe("Let me look.");
+    expect(r.data.stop_reason).toBe("tool_use");
+    expect(r.data.content).toEqual(toolReply().body.content);
+    expect(sent[0]!.body).toEqual({ model: "claude-haiku-4-5", max_tokens: 900, messages: msgs, system,
+      tools: [{ ...TOOL, cache_control: { type: "ephemeral" } }], tool_choice: { type: "auto" } });
+  });
+
+  it("a caller with no tools gets exactly the old request and answer", async () => {
+    const { token } = await newAccount();
+    const { sent } = stubAnthropic(toolReply());
+    const r = await call("/llm/complete", { token, body: { prompt: "hi" } });
+    expect(Object.keys(r.data).sort()).toEqual(["model", "text", "tokens"]);
+    expect(sent[0]!.body).toEqual({ model: "claude-haiku-4-5", max_tokens: 1024,
+                                    messages: [{ role: "user", content: "hi" }] });
+  });
+
+  it("refuses bad tool requests with a 400 before metering or any model call", async () => {
+    const { id, token } = await newAccount();
+    const { sent } = stubAnthropic(toolReply());
+    const many = Array.from({ length: 17 }, (_, i) => ({ ...TOOL, name: `t${i}` }));
+    const bad: unknown[] = [
+      { tools: many },                                                       // over 16
+      { tools: [{ ...TOOL, description: "x".repeat(40_000) }] },             // over the size cap
+      { tools: [{ type: "web_search_20250305", name: "web_search" }] },      // a server tool
+      { tools: [{ name: "has space", input_schema: {} }] },
+      { tools: [{ name: "no_schema" }] },
+      { tools: [TOOL, TOOL] },
+      { tools: "github_status" },
+      { tool_choice: { type: "auto" } },                                     // no tools
+      { tools: [TOOL], tool_choice: { type: "tool", name: "other" } },
+      { tools: [TOOL], tool_choice: { type: "sometimes" } },
+      { tools: [{ ...TOOL, cache_control: { type: "forever" } }] },
+      { system: [{ type: "image", source: {} }] },
+      { system: Array.from({ length: 5 }, () => ({ type: "text", text: "s" })) },
+    ];
+    for (const extra of bad) {
+      const r = await call("/llm/complete", { token, body: { prompt: "hi", ...(extra as object) } });
+      expect(r.status, JSON.stringify(extra).slice(0, 80)).toBe(400);
+      expect(typeof r.data.error).toBe("string");
+    }
+    expect(sent).toHaveLength(0);
+    const row = await env.DB.prepare("SELECT llm_tokens FROM usage WHERE user = ? AND period = ?")
+      .bind(id, period()).first();
+    expect(row).toBeNull();
+  });
+
+  it("the tool definitions count in the up-front estimate", async () => {
+    const { id, token } = await newAccount();
+    await addLlmTokens(env.DB, id, period(), 399_000);                    // 1k under the free cap
+    const { sent } = stubAnthropic(toolReply());
+    const tools = Array.from({ length: 4 }, (_, i) => ({ ...TOOL, name: `t${i}`, description: "d".repeat(7_000) }));
+    expect((await call("/llm/complete", { token, body: { prompt: "hi", tools } })).status).toBe(402);
+    expect(sent).toHaveLength(0);
+    // the same tools on a fresh account go through
+    const fresh = await newAccount();
+    expect((await call("/llm/complete", { token: fresh.token, body: { prompt: "hi", tools } })).status).toBe(200);
+  });
+
+  it("meters cache writes and reads as input", async () => {
+    const { id, token } = await newAccount();
+    stubAnthropic(toolReply(10, 5, { cache_creation_input_tokens: 100, cache_read_input_tokens: 50 }));
+    const r = await call("/llm/complete", { token, body: { prompt: "hi", tools: [TOOL] } });
+    expect(r.data.tokens.used).toBe(165);
+    const mine = await env.DB.prepare("SELECT llm_tokens FROM usage WHERE user = ? AND period = ?")
+      .bind(id, period()).first<{ llm_tokens: number }>();
+    expect(mine!.llm_tokens).toBe(165);
+  });
+
+  it("never logs the prompt or the tool input on a failure", async () => {
+    const { token } = await newAccount();
+    stubAnthropic({ status: 400, body: { error: { message: "bad request" } } });
+    const logged: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => { logged.push(a.map(String).join(" ")); });
+    vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => { logged.push(a.map(String).join(" ")); });
+    const r = await call("/llm/complete", { token, body: {
+      messages: [{ role: "user", content: "SECRET-PROMPT" }],
+      tools: [{ ...TOOL, description: "SECRET-TOOL" }] } });
+    expect(r.status).toBe(502);
+    expect(logged.join("\n")).not.toMatch(/SECRET-/);
+  });
+});
+
 describe("/llm/package", () => {
   it("counts runs and stops at the free three; a pass draws from its own balance", async () => {
     const { id, token } = await newAccount();

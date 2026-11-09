@@ -634,14 +634,46 @@ _LISTED = re.compile(r"(^|\n)\s*(?:\d+[.)]|[-*•])\s+\S", re.M)
 _URL = re.compile(r"https?://|www\.", re.I)
 
 
-def wants_agent(message: str) -> bool:
-    """A turn the agent should answer (cheap, no model): GitHub, repositories, portfolio,
-    projects talked about without an explicit list, relevance, the quiz, connecting, and "what
-    can you do". An explicit list of projects or a pasted link is material for the existing
-    capture, so it stays there."""
+# A question: a question mark, or a sentence that opens like one.
+_QUESTION_START = re.compile(
+    r"^\s*(?:what|which|how|why|where|who|when|can|could|would|will|do|does|did|is|are|should|"
+    r"have you|has|any)\b", re.I)
+# An ask of the app: a verb aimed at GitHub, repositories or projects ("check my github",
+# "build me a project", "which repos fit").
+_ASK = re.compile(
+    r"\b(?:check|look (?:at|through)|scan|review|go through|rank|show|list|find|pull|read|"
+    r"open|connect|link|suggest|recommend|build me|help me build|make me|create|compare)\b"
+    r"[^.?!\n]{0,40}\b(?:github|repos?|repositor(?:y|ies)|portfolio|projects?)\b", re.I)
+# An answer: what a person says back to the intake's question ("no github, no projects",
+# "I don't have projects", "skip", "yes").
+_ANSWER_START = re.compile(
+    r"^\s*(?:no|none|nope|nah|not|n/?a|skip|i (?:do not|don'?t|dont) have|i have(?:n'?t| no)|"
+    r"there (?:are|is) no|yes|yeah|yep|sure|ok(?:ay)?|my)\b", re.I)
+
+
+def is_question(message: str) -> bool:
+    m = str(message or "")
+    return "?" in m or bool(_QUESTION_START.match(m))
+
+
+def wants_agent(message: str, pending: bool = False) -> bool:
+    """A turn the agent should answer (cheap, no model): a question or a request about GitHub,
+    repositories, portfolio, projects, relevance, the quiz, connecting, or "what can you do".
+
+    A message that only answers (a decline such as "no github, no projects", "I don't have
+    projects", a statement, an explicit list of projects, a pasted link) is material for the
+    intake's capture, so it stays there. ``pending`` is True while a required intake answer is
+    pending (before the first build): then only a clear question goes to the agent, never an
+    imperative or a statement, so the funnel's question is always answered first."""
     m = str(message or "")
     if not m.strip() or _LISTED.search(m):
         return False
     if _URL.search(m) and not re.search(r"\?", m):
         return False
-    return bool(_AGENT_WORDS.search(m) or _PROJECTS.search(m))
+    if not (_AGENT_WORDS.search(m) or _PROJECTS.search(m)):
+        return False
+    if is_question(m):
+        return True
+    if pending:
+        return False
+    return bool(_ASK.search(m)) and not _ANSWER_START.match(m)

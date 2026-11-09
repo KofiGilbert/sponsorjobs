@@ -196,3 +196,101 @@ def test_the_whole_free_tier_shares_a_daily_budget_and_passes_are_untouched(monk
     assert r.status_code == 503 and r.get_json()["reason"] == "free_busy"
     meter.store.set_pass("paid", "pass30", int(time.time()) + 86_400, 900, 10)
     assert c.post("/llm/complete", json={"prompt": "hi"}, headers=paid).status_code == 200
+
+
+# -- tool use (the resume chat agent; mirrors worker/test/broker.test.ts) ------------------- #
+
+_TOOL = {"name": "github_status", "description": "Is GitHub connected?",
+         "input_schema": {"type": "object", "properties": {}}}
+
+
+class _ToolRecorder(FakeProvider):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def complete(self, model, prompt="", **kw):
+        self.calls.append({"prompt": prompt, **kw})
+        out = {"text": "Let me look.", "input_tokens": 20, "output_tokens": 5}
+        if kw.get("tools"):
+            out.update(content=[{"type": "text", "text": "Let me look."},
+                                {"type": "tool_use", "id": "tu_1", "name": "github_status", "input": {}}],
+                       stop_reason="tool_use")
+        return out
+
+
+def _tool_client(plan=None):
+    rec = _ToolRecorder()
+    meter = Meter(InMemoryStore())
+    app = create_app(meter=meter, provider=rec, period_fn=lambda: "2026-07")
+    app.config.update(TESTING=True)
+    c = app.test_client()
+    c.rec, c.meter = rec, meter
+    if plan:
+        c.post("/billing/plan", json={"plan": plan}, headers=H)
+    return c
+
+
+def test_tools_pass_through_and_content_and_stop_reason_come_back():
+    c = _tool_client()
+    system = [{"type": "text", "text": "You help.", "cache_control": {"type": "ephemeral"}}]
+    r = c.post("/llm/complete", headers=H, json={
+        "system": system, "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        "tools": [{**_TOOL, "cache_control": {"type": "ephemeral"}, "extra": "dropped"}],
+        "tool_choice": {"type": "auto"}})
+    body = r.get_json()
+    assert r.status_code == 200
+    assert body["stop_reason"] == "tool_use" and body["content"][1]["name"] == "github_status"
+    seen = c.rec.calls[0]
+    assert seen["system"] == system and seen["tool_choice"] == {"type": "auto"}
+    assert seen["tools"] == [{**_TOOL, "cache_control": {"type": "ephemeral"}}]
+
+
+def test_a_caller_with_no_tools_gets_the_old_request_and_answer():
+    c = _tool_client()
+    r = c.post("/llm/complete", headers=H, json={"system": "S", "prompt": "hi"})
+    assert set(r.get_json()) == {"text", "model", "tokens"}
+    assert "tools" not in c.rec.calls[0] and c.rec.calls[0]["system"] == "S"
+
+
+@pytest.mark.parametrize("extra", [
+    {"tools": [dict(_TOOL, name=f"t{i}") for i in range(17)]},
+    {"tools": [dict(_TOOL, description="x" * 40_000)]},
+    {"tools": [{"type": "web_search_20250305", "name": "web_search"}]},
+    {"tools": [{"name": "has space", "input_schema": {}}]},
+    {"tools": [{"name": "no_schema"}]},
+    {"tools": [_TOOL, _TOOL]},
+    {"tools": "github_status"},
+    {"tool_choice": {"type": "auto"}},
+    {"tools": [_TOOL], "tool_choice": {"type": "tool", "name": "other"}},
+    {"tools": [dict(_TOOL, cache_control={"type": "forever"})]},
+    {"system": [{"type": "image", "source": {}}]},
+])
+def test_bad_tool_requests_are_400_before_metering_or_any_call(extra):
+    c = _tool_client()
+    r = c.post("/llm/complete", headers=H, json={"prompt": "hi", **extra})
+    assert r.status_code == 400 and isinstance(r.get_json()["error"], str)
+    assert c.rec.calls == []
+    assert c.meter.store.get_llm_tokens("u1", "2026-07") == 0
+
+
+def test_tool_definitions_count_in_the_up_front_estimate():
+    c = _tool_client()
+    c.meter.record_llm("u1", "2026-07", 399_000)                 # 1k under the free cap
+    tools = [dict(_TOOL, name=f"t{i}", description="d" * 7_000) for i in range(4)]
+    assert c.post("/llm/complete", headers=H, json={"prompt": "hi", "tools": tools}).status_code == 402
+    assert c.rec.calls == []
+    fresh = {"X-Tailor-User": "u2"}
+    assert c.post("/llm/complete", headers=fresh, json={"prompt": "hi", "tools": tools}).status_code == 200
+
+
+def test_a_failed_tool_call_never_logs_the_prompt_or_tool_input(caplog):
+    class Boom(FakeProvider):
+        def complete(self, m, p="", **k): raise RuntimeError("upstream 400")
+    app = create_app(meter=Meter(InMemoryStore()), provider=Boom(), period_fn=lambda: "2026-07")
+    app.config.update(TESTING=True)
+    r = app.test_client().post("/llm/complete", headers=H, json={
+        "messages": [{"role": "user", "content": "SECRET-PROMPT"}],
+        "tools": [dict(_TOOL, description="SECRET-TOOL")]})
+    assert r.status_code == 502
+    assert "SECRET-" not in caplog.text and "SECRET-" not in r.get_data(as_text=True)
