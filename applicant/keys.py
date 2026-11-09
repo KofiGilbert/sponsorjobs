@@ -18,7 +18,7 @@ SENSITIVITIES = (NORMAL, LEGAL, EEO)
 # Where a fact came from (docs section 5.1). ``you`` and ``drafted`` are the answer library's
 # own two sources, kept as they are.
 SOURCES = ("you", "card", "onboarding", "ask_bar", "ask_telegram", "late_telegram", "extension",
-           "resume", "chat", "telegram_chat", "drafted", "derived", "migration")
+           "resume", "chat", "telegram_chat", "drafted", "derived", "migration", "github")
 # A self-identification value only ever comes from the person's own direct choice (section 9).
 EEO_REFUSED_SOURCES = frozenset({"chat", "telegram_chat", "resume", "drafted", "derived", "model"})
 # A legal value proposed by these waits as needs_check (unconfirmed_legal) and never fills a form.
@@ -26,9 +26,11 @@ LEGAL_PROPOSAL_SOURCES = frozenset({"resume", "chat", "telegram_chat"})
 
 # Confidence by source (section 5.1): said or chosen by the person 1.0, read from their resume
 # 0.9, drafted from the profile 0.8, extracted from chat 0.7.
-CONFIDENCE = {"resume": 0.9, "drafted": 0.8, "chat": 0.7, "telegram_chat": 0.7}
+# A project read from the person's own GitHub repository (added with their click) is 0.9, like
+# their resume: real, but not yet seen and kept on the profile page.
+CONFIDENCE = {"resume": 0.9, "github": 0.9, "drafted": 0.8, "chat": 0.7, "telegram_chat": 0.7}
 # Sources whose facts the person has not seen and kept yet (``confirmed = 0``).
-UNCONFIRMED_SOURCES = frozenset({"drafted", "resume", "chat", "telegram_chat", "derived"})
+UNCONFIRMED_SOURCES = frozenset({"drafted", "resume", "chat", "telegram_chat", "derived", "github"})
 
 
 def confidence_for(source: str) -> float:

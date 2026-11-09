@@ -892,6 +892,11 @@ class WebIntake:
         # The stored GitHub token, () -> str, set by the app beside github_status. Only the
         # agent's list_repos callable holds it (ui/github_repos.py); it is never shown or logged.
         self.github_token = None
+        # The repo ranking (ui/repo_rank.py): at most three model calls a session, cached by job,
+        # repositories and resume projects. And the single-use tokens a repo_fit card's button
+        # spends (POST /api/session/action); only the person's click uses one, never a tool.
+        self.rank_state: dict = {"count": 0, "cache": {}}
+        self.action_tokens: dict = {}
         self.last_cover_letter = ""        # most recent drafted cover letter (bundled on accept)
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
         self.source_job = {}               # {url, source, source_id} when started from a sourced job
@@ -1149,11 +1154,16 @@ class WebIntake:
         return self._agent_reply(message) if self._agent_on() else self._converse(message)
 
     def _github_view(self) -> dict:
+        """The GitHub connection as the chat states it. It agrees with the token the repo
+        lookup uses: a saved token is connected unless GitHub itself rejected it."""
         from ui.github_repos import login_from
-        gh = self._github() or {}
+        got = self._github()
+        gh = got or {}
+        has_token = bool(self._token())
+        connected = bool(gh.get("connected")) or (has_token and gh.get("reason") != "token_rejected")
         ident = dict((self.profile or {}).get("identity") or {})
         ident.update({k: v for k, v in (self.essentials.get("identity") or {}).items() if v})
-        return {"connected": bool(gh.get("connected")), "login": str(gh.get("login") or ""),
+        return {"connected": connected, "login": str(gh.get("login") or ""),
                 "resume_login": login_from(ident.get("github") or "")}
 
     def _token(self) -> str:
@@ -1216,7 +1226,208 @@ class WebIntake:
             list_repos=lambda login: github_repos.list_repos(login, token=self._token()),
             history=lambda: self.prior_history + self.history,
             secrets=lambda: [t for t in (self._token(),) if t],
+            rank_repos=self._rank_for_job, offer=self._offer,
             role=self.role or "", company=self.company or "")
+
+    # -- repo ranking and adding (plan PRs 3 and 4) ------------------------------------- #
+    def _resume_projects(self, github_too: bool = False) -> list[dict]:
+        """The projects on this resume (the page, then the chat's own), each once. Placeholder
+        suggestions are not the person's; projects added from GitHub are judged as repos."""
+        from intake.links import same_title
+        used = getattr(self.assembled, "profile_used", None) or self.profile or {}
+        out: list[dict] = []
+        for p in (used.get("projects") or []) + (self.essentials.get("projects") or []):
+            if not isinstance(p, dict) or p.get("suggested"):
+                continue
+            if p.get("source") == "github" and not github_too:
+                continue
+            name = str(p.get("org") or p.get("title") or p.get("name") or "")
+            if name and not any(same_title(name, str(q.get("org") or q.get("title") or q.get("name") or ""))
+                                for q in out):
+                out.append(p)
+        return out
+
+    def _on_resume(self, repo: dict) -> bool:
+        from intake.links import same_title
+        for p in self._resume_projects(github_too=True):
+            name = str(p.get("org") or p.get("title") or p.get("name") or "")
+            link = str(p.get("link") or p.get("url") or "").rstrip("/").lower()
+            if (repo.get("full_name") and p.get("repo") == repo.get("full_name")) \
+                    or (link and link == str(repo.get("url") or "").rstrip("/").lower()) \
+                    or same_title(name, str(repo.get("name") or "")):
+                return True
+        return False
+
+    def _rank_for_job(self, login: str) -> dict:
+        """The person's repositories (and resume projects) judged for this job, through
+        ui/repo_rank.rank with this session's cap and cache. Each repo says whether it is on the
+        resume already. The token makes the GitHub calls and goes nowhere else."""
+        from ui import github_repos, repo_rank
+        repos, err = [], ""
+        if login:
+            got = github_repos.list_repos(login, token=self._token())
+            if got.get("ok"):
+                repos = list(got.get("repos") or [])
+                login = got.get("login") or login
+            else:
+                err = str(got.get("error") or "")
+        projects = self._resume_projects()
+        if err and not projects:
+            return {"ok": False, "error": err}
+        out = repo_rank.rank(self.llm, self.jd, repos, projects, login=login, token=self._token(),
+                             state=self.rank_state)
+        out["repos"] = [{**r, "on_resume": self._on_resume(r)} for r in out.get("repos") or []]
+        if err:
+            out["github_error"] = err
+        return out
+
+    def _offer(self, repos: list) -> str:
+        """A single-use action token for a card that offers these ranked repositories. The
+        entries are built now, from what the card shows (checked bullets, real link, dates)."""
+        import secrets as _secrets
+        import time as _time
+        from ui.repo_rank import entry_for
+        entries = {r["key"]: entry_for(r) for r in repos or [] if isinstance(r, dict) and r.get("key")}
+        if not entries:
+            return ""
+        tok = _secrets.token_urlsafe(18)
+        self.action_tokens[tok] = {"kind": "add_projects", "entries": entries, "used": False,
+                                   "at": _time.time()}
+        for old in list(self.action_tokens)[:-20]:          # keep the last twenty cards
+            self.action_tokens.pop(old, None)
+        return tok
+
+    ACTION_USED = "That card was already used. Ask me again to see your repositories now."
+    ACTION_GONE = "That card is from an earlier chat. Ask me again to check your repositories."
+
+    def apply_action(self, token: str, choice: str, args: dict | None = None) -> dict:
+        """The person's click on a card (POST /api/session/action): the only way a card changes
+        the resume. ``choice`` "add" adds the ticked repositories (``args.keys``). A token works
+        once; a used or unknown one changes nothing. Returns the session state with
+        action_ok and, on success, what was added."""
+        args = dict(args or {})
+        rec = self.action_tokens.get(str(token or ""))
+        if rec is None:
+            st = self._state([])
+            st.update({"action_ok": False, "action_error": self.ACTION_GONE})
+            return st
+        if rec.get("used"):
+            st = self._state([])
+            st.update({"action_ok": False, "action_error": self.ACTION_USED})
+            return st
+        if choice != "add" or rec.get("kind") != "add_projects":
+            st = self._state([])
+            st.update({"action_ok": False, "action_error": "I can't do that from this card."})
+            return st
+        keys = [str(k) for k in args.get("keys") or [] if str(k) in rec["entries"]]
+        if not keys:
+            st = self._state([])
+            st.update({"action_ok": False, "action_error": "Tick at least one repository first."})
+            return st
+        rec["used"] = True
+        got = self.add_projects([rec["entries"][k] for k in keys], source="github")
+        added, skipped = got.get("added") or [], got.get("skipped") or []
+        msgs = []
+        if added:
+            msgs.append(f"I added {', '.join(added)} to this resume"
+                        + (" and your saved profile." if got.get("saved") else "."))
+            cut = self._trims_note() if self.assembled is not None else ""
+            if cut:
+                msgs.append(cut)
+        if skipped:
+            one = len(skipped) == 1
+            msgs.append(f"{', '.join(skipped)} {'was' if one else 'were'} already on this resume, so "
+                        f"I left {'it as it was' if one else 'them as they were'}.")
+        for m in msgs:
+            self._append("agent", m)
+        # The card in the transcript shows it was used, so a restored chat does not offer it again.
+        for t in reversed(self.history):
+            for c in [t.get("card")] + list(t.get("cards") or []):
+                if isinstance(c, dict) and c.get("token") == token:
+                    c["used"] = True
+                    c["added"] = list(added)
+        self._persist()
+        st = self._state(msgs)
+        st.update({"action_ok": True, "added": added, "skipped": skipped})
+        return st
+
+    def add_projects(self, entries: list, source: str = "github") -> dict:
+        """Add project entries the person chose (from a repo_fit card) to this resume's
+        essentials and page, the brain (source ``source``) and the saved profile (section 4b),
+        then rebuild the page. An entry already there by name, link or repo is skipped, so
+        adding twice changes nothing. Returns {"added": [names], "skipped": [names], "saved"}."""
+        from intake.links import same_title
+
+        def there(e, lst):
+            for p in lst or []:
+                if not isinstance(p, dict):
+                    continue
+                link = str(p.get("link") or p.get("url") or "").rstrip("/").lower()
+                if same_title(e["org"], str(p.get("org") or p.get("title") or p.get("name") or "")) \
+                        or (e.get("link") and link == e["link"].rstrip("/").lower()) \
+                        or (e.get("repo") and p.get("repo") == e["repo"]):
+                    return True
+            return False
+
+        cur = self.essentials.setdefault("projects", [])
+        page = (self.profile or {}).get("projects") if isinstance(self.profile, dict) else None
+        added, skipped = [], []
+        for e in entries or []:
+            if not isinstance(e, dict) or not str(e.get("org") or "").strip():
+                continue
+            e = dict(e, source=source)
+            if there(e, cur) or there(e, page):
+                skipped.append(e["org"])
+                continue
+            cur.append(dict(e))
+            # The page's profile too (before a draft it is the saved row this session writes,
+            # and _draft refills its projects from essentials anyway).
+            if isinstance(self.profile, dict):
+                self.profile.setdefault("projects", []).append(dict(e))
+            added.append(e)
+        if not added:
+            return {"added": [], "skipped": skipped, "saved": False}
+        dec = self.essentials.get("declined")
+        if isinstance(dec, list) and "projects" in dec:
+            self.essentials["declined"] = [d for d in dec if d != "projects"]
+        self._brain_projects(added, source)
+        if self.assembled is not None:
+            self._assemble()
+        self._persist()
+        saved = self._save_projects_to_profile(added)
+        return {"added": [e["org"] for e in added], "skipped": skipped, "saved": saved}
+
+    def _brain_projects(self, entries: list, source: str):
+        st = self._brain()
+        if st is None:
+            return
+        try:
+            from applicant import facts as _F
+            from applicant.migrate import _norm
+            for e in entries:
+                val = {k: e.get(k) for k in ("org", "dates", "link") if e.get(k)}
+                _F.put(st, "project", val, source=source, subject=f"project:{_norm(e['org'])}",
+                       source_ref=f"github:{e.get('repo') or e['org']}")
+        except Exception:      # noqa: BLE001 - the brain never breaks the chat
+            pass
+
+    def _save_projects_to_profile(self, entries: list) -> bool:
+        """The added projects on the saved profile too (section 4b), so the next application
+        can reuse them. Only adds; never rewrites what is there."""
+        from intake.links import same_title
+        try:
+            saved = self.memory.load("default") or {}
+            prof = dict(saved.get("profile") or {})
+            projs = prof.setdefault("projects", [])
+            new = [e for e in entries if not any(
+                isinstance(p, dict) and same_title(e["org"], str(p.get("org") or p.get("title") or ""))
+                for p in projs)]
+            if new:
+                projs.extend(dict(e) for e in new)
+                self.memory.save("default", prof, saved.get("essentials") or {}, saved.get("history") or [])
+            return True
+        except Exception:      # noqa: BLE001
+            return False
 
     def _agent_reply(self, message: str):
         from agent.resume_chat import run_turn
@@ -1229,8 +1440,10 @@ class WebIntake:
         self._append("agent", text)
         if cards:
             self.history[-1]["card"] = cards[0]
+            if len(cards) > 1:
+                self.history[-1]["cards"] = cards
         self._persist()
-        return self._state([text], cards=cards[:1])
+        return self._state([text], cards=cards)
 
     # -- what the app can do (2026-11-06) ----------------------------------------------- #
     # Kofi uploaded his resume, then asked "didn't you see the projects that were on the resume
@@ -2998,6 +3211,14 @@ class WebIntake:
             if nm and nm not in names:
                 cur.append(p)
                 names.add(nm)
+        # A project the person added from GitHub keeps what came from the repository (its link,
+        # dates, checked bullets) even when the extractor echoes it back thinner.
+        by = {str(p.get("org") or p.get("title") or "").strip().lower(): p for p in prior or []
+              if isinstance(p, dict) and p.get("source") == "github"}
+        for i, p in enumerate(cur):
+            old = by.get(str(p.get("org") or p.get("title") or "").strip().lower())
+            if old is not None and p is not old:
+                cur[i] = {**p, **{k: v for k, v in old.items() if v not in (None, "", [], {})}}
 
     def _preserve_education_extras(self, prior: list):
         """Carry transcript/typed courses (and location) forward when the extractor

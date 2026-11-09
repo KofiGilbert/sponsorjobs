@@ -4812,3 +4812,36 @@ body.panel-open .trk-panel { right: calc(var(--panel-w) + 42px); }
 .signin-terms { margin-top: 10px; font-size: 12px; line-height: 1.5; color: var(--faint); }
 .signin-terms a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
 .signin-terms a:hover { color: var(--ink); }
+
+/* The resume chat's repo_fit card (agent/resume_chat.py): which GitHub repositories fit this job.
+   A framed card under the reply, aligned with the bubbles; fits with a checkbox, the rest folded
+   to one line each; ghost buttons only (the composer keeps the screen's one primary). */
+.repo-fit { margin: 2px 0 12px 44px; max-width: 620px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+@media (max-width: 560px) { .repo-fit { margin-left: 0; } }
+.repo-fit .rf-list { display: flex; flex-direction: column; gap: 2px; }
+.repo-fit .rf-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 6px; border-radius: 8px; cursor: pointer; }
+.repo-fit .rf-row:hover { background: var(--surface-2); }
+.repo-fit .rf-row input { margin-top: 3px; accent-color: var(--ink); }
+.repo-fit .rf-body { min-width: 0; flex: 1; }
+.repo-fit .rf-head { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; }
+.repo-fit .rf-name { color: var(--ink); font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.repo-fit .rf-name a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--border-strong); }
+.repo-fit .rf-fit { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.repo-fit .rf-why { color: var(--ink-2); font-size: 12.5px; margin-top: 2px; }
+.repo-fit .rf-terms { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.repo-fit .rf-terms span { font-size: 11.5px; color: var(--ink-2); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+.repo-fit .rf-fold summary { cursor: pointer; color: var(--ink-2); font-size: 12.5px; padding: 4px 6px; list-style: none; }
+.repo-fit .rf-fold summary::-webkit-details-marker { display: none; }
+.repo-fit .rf-fold summary::before { content: "\203A"; display: inline-block; width: 12px; transition: transform var(--dur) var(--ease); }
+.repo-fit .rf-fold[open] summary::before { transform: rotate(90deg); }
+.repo-fit .rf-count { color: var(--muted); margin-left: 4px; }
+.repo-fit .rf-line { display: flex; gap: 8px; align-items: baseline; padding: 3px 6px 3px 18px; font-size: 12.5px; min-width: 0; }
+.repo-fit .rf-line .rf-name { font-size: 12.5px; font-weight: 550; flex: none; }
+.repo-fit .rf-line .rf-fit { flex: none; }
+.repo-fit .rf-line .rf-why { margin: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.repo-fit .rf-empty { color: var(--ink-2); font-size: 13px; }
+.repo-fit .rf-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.repo-fit .rf-add:not(:disabled) { color: var(--ink); border-color: var(--ink-2); }
+.repo-fit .rf-add:disabled { opacity: 0.55; cursor: not-allowed; }
+.repo-fit .rf-note { color: var(--muted); font-size: 11.5px; }

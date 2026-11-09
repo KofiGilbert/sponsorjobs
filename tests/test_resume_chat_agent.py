@@ -186,7 +186,8 @@ def test_list_repos_keeps_only_owned_live_repos(gh):
     got = github_repos.list_repos("https://github.com/janedoe")
     assert got["ok"] and [r["name"] for r in got["repos"]] == ["route-planner", "dock-scheduler"]
     assert got["dropped"] == {"forks": 1, "archived": 1, "empty": 1}
-    assert set(got["repos"][0]) == {"name", "url", "description", "topics", "language", "stars", "pushed_at"}
+    assert set(got["repos"][0]) == {"name", "url", "description", "topics", "language", "stars", "pushed_at",
+                                    "created_at", "private"}
     assert gh[0]["url"].endswith("/users/janedoe/repos") and gh[0]["params"]["sort"] == "pushed"
     assert gh[0]["params"]["per_page"] == 100 and gh[0]["token"] == ""
     github_repos.list_repos("janedoe")

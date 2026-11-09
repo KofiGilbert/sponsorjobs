@@ -1393,8 +1393,11 @@ def _session() -> WebIntake:
 
 
 def _github_connection() -> dict:
-    """Whether the person's own GitHub is connected (Settings, Connections), for the chat."""
-    return {"connected": bool(_cred("GITHUB_TOKEN")), "login": _cred("GITHUB_LOGIN") or ""}
+    """Whether the person's own GitHub is connected (Settings, Connections), for the chat. A
+    saved token is a connection (the same token the repo lookup uses), and a missing login is
+    named once by GitHub's GET /user (ui/github_repos.connection). Never carries the token."""
+    from ui.github_repos import connection
+    return connection(_cred("GITHUB_TOKEN"), _cred("GITHUB_LOGIN") or "")
 
 
 class Unavailable(RuntimeError):
@@ -3010,7 +3013,8 @@ def session_state():
     # reads as "we weren't working on anything".
     # A turn's chat card (agent/resume_chat.py) comes back with it, so restore re-renders it.
     state["history"] = [{"role": t.get("role"), "content": t.get("content"),
-                         **({"card": t["card"]} if t.get("card") else {})}
+                         **({"card": t["card"]} if t.get("card") else {}),
+                         **({"cards": t["cards"]} if t.get("cards") else {})}
                         for t in (s.history or [])]
     return jsonify(state)
 
@@ -3020,6 +3024,20 @@ def session_state():
 def answer():
     text = (request.json or {}).get("text", "")
     return jsonify(_session().submit(text))
+
+
+@app.post("/api/session/action")
+@_guard
+def session_action():
+    """Body {token, choice, args}. The person's click on a chat card (agent/resume_chat.py): the
+    only way a card changes the resume. The token is single-use and lives on the session; the
+    chat model never sees it and no tool can spend it (WebIntake.apply_action)."""
+    body = request.json or {}
+    token = str(body.get("token") or "").strip()
+    if not token:
+        return jsonify({"error": "No card given."}), 400
+    args = body.get("args") if isinstance(body.get("args"), dict) else {}
+    return jsonify(_session().apply_action(token, str(body.get("choice") or ""), args))
 
 
 def _receive_upload():
@@ -6631,8 +6649,10 @@ def telegram_disconnect():
 @app.get("/api/github/status")
 @_guard
 def github_status():
-    token = _cred("GITHUB_TOKEN")
-    return jsonify({"configured": bool(token), "login": _cred("GITHUB_LOGIN") or ""})
+    conn = _github_connection()      # the same answer the chat gives
+    return jsonify({"configured": bool(_cred("GITHUB_TOKEN")), "login": conn.get("login") or "",
+                    "connected": bool(conn.get("connected")),
+                    **({"reason": conn["reason"]} if conn.get("reason") else {})})
 
 
 @app.post("/api/github")

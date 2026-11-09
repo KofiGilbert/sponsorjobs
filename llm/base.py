@@ -134,6 +134,13 @@ class LLMBackend(Protocol):
         (llm/agent_protocol.py)."""
         ...
 
+    def rank_repos_for_jd(self, jd: str, terms: list, repo_cards: list,
+                          resume_projects: list) -> dict:
+        """One tool-less call judging the person's repositories and resume projects for one job:
+        {"repos": [{id, fit, terms, why, bullets}], "projects": [{id, fit, terms, why}]}. The
+        caller (ui/repo_rank.py) checks every term and bullet against the item's own text."""
+        ...
+
     def draft_profile(self, jd_text: str, essentials: dict) -> dict:
         """Draft the *content-heavy* parts of a PROFILE from the JD + essentials.
 
@@ -849,7 +856,13 @@ class FakeLLM:
                     continue
                 names = [str(x.get("name")) for k in ("projects", "repos")
                          for x in obj.get(k) or [] if isinstance(x, dict) and x.get("name")]
-                if names:
+                if "fits" in obj:
+                    fits = [f"{x.get('name')} ({x.get('fit')})" for x in obj.get("fits") or []]
+                    bits.append(("These fit this job: " + ", ".join(fits) + ".") if fits
+                                else "None of your repositories fit this job.")
+                    if obj.get("how_judged"):
+                        bits.append(str(obj["how_judged"]))
+                elif names:
                     bits.append(f"{r.get('name')}: " + ", ".join(names) + ".")
                 elif obj.get("error"):
                     bits.append(str(obj["error"]))
@@ -859,7 +872,9 @@ class FakeLLM:
                     "stop": "end_turn"}
         said = str(last.get("content") or "")
         calls = []
-        if re.search(r"\b(github|repos?|repositor\w*|portfolio)\b", said, re.I):
+        if re.search(r"\b(fits?|match\w*|relevant)\b", said, re.I) and "rank_repos_for_jd" in names:
+            calls.append("rank_repos_for_jd")
+        elif re.search(r"\b(github|repos?|repositor\w*|portfolio)\b", said, re.I):
             calls += [c for c in ("github_status", "list_repos") if c in names]
         if re.search(r"\b(projects?|resume)\b", said, re.I) and "resume_snapshot" in names:
             calls.append("resume_snapshot")
@@ -869,6 +884,40 @@ class FakeLLM:
                                    for i, n in enumerate(calls)]}
         return {"text": "I can look at your resume, your last upload and your public GitHub "
                         "repositories.", "tool_calls": [], "stop": "end_turn"}
+
+    def rank_repos_for_jd(self, jd: str, terms: list, repo_cards: list,
+                          resume_projects: list) -> dict:
+        """Deterministic: ``rank_script`` (a dict, or a callable of the same arguments) when a test
+        sets one. Otherwise each item's fit comes from how many job skills its own text names
+        (2+ strong, 1 some, else none), and a repository's bullet is its README's first sentence."""
+        self.rank_calls = getattr(self, "rank_calls", 0) + 1
+        self.last_rank_args = (jd, list(terms or []), list(repo_cards or []), list(resume_projects or []))
+        script = getattr(self, "rank_script", None)
+        if callable(script):
+            return script(jd, terms, repo_cards, resume_projects)
+        if isinstance(script, dict):
+            return script
+
+        def judge(text):
+            low = str(text or "").lower()
+            hit = [t for t in terms or [] if re.search(r"(?<![a-z0-9])" + re.escape(str(t).lower())
+                                                       + r"(?![a-z0-9])", low)]
+            return ("strong" if len(hit) >= 2 else "some" if hit else "none"), hit
+
+        repos = []
+        for c in repo_cards or []:
+            fit, hit = judge(" ".join(str(c.get(k) or "") for k in ("name", "description", "readme"))
+                             + " " + " ".join(map(str, (c.get("topics") or []) + (c.get("languages") or []))))
+            first = re.split(r"(?<=[.!?])\s+", str(c.get("readme") or "").strip())[0][:200]
+            repos.append({"id": c.get("id"), "fit": fit, "terms": hit,
+                          "why": (f"It uses {', '.join(hit[:3])}." if hit else "It does not use this job's skills."),
+                          "bullets": [first] if first and fit != "none" else []})
+        projs = []
+        for p in resume_projects or []:
+            fit, hit = judge(f"{p.get('name')} {p.get('text')}")
+            projs.append({"id": p.get("id"), "fit": fit, "terms": hit,
+                          "why": (f"It shows {', '.join(hit[:3])}." if hit else "It does not show this job's skills.")})
+        return {"repos": repos, "projects": projs}
 
     def distill_memory(self, history: list[dict], known_keys: list[str]) -> dict:
         """Deterministic distillation: detect the few preference/constraint shapes the offline

@@ -4,10 +4,13 @@ holds, read in that turn. Behind the flag TAILOR_CHAT_AGENT (off by default; off
 behaves exactly as before).
 
 One turn (``run_turn``) is at most MAX_ROUNDS rounds of tool calls, then the answer. Tools only
-READ in this piece: the resume being built, the last upload, the GitHub connection and the
-person's public repositories. Nothing here changes the resume, so ``did`` is always empty and
-``honest`` strips any sentence that claims a save or an addition. Mutating tools come later,
-behind a single-use action token the person's own click spends.
+READ: the resume being built, the last upload, the GitHub connection, the person's public
+repositories, and how well those and the resume's own projects fit this job (ui/repo_rank.py,
+whose README text never enters this loop). Nothing here changes the resume, so ``did`` is
+always empty and ``honest`` strips any sentence that claims a save or an addition. A tool that
+offers a change (rank_repos_for_jd, propose_add_projects) returns a card with a single-use
+action token; only the person's click spends it (POST /api/session/action ->
+WebIntake.apply_action), and the token never reaches the model.
 
 The app's pieces reach this module only through ``AppContext`` callables, so it never imports
 ui/app.py (the same split as agent/home.py: decide and word things here, act in the routes).
@@ -54,6 +57,12 @@ class AppContext:
     list_repos: Callable[[str], dict]              # login -> ui/github_repos.list_repos result
     history: Callable[[], list] = field(default=lambda: [])
     secrets: Callable[[], list] = field(default=lambda: [])
+    # login -> ui/repo_rank.rank result (the session holds the cap, the cache and the token).
+    # README text stays inside it: only fits, checked terms and one line "why" reach the model.
+    rank_repos: Callable[[str], dict] | None = None
+    # ranked repos the person may add -> a single-use action token for the card's button. Only
+    # POST /api/session/action spends it (the person's click); no tool can.
+    offer: Callable[[list], str] | None = None
     role: str = ""
     company: str = ""
 
@@ -128,6 +137,111 @@ def _t_list_repos(ctx: AppContext, inp: dict) -> dict:
     return out
 
 
+def _login(ctx: AppContext, inp: dict) -> str:
+    login = str((inp or {}).get("login") or "").strip()
+    if not login:
+        gh = dict(ctx.github_status() or {})
+        login = str(gh.get("resume_login") or gh.get("login") or "")
+    return login
+
+
+FIT_WORDS = {"strong": "strong fit", "some": "some fit", "none": "does not fit", "unknown": "could not judge"}
+ADD_LABEL = "Add selected to this resume"
+BUILD_LABEL = "Build a project for this job instead"
+ADD_HINT = ("The person sees these in a card with checkboxes. To add any, they tick it and click "
+            f"\"{ADD_LABEL}\". You cannot add projects yourself.")
+
+
+def repo_fit_card(got: dict, token: str, picked: list | None = None, only: list | None = None) -> dict:
+    """The repo_fit card: fits (a checkbox each), doesn't fit and couldn't judge (one line each,
+    collapsed), the resume's own projects on the same scale, and the honest footnote. ``only``
+    (keys) shows just those as the fits, for a proposal the person asked for by name."""
+    repos = [r for r in got.get("repos") or [] if isinstance(r, dict)]
+    if only is not None:
+        keys = set(only)
+        fits = [r for r in repos if r.get("key") in keys]
+        rest = []
+    else:
+        fits = [r for r in repos if r.get("fit") in ("strong", "some")]
+        rest = [r for r in repos if r.get("fit") not in ("strong", "some")]
+    from ui.repo_rank import NOTE, PRIVATE_NOTE
+
+    def row(r):
+        return {"key": r.get("key"), "name": r.get("name"), "url": r.get("url") or "",
+                "fit": r.get("fit"), "terms": list(r.get("terms") or [])[:6], "why": r.get("why") or "",
+                "on_resume": bool(r.get("on_resume")),
+                **({"note": PRIVATE_NOTE} if r.get("private") else {})}
+    return {"type": "repo_fit", "token": token,
+            "fits": [row(r) for r in fits],
+            "no_fit": [{"name": r.get("name"), "why": r.get("why") or ""} for r in rest if r.get("fit") == "none"],
+            "unknown": [{"name": r.get("name"), "why": r.get("why") or ""} for r in rest if r.get("fit") == "unknown"],
+            "projects": [{"name": p.get("name"), "fit": p.get("fit"), "terms": list(p.get("terms") or [])[:6],
+                          "why": p.get("why") or ""} for p in got.get("projects") or []],
+            "picked": [k for k in (picked or []) if any(f.get("key") == k for f in fits)],
+            "note": NOTE}
+
+
+def _for_model(r: dict) -> dict:
+    return {"name": r.get("name"), "fit": FIT_WORDS.get(r.get("fit"), r.get("fit")),
+            "skills_it_shows": list(r.get("terms") or []), "why": r.get("why") or "",
+            **({"already_on_resume": True} if r.get("on_resume") else {}),
+            **({"private": True} if r.get("private") else {})}
+
+
+def _ranked(ctx: AppContext, inp: dict) -> dict:
+    if ctx.rank_repos is None:
+        raise RuntimeError("ranking is not wired")
+    return dict(ctx.rank_repos(_login(ctx, inp)) or {})
+
+
+def _t_rank_repos(ctx: AppContext, inp: dict) -> dict:
+    got = _ranked(ctx, inp)
+    if not got.get("ok"):
+        return {"ok": False, "error": got.get("error") or TOOL_FAIL}
+    repos = [r for r in got.get("repos") or [] if isinstance(r, dict)]
+    addable = [r for r in repos if r.get("fit") in ("strong", "some") and not r.get("on_resume")]
+    token = ctx.offer(addable) if (ctx.offer and addable) else ""
+    from ui.repo_rank import NOTE
+    out = {"ok": True, "job_skills": list(got.get("terms") or [])[:15],
+           "fits": [_for_model(r) for r in repos if r.get("fit") in ("strong", "some")],
+           "doesnt_fit": [r.get("name") for r in repos if r.get("fit") == "none"],
+           "couldnt_judge": [r.get("name") for r in repos if r.get("fit") == "unknown"],
+           "resume_projects": [_for_model(p) for p in got.get("projects") or []],
+           "how_judged": NOTE, "how_to_add": ADD_HINT}
+    out["card"] = repo_fit_card(got, token)
+    return out
+
+
+def _t_assess_projects(ctx: AppContext, inp: dict) -> dict:
+    got = _ranked(ctx, inp)
+    if not got.get("ok"):
+        return {"ok": False, "error": got.get("error") or TOOL_FAIL}
+    return {"ok": True, "job_skills": list(got.get("terms") or [])[:15],
+            "resume_projects": [_for_model(p) for p in got.get("projects") or []]}
+
+
+def _t_propose_add(ctx: AppContext, inp: dict) -> dict:
+    names = [str(n).strip().lower() for n in (inp or {}).get("names") or [] if str(n).strip()]
+    if not names:
+        return {"ok": False, "error": "Say which repositories to add, by name."}
+    got = _ranked(ctx, inp)
+    if not got.get("ok"):
+        return {"ok": False, "error": got.get("error") or TOOL_FAIL}
+    repos = [r for r in got.get("repos") or [] if isinstance(r, dict)]
+
+    def hit(r, n):
+        return n in (str(r.get("name") or "").lower(), str(r.get("full_name") or "").lower())
+    found = [r for r in repos if any(hit(r, n) for n in names) and not r.get("on_resume")]
+    missing = [n for n in names if not any(hit(r, n) for r in repos)]
+    already = [r.get("name") for r in repos if any(hit(r, n) for n in names) and r.get("on_resume")]
+    out = {"ok": bool(found), "offered": [r.get("name") for r in found], "not_found": missing,
+           "already_on_resume": already, "how_to_add": ADD_HINT}
+    if found and ctx.offer:
+        keys = [r.get("key") for r in found]
+        out["card"] = repo_fit_card(got, ctx.offer(found), picked=keys, only=keys)
+    return out
+
+
 TOOLS: dict[str, Tool] = {t.name: t for t in (
     Tool("resume_snapshot",
          "See the resume being built now: the person's name and links (GitHub, LinkedIn), their "
@@ -151,6 +265,29 @@ TOOLS: dict[str, Tool] = {t.name: t for t in (
              "login": {"type": "string",
                        "description": "A GitHub username the person gave, only if it differs "
                                       "from the one on their resume."}}}),
+    Tool("rank_repos_for_jd",
+         "Judge which of the person's own public GitHub repositories fit this job, and the "
+         "projects already on their resume on the same scale: strong fit, some fit, does not fit "
+         "or could not judge, with the job skills each one really shows and why. The person gets "
+         "a card with checkboxes to add the fits to this resume. It reads names, descriptions and "
+         "READMEs, not code.",
+         _t_rank_repos,
+         schema={"type": "object", "properties": {
+             "login": {"type": "string",
+                       "description": "A GitHub username the person gave, only if it differs "
+                                      "from the one on their resume."}}}),
+    Tool("assess_resume_projects",
+         "Judge how well each project already on the resume fits this job, with the job skills "
+         "each one really shows and why.",
+         _t_assess_projects),
+    Tool("propose_add_projects",
+         "When the person asks to add named repositories to this resume, give them a card to "
+         "confirm. This does not add anything: they confirm with the card's button.",
+         _t_propose_add,
+         schema={"type": "object", "properties": {
+             "names": {"type": "array", "items": {"type": "string"},
+                       "description": "The repository names the person asked to add."}},
+             "required": ["names"]}),
 )}
 
 
@@ -175,7 +312,10 @@ def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "") -> 
         "- You cannot change the resume, add projects, publish anything or connect GitHub "
         "yourself. Never say you saved, added, updated or changed anything. When the person "
         "wants a change, tell them to say it in this chat with the details, or point them to "
-        "the button you were given.",
+        "the button you were given. When a tool gave them a card with checkboxes, tell them to "
+        "tick what they want and click its button.",
+        "- When you judge repositories, say plainly that you read names, descriptions and "
+        "READMEs, not the code, and name the job skills each fit really shows.",
         "- If a tool says something failed or was rate limited, say so in one plain line.",
         "- Be short and warm: a few sentences, or a short list (one item per line) when listing "
         "things. Plain text, no markdown headings or tables. Use plain words, no dashes as "
@@ -226,7 +366,47 @@ def _clean(text: str) -> str:
 
 # ----------------------------------------------------------------------------- cards
 
+_TOKEN = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+
+def _s(v, n: int = 160) -> str:
+    return str(v or "").strip()[:n]
+
+
+def _valid_repo_fit(card: dict) -> dict | None:
+    """A repo_fit card with only the fields renderCard knows, every string clipped, links only
+    to https://github.com, and a token of the shape the session issues (or none)."""
+    tok = str(card.get("token") or "")
+
+    def url(u):
+        u = str(u or "")
+        return u if u.startswith("https://github.com/") and len(u) < 200 else ""
+
+    fits = [{"key": _s(f.get("key"), 140), "name": _s(f.get("name"), 100), "url": url(f.get("url")),
+             "fit": f.get("fit") if f.get("fit") in ("strong", "some", "none", "unknown") else "unknown",
+             "terms": [_s(t, 40) for t in (f.get("terms") or [])[:6]], "why": _s(f.get("why")),
+             "on_resume": bool(f.get("on_resume")), **({"note": _s(f["note"])} if f.get("note") else {})}
+            for f in card.get("fits") or [] if isinstance(f, dict) and f.get("name")]
+    lines = lambda k: [{"name": _s(x.get("name"), 100), "why": _s(x.get("why"))}   # noqa: E731
+                       for x in card.get(k) or [] if isinstance(x, dict) and x.get("name")][:40]
+    projs = [{"name": _s(p.get("name"), 100), "fit": p.get("fit") if p.get("fit") in FIT_WORDS else "unknown",
+              "terms": [_s(t, 40) for t in (p.get("terms") or [])[:6]], "why": _s(p.get("why"))}
+             for p in card.get("projects") or [] if isinstance(p, dict) and p.get("name")][:10]
+    if not (fits or card.get("no_fit") or card.get("unknown") or projs):
+        return None
+    keys = {f["key"] for f in fits}
+    out = {"type": "repo_fit", "token": tok if _TOKEN.match(tok) else "", "fits": fits[:12],
+           "no_fit": lines("no_fit"), "unknown": lines("unknown"), "projects": projs,
+           "picked": [k for k in card.get("picked") or [] if k in keys], "note": _s(card.get("note"), 120)}
+    for k in ("used", "added"):
+        if card.get(k):
+            out[k] = card[k] if k == "used" else [_s(x, 100) for x in card[k]][:12]
+    return out
+
+
 def _valid_card(card) -> dict | None:
+    if isinstance(card, dict) and card.get("type") == "repo_fit":
+        return _valid_repo_fit(card)
     if not isinstance(card, dict) or card.get("type") != "buttons":
         return None
     buttons = []
@@ -242,14 +422,22 @@ def _valid_card(card) -> dict | None:
 
 
 def merge_cards(cards: list[dict]) -> list[dict]:
-    """One buttons card per turn: the tools' buttons together, each label once."""
-    seen, buttons = set(), []
+    """At most one repo_fit card (the last one a tool gave) and one buttons card per turn: the
+    tools' buttons together, each label once."""
+    seen, buttons, fit = set(), [], None
     for c in cards:
-        for b in (_valid_card(c) or {}).get("buttons", []):
+        v = _valid_card(c) or {}
+        if v.get("type") == "repo_fit":
+            fit = v
+            continue
+        for b in v.get("buttons", []):
             if b["label"].lower() not in seen:
                 seen.add(b["label"].lower())
                 buttons.append(b)
-    return [{"type": "buttons", "buttons": buttons[:MAX_BUTTONS]}] if buttons else []
+    if fit is not None:       # the card has its own Projects button; the list one repeats it
+        buttons = [b for b in buttons if not b.get("send", "").lower().startswith("which of my github")]
+    out = [fit] if fit is not None else []
+    return out + ([{"type": "buttons", "buttons": buttons[:MAX_BUTTONS]}] if buttons else [])
 
 
 # ----------------------------------------------------------------------------- the loop
