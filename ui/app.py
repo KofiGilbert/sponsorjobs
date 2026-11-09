@@ -3335,6 +3335,21 @@ def keyword_apply(cv_id):
     return jsonify(s.keyword_apply(term, draft))
 
 
+@app.post("/api/cv/<cv_id>/keyword/add")
+@_guard
+def keyword_add(cv_id):
+    """Body {term}. ADD on a job keyword: the person says they have it, so it goes on the
+    best-fitting Skills line in the job's wording and into their saved profile, and the page
+    recompiles to one clean page. Returns the session state with the new coverage report."""
+    s = _keyword_session(cv_id)
+    if s is None:
+        return jsonify({"error": "Open this resume in the builder first."}), 404
+    term = _keyword_term()
+    if not term:
+        return jsonify({"error": "No keyword given."}), 400
+    return jsonify(s.keyword_add(term))
+
+
 @app.post("/api/cv/<cv_id>/keyword/undo")
 @_guard
 def keyword_undo(cv_id):
