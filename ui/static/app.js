@@ -173,7 +173,8 @@
   function paintLiveNav(st) {
     const host = $("#liveNav");
     if (!host) return;
-    if (!st || !(st.active || st.phase)) { host.hidden = true; host.innerHTML = ""; return; }
+    // Saved (phase "done"): the resume is in Resumes now, not in progress.
+    if (!st || !(st.active || st.phase) || st.phase === "done") { host.hidden = true; host.innerHTML = ""; return; }
     const who = [st.role, st.company].filter(Boolean).join(" · ") || "Untitled Resume";
     host.hidden = false;
     // A rail item like Home or Resumes: the icon (with the live dot), "Building" under it, and
@@ -4068,23 +4069,49 @@
     }, "Reading your document…");
   });
 
+  // Accept & Save, the same from the builder or from the pane over any other page (Kofi, test
+  // build 13: clicked on Home, nothing visibly changed). "Saving…" while it runs; then a toast
+  // "Saved to Resumes" with Open, the pane closes, Resumes opens with the new one highlighted, and
+  // the rail's Building item goes (the resume is done). A blocked save or an error is a toast and
+  // the pane stays open: never only a chat bubble the person may not be looking at.
   $("#acceptBtn").addEventListener("click", async () => {
-    $("#acceptBtn").disabled = true;
+    const btn = $("#acceptBtn");
+    if (btn.dataset.saving) return;
+    const label = btn.textContent;
+    btn.dataset.saving = "1"; btn.disabled = true; btn.textContent = "Saving…";
+    let r = null;
     try {
-      await withWorking(async () => {
-        const r = await api("/api/session/accept", {});   // {} forces a POST
-        if (r && r.ok === false) {   // blocked by a flagged placeholder project
-          bubble("agent", esc(r.reason || "Resolve the flagged placeholder before saving."));
-          return;
-        }
-        await loadDashboard();
-        showView("dashboard");
-      }, "Saving your resume…");
+      r = await api("/api/session/accept", {});   // {} forces a POST
+    } catch (e) {
+      if (!e.reason || !OUTAGE[e.reason]) toast(e.message || "Couldn't save your resume. Try again.", null, 8000);
+      return;
     } finally {
       // Always re-enable, otherwise any transient failure leaves Accept dead forever.
-      $("#acceptBtn").disabled = false;
+      delete btn.dataset.saving; btn.disabled = false; btn.textContent = label;
     }
+    if (!r || r.ok === false) {   // blocked: a flagged placeholder project, or not a clean page
+      const why = (r && r.reason) || "Resolve the flagged placeholder before saving.";
+      toast(why, null, 9000);
+      if ($("#view-builder")?.classList.contains("is-active")) bubble("agent", esc(why));
+      return;
+    }
+    if (window.Panel && Panel.isOpen("cv")) Panel.close();
+    await refreshLiveNav();
+    await showSavedResume(r.record_id);
+    toast("Saved to Resumes", { label: "Open", run: () => openPackage(r.record_id) });
   });
+  // Resumes, with the one just saved highlighted and in view.
+  async function showSavedResume(id) {
+    document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("is-active", x.dataset.nav === "cvs"));
+    stopFeedPoll();
+    showView("cvs");
+    await loadCvs();
+    const card = id != null && document.querySelector(`#cvManager .cv-card[data-id="${CSS.escape(String(id))}"]`);
+    if (!card) return;
+    card.classList.add("is-new");
+    card.scrollIntoView({ block: "center" });
+    setTimeout(() => card.classList.remove("is-new"), 4000);
+  }
 
   /* ---------------------------------------------------------------- the memory page
      "What SponsorJobs knows about you" (docs/applicant-brain.md, section 13, Phase 6). It
@@ -8755,7 +8782,7 @@
 
   // toast("Moved", {label: "Undo", run}) shows one action beside the message (Gmail's undo
   // toast) and stays up a little longer so there is time to reach it.
-  function toast(msg, action) {
+  function toast(msg, action, ms) {
     let t = $("#toast");
     if (!t) { t = document.createElement("div"); t.id = "toast"; t.className = "toast"; document.body.appendChild(t); }
     t.textContent = msg;
@@ -8767,7 +8794,7 @@
       t.appendChild(b);
     }
     t.classList.add("show");
-    clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove("show"), action ? 6000 : 2600);
+    clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove("show"), ms || (action ? 6000 : 2600));
   }
 
   // Buying, the production way (claude.ai, ChatGPT, Notion, Linear): signing in is its OWN screen,
