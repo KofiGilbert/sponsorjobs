@@ -702,6 +702,8 @@
   "projects.quizSubmit": "Enviar",
   "projects.quizScore": "{s} de {m}",
   "projects.quizPassed": "Aprovado. {t} está verificado.",
+  "projects.quizAdded": "Aprovado. Adicionado ao seu currículo para {j}.",
+  "projects.backResume": "Voltar ao seu currículo",
   "projects.quizMissed": "Você precisa de {p} para passar. Revise as que errou e tente de novo.",
   "projects.yourAnswer": "Sua resposta",
   "projects.correctAnswer": "Correta",

@@ -702,6 +702,8 @@
   "projects.quizSubmit": "Absenden",
   "projects.quizScore": "{s} von {m}",
   "projects.quizPassed": "Bestanden. {t} ist verifiziert.",
+  "projects.quizAdded": "Bestanden. Zu deinem Lebenslauf für {j} hinzugefügt.",
+  "projects.backResume": "Zurück zum Lebenslauf",
   "projects.quizMissed": "Du brauchst {p} zum Bestehen. Sieh dir die falschen an und versuch es noch einmal.",
   "projects.yourAnswer": "Deine Antwort",
   "projects.correctAnswer": "Richtig",

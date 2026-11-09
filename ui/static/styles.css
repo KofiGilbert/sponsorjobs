@@ -4845,3 +4845,28 @@ body.panel-open .trk-panel { right: calc(var(--panel-w) + 42px); }
 .repo-fit .rf-add:not(:disabled) { color: var(--ink); border-color: var(--ink-2); }
 .repo-fit .rf-add:disabled { opacity: 0.55; cursor: not-allowed; }
 .repo-fit .rf-note { color: var(--muted); font-size: 11.5px; }
+
+/* The resume chat's ideas card (agent/resume_chat.py suggest_projects_for_jd): the Projects page's
+   own compact idea cards, one column, framed like repo_fit under the reply. Each idea's ghost
+   "Build this for this job" is the only action; the composer keeps the screen's one primary. */
+.chat-ideas { margin: 2px 0 12px 44px; max-width: 620px; display: flex; flex-direction: column; gap: 10px; }
+@media (max-width: 560px) { .chat-ideas { margin-left: 0; } }
+.chat-ideas .ci-head { color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
+.chat-ideas .ci-list { display: flex; flex-direction: column; gap: 8px; }
+.chat-ideas .proj-idea { animation: none; padding: 14px 16px 10px; }
+.chat-ideas .proj-idea-ft { flex-wrap: wrap; row-gap: 8px; }
+.chat-ideas .proj-idea [data-start] { margin-left: auto; }
+.chat-ideas .proj-idea [data-start]:disabled { opacity: 0.55; cursor: not-allowed; }
+.chat-ideas .rf-note { color: var(--muted); font-size: 11.5px; }
+
+/* project_progress: a project built from the chat, its build progress, then Learn it / Defend it. */
+.proj-progress { margin: 2px 0 12px 44px; max-width: 620px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 560px) { .proj-progress { margin-left: 0; } }
+.proj-progress .pp-head { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; min-width: 0; }
+.proj-progress .pp-title { color: var(--ink); font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.proj-progress .pp-state { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.proj-progress .pp-bar { height: 3px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.proj-progress .pp-bar span { display: block; height: 100%; width: 0; background: var(--ink-2); transition: width var(--dur) var(--ease); }
+.proj-progress .pp-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.proj-progress .pp-acts:empty { display: none; }

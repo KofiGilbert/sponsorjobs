@@ -702,6 +702,8 @@
   "projects.quizSubmit": "Submit",
   "projects.quizScore": "{s} of {m}",
   "projects.quizPassed": "Passed. {t} is verified.",
+  "projects.quizAdded": "Passed. Added to your resume for {j}.",
+  "projects.backResume": "Back to your resume",
   "projects.quizMissed": "You need {p} to pass. Go over the ones you missed, then retake it.",
   "projects.yourAnswer": "Your answer",
   "projects.correctAnswer": "Correct",

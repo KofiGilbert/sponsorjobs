@@ -3179,14 +3179,95 @@
     if (fits.length && card.token) acts.appendChild(add);
     const build = el("button", "btn btn-sm btn-ghost");
     build.type = "button"; build.textContent = "Build a project for this job instead";
-    build.addEventListener("click", () => CARD_NAV.projects());
+    // Ideas for THIS job, in the chat (agent/resume_chat.py suggest_projects_for_jd).
+    build.addEventListener("click", () => sendTurn("Suggest projects I could build for this job", esc(build.textContent)));
     acts.appendChild(build);
     wrap.appendChild(acts);
     if (card.note) { const n = el("div", "rf-note"); n.textContent = unDash(card.note); wrap.appendChild(n); }
     chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
   }
+  // ideas: project ideas for THIS job (agent/resume_chat.py suggest_projects_for_jd), each in the
+  // Projects page's own compact idea card. Its button, "Build this for this job", spends the
+  // card's single-use token at /api/session/action: the AI builds that one (one package) for this
+  // resume, and a project_progress card follows it. Nothing reaches the resume until its quiz.
+  function renderIdeasCard(card) {
+    const wrap = el("div", "chat-card chat-ideas");
+    const ideas = card.ideas || [];
+    wrap.innerHTML = `<div class="ci-head">${esc(card.role ? `Ideas for ${unDash(card.role)}` : "Ideas for this job")}</div>
+      <div class="ci-list">${ideas.map((s, i) => ideaCard(s, i, { compact: true, still: true })).join("")}</div>
+      <div class="rf-note">${esc("A built project reaches your resume only after you learn it and pass its quiz.")}</div>`;
+    const btns = [];
+    wrap.querySelectorAll(".proj-idea").forEach((art, i) => {
+      art.querySelector("[data-save]")?.remove();
+      const s = ideas[i], b = art.querySelector("[data-start]");
+      if (!b || !s) return;
+      b.classList.remove("btn-primary"); b.classList.add("btn-ghost");
+      const started = card.used && card.built === s.key;
+      b.textContent = started ? "Building for this job" : "Build this for this job";
+      b.disabled = !!card.used || !card.token;
+      btns.push(b);
+      b.addEventListener("click", async () => {
+        if (composerBusy || b.disabled) return;
+        composerBusy = true; btns.forEach(x => { x.disabled = true; });
+        let ok = false;
+        try {
+          await withWorking(async () => {
+            const st = await api("/api/session/action", { token: card.token, choice: "build", args: { key: s.key } });
+            if (st.action_ok) { ok = true; b.textContent = "Building for this job"; }
+            else if (st.action_error) bubble("agent", chatText(st.action_error));
+            applyState(st);
+          }, "Starting the build…");
+        } finally {
+          composerBusy = false;
+          if (!ok) btns.forEach(x => { x.disabled = false; });
+        }
+      });
+    });
+    chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
+  }
+  // project_progress: a project built from the chat. It follows the build, then opens that
+  // project's Learn it or Defend it step on Projects (openProjectStep). "added" marks the turn that
+  // put it on this resume after its quiz.
+  const PP_LABEL = { building: "Building", failed: "Build stopped", learn: "Built. Learn it next.",
+    defend: "Learned. Defend it next.", verified: "Verified" };
+  function renderProgressCard(card) {
+    const wrap = el("div", "chat-card proj-progress");
+    wrap.innerHTML = `<div class="pp-head"><span class="pp-title">${esc(unDash(card.title || "Your project"))}</span><span class="pp-state"></span></div>
+      <div class="pp-bar" hidden><span></span></div><div class="pp-acts"></div>`;
+    const state = wrap.querySelector(".pp-state"), bar = wrap.querySelector(".pp-bar"), acts = wrap.querySelector(".pp-acts");
+    const button = (label, fn) => { const b = el("button", "btn btn-sm btn-ghost"); b.type = "button"; b.textContent = label; b.addEventListener("click", fn); acts.appendChild(b); };
+    let timer = null;
+    const paint = (p) => {
+      const stage = p.stage || (p.status === "verified" ? "verified" : "building");
+      const b = p.build || {};
+      state.textContent = card.added && stage === "verified" ? "On this resume" : (PP_LABEL[stage] || "");
+      const frac = b.total ? Math.min(1, (b.done || 0) / b.total) : 0;
+      bar.hidden = stage !== "building";
+      bar.firstElementChild.style.width = `${Math.round(frac * 100)}%`;
+      acts.innerHTML = "";
+      if (stage === "learn" || stage === "defend") {
+        button("Learn it", () => openProjectStep(card.project_id, "learn"));
+        if (stage === "defend") button("Defend it", () => openProjectStep(card.project_id, "defend"));
+      } else if (stage === "failed" || stage === "verified") {
+        button("Open in Projects", () => openProjectStep(card.project_id, ""));
+      }
+      return stage;
+    };
+    const poll = async () => {
+      timer = null;
+      if (!document.body.contains(wrap)) return;           // the chat was cleared: stop
+      let p = null;
+      try { p = (await api(`/api/projects/${encodeURIComponent(card.project_id)}/build`)).project; } catch { /* try again */ }
+      const stage = p ? paint(p) : "building";
+      if (stage === "building") timer = setTimeout(poll, 2000);
+    };
+    chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
+    poll();
+  }
   function renderCard(card) {
     if (card && card.type === "repo_fit") { renderRepoFit(card); return; }
+    if (card && card.type === "ideas") { renderIdeasCard(card); return; }
+    if (card && card.type === "project_progress") { renderProgressCard(card); return; }
     if (!card || card.type !== "buttons") return;
     const acts = (card.buttons || []).filter(b => b && b.label && (CARD_NAV[b.nav] || b.send));
     if (!acts.length) return;
@@ -5372,6 +5453,20 @@
     };
   }
   function showMyProjects() { MYPROJ = true; if ($("#projIdeas")) $("#projIdeas").hidden = true; renderProjList(); }
+  // Open one project's step on Projects, by id, from anywhere (a chat card): "learn", "defend", or
+  // "" for its card on Your projects. A project not found opens Your projects.
+  async function openProjectStep(pid, step) {
+    document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("is-active", x.dataset.nav === "projects"));
+    stopFeedPoll();
+    MYPROJ = true;
+    showView("projects");
+    await loadProjects();
+    const p = PROJECTS.find(x => x.id === pid);
+    if (p && step === "defend" && p.stage === "defend") return startQuiz(p);
+    if (p && (step === "learn" || step === "defend") && (p.stage === "learn" || p.stage === "defend")) return startLearn(p);
+    showMyProjects();
+    if (p) document.querySelector(`#projList [data-id="${CSS.escape(pid)}"]`)?.scrollIntoView({ block: "center" });
+  }
   // Monochrome inline glyphs for the Projects screen (no assets, no colour).
   // <tech-logo> (2026-10-13). The idea tile is the Jobs logo tile: white, with the real logo of
   // the idea's main technology in its own brand colour (Simple Icons, vendored in
@@ -6189,14 +6284,17 @@
           ${sel.w && sel.w.explain ? `<p class="quiz-miss-x">${esc(sel.w.explain)}</p>` : ""}
         </div>`;
     }
-    const verdict = ok ? PT("projects.quizPassed", "Passed. {t} is verified.").replace("{t}", Q.title)
+    // Built from the resume chat for the resume still open there: the pass already added it.
+    const addedTo = ok && r.added_to ? [r.added_to.role, r.added_to.company].filter(Boolean).join(" at ") : "";
+    const verdict = addedTo ? PT("projects.quizAdded", "Passed. Added to your resume for {j}.").replace("{j}", addedTo)
+      : ok ? PT("projects.quizPassed", "Passed. {t} is verified.").replace("{t}", Q.title)
       : PT("projects.quizMissed", "You need {p} to pass. Go over the ones you missed, then retake it.").replace("{p}", r.pass_mark);
     $("#projQuizCard").innerHTML = `<div class="sx is-result">
       <div class="rs-band ${ok ? "is-pass" : ""}">
         <div class="quiz-score-l"><span class="quiz-score-n">${esc(PT("projects.quizScore", "{s} of {m}").replace("{s}", r.score).replace("{m}", r.total))}</span>
           <span class="quiz-score-t">${esc(verdict)}</span>
           ${topics ? `<span class="rs-topics">${esc(topics)}</span>` : ""}</div>
-        <button class="btn btn-primary btn-sm" id="quizMain" type="button">${esc(ok ? PT("projects.addResume", "Add to resume") : PT("projects.retake", "Retake"))}</button>
+        <button class="btn btn-primary btn-sm" id="quizMain" type="button">${esc(addedTo ? PT("projects.backResume", "Back to your resume") : ok ? PT("projects.addResume", "Add to resume") : PT("projects.retake", "Retake"))}</button>
       </div>
       <div class="rs-md">
         <section class="rs-list" role="region" aria-labelledby="rsListH">
@@ -6213,6 +6311,7 @@
     card.querySelector(".rs-row.is-sel")?.scrollIntoView({ block: "nearest" });
     $("#quizMain")?.addEventListener("click", async (e) => {
       if (!ok) { const p = { id: Q.id, title: Q.title }; startQuiz(p); return; }
+      if (addedTo) { leaveQuiz(); document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("is-active")); resumeBuilder(); return; }
       e.target.disabled = true;
       try { const res = await fetch(`/api/projects/${Q.id}/tocv`, { method: "POST" }); toast(res.ok ? PT("projects.addedResume", "Added to your resume material.") : PT("projects.cantAdd", "Couldn't add it to your resume.")); }
       catch { toast(PT("projects.cantAdd", "Couldn't add it to your resume.")); }
