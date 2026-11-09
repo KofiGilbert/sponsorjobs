@@ -3094,7 +3094,99 @@
       document.querySelector('.set-tab[data-set="connections"]')?.click();
     },
   };
+  // repo_fit: which of the person's GitHub repositories fit this job (ui/repo_rank.py). Fits get
+  // a checkbox; doesn't fit and couldn't judge are one line each, collapsed. Only the person's
+  // click on "Add selected" changes the resume: it spends the card's single-use token at
+  // /api/session/action. The footnote says what was read, honestly.
+  const FIT_LABEL = { strong: "Strong fit", some: "Some fit", none: "Doesn't fit", unknown: "Couldn't judge" };
+  function rfLine(r, withFit) {
+    const row = el("div", "rf-line");
+    row.innerHTML = `<span class="rf-name">${esc(unDash(r.name || ""))}</span>`
+      + (withFit ? `<span class="rf-fit">${esc(FIT_LABEL[r.fit] || "")}</span>` : "")
+      + (r.why ? `<span class="rf-why">${esc(unDash(r.why))}</span>` : "");
+    return row;
+  }
+  function rfFold(title, rows, withFit) {
+    if (!rows || !rows.length) return null;
+    const d = el("details", "rf-fold");
+    d.innerHTML = `<summary>${esc(title)} <span class="rf-count">${rows.length}</span></summary>`;
+    rows.forEach(r => d.appendChild(rfLine(r, withFit)));
+    return d;
+  }
+  function renderRepoFit(card) {
+    const wrap = el("div", "chat-card repo-fit");
+    const used = !!card.used;
+    const fits = card.fits || [];
+    const picked = new Set(card.picked || []);
+    const boxes = [];
+    if (fits.length) {
+      const list = el("div", "rf-list");
+      fits.forEach(f => {
+        const row = el("label", "rf-row");
+        row.dataset.name = f.name || "";
+        const box = document.createElement("input");
+        box.type = "checkbox"; box.value = f.key || "";
+        const added = used && (card.added || []).includes(f.name);
+        box.disabled = used || f.on_resume || !card.token;
+        box.checked = added || (!f.on_resume && picked.has(f.key));
+        if (!box.disabled) boxes.push(box);
+        const name = f.url
+          ? `<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(unDash(f.name))}</a>`
+          : esc(unDash(f.name));
+        const body = el("div", "rf-body");
+        body.innerHTML = `<div class="rf-head"><span class="rf-name">${name}</span>`
+          + `<span class="rf-fit">${esc(added ? "Added" : f.on_resume ? "On your resume" : (FIT_LABEL[f.fit] || ""))}</span></div>`
+          + (f.why ? `<div class="rf-why">${esc(unDash(f.why))}</div>` : "")
+          + (f.terms && f.terms.length ? `<div class="rf-terms">${f.terms.map(t => `<span>${esc(t)}</span>`).join("")}</div>` : "")
+          + (f.note ? `<div class="rf-why">${esc(unDash(f.note))}</div>` : "");
+        row.appendChild(box); row.appendChild(body);
+        list.appendChild(row);
+      });
+      wrap.appendChild(list);
+    } else {
+      const none = el("div", "rf-empty"); none.textContent = "None of your repositories fit this job.";
+      wrap.appendChild(none);
+    }
+    [rfFold("Doesn't fit", card.no_fit, false), rfFold("Couldn't judge", card.unknown, false),
+     rfFold("Projects on your resume", card.projects, true)].forEach(d => d && wrap.appendChild(d));
+    const acts = el("div", "rf-acts");
+    const add = el("button", "btn btn-sm btn-ghost rf-add");
+    add.type = "button";
+    const sync = () => { add.disabled = used || !boxes.some(b => b.checked); };
+    if (used) add.textContent = (card.added && card.added.length) ? `Added ${card.added.join(", ")}` : "Used";
+    else add.textContent = "Add selected to this resume";
+    boxes.forEach(b => b.addEventListener("change", sync)); sync();
+    add.addEventListener("click", async () => {
+      const keys = boxes.filter(b => b.checked).map(b => b.value);
+      if (!keys.length || composerBusy) return;
+      composerBusy = true; add.disabled = true;
+      try {
+        await withWorking(async () => {
+          const st = await api("/api/session/action", { token: card.token, choice: "add", args: { keys } });
+          if (st.action_ok) {
+            boxes.forEach(b => { b.disabled = true; });
+            wrap.querySelectorAll(".rf-row").forEach(r => {
+              if ((st.added || []).includes(r.dataset.name)) r.querySelector(".rf-fit").textContent = "Added";
+            });
+            add.textContent = (st.added && st.added.length) ? `Added ${st.added.join(", ")}` : "Used";
+          } else if (st.action_error) {
+            bubble("agent", chatText(st.action_error));
+          }
+          applyState(st);
+        }, "Adding…");
+      } finally { composerBusy = false; sync(); if (add.textContent.startsWith("Added") || add.textContent === "Used") add.disabled = true; }
+    });
+    if (fits.length && card.token) acts.appendChild(add);
+    const build = el("button", "btn btn-sm btn-ghost");
+    build.type = "button"; build.textContent = "Build a project for this job instead";
+    build.addEventListener("click", () => CARD_NAV.projects());
+    acts.appendChild(build);
+    wrap.appendChild(acts);
+    if (card.note) { const n = el("div", "rf-note"); n.textContent = unDash(card.note); wrap.appendChild(n); }
+    chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
+  }
   function renderCard(card) {
+    if (card && card.type === "repo_fit") { renderRepoFit(card); return; }
     if (!card || card.type !== "buttons") return;
     const acts = (card.buttons || []).filter(b => b && b.label && (CARD_NAV[b.nav] || b.send));
     if (!acts.length) return;
@@ -3473,7 +3565,7 @@
     $("#jdGate").hidden = true;          // a session exists, don't ask for the JD again
     (st.history || []).forEach(t => {
       bubble(t.role === "user" ? "user" : "agent", chatText(t.content || ""));
-      if (t.card) renderCard(t.card);
+      (t.cards && t.cards.length ? t.cards : (t.card ? [t.card] : [])).forEach(renderCard);
     });
     applyState(st);
     return true;

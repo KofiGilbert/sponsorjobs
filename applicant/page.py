@@ -57,7 +57,8 @@ _SOURCE = {"resume": "From your resume", "chat": "From your chat", "telegram_cha
            "drafted": "Drafted from your profile", "derived": "Worked out from your answers",
            "migration": "Saved by an earlier version", "card": "You, on the form answers card",
            "onboarding": "You, in setup", "ask_bar": "You, on the apply bar", "ask_telegram": "You, on Telegram",
-           "late_telegram": "You, on Telegram", "extension": "You, in the browser extension"}
+           "late_telegram": "You, on Telegram", "extension": "You, in the browser extension",
+           "github": "From your GitHub"}
 
 
 def source_words(source: str, ref: str = "", store: str = "") -> str:

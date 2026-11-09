@@ -62,6 +62,9 @@ def _card(r: dict) -> dict:
         "language": str(r.get("language") or ""),
         "stars": int(r.get("stargazers_count") or 0),
         "pushed_at": str(r.get("pushed_at") or ""),
+        "created_at": str(r.get("created_at") or ""),
+        # A private repository would 404 for a recruiter, so an entry made from it has no link.
+        "private": bool(r.get("private")),
     }
 
 
@@ -120,4 +123,44 @@ def list_repos(login: str, token: str = "", now: float | None = None) -> dict:
 
 def clear_cache() -> None:
     _CACHE.clear()
+    _LOGINS.clear()
     _BLOCKED_UNTIL["t"] = 0.0
+
+
+# ----------------------------------------------------------------------------- connection
+
+_LOGINS: dict[str, tuple[float, int, str]] = {}   # sha256(token) -> (when, status, login)
+LOGIN_TTL = 6 * 3600
+
+
+def connection(token: str, login: str = "", now: float | None = None) -> dict:
+    """{"connected", "login", "reason"?} that agrees with the token the repo lookup uses.
+
+    A saved token IS a connection, so the chat never says "isn't connected" while that token
+    makes the call. When the saved login is missing, GitHub's own GET /user names it, once
+    (cached by a hash of the token, never the token itself). A token GitHub rejects (401) reads
+    as not connected, with the reason; offline keeps it connected with no login. The token is
+    never returned."""
+    token = str(token or "").strip()
+    login = str(login or "").strip()
+    if not token:
+        return {"connected": False, "login": ""}
+    if login:
+        return {"connected": True, "login": login}
+    import hashlib
+    key = hashlib.sha256(token.encode()).hexdigest()
+    now = time.time() if now is None else now
+    hit = _LOGINS.get(key)
+    if hit is None or (now - hit[0] > LOGIN_TTL and hit[1] != 401):
+        try:
+            status, data = github_publish.FETCH("GET", f"{github_publish.API}/user", token, None, None)
+        except Exception:      # noqa: BLE001 - a broken transport reads as offline
+            status, data = 0, None
+        got = str((data or {}).get("login") or "") if isinstance(data, dict) and status == 200 else ""
+        hit = (now, int(status or 0), got)
+        if status in (200, 401):           # offline and rate limits are asked again next time
+            _LOGINS[key] = hit
+    status, got = hit[1], hit[2]
+    if status == 401:
+        return {"connected": False, "login": "", "reason": "token_rejected"}
+    return {"connected": True, "login": got}
