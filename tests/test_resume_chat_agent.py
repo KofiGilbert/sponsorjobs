@@ -173,13 +173,54 @@ def test_json_fallback_parses_calls_and_replies():
     assert parse_json_reply("plain words", tools)["text"] == "plain words"
 
 
-def test_broker_uses_the_json_fallback(monkeypatch):
+def test_broker_falls_back_to_json_when_the_answer_has_no_content_blocks(monkeypatch):
+    # An older broker ignores `tools` and answers text only: the turn is re-asked in the JSON
+    # protocol, and later turns go straight to it.
+    from llm import broker_client
     from llm.broker_client import BrokerLLM
+    monkeypatch.setattr(broker_client, "_NATIVE_TOOLS", {})
     b = BrokerLLM(broker_url="http://127.0.0.1:1")
-    sent = {}
-    monkeypatch.setattr(b, "_post", lambda payload: sent.update(payload) or '{"reply": "ok"}')
+    sent = []
+    monkeypatch.setattr(b, "_send", lambda payload: sent.append(payload) or {"text": '{"reply": "ok"}'})
     out = b.agent_turn("SYS", [{"role": "user", "content": "hi"}], [rc.TOOLS["github_status"].spec()])
-    assert out["text"] == "ok" and "tools" not in sent and "github_status" in sent["system"]
+    assert out["text"] == "ok" and "tools" in sent[0] and "tools" not in sent[1]
+    assert "github_status" in sent[1]["system"]
+    b.agent_turn("SYS", [{"role": "user", "content": "hi"}], [rc.TOOLS["github_status"].spec()])
+    assert len(sent) == 3 and "tools" not in sent[2]
+
+
+def test_broker_speaks_native_tool_use_when_content_blocks_come_back(monkeypatch):
+    from llm import broker_client
+    from llm.broker_client import BrokerLLM
+    monkeypatch.setattr(broker_client, "_NATIVE_TOOLS", {})
+    b = BrokerLLM(broker_url="http://127.0.0.1:2")
+    sent = []
+    answer = {"text": "Checking.", "stop_reason": "tool_use",
+              "content": [{"type": "text", "text": "Checking."},
+                          {"type": "tool_use", "id": "tu_1", "name": "github_status", "input": {}}]}
+    monkeypatch.setattr(b, "_send", lambda payload: sent.append(payload) or answer)
+    msgs = [{"role": "user", "content": "is my github connected?"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "tu_0", "name": "github_status", "input": {}}]},
+            {"role": "tool", "results": [{"id": "tu_0", "name": "github_status", "content": "{}"}]}]
+    out = b.agent_turn("SYS", msgs, [rc.TOOLS["github_status"].spec()])
+    assert out == {"text": "Checking.", "stop": "tool_use",
+                   "tool_calls": [{"id": "tu_1", "name": "github_status", "input": {}}]}
+    p = sent[0]
+    assert len(sent) == 1
+    assert p["system"] == [{"type": "text", "text": "SYS", "cache_control": {"type": "ephemeral"}}]
+    assert p["tools"][-1]["cache_control"] == {"type": "ephemeral"} and p["tools"][0]["name"] == "github_status"
+    assert p["messages"] == anthropic_messages(msgs)
+    assert "cache_control" not in rc.TOOLS["github_status"].spec()     # the shared spec is untouched
+
+
+def test_broker_native_turn_still_refuses_placeholder_text(monkeypatch):
+    from llm import broker_client
+    from llm.broker_client import BrokerLLM, BrokerUnavailable
+    monkeypatch.setattr(broker_client, "_NATIVE_TOOLS", {})
+    b = BrokerLLM(broker_url="http://127.0.0.1:3")
+    monkeypatch.setattr(b, "_send", lambda payload: {"content": [{"type": "text", "text": "[fake:m] x"}]})
+    with pytest.raises(BrokerUnavailable):
+        b.agent_turn("SYS", [{"role": "user", "content": "hi"}], [rc.TOOLS["github_status"].spec()])
 
 
 # -- public repositories ----------------------------------------------------------------- #

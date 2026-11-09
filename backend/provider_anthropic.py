@@ -47,6 +47,20 @@ def _supports_effort(model: str) -> bool:
     return str(model or "").startswith(_EFFORT_CAPABLE_PREFIXES)
 
 
+def _block(b) -> dict:
+    """One content block as plain JSON (the SDK's model, or a test's stand-in)."""
+    if isinstance(b, dict):
+        return dict(b)
+    dump = getattr(b, "model_dump", None)
+    if callable(dump):
+        return dump(exclude_none=True)
+    kind = getattr(b, "type", "")
+    if kind == "tool_use":
+        return {"type": "tool_use", "id": getattr(b, "id", ""), "name": getattr(b, "name", ""),
+                "input": dict(getattr(b, "input", None) or {})}
+    return {"type": kind, "text": getattr(b, "text", "") or ""}
+
+
 class AnthropicProvider(Provider):
     def __init__(self, api_key: str | None = None, client=None, *, max_tokens: int = 1024) -> None:
         self.max_tokens = max_tokens
@@ -75,7 +89,12 @@ class AnthropicProvider(Provider):
         }
         system = kw.get("system")
         if system:
-            create["system"] = system
+            create["system"] = system          # text, or cached text blocks (broker_tools)
+        if kw.get("tools"):
+            # The resume chat agent's tools, already checked by backend/broker_tools.py.
+            create["tools"] = kw["tools"]
+            if kw.get("tool_choice"):
+                create["tool_choice"] = kw["tool_choice"]
         effort = kw.get("effort")
         if effort and _supports_effort(model):
             create["output_config"] = {"effort": effort}
@@ -96,6 +115,15 @@ class AnthropicProvider(Provider):
             b.text for b in msg.content if getattr(b, "type", "") == "text"
         ).strip()
         usage = getattr(msg, "usage", None)
-        return {"text": text,
-                "input_tokens": getattr(usage, "input_tokens", 0) or 0,
-                "output_tokens": getattr(usage, "output_tokens", 0) or 0}
+        # Cached input is still input on the company key (a write costs more than plain input, a
+        # read less), so both count as input and the plan caps stay on the safe side.
+        inp = sum(int(getattr(usage, k, 0) or 0) for k in
+                  ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+        out = {"text": text,
+               "input_tokens": inp,
+               "output_tokens": getattr(usage, "output_tokens", 0) or 0}
+        if kw.get("tools"):
+            # The content blocks (text, tool_use) and why the model stopped, for the agent.
+            out["content"] = [_block(b) for b in msg.content]
+            out["stop_reason"] = getattr(msg, "stop_reason", None)
+        return out

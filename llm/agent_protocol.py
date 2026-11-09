@@ -9,9 +9,10 @@
 ``tools`` are Anthropic tool definitions: {"name", "description", "input_schema"}.
 ``stop`` is "tool_use" when the model asked for tools, else "end_turn" (or the model's own reason).
 
-AnthropicLLM speaks this natively (tool use content blocks). A client without native tool use
-(OpenAI here, and BrokerLLM until the broker passes tools through) uses ``json_agent_turn``: the
-tools are described in the system prompt and the model answers with one JSON object.
+AnthropicLLM speaks this natively (tool use content blocks), and so does BrokerLLM when the broker
+passes tools through (its answer carries ``content`` blocks, read by ``from_blocks``). A client
+without native tool use (OpenAI here, and BrokerLLM on an older broker) uses ``json_agent_turn``:
+the tools are described in the system prompt and the model answers with one JSON object.
 """
 
 from __future__ import annotations
@@ -67,6 +68,22 @@ def from_anthropic(msg) -> dict:
             calls.append({"id": getattr(b, "id", ""), "name": getattr(b, "name", ""),
                           "input": dict(getattr(b, "input", None) or {})})
     stop = getattr(msg, "stop_reason", "") or ("tool_use" if calls else "end_turn")
+    return {"text": "".join(text).strip(), "tool_calls": calls, "stop": stop}
+
+
+def from_blocks(content: list, stop_reason=None) -> dict:
+    """The same turn from content blocks as plain JSON (the broker's /llm/complete answer)."""
+    text, calls = [], []
+    for b in content or []:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "text":
+            text.append(str(b.get("text") or ""))
+        elif b.get("type") == "tool_use" and b.get("name"):
+            inp = b.get("input")
+            calls.append({"id": str(b.get("id") or ""), "name": str(b["name"]),
+                          "input": dict(inp) if isinstance(inp, dict) else {}})
+    stop = str(stop_reason or "") or ("tool_use" if calls else "end_turn")
     return {"text": "".join(text).strip(), "tool_calls": calls, "stop": stop}
 
 

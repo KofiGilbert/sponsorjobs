@@ -23,6 +23,7 @@ import os
 
 from flask import Flask, jsonify, redirect, request
 
+from backend.broker_tools import BadRequest, tool_args
 from backend.metering import InMemoryStore, Meter, QuotaExceeded
 from backend.providers import FakeProvider
 
@@ -131,12 +132,19 @@ def create_app(meter=None, provider=None, period_fn=_default_period, identify=_d
         period = period_fn()
         body = _body()
         prompt = str(body.get("prompt", ""))
-        system = str(body.get("system", ""))
+        # Tool use (backend/broker_tools.py): the app's own tools, a tool_choice and a system
+        # prompt as cached text blocks. Checked before anything is metered or sent; a caller that
+        # sends none of them gets exactly the old request and the old answer.
+        try:
+            ta = tool_args(body)
+        except BadRequest as exc:
+            return jsonify(error=str(exc)), 400
+        system = ta["system"]
         # The bundled app calls carry a system prompt and, for the conversational flows, a full
         # message history instead of a single prompt. Accept both; estimate the input size from
-        # whatever was sent so the cap is enforced on the real payload.
+        # whatever was sent so the cap is enforced on the real payload (the tools count too).
         messages = body.get("messages") if isinstance(body.get("messages"), list) else None
-        est_chars = len(prompt) + len(system)
+        est_chars = len(prompt) + ta["chars"]
         if messages:
             est_chars += sum(len(str(m.get("content", ""))) for m in messages if isinstance(m, dict))
         # Estimate input tokens up front so a single oversized prompt can't blow past a capped plan
@@ -152,8 +160,10 @@ def create_app(meter=None, provider=None, period_fn=_default_period, identify=_d
         model = meter.llm_model_for(user)
         try:
             max_tokens = int(body.get("max_tokens") or 0) or None
+            extra = ({"tools": ta["tools"], "tool_choice": ta["tool_choice"]}
+                     if ta["tools"] else {})
             out = provider.complete(model, prompt, system=system, messages=messages,
-                                    max_tokens=max_tokens, effort=body.get("effort"))
+                                    max_tokens=max_tokens, effort=body.get("effort"), **extra)
         except Exception as exc:
             # Log before flattening. Every upstream failure -- a rejected parameter, an
             # auth problem, a quota -- collapses into the same opaque 502 for the client,
@@ -166,6 +176,12 @@ def create_app(meter=None, provider=None, period_fn=_default_period, identify=_d
         used = meter.record_llm(user, period, spent)
         if free:
             meter.store.add_llm_tokens(FREE_POOL_USER, _day(), spent)
+        if ta["tools"]:
+            # Tool-use callers get the content blocks and the stop reason too (BrokerLLM
+            # agent_turn reads tool calls from them). A provider without them (FakeProvider)
+            # answers text only, and the client falls back to its JSON protocol.
+            extra = {k: out[k] for k in ("content", "stop_reason") if out.get(k) is not None}
+            return jsonify(text=out["text"], model=model, tokens=used, **extra)
         return jsonify(text=out["text"], model=model, tokens=used)
 
     @app.route("/llm/package", methods=["POST"])
