@@ -216,6 +216,9 @@ const OWN_BROWSER_HOSTS = [
 // belongs in their own browser, where they are already signed in to GitHub.
 const OWN_BROWSER_PATHS = [
   ["github.com", "/login"], ["github.com", "/sessions"],
+  // Connect GitHub: the App's install page and "Choose repos on GitHub" need the person's own
+  // signed-in browser, not the in-app pane.
+  ["github.com", "/apps"], ["github.com", "/settings/installations"],
 ];
 
 function opensInOwnBrowser(url) {

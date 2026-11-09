@@ -1398,7 +1398,7 @@ def _session() -> WebIntake:
         s.github_status = _github_connection   # the chat says truly whether GitHub is connected
     if getattr(s, "github_token", None) is None:
         # Only the chat agent's repo lookup holds it (ui/github_repos.py); never shown or logged.
-        s.github_token = lambda: _cred("GITHUB_TOKEN") or ""
+        s.github_token = lambda: _github_token()
     if getattr(s, "ideas_for", None) is None:
         s.ideas_for = lambda: _session_ideas(s)               # ideas for THIS job (plan PR 7)
     if getattr(s, "start_build", None) is None:
@@ -1419,7 +1419,76 @@ def _github_connection() -> dict:
     saved token is a connection (the same token the repo lookup uses), and a missing login is
     named once by GitHub's GET /user (ui/github_repos.connection). Never carries the token."""
     from ui.github_repos import connection
-    return connection(_cred("GITHUB_TOKEN"), _cred("GITHUB_LOGIN") or "")
+    token = _github_token()
+    conn = connection(token, _cred("GITHUB_LOGIN") or "")
+    if conn.get("reason") == "token_rejected" and _cred("GITHUB_REFRESH_TOKEN"):
+        fresh = _github_refreshed(token)          # an 8-hour App token that just ran out
+        if fresh and fresh != token:
+            conn = connection(fresh, _cred("GITHUB_LOGIN") or "")
+    return conn
+
+
+# ---- GitHub tokens. A token from the SponsorJobs GitHub App (ui/github_app.py) lasts 8 hours and
+# comes with a refresh token; it is renewed through the Worker shortly before it runs out, and once
+# when GitHub answers 401. A pasted personal token or a device-flow token has no refresh token and
+# is used as it is. Everything that calls GitHub reads the token through _github_token(). ----
+_GH_REFRESH_LOCK = threading.Lock()
+
+
+def _save_github_tokens(tokens: dict, login: str | None = None) -> None:
+    """Save a connect's or a refresh's tokens through the usual credential path."""
+    from ui import github_app
+    _save_cred("GITHUB_TOKEN", str(tokens.get("access_token") or ""))
+    if tokens.get("refresh_token"):
+        _save_cred("GITHUB_REFRESH_TOKEN", str(tokens["refresh_token"]))
+    expires = github_app.expiry_from(tokens)
+    if expires:
+        _save_cred("GITHUB_TOKEN_EXPIRES", expires)
+    else:
+        _revoke_cred("GITHUB_TOKEN_EXPIRES")
+    if login is not None:
+        _save_cred("GITHUB_LOGIN", login)
+
+
+def _forget_github() -> None:
+    for name in ("GITHUB_TOKEN", "GITHUB_LOGIN", "GITHUB_REFRESH_TOKEN", "GITHUB_TOKEN_EXPIRES"):
+        _revoke_cred(name)
+
+
+def _github_refreshed(stale: str) -> str:
+    """Renew the App token that GitHub just refused (or that is about to run out). One refresh at
+    a time; a caller holding an already-replaced token simply gets the current one. Returns the
+    token to use, which is the old one when nothing could be renewed."""
+    from ui import github_app
+    with _GH_REFRESH_LOCK:
+        cur = _cred("GITHUB_TOKEN") or ""
+        if cur and cur != stale:
+            return cur
+        rt = _cred("GITHUB_REFRESH_TOKEN")
+        if not rt:
+            return cur
+        res = github_app.refresh(BROKER_URL, rt)
+        if res.get("ok"):
+            _save_github_tokens(res["tokens"])
+            return str(res["tokens"]["access_token"])
+        return cur
+
+
+def _github_token() -> str:
+    """The token every GitHub call uses, renewed first when it is about to expire."""
+    from ui import github_app
+    token = _cred("GITHUB_TOKEN") or ""
+    if token and _cred("GITHUB_REFRESH_TOKEN") and github_app.needs_refresh(_cred("GITHUB_TOKEN_EXPIRES")):
+        return _github_refreshed(token)
+    return token
+
+
+def _install_github_refresh_hook() -> None:
+    from ui import github_publish
+    github_publish.ON_401 = _github_refreshed
+
+
+_install_github_refresh_hook()
 
 
 class Unavailable(RuntimeError):
@@ -4905,9 +4974,9 @@ def _autofill_saved_project_dates() -> list[str]:
         ess = saved.get("essentials") or {}
         gh = str((profile.get("identity") or {}).get("github") or "")
         cache = _DATA / "github_repo_dates.json"
-        filled = fill_project_dates(profile.get("projects") or [], gh, cache, _cred("GITHUB_TOKEN"))
+        filled = fill_project_dates(profile.get("projects") or [], gh, cache, _github_token())
         if ess.get("projects"):
-            filled += fill_project_dates(ess["projects"], gh, cache, _cred("GITHUB_TOKEN"))
+            filled += fill_project_dates(ess["projects"], gh, cache, _github_token())
         if filled:
             mem.save("default", profile, ess, saved.get("history") or [])
         return filled
@@ -6672,9 +6741,14 @@ def telegram_disconnect():
 @_guard
 def github_status():
     conn = _github_connection()      # the same answer the chat gives
+    from ui import github_app
     from ui.github_device import available
+    app_flow = github_app.available(BROKER_URL)
     return jsonify({"configured": bool(_cred("GITHUB_TOKEN")), "login": conn.get("login") or "",
                     "connected": bool(conn.get("connected")), "device_flow": available(),
+                    "app_flow": app_flow, "manage_url": github_app.manage_url(BROKER_URL),
+                    # a GitHub App user token (ghu_...), so "Choose repos on GitHub" applies
+                    "via_app": (_cred("GITHUB_TOKEN") or "").startswith("ghu_"),
                     **({"reason": conn["reason"]} if conn.get("reason") else {})})
 
 
@@ -6689,6 +6763,7 @@ def github_save():
     res = validate_token(token)
     if not res.get("ok"):
         return jsonify({"ok": False, "error": res.get("error", "Token rejected.")}), 400
+    _forget_github()                 # a pasted token never refreshes: drop an App token's leftovers
     _save_cred("GITHUB_TOKEN", token)
     _save_cred("GITHUB_LOGIN", res.get("login", ""))
     return jsonify({"ok": True, "login": res.get("login", "")})
@@ -6697,9 +6772,12 @@ def github_save():
 @app.post("/api/github/disconnect")
 @_guard
 def github_disconnect():
-    _revoke_cred("GITHUB_TOKEN")
-    _revoke_cred("GITHUB_LOGIN")
-    return jsonify({"ok": True})
+    """Forget the token here. The App stays installed on GitHub until the person removes it
+    there, so the answer carries where to do that."""
+    from ui import github_app
+    _forget_github()
+    github_app.cancel()
+    return jsonify({"ok": True, "manage_url": github_app.manage_url(BROKER_URL)})
 
 
 # ---- Sign in with GitHub (the default way to connect): GitHub's OAuth device flow, the way
@@ -6735,6 +6813,7 @@ def github_device_poll():
     check = validate_token(token)
     if not check.get("ok"):
         return jsonify({"ok": False, "connected": False, "state": "error", "error": D.FAILED})
+    _forget_github()
     _save_cred("GITHUB_TOKEN", token)
     _save_cred("GITHUB_LOGIN", check.get("login", ""))
     return jsonify({"ok": True, "connected": True, "state": "ok", "login": check.get("login", "")})
@@ -6746,6 +6825,120 @@ def github_device_cancel():
     from ui import github_device as D
     D.cancel()
     return jsonify({"ok": True})
+
+
+# ---- Connect GitHub, the one-click way (the default once the Worker has the GitHub App's
+# settings): the person's own browser opens GitHub's Authorize / Install page for the SponsorJobs
+# GitHub App, where they pick repositories, and lands back on this engine's /github/app/done
+# page, already connected. ui/github_app.py has the protocol; the device flow and the token box
+# above stay as the fallbacks. No token is ever in a response or a log line. ----
+@app.post("/api/github/app/start")
+@_guard
+def github_app_start():
+    """Open the connect in the person's OWN default browser (GitHub, like Google, wants sign-in
+    in a real browser, RFC 8252). {'ok', 'url'}, or {'ok': False, 'fallback': 'device'|'token'}
+    when the Worker is not set up, so the page switches to the fallback at once."""
+    import webbrowser
+    from ui import github_app, github_device
+    if not github_app.available(BROKER_URL):
+        return jsonify({"ok": False, "fallback": "device" if github_device.available() else "token"})
+    res = github_app.start(BROKER_URL, f"{request.host_url.rstrip('/')}/github/app/done")
+    if request.args.get("open", "1") != "0":
+        try:
+            webbrowser.open(res["url"])
+        except Exception:
+            return jsonify({"ok": True, "url": res["url"], "opened": False})
+    return jsonify({"ok": True, "url": res["url"], "opened": True})
+
+
+@app.get("/api/github/app/poll")
+@_guard
+def github_app_poll():
+    """The Settings row checks this while it waits: idle, waiting, connected, denied or error."""
+    from ui import github_app
+    return jsonify(github_app.status())
+
+
+@app.post("/api/github/app/cancel")
+@_guard
+def github_app_cancel():
+    from ui import github_app
+    github_app.cancel()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/github/app/finish")
+@_guard
+def github_app_finish():
+    """The /github/app/done page hands over what the browser brought back: {nonce} (the one-time
+    key from the URL fragment) or {error}. With a nonce the tokens are claimed from the Worker,
+    checked with GitHub's GET /user, and saved. Answers the login only."""
+    from ui import github_app
+    from ui.github_publish import validate_token
+    b = request.get_json(silent=True) or {}
+    if b.get("error") or not b.get("nonce"):
+        res = github_app.give_up(str(b.get("error") or "failed"))
+        return jsonify({"ok": False, "error": res["error"]}), 400
+    res = github_app.finish(BROKER_URL, str(b.get("nonce")))
+    if not res.get("ok"):
+        return jsonify({"ok": False, "error": res.get("error") or github_app.FAILED}), 400
+    tokens = res["tokens"]
+    check = validate_token(str(tokens["access_token"]))
+    if not check.get("ok"):
+        github_app.mark("error", error=github_app.FAILED)
+        return jsonify({"ok": False, "error": github_app.FAILED}), 400
+    login = str(check.get("login") or "")
+    _save_github_tokens(tokens, login)
+    try:
+        from ui.github_repos import clear_cache
+        clear_cache()
+    except Exception:          # noqa: BLE001 - a stale cache only delays the new login's repos
+        pass
+    github_app.mark("connected", login=login)
+    return jsonify({"ok": True, "login": login})
+
+
+_GITHUB_DONE_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>SponsorJobs</title>
+<style>
+:root{color-scheme:light dark;--bg:#131316;--ink:#e7e7ea;--muted:#82828c}
+@media (prefers-color-scheme: light){:root{--bg:#f7f7f8;--ink:#18181b;--muted:#71717a}}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);
+font:14px/1.5 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;text-align:center}
+h1{font-size:19px;font-weight:600;margin:0}
+p{margin:6px 0 0;color:var(--muted)}
+</style></head><body><main>
+<h1 id="h">Connecting GitHub...</h1><p id="p"></p></main>
+<script>
+(function () {
+  var h = new URLSearchParams(location.hash.slice(1));
+  var nonce = h.get("nonce") || "", err = h.get("error") || "";
+  history.replaceState(null, "", location.pathname);   // keep the key out of history
+  function done(ok, title, msg) {
+    document.getElementById("h").textContent = title;
+    document.getElementById("p").textContent = msg;
+    if (ok) setTimeout(function () { location.href = "sponsorjobs://github-connected"; }, 400);   // back to the app
+  }
+  fetch("/api/github/app/finish", {method: "POST", headers: {"Content-Type": "application/json"},
+                                   body: JSON.stringify(nonce ? {nonce: nonce} : {error: err || "failed"})})
+    .then(function (r) { return r.json().then(function (d) { return {ok: r.ok && d.ok, d: d}; }); })
+    .then(function (x) {
+      if (x.ok) done(true, "Connected", "You can go back to SponsorJobs.");
+      else done(false, err === "cancelled" ? "Not connected" : "GitHub didn't connect",
+                (x.d.error || "Try again") + " Go back to SponsorJobs.");
+    })
+    .catch(function () { done(false, "GitHub didn't connect", "Go back to SponsorJobs and try again."); });
+})();
+</script></body></html>"""
+
+
+@app.get("/github/app/done")
+def github_app_done():
+    """Where the browser lands after GitHub. The Worker puts the one-time key in the URL FRAGMENT
+    (never sent to a server, so never in a log); this page posts it to /api/github/app/finish on
+    this same engine, then hands the person back to the app with sponsorjobs://."""
+    return _GITHUB_DONE_PAGE, 200, {"Content-Type": "text/html; charset=utf-8",
+                                    "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 
 
 # ---- Memory (P1): the person owns their local memory, view / export / erase it (CLAUDE.md §5).
@@ -8038,7 +8231,7 @@ def _add_examples(ideas: list[dict]) -> bool:
     answered at all (False means GitHub was unreachable, and every idea shows none)."""
     from concurrent.futures import ThreadPoolExecutor
     from ui import github_publish as G
-    token = _cred("GITHUB_TOKEN")
+    token = _github_token()
     if not ideas:
         return True
     try:
@@ -8071,7 +8264,7 @@ def _heal_examples(key: str, hit: dict) -> list[dict]:
         return ideas
     from concurrent.futures import ThreadPoolExecutor
     from ui import github_publish as G
-    token = _cred("GITHUB_TOKEN")
+    token = _github_token()
     batch = stale if token else stale[:_HEAL_MAX_ANON]
     try:
         with ThreadPoolExecutor(max_workers=min(6, len(batch))) as ex:
@@ -8314,7 +8507,7 @@ def projects_start():
          "repo": slugify(idea.get("repo") or title),
          "status": "draft"}
     gh = {"connected": False, "ok": False, "url": "", "error": "", "issues": 0}
-    token = _cred("GITHUB_TOKEN")
+    token = _github_token()
     if token:
         gh["connected"] = True
         from ui import github_publish as G
@@ -8452,7 +8645,7 @@ def projects_publish(pid):
         return jsonify({"error": "Project not found."}), 404
     if p.get("status") != "verified":
         return jsonify({"error": "Pass the understanding test before publishing this."}), 400
-    token = _cred("GITHUB_TOKEN")
+    token = _github_token()
     if not token:
         return jsonify({"error": "Connect GitHub in Settings, Connections first."}), 400
     from ui import github_publish as G
@@ -8720,7 +8913,7 @@ def _run_build(pid: str, llm, generate: bool = True) -> None:
         progress(state="failed", error=msg, stage="write", tokens=meter.as_dict(), finished=time.time())
         return
     if p.get("target") == "github":
-        token = _cred("GITHUB_TOKEN")
+        token = _github_token()
         if not token:
             progress(state="failed", stage="push", error="Connect GitHub in Settings first. "
                      "Your files are saved here.", tokens=meter.as_dict(), finished=time.time())

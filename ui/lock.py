@@ -53,7 +53,7 @@ _CRED_NAMES = (
     # so it is as sensitive as the API key. The chat id (the owner's own) travels with it.
     "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
     # GitHub: a Personal Access Token with write scope on the owner's OWN account.
-    "GITHUB_TOKEN", "GITHUB_LOGIN",
+    "GITHUB_TOKEN", "GITHUB_LOGIN", "GITHUB_REFRESH_TOKEN", "GITHUB_TOKEN_EXPIRES",
     # Paid cloud avatar (Tavus) key, and the optional Adzuna sourcing dev key.
     "AVATAR_API_KEY", "ADZUNA_APP_ID", "ADZUNA_APP_KEY",
     # The Gmail OAuth token (JSON) — mailbox read access. Stored via the app's Gmail token
