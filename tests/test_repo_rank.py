@@ -127,7 +127,7 @@ def test_no_readme_and_no_description_is_couldnt_judge(gh):
 
 
 def test_only_the_top_k_are_read_closely(monkeypatch):
-    many = [_repo(f"r{i}", description="SQL and Power BI" if i < 3 else "misc") for i in range(12)]
+    many = [_repo(f"r{i}", description="SQL and Power BI" if i < 3 else "misc") for i in range(15)]
     seen = []
 
     def fetch(method, url, token="", body=None, params=None):
@@ -142,7 +142,10 @@ def test_only_the_top_k_are_read_closely(monkeypatch):
     assert len(readmes) == repo_rank.K and len(llm.last_rank_args[2]) <= repo_rank.K
     assert {"/repos/janedoe/r0/readme", "/repos/janedoe/r1/readme", "/repos/janedoe/r2/readme"} <= \
         {u.split("api.github.com")[-1] for u in readmes}
-    assert len(got["repos"]) == 12
+    assert len(got["repos"]) == 15
+    # The ones not opened are not judged: never "does not fit" on a guess from the name.
+    unopened = [r for r in got["repos"] if r["why"] == repo_rank.NOT_OPENED]
+    assert len(unopened) == 15 - repo_rank.K and {r["fit"] for r in unopened} == {"unknown"}
 
 
 def test_a_cache_hit_makes_no_model_call_and_the_cap_holds(gh):
@@ -384,3 +387,57 @@ def test_a_repo_already_on_the_resume_is_not_offered_again(template_source, fake
     assert next(f for f in card["fits"] if f["name"] == "kpi-dashboard")["on_resume"]
     out = s.add_projects([repo_rank.entry_for(kpi)])
     assert out["added"] == [] and out["skipped"] == ["kpi-dashboard"]
+
+
+def test_a_notebook_repo_counts_as_python():
+    """GitHub reports notebooks as "Jupyter Notebook"; for a job asking for Python that is Python."""
+    card = _repo("Data-Analytics-Projects", description="All my data analytics projects")
+    card["language"] = "Jupyter Notebook"
+    assert repo_rank.pre_score(card, ["Python"]) >= 1
+    assert "Python" in repo_rank.repo_text(card, {"languages": ["Jupyter Notebook"]})
+
+
+def test_a_short_readme_reads_the_folder_names(monkeypatch):
+    """A portfolio repo with a one-line README keeps its work in folders ("SQL Projects"): the
+    folder names are read, sent to the ranker, and count as the repo's own text for terms."""
+    repo_rank.clear_cache()
+    card = _repo("Data-Analytics-Projects", description="This repository contains all my Data Analytics Projects")
+    seen = []
+
+    def fetch(method, url, token="", body=None, params=None):
+        seen.append(url)
+        if url.endswith("/users/janedoe/repos"):
+            return 200, [card]
+        if url.endswith("/readme"):
+            return 200, {"content": base64.b64encode(b"# Data-Analytics-Projects\nMy projects").decode()}
+        if url.endswith("/contents"):
+            return 200, [{"name": "SQL Projects", "type": "dir"}, {"name": ".github", "type": "dir"},
+                         {"name": "README.md", "type": "file"}]
+        return 404, {}
+    monkeypatch.setattr(github_publish, "FETCH", fetch)
+    llm = FakeLLM()
+    llm.rank_script = lambda jd, terms, repos, projects: {
+        "repos": [{"id": c["id"], "fit": "some", "terms": ["SQL"], "why": "SQL work.", "bullets": []}
+                  for c in repos], "projects": []}
+    got = _rank(llm)
+    sent = llm.last_rank_args[2][0]
+    assert sent["files"] == ["SQL Projects", "README.md"]
+    r = got["repos"][0]
+    assert r["fit"] == "some" and r["terms"] == ["SQL"]
+
+
+def test_a_long_readme_does_not_list_the_folders(monkeypatch):
+    repo_rank.clear_cache()
+    card = _repo("kpi", description="KPI dashboards")
+    seen = []
+
+    def fetch(method, url, token="", body=None, params=None):
+        seen.append(url)
+        if url.endswith("/users/janedoe/repos"):
+            return 200, [card]
+        if url.endswith("/readme"):
+            return 200, {"content": base64.b64encode(("SQL dashboards. " * 40).encode()).decode()}
+        return 404, {}
+    monkeypatch.setattr(github_publish, "FETCH", fetch)
+    _rank(FakeLLM())
+    assert not [u for u in seen if u.endswith("/contents")]

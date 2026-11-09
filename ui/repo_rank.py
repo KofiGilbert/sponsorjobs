@@ -34,7 +34,9 @@ from datetime import datetime, timezone
 
 from ui import github_publish
 
-K = 8                         # repositories read closely (README + languages)
+K = 12                        # repositories read closely (README + languages)
+SHORT_README = 300            # below this, the top-level file and folder names are read too
+MAX_PATHS = 20
 README_CHARS = 1500
 MAX_RANKINGS = 3              # model calls per chat session
 MAX_BULLETS = 2
@@ -47,7 +49,8 @@ LIMIT = ("I have already checked your repositories for this job three times in t
          "Start a new chat to check again.")
 NO_REPOS = "There are no repositories of yours to check."
 PRIVATE_NOTE = "Private, so no link: a recruiter could not open it."
-NOT_READ = "Its name, description and topics do not mention this job's skills."
+NOT_READ = "Its README and description do not show this job's skills."
+NOT_OPENED = f"Not opened. I read the {K} that looked closest to this job."
 NO_TEXT = "It has no README and no description, so I could not judge it."
 
 # (full_name lower, pushed_at) -> (when, {"readme": str, "languages": [str]})
@@ -107,15 +110,23 @@ def full_name(card: dict, login: str = "") -> str:
     return f"{login}/{card.get('name')}" if login else str(card.get("name") or "")
 
 
+def _lang_words(lang) -> str:
+    """A language as matching text. GitHub reports notebooks as "Jupyter Notebook"; they are
+    Python notebooks in practice, so they count for a job that asks for Python."""
+    lang = str(lang or "")
+    return f"{lang} Python" if lang.lower() == "jupyter notebook" else lang
+
+
 def meta_text(card: dict) -> str:
     return " ".join([_words_of(card.get("name")), str(card.get("description") or ""),
                      " ".join(_words_of(t) for t in card.get("topics") or []),
-                     str(card.get("language") or "")])
+                     _lang_words(card.get("language"))])
 
 
 def repo_text(card: dict, details: dict | None) -> str:
     d = details or {}
-    return " ".join([meta_text(card), " ".join(d.get("languages") or []), d.get("readme") or ""])
+    return " ".join([meta_text(card), " ".join(_lang_words(x) for x in d.get("languages") or []),
+                     d.get("readme") or "", " ".join(d.get("paths") or [])])
 
 
 def _when(iso: str):
@@ -142,14 +153,16 @@ def pre_score(card: dict, terms: list[str], now: datetime | None = None) -> floa
 # ----------------------------------------------------------------------------- GitHub reads
 
 def fetch_details(full: str, pushed_at: str, token: str = "", now: float | None = None) -> dict:
-    """{"readme": plain text (first README_CHARS), "languages": [by bytes], "ok": bool} for one
-    repository, cached by (full_name, pushed_at). A README GitHub does not have is ""."""
+    """{"readme": plain text (first README_CHARS), "languages": [by bytes], "paths": [top-level
+    names, only when the README is short], "ok": bool} for one repository, cached by
+    (full_name, pushed_at). A README GitHub does not have is "". A portfolio repository often has
+    a one-line README and the work in folders ("SQL Projects"), so the folder names are read too."""
     now = time.time() if now is None else now
     key = (full.lower(), str(pushed_at or ""))
     hit = _DETAILS.get(key)
     if hit and now - hit[0] < DETAIL_TTL:
         return dict(hit[1])
-    out = {"readme": "", "languages": [], "ok": True}
+    out = {"readme": "", "languages": [], "paths": [], "ok": True}
     try:
         status, data = github_publish.FETCH("GET", f"{github_publish.API}/repos/{full}/readme",
                                             token or "", None, None)
@@ -172,6 +185,18 @@ def fetch_details(full: str, pushed_at: str, token: str = "", now: float | None 
         out["languages"] = [str(k) for k, _v in sorted(data.items(), key=lambda kv: -int(kv[1] or 0))][:5]
     elif status != 404:
         out["ok"] = False
+    if len(out["readme"]) < SHORT_README:
+        try:
+            status, data = github_publish.FETCH("GET", f"{github_publish.API}/repos/{full}/contents",
+                                                token or "", None, None)
+        except Exception:      # noqa: BLE001
+            status, data = 0, None
+        if status == 200 and isinstance(data, list):
+            out["paths"] = [str(x.get("name") or "") for x in data
+                            if isinstance(x, dict) and x.get("name")
+                            and not str(x.get("name")).startswith(".")][:MAX_PATHS]
+        elif status not in (200, 404):
+            out["ok"] = False
     if out["ok"]:
         _DETAILS[key] = (now, dict(out))
     return out
@@ -285,13 +310,13 @@ def rank(llm, jd: str, repos: list[dict], resume_projects: list[dict], *, login:
     for i, r in enumerate(top):
         fn = full_name(r, login)
         d = details[fn]
-        if not d.get("readme") and not str(r.get("description") or "").strip():
+        if not d.get("readme") and not str(r.get("description") or "").strip() and not d.get("paths"):
             unjudgeable.append(r)
             continue
         to_model.append({"id": f"r{i + 1}", "name": r["name"], "description": str(r.get("description") or ""),
                          "topics": list(r.get("topics") or []), "languages": d.get("languages") or
                          ([r["language"]] if r.get("language") else []), "readme": d.get("readme") or "",
-                         "_card": r, "_full": fn})
+                         "files": d.get("paths") or [], "_card": r, "_full": fn})
     raw = {"repos": [], "projects": []}
     if to_model or projs:
         state["count"] += 1
@@ -325,11 +350,9 @@ def rank(llm, jd: str, repos: list[dict], resume_projects: list[dict], *, login:
         fn = full_name(r, login)
         out_repos.append({**base(r, fn), "fit": "unknown", "terms": [], "why": NO_TEXT, "bullets": []})
     for r in rest:
+        # Not opened, so not judged: saying it does not fit would be a guess from its name.
         fn = full_name(r, login)
-        if not str(r.get("description") or "").strip():
-            out_repos.append({**base(r, fn), "fit": "unknown", "terms": [], "why": NO_TEXT, "bullets": []})
-        else:
-            out_repos.append({**base(r, fn), "fit": "none", "terms": [], "why": NOT_READ, "bullets": []})
+        out_repos.append({**base(r, fn), "fit": "unknown", "terms": [], "why": NOT_OPENED, "bullets": []})
     rank_of = {"strong": 0, "some": 1, "none": 2, "unknown": 3}
     out_repos.sort(key=lambda x: (rank_of[x["fit"]], -len(x["terms"])))
     pj = {str(x.get("id")): x for x in raw.get("projects") or [] if isinstance(x, dict)}
