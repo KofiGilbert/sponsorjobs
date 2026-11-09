@@ -198,6 +198,35 @@ def test_a_question_during_intake_reaches_the_agent(template_source, fake_llm, w
     assert seen
 
 
+def test_a_follow_up_question_stays_with_the_agent(template_source, fake_llm, workdir, gh, monkeypatch):
+    """Seen in test build 11 (2026-11-09): after the agent ranked the repos, "None of them is
+    strong. What do you suggest?" has no GitHub or project word, so it fell to the intake, which
+    asked for a name. A question right after an agent reply is part of that conversation."""
+    monkeypatch.setenv(rc.FLAG, "1")
+    s = _session(template_source, fake_llm, workdir)
+    seen = []
+    fake_llm.agent_script = lambda sys_, msgs, tools: seen.append(1) or {
+        "text": "Here is what I found.", "tool_calls": [], "stop": "end_turn"}
+    s.submit("Which of my repos fit this job?")
+    s.submit("None of them is strong. What do you suggest?")
+    assert len(seen) == 2
+
+
+def test_a_follow_up_answer_and_a_later_question_stay_on_the_intake(template_source, fake_llm, workdir,
+                                                                      gh, monkeypatch):
+    """Only a question right after an agent reply follows it: an answer goes to the intake, and a
+    question after the intake has spoken again goes by the usual words."""
+    monkeypatch.setenv(rc.FLAG, "1")
+    s = _session(template_source, fake_llm, workdir)
+    seen = []
+    fake_llm.agent_script = lambda sys_, msgs, tools: seen.append(1) or {
+        "text": "Here is what I found.", "tool_calls": [], "stop": "end_turn"}
+    s.submit("Which of my repos fit this job?")
+    s.submit("My name is Jane Doe, jane@example.com")
+    s.submit("Is that okay?")
+    assert len(seen) == 1
+
+
 # -- protocol ---------------------------------------------------------------------------- #
 
 def test_native_messages_alternate_and_carry_tool_blocks():
