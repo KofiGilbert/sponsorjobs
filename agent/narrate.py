@@ -63,8 +63,9 @@ SYSTEM = "\n".join([
     "You get the chat so far and the brief: the points for this turn, in order, each with its "
     "facts. Rules:",
     "- Cover every point in the brief, merged into one short, warm message: two to five plain "
-    "sentences, no list, no greeting, no sign off. Keep the brief's order unless another reads "
-    "more naturally.",
+    "sentences, no greeting, no sign off. Keep the brief's order unless another reads more "
+    "naturally. The chat shows a little markdown: you may split it into two short paragraphs "
+    "with a blank line, and use a short \"- \" list only when naming three or more things.",
     "- Use every number, name, skill, section and button label exactly as the brief gives it. "
     "Every string listed under \"exact\" must appear in your message character for character. "
     "Button labels go in <b></b>, for example <b>Accept & Save</b>.",
@@ -79,7 +80,7 @@ SYSTEM = "\n".join([
     "- A \"build\" point means the page was just built or rebuilt; the person sees its summary row "
     "right above your message, so do not repeat that row's numbers unless a point needs them.",
     "- When the person asked something, answer it first, from the brief and the chat only.",
-    "- Plain words. No dashes as punctuation, no markdown, no headings. Say resume, never CV. "
+    "- Plain words. No dashes as punctuation, no headings, no tables, no links. Say resume, never CV. "
     "Never mention the brief, points or the app's rules.",
     "Answer with the message text only.",
 ])
@@ -129,7 +130,7 @@ def clean(text: str) -> str:
     t = re.sub(r"\bCVs\b", "resumes", re.sub(r"\bCV\b", "resume", t))
     t = re.sub(r"\*\*([^*\n]+?)\*\*", r"<b>\1</b>", t)
     t = re.sub(r"(?m)^#{1,6}\s+", "", t)
-    t = re.sub(r"(?m)^\s*[-*•]\s+", "", t)              # a list the prompt forbade: plain lines
+    t = re.sub(r"(?m)^\s*[*•]\s+", "- ", t)             # one list marker, the one the chat renders
     return re.sub(r"\n{3,}", "\n\n", t).strip()
 
 
