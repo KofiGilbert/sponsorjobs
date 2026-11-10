@@ -245,3 +245,11 @@ def test_a_project_polish_that_falls_short_asks_for_longer_versions_next(tmp_pat
     asked = [w[0] for w in llm.words if w]
     assert len(asked) >= 2, llm.words
     assert sum(asked[1]) > sum(asked[0]), asked             # the second try asks for more words
+
+
+def test_the_answer_may_wrap_each_bullet_s_versions():
+    from llm.anthropic_client import parse_role_lists
+    out = '{"roles": [{"role": "A", "bullets": [{"versions": ["a.", "aa."]}, ["b.", "bb."]]}]}'
+    assert parse_role_lists(out, 1) == [[["a.", "aa."], ["b.", "bb."]]]
+    out = '[[{"versions": [{"text": "x."}, {"text": "xx."}]}]]'
+    assert parse_role_lists(out, 1) == [[["x.", "xx."]]]
