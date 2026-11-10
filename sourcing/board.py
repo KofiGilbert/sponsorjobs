@@ -23,12 +23,14 @@ from datetime import date, datetime, timedelta, timezone
 
 # "approved" = reviewed and approved in the app, not submitted yet (submit/stages.py); a failed
 # auto-submit stays here, marked "Needs you", until the person submits it.
-STAGES = ("saved", "approved", "applied", "interviewing", "offer", "rejected", "archived")
+# "in_progress" = a resume for it is being built: its resume session (ui/builder_sessions.py) is open
+# and not sent. Starting a session puts the job here; applying moves it on as before.
+STAGES = ("saved", "in_progress", "approved", "applied", "interviewing", "offer", "rejected", "archived")
 RANK = {s: i for i, s in enumerate(STAGES)}
 # How far an application got, for honest funnel counts. Rejected and archived are endings, not
 # progress, so the furthest stage is always one of these; a job that interviewed and was then
 # rejected keeps "interviewing" here even though its card now sits in Closed.
-PROGRESS = ("saved", "approved", "applied", "interviewing", "offer")
+PROGRESS = ("saved", "in_progress", "approved", "applied", "interviewing", "offer")
 PROGRESS_RANK = {s: i for i, s in enumerate(PROGRESS)}
 # How many recent stage changes the side panel lists (each one can be walked back with Undo).
 HISTORY_SHOWN = 5
@@ -39,6 +41,13 @@ NUDGE_STAGES = ("applied", "interviewing")
 # Rows the board creates for a resume tailored from a pasted JD (no sourced posting behind it).
 # They are keyed ``tailored:<record id>`` and never appear on the Jobs feed.
 TAILORED_SOURCE = "tailored"
+# Rows made for a resume chat started from a job description pasted on Home: every builder session
+# belongs to one job (ui/builder_sessions.py), so a pasted one gets its own. Keyed
+# ``pasted:<session id>``, never shown on the Jobs feed.
+PASTED_SOURCE = "pasted"
+# Why a job left the running: a posting found closed or gone from its feed. Not a stage (the person
+# was not rejected); the card keeps its stage and says the posting closed.
+CLOSED_POSTING = "posting closed"
 
 
 def now_iso() -> str:
@@ -64,7 +73,7 @@ def migrate_board(c: sqlite3.Connection) -> None:
     cols = {r[1] for r in c.execute("PRAGMA table_info(sourced_job)")}
     for name, ddl in (("stage", "TEXT"), ("stage_at", "TEXT"), ("applied_at", "TEXT"),
                       ("follow_up_at", "TEXT"), ("notes", "TEXT DEFAULT ''"),
-                      ("furthest_stage", "TEXT")):
+                      ("furthest_stage", "TEXT"), ("closed_at", "TEXT"), ("closed_reason", "TEXT")):
         if name not in cols:
             c.execute(f"ALTER TABLE sourced_job ADD COLUMN {name} {ddl}")
     c.execute("""CREATE TABLE IF NOT EXISTS tracker_activity (
@@ -117,7 +126,7 @@ def _backfill_furthest(c: sqlite3.Connection) -> None:
 
 _BOARD_COLS = ("source_id, source, company, title, location, remote, url, posted_at, salary, "
                "saved, sponsorship_stated, stage, stage_at, applied_at, follow_up_at, notes, "
-               "furthest_stage")
+               "furthest_stage, closed_at, closed_reason")
 
 
 class BoardMixin:
@@ -181,7 +190,7 @@ class BoardMixin:
                 params.append((d + timedelta(days=FOLLOW_UP_DAYS)).isoformat() if d else None)
         elif stage in ("rejected", "archived"):
             sets.append("follow_up_at=NULL")
-        elif stage in ("saved", "approved"):
+        elif stage in ("saved", "in_progress", "approved"):
             # Back to Saved (or Approved) means "not applied after all" (the review queue's stage_patch does
             # the same for a record), so the funnel stops counting it and the nudge is dropped.
             sets.append("applied_at=NULL"); sets.append("follow_up_at=NULL")
@@ -351,6 +360,16 @@ class BoardMixin:
         return [dict(r) for r in self._conn.execute(
             "SELECT message_id, thread_id, matched_by, label, subject, at FROM tracker_mail "
             "WHERE source_id=? ORDER BY at DESC", (source_id,)).fetchall()]
+
+    def mark_posting_closed(self, source_id: str, reason: str = CLOSED_POSTING,
+                            now: str | None = None) -> bool:
+        """Stamp a job's posting as closed (``closed_at``, ``closed_reason``), once. Its stage is
+        left alone: a closed posting is not a rejection. Returns True when it was stamped now."""
+        cur = self._conn.execute(
+            "UPDATE sourced_job SET closed_at=?, closed_reason=? WHERE source_id=? "
+            "AND (closed_at IS NULL OR closed_at='')", (now or now_iso(), reason, source_id))
+        self._conn.commit()
+        return cur.rowcount > 0
 
     # -- reads ----------------------------------------------------------- #
     def board_job(self, source_id: str) -> dict | None:

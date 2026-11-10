@@ -460,3 +460,16 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   markdown (paragraphs, bold, "- " and "1. " lists, line breaks) is rendered AFTER escaping, so a
   model can never put raw HTML on the page. An older saved chat merges consecutive assistant
   lines into one response when restored. Screens: 1893x1183 at 100% and 76%, dark and light.
+- 2026-11-10: The JOB is the unit, not the chat. Every resume session is kept (ui/builder_sessions.py)
+  and belongs to one tracker job (a pasted description gets its own "pasted:" job). No new sidebar item:
+  Home, Jobs, Resumes and Tracker open the same job workspace (the builder with that session restored).
+  Tracker has an optional "In progress" column between Saved and Ready to apply; a card with a session
+  reads "Resume 96% · page 95%" and "Chat · 2h ago" and opens the workspace; a closed posting goes to
+  Closed as "Posting closed Nov 9", never Rejected. Jobs: "Open your resume →" plus one --good-dot line
+  ("You tailored a resume for this role 2h ago · 96% keyword match · not sent yet") and a "Your resume ·
+  96%" chip on the card. Resumes: a row opens its workspace; Download is a hover action; a chat glyph
+  marks rows with a session. Home: "Continue tailoring · 2" beside See examples (pairs with Start
+  tailoring; hidden at 0) opens a list in the examples list's own style: "In progress", "Recent", then
+  "All jobs in Tracker →". "In progress" is the state's one name everywhere (LinkedIn's tracker word);
+  "Resume" is never a verb. A closed job's chat opens with one quiet note (company and date from the
+  job's record) and Reuse / Download, and hides Accept. Screens: scratchpad continue/*.png.

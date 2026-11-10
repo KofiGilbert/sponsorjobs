@@ -201,6 +201,7 @@
   async function loadDashboard() {
     // Prompt-first Home: nothing to fetch for the hero, the prompt IS the page.
     await refreshLiveNav();   // the sidebar entry is the way back into an open CV
+    loadHomeContinue();
     loadHomeToday();
   }
 
@@ -269,16 +270,20 @@
     const opts = CV_STAGES.map(([v, lbl]) =>
       `<option value="${v}"${v === stage ? " selected" : ""}>${lbl}</option>`).join("");
     const nudge = c.follow_up_is_due ? `<span class="cv-followup" title="It has been a few days, a short follow-up helps">Follow up due</span>` : "";
-    const sub = [esc(c.company || ""), esc(c.template_label || ""), c.match != null ? `${c.match}% match` : ""].filter(Boolean).join("  \u00b7  ");
+    const sub = [esc(c.company || ""), esc(c.template_label || ""), c.match != null ? `${c.match}% match` : "",
+      c.applied_at ? esc(sjT("cvs.appliedOn", "Applied {d}").replace("{d}", sessDay(c.applied_at))) : ""].filter(Boolean).join("  \u00b7  ");
+    // A resume made in a session reopens it (chat and page); the small glyph says it has one.
+    const glyph = c.session_id ? `<span class="cv-chat-ic" title="${esc(sjT("cvs.hasChat", "Opens with its chat"))}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></span>` : "";
     return `<article class="cv-card cv-row" tabindex="0" role="button" data-id="${c.id}" title="${esc(c.role)}">
       <span class="cv-row-ic"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M9 1.5v3h3" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M6 8.2h4M6 10.6h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg></span>
       <div class="cv-row-main">
-        <div class="cv-row-name cv-name-line">${esc(c.role)}</div>
+        <div class="cv-row-name cv-name-line">${esc(c.role)}${glyph}</div>
         <div class="cv-row-sub">${sub}${nudge}</div>
       </div>
       <select class="cv-stage cv-stage-${stage}" data-id="${c.id}" title="Application status" aria-label="Application status">${opts}</select>
       <span class="cv-row-date">${esc(c.when || "")}</span>
       <div class="cv-actions">
+        <a class="cv-act" data-act="download" href="/api/cv.pdf?job=cv-${c.id}" download title="${esc(sjT("cvs.download", "Download"))}" aria-label="${esc(sjT("cvs.download", "Download"))}"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 2.5v8M4.8 7.6 8 10.8l3.2-3.2M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
         <button class="cv-act" data-act="rename" type="button" title="Rename (F2)">&#9998;</button>
         <button class="cv-act" data-act="menu" type="button" title="More">&#8943;</button>
       </div>
@@ -428,17 +433,25 @@
     });
   }
 
+  // A resume row opens its job workspace (the chat and the page) when it was made in a session;
+  // an older one, from before sessions were kept, opens its package as before.
+  async function openCvRow(id) {
+    const rec = CV_RECS.find(r => String(r.id) === String(id));
+    if (rec && rec.session_id && (await openSessionWorkspace(rec.session_id))) return;
+    openPackage(id);
+  }
+
   function wireCvManager(root) {
     root.querySelectorAll(".cv-card").forEach(card => {
       card.addEventListener("click", (e) => {
         if (e.target.closest(".cv-act, input, .cv-stage")) return;
         if (card.classList.contains("was-dragged")) { card.classList.remove("was-dragged"); return; }
-        openPackage(card.dataset.id);
+        openCvRow(card.dataset.id);
       });
       card.addEventListener("keydown", (e) => {
         if (e.target.tagName === "INPUT") return;
         if (e.key === "F2") { e.preventDefault(); startRename(card); }
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPackage(card.dataset.id); }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCvRow(card.dataset.id); }
       });
     });
     root.querySelectorAll('[data-act="rename"]').forEach(b =>
@@ -686,9 +699,92 @@
     });
     $("#homeGo")?.addEventListener("click", start);
     $("#homeExamples")?.addEventListener("click", () => { box.focus(); openList(); });
+    wireHomeContinue();
   })();
 
   // (The old next-best-action hero card is gone: the prompt IS the home now.)
+
+  /* ---- Home: "Continue tailoring · 2" beside See examples (2026-11-10). It pairs with Start
+     tailoring (start new, or continue one). The list is the examples list's own style: group
+     "In progress" (jobs whose resume is not sent yet), group "Recent" (a few applied or closed),
+     then "All jobs in Tracker". Hidden when nothing is in progress. Keys: arrows, Enter, Escape. */
+  let HC = { rows: [], active: -1 };
+  async function loadHomeContinue() {
+    const btn = $("#homeContinue"), list = $("#homeContinueList");
+    if (!btn || !list) return;
+    let d = null;
+    try { d = await api("/api/tracker/continue"); } catch { d = null; }
+    const n = (d && d.count) || 0;
+    btn.hidden = !n;
+    if (!n) { closeHomeContinue(); return; }
+    btn.textContent = sjT("home.continue", "Continue tailoring \u00b7 {n}").replace("{n}", n);
+    const row = (x, i, kind) => {
+      const meta = kind === "going"
+        ? [sessScore(x), sjT("home.cChat", "chat {t}").replace("{t}", sessAgo(x.updated_at))].filter(Boolean).join(" \u00b7 ")
+        : x.closed_at ? sjT("home.cClosed", "Posting closed {d} \u00b7 kept as a record").replace("{d}", sessDay(x.closed_at))
+        : [x.applied_at ? sjT("home.cApplied", "Applied {d}").replace("{d}", sessDay(x.applied_at)) : sjT("tracker.stage.applied", "Applied"),
+           x.follow_up_at ? sjT("home.cFollow", "follow up {d}").replace("{d}", sessDay(x.follow_up_at)) : ""].filter(Boolean).join(" \u00b7 ");
+      const dot = kind === "going" ? "is-on" : x.closed_at ? "is-closed" : "is-sent";
+      return `<div class="home-suggest-row hc-row" id="hcRow${i}" role="option" aria-selected="false" data-hc-sid="${esc(x.source_id)}">
+          <span class="hc-dot ${dot}" aria-hidden="true"></span>
+          <span class="hc-main"><span class="hc-t">${esc([x.title, x.company].filter(Boolean).join(" \u00b7 "))}</span>
+          <span class="hc-m">${esc(meta)}</span></span></div>`;
+    };
+    let i = 0;
+    const going = (d.in_progress || []).map(x => row(x, i++, "going")).join("");
+    const recent = (d.recent || []).map(x => row(x, i++, "recent")).join("");
+    list.innerHTML = `<div class="home-suggest-l">${esc(sjT("home.cInProgress", "In progress"))}</div>${going}`
+      + (recent ? `<div class="home-suggest-l">${esc(sjT("home.cRecent", "Recent"))}</div>${recent}` : "")
+      + `<div class="home-suggest-row hc-all" id="hcRow${i}" role="option" aria-selected="false" data-hc-all>${esc(sjT("home.cAll", "All jobs in Tracker \u2192"))}</div>`;
+    HC.rows = [...list.querySelectorAll(".home-suggest-row")];
+    HC.rows.forEach((r, k) => {
+      r.addEventListener("mousedown", (e) => e.preventDefault());   // keep focus on the link
+      r.addEventListener("mouseenter", () => hcActive(k));
+      r.addEventListener("click", () => hcPick(k));
+    });
+  }
+  function hcActive(i) {
+    HC.active = i;
+    HC.rows.forEach((r, k) => { r.classList.toggle("is-active", k === i); r.setAttribute("aria-selected", k === i ? "true" : "false"); });
+    const btn = $("#homeContinue");
+    if (btn) { if (i >= 0) btn.setAttribute("aria-activedescendant", HC.rows[i].id); else btn.removeAttribute("aria-activedescendant"); }
+  }
+  function openHomeContinue() {
+    const list = $("#homeContinueList");
+    if (!list || !HC.rows.length) return;
+    $("#homeSuggest") && ($("#homeSuggest").hidden = true);   // one list at a time
+    list.hidden = false; $("#homeContinue").setAttribute("aria-expanded", "true"); hcActive(-1);
+  }
+  function closeHomeContinue() {
+    const list = $("#homeContinueList");
+    if (!list) return;
+    list.hidden = true; $("#homeContinue")?.setAttribute("aria-expanded", "false"); hcActive(-1);
+  }
+  async function hcPick(i) {
+    const r = HC.rows[i];
+    if (!r) return;
+    closeHomeContinue();
+    if (r.hasAttribute("data-hc-all")) { navTo("tracker"); return; }
+    await openJobWorkspace(r.dataset.hcSid);
+  }
+  function wireHomeContinue() {
+    const btn = $("#homeContinue");
+    if (!btn) return;
+    btn.addEventListener("click", () => ($("#homeContinueList").hidden ? openHomeContinue() : closeHomeContinue()));
+    btn.addEventListener("blur", closeHomeContinue);
+    btn.addEventListener("keydown", (e) => {
+      const open = !$("#homeContinueList").hidden;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (!open) openHomeContinue();
+        const n = HC.rows.length, d = e.key === "ArrowDown" ? 1 : -1;
+        hcActive(HC.active < 0 ? (d > 0 ? 0 : n - 1) : (HC.active + d + n) % n);
+        return;
+      }
+      if (e.key === "Escape" && open) { e.preventDefault(); closeHomeContinue(); return; }
+      if (e.key === "Enter" && open && HC.active >= 0) { e.preventDefault(); hcPick(HC.active); }
+    });
+  }
 
   // Roles you can actually take, first. This strip called itself "best-fit" and was
   // .slice(0, 4) of whatever arrived most recently, so an F-1 student in Chicago who needs
@@ -770,8 +866,16 @@
       noteVia(r);
       const foot = $(".home-roles-foot");
       if (r.loading) { if (foot) foot.hidden = true; el.innerHTML = feedLoadingHtml(r.feed); watchFeedDownload(loadHomeToday); return; }
+      // Ranked by fit to the saved profile on the server (ui/home_fit.py). With no profile to rank
+      // against, the strip says what it is instead of "best-fit", and reachability orders it.
+      const lbl = $("#homeTodayLbl");
+      if (lbl) {
+        const key = r.fit_ranked ? "home.today" : "home.todayNew";
+        lbl.dataset.i18n = key;
+        lbl.textContent = sjT(key, r.fit_ranked ? "Today \u00b7 fresh best-fit roles" : "Today \u00b7 new sponsor roles");
+      }
       // The list scrolls under the fixed prompt, so it can hold more than a peek.
-      const jobs = rankForReachability(r.jobs || []).slice(0, 12);
+      const jobs = (r.fit_ranked ? (r.jobs || []) : rankForReachability(r.jobs || [])).slice(0, 12);
       if (foot) foot.hidden = jobs.length < 3;
       if (!jobs.length && feedFailed(r.feed)) { el.innerHTML = feedFailHtml(); wireFeedRetry(el, loadHomeToday); return; }
       if (!jobs.length) { el.innerHTML = `<div class="empty small">No roles yet, open <b>Jobs</b> to add sources.</div>`; return; }
@@ -1733,7 +1837,7 @@
             <div class="fr-co-name">${esc(coName(j))}</div>
             ${f.label ? `<span class="fr-fresh ${f.cls}">${f.cls ? "● " : ""}${esc(f.label)}</span>` : ""}
           </div>
-          <div class="fr-role">${esc(j.title)} ${isNew}</div>
+          <div class="fr-role">${esc(j.title)} ${isNew}${j.my_session && j.my_session.keywords != null ? ` <span class="fr-mine">${esc(sjT("jobs.mineChip", "Your resume \u00b7 {n}%").replace("{n}", j.my_session.keywords))}</span>` : ""}</div>
           <div class="fr-loc">${esc(usLocation(j.location))}</div>
           <div class="fr-tags">${tags}</div>
           <div class="fr-meta">
@@ -1773,6 +1877,25 @@
     }, { passive: true });
   }
 
+  // A role you already tailored a resume for opens that resume (its workspace); the rest tailor.
+  function fdMainBtn(j, small) {
+    const cls = "btn btn-primary" + (small ? " btn-sm" : "");
+    return j.my_session
+      ? `<button class="${cls}" data-fd-open="${esc(j.source_id)}" type="button">${esc(sjT("jobs.openResume", "Open your resume \u2192"))}</button>`
+      : `<button class="${cls}" data-fd-tailor="${esc(j.source_id)}" type="button">Tailor &amp; apply →</button>`;
+  }
+  // One line under the buttons: when you tailored for it, its keyword match, and whether it went.
+  function fdMineLine(j) {
+    const x = j.my_session;
+    if (!x) return "";
+    const parts = [sjT("jobs.mineLine", "You tailored a resume for this role {t}").replace("{t}", sessAgo(x.updated_at))];
+    if (x.keywords != null) parts.push(sjT("jobs.mineMatch", "{n}% keyword match").replace("{n}", x.keywords));
+    parts.push(x.applied_at ? sjT("jobs.sentOn", "sent {d}").replace("{d}", sessDay(x.applied_at))
+      : x.closed_at ? sjT("jobs.closedOn", "posting closed {d}").replace("{d}", sessDay(x.closed_at))
+      : sjT("jobs.notSent", "not sent yet"));
+    return `<div class="fd-mine"><span class="fd-mine-dot" aria-hidden="true"></span>${esc(parts.join(" \u00b7 "))}</div>`;
+  }
+
   function selectJob(sid) {
     SELECTED_SID = sid;
     const j = LAST_JOBS.find(x => x.source_id === sid);
@@ -1792,7 +1915,7 @@
           <div class="fd-stick-t">${esc(j.title)}</div>
           <div class="fd-stick-c">${esc(coName(j))} <span>·</span> ${esc(usLocation(j.location))}</div>
         </div>
-        <button class="btn btn-primary btn-sm" data-fd-tailor="${esc(j.source_id)}" type="button">Tailor &amp; apply →</button>
+        ${fdMainBtn(j, true)}
       </div></div>
       <div class="fd-head">
         <div class="fd-headrow">
@@ -1819,14 +1942,19 @@
       </div>
       <div class="fd-match" id="fdMatch"></div>
       <div class="fd-actions">
-        <button class="btn btn-primary" data-fd-tailor="${esc(j.source_id)}" type="button">Tailor &amp; apply →</button>
+        ${fdMainBtn(j)}
         <a class="btn btn-ghost" href="${esc(j.url)}" target="_blank" rel="noopener">View posting ↗</a>
         <button class="btn btn-ghost fd-save ${j.saved ? "is-saved" : ""}" data-fd-save="${esc(j.source_id)}" type="button" aria-pressed="${j.saved ? "true" : "false"}">${j.saved ? "★ Saved" : "☆ Save"}</button>
         <button class="btn btn-ghost" data-fd-dismiss="${esc(j.source_id)}" type="button">Dismiss</button>
       </div>
+      ${fdMineLine(j)}
       <div class="fd-jd" id="fdJd"><span class="muted">Loading the full description…</span></div>
       <div class="fd-company" id="fdCompany"></div>`;
     det.querySelectorAll("[data-fd-tailor]").forEach(b => b.addEventListener("click", e => tailorJob(e.currentTarget.dataset.fdTailor)));
+    det.querySelectorAll("[data-fd-open]").forEach(b => b.addEventListener("click", async e => {
+      const sid = e.currentTarget.dataset.fdOpen;
+      if (!(await openJobWorkspace(sid))) tailorJob(sid);
+    }));
     det.querySelector("[data-fd-save]")?.addEventListener("click", e => toggleSave(e.currentTarget, j));
     det.querySelector("[data-fd-dismiss]")?.addEventListener("click", async e => {
       const s = e.currentTarget.dataset.fdDismiss;
@@ -2332,6 +2460,46 @@
     if (s < 5400) return Math.round(s / 60) + "m ago";
     if (s < 129600) return Math.round(s / 3600) + "h ago";
     return Math.round(s / 86400) + "d ago";
+  }
+
+  /* ---- The job workspace (2026-11-10): every resume session belongs to one job, and Home, Jobs,
+     Resumes and Tracker all open the same place, the builder with that job's session (its chat
+     and its page) restored. The server keeps every session (ui/builder_sessions.py). */
+  const sjT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  // When a session was last worked on ("2h ago", "yesterday", "Nov 8"), from epoch seconds.
+  function sessAgo(ts) {
+    if (!ts) return "";
+    const s = Date.now() / 1000 - Number(ts);
+    if (s < 43200) return relAgo(Math.max(0, s));
+    const d = new Date(Number(ts) * 1000);
+    return calendarAgo(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+  }
+  // "Resume 96% · page 95%": the job's keywords on the resume, then how full the page is.
+  function sessScore(x) {
+    const out = [];
+    if (x && x.keywords != null) out.push(sjT("sess.resumePct", "Resume {n}%").replace("{n}", x.keywords));
+    if (x && x.fill != null) out.push(sjT("sess.pagePct", "page {n}%").replace("{n}", x.fill));
+    return out.join(" \u00b7 ");
+  }
+  // "2026-11-08" -> "Nov 8" (a local date, see trkDay).
+  function sessDay(iso) {
+    if (!iso) return "";
+    const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+    if (!y || !m || !d) return String(iso).slice(0, 10);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  // Open a job's workspace: its current session. False when the job has none yet.
+  async function openJobWorkspace(sid) {
+    try { await apiCall("/api/tracker/session/open", { source_id: sid }); }
+    catch { return false; }
+    await resumeBuilder();
+    return true;
+  }
+  async function openSessionWorkspace(id) {
+    try { await apiCall(`/api/sessions/${encodeURIComponent(id)}/open`, {}); }
+    catch { return false; }
+    await resumeBuilder();
+    return true;
   }
   // Parse a timestamp as UTC epoch ms, or null if it carries no clock. SQLite's CURRENT_TIMESTAMP
   // gives "YYYY-MM-DD HH:MM:SS" with no zone marker, which JS would otherwise misread as local time.
@@ -3510,6 +3678,8 @@
       $("#editToggle").hidden = false;
       showPdf();   // the preview IS the compiled PDF, always land here after a build
     }
+    // A closed job's chat is a record: nothing to save for sending.
+    $("#acceptBtn").hidden = Boolean(st.expired);
     if (st.phase === "review") {
       const blocked = Boolean(st.blocked_finalize);
       $("#acceptBtn").disabled = blocked;
@@ -3530,6 +3700,7 @@
           : I18N.t("builder.acceptSave", "Looks good? Accept to save it to Resumes.");
       }
     }
+    if (st.expired) $("#acceptNote").textContent = sjT("chat.recordNote", "Kept as a record. The job has closed.");
   }
 
   // The honesty check (a skill on the page the person's own profile cannot back) is the one
@@ -3851,8 +4022,36 @@
     });
     flush();
     applyState(st);
+    if (st.expired) renderClosedNote(st);
     chatGithubCheck();       // connected since this chat last spoke of GitHub: carry on now
     return true;
+  }
+
+  // A closed job's chat opens as a record: one quiet note at the top, with what can still be
+  // done (download the resume, or reuse it for a similar job). The company and the day come
+  // from the job's own record. Questions still work; nothing here applies.
+  function renderClosedNote(st) {
+    const n = st.expired_note || {};
+    const co = n.company || st.company || "";
+    const body = n.closed_at
+      ? sjT("chat.closedBody", "{company} stopped taking applications on {date}. This chat is kept as a record. Your resume can still be downloaded or reused for a similar job.")
+          .replace("{company}", co || sjT("chat.theEmployer", "The employer")).replace("{date}", sessDay(n.closed_at))
+      : sjT("chat.closedBodyNoDate", "{company} stopped taking applications. This chat is kept as a record. Your resume can still be downloaded or reused for a similar job.")
+          .replace("{company}", co || sjT("chat.theEmployer", "The employer"));
+    const note = el("div", "chat-closed-note");
+    note.setAttribute("role", "note");
+    note.innerHTML = `<span class="ccn-dot" aria-hidden="true"></span><div class="ccn-main">
+        <div class="ccn-txt"><b>${esc(sjT("chat.closedTitle", "This job has closed."))}</b> ${esc(body)}</div>
+        <div class="ccn-acts">
+          <button class="btn btn-ghost btn-sm" type="button" data-ccn-reuse>${esc(sjT("chat.reuse", "Reuse for a similar job"))}</button>
+          ${st.pdf ? `<a class="btn btn-ghost btn-sm" data-ccn-dl href="${esc(st.pdf)}" download>${esc(sjT("chat.download", "Download resume"))}</a>` : ""}
+        </div></div>`;
+    chat.prepend(note);
+    note.querySelector("[data-ccn-reuse]").addEventListener("click", () => {
+      // A new session for the new job: the saved profile carries this resume's material, so the
+      // only thing to ask for is the new description (the same template stays).
+      openBuilder(st.template || undefined);
+    });
   }
 
   // The server picks the template from the JD it just read, so nothing is asked up front.
@@ -5182,8 +5381,8 @@
      drag and drop, a table view, and a side panel per card (notes saved on blur, contacts, a
      follow-up date, the timeline, links to the tailored resume and cover letter). The funnel at
      the top is computed server-side so the numbers match the claims export. */
-  const TRK_STAGES = ["saved", "approved", "applied", "interviewing", "offer", "rejected", "archived"];
-  const TRK_STAGE_EN = { saved: "Saved", approved: "Approved", applied: "Applied", interviewing: "Interviewing",
+  const TRK_STAGES = ["saved", "in_progress", "approved", "applied", "interviewing", "offer", "rejected", "archived"];
+  const TRK_STAGE_EN = { saved: "Saved", in_progress: "In progress", approved: "Approved", applied: "Applied", interviewing: "Interviewing",
     offer: "Offer", rejected: "Rejected", archived: "Archived" };
   const trkT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
   const trkStageName = (s) => trkT("tracker.stage." + s, TRK_STAGE_EN[s] || s);
@@ -5259,9 +5458,22 @@
   function trkCardHtml(c) {
     const rec = c.record;
     const meta = [];
+    const sess = c.has_session ? c.session : null;
+    const closed = c.closed_at ? `<span>${esc(trkT("tracker.postingClosed", "Posting closed {d}").replace("{d}", trkDay(c.closed_at)))}</span>` : "";
+    // A job with a resume session (the job workspace): how the resume stands and when its chat
+    // last moved, then its links. In progress: "Resume 96% · page 95%" and "Chat · 2h ago".
+    if (sess && !c.applied_at && !c.closed_at) {
+      const score = sessScore(sess);
+      const lines = [score ? `<div class="trk-card-meta trk-sess">${esc(score)}</div>` : "",
+        `<div class="trk-card-meta trk-sess">${esc(trkT("tracker.chatAgo", "Chat \u00b7 {t}").replace("{t}", sessAgo(sess.updated_at)))}</div>`];
+      return trkCardShell(c, lines.join(""));
+    }
+    if (closed) meta.push(closed);
     if (c.applied_at) meta.push(`<span>${esc(trkT("tracker.appliedOn", "Applied"))} ${esc(trkDay(c.applied_at))}</span>`);
     if (c.follow_up_at) meta.push(`<span class="${c.follow_up_due ? "trk-due" : ""}">${esc(trkT("tracker.followUpShort", "Follow up"))} ${esc(trkDay(c.follow_up_at))}</span>`);
-    if (rec && rec.pdf) meta.push(`<a href="${esc(rec.pdf)}" target="_blank" rel="noopener">${esc(trkT("tracker.resume", "Resume"))}${rec.count > 1 ? ` (${rec.count})` : ""}</a>`);
+    const pdf = (rec && rec.pdf) || (sess && sess.pdf);
+    if (pdf) meta.push(`<a href="${esc(pdf)}" target="_blank" rel="noopener">${esc(trkT("tracker.resume", "Resume"))}${rec && rec.count > 1 ? ` (${rec.count})` : ""}</a>`);
+    if (sess) meta.push(`<a href="#" data-trk-chat>${esc(trkT("tracker.chat", "Chat"))}</a>`);
     if (c.has_notes) meta.push(`<span>${esc(trkT("tracker.hasNotes", "Notes"))}</span>`);
     const chips = trkChips(c);
     // How it was sent, or why it came back (submit/stages.py). Only said where it adds news:
@@ -5270,12 +5482,15 @@
       ? `<div class="trk-card-state needs" title="${esc(rec.state_detail || "")}">${esc(trkT("tracker.needsYou", "Needs you"))}</div>`
       : rec && rec.state === "submitted" && rec.how === "auto" && c.stage === "applied"
       ? `<div class="trk-card-state">${esc(trkT("tracker.submittedForYou", "Submitted for you"))}</div>` : "";
-    return `<div class="trk-card" draggable="true" data-sid="${esc(c.source_id)}" role="button" tabindex="0">
+    return trkCardShell(c, `${st}
+      ${chips ? `<div class="trk-card-chips">${chips}</div>` : ""}
+      ${meta.length ? `<div class="trk-card-meta">${meta.join("")}</div>` : ""}`);
+  }
+  function trkCardShell(c, inner) {
+    return `<div class="trk-card" draggable="true" data-sid="${esc(c.source_id)}"${c.has_session ? " data-session" : ""} role="button" tabindex="0">
       <div class="trk-card-co">${esc(c.company)}</div>
       <div class="trk-card-t">${esc(c.title)}</div>
-      ${st}
-      ${chips ? `<div class="trk-card-chips">${chips}</div>` : ""}
-      ${meta.length ? `<div class="trk-card-meta">${meta.join("")}</div>` : ""}
+      ${inner}
     </div>`;
   }
 
@@ -5284,6 +5499,8 @@
   // auto-apply) shows only while something waits there; Closed holds rejected and archived jobs.
   const TRK_COLS = [
     { key: "saved", stages: ["saved"], hint: ["tracker.hintSaved", "Jobs you save from the Jobs page"] },
+    // A resume is being built for these (its session is open and not sent): shown while one is.
+    { key: "in_progress", stages: ["in_progress"], optional: true, hint: ["tracker.hintInProgress", "Resumes you are tailoring"] },
     { key: "approved", stages: ["approved"], optional: true, hint: ["tracker.hintApproved", "Approved for auto-apply"] },
     { key: "applied", stages: ["applied"], hint: ["tracker.hintApplied", "Moves here when you apply"] },
     { key: "interviewing", stages: ["interviewing"], hint: ["tracker.hintInterview", "Drag a card here when they call"] },
@@ -5311,9 +5528,17 @@
     }).join("");
     requestAnimationFrame(trkFitBoard);
     host.querySelectorAll(".trk-card").forEach(card => {
-      card.addEventListener("click", (e) => { if (e.target.closest("a")) return; openTrackerPanel(card.dataset.sid); });
+      // A job with a resume session opens its workspace (chat and page); the rest open the panel.
+      const open = () => card.hasAttribute("data-session")
+        ? openJobWorkspace(card.dataset.sid).then(ok => { if (!ok) openTrackerPanel(card.dataset.sid); })
+        : openTrackerPanel(card.dataset.sid);
+      card.addEventListener("click", (e) => {
+        if (e.target.closest("[data-trk-chat]")) { e.preventDefault(); openJobWorkspace(card.dataset.sid); return; }
+        if (e.target.closest("a")) return;
+        open();
+      });
       card.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openTrackerPanel(card.dataset.sid); }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
       });
       card.addEventListener("dragstart", (e) => {
         e.dataTransfer.setData("text/plain", card.dataset.sid);

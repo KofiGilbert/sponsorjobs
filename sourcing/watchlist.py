@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from .board import TAILORED_SOURCE, BoardMixin, migrate_board
+from .board import PASTED_SOURCE, TAILORED_SOURCE, BoardMixin, migrate_board
 from .quality import is_list_only
 
 DEFAULT_CRITERIA = {"titles": [], "locations": [], "remote": "any"}
@@ -421,8 +421,8 @@ class Watchlist(BoardMixin):
                 "posted_at, salary, first_seen, is_new, dismissed, saved, sponsorship_stated, "
                 "(jd_text IS NOT NULL AND jd_text <> '') AS has_jd")
         q = f"SELECT {cols} FROM sourced_job"
-        conds, params = [], [TAILORED_SOURCE]
-        conds.append("source<>?")           # board-only rows (resume tailored from a pasted JD)
+        conds, params = [], [TAILORED_SOURCE, PASTED_SOURCE]
+        conds.append("source NOT IN (?, ?)")   # board-only rows (resume tailored from a pasted JD)
         if not include_dismissed:
             conds.append("dismissed=0")
             if not saved_only:          # a posting found closed leaves the board (not Saved)

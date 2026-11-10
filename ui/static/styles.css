@@ -4940,3 +4940,39 @@ body.panel-open .trk-panel { right: calc(var(--panel-w) + 42px); }
   -webkit-user-select: text; cursor: text; overflow-wrap: anywhere; }
 .help-gmail { width: 100%; justify-content: center; }
 .help-mailapp { display: block; margin: 12px auto 0; font-size: 12.5px; }
+
+/* ---- The job workspace (2026-11-10): every resume session belongs to a job; Home, Jobs, Resumes
+   and Tracker open the same builder with that session. Quiet: grey text, one --good dot or chip. */
+.home-foot-links { display: inline-flex; align-items: center; gap: 18px; min-width: 0; }
+.home-foot-links .home-examples[hidden] { display: none; }
+.home-continue .hc-row { display: flex; align-items: flex-start; gap: 9px; }
+.hc-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; margin-top: 7px; background: var(--faint); }
+.hc-dot.is-on { background: var(--good); }
+.hc-dot.is-sent { background: transparent; box-shadow: inset 0 0 0 1px var(--muted); }
+.hc-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hc-t { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hc-row.is-active .hc-t { color: var(--ink); }
+.hc-m { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.home-continue .hc-all { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.home-continue .hc-all.is-active { color: var(--ink); }
+/* Tracker: a job's resume and chat lines sit as two quiet lines under the title. */
+.trk-card-meta.trk-sess { margin-top: 5px; }
+.trk-card-meta.trk-sess + .trk-card-meta.trk-sess { margin-top: 3px; }
+/* Jobs: "Your resume · 96%" after the title, and one line under the detail buttons. */
+.fr-mine { display: inline-block; font-size: 11px; font-weight: 600; color: var(--good); margin-left: 4px; vertical-align: 1px; white-space: nowrap; }
+.fd-mine { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); margin: -6px 0 16px; }
+.fd-mine-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--good); }
+/* Resumes: a resume made in a session has a small chat glyph after its name. */
+.cv-chat-ic { display: inline-flex; vertical-align: -2px; margin-left: 7px; color: var(--faint); }
+.cv-chat-ic svg { width: 13px; height: 13px; }
+a.cv-act { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+/* A closed job's chat: one quiet note at the top; the chat below is the record. */
+.chat-closed-note { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0 18px; padding: 12px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm, 10px); }
+.ccn-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 6px; background: var(--faint); }
+.ccn-main { min-width: 0; }
+.ccn-txt { font-size: 13px; line-height: 1.5; color: var(--muted); }
+.ccn-txt b { color: var(--ink); font-weight: 600; }
+.ccn-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ccn-acts a.btn { text-decoration: none; }
+.home-examples:focus-visible { outline: 1px solid var(--border-strong); outline-offset: 3px; border-radius: 4px; }
