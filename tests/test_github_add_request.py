@@ -243,7 +243,8 @@ def test_not_connected_gives_the_connect_card_and_carries_on_with_the_add(templa
     g.on = True
     st = s.github_connected()
     assert st["resumed"] is True
-    assert st["messages"][0] == f"Connected as janedoe. Adding the two repos that fit this {ROLE} role best."
+    assert len(st["messages"]) == 1          # one voice: the lead and what was added, one message
+    assert st["messages"][0].startswith(f"Connected as janedoe. Adding the two repos that fit this {ROLE} role best.")
     assert len(_github_projects(s)) == 2
     assert st["cards"][0]["type"] == "repo_fit"
     again = s.github_connected()                  # once per connect

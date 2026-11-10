@@ -134,6 +134,11 @@ class LLMBackend(Protocol):
         (llm/agent_protocol.py)."""
         ...
 
+    def narrate(self, system: str, user: str, max_tokens: int = 400) -> str:
+        """The resume chat's ONE message for a turn, written from the turn's brief and the chat
+        so far (agent/narrate.py builds both). Sets ``last_narrate_usage``."""
+        ...
+
     def rank_repos_for_jd(self, jd: str, terms: list, repo_cards: list,
                           resume_projects: list) -> dict:
         """One tool-less call judging the person's repositories and resume projects for one job:
@@ -898,6 +903,36 @@ class FakeLLM:
                                    for i, n in enumerate(calls)]}
         return {"text": "I can look at your resume, your last upload and your public GitHub "
                         "repositories.", "tool_calls": [], "stop": "end_turn"}
+
+    def narrate(self, system: str, user: str, max_tokens: int = 400) -> str:
+        """Deterministic stand-in for the one message per turn: ``narrate_script`` when a test
+        sets one (a string, a list popped in order, a callable ``(system, user, items)`` or an
+        exception to raise), else the brief's points joined as the fallback joins them, so a
+        test reads the same facts either way. Records the brief it was given."""
+        from agent.narrate import fallback
+        self.narrate_calls = getattr(self, "narrate_calls", 0) + 1
+        brief = user.split("THE BRIEF (this turn's points, in order):\n", 1)[-1]
+        brief = brief.rsplit("\nWrite the one message now.", 1)[0]
+        try:
+            items = json.loads(brief)
+        except (TypeError, ValueError):
+            items = []
+        self.last_narrate_items, self.last_narrate_user = items, user
+        self.last_narrate_usage = {"input": len(system + user) // 4, "output": 60, "model": "fake"}
+        script = getattr(self, "narrate_script", None)
+        if isinstance(script, BaseException) or (isinstance(script, type)
+                                                 and issubclass(script, BaseException)):
+            raise script
+        if callable(script):
+            return script(system, user, items)
+        if isinstance(script, list) and script:
+            out = script.pop(0)
+            if isinstance(out, BaseException):
+                raise out
+            return out
+        if isinstance(script, str):
+            return script
+        return fallback(items)
 
     def rank_repos_for_jd(self, jd: str, terms: list, repo_cards: list,
                           resume_projects: list) -> dict:

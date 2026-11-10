@@ -89,15 +89,17 @@ def _questions(msgs):
 @requires_latex
 def test_after_a_build_one_question_at_most_and_the_edit_tip_once(template_source, fake_llm, workdir):
     s, st = _built(template_source, fake_llm, workdir)
-    assert st["messages"].count(WebIntake.EDIT_TIP) == 1
-    assert len(_questions(st["messages"])) <= 1, st["messages"]
+    assert len(st["messages"]) == 1
+    assert sum(m.count(WebIntake.EDIT_TIP) for m in st["messages"]) == 1
+    assert sum(m.count("?") for m in st["messages"]) <= 1, st["messages"]
     assert "a few more real things" not in " ".join(st["messages"])
     # A real answer rebuilds: the tip is not said again, and still one question at most.
     st2 = s.submit("At BlackOrigin I rebuilt the monthly reporting in SQL and cut close time "
                    "from five days to two.")
     assert len(_builds(s)) == 2
-    assert WebIntake.EDIT_TIP not in st2["messages"]
-    assert len(_questions(st2["messages"])) <= 1, st2["messages"]
+    assert len(st2["messages"]) == 1
+    assert WebIntake.EDIT_TIP not in st2["messages"][0]
+    assert st2["messages"][0].count("?") <= 1, st2["messages"]
 
 
 @requires_latex

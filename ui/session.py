@@ -58,6 +58,20 @@ _TITLE_WORDS = re.compile(
     re.I)
 
 
+def _voice_logger(row: dict) -> None:
+    """One line per chat turn's message: whether the AI wrote it, why not, and its tokens. To the
+    log, and to TAILOR_VOICE_LOG (a file) when set, for measuring what one voice costs."""
+    import logging
+    logging.getLogger("tailor.voice").info("voice %s", json.dumps(row, default=str))
+    path = os.environ.get("TAILOR_VOICE_LOG")
+    if path:
+        try:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, default=str) + "\n")
+        except OSError:
+            pass
+
+
 def _jd_label(jd_text: str) -> tuple[str, str]:
     """Best-effort (role, company) from the top of a JD. Skips scraped boilerplate
     ('Company logo for …') and the posting's metadata lines ('OPEN DATE: November 9, 2026')
@@ -937,6 +951,31 @@ def _builds(kind: str):
     return deco
 
 
+def _one_voice(fn):
+    """One chat turn, said in ONE message written by the AI (Kofi, 2026-11-10). The code inside
+    the turn decides what happens and what must be said, and says it as before: a fixed line, or
+    a model reply. Each fixed line is a brief item (WebIntake._fact) with its facts. When the turn
+    ends, WebIntake._speak turns everything said in it into one message: kept as is when it is a
+    single model reply already, else written by the narrator (agent/narrate.py) from the brief
+    and the chat, else (the call failed) the lines joined. The history then holds that one
+    message, with the turn's cards on it, after the build's summary row. A turn inside a turn
+    (a build from an upload) is one turn."""
+    @functools.wraps(fn)
+    def run(self, *a, **kw):
+        if self._turn is not None:
+            return fn(self, *a, **kw)
+        turn = {"h0": len(self.history), "v0": self._pdf_v, "sig": self._material_sig(),
+                "items": {}, "model": set(), "message": ""}
+        self._turn = turn
+        try:
+            out = fn(self, *a, **kw)
+        finally:
+            self._turn = None
+        with self.lock:
+            return self._speak(turn, out)
+    return run
+
+
 class WebIntake:
     # The body sections the page renders: the template's own (its manifest), plus Interests
     # whenever the person gave them and the template has no Interests section of its own. Kofi
@@ -1099,8 +1138,11 @@ class WebIntake:
     # ------------------------------------------------------------------ helpers
     def _append(self, role: str, content: str):
         """Record one turn in the session AND persist it verbatim to the diary,
-        as it happens, the fix for 'nothing persisted until Accept'."""
+        as it happens, the fix for 'nothing persisted until Accept'. Inside a turn the app's own
+        lines wait: the turn's one message reaches the diary when it is said (_speak)."""
         self.history.append({"role": role, "content": content})
+        if role == "agent" and self._turn is not None:
+            return
         try:
             ref = self.palace.remember_turn(role, content)
             if role == "user" and ref:
@@ -1279,7 +1321,7 @@ class WebIntake:
         reply = self._no_false_limits(reply, message)
         if self._connect_due:
             return self._reply_with_connect(reply)
-        reply = reply or "Noted, I'll remember that."
+        reply = self._model_said(reply) or self._fact("ack", "Noted, I'll remember that.")
         self._append("agent", reply)
         self._persist()
         return self._state([reply])
@@ -1290,6 +1332,7 @@ class WebIntake:
         from agent.resume_chat import connect_card
         self._connect_due = False
         card = connect_card()
+        self._model_said(reply)
         self._append("agent", reply)
         self.history[-1]["card"] = card
         self._persist()
@@ -1635,7 +1678,10 @@ class WebIntake:
                        "action_error": str(exc) or "I could not start that build. Try again in a moment."})
             return st
         title = str(proj.get("title") or idea.get("title") or "")
-        msg = self.BUILD_STARTED.format(title=title)
+        msg = self._fact("build_started", self.BUILD_STARTED.format(title=title), exact=[title],
+                         project=title, takes="a few minutes",
+                         then="when it is built they learn it and pass its quiz, then you add it "
+                              "to this resume")
         self._append("agent", msg)
         card = {"type": "project_progress", "project_id": str(proj.get("id") or ""), "title": title}
         self.history[-1]["card"] = card
@@ -1649,6 +1695,7 @@ class WebIntake:
         st.update({"action_ok": True, "project": proj})
         return st
 
+    @_one_voice
     def add_verified_project(self, entry: dict, title: str = "", score=None, total=None,
                              project_id: str = "") -> dict:
         """A project the person built for this resume passed its quiz (ui/app._on_project_verified,
@@ -1662,7 +1709,9 @@ class WebIntake:
             where = f" for {self.role}" if self.role else ""
             where += f" at {self.company}" if self.company else ""
             score_s = f", {score} of {total}" if score is not None and total else ""
-            msg = f"You passed {title}{score_s}. I added it to your resume{where}."
+            msg = self._fact("passed_quiz", f"You passed {title}{score_s}. I added it to your resume{where}.",
+                             exact=[title], project=title, score=score, out_of=total,
+                             added_to_resume=True, rebuilt=self.assembled is not None)
             cut = self._trims_note() if self.assembled is not None else ""
             self._append("agent", msg + (f" {cut}" if cut else ""))
             self.history[-1]["card"] = {"type": "project_progress", "project_id": project_id,
@@ -1703,6 +1752,7 @@ class WebIntake:
         with self.lock:
             return self._apply_action(token, choice, args)
 
+    @_one_voice
     def _apply_action(self, token: str, choice: str, args: dict | None = None) -> dict:
         """The person's click on a card (POST /api/session/action): the only way a card changes
         the resume. ``choice`` "add" adds the ticked repositories (``args.keys``). A token works
@@ -1734,15 +1784,18 @@ class WebIntake:
         added, skipped = got.get("added") or [], got.get("skipped") or []
         msgs = []
         if added:
-            msgs.append(f"I added {', '.join(added)} to this resume"
-                        + (" and your saved profile." if got.get("saved") else "."))
+            msgs.append(self._fact("added_projects", f"I added {', '.join(added)} to this resume"
+                                   + (" and your saved profile." if got.get("saved") else "."),
+                                   exact=added, added=added, saved_to_profile=bool(got.get("saved")),
+                                   rebuilt=self.assembled is not None))
             cut = self._trims_note() if self.assembled is not None else ""
             if cut:
                 msgs.append(cut)
         if skipped:
             one = len(skipped) == 1
-            msgs.append(f"{', '.join(skipped)} {'was' if one else 'were'} already on this resume, so "
-                        f"I left {'it as it was' if one else 'them as they were'}.")
+            msgs.append(self._fact("already_on_resume", f"{', '.join(skipped)} {'was' if one else 'were'} "
+                                   f"already on this resume, so I left {'it as it was' if one else 'them as they were'}.",
+                                   exact=skipped, already_on_resume=skipped))
         for m in msgs:
             self._append("agent", m)
         # The card in the transcript shows it was used, so a restored chat does not offer it again.
@@ -2010,16 +2063,22 @@ class WebIntake:
         "Check my GitHub" button, and the turn that carries on by itself once GitHub is
         connected (``connected_as``, the login). Not connected and no username: one line and
         the Connect GitHub button, never steps."""
-        from agent.resume_chat import _t_rank_repos, connect_card, merge_cards
+        from agent.resume_chat import ADD_LABEL, _t_rank_repos, connect_card, merge_cards
         gh = self._github_view()
         login = (gh.get("login") if gh.get("connected") else "") or gh.get("resume_login") or ""
         msgs: list[str] = []
         if connected_as:
             where = f"this {self.role} role" if self.role else "this job"
-            lead = f"Connected as {connected_as}. Checking your repos for {where}."
+            lead = self._fact("github_connected", f"Connected as {connected_as}. Checking your "
+                              f"repos for {where}.", exact=[connected_as], login=connected_as,
+                              doing="checking their repositories for this job")
             msgs.append(lead)
             self._append("agent", lead)
         if not login:
+            self._fact("github_not_connected", self.GITHUB_NOT_CONNECTED,
+                       github="not connected and no username known",
+                       point_to="the Connect GitHub button below; once connected you check their "
+                                "repos for this job by yourself")
             msgs.append(self.GITHUB_NOT_CONNECTED)
             self._append("agent", self.GITHUB_NOT_CONNECTED)
             card = connect_card()
@@ -2032,6 +2091,16 @@ class WebIntake:
             out = {"ok": False}
         cards = merge_cards([out.pop("card")]) if out.get("card") else []
         text = self._rank_takeaway(out)
+        fits = [f for f in out.get("fits") or [] if isinstance(f, dict) and f.get("name")]
+        self._fact("repo_fit", text, exact=self._rank_best(fits),
+                   ok=bool(out.get("ok")), best_fits=self._rank_best(fits) or None,
+                   fits=[{"name": f["name"], "fit": f.get("fit"), "shows": f.get("skills_it_shows")}
+                         for f in fits[:5]] or None,
+                   none_fit=bool(out.get("ok") and not fits),
+                   how_judged="names, descriptions and READMEs, not the code",
+                   card_below=("a card lists every repo; they tick the ones they want and click "
+                               "the card's button" if cards else None),
+                   button_on_card=ADD_LABEL if fits else None)
         msgs.append(text)
         self._append("agent", text)
         if cards:
@@ -2039,6 +2108,11 @@ class WebIntake:
         self._agent_spoke = True       # a follow-up question stays with the agent
         self._persist()
         return self._state(msgs, cards=cards)
+
+    @staticmethod
+    def _rank_best(fits: list) -> list:
+        best = [f["name"] for f in fits if f.get("fit") == "strong fit"] or [f["name"] for f in fits]
+        return best[:3]
 
     @staticmethod
     def _rank_takeaway(out: dict) -> str:
@@ -2148,7 +2222,9 @@ class WebIntake:
         if connected_as:
             what = "repo" if n == 1 else f"{self._NUM_WORDS.get(n, str(n))} repos"
             where = f"this {self.role} role" if self.role else "this job"
-            lead = f"Connected as {connected_as}. Adding the {what} that fit {where} best."
+            lead = self._fact("github_connected", f"Connected as {connected_as}. Adding the {what} "
+                              f"that fit {where} best.", exact=[connected_as], login=connected_as,
+                              doing=f"adding the {what} that fit this job best")
             msgs.append(lead)
             self._append("agent", lead)
         out = self._add_top(n)
@@ -2157,6 +2233,9 @@ class WebIntake:
                     + ("repo" if n == 1 else f"{self._NUM_WORDS.get(n, str(n))} repos")
                     + " that fit this job best.")
             card = dict(connect_card(), add=n)
+            self._fact("github_not_connected", line, github="not connected", asked_to_add=n,
+                       point_to="the Connect GitHub button below; once connected you add the "
+                                "repos that fit this job best by yourself")
             msgs.append(line)
             self._append("agent", line)
             self.history[-1]["card"] = card
@@ -2168,6 +2247,15 @@ class WebIntake:
                 {"label": "Build a project for this job", "send": self.BUILD_ONE_SEND}]})
         cards = merge_cards(raw)
         text = str(out.get("say") or "")
+        added = [a.get("name") for a in out.get("added") or [] if a.get("name")]
+        self._fact("added_from_github", text, exact=added, asked_for=n, added=out.get("added") or None,
+                   fewer_fit_than_asked=bool(out.get("fewer_fit_than_asked")),
+                   already_on_resume=out.get("already_on_resume") or None,
+                   rebuilt=bool(added and self.assembled is not None),
+                   cut_to_fit=len(getattr(self.assembled, "trims", None) or []) if added else None,
+                   offer=("help building a project for this job for the rest"
+                          if out.get("fewer_fit_than_asked") or not added else None),
+                   failed=None if out.get("ok") else "could not read their repos just now")
         msgs.append(text)
         self._append("agent", text)
         if cards:
@@ -2193,6 +2281,7 @@ class WebIntake:
                         return 0
         return 0
 
+    @_one_voice
     def github_connected(self, pending: bool = False) -> dict:
         """GitHub just became connected (the one-click flow, the device flow, a pasted token, in
         Settings or from the chat): when the chat's last word on GitHub was "not connected" (a
@@ -2262,7 +2351,7 @@ class WebIntake:
             out = run_turn(self, self._agent_ctx(), message)
         except Exception:      # noqa: BLE001 - the agent failing falls back to today's reply
             return self._converse(message)
-        text = str(out.get("text") or "").strip() or "Noted."
+        text = self._model_said(str(out.get("text") or "").strip()) or self._fact("ack", "Noted.")
         cards = list(out.get("cards") or [])
         self._agent_spoke = True       # a follow-up question stays with the agent (_submit)
         self._append("agent", text)
@@ -2910,6 +2999,7 @@ class WebIntake:
             out["choice_saved"] = saved
         return out
 
+    @_one_voice
     @_locked
     def answer_proposal(self, token: str, save: bool, option: int = 0):
         """Save (or not) a choice read in this chat. Saved, it applies to this page at once."""
@@ -3328,15 +3418,21 @@ class WebIntake:
         cur_declined = set(self.essentials.get("declined", []) or [])
         new_declined = sorted(cur_declined - set(getattr(self, "last_declined", [])))
         self.last_declined = sorted(cur_declined)
-        try:
-            ask = str(self.llm.ask_missing(missing, answered, self.role, new_declined) or "").strip()
-        except Exception:
-            ask = ""
+        ask = ""
+        if not self._narrating():          # in a turn, the turn's one message words the ask
+            try:
+                ask = str(self.llm.ask_missing(missing, answered, self.role, new_declined) or "").strip()
+            except Exception:
+                ask = ""
         if not ask:                                        # deterministic fallback
             take = missing[:2]
             joined = take[0] if len(take) == 1 else f"{take[0]}, and {take[1]}"
             ack = "Got it. " if answered else ""
             ask = f"{ack}Could you tell me {joined}?"
+        self._fact("ask_missing", ask, ask=list(missing[:2]),
+                   just_answered=answered or None, just_declined=new_declined or None,
+                   note="ask for these (at most two), naturally; acknowledge what was just answered "
+                        "or declined without praising a decline")
         msgs = list(lead or [])
         msgs.append(ask)
         self._append("agent", ask)
@@ -3344,6 +3440,7 @@ class WebIntake:
         return self._state(msgs)
 
     # ------------------------------------------------------------------ upload
+    @_one_voice
     @_locked
     def ingest_document(self, text: str, filename: str = "", links: list | None = None):
         """ONE upload path: read the file, decide what it is (CV / transcript /
@@ -3358,6 +3455,7 @@ class WebIntake:
             return self.ingest_certificate(text, filename)
         return self.ingest_resume(text, filename, links=links)
 
+    @_one_voice
     def ingest_certificate(self, text: str, filename: str = ""):
         """Record an uploaded certificate as a real credential (added to the skills
         block's certifications). Raw file kept; clean summary to the diary."""
@@ -3383,6 +3481,7 @@ class WebIntake:
                  "certification name you'd like on the resume?"])
         return self.draft(lead=lead)
 
+    @_one_voice
     @_locked
     def ingest_resume(self, text: str, filename: str = "", links: list | None = None):
         """Pre-fill the profile from an uploaded CV's extracted text: merge the
@@ -3621,6 +3720,7 @@ class WebIntake:
                 cleaned[label] = ", ".join(dict.fromkeys(kept))
         self.profile["skills"] = cleaned
 
+    @_one_voice
     @_locked
     def ingest_transcript(self, text: str, filename: str = ""):
         """Read the REAL courses from an academic transcript and populate the
@@ -3702,6 +3802,7 @@ class WebIntake:
             return self._ask_missing(missing, lead=lead)
         return self.draft(lead=lead)
 
+    @_one_voice
     @_locked
     def remove_suggested_projects(self):
         """Drop all flagged placeholder projects and unblock finalization."""
@@ -3758,13 +3859,22 @@ class WebIntake:
         if self.returning:
             name = self.essentials.get("identity", {}).get("name", "")
             first = (" " + name.split()[0]) if name else ""
-            return (f"Welcome back{first}. I still have your background, {self._known_summary()}. "
+            text = (f"Welcome back{first}. I still have your background, {self._known_summary()}. "
                     f"Anything new or changed since last time, or should I tailor what I have to "
                     f"{role_phrase}{where}?")
-        return (f"I've read {role_phrase}{where}. <b>Upload your existing resume</b> "
+            return self._fact("opening", text, returning=True, first_name=first.strip(),
+                              background_on_file=self._known_summary(), job_role=self.role,
+                              company=self.company,
+                              ask="whether anything is new or changed since last time, or to "
+                                  "tailor what is on file to this job")
+        text = (f"I've read {role_phrase}{where}. <b>Upload your existing resume</b> "
                 "(Word, PDF, PowerPoint, or a photo/scan) and I'll pull in the details, or just "
                 "tell me about yourself: your name, schools, and work history. Either way I'll only "
                 "ask about anything that's missing.")
+        return self._fact("opening", text, returning=False, job_role=self.role, company=self.company,
+                          ask="upload their existing resume (Word, PDF, PowerPoint, or a photo), "
+                              "or tell you their name, schools and work history; you only ask "
+                              "about what is missing")
 
     # ------------------------------------------------------------------ client state
     def _state(self, messages=None, extra=None, cards=None):
@@ -3853,6 +3963,10 @@ class WebIntake:
             if said and not any(self._connect_buttons(c) for c in s["cards"]):
                 from agent.resume_chat import connect_card
                 card = connect_card()
+                self._fact("github_not_connected", self.GITHUB_NOT_CONNECTED,
+                           github="not connected and no username known",
+                           point_to="the Connect GitHub button below; once connected you check "
+                                    "their repos for this job by yourself")
                 self._append("agent", self.GITHUB_NOT_CONNECTED)
                 self.history[-1]["card"] = card
                 s["messages"] = list(s["messages"]) + [self.GITHUB_NOT_CONNECTED]
@@ -3870,7 +3984,138 @@ class WebIntake:
     _pdf_v = 0
     _bt = None              # the build being told in the chat (_builds)
     _pending_build = None   # a helper's build, carried by the next state
+    _turn = None            # the chat turn being said in one message (_one_voice)
 
+    # -- one voice: the code decides what is said, the AI says it (agent/narrate.py) ------ #
+    def _voice_on(self) -> bool:
+        """The turn's message is written by the model: narration on, a model that narrates,
+        and someone reading (an unattended auto-apply build has nobody in the chat)."""
+        from agent.narrate import enabled
+        return (enabled() and callable(getattr(self.llm, "narrate", None))
+                and not self.essentials.get("unattended"))
+
+    def _narrating(self) -> bool:
+        """Inside a turn whose message the model writes: a helper that would word a line with its
+        own model call (a question for more material) leaves the wording to that one message."""
+        return self._turn is not None and self._voice_on()
+
+    def _fact(self, kind: str, text: str, exact=None, **facts) -> str:
+        """A fixed line said in this turn, as a brief item: what it is (``kind``), the facts the
+        written message must state (``exact`` verbatim), and the line itself as the fallback.
+        Returns the line, so the caller says it exactly as before."""
+        if text and self._turn is not None:
+            from agent.narrate import item
+            self._turn["items"][text] = item(kind, text, exact, **facts)
+        return text
+
+    def _model_said(self, text: str) -> str:
+        """A line a model wrote for this turn (the intake's reply, the agent's answer)."""
+        if text and self._turn is not None:
+            self._turn["model"].add(text)
+        return text
+
+    _voice_log: list = []
+
+    def _speak(self, turn: dict, out):
+        """The end of a turn (_one_voice): everything the app said in it becomes ONE message.
+        Returns ``out`` with that message, its cards, and the build's row before it."""
+        from agent import narrate as _N
+        st = out if isinstance(out, dict) and "phase" in out else None
+        h0 = min(int(turn["h0"]), len(self.history))
+        said_rows = [t for t in self.history[h0:] if isinstance(t, dict)
+                     and t.get("role") == "agent" and not t.get("build")]
+        said = [str(m) for m in ((st or {}).get("messages") or []) if str(m or "").strip()]
+        for t in said_rows:
+            c = str(t.get("content") or "")
+            if c.strip() and c not in said:
+                said.append(c)
+        if not said:
+            return out
+        cards: list = []
+        for t in said_rows:
+            for c in (t.get("cards") or ([t["card"]] if t.get("card") else [])):
+                if isinstance(c, dict) and not any(c is x for x in cards):
+                    cards.append(c)
+        for c in (st or {}).get("cards") or []:
+            if isinstance(c, dict) and not any(c is x for x in cards):
+                cards.append(c)
+        model = turn["model"]
+        rec = (st or {}).get("build") or next(
+            (t["build"] for t in self.history[h0:] if isinstance(t, dict) and t.get("build")), None)
+        log = {"turn": len(self.history), "lines": len(said), "narrated": False}
+        if len(said) == 1 and said[0] in model:
+            final = said[0]                   # one model reply already: the AI said it
+        else:
+            items = [turn["items"].get(m) or _N.item("reply_draft" if m in model else "note", m)
+                     for m in said]
+            if rec:
+                items.insert(0, _N.item("build", "", summary=rec.get("summary"),
+                                        what_changed=list(rec.get("items") or [])[:4]))
+            if self._voice_on():
+                context = (self.prior_history + [t for t in self.history if not any(
+                    t is r for r in said_rows)])
+                res = _N.narrate(self.llm, items, context, message=turn.get("message") or "",
+                                 role=self.role, company=self.company)
+            else:
+                res = {"text": _N.fallback(items), "ok": False, "why": "off", "usage": None}
+            final = res["text"]
+            if res["ok"]:
+                final = self._voice_checks(final, items, turn, cards)
+                if not final:
+                    res["ok"], res["why"], final = False, "checks", _N.fallback(items)
+            log.update({"narrated": bool(res["ok"]), "why": res.get("why") or "",
+                        "usage": res.get("usage"), "secs": res.get("secs"),
+                        "kinds": [i.get("kind") for i in items]})
+            final = final or _N.fallback(items) or said[-1]
+        self._voice_log = (list(self._voice_log) + [log])[-50:]
+        _voice_logger(log)
+        entry = {"role": "agent", "content": final}
+        if cards:
+            entry["card"] = cards[0]
+            if len(cards) > 1:
+                entry["cards"] = cards
+        keep = [t for t in self.history if not any(t is r for r in said_rows)]
+        self.history[:] = keep + [entry]
+        try:
+            self.palace.remember_turn("agent", final)
+        except Exception:  # noqa: BLE001
+            pass
+        self._persist()
+        if st is not None:
+            st["messages"] = [final]
+            st["cards"] = cards
+            if st.get("build"):
+                st["build_at"] = 0
+        return out
+
+    def _voice_checks(self, text: str, items: list, turn: dict, cards: list) -> str:
+        """The written message under the chat's own rules: "share your GitHub" becomes the Connect
+        GitHub button while it is not connected (the button goes under the message), and a claim
+        that something was saved, added, changed or filled when nothing changed in this turn
+        throws the message away (empty: the fallback is said instead)."""
+        from agent import narrate as _N
+        from agent.resume_chat import connect_card
+        if _N.claims_change(text) and self._pdf_v == turn["v0"] \
+                and self._material_sig() == turn["sig"] and not self._said_done(items):
+            return ""
+        shared, hit = _N.share_to_connect(text)
+        if hit:
+            gh = self._github_view()
+            if not (gh.get("connected") or gh.get("resume_login")):
+                text = shared
+                if not any(self._connect_buttons(c) for c in cards):
+                    cards.append(connect_card())
+        return text
+
+    # Brief kinds that report something the app did in this turn, so the message may say so even
+    # when the page itself did not change (a saved choice, a project build started).
+    _DONE_KINDS = ("added_projects", "added_from_github", "passed_quiz", "build_started",
+                   "keep_choice", "note", "github_connected")
+
+    def _said_done(self, items: list) -> bool:
+        return any(i.get("kind") in self._DONE_KINDS for i in items)
+
+    @_one_voice
     def start(self):
         # Recall the most relevant prior statements for THIS job from the diary (keyword
         # overlap), on every entry point (New CV and Tailor-from-job both land here).
@@ -3884,10 +4129,13 @@ class WebIntake:
         with self.lock:
             return self._submit(message)
 
+    @_one_voice
     def _submit(self, message: str):
         message = (message or "").strip()
         if not message:
             return self._state()
+        if self._turn is not None:
+            self._turn["message"] = message
         # Did the agent answer the last turn? Then a follow-up question ("None of them is strong.
         # What do you suggest?") is part of that conversation, even without a GitHub or project
         # word in it, and must not fall back to the intake's next field question.
@@ -3993,7 +4241,7 @@ class WebIntake:
             if _wants_done(message) and not self._open_required_sections():
                 self.essentials["enrich_done"] = True
         self._connect_due = False
-        reply = self._no_false_limits(str(out.get("reply", "")).strip(), message)
+        reply = self._model_said(self._no_false_limits(str(out.get("reply", "")).strip(), message))
         if self._connect_due:     # a GitHub question answered "not connected": the button, not steps
             return self._reply_with_connect(reply)
         self._persist()   # remember what was shared, without waiting for Accept
@@ -4006,7 +4254,9 @@ class WebIntake:
             if self._new_proposals:
                 # A choice for kinds of jobs ("for banks, show Stanbic, not Viva"): offered as a
                 # chip with Save. Nothing is kept until the tap, and the turn is not material.
-                note = "Want me to keep this choice for next time?"
+                note = self._fact("keep_choice", "Want me to keep this choice for next time?",
+                                  ask="whether to keep this choice for next time (a Save chip "
+                                      "is shown under the message)")
                 self._append("agent", note)
                 self._persist()
                 return self._state([note])
@@ -4102,21 +4352,38 @@ class WebIntake:
         page is still short."""
         out = self._fill_page_now()
         lines = []
-        if out.get("ok") and out.get("bullets_written_from_their_material"):
+        wrote = out.get("bullets_written_from_their_material") if out.get("ok") else None
+        if wrote:
             lines.append("I filled the rest with more of your recent work. Check the new bullets "
                          "in the summary above before you send.")
-        if getattr(self.assembled, "underfull", False):
-            lines.append(f"The page is at {self._page_fill_pct()}%, so it isn't finished yet: "
+        pct = self._page_fill_pct()
+        short = bool(getattr(self.assembled, "underfull", False))
+        if short:
+            lines.append(f"The page is at {pct}%, so it isn't finished yet: "
                          "there is no more of your material on file to fill it. Send me more "
                          "any time and I'll work it in.")
         else:
             lines.append("Check the page, then <b>Accept & Save</b>.")
-        return self._say(" ".join(lines))
+        text = " ".join(lines)
+        if short:
+            return self._say(self._fact(
+                "page_still_short", text, exact=[f"{pct}%"], fill_percent=pct,
+                bullets_just_written_from_their_material=len(wrote or []) or None,
+                why="there is no more of their material on file to fill it",
+                what_would_fill_it=list(out.get("real_material_that_would_fill_it") or [])[:3],
+                next="they can send more material any time and you will work it in; the page is "
+                     "not finished, so do not call it done or tell them to Accept & Save"))
+        return self._say(self._fact(
+            "done", text, exact=["Accept & Save"],
+            bullets_just_written_from_their_material=len(wrote or []) or None,
+            next="check the page (and the new bullets in the summary above, if any), then click "
+                 "Accept & Save"))
 
     def _no_build_reply(self, reply: str, message: str) -> str:
         if _wants_done(message):
-            return "That's everything then. Check the page, then <b>Accept & Save</b>."
-        return reply or "Got it."
+            return self._fact("done", "That's everything then. Check the page, then <b>Accept & Save</b>.",
+                              exact=["Accept & Save"], next="check the page, then click Accept & Save")
+        return reply or self._fact("ack", "Got it.")
 
     def _say(self, text: str):
         self._append("agent", text)
@@ -4227,11 +4494,14 @@ class WebIntake:
             return self.build_from_saved()
         return self._funnel_tail()
 
+    @_one_voice
     @_locked
     def decline_required(self):
         """The "None, leave it off" button under the required-sections question: decline
         every open required section, then build. Deterministic, no model call."""
         self._append("user", "None, leave it off")
+        if self._turn is not None:
+            self._turn["message"] = "None, leave it off"
         self._decline_open_required()
         self._persist()
         if self.assembled is not None:     # a stale click after the build: nothing to do
@@ -4248,6 +4518,9 @@ class WebIntake:
         them = "it" if len(labels) == 1 else "them"
         note = (f"Before I build, I need your {what}. Tell me below, or choose "
                 f"<b>None, leave it off</b> and I'll build without {them}.")
+        self._fact("nudge_required", note, exact=list(labels) + ["None, leave it off"],
+                   sections_still_needed=labels, button="None, leave it off",
+                   ask="tell you about them below, or click the button to build without them")
         self._append("agent", note)
         self._persist()
         return self._state([note])
@@ -4261,9 +4534,11 @@ class WebIntake:
             # draft() builds now if nothing template-critical is missing; if a
             # location/date the template needs is still absent, it asks for just
             # that (concise) and then builds, skipping all the optional extras.
-            return self.draft(lead=["On it, building with what you've given me."])
-        note = ("Happy to build right away, but I don't have anything on file yet. Give me at least "
-                "your name and one role and I'll build it immediately.")
+            return self.draft(lead=[self._fact("building", "On it, building with what you've given me.")])
+        note = self._fact(
+            "ask_missing", "Happy to build right away, but I don't have anything on file yet. Give me "
+            "at least your name and one role and I'll build it immediately.",
+            nothing_on_file=True, ask="their name and at least one role, then you build at once")
         self._append("agent", note)
         self._persist()
         return self._state([note])
@@ -4777,17 +5052,32 @@ class WebIntake:
 
         if saved and getattr(self.assembled, "fact_flags", None):
             from tailoring.fact_gate import describe as _describe_figures
-            say(_describe_figures(self.assembled.fact_flags))
+            say(self._fact("figures_to_confirm", _describe_figures(self.assembled.fact_flags),
+                           flagged=[f"{', '.join(list(f.get('figures') or f.get('claims') or [])[:3])}"
+                                    f" ({f.get('label')}, {f.get('action') or 'flagged'})"
+                                    for f in list(self.assembled.fact_flags)[:4] if isinstance(f, dict)],
+                           how="flagged figures are not in their saved material: confirm or "
+                               "strike each on the page before sending; reverted ones already "
+                               "kept their own wording"))
         say(self._trims_note())
         say(self._fill_note())
         if self.title_flags():
-            say("I aligned a job <b>title</b> to the role, it's highlighted; click it to "
-                "confirm or revert.")
+            say(self._fact("title_aligned", "I aligned a job <b>title</b> to the role, it's "
+                           "highlighted; click it to confirm or revert.",
+                           how="the title is highlighted on the page; clicking it confirms or "
+                               "reverts it"))
         if not e.get("edit_tip_said"):
             e["edit_tip_said"] = True
-            say(self.EDIT_TIP)
+            say(self._fact("edit_tip", self.EDIT_TIP, exact=["Accept & Save"],
+                           tip="they can edit any bullet right on the page, then click "
+                               "Accept & Save"))
         if date_flags:
-            say(self._date_flag_note(date_flags))
+            say(self._fact("placeholder_dates", self._date_flag_note(date_flags), exact=date_flags,
+                           entries=date_flags,
+                           what="their start and end months were missing, so placeholder months "
+                                "are filled in and shown in red on the resume",
+                           next="replace them with the real months before submitting; the "
+                                "template uses full months"))
         if saved:
             say(self.undated_projects_note())
         extra = self._light_extra()
@@ -4800,8 +5090,10 @@ class WebIntake:
             elif extra and not e.get("light_note_said"):
                 # Nothing left to ask and the page is still light: said once, never nagged.
                 e["light_note_said"] = True
-                msgs.append(self.LIGHT_NOTE)
-                self._append("agent", self.LIGHT_NOTE)
+                note = self._fact("light", self.LIGHT_NOTE,
+                                  could_add=list((extra.get("light_cv") or {}).get("suggestions") or [])[:3])
+                msgs.append(note)
+                self._append("agent", note)
         self._persist()
         return self._state(msgs, extra=extra, cards=cards)
 
@@ -4848,8 +5140,9 @@ class WebIntake:
                 or self.essentials.get("unattended"):
             return []
         self._project_offered = True       # judged at the first build only, offered or not
-        if any((t.get("card") or {}).get("offer") == self.PROJECT_OFFER for t in self.history
-               if isinstance(t, dict)):
+        if any((c or {}).get("offer") == self.PROJECT_OFFER for t in self.history
+               if isinstance(t, dict) for c in [t.get("card")] + list(t.get("cards") or [])
+               if isinstance(c, dict)):
             return []
         try:
             cov = self.coverage_dict()
@@ -4873,6 +5166,12 @@ class WebIntake:
                            "help you build one for this job.")
             buttons = [dict(self.PROJECT_OFFER_CONNECT), dict(self.PROJECT_OFFER_BUTTONS[1])]
         card = {"type": "buttons", "offer": self.PROJECT_OFFER, "buttons": buttons}
+        self._fact("project_offer", text, exact=named, job_skills_not_shown=named,
+                   github_can_be_checked=can_check,
+                   buttons_below=[b["label"] for b in buttons],
+                   point_to="a project can show those skills; the buttons below check their "
+                            "GitHub" + ("" if can_check else " once connected") + " or build one "
+                            "for this job")
         msgs.append(text)
         self._append("agent", text)
         self.history[-1]["card"] = card
@@ -4911,8 +5210,11 @@ class WebIntake:
             return ""
         who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
         if len(names) == 1:
-            return f"Without dates, {who} reads as undated; recruiters may weigh it less."
-        return f"Without dates, {who} read as undated; recruiters may weigh them less."
+            text = f"Without dates, {who} reads as undated; recruiters may weigh it less."
+        else:
+            text = f"Without dates, {who} read as undated; recruiters may weigh them less."
+        return self._fact("undated_projects", text, exact=names, projects_without_dates=names,
+                          why="recruiters may weigh an undated project less")
 
     @_locked
     @_builds("draft")
@@ -4993,9 +5295,10 @@ class WebIntake:
                 self._bt["lead"] = len(msgs)
             return self._review_tail(msgs, date_flags, saved=True)
         if self.essentials.get("experience"):
-            return self.draft(lead=["Using what I already have on file."])
-        note = ("I don't have a saved profile yet, tell me your name and work history "
-                "and I'll build one.")
+            return self.draft(lead=[self._fact("building", "Using what I already have on file.")])
+        note = self._fact("ask_missing", "I don't have a saved profile yet, tell me your name and "
+                          "work history and I'll build one.", no_saved_profile=True,
+                          ask="their name and work history")
         self._append("agent", note)
         return self._state([note])
 
@@ -5098,9 +5401,8 @@ class WebIntake:
     @staticmethod
     def _date_flag_note(orgs: list[str]) -> str:
         who = orgs[0] if len(orgs) == 1 else ", ".join(orgs[:-1]) + " and " + orgs[-1]
-        return (f"Heads up: I didn't have the start/end <b>months</b> for {who}, so I "
-                f"filled placeholder months (shown in <b>red</b> on the resume). Replace them "
-                f"with the real months before you submit, the template uses full months.")
+        return (f"I didn't have the months for {who}, so placeholder months show in <b>red</b>. "
+                f"Replace them with the real months before you send.")
 
     def _expand_terse_bullets(self):
         """Typed notes arrive as stubby fragments ('Built SQL reporting pipelines') or
@@ -5433,7 +5735,9 @@ class WebIntake:
                     q = (f"This role asks for {terms[0]} and {terms[1]}. Have you used either? "
                          "Tell me which, plus any other tools you use, and I'll add them to "
                          "your skills.")
-                return q
+                return self._fact("ask_skills", q, exact=terms, job_skills=terms,
+                                  ask="whether they have used these; any they have goes into "
+                                      "their skills, with other tools they use")
         # No question about a short skills line or a bullet that stops short (Kofi, 2026-11-10):
         # the line fit fills those by writing, as a professional resume writer would.
         return ""
@@ -5672,12 +5976,21 @@ class WebIntake:
         before = set(self.essentials.get("required_open_at_ask") or [])
         answered = sorted(sec for sec in before - set(open_req)
                           if sec not in set(self.essentials.get("declined") or []))
-        try:
-            ask = str(self.llm.ask_enrich(phrases, answered,
-                                          self.role, guidance,
-                                          person=self._who_we_are_asking()) or "").strip()
-        except Exception:
-            ask = ""
+        ask = ""
+        narrating = self._narrating()
+        if not narrating:
+            try:
+                ask = str(self.llm.ask_enrich(phrases, answered,
+                                              self.role, guidance,
+                                              person=self._who_we_are_asking()) or "").strip()
+            except Exception:
+                ask = ""
+        if not ask and narrating:         # the fallback of a written message: one question
+            hints = {"extracurricular": "anything you do outside work, like volunteering, clubs "
+                                        "or teams", "interests": "a few interests or hobbies",
+                     "summary": "a line on your professional focus"}
+            ask = (f"Could you tell me {_and_list([hints.get(k, f'your {k}') for k in open_req])}? "
+                   "If there's none, say so and I'll leave it off.")
         if not ask:                       # deterministic, warm fallback
             ask = (" ".join(phrases) + " (If there's genuinely none, tell me and I'll leave "
                    "that off.)")
@@ -5687,6 +6000,14 @@ class WebIntake:
         them = "it" if len(labels) == 1 else "them"
         ask = (f"Your template has {what} {word}, and your resume won't look complete without "
                f"{them}. {ask}")
+        if narrating:
+            self._fact("ask_required", ask, exact=labels, sections=labels,
+                       why="the template has these sections and the resume won't look complete "
+                           "without them",
+                       ask_about=phrases, how_to_ask=self._ask_style(guidance),
+                       about_the_person=self._who_brief(),
+                       if_none="they can say there is none and you leave it off",
+                       one_question="ask for all of these in ONE question")
         e = self.essentials
         e["asked_required"] = True
         e["required_open_at_ask"] = list(open_req)
@@ -5727,18 +6048,41 @@ class WebIntake:
         e["enrich_last_ask"] = [k for k, _ in take]
         phrases = [p for _k, p in take]
         guidance = self._enrich_guidance([k for k, _ in take])
-        try:
-            ask = str(self.llm.ask_enrich(phrases, answered, self.role, guidance,
-                                          person=self._who_we_are_asking()) or "").strip()
-        except Exception:
-            ask = ""
+        ask = ""
+        narrating = self._narrating()
+        if not narrating:
+            try:
+                ask = str(self.llm.ask_enrich(phrases, answered, self.role, guidance,
+                                              person=self._who_we_are_asking()) or "").strip()
+            except Exception:
+                ask = ""
         if not ask:
             joined = phrases[0] if len(phrases) == 1 else f"{phrases[0]}, and {phrases[1]}"
             ack = "Nice, added. " if answered else ""
             ask = (f"{ack}To fill your resume out like the template, could you share "
                    f"{joined}? (Real details only, or say \u201cthat's everything\u201d and "
                    "I'll finalize.)")
+        if narrating:
+            self._fact("ask", ask, ask_about=phrases, how_to_ask=self._ask_style(guidance),
+                       about_the_person=self._who_brief(),
+                       just_added=answered or None,
+                       real_details_only="they can also say that's everything and you finalize",
+                       one_question="ask for these in ONE question")
         return ask
+
+    @staticmethod
+    def _ask_style(guidance) -> dict | None:
+        """The template's interview style and each topic's goal and example opener, small, for
+        the turn's brief (the same guidance ask_enrich gets)."""
+        if not guidance:
+            return None
+        out = {}
+        if guidance.get("style"):
+            out["style"] = str(guidance["style"])[:300]
+        for k, t in (guidance.get("topics") or {}).items():
+            out[k] = {"goal": str(t.get("goal") or "")[:200],
+                      "example_opener": (list(t.get("leads") or []) or [""])[0][:200]}
+        return out or None
 
     def _enrich_guidance(self, keys):
         """Interview-style + per-topic goals/example openers from the template
@@ -5791,6 +6135,15 @@ class WebIntake:
         return {"name": str((self.profile.get("identity") or {}).get("name") or "").split(" ")[0],
                 "roles": roles, "education": edu,
                 "target_role": self.role, "target_company": self.company}
+
+    def _who_brief(self) -> dict | None:
+        """The person in a few words for the turn's brief: first name and their latest roles, so
+        a question can be one only they could be asked (the slim form of _who_we_are_asking)."""
+        who = self._who_we_are_asking()
+        roles = [" at ".join(x for x in (r.get("title"), r.get("org")) if x)
+                 for r in who.get("roles") or []][:3]
+        out = {k: v for k, v in (("first_name", who.get("name")), ("roles", roles)) if v}
+        return out or None
 
     def _cheapest_gaps_first(self) -> list[str]:
         """Real material that would fill this page, ordered by what it COSTS to answer.
@@ -5890,6 +6243,7 @@ class WebIntake:
     TEMPLATE_FAILED = ("Your resume didn't fit one clean page in the {name} template, so I kept "
                        "{old}.")
 
+    @_one_voice
     @_locked
     @_builds("template")
     def set_template(self, name: str, template_source: str):
@@ -6228,7 +6582,11 @@ class WebIntake:
             # "Just build it": no per-role asks, only what the page did.
             notes = [x for x in notes if "Tell me more" not in x]
         parts += notes
-        return " ".join(parts)
+        text = " ".join(parts)
+        return self._fact("filled_page", text,
+                          bullets_written_from_their_material=n or None,
+                          where_to_check="the build summary above lists each new bullet" if n else None,
+                          notes=notes or None)
 
     def _trims_note(self) -> str:
         """One line when the one-page fit cut something: nothing is cut silently."""
@@ -6236,9 +6594,12 @@ class WebIntake:
         if not n:
             return ""
         if n == 1:
-            return "To fit one page I cut one item. It is in the summary above, with Put back."
-        return (f"To fit one page I cut {n} items. They are in the summary above, "
-                "each with Put back.")
+            text = "To fit one page I cut one item. It is in the summary above, with Put back."
+        else:
+            text = (f"To fit one page I cut {n} items. They are in the summary above, "
+                    "each with Put back.")
+        return self._fact("cut_to_fit", text, exact=["Put back"], items_cut=n,
+                          where="the build summary above, each with a Put back button")
 
     REFINE_CHIPS = 4
 
@@ -6256,6 +6617,7 @@ class WebIntake:
                 break
         return out
 
+    @_one_voice
     @_locked
     @_builds("put_back")
     def put_back(self, trim_id: str) -> dict:

@@ -59,6 +59,29 @@ def _no_fake(text: str) -> None:
             "no_key")
 
 
+def _log_usage(payload: dict, out: dict) -> None:
+    """TAILOR_USAGE_LOG=<file>: one JSON line per broker call, with the calling method, the tokens
+    it spent (when the broker says) and the account's running total, to measure what a chat turn
+    and a whole resume build cost. Off unless set; never the prompt or the answer."""
+    path = os.environ.get("TAILOR_USAGE_LOG")
+    if not path:
+        return
+    try:
+        import inspect
+        caller = next((f.function for f in inspect.stack()[2:8]
+                       if f.function not in ("_send", "_post", "_complete", "_complete_history",
+                                             "json_agent_turn")), "?")
+        u = out.get("usage") or {}
+        row = {"t": round(time.time(), 2), "call": caller, "model": out.get("model"),
+               "in": u.get("input_tokens"), "out": u.get("output_tokens"),
+               "used": (out.get("tokens") or {}).get("used"),
+               "max_tokens": payload.get("max_tokens"), "tools": bool(payload.get("tools"))}
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except Exception:   # noqa: BLE001 - measuring never breaks a call
+        pass
+
+
 class BrokerUnavailable(RuntimeError):
     """The managed broker could not be reached, or refused the call (service down, or quota hit).
 
@@ -143,6 +166,17 @@ class BrokerLLM(AnthropicLLM):
             _NATIVE_TOOLS[self.broker_url] = False      # an older broker: tools were ignored
         return json_agent_turn(self._complete_history, system, messages, tools, max_tokens)
 
+    def narrate(self, system: str, user: str, max_tokens: int = 400) -> str:
+        """The resume chat's one message for a turn (agent/narrate.py). The broker picks the
+        model by plan, so this side sets what it can: low effort and a small max_tokens."""
+        text = self._post({"system": system, "prompt": user, "max_tokens": max_tokens,
+                           "effort": "low"})
+        u = (self.last_meta or {}).get("usage") or {}
+        self.last_narrate_usage = ({"input": int(u.get("input_tokens") or 0),
+                                    "output": int(u.get("output_tokens") or 0),
+                                    "model": (self.last_meta or {}).get("model")} if u else None)
+        return text
+
     # -- transport -------------------------------------------------------------------------- #
     def _post(self, payload: dict) -> str:
         data = self._send(payload)
@@ -197,7 +231,9 @@ class BrokerLLM(AnthropicLLM):
             raise BrokerUnavailable(
                 "SponsorJobs' AI took too long to answer. Check your connection and try again.",
                 "service_down") from last_exc
-        return out if isinstance(out, dict) else {}
+        out = out if isinstance(out, dict) else {}
+        _log_usage(payload, out)
+        return out
 
     @staticmethod
     def _error(exc: "urllib.error.HTTPError") -> "tuple[str, str, float | None]":

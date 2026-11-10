@@ -35,8 +35,14 @@ _EFFORT_CAPABLE_PREFIXES = (
     "claude-fable-", "claude-mythos-",
     "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7",
     "claude-opus-4-6", "claude-opus-4-5",
-    "claude-sonnet-5", "claude-sonnet-4-6",
+    "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-5",
 )
+
+# The resume chat's one message per turn (agent/narrate.py) rewords facts the app decided, so it
+# runs on the cheapest current model: Claude Haiku 5.5 ($0.10 / $0.50 per Mtok), low effort,
+# extended thinking off (Haiku 5.5 accepts "disabled" at effort high or below).
+NARRATE_MODEL = "claude-haiku-5-5"
+_THINKING_OFF_PREFIXES = ("claude-haiku-5",)
 
 
 def supports_effort(model: str) -> bool:
@@ -915,6 +921,32 @@ class AnthropicLLM:
         self.last_usage = ({"input": int(getattr(u, "input_tokens", 0) or 0),
                             "output": int(getattr(u, "output_tokens", 0) or 0)} if u else None)
         return from_anthropic(msg)
+
+    def narrate(self, system: str, user: str, max_tokens: int = 400) -> str:
+        """The resume chat's one message for a turn (agent/narrate.py): a short, warm rewording of
+        facts the app already decided, so the cheapest model that reads naturally writes it
+        (NARRATE_MODEL, overridable with RESUME_AGENT_NARRATE_MODEL), at low effort with no
+        extended thinking. A key that cannot reach that model falls back to the main one."""
+        model = os.environ.get("RESUME_AGENT_NARRATE_MODEL") or NARRATE_MODEL
+        for m in dict.fromkeys((model, self.model)):
+            create = {"model": m, "max_tokens": max_tokens, "system": system,
+                      "messages": [{"role": "user", "content": user}]}
+            if supports_effort(m):
+                create["output_config"] = {"effort": "low"}
+            if str(m).startswith(_THINKING_OFF_PREFIXES):
+                create["thinking"] = {"type": "disabled"}
+            try:
+                msg = self._client.messages.create(**create)
+            except Exception as exc:      # noqa: BLE001 - an unknown model: the main one
+                if m == self.model or "model" not in str(exc).lower():
+                    raise
+                continue
+            u = getattr(msg, "usage", None)
+            self.last_narrate_usage = self.last_usage = (
+                {"input": int(getattr(u, "input_tokens", 0) or 0),
+                 "output": int(getattr(u, "output_tokens", 0) or 0), "model": m} if u else None)
+            return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
+        return ""
 
     def extract_intake(self, jd_text: str, known: dict, history: list[dict],
                        with_projects: bool = False) -> dict:
