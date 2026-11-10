@@ -209,3 +209,39 @@ def test_the_plan_writer_chooses_among_four_versions(tmp_path):
     exp = {b for _k, _e, r in A.ranked_roles(res.profile_used) for b in r["bullets"]}
     fits = [i for i in rep.bullets if i.text in exp and i.found]
     assert fits and sum(i.ok() for i in fits) >= len(fits) * 0.75, [round(i.last_fill, 2) for i in fits]
+
+
+@pytest.mark.skipif(__import__("shutil").which("pdflatex") is None, reason="needs LaTeX")
+def test_a_project_polish_that_falls_short_asks_for_longer_versions_next(tmp_path):
+    """Run 20: the Last-Mile project's versions all stopped near 85% of two lines and the same
+    word targets were asked again. The next try's targets move by how far the last one missed."""
+    import sys
+    sys.path.insert(0, "tests")
+    from pathlib import Path
+    from test_strict_staircase import _PlanWriter, _ladder_profile
+    from tailoring import assembler as A
+
+    class _ShortProjects(_PlanWriter):
+        def __init__(self):
+            super().__init__()
+            self.words = []
+
+        def polish_role(self, role_label, bullets, budgets, context="", jd_text="", only=None,
+                        words=None):
+            self.words.append([list(w) for w in (words or [])])
+            out = list(bullets)
+            for k in (only or []):
+                base = bullets[k].rstrip(".")
+                # every version reaches only about 80% of what was asked
+                out[k] = [base + " " + " ".join(["for the depot team"] * max(0, int(w * 0.8 - len(base.split())) // 4)) + "."
+                          for w in (words[k] if words else [20])]
+            return out
+    prof = _ladder_profile()
+    prof["projects"] = [{"title": "Route Simulator (Python)", "bullets": [
+        "Built a discrete-event simulation of a 5,000-order-a-day delivery operation."]}]
+    llm = _ShortProjects()
+    A.assemble_cv(Path("config/resume_shetty.tex").read_text(), prof, "Analyst.", llm, tmp_path,
+                  tailor=False, fit_lines=True, fit_rounds=0)
+    asked = [w[0] for w in llm.words if w]
+    assert len(asked) >= 2, llm.words
+    assert sum(asked[1]) > sum(asked[0]), asked             # the second try asks for more words

@@ -2470,6 +2470,7 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
 
     bl_now: list = []
     label_now, employer_now = [""], [""]
+    boost: dict = {}                        # (entry, bullet) -> how much longer the next versions
 
     for attempt in range(tries):
         rep = _lf.measure(getattr(result, "pdf_path", None), used)
@@ -2507,7 +2508,9 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
             try:
                 out = llm.polish_role(label, list(bl), asks, context=profile_text_safe(entry),
                                       jd_text=jd_text, only=todo,
-                                      words=[_pf.word_targets(n, cpl) for n in lines_for])
+                                      words=[[max(6, round(w * boost.get((label, k), 1.0)))
+                                              for w in _pf.word_targets(n, cpl)]
+                                             for k, n in enumerate(lines_for)])
             except Exception as exc:                         # noqa: BLE001 - polish is optional
                 _fill_log(step="polish-error", label=label, why=str(exc)[:200])
                 continue
@@ -2527,8 +2530,18 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
                     continue
                 # Versions of different length: the one whose last line lands full on its lines
                 # (tailoring/plan_fill.choose_version), measured against this page.
-                cand, _landed, _way = (_pf.choose_version(good, lines_for[k], cap) if cap
-                                       else (good[0], True, ""))
+                cand, landed, _way = (_pf.choose_version(good, lines_for[k], cap) if cap
+                                      else (good[0], True, ""))
+                if cap and not landed:
+                    # Every version fell short (or spilled): the next try's word targets move by
+                    # how far this one missed (run 20: a project's versions all stopped near 85%
+                    # of two lines, and the same targets were asked again).
+                    got = _pf.lines_needed(cand, cap) or 1.0
+                    want = lines_for[k] - 1 + 0.95
+                    boost[(label, k)] = min(1.6, max(0.6, boost.get((label, k), 1.0) * want / got))
+                _fill_log(step="polish-versions", label=label, n=k, why={
+                    "lines": lines_for[k], "landed": landed,
+                    "versions": [round(_pf.lines_needed(v, cap), 2) for v in good] if cap else []})
                 new[k] = cand
             if new == bl:
                 continue
@@ -2980,7 +2993,7 @@ def assemble_cv(
                                    jobname=jobname, origins=origins,
                                    known=known_material(*gate_material, jd_text),
                                    known_figures=source_figures(*gate_material),
-                                   projects_only=bool(planned))
+                                   projects_only=bool(planned), tries=3)
     elif (fit_lines and llm is not None and callable(getattr(llm, "polish_role", None))
             and result and result.ok and result.pages == 1):
         from .fact_gate import known_material, source_figures
