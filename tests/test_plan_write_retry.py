@@ -34,7 +34,7 @@ class _Scripted(AnthropicLLM):
 def test_an_empty_answer_is_asked_again_without_effort_and_with_more_room():
     llm = _Scripted([("", "max_tokens"), (json.dumps([["Built SQL reports on order volumes."]]), "end_turn")])
     assert llm.write_experience(ROLES, jd_text="") == [["Built SQL reports on order volumes."]]
-    assert llm.calls == [("low", 8000), ("none", 12000)]
+    assert llm.calls == [("low", 16000), ("none", 24000)]
     assert [t["stop_reason"] for t in llm.last_meta["tries"]] == ["max_tokens", "end_turn"]
 
 

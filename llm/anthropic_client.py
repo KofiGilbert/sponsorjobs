@@ -533,6 +533,7 @@ class AnthropicLLM:
             "- filler (leveraging, ensuring, robust, comprehensive, seamless), em or en dashes.\n"
             "Start each bullet with a concrete action verb in the role's tense. Use the job's "
             "wording where it truly fits the work.\n"
+            "Work quickly: do not deliberate at length, write the bullets directly.\n"
             "Return ONLY a JSON array with one array of bullet strings per role, in role order. "
             "For a bullet marked KEEP AS IS, return its current text unchanged."
         )
@@ -542,7 +543,9 @@ class AnthropicLLM:
         # budget reasoning and answered nothing (2026-11-10). An empty answer, or one cut off at
         # the token limit, is asked once more with no effort setting and more room.
         tries = []
-        for effort, room in (("low", 8000), ("none", 12000)):
+        # Run 11: both tries spent every token on reasoning (blocks: thinking only), so the
+        # budget leaves room to answer after it, and the second try has more again.
+        for effort, room in (("low", 16000), ("none", 24000)):
             out = self._complete(system, user, max_tokens=room, effort=effort) or ""
             meta = dict(getattr(self, "last_meta", None) or {})
             tries.append({"effort": effort, "max_tokens": room, "chars": len(out), **meta})

@@ -127,6 +127,11 @@ def line_share(result, LF) -> tuple[float, float]:
     return share, gap
 
 
+def _opening(text: str) -> list:
+    from .filler import _fact_tokens
+    return _fact_tokens(text)[:3]
+
+
 def lines_of(it, text: str, cpl: float) -> int:
     """The printed lines of a bullet: as measured, unless the measure matched lines that are
     not its own (more lines than its text can fill), then from its length."""
@@ -241,8 +246,11 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
             return None
         return out
 
+    reasons: dict = {}
+
     def place(out, only=None):
-        """Put the written bullets on the page; returns {role: [(bullet, reasons)]} refused."""
+        """Put the written bullets on the page; returns {role: [bullet index]} refused, with
+        the reasons in ``reasons``."""
         refused: dict = {}
         for i, (_k, e, r) in enumerate(roles):
             want = info[i]["targets"]
@@ -259,11 +267,18 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                     cur[k] = text
                 else:
                     refused.setdefault(i, []).append(k)
-            # A slot still empty takes the person's own bullet (theirs, never refused).
+                    reasons[(i, k)] = bad
+            # A slot still empty takes one of the person's own bullets that reads cleanly beside
+            # the others: no stock tail, no employer name, no phrase or opening another says.
             for k in range(len(cur)):
                 if not cur[k]:
+                    others = [c for c in cur if c]
                     spare = [s for s in info[i]["saved"] if s not in cur
-                             and not any(c and same_fact(s, c) for c in cur)]
+                             and not any(same_fact(s, c) for c in others)
+                             and not any(_opening(s) == _opening(c) for c in others)
+                             and not role_padding(s, others, info[i]["company"], "",
+                                                  context=" ".join([info[i]["title"],
+                                                                    info[i]["company"]]))]
                     cur[k] = spare[0] if spare else None
             r["bullets"][:] = [c for c in cur if c]
         return refused
@@ -310,8 +325,10 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
         miss.setdefault(i, [])
         miss[i] = sorted(set(miss[i]) | set(ks))
         for k in ks:
-            why.setdefault((i, k), "failed a check: no new numbers, names, credentials or "
-                                   "claims, no employer name, no stock tail, no repeated phrase")
+            why.setdefault((i, k), "was refused (" + "; ".join(map(str, reasons.get((i, k), [])))
+                           + "): write it again with its own words, no number, name, credential "
+                             "or claim the material does not state, no employer name, no stock "
+                             "tail, and no phrase another bullet of the role uses")
     if miss:
         cur = [list(r["bullets"]) for _k, _e, r in roles]
         fb = {f"{i}:{k}": v for (i, k), v in why.items()}
