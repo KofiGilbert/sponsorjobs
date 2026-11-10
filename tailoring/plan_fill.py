@@ -129,6 +129,21 @@ def line_share(result, LF) -> tuple[float, float]:
     return share, gap
 
 
+def strict(counts: list, floor: int) -> bool:
+    """Every role fewer bullets than the newer one above it, the oldest at ``floor`` or more."""
+    return bool(counts) and counts[-1] >= floor and all(b < a for a, b in zip(counts, counts[1:]))
+
+
+def rebalance(counts: list, floor: int):
+    """The strict staircase nearest ``counts`` that only takes bullets away (each role at most
+    one fewer than the role above), or None when that would take the oldest role under
+    ``floor``: 6/5/5/3 becomes 6/5/4/3; 4/4/3/2 cannot (4/3/2/1)."""
+    out = []
+    for i, c in enumerate(counts):
+        out.append(c if i == 0 else min(c, out[-1] - 1))
+    return out if out and out[-1] >= floor else None
+
+
 def _opening(text: str) -> list:
     from .filler import _fact_tokens
     return _fact_tokens(text)[:3]
@@ -249,6 +264,19 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
         return out
 
     reasons: dict = {}
+    tried_texts: dict = {}                                   # role -> [(refused text, reasons)]
+
+    def last_resort(i: int, have: list) -> str:
+        """A bullet for a slot the model never filled: the person's own bullet that repeats no
+        fact on the page, else the refused bullet whose only fault was a shared phrase."""
+        for sv in info[i]["saved"]:
+            if sv not in have and not any(same_fact(sv, h) for h in have) \
+                    and not any(_opening(sv) == _opening(h) for h in have):
+                return sv
+        for text, bad in tried_texts.get(i, []):
+            if text and text not in have and all(str(b).startswith("repeats a phrase") for b in bad):
+                return text
+        return ""
 
     def place(out, only=None):
         """Put the written bullets on the page; returns {role: [bullet index]} refused, with
@@ -270,6 +298,7 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                 else:
                     refused.setdefault(i, []).append(k)
                     reasons[(i, k)] = bad
+                    tried_texts.setdefault(i, []).append((text, bad))
             # A slot still empty takes one of the person's own bullets that reads cleanly beside
             # the others: no stock tail, no employer name, no phrase or opening another says.
             for k in range(len(cur)):
@@ -399,6 +428,45 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
         place(outh, only=holes)
         res = compile_now("plan4")
         _log(step="plan-holes", label="experience", fill=res.fill_ratio, why=str(holes))
+    # STRICT, WHATEVER THE MODEL LEFT EMPTY. Still a hole: the staircase is rebalanced from the
+    # counts the page has (``rebalance``): lower roles step down under the top, their freed
+    # lines going to 2-line targets, and those bullets are written again in one call. When the
+    # oldest role's floor rules that out, the hole takes the person's own bullet, or the refused
+    # bullet whose only fault was a shared phrase.
+    counts = [len(r["bullets"]) for _k, _e, r in roles]
+    if not strict(counts, A.OLDEST_FLOOR):
+        plan2 = rebalance(counts, A.OLDEST_FLOOR)
+        if plan2 is not None:
+            freed = 0                                        # planned lines no bullet prints
+            for i, (_k, _e, r) in enumerate(roles):
+                del r["bullets"][plan2[i]:]
+                freed += sum(info[i]["targets"][len(r["bullets"]):])
+                info[i]["targets"] = info[i]["targets"][:len(r["bullets"])]
+            grow = {}
+            for i in range(len(info)):
+                for k, n in enumerate(info[i]["targets"]):
+                    if freed > 0 and n == 1:
+                        info[i]["targets"][k] = 2
+                        grow.setdefault(i, []).append(k)
+                        freed -= 1
+            if grow:
+                cur = [list(r["bullets"]) for _k, _e, r in roles]
+                fb = {f"{i}:{k}": "the page needs this bullet on 2 lines, the last one full"
+                      for i, ks in grow.items() for k in ks}
+                outg = ask(current=cur, only=grow, feedback=fb)
+                if outg is not None:
+                    place(outg, only=grow)
+            _log(step="plan-rebalanced", label="experience", n=plan2, why=str(grow))
+        else:
+            for i, (_k, _e, r) in enumerate(roles):
+                need = len(info[i]["targets"]) - len(r["bullets"])
+                for _ in range(max(0, need)):
+                    pick = last_resort(i, r["bullets"])
+                    if pick:
+                        r["bullets"].append(pick)
+            _log(step="plan-last-resort", label="experience",
+                 n=[len(r["bullets"]) for _k, _e, r in roles])
+        res = compile_now("plan5")
     if not (res.ok and res.pages == 1 and res.overfull_count <= base_overfull
             and (res.fill_ratio or 0) <= max_fill + 0.005):
         for (_k, _e, r), bl in zip(roles, before):
