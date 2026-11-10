@@ -1,1225 +1,153 @@
 {
- "probed": 1432,
- "skipped": 68,
- "hits": 68,
+ "probed": 1492,
+ "skipped": 8,
+ "hits": 6,
  "new_boards": [
   {
-   "company": "Taylor",
+   "company": "Inrix Inc",
    "ats": "workday",
-   "board_id": "taylor.wd1/External",
-   "jobs": 166,
-   "url": "https://taylor.wd1.myworkdayjobs.com/External",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 8,
-   "perm_certs": 0
-  },
-  {
-   "company": "Terex Usa, Llc",
-   "ats": "workday",
-   "board_id": "terex.wd1/terexcareers",
-   "jobs": 481,
-   "url": "https://terex.wd1.myworkdayjobs.com/terexcareers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 8,
-   "perm_certs": 0
-  },
-  {
-   "company": "Cambria Solutions Inc",
-   "ats": "workday",
-   "board_id": "cambria.wd1/cambria_careers",
-   "jobs": 70,
-   "url": "https://cambria.wd1.myworkdayjobs.com/cambria_careers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 13,
-   "perm_certs": 0
-  },
-  {
-   "company": "Ingredion Incorporated",
-   "ats": "workday",
-   "board_id": "ingredion.wd1/IngredionCareers",
-   "jobs": 227,
-   "url": "https://ingredion.wd1.myworkdayjobs.com/IngredionCareers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 13,
-   "perm_certs": 0
-  },
-  {
-   "company": "Meredith Corporation",
-   "ats": "workday",
-   "board_id": "meredith.wd5/EXT",
-   "jobs": 26,
-   "url": "https://meredith.wd5.myworkdayjobs.com/EXT",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 13,
-   "perm_certs": 0
-  },
-  {
-   "company": "Oaktree Capital Management L P",
-   "ats": "workday",
-   "board_id": "oaktree.wd1/Oaktree",
-   "jobs": 55,
-   "url": "https://oaktree.wd1.myworkdayjobs.com/Oaktree",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 13,
-   "perm_certs": 0
-  },
-  {
-   "company": "Syner-G Pharma Consulting Llc",
-   "ats": "greenhouse",
-   "board_id": "synerg",
-   "jobs": 47,
-   "url": "https://boards-api.greenhouse.io/v1/boards/synerg/jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 13,
-   "perm_certs": 0
-  },
-  {
-   "company": "Advantech Corporation",
-   "ats": "workday",
-   "board_id": "advantech.wd3/External",
-   "jobs": 210,
-   "url": "https://advantech.wd3.myworkdayjobs.com/External",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 3
-  },
-  {
-   "company": "Ashland University",
-   "ats": "workday",
-   "board_id": "ashland.wd12/AshlandCareers1",
-   "jobs": 85,
-   "url": "https://ashland.wd12.myworkdayjobs.com/AshlandCareers1",
-   "verified": "2026-11-09",
-   "cap_exempt": 1,
-   "h1b_approvals": 4,
-   "perm_certs": 0
-  },
-  {
-   "company": "Heidelberg University",
-   "ats": "workday",
-   "board_id": "heidelberg.wd502/careersHEIDELBERG",
-   "jobs": 78,
-   "url": "https://heidelberg.wd502.myworkdayjobs.com/careersHEIDELBERG",
-   "verified": "2026-11-09",
-   "cap_exempt": 1,
-   "h1b_approvals": 4,
-   "perm_certs": 0
-  },
-  {
-   "company": "Ocean Spray Cranberries Inc",
-   "ats": "workday",
-   "board_id": "oceanspray.wd5/OceanSprayJobs",
-   "jobs": 56,
-   "url": "https://oceanspray.wd5.myworkdayjobs.com/OceanSprayJobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 0
-  },
-  {
-   "company": "Outsystems Inc",
-   "ats": "workday",
-   "board_id": "outsystems.wd503/OutSystems",
-   "jobs": 62,
-   "url": "https://outsystems.wd503.myworkdayjobs.com/OutSystems",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 0
-  },
-  {
-   "company": "Plug Power Inc",
-   "ats": "workday",
-   "board_id": "plugpower.wd5/Plug_Power_Inc",
-   "jobs": 103,
-   "url": "https://plugpower.wd5.myworkdayjobs.com/Plug_Power_Inc",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 0
-  },
-  {
-   "company": "Prog Leasing Llc",
-   "ats": "workday",
-   "board_id": "progleasing.wd5/ProgLeasingCareers",
-   "jobs": 41,
-   "url": "https://progleasing.wd5.myworkdayjobs.com/ProgLeasingCareers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 0
-  },
-  {
-   "company": "Southern Oregon University",
-   "ats": "workday",
-   "board_id": "sou.wd1/Southern_Oregon_University",
-   "jobs": 29,
-   "url": "https://sou.wd1.myworkdayjobs.com/Southern_Oregon_University",
-   "verified": "2026-11-09",
-   "cap_exempt": 1,
-   "h1b_approvals": 4,
-   "perm_certs": 0
-  },
-  {
-   "company": "University Of Findlay",
-   "ats": "workday",
-   "board_id": "findlay.wd5/careers",
-   "jobs": 34,
-   "url": "https://findlay.wd5.myworkdayjobs.com/careers",
-   "verified": "2026-11-09",
-   "cap_exempt": 1,
-   "h1b_approvals": 4,
-   "perm_certs": 0
-  },
-  {
-   "company": "Weil, Gotshal & Manges Llp",
-   "ats": "workday",
-   "board_id": "weil.wd1/TonyG",
+   "board_id": "inrix.wd5/INRIX",
    "jobs": 1,
-   "url": "https://weil.wd1.myworkdayjobs.com/TonyG",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 0
-  },
-  {
-   "company": "Wiley Edu Llc",
-   "ats": "workday",
-   "board_id": "wiley.wd1/leadership",
-   "jobs": 1,
-   "url": "https://wiley.wd1.myworkdayjobs.com/leadership",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 0
-  },
-  {
-   "company": "Advisor Group Inc",
-   "ats": "workday",
-   "board_id": "advisorgroup.wd1/Advisor_Career_Site",
-   "jobs": 65,
-   "url": "https://advisorgroup.wd1.myworkdayjobs.com/Advisor_Career_Site",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Alegeus Technologies Llc",
-   "ats": "workday",
-   "board_id": "alegeus.wd1/Alegeus_External_Careers",
-   "jobs": 21,
-   "url": "https://alegeus.wd1.myworkdayjobs.com/Alegeus_External_Careers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Altamed Health Services Corporation",
-   "ats": "workday",
-   "board_id": "altamed.wd1/Careers",
-   "jobs": 274,
-   "url": "https://altamed.wd1.myworkdayjobs.com/Careers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Argenx Us Inc",
-   "ats": "workday",
-   "board_id": "argenx.wd3/External_Careers",
-   "jobs": 172,
-   "url": "https://argenx.wd3.myworkdayjobs.com/External_Careers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Biamp Systems Llc",
-   "ats": "workday",
-   "board_id": "biamp.wd12/Biamp",
-   "jobs": 6,
-   "url": "https://biamp.wd12.myworkdayjobs.com/Biamp",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1
-  },
-  {
-   "company": "Buildertrend Solutions Inc",
-   "ats": "workday",
-   "board_id": "buildertrend.wd108/External_Careers",
-   "jobs": 6,
-   "url": "https://buildertrend.wd108.myworkdayjobs.com/External_Careers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Catalina Business Solutions Inc",
-   "ats": "workday",
-   "board_id": "catalina.wd1/Catalina",
-   "jobs": 8,
-   "url": "https://catalina.wd1.myworkdayjobs.com/Catalina",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Daikin Applied Americas Inc",
-   "ats": "workday",
-   "board_id": "daikin.wd12/DaikinManufacturing_External",
-   "jobs": 41,
-   "url": "https://daikin.wd12.myworkdayjobs.com/DaikinManufacturing_External",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Embecta Medical I Llc",
-   "ats": "workday",
-   "board_id": "embecta.wd1/embectacareers",
-   "jobs": 64,
-   "url": "https://embecta.wd1.myworkdayjobs.com/embectacareers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Frost Bank",
-   "ats": "workday",
-   "board_id": "frostbank.wd5/External",
-   "jobs": 182,
-   "url": "https://frostbank.wd5.myworkdayjobs.com/External",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Goodby, Silverstein  Partners Inc.",
-   "ats": "greenhouse",
-   "board_id": "goodbysilversteinpartners",
-   "jobs": 3,
-   "url": "https://boards-api.greenhouse.io/v1/boards/goodbysilversteinpartners/jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 0,
-   "perm_certs": 7
-  },
-  {
-   "company": "Haemonetics Corporation",
-   "ats": "workday",
-   "board_id": "haemonetics.wd5/HAE",
-   "jobs": 112,
-   "url": "https://haemonetics.wd5.myworkdayjobs.com/HAE",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Hamilton Enterprises Llc",
-   "ats": "workday",
-   "board_id": "hamilton.wd3/hamilton_jobs",
-   "jobs": 48,
-   "url": "https://hamilton.wd3.myworkdayjobs.com/hamilton_jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1
-  },
-  {
-   "company": "Hearst Business Media Corporation",
-   "ats": "greenhouse",
-   "board_id": "hearst",
-   "jobs": 370,
-   "url": "https://boards-api.greenhouse.io/v1/boards/hearst/jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Infront X Llc",
-   "ats": "greenhouse",
-   "board_id": "infront",
-   "jobs": 10,
-   "url": "https://boards-api.greenhouse.io/v1/boards/infront/jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Iseatz Inc",
-   "ats": "greenhouse",
-   "board_id": "iseatz",
-   "jobs": 2,
-   "url": "https://boards-api.greenhouse.io/v1/boards/iseatz/jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Kodiak Robotics Inc",
-   "ats": "greenhouse",
-   "board_id": "kodiak",
-   "jobs": 56,
-   "url": "https://boards-api.greenhouse.io/v1/boards/kodiak/jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "L L Bean Inc",
-   "ats": "workday",
-   "board_id": "llbean.wd1/LLBean_Careers",
-   "jobs": 121,
-   "url": "https://llbean.wd1.myworkdayjobs.com/LLBean_Careers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1
-  },
-  {
-   "company": "Laticrete International Inc",
-   "ats": "workday",
-   "board_id": "laticrete.wd1/laticreteinternational",
-   "jobs": 49,
-   "url": "https://laticrete.wd1.myworkdayjobs.com/laticreteinternational",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Lilly Usa Llc",
-   "ats": "workday",
-   "board_id": "lilly.wd115/LLY",
-   "jobs": 430,
-   "url": "https://lilly.wd115.myworkdayjobs.com/LLY",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1
-  },
-  {
-   "company": "Nuts Com Inc",
-   "ats": "greenhouse",
-   "board_id": "nutscom",
-   "jobs": 14,
-   "url": "https://boards-api.greenhouse.io/v1/boards/nutscom/jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Option Care Enterprises Inc",
-   "ats": "workday",
-   "board_id": "optioncare.wd1/OptionCare",
-   "jobs": 302,
-   "url": "https://optioncare.wd1.myworkdayjobs.com/OptionCare",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1
-  },
-  {
-   "company": "Rapp Illinois Inc",
-   "ats": "greenhouse",
-   "board_id": "rapp",
-   "jobs": 7,
-   "url": "https://boards-api.greenhouse.io/v1/boards/rapp/jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1
-  },
-  {
-   "company": "Sonoco Products Company",
-   "ats": "workday",
-   "board_id": "sonoco.wd1/CorporateCareers",
-   "jobs": 287,
-   "url": "https://sonoco.wd1.myworkdayjobs.com/CorporateCareers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Talking Rain Beverage Company Inc",
-   "ats": "workday",
-   "board_id": "talkingrain.wd1/TR",
-   "jobs": 12,
-   "url": "https://talkingrain.wd1.myworkdayjobs.com/TR",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "The Avon Company",
-   "ats": "workday",
-   "board_id": "avon.wd5/AvonCareers",
-   "jobs": 36,
-   "url": "https://avon.wd5.myworkdayjobs.com/AvonCareers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "The Esab Group Inc",
-   "ats": "workday",
-   "board_id": "esab.wd5/esabcareers",
-   "jobs": 84,
-   "url": "https://esab.wd5.myworkdayjobs.com/esabcareers",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1
-  },
-  {
-   "company": "Veritone Inc",
-   "ats": "workday",
-   "board_id": "veritone.wd1/Veritone_Career_Site",
-   "jobs": 5,
-   "url": "https://veritone.wd1.myworkdayjobs.com/Veritone_Career_Site",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Welbe Health Llc",
-   "ats": "greenhouse",
-   "board_id": "welbehealth",
-   "jobs": 142,
-   "url": "https://boards-api.greenhouse.io/v1/boards/welbehealth/jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0
-  },
-  {
-   "company": "Invoice Cloud Inc",
-   "ats": "greenhouse",
-   "board_id": "invoicecloud",
-   "jobs": 23,
-   "url": "https://boards-api.greenhouse.io/v1/boards/invoicecloud/jobs",
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 8,
-   "perm_certs": 2
-  },
-  {
-   "company": "Calvin University",
-   "ats": "workday",
-   "board_id": "calvin.wd5/CalvinUniversityCareers",
-   "jobs": 46,
-   "url": "https://calvin.wd5.myworkdayjobs.com/CalvinUniversityCareers",
-   "verified": "2026-11-09",
-   "cap_exempt": 1,
-   "h1b_approvals": 2,
-   "perm_certs": 1
-  },
-  {
-   "company": "Captive-Aire Systems Inc",
-   "ats": "greenhouse",
-   "board_id": "captiveaire",
-   "jobs": 102,
-   "url": "https://boards-api.greenhouse.io/v1/boards/captiveaire/jobs",
-   "verified": "2026-11-09",
+   "url": "https://inrix.wd5.myworkdayjobs.com/INRIX",
+   "verified": "2026-11-10",
    "cap_exempt": 0,
    "h1b_approvals": 11,
    "perm_certs": 0
   },
   {
-   "company": "Cf Industries Employee Services",
+   "company": "Orange",
    "ats": "workday",
-   "board_id": "cfindustries.wd1/careers",
-   "jobs": 57,
-   "url": "https://cfindustries.wd1.myworkdayjobs.com/careers",
-   "verified": "2026-11-09",
+   "board_id": "orange.wd3/Orange_Career",
+   "jobs": 2,
+   "url": "https://orange.wd3.myworkdayjobs.com/Orange_Career",
+   "verified": "2026-11-10",
+   "cap_exempt": 0,
+   "h1b_approvals": 11,
+   "perm_certs": 0
+  },
+  {
+   "company": "Plexus Corp",
+   "ats": "workday",
+   "board_id": "plexus.wd504/Plexus_Careers",
+   "jobs": 416,
+   "url": "https://plexus.wd504.myworkdayjobs.com/Plexus_Careers",
+   "verified": "2026-11-10",
+   "cap_exempt": 0,
+   "h1b_approvals": 6,
+   "perm_certs": 3
+  },
+  {
+   "company": "Wp Engine Inc",
+   "ats": "workday",
+   "board_id": "wpengine.wd1/WP_Engine",
+   "jobs": 7,
+   "url": "https://wpengine.wd1.myworkdayjobs.com/WP_Engine",
+   "verified": "2026-11-10",
+   "cap_exempt": 0,
+   "h1b_approvals": 11,
+   "perm_certs": 0
+  },
+  {
+   "company": "Walker & Dunlop Llc",
+   "ats": "workday",
+   "board_id": "walkerdunlop.wd1/WD",
+   "jobs": 28,
+   "url": "https://walkerdunlop.wd1.myworkdayjobs.com/WD",
+   "verified": "2026-11-10",
    "cap_exempt": 0,
    "h1b_approvals": 11,
    "perm_certs": 0
   }
  ],
- "duplicates": 17,
+ "duplicates": 1,
  "rejected": [
   {
-   "company": "Trinity West",
-   "board": "workday:trinity \u2014 trinity.wd1.myworkdayjobs.com/Trinity_University identifies as 'Trinity University Trinity University'; needs 1 of ['trinity'] to be 'Trinity West'"
+   "company": "Global Intellectuals Llc",
+   "board": "workday:global \u2014 global.wd1.myworkdayjobs.com/globalpartnerscareers identifies as 'globalpartnerscareers SPR Operator LLC / Global GP LLC / Global Montello Group Corp'; needs 1 of ['intellectuals'] to be 'Global Intellectuals Llc'"
   },
   {
-   "company": "United States Cold Storage Inc",
-   "board": "greenhouse:unitedstates \u2014 board is named 'capSpire - US'; needs 2 of ['cold', 'storage'] to be 'United States Cold Storage Inc'"
+   "company": "Global Therapy Solutions Llc",
+   "board": "workday:global \u2014 global.wd1.myworkdayjobs.com/globalpartnerscareers identifies as 'globalpartnerscareers SPR Operator LLC / Global GP LLC / Global Montello Group Corp'; needs 1 of ['therapy'] to be 'Global Therapy Solutions Llc'"
   },
   {
-   "company": "Wegmans Food Markets Inc",
-   "board": "workday:wegmans \u2014 wegmans.wd1.myworkdayjobs.com robots.txt disallows its career site(s) ['Wegmans', 'Wegmans_Unposted']; not crawled"
+   "company": "Global Entrepreneurs Network Inc",
+   "board": "workday:global \u2014 global.wd1.myworkdayjobs.com/globalpartnerscareers identifies as 'globalpartnerscareers SPR Operator LLC / Global GP LLC / Global Montello Group Corp'; needs 1 of ['entrepreneurs'] to be 'Global Entrepreneurs Network Inc'"
   },
   {
-   "company": "Zam Network Llc",
-   "board": "greenhouse:zam \u2014 board is named 'ZAM'; needs 1 of ['network'] to be 'Zam Network Llc'"
+   "company": "Industrial And Commercial Bank Of China New York Branch",
+   "board": "greenhouse:industrial \u2014 board is named 'Industrial Door Company'; needs 1 of ['bank'] to be 'Industrial And Commercial Bank Of China New York Branch'"
   },
   {
-   "company": "Axis Specialty Us Services Inc",
-   "board": "workday:axis \u2014 axis.wd3.myworkdayjobs.com/External_Career_Site identifies as 'External Career Site Axis Communications Inc, Canada / Axis Communications AB'; needs 2 of ['axis', 'specialty'] to be 'Axis Specialty Us Services Inc'"
+   "company": "Ketch Kloud Inc",
+   "board": "greenhouse:ketch \u2014 board is named 'Ketch'; needs 2 of ['ketch', 'kloud'] to be 'Ketch Kloud Inc'"
   },
   {
-   "company": "Endurance International Group Inc",
-   "board": "workday:endurance \u2014 endurance.wd103.myworkdayjobs.com robots.txt disallows its career site(s) ['SompoInternational']; not crawled"
+   "company": "Jackson Hewitt Technology Svcs Llc",
+   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/Jackson_Careers identifies as 'Jackson Careers Jackson National Life Insurance'; needs 2 of ['jackson', 'hewitt'] to be 'Jackson Hewitt Technology Svcs Llc'"
   },
   {
-   "company": "American Family Connect Property",
-   "board": "workday:american \u2014 american.wd1.myworkdayjobs.com/AU identifies as 'AU American University'; needs 2 of ['family', 'connect', 'property'] to be 'American Family Connect Property'"
+   "company": "Jackson Hewitt Technology Svcs Llc",
+   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/Jackson_Campus identifies as 'Jackson Campus Jackson National Life Insurance'; needs 2 of ['jackson', 'hewitt'] to be 'Jackson Hewitt Technology Svcs Llc'"
   },
   {
-   "company": "American It Minds Inc",
-   "board": "workday:american \u2014 american.wd1.myworkdayjobs.com/AU identifies as 'AU American University'; needs 1 of ['minds'] to be 'American It Minds Inc'"
+   "company": "Jackson Hewitt Technology Svcs Llc",
+   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/PPMA_Careers identifies as 'PPMA Careers PPM America'; needs 2 of ['jackson', 'hewitt'] to be 'Jackson Hewitt Technology Svcs Llc'"
   },
   {
-   "company": "Brown Neurology",
-   "board": "workday:brown \u2014 brown.wd5.myworkdayjobs.com/staff-careers-brown identifies as 'staff careers brown Brown University'; needs 2 of ['brown', 'neurology'] to be 'Brown Neurology'"
+   "company": "Jackson Hewitt Technology Svcs Llc",
+   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/Jackson_Careers_2 identifies as 'Jackson Careers 2 Jackson National Life Insurance'; needs 2 of ['jackson', 'hewitt'] to be 'Jackson Hewitt Technology Svcs Llc'"
   },
   {
-   "company": "Brown Neurology",
-   "board": "workday:brown \u2014 brown.wd5.myworkdayjobs.com/brown-staff-waiver identifies as 'brown staff waiver Brown University'; needs 2 of ['brown', 'neurology'] to be 'Brown Neurology'"
+   "company": "Onto Innovation Inc Fka Nanometric",
+   "board": "workday:onto \u2014 onto.wd1.myworkdayjobs.com/ONTO_Careers identifies as 'ONTO Careers Onto Innovation Inc-US'; needs 2 of ['onto', 'nanometric'] to be 'Onto Innovation Inc Fka Nanometric'"
   },
   {
-   "company": "Bluestone Staffing Solutions",
-   "board": "greenhouse:bluestone \u2014 board is named 'Bluestone Physician Services'; needs 2 of ['bluestone', 'staffing'] to be 'Bluestone Staffing Solutions'"
+   "company": "Red Salsa Technologies Inc",
+   "board": "workday:red \u2014 red.wd1.myworkdayjobs.com/VV identifies as 'VV LE004 V Cruises US, LLC'; needs 1 of ['salsa'] to be 'Red Salsa Technologies Inc'"
   },
   {
-   "company": "Easygo Warehouse Services Corporation",
-   "board": "greenhouse:easygo \u2014 board is named 'Easygo'; needs 2 of ['easygo', 'warehouse'] to be 'Easygo Warehouse Services Corporation'"
+   "company": "Solera Health Inc",
+   "board": "workday:solera \u2014 solera.wd5.myworkdayjobs.com/Global_Career_Site identifies as 'Global Career Site 6770 Audatex Systems s.r.o. / 2152 SmartDrive Systems (India) Private Limited / 2144 Omnitracs de Mexico S.A. de C.V.'; needs 1 of ['solera'] to be 'Solera Health Inc'"
   },
   {
-   "company": "Elite Dental Llc",
-   "board": "greenhouse:elite \u2014 board is named 'Elite Physical Therapy, Inc. '; needs 1 of ['elite'] to be 'Elite Dental Llc'"
+   "company": "Superior Vision Benefit Mgt Inc",
+   "board": "greenhouse:superior \u2014 board is named 'Superior Animal Hospital & Boarding Suites'; needs 2 of ['superior', 'vision', 'benefit'] to be 'Superior Vision Benefit Mgt Inc'"
   },
   {
-   "company": "Nexus Pharmaceuticals Inc",
-   "board": "greenhouse:nexus \u2014 board is named 'CGS Nexus'; needs 1 of ['nexus'] to be 'Nexus Pharmaceuticals Inc'"
+   "company": "Swift Beef Company A Jbs Usa Subsi",
+   "board": "workday:swift \u2014 swift.wd3.myworkdayjobs.com/Join-Swift identifies as 'Join Swift NL00 SWIFT OPCNL / BE00 SWIFT s.c. / MY00 SWIFT Support Services Malaysia Sdn. Bhd.'; needs 2 of ['swift', 'beef', 'subsi'] to be 'Swift Beef Company A Jbs Usa Subsi'"
   },
   {
-   "company": "Red Bell Real Estate Llc",
-   "board": "workday:red \u2014 red.wd1.myworkdayjobs.com/VV identifies as 'VV LE004 V Cruises US, LLC'; needs 2 of ['bell', 'real', 'estate'] to be 'Red Bell Real Estate Llc'"
+   "company": "The Dept Of Medicine Med Svc Grp A",
+   "board": "greenhouse:dept \u2014 board is named 'DEPT\u00ae'; needs 2 of ['dept', 'medicine'] to be 'The Dept Of Medicine Med Svc Grp A'"
   },
   {
-   "company": "Shell Exploration And Production C",
-   "board": "workday:shell \u2014 shell.wd3.myworkdayjobs.com/ShellCareers identifies as 'Shell Careers IN09 Shell India MP Ltd - SSSC'; needs 2 of ['shell', 'exploration', 'production'] to be 'Shell Exploration And Production C'"
+   "company": "Ultimate Fitness Gr Llc",
+   "board": "greenhouse:ultimate \u2014 board is named 'Ultimate Heating & Air, Inc'; needs 2 of ['ultimate', 'fitness'] to be 'Ultimate Fitness Gr Llc'"
   },
   {
-   "company": "Shell Exploration And Production C",
-   "board": "workday:shell \u2014 shell.wd3.myworkdayjobs.com/Proactive identifies as 'Proactive NL03 Shell GSI BV'; needs 2 of ['shell', 'exploration', 'production'] to be 'Shell Exploration And Production C'"
-  },
-  {
-   "company": "Shell Exploration And Production C",
-   "board": "workday:shell \u2014 shell.wd3.myworkdayjobs.com/Fasttrack identifies as 'Fasttrack SGOP Shell Singapore Pte. Ltd / NL03 Shell GSI BV / VE01 Shell Venezuela S.A.'; needs 2 of ['shell', 'exploration', 'production'] to be 'Shell Exploration And Production C'"
-  },
-  {
-   "company": "American Technology Connexions Inc",
-   "board": "workday:american \u2014 american.wd1.myworkdayjobs.com/AU identifies as 'AU American University'; needs 1 of ['connexions'] to be 'American Technology Connexions Inc'"
-  },
-  {
-   "company": "Sculptor Capital Lp",
-   "board": "workday:sculptor \u2014 sculptor.wd12.myworkdayjobs.com robots.txt disallows its career site(s) ['Sculptor_External_Career_Site', 'Rithm_External_Career_Site']; not crawled"
-  },
-  {
-   "company": "East Carolina Univ",
-   "board": "workday:ecu \u2014 ecu.wd12.myworkdayjobs.com/Everwise_Careers identifies as 'Everwise Careers EVERWISE CREDIT UNION'; needs 1 of [] to be 'East Carolina Univ'"
-  },
-  {
-   "company": "Alameda Health System",
-   "board": "greenhouse:alameda \u2014 board is named 'Alameda Veterinary Clinic'; needs 1 of ['alameda'] to be 'Alameda Health System'"
-  },
-  {
-   "company": "Benjamin Franklin Institute Of Tec",
-   "board": "greenhouse:benjamin \u2014 board is named 'Benjamin'; needs 1 of ['institute'] to be 'Benjamin Franklin Institute Of Tec'"
-  },
-  {
-   "company": "Mercy Hospital Cedar Rapids Iowa D",
-   "board": "workday:mercy \u2014 mercy.wd1.myworkdayjobs.com/mercycareers identifies as 'mercycareers MHM Support Services'; needs 2 of ['mercy', 'hospital', 'cedar', 'rapids'] to be 'Mercy Hospital Cedar Rapids Iowa D'"
-  },
-  {
-   "company": "American Enterprise Institute For Public Policy Research",
-   "board": "greenhouse:public \u2014 board is named 'Public'; needs 2 of ['institute', 'public', 'policy'] to be 'American Enterprise Institute For Public Policy Research'"
-  },
-  {
-   "company": "American Enterprise Institute For Public Policy Research",
-   "board": "workday:american \u2014 american.wd1.myworkdayjobs.com/AU identifies as 'AU American University'; needs 2 of ['institute', 'public', 'policy'] to be 'American Enterprise Institute For Public Policy Research'"
-  },
-  {
-   "company": "Applied Predictive Technologies",
-   "board": "workday:applied \u2014 applied.wd501.myworkdayjobs.com robots.txt disallows its career site(s) ['Applied']; not crawled"
-  },
-  {
-   "company": "American National Insurance Compan",
-   "board": "workday:american \u2014 american.wd1.myworkdayjobs.com/AU identifies as 'AU American University'; needs 1 of ['compan'] to be 'American National Insurance Compan'"
-  },
-  {
-   "company": "Bjc Health System",
-   "board": "workday:bhs \u2014 bhs.wd1.myworkdayjobs.com/careers identifies as 'careers BHS Baptist Healthcare System'; needs 1 of [] to be 'Bjc Health System'"
-  },
-  {
-   "company": "Baldwin Area Medical Center",
-   "board": "workday:baldwin \u2014 baldwin.wd1.myworkdayjobs.com/Baldwin identifies as 'Baldwin Baldwin Group Colleague, Inc.'; needs 2 of ['baldwin', 'area', 'center'] to be 'Baldwin Area Medical Center'"
-  },
-  {
-   "company": "Baldwin Area Medical Center",
-   "board": "workday:baldwin \u2014 baldwin.wd1.myworkdayjobs.com/CAC identifies as 'CAC Baldwin Group Colleague, Inc.'; needs 2 of ['baldwin', 'area', 'center'] to be 'Baldwin Area Medical Center'"
-  },
-  {
-   "company": "Baldwin Area Medical Center",
-   "board": "workday:baldwin \u2014 baldwin.wd1.myworkdayjobs.com/MSI identifies as 'MSI Baldwin Group Colleague, Inc.'; needs 2 of ['baldwin', 'area', 'center'] to be 'Baldwin Area Medical Center'"
-  },
-  {
-   "company": "Charles R Drew University Of Medic",
-   "board": "greenhouse:charles \u2014 board is named 'charles'; needs 2 of ['drew', 'medic'] to be 'Charles R Drew University Of Medic'"
-  },
-  {
-   "company": "Charlotte Education Foundation",
-   "board": "greenhouse:education \u2014 board is named 'Learning Commons'; needs 2 of ['education', 'foundation'] to be 'Charlotte Education Foundation'"
-  },
-  {
-   "company": "Elo Touch Solutions Inc",
-   "board": "greenhouse:elo \u2014 board is named 'Elo'; needs 1 of ['touch'] to be 'Elo Touch Solutions Inc'"
-  },
-  {
-   "company": "Global Citizens Public Charter Sch",
-   "board": "greenhouse:public \u2014 board is named 'Public'; needs 2 of ['citizens', 'public', 'charter'] to be 'Global Citizens Public Charter Sch'"
-  },
-  {
-   "company": "Global Citizens Public Charter Sch",
-   "board": "workday:global \u2014 global.wd1.myworkdayjobs.com/globalpartnerscareers identifies as 'globalpartnerscareers Global Montello Group Corp'; needs 2 of ['citizens', 'public', 'charter'] to be 'Global Citizens Public Charter Sch'"
-  },
-  {
-   "company": "Global Life Scis Solutions Usa Llc",
-   "board": "workday:global \u2014 global.wd1.myworkdayjobs.com/globalpartnerscareers identifies as 'globalpartnerscareers Global Montello Group Corp'; needs 1 of ['scis'] to be 'Global Life Scis Solutions Usa Llc'"
-  },
-  {
-   "company": "Global Teachers Solutions Llc",
-   "board": "workday:global \u2014 global.wd1.myworkdayjobs.com/globalpartnerscareers identifies as 'globalpartnerscareers Global Montello Group Corp'; needs 1 of ['teachers'] to be 'Global Teachers Solutions Llc'"
-  },
-  {
-   "company": "Huron Regional Medical Center",
-   "board": "workday:huron \u2014 huron.wd1.myworkdayjobs.com/huroncareers identifies as 'huroncareers HCAN Huron Advisors Canada Limited / SVCS Huron Consulting Services LLC / INC Huron Consulting Group Inc.'; needs 2 of ['huron', 'regional', 'center'] to be 'Huron Regional Medical Center'"
-  },
-  {
-   "company": "Illinois Wesleyan Univ",
-   "board": "workday:wesleyan \u2014 wesleyan.wd5.myworkdayjobs.com/careers identifies as 'careers WU Wesleyan University'; needs 1 of ['wesleyan'] to be 'Illinois Wesleyan Univ'"
-  },
-  {
-   "company": "Industrial Connections & Solns Llc",
-   "board": "greenhouse:industrial \u2014 board is named 'Industrial Door Company'; needs 2 of ['connections', 'solns'] to be 'Industrial Connections & Solns Llc'"
-  },
-  {
-   "company": "Jefferson Hospital",
-   "board": "workday:jefferson \u2014 jefferson.wd5.myworkdayjobs.com/External identifies as 'External Jefferson County'; needs 2 of ['jefferson', 'hospital'] to be 'Jefferson Hospital'"
-  },
-  {
-   "company": "Justanswer Llc",
-   "board": "greenhouse:justanswer \u2014 board is named 'Pearl'; needs 1 of ['justanswer'] to be 'Justanswer Llc'"
-  },
-  {
-   "company": "International Business Technologie",
-   "board": "greenhouse:international \u2014 board is named 'UpWork International'; needs 1 of ['technologie'] to be 'International Business Technologie'"
-  },
-  {
-   "company": "Kwai Inc",
-   "board": "workday:kwai \u2014 kwai.wd3.myworkdayjobs.com/Kuaishou_External identifies as 'Kuaishou External JOYO TECHNOLOGY PTE. LTD. / JOYO TECNOLOGIA BRASIL LTDA.'; needs 1 of ['kwai'] to be 'Kwai Inc'"
-  },
-  {
-   "company": "Mercy Hospital Cedar Rapids Lowa",
-   "board": "workday:mercy \u2014 mercy.wd1.myworkdayjobs.com/mercycareers identifies as 'mercycareers MHM Support Services'; needs 2 of ['mercy', 'hospital', 'cedar', 'rapids', 'lowa'] to be 'Mercy Hospital Cedar Rapids Lowa'"
-  },
-  {
-   "company": "Mercy Clinic Fort Smith Communitie",
-   "board": "workday:mercy \u2014 mercy.wd1.myworkdayjobs.com/mercycareers identifies as 'mercycareers MHM Support Services'; needs 2 of ['mercy', 'clinic', 'fort', 'smith', 'communitie'] to be 'Mercy Clinic Fort Smith Communitie'"
-  },
-  {
-   "company": "Mercy Hospital Of Devils Lake Dba",
-   "board": "workday:mercy \u2014 mercy.wd1.myworkdayjobs.com/mercycareers identifies as 'mercycareers MHM Support Services'; needs 2 of ['mercy', 'hospital', 'devils', 'lake'] to be 'Mercy Hospital Of Devils Lake Dba'"
-  },
-  {
-   "company": "Mercy Medical Center Cedar Rapids Iowa",
-   "board": "workday:mercy \u2014 mercy.wd1.myworkdayjobs.com/mercycareers identifies as 'mercycareers MHM Support Services'; needs 2 of ['mercy', 'center', 'cedar', 'rapids'] to be 'Mercy Medical Center Cedar Rapids Iowa'"
-  },
-  {
-   "company": "National Account Service Company L",
-   "board": "greenhouse:national \u2014 board is named 'NATIONAL'; needs 1 of ['account'] to be 'National Account Service Company L'"
-  },
-  {
-   "company": "National Rehabilitation Hospital Inc D/B/A Medstar National Rehabilitation Network",
-   "board": "greenhouse:national \u2014 board is named 'NATIONAL'; needs 2 of ['hospital', 'medstar'] to be 'National Rehabilitation Hospital Inc D/B/A Medstar National Rehabilitation Network'"
-  },
-  {
-   "company": "New York University Abu Dhabi",
-   "board": "greenhouse:new \u2014 board is named 'Sonja Inc.  '; needs 1 of ['dhabi'] to be 'New York University Abu Dhabi'"
-  },
-  {
-   "company": "Oklahoma City University",
-   "board": "greenhouse:oklahoma \u2014 board is named 'Virtual Preparatory Academy of Oklahoma'; needs 1 of ['city'] to be 'Oklahoma City University'"
-  },
-  {
-   "company": "Onto Innovation Inc F K A Nanometr",
-   "board": "workday:onto \u2014 onto.wd1.myworkdayjobs.com/ONTO_Careers identifies as 'ONTO Careers Onto Innovation Inc-US'; needs 2 of ['onto', 'nanometr'] to be 'Onto Innovation Inc F K A Nanometr'"
-  },
-  {
-   "company": "Philadelphia Univ D/B/A Thomas Jefferson East Falls",
-   "board": "workday:jefferson \u2014 jefferson.wd5.myworkdayjobs.com/External identifies as 'External Jefferson County'; needs 2 of ['jefferson', 'falls'] to be 'Philadelphia Univ D/B/A Thomas Jefferson East Falls'"
-  },
-  {
-   "company": "Public Hlth Trust Of Dade County F",
-   "board": "greenhouse:public \u2014 board is named 'Public'; needs 2 of ['public', 'hlth', 'trust', 'dade', 'county'] to be 'Public Hlth Trust Of Dade County F'"
-  },
-  {
-   "company": "Quotient Scis - Philadelphia Llc",
-   "board": "greenhouse:quotient \u2014 board is named 'Quotient Therapeutics'; needs 2 of ['quotient', 'scis'] to be 'Quotient Scis - Philadelphia Llc'"
-  },
-  {
-   "company": "Sentara Halifax Regional Hospital",
-   "board": "workday:sentara \u2014 sentara.wd1.myworkdayjobs.com/SCS identifies as 'SCS 101 Sentara Hospitals'; needs 2 of ['sentara', 'halifax', 'regional', 'hospital'] to be 'Sentara Halifax Regional Hospital'"
-  },
-  {
-   "company": "Sentara Halifax Regional Hospital",
-   "board": "workday:sentara \u2014 sentara.wd1.myworkdayjobs.com/PCS identifies as 'PCS 170 Sentara Health Administration, Inc. / 101 Sentara Hospitals'; needs 2 of ['sentara', 'halifax', 'regional', 'hospital'] to be 'Sentara Halifax Regional Hospital'"
-  },
-  {
-   "company": "Sentry Insurance A Mutual Company",
-   "board": "workday:sentryinsurance \u2014 sentryinsurance.wd1.myworkdayjobs.com/SentryCareers identifies as 'Sentry Careers 001 Sentry Insurance Company / 009 Sentry Services, L.L.C.'; needs 2 of ['sentry', 'mutual'] to be 'Sentry Insurance A Mutual Company'"
-  },
-  {
-   "company": "Testing Mavens Llc",
-   "board": "greenhouse:testing \u2014 board is named '[DO NOT USE  - TEST [Training Use Only]]'; needs 2 of ['testing', 'mavens'] to be 'Testing Mavens Llc'"
-  },
-  {
-   "company": "Tower Health Medical Group As Part",
-   "board": "workday:tower \u2014 tower.wd5.myworkdayjobs.com/Tower identifies as 'Tower 540 Tower Research Capital (Hong Kong) Limited'; needs 2 of ['tower', 'part'] to be 'Tower Health Medical Group As Part'"
-  },
-  {
-   "company": "Trinity Hlth Of New England Provid",
-   "board": "workday:trinity \u2014 trinity.wd1.myworkdayjobs.com/Trinity_University identifies as 'Trinity University Trinity University'; needs 2 of ['trinity', 'hlth', 'england', 'provid'] to be 'Trinity Hlth Of New England Provid'"
-  },
-  {
-   "company": "Western Mi Univ Homer Stryker M D",
-   "board": "workday:western \u2014 western.wd1.myworkdayjobs.com/WESTERN identifies as 'WESTERN Western Colorado University'; needs 2 of ['homer', 'stryker'] to be 'Western Mi Univ Homer Stryker M D'"
-  },
-  {
-   "company": "Western Univ Of Hlth Sciences",
-   "board": "workday:western \u2014 western.wd1.myworkdayjobs.com/WESTERN identifies as 'WESTERN Western Colorado University'; needs 1 of ['hlth'] to be 'Western Univ Of Hlth Sciences'"
-  },
-  {
-   "company": "Air Motion Systems Inc",
-   "board": "greenhouse:air \u2014 board is named 'Air'; needs 1 of ['motion'] to be 'Air Motion Systems Inc'"
-  },
-  {
-   "company": "American Securities Llc",
-   "board": "workday:american \u2014 american.wd1.myworkdayjobs.com/AU identifies as 'AU American University'; needs 1 of ['securities'] to be 'American Securities Llc'"
-  },
-  {
-   "company": "Aviva Links Inc",
-   "board": "workday:aviva \u2014 aviva.wd1.myworkdayjobs.com/External identifies as 'External Aviva Canada Inc'; needs 2 of ['aviva', 'links'] to be 'Aviva Links Inc'"
-  },
-  {
-   "company": "Aviva Links Inc",
-   "board": "workday:aviva \u2014 aviva.wd1.myworkdayjobs.com/Aviva_Investors_External identifies as 'Aviva Investors External Aviva Investors Luxembourg S.A. / Aviva Employment Services - AI'; needs 2 of ['aviva', 'links'] to be 'Aviva Links Inc'"
-  },
-  {
-   "company": "Blackrock Neurotech",
-   "board": "workday:blackrock \u2014 blackrock.wd1.myworkdayjobs.com/BlackRock_Professional identifies as 'Black Rock Professional'; needs 2 of ['blackrock', 'neurotech'] to be 'Blackrock Neurotech'"
-  },
-  {
-   "company": "Bluescope Buildings North America Inc",
-   "board": "workday:bluescope \u2014 bluescope.wd3.myworkdayjobs.com/careers identifies as 'careers PT NS BlueScope Indonesia / NS Bluescope Asia Sdn Bhd / NS Bluescope Malaysia Sdn Bhd'; needs 2 of ['bluescope', 'buildings'] to be 'Bluescope Buildings North America Inc'"
-  },
-  {
-   "company": "Byd Electronic America Corp",
-   "board": "greenhouse:byd \u2014 board is named 'BYD North America'; needs 1 of ['electronic'] to be 'Byd Electronic America Corp'"
-  },
-  {
-   "company": "Candid Care Co",
-   "board": "greenhouse:candid \u2014 board is named 'Candid'; needs 2 of ['candid', 'care'] to be 'Candid Care Co'"
-  },
-  {
-   "company": "Centennial Medical Group Inc",
-   "board": "greenhouse:centennial \u2014 board is named 'Centennial Real Estate Company LLC'; needs 1 of ['centennial'] to be 'Centennial Medical Group Inc'"
-  },
-  {
-   "company": "City Of Salem",
-   "board": "workday:city \u2014 city.wd1.myworkdayjobs.com/CityUS identifies as 'City US City BES, LLC / City Facilities Management (MA) LLC'; needs 2 of ['city', 'salem'] to be 'City Of Salem'"
-  },
-  {
-   "company": "City Of Salem",
-   "board": "workday:city \u2014 city.wd1.myworkdayjobs.com/CFM identifies as 'CFM City Facilities Management (MA) LLC / City Facilities Management (FL) LLC'; needs 2 of ['city', 'salem'] to be 'City Of Salem'"
-  },
-  {
-   "company": "City Of Salem",
-   "board": "workday:city \u2014 city.wd1.myworkdayjobs.com/CBES identifies as 'CBES City BES, LLC'; needs 2 of ['city', 'salem'] to be 'City Of Salem'"
-  },
-  {
-   "company": "David Energy Systems Inc",
-   "board": "greenhouse:david \u2014 board is named 'DAVID'; needs 1 of ['energy'] to be 'David Energy Systems Inc'"
-  },
-  {
-   "company": "David M Lewis Company Llc",
-   "board": "greenhouse:david \u2014 board is named 'DAVID'; needs 1 of ['lewis'] to be 'David M Lewis Company Llc'"
-  },
-  {
-   "company": "Devine Home Care, Inc.",
-   "board": "greenhouse:devine \u2014 board is named 'The Devine Schools'; needs 2 of ['devine', 'home', 'care'] to be 'Devine Home Care, Inc.'"
-  },
-  {
-   "company": "Elite Business Consulting Llc",
-   "board": "greenhouse:elite \u2014 board is named 'Elite Physical Therapy, Inc. '; needs 1 of ['elite'] to be 'Elite Business Consulting Llc'"
-  },
-  {
-   "company": "Excel Global Solutions Inc",
-   "board": "greenhouse:excel \u2014 board is named 'Excel Learning Center'; needs 1 of ['excel'] to be 'Excel Global Solutions Inc'"
-  },
-  {
-   "company": "Future Green Design Corp",
-   "board": "greenhouse:future \u2014 board is named 'Future'; needs 2 of ['future', 'green'] to be 'Future Green Design Corp'"
-  },
-  {
-   "company": "Georgia Pacific Corrugated Llc",
-   "board": "workday:georgia \u2014 georgia.wd5.myworkdayjobs.com/TGC identifies as 'TGC Defense, Department of / Juvenile Justice, Department of / Agriculture, Department of'; needs 1 of ['corrugated'] to be 'Georgia Pacific Corrugated Llc'"
-  },
-  {
-   "company": "Georgia Pacific Building Products Llc",
-   "board": "workday:georgia \u2014 georgia.wd5.myworkdayjobs.com/TGC identifies as 'TGC Defense, Department of / Juvenile Justice, Department of / Agriculture, Department of'; needs 1 of ['building'] to be 'Georgia Pacific Building Products Llc'"
-  },
-  {
-   "company": "Global Data Publications Inc",
-   "board": "workday:global \u2014 global.wd1.myworkdayjobs.com/globalpartnerscareers identifies as 'globalpartnerscareers Global Montello Group Corp'; needs 1 of ['publications'] to be 'Global Data Publications Inc'"
-  },
-  {
-   "company": "Highnote Platform Inc",
-   "board": "greenhouse:highnote \u2014 board is named 'Highnote'; needs 2 of ['highnote', 'platform'] to be 'Highnote Platform Inc'"
-  },
-  {
-   "company": "Healthcare Therapy Services Inc",
-   "board": "workday:healthcare \u2014 healthcare.wd1.myworkdayjobs.com/Search identifies as 'Search IND KCI Medical India Private limited / TWN Solventum Taiwan Co., Ltd. / USA Solventum Health Information Systems, Inc.'; needs 1 of ['therapy'] to be 'Healthcare Therapy Services Inc'"
-  },
-  {
-   "company": "Healthcare Therapy Services Inc",
-   "board": "workday:healthcare \u2014 healthcare.wd1.myworkdayjobs.com/private identifies as 'private CHE KCI Medical GmbH / AUS KCI Medical Australia Pty Ltd / POL Solventum Poland Manufacturing Sp. z o.o.'; needs 1 of ['therapy'] to be 'Healthcare Therapy Services Inc'"
-  },
-  {
-   "company": "Icon Laboratory Services Llc",
-   "board": "workday:icon \u2014 icon.wd3.myworkdayjobs.com/broadbean_external identifies as 'broadbean external 293 ICR Bulgaria - BUL / 410 ICR United States USA / 130 ICR France - FRA'; needs 2 of ['icon', 'laboratory'] to be 'Icon Laboratory Services Llc'"
-  },
-  {
-   "company": "Icon Payments Llc",
-   "board": "workday:icon \u2014 icon.wd3.myworkdayjobs.com/broadbean_external identifies as 'broadbean external 293 ICR Bulgaria - BUL / 410 ICR United States USA / 130 ICR France - FRA'; needs 1 of ['icon'] to be 'Icon Payments Llc'"
-  },
-  {
-   "company": "Impact Cnc Llc",
-   "board": "greenhouse:impact \u2014 board is named 'impact.com'; needs 1 of ['impact'] to be 'Impact Cnc Llc'"
-  },
-  {
-   "company": "International Federation Of Accountants",
-   "board": "greenhouse:international \u2014 board is named 'UpWork International'; needs 2 of ['federation', 'accountants'] to be 'International Federation Of Accountants'"
-  },
-  {
-   "company": "Island Landscapes, Llc",
-   "board": "greenhouse:island \u2014 board is named 'Island'; needs 1 of ['landscapes'] to be 'Island Landscapes, Llc'"
-  },
-  {
-   "company": "Island Peer Review Organization Inc",
-   "board": "greenhouse:island \u2014 board is named 'Island'; needs 2 of ['peer', 'review', 'organization'] to be 'Island Peer Review Organization Inc'"
-  },
-  {
-   "company": "Jackson Public School District",
-   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/Jackson_Careers identifies as 'Jackson Careers Jackson National Life Insurance'; needs 2 of ['jackson', 'public', 'school', 'district'] to be 'Jackson Public School District'"
-  },
-  {
-   "company": "Jackson Public School District",
-   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/Jackson_Campus identifies as 'Jackson Campus Jackson National Life Insurance'; needs 2 of ['jackson', 'public', 'school', 'district'] to be 'Jackson Public School District'"
-  },
-  {
-   "company": "Jackson Public School District",
-   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/PPMA_Careers identifies as 'PPMA Careers PPM America'; needs 2 of ['jackson', 'public', 'school', 'district'] to be 'Jackson Public School District'"
-  },
-  {
-   "company": "Jackson Public School District",
-   "board": "workday:jackson \u2014 jackson.wd1.myworkdayjobs.com/Jackson_Careers_2 identifies as 'Jackson Careers 2 Jackson National Life Insurance'; needs 2 of ['jackson', 'public', 'school', 'district'] to be 'Jackson Public School District'"
-  },
-  {
-   "company": "Labcorp Early Development Laboratories Inc",
-   "board": "workday:labcorp \u2014 labcorp.wd1.myworkdayjobs.com/External identifies as 'External LCA Lab. Corp. of America / LCH Lab. Corp. of America Holdings'; needs 2 of ['labcorp', 'early'] to be 'Labcorp Early Development Laboratories Inc'"
-  },
-  {
-   "company": "Liberty Pharma Inc",
-   "board": "workday:liberty \u2014 liberty.wd5.myworkdayjobs.com/lu_job_board_staff identifies as 'lu job board staff Liberty University, Inc.'; needs 1 of ['liberty'] to be 'Liberty Pharma Inc'"
-  },
-  {
-   "company": "Liberty Pharma Inc",
-   "board": "workday:liberty \u2014 liberty.wd5.myworkdayjobs.com/lu_job_board_faculty identifies as 'lu job board faculty Liberty University, Inc.'; needs 1 of ['liberty'] to be 'Liberty Pharma Inc'"
-  },
-  {
-   "company": "Liberty Pharma Inc",
-   "board": "workday:liberty \u2014 liberty.wd5.myworkdayjobs.com/lu_job_board_confidential identifies as 'lu job board confidential Liberty University, Inc.'; needs 1 of ['liberty'] to be 'Liberty Pharma Inc'"
-  },
-  {
-   "company": "Liberty Home Care Ii Llc",
-   "board": "workday:liberty \u2014 liberty.wd5.myworkdayjobs.com/lu_job_board_staff identifies as 'lu job board staff Liberty University, Inc.'; needs 2 of ['liberty', 'home', 'care'] to be 'Liberty Home Care Ii Llc'"
-  },
-  {
-   "company": "Liberty Home Care Ii Llc",
-   "board": "workday:liberty \u2014 liberty.wd5.myworkdayjobs.com/lu_job_board_faculty identifies as 'lu job board faculty Liberty University, Inc.'; needs 2 of ['liberty', 'home', 'care'] to be 'Liberty Home Care Ii Llc'"
-  },
-  {
-   "company": "Liberty Home Care Ii Llc",
-   "board": "workday:liberty \u2014 liberty.wd5.myworkdayjobs.com/lu_job_board_confidential identifies as 'lu job board confidential Liberty University, Inc.'; needs 2 of ['liberty', 'home', 'care'] to be 'Liberty Home Care Ii Llc'"
-  },
-  {
-   "company": "Mercy Health Services Iowa Corp",
-   "board": "workday:mercy \u2014 mercy.wd1.myworkdayjobs.com/mercycareers identifies as 'mercycareers MHM Support Services'; needs 1 of ['mercy'] to be 'Mercy Health Services Iowa Corp'"
-  },
-  {
-   "company": "National Debt Relief Llc",
-   "board": "greenhouse:national \u2014 board is named 'NATIONAL'; needs 2 of ['debt', 'relief'] to be 'National Debt Relief Llc'"
-  },
-  {
-   "company": "New Dimensions Outdoor Services, Inc.",
-   "board": "greenhouse:new \u2014 board is named 'Sonja Inc.  '; needs 2 of ['dimensions', 'outdoor'] to be 'New Dimensions Outdoor Services, Inc.'"
-  },
-  {
-   "company": "New Hampshire Ips Medical Svcs Llc",
-   "board": "greenhouse:new \u2014 board is named 'Sonja Inc.  '; needs 1 of ['svcs'] to be 'New Hampshire Ips Medical Svcs Llc'"
-  },
-  {
-   "company": "New Jersey Rehab Experts Llc",
-   "board": "greenhouse:new \u2014 board is named 'Sonja Inc.  '; needs 2 of ['rehab', 'experts'] to be 'New Jersey Rehab Experts Llc'"
-  },
-  {
-   "company": "New Land Capital Llc",
-   "board": "greenhouse:new \u2014 board is named 'Sonja Inc.  '; needs 1 of ['land'] to be 'New Land Capital Llc'"
-  },
-  {
-   "company": "Ngc Transmission Equipment America Inc",
-   "board": "workday:ngc \u2014 ngc.wd1.myworkdayjobs.com/Northrop_Grumman_External_Site identifies as 'Northrop Grumman External Site 0090 CORP-Corporate Office / 0290 Corp-NGC International Inc'; needs 2 of ['transmission', 'equipment'] to be 'Ngc Transmission Equipment America Inc'"
-  },
-  {
-   "company": "Oasis Professional Management Group, Ltd.",
-   "board": "greenhouse:oasis \u2014 board is named 'Oasis Physical Therapy'; needs 2 of ['oasis', 'professional'] to be 'Oasis Professional Management Group, Ltd.'"
-  },
-  {
-   "company": "Palmetto Solar Llc",
-   "board": "greenhouse:palmetto \u2014 board is named 'Palmetto Animal Hospital'; needs 2 of ['palmetto', 'solar'] to be 'Palmetto Solar Llc'"
-  },
-  {
-   "company": "Pine Gate Renewables Llc",
-   "board": "greenhouse:pine \u2014 board is named 'Pine'; needs 2 of ['pine', 'gate', 'renewables'] to be 'Pine Gate Renewables Llc'"
-  },
-  {
-   "company": "Project Verte Inc",
-   "board": "workday:project \u2014 project.wd5.myworkdayjobs.com/ProjectCorp identifies as 'Project Corp Project: WorldWide, Inc.'; needs 2 of ['project', 'verte'] to be 'Project Verte Inc'"
-  },
-  {
-   "company": "Project Verte Inc",
-   "board": "workday:project \u2014 project.wd5.myworkdayjobs.com/ProjectWW identifies as 'Project WW Project: WorldWide, Inc.'; needs 2 of ['project', 'verte'] to be 'Project Verte Inc'"
-  },
-  {
-   "company": "Project Risk Analytics Llc",
-   "board": "workday:project \u2014 project.wd5.myworkdayjobs.com/ProjectCorp identifies as 'Project Corp Project: WorldWide, Inc.'; needs 2 of ['project', 'risk'] to be 'Project Risk Analytics Llc'"
-  },
-  {
-   "company": "Project Risk Analytics Llc",
-   "board": "workday:project \u2014 project.wd5.myworkdayjobs.com/ProjectWW identifies as 'Project WW Project: WorldWide, Inc.'; needs 2 of ['project', 'risk'] to be 'Project Risk Analytics Llc'"
-  },
-  {
-   "company": "Red Digital Cinema Llc",
-   "board": "workday:red \u2014 red.wd1.myworkdayjobs.com/VV identifies as 'VV LE004 V Cruises US, LLC'; needs 1 of ['cinema'] to be 'Red Digital Cinema Llc'"
-  },
-  {
-   "company": "Revel Transit Inc",
-   "board": "greenhouse:revel \u2014 board is named 'Revel'; needs 2 of ['revel', 'transit'] to be 'Revel Transit Inc'"
-  },
-  {
-   "company": "Roche Diabetes Care Inc",
-   "board": "workday:roche \u2014 roche.wd3.myworkdayjobs.com/roche-ext identifies as 'roche ext 1000 Genentech, Inc. / 1201 F. Hoffmann-La Roche AG / 6019 Roche Diagnostics Operations, Inc.'; needs 2 of ['roche', 'diabetes', 'care'] to be 'Roche Diabetes Care Inc'"
-  },
-  {
-   "company": "Roche Diabetes Care Inc",
-   "board": "workday:roche \u2014 roche.wd3.myworkdayjobs.com/ROG-A2O-GENE identifies as 'ROG A2 O GENE 1010 Genentech USA, Inc. / 1000 Genentech, Inc.'; needs 2 of ['roche', 'diabetes', 'care'] to be 'Roche Diabetes Care Inc'"
-  },
-  {
-   "company": "Roche Diabetes Care Inc",
-   "board": "workday:roche \u2014 roche.wd3.myworkdayjobs.com/mysugr-ext identifies as 'mysugr ext 6935 mySugr GmbH'; needs 2 of ['roche', 'diabetes', 'care'] to be 'Roche Diabetes Care Inc'"
-  },
-  {
-   "company": "Space Exploration Technologies Corp",
-   "board": "greenhouse:space \u2014 board is named 'Space Programs'; needs 2 of ['space', 'exploration'] to be 'Space Exploration Technologies Corp'"
-  },
-  {
-   "company": "Swift Navigation Inc",
-   "board": "workday:swift \u2014 swift.wd3.myworkdayjobs.com/Join-Swift identifies as 'Join Swift BE00 SWIFT s.c. / MY00 SWIFT Support Services Malaysia Sdn. Bhd. / NL00 SWIFT OPCNL'; needs 2 of ['swift', 'navigation'] to be 'Swift Navigation Inc'"
-  },
-  {
-   "company": "Symphony Infotek Inc",
-   "board": "greenhouse:symphony \u2014 board is named 'Symphony Communication Services'; needs 2 of ['symphony', 'infotek'] to be 'Symphony Infotek Inc'"
-  },
-  {
-   "company": "Tds Operating Inc",
-   "board": "greenhouse:tds \u2014 board is named 'Total Deployment Solutions'; needs 1 of ['operating'] to be 'Tds Operating Inc'"
-  },
-  {
-   "company": "Teague Nall And Perkins Inc",
-   "board": "greenhouse:teague \u2014 board is named 'Teague'; needs 2 of ['teague', 'nall', 'perkins'] to be 'Teague Nall And Perkins Inc'"
-  },
-  {
-   "company": "Urban Health Plan Inc",
-   "board": "workday:urban \u2014 urban.wd115.myworkdayjobs.com/Urban-Careers identifies as 'Urban Careers The Urban Institute'; needs 2 of ['urban', 'plan'] to be 'Urban Health Plan Inc'"
-  },
-  {
-   "company": "World Wide Professional Solutions Llc",
-   "board": "workday:worldwide \u2014 worldwide.wd1.myworkdayjobs.com/External identifies as 'External Worldwide Clinical Trials Holdings, Inc.'; needs 2 of ['world', 'wide', 'professional'] to be 'World Wide Professional Solutions Llc'"
-  },
-  {
-   "company": "Abacus Technical Services Llc",
-   "board": "greenhouse:abacus \u2014 board is named 'ABACUS'; needs 2 of ['abacus', 'technical'] to be 'Abacus Technical Services Llc'"
-  },
-  {
-   "company": "American Public Education Inc",
-   "board": "greenhouse:public \u2014 board is named 'Public'; needs 2 of ['public', 'education'] to be 'American Public Education Inc'"
-  },
-  {
-   "company": "American Public Education Inc",
-   "board": "greenhouse:education \u2014 board is named 'Learning Commons'; needs 2 of ['public', 'education'] to be 'American Public Education Inc'"
-  },
-  {
-   "company": "American Public Education Inc",
-   "board": "workday:american \u2014 american.wd1.myworkdayjobs.com/AU identifies as 'AU American University'; needs 2 of ['public', 'education'] to be 'American Public Education Inc'"
-  },
-  {
-   "company": "Aig Asset Management U S Llc",
-   "board": "workday:aig \u2014 aig.wd1.myworkdayjobs.com/aig identifies as 'aig National Union Fire Insurance Company of Pittsburgh, Pa. / AIG Europe S.A. (France branch)'; needs 1 of ['asset'] to be 'Aig Asset Management U S Llc'"
-  },
-  {
-   "company": "Aig Asset Management U S Llc",
-   "board": "workday:aig \u2014 aig.wd1.myworkdayjobs.com/japan identifies as 'japan AIG General Insurance Company, Ltd.'; needs 1 of ['asset'] to be 'Aig Asset Management U S Llc'"
-  },
-  {
-   "company": "Aig Asset Management U S Llc",
-   "board": "workday:aig \u2014 aig.wd1.myworkdayjobs.com/early_careers identifies as 'early careers AIG Europe S.A. (Germany branch) / AIG Australia Limited'; needs 1 of ['asset'] to be 'Aig Asset Management U S Llc'"
-  },
-  {
-   "company": "American Society Of Clinical Oncol",
-   "board": "workday:american \u2014 american.wd1.myworkdayjobs.com/AU identifies as 'AU American University'; needs 2 of ['society', 'clinical', 'oncol'] to be 'American Society Of Clinical Oncol'"
-  },
-  {
-   "company": "Challenger Sports Corp",
-   "board": "workday:challenger \u2014 challenger.wd3.myworkdayjobs.com/Challenger_Careers identifies as 'Challenger Careers C120 Challenger Group Services Pty Ltd'; needs 2 of ['challenger', 'sports'] to be 'Challenger Sports Corp'"
-  },
-  {
-   "company": "Essex Technology Group Inc",
-   "board": "workday:essex \u2014 essex.wd5.myworkdayjobs.com/essexcareers identifies as 'essexcareers EPT SPE LLC'; needs 1 of ['essex'] to be 'Essex Technology Group Inc'"
-  },
-  {
-   "company": "Georgia Pacific Gypsum Llc",
-   "board": "workday:georgia \u2014 georgia.wd5.myworkdayjobs.com/TGC identifies as 'TGC Defense, Department of / Juvenile Justice, Department of / Agriculture, Department of'; needs 1 of ['gypsum'] to be 'Georgia Pacific Gypsum Llc'"
-  },
-  {
-   "company": "Fujifilm Sonosite Inc",
-   "board": "workday:fujifilm \u2014 fujifilm.wd3.myworkdayjobs.com/FLB_CS identifies as 'FLB CS FLBD FUJIFILM Life Sciences Biotechnologies Denmark ApS'; needs 2 of ['fujifilm', 'sonosite'] to be 'Fujifilm Sonosite Inc'"
-  },
-  {
-   "company": "Fujifilm Sonosite Inc",
-   "board": "workday:fujifilm \u2014 fujifilm.wd3.myworkdayjobs.com/Regional_External_Career identifies as 'Regional External Career FEBS FUJIFILM Europe Business Service sp. z o.o. / FFDE FUJIFILM Germany GmbH'; needs 2 of ['fujifilm', 'sonosite'] to be 'Fujifilm Sonosite Inc'"
-  },
-  {
-   "company": "Fujifilm Sonosite Inc",
-   "board": "workday:fujifilm \u2014 fujifilm.wd3.myworkdayjobs.com/FFME_HCME_CS identifies as 'FFME HCME CS FFME FUJIFILM Middle East\\xa0FZE'; needs 2 of ['fujifilm', 'sonosite'] to be 'Fujifilm Sonosite Inc'"
-  },
-  {
-   "company": "Fujifilm Sonosite Inc",
-   "board": "workday:fujifilm \u2014 fujifilm.wd3.myworkdayjobs.com/CH_HC_ES identifies as 'CH HC ES HCDE FUJIFILM Healthcare Deutschland GmbH'; needs 2 of ['fujifilm', 'sonosite'] to be 'Fujifilm Sonosite Inc'"
+   "company": "Veterans Ez Info Inc",
+   "board": "greenhouse:veterans \u2014 board is named 'IntelliDyne Jobs for Veterans'; needs 2 of ['veterans', 'info'] to be 'Veterans Ez Info Inc'"
   }
  ],
  "throttled": 0,
  "partial": 0,
  "stopped": "exhausted",
  "per_ats": {
-  "greenhouse": 11,
-  "workday": 40
+  "workday": 5
  },
  "requeued": 0,
  "waited": 0.0,
- "blocked": [
-  {
-   "company": "Buzzfeed Inc",
-   "host": "buzzfeed.wd1.myworkdayjobs.com",
-   "why": "HTTP 401"
-  },
-  {
-   "company": "Rover Resources Inc",
-   "host": "rover.wd5.myworkdayjobs.com",
-   "why": "HTTP 403"
-  },
-  {
-   "company": "Xero Inc",
-   "host": "xero.wd3.myworkdayjobs.com",
-   "why": "HTTP 401"
-  },
-  {
-   "company": "Amtrust Financial Services Inc",
-   "host": "amtrust.wd1.myworkdayjobs.com",
-   "why": "HTTP 401"
-  },
-  {
-   "company": "Automotive Rentals Inc",
-   "host": "automotive.wd501.myworkdayjobs.com",
-   "why": "HTTP 401"
-  },
-  {
-   "company": "Guideone Insurance Company",
-   "host": "guideone.wd1.myworkdayjobs.com",
-   "why": "HTTP 401"
-  },
-  {
-   "company": "Jupiter Consulting Services Llc",
-   "host": "jupiter.wd3.myworkdayjobs.com",
-   "why": "HTTP 401"
-  },
-  {
-   "company": "Symphony Infotek Inc",
-   "host": "symphony.wd1.myworkdayjobs.com",
-   "why": "HTTP 401"
-  }
- ],
- "cap_exempt_hits": 7,
- "requests": 46891,
+ "blocked": [],
+ "cap_exempt_hits": 0,
+ "requests": 5865,
  "rate_limited": 0,
  "server_errors": 1,
  "cooldowns": 0,
  "deferred": 0,
- "refusals": 8,
+ "refusals": 0,
  "robots_denied": {},
- "minutes": 51.1,
+ "minutes": 48.4,
  "before": 1756,
  "after": 1876,
  "before_ats": {
@@ -1235,156 +163,60 @@
  "after_ats": {
   "amazonjobs": 1,
   "ashby": 46,
-  "greenhouse": 854,
+  "greenhouse": 852,
   "lever": 50,
   "recruitee": 2,
   "smartrecruiters": 158,
   "workable": 4,
-  "workday": 761
+  "workday": 763
  },
- "new_jobs": 14011,
+ "new_jobs": 14433,
  "left_out": [
   {
    "ats": "workday",
-   "board_id": "taylor.wd1/External",
-   "company": "Taylor",
-   "url": "https://taylor.wd1.myworkdayjobs.com/External",
-   "jobs": 166,
-   "verified": "2026-11-09",
+   "board_id": "orange.wd3/Orange_Career",
+   "company": "Orange",
+   "url": "https://orange.wd3.myworkdayjobs.com/Orange_Career",
+   "jobs": 2,
+   "verified": "2026-11-10",
    "cap_exempt": 0,
-   "h1b_approvals": 8,
+   "h1b_approvals": 11,
    "perm_certs": 0,
    "us_jobs": 0
   },
   {
-   "ats": "workday",
-   "board_id": "advantech.wd3/External",
-   "company": "Advantech Corporation",
-   "url": "https://advantech.wd3.myworkdayjobs.com/External",
-   "jobs": 210,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 3,
-   "us_jobs": 0
-  },
-  {
-   "ats": "workday",
-   "board_id": "heidelberg.wd502/careersHEIDELBERG",
-   "company": "Heidelberg University",
-   "url": "https://heidelberg.wd502.myworkdayjobs.com/careersHEIDELBERG",
-   "jobs": 78,
-   "verified": "2026-11-09",
-   "cap_exempt": 1,
-   "h1b_approvals": 4,
-   "perm_certs": 0,
-   "us_jobs": 0
-  },
-  {
-   "ats": "workday",
-   "board_id": "findlay.wd5/careers",
-   "company": "University Of Findlay",
-   "url": "https://findlay.wd5.myworkdayjobs.com/careers",
-   "jobs": 34,
-   "verified": "2026-11-09",
-   "cap_exempt": 1,
-   "h1b_approvals": 4,
-   "perm_certs": 0,
-   "us_jobs": 0
-  },
-  {
-   "ats": "workday",
-   "board_id": "wiley.wd1/leadership",
-   "company": "Wiley Edu Llc",
-   "url": "https://wiley.wd1.myworkdayjobs.com/leadership",
+   "ats": "greenhouse",
+   "board_id": "marshallwace",
+   "company": "Marshall Wace North America L P",
+   "url": "https://boards-api.greenhouse.io/v1/boards/marshallwace/jobs",
    "jobs": 1,
-   "verified": "2026-11-09",
+   "verified": "2026-11-07",
    "cap_exempt": 0,
    "h1b_approvals": 12,
-   "perm_certs": 0,
+   "perm_certs": 2,
    "us_jobs": 0
   },
   {
    "ats": "workday",
-   "board_id": "catalina.wd1/Catalina",
-   "company": "Catalina Business Solutions Inc",
-   "url": "https://catalina.wd1.myworkdayjobs.com/Catalina",
-   "jobs": 8,
-   "verified": "2026-11-09",
+   "board_id": "driscolls.wd5/driscolls",
+   "company": "Driscolls Inc",
+   "url": "https://driscolls.wd5.myworkdayjobs.com/driscolls",
+   "jobs": 17,
+   "verified": "2026-11-08",
    "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 0
-  },
-  {
-   "ats": "workday",
-   "board_id": "daikin.wd12/DaikinManufacturing_External",
-   "company": "Daikin Applied Americas Inc",
-   "url": "https://daikin.wd12.myworkdayjobs.com/DaikinManufacturing_External",
-   "jobs": 41,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 0
-  },
-  {
-   "ats": "workday",
-   "board_id": "hamilton.wd3/hamilton_jobs",
-   "company": "Hamilton Enterprises Llc",
-   "url": "https://hamilton.wd3.myworkdayjobs.com/hamilton_jobs",
-   "jobs": 48,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
+   "h1b_approvals": 8,
    "perm_certs": 1,
    "us_jobs": 0
   },
   {
    "ats": "greenhouse",
-   "board_id": "infront",
-   "company": "Infront X Llc",
-   "url": "https://boards-api.greenhouse.io/v1/boards/infront/jobs",
-   "jobs": 10,
-   "verified": "2026-11-09",
+   "board_id": "patch",
+   "company": "Patch Media",
+   "url": "https://boards-api.greenhouse.io/v1/boards/patch/jobs",
+   "jobs": 1,
+   "verified": "2026-11-08",
    "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 0
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "iseatz",
-   "company": "Iseatz Inc",
-   "url": "https://boards-api.greenhouse.io/v1/boards/iseatz/jobs",
-   "jobs": 2,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 0
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "rapp",
-   "company": "Rapp Illinois Inc",
-   "url": "https://boards-api.greenhouse.io/v1/boards/rapp/jobs",
-   "jobs": 7,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1,
-   "us_jobs": 0
-  },
-  {
-   "ats": "workday",
-   "board_id": "avon.wd5/AvonCareers",
-   "company": "The Avon Company",
-   "url": "https://avon.wd5.myworkdayjobs.com/AvonCareers",
-   "jobs": 36,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
+   "h1b_approvals": 8,
    "perm_certs": 0,
    "us_jobs": 0
   }
@@ -1392,471 +224,51 @@
  "evidence": [
   {
    "ats": "workday",
-   "board_id": "terex.wd1/terexcareers",
-   "company": "Terex Usa, Llc",
-   "url": "https://terex.wd1.myworkdayjobs.com/terexcareers",
-   "jobs": 481,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 8,
-   "perm_certs": 0,
-   "us_jobs": 427
-  },
-  {
-   "ats": "workday",
-   "board_id": "cambria.wd1/cambria_careers",
-   "company": "Cambria Solutions Inc",
-   "url": "https://cambria.wd1.myworkdayjobs.com/cambria_careers",
-   "jobs": 70,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 13,
-   "perm_certs": 0,
-   "us_jobs": 63
-  },
-  {
-   "ats": "workday",
-   "board_id": "ingredion.wd1/IngredionCareers",
-   "company": "Ingredion Incorporated",
-   "url": "https://ingredion.wd1.myworkdayjobs.com/IngredionCareers",
-   "jobs": 227,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 13,
-   "perm_certs": 0,
-   "us_jobs": 89
-  },
-  {
-   "ats": "workday",
-   "board_id": "meredith.wd5/EXT",
-   "company": "Meredith Corporation",
-   "url": "https://meredith.wd5.myworkdayjobs.com/EXT",
-   "jobs": 26,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 13,
-   "perm_certs": 0,
-   "us_jobs": 19
-  },
-  {
-   "ats": "workday",
-   "board_id": "oaktree.wd1/Oaktree",
-   "company": "Oaktree Capital Management L P",
-   "url": "https://oaktree.wd1.myworkdayjobs.com/Oaktree",
-   "jobs": 55,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 13,
-   "perm_certs": 0,
-   "us_jobs": 23
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "synerg",
-   "company": "Syner-G Pharma Consulting Llc",
-   "url": "https://boards-api.greenhouse.io/v1/boards/synerg/jobs",
-   "jobs": 47,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 13,
-   "perm_certs": 0,
-   "us_jobs": 40
-  },
-  {
-   "ats": "workday",
-   "board_id": "ashland.wd12/AshlandCareers1",
-   "company": "Ashland University",
-   "url": "https://ashland.wd12.myworkdayjobs.com/AshlandCareers1",
-   "jobs": 85,
-   "verified": "2026-11-09",
-   "cap_exempt": 1,
-   "h1b_approvals": 4,
-   "perm_certs": 0,
-   "us_jobs": 46
-  },
-  {
-   "ats": "workday",
-   "board_id": "oceanspray.wd5/OceanSprayJobs",
-   "company": "Ocean Spray Cranberries Inc",
-   "url": "https://oceanspray.wd5.myworkdayjobs.com/OceanSprayJobs",
-   "jobs": 56,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 0,
-   "us_jobs": 51
-  },
-  {
-   "ats": "workday",
-   "board_id": "outsystems.wd503/OutSystems",
-   "company": "Outsystems Inc",
-   "url": "https://outsystems.wd503.myworkdayjobs.com/OutSystems",
-   "jobs": 62,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 0,
-   "us_jobs": 12
-  },
-  {
-   "ats": "workday",
-   "board_id": "plugpower.wd5/Plug_Power_Inc",
-   "company": "Plug Power Inc",
-   "url": "https://plugpower.wd5.myworkdayjobs.com/Plug_Power_Inc",
-   "jobs": 103,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 0,
-   "us_jobs": 85
-  },
-  {
-   "ats": "workday",
-   "board_id": "progleasing.wd5/ProgLeasingCareers",
-   "company": "Prog Leasing Llc",
-   "url": "https://progleasing.wd5.myworkdayjobs.com/ProgLeasingCareers",
-   "jobs": 41,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 0,
-   "us_jobs": 34
-  },
-  {
-   "ats": "workday",
-   "board_id": "sou.wd1/Southern_Oregon_University",
-   "company": "Southern Oregon University",
-   "url": "https://sou.wd1.myworkdayjobs.com/Southern_Oregon_University",
-   "jobs": 29,
-   "verified": "2026-11-09",
-   "cap_exempt": 1,
-   "h1b_approvals": 4,
-   "perm_certs": 0,
-   "us_jobs": 18
-  },
-  {
-   "ats": "workday",
-   "board_id": "weil.wd1/TonyG",
-   "company": "Weil, Gotshal & Manges Llp",
-   "url": "https://weil.wd1.myworkdayjobs.com/TonyG",
+   "board_id": "inrix.wd5/INRIX",
+   "company": "Inrix Inc",
+   "url": "https://inrix.wd5.myworkdayjobs.com/INRIX",
    "jobs": 1,
-   "verified": "2026-11-09",
+   "verified": "2026-11-10",
    "cap_exempt": 0,
-   "h1b_approvals": 12,
+   "h1b_approvals": 11,
    "perm_certs": 0,
    "us_jobs": 1
   },
   {
    "ats": "workday",
-   "board_id": "advisorgroup.wd1/Advisor_Career_Site",
-   "company": "Advisor Group Inc",
-   "url": "https://advisorgroup.wd1.myworkdayjobs.com/Advisor_Career_Site",
-   "jobs": 65,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 18
-  },
-  {
-   "ats": "workday",
-   "board_id": "alegeus.wd1/Alegeus_External_Careers",
-   "company": "Alegeus Technologies Llc",
-   "url": "https://alegeus.wd1.myworkdayjobs.com/Alegeus_External_Careers",
-   "jobs": 21,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 6
-  },
-  {
-   "ats": "workday",
-   "board_id": "altamed.wd1/Careers",
-   "company": "Altamed Health Services Corporation",
-   "url": "https://altamed.wd1.myworkdayjobs.com/Careers",
-   "jobs": 274,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 245
-  },
-  {
-   "ats": "workday",
-   "board_id": "argenx.wd3/External_Careers",
-   "company": "Argenx Us Inc",
-   "url": "https://argenx.wd3.myworkdayjobs.com/External_Careers",
-   "jobs": 172,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 76
-  },
-  {
-   "ats": "workday",
-   "board_id": "biamp.wd12/Biamp",
-   "company": "Biamp Systems Llc",
-   "url": "https://biamp.wd12.myworkdayjobs.com/Biamp",
-   "jobs": 6,
-   "verified": "2026-11-09",
+   "board_id": "plexus.wd504/Plexus_Careers",
+   "company": "Plexus Corp",
+   "url": "https://plexus.wd504.myworkdayjobs.com/Plexus_Careers",
+   "jobs": 416,
+   "verified": "2026-11-10",
    "cap_exempt": 0,
    "h1b_approvals": 6,
-   "perm_certs": 1,
+   "perm_certs": 3,
+   "us_jobs": 180
+  },
+  {
+   "ats": "workday",
+   "board_id": "wpengine.wd1/WP_Engine",
+   "company": "Wp Engine Inc",
+   "url": "https://wpengine.wd1.myworkdayjobs.com/WP_Engine",
+   "jobs": 7,
+   "verified": "2026-11-10",
+   "cap_exempt": 0,
+   "h1b_approvals": 11,
+   "perm_certs": 0,
    "us_jobs": 3
   },
   {
    "ats": "workday",
-   "board_id": "buildertrend.wd108/External_Careers",
-   "company": "Buildertrend Solutions Inc",
-   "url": "https://buildertrend.wd108.myworkdayjobs.com/External_Careers",
-   "jobs": 6,
-   "verified": "2026-11-09",
+   "board_id": "walkerdunlop.wd1/WD",
+   "company": "Walker & Dunlop Llc",
+   "url": "https://walkerdunlop.wd1.myworkdayjobs.com/WD",
+   "jobs": 28,
+   "verified": "2026-11-10",
    "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 2
-  },
-  {
-   "ats": "workday",
-   "board_id": "embecta.wd1/embectacareers",
-   "company": "Embecta Medical I Llc",
-   "url": "https://embecta.wd1.myworkdayjobs.com/embectacareers",
-   "jobs": 64,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 23
-  },
-  {
-   "ats": "workday",
-   "board_id": "frostbank.wd5/External",
-   "company": "Frost Bank",
-   "url": "https://frostbank.wd5.myworkdayjobs.com/External",
-   "jobs": 182,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 163
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "goodbysilversteinpartners",
-   "company": "Goodby, Silverstein  Partners Inc.",
-   "url": "https://boards-api.greenhouse.io/v1/boards/goodbysilversteinpartners/jobs",
-   "jobs": 3,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 0,
-   "perm_certs": 7,
-   "us_jobs": 3
-  },
-  {
-   "ats": "workday",
-   "board_id": "haemonetics.wd5/HAE",
-   "company": "Haemonetics Corporation",
-   "url": "https://haemonetics.wd5.myworkdayjobs.com/HAE",
-   "jobs": 112,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 62
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "hearst",
-   "company": "Hearst Business Media Corporation",
-   "url": "https://boards-api.greenhouse.io/v1/boards/hearst/jobs",
-   "jobs": 370,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 345
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "kodiak",
-   "company": "Kodiak Robotics Inc",
-   "url": "https://boards-api.greenhouse.io/v1/boards/kodiak/jobs",
-   "jobs": 56,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 56
-  },
-  {
-   "ats": "workday",
-   "board_id": "llbean.wd1/LLBean_Careers",
-   "company": "L L Bean Inc",
-   "url": "https://llbean.wd1.myworkdayjobs.com/LLBean_Careers",
-   "jobs": 121,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1,
-   "us_jobs": 120
-  },
-  {
-   "ats": "workday",
-   "board_id": "laticrete.wd1/laticreteinternational",
-   "company": "Laticrete International Inc",
-   "url": "https://laticrete.wd1.myworkdayjobs.com/laticreteinternational",
-   "jobs": 49,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 40
-  },
-  {
-   "ats": "workday",
-   "board_id": "lilly.wd115/LLY",
-   "company": "Lilly Usa Llc",
-   "url": "https://lilly.wd115.myworkdayjobs.com/LLY",
-   "jobs": 430,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1,
-   "us_jobs": 179
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "nutscom",
-   "company": "Nuts Com Inc",
-   "url": "https://boards-api.greenhouse.io/v1/boards/nutscom/jobs",
-   "jobs": 14,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
+   "h1b_approvals": 11,
    "perm_certs": 0,
    "us_jobs": 14
-  },
-  {
-   "ats": "workday",
-   "board_id": "optioncare.wd1/OptionCare",
-   "company": "Option Care Enterprises Inc",
-   "url": "https://optioncare.wd1.myworkdayjobs.com/OptionCare",
-   "jobs": 302,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1,
-   "us_jobs": 253
-  },
-  {
-   "ats": "workday",
-   "board_id": "sonoco.wd1/CorporateCareers",
-   "company": "Sonoco Products Company",
-   "url": "https://sonoco.wd1.myworkdayjobs.com/CorporateCareers",
-   "jobs": 287,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 164
-  },
-  {
-   "ats": "workday",
-   "board_id": "talkingrain.wd1/TR",
-   "company": "Talking Rain Beverage Company Inc",
-   "url": "https://talkingrain.wd1.myworkdayjobs.com/TR",
-   "jobs": 12,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 12
-  },
-  {
-   "ats": "workday",
-   "board_id": "esab.wd5/esabcareers",
-   "company": "The Esab Group Inc",
-   "url": "https://esab.wd5.myworkdayjobs.com/esabcareers",
-   "jobs": 84,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 6,
-   "perm_certs": 1,
-   "us_jobs": 24
-  },
-  {
-   "ats": "workday",
-   "board_id": "veritone.wd1/Veritone_Career_Site",
-   "company": "Veritone Inc",
-   "url": "https://veritone.wd1.myworkdayjobs.com/Veritone_Career_Site",
-   "jobs": 5,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 3
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "welbehealth",
-   "company": "Welbe Health Llc",
-   "url": "https://boards-api.greenhouse.io/v1/boards/welbehealth/jobs",
-   "jobs": 142,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 7,
-   "perm_certs": 0,
-   "us_jobs": 142
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "invoicecloud",
-   "company": "Invoice Cloud Inc",
-   "url": "https://boards-api.greenhouse.io/v1/boards/invoicecloud/jobs",
-   "jobs": 23,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 8,
-   "perm_certs": 2,
-   "us_jobs": 9
-  },
-  {
-   "ats": "workday",
-   "board_id": "calvin.wd5/CalvinUniversityCareers",
-   "company": "Calvin University",
-   "url": "https://calvin.wd5.myworkdayjobs.com/CalvinUniversityCareers",
-   "jobs": 46,
-   "verified": "2026-11-09",
-   "cap_exempt": 1,
-   "h1b_approvals": 2,
-   "perm_certs": 1,
-   "us_jobs": 39
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "captiveaire",
-   "company": "Captive-Aire Systems Inc",
-   "url": "https://boards-api.greenhouse.io/v1/boards/captiveaire/jobs",
-   "jobs": 102,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 11,
-   "perm_certs": 0,
-   "us_jobs": 95
-  },
-  {
-   "ats": "workday",
-   "board_id": "cfindustries.wd1/careers",
-   "company": "Cf Industries Employee Services",
-   "url": "https://cfindustries.wd1.myworkdayjobs.com/careers",
-   "jobs": 57,
-   "verified": "2026-11-09",
-   "cap_exempt": 0,
-   "h1b_approvals": 11,
-   "perm_certs": 0,
-   "us_jobs": 48
   },
   {
    "ats": "workday",
@@ -1880,7 +292,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 11,
    "perm_certs": 0,
-   "us_jobs": 17
+   "us_jobs": 18
   },
   {
    "ats": "greenhouse",
@@ -1892,7 +304,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 11,
    "perm_certs": 0,
-   "us_jobs": 51
+   "us_jobs": 47
   },
   {
    "ats": "workday",
@@ -1952,7 +364,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 10,
    "perm_certs": 1,
-   "us_jobs": 67
+   "us_jobs": 64
   },
   {
    "ats": "workday",
@@ -1964,7 +376,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 10,
    "perm_certs": 1,
-   "us_jobs": 93
+   "us_jobs": 94
   },
   {
    "ats": "workday",
@@ -1988,7 +400,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 11,
    "perm_certs": 0,
-   "us_jobs": 256
+   "us_jobs": 260
   },
   {
    "ats": "workday",
@@ -2000,7 +412,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 11,
    "perm_certs": 0,
-   "us_jobs": 6
+   "us_jobs": 9
   },
   {
    "ats": "greenhouse",
@@ -2024,7 +436,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 9,
    "perm_certs": 2,
-   "us_jobs": 75
+   "us_jobs": 76
   },
   {
    "ats": "workday",
@@ -2060,7 +472,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 8,
    "perm_certs": 2,
-   "us_jobs": 106
+   "us_jobs": 104
   },
   {
    "ats": "workday",
@@ -2072,7 +484,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 10,
    "perm_certs": 0,
-   "us_jobs": 165
+   "us_jobs": 170
   },
   {
    "ats": "workday",
@@ -2084,7 +496,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 10,
    "perm_certs": 0,
-   "us_jobs": 34
+   "us_jobs": 30
   },
   {
    "ats": "greenhouse",
@@ -2096,7 +508,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 0,
    "perm_certs": 10,
-   "us_jobs": 466
+   "us_jobs": 471
   },
   {
    "ats": "greenhouse",
@@ -2120,7 +532,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 10,
    "perm_certs": 0,
-   "us_jobs": 9
+   "us_jobs": 8
   },
   {
    "ats": "workday",
@@ -2204,7 +616,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 10,
    "perm_certs": 0,
-   "us_jobs": 108
+   "us_jobs": 104
   },
   {
    "ats": "workday",
@@ -2240,7 +652,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 16,
    "perm_certs": 0,
-   "us_jobs": 27
+   "us_jobs": 29
   },
   {
    "ats": "workday",
@@ -2264,7 +676,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 16,
    "perm_certs": 0,
-   "us_jobs": 203
+   "us_jobs": 211
   },
   {
    "ats": "greenhouse",
@@ -2279,18 +691,6 @@
    "us_jobs": 6
   },
   {
-   "ats": "greenhouse",
-   "board_id": "marshallwace",
-   "company": "Marshall Wace North America L P",
-   "url": "https://boards-api.greenhouse.io/v1/boards/marshallwace/jobs",
-   "jobs": 1,
-   "verified": "2026-11-07",
-   "cap_exempt": 0,
-   "h1b_approvals": 12,
-   "perm_certs": 2,
-   "us_jobs": 1
-  },
-  {
    "ats": "workday",
    "board_id": "arbella.wd5/Arbella",
    "company": "Arbella Insurance Group",
@@ -2300,7 +700,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 15,
    "perm_certs": 0,
-   "us_jobs": 30
+   "us_jobs": 29
   },
   {
    "ats": "workday",
@@ -2312,7 +712,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 6,
    "perm_certs": 3,
-   "us_jobs": 56
+   "us_jobs": 57
   },
   {
    "ats": "greenhouse",
@@ -2348,19 +748,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 9,
    "perm_certs": 0,
-   "us_jobs": 48
-  },
-  {
-   "ats": "workday",
-   "board_id": "driscolls.wd5/driscolls",
-   "company": "Driscolls Inc",
-   "url": "https://driscolls.wd5.myworkdayjobs.com/driscolls",
-   "jobs": 17,
-   "verified": "2026-11-08",
-   "cap_exempt": 0,
-   "h1b_approvals": 8,
-   "perm_certs": 1,
-   "us_jobs": 1
+   "us_jobs": 46
   },
   {
    "ats": "workday",
@@ -2372,7 +760,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 9,
    "perm_certs": 0,
-   "us_jobs": 246
+   "us_jobs": 242
   },
   {
    "ats": "greenhouse",
@@ -2384,7 +772,19 @@
    "cap_exempt": 0,
    "h1b_approvals": 9,
    "perm_certs": 0,
-   "us_jobs": 52
+   "us_jobs": 53
+  },
+  {
+   "ats": "greenhouse",
+   "board_id": "hearst",
+   "company": "Hearst Business Publishing Inc",
+   "url": "https://boards-api.greenhouse.io/v1/boards/hearst/jobs",
+   "jobs": 366,
+   "verified": "2026-11-08",
+   "cap_exempt": 0,
+   "h1b_approvals": 8,
+   "perm_certs": 1,
+   "us_jobs": 346
   },
   {
    "ats": "workday",
@@ -2408,7 +808,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 9,
    "perm_certs": 0,
-   "us_jobs": 20
+   "us_jobs": 18
   },
   {
    "ats": "greenhouse",
@@ -2468,7 +868,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 5,
    "perm_certs": 4,
-   "us_jobs": 32
+   "us_jobs": 31
   },
   {
    "ats": "workday",
@@ -2492,19 +892,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 9,
    "perm_certs": 0,
-   "us_jobs": 541
-  },
-  {
-   "ats": "workday",
-   "board_id": "wpengine.wd1/WP_Engine",
-   "company": "Wpengine Inc",
-   "url": "https://wpengine.wd1.myworkdayjobs.com/WP_Engine",
-   "jobs": 7,
-   "verified": "2026-11-08",
-   "cap_exempt": 0,
-   "h1b_approvals": 8,
-   "perm_certs": 1,
-   "us_jobs": 3
+   "us_jobs": 544
   },
   {
    "ats": "workday",
@@ -2516,7 +904,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 13,
    "perm_certs": 1,
-   "us_jobs": 515
+   "us_jobs": 517
   },
   {
    "ats": "workday",
@@ -2528,7 +916,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 13,
    "perm_certs": 1,
-   "us_jobs": 71
+   "us_jobs": 66
   },
   {
    "ats": "workday",
@@ -2552,7 +940,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 4,
    "perm_certs": 6,
-   "us_jobs": 273
+   "us_jobs": 284
   },
   {
    "ats": "workday",
@@ -2600,7 +988,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 9,
    "perm_certs": 3,
-   "us_jobs": 99
+   "us_jobs": 101
   },
   {
    "ats": "workday",
@@ -2612,7 +1000,7 @@
    "cap_exempt": 1,
    "h1b_approvals": 3,
    "perm_certs": 1,
-   "us_jobs": 100
+   "us_jobs": 98
   },
   {
    "ats": "workday",
@@ -2636,7 +1024,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 8,
    "perm_certs": 0,
-   "us_jobs": 6
+   "us_jobs": 7
   },
   {
    "ats": "workday",
@@ -2648,7 +1036,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 8,
    "perm_certs": 0,
-   "us_jobs": 40
+   "us_jobs": 41
   },
   {
    "ats": "workday",
@@ -2696,7 +1084,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 8,
    "perm_certs": 0,
-   "us_jobs": 26
+   "us_jobs": 24
   },
   {
    "ats": "workday",
@@ -2756,7 +1144,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 7,
    "perm_certs": 1,
-   "us_jobs": 101
+   "us_jobs": 100
   },
   {
    "ats": "greenhouse",
@@ -2780,7 +1168,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 6,
    "perm_certs": 2,
-   "us_jobs": 98
+   "us_jobs": 95
   },
   {
    "ats": "workday",
@@ -2804,19 +1192,7 @@
    "cap_exempt": 0,
    "h1b_approvals": 8,
    "perm_certs": 0,
-   "us_jobs": 106
-  },
-  {
-   "ats": "greenhouse",
-   "board_id": "patch",
-   "company": "Patch Media",
-   "url": "https://boards-api.greenhouse.io/v1/boards/patch/jobs",
-   "jobs": 1,
-   "verified": "2026-11-08",
-   "cap_exempt": 0,
-   "h1b_approvals": 8,
-   "perm_certs": 0,
-   "us_jobs": 1
+   "us_jobs": 107
   },
   {
    "ats": "workday",
@@ -2828,7 +1204,463 @@
    "cap_exempt": 0,
    "h1b_approvals": 8,
    "perm_certs": 0,
-   "us_jobs": 32
+   "us_jobs": 33
+  },
+  {
+   "ats": "workday",
+   "board_id": "terex.wd1/terexcareers",
+   "company": "Terex Usa, Llc",
+   "url": "https://terex.wd1.myworkdayjobs.com/terexcareers",
+   "jobs": 481,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 8,
+   "perm_certs": 0,
+   "us_jobs": 420
+  },
+  {
+   "ats": "workday",
+   "board_id": "cambria.wd1/cambria_careers",
+   "company": "Cambria Solutions Inc",
+   "url": "https://cambria.wd1.myworkdayjobs.com/cambria_careers",
+   "jobs": 70,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 13,
+   "perm_certs": 0,
+   "us_jobs": 63
+  },
+  {
+   "ats": "workday",
+   "board_id": "ingredion.wd1/IngredionCareers",
+   "company": "Ingredion Incorporated",
+   "url": "https://ingredion.wd1.myworkdayjobs.com/IngredionCareers",
+   "jobs": 227,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 13,
+   "perm_certs": 0,
+   "us_jobs": 88
+  },
+  {
+   "ats": "workday",
+   "board_id": "meredith.wd5/EXT",
+   "company": "Meredith Corporation",
+   "url": "https://meredith.wd5.myworkdayjobs.com/EXT",
+   "jobs": 26,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 13,
+   "perm_certs": 0,
+   "us_jobs": 20
+  },
+  {
+   "ats": "workday",
+   "board_id": "oaktree.wd1/Oaktree",
+   "company": "Oaktree Capital Management L P",
+   "url": "https://oaktree.wd1.myworkdayjobs.com/Oaktree",
+   "jobs": 55,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 13,
+   "perm_certs": 0,
+   "us_jobs": 22
+  },
+  {
+   "ats": "greenhouse",
+   "board_id": "synerg",
+   "company": "Syner-G Pharma Consulting Llc",
+   "url": "https://boards-api.greenhouse.io/v1/boards/synerg/jobs",
+   "jobs": 47,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 13,
+   "perm_certs": 0,
+   "us_jobs": 40
+  },
+  {
+   "ats": "workday",
+   "board_id": "ashland.wd12/AshlandCareers1",
+   "company": "Ashland University",
+   "url": "https://ashland.wd12.myworkdayjobs.com/AshlandCareers1",
+   "jobs": 85,
+   "verified": "2026-11-09",
+   "cap_exempt": 1,
+   "h1b_approvals": 4,
+   "perm_certs": 0,
+   "us_jobs": 46
+  },
+  {
+   "ats": "workday",
+   "board_id": "oceanspray.wd5/OceanSprayJobs",
+   "company": "Ocean Spray Cranberries Inc",
+   "url": "https://oceanspray.wd5.myworkdayjobs.com/OceanSprayJobs",
+   "jobs": 56,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 12,
+   "perm_certs": 0,
+   "us_jobs": 52
+  },
+  {
+   "ats": "workday",
+   "board_id": "outsystems.wd503/OutSystems",
+   "company": "Outsystems Inc",
+   "url": "https://outsystems.wd503.myworkdayjobs.com/OutSystems",
+   "jobs": 62,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 12,
+   "perm_certs": 0,
+   "us_jobs": 12
+  },
+  {
+   "ats": "workday",
+   "board_id": "plugpower.wd5/Plug_Power_Inc",
+   "company": "Plug Power Inc",
+   "url": "https://plugpower.wd5.myworkdayjobs.com/Plug_Power_Inc",
+   "jobs": 103,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 12,
+   "perm_certs": 0,
+   "us_jobs": 85
+  },
+  {
+   "ats": "workday",
+   "board_id": "progleasing.wd5/ProgLeasingCareers",
+   "company": "Prog Leasing Llc",
+   "url": "https://progleasing.wd5.myworkdayjobs.com/ProgLeasingCareers",
+   "jobs": 41,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 12,
+   "perm_certs": 0,
+   "us_jobs": 33
+  },
+  {
+   "ats": "workday",
+   "board_id": "sou.wd1/Southern_Oregon_University",
+   "company": "Southern Oregon University",
+   "url": "https://sou.wd1.myworkdayjobs.com/Southern_Oregon_University",
+   "jobs": 29,
+   "verified": "2026-11-09",
+   "cap_exempt": 1,
+   "h1b_approvals": 4,
+   "perm_certs": 0,
+   "us_jobs": 18
+  },
+  {
+   "ats": "workday",
+   "board_id": "weil.wd1/TonyG",
+   "company": "Weil, Gotshal & Manges Llp",
+   "url": "https://weil.wd1.myworkdayjobs.com/TonyG",
+   "jobs": 1,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 12,
+   "perm_certs": 0,
+   "us_jobs": 1
+  },
+  {
+   "ats": "workday",
+   "board_id": "advisorgroup.wd1/Advisor_Career_Site",
+   "company": "Advisor Group Inc",
+   "url": "https://advisorgroup.wd1.myworkdayjobs.com/Advisor_Career_Site",
+   "jobs": 65,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 19
+  },
+  {
+   "ats": "workday",
+   "board_id": "alegeus.wd1/Alegeus_External_Careers",
+   "company": "Alegeus Technologies Llc",
+   "url": "https://alegeus.wd1.myworkdayjobs.com/Alegeus_External_Careers",
+   "jobs": 21,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 5
+  },
+  {
+   "ats": "workday",
+   "board_id": "altamed.wd1/Careers",
+   "company": "Altamed Health Services Corporation",
+   "url": "https://altamed.wd1.myworkdayjobs.com/Careers",
+   "jobs": 274,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 247
+  },
+  {
+   "ats": "workday",
+   "board_id": "argenx.wd3/External_Careers",
+   "company": "Argenx Us Inc",
+   "url": "https://argenx.wd3.myworkdayjobs.com/External_Careers",
+   "jobs": 172,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 76
+  },
+  {
+   "ats": "workday",
+   "board_id": "biamp.wd12/Biamp",
+   "company": "Biamp Systems Llc",
+   "url": "https://biamp.wd12.myworkdayjobs.com/Biamp",
+   "jobs": 6,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 6,
+   "perm_certs": 1,
+   "us_jobs": 3
+  },
+  {
+   "ats": "workday",
+   "board_id": "buildertrend.wd108/External_Careers",
+   "company": "Buildertrend Solutions Inc",
+   "url": "https://buildertrend.wd108.myworkdayjobs.com/External_Careers",
+   "jobs": 6,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 2
+  },
+  {
+   "ats": "workday",
+   "board_id": "embecta.wd1/embectacareers",
+   "company": "Embecta Medical I Llc",
+   "url": "https://embecta.wd1.myworkdayjobs.com/embectacareers",
+   "jobs": 64,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 22
+  },
+  {
+   "ats": "workday",
+   "board_id": "frostbank.wd5/External",
+   "company": "Frost Bank",
+   "url": "https://frostbank.wd5.myworkdayjobs.com/External",
+   "jobs": 182,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 167
+  },
+  {
+   "ats": "greenhouse",
+   "board_id": "goodbysilversteinpartners",
+   "company": "Goodby, Silverstein  Partners Inc.",
+   "url": "https://boards-api.greenhouse.io/v1/boards/goodbysilversteinpartners/jobs",
+   "jobs": 3,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 0,
+   "perm_certs": 7,
+   "us_jobs": 3
+  },
+  {
+   "ats": "workday",
+   "board_id": "haemonetics.wd5/HAE",
+   "company": "Haemonetics Corporation",
+   "url": "https://haemonetics.wd5.myworkdayjobs.com/HAE",
+   "jobs": 112,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 61
+  },
+  {
+   "ats": "greenhouse",
+   "board_id": "kodiak",
+   "company": "Kodiak Robotics Inc",
+   "url": "https://boards-api.greenhouse.io/v1/boards/kodiak/jobs",
+   "jobs": 56,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 54
+  },
+  {
+   "ats": "workday",
+   "board_id": "llbean.wd1/LLBean_Careers",
+   "company": "L L Bean Inc",
+   "url": "https://llbean.wd1.myworkdayjobs.com/LLBean_Careers",
+   "jobs": 121,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 6,
+   "perm_certs": 1,
+   "us_jobs": 115
+  },
+  {
+   "ats": "workday",
+   "board_id": "laticrete.wd1/laticreteinternational",
+   "company": "Laticrete International Inc",
+   "url": "https://laticrete.wd1.myworkdayjobs.com/laticreteinternational",
+   "jobs": 49,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 37
+  },
+  {
+   "ats": "workday",
+   "board_id": "lilly.wd115/LLY",
+   "company": "Lilly Usa Llc",
+   "url": "https://lilly.wd115.myworkdayjobs.com/LLY",
+   "jobs": 430,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 6,
+   "perm_certs": 1,
+   "us_jobs": 213
+  },
+  {
+   "ats": "greenhouse",
+   "board_id": "nutscom",
+   "company": "Nuts Com Inc",
+   "url": "https://boards-api.greenhouse.io/v1/boards/nutscom/jobs",
+   "jobs": 14,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 14
+  },
+  {
+   "ats": "workday",
+   "board_id": "optioncare.wd1/OptionCare",
+   "company": "Option Care Enterprises Inc",
+   "url": "https://optioncare.wd1.myworkdayjobs.com/OptionCare",
+   "jobs": 302,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 6,
+   "perm_certs": 1,
+   "us_jobs": 255
+  },
+  {
+   "ats": "workday",
+   "board_id": "sonoco.wd1/CorporateCareers",
+   "company": "Sonoco Products Company",
+   "url": "https://sonoco.wd1.myworkdayjobs.com/CorporateCareers",
+   "jobs": 287,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 161
+  },
+  {
+   "ats": "workday",
+   "board_id": "talkingrain.wd1/TR",
+   "company": "Talking Rain Beverage Company Inc",
+   "url": "https://talkingrain.wd1.myworkdayjobs.com/TR",
+   "jobs": 12,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 13
+  },
+  {
+   "ats": "workday",
+   "board_id": "esab.wd5/esabcareers",
+   "company": "The Esab Group Inc",
+   "url": "https://esab.wd5.myworkdayjobs.com/esabcareers",
+   "jobs": 84,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 6,
+   "perm_certs": 1,
+   "us_jobs": 24
+  },
+  {
+   "ats": "workday",
+   "board_id": "veritone.wd1/Veritone_Career_Site",
+   "company": "Veritone Inc",
+   "url": "https://veritone.wd1.myworkdayjobs.com/Veritone_Career_Site",
+   "jobs": 5,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 3
+  },
+  {
+   "ats": "greenhouse",
+   "board_id": "welbehealth",
+   "company": "Welbe Health Llc",
+   "url": "https://boards-api.greenhouse.io/v1/boards/welbehealth/jobs",
+   "jobs": 142,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 7,
+   "perm_certs": 0,
+   "us_jobs": 142
+  },
+  {
+   "ats": "greenhouse",
+   "board_id": "invoicecloud",
+   "company": "Invoice Cloud Inc",
+   "url": "https://boards-api.greenhouse.io/v1/boards/invoicecloud/jobs",
+   "jobs": 23,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 8,
+   "perm_certs": 2,
+   "us_jobs": 8
+  },
+  {
+   "ats": "workday",
+   "board_id": "calvin.wd5/CalvinUniversityCareers",
+   "company": "Calvin University",
+   "url": "https://calvin.wd5.myworkdayjobs.com/CalvinUniversityCareers",
+   "jobs": 46,
+   "verified": "2026-11-09",
+   "cap_exempt": 1,
+   "h1b_approvals": 2,
+   "perm_certs": 1,
+   "us_jobs": 39
+  },
+  {
+   "ats": "greenhouse",
+   "board_id": "captiveaire",
+   "company": "Captive-Aire Systems Inc",
+   "url": "https://boards-api.greenhouse.io/v1/boards/captiveaire/jobs",
+   "jobs": 102,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 11,
+   "perm_certs": 0,
+   "us_jobs": 94
+  },
+  {
+   "ats": "workday",
+   "board_id": "cfindustries.wd1/careers",
+   "company": "Cf Industries Employee Services",
+   "url": "https://cfindustries.wd1.myworkdayjobs.com/careers",
+   "jobs": 57,
+   "verified": "2026-11-09",
+   "cap_exempt": 0,
+   "h1b_approvals": 11,
+   "perm_certs": 0,
+   "us_jobs": 48
   }
  ]
 }
