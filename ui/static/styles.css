@@ -4904,3 +4904,13 @@ body.panel-open .trk-panel { right: calc(var(--panel-w) + 42px); }
 .proj-progress .pp-acts:empty { display: none; }
 .chat-ideas .proj-idea[hidden] { display: none; }
 .chat-ideas .ci-more { align-self: flex-start; }
+
+/* Help and support: a small panel on the .upg modal shell. The address is selectable text with a
+   quiet Copy; one primary action (Open in Gmail); the mail app is a quiet link below it. */
+.help-card { max-width: 400px; }
+.help-addr { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; padding: 10px 10px 10px 14px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md); }
+.help-email { flex: 1; min-width: 0; font-size: 13.5px; color: var(--ink); user-select: text;
+  -webkit-user-select: text; cursor: text; overflow-wrap: anywhere; }
+.help-gmail { width: 100%; justify-content: center; }
+.help-mailapp { display: block; margin: 12px auto 0; font-size: 12.5px; }

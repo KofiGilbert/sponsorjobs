@@ -9737,18 +9737,60 @@
   $("#extHelp")?.addEventListener("click", () => { const d = $("#extDetail"); if (d) d.hidden = !d.hidden; });
   $("#gmHelp")?.addEventListener("click", () => { const d = $("#gmDetail"); if (d) d.hidden = !d.hidden; });
   $("#menuSettings")?.addEventListener("click", openSettings);
-  // Help and support: a plain email to our support inbox, in the person's own mail app. The draft
-  // carries only the app version, never profile data. The desktop shell accepts exactly this
-  // address (shell-electron/links.js); a plain browser opens the mailto link itself.
-  $("#menuHelp")?.addEventListener("click", async () => {
-    closeAcctMenu();
-    const shell = window.tailorShell;
+  // Help and support: a small panel, never the OS mail handler alone (a browser set as the mailto
+  // handler with no mail in it just flashes open and shut). It offers the address to copy, Gmail's
+  // compose screen in the person's own browser, and their mail app as a quiet second choice. Drafts
+  // carry only the app version, never profile data. The desktop shell accepts exactly these two
+  // URLs (shell-electron/links.js); a plain browser opens them itself.
+  const SUPPORT_EMAIL = "support@sponsorjobs.ai";
+  const helpModal = $("#helpModal");
+  const helpT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  async function supportDraft() {
     let version = "web";
-    try { if (shell?.appVersion) version = (await shell.appVersion()) || version; } catch (e) { /* keep "web" */ }
-    const url = "mailto:support@sponsorjobs.ai?subject=" + encodeURIComponent("SponsorJobs help")
-      + "&body=" + encodeURIComponent("\n\nApp version: " + version);
+    try { if (window.tailorShell?.appVersion) version = (await window.tailorShell.appVersion()) || version; } catch (e) { /* keep "web" */ }
+    return { su: "SponsorJobs help", body: "\n\nApp version: " + version };
+  }
+  function openHelp() {
+    closeAcctMenu();
+    if (!helpModal) return;
+    const b = $("#helpCopy"); if (b) b.textContent = helpT("help.copy", "Copy");
+    helpModal.hidden = false;
+    $("#helpGmail")?.focus();
+  }
+  function closeHelp() { if (helpModal) helpModal.hidden = true; }
+  $("#menuHelp")?.addEventListener("click", openHelp);
+  $("#helpClose")?.addEventListener("click", closeHelp);
+  helpModal?.addEventListener("click", (e) => { if (e.target === helpModal) closeHelp(); });
+  $("#helpCopy")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    let ok = false;
+    try { await navigator.clipboard.writeText(SUPPORT_EMAIL); ok = true; } catch (err) { /* fall back below */ }
+    if (!ok) {   // no clipboard permission: select the address so Cmd+C works
+      const el = $("#helpEmail"), r = document.createRange();
+      r.selectNodeContents(el);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      try { ok = document.execCommand("copy"); } catch (err) { /* the selection stays */ }
+    }
+    btn.textContent = ok ? helpT("help.copied", "Copied") : helpT("help.copy", "Copy");
+    if (ok) setTimeout(() => { btn.textContent = helpT("help.copy", "Copy"); }, 1600);
+  });
+  $("#helpGmail")?.addEventListener("click", async () => {
+    const d = await supportDraft();
+    const url = "https://mail.google.com/mail/?view=cm&fs=1&to=" + encodeURIComponent(SUPPORT_EMAIL)
+      + "&su=" + encodeURIComponent(d.su) + "&body=" + encodeURIComponent(d.body);
+    const shell = window.tailorShell;
+    if (shell?.openSupportGmail) shell.openSupportGmail(url);
+    else window.open(url, "_blank", "noopener");
+    closeHelp();
+  });
+  $("#helpMailApp")?.addEventListener("click", async () => {
+    const d = await supportDraft();
+    const url = "mailto:" + SUPPORT_EMAIL + "?subject=" + encodeURIComponent(d.su)
+      + "&body=" + encodeURIComponent(d.body);
+    const shell = window.tailorShell;
     if (shell?.openSupportMail) shell.openSupportMail(url);
     else window.location.href = url;
+    closeHelp();
   });
   $("#setClose")?.addEventListener("click", closeSettings);
   setModal?.addEventListener("click", (e) => { if (e.target === setModal) closeSettings(); });
@@ -9758,6 +9800,7 @@
     closeLangMenu();
     if (setModal && !setModal.hidden) closeSettings();
     if (upgModal && !upgModal.hidden) closeUpgrade();
+    if (helpModal && !helpModal.hidden) closeHelp();
   });
 
   // ---------------------------------------------------------------- App Lock

@@ -20,7 +20,7 @@ const path = require("path");
 const frames = require("./frames");
 const { isNewPage, pageMessage, wallMessage } = require("./pagewatch");
 const { createAgent } = require("./agent");
-const { isSupportMailto } = require("./links");
+const { isSupportMailto, isSupportGmailCompose } = require("./links");
 
 const SERVER = "http://127.0.0.1:57000";
 // The STATIC job feed (docs/feed.md): a scheduled GitHub Action crawls and uploads jobs.json.gz
@@ -334,7 +334,7 @@ async function createWindow() {
 
   // External links from the app page itself also stay in-app.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (isSupportMailto(url)) { shell.openExternal(url); return { action: "deny" }; }
+    if (isSupportMailto(url) || isSupportGmailCompose(url)) { shell.openExternal(url); return { action: "deny" }; }
     if (/^https?:/i.test(url) && !url.startsWith(SERVER)) {
       openInPane(url);
       return { action: "deny" };
@@ -342,7 +342,7 @@ async function createWindow() {
     return { action: "allow" };
   });
   win.webContents.on("will-navigate", (e, url) => {
-    if (isSupportMailto(url)) { e.preventDefault(); shell.openExternal(url); return; }
+    if (isSupportMailto(url) || isSupportGmailCompose(url)) { e.preventDefault(); shell.openExternal(url); return; }
     if (!url.startsWith(SERVER)) { e.preventDefault(); openInPane(url); return; }
     // /api/open?u=... is a REROUTE INSTRUCTION, not a page to visit. It is same-origin,
     // so the check above lets it through, the main frame commits the navigation, and the
@@ -1103,6 +1103,11 @@ ipcMain.on("update:open", (_e, url) => {
 // accepted; anything else is dropped (links.js).
 ipcMain.on("support:mail", (_e, url) => {
   if (isSupportMailto(url)) shell.openExternal(url);
+});
+// "Open in Gmail" in the Help and support panel: Gmail's compose screen in the person's own
+// browser (not the in-app pane), addressed to our support inbox and nothing else (links.js).
+ipcMain.on("support:gmail", (_e, url) => {
+  if (isSupportGmailCompose(url)) shell.openExternal(url);
 });
 // The Terms of Use the sign-in line links to: one fixed address, opened in the person's own
 // browser (the pane would sit under the sign-in screen). The page sends no URL, so nothing else opens.

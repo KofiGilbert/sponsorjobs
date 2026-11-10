@@ -1195,7 +1195,7 @@
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M13.2 9.6a1 1 0 0 0 .2 1.1l.1.1a1.2 1.2 0 1 1-1.7 1.7l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9v.1a1.2 1.2 0 0 1-2.4 0v-.1a1 1 0 0 0-.7-.9 1 1 0 0 0-1.1.2l-.1.1a1.2 1.2 0 1 1-1.7-1.7l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6h-.1a1.2 1.2 0 0 1 0-2.4h.1a1 1 0 0 0 .9-.7 1 1 0 0 0-.2-1.1l-.1-.1a1.2 1.2 0 1 1 1.7-1.7l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .6-.9v-.1a1.2 1.2 0 0 1 2.4 0v.1a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1.2 1.2 0 1 1 1.7 1.7l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.6h.1a1.2 1.2 0 0 1 0 2.4h-.1a1 1 0 0 0-.9.6z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>
       <span data-i18n="acct.settings">Settings</span>
     </button>
-    <!-- Opens the person's own mail app to our support inbox (no personal data in the draft). -->
+    <!-- Opens the Help and support panel (#helpModal): copy the address, Gmail, or the mail app. -->
     <button class="acct-menu-item" id="menuHelp" role="menuitem" type="button">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6.2 6.3a1.9 1.9 0 0 1 3.7.5c0 1.3-1.9 1.6-1.9 2.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>
       <span data-i18n="acct.help">Help and support</span>
@@ -1401,6 +1401,27 @@
   <div class="acct-menu lang-menu" id="langMenu" role="menu" hidden>
     <div class="acct-menu-head"><div class="acct-menu-name" data-i18n="lang.title">Language</div></div>
     <div id="langList"><!-- language options injected --></div>
+  </div>
+
+  <!-- Help and support: our address to copy, Gmail's compose screen in the person's own browser,
+       or their mail app. Never depends on the OS mail handler alone (a browser set as the mailto
+       handler with no mail in it just flashes). The draft carries only the app version. -->
+  <div class="upg help" id="helpModal" hidden>
+    <div class="upg-card help-card" role="dialog" aria-modal="true" aria-labelledby="helpH">
+      <button class="upg-x" id="helpClose" type="button" aria-label="Close">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+      <header class="upg-head">
+        <h2 class="upg-h" id="helpH" data-i18n="acct.help">Help and support</h2>
+        <p class="upg-sub" data-i18n="help.sub">Email us. We usually reply within a day.</p>
+      </header>
+      <div class="help-addr">
+        <span class="help-email" id="helpEmail">support@sponsorjobs.ai</span>
+        <button class="btn btn-ghost btn-sm" id="helpCopy" type="button" data-i18n="help.copy">Copy</button>
+      </div>
+      <button class="btn btn-primary help-gmail" id="helpGmail" type="button" data-i18n="help.gmail">Open in Gmail</button>
+      <button class="link-btn help-mailapp" id="helpMailApp" type="button" data-i18n="help.mailApp">Use my mail app</button>
+    </div>
   </div>
 
   <!-- Settings. The rail is short ON PURPOSE: too many categories force a choice
