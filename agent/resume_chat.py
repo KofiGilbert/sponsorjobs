@@ -521,8 +521,9 @@ def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "",
             "- When the person asks about white space, a short page, a gap at the bottom or a "
             "resume that looks incomplete, call fill_page; never guess why. Then say in one or two "
             "plain sentences what changed (the fill before and after). If it is still short, give "
-            "the reason the tool returned and ask ONE specific question for real material that "
-            "would fill it.")
+            "the reason the tool returned, if it gave one, and ask ONE specific question for real "
+            "material that would fill it. Never mention tools, calls or what a tool did or did not "
+            "say: speak as yourself (\"I re-ran the fill\", never \"the tool didn't say\").")
     if "add_github_projects" in tools:
         lines[lines.index("Rules:") + 2] = (
             "- The only change you can make is adding the person's own GitHub repositories with "
