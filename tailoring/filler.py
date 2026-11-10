@@ -316,3 +316,75 @@ def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = 
     if hollow(new):
         out.append("empty filler")
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Padding that adds no fact (Kofi, 2026-11-10, a real D365 build)
+# --------------------------------------------------------------------------- #
+# Stock tails a model reaches a length with: "for stakeholders across the business" on three
+# bullets of one role, "for BlackOrigin Inc.'s products", "at Stanbic Bank Ghana".
+_STOCK_TAIL = re.compile(
+    r"\b(?:for|to|with)\s+(?:the\s+|its\s+|their\s+)?(?:key\s+)?stakeholders"
+    r"(?:\s+across\s+the\s+(?:business|company|organi[sz]ation|bank))?\b"
+    r"|\bacross\s+the\s+(?:business|organi[sz]ation)\b", re.I)
+_CORP = re.compile(r"\b(?:inc|llc|ltd|limited|corp|corporation|co|plc|gmbh|group)\.?$", re.I)
+# A run of this many words in a row, with at least two content words, said again on another
+# bullet of the same role is a repeated phrase.
+REPEAT_RUN = 4
+
+
+def employer_names(org: str) -> list[str]:
+    """How a bullet could name its own employer: the full name, the name without "Inc." and
+    the like, and an acronym in brackets ("CSIR")."""
+    org = str(org or "").strip()
+    if not org:
+        return []
+    out = {org}
+    core = re.sub(r"\s*\([^)]*\)\s*", " ", org).strip(" ,.")
+    core = _CORP.sub("", core).strip(" ,.")
+    if len(core) >= 3:
+        out.add(core)
+    out |= {m for m in re.findall(r"\(([A-Z][A-Za-z&]{1,9})\)", org)}
+    return sorted(out, key=len, reverse=True)
+
+
+def role_padding(new: str, siblings, employer: str = "", source: str = "") -> list[str]:
+    """Padding a bullet added to a role carries that states no fact: its own employer's name
+    (the role's heading already says it), a stock tail ("for stakeholders across the
+    business"), or a phrase another bullet of the role already says. Anything ``source`` (the
+    person's own bullet it came from) already says is theirs and allowed."""
+    new, source = str(new or ""), str(source or "")
+    out: list[str] = []
+    for name in employer_names(employer):
+        if re.search(r"(?<![A-Za-z])" + re.escape(name) + r"(?![A-Za-z])", new, re.I) and \
+                not re.search(r"(?<![A-Za-z])" + re.escape(name) + r"(?![A-Za-z])", source, re.I):
+            out.append("names its own employer")
+            break
+    m = _STOCK_TAIL.search(new)
+    if m and not _STOCK_TAIL.search(source):
+        out.append("stock tail: " + m.group(0))
+    mine = _fact_tokens(new)
+    src = _fact_tokens(source)
+    for sib in siblings or ():
+        st = _fact_tokens(str(sib or ""))
+        if _shared_phrase(mine, st, src):
+            out.append("repeats a phrase of another bullet")
+            break
+    return out
+
+
+def _shared_phrase(a: list[str], b: list[str], allowed: list[str]) -> bool:
+    """A run of ``REPEAT_RUN`` or more words in both ``a`` and ``b``, with two content words,
+    that ``allowed`` does not hold."""
+    allowed_s = " " + " ".join(allowed) + " "
+    for i in range(len(a)):
+        for j in range(len(b)):
+            k = 0
+            while i + k < len(a) and j + k < len(b) and a[i + k] == b[j + k]:
+                k += 1
+            if k >= REPEAT_RUN:
+                run = a[i:i + k]
+                if sum(t not in _FACT_STOP for t in run) >= 2 and \
+                        (" " + " ".join(run[:REPEAT_RUN]) + " ") not in allowed_s:
+                    return True
+    return False

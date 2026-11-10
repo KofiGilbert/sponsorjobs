@@ -34,13 +34,15 @@ def _counts(profile: dict) -> list[int]:
 
 
 # --------------------------------------------------------------------------- the staircase
-RICH = ("Analyzed SQL and Excel operational data for a high-volume delivery platform, tracking 250 "
-        "drivers and 5,000+ daily orders, and turned the findings into capacity and service-level "
-        "decisions for the operations team.")
+RICH = ("Analyzed SQL and Excel operational data for a high-volume delivery platform serving the "
+        "Accra metro area, tracking 250 drivers and 5,000+ daily orders through shift reports, and "
+        "turned the findings into capacity and service-level decisions for the operations team and "
+        "the product group.")
+# Each part a full line of its own (a split is taken only when its parts stand as full lines).
 RICH_PARTS = [
-    "Analyzed SQL and Excel operational data for a high-volume delivery platform's operations team.",
-    "Tracked 250 drivers and 5,000+ daily orders on the delivery platform in SQL and Excel.",
-    "Turned the operational findings into capacity and service-level decisions for the operations team.",
+    "Analyzed SQL and Excel operational data for a high-volume delivery platform serving the Accra metro area.",
+    "Tracked 250 drivers and 5,000+ daily orders through shift reports on the delivery platform in SQL and Excel.",
+    "Turned the operational findings into capacity and service-level decisions for the operations team and the product group.",
 ]
 
 
@@ -252,12 +254,19 @@ def test_a_split_part_that_takes_a_sibling_s_point_is_refused():
                 "Tracked 250 drivers and more than 5,000 daily orders on the digital fulfillment platform, "
                 "turning findings into decisions on capacity and service levels."]
     assert "point" in _split_problem(borrowed, v0, v0 + "\nhigh-velocity\n" + v1, [v1], "", "past")
-    honest = ["Analyzed SQL and Excel operational data for a high-velocity digital fulfillment platform.",
-              "Tracked 250 drivers and 5,000+ daily orders on the digital fulfillment platform."]
-    assert _split_problem(honest, v0, v0 + "\nhigh-velocity\n" + v1, [v1], "", "past") == ""
+    honest = ["Analyzed SQL and Excel operational data for a high-velocity digital fulfillment platform "
+              "and its daily operations.",
+              "Tracked 250 drivers and 5,000+ daily orders through shift reports, measuring the workload "
+              "behind each delivery."]
+    notes = v0 + "\nhigh-velocity\n" + v1 + "\nshift reports workload measuring delivery daily operations"
+    assert _split_problem(honest, v0, notes, [v1], "", "past") == ""
+    # a part too short to stand as a full line keeps the bullet whole (the role gets a written one)
+    assert "too thin" in _split_problem(
+        ["Analyzed SQL and Excel operational data for a digital fulfillment platform.", honest[1]],
+        v0, notes, [v1], "", "past")
     # two parts that open the same way read as one fact twice
-    same = ["Turned operational findings into product decisions for the fulfillment platform.",
-            "Turned operational findings into operations decisions on capacity and service levels."]
+    same = ["Turned operational findings into product decisions on what the fulfillment platform built next.",
+            "Turned operational findings into operations decisions on driver capacity and service levels."]
     assert "opens like" in _split_problem(same, v1, v1, [v0], "", "past")
 
 
@@ -360,3 +369,62 @@ def test_the_page_rule_report_measures_the_compiled_pdf(template_source, workdir
     roles = [r for _k, _e, r in sorted(ranked_roles(tied.profile_used), key=lambda x: x[0])]
     roles[-2]["bullets"] = roles[-2]["bullets"][:len(roles[-1]["bullets"])]
     assert not A.page_rule_report(tied)["staircase"]
+
+
+# --------------------------------------------------------------------------- padding with no fact
+def test_padding_that_adds_no_fact_is_refused():
+    """Word for word from the confirming real run (2026-11-10)."""
+    from tailoring.filler import role_padding
+    bo = "BlackOrigin Inc."
+    sibs = ["Led business intelligence across the company's products for stakeholders across the business."]
+    assert "repeats a phrase of another bullet" in role_padding(
+        "Built KPI dashboards that track growth, usage, and unit costs for stakeholders across the business.",
+        sibs, bo)
+    assert any(x.startswith("stock tail") for x in role_padding(
+        "Built automated Python and SQL reporting for stakeholders across the business.", [], bo))
+    assert "names its own employer" in role_padding(
+        "Built automated Python and SQL reporting for BlackOrigin Inc.'s products.", [], bo)
+    csir = "Council for Scientific and Industrial Research (CSIR)"
+    assert "names its own employer" in role_padding(
+        "Analyzed research datasets at the Council for Scientific and Industrial Research (CSIR).", [], csir)
+    assert "names its own employer" in role_padding("Built SQL pipelines for CSIR research.", [], csir)
+    # the written bullet the run got right passes
+    assert role_padding("Built SQL reports and dashboards that gave operations staff a daily view of "
+                        "order volumes, driver workload and service levels on the fulfillment platform.",
+                        ["Analyzed SQL and Excel operational data for a digital fulfillment platform."],
+                        "Viva Technologies Ghana") == []
+    # what the person's own bullet already says is theirs
+    own = "Led enterprise CRM requirements for stakeholders across the business."
+    assert role_padding(own, [], bo, source=own) == []
+
+
+class _Polisher(FakeLLM):
+    """Polishes every bullet by naming the employer: each rewrite must be refused."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    def polish_role(self, role_label, bullets, budgets, context="", jd_text="", only=None):
+        self.calls += 1
+        org = role_label.split(", ")[0]
+        return [f"{b.rstrip('.')} at {org}, working across every team and function there." for b in bullets]
+
+    def split_bullet(self, *a, **k):
+        return [a[1]]
+
+    def write_role_bullet(self, *a, **k):
+        return ""
+
+
+@requires_latex
+def test_the_edge_polish_runs_per_role_and_refuses_padding(template_source, workdir):
+    llm = _Polisher()
+    prof = _ladder_profile()
+    res = assemble_cv(template_source, prof, "Data Analyst. SQL, Excel, Tableau.", llm, workdir,
+                      tailor=False, fill_writes=True, fit_lines=True, fit_rounds=0)
+    assert res.ok and res.compile.pages == 1
+    assert llm.calls >= 1
+    for _k, e, r in ranked_roles(res.profile_used):
+        for b in r["bullets"]:
+            assert e["org"] not in b, b

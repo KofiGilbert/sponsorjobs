@@ -1210,7 +1210,8 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     """
     from .fact_gate import gate_rewrite
     from .fact_gate import known_material
-    from .filler import borrows_from_sibling, hollow, is_padded, repeats_sibling, tacked_on_terms
+    from .filler import (borrows_from_sibling, hollow, is_padded, repeats_sibling, role_padding,
+                         tacked_on_terms)
     from .keywords import supported_skills, term_present
 
     # What a fill may name: the person's material and the job's own words (its duties, its tools).
@@ -1298,6 +1299,8 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                            else [])
                        or tacked_on_terms(text, new)
                        or (["empty filler"] if hollow(new) else [])
+                       or role_padding(new, siblings, label.split(", ")[0] if section == "experience"
+                                       else "", text)
                        or gate_rewrite(text, new, known=fill_known, known_figures=known_figures))
                 if bad:
                     out.rejected.append({"label": label, "bullet": text, "attempted": new,

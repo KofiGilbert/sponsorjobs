@@ -1696,7 +1696,8 @@ def _listed_skills(profile: dict) -> list[str]:
 
 
 def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
-                     listed_skills=(), max_chars: int = 0, material: str = "") -> list[str]:
+                     listed_skills=(), max_chars: int = 0, material: str = "",
+                     employer: str = "") -> list[str]:
     """Why a bullet WRITTEN for one role may not go on the page; empty means it may.
 
     Like a professional resume writer (Kofi, 2026-11-10), the writer may describe the work a
@@ -1708,7 +1709,7 @@ def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
     that repeats or restates another bullet of the role (one fact, one bullet)."""
     from .fact_gate import figures, known_material, new_claims, source_figures
     from .filler import (_FACT_STOP, _fact_tokens, filler_added, new_bullet_problems,
-                         repeats_sibling, same_fact, tacked_on_terms)
+                         repeats_sibling, role_padding, same_fact, tacked_on_terms)
 
     new = str(new or "").strip()
     if not new:
@@ -1738,6 +1739,7 @@ def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
         bad.append("too long")
     # One fact, one bullet: something no other bullet of the role says.
     bad += new_bullet_problems(new, sibs)
+    bad += role_padding(new, sibs, employer)
     return list(dict.fromkeys(bad))
 
 
@@ -1809,7 +1811,7 @@ def _role_tense(role: dict, entry: dict, others) -> str:
 # A part of a split that is shorter than this, or says fewer content words, is too thin to
 # stand as its own achievement ("Turn the reporting results into roadmap and spend decisions.",
 # a real build): the bullet is kept whole instead.
-SPLIT_MIN_CHARS = 70
+SPLIT_MIN_CHARS = 85
 SPLIT_MIN_WORDS = 6
 # A split the checks refuse is asked for once more, with the reason.
 SPLIT_TRIES = 2
@@ -1831,23 +1833,24 @@ _SPLIT_HINTS = {
 # A bullet splits into at most this many parts, and into three only when it is long enough to
 # hold them (about this many characters of its own words per part).
 SPLIT_MAX_PARTS = 3
-SPLIT_CHARS_PER_PART = 65
+SPLIT_CHARS_PER_PART = 85
 
 
 def _split_ok(parts: list, src: str, role_text: str, siblings, jd_text: str,
-              tense: str = "") -> bool:
+              tense: str = "", employer: str = "") -> bool:
     """Every part of a split restates only its source bullet: no new figure, name or skill,
     no filler, no repeat of another bullet or of another part. Each part is a complete
     achievement of its own (``SPLIT_MIN_CHARS``, ``SPLIT_MIN_WORDS``) and opens in ``tense``."""
-    return not _split_problem(parts, src, role_text, siblings, jd_text, tense)
+    return not _split_problem(parts, src, role_text, siblings, jd_text, tense, employer)
 
 
 def _split_problem(parts: list, src: str, role_text: str, siblings, jd_text: str,
-                   tense: str = "") -> str:
+                   tense: str = "", employer: str = "") -> str:
     """Why a split may not go on the page (``_split_ok``); "" when it may."""
     from .fact_gate import figures, known_material, new_claims
     from .filler import (_content_stems, _fact_tokens, _longest_shared_run, borrows_from_sibling,
-                         fact_stems, filler_added, new_bullet_problems, shares_a_clause)
+                         fact_stems, filler_added, new_bullet_problems, role_padding,
+                         shares_a_clause)
     from .keywords import introduced_skills
 
     known = known_material(src, role_text)
@@ -1883,6 +1886,10 @@ def _split_problem(parts: list, src: str, role_text: str, siblings, jd_text: str
             return f"part {n + 1} opens like another part"
         # Each part says a fact the role's other bullets do not, and is not empty filler.
         bad = new_bullet_problems(part, siblings, restate=False)
+        # No padding that states no fact: its own employer's name, a stock tail, a phrase
+        # another bullet of the role (or the other part) already says.
+        bad += role_padding(part, list(siblings or ()) + [x for k, x in enumerate(parts) if k != n],
+                            employer, src)
         if bad:
             return f"part {n + 1}: {bad[0]}"
     return ""
@@ -2007,6 +2014,7 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                                "dry": False})
         bl = role["bullets"]
         label = entry_label(entry, role)
+        employer = str(entry.get("org") or entry.get("company") or "") if section == "experience" else ""
         rec = {"section": section, "label": label}
         src_role = source_roles.get(_role_key(entry, role))
         reserve = role.get("_reserve") or []
@@ -2065,7 +2073,8 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                             why = "not that many parts"
                             _fill_log(step="split", label=label, src=src, n=n, parts=parts, why=why)
                             break                              # the model says it holds fewer
-                        why = _split_problem(parts, src, role_text, others, jd_text, tense)
+                        why = _split_problem(parts, src, role_text, others, jd_text, tense,
+                                             employer)
                         if why:
                             # A model told to write whole sentences tends to end a part with a
                             # clause that only reaches a length: the part without it is tried.
@@ -2073,7 +2082,7 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                                        for x in parts]
                             if trimmed != parts:
                                 why2 = _split_problem(trimmed, src, role_text, others, jd_text,
-                                                      tense)
+                                                      tense, employer)
                                 _fill_log(step="split-trim", label=label, src=src, n=n,
                                           parts=trimmed, why=why2)
                                 if not why2:
@@ -2115,7 +2124,7 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                 if new.strip(". ").upper() == "NONE":
                     new = ""
                 why = (written_problems(new, role_text, mine, jd_text, listed, budget,
-                                        material=extra) if new else ["none"])
+                                        material=extra, employer=employer) if new else ["none"])
                 _fill_log(step="write", label=label, bullet=new, why=why)
                 if new and not why:
                     origins[new] = new                         # traced through the line fit
@@ -2239,13 +2248,43 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
         below = len(chain[i + 1][2]["bullets"]) + 1
         return max(below, STAIR_FIRST) if i == 0 else below
 
+    def dry(entry: dict, role: dict) -> bool:
+        return bool(state.get(("experience",) + _role_key(entry, role), {}).get("dry"))
+
     def base():
         for i in range(len(chain) - 1, -1, -1):
             _rank, entry, role = chain[i]
             want = floor_of(i)
+            if i and dry(chain[i - 1][1], chain[i - 1][2]):
+                # The role above has no more to give: this one stays a step under it.
+                want = min(want, max(len(chain[i - 1][2]["bullets"]) - 1,
+                                     OLDEST_FLOOR if i == len(chain) - 1 else 1))
             while len(role["bullets"]) < want:
                 if not grow(entry, role, want, room=True):
                     break
+
+    def unwind() -> bool:
+        # The bottom-up climb reached a role whose role above then ran dry: the bullets the fill
+        # WROTE for it come back off until it stands a step under the role above again (the
+        # person's own bullets are hold()'s to cut, with Put back).
+        written = {str(a.get("bullet")) for a in added if a.get("kind") == "written"}
+        took = False
+        for i in range(1, len(chain)):
+            _rank, entry, role = chain[i]
+            floor = OLDEST_FLOOR if i == len(chain) - 1 else 1
+            lim = max(floor, len(chain[i - 1][2]["bullets"]) - 1)
+            bl = role["bullets"]
+            while len(bl) > lim:
+                k = next((j for j in range(len(bl) - 1, -1, -1) if str(bl[j]) in written), None)
+                if k is None:
+                    break
+                bl.pop(k)
+                took = True
+        if took:
+            now = {str(b) for _k, _e, r in chain for b in r["bullets"]}
+            added[:] = [a for a in added if a.get("section") != "experience"
+                        or str(a.get("bullet")) in now]
+        return took
 
     def one_more(top_cap: int) -> bool:
         for i, (_rank, entry, role) in enumerate(chain):
@@ -2255,6 +2294,7 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
         return False
 
     def climb():
+        nonlocal result
         if not chain or blocked:
             return
         base()
@@ -2265,9 +2305,13 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
             # The top goes past STAIR_SOFT_TOP only when every role below stands a step under the
             # one above it: a tie lower down is not fixed by piling more onto the top.
             counts = [len(r["bullets"]) for _k, _e, r in chain]
-            if top_cap >= STAIR_TOP or any(b >= a for a, b in zip(counts, counts[1:])):
+            if top_cap >= STAIR_TOP or any(a - b != 1 for a, b in zip(counts, counts[1:])):
                 break
             top_cap += 1                     # every role stands a step below: the page needs more
+        if unwind():
+            r = measure()
+            if r and r.ok and r.pages == 1 and r.fill_ratio is not None:
+                result = r
 
     def hold() -> bool:
         # The staircase holds: an older role never shows as many bullets as the role above it.
@@ -2346,6 +2390,115 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                          "there is no more of your material for that role yet. Tell me more "
                          "about it and I will add it.")
     return result, added, notes
+
+
+# A polished bullet aims at this share of its lines' width: one full line, or two.
+POLISH_LO, POLISH_HI = 0.93, 0.99
+
+
+def _chars_per_line(rep) -> float:
+    """Characters one full bullet line holds on this page, from the measured bullets."""
+    est = [len(i.text) / i.total for i in rep.bullets if i.found and i.total >= 0.5]
+    est.sort()
+    return est[len(est) // 2] if est else 0.0
+
+
+def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, headings,
+                  workdir: Path, jobname: str, origins: dict, known: dict, known_figures: set):
+    """Rewrite each entry's bullets so every one runs to the right edge: one call per entry
+    (``llm.polish_role``) with a character window per bullet (one full line, or two, from the
+    measured width), keeping its facts and keeping the bullets distinct. Each rewrite passes
+    the fact gate, the filler and padding checks (no invented number, name or credential, no
+    employer name, no stock tail, no phrase another bullet says); an entry's rewrites are kept
+    only when the page stays one clean page at least as full. Then one targeted retry for any
+    bullet still short or spilling. Returns the result."""
+    from . import linefit as _lf
+    from .fact_gate import gate_rewrite
+    from .filler import hollow, is_padded, role_padding
+
+    base_overfull = result.overfull_count
+
+    def measure_page():
+        return _lf.measure(getattr(result, "pdf_path", None), used)
+
+    def clean(r, before) -> bool:
+        return bool(r and r.ok and r.pages == 1 and r.overfull_count <= base_overfull
+                    and r.fill_ratio is not None and r.fill_ratio <= MAX_FILL
+                    and r.fill_ratio >= min(before, FILL_GOAL) - 0.002)
+
+    def entries():
+        for p in used.get("projects") or []:
+            if isinstance(p, dict) and isinstance(p.get("bullets"), list):
+                yield p, p, "", entry_label(p)
+        for _rank, e, r in ranked_roles(used):
+            if isinstance(r.get("bullets"), list):
+                yield e, r, str(e.get("org") or e.get("company") or ""), entry_label(e, r)
+
+    for attempt in range(2):
+        rep = measure_page()
+        cpl = _chars_per_line(rep)
+        if not cpl:
+            return result
+        fits = {i.text: i for i in rep.bullets}
+        for entry, role, employer, label in list(entries()):
+            bl = role["bullets"]
+            todo = [k for k, b in enumerate(bl) if b in fits and not fits[b].ok()]
+            if not todo:
+                continue
+            asks = []
+            for k in range(len(bl)):
+                it = fits.get(bl[k])
+                n = max(1, round(it.total)) if it and it.found else max(1, round(len(bl[k]) / cpl))
+                if it and it.found and it.lines >= 2 and it.last_fill < _lf.SPILL_TRIM:
+                    n = it.lines - 1                         # a stub line: one line fewer
+                asks.append((int(cpl * n * POLISH_LO), int(cpl * n * POLISH_HI)))
+            context = profile_text_safe(entry)
+            try:
+                out = llm.polish_role(label, list(bl), asks, context=context, jd_text=jd_text,
+                                      only=todo if attempt else None)
+            except Exception:                                # noqa: BLE001 - polish is optional
+                continue
+            if not isinstance(out, list) or len(out) != len(bl):
+                continue
+            new = list(bl)
+            for k in todo:
+                cand = str(out[k] or "").strip()
+                lo, hi = asks[k]
+                if not cand or cand == bl[k] or not (lo * 0.9 <= len(cand) <= hi * 1.06):
+                    continue
+                others = [x for j, x in enumerate(new) if j != k]
+                src = str(origins.get(bl[k], bl[k]))
+                if (gate_rewrite(bl[k], cand, known=known, known_figures=known_figures)
+                        or hollow(cand) or is_padded(bl[k], cand)
+                        or role_padding(cand, others, employer, src + " " + bl[k])):
+                    _fill_log(step="polish", label=label, bullet=cand, why="refused")
+                    continue
+                new[k] = cand
+            if new == bl:
+                continue
+            before = result.fill_ratio or 0.0
+            old = list(bl)
+            role["bullets"][:] = new
+            r = compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
+                            workdir, jobname=f"{jobname}-polish")
+            if clean(r, before):
+                result = r
+                for o, n_ in zip(old, new):
+                    if o != n_:
+                        origins[n_] = origins.get(o, o)
+                _fill_log(step="polished", label=label, fill=r.fill_ratio)
+            else:
+                role["bullets"][:] = old
+                _fill_log(step="polish-undone", label=label, fill=getattr(r, "fill_ratio", None))
+    return result
+
+
+def profile_text_safe(entry: dict) -> str:
+    from .keywords import profile_text
+    try:
+        return profile_text(entry)
+    except Exception:                                        # noqa: BLE001
+        return ""
 
 
 def staircase_ok(profile: dict) -> bool:
@@ -2729,6 +2882,18 @@ def assemble_cv(
                 bullet_notes = list(dict.fromkeys(list(bullet_notes) + list(notes2)))
     if staircase_ok(used):                   # a step the second pass made needs no note
         bullet_notes = [n for n in bullet_notes if "no more than the older" not in n]
+
+    # THE EDGE POLISH (Kofi, 2026-11-10): one model call per role, every bullet given a
+    # character budget from the measured line width (one full line, or two), so no bullet
+    # stops short or spills a stub; re-measured, with one targeted retry.
+    if (fit_lines and llm is not None and callable(getattr(llm, "polish_role", None))
+            and result and result.ok and result.pages == 1):
+        from .fact_gate import known_material, source_figures
+        result = _polish_edges(preamble, used, result, llm=llm, jd_text=jd_text,
+                               sections=sections, headings=headings, workdir=workdir,
+                               jobname=jobname, origins=origins,
+                               known=known_material(*gate_material, jd_text),
+                               known_figures=source_figures(*gate_material))
 
     # The grow, fill and restore passes compile under side jobnames (-full, -fill, -restore).
     # Whatever won must also exist under the REAL jobname, because that is the file the app serves (/api/cv.pdf?job=...);

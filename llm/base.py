@@ -433,14 +433,14 @@ class FakeLLM:
 
     # Each frame shares as few words as possible with the others, so a later written bullet
     # never restates an earlier one (assembler.written_problems).
-    # Each frame is the role's own words (its title and employer) around the job terms, so a
-    # written bullet carries no padding (tailoring/filler.new_bullet_problems).
+    # Each frame names no employer and shares no phrase with another frame, so a written
+    # bullet passes the padding checks (tailoring/filler.role_padding).
     _WRITE_FRAMES = (
-        "Worked with {ab} as {title} at {org}.",
+        "Worked with {ab} as {title}.",
         "Used {ab} in the {title} role.",
-        "Applied {ab} to {org} work.",
-        "Relied on {ab} at {org}.",
-        "Brought {ab} into the {title} role.",
+        "Applied {ab} to weekly reporting requests.",
+        "Relied on {ab} for routine data checks.",
+        "Brought {ab} into monthly planning reviews.",
     )
 
     def write_role_bullet(self, role_label: str, material: str, existing: list[str],
@@ -459,6 +459,11 @@ class FakeLLM:
         text = self._WRITE_FRAMES[n % len(self._WRITE_FRAMES)].format(
             ab=a if a == b else f"{a} and {b}", title=title, org=org)
         return text if len(text) <= max(int(max_chars or 0), 1) else ""
+
+    def polish_role(self, role_label: str, bullets: list[str], budgets: list, context: str = "",
+                    jd_text: str = "", only=None) -> list[str]:
+        """Deterministic test double: the bullets unchanged (it never writes to a length)."""
+        return list(bullets)
 
     # -- self-heal ------------------------------------------------------- #
     def shorten_bullet(self, text: str, max_len_chars: int) -> str:

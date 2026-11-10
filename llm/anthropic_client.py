@@ -452,6 +452,49 @@ class AnthropicLLM:
                 pass
         return [str(text or "").strip()]
 
+    def polish_role(self, role_label: str, bullets: list[str], budgets: list, context: str = "",
+                    jd_text: str = "", only=None) -> list[str]:
+        """Rewrite one role's bullets so each lands in its character window (one full printed
+        line, or two), keeping every fact and keeping the bullets distinct
+        (tailoring/assembler.py ``_polish_edges``; every rewrite is checked again)."""
+        idx = list(range(len(bullets))) if only is None else [int(k) for k in only]
+        lines = []
+        for k, b in enumerate(bullets):
+            lo, hi = budgets[k]
+            mark = f"REWRITE to {lo}-{hi} characters" if k in idx else "KEEP AS IS"
+            lines.append(f"{k + 1}. [{mark}] ({len(b)} now) {b}")
+        system = (
+            "You are a professional resume writer polishing ONE role's bullets so every bullet "
+            "runs to the right edge of the page: each marked bullet must land inside its "
+            "character window (a full printed line, or two full lines). Count carefully.\n"
+            "- Keep every fact, number and name the bullet states. To lengthen, add real detail "
+            "from ROLE CONTEXT or the work the TARGET JOB describes for this kind of role "
+            "(a tool, a method, who it served, what it changed). To shorten, drop the weakest "
+            "words.\n"
+            "- Never invent a number or percentage, an employer, product or client name, or a "
+            "degree, certification or award.\n"
+            "- Never put the employer's own name in a bullet, never use stock tails like \"for "
+            "stakeholders across the business\", and never repeat a phrase another bullet of "
+            "this role uses. Each bullet says its own thing.\n"
+            "- Start with a concrete action verb in the bullet's tense. No filler (leveraging, "
+            "ensuring, robust, comprehensive, seamless), no em or en dashes.\n"
+            "Return ONLY a JSON array with one string per bullet, in order, KEEP AS IS bullets "
+            "unchanged."
+        )
+        user = (f"ROLE: {role_label}\n\nBULLETS:\n" + "\n".join(lines) + "\n\n"
+                f"ROLE CONTEXT:\n{str(context)[:2000]}\n\n"
+                f"TARGET JOB (context only):\n{str(jd_text)[:1000]}")
+        out = self._complete(system, user, max_tokens=1200, effort="medium") or ""
+        if "[" in out and "]" in out:
+            try:
+                data = json.loads(out[out.find("["): out.rfind("]") + 1])
+                got = [str(x).strip() for x in data]
+                if len(got) == len(bullets):
+                    return got
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return list(bullets)
+
     def write_role_bullet(self, role_label: str, material: str, existing: list[str],
                           jd_terms: list[str], max_chars: int, jd_text: str = "") -> str:
         """ONE more bullet for one role, from that role's own material only, for a page that
