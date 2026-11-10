@@ -262,6 +262,23 @@ class LineReport:
         return "\n".join(out)
 
 
+# A resize that lengthens a bullet with this many content words its entry's material never says
+# (and that make up more than ``filler.PAD_SHARE`` of the bullet) pads it out: "owning the
+# function that covers every product line and the data the company uses to track them" on a
+# real build (2026-11-10).
+PAD_NEW_WORDS = 4
+
+
+def _pads_out(before: str, after: str, grounding: str, source: str = "") -> bool:
+    from .filler import PAD_SHARE, fact_stems
+    mine = set(fact_stems(after))
+    if not mine:
+        return False
+    known = set(fact_stems(before)) | set(fact_stems(grounding)) | set(fact_stems(source))
+    invented = mine - known
+    return len(invented) >= PAD_NEW_WORDS and len(invented) / len(mine) > PAD_SHARE
+
+
 def _bullet_items(profile: dict) -> list[tuple[list, int, str, str, str]]:
     from .assembler import _iter_bullet_slots_with_grounding
     return list(_iter_bullet_slots_with_grounding(profile, with_label=True))
@@ -1287,6 +1304,8 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                            if borrows_from_sibling(text, new, (trimmed or {}).get(label) or ())
                            else [])
                        or tacked_on_terms(text, new)
+                       or (["padding"] if _pads_out(text, new, grounding,
+                                                    (origins or {}).get(text, "")) else [])
                        or gate_rewrite(text, new, known=known, known_figures=known_figures))
                 if bad:
                     out.rejected.append({"label": label, "bullet": text, "attempted": new,

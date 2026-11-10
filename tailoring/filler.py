@@ -213,3 +213,83 @@ def dedupe_bullets(bullets: list) -> list:
             continue
         out.append(b)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# A bullet the page fill adds must say something of its own (Kofi, 2026-11-10)
+# --------------------------------------------------------------------------- #
+# The staircase fill grew a role by splitting its bullets and writing more, and a real D365 build
+# came out with thin parts that restate each other: "Led business intelligence across the
+# company's products, owning the function that covers every product line and the data the
+# company uses to track them." beside "Set the reporting direction for the product, growth, and
+# finance teams...", and "Built an AI-assisted pipeline that processes 280,000+ daily job
+# postings, turning a very large raw feed into a structured set of listings." Each new bullet
+# must carry a fact (a tool, a number, an outcome) no other bullet of the role says, in words
+# the person's material states, not words added to reach a length.
+
+# Words that join a sentence without carrying a fact.
+_GLUE = frozenset("that which who whom them they then there than such also each every all both "
+                  "one more very what when where whose so".split())
+# A new bullet needs this many content words (or one figure) that no other bullet of the role says.
+DISTINCT_MIN = 2
+# A new bullet whose content words are this share or more already on the role's other bullets
+# restates them.
+RESTATE_SHARE = 0.5
+# A new bullet may carry at most this share of content words the role's material never says
+# (rephrasing is fine; a clause invented to reach a length is padding).
+PAD_SHARE = 0.34
+
+
+def _stem(t: str) -> str:
+    t = t.lower()
+    if t.endswith("'s"):
+        t = t[:-2]
+    if t.endswith("ss"):
+        return t
+    for suf in ("ing", "ed", "es", "s"):
+        if len(t) > len(suf) + 3 and t.endswith(suf):
+            return t[: -len(suf)]
+    return t
+
+
+def fact_stems(text: str, skip_lead: bool = False) -> list[str]:
+    """The content words of ``text``, stemmed (``turns``, ``turned`` and ``turning`` are one),
+    without joining words. ``skip_lead`` drops the opening verb, which a new bullet is free to
+    choose."""
+    toks = _fact_tokens(text)
+    if skip_lead and toks:
+        toks = toks[1:]
+    return [_stem(t) for t in toks if t not in _FACT_STOP and t not in _GLUE]
+
+
+def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = True) -> list[str]:
+    """Why a bullet the fill ADDS to a role (a part of a split, or a bullet written from the
+    role's material) may not go on the page; empty means it may.
+
+    * "adds no fact of its own": no figure and fewer than ``DISTINCT_MIN`` content words that
+      the role's other bullets (``siblings``) do not already say;
+    * "restates the role's other bullets": ``RESTATE_SHARE`` or more of its content words are
+      already on them (not checked with ``restate`` off: a part of a split may carry its
+      source's context, the platform or the tools, so it reads on its own);
+    * "padded with words the material does not say": more than ``PAD_SHARE`` of its content
+      words appear nowhere in the role's material (``material``, its source bullet included) or
+      on the other bullets."""
+    from .fact_gate import figures
+
+    mine = set(fact_stems(new, skip_lead=True))
+    if not mine:
+        return ["empty"]
+    sibs = [str(s) for s in siblings or () if str(s).strip()]
+    said = {t for s in sibs for t in fact_stems(s)}
+    out: list[str] = []
+    new_figs = figures(new) - {f for s in sibs for f in figures(s)}
+    fresh = mine - said
+    if not new_figs and len(fresh) < DISTINCT_MIN:
+        out.append("adds no fact of its own")
+    elif restate and sibs and len(mine & said) / len(mine) >= RESTATE_SHARE and not new_figs:
+        out.append("restates the role's other bullets")
+    known = said | set(fact_stems(material))
+    invented = mine - known
+    if len(invented) / len(mine) > PAD_SHARE:
+        out.append("padded with words the material does not say")
+    return out

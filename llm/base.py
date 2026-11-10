@@ -81,12 +81,12 @@ class LLMBackend(Protocol):
         """
 
     def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "",
-                     tense: str = "past") -> list[str]:
+                     tense: str = "past", context: str = "") -> list[str]:
         """Rewrite ONE bullet that packs several accomplishments as exactly ``parts`` bullets
         (tailoring/assembler.py ``_recency_fill``, making room for one more bullet on a recent
         role). Each part is a complete achievement sentence opening with a verb in ``tense``
-        ("past" or "present"); every fact comes from ``text``; no phrase repeats across the
-        parts. Return the bullet unchanged in a one-item list when it does not hold that many
+        ("past" or "present"); every fact comes from ``text`` and ``context`` (the role's own
+        material); no phrase repeats across the parts, and none is padded to a length. Return the bullet unchanged in a one-item list when it does not hold that many
         distinct achievements."""
 
     def write_role_bullet(self, role_label: str, material: str, existing: list[str],
@@ -418,7 +418,7 @@ class FakeLLM:
         return [str(b).strip() for b in bullets if str(b).strip()]
 
     def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "",
-                     tense: str = "past") -> list[str]:
+                     tense: str = "past", context: str = "") -> list[str]:
         """Deterministic: split at a semicolon, else at the last ", and ", into ``parts``
         sentences of the bullet's own words; the bullet unchanged when it has no such joint.
         It never changes a verb, so the assembler's tense check decides whether it stands."""
@@ -433,12 +433,14 @@ class FakeLLM:
 
     # Each frame shares as few words as possible with the others, so a later written bullet
     # never restates an earlier one (assembler.written_problems).
+    # Each frame is the role's own words (its title and employer) around the job terms, so a
+    # written bullet carries no padding (tailoring/filler.new_bullet_problems).
     _WRITE_FRAMES = (
         "Worked with {ab} as {title} at {org}.",
-        "Used {ab} in day-to-day tasks.",
-        "Applied {ab} to recurring requests.",
-        "Relied on {ab} for routine checks.",
-        "Brought {ab} into weekly reviews.",
+        "Used {ab} in the {title} role.",
+        "Applied {ab} to {org} work.",
+        "Relied on {ab} at {org}.",
+        "Brought {ab} into the {title} role.",
     )
 
     def write_role_bullet(self, role_label: str, material: str, existing: list[str],

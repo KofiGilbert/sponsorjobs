@@ -185,7 +185,9 @@ def test_the_freed_line_gives_the_oldest_role_its_second_bullet(template_source,
     six = assemble_cv(template_source, _staircase_sample(), jd, None, workdir, tailor=False,
                       skill_cap=6, jobname="six")
     five = assemble_cv(template_source, _staircase_sample(), jd, None, workdir, tailor=False)
-    assert len(six.profile_used["skills"]) == 6 and _counts(six.profile_used)[-1] == 1
+    # The oldest role keeps its second bullet either way (Kofi, 2026-11-10: it never goes below
+    # two); the strict staircase is built from the bottom up.
+    assert len(six.profile_used["skills"]) == 6 and _counts(six.profile_used)[-1] == 2
     assert five.ok and five.compile.pages == 1 and five.compile.overfull_count == 0
     assert len(five.profile_used["skills"]) == 5
     c = _counts(five.profile_used)

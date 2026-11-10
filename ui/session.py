@@ -938,6 +938,27 @@ def _builds(kind: str):
 
 
 class WebIntake:
+    # The body sections the page renders: the template's own (its manifest), plus Interests
+    # whenever the person gave them and the template has no Interests section of its own. Kofi
+    # answered the hobbies question and a D365 build in the Software Engineer template (no
+    # Interests section) printed none of it (2026-11-10): what the person gives always prints.
+    # It goes last, as "Additional Information", and renders nothing while they have none.
+    @property
+    def sections(self) -> list:
+        secs = list(getattr(self, "_template_sections", None) or [])
+        if secs and "interests" not in secs and self._has_interests():
+            secs.append("interests")
+        return secs
+
+    @sections.setter
+    def sections(self, value) -> None:
+        self._template_sections = list(value or [])
+
+    def _has_interests(self) -> bool:
+        return self._section_filled("interests", getattr(self, "profile", None) or {},
+                                    getattr(self, "essentials", None) or {},
+                                    getattr(self, "saved_profile", None) or {})
+
     def __init__(self, jd_text, template_source, llm, memory, records, workdir,
                  profile_name="default", jobname="cv", palace_dir=None,
                  template_name=None):
@@ -5292,8 +5313,44 @@ class WebIntake:
     def _fit_material(self) -> list:
         """The fact gate's material for a fit build: the brain material plus the person's
         stated skills and real bullets (``_skill_source_text``), so a skill they told us
-        about may be placed on the page."""
-        return list(self._brain_material()) + [self._skill_source_text()] + self._brain_skills()
+        about may be placed on the page, and what their uploaded resumes say under each of
+        their employers (``_upload_role_notes``), which the page fill may split or draw on."""
+        out = list(self._brain_material()) + [self._skill_source_text()] + self._brain_skills()
+        notes = self._upload_role_notes()
+        return out + ([{"role_notes": notes}] if notes else [])
+
+    _UPLOAD_TEXT: dict = {}          # (path, mtime) -> extracted text of that uploaded file
+
+    def _upload_role_notes(self) -> dict:
+        """{employer, lower case: what the person's uploaded resumes say under it}
+        (tailoring/assembler.role_notes), newest file first, for the employers in their
+        profile. Read once per file; local only."""
+        d = self._uploads_dir()
+        if d is None:
+            return {}
+        from intake.cv_import import extract_text
+        from tailoring.assembler import role_notes
+        prof = self.profile if (self.profile or {}).get("experience") else (self.saved_profile or {})
+        orgs = [str(e.get("org") or e.get("company") or "").strip()
+                for e in (prof or {}).get("experience") or [] if isinstance(e, dict)]
+        orgs = [o for o in orgs if o]
+        if not orgs:
+            return {}
+        out: dict = {}
+        files = sorted((f for f in d.iterdir() if f.suffix.lower() in (".pdf", ".docx", ".txt")),
+                       key=lambda f: f.stat().st_mtime, reverse=True)[:6]
+        for f in files:
+            key = (str(f), f.stat().st_mtime)
+            text = self._UPLOAD_TEXT.get(key)
+            if text is None:
+                try:
+                    text = extract_text(f)
+                except Exception:      # noqa: BLE001 - an unreadable file adds nothing
+                    text = ""
+                self._UPLOAD_TEXT[key] = text
+            for org, notes in role_notes(text, orgs).items():
+                out.setdefault(org, notes)
+        return out
 
     # ------------------------------------------------------- full-width line questions
     def _missing_jd_skills(self) -> list[str]:

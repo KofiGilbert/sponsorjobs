@@ -313,11 +313,11 @@ def test_make_room_cuts_older_material_in_kofis_order_and_can_undo():
         ([2, 2, 2, 2], [3, 1], 6),      # (2) project bullets beyond one, last project first
         ([2, 2, 2, 2], [2, 1], 6),
         ([2, 2, 2, 2], [1, 1], 6),
-        ([2, 2, 2, 1], [1, 1], 6),      # (3) the oldest role down to one
-        ([2, 2, 2, 1], [1, 1], 5),      # (4) skills lines beyond the minimum (4)
-        ([2, 2, 2, 1], [1, 1], 4),
+        # The oldest role keeps two (Kofi, 2026-11-10: it used to go down to one).
+        ([2, 2, 2, 2], [1, 1], 5),      # (3) skills lines beyond the minimum (4)
+        ([2, 2, 2, 2], [1, 1], 4),
     ]
-    assert len(trims) == 8 and page["summary"] == "Analyst." and len(page["experience"]) == 4
+    assert len(trims) == 7 and page["summary"] == "Analyst." and len(page["experience"]) == 4
     for u in reversed(undo):
         u()
     assert page == whole and trims == []
