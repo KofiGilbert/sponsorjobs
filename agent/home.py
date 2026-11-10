@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 
-INTENTS = ("find_and_apply", "status", "tailor_one", "other")
+INTENTS = ("find_and_apply", "status", "tailor_one", "github", "email", "extension", "other")
 
 # Words a posting carries and a request almost never does.
 _JD_WORDS = re.compile(
@@ -43,6 +43,12 @@ _AWAY = re.compile(r"\baway\s+(?:for\s+)?(\d{1,2}|an?)\s*(?:hours?|hrs?|h)\b", r
 _AT_COMPANY = re.compile(r"\bat\s+([A-Z][\w&.]*(?:\s+[A-Z][\w&.]*){0,2})")
 _FOR_ROLE = re.compile(r"\bfor\s+(?:an?\s+)?([a-z][a-z /&+-]*?)\s+(?:role|job|position|opening)\b",
                        re.IGNORECASE)
+# What a request needs connected (check first, connect inline, then carry on).
+_GITHUB = re.compile(r"\b(github|git hub|repos?|repositor(?:y|ies))\b", re.IGNORECASE)
+_EMAIL = re.compile(r"\b(e-?mail address|application e-?mail|an address|my inbox|inbox|"
+                    r"verification (?:codes?|e-?mails?|links?)|recruiter (?:replies|e-?mails)|"
+                    r"e-?mail alias|alias)\b", re.IGNORECASE)
+_EXTENSION = re.compile(r"\b(extension|linkedin|indeed|sponsor badges?)\b", re.IGNORECASE)
 _TITLE_NOISE = {"best", "good", "new", "more", "matching", "remote", "sponsored", "sponsoring",
                 "sponsor", "visa", "fresh", "top", "great", "suitable", "open", "the", "me", "my",
                 "some", "any", "a", "an", "and", "for", "of", "to", "with", "that", "find",
@@ -82,6 +88,18 @@ def route(text: str) -> str:
 def empty_intent(intent: str = "other") -> dict:
     return {"intent": intent, "titles": [], "count": None, "location": None,
             "telegram": False, "away_hours": None, "sponsors_only": False}
+
+
+def _side_intent(low: str) -> str:
+    """A request about one integration's own job: GitHub repos, the application email, or the
+    browser extension (LinkedIn and Indeed). "" when it is about none of them."""
+    if _GITHUB.search(low):
+        return "github"
+    if _EMAIL.search(low):
+        return "email"
+    if _EXTENSION.search(low):
+        return "extension"
+    return ""
 
 
 def _clean_title(raw: str) -> str:
@@ -140,22 +158,30 @@ def parse_request_rules(text: str) -> dict:
     # "tailor 10 business analyst roles": the number is how many, never the away hours. Read
     # for every request so a Change turn ("make it 3", "only 2") carries its number.
     out["count"] = _count_in(_AWAY.sub(" ", t))
+    side = _side_intent(low)
     if _AT_COMPANY.search(t) and _TAILOR_ONE.search(t) and not re.search(r"\bfind\b", low):
         out["intent"] = "tailor_one"
+    elif side == "extension" and re.search(r"\b(linkedin|indeed)\b", low):
+        out["intent"] = "extension"           # LinkedIn and Indeed: only through the extension
     elif _FIND.search(low) and (titles or re.search(r"\b(roles?|jobs?|positions?)\b", low)):
         out["intent"] = "find_and_apply"
+    elif side:
+        out["intent"] = side
     return out
 
 
 INTENT_SYSTEM = (
     "You turn one short request from a job seeker into JSON for an app that finds roles, "
     "tailors resumes and applies. Answer with one JSON object only, no prose:\n"
-    '{"intent": "find_and_apply" | "status" | "tailor_one" | "other", '
+    '{"intent": "find_and_apply" | "status" | "tailor_one" | "github" | "email" | "extension" | "other", '
     '"titles": ["job title", ...], "count": integer or null, "location": string or null, '
     '"telegram": boolean, "away_hours": integer or null, "sponsors_only": boolean}\n'
     "find_and_apply: find roles, tailor, queue or apply (count = how many, titles = the roles "
     "named). status: what is waiting, pending, or done. tailor_one: tailor a resume for one "
-    "named role or company with no job description given. other: anything else. "
+    "named role or company with no job description given. github: anything about their GitHub "
+    "repositories. email: their application email address, inbox, verification codes or "
+    "recruiter replies. extension: the browser extension, or help on LinkedIn or Indeed. "
+    "other: anything else. "
     "telegram is true when the person wants a message on Telegram. away_hours is how long "
     "they said they will be away. sponsors_only is true when they ask for visa sponsors only."
 )
@@ -284,8 +310,7 @@ def plan_text(*, n: int, titles: list[str], min_fit: int, auto: int, auto_compan
     if telegram and telegram_connected:
         lines.append("4. Message you on Telegram when they are done.")
     elif telegram:
-        lines.append("4. Telegram is not connected yet, so I will show the results here. Connect "
-                     "it in Auto-apply to get them on your phone.")
+        lines.append("4. Telegram is not connected yet, so I will show the results here.")
     tail = f"This uses {n} of your {packages_left} packages." if packages_left is not None \
         else f"This uses {n} {plural(n, 'package')}."
     if note:
@@ -337,3 +362,76 @@ def batch_message(tailored: list[dict], sent: list[dict], companies_fn) -> str:
         verb = "are" if len(rest) != 1 else "is"
         parts.append(f"{len(rest)} {verb} ready and waiting for your click ({companies_fn(rest)}).")
     return " ".join(parts)
+
+
+# ----------------------------------------------------------------------------- check first
+# A request that needs an integration checks it FIRST. Not connected: one line and a button
+# that connects it right there (never menu paths or steps in the reply), and the request waits.
+# Once it is connected, the agent carries on with that same request by itself, once
+# (/api/agent/connected in ui/app.py). Nothing is promised that needs a missing integration.
+
+INTEGRATIONS = ("telegram", "github", "email", "extension")
+CONNECT = {
+    "telegram": {"label": "Connect Telegram", "line": "Telegram isn't connected yet."},
+    "github": {"label": "Connect GitHub", "line": "GitHub isn't connected yet."},
+    "email": {"label": "Get an address",
+              "line": "You don't have an address for applications yet."},
+    "extension": {"label": "How to load", "line": "The browser extension isn't loaded yet."},
+}
+
+
+def needs(intent: dict) -> list[str]:
+    """The integrations this request cannot be done without, in the order to connect them."""
+    out = []
+    if intent.get("telegram") and intent.get("intent") in ("find_and_apply", "status"):
+        out.append("telegram")
+    kind = intent.get("intent")
+    if kind in ("github", "email", "extension"):
+        out.append(kind)
+    return out
+
+
+def connect_reply(name: str) -> dict:
+    """The reply while ``name`` is not connected: one line, and the card with its one button."""
+    c = CONNECT[name]
+    return {"text": c["line"], "buttons": [],
+            "connect": {"integration": name, "label": c["label"]}}
+
+
+def running_text(n: int, titles: list[str], telegram: bool) -> str:
+    """Carrying on with a find and apply once Telegram is connected: the run starts now."""
+    what = f"{n} {titles_phrase(titles)} {plural(n, 'role')}"
+    tail = " I'll message you on Telegram when they're ready." if telegram else ""
+    return f"Connected. Tailoring {what} now.{tail}".replace(". I'll", "; I'll")
+
+
+def _names(items: list[str]) -> str:
+    items = [x for x in items if x]
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def github_text(login: str, repos: list[str], ok: bool = True, just: bool = False) -> str:
+    who = f"as {login}" if login else ""
+    lead = " ".join(("Connected" if just else "Your GitHub is connected", who)).strip() + "."
+    if not ok:
+        return lead + " I couldn't read your repos just now. Try again in a moment."
+    if not repos:
+        return lead + " I don't see any public repos with code yet."
+    n = len(repos)
+    return lead + f" I can see {n} {plural(n, 'repo')}, newest first: {_names(repos[:3])}."
+
+
+def email_text(address: str, just: bool = False) -> str:
+    if address:
+        lead = "Done. Applications use " if just else "Applications already use "
+        return (lead + f"{address}. Verification codes and links reach me, and recruiter replies "
+                "land in your own inbox.")
+    return ("Your inbox is connected. I read only your applications' verification codes, links "
+            "and recruiter replies.")
+
+
+def extension_text(just: bool = False) -> str:
+    lead = "The extension is connected." if just else "The extension is already connected."
+    return lead + " Open a job on LinkedIn or Indeed and you'll see its sponsor badge there."

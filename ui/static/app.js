@@ -3904,6 +3904,8 @@
   // A reply: the text as a bubble (plain text, escaped), then its buttons underneath.
   function agentReply(r) {
     bubble("agent", chatText(r.text || ""));
+    if (r.connect) agentConnectCard(r.connect);
+    if (r.next === "go") { agentRun(); return; }      // carrying on by itself: no click, no turn
     const acts = (r.buttons || []).filter(b => b && b.id);
     if (!acts.length) return;
     const wrap = el("div", "agent-acts");
@@ -3911,7 +3913,8 @@
                      open_autoapply: agentT("agent.open", "Open Auto-apply"),
                      find: agentT("agent.find", "Find matching roles"),
                      add_resume: agentT("agent.addResume", "Add my resume"),
-                     add_details: agentT("agent.addDetails", "Add the details") };
+                     add_details: agentT("agent.addDetails", "Add the details"),
+                     open_projects: agentT("agent.openProjects", "Open Projects") };
     acts.forEach(b => {
       const btn = el("button", "btn btn-sm " + (b.id === "go" ? "btn-primary" : "btn-ghost"));
       btn.type = "button"; btn.textContent = labels[b.id] || b.label || b.id;
@@ -3920,11 +3923,16 @@
     });
     chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
   }
+  async function agentRun() {
+    await withWorking(async () => agentReply(await api("/api/agent/go", {})),
+                      agentT("agent.tailoring", "Tailoring. This takes a few minutes."));
+  }
   async function agentAct(id, r) {
     if (id === "go") {
       bubble("user", esc(agentT("agent.go", "Go ahead")));
-      await withWorking(async () => agentReply(await api("/api/agent/go", {})),
-                        agentT("agent.tailoring", "Tailoring. This takes a few minutes."));
+      await agentRun();
+    } else if (id === "open_projects") {
+      document.querySelector('[data-nav="projects"]')?.click();
     } else if (id === "change") {
       bubble("agent", esc(agentT("agent.changeQ", "What should I change? The titles, how many, or where.")));
       AGENT.change = true; composerInput.focus();
@@ -3939,6 +3947,146 @@
       agentAsk(titles ? `Find ${titles} roles for me` : "Find roles for me");
     }
   }
+  /* Check first, connect inline, carry on (Kofi, test build 13). A request that needs Telegram,
+     GitHub, the application address or the browser extension, while it is not connected, gets
+     one line and this card: one button that connects it right here (never menu steps in a
+     reply). While it waits, the page asks /api/agent/connected every few seconds, on focus, and
+     when GitHub reports in; the server carries on with the held request by itself, once. */
+  const AC = { poll: null, until: 0, busy: false };
+  const acT = (k, f) => agentT(k, f);
+  function agentConnectCard(c) {
+    document.querySelectorAll("#chatScroll .agent-connect").forEach(x => x.remove());   // one live card
+    const wrap = el("div", "agent-acts agent-connect");
+    wrap.dataset.integration = c.integration;
+    wrap.innerHTML = `<button class="btn btn-sm btn-primary ac-go" type="button">${esc(c.label)}</button>`
+      + `<span class="ac-wait" hidden><span class="gh-spin" aria-hidden="true"></span><span class="ac-wait-t"></span></span>`
+      + `<a class="ac-again" href="#" hidden></a>`
+      + `<button class="btn btn-sm btn-ghost ac-cancel" type="button" hidden>${esc(acT("agent.cancel", "Cancel"))}</button>`
+      + `<span class="ac-msg" hidden></span>`
+      + `<div class="ac-how" hidden></div>`;
+    wrap.querySelector(".ac-go").addEventListener("click", () => agentConnectStart(wrap, c));
+    wrap.querySelector(".ac-cancel").addEventListener("click", () => { acStop(); acUi(wrap, "idle"); });
+    chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
+  }
+  function acUi(wrap, state, text) {
+    const waiting = state === "waiting";
+    wrap.querySelector(".ac-go").hidden = waiting || state === "done";
+    wrap.querySelector(".ac-wait").hidden = !waiting;
+    wrap.querySelector(".ac-wait-t").textContent = waiting ? (text || "") : "";
+    wrap.querySelector(".ac-cancel").hidden = !waiting;
+    if (!waiting) wrap.querySelector(".ac-again").hidden = true;
+    const m = wrap.querySelector(".ac-msg");
+    m.textContent = state === "idle" ? (text || "") : ""; m.hidden = !(state === "idle" && text);
+  }
+  function acOpen(url) {
+    fetch("/api/open?u=" + encodeURIComponent(url)).catch(() => window.open(url, "_blank", "noopener"));
+  }
+  async function agentConnectStart(wrap, c) {
+    const kind = c.integration;
+    if (kind === "telegram") {
+      let d = {};
+      try { d = await api("/api/notify/telegram/link", {}); } catch { d = { ok: false }; }
+      if (!d.ok || !d.url) {
+        // The official bot is not reachable on this build: your own bot is the fallback.
+        await openSettings(); document.querySelector('[data-set="notify"]')?.click(); ntShowOwnBot();
+        acUi(wrap, "waiting", acT("agent.waitOwnBot", "Waiting for your bot"));
+      } else {
+        acOpen(d.url);
+        const again = wrap.querySelector(".ac-again");
+        again.textContent = acT("agent.openTelegram", "Open Telegram"); again.href = d.url; again.hidden = false;
+        again.onclick = (e) => { e.preventDefault(); acOpen(d.url); };
+        acUi(wrap, "waiting", acT("agent.waitTelegram", "Press Start in Telegram"));
+        again.hidden = false;
+      }
+      return acWatch((Number(d.expires_in) || 600) * 1000);
+    }
+    if (kind === "github") {
+      await renderConnections();
+      if (GH_ON) return agentConnected();
+      acUi(wrap, "waiting", acT("agent.waitBrowser", "Finish in your browser"));
+      if (GH_APP) ghAppStart(); else await CARD_NAV.github();
+      return acWatch(10 * 60000);
+    }
+    if (kind === "email") {
+      const b = wrap.querySelector(".ac-go"); b.disabled = true;
+      let d = {};
+      try {
+        const r = await fetch("/api/inbox/alias", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        d = await r.json().catch(() => ({})); d.ok = r.ok && d.ok !== false;
+      } catch { d = { ok: false }; }
+      b.disabled = false;
+      if (d.ok) return agentConnected();
+      if (String(d.reason || "").includes("sign_in")) {     // the address needs an account: sign in here
+        acUi(wrap, "idle", acT("agent.signInFirst", "Sign in first, then I'll make the address."));
+        const si = b.cloneNode(false);           // the same place, now Sign in
+        si.textContent = acT("agent.signIn", "Sign in");
+        si.addEventListener("click", () => { openSignin(); acUi(wrap, "waiting", acT("agent.waitSignIn", "Finish signing in")); acWatch(10 * 60000, true); });
+        b.replaceWith(si);
+        return;
+      }
+      return acUi(wrap, "idle", d.error || acT("agent.connectFailed", "That didn't work. Try again in a moment."));
+    }
+    if (kind === "extension") {
+      let st = {};
+      try { st = await api("/api/extension/status"); } catch { /* the steps still help */ }
+      if (st.connected) return agentConnected();
+      const folder = st.folder || "";
+      const how = wrap.querySelector(".ac-how");
+      how.innerHTML = `<ol class="ac-steps"><li>${esc(acT("agent.ext1", "Open chrome://extensions in Chrome"))}</li>`
+        + `<li>${esc(acT("agent.ext2", "Turn on Developer mode"))}</li>`
+        + `<li>${esc(acT("agent.ext3", "Click Load unpacked and pick this folder"))}</li></ol>`
+        + (folder ? `<code class="ext-path">${esc(folder)}</code><button class="btn btn-sm btn-ghost ac-copy" type="button">${esc(acT("agent.copyPath", "Copy folder path"))}</button>` : "");
+      how.hidden = false;
+      how.querySelector(".ac-copy")?.addEventListener("click", async (e) => {
+        try { await navigator.clipboard.writeText(folder); e.target.textContent = acT("agent.copied", "Copied"); } catch { /* the path is on screen */ }
+      });
+      acUi(wrap, "waiting", acT("agent.waitExtension", "Waiting for the extension"));
+      return acWatch(30 * 60000);
+    }
+  }
+  function acStop() { clearInterval(AC.poll); AC.poll = null; AC.until = 0; }
+  // Ask the server every few seconds while a card waits; ``signin`` retries the address once
+  // the person has signed in.
+  function acWatch(ms, signin) {
+    acStop();
+    AC.until = Date.now() + ms;
+    AC.poll = setInterval(async () => {
+      if (Date.now() > AC.until) {
+        acStop();
+        const w = document.querySelector("#chatScroll .agent-connect");
+        if (w) acUi(w, "idle", acT("agent.expired", "That took too long. Click to try again."));
+        return;
+      }
+      if (signin) {
+        try {
+          const r = await fetch("/api/inbox/alias", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+          if (!r.ok) return;
+        } catch { return; }
+      }
+      agentConnected();
+    }, 3000);
+  }
+  async function agentConnected() {
+    if (AC.busy || !document.querySelector("#chatScroll .agent-connect")) return;
+    AC.busy = true;
+    try {
+      const r = await api("/api/agent/connected", {});
+      if (!r.resumed) return;
+      acStop();
+      const done = { telegram: acT("agent.tgDone", "Telegram connected"), github: acT("agent.ghDone", "GitHub connected"),
+                     email: acT("agent.mailDone", "Address ready"), extension: acT("agent.extDone", "Extension connected") };
+      document.querySelectorAll("#chatScroll .agent-connect").forEach(w => {
+        w.innerHTML = `<button class="btn btn-sm btn-ghost" type="button" disabled>${esc(done[w.dataset.integration] || acT("agent.connected", "Connected"))}</button>`;
+        w.classList.remove("agent-connect");
+      });
+      if (setModal && !setModal.hidden) closeSettings();
+      agentReply(r);
+    } catch { /* the next tick tries again */ }
+    finally { AC.busy = false; }
+  }
+  document.addEventListener("tailor:github", () => agentConnected());
+  window.addEventListener("focus", () => agentConnected());
+
   // One turn: the person's words, a working bubble, the reply. Returns the server answer so
   // the Home box can fall back to a tailoring session when the server read a posting.
   async function agentAsk(text) {

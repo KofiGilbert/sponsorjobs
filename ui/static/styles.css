@@ -2321,6 +2321,16 @@ body.panel-open .app {
 /* The chat in assistant mode: a reply's buttons sit under the bubble, like the autobuild action. */
 .agent-acts { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 10px 44px; }
 @media (max-width: 560px) { .agent-acts { margin-left: 0; } }
+/* Check first, connect inline (agent/home.py connect_reply): one button, then the wait. */
+.agent-connect { align-items: center; }
+.agent-connect .ac-wait { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.agent-connect .ac-wait[hidden], .agent-connect .ac-again[hidden], .agent-connect .ac-msg[hidden],
+.agent-connect .ac-how[hidden] { display: none; }
+.agent-connect .ac-again { font-size: 13px; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+.agent-connect .ac-msg { font-size: 13px; color: var(--muted); flex-basis: 100%; }
+.agent-connect .ac-how { flex-basis: 100%; font-size: 13px; color: var(--ink); }
+.agent-connect .ac-steps { margin: 4px 0 8px 18px; padding: 0; line-height: 1.6; }
+.agent-connect .ac-how .ext-path { margin-bottom: 8px; }
 .home-fade { transition: opacity .25s ease; }
 /* Home: the heading and prompt stay fixed; only the role list scrolls beneath them. */
 #view-dashboard.is-active { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }

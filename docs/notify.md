@@ -431,6 +431,19 @@ mode switch; three Try pills under it fill and send those examples.
   text is a request: a tiny model prompt (low effort, ~200 tokens) returns one JSON intent
   `{intent: find_and_apply | status | tailor_one | other, titles, count, location, telegram,
   away_hours, sponsors_only}`; with no model (no key, offline) keyword rules answer instead.
+* **Check first, connect inline, carry on.** A request that needs an integration checks it
+  before anything else (`home.needs`, `_integration_on`): Telegram for "message me on
+  Telegram", GitHub for a request about repos, the SponsorJobs address for one about the
+  application email, the browser extension for LinkedIn or Indeed. Not connected: one line
+  ("Telegram isn't connected yet.") and a card with one button (Connect Telegram opens the
+  official bot's link; Connect GitHub runs the one-click App flow; Get an address takes the
+  alias; How to load shows the folder to load). No menu steps in a reply, and nothing promised
+  that needs the missing piece. The request waits in `_AGENT["pending"]`; the page asks
+  `POST /api/agent/connected` while the card waits (and on focus, and when GitHub reports in),
+  and once the integration is connected the agent carries on with that request by itself, once.
+  A find and apply that was waiting on Telegram then starts its run ("Connected. Tailoring 10
+  business analyst roles now; I'll message you on Telegram when they're ready."), since the
+  person already asked for exactly that run; a plan that cannot run says why instead.
 * **find_and_apply states a plan first and spends no package.** It ranks with the same
   functions Up next and `/api/autoapply/run` use (`_aa_candidates`, `_aa_scorer`,
   `picker.rank`, the fit floor from prefs), caps at the route's 10 a run, at the packages
