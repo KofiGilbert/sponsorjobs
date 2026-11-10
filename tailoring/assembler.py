@@ -1147,7 +1147,7 @@ def _tailor_one(original: str, siblings: list, grounding: str, jd_text: str, llm
     reword (see ``_tailor_bullets``). ``siblings`` are the other bullets of its entry and
     ``grounding`` everything that entry says."""
     from .fact_gate import gate_rewrite
-    from .filler import repeats_sibling
+    from .filler import repeats_sibling, role_padding
     from .keywords import term_present
 
     budget = _bullet_budget(original)
@@ -1168,6 +1168,12 @@ def _tailor_one(original: str, siblings: list, grounding: str, jd_text: str, llm
     # (1b) Discard a reword that restates a sibling bullet's clause (the sibling is in
     # its grounding, so a reword can copy it): one fact, one bullet per entry.
     if repeats_sibling(original, new, siblings):
+        return original
+    # (1c) No padding that states no fact (Kofi, 2026-11-10): the role's own employer name, a
+    # stock tail ("for stakeholders across the business"), a phrase another bullet of the role
+    # says. What the person's own bullet already says stays.
+    employer = label.split(", ")[0] if section == "experience" else ""
+    if role_padding(new, siblings, employer, original):
         return original
     # (2) Enforce the per-bullet length ceiling. Only fires on a wild over-expansion
     # past the budget (floor 165 chars); a normal one-line bullet never trips it.
@@ -2404,27 +2410,26 @@ def _chars_per_line(rep) -> float:
 
 
 def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, headings,
-                  workdir: Path, jobname: str, origins: dict, known: dict, known_figures: set):
+                  workdir: Path, jobname: str, origins: dict, known: dict, known_figures: set,
+                  tries: int = 2):
     """Rewrite each entry's bullets so every one runs to the right edge: one call per entry
-    (``llm.polish_role``) with a character window per bullet (one full line, or two, from the
-    measured width), keeping its facts and keeping the bullets distinct. Each rewrite passes
-    the fact gate, the filler and padding checks (no invented number, name or credential, no
-    employer name, no stock tail, no phrase another bullet says); an entry's rewrites are kept
-    only when the page stays one clean page at least as full. Then one targeted retry for any
-    bullet still short or spilling. Returns the result."""
+    (``llm.polish_role``, every role and every project with a bullet short of the edge) with a
+    character window per bullet from the measured width. A bullet that spills a stub line is
+    tightened to one line fewer while the page is at the fill goal (the freed line goes to the
+    staircase afterwards) and extended to a full last line while it is short; a short one-line
+    bullet is extended to a full line. Each rewrite passes the fact gate and the filler and
+    padding checks. An entry's rewrites are kept when the page stays one clean page and the
+    entry has fewer short or stub bullets than before. ``tries`` passes, the later ones only
+    for what is still short. Returns the result."""
     from . import linefit as _lf
     from .fact_gate import gate_rewrite
     from .filler import hollow, is_padded, role_padding
 
     base_overfull = result.overfull_count
 
-    def measure_page():
-        return _lf.measure(getattr(result, "pdf_path", None), used)
-
-    def clean(r, before) -> bool:
+    def clean(r) -> bool:
         return bool(r and r.ok and r.pages == 1 and r.overfull_count <= base_overfull
-                    and r.fill_ratio is not None and r.fill_ratio <= MAX_FILL
-                    and r.fill_ratio >= min(before, FILL_GOAL) - 0.002)
+                    and r.fill_ratio is not None and r.fill_ratio <= MAX_FILL)
 
     def entries():
         for p in used.get("projects") or []:
@@ -2434,8 +2439,12 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
             if isinstance(r.get("bullets"), list):
                 yield e, r, str(e.get("org") or e.get("company") or ""), entry_label(e, r)
 
-    for attempt in range(2):
-        rep = measure_page()
+    def short_in(rep, bl) -> int:
+        fits = {i.text: i for i in rep.bullets}
+        return sum(1 for b in bl if b in fits and not fits[b].ok())
+
+    for attempt in range(tries):
+        rep = _lf.measure(getattr(result, "pdf_path", None), used)
         cpl = _chars_per_line(rep)
         if not cpl:
             return result
@@ -2445,43 +2454,55 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
             todo = [k for k, b in enumerate(bl) if b in fits and not fits[b].ok()]
             if not todo:
                 continue
+            at_goal = (result.fill_ratio or 0) >= FILL_GOAL
             asks = []
             for k in range(len(bl)):
                 it = fits.get(bl[k])
-                n = max(1, round(it.total)) if it and it.found else max(1, round(len(bl[k]) / cpl))
-                if it and it.found and it.lines >= 2 and it.last_fill < _lf.SPILL_TRIM:
-                    n = it.lines - 1                         # a stub line: one line fewer
+                if it and it.found:
+                    n = it.lines
+                    if it.lines >= 2 and it.last_fill < _lf.SPILL_TRIM and at_goal:
+                        n = it.lines - 1                     # a stub line: one line fewer
+                else:
+                    n = max(1, round(len(bl[k]) / cpl))
                 asks.append((int(cpl * n * POLISH_LO), int(cpl * n * POLISH_HI)))
-            context = profile_text_safe(entry)
             try:
-                out = llm.polish_role(label, list(bl), asks, context=context, jd_text=jd_text,
-                                      only=todo if attempt else None)
-            except Exception:                                # noqa: BLE001 - polish is optional
+                out = llm.polish_role(label, list(bl), asks, context=profile_text_safe(entry),
+                                      jd_text=jd_text, only=todo)
+            except Exception as exc:                         # noqa: BLE001 - polish is optional
+                _fill_log(step="polish-error", label=label, why=str(exc)[:200])
                 continue
             if not isinstance(out, list) or len(out) != len(bl):
+                _fill_log(step="polish-error", label=label, why="wrong number of bullets")
                 continue
             new = list(bl)
             for k in todo:
                 cand = str(out[k] or "").strip()
                 lo, hi = asks[k]
-                if not cand or cand == bl[k] or not (lo * 0.9 <= len(cand) <= hi * 1.06):
+                if not cand or cand == bl[k]:
+                    continue
+                if not (lo * 0.88 <= len(cand) <= hi * 1.06):
+                    _fill_log(step="polish", label=label, bullet=cand, why=f"length {len(cand)} not {lo}-{hi}")
                     continue
                 others = [x for j, x in enumerate(new) if j != k]
                 src = str(origins.get(bl[k], bl[k]))
-                if (gate_rewrite(bl[k], cand, known=known, known_figures=known_figures)
-                        or hollow(cand) or is_padded(bl[k], cand)
-                        or role_padding(cand, others, employer, src + " " + bl[k])):
-                    _fill_log(step="polish", label=label, bullet=cand, why="refused")
+                why = (gate_rewrite(bl[k], cand, known=known, known_figures=known_figures)
+                       + (["filler"] if hollow(cand) or is_padded(bl[k], cand) else [])
+                       + role_padding(cand, others, employer, src + " " + bl[k]))
+                if why:
+                    _fill_log(step="polish", label=label, bullet=cand, why=why)
                     continue
                 new[k] = cand
             if new == bl:
                 continue
-            before = result.fill_ratio or 0.0
             old = list(bl)
             role["bullets"][:] = new
             r = compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
                             workdir, jobname=f"{jobname}-polish")
-            if clean(r, before):
+            ok = clean(r)
+            if ok:
+                after = _lf.measure(getattr(r, "pdf_path", None), used)
+                ok = short_in(after, new) < short_in(rep, old)
+            if ok:
                 result = r
                 for o, n_ in zip(old, new):
                     if o != n_:
@@ -2889,11 +2910,23 @@ def assemble_cv(
     if (fit_lines and llm is not None and callable(getattr(llm, "polish_role", None))
             and result and result.ok and result.pages == 1):
         from .fact_gate import known_material, source_figures
-        result = _polish_edges(preamble, used, result, llm=llm, jd_text=jd_text,
-                               sections=sections, headings=headings, workdir=workdir,
-                               jobname=jobname, origins=origins,
-                               known=known_material(*gate_material, jd_text),
-                               known_figures=source_figures(*gate_material))
+        pol_known = known_material(*gate_material, jd_text)
+        pol_figs = source_figures(*gate_material)
+
+        def polish(res):
+            return _polish_edges(preamble, used, res, llm=llm, jd_text=jd_text,
+                                 sections=sections, headings=headings, workdir=workdir,
+                                 jobname=jobname, origins=origins, known=pol_known,
+                                 known_figures=pol_figs)
+        result = polish(result)
+        # A stub tightened to one line frees a line: it goes to the staircase, and what that
+        # adds runs to the edge too.
+        if result.fill_ratio is not None and result.fill_ratio < FILL_GOAL:
+            result, more, notes3 = fill_page(result)
+            added += more
+            bullet_notes = list(dict.fromkeys(list(bullet_notes) + list(notes3)))
+            if more:
+                result = polish(result)
 
     # The grow, fill and restore passes compile under side jobnames (-full, -fill, -restore).
     # Whatever won must also exist under the REAL jobname, because that is the file the app serves (/api/cv.pdf?job=...);

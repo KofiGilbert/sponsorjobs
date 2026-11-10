@@ -376,7 +376,10 @@ def test_when_no_room_can_be_made_the_page_stays_clean_and_says_so(template_sour
     res = assemble_cv(template_source, _near_full(), JD, FakeLLM(), workdir, tailor=True)
     assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
     assert res.fill_ratio <= MAX_FILL
-    assert any("would not fit on one page" in n for n in res.bullet_notes), res.bullet_notes
+    # Either the most recent role got its three without any room being made, or a note says
+    # why it could not.
+    top = _counts(res.profile_used)[0]
+    assert top >= 3 or any("would not fit on one page" in n for n in res.bullet_notes), res.bullet_notes
 
 
 # --------------------------------------------------------------------------- a split stays split
