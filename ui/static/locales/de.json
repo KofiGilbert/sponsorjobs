@@ -60,6 +60,7 @@
   "job.closedNothingSpent": "Diese Stelle ist geschlossen. Es wurde nichts verbraucht.",
   "jobs.crawling": "weitere Stellen werden geladen",
   "jobs.crawlingFirst": "Stellen werden zum ersten Mal geladen, das dauert ein paar Minuten",
+  "jobs.loading": "Jobs werden geladen",
   "jobs.crawlError": "Stellen konnten nicht geladen werden, neuer Versuch in ein paar Minuten",
   "nav.prep": "Interviewvorbereitung",
   "prep.title": "Interviewvorbereitung",

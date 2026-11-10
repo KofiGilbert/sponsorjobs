@@ -22,7 +22,11 @@ const { isNewPage, pageMessage, wallMessage } = require("./pagewatch");
 const { createAgent } = require("./agent");
 const { isSupportMailto } = require("./links");
 
-const SERVER = "http://127.0.0.1:57000";
+// TAILOR_PORT / TAILOR_CDP_PORT let the dev app (dev-start.sh) run beside the installed app, which
+// owns 57000 and 9223. The installed app never sets them.
+const PORT = Number(process.env.TAILOR_PORT) || 57000;
+const SERVER = `http://127.0.0.1:${PORT}`;
+const CDP_PORT = String(Number(process.env.TAILOR_CDP_PORT) || 9223);
 // The STATIC job feed (docs/feed.md): a scheduled GitHub Action crawls and uploads jobs.json.gz
 // + JD shards to Cloudflare R2 behind our domain; the engine downloads the slim list hourly and
 // filters locally, so every user sees the fresh, sponsor-tagged board with no server to keep
@@ -31,7 +35,7 @@ const SERVER = "http://127.0.0.1:57000";
 // set the app simply runs on its local crawl instead of waiting on a lookup that cannot succeed.
 const FEED_URL = process.env.TAILOR_FEED_URL || "https://feed.sponsorjobs.ai/feed";
 // Fixed CDP port so the Python side (assisted apply) can attach to the pane.
-app.commandLine.appendSwitch("remote-debugging-port", "9223");
+app.commandLine.appendSwitch("remote-debugging-port", CDP_PORT);
 
 let win = null;
 let pane = null;           // WebContentsView for the in-app browser
@@ -91,7 +95,7 @@ async function ensureServer() {
     // deleted checkout answered "/" but 404'd every stylesheet, and the installed app attached to
     // it and showed a bare, unstyled page.
     if (!app.isPackaged || await ping(SERVER + "/static/styles.css")) return;
-    throw new Error("Another program is using SponsorJobs' port (127.0.0.1:57000) and is not " +
+    throw new Error(`Another program is using SponsorJobs' port (127.0.0.1:${PORT}) and is not ` +
                     "working, most likely an older SponsorJobs engine that was left running. " +
                     "Restart your computer, then open SponsorJobs again.");
   }

@@ -60,6 +60,10 @@ if [ "${TAILOR_LIVE_BROKER:-0}" = "1" ]; then
   export RESUME_AGENT_CRED_FILE="$live_creds"
   echo "SponsorJobs dev: live broker $TAILOR_BROKER_URL (sign in from the account menu)"
 fi
+# Own ports, so the dev app runs beside an installed SponsorJobs (which owns 57000 and 9223) instead of
+# silently attaching to the installed engine and showing the installed code.
+export TAILOR_PORT="${TAILOR_PORT:-57010}"
+export TAILOR_CDP_PORT="${TAILOR_CDP_PORT:-9233}"
 export PATH="/opt/homebrew/bin:$PATH"          # pdflatex (brew texlive)
 
 exec npm start

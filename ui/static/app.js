@@ -716,17 +716,14 @@
   // so in one line with a Retry button. "No roles yet" is kept for a board that is truly empty.
   let FEED_DL_TIMER = null;
   const FEED_DL_WAITERS = new Set();
+  // eslint-disable-next-line no-unused-vars
   const mbText = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB");
-  function feedDownloadText(st) {
-    const got = st && st.bytes ? mbText(st.bytes) : "";
-    const of = got && st.total ? ` of ${mbText(st.total)}` : "";
-    return got ? `Downloading today's jobs\u2026 ${got}${of}` : "Downloading today's jobs\u2026";
-  }
+  // No sizes, no "slow connection" lecture (Kofi, 2026-11-09: "is that what LinkedIn does?"). The
+  // list shows grey placeholder cards; where one line is needed it just says Loading jobs.
+  function feedDownloadText() { return "Loading jobs\u2026"; }
   const feedFailed = (st) => !!(st && st.configured && !st.downloading && !st.has_cache && st.failing);
-  function feedLoadingHtml(st) {
-    return `<div class="feed-dl" role="status"><span class="feed-dl-dot" aria-hidden="true"></span>` +
-      `<span data-feed-dl>${esc(feedDownloadText(st))}</span>` +
-      `<span class="feed-dl-sub">This can take a few minutes on a slow connection. The list appears here on its own.</span></div>`;
+  function feedLoadingHtml() {
+    return `<div role="status" aria-label="Loading jobs">${jobSkeleton()}</div>`;
   }
   function feedFailHtml() {
     return `<div class="feed-dl is-failed" role="alert"><span>Couldn't download the job list. Check your connection and try again.</span>` +
@@ -1496,7 +1493,7 @@
       for (const [re, label] of ROLE_CATS) { if (re.test(t)) tags.push(label); if (tags.length >= 2) break; }
     }
     const show = max || 2;
-    const head = tags.slice(0, show).map(c => `<span class="fr-tag">${esc(c)}</span>`).join("");
+    const head = tags.slice(0, show).map(c => `<span class="fr-tag" title="${esc(c)}">${esc(c)}</span>`).join("");
     const rest = tags.slice(show);
     return head + (rest.length ? `<span class="fr-tag fr-tag-more" title="${esc(rest.join(", "))}">+${rest.length}</span>` : "");
   }
@@ -2522,7 +2519,7 @@
     if (FEED_CRAWLING) {
       el.textContent = total
         ? `${count} · ${I18N.t("jobs.crawling", "fetching more from the job boards")}`
-        : I18N.t("jobs.crawlingFirst", "fetching jobs from the job boards for the first time, this takes a few minutes");
+        : I18N.t("jobs.loading", "Loading jobs");
       return;
     }
     // The age of the NEWEST JOB, never the age of the last rebuild. If nothing new has arrived for

@@ -60,6 +60,7 @@
   "job.closedNothingSpent": "Esta oferta está cerrada. No se gastó nada.",
   "jobs.crawling": "buscando más en las bolsas de empleo",
   "jobs.crawlingFirst": "buscando empleos en las bolsas por primera vez, tarda unos minutos",
+  "jobs.loading": "Cargando empleos",
   "jobs.crawlError": "no se pudieron obtener empleos de las bolsas, se reintentará en unos minutos",
   "nav.prep": "Preparación de entrevistas",
   "prep.title": "Preparación de entrevistas",

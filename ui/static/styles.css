@@ -1164,6 +1164,7 @@ button { font-family: inherit; cursor: pointer; }
    faint border both sit too close to the card; a clear stronger border + a slight ink tint + a
    pill shape make it read as a real bounded tag, like the sponsorship badges. */
 .fr-tag { flex: none; white-space: nowrap;   /* a pill never squeezes or wraps into a tall blob */
+  max-width: 190px; overflow: hidden; text-overflow: ellipsis;   /* a long name ends in ... (full name on hover) */
   font-size: 10.5px; font-weight: 600; color: var(--ink);
   background: color-mix(in srgb, var(--ink) 7%, transparent);
   border: 1px solid var(--border-strong); border-radius: var(--r-pill); padding: 2px 9px; }

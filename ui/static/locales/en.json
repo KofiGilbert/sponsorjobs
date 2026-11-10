@@ -60,6 +60,7 @@
   "job.closedNothingSpent": "This job is closed. Nothing was spent.",
   "jobs.crawling": "fetching more from the job boards",
   "jobs.crawlingFirst": "fetching jobs from the job boards for the first time, this takes a few minutes",
+  "jobs.loading": "Loading jobs",
   "jobs.crawlError": "couldn't fetch jobs from the boards, will retry in a few minutes",
   "nav.prep": "Interview prep",
   "prep.title": "Interview prep",
