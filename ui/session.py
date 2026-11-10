@@ -95,6 +95,8 @@ def _essentials_from(saved_ess: dict, profile: dict) -> dict:
             # and the ones the person said they don't have: never asked twice.
             "skills_asked": [str(s) for s in (saved_ess.get("skills_asked") or [])],
             "skills_declined": [str(s) for s in (saved_ess.get("skills_declined") or [])],
+            # Skills the person added with ADD on a job's keywords (their provenance).
+            "skills_from_jobs": [str(s) for s in (saved_ess.get("skills_from_jobs") or [])],
             "declined": list(saved_ess.get("declined") or [])}
 
 
@@ -5291,6 +5293,17 @@ class WebIntake:
         if idx is None or self.assembled is None:
             return self._keyword_result(term, False, f"Nothing to undo for {term}.")
         act = self.keyword_actions[idx]
+        if act["kind"] == "skill":
+            from tailoring.linefit import remove_term
+            self.profile["skills"] = remove_term(self.profile.get("skills") or {}, act["term"],
+                                                 act.get("label", ""), act.get("shed") or ())
+            self._unsave_added_skill(act["term"], act.get("saved") or {})
+            del self.keyword_actions[idx]
+            self._assemble()
+            self._persist()
+            out = self._keyword_result(term, True, "")
+            out["undone"] = True
+            return out
         if act["kind"] == "new":
             res = remove_added_bullet(self.assembled.tex_source, act["tex_after"], self.workdir,
                                       jobname=self.jobname)
@@ -5307,6 +5320,122 @@ class WebIntake:
         out = self._keyword_result(term, True, "", res if res.ok else None)
         out["undone"] = True
         return out
+
+    # ADD on a job keyword. The person clicking ADD is the person saying they have the skill,
+    # the same as typing it into their profile (Kofi, 2026-11-09: "it is still the same person
+    # telling you i have the skill so add it"), so it is added in one click, like Teal, Jobscan
+    # and Rezi: on the best-fitting Skills line, in the job's own wording, and saved as their
+    # own skill so every later resume treats it as theirs.
+    @_locked
+    def keyword_add(self, term: str) -> dict:
+        """Add ``term`` to the page's Skills block and to the saved profile. The page rebuilds
+        through the normal one-page fit (compile, page count, overfull check, shrink). When
+        even that cannot keep it on one page, the page stays as it was, the skill stays saved,
+        and the person is told in one line."""
+        import copy as _copy
+        from tailoring.linefit import place_term
+        term = " ".join(str(term or "").split())[:80]
+        if not term:
+            return self._keyword_result(term, False, "No keyword given.")
+        if self.assembled is None or not self.assembled.tex_source:
+            return self._keyword_result(term, False, "Build the resume first, then add keywords to it.")
+        saved = self._save_added_skill(term)
+        before = _copy.deepcopy(self.profile)
+        width_fn, avail = self._skill_widths()
+        pl = place_term(self.profile.get("skills") or {}, term, width_fn=width_fn, avail=avail,
+                        jd_text=self.jd)
+        if pl.already and self._term_on_page(term):
+            self._persist()
+            return self._keyword_result(term, True, "")
+        self.profile["skills"] = pl.skills
+        self._assemble()
+        a = self.assembled
+        if not (a is not None and a.ok and a.compile is not None and a.compile.pages == 1
+                and self._term_on_page(term)):
+            self.profile = before
+            self._assemble()
+            self._persist()
+            return self._keyword_result(
+                term, False, f"No room on the page for {term}. It is saved to your profile.")
+        # Terms the line gave up to stay one line remain the person's own skills.
+        si = self.essentials.setdefault("skills_input", [])
+        for t in pl.shed:
+            if t.lower() not in {str(x).lower() for x in si}:
+                si.append(t)
+        self.keyword_actions.append({"term": term, "kind": "skill", "label": pl.label,
+                                     "before": "", "after": term, "shed": list(pl.shed),
+                                     "saved": saved})
+        self._persist()
+        return self._keyword_result(term, True, "")
+
+    def _term_on_page(self, term: str) -> bool:
+        from tailoring.assembler import _rendered_cv_text
+        from tailoring.keywords import term_present
+        a = self.assembled
+        if a is None:
+            return False
+        return term_present(term, _rendered_cv_text(a.profile_used or {}, self.sections))
+
+    def _skill_widths(self):
+        """The Skills line width test calibrated to the real page (tailoring/linefit.py), or
+        the template estimate when the page cannot be read."""
+        from tailoring import linefit as _lf
+        try:
+            rep = _lf.measure(getattr(self.assembled, "pdf_path", None),
+                              getattr(self.assembled, "profile_used", None) or {})
+            if rep.items and rep.width:
+                k = _lf.calibrate(rep)
+                return (lambda lab, terms: k * _lf.estimate_width(lab, terms)), rep.width - 1.5
+        except Exception:      # noqa: BLE001 - the estimate is good enough to place a term
+            pass
+        return _lf.estimate_width, None
+
+    def _save_added_skill(self, term: str) -> dict:
+        """Save an ADDed keyword as the person's own skill: their stated skills (which every
+        build reads) with its provenance, and the brain with source "you". Returns what was
+        new, so an undo takes back only that."""
+        e = self.essentials
+        low = term.lower()
+        out = {"input": False, "fact": False}
+        si = e.setdefault("skills_input", [])
+        if low not in {str(x).lower() for x in si}:
+            si.append(term)
+            out["input"] = True
+        src = e.setdefault("skills_from_jobs", [])
+        if low not in {str(x).lower() for x in src}:
+            src.append(term)
+        for k in ("skills_declined", "skills_pending"):
+            if e.get(k):
+                e[k] = [x for x in e[k] if str(x).lower() != low]
+        st = self._brain()
+        if st is not None:
+            try:
+                from applicant import facts as _F
+                from applicant.store import ACTIVE
+                subject = f"skill:{low}"
+                if not any(r["status"] == ACTIVE for r in st.current("skill", subject, "")):
+                    _F.put(st, "skill", term, source="you", subject=subject,
+                           source_ref="job_keywords",
+                           question=f"Added {term} from a job's keywords")
+                    out["fact"] = True
+            except Exception:      # noqa: BLE001 - stated skills still carry it
+                pass
+        return out
+
+    def _unsave_added_skill(self, term: str, saved: dict) -> None:
+        e = self.essentials
+        low = term.lower()
+        if saved.get("input"):
+            e["skills_input"] = [x for x in (e.get("skills_input") or []) if str(x).lower() != low]
+            e["skills_from_jobs"] = [x for x in (e.get("skills_from_jobs") or [])
+                                     if str(x).lower() != low]
+        if saved.get("fact"):
+            st = self._brain()
+            if st is not None:
+                try:
+                    st.forget("skill", f"skill:{low}")
+                except Exception:      # noqa: BLE001
+                    pass
 
     def _keyword_result(self, term: str, ok: bool, reason: str, res=None) -> dict:
         st = self._state()

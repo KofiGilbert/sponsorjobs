@@ -3524,9 +3524,17 @@
      with an undo link. The term list is server truth (st.keyword_actions). */
   let KW_ACTIONS = [];
   let KW_PENDING = null;
+  /* ADD on a job keyword adds it (Kofi, 2026-11-09: "it is still the same person telling you
+     i have the skill so add it"): the term goes on a Skills line and into the saved profile
+     in one click. Clicks queue: one rebuild runs at a time, and a term waiting its turn
+     stays shown as Adding across re-renders, so no click is lost. */
+  const KW_BUSY = new Set();
+  let KW_QUEUE = Promise.resolve();
   const kwT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
 
+  let KW_LAST_COV = null;
   function renderCovDetail(cov) {
+    KW_LAST_COV = cov;
     const present = (cov.present || []).slice(0, 24);
     const have = (cov.missing_supported || []).slice(0, 20);
     const missing = (cov.missing || []).slice(0, 20);
@@ -3535,12 +3543,15 @@
       + (applied.has(String(t).toLowerCase())
         ? ` <a href="#" class="kw-undo" data-term="${esc(t)}">${esc(kwT("kw.undo", "undo"))}</a>` : "")
       + `</span>`;
-    const miss = t => `<span class="term miss">${esc(t)}<button type="button" class="kw-add" data-term="${esc(t)}">${esc(kwT("kw.add", "Add"))}</button></span>`;
+    const miss = (t, direct) => {
+      const busy = KW_BUSY.has(String(t).toLowerCase());
+      return `<span class="term miss">${esc(t)}<button type="button" class="kw-add"${direct ? ` data-direct="1"` : ""} data-term="${esc(t)}"${busy ? " disabled" : ""}>${esc(busy ? kwT("kw.adding", "Adding") : kwT("kw.add", "Add"))}</button></span>`;
+    };
     let html = `<span class="cd-lbl">${esc(kwT("kw.inResume", "In resume"))}</span>`
       + (present.map(hit).join("") || `<span class="term miss"></span>`);
-    if (have.length) html += `<span class="cd-lbl">${esc(kwT("kw.youHave", "You have, not shown"))}</span>` + have.map(miss).join("");
+    if (have.length) html += `<span class="cd-lbl">${esc(kwT("kw.youHave", "You have, not shown"))}</span>` + have.map(t => miss(t, false)).join("");
     html += `<span class="cd-lbl">${esc(kwT("kw.missing", "Missing"))}</span>`
-      + (missing.map(miss).join("") || `<span class="term hit">${esc(kwT("kw.none", "none"))}</span>`);
+      + (missing.map(t => miss(t, true)).join("") || `<span class="term hit">${esc(kwT("kw.none", "none"))}</span>`);
     $("#covDetail").innerHTML = html;
   }
   $("#covInfo").addEventListener("click", () => { $("#covDetail").hidden = !$("#covDetail").hidden; });
@@ -3565,12 +3576,7 @@
     if (btn) { btn.disabled = false; btn.textContent = kwT("kw.add", "Add"); }
     if (!p) return;
     KW_PENDING = p;
-    if (!p.supported) {
-      kwCard(`<div class="kw-term">${esc(term)}</div>`
-        + `<p class="kw-note">${esc(kwT("kw.unsupported", "Not supported by your profile"))}. ${esc(kwT("kw.unsupportedHint", "Add it to a role or project in your profile, then try again."))}</p>`
-        + kwIgnoreBtn());
-      return;
-    }
+    if (!p.supported) { KW_PENDING = null; kwAdd(term, btn); return; }   // ADD means add it
     if (!p.ok) {
       kwCard(`<div class="kw-term">${esc(term)}</div><p class="kw-note">${esc(p.reason || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
       return;
@@ -3607,6 +3613,33 @@
     applyState(st);           // new PDF, new coverage, the term now under "In resume" with undo
   }
 
+  // Queue one ADD: the button reads Adding until its turn has run.
+  function kwAdd(term, btn) {
+    const key = String(term).toLowerCase();
+    if (KW_BUSY.has(key)) return;
+    KW_BUSY.add(key);
+    if (btn) { btn.disabled = true; btn.textContent = kwT("kw.adding", "Adding"); }
+    KW_QUEUE = KW_QUEUE.then(() => kwAddNow(term)).finally(() => {
+      KW_BUSY.delete(key);
+      if (KW_LAST_COV) renderCovDetail(KW_LAST_COV);
+    });
+  }
+
+  async function kwAddNow(term) {
+    let st;
+    try { st = await api("/api/cv/live/keyword/add", { term }); }
+    catch (err) {
+      kwCard(`<div class="kw-term">${esc(term)}</div><p class="kw-note">${esc(err.message || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+      return;
+    }
+    applyState(st);           // new PDF, new coverage, the term now under "In resume" with undo
+    if (!st.ok) {
+      kwCard(`<div class="kw-term">${esc(term)}</div><p class="kw-note">${esc(st.reason || kwT("kw.failed", "Could not add this keyword."))}</p>` + kwIgnoreBtn());
+    } else if (KW_PENDING === null) {
+      kwCard("");
+    }
+  }
+
   async function kwUndo(term) {
     let st;
     try { st = await api("/api/cv/live/keyword/undo", { term }); }
@@ -3621,7 +3654,12 @@
   $("#covDetail").addEventListener("click", (e) => {
     const add = e.target.closest(".kw-add");
     const undo = e.target.closest(".kw-undo");
-    if (add) { e.preventDefault(); kwPreview(add.dataset.term, add); }
+    if (add) {
+      e.preventDefault();
+      if (add.disabled) return;
+      if (add.dataset.direct) kwAdd(add.dataset.term, add);
+      else kwPreview(add.dataset.term, add);
+    }
     else if (undo) { e.preventDefault(); kwUndo(undo.dataset.term); }
   });
   /* What changed (tailoring/changes.py, built in code from the page and the base resume), the
