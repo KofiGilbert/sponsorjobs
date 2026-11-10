@@ -156,6 +156,12 @@
   function showView(name) {
     document.querySelectorAll(".view").forEach(v => v.classList.remove("is-active"));
     $("#view-" + name).classList.add("is-active");
+    // The rail's Building item is the builder's own: highlighted while it is open.
+    const live = $("#liveNavBtn");
+    if (live && name === "builder" && !AGENT.on) document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("is-active", x === live));
+    else live?.classList.remove("is-active");
+    // Back in the resume chat: GitHub may have been connected while it was hidden.
+    if (name === "builder") setTimeout(() => chatGithubCheck(), 0);
   }
 
   /* ---------------------------------------------------------------- live CV in the nav */
@@ -167,14 +173,18 @@
   function paintLiveNav(st) {
     const host = $("#liveNav");
     if (!host) return;
-    if (!st || !(st.active || st.phase)) { host.hidden = true; host.innerHTML = ""; return; }
+    // Saved (phase "done"): the resume is in Resumes now, not in progress.
+    if (!st || !(st.active || st.phase) || st.phase === "done") { host.hidden = true; host.innerHTML = ""; return; }
     const who = [st.role, st.company].filter(Boolean).join(" · ") || "Untitled Resume";
     host.hidden = false;
+    // A rail item like Home or Resumes: the icon (with the live dot), "Building" under it, and
+    // the role and company on hover. Highlighted while the builder is open.
     host.innerHTML = `<div class="nav-sec">In progress</div>
-      <button class="nav-item nav-live" id="liveNavBtn" title="${esc(who)}">
-        <span class="live-dot" aria-hidden="true"></span>
-        <span class="nav-label nav-live-t">${esc(who)}</span>
+      <button class="nav-item nav-live" id="liveNavBtn" title="${esc(who)}" aria-label="${esc("Building: " + who)}">
+        <span class="nav-live-ic"><svg class="nav-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/><path d="M14 3v4h4M9 12h4M6 3v18h5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M14.5 20.5l.6-2.6 4.4-4.4a1.4 1.4 0 0 1 2 2l-4.4 4.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span class="live-dot" aria-hidden="true"></span></span>
+        <span class="nav-label nav-live-t" data-rail="Building">${esc(who)}</span>
       </button>`;
+    $("#liveNavBtn").classList.toggle("is-active", !!$("#view-builder")?.classList.contains("is-active") && !AGENT.on);
     $("#liveNavBtn").addEventListener("click", () => resumeBuilder());
   }
 
@@ -3289,11 +3299,22 @@
     if (!acts.length) return;
     const wrap = el("div", "agent-acts chat-card");
     acts.forEach(b => {
+      // Connect GitHub: one click starts the connect right here (connectFromChat), and the chat
+      // carries on by itself once it is connected. Once connected, the button shows it, done.
+      if (b.nav === "github") { wrap.appendChild(chatGhBox(card.connected)); return; }
       const btn = el("button", "btn btn-sm btn-ghost");
       btn.type = "button"; btn.textContent = unDash(b.label);
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         if (b.nav) { CARD_NAV[b.nav](); return; }
         if (composerBusy) return;
+        // "Check my GitHub" on a card from before GitHub was connected: connect first (no reply
+        // with steps), then the chat checks the repos by itself.
+        if (b.send === CHECK_GITHUB_SEND && !(await ghCanCheck())) {
+          btn.replaceWith(chatGhBox(""));
+          GH_CHAT_PENDING = true;
+          connectFromChat();
+          return;
+        }
         wrap.remove();
         sendTurn(b.send, esc(unDash(b.label)));
       });
@@ -3301,6 +3322,79 @@
     });
     chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
   }
+
+  // ---- GitHub from the chat (Kofi, test build 13): the chat checks GitHub before it offers a
+  // check, its Connect GitHub button connects in one click with the wait shown on the card, and
+  // whenever GitHub becomes connected (here, in Settings, any way) while the chat's last word was
+  // "not connected", the chat carries on by itself (POST /api/session/github_connected).
+  const CHECK_GITHUB_SEND = "Check my GitHub for projects that fit this job";
+  let GH_CHAT_PENDING = false, GH_CHAT_SETTINGS = false, GH_CHAT_BUSY = false;
+  function chatGhBox(connected) {
+    const box = el("span", "chat-gh");
+    if (connected) {
+      box.innerHTML = `<button class="btn btn-sm btn-ghost chat-gh-done" type="button" disabled>${esc(connected === "GitHub" ? "GitHub connected" : `Connected as ${connected}`)}</button>`;
+      return box;
+    }
+    box.innerHTML = `<button class="btn btn-sm btn-ghost chat-gh-connect" type="button">${GH_MARK}Connect GitHub</button>`
+      + `<span class="chat-gh-wait" hidden><span class="gh-spin" aria-hidden="true"></span>Finish in your browser</span>`
+      + `<button class="btn btn-sm btn-ghost chat-gh-cancel" type="button" hidden>Cancel</button>`
+      + `<span class="chat-gh-msg" hidden></span>`;
+    box.querySelector(".chat-gh-connect").addEventListener("click", () => connectFromChat());
+    box.querySelector(".chat-gh-cancel").addEventListener("click", () => { GH_CHAT_PENDING = false; ghAppStop(true); });
+    return box;
+  }
+  // The live Connect GitHub boxes follow the one-click wait (ghAppUi).
+  function chatGhUi(waiting, text) {
+    document.querySelectorAll("#chatScroll .chat-gh").forEach(box => {
+      const c = box.querySelector(".chat-gh-connect"); if (!c) return;
+      c.hidden = waiting;
+      box.querySelector(".chat-gh-wait").hidden = !waiting;
+      box.querySelector(".chat-gh-cancel").hidden = !waiting;
+      const m = box.querySelector(".chat-gh-msg");
+      m.textContent = text || ""; m.hidden = !text;
+    });
+  }
+  function chatGhDone(login) {
+    document.querySelectorAll("#chatScroll .chat-gh").forEach(box => {
+      if (box.querySelector(".chat-gh-connect")) box.replaceWith(chatGhBox(login || "GitHub"));
+    });
+  }
+  async function ghCanCheck() {
+    try {
+      const g = await fetch("/api/github/status").then(r => r.json());
+      return !!(g.configured || g.connected);
+    } catch { return true; }     // unknown: the server's own check answers
+  }
+  async function connectFromChat() {
+    await renderConnections();
+    if (GH_ON) { chatGithubCheck(); return; }
+    if (GH_APP) { ghAppStart(); return; }        // opens the browser; the card shows the wait
+    // No one-click App on this build: the sign-in code (or the token box) lives in Settings.
+    GH_CHAT_SETTINGS = true;
+    await CARD_NAV.github();
+  }
+  // Carry on once GitHub is connected, when the resume chat is open and its last word on GitHub
+  // was "not connected" (a live Connect GitHub button, or a Check my GitHub click waiting on the
+  // connect). The server decides, once per connect; a second call changes nothing.
+  async function chatGithubCheck() {
+    if (GH_CHAT_BUSY || AGENT.on || !$("#view-builder")?.classList.contains("is-active")) return;
+    if (!GH_CHAT_PENDING && !document.querySelector("#chatScroll .chat-gh-connect")) return;
+    GH_CHAT_BUSY = true;
+    try {
+      if (!(await ghCanCheck())) return;
+      const pending = GH_CHAT_PENDING; GH_CHAT_PENDING = false;
+      if (GH_CHAT_SETTINGS) { GH_CHAT_SETTINGS = false; closeSettings(); }
+      await withWorking(async () => {
+        const st = await api("/api/session/github_connected", { pending });
+        chatGhDone(st.github_login);
+        if (st.resumed) applyState(st);
+      }, "…");
+    } catch { /* the next focus or view change tries again */ }
+    finally { GH_CHAT_BUSY = false; }
+  }
+  document.addEventListener("tailor:github", () => chatGithubCheck());
+  window.addEventListener("focus", () => chatGithubCheck());
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) chatGithubCheck(); });
 
   // One-click autonomous build for a returning user (their saved profile → tailored CV).
   function renderAutobuild() {
@@ -3665,6 +3759,7 @@
       (t.cards && t.cards.length ? t.cards : (t.card ? [t.card] : [])).forEach(renderCard);
     });
     applyState(st);
+    chatGithubCheck();       // connected since this chat last spoke of GitHub: carry on now
     return true;
   }
 
@@ -3974,23 +4069,49 @@
     }, "Reading your document…");
   });
 
+  // Accept & Save, the same from the builder or from the pane over any other page (Kofi, test
+  // build 13: clicked on Home, nothing visibly changed). "Saving…" while it runs; then a toast
+  // "Saved to Resumes" with Open, the pane closes, Resumes opens with the new one highlighted, and
+  // the rail's Building item goes (the resume is done). A blocked save or an error is a toast and
+  // the pane stays open: never only a chat bubble the person may not be looking at.
   $("#acceptBtn").addEventListener("click", async () => {
-    $("#acceptBtn").disabled = true;
+    const btn = $("#acceptBtn");
+    if (btn.dataset.saving) return;
+    const label = btn.textContent;
+    btn.dataset.saving = "1"; btn.disabled = true; btn.textContent = "Saving…";
+    let r = null;
     try {
-      await withWorking(async () => {
-        const r = await api("/api/session/accept", {});   // {} forces a POST
-        if (r && r.ok === false) {   // blocked by a flagged placeholder project
-          bubble("agent", esc(r.reason || "Resolve the flagged placeholder before saving."));
-          return;
-        }
-        await loadDashboard();
-        showView("dashboard");
-      }, "Saving your resume…");
+      r = await api("/api/session/accept", {});   // {} forces a POST
+    } catch (e) {
+      if (!e.reason || !OUTAGE[e.reason]) toast(e.message || "Couldn't save your resume. Try again.", null, 8000);
+      return;
     } finally {
       // Always re-enable, otherwise any transient failure leaves Accept dead forever.
-      $("#acceptBtn").disabled = false;
+      delete btn.dataset.saving; btn.disabled = false; btn.textContent = label;
     }
+    if (!r || r.ok === false) {   // blocked: a flagged placeholder project, or not a clean page
+      const why = (r && r.reason) || "Resolve the flagged placeholder before saving.";
+      toast(why, null, 9000);
+      if ($("#view-builder")?.classList.contains("is-active")) bubble("agent", esc(why));
+      return;
+    }
+    if (window.Panel && Panel.isOpen("cv")) Panel.close();
+    await refreshLiveNav();
+    await showSavedResume(r.record_id);
+    toast("Saved to Resumes", { label: "Open", run: () => openPackage(r.record_id) });
   });
+  // Resumes, with the one just saved highlighted and in view.
+  async function showSavedResume(id) {
+    document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("is-active", x.dataset.nav === "cvs"));
+    stopFeedPoll();
+    showView("cvs");
+    await loadCvs();
+    const card = id != null && document.querySelector(`#cvManager .cv-card[data-id="${CSS.escape(String(id))}"]`);
+    if (!card) return;
+    card.classList.add("is-new");
+    card.scrollIntoView({ block: "center" });
+    setTimeout(() => card.classList.remove("is-new"), 4000);
+  }
 
   /* ---------------------------------------------------------------- the memory page
      "What SponsorJobs knows about you" (docs/applicant-brain.md, section 13, Phase 6). It
@@ -8661,7 +8782,7 @@
 
   // toast("Moved", {label: "Undo", run}) shows one action beside the message (Gmail's undo
   // toast) and stays up a little longer so there is time to reach it.
-  function toast(msg, action) {
+  function toast(msg, action, ms) {
     let t = $("#toast");
     if (!t) { t = document.createElement("div"); t.id = "toast"; t.className = "toast"; document.body.appendChild(t); }
     t.textContent = msg;
@@ -8673,7 +8794,7 @@
       t.appendChild(b);
     }
     t.classList.add("show");
-    clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove("show"), action ? 6000 : 2600);
+    clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove("show"), ms || (action ? 6000 : 2600));
   }
 
   // Buying, the production way (claude.ai, ChatGPT, Notion, Linear): signing in is its OWN screen,
@@ -9183,6 +9304,7 @@
     if ($("#ghToggle")) $("#ghToggle").hidden = waiting;
     const msg = $("#ghAppMsg");
     if (msg) { msg.textContent = text || ""; msg.hidden = !text; }
+    chatGhUi(waiting, text);
   }
   function ghAppStop(tellServer) {
     GH_APP_RUN++; clearTimeout(GH_APP_POLL); GH_APP_POLL = null;
@@ -9202,6 +9324,11 @@
     if (run !== GH_APP_RUN) return;
     if (d.fallback) {          // the App isn't set up after all: the device flow or the token box
       ghAppUi("idle"); GH_APP = false;
+      if (setModal && setModal.hidden) {     // started from the chat: that sign-in lives in Settings
+        GH_CHAT_SETTINGS = true;
+        await openSettings();
+        document.querySelector('.set-tab[data-set="connections"]')?.click();
+      }
       await renderConnections();
       return connectGitHub();
     }
@@ -9335,14 +9462,11 @@
         tg.classList.toggle("btn-primary", primary); tg.classList.toggle("btn-ghost", !primary);
       }
       if ($("#ghAdvWrap")) $("#ghAdvWrap").hidden = !(GH_APP || GH_DEVICE) || gh.configured;
-      // The App stays installed on GitHub until the person removes it there: say where.
-      const mw = $("#ghManageWrap"), showManage = GH_APP && ((gh.configured && GH_VIA_APP) || (!gh.configured && GH_GONE));
+      // The App stays installed on GitHub until the person removes it there: after Disconnect,
+      // say where. A connected row shows only who it is and Disconnect (Kofi, 2026-11-09).
+      const mw = $("#ghManageWrap"), showManage = GH_APP && !gh.configured && GH_GONE;
       if (mw) mw.hidden = !showManage;
-      if ($("#ghManage")) {
-        $("#ghManage").href = gh.manage_url || "https://github.com/settings/installations";
-        $("#ghManage").textContent = gh.configured ? "Choose repos on GitHub" : "remove the app on GitHub";
-      }
-      if ($("#ghManageLead")) $("#ghManageLead").textContent = gh.configured ? "" : "Disconnected here. To end access, ";
+      if ($("#ghManage")) $("#ghManage").href = gh.manage_url || "https://github.com/settings/installations";
     } catch { /* leave */ }
   }
   // The SponsorJobs address (docs/mail-alias.md): one click to take it, one to stop using it.

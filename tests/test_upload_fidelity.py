@@ -228,7 +228,8 @@ def test_app_context_reaches_the_reply_prompt(template_source, fake_llm, workdir
     s = _uploaded(template_source, fake_llm, workdir)
     ctx = s._app_context()
     assert "Jane_Doe_Resume.pdf" in ctx and "Route Planner" in ctx
-    assert "GitHub is NOT connected" in ctx and "Connections" in ctx
+    assert "GitHub is NOT connected" in ctx and "Connect GitHub button" in ctx
+    assert "Settings, then Connections" not in ctx            # no menu steps (2026-11-09)
     assert "Projects page" in ctx
 
     llm = AnthropicLLM.__new__(AnthropicLLM)          # no client, no network
@@ -255,7 +256,8 @@ def test_a_reply_that_denies_reading_files_is_replaced(template_source, fake_llm
     reply = " ".join(st.get("messages") or [])
     assert "can't access files" not in reply
     assert "I read Jane_Doe_Resume.pdf" in reply and "Route Planner" in reply
-    assert "GitHub isn't connected" in reply and "Connections" in reply
+    assert "GitHub isn't connected" in reply and "Settings" not in reply
+    assert any(b.get("nav") == "github" for c in st["cards"] for b in c.get("buttons") or [])
     assert "—" not in reply and "–" not in reply
 
 
