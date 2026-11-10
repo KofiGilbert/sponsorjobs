@@ -122,20 +122,13 @@ def test_build_button_twice_while_required_open_does_not_loop(template_source, f
     assert set(keys) == set(s.required_fill), keys
     first = " ".join(st1["messages"])
 
+    # Ask ONCE, never again (Kofi, 2026-11-10): the second press answers the question and
+    # builds; nothing is asked or nudged again, and nothing is invented for the open sections.
     st2 = s.submit(BUILD_BUTTON)
-    assert s.assembled is None, "pressing build must not skip the required sections"
-    second = " ".join(st2["messages"])
-    assert second and second != first, "the same question was re-asked verbatim (the loop)"
-    low = second.lower()
-    assert "none, leave it off" in low
-    assert "thank" not in low and "added" not in low, "thanked them for nothing"
-    assert st2["can_autobuild"] is False and st2.get("required_open")
-    # Nothing was invented for the open sections while nudging.
+    assert s.assembled is not None and st2["phase"] == "review"
+    assert "before i build, i need your" not in " ".join(st2["messages"]).lower()
     assert not s.essentials.get("extracurricular")
     assert not str(s.essentials.get("interests") or "").strip()
-    # A third press stays the same short line: bounded, never a new interrogation.
-    st3 = s.submit(BUILD_BUTTON)
-    assert " ".join(st3["messages"]) == second
 
 
 def test_reask_never_claims_material_was_added(template_source, fake_llm, workdir):
@@ -164,7 +157,6 @@ def test_decline_button_records_a_real_decline_and_builds(template_source, fake_
     s = _returning(template_source, fake_llm, workdir)
     s.start()
     s.submit(BUILD_BUTTON)
-    s.submit(BUILD_BUTTON)                                 # the second press: no loop, no build
     assert s.assembled is None
     st = s.decline_required()
     assert {"extracurricular", "interests"} <= set(s.essentials.get("declined") or [])

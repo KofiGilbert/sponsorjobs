@@ -3979,8 +3979,17 @@ class WebIntake:
             # button in other words.
             if _bare_decline(message) or _wants_done(message):
                 declined_now = self._decline_open_required()
-            # An answer that filled part of the question answers all of it (for this chat).
-            self._settle_required_answer()
+            # Any reply to the question answers it (Kofi, 2026-11-10: ask ONCE, never again).
+            # His "football and travelling" landed in Interests while only Extracurricular had
+            # been asked, and the chat said "Before I build, I need your Extracurricular" right
+            # after he answered. What he didn't give is covered for this chat (not declined), and
+            # the page fill fills the room with more of his recent work.
+            # Only a reply to THAT question: the last thing the chat said before this message
+            # was the outside-work ask (a reply to a skeleton question is not an answer to it).
+            e = self.essentials
+            if self._last_agent_said(e.get("required_ask_text")):
+                asked = list(e.get("required_open_at_ask") or self._open_required_sections())
+                e["required_covered"] = sorted(set(e.get("required_covered") or []) | set(asked))
             if _wants_done(message) and not self._open_required_sections():
                 self.essentials["enrich_done"] = True
         self._connect_due = False
@@ -4165,6 +4174,22 @@ class WebIntake:
         return self.draft(lead=lead)
 
     # -- the required-sections question (Extracurricular / Interests) ------------------ #
+    def _last_agent_said(self, text) -> bool:
+        """True when the chat's last message before the person's latest one began with ``text``."""
+        text = str(text or "").strip()
+        if not text:
+            return False
+        seen_user = False
+        for turn in reversed(self.history or []):
+            if not isinstance(turn, dict):
+                continue
+            if turn.get("role") == "user" and not seen_user:
+                seen_user = True
+                continue
+            if turn.get("role") == "agent" and seen_user:
+                return str(turn.get("content") or "").strip().startswith(text[:120])
+        return False
+
     def _required_labels(self, keys) -> list[str]:
         """The open required sections as the person reads them ("Extracurricular")."""
         heads = self.headings if isinstance(self.headings, dict) else {}
@@ -5665,6 +5690,7 @@ class WebIntake:
         e = self.essentials
         e["asked_required"] = True
         e["required_open_at_ask"] = list(open_req)
+        e["required_ask_text"] = ask[:200]
         # Asked once: never asked again, before or after the build (_enrich_invite).
         e["required_asked"] = sorted(set(e.get("required_asked") or []) | set(open_req))
         self._persist()

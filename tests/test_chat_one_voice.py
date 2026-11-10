@@ -134,14 +134,17 @@ def test_hobbies_answer_the_outside_work_question_once_and_the_saved_build_runs(
     assert "extracurricular" not in (s.essentials.get("declined") or [])   # covered, not declined
 
 
-def test_pre_build_reask_is_the_short_nudge_not_the_question_again(template_source, fake_llm, workdir):
+@requires_latex
+def test_any_reply_answers_the_outside_work_question_once(template_source, fake_llm, workdir):
+    # Ask ONCE, never again (Kofi, 2026-11-10: "Did i just not answer this question !"): any
+    # reply to the question carries on to the build, it is never asked or nudged a second time.
     s = _s(template_source, fake_llm, workdir)
     s.start()
-    first = " ".join(s.submit(SKELETON)["messages"])
-    st = s.submit("My manager at BlackOrigin was great.")
-    second = " ".join(st["messages"])
-    assert s.assembled is None and second != first
-    assert "None, leave it off" in second
+    s.submit(SKELETON)
+    st = s.submit("Playing football over the weekends and travelling to see the world")
+    said = " ".join(st["messages"])
+    assert "Before I build, I need your" not in said, said
+    assert s.assembled is not None
 
 
 def test_the_model_is_only_thanked_for_what_was_really_added(template_source, fake_llm, workdir):
