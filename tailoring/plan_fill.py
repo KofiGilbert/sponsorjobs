@@ -163,7 +163,9 @@ def lines_of(it, text: str, cpl: float) -> int:
 # A chosen version's last line lands in this share of the line (no extra line wrapped).
 LAND_LO, LAND_HI = 0.90, 0.985
 # Word targets for the versions of an n-line bullet, as shares of n full lines.
-VERSION_SHARES = (0.70, 0.82, 0.94, 1.06)
+# Run 19: versions 12% apart straddled the 90-98% landing band and missed it on 2 of 18 bullets
+# (one at 78%, the next spilling a line); 6% apart, one lands.
+VERSION_SHARES = (0.84, 0.90, 0.96, 1.02)
 
 
 def line_capacity(rep) -> float:
@@ -350,6 +352,10 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                         vers.append(v)
                     elif v:
                         tried_texts.setdefault(i, []).append((v, problems(i, v, sibs)))
+                        _log(step="plan-version-refused", label=info[i]["label"], n=k, bullet=v,
+                             why=problems(i, v, sibs))
+                _log(step="plan-versions", label=info[i]["label"], n=k,
+                     why=[(len(v), round(lines_needed(v, cap), 2)) for v in vers])
                 text, landed, way = choose_version(vers, want[k], cap) if cap else (
                     (vers[0], True, "") if vers else ("", False, "longer"))
                 if text and not landed:
