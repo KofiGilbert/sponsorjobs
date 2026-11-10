@@ -134,24 +134,27 @@ def test_overflow_cuts_the_oldest_roles_first_and_protects_the_two_most_recent()
 
 
 # --------------------------------------------------------------------------- the gate
-def test_a_written_bullet_with_an_invented_number_or_tool_is_rejected():
+def test_a_written_bullet_with_an_invented_number_or_name_is_rejected():
+    """Kofi, 2026-11-10: the writer works like a professional resume writer (the role, the
+    company, the person's skills and projects, the job's duties). Only an invented number, a
+    named employer, product or client, or a credential stays refused, with filler and repeats."""
     role_text = ("Lakeshore Logistics\nData Analyst\nBuilt weekly SQL and Tableau dashboards that "
-                 "track on-time delivery for 14 regional depots.\nAt Lakeshore Logistics I also "
-                 "trained the new analysts to maintain the SQL dashboards.")
+                 "track on-time delivery for 14 regional depots.")
     listed = ["SQL", "Tableau", "Kubernetes", "Power BI"]
     sib = ["Built weekly SQL and Tableau dashboards that track on-time delivery for 14 regional depots."]
-    ok = "Trained the new analysts to maintain and extend the SQL dashboards."
-    assert written_problems(ok, role_text, sib, JD, listed) == []
-    # says nothing the sibling does not (a real build wrote one like this, 2026-11-06)
-    assert "restates the role's other bullets" in written_problems(
-        "Shared the weekly SQL delivery dashboards with each regional depot.", role_text, sib, JD, listed)
+    assert written_problems("Trained the new analysts to maintain and extend the SQL dashboards.",
+                            role_text, sib, JD, listed) == []
+    # a typical duty of the title, in a skill the person listed
+    assert written_problems("Built Power BI reports on carrier costs for the finance team.",
+                            role_text, sib, JD, listed) == []
     assert "40" in " ".join(written_problems("Cut delivery delays by 40 percent with SQL dashboards.",
                                              role_text, sib, JD, listed))
-    assert written_problems("Moved the depot dashboards onto Kubernetes for the team.",
-                            role_text, sib, JD, listed)                      # tool from another part
-    assert written_problems("Built dashboards in Power BI for the depots.", role_text, sib, JD, listed)
     assert written_problems("Partnered with Amazon on depot reporting.", role_text, sib, JD, listed)
+    assert written_problems("Earned the PMP certification while leading depot reporting.",
+                            role_text, sib, JD, listed)
     assert written_problems(sib[0], role_text, sib, JD, listed)            # repeats a sibling
+    assert "restates the role's other bullets" in written_problems(
+        "Shared the weekly SQL delivery dashboards with each regional depot.", role_text, sib, JD, listed)
     assert written_problems("Leveraging SQL, ensuring robust delivery tracking for depots.",
                             role_text, sib, JD, listed)                      # filler
 
@@ -313,11 +316,11 @@ def test_make_room_cuts_older_material_in_kofis_order_and_can_undo():
         ([2, 2, 2, 2], [3, 1], 6),      # (2) project bullets beyond one, last project first
         ([2, 2, 2, 2], [2, 1], 6),
         ([2, 2, 2, 2], [1, 1], 6),
-        ([2, 2, 2, 1], [1, 1], 6),      # (3) the oldest role down to one
-        ([2, 2, 2, 1], [1, 1], 5),      # (4) skills lines beyond the minimum (4)
-        ([2, 2, 2, 1], [1, 1], 4),
+        # The oldest role keeps two (Kofi, 2026-11-10: it used to go down to one).
+        ([2, 2, 2, 2], [1, 1], 5),      # (3) skills lines beyond the minimum (4)
+        ([2, 2, 2, 2], [1, 1], 4),
     ]
-    assert len(trims) == 8 and page["summary"] == "Analyst." and len(page["experience"]) == 4
+    assert len(trims) == 7 and page["summary"] == "Analyst." and len(page["experience"]) == 4
     for u in reversed(undo):
         u()
     assert page == whole and trims == []
@@ -360,8 +363,8 @@ def test_on_a_near_full_page_the_recent_roles_still_get_three_by_trimming_older_
     c = _counts(res.profile_used)
     assert c[0] >= 3 and len(c) == 4 and c[0] == max(c)                      # no role dropped
     # room came from project bullets beyond one each, and the staircase from older roles
-    assert res.trims and all(t["kind"] == "bullet" for t in res.trims)
-    assert all(t["section"] == "projects" or t.get("staircase") for t in res.trims)
+    assert res.trims and all(t["kind"] == "bullet" or t.get("room") for t in res.trims)
+    assert all(t["section"] == "projects" or t.get("staircase") or t.get("room") for t in res.trims)
     assert all(len(p["bullets"]) >= 1 for p in res.profile_used["projects"])
     assert len(res.profile_used["projects"]) == 2
 
@@ -373,7 +376,10 @@ def test_when_no_room_can_be_made_the_page_stays_clean_and_says_so(template_sour
     res = assemble_cv(template_source, _near_full(), JD, FakeLLM(), workdir, tailor=True)
     assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
     assert res.fill_ratio <= MAX_FILL
-    assert any("would not fit on one page" in n for n in res.bullet_notes), res.bullet_notes
+    # Either the most recent role got its three without any room being made, or a note says
+    # why it could not.
+    top = _counts(res.profile_used)[0]
+    assert top >= 3 or any("would not fit on one page" in n for n in res.bullet_notes), res.bullet_notes
 
 
 # --------------------------------------------------------------------------- a split stays split

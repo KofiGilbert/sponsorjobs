@@ -202,10 +202,10 @@ def test_a_one_word_last_line_is_a_fit_issue_not_a_question(template_source, fak
     s.assembled = _Page({"short_bullets": [
         {"label": "Last-Mile Operations Simulator (Python, simulation",
          "text": "Showed a demand-shaped roster beat a flat one.", "fill": 0.4, "lines": 1}]})
-    q = s._line_question()
-    assert q.startswith("Your Last-Mile Operations Simulator bullet is a bit thin")
-    assert "(Python" not in q and "stops short" not in q
-    assert s._line_question() == "", "asked about a bullet twice in one chat"
+    # A thin bullet is not asked about either (Kofi, 2026-11-10): the line fit writes it out.
+    assert s._line_question() == ""
+    s.assembled = _Page({"short_skills": [{"label": "Tools"}], "skills_needed": 1})
+    assert "needs a little more" not in s._line_question()
 
 
 # ------------------------------------------------------------------ keyword ADD rows

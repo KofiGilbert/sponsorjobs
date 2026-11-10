@@ -73,10 +73,12 @@ def _terms(text: str) -> set[str]:
     return {t for t in out if len(t) > 1}
 
 
-def tacked_on_terms(original: str, candidate: str) -> list[str]:
+def tacked_on_terms(original: str, candidate: str, count: bool = True) -> list[str]:
     """Terms a rewrite bolts on as a list, rather than saying what happened: a leading keyword
     wall, a trailing comma list, or a closing "using/leveraging/with ..." clause that names a
-    tool or skill the original bullet did not. Empty means the rewrite is clean."""
+    tool or skill the original bullet did not, and (with ``count``) three or more new terms at
+    once. A bullet written new names its tools in the sentence, so it is checked without
+    ``count``. Empty means the rewrite is clean."""
     orig, cand = str(original or ""), str(candidate or "")
     new_terms = _terms(cand) - _terms(orig)
     if _LEAD_WALL.search(cand) and not _LEAD_WALL.search(orig):
@@ -90,7 +92,7 @@ def tacked_on_terms(original: str, candidate: str) -> list[str]:
         if m and m.group("tail").strip() not in orig:
             tail = m.group("tail").lower()
             hits |= {t for t in new_terms if t in tail}
-    if len(new_terms) >= 3:            # a fill adds a real detail, never a set of keywords
+    if count and len(new_terms) >= 3:  # a fill adds a real detail, never a set of keywords
         hits |= new_terms
     return sorted(hits)
 
@@ -213,3 +215,183 @@ def dedupe_bullets(bullets: list) -> list:
             continue
         out.append(b)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# A bullet the page fill adds must say something of its own (Kofi, 2026-11-10)
+# --------------------------------------------------------------------------- #
+# The staircase fill grew a role by splitting its bullets and writing more, and a real D365 build
+# came out with thin parts that restate each other: "Led business intelligence across the
+# company's products, owning the function that covers every product line and the data the
+# company uses to track them." beside "Set the reporting direction for the product, growth, and
+# finance teams...", and "Built an AI-assisted pipeline that processes 280,000+ daily job
+# postings, turning a very large raw feed into a structured set of listings." Each new bullet
+# must carry a fact (a tool, a number, an outcome) no other bullet of the role says, in words
+# the person's material states, not words added to reach a length.
+
+# Words that join a sentence without carrying a fact.
+_GLUE = frozenset("that which who whom them they then there than such also each every all both "
+                  "one more very what when where whose so".split())
+# A new bullet needs this many content words (or one figure) that no other bullet of the role says.
+DISTINCT_MIN = 2
+# A new bullet whose content words are this share or more already on the role's other bullets
+# restates them.
+RESTATE_SHARE = 0.5
+# ...unless it adds at least this many content words of its own (a bullet may carry the role's
+# context, its tools and its platform).
+RESTATE_FRESH = 4
+# Words that carry no checkable content on their own: a line made only of these (and joining
+# words) says nothing ("Drove strategic alignment and operational excellence across teams").
+_BUZZ = frozenset("""
+strategic strategy alignment aligned excellence operational value values impact impactful success
+successful outcome outcomes synergy synergies stakeholder stakeholders initiative initiatives
+effort efforts various key critical core best practice practices high quality results result
+drive drove driving deliver delivered delivering support supported supporting ensure ensured
+enable enabled foster fostered leverage leveraged team teams cross functional organization
+organizational business overall growth culture vision mission goal goals objective objectives
+""".split())
+# A bullet needs at least this many content words beyond buzzwords to say something concrete.
+CONCRETE_MIN = 3
+
+
+def _stem(t: str) -> str:
+    t = t.lower()
+    if t.endswith("'s"):
+        t = t[:-2]
+    if t.endswith("ss"):
+        return t
+    for suf in ("ing", "ed", "es", "s"):
+        if len(t) > len(suf) + 3 and t.endswith(suf):
+            return t[: -len(suf)]
+    return t
+
+
+def fact_stems(text: str, skip_lead: bool = False) -> list[str]:
+    """The content words of ``text``, stemmed (``turns``, ``turned`` and ``turning`` are one),
+    without joining words. ``skip_lead`` drops the opening verb, which a new bullet is free to
+    choose."""
+    toks = _fact_tokens(text)
+    if skip_lead and toks:
+        toks = toks[1:]
+    return [_stem(t) for t in toks if t not in _FACT_STOP and t not in _GLUE]
+
+
+def hollow(text: str) -> bool:
+    """True for empty buzzword filler: a line with no concrete action or object, fewer than
+    ``CONCRETE_MIN`` content words that are not buzzwords."""
+    return len({t for t in fact_stems(text, skip_lead=True) if t not in _BUZZ}) < CONCRETE_MIN
+
+
+def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = True,
+                        max_new: int | None = None) -> list[str]:
+    """Why a bullet the fill ADDS to a role (a part of a split, or a bullet written for the
+    role) may not go on the page; empty means it may.
+
+    * "adds no fact of its own": no figure and fewer than ``DISTINCT_MIN`` content words that
+      the role's other bullets (``siblings``) do not already say;
+    * "restates the role's other bullets": ``RESTATE_SHARE`` or more of its content words are
+      already on them (not checked with ``restate`` off: a part of a split may carry its
+      source's context, the platform or the tools, so it reads on its own);
+    * "empty filler": no concrete action or object (``hollow``).
+
+    A bullet written like a professional resume writer would, from the role, the company, the
+    person's skills and projects and the job's duties, is NOT refused for using words the
+    person's material does not (Kofi, 2026-11-10). ``material`` and ``max_new`` are kept for
+    callers and not used."""
+    from .fact_gate import figures
+
+    mine = set(fact_stems(new, skip_lead=True))
+    if not mine:
+        return ["empty"]
+    sibs = [str(s) for s in siblings or () if str(s).strip()]
+    said = {t for s in sibs for t in fact_stems(s)}
+    out: list[str] = []
+    new_figs = figures(new) - {f for s in sibs for f in figures(s)}
+    fresh = mine - said
+    if not new_figs and len(fresh) < DISTINCT_MIN:
+        out.append("adds no fact of its own")
+    elif (restate and sibs and len(mine & said) / len(mine) >= RESTATE_SHARE and not new_figs
+          and len(fresh) < RESTATE_FRESH):
+        out.append("restates the role's other bullets")
+    if hollow(new):
+        out.append("empty filler")
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Padding that adds no fact (Kofi, 2026-11-10, a real D365 build)
+# --------------------------------------------------------------------------- #
+# Stock tails a model reaches a length with: "for stakeholders across the business" on three
+# bullets of one role, "for BlackOrigin Inc.'s products", "at Stanbic Bank Ghana".
+_STOCK_TAIL = re.compile(
+    r"\b(?:for|to|with)\s+(?:the\s+|its\s+|their\s+)?(?:key\s+)?stakeholders"
+    r"(?:\s+across\s+the\s+(?:business|company|organi[sz]ation|bank))?\b"
+    r"|\bacross\s+the\s+(?:business|organi[sz]ation)\b", re.I)
+_CORP = re.compile(r"\b(?:inc|llc|ltd|limited|corp|corporation|co|plc|gmbh|group)\.?$", re.I)
+# A run of this many words in a row, with at least two content words, said again on another
+# bullet of the same role is a repeated phrase.
+REPEAT_RUN = 4
+
+
+def employer_names(org: str) -> list[str]:
+    """How a bullet could name its own employer: the full name, the name without "Inc." and
+    the like, and an acronym in brackets ("CSIR")."""
+    org = str(org or "").strip()
+    if not org:
+        return []
+    out = {org}
+    core = re.sub(r"\s*\([^)]*\)\s*", " ", org).strip(" ,.")
+    core = _CORP.sub("", core).strip(" ,.")
+    if len(core) >= 3:
+        out.add(core)
+    out |= {m for m in re.findall(r"\(([A-Z][A-Za-z&]{1,9})\)", org)}
+    return sorted(out, key=len, reverse=True)
+
+
+def role_padding(new: str, siblings, employer: str = "", source: str = "",
+                 repeats_from_source: bool = True, context: str = "",
+                 allowed: str = "") -> list[str]:
+    """Padding a bullet added to a role carries that states no fact: its own employer's name
+    (the role's heading already says it), a stock tail ("for stakeholders across the
+    business"), or a phrase another bullet of the role already says. Anything ``source`` (the
+    person's own bullet it came from) already says is theirs and allowed. For a repeated
+    phrase, the words of ``context`` (the role's title and company) do not count, and a phrase
+    ``allowed`` holds (the role's own saved bullets) may recur."""
+    new, source = str(new or ""), str(source or "")
+    out: list[str] = []
+    for name in employer_names(employer):
+        if re.search(r"(?<![A-Za-z])" + re.escape(name) + r"(?![A-Za-z])", new, re.I) and \
+                not re.search(r"(?<![A-Za-z])" + re.escape(name) + r"(?![A-Za-z])", source, re.I):
+            out.append("names its own employer")
+            break
+    m = _STOCK_TAIL.search(new)
+    if m and not _STOCK_TAIL.search(source):
+        out.append("stock tail: " + m.group(0))
+    mine = _fact_tokens(new)
+    # A part of a split may not carry its source's phrase into two bullets: with
+    # ``repeats_from_source`` off, the source does not excuse a repeat.
+    src = (_fact_tokens(source) if repeats_from_source else []) + ["|"] + _fact_tokens(allowed)
+    ctx = set(_fact_tokens(context))
+    for sib in siblings or ():
+        st = _fact_tokens(str(sib or ""))
+        if _shared_phrase(mine, st, src, ctx):
+            out.append("repeats a phrase of another bullet")
+            break
+    return out
+
+
+def _shared_phrase(a: list[str], b: list[str], allowed: list[str], ctx=frozenset()) -> bool:
+    """A run of ``REPEAT_RUN`` or more words in both ``a`` and ``b``, with two content words,
+    that ``allowed`` does not hold."""
+    allowed_s = " " + " ".join(allowed) + " "
+    for i in range(len(a)):
+        for j in range(len(b)):
+            k = 0
+            while i + k < len(a) and j + k < len(b) and a[i + k] == b[j + k]:
+                k += 1
+            if k >= REPEAT_RUN:
+                run = a[i:i + k]
+                if sum(t not in _FACT_STOP and t not in ctx for t in run) >= 2 and \
+                        (" " + " ".join(run[:REPEAT_RUN]) + " ") not in allowed_s:
+                    return True
+    return False

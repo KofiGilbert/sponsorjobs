@@ -938,6 +938,27 @@ def _builds(kind: str):
 
 
 class WebIntake:
+    # The body sections the page renders: the template's own (its manifest), plus Interests
+    # whenever the person gave them and the template has no Interests section of its own. Kofi
+    # answered the hobbies question and a D365 build in the Software Engineer template (no
+    # Interests section) printed none of it (2026-11-10): what the person gives always prints.
+    # It goes last, as "Additional Information", and renders nothing while they have none.
+    @property
+    def sections(self) -> list:
+        secs = list(getattr(self, "_template_sections", None) or [])
+        if secs and "interests" not in secs and self._has_interests():
+            secs.append("interests")
+        return secs
+
+    @sections.setter
+    def sections(self, value) -> None:
+        self._template_sections = list(value or [])
+
+    def _has_interests(self) -> bool:
+        return self._section_filled("interests", getattr(self, "profile", None) or {},
+                                    getattr(self, "essentials", None) or {},
+                                    getattr(self, "saved_profile", None) or {})
+
     def __init__(self, jd_text, template_source, llm, memory, records, workdir,
                  profile_name="default", jobname="cv", palace_dir=None,
                  template_name=None):
@@ -2570,11 +2591,24 @@ class WebIntake:
                 key = self._role_key(entry.get("org"), role.get("title"))
                 tailored[key] = list(role.get("bullets") or [])
 
+        origins = getattr(self.assembled, "origins", None)
+
+        def _norm(t) -> str:
+            return re.sub(r"\s+", " ", str(t or "")).strip().lower()
+
         def _adopt(entry: dict, role: dict) -> dict:
             role = dict(role)
             original = list(role.get("bullets") or [])
             new = tailored.get(self._role_key(entry.get("org"), role.get("title")))
-            if new:
+            if new and isinstance(origins, dict):
+                # The page's bullets, as tailored (a split's parts and a bullet written for the
+                # page included), then every bullet of theirs the page did not show. Matched by
+                # where each page bullet came from, never by position: a page that left out the
+                # third of four bullets used to save the fourth twice and lose the third
+                # (Stanbic, 2026-11-10).
+                shown = {_norm(origins.get(b, b)) for b in new}
+                role["bullets"] = list(new) + [o for o in original if _norm(o) not in shown]
+            elif new:
                 # Tailored bullets replace the originals one for one; anything the
                 # render trimmed off the end is carried over untouched.
                 role["bullets"] = new + original[len(new):]
@@ -5292,8 +5326,44 @@ class WebIntake:
     def _fit_material(self) -> list:
         """The fact gate's material for a fit build: the brain material plus the person's
         stated skills and real bullets (``_skill_source_text``), so a skill they told us
-        about may be placed on the page."""
-        return list(self._brain_material()) + [self._skill_source_text()] + self._brain_skills()
+        about may be placed on the page, and what their uploaded resumes say under each of
+        their employers (``_upload_role_notes``), which the page fill may split or draw on."""
+        out = list(self._brain_material()) + [self._skill_source_text()] + self._brain_skills()
+        notes = self._upload_role_notes()
+        return out + ([{"role_notes": notes}] if notes else [])
+
+    _UPLOAD_TEXT: dict = {}          # (path, mtime) -> extracted text of that uploaded file
+
+    def _upload_role_notes(self) -> dict:
+        """{employer, lower case: what the person's uploaded resumes say under it}
+        (tailoring/assembler.role_notes), newest file first, for the employers in their
+        profile. Read once per file; local only."""
+        d = self._uploads_dir()
+        if d is None:
+            return {}
+        from intake.cv_import import extract_text
+        from tailoring.assembler import role_notes
+        prof = self.profile if (self.profile or {}).get("experience") else (self.saved_profile or {})
+        orgs = [str(e.get("org") or e.get("company") or "").strip()
+                for e in (prof or {}).get("experience") or [] if isinstance(e, dict)]
+        orgs = [o for o in orgs if o]
+        if not orgs:
+            return {}
+        out: dict = {}
+        files = sorted((f for f in d.iterdir() if f.suffix.lower() in (".pdf", ".docx", ".txt")),
+                       key=lambda f: f.stat().st_mtime, reverse=True)[:6]
+        for f in files:
+            key = (str(f), f.stat().st_mtime)
+            text = self._UPLOAD_TEXT.get(key)
+            if text is None:
+                try:
+                    text = extract_text(f)
+                except Exception:      # noqa: BLE001 - an unreadable file adds nothing
+                    text = ""
+                self._UPLOAD_TEXT[key] = text
+            for org, notes in role_notes(text, orgs).items():
+                out.setdefault(org, notes)
+        return out
 
     # ------------------------------------------------------- full-width line questions
     def _missing_jd_skills(self) -> list[str]:
@@ -5319,9 +5389,9 @@ class WebIntake:
     def _line_question(self) -> str:
         """One targeted question when the page lacks the real material for every line to run
         full (tailoring/linefit.py ``line_gaps``): first the JD skills the person may have
-        ("This role asks for Looker and dbt. Have you used either?"), else more tools for a
-        short skills line, else one more detail for a bullet that stops short. Asked once per
-        item; the answer is saved as the person's own fact. Never pads instead of asking."""
+        ("This role asks for Looker and dbt. Have you used either?"). Asked once per
+        item; the answer is saved as the person's own fact. A short skills line or a bullet that
+        stops short is filled by the line fit's writing, never asked about (Kofi, 2026-11-10)."""
         gaps = getattr(self.assembled, "line_gaps", None) or {}
         if not gaps or self.essentials.get("unattended"):
             return ""
@@ -5339,29 +5409,8 @@ class WebIntake:
                          "Tell me which, plus any other tools you use, and I'll add them to "
                          "your skills.")
                 return q
-            if "skills_more" not in (e.get("enrich_asked") or []):
-                e.setdefault("enrich_asked", []).append("skills_more")
-                short = (gaps.get("short_skills") or [{}])[0].get("label") or ""
-                where = f" for {short}" if short else ""
-                return ("Your skills section needs a little more to fill every line. What other "
-                        f"tools, software or methods do you use{where}?")
-        # A bullet is only asked about when it is genuinely thin: ONE line, well short of the
-        # margin. A bullet whose last line holds a word or two is a fit problem the fit loop
-        # trims, not missing material ("One bullet at Last-Mile Operations Simulator (Python
-        # stops short", Kofi, 2026-11-10). One such question per chat.
-        if e.get("bullets_asked"):
-            return ""
-        for b in gaps.get("short_bullets") or []:
-            text = str(b.get("text") or "")
-            if not text or int(b.get("lines") or 1) != 1 or float(b.get("fill") or 0) >= THIN_BULLET:
-                continue
-            e.setdefault("bullets_asked", []).append(text[:60].lower())
-            words = text.split()
-            clip = " ".join(words[:9]) + ("..." if len(words) > 9 else "")
-            name = _bullet_owner(b.get("label"))
-            where = f"Your {name} bullet" if name else "One bullet"
-            return (f"{where} is a bit thin: \"{clip}\". What tool did you use, or what did "
-                    "it change? I'll only use what you tell me.")
+        # No question about a short skills line or a bullet that stops short (Kofi, 2026-11-10):
+        # the line fit fills those by writing, as a professional resume writer would.
         return ""
 
     _YES_ALL = re.compile(r"^\s*(yes|yeah|yep|yup|sure|both|all of them|i have|i've used (?:both|all)|"

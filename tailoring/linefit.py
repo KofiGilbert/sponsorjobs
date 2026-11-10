@@ -10,10 +10,13 @@ The rule. Every written line on the resume runs to the right edge of the page:
   * BULLETS: the number of bullets per role is untouched (the assembler's recency budget
     sets it before this runs). Each bullet's LAST line runs close to the right edge: a short
     last line is filled, a bullet that spills a word or two onto a new line is trimmed back.
-  * Only the person's own material (CLAUDE.md section 8). Nothing here invents a skill or a
-    detail: every rewrite passes the fact gate (tailoring/fact_gate.py), the skill guard
-    (keywords.introduced_skills) and the padding guard (tailoring/filler.py). When there is
-    not enough real material, the caller ASKS the person (``FitOutcome.gaps``), it never pads.
+  * Written like a professional resume writer (Kofi, 2026-11-10): a short last line may be
+    filled from the entry, the person's skills and the job's duties. What stays refused, by
+    the fact gate (tailoring/fact_gate.py) and the filler guard (tailoring/filler.py): a
+    number, a named employer, product or client, or a credential the person's material does
+    not state, buzzword filler, a keyword list, another bullet's point. Skills lines hold only
+    skills the person supports or ADDed. Fill beats trim: a spilling bullet is never trimmed
+    while the page is short of the fill goal.
   * One page, no overfull box, and never worse than before: every round is compiled and
     measured, and only a round that keeps the page clean AND scores better is kept.
 
@@ -1206,9 +1209,15 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     ``skill_keep``: terms the person ADDed, which a repack never sheds while another can go.
     """
     from .fact_gate import gate_rewrite
-    from .filler import borrows_from_sibling, is_padded, repeats_sibling, tacked_on_terms
-    from .keywords import introduced_skills, supported_skills, term_present
+    from .fact_gate import known_material
+    from .filler import (borrows_from_sibling, hollow, is_padded, repeats_sibling, role_padding,
+                         tacked_on_terms)
+    from .keywords import supported_skills, term_present
 
+    # What a fill may name: the person's material and the job's own words (its duties, its tools).
+    jd_known = known_material(jd_text or "", profile.get("skills") or {})
+    fill_known = {"words": set((known or {}).get("words") or set()) | jd_known["words"],
+                  "creds": list((known or {}).get("creds") or [])}
     before = measure(getattr(result, "pdf_path", None), profile)
     out = FitOutcome(profile=profile, result=result, before=before, after=before)
     if not before.items or not before.width:
@@ -1277,8 +1286,10 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                         or _broken(text, new)):
                     continue
                 siblings = [bl[k] for k in range(len(bl)) if k != idx]
-                bad = (introduced_skills(text, new, grounding, jd_text)
-                       or (["padding"] if is_padded(text, new) else [])
+                # A fill is written like the bullet writer (Kofi, 2026-11-10): the entry, the
+                # person's skills and the job's duties may supply its words; a number, a named
+                # employer, product or client, or a credential they do not state may not.
+                bad = ((["padding"] if is_padded(text, new) else [])
                        or (["repeats another bullet"] if repeats_sibling(text, new, siblings)
                            else [])
                        or (["takes another bullet's point"]
@@ -1287,7 +1298,10 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                            if borrows_from_sibling(text, new, (trimmed or {}).get(label) or ())
                            else [])
                        or tacked_on_terms(text, new)
-                       or gate_rewrite(text, new, known=known, known_figures=known_figures))
+                       or (["empty filler"] if hollow(new) else [])
+                       or role_padding(new, siblings, label.split(", ")[0] if section == "experience"
+                                       else "", text)
+                       or gate_rewrite(text, new, known=fill_known, known_figures=known_figures))
                 if bad:
                     out.rejected.append({"label": label, "bullet": text, "attempted": new,
                                          "claims": list(bad)})

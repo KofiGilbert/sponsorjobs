@@ -325,6 +325,9 @@ def new_claims(new: str, *sources, known: dict | None = None) -> list[str]:
             if not creds or not any(core <= have for have in creds):
                 out.append(c)
             continue
+        # A possessive names the same thing ("BlackOrigin's products" when the material says
+        # "BlackOrigin Inc."): it is not a new claim.
+        c = re.sub(r"['\u2019]s\b", "", c)
         toks = _words(c)
         main = c.lower().strip(".'")
         if main in words or (main.endswith("s") and main[:-1] in words):
