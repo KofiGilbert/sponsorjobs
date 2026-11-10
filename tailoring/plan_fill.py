@@ -35,6 +35,8 @@ TOP_MOST = 6
 ADJUST_MOST = 4
 # Calls that ask only for a bullet still missing after the retry and the adjustment.
 HOLE_TRIES = 2
+# Rounds of the one-call retry for bullets that missed their lines (each told by how much).
+RETRY_ROUNDS = 2
 
 # An outcome a bullet asserts that the person's material must state to be said: "with none
 # skipped or lost" (a real write, 2026-11-10), "zero errors", "100% accuracy", "never missed".
@@ -335,10 +337,16 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                     continue
                 if lines_of(it, b, cpl) != n or not it.ok():
                     out.setdefault(i, []).append(k)
+                    lo, hi, _n = windows([[n]], cpl)[0][0]
+                    need = (lo + hi) // 2 - len(b)
                     notes[(i, k)] = (f"was {len(b)} characters and printed on "
-                                     f"{lines_of(it, b, cpl)} line(s), "
-                                     f"the last {it.last_fill:.0%} full; it must print on {n} "
-                                     f"line(s), the last one full")
+                                     f"{lines_of(it, b, cpl)} line(s), the last "
+                                     f"{it.last_fill:.0%} full; it must be {lo}-{hi} characters "
+                                     f"(about {lo // 6}-{hi // 6} words) to print on {n} line(s), "
+                                     f"the last one full: "
+                                     + (f"ADD about {need} characters ({max(1, need // 6)} words) "
+                                        "of real detail" if need > 0 else
+                                        f"CUT about {-need} characters"))
         return out, notes
 
     before = copy.deepcopy([list(r["bullets"]) for _k, _e, r in roles])
@@ -363,15 +371,18 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                            + "): write it again with its own words, no number, name, credential "
                              "or claim the material does not state, no employer name, no stock "
                              "tail, and no phrase another bullet of the role uses")
-    if miss:
+    for _round in range(RETRY_ROUNDS):
+        if not miss:
+            break
         cur = [list(r["bullets"]) for _k, _e, r in roles]
-        fb = {f"{i}:{k}": v for (i, k), v in why.items()}
+        fb = {f"{key[0]}:{key[1]}": v for key, v in why.items() if len(key) == 2}
         out2 = ask(current=cur, only=miss, feedback=fb)
         if out2 is not None:
             place(out2, only=miss)
             res = compile_now("plan2")
             _log(step="plan-retry", label="experience", fill=res.fill_ratio, n=res.pages,
                  why=str(misses(res)[1])[:600] if res.ok and res.pages == 1 else "")
+        miss, why = misses(res) if (res.ok and res.pages == 1) else ({}, {})
     # ADJUST once: over a page, or short of the goal, by the lines the page is off (1-line
     # bullets become 2-line in the newest roles, or 2-line become 1-line in the oldest).
     _log(step="plan-check", label="experience", fill=res.fill_ratio,

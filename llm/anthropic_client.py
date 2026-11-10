@@ -505,8 +505,8 @@ class AnthropicLLM:
                 have = ""
                 if current is not None and i < len(current) and k < len(current[i]):
                     have = f' now: "{current[i][k]}"'
-                want.append(f"  bullet {k + 1}: {lo}-{hi} characters ({n} printed line"
-                            f"{'s' if n > 1 else ''}){mark}{have}")
+                want.append(f"  bullet {k + 1}: {lo}-{hi} characters, about {lo // 6}-{hi // 6} "
+                            f"words ({n} printed line{'s' if n > 1 else ''}){mark}{have}")
             blocks.append(
                 f"ROLE {i + 1}: {ro['title']} at {ro['company']} ({ro['dates']}), "
                 f"{ro['tense']} tense\n"
@@ -517,7 +517,9 @@ class AnthropicLLM:
             "You are a professional resume writer. Write the Experience bullets for each role "
             "to the plan: exactly the number of bullets asked, each inside its character window "
             "(a window of 1 printed line means the bullet fills that one line; 2 lines means it "
-            "fills the first line and nearly all of the second). Count characters carefully.\n"
+            "fills the first line and nearly all of the second). Count characters carefully: a "
+            "bullet shorter than its window leaves a half-empty line, which is the one thing that "
+            "must not happen, so aim for the top of each window.\n"
             "Sources: the person's own saved bullets and uploaded resume for that role. Reword, "
             "merge, split and expand them, and write new bullets from the role's title and the "
             "duties the TARGET JOB lists for this kind of role.\n"
