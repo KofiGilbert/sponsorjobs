@@ -2467,9 +2467,12 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
                 it = fits.get(bl[k])
                 by_text = max(1, math.ceil(len(bl[k]) / cpl - 0.15))
                 if it and it.found:
-                    n = min(it.lines, by_text)               # a mislocated line never inflates it
+                    # As printed, unless the measure matched lines not its own; a stub is run
+                    # out to a full last line, or tightened to a line fewer while the page keeps
+                    # the goal without it.
+                    n = it.lines if it.lines <= by_text + 1 else by_text
                     if n >= 2 and it.last_fill < _lf.SPILL_TRIM and at_goal:
-                        n -= 1                               # a stub line: one line fewer
+                        n -= 1
                 else:
                     n = by_text
                 asks.append((int(cpl * n * POLISH_LO), int(cpl * n * POLISH_HI)))

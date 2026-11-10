@@ -290,6 +290,9 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
             idxs = (only or {}).get(i, []) if only is not None else range(len(want))
             for k in idxs:
                 text = got[k] if k < len(got) else ""
+                # Every bullet is a sentence and ends with a full stop (the window counts it).
+                if text and not text.rstrip().endswith((".", "!", "?")):
+                    text = text.rstrip(" ,;:") + "."
                 sibs = [str(x) for j, x in enumerate(cur) if j != k and x]
                 bad = problems(i, text, sibs) if text else ["empty"]
                 _log(step="plan-write", label=info[i]["label"], n=k, bullet=text, why=bad)

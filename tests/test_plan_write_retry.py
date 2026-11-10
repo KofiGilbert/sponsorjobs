@@ -119,3 +119,40 @@ def test_a_slot_the_model_never_fills_still_leaves_a_strict_staircase(tmp_path):
                                                     key=lambda x: x[0])]
     assert all(b < a for a, b in zip(c, c[1:])) and c[-1] >= 2, c
     assert c[0] < 6                                            # the hole was never filled
+
+
+# --------------------------------------------------------------------------- full stops, measure
+@pytest.mark.skipif(__import__("shutil").which("pdflatex") is None, reason="needs LaTeX")
+def test_every_planned_bullet_ends_with_a_full_stop(tmp_path):
+    import sys
+    sys.path.insert(0, "tests")
+    from pathlib import Path
+    from test_strict_staircase import _PlanWriter, _ladder_profile
+    from tailoring import assembler as A
+
+    class _NoStops(_PlanWriter):
+        def write_experience(self, roles, jd_text="", current=None, only=None, feedback=None):
+            out = super().write_experience(roles, jd_text, current, only, feedback)
+            return [[b.rstrip(".") for b in row] for row in out]
+    res = A.assemble_cv(Path("config/resume_shetty.tex").read_text(), _ladder_profile(), "Analyst.",
+                        _NoStops(), tmp_path, tailor=False, fit_lines=True, fit_rounds=0)
+    for _k, _e, r in A.ranked_roles(res.profile_used):
+        assert all(b.rstrip().endswith(".") for b in r["bullets"]), r["bullets"]
+
+
+@pytest.mark.skipif(__import__("shutil").which("pdflatex") is None, reason="needs LaTeX")
+def test_an_apostrophe_never_splits_a_printed_line(tmp_path):
+    """Run 16: "company's" (a raised glyph) split its line in two, so the measure read the first
+    half as the line's end and every full second line looked short, and short ones looked full."""
+    from pathlib import Path
+    from tailoring.assembler import extract_preamble, render_cv
+    from tailoring.compiler import compile_tex
+    from tailoring.linefit import pdf_lines
+    b = ("Led business intelligence across the company's products, building KPI dashboards that "
+         "track growth, usage, and unit costs so product and finance teams review one view.")
+    prof = {"identity": {"name": "A B"}, "experience": [{"org": "Acme", "roles": [
+        {"title": "Analyst", "dates": "2020 - 2024", "bullets": [b]}]}]}
+    tex = render_cv(extract_preamble(Path("config/resume_shetty.tex").read_text()), prof)
+    r = compile_tex(tex, tmp_path, jobname="apos")
+    rows = [ln for ln in pdf_lines(r.pdf_path) if "intelligence" in ln.text or "products," in ln.text]
+    assert len(rows) == 1 and "products" in rows[0].text, [x.text for x in rows]

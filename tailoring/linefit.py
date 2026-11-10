@@ -129,11 +129,15 @@ def pdf_lines(pdf_path) -> list[PdfLine]:
                     flush()
                     last_y = None
                     continue
-                # A new baseline without a line break (rare): start a new line.
-                if last_y is not None and box[2] > box[0] and abs(box[1] - last_y) > 4.0 \
-                        and not ch.isspace():
+                # A new baseline without a line break: start a new line. Only a letter or digit
+                # sets the baseline, and only a move DOWN the page (or far up) starts a line: a
+                # raised glyph (the apostrophe in "company's") sits a few points higher and
+                # used to split its line in two, so the measure read the line's first half as
+                # its end (2026-11-10).
+                if last_y is not None and box[2] > box[0] and ch.isalnum() \
+                        and (last_y - box[1] > 4.0 or box[1] - last_y > 8.0):
                     flush()
-                if box[2] > box[0] and not ch.isspace():
+                if box[2] > box[0] and ch.isalnum():
                     last_y = box[1]
                 cur.append((ch, box))
             flush()
