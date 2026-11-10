@@ -78,8 +78,18 @@ def test_six_lines_merge_by_meaning_into_five_and_every_job_term_stays():
 def test_vague_phrases_go_before_concrete_tools():
     out = _terms(LF.cap_skill_block(D365, 5, jd_text=JD))
     assert "evidence-based recommendations" not in out and "revenue and cost analysis" not in out
-    assert "business analytics" not in out and "advanced Excel" in out
+    assert "business analytics" not in out
     assert not any(LF.is_vague_skill(t) for t in out)          # no vague phrase kept over a tool
+    assert "KPI frameworks" in out and "enterprise CRM requirements" in out
+
+
+def test_a_nearly_empty_line_merges_rather_than_two_full_ones():
+    """Kofi's saved block: "Domain Knowledge" held only Logic Apps once the degrees were taken
+    off. It joins a line; it never stays as a one-term row while two full rows are squeezed."""
+    skills = dict(D365, **{"Domain Knowledge": "Logic Apps"})
+    out = LF.cap_skill_block(skills, 5, jd_text=JD)
+    assert len(out) == 5 and "Logic Apps" in _terms(out)
+    assert all(len(LF.split_terms(v)) >= 3 for v in out.values()), out
 
 
 @pytest.mark.parametrize("term,vague", [
