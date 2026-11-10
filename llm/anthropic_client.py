@@ -154,7 +154,8 @@ class AnthropicLLM:
         # "This model does not support the effort parameter", a 400 that takes down the
         # whole call. It only tunes reasoning depth, so a model that cannot take it should
         # simply run without it rather than fail. Same guard as the broker-side provider.
-        if supports_effort(self.model):
+        # effort="none" sends no effort at all (the model's own default, no extra reasoning).
+        if supports_effort(self.model) and effort != "none":
             create["output_config"] = {"effort": effort or self.effort}
         try:
             msg = self._client.messages.create(**create)
@@ -168,6 +169,8 @@ class AnthropicLLM:
         u = getattr(msg, "usage", None)
         self.last_usage = ({"input": int(getattr(u, "input_tokens", 0) or 0),
                             "output": int(getattr(u, "output_tokens", 0) or 0)} if u else None)
+        self.last_meta = {"stop_reason": getattr(msg, "stop_reason", None), "usage": self.last_usage,
+                          "blocks": [getattr(b, "type", "") for b in msg.content]}
         return "".join(
             block.text for block in msg.content if getattr(block, "type", "") == "text"
         ).strip()
@@ -536,12 +539,19 @@ class AnthropicLLM:
         user = ("\n\n".join(blocks)
                 + f"\n\nTARGET JOB (context only):\n{str(jd_text)[:2500]}")
         # Low effort and room to answer: at medium effort a reasoning model spent the whole
-        # budget thinking and answered nothing (2026-11-10). This is writing to a plan.
-        out = self._complete(system, user, max_tokens=8000, effort="low") or ""
-        got = parse_role_lists(out, len(roles))
-        if got is None:
-            raise ValueError("write_experience: unreadable answer: " + out[:300].replace("\n", " "))
-        return got
+        # budget reasoning and answered nothing (2026-11-10). An empty answer, or one cut off at
+        # the token limit, is asked once more with no effort setting and more room.
+        tries = []
+        for effort, room in (("low", 8000), ("none", 12000)):
+            out = self._complete(system, user, max_tokens=room, effort=effort) or ""
+            meta = dict(getattr(self, "last_meta", None) or {})
+            tries.append({"effort": effort, "max_tokens": room, "chars": len(out), **meta})
+            got = parse_role_lists(out, len(roles))
+            if got is not None and meta.get("stop_reason") != "max_tokens":
+                self.last_meta = {**meta, "tries": tries}
+                return got
+        self.last_meta = {"tries": tries}
+        raise ValueError("write_experience: no readable answer after " + json.dumps(tries)[:600])
 
     def polish_role(self, role_label: str, bullets: list[str], budgets: list, context: str = "",
                     jd_text: str = "", only=None) -> list[str]:

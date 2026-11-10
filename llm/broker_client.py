@@ -93,8 +93,9 @@ class BrokerLLM(AnthropicLLM):
     # -- the two low-level calls every specialised method funnels through -------------------- #
     def _complete(self, system: str, user: str, max_tokens: int = 1024,
                   effort: str | None = None) -> str:
-        return self._post({"system": system, "prompt": user,
-                           "max_tokens": max_tokens, "effort": effort or self.effort})
+        # effort="none" sends no effort: the broker then sets none on the model call.
+        return self._post({"system": system, "prompt": user, "max_tokens": max_tokens,
+                           "effort": None if effort == "none" else (effort or self.effort)})
 
     def agent_step_image(self, system: str, user: str, image_b64: str) -> str:
         # The broker takes the screenshot as one base64 PNG next to the prompt; a broker that
@@ -144,7 +145,11 @@ class BrokerLLM(AnthropicLLM):
 
     # -- transport -------------------------------------------------------------------------- #
     def _post(self, payload: dict) -> str:
-        text = (self._send(payload).get("text") or "").strip()
+        data = self._send(payload)
+        text = (data.get("text") or "").strip()
+        # Why the model stopped and what it spent (a broker that predates them sends neither).
+        self.last_meta = {"stop_reason": data.get("stop_reason"), "usage": data.get("usage"),
+                          "blocks": data.get("blocks"), "model": data.get("model")}
         _no_fake(text)
         return text
 

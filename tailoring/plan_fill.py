@@ -232,8 +232,10 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
             out = llm.write_experience(info, jd_text=jd_text, current=current, only=only,
                                        feedback=feedback)
         except Exception as exc:                             # noqa: BLE001
-            _log(step="plan-error", label="experience", why=str(exc)[:200])
+            _log(step="plan-error", label="experience", why=str(exc)[:800],
+                 n=getattr(llm, "last_meta", None))
             return None
+        _log(step="plan-call", label="experience", n=getattr(llm, "last_meta", None))
         if not isinstance(out, list) or len(out) != len(info):
             _log(step="plan-error", label="experience", why="wrong number of roles")
             return None
