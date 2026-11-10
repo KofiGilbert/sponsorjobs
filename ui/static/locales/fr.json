@@ -65,6 +65,7 @@
   "job.closedNothingSpent": "Cette offre est close. Rien n'a été dépensé.",
   "jobs.crawling": "récupération d'autres offres",
   "jobs.crawlingFirst": "première récupération des offres, cela prend quelques minutes",
+  "jobs.loading": "Chargement des offres",
   "jobs.crawlError": "impossible de récupérer les offres, nouvel essai dans quelques minutes",
   "nav.prep": "Préparation d'entretien",
   "prep.title": "Préparation d'entretien",

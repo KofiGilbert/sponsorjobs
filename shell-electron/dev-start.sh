@@ -47,7 +47,9 @@ export TAILOR_OWN_KEY="${TAILOR_OWN_KEY:-1}"   # run on the saved Anthropic key
 # The live account token is kept in its own git-ignored file (config/credentials.live.env), so it
 # never overwrites the local dev broker's token in config/credentials.env and you stay signed in
 # on both. Your saved AI keys are copied over once so tailoring keeps running on them.
-if [ "${TAILOR_LIVE_BROKER:-0}" = "1" ]; then
+# Default ON (Kofi, 2026-11-09): the dev app must look exactly like the installed app, which never
+# asks for an AI key. TAILOR_LIVE_BROKER=0 gives the open-source bring-your-own-key edition.
+if [ "${TAILOR_LIVE_BROKER:-1}" = "1" ]; then
   export TAILOR_EDITION=official
   export TAILOR_BROKER_URL="${TAILOR_BROKER_URL:-https://api.sponsorjobs.ai}"
   repo="$(cd .. && pwd)"
@@ -60,6 +62,10 @@ if [ "${TAILOR_LIVE_BROKER:-0}" = "1" ]; then
   export RESUME_AGENT_CRED_FILE="$live_creds"
   echo "SponsorJobs dev: live broker $TAILOR_BROKER_URL (sign in from the account menu)"
 fi
+# Own ports, so the dev app runs beside an installed SponsorJobs (which owns 57000 and 9223) instead of
+# silently attaching to the installed engine and showing the installed code.
+export TAILOR_PORT="${TAILOR_PORT:-57010}"
+export TAILOR_CDP_PORT="${TAILOR_CDP_PORT:-9233}"
 export PATH="/opt/homebrew/bin:$PATH"          # pdflatex (brew texlive)
 
 exec npm start
