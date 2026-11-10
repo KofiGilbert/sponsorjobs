@@ -2929,6 +2929,12 @@ def assemble_cv(
             fill_goal=FILL_GOAL, max_fill=MAX_FILL)
         if planned:
             added = [a for a in added if a.get("section") != "experience"] + planned
+        elif result and result.ok and result.pages == 1:
+            # The plan could not be written: the bullet-by-bullet fill runs instead, so the page
+            # is never left short for it.
+            result, more, more_notes = fill_page(result)
+            added += more
+            bullet_notes = list(dict.fromkeys(list(bullet_notes) + list(more_notes)))
         if callable(getattr(llm, "polish_role", None)) and result and result.ok:
             # Projects keep their own bullets; one that stops short is run to the edge.
             result = _polish_edges(preamble, used, result, llm=llm, jd_text=jd_text,
@@ -2936,7 +2942,7 @@ def assemble_cv(
                                    jobname=jobname, origins=origins,
                                    known=known_material(*gate_material, jd_text),
                                    known_figures=source_figures(*gate_material),
-                                   projects_only=True)
+                                   projects_only=bool(planned))
     elif (fit_lines and llm is not None and callable(getattr(llm, "polish_role", None))
             and result and result.ok and result.pages == 1):
         from .fact_gate import known_material, source_figures

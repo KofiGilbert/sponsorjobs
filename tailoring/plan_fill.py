@@ -218,7 +218,7 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
         bad += invented_claims(text, own)
         if hollow(text) or filler_added("", text):
             bad.append("filler")
-        bad += tacked_on_terms("", text, count=False)
+        bad += tacked_on_terms(own, text, count=False)
         bad += role_padding(text, siblings, ro["company"], "",
                             context=" ".join([ro["title"], ro["company"]]), allowed=own)
         if any(same_fact(text, s) for s in siblings):

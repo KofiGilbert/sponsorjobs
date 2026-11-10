@@ -80,6 +80,37 @@ def parse_file_blocks(raw: str) -> list[dict]:
     return out
 
 
+def parse_role_lists(out: str, n_roles: int):
+    """The model's answer to ``write_experience`` as one list of bullet strings per role:
+    a JSON array of arrays, an array of {"bullets": [...]} objects, or {"roles": [...]}, inside
+    code fences or not. None when it cannot be read as ``n_roles`` lists."""
+    text = str(out or "").strip()
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
+    data = None
+    for opener, closer in (("[", "]"), ("{", "}")):
+        a, b = text.find(opener), text.rfind(closer)
+        if a == -1 or b <= a:
+            continue
+        try:
+            data = json.loads(text[a: b + 1])
+            break
+        except (json.JSONDecodeError, TypeError):
+            continue
+    if isinstance(data, dict):
+        data = data.get("roles") or data.get("experience") or next(
+            (v for v in data.values() if isinstance(v, list)), None)
+    if not isinstance(data, list):
+        return None
+    rows = []
+    for x in data:
+        if isinstance(x, dict):
+            x = x.get("bullets") or next((v for v in x.values() if isinstance(v, list)), None)
+        if not isinstance(x, list):
+            return None
+        rows.append([str(b).strip() for b in x])
+    return rows if len(rows) == n_roles else None
+
+
 class AnthropicLLM:
     """Production LLM backend. Constructed lazily so imports never require a key."""
 
@@ -504,15 +535,11 @@ class AnthropicLLM:
         )
         user = ("\n\n".join(blocks)
                 + f"\n\nTARGET JOB (context only):\n{str(jd_text)[:2500]}")
-        out = self._complete(system, user, max_tokens=3500, effort="medium") or ""
-        if "[" in out and "]" in out:
-            try:
-                data = json.loads(out[out.find("["): out.rfind("]") + 1])
-                if isinstance(data, list) and all(isinstance(x, list) for x in data):
-                    return [[str(b).strip() for b in x] for x in data]
-            except (json.JSONDecodeError, TypeError):
-                pass
-        return [list(ro["saved"])[:len(ro["windows"])] for ro in roles]
+        out = self._complete(system, user, max_tokens=4000, effort="medium") or ""
+        got = parse_role_lists(out, len(roles))
+        if got is None:
+            raise ValueError("write_experience: unreadable answer: " + out[:300].replace("\n", " "))
+        return got
 
     def polish_role(self, role_label: str, bullets: list[str], budgets: list, context: str = "",
                     jd_text: str = "", only=None) -> list[str]:
