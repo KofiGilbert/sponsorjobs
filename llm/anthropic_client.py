@@ -516,7 +516,8 @@ class AnthropicLLM:
                     have = f' now: "{current[i][k]}"'
                 words = (ro.get("words") or [[]] * len(ro["windows"]))[k]
                 size = (f"4 versions of about {', '.join(map(str, words[:-1]))} and {words[-1]} "
-                        f"words" if words else f"{lo}-{hi} characters")
+                        f"words, the longest at most {hi} characters" if words
+                        else f"{lo}-{hi} characters")
                 want.append(f"  bullet {k + 1}: {size} ({n} printed line{'s' if n > 1 else ''})"
                             f"{mark}{have}")
             blocks.append(

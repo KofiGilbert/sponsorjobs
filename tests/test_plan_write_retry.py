@@ -253,3 +253,17 @@ def test_the_answer_may_wrap_each_bullet_s_versions():
     assert parse_role_lists(out, 1) == [[["a.", "aa."], ["b.", "bb."]]]
     out = '[[{"versions": [{"text": "x."}, {"text": "xx."}]}]]'
     assert parse_role_lists(out, 1) == [[["x.", "xx."]]]
+
+
+def test_a_slot_whose_versions_all_spill_takes_one_that_lands_on_a_line_more():
+    """Run 22: every 1-line version ran to 1.1-1.4 lines; the shortest spilled a stub. One that
+    lands on two lines is better, and the adjustment balances the page."""
+    from tailoring.plan_fill import choose_version, lines_needed
+    from tailoring.textwidth import text_width_pt
+    cap = text_width_pt("metric " * 20)
+    v39 = ("Built " + "metric " * 38).strip() + "."
+    v24 = ("Built " + "metric " * 23).strip() + "."
+    text, landed, way = choose_version([v24, v39], 1, cap)
+    assert not landed and way == "shorter"
+    text, landed, _ = choose_version([v24, v39], 2, cap)
+    assert landed and text == v39
