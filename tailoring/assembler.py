@@ -1716,7 +1716,7 @@ def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
     pool = "\n".join([str(role_text or ""), str(material or ""), ", ".join(listed_skills or ())])
     bad = sorted(figures(new) - source_figures(pool), key=lambda s: (len(s), s))
     bad += new_claims(new, known=known_material(pool, str(jd_text or "")))
-    bad += filler_added(role_text, new) + tacked_on_terms(role_text, new)
+    bad += filler_added(role_text, new) + tacked_on_terms(role_text, new, count=False)
     sibs = [str(s) for s in siblings or () if str(s).strip()]
     if repeats_sibling("", new, sibs) or any(same_fact(new, s) for s in sibs):
         bad.append("repeats a bullet of this role")
@@ -1728,7 +1728,11 @@ def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
             return [t.rstrip("s") for t in _fact_tokens(text) if t not in _FACT_STOP]
         said = {t for x in sibs for t in stems(x)}
         mine = stems(new)
-        if mine and sum(t in said for t in mine) / len(mine) >= WRITTEN_SAID_SHARE:
+        # A written bullet carries the role's context (its tools, its platform); it restates
+        # only when it adds fewer than WRITTEN_FRESH words of its own.
+        fresh = {t for t in mine if t not in said}
+        if (mine and sum(t in said for t in mine) / len(mine) >= WRITTEN_SAID_SHARE
+                and len(fresh) < WRITTEN_FRESH):
             bad.append("restates the role's other bullets")
     if max_chars and len(new) > max_chars:
         bad.append("too long")
@@ -1740,6 +1744,8 @@ def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
 # A written bullet whose content words are this share or more already on the role's other
 # bullets restates them, and is refused (``written_problems``).
 WRITTEN_SAID_SHARE = 0.5
+# ...unless it adds at least this many content words of its own.
+WRITTEN_FRESH = 4
 # Two parts of a split may not share this many content words in a row.
 SPLIT_SHARED_RUN = 4
 
@@ -2256,7 +2262,10 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
         while short():
             if one_more(top_cap):
                 continue
-            if top_cap >= STAIR_TOP:
+            # The top goes past STAIR_SOFT_TOP only when every role below stands a step under the
+            # one above it: a tie lower down is not fixed by piling more onto the top.
+            counts = [len(r["bullets"]) for _k, _e, r in chain]
+            if top_cap >= STAIR_TOP or any(b >= a for a, b in zip(counts, counts[1:])):
                 break
             top_cap += 1                     # every role stands a step below: the page needs more
 
@@ -2650,8 +2659,9 @@ def assemble_cv(
     # one-word spill trimmed. Each round must keep the page clean and score better, so the
     # result is never worse than the page above.
     line_fit = line_before = line_gaps = pre_fit = None
-    if fit_lines and result and result.ok and result.pages == 1:
-        pre_fit = _copy.deepcopy(used)
+
+    def fit_once(used, result):
+        """One line-fit pass on the page; returns (used, result, outcome)."""
         from . import linefit as _lf
         from .fact_gate import known_material, source_figures
 
@@ -2671,9 +2681,6 @@ def assemble_cv(
             skill_cap=cap, skill_keep=skill_keep)
         if fo.result is not result:
             used, result = fo.profile, fo.result
-        # A fit rewrite the guards refused never reached the page, so there is nothing for
-        # the person to confirm: the bullet simply kept its wording.
-        line_fit, line_before, line_gaps = fo.after.as_dict(), fo.before.as_dict(), fo.gaps()
         # The packer may have drawn a near-duplicate from the pool ("Excel" next to "Microsoft
         # Excel"): the page shows each skill once. Taking terms off a one-line skills line never
         # adds height, so the page stays clean; it is recompiled to show it.
@@ -2686,6 +2693,14 @@ def assemble_cv(
                                  workdir, jobname=f"{jobname}-tidy")
                 if r2.ok and r2.pages == 1:
                     result = r2
+        return used, result, fo
+
+    if fit_lines and result and result.ok and result.pages == 1:
+        pre_fit = _copy.deepcopy(used)
+        used, result, fo = fit_once(used, result)
+        # A fit rewrite the guards refused never reached the page, so there is nothing for
+        # the person to confirm: the bullet simply kept its wording.
+        line_fit, line_before, line_gaps = fo.after.as_dict(), fo.before.as_dict(), fo.gaps()
 
     # RESTORE. The line fit and the resized splits change heights after the room was made, so a
     # cut made for the recency minimums may no longer be needed: put those back, the last cut
@@ -2703,6 +2718,15 @@ def assemble_cv(
         result, more, more_notes = fill_page(result)
         added += more
         bullet_notes = list(dict.fromkeys(list(bullet_notes) + list(more_notes)))
+        # The bullets this pass added run to the right edge too (Kofi's rule: no stub last
+        # line): one more fit pass on the page, then the fill once more if it came out short.
+        if more and fit_lines and result and result.ok and result.pages == 1:
+            used, result, fo = fit_once(used, result)
+            line_fit, line_gaps = fo.after.as_dict(), fo.gaps()
+            if result.fill_ratio is not None and result.fill_ratio < FILL_GOAL:
+                result, more2, notes2 = fill_page(result)
+                added += more2
+                bullet_notes = list(dict.fromkeys(list(bullet_notes) + list(notes2)))
     if staircase_ok(used):                   # a step the second pass made needs no note
         bullet_notes = [n for n in bullet_notes if "no more than the older" not in n]
 
@@ -2787,3 +2811,26 @@ def _rendered_cv_text(profile: dict, sections=None) -> str:
         if name in _SECTION_RENDERERS and name in profile:
             visible[name] = profile[name]
     return profile_text(visible)
+
+
+def page_rule_report(res) -> dict:
+    """Kofi's four page rules (2026-11-10), measured on the compiled PDF of a build ``res``:
+    every bullet's last line reaches the right-edge target (``linefit.BULLET_LAST_LINE_TARGET``,
+    no stub line), every skills line is one line, the page is filled to ``FILL_GOAL``, and the
+    bullets step down strictly by recency (``staircase_ok``, the oldest role keeping
+    ``OLDEST_FLOOR``). Returns {rule: bool} with the offending items under "details"."""
+    from . import linefit as _lf
+    rep = _lf.measure(getattr(res, "pdf_path", None), res.profile_used)
+    counts = [len(r.get("bullets") or []) for _k, e, r in
+              sorted(ranked_roles(res.profile_used), key=lambda x: x[0])]
+    short = [b.text for b in rep.short_bullets()]
+    out = {
+        "edges": bool(rep.items) and not short,
+        "skills_one_line": bool(rep.items) and rep.skills_wrapped == 0,
+        "fill": bool(res.fill_ratio is not None and res.fill_ratio >= FILL_GOAL),
+        "staircase": (staircase_ok(res.profile_used)
+                      and (not counts or counts[-1] >= min(OLDEST_FLOOR, counts[0]))),
+    }
+    out["details"] = {"short_bullets": short, "skills_wrapped": rep.skills_wrapped,
+                      "fill": res.fill_ratio, "counts": counts}
+    return out

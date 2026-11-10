@@ -73,10 +73,12 @@ def _terms(text: str) -> set[str]:
     return {t for t in out if len(t) > 1}
 
 
-def tacked_on_terms(original: str, candidate: str) -> list[str]:
+def tacked_on_terms(original: str, candidate: str, count: bool = True) -> list[str]:
     """Terms a rewrite bolts on as a list, rather than saying what happened: a leading keyword
     wall, a trailing comma list, or a closing "using/leveraging/with ..." clause that names a
-    tool or skill the original bullet did not. Empty means the rewrite is clean."""
+    tool or skill the original bullet did not, and (with ``count``) three or more new terms at
+    once. A bullet written new names its tools in the sentence, so it is checked without
+    ``count``. Empty means the rewrite is clean."""
     orig, cand = str(original or ""), str(candidate or "")
     new_terms = _terms(cand) - _terms(orig)
     if _LEAD_WALL.search(cand) and not _LEAD_WALL.search(orig):
@@ -90,7 +92,7 @@ def tacked_on_terms(original: str, candidate: str) -> list[str]:
         if m and m.group("tail").strip() not in orig:
             tail = m.group("tail").lower()
             hits |= {t for t in new_terms if t in tail}
-    if len(new_terms) >= 3:            # a fill adds a real detail, never a set of keywords
+    if count and len(new_terms) >= 3:  # a fill adds a real detail, never a set of keywords
         hits |= new_terms
     return sorted(hits)
 
@@ -235,6 +237,9 @@ DISTINCT_MIN = 2
 # A new bullet whose content words are this share or more already on the role's other bullets
 # restates them.
 RESTATE_SHARE = 0.5
+# ...unless it adds at least this many content words of its own (a bullet may carry the role's
+# context, its tools and its platform).
+RESTATE_FRESH = 4
 # Words that carry no checkable content on their own: a line made only of these (and joining
 # words) says nothing ("Drove strategic alignment and operational excellence across teams").
 _BUZZ = frozenset("""
@@ -305,7 +310,8 @@ def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = 
     fresh = mine - said
     if not new_figs and len(fresh) < DISTINCT_MIN:
         out.append("adds no fact of its own")
-    elif restate and sibs and len(mine & said) / len(mine) >= RESTATE_SHARE and not new_figs:
+    elif (restate and sibs and len(mine & said) / len(mine) >= RESTATE_SHARE and not new_figs
+          and len(fresh) < RESTATE_FRESH):
         out.append("restates the role's other bullets")
     if hollow(new):
         out.append("empty filler")

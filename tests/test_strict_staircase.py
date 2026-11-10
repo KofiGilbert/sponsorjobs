@@ -341,3 +341,22 @@ def test_a_page_that_leaves_out_a_middle_bullet_never_loses_it_from_the_profile(
     whole = s._whole_profile_after_render(page)
     got = whole["experience"][0]["roles"][0]["bullets"]
     assert got == tailored + [own[2]]
+
+
+# --------------------------------------------------------------------------- the four page rules
+@requires_latex
+def test_the_page_rule_report_measures_the_compiled_pdf(template_source, workdir):
+    """Edges, one-line skills, fill and the strict staircase, read off the real PDF."""
+    res = assemble_cv(template_source, _ladder_profile(), "Data Analyst. SQL, Excel, Tableau.",
+                      _Splits(), workdir, tailor=False, fill_writes=True)
+    rep = A.page_rule_report(res)
+    assert set(rep) == {"edges", "skills_one_line", "fill", "staircase", "details"}
+    assert rep["staircase"] == A.staircase_ok(res.profile_used)
+    assert rep["fill"] == (res.fill_ratio >= A.FILL_GOAL)
+    assert rep["edges"] == (not rep["details"]["short_bullets"])
+    assert rep["details"]["counts"] == _counts(res.profile_used)
+    # a tie at the bottom is not a staircase
+    tied = copy.deepcopy(res)
+    roles = [r for _k, _e, r in sorted(ranked_roles(tied.profile_used), key=lambda x: x[0])]
+    roles[-2]["bullets"] = roles[-2]["bullets"][:len(roles[-1]["bullets"])]
+    assert not A.page_rule_report(tied)["staircase"]
