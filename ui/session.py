@@ -33,15 +33,48 @@ _JD_JUNK = ("logo", "posted", "apply now", "easy apply", "save job", "http", "ww
             "sign in", "share this", "report this")
 
 
+# A line that is a posting's metadata, not its title: "OPEN DATE: November 9, 2026", "SCHEDULE:
+# Full Time", "*DUTY LOCATION: Washington, DC" (the Smithsonian D365 posting, 2026-11-10, whose
+# header read "OPEN DATE: November 9"). A label before a colon, a date, or a bare marker.
+_JD_META = re.compile(
+    r"^[*#>\s]*(?:[A-Za-z][A-Za-z /&()'-]{1,40}:\s|\S+\s*:\s*$)"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b"
+    r"|\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b|^[\W_]*$", re.I)
+_JD_LABEL_WORDS = re.compile(
+    r"^(?:open|closing|close|posted|post|start|end|position|appointment|schedule|duty|job|"
+    r"req(?:uisition)?|salary|pay|grade|series|location|department|division|type|category|"
+    r"reports? to|apply by|deadline|date)\b", re.I)
+# "The D365 Software Developer plays a key role...", "As a Data Analyst, you will...", "We are
+# hiring a Senior Analyst": the title a posting's prose names when its first lines are metadata.
+_JD_TITLE_IN_PROSE = re.compile(
+    r"(?:\bThe|\bAs (?:a|an|the)|\b(?:hiring|seeking|looking for) (?:a|an))\s+"
+    r"((?:[A-Z0-9][\w+#&/.-]*\s+){0,5}?[A-Z][\w+#&/.-]*)"
+    r"(?=,?\s+(?:plays|will|is (?:responsible|a|an)|role|position|works|leads|supports|"
+    r"you will|to join|who)\b)")
+_TITLE_WORDS = re.compile(
+    r"\b(?:developer|engineer|analyst|manager|scientist|architect|designer|consultant|"
+    r"specialist|director|lead|officer|administrator|associate|coordinator|technician|"
+    r"intern|accountant|advisor|adviser|programmer|researcher|strategist|head|vp|president)\b",
+    re.I)
+
+
 def _jd_label(jd_text: str) -> tuple[str, str]:
     """Best-effort (role, company) from the top of a JD. Skips scraped boilerplate
-    ('Company logo for …') so the greeting never reads 'the Company logo for role';
-    returns '' for either when nothing clean is found."""
+    ('Company logo for …') and the posting's metadata lines ('OPEN DATE: November 9, 2026')
+    so the greeting never reads 'the Company logo for role' or 'the OPEN DATE: November 9
+    role'; when the first lines are all metadata, the title the prose names ('The D365
+    Software Developer plays a key role') is used. '' for either when nothing clean is found.
+    A session started from a job record uses the record's title instead (ui/app.py)."""
     def _clean(seg: str, limit: int) -> str:
-        seg = re.split(r"[.,;]", seg or "")[0].strip()[:limit]
+        seg = re.split(r"[.,;]", seg or "")[0].strip(" *#\t")[:limit]
         return "" if (not seg or any(j in seg.lower() for j in _JD_JUNK)) else seg
     lines = [ln.strip() for ln in (jd_text or "").splitlines() if ln.strip()]
     for ln in lines[:8]:
+        named = re.match(r"^[*#\s]*(?:job |position |role )?(?:title|position|role)\s*:\s*(.+)$", ln, re.I)
+        if named and _clean(named.group(1), 60):
+            return _clean(named.group(1), 60), ""
+        if _JD_META.search(ln) or _JD_LABEL_WORDS.match(ln.lstrip("*# ")) or len(ln) > 120:
+            continue
         parts = re.split(r"\s+[, \-, |·]\s+|\s+at\s+", ln, maxsplit=1)
         role = _clean(parts[0], 60)
         if not role:
@@ -50,6 +83,10 @@ def _jd_label(jd_text: str) -> tuple[str, str]:
         if len(parts) > 1:
             company = _clean(re.split(r"\s+in\s+", parts[1])[0], 40)
         return role, company
+    for m in _JD_TITLE_IN_PROSE.finditer(" ".join(lines[:60])):
+        title = m.group(1).strip()
+        if _TITLE_WORDS.search(title):
+            return title[:60], ""
     return "", ""
 
 
@@ -2364,13 +2401,54 @@ class WebIntake:
     def _no_false_limits(self, reply: str, message: str) -> str:
         """Replace a reply that claims the app cannot read files or GitHub (when it can, or
         when the honest answer is "not connected yet, here is where") with one written from
-        the app's own state."""
+        the app's own state. Then the GitHub rule (_no_github_ask)."""
         hit = self._DENIES.search(reply or "")
         if hit:
             fixed = self._capability_answer(f"{message} {hit.group(0)}")
             if fixed:
                 return fixed
-        return reply
+        return self._no_github_ask(reply)
+
+    # The intake model asked "if you have a LinkedIn or GitHub address, send it over" (Kofi's
+    # D365 chat, 2026-11-10). GitHub is never typed into the chat: connected, it is never asked
+    # for; not connected, the Connect GitHub button does it.
+    _GITHUB_WORD = re.compile(r"\bgit\s?hub\b", re.I)
+    _ASKS_FOR = re.compile(
+        r"\b(?:send|share|give|paste|provide|drop|post|add|include|tell me|let me know|"
+        r"what(?:'s|’s| is) your|do you have|if you have|got an?|have an?)\b", re.I)
+    _GITHUB_IN_LIST = re.compile(
+        r"\s*(?:,|\bor\b|\band\b|/)\s*(?:your\s+)?git\s?hub(?:\s+(?:link|address|url|profile|"
+        r"username|handle|page))?\b|\bgit\s?hub(?:\s+(?:link|address|url|profile|"
+        r"username|handle|page))?\s*(?:,|\bor\b|\band\b|/)\s*", re.I)
+    _github_card_due = False
+
+    def _no_github_ask(self, reply: str) -> str:
+        """Take any ask for the person's GitHub out of a model reply: GitHub alone, the
+        sentence goes; GitHub beside LinkedIn or a website, just GitHub goes. When GitHub is
+        not connected and no username is known, the turn gets the Connect GitHub button
+        (_state). A sentence that only mentions GitHub stays."""
+        if not reply or not self._GITHUB_WORD.search(reply):
+            return reply
+        kept, dropped = [], False
+        for sent in re.split(r"(?<=[.!?])\s+", reply):
+            if self._GITHUB_WORD.search(sent) and self._ASKS_FOR.search(sent):
+                rest = self._GITHUB_IN_LIST.sub(" ", sent)
+                rest = re.sub(r"\s+([,.!?])", r"\1", re.sub(r"\s{2,}", " ", rest)).strip()
+                dropped = True
+                if not self._GITHUB_WORD.search(rest) and re.search(
+                        r"\b(?:linkedin|website|portfolio|blog)\b", rest, re.I):
+                    kept.append(rest)
+                continue
+            kept.append(sent)
+        if not dropped:
+            return reply
+        out = " ".join(kept).strip()
+        gh = self._github_view()
+        if not (gh.get("connected") or gh.get("resume_login")):
+            # The button goes under this reply only if the reply is really said (_state): a
+            # reply the turn throws away (a build that asks something else first) brings none.
+            self._github_card_due = out or True
+        return out
 
     def _apply_memory_selection(self):
         """Recall -> decide (P1, Task 3). Record which of the person's experiences/projects/skills
@@ -3730,6 +3808,19 @@ class WebIntake:
                 s["blocked_finalize"] = True
         if extra:
             s.update(extra)
+        # A model reply asked for the person's GitHub while it is not connected (_no_github_ask):
+        # the Connect GitHub button instead, once, unless this turn already shows one.
+        due = self._github_card_due
+        if due and s["messages"]:
+            self._github_card_due = False
+            said = due is True or any(str(due) in str(m) for m in s["messages"])
+            if said and not any(self._connect_buttons(c) for c in s["cards"]):
+                from agent.resume_chat import connect_card
+                card = connect_card()
+                self._append("agent", self.GITHUB_NOT_CONNECTED)
+                self.history[-1]["card"] = card
+                s["messages"] = list(s["messages"]) + [self.GITHUB_NOT_CONNECTED]
+                s["cards"].append(card)
         # A build told in the chat by a helper (add_projects inside a chat turn) rides on the
         # first state after it; a build's own state gets it from _builds.
         if self._pending_build is not None and self._bt is None:
@@ -3765,6 +3856,7 @@ class WebIntake:
         # What do you suggest?") is part of that conversation, even without a GitHub or project
         # word in it, and must not fall back to the intake's next field question.
         followup, self._agent_spoke = bool(getattr(self, "_agent_spoke", False)), False
+        self._github_card_due = False
         self._append("user", message)
 
         # "Check my GitHub" (the offer's button sends this exact line): the check itself, not a
@@ -4613,26 +4705,30 @@ class WebIntake:
         One voice per turn: Kofi got the same tip after every build and three questions in a
         row, two of them the same (2026-11-10)."""
         e = self.essentials
-        if saved and getattr(self.assembled, "fact_flags", None):
-            from tailoring.fact_gate import describe as _describe_figures
-            msgs.append(_describe_figures(self.assembled.fact_flags))
-        for note in (self._trims_note(), self._fill_note()):
+
+        def say(note):
+            # Every line said here goes into the chat's history too, so a reopened chat shows
+            # what was said live (the tip and the notes used to vanish on reload). The live
+            # turn renders from the response and a reload from the history, never both.
             if note:
                 msgs.append(note)
+                self._append("agent", note)
+
+        if saved and getattr(self.assembled, "fact_flags", None):
+            from tailoring.fact_gate import describe as _describe_figures
+            say(_describe_figures(self.assembled.fact_flags))
+        say(self._trims_note())
+        say(self._fill_note())
         if self.title_flags():
-            msgs.append("I aligned a job <b>title</b> to the role, it's highlighted; click it to "
-                        "confirm or revert.")
+            say("I aligned a job <b>title</b> to the role, it's highlighted; click it to "
+                "confirm or revert.")
         if not e.get("edit_tip_said"):
             e["edit_tip_said"] = True
-            msgs.append(self.EDIT_TIP)
+            say(self.EDIT_TIP)
         if date_flags:
-            note = self._date_flag_note(date_flags)
-            msgs.append(note)
-            self._append("agent", note)
+            say(self._date_flag_note(date_flags))
         if saved:
-            undated = self.undated_projects_note()
-            if undated:
-                msgs.append(undated)
+            say(self.undated_projects_note())
         extra = self._light_extra()
         cards = self._project_offer(msgs)
         if not cards and not e.get("unattended"):

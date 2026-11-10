@@ -133,4 +133,4 @@ def test_build_from_saved_adds_the_line():
     # The body lives in _build_from_saved since the live activity feed wraps the build, and its
     # tail in _review_tail (saved=True) since both build paths share one (2026-11-10).
     src = inspect.getsource(WebIntake._build_from_saved) + inspect.getsource(WebIntake._review_tail)
-    assert "saved=True" in src and "undated = self.undated_projects_note()" in src and "msgs.append(undated)" in src
+    assert "saved=True" in src and "say(self.undated_projects_note())" in src
