@@ -1391,6 +1391,7 @@ def _annalisa_reply(text: str) -> str:
 
 
 def _session() -> WebIntake:
+    _restore_latest_once()
     s = _SESSION.get("s")
     if s is None:
         raise RuntimeError("No active session. Start a new resume first.")
@@ -2999,6 +3000,52 @@ def template_thumb(name):
     return resp
 
 
+def _jd_location(jd: str) -> str:
+    """The location a pasted description states near its top ("Location: Austin, TX", "Austin,
+    TX", "Remote"), or "" when it says none. Never guessed beyond that."""
+    head = (jd or "")[:1500]
+    m = re.search(r"(?im)^\s*(?:job\s+)?location\s*[:|]\s*(.{2,80}?)\s*$", head)
+    if m:
+        return m.group(1).strip(" .")
+    m = re.search(r"\b([A-Z][a-zA-Z.]+(?: [A-Z][a-zA-Z.]+){0,2}, (?:A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[ADLN]|"
+                  r"K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY]))\b",
+                  head[:600])
+    if m:
+        return m.group(1)
+    return "Remote" if re.search(r"\bremote\b", head[:600], re.I) else ""
+
+
+def _attach_session_job(session, job: dict | None = None, job_id: str = "") -> str:
+    """Every resume chat belongs to exactly one tracker job (sourcing/board.py). A job from the
+    Jobs page is that job (stored locally from its snapshot if it came from the feed); a pasted
+    description gets a job made from it (title, company, location, the description, source
+    "pasted"); a variant shares its sibling's. The job's card goes to In progress (from nowhere or
+    Saved; a job further on stays where it is), and the session keeps its id. Returns the job id."""
+    from sourcing.board import PASTED_SOURCE, now_iso
+    w = _watchlist()
+    try:
+        if job and job.get("source_id"):
+            sid = str(job["source_id"])
+            snap = None if w.get_job(sid) else dict(job)
+        elif job_id:
+            sid, snap = job_id, None
+        else:
+            sid = f"{PASTED_SOURCE}:{session.jobname}"
+            snap = {"source_id": sid, "source": PASTED_SOURCE, "company": session.company or "",
+                    "title": session.role or "", "location": _jd_location(session.jd), "url": "",
+                    "jd_text": session.jd, "posted_at": now_iso()[:10]}
+        try:
+            w.track_job(sid, "in_progress", note="Resume started", job=snap)
+            if w.stage_of(sid) == "saved":
+                w.move_stage(sid, "in_progress", note="Resume started")
+        except Exception:      # noqa: BLE001 - the chat still starts; the board catches up on accept
+            traceback.print_exc()
+    finally:
+        w.close()
+    session.job_id = sid
+    return sid
+
+
 @app.post("/api/session/start")
 @_guard
 def start():
@@ -3018,6 +3065,7 @@ def start():
     jobname = "cv" + uuid.uuid4().hex[:8]
     session = WebIntake(jd, tex, llm, _memory(), _records(), WORKDIR,
                         jobname=jobname, palace_dir=PALACE_DIR, template_name=tname)
+    _attach_session_job(session)        # a pasted description gets its own tracker job
     _SESSION["s"] = session
     return jsonify(session.start())
 
@@ -3080,6 +3128,7 @@ def record_variant(rid: int):
                         palace_dir=PALACE_DIR, template_name=tname,
                         profile_name="variant")
     session.variant_of = rid
+    _attach_session_job(session, job_id=_board_key(rec)[0])   # the same job as its sibling
     _SESSION["s"] = session
     session.start()
     # P3: apply any Telegram handling note attached to this record ("use my analyst profile",
@@ -3111,22 +3160,187 @@ def activity_feed():
     return jsonify({"ok": True, "run": _act.snapshot(key)})
 
 
-@app.get("/api/session/state")
-def session_state():
-    """Read the live session, so the person can leave a CV and come back to it.
+# ---------------------------------------------------------------- kept sessions (ui/builder_sessions.py)
+# Every resume chat is written to local SQLite after each request that touched it, so a restart,
+# an update or a crash never loses the resume being built (Kofi lost his D365 resume that way,
+# 2026-11-10). The most recent unfinished one comes back on its own; any one opens by id.
+_SESSION_STORES: dict = {}
+_SESSION_SIG: dict = {}                  # session id -> hash of what was last written
+_SESSION_RESTORE = {"tried": False}      # the engine-start restore runs once per process
+JOB_EXPIRED_MSG = ("This job has closed, so this chat is now a record of it. You can still "
+                   "download this resume or use it for another job.")
 
-    Every other session route is a POST that MUTATES. Nothing could READ the session, so
-    the client held the whole CV in browser memory and any navigation destroyed work the
-    server still had sitting right here in _SESSION ("I click away to other pages and I
-    come back to the CV that we just created and it disappears").
 
-    Never raises for "no session": an empty builder is a normal state, not an error.
-    """
-    s = _SESSION.get("s")
-    if s is None:
-        return jsonify({"active": False})
+def _session_store():
+    from ui.builder_sessions import SessionStore
+    st = _SESSION_STORES.get(DB_PATH)
+    if st is None:
+        st = _SESSION_STORES[DB_PATH] = SessionStore(DB_PATH)
+    return st
+
+
+class _LazyLLM:
+    """The model for a restored session, made on its first use. Restoring reads only local data:
+    no network at engine start, and no package counted (the session's run was counted when it
+    began). Offline or keyless, the restored chat still opens; the first AI step then says why."""
+
+    def __init__(self):
+        self._llm = None
+
+    def __getattr__(self, name):
+        if name.startswith("__") or name == "_llm":
+            raise AttributeError(name)
+        if self._llm is None:
+            self._llm = _make_llm()
+        return getattr(self._llm, name)
+
+
+def _session_snapshot(s) -> tuple[dict, dict, str]:
+    """(data, meta, signature) of a session: what the store holds, and a hash to skip rewrites."""
+    import hashlib
+
+    from ui import builder_sessions as BS
+    data, meta = BS.dump(s), BS.meta_of(s)
+    sig = hashlib.sha256(json.dumps([data, meta], sort_keys=True, default=str).encode()).hexdigest()
+    return data, meta, sig
+
+
+def _save_live_session(s=None) -> bool:
+    """Write the live session (or ``s``) to the store when it changed. Never blocks on a build
+    running on another thread: that request's own save follows it. Merely opening a session
+    writes nothing, so a job's current session is the one last worked on, not the last looked at."""
+    s = s if s is not None else _SESSION.get("s")
+    if s is None or (getattr(s, "essentials", None) or {}).get("unattended"):
+        return False
+    lock = getattr(s, "lock", None)
+    if lock is not None and not lock.acquire(blocking=False):
+        return False
+    try:
+        data, meta, sig = _session_snapshot(s)
+    except Exception:      # noqa: BLE001 - keeping a copy never breaks the request
+        traceback.print_exc()
+        return False
+    finally:
+        if lock is not None:
+            lock.release()
+    sid = str(s.jobname)
+    if _SESSION_SIG.get(sid) == sig:
+        return False
+    try:
+        _session_store().save(sid, meta, data)
+    except Exception:      # noqa: BLE001
+        traceback.print_exc()
+        return False
+    _SESSION_SIG[sid] = sig
+    return True
+
+
+@app.after_request
+def _keep_session(resp):
+    """After any request that may have changed the open resume chat, keep a copy of it."""
+    if request.method != "GET" and _SESSION.get("s") is not None:
+        _save_live_session()
+    return resp
+
+
+def _restore_session(row: dict):
+    """A WebIntake from a stored row (ui/builder_sessions.restore)."""
+    from ui import builder_sessions as BS
+    data = row.get("data") or {}
+    tex, tname = _load_template(data.get("template_name"))
+    data = {**data, "template_name": tname}
+    s = BS.restore(data, template_source=tex, llm=_LazyLLM(), memory=_memory(), records=_records(),
+                   workdir=WORKDIR, palace_dir=PALACE_DIR)
+    try:
+        _SESSION_SIG[str(s.jobname)] = _session_snapshot(s)[2]
+    except Exception:      # noqa: BLE001 - then the next request simply writes it again
+        _SESSION_SIG.pop(str(s.jobname), None)
+    return s
+
+
+def _restore_latest_once() -> None:
+    """On engine start (the first look at the session): bring back the most recent unfinished
+    session, so the rail's Building entry is there again after a restart, update or crash."""
+    if _SESSION_RESTORE["tried"] or _SESSION.get("s") is not None:
+        return
+    _SESSION_RESTORE["tried"] = True
+    try:
+        row = _session_store().latest_unfinished()
+        if row:
+            _SESSION["s"] = _restore_session(row)
+    except Exception:      # noqa: BLE001 - a damaged row never stops the app from opening
+        traceback.print_exc()
+
+
+def _close_posting_on_board(w, sid: str) -> None:
+    """A job's posting closed: stamp it (closed_at, "posting closed") and, if it was not applied
+    to yet (Saved, In progress, Approved), move its card to Closed, the Archived stage, never to
+    Rejected. An applied job stays where it is: a posting often closes after the application."""
+    from sourcing.board import CLOSED_POSTING
+    w.mark_posting_closed(sid, CLOSED_POSTING)
+    if w.stage_of(sid) in ("saved", "in_progress", "approved"):
+        w.move_stage(sid, "archived", note="Posting closed")
+
+
+def _session_job_id(s) -> str:
+    return str(getattr(s, "job_id", "") or (getattr(s, "source_job", None) or {}).get("source_id") or "")
+
+
+def _session_job_closed(s) -> str:
+    """Why the job this session belongs to is closed, or "" while it is open. Local checks only:
+    the job already stamped closed, its posting found closed (closed_job) or its application
+    record moved to the closed-posting state, or a feed job no longer in the feed. A closed job is
+    stamped on its tracker row (closed_at, closed_reason), never moved to Rejected. A pasted
+    description's job never closes by itself."""
+    from sourcing.board import CLOSED_POSTING, PASTED_SOURCE, TAILORED_SOURCE
+    from submit.stages import app_stage
+    sid = _session_job_id(s)
+    if not sid:
+        return ""
+    w = _watchlist()
+    try:
+        row = w.board_job(sid) or {}
+        if row.get("closed_at"):
+            return row.get("closed_reason") or CLOSED_POSTING
+        closed = sid in w.closed_ids()
+        rid = getattr(s, "_last_record_id", None)
+        if not closed and rid:
+            rec = _get_record(rid)
+            closed = bool(rec and app_stage(_record_data(rec)).get("reason") == "posting_closed")
+        source = str(row.get("source") or (getattr(s, "source_job", None) or {}).get("source") or "")
+        if not closed and source not in (PASTED_SOURCE, TAILORED_SOURCE) \
+                and not sid.startswith((PASTED_SOURCE + ":", TAILORED_SOURCE + ":")) and _feed_serving():
+            try:
+                sf = _static_feed()
+                sf.jobs()
+                closed = sf.get(sid) is None
+            except Exception:      # noqa: BLE001 - the feed not loaded yet: unknown is not closed
+                closed = False
+        if not closed:
+            return ""
+        _close_posting_on_board(w, sid)
+        return CLOSED_POSTING
+    finally:
+        w.close()
+
+
+def _session_status(row: dict) -> str:
+    """in_progress / saved, and saved -> applied once the application record has been sent."""
+    from submit.stages import app_stage
+    from ui.builder_sessions import STATUS_APPLIED, STATUS_SAVED
+    if row.get("status") != STATUS_SAVED or not row.get("record_id"):
+        return row.get("status") or ""
+    rec = _get_record(row["record_id"])
+    if rec and app_stage(_record_data(rec)).get("stage") in ("applied", "interviewing", "offer", "rejected"):
+        return STATUS_APPLIED
+    return STATUS_SAVED
+
+
+def _session_payload(s) -> dict:
+    """The session as the builder reads it: its state, active, its id, and the whole chat."""
     state = s._state()
     state["active"] = True
+    state["session_id"] = str(s.jobname)
     # The transcript lives server-side in session.history; the chat bubbles were only ever
     # in the browser. Hand it back or the CV returns to an empty conversation, which still
     # reads as "we weren't working on anything".
@@ -3137,7 +3351,133 @@ def session_state():
                          **({"cards": t["cards"]} if t.get("cards") else {}),
                          **({"build": t["build"]} if t.get("build") else {})}
                         for t in (s.history or [])]
-    return jsonify(state)
+    if getattr(s, "expired_noted", False):
+        state["expired"] = True
+    return state
+
+
+@app.get("/api/sessions")
+def sessions_list():
+    """Every kept resume session, newest first, like a chat app's Recents. ``q`` matches the role
+    or the company; ``status`` narrows to in_progress, saved or applied; ``job_id`` to one job's.
+    The open one is ``live``; each job's newest is its ``current`` one."""
+    from ui.builder_sessions import STATUS_APPLIED, STATUS_SAVED
+    q = str(request.args.get("q") or "")[:120]
+    want = str(request.args.get("status") or "")
+    try:
+        limit = max(1, min(500, int(request.args.get("limit") or 50)))
+    except ValueError:
+        limit = 50
+    live = _SESSION.get("s")
+    live_id = str(live.jobname) if live is not None else ""
+    if live is not None:
+        _save_live_session(live)
+    # "applied" is worked out from the record, so it is read from the saved ones.
+    job_id = str(request.args.get("job_id") or "")
+    rows = _session_store().list(q=q, limit=500 if want == STATUS_APPLIED else limit,
+                                 status=STATUS_SAVED if want == STATUS_APPLIED else want, job_id=job_id)
+    current = _session_store().current_by_job([r["job_id"] for r in rows if r.get("job_id")])
+    out = []
+    for r in rows:
+        r["status"] = _session_status(r)
+        if want and r["status"] != want:
+            continue
+        r["live"] = r["id"] == live_id
+        r["current"] = (current.get(r.get("job_id") or "") or {}).get("id") == r["id"]
+        out.append(r)
+    return jsonify({"sessions": out[:limit]})
+
+
+@app.post("/api/sessions/<sid>/open")
+@_guard
+def sessions_open(sid):
+    """Reopen a kept chat in the builder, with its job, template, page and chat (the open one is
+    kept first). A chat whose job has closed opens as a record: ``expired`` is true and the AI's
+    first line says so, once."""
+    row = _session_store().get(sid)
+    if row is None:
+        return jsonify({"error": "That resume chat isn't here any more."}), 404
+    live = _SESSION.get("s")
+    if live is not None and str(live.jobname) == sid:
+        s = live
+    else:
+        if live is not None:
+            _save_live_session(live)
+        s = _restore_session(row)
+        _SESSION["s"] = s
+    _SESSION_RESTORE["tried"] = True
+    return jsonify(_open_payload(s))
+
+
+def _open_payload(s) -> dict:
+    """A reopened session as the builder reads it, with ``expired`` and its ``expired_reason``.
+    The AI's first line on a closed job's chat says so, once; the chat is then a record."""
+    reason = _session_job_closed(s)
+    if reason and not getattr(s, "expired_noted", False):
+        with s.lock:
+            s._append("agent", JOB_EXPIRED_MSG)
+            s.expired_noted = True
+    payload = _session_payload(s)
+    payload["expired"] = bool(reason)
+    payload["expired_reason"] = reason
+    if reason:
+        payload["messages"] = [JOB_EXPIRED_MSG]
+    return payload
+
+
+@app.post("/api/tracker/session/open")
+@_guard
+def tracker_session_open():
+    """Open a job's resume chat: its current (newest) session. Body {source_id}; 404 when the
+    job has none."""
+    sid = str((request.json or {}).get("source_id") or "").strip()
+    live = _SESSION.get("s")
+    if live is not None and _session_job_id(live) == sid:
+        _save_live_session(live)
+    rows = _session_store().list(job_id=sid, limit=1) if sid else []
+    if not rows:
+        return jsonify({"error": "No resume chat for that job yet."}), 404
+    return sessions_open(rows[0]["id"])
+
+
+@app.delete("/api/sessions/<sid>")
+@_guard
+def sessions_delete(sid):
+    """Delete one kept chat and its working files. A saved resume stays in Resumes (its record
+    keeps its own copy of the PDF). Deleting the open one closes the builder."""
+    gone = _session_store().delete(sid)
+    live = _SESSION.get("s")
+    if live is not None and str(live.jobname) == sid:
+        _SESSION.pop("s", None)
+    _SESSION_SIG.pop(sid, None)
+    if re.fullmatch(r"cv[0-9a-f]{8}", sid or ""):
+        for ext in ("pdf", "tex", "log", "aux", "out"):
+            try:
+                (WORKDIR / f"{sid}.{ext}").unlink(missing_ok=True)
+            except OSError:
+                pass
+    return jsonify({"ok": True, "deleted": gone})
+
+
+@app.get("/api/session/state")
+def session_state():
+    """Read the live session, so the person can leave a CV and come back to it.
+
+    Every other session route is a POST that MUTATES. Nothing could READ the session, so
+    the client held the whole CV in browser memory and any navigation destroyed work the
+    server still had sitting right here in _SESSION ("I click away to other pages and I
+    come back to the CV that we just created and it disappears").
+
+    Never raises for "no session": an empty builder is a normal state, not an error.
+
+    Since 2026-11-10 the session also survives the engine: the first look after a start brings
+    back the most recent unfinished one from the store (ui/builder_sessions.py).
+    """
+    _restore_latest_once()
+    s = _SESSION.get("s")
+    if s is None:
+        return jsonify({"active": False})
+    return jsonify(_session_payload(s))
 
 
 @app.post("/api/session/answer")
@@ -3975,6 +4315,9 @@ def jobs_list():
                 hidden = _dismissed_ids() | _closed_job_ids()   # the person's own Dismiss, and closed postings
                 if hidden:
                     filtered = [j for j in filtered if j.get("source_id") not in hidden]
+                fit_ranked = False
+                if a.get("home") == "1":
+                    filtered, fit_ranked = _home_fit_rank(filtered)
                 page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1),
                                                             a.get("per_page", 30))
                 page_jobs = _jobs_mark([dict(j) for j in page_jobs])   # never mutate the cached rows
@@ -3984,6 +4327,7 @@ def jobs_list():
                         j["saved"] = j.get("source_id") in saved
                 refreshed = header.get("generated_at")
                 return jsonify({"jobs": page_jobs, "count": count, "total": len(jobs),
+                                "fit_ranked": fit_ranked,
                                 "page": page, "per_page": per_page, "refreshed_at": refreshed,
                                 "newest_at": _newest_arrival(jobs),
                                 "stale": _is_stale(refreshed, hours=12) if refreshed else False,
@@ -4040,6 +4384,9 @@ def jobs_list():
             except Exception:                            # noqa: BLE001 - search still returns the local matches
                 pass
         filtered = _jobs_personal(filtered, home=a.get("home") == "1")
+        fit_ranked = False
+        if a.get("home") == "1":
+            filtered, fit_ranked = _home_fit_rank(filtered)
         page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1), a.get("per_page", 30))
         page_jobs = _jobs_mark([dict(j) for j in page_jobs])
         refreshed = _sponsors().get_meta("jobs_refreshed_at")
@@ -4058,6 +4405,7 @@ def jobs_list():
         # 168-role fallback during a network blip. When feed_url is unset (or still the placeholder)
         # this is a genuine local-only install, so it is NOT degraded.
         return jsonify({"jobs": page_jobs, "count": count, "total": len(jobs),
+                        "fit_ranked": fit_ranked,
                         "page": page, "per_page": per_page, "refreshed_at": refreshed,
                         "newest_at": _newest_arrival(jobs),
                         "stale": _is_stale(refreshed, hours=12),
@@ -7869,6 +8217,12 @@ def memory_erase():
     import shutil
     resumes = bool((request.json or {}).get("resumes")) if request.is_json else False
     _SESSION.pop("s", None)   # drop any live in-memory session so it can't re-save the old state
+    _SESSION_RESTORE["tried"] = True
+    _SESSION_SIG.clear()
+    try:
+        _session_store().clear()   # every kept resume chat (ui/builder_sessions.py)
+    except Exception:      # noqa: BLE001
+        traceback.print_exc()
     mem = _memory()
     try:
         mem.erase_everything()
@@ -12889,6 +13243,7 @@ def start_from_job():
     # auto vs. assisted for it later.
     session.source_job = {"url": job.get("url") or "", "source": job.get("source") or "",
                           "source_id": sid}
+    _attach_session_job(session, job={**job, "source_id": sid})
     _SESSION["s"] = session
     return jsonify(session.start())
 
@@ -14967,6 +15322,7 @@ def _mark_job_closed(source_id: str, url: str = "", phrase: str = "") -> None:
         w = _watchlist()
         try:
             w.mark_closed(source_id, url, phrase)
+            _close_posting_on_board(w, source_id)    # its tracker card: Closed, not Rejected
         except Exception:   # noqa: BLE001 - best effort; the person was told already
             pass
         finally:
@@ -16854,6 +17210,26 @@ def autoapply_forget():
     return jsonify(_learn_view(st))
 
 
+def _home_fit_rank(rows: list[dict]) -> tuple[list[dict], bool]:
+    """Home's Today strip: the freshest roles, best fit to the saved profile first (ui/home_fit.py).
+    (rows, True) when ranked by fit; (rows unchanged, False) with no profile to rank against, and
+    the strip then says "new sponsor roles" instead of "best-fit"."""
+    from ui.home_fit import fit_targets, rank
+    try:
+        mem = _memory()
+        try:
+            profile = (mem.load("default") or {}).get("profile") or {}
+        finally:
+            mem.close()
+        targets = fit_targets(profile)
+    except Exception:      # noqa: BLE001 - the strip still shows, unranked
+        traceback.print_exc()
+        targets = None
+    if not targets:
+        return rows, False
+    return rank(rows, targets), True
+
+
 def _jobs_personal(rows: list[dict], *, home: bool = False) -> list[dict]:
     """The Jobs board through the person's own settings: a role whose ad or TITLE requires
     citizenship or a clearance ("USC & GC only", "Top Secret"), or says it will not sponsor, is
@@ -16890,10 +17266,13 @@ def _board_key(rec: dict) -> tuple[str, dict | None]:
     from sourcing.board import TAILORED_SOURCE
     data = _record_data(rec)
     sj = data.get("source_job") or {}
-    sid = str(sj.get("source_id") or "").strip()
+    # A resume chat's own job (a pasted description's "pasted:" row) when it has no sourced one.
+    sid = str(sj.get("source_id") or data.get("job_id") or "").strip()
     role = (rec.get("jd_label") or rec.get("role") or "").split(" · ")[0].strip()
     if sid:
-        snap = {"source_id": sid, "source": sj.get("source") or "", "company": rec.get("company") or "",
+        from sourcing.board import PASTED_SOURCE
+        src = sj.get("source") or (PASTED_SOURCE if sid.startswith(PASTED_SOURCE + ":") else "")
+        snap = {"source_id": sid, "source": src, "company": rec.get("company") or "",
                 "title": role, "url": sj.get("url") or "", "posted_at": (rec.get("created_at") or "")[:10]}
         return sid, snap
     sid = f"{TAILORED_SOURCE}:{rec['id']}"
@@ -17011,9 +17390,27 @@ def _board_patch_records(records: list[dict], stage: str) -> None:
         recs.close()
 
 
-def _board_card(j: dict, records: list[dict], today) -> dict:
-    """One card: the job, its sponsorship badges, the latest tailored resume, and the dates."""
+def _job_session_view(row: dict | None) -> dict | None:
+    """A job's current resume chat as a card shows it: "Tailored · 96%" or "In progress"."""
+    if not row:
+        return None
+    return {"id": row["id"], "status": _session_status(row), "fill": row.get("fill"),
+            "keywords": row.get("keywords"), "template": row.get("template") or "",
+            "template_label": row.get("template_label") or "", "updated_at": row.get("updated_at"),
+            "pdf": row.get("pdf")}
+
+
+def _board_card(j: dict, records: list[dict], today, sessions: dict | None = None) -> dict:
+    """One card: the job, its sponsorship badges, the latest tailored resume, its current resume
+    chat (``session``, with ``has_session``), whether its posting closed, and the dates.
+    ``sessions`` is {job id: current session row} read once for a whole board."""
     from sourcing.board import date_of
+    if sessions is None:
+        try:
+            sessions = _session_store().current_by_job([j["source_id"]])
+        except Exception:      # noqa: BLE001 - the card shows without its chat
+            sessions = {}
+    sess = _job_session_view(sessions.get(j["source_id"]))
     latest = max(records, key=lambda r: r["id"]) if records else None
     rec = None
     if latest:
@@ -17041,6 +17438,8 @@ def _board_card(j: dict, records: list[dict], today) -> dict:
         "visa": j.get("visa") or [], "sponsorship_stated": j.get("sponsorship_stated"),
         "has_notes": bool((j.get("notes") or "").strip()),
         "record": rec,
+        "has_session": sess is not None, "session": sess,
+        "closed_at": j.get("closed_at") or None, "closed_reason": j.get("closed_reason") or "",
     }
 
 
@@ -17068,8 +17467,12 @@ def tracker_board():
     finally:
         w.close()
     columns = {s: [] for s in ([only] if only else STAGES)}
+    try:
+        sessions = _session_store().current_by_job([j["source_id"] for j in jobs])
+    except Exception:      # noqa: BLE001
+        sessions = {}
     for j in jobs:
-        columns[j["stage"]].append(_board_card(j, by_job.get(j["source_id"], []), today))
+        columns[j["stage"]].append(_board_card(j, by_job.get(j["source_id"], []), today, sessions))
     return _nostore(jsonify({"stages": list(STAGES), "columns": columns, "due_count": due,
                              "goal": _board_goal(), "total": len(jobs)}))
 
@@ -17180,7 +17583,14 @@ def tracker_job():
                      "cover_letter": (f"/api/record/{r['id']}/cover_letter.pdf"
                                       if (data.get("cover_letter") or "").strip() else None)})
     card = _board_card(job, by_job.get(sid, []), date.today())
+    # Every resume chat for this job, newest first; the newest is the current one.
+    live = _SESSION.get("s")
+    if live is not None and _session_job_id(live) == sid:
+        _save_live_session(live)
+    sessions = [{**_job_session_view(r), "current": i == 0}
+                for i, r in enumerate(_session_store().list(job_id=sid, limit=50))]
     return _nostore(jsonify({**card, "notes": job.get("notes") or "", "contacts": contacts,
+                             "sessions": sessions,
                              "activity": activity, "history": history, "mail": mail,
                              "furthest_stage": job.get("furthest_stage") or "",
                              "records": recs, "salary": job.get("salary") or ""}))

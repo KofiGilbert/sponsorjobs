@@ -1076,6 +1076,9 @@ class WebIntake:
         self.last_cover_letter = ""        # most recent drafted cover letter (bundled on accept)
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
         self.source_job = {}               # {url, source, source_id} when started from a sourced job
+        # The tracker job this resume chat belongs to (sourcing/board.py): the sourced job's id, or
+        # the "pasted:<id>" row made for a pasted description (ui/app._attach_session_job).
+        self.job_id = ""
         self.keyword_actions: list[dict] = []   # "Add this keyword" edits on this page, undo one by one
         # The person's choices (applicant brain, Phase 5): this resume's own switches ("Show on
         # this resume", "Swap for ..."), the one line that asks once whether to keep a change for
@@ -7027,6 +7030,8 @@ class WebIntake:
             "screening": self.last_screening or [],
             "status": "ready",
             "source_job": self.source_job or {},   # drives the submission policy (submit/)
+            # The tracker job this resume belongs to, so its card and its resume chat are one job.
+            "job_id": getattr(self, "job_id", "") or (self.source_job or {}).get("source_id") or "",
             # The exact tailored profile this CV was rendered from, so an ATS-friendly .docx
             # export reproduces the SAME content as the PDF (not a lossy PDF->Word convert).
             "render_profile": self._record_render_profile(),
