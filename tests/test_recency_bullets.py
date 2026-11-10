@@ -314,9 +314,10 @@ def test_make_room_cuts_older_material_in_kofis_order_and_can_undo():
         ([2, 2, 2, 2], [2, 1], 6),
         ([2, 2, 2, 2], [1, 1], 6),
         ([2, 2, 2, 1], [1, 1], 6),      # (3) the oldest role down to one
-        ([2, 2, 2, 1], [1, 1], 5),      # (4) skills lines beyond the minimum
+        ([2, 2, 2, 1], [1, 1], 5),      # (4) skills lines beyond the minimum (4)
+        ([2, 2, 2, 1], [1, 1], 4),
     ]
-    assert len(trims) == 7 and page["summary"] == "Analyst." and len(page["experience"]) == 4
+    assert len(trims) == 8 and page["summary"] == "Analyst." and len(page["experience"]) == 4
     for u in reversed(undo):
         u()
     assert page == whole and trims == []
@@ -328,7 +329,10 @@ def _near_full():
                                     "Survey Methods, Statistical Computing")
     p["extracurricular"].append({"title": "Treasurer, UIC Statistics Club", "date": "2016 - 2018", "bullets": [
         "Kept the club budget in a shared spreadsheet and reported spending to members each term.",
-        "Organized a yearly data challenge with a local hospital that drew forty student teams."]})
+        "Organized a yearly data challenge with a local hospital that drew forty student teams.",
+        # The Skills block holds at most 5 lines (linefit.SKILL_LINES_MAX), so the line a 6th
+        # skills line used to take is taken here, keeping the page as full as before.
+        "Ran weekly R workshops for first-year members."]})
     p["skills"]["Reporting"] = "Monthly reporting, KPI tracking, Excel pivot tables"
     p["projects"] = [
         {"org": "Depot Delay Tracker", "title": "Creator", "dates": "2024", "bullets": [

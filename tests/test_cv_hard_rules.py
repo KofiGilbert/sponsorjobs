@@ -511,11 +511,11 @@ def test_supported_material_yields_more_than_two_skill_rows():
     assert len(rows) >= 4, f"only {len(rows)} rows: {list(rows)}"
 
 
-def test_shrink_keeps_at_least_five_skill_categories():
-    """Skills shrink from 6 down to the 5-category floor, never below it."""
+def test_shrink_keeps_at_least_four_skill_lines():
+    """Skills shrink from 6 down to the 4-line floor (linefit.SKILL_LINES_MIN), never below it."""
     profile = {"skills": {f"C{i}": "term one, term two" for i in range(6)},
                "experience": [{"org": "X", "roles": [{"title": "T", "dates": "2020", "bullets": []}]}]}
     for _ in range(40):
         if not _shrink_once(profile):
             break
-    assert len(profile["skills"]) == 5, f"skills floor breached: {list(profile['skills'])}"
+    assert len(profile["skills"]) == 4, f"skills floor breached: {list(profile['skills'])}"
