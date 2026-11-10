@@ -160,6 +160,50 @@ def lines_of(it, text: str, cpl: float) -> int:
     return it.lines if it.lines <= est + 1 else est
 
 
+# A chosen version's last line lands in this share of the line (no extra line wrapped).
+LAND_LO, LAND_HI = 0.90, 0.985
+# Word targets for the versions of an n-line bullet, as shares of n full lines.
+VERSION_SHARES = (0.70, 0.82, 0.94, 1.06)
+
+
+def line_capacity(rep) -> float:
+    """Estimated points (tailoring/textwidth.py) one printed bullet line holds on this page,
+    calibrated against the measured bullets (median)."""
+    from .textwidth import text_width_pt
+    est = sorted(text_width_pt(i.text) / i.total for i in rep.bullets
+                 if i.found and i.total >= 0.7 and i.lines <= math.ceil(len(i.text) / 60) + 1)
+    return est[len(est) // 2] if est else 0.0
+
+
+def lines_needed(text: str, cap: float) -> float:
+    """Printed lines as a fraction (1.93 = a full first line and 93% of the second)."""
+    from .textwidth import text_width_pt
+    return text_width_pt(text) / cap if cap else 0.0
+
+
+def choose_version(versions: list, n: int, cap: float):
+    """(text, landed, direction) for an n-line slot from a bullet's versions: the one whose last
+    line lands in ``LAND_LO``-``LAND_HI`` on n lines; else the longest that stays on n lines
+    (or the shortest when every version spills), with "longer" or "shorter" for the retry."""
+    vs = [v for v in versions if str(v or "").strip()]
+    if not vs:
+        return "", False, "longer"
+    fit = [(abs(lines_needed(v, cap) - (n - 1 + 0.95)), v) for v in vs
+           if n - 1 + LAND_LO <= lines_needed(v, cap) <= n - 1 + LAND_HI]
+    if fit:
+        return min(fit)[1], True, ""
+    under = [v for v in vs if lines_needed(v, cap) < n - 1 + LAND_LO]
+    if under:
+        return max(under, key=lambda v: lines_needed(v, cap)), False, "longer"
+    return min(vs, key=lambda v: lines_needed(v, cap)), False, "shorter"
+
+
+def word_targets(n: int, cpl: float) -> list[int]:
+    """Word counts for the versions of an n-line bullet (about 6.2 characters a word)."""
+    per_line = cpl / 6.2
+    return [max(6, round(n * per_line * f)) for f in VERSION_SHARES]
+
+
 def chars_per_line(rep) -> float:
     """Characters one full bullet line holds, from the measured bullets (the median)."""
     est = sorted(len(i.text) / i.total for i in rep.bullets if i.found and i.total >= 0.7)
@@ -194,6 +238,7 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
     base_overfull = result.overfull_count
     rep = LF.measure(getattr(result, "pdf_path", None), used)
     cpl = chars_per_line(rep)
+    cap = line_capacity(rep)
     if not cpl:
         return result, []
     found = {i.text: i for i in rep.bullets if i.found}
@@ -252,6 +297,7 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
     def ask(current=None, only=None, feedback=None):
         for ro in info:
             ro["windows"] = windows([ro["targets"]], cpl)[0]
+            ro["words"] = [word_targets(n, cpl) for n in ro["targets"]]
         try:
             out = llm.write_experience(info, jd_text=jd_text, current=current, only=only,
                                        feedback=feedback)
@@ -267,6 +313,7 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
 
     reasons: dict = {}
     tried_texts: dict = {}                                   # role -> [(refused text, reasons)]
+    shifts: dict = {}                                        # (role, bullet) -> "longer"/"shorter"
 
     def last_resort(i: int, have: list) -> str:
         """A bullet for a slot the model never filled: the person's own bullet that repeats no
@@ -288,15 +335,27 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
             want = info[i]["targets"]
             cur = list(r["bullets"]) if only is not None else [None] * len(want)
             cur = (cur + [None] * len(want))[:len(want)]
-            got = [str(x or "").strip() for x in (out[i] or [])]
+            got = [x if isinstance(x, list) else [x] for x in (out[i] or [])]
             idxs = (only or {}).get(i, []) if only is not None else range(len(want))
             for k in idxs:
-                text = got[k] if k < len(got) else ""
-                # Every bullet is a sentence and ends with a full stop (the window counts it).
-                if text and not text.rstrip().endswith((".", "!", "?")):
-                    text = text.rstrip(" ,;:") + "."
                 sibs = [str(x) for j, x in enumerate(cur) if j != k and x]
-                bad = problems(i, text, sibs) if text else ["empty"]
+                # Every version a sentence ending with a full stop (the measure counts it), and
+                # only versions that pass every check are measured.
+                vers = []
+                for v in (got[k] if k < len(got) else []):
+                    v = str(v or "").strip()
+                    if v and not v.endswith((".", "!", "?")):
+                        v = v.rstrip(" ,;:") + "."
+                    if v and not problems(i, v, sibs):
+                        vers.append(v)
+                    elif v:
+                        tried_texts.setdefault(i, []).append((v, problems(i, v, sibs)))
+                text, landed, way = choose_version(vers, want[k], cap) if cap else (
+                    (vers[0], True, "") if vers else ("", False, "longer"))
+                if text and not landed:
+                    shifts[(i, k)] = way
+                first = str((got[k] or [""])[0] if k < len(got) and got[k] else "")
+                bad = [] if text else (problems(i, first, sibs) if first else ["empty"])
                 _log(step="plan-write", label=info[i]["label"], n=k, bullet=text, why=bad)
                 if not bad:
                     cur[k] = text
@@ -346,7 +405,9 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                                      f"the last one full: "
                                      + (f"ADD about {need} characters ({max(1, need // 6)} words) "
                                         "of real detail" if need > 0 else
-                                        f"CUT about {-need} characters"))
+                                        f"CUT about {-need} characters")
+                                     + ": give 4 new versions, all "
+                                     + ("longer" if need > 0 else "shorter") + " than this one")
         return out, notes
 
     before = copy.deepcopy([list(r["bullets"]) for _k, _e, r in roles])

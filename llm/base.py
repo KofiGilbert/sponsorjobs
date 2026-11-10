@@ -461,7 +461,7 @@ class FakeLLM:
         return text if len(text) <= max(int(max_chars or 0), 1) else ""
 
     def polish_role(self, role_label: str, bullets: list[str], budgets: list, context: str = "",
-                    jd_text: str = "", only=None) -> list[str]:
+                    jd_text: str = "", only=None, words=None) -> list:
         """Deterministic test double: the bullets unchanged (it never writes to a length)."""
         return list(bullets)
 
