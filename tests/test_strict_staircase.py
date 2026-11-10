@@ -148,33 +148,30 @@ BO = [
 BO_MATERIAL = "BlackOrigin Inc.\nAI Senior Business Intelligence Manager\n" + "\n".join(BO)
 
 
-def test_the_real_builds_restating_bullets_are_refused():
-    """Word for word from the 7/5/2/2 page (2026-11-10)."""
-    padded = {
-        "Led business intelligence across the company's products, owning the function that covers "
-        "every product line and the data the company uses to track them.": 0,
-        "Built an AI-assisted pipeline that processes 280,000+ daily job postings, turning a very "
-        "large raw feed into a structured set of listings.": 2,
-        "Delivered 145,000+ sponsorship-matched roles from that feed, giving job seekers a filtered "
-        "set of openings to apply to.": 2,
-    }
-    for text, src in padded.items():
-        sibs = [b for i, b in enumerate(BO) if i != src]
-        assert "padded with words the material does not say" in new_bullet_problems(
-            text, sibs, BO_MATERIAL), text
-    # The same split, made of the bullet's own words, goes through.
+def test_only_empty_filler_is_refused_never_a_professionally_written_bullet():
+    """Kofi, 2026-11-10: a bullet written the way a professional would (its words need not be
+    the person's own) goes through; a line with no concrete action or object does not."""
+    from tailoring.filler import hollow
+    written = ("Led business intelligence across the company's products, owning the function "
+               "that covers every product line and the data the company uses to track them.")
+    assert new_bullet_problems(written, BO[1:], BO_MATERIAL) == []
+    assert hollow("Drove strategic alignment and operational excellence across teams.")
+    assert "empty filler" in new_bullet_problems(
+        "Delivered key results and business value for stakeholders.", BO, BO_MATERIAL)
+    # each part of a split still says something the role's other bullets do not
     good = ["Built an AI-assisted pipeline that processes 280,000+ daily job postings for the company.",
             "Matched 145,000+ sponsorship roles from the daily job postings the pipeline turns out."]
     assert _split_ok(good, BO[2], BO_MATERIAL, BO[:2], "")
-    bad = list(padded)[1:]
-    assert not _split_ok(bad, BO[2], BO_MATERIAL, BO[:2], "")
+    assert not _split_ok([BO[0], good[1]], BO[2], BO_MATERIAL, BO[:2], "")
 
 
-def test_a_written_bullet_that_restates_or_pads_is_refused():
+def test_a_written_bullet_that_restates_or_invents_a_figure_is_refused():
     sibs = list(BO)
-    # an invented direction-setting clause the material never states
+    # a typical duty of the title is fine now (Kofi, 2026-11-10); an invented figure is not
     assert written_problems("Set the reporting direction for the product, growth, and finance "
                             "teams that depend on product data to plan their work.",
+                            BO_MATERIAL, sibs) == []
+    assert written_problems("Cut reporting time by 35 percent for the product and finance teams.",
                             BO_MATERIAL, sibs)
     # nothing the other bullets do not already say
     assert "adds no fact of its own" in new_bullet_problems(
@@ -244,18 +241,13 @@ def test_interests_print_on_a_template_without_an_interests_section(template_sou
     assert "interests" not in s.sections
 
 
-def test_a_split_part_that_pads_or_takes_a_sibling_s_point_is_refused():
+def test_a_split_part_that_takes_a_sibling_s_point_is_refused():
     """Word for word from the first real build after the staircase change (2026-11-10)."""
     from tailoring.assembler import _split_problem
-    from tailoring.linefit import _pads_out
     v0 = ("Analyzed SQL and Excel operational data for a digital fulfillment platform, tracking 250 "
           "drivers and 5,000+ daily orders.")
     v1 = ("Turned operational findings into product and operations decisions on capacity and service "
           "levels for the fulfillment platform.")
-    padded = ["Analyzed operational data in SQL and Excel for a digital fulfillment platform, building "
-              "the data view behind daily operations.",
-              "Tracked 250 drivers and 5,000+ daily orders on the digital fulfillment platform."]
-    assert "padded" in _split_problem(padded, v0, v0 + "\n" + v1, [v1], "", "past")
     borrowed = ["Analyzed SQL and Excel operational data for a high-velocity digital fulfillment platform.",
                 "Tracked 250 drivers and more than 5,000 daily orders on the digital fulfillment platform, "
                 "turning findings into decisions on capacity and service levels."]
@@ -263,6 +255,89 @@ def test_a_split_part_that_pads_or_takes_a_sibling_s_point_is_refused():
     honest = ["Analyzed SQL and Excel operational data for a high-velocity digital fulfillment platform.",
               "Tracked 250 drivers and 5,000+ daily orders on the digital fulfillment platform."]
     assert _split_problem(honest, v0, v0 + "\nhigh-velocity\n" + v1, [v1], "", "past") == ""
-    # the line fit refuses the same padding when it lengthens a bullet
-    assert _pads_out(honest[0], padded[0], "Viva Technologies Ghana\n" + v1, v0)
-    assert not _pads_out(honest[1], honest[1].rstrip(".") + " in SQL and Excel.", v0, v0)
+    # two parts that open the same way read as one fact twice
+    same = ["Turned operational findings into product decisions for the fulfillment platform.",
+            "Turned operational findings into operations decisions on capacity and service levels."]
+    assert "opens like" in _split_problem(same, v1, v1, [v0], "", "past")
+
+
+# --------------------------------------------------------------------------- refused splits
+def test_a_padded_tail_clause_comes_off_a_split_part():
+    from tailoring.assembler import _without_padded_tail
+    src = "Built an AI-assisted pipeline that turns 280,000+ daily job postings into 145,000+ sponsorship-matched roles."
+    assert _without_padded_tail(
+        "Built an AI-assisted pipeline that processes 280,000+ daily job postings, giving the "
+        "company's job seekers a structured daily feed to work from.", src) == \
+        "Built an AI-assisted pipeline that processes 280,000+ daily job postings."
+    # a clause with a figure, or of the bullet's own words, stays
+    keep = "Matched postings to sponsorship records, producing 145,000+ sponsorship-matched roles."
+    assert _without_padded_tail(keep, src) == keep
+    own = "Led business intelligence across the company's products, building KPI dashboards."
+    assert _without_padded_tail(own, own) == own
+
+
+class _SecondTry(FakeLLM):
+    """Pads its first split; told why, splits cleanly."""
+
+    def __init__(self):
+        super().__init__()
+        self.feedback: list = []
+
+    def split_bullet(self, role_title, text, parts, jd_text="", tense="past", context="", feedback=""):
+        self.feedback.append(feedback)
+        if text != RICH or parts != 3:
+            return [text]
+        if not feedback:
+            return [p.rstrip(".") + " to support long-term strategic planning cycles."
+                    for p in RICH_PARTS]
+        return list(RICH_PARTS)
+
+    def write_role_bullet(self, *a, **k):
+        return ""
+
+
+@requires_latex
+def test_a_refused_split_is_asked_for_once_more_with_the_reason(template_source, workdir):
+    llm = _SecondTry()
+    res = assemble_cv(template_source, _ladder_profile(), "Data Analyst. SQL, Excel, Tableau.", llm,
+                      workdir, tailor=False, fill_writes=True)
+    viva = next(r for _k, e, r in ranked_roles(res.profile_used) if e["org"] == "Viva Delivery")
+    assert viva["bullets"] == RICH_PARTS
+    told = [f for f in llm.feedback if f]
+    assert told and "was refused (part" in told[0]          # the reason goes with the second ask
+
+
+def test_a_possessive_names_the_same_employer():
+    from tailoring.fact_gate import known_material, new_claims
+    src = "BlackOrigin Inc.\nBuilt automated Python and SQL reporting for stakeholders."
+    assert new_claims("Built automated Python and SQL reporting for BlackOrigin's products.",
+                      known=known_material(src)) == []
+    assert new_claims("Built reporting for Acme's products.", known=known_material(src))
+
+
+# --------------------------------------------------------------------------- the saved profile
+def test_a_page_that_leaves_out_a_middle_bullet_never_loses_it_from_the_profile(workdir):
+    """Stanbic's page showed bullets 1, 2 and 4 of 4; the saved profile came back with bullet 4
+    twice and bullet 3 gone (the merge went by position)."""
+    from types import SimpleNamespace
+    mem = ConversationMemory(":memory:")
+    own = ["Led business analysis across retail and digital banking.",
+           "Turned complex data into recommendations for senior leadership.",
+           "Earned promotion to Senior Business Analyst within 6.5 years.",
+           "Led enterprise CRM requirements and process improvement."]
+    prof = {"identity": {"name": "K G"}, "experience": [
+        {"org": "Stanbic Bank Ghana", "roles": [{"title": "Senior Business Analyst",
+                                                 "dates": "2018 - 2024", "bullets": list(own)}]}]}
+    mem.save("default", copy.deepcopy(prof), {}, [])
+    s = WebIntake("Analyst.", "", FakeLLM(), mem, CVRecords(":memory:"), workdir, jobname="cv",
+                  palace_dir=workdir / "p")
+    s.profile = normalize_profile(copy.deepcopy(prof))
+    page = copy.deepcopy(s.profile)
+    tailored = ["Led business analysis and reporting across retail and digital banking.",
+                "Translated complex data into recommendations for senior leadership.",
+                own[3]]
+    page["experience"][0]["roles"][0]["bullets"] = list(tailored)
+    s.assembled = SimpleNamespace(origins={tailored[0]: own[0], tailored[1]: own[1]})
+    whole = s._whole_profile_after_render(page)
+    got = whole["experience"][0]["roles"][0]["bullets"]
+    assert got == tailored + [own[2]]

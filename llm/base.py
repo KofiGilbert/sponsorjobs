@@ -81,7 +81,7 @@ class LLMBackend(Protocol):
         """
 
     def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "",
-                     tense: str = "past", context: str = "") -> list[str]:
+                     tense: str = "past", context: str = "", feedback: str = "") -> list[str]:
         """Rewrite ONE bullet that packs several accomplishments as exactly ``parts`` bullets
         (tailoring/assembler.py ``_recency_fill``, making room for one more bullet on a recent
         role). Each part is a complete achievement sentence opening with a verb in ``tense``
@@ -418,7 +418,7 @@ class FakeLLM:
         return [str(b).strip() for b in bullets if str(b).strip()]
 
     def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "",
-                     tense: str = "past", context: str = "") -> list[str]:
+                     tense: str = "past", context: str = "", feedback: str = "") -> list[str]:
         """Deterministic: split at a semicolon, else at the last ", and ", into ``parts``
         sentences of the bullet's own words; the bullet unchanged when it has no such joint.
         It never changes a verb, so the assembler's tense check decides whether it stands."""

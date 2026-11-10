@@ -2591,11 +2591,24 @@ class WebIntake:
                 key = self._role_key(entry.get("org"), role.get("title"))
                 tailored[key] = list(role.get("bullets") or [])
 
+        origins = getattr(self.assembled, "origins", None)
+
+        def _norm(t) -> str:
+            return re.sub(r"\s+", " ", str(t or "")).strip().lower()
+
         def _adopt(entry: dict, role: dict) -> dict:
             role = dict(role)
             original = list(role.get("bullets") or [])
             new = tailored.get(self._role_key(entry.get("org"), role.get("title")))
-            if new:
+            if new and isinstance(origins, dict):
+                # The page's bullets, as tailored (a split's parts and a bullet written for the
+                # page included), then every bullet of theirs the page did not show. Matched by
+                # where each page bullet came from, never by position: a page that left out the
+                # third of four bullets used to save the fourth twice and lose the third
+                # (Stanbic, 2026-11-10).
+                shown = {_norm(origins.get(b, b)) for b in new}
+                role["bullets"] = list(new) + [o for o in original if _norm(o) not in shown]
+            elif new:
                 # Tailored bullets replace the originals one for one; anything the
                 # render trimmed off the end is carried over untouched.
                 role["bullets"] = new + original[len(new):]
@@ -5376,9 +5389,9 @@ class WebIntake:
     def _line_question(self) -> str:
         """One targeted question when the page lacks the real material for every line to run
         full (tailoring/linefit.py ``line_gaps``): first the JD skills the person may have
-        ("This role asks for Looker and dbt. Have you used either?"), else more tools for a
-        short skills line, else one more detail for a bullet that stops short. Asked once per
-        item; the answer is saved as the person's own fact. Never pads instead of asking."""
+        ("This role asks for Looker and dbt. Have you used either?"). Asked once per
+        item; the answer is saved as the person's own fact. A short skills line or a bullet that
+        stops short is filled by the line fit's writing, never asked about (Kofi, 2026-11-10)."""
         gaps = getattr(self.assembled, "line_gaps", None) or {}
         if not gaps or self.essentials.get("unattended"):
             return ""
@@ -5396,29 +5409,8 @@ class WebIntake:
                          "Tell me which, plus any other tools you use, and I'll add them to "
                          "your skills.")
                 return q
-            if "skills_more" not in (e.get("enrich_asked") or []):
-                e.setdefault("enrich_asked", []).append("skills_more")
-                short = (gaps.get("short_skills") or [{}])[0].get("label") or ""
-                where = f" for {short}" if short else ""
-                return ("Your skills section needs a little more to fill every line. What other "
-                        f"tools, software or methods do you use{where}?")
-        # A bullet is only asked about when it is genuinely thin: ONE line, well short of the
-        # margin. A bullet whose last line holds a word or two is a fit problem the fit loop
-        # trims, not missing material ("One bullet at Last-Mile Operations Simulator (Python
-        # stops short", Kofi, 2026-11-10). One such question per chat.
-        if e.get("bullets_asked"):
-            return ""
-        for b in gaps.get("short_bullets") or []:
-            text = str(b.get("text") or "")
-            if not text or int(b.get("lines") or 1) != 1 or float(b.get("fill") or 0) >= THIN_BULLET:
-                continue
-            e.setdefault("bullets_asked", []).append(text[:60].lower())
-            words = text.split()
-            clip = " ".join(words[:9]) + ("..." if len(words) > 9 else "")
-            name = _bullet_owner(b.get("label"))
-            where = f"Your {name} bullet" if name else "One bullet"
-            return (f"{where} is a bit thin: \"{clip}\". What tool did you use, or what did "
-                    "it change? I'll only use what you tell me.")
+        # No question about a short skills line or a bullet that stops short (Kofi, 2026-11-10):
+        # the line fit fills those by writing, as a professional resume writer would.
         return ""
 
     _YES_ALL = re.compile(r"^\s*(yes|yeah|yep|yup|sure|both|all of them|i have|i've used (?:both|all)|"

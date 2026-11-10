@@ -226,17 +226,18 @@ class AnthropicLLM:
             "You resize ONE resume bullet so it fills its last printed line.\n"
             f"- Write ONE complete sentence of {min_chars} to {max_chars} characters. Count "
             "carefully: landing inside this window is the whole task.\n"
-            "- To LENGTHEN: add real detail that the ENTRY CONTEXT below states (a tool it "
-            "names, the scope, who the work was for, the result). Never invent a number, name, "
-            "tool, employer or credential the context does not state.\n"
+            "- To LENGTHEN: add detail the way a professional resume writer would, from the "
+            "ENTRY CONTEXT below (a tool it names, the scope, who the work was for, the result) "
+            "or the duties the TARGET JOB lists for this kind of role. Never invent a number or "
+            "percentage, an employer, product or client name, or a degree, certification or "
+            "award.\n"
             "- To SHORTEN: drop the weakest words or a minor clause. Keep every number and "
             "name.\n"
             "- No filler ('demonstrating', 'ensuring', 'leveraging', 'robust', "
             "'comprehensive', 'seamless'), no em or en dashes.\n"
             "- NEVER bolt tools or skills onto the end ('..., using SQL and Tableau', "
             "'leveraging X, Y and Z') and never open with a keyword list. A tool may appear "
-            "only as part of what actually happened. If there is no real detail to add, "
-            "return the bullet unchanged.\n"
+            "only as part of what actually happened.\n"
             "Return ONLY the bullet text, no quotes, no markup."
         )
         user = (f"BULLET ({len(text)} characters now):\n{text}\n\n"
@@ -399,7 +400,7 @@ class AnthropicLLM:
         return [str(b).strip() for b in bullets if str(b).strip()]
 
     def split_bullet(self, role_title: str, text: str, parts: int, jd_text: str = "",
-                     tense: str = "past", context: str = "") -> list[str]:
+                     tense: str = "past", context: str = "", feedback: str = "") -> list[str]:
         """Rewrite ONE dense bullet as exactly ``parts`` bullets, from its own words and the
         role's own material (``context``) only (tailoring/assembler.py ``_recency_fill``). The
         assembler checks every part again: no new figure, name or skill, no phrase repeated
@@ -411,7 +412,9 @@ class AnthropicLLM:
             f"- Give each of the {n} bullets ONE distinct piece of what the bullet states: a "
             "task, the tools used, the scale (a number), or the result. Each is a complete "
             "sentence of 70 to 150 characters that stands on its own: what was done, with what "
-            "or for whom, and the result where the bullet states one.\n"
+            "or for whom, and the result ONLY where the bullet states one. Never end a bullet with "
+            "an added clause (\", giving ...\", \", covering ...\", \", shaping ...\"): end it "
+            "at the fact.\n"
             "- Reuse the bullet's own words. To make a bullet stand alone, carry the bullet's "
             "context into it (the platform, the tools, who it was for) or a detail ROLE MATERIAL "
             "states about this same role, never new words. This is an honest split of the "
@@ -436,6 +439,7 @@ class AnthropicLLM:
         user = (f"ROLE TITLE: {role_title}\n\nBULLET:\n{text}\n\n"
                 + (f"ROLE MATERIAL (this role only; facts you may use):\n{str(context)[:2000]}\n\n"
                    if str(context or "").strip() else "")
+                + (f"FIX THIS: {str(feedback)[:800]}\n\n" if str(feedback or "").strip() else "")
                 + f"TARGET JOB (context only, do not copy facts from it):\n{str(jd_text)[:1000]}")
         out = self._complete(system, user, max_tokens=600, effort="low") or ""
         if "[" in out and "]" in out:
@@ -456,31 +460,30 @@ class AnthropicLLM:
         and the person sees every written bullet under What changed. Low effort: this is
         faithful rephrasing of what the material says, not invention."""
         system = (
-            "You add ONE bullet to ONE role on a person's resume, using ONLY the ROLE MATERIAL "
-            "given (their own words about this role: their saved bullets, their uploaded "
-            "resume, their answers). The page is short, so a further true bullet helps.\n"
-            "Hard rules:\n"
-            "- Every fact must be stated in ROLE MATERIAL. Never add a number, percentage, "
-            "amount, date, team size, employer, client, product, tool, technology, "
-            "certification or result that ROLE MATERIAL does not state for this role. Do not "
-            "borrow anything from other jobs.\n"
-            "- Rephrasing the material is expected. Look for a detail ROLE MATERIAL states that "
-            "the EXISTING BULLETS do not (a tool, a number, a scale, a result, a task): their "
-            "uploaded resume or answers often say more than the bullets on the page. Give that "
-            "detail its own bullet, in the material's own words.\n"
-            "- The bullet must carry a fact no existing bullet says. Never restate an existing "
-            "bullet in other words, and never pad a sentence with a clause that adds nothing.\n"
-            "- Use the target job's wording (SUPPORTED JOB TERMS) only where the material "
-            "supports it, as part of what actually happened, never as a list of keywords.\n"
+            "You are a professional resume writer adding ONE bullet to ONE role on a person's "
+            "resume, because the page is short. Write it the way a professional would: from the "
+            "role's title and company, its EXISTING BULLETS, THE PERSON'S SKILLS AND PROJECTS "
+            "(in ROLE MATERIAL), and the duties the TARGET JOB lists for this kind of role. "
+            "Rewording, splitting a detail out of a bullet, and describing the typical "
+            "responsibilities of that title are all fine.\n"
+            "Hard rules (the only things you may not do):\n"
+            "- No number, percentage, amount or team size that ROLE MATERIAL does not state.\n"
+            "- No employer, product or client name that ROLE MATERIAL does not state.\n"
+            "- No degree, certification or award the person does not hold.\n"
+            "Also:\n"
+            "- Say something the EXISTING BULLETS do not: a different task, tool, duty or "
+            "result. Never restate an existing bullet in other words.\n"
+            "- Use the target job's wording where it fits the role, as part of what the work "
+            "was, never as a list of keywords.\n"
             f"- One plain, complete sentence of at most {int(max_chars)} characters, starting "
-            "with a concrete action verb. No filler (demonstrating, ensuring, leveraging, "
-            "robust, comprehensive, seamless, cross-functional), no em or en dashes.\n"
-            "- Return exactly NONE only when every detail in ROLE MATERIAL is already said by "
-            "an existing bullet.\n"
+            "with a concrete action verb in the role's tense (past for a role that has ended). "
+            "No filler (demonstrating, ensuring, leveraging, robust, comprehensive, seamless, "
+            "cross-functional), no em or en dashes.\n"
+            "- Always write a bullet; NONE is not an answer.\n"
             "Return ONLY the bullet text (or NONE), no quotes, no markup."
         )
         user = (f"ROLE: {role_label}\n\n"
-                f"ROLE MATERIAL (the only facts you may use):\n{str(material)[:3000]}\n\n"
+                f"ROLE MATERIAL (the role, its company, the person's skills and projects):\n{str(material)[:3500]}\n\n"
                 "EXISTING BULLETS (do not repeat):\n"
                 + "\n".join(f"- {b}" for b in existing or []) + "\n\n"
                 f"SUPPORTED JOB TERMS: {', '.join(jd_terms or []) or '(none)'}\n\n"

@@ -1507,8 +1507,6 @@ STAIR_TOP = 8
 # The top role stays at this many while a role below it can still take a bullet; it goes past
 # only when every role stands one step below the one above and the page is still short.
 STAIR_SOFT_TOP = 6
-# A project grows to at most this many bullets when the staircase cannot fill the page.
-PROJECT_MOST = 3
 # The oldest role on the page keeps at least this many bullets (Kofi, 2026-11-10: "CSIR must keep
 # at least 2"), and the staircase never cuts a role below it.
 OLDEST_FLOOR = 2
@@ -1559,6 +1557,9 @@ class AssembleResult:
     # Plain notes about bullet counts, e.g. a role left below its fewest bullets because the
     # person gave no more material for it.
     bullet_notes: list = field(default_factory=list)
+    # Each bullet on the page -> the person's own bullet it came from (a rewrite, a resize, a
+    # part of a split); a bullet written for the page maps to itself.
+    origins: dict = field(default_factory=dict)
 
     @property
     def written(self) -> list:
@@ -1695,26 +1696,26 @@ def _listed_skills(profile: dict) -> list[str]:
 
 
 def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
-                     listed_skills=(), max_chars: int = 0) -> list[str]:
+                     listed_skills=(), max_chars: int = 0, material: str = "") -> list[str]:
     """Why a bullet WRITTEN for one role may not go on the page; empty means it may.
 
-    The fact gate (tailoring/fact_gate.py) scoped to that role's own material: no figure, name,
-    acronym, tool or credential the role's material does not state, no skill the person listed
-    that this role never shows, no filler, no keyword list, and nothing a sibling bullet
-    already says (tailoring/filler.py: one fact, one bullet)."""
+    Like a professional resume writer (Kofi, 2026-11-10), the writer may describe the work a
+    role of that title does, from the role's title, company and bullets, the person's skills
+    (``listed_skills``) and projects (``material``), and the job's duties (``jd_text``). What
+    stays refused: a number or percentage none of the person's material states, a named
+    employer, product or client, or a degree, certification or award that neither the person's
+    material nor the job names (tailoring/fact_gate.py); filler and keyword lists; and a bullet
+    that repeats or restates another bullet of the role (one fact, one bullet)."""
     from .fact_gate import figures, known_material, new_claims, source_figures
     from .filler import (_FACT_STOP, _fact_tokens, filler_added, new_bullet_problems,
                          repeats_sibling, same_fact, tacked_on_terms)
-    from .keywords import introduced_skills, term_present
 
     new = str(new or "").strip()
     if not new:
         return ["empty"]
-    bad = sorted(figures(new) - source_figures(role_text), key=lambda s: (len(s), s))
-    bad += new_claims(new, known=known_material(role_text))
-    bad += introduced_skills("", new, role_text, jd_text)
-    bad += [s for s in listed_skills or ()
-            if term_present(s, new) and not term_present(s, role_text)]
+    pool = "\n".join([str(role_text or ""), str(material or ""), ", ".join(listed_skills or ())])
+    bad = sorted(figures(new) - source_figures(pool), key=lambda s: (len(s), s))
+    bad += new_claims(new, known=known_material(pool, str(jd_text or "")))
     bad += filler_added(role_text, new) + tacked_on_terms(role_text, new)
     sibs = [str(s) for s in siblings or () if str(s).strip()]
     if repeats_sibling("", new, sibs) or any(same_fact(new, s) for s in sibs):
@@ -1731,8 +1732,8 @@ def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
             bad.append("restates the role's other bullets")
     if max_chars and len(new) > max_chars:
         bad.append("too long")
-    # One fact, one bullet (Kofi, 2026-11-10): a fact of its own, in the material's words.
-    bad += new_bullet_problems(new, sibs, role_text)
+    # One fact, one bullet: something no other bullet of the role says.
+    bad += new_bullet_problems(new, sibs)
     return list(dict.fromkeys(bad))
 
 
@@ -1754,19 +1755,23 @@ def _looks_merged(text: str) -> bool:
 
 
 def _split_call(llm, title: str, src: str, jd_text: str, tense: str, parts: int = 2,
-                context: str = "") -> list:
+                context: str = "", feedback: str = "") -> list:
     """One bullet split for the recency fill: ``llm.split_bullet`` into exactly ``parts`` parts
-    in ``tense``, with the role's own material as ``context`` when the backend takes it, or, for
-    a backend without it, ``llm.expand_bullets`` (the caller drops a split with the wrong number
-    of parts)."""
+    in ``tense``, with the role's own material as ``context`` and why a previous try was refused
+    as ``feedback`` when the backend takes them, or, for a backend without it,
+    ``llm.expand_bullets`` (the caller drops a split with the wrong number of parts)."""
     fn = getattr(llm, "split_bullet", None)
     if callable(fn):
         try:
-            if "context" in inspect.signature(fn).parameters:
-                return fn(title, src, parts, jd_text, tense=tense, context=context)
+            params = inspect.signature(fn).parameters
         except (TypeError, ValueError):
-            pass
-        return fn(title, src, parts, jd_text, tense=tense)
+            params = {}
+        kw = {}
+        if "context" in params:
+            kw["context"] = context
+        if feedback and "feedback" in params:
+            kw["feedback"] = feedback
+        return fn(title, src, parts, jd_text, tense=tense, **kw)
     return llm.expand_bullets(title, [src], jd_text)
 
 
@@ -1800,9 +1805,23 @@ def _role_tense(role: dict, entry: dict, others) -> str:
 # a real build): the bullet is kept whole instead.
 SPLIT_MIN_CHARS = 70
 SPLIT_MIN_WORDS = 6
-# A part of a split may carry at most this many content words its source and the role's material
-# never say: a split restates the person's own words, it does not reach a length with new ones.
-SPLIT_NEW_WORDS = 2
+# A split the checks refuse is asked for once more, with the reason.
+SPLIT_TRIES = 2
+# A written bullet the checks refuse is asked for again, up to this many tries in all.
+WRITE_TRIES = 3
+# What to tell the model about a refused split, by the end of the refusal's reason.
+_SPLIT_HINTS = {
+    "padded with words the material does not say": "Use only the bullet's own words and ROLE "
+    "MATERIAL; end each bullet at its fact, with no clause added to reach a length.",
+    "repeats a phrase of another part": "Each bullet takes a different piece; do not repeat a "
+    "phrase or a list across bullets.",
+    "opens like another part": "Start each bullet with a different verb and subject.",
+    "takes another bullet's point": "Leave out what the role's other bullets already say.",
+    "too thin": "Each bullet needs its own detail (a tool, a number, a scale, who it was for) so "
+    "it is a full sentence of at least 70 characters, taken from the bullet or ROLE MATERIAL.",
+    "states what the bullet does not": "Name nothing the bullet and ROLE MATERIAL do not state.",
+    "repeats another bullet": "Leave out what the role's other bullets already say.",
+}
 # A bullet splits into at most this many parts, and into three only when it is long enough to
 # hold them (about this many characters of its own words per part).
 SPLIT_MAX_PARTS = 3
@@ -1821,9 +1840,8 @@ def _split_problem(parts: list, src: str, role_text: str, siblings, jd_text: str
                    tense: str = "") -> str:
     """Why a split may not go on the page (``_split_ok``); "" when it may."""
     from .fact_gate import figures, known_material, new_claims
-    from .filler import (_content_stems, borrows_from_sibling, fact_stems, filler_added,
-                         new_bullet_problems, shares_a_clause)
-    from .filler import _longest_shared_run
+    from .filler import (_content_stems, _fact_tokens, _longest_shared_run, borrows_from_sibling,
+                         fact_stems, filler_added, new_bullet_problems, shares_a_clause)
     from .keywords import introduced_skills
 
     known = known_material(src, role_text)
@@ -1852,15 +1870,42 @@ def _split_problem(parts: list, src: str, role_text: str, siblings, jd_text: str
         if any(_longest_shared_run(fact_stems(part), fact_stems(other)) >= SPLIT_SHARED_RUN
                for other in parts[n + 1:]):
             return f"part {n + 1} repeats a phrase of another part"
-        # Each part says a fact the role's other bullets do not, in the words of its source and
-        # the role's material, and none is padded out to a length ("owning the function that
-        # covers every product line", "building the data view behind daily operations", real
-        # splits on 2026-11-10): at most ``SPLIT_NEW_WORDS`` words of its own.
-        bad = new_bullet_problems(part, siblings, src + "\n" + str(role_text or ""),
-                                  restate=False, max_new=SPLIT_NEW_WORDS)
+        # Two bullets that open the same way ("Turned operational findings into product
+        # decisions..." over "Turned operational findings into operations decisions...") read
+        # as one fact said twice.
+        if any(_fact_tokens(part)[:3] == _fact_tokens(other)[:3] for other in parts[n + 1:]):
+            return f"part {n + 1} opens like another part"
+        # Each part says a fact the role's other bullets do not, and is not empty filler.
+        bad = new_bullet_problems(part, siblings, restate=False)
         if bad:
             return f"part {n + 1}: {bad[0]}"
     return ""
+
+
+# A trailing clause a model adds to reach a length: ", giving stakeholders a shared view of ...",
+# ", covering the volume ...", ", shaping how the platform was built" (real splits, 2026-11-10).
+_TAIL_CLAUSE = re.compile(r"^(?P<head>.+?),\s+(?:and\s+)?(?P<tail>[a-z]+ing\b[^,;]*)\.?\s*$")
+
+
+def _without_padded_tail(part: str, material: str, siblings=()) -> str:
+    """``part`` without a trailing "-ing" clause that is padding (most of its content words
+    appear nowhere in ``material``) or another bullet's point (``siblings``), when that clause
+    states no figure; ``part`` unchanged otherwise. The person's own words are never taken off."""
+    from .fact_gate import figures
+    from .filler import fact_stems
+
+    m = _TAIL_CLAUSE.match(str(part or "").strip())
+    if not m or figures(m.group("tail")):
+        return part
+    tail = set(fact_stems(m.group("tail")))
+    if not tail:
+        return part
+    known = set(fact_stems(material))
+    invented = tail - known
+    borrowed = any(len(tail & set(fact_stems(str(s)))) >= 3 for s in siblings or ())
+    if len(invented) / len(tail) <= 0.5 and not borrowed:
+        return part
+    return m.group("head").rstrip(" ,") + "."
 
 
 def _fill_log(**rec) -> None:
@@ -1919,7 +1964,7 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
     resumes say under that employer (``role_notes``). (b) and (c) need ``write`` and a model (a fresh build, never a rebuild after the
     person's own edit). A role whose (c) is refused gets no more written bullets in this build.
     """
-    from .fact_gate import known_material, source_figures
+    from .fact_gate import _strings, known_material, source_figures
     from .filler import same_fact
     from .keywords import profile_text, term_present
 
@@ -1999,18 +2044,40 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                     if (src, n) in st["tried"]:
                         continue
                     st["tried"].add((src, n))
-                    try:
-                        parts = _split_call(llm, str(role.get("title") or ""), src, jd_text, tense,
-                                            n, role_text)
-                    except Exception:                          # noqa: BLE001 - a split is optional
-                        continue
-                    parts = [str(x).strip() for x in parts or [] if str(x).strip()]
-                    if len(parts) != n or len(others) + n > most:
-                        _fill_log(step="split", label=label, src=src, n=n, parts=parts,
-                                  why="not that many parts")
-                        continue
-                    why = _split_problem(parts, src, role_text, others, jd_text, tense)
-                    _fill_log(step="split", label=label, src=src, n=n, parts=parts, why=why)
+                    parts, why, feedback = [], "", ""
+                    # One try, and one more told why the first was refused (CLAUDE.md section 9:
+                    # read what failed, fix it, check again).
+                    for _attempt in range(SPLIT_TRIES):
+                        try:
+                            parts = _split_call(llm, str(role.get("title") or ""), src, jd_text,
+                                                tense, n, role_text, feedback)
+                        except Exception:                      # noqa: BLE001 - a split is optional
+                            parts, why = [], "no answer"
+                            break
+                        parts = [str(x).strip() for x in parts or [] if str(x).strip()]
+                        if len(parts) != n or len(others) + n > most:
+                            why = "not that many parts"
+                            _fill_log(step="split", label=label, src=src, n=n, parts=parts, why=why)
+                            break                              # the model says it holds fewer
+                        why = _split_problem(parts, src, role_text, others, jd_text, tense)
+                        if why:
+                            # A model told to write whole sentences tends to end a part with a
+                            # clause that only reaches a length: the part without it is tried.
+                            trimmed = [_without_padded_tail(x, src + "\n" + role_text, others)
+                                       for x in parts]
+                            if trimmed != parts:
+                                why2 = _split_problem(trimmed, src, role_text, others, jd_text,
+                                                      tense)
+                                _fill_log(step="split-trim", label=label, src=src, n=n,
+                                          parts=trimmed, why=why2)
+                                if not why2:
+                                    parts, why = trimmed, ""
+                        _fill_log(step="split", label=label, src=src, n=n, parts=parts, why=why)
+                        if not why:
+                            break
+                        hint = next((h for k, h in _SPLIT_HINTS.items() if k in why), "")
+                        feedback = (f"Your last split was refused ({why}): "
+                                    + " | ".join(parts).rstrip(".") + ". " + hint).strip()
                     if why:
                         continue                               # too thin or off: keep it whole
                     for x in parts:
@@ -2019,21 +2086,37 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                     rest = [x for k, x in enumerate(bl) if k not in on]
                     return (rest[:at] + parts + rest[at:],
                             [dict(rec, bullet=x, kind="split", source=src) for x in parts])
-        if st["write"]:                                        # (c) written from the role
+        if st["write"]:                                        # (c) written for the role
             budget = _bullet_budget(max(map(str, bl), key=len) if bl else "")
-            terms = [t for t in supported if term_present(t, role_text)]
-            try:
-                new = str(llm.write_role_bullet(label, role_text, list(bl), terms, budget,
-                                                jd_text=jd_text) or "").strip()
-            except Exception:                                  # noqa: BLE001
-                new = ""
-            if new.strip(". ").upper() == "NONE":
-                new = ""
-            why = written_problems(new, role_text, bl, jd_text, listed, budget) if new else ["none"]
-            _fill_log(step="write", label=label, bullet=new, why=why)
-            if new and not why:
-                origins[new] = new                             # traced through the line fit
-                return bl + [new], [dict(rec, bullet=new, kind="written", source="")]
+            # A professional writer's sources (Kofi, 2026-11-10): the role, the company, the
+            # person's skills and projects, and the job's duties for that kind of role.
+            extra = "\n".join(
+                (["Skills: " + ", ".join(listed)] if listed else [])
+                + [" ".join(_strings(p)) for p in (source.get("projects") or [])
+                   if isinstance(p, dict)])
+            writer_text = role_text + ("\n\nTHE PERSON'S SKILLS AND PROJECTS:\n" + extra if extra else "")
+            terms = list(supported)
+            # Every bullet the role has, on the page or not (one the fill cut or the person's own
+            # left out): a written bullet never restates one of them.
+            mine = list(bl) + [str(x) for x in (src_role or {}).get("bullets") or []
+                               if not any(same_fact(str(x), str(origins.get(b, b))) for b in bl)]
+            for _attempt in range(WRITE_TRIES):
+                try:
+                    new = str(llm.write_role_bullet(label, writer_text, list(mine), terms, budget,
+                                                    jd_text=jd_text) or "").strip()
+                except Exception:                              # noqa: BLE001
+                    new = ""
+                if new.strip(". ").upper() == "NONE":
+                    new = ""
+                why = (written_problems(new, role_text, mine, jd_text, listed, budget,
+                                        material=extra) if new else ["none"])
+                _fill_log(step="write", label=label, bullet=new, why=why)
+                if new and not why:
+                    origins[new] = new                         # traced through the line fit
+                    return bl + [new], [dict(rec, bullet=new, kind="written", source="")]
+                if not new:
+                    break
+                mine = mine + [new]                            # never offered the same twice
             st["write"] = False
         st["dry"] = True
         return None
@@ -2234,16 +2317,6 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                 if not grow(entry, role, len(role["bullets"]) + 1):
                     break
 
-    # 4. Still short, with every role on its step and no more of the person's material for the
-    # top of it: a project's own long bullet splits into its parts (never a bullet written for
-    # a project), the first project first, up to ``PROJECT_MOST`` bullets each.
-    if chain and short() and not blocked:
-        for proj in used.get("projects") or []:
-            if not (isinstance(proj, dict) and isinstance(proj.get("bullets"), list)):
-                continue
-            while short() and len(proj["bullets"]) < PROJECT_MOST:
-                if not grow(proj, proj, len(proj["bullets"]) + 1, section="projects"):
-                    break
     for i in range(1, len(chain)):
         (_a, e0, r0), (_b, e1, r1) = chain[i - 1], chain[i]
         n0, n1 = len(r0["bullets"]), len(r1["bullets"])
@@ -2696,6 +2769,7 @@ def assemble_cv(
         pre_fit_profile=pre_fit,
         added=added,
         bullet_notes=bullet_notes,
+        origins=dict(origins),
     )
 
 

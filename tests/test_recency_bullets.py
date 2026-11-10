@@ -134,24 +134,27 @@ def test_overflow_cuts_the_oldest_roles_first_and_protects_the_two_most_recent()
 
 
 # --------------------------------------------------------------------------- the gate
-def test_a_written_bullet_with_an_invented_number_or_tool_is_rejected():
+def test_a_written_bullet_with_an_invented_number_or_name_is_rejected():
+    """Kofi, 2026-11-10: the writer works like a professional resume writer (the role, the
+    company, the person's skills and projects, the job's duties). Only an invented number, a
+    named employer, product or client, or a credential stays refused, with filler and repeats."""
     role_text = ("Lakeshore Logistics\nData Analyst\nBuilt weekly SQL and Tableau dashboards that "
-                 "track on-time delivery for 14 regional depots.\nAt Lakeshore Logistics I also "
-                 "trained the new analysts to maintain the SQL dashboards.")
+                 "track on-time delivery for 14 regional depots.")
     listed = ["SQL", "Tableau", "Kubernetes", "Power BI"]
     sib = ["Built weekly SQL and Tableau dashboards that track on-time delivery for 14 regional depots."]
-    ok = "Trained the new analysts to maintain and extend the SQL dashboards."
-    assert written_problems(ok, role_text, sib, JD, listed) == []
-    # says nothing the sibling does not (a real build wrote one like this, 2026-11-06)
-    assert "restates the role's other bullets" in written_problems(
-        "Shared the weekly SQL delivery dashboards with each regional depot.", role_text, sib, JD, listed)
+    assert written_problems("Trained the new analysts to maintain and extend the SQL dashboards.",
+                            role_text, sib, JD, listed) == []
+    # a typical duty of the title, in a skill the person listed
+    assert written_problems("Built Power BI reports on carrier costs for the finance team.",
+                            role_text, sib, JD, listed) == []
     assert "40" in " ".join(written_problems("Cut delivery delays by 40 percent with SQL dashboards.",
                                              role_text, sib, JD, listed))
-    assert written_problems("Moved the depot dashboards onto Kubernetes for the team.",
-                            role_text, sib, JD, listed)                      # tool from another part
-    assert written_problems("Built dashboards in Power BI for the depots.", role_text, sib, JD, listed)
     assert written_problems("Partnered with Amazon on depot reporting.", role_text, sib, JD, listed)
+    assert written_problems("Earned the PMP certification while leading depot reporting.",
+                            role_text, sib, JD, listed)
     assert written_problems(sib[0], role_text, sib, JD, listed)            # repeats a sibling
+    assert "restates the role's other bullets" in written_problems(
+        "Shared the weekly SQL delivery dashboards with each regional depot.", role_text, sib, JD, listed)
     assert written_problems("Leveraging SQL, ensuring robust delivery tracking for depots.",
                             role_text, sib, JD, listed)                      # filler
 
@@ -360,8 +363,8 @@ def test_on_a_near_full_page_the_recent_roles_still_get_three_by_trimming_older_
     c = _counts(res.profile_used)
     assert c[0] >= 3 and len(c) == 4 and c[0] == max(c)                      # no role dropped
     # room came from project bullets beyond one each, and the staircase from older roles
-    assert res.trims and all(t["kind"] == "bullet" for t in res.trims)
-    assert all(t["section"] == "projects" or t.get("staircase") for t in res.trims)
+    assert res.trims and all(t["kind"] == "bullet" or t.get("room") for t in res.trims)
+    assert all(t["section"] == "projects" or t.get("staircase") or t.get("room") for t in res.trims)
     assert all(len(p["bullets"]) >= 1 for p in res.profile_used["projects"])
     assert len(res.profile_used["projects"]) == 2
 
@@ -525,12 +528,8 @@ def test_the_line_fit_never_takes_the_point_of_a_bullet_cut_to_fit(monkeypatch):
     out = run({"CSIR, Research Assistant": [cut]})
     assert out.profile["experience"][0]["roles"][0]["bullets"] == [kept]
     assert any("cut to fit" in str(r["claims"]) for r in out.rejected)
-    # without the cut on record the resize is not refused for that reason: the test exercises
-    # the real path. (It is refused all the same, as padding: the words it adds are not this
-    # entry's, tailoring/linefit._pads_out.)
-    again = run({})
-    assert not any("cut to fit" in str(r["claims"]) for r in again.rejected)
-    assert any("padding" in str(r["claims"]) for r in again.rejected)
+    # without the cut on record the same resize goes through: the test exercises the real path
+    assert run({}).profile["experience"][0]["roles"][0]["bullets"] == [grown]
 
 
 # --------------------------------------------------------------------------- restore what fits

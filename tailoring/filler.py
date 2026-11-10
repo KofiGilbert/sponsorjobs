@@ -235,9 +235,18 @@ DISTINCT_MIN = 2
 # A new bullet whose content words are this share or more already on the role's other bullets
 # restates them.
 RESTATE_SHARE = 0.5
-# A new bullet may carry at most this share of content words the role's material never says
-# (rephrasing is fine; a clause invented to reach a length is padding).
-PAD_SHARE = 0.34
+# Words that carry no checkable content on their own: a line made only of these (and joining
+# words) says nothing ("Drove strategic alignment and operational excellence across teams").
+_BUZZ = frozenset("""
+strategic strategy alignment aligned excellence operational value values impact impactful success
+successful outcome outcomes synergy synergies stakeholder stakeholders initiative initiatives
+effort efforts various key critical core best practice practices high quality results result
+drive drove driving deliver delivered delivering support supported supporting ensure ensured
+enable enabled foster fostered leverage leveraged team teams cross functional organization
+organizational business overall growth culture vision mission goal goals objective objectives
+""".split())
+# A bullet needs at least this many content words beyond buzzwords to say something concrete.
+CONCRETE_MIN = 3
 
 
 def _stem(t: str) -> str:
@@ -262,19 +271,28 @@ def fact_stems(text: str, skip_lead: bool = False) -> list[str]:
     return [_stem(t) for t in toks if t not in _FACT_STOP and t not in _GLUE]
 
 
+def hollow(text: str) -> bool:
+    """True for empty buzzword filler: a line with no concrete action or object, fewer than
+    ``CONCRETE_MIN`` content words that are not buzzwords."""
+    return len({t for t in fact_stems(text, skip_lead=True) if t not in _BUZZ}) < CONCRETE_MIN
+
+
 def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = True,
                         max_new: int | None = None) -> list[str]:
-    """Why a bullet the fill ADDS to a role (a part of a split, or a bullet written from the
-    role's material) may not go on the page; empty means it may.
+    """Why a bullet the fill ADDS to a role (a part of a split, or a bullet written for the
+    role) may not go on the page; empty means it may.
 
     * "adds no fact of its own": no figure and fewer than ``DISTINCT_MIN`` content words that
       the role's other bullets (``siblings``) do not already say;
     * "restates the role's other bullets": ``RESTATE_SHARE`` or more of its content words are
       already on them (not checked with ``restate`` off: a part of a split may carry its
       source's context, the platform or the tools, so it reads on its own);
-    * "padded with words the material does not say": more than ``PAD_SHARE`` of its content
-      words appear nowhere in the role's material (``material``, its source bullet included) or
-      on the other bullets, or more than ``max_new`` of them when it is given (a split)."""
+    * "empty filler": no concrete action or object (``hollow``).
+
+    A bullet written like a professional resume writer would, from the role, the company, the
+    person's skills and projects and the job's duties, is NOT refused for using words the
+    person's material does not (Kofi, 2026-11-10). ``material`` and ``max_new`` are kept for
+    callers and not used."""
     from .fact_gate import figures
 
     mine = set(fact_stems(new, skip_lead=True))
@@ -289,8 +307,6 @@ def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = 
         out.append("adds no fact of its own")
     elif restate and sibs and len(mine & said) / len(mine) >= RESTATE_SHARE and not new_figs:
         out.append("restates the role's other bullets")
-    known = said | set(fact_stems(material))
-    invented = mine - known
-    if len(invented) / len(mine) > PAD_SHARE or (max_new is not None and len(invented) > max_new):
-        out.append("padded with words the material does not say")
+    if hollow(new):
+        out.append("empty filler")
     return out
