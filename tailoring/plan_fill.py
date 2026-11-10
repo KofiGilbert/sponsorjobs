@@ -37,6 +37,8 @@ ADJUST_MOST = 4
 HOLE_TRIES = 2
 # Rounds of the one-call retry for bullets that missed their lines (each told by how much).
 RETRY_ROUNDS = 2
+# Rounds that move the plan by the lines the page is over or short.
+ADJUST_ROUNDS = 2
 
 # An outcome a bullet asserts that the person's material must state to be said: "with none
 # skipped or lost" (a real write, 2026-11-10), "zero errors", "100% accuracy", "never missed".
@@ -316,6 +318,7 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
     reasons: dict = {}
     tried_texts: dict = {}                                   # role -> [(refused text, reasons)]
     shifts: dict = {}                                        # (role, bullet) -> "longer"/"shorter"
+    slot_versions: dict = {}                                 # (role, bullet) -> versions that passed
 
     def last_resort(i: int, have: list) -> str:
         """A bullet for a slot the model never filled: the person's own bullet that repeats no
@@ -356,8 +359,23 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                              why=problems(i, v, sibs))
                 _log(step="plan-versions", label=info[i]["label"], n=k,
                      why=[(len(v), round(lines_needed(v, cap), 2)) for v in vers])
+                if vers:
+                    slot_versions[(i, k)] = vers
                 text, landed, way = choose_version(vers, want[k], cap) if cap else (
                     (vers[0], True, "") if vers else ("", False, "longer"))
+                if cap and vers and not landed:
+                    # No version lands on the planned lines, but one lands on a line more or a
+                    # line fewer: take it and re-plan that slot (run 22: every 1-line version
+                    # ran to 1.1-1.4 lines); the adjustment balances the page's lines.
+                    for alt in ((want[k] + 1, max(1, want[k] - 1)) if way == "shorter"
+                                else (max(1, want[k] - 1), want[k] + 1)):
+                        if alt == want[k] or alt > 2:
+                            continue
+                        t2, ok2, _w2 = choose_version(vers, alt, cap)
+                        if ok2:
+                            text, landed, way = t2, True, ""
+                            want[k] = alt
+                            break
                 if text and not landed:
                     shifts[(i, k)] = way
                 first = str((got[k] or [""])[0] if k < len(got) and got[k] else "")
@@ -450,29 +468,51 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
             _log(step="plan-retry", label="experience", fill=res.fill_ratio, n=res.pages,
                  why=str(misses(res)[1])[:600] if res.ok and res.pages == 1 else "")
         miss, why = misses(res) if (res.ok and res.pages == 1) else ({}, {})
-    # ADJUST once: over a page, or short of the goal, by the lines the page is off (1-line
-    # bullets become 2-line in the newest roles, or 2-line become 1-line in the oldest).
+    # ADJUST, up to ADJUST_ROUNDS times: over a page (or past the most a page may hold) by k
+    # lines, k 2-line targets become 1-line, the oldest roles first and the newest last; short by
+    # k lines, k 1-line targets become 2-line, the newest roles first. Each changed slot takes
+    # the version already written for its new line count when one lands (no call); the rest, and
+    # any slot left empty, are asked for in one call. An overshoot is never thrown away for the
+    # old fill while the plan can still land (run 22: 2 pages, rolled back).
     _log(step="plan-check", label="experience", fill=res.fill_ratio,
          why=f"ok={res.ok} pages={res.pages} overfull={res.overfull_count}/{base_overfull}")
-    # A slot left empty (its bullet refused twice and no saved bullet reads cleanly beside the
-    # others) breaks the staircase: it is asked for once more, in the same call as any adjustment.
-    empty = {i: list(range(len(r["bullets"]), len(info[i]["targets"])))
-             for i, (_k, _e, r) in enumerate(roles) if len(r["bullets"]) < len(info[i]["targets"])}
-    if res.ok and (empty or res.pages > 1 or (res.fill_ratio or 0) > max_fill
-                   or (res.fill_ratio or 0) < fill_goal):
-        over = res.pages > 1 or (res.fill_ratio or 0) > max_fill
-        under = (res.fill_ratio or 0) < fill_goal
-        off = 2 if res.pages > 1 else abs(round((PLAN_TARGET - (res.fill_ratio or 0)) / share))
-        off = max(1, min(off, ADJUST_MOST)) if (over or under) else 0
-        picks: dict = {i: list(ks) for i, ks in empty.items()}
+    for _adj in range(ADJUST_ROUNDS):
+        fill = res.fill_ratio or 0
+        empty = {i: list(range(len(r["bullets"]), len(info[i]["targets"])))
+                 for i, (_k, _e, r) in enumerate(roles)
+                 if len(r["bullets"]) < len(info[i]["targets"])}
+        over = bool(res.ok and (res.pages > 1 or fill > max_fill))
+        under = bool(res.ok and res.pages == 1 and fill < fill_goal)
+        if not (empty or over or under):
+            break
+        if over:
+            k_off = max(2 if res.pages > 1 else 1,
+                        math.ceil((max(fill, 1.0 if res.pages > 1 else fill) - PLAN_TARGET) / share))
+        elif under:
+            k_off = max(1, math.ceil((PLAN_TARGET - fill) / share))
+        else:
+            k_off = 0
+        k_off = min(k_off, 2 * ADJUST_MOST)
+        flipped: dict = {}
         order = range(len(info) - 1, -1, -1) if over else range(len(info))
         for i in order:
             row = info[i]["targets"]
             for k in (range(len(row) - 1, -1, -1) if over else range(len(row))):
-                if off and row[k] == (2 if over else 1):
+                if k_off and row[k] == (2 if over else 1):
                     row[k] = 1 if over else 2
+                    flipped.setdefault(i, []).append(k)
+                    k_off -= 1
+        picks: dict = {i: list(ks) for i, ks in empty.items()}
+        for i, ks in flipped.items():
+            bl = roles[i][2]["bullets"]
+            for k in ks:
+                vers = slot_versions.get((i, k)) or []
+                text, landed, _way = choose_version(vers, info[i]["targets"][k], cap) if cap \
+                    else ("", False, "")
+                if landed and k < len(bl):
+                    bl[k] = text                             # already written: no call
+                else:
                     picks.setdefault(i, []).append(k)
-                    off -= 1
         if picks:
             cur = [list(r["bullets"]) + [""] * (len(info[i]["targets"]) - len(r["bullets"]))
                    for i, (_k, _e, r) in enumerate(roles)]
@@ -486,9 +526,9 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
             out3 = ask(current=cur, only=picks, feedback=fb)
             if out3 is not None:
                 place(out3, only=picks)
-                res = compile_now("plan3")
-            _log(step="plan-adjust", label="experience", fill=getattr(res, "fill_ratio", None),
-                 why=str(picks))
+        res = compile_now(f"plan3-{_adj}")
+        _log(step="plan-adjust", label="experience", fill=getattr(res, "fill_ratio", None),
+             n=getattr(res, "pages", None), why=f"flipped {flipped}, asked {picks}")
     # A HOLE (a slot whose bullet was refused every time) breaks the staircase: up to
     # HOLE_TRIES more calls ask only for the missing bullets, each told exactly what was refused.
     for _try in range(HOLE_TRIES):

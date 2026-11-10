@@ -101,14 +101,22 @@ def parse_role_lists(out: str, n_roles: int):
             (v for v in data.values() if isinstance(v, list)), None)
     if not isinstance(data, list):
         return None
+    def versions(b):
+        # A bullet: a string, an array of versions, or {"versions": [...]} / {"text": ...}.
+        if isinstance(b, dict):
+            b = (b.get("versions") or b.get("options") or b.get("text") or b.get("bullet")
+                 or next((v for v in b.values() if isinstance(v, (list, str))), ""))
+        if isinstance(b, list):
+            return [str(v.get("text") if isinstance(v, dict) else v).strip() for v in b]
+        return str(b or "").strip()
+
     rows = []
     for x in data:
         if isinstance(x, dict):
             x = x.get("bullets") or next((v for v in x.values() if isinstance(v, list)), None)
         if not isinstance(x, list):
             return None
-        rows.append([[str(v).strip() for v in b] if isinstance(b, list) else str(b).strip()
-                     for b in x])
+        rows.append([versions(b) for b in x])
     return rows if len(rows) == n_roles else None
 
 
@@ -508,7 +516,8 @@ class AnthropicLLM:
                     have = f' now: "{current[i][k]}"'
                 words = (ro.get("words") or [[]] * len(ro["windows"]))[k]
                 size = (f"4 versions of about {', '.join(map(str, words[:-1]))} and {words[-1]} "
-                        f"words" if words else f"{lo}-{hi} characters")
+                        f"words, the longest at most {hi} characters" if words
+                        else f"{lo}-{hi} characters")
                 want.append(f"  bullet {k + 1}: {size} ({n} printed line{'s' if n > 1 else ''})"
                             f"{mark}{have}")
             blocks.append(
@@ -556,7 +565,8 @@ class AnthropicLLM:
         for effort, room in (("low", 16000), ("none", 24000)):
             out = self._complete(system, user, max_tokens=room, effort=effort) or ""
             meta = dict(getattr(self, "last_meta", None) or {})
-            tries.append({"effort": effort, "max_tokens": room, "chars": len(out), **meta})
+            tries.append({"effort": effort, "max_tokens": room, "chars": len(out), **meta,
+                          "start": out[:160]})
             got = parse_role_lists(out, len(roles))
             if got is not None and meta.get("stop_reason") != "max_tokens":
                 self.last_meta = {**meta, "tries": tries}

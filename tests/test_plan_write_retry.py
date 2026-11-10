@@ -209,3 +209,61 @@ def test_the_plan_writer_chooses_among_four_versions(tmp_path):
     exp = {b for _k, _e, r in A.ranked_roles(res.profile_used) for b in r["bullets"]}
     fits = [i for i in rep.bullets if i.text in exp and i.found]
     assert fits and sum(i.ok() for i in fits) >= len(fits) * 0.75, [round(i.last_fill, 2) for i in fits]
+
+
+@pytest.mark.skipif(__import__("shutil").which("pdflatex") is None, reason="needs LaTeX")
+def test_a_project_polish_that_falls_short_asks_for_longer_versions_next(tmp_path):
+    """Run 20: the Last-Mile project's versions all stopped near 85% of two lines and the same
+    word targets were asked again. The next try's targets move by how far the last one missed."""
+    import sys
+    sys.path.insert(0, "tests")
+    from pathlib import Path
+    from test_strict_staircase import _PlanWriter, _ladder_profile
+    from tailoring import assembler as A
+
+    class _ShortProjects(_PlanWriter):
+        def __init__(self):
+            super().__init__()
+            self.words = []
+
+        def polish_role(self, role_label, bullets, budgets, context="", jd_text="", only=None,
+                        words=None):
+            self.words.append([list(w) for w in (words or [])])
+            out = list(bullets)
+            for k in (only or []):
+                base = bullets[k].rstrip(".")
+                # every version reaches only about 80% of what was asked
+                out[k] = [base + " " + " ".join(["for the depot team"] * max(0, int(w * 0.8 - len(base.split())) // 4)) + "."
+                          for w in (words[k] if words else [20])]
+            return out
+    prof = _ladder_profile()
+    prof["projects"] = [{"title": "Route Simulator (Python)", "bullets": [
+        "Built a discrete-event simulation of a 5,000-order-a-day delivery operation."]}]
+    llm = _ShortProjects()
+    A.assemble_cv(Path("config/resume_shetty.tex").read_text(), prof, "Analyst.", llm, tmp_path,
+                  tailor=False, fit_lines=True, fit_rounds=0)
+    asked = [w[0] for w in llm.words if w]
+    assert len(asked) >= 2, llm.words
+    assert sum(asked[1]) > sum(asked[0]), asked             # the second try asks for more words
+
+
+def test_the_answer_may_wrap_each_bullet_s_versions():
+    from llm.anthropic_client import parse_role_lists
+    out = '{"roles": [{"role": "A", "bullets": [{"versions": ["a.", "aa."]}, ["b.", "bb."]]}]}'
+    assert parse_role_lists(out, 1) == [[["a.", "aa."], ["b.", "bb."]]]
+    out = '[[{"versions": [{"text": "x."}, {"text": "xx."}]}]]'
+    assert parse_role_lists(out, 1) == [[["x.", "xx."]]]
+
+
+def test_a_slot_whose_versions_all_spill_takes_one_that_lands_on_a_line_more():
+    """Run 22: every 1-line version ran to 1.1-1.4 lines; the shortest spilled a stub. One that
+    lands on two lines is better, and the adjustment balances the page."""
+    from tailoring.plan_fill import choose_version, lines_needed
+    from tailoring.textwidth import text_width_pt
+    cap = text_width_pt("metric " * 20)
+    v39 = ("Built " + "metric " * 38).strip() + "."
+    v24 = ("Built " + "metric " * 23).strip() + "."
+    text, landed, way = choose_version([v24, v39], 1, cap)
+    assert not landed and way == "shorter"
+    text, landed, _ = choose_version([v24, v39], 2, cap)
+    assert landed and text == v39
