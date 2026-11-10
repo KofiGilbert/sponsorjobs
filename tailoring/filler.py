@@ -262,7 +262,8 @@ def fact_stems(text: str, skip_lead: bool = False) -> list[str]:
     return [_stem(t) for t in toks if t not in _FACT_STOP and t not in _GLUE]
 
 
-def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = True) -> list[str]:
+def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = True,
+                        max_new: int | None = None) -> list[str]:
     """Why a bullet the fill ADDS to a role (a part of a split, or a bullet written from the
     role's material) may not go on the page; empty means it may.
 
@@ -273,7 +274,7 @@ def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = 
       source's context, the platform or the tools, so it reads on its own);
     * "padded with words the material does not say": more than ``PAD_SHARE`` of its content
       words appear nowhere in the role's material (``material``, its source bullet included) or
-      on the other bullets."""
+      on the other bullets, or more than ``max_new`` of them when it is given (a split)."""
     from .fact_gate import figures
 
     mine = set(fact_stems(new, skip_lead=True))
@@ -290,6 +291,6 @@ def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = 
         out.append("restates the role's other bullets")
     known = said | set(fact_stems(material))
     invented = mine - known
-    if len(invented) / len(mine) > PAD_SHARE:
+    if len(invented) / len(mine) > PAD_SHARE or (max_new is not None and len(invented) > max_new):
         out.append("padded with words the material does not say")
     return out

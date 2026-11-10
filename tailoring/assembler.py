@@ -1739,8 +1739,8 @@ def written_problems(new: str, role_text: str, siblings, jd_text: str = "",
 # A written bullet whose content words are this share or more already on the role's other
 # bullets restates them, and is refused (``written_problems``).
 WRITTEN_SAID_SHARE = 0.5
-# Two parts of a split may not share this many words in a row.
-SPLIT_SHARED_RUN = 5
+# Two parts of a split may not share this many content words in a row.
+SPLIT_SHARED_RUN = 4
 
 
 def _looks_merged(text: str) -> bool:
@@ -1799,7 +1799,10 @@ def _role_tense(role: dict, entry: dict, others) -> str:
 # stand as its own achievement ("Turn the reporting results into roadmap and spend decisions.",
 # a real build): the bullet is kept whole instead.
 SPLIT_MIN_CHARS = 70
-SPLIT_MIN_WORDS = 7
+SPLIT_MIN_WORDS = 6
+# A part of a split may carry at most this many content words its source and the role's material
+# never say: a split restates the person's own words, it does not reach a length with new ones.
+SPLIT_NEW_WORDS = 2
 # A bullet splits into at most this many parts, and into three only when it is long enough to
 # hold them (about this many characters of its own words per part).
 SPLIT_MAX_PARTS = 3
@@ -1811,36 +1814,68 @@ def _split_ok(parts: list, src: str, role_text: str, siblings, jd_text: str,
     """Every part of a split restates only its source bullet: no new figure, name or skill,
     no filler, no repeat of another bullet or of another part. Each part is a complete
     achievement of its own (``SPLIT_MIN_CHARS``, ``SPLIT_MIN_WORDS``) and opens in ``tense``."""
+    return not _split_problem(parts, src, role_text, siblings, jd_text, tense)
+
+
+def _split_problem(parts: list, src: str, role_text: str, siblings, jd_text: str,
+                   tense: str = "") -> str:
+    """Why a split may not go on the page (``_split_ok``); "" when it may."""
     from .fact_gate import figures, known_material, new_claims
-    from .filler import (_content_stems, _fact_tokens, _longest_shared_run, filler_added,
+    from .filler import (_content_stems, borrows_from_sibling, fact_stems, filler_added,
                          new_bullet_problems, shares_a_clause)
+    from .filler import _longest_shared_run
     from .keywords import introduced_skills
 
     known = known_material(src, role_text)
     for n, part in enumerate(parts):
         if len(part) < SPLIT_MIN_CHARS or len(_content_stems(part)) < SPLIT_MIN_WORDS:
-            return False
+            return f"part {n + 1} too thin"
         if tense and _opens_in_past(part) != (tense == "past"):
-            return False
-        if (figures(part) - figures(src) or new_claims(part, known=known)
-                or introduced_skills(src, part, role_text, jd_text) or filler_added(src, part)
-                or len(part) > _bullet_budget(src)):
-            return False
+            return f"part {n + 1} not in the {tense} tense"
+        if figures(part) - figures(src) or new_claims(part, known=known):
+            return f"part {n + 1} states what the bullet does not"
+        if introduced_skills(src, part, role_text, jd_text) or filler_added(src, part):
+            return f"part {n + 1} adds a skill or filler"
+        if len(part) > _bullet_budget(src):
+            return f"part {n + 1} longer than the bullet"
         if any(shares_a_clause(part, str(s)) for s in siblings or ()):
-            return False
+            return f"part {n + 1} repeats another bullet"
+        # A part that takes another bullet's point ("..., turning findings into decisions on
+        # capacity and service levels" beside the bullet that says exactly that, a real split on
+        # 2026-11-10) says it twice on the page.
+        if borrows_from_sibling(src, part, siblings):
+            return f"part {n + 1} takes another bullet's point"
         # Parts of one sentence each say their own thing: a phrase repeated across parts
         # ("growth, usage, and unit costs" three times, a real split on 2026-11-06) reads as
-        # padding on the page.
-        if any(_longest_shared_run(_fact_tokens(part), _fact_tokens(other)) >= SPLIT_SHARED_RUN
+        # padding on the page. Counted in content words, so a part may carry its source's
+        # context ("for stakeholders across the business") and still read on its own.
+        if any(_longest_shared_run(fact_stems(part), fact_stems(other)) >= SPLIT_SHARED_RUN
                for other in parts[n + 1:]):
-            return False
+            return f"part {n + 1} repeats a phrase of another part"
         # Each part says a fact the role's other bullets do not, in the words of its source and
         # the role's material, and none is padded out to a length ("owning the function that
-        # covers every product line", a real split on 2026-11-10). The parts may share their
-        # source's context with each other (the shared-run check above keeps them apart).
-        if new_bullet_problems(part, siblings, src + "\n" + str(role_text or ""), restate=False):
-            return False
-    return True
+        # covers every product line", "building the data view behind daily operations", real
+        # splits on 2026-11-10): at most ``SPLIT_NEW_WORDS`` words of its own.
+        bad = new_bullet_problems(part, siblings, src + "\n" + str(role_text or ""),
+                                  restate=False, max_new=SPLIT_NEW_WORDS)
+        if bad:
+            return f"part {n + 1}: {bad[0]}"
+    return ""
+
+
+def _fill_log(**rec) -> None:
+    """One line of what the page fill tried and why it was refused, to the file named by
+    ``TAILOR_FILL_LOG`` when it is set (a developer's diagnosis; nothing is written otherwise)."""
+    import json
+    import os
+    path = os.environ.get("TAILOR_FILL_LOG")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, default=str) + "\n")
+    except OSError:
+        pass
 
 
 def _recency_fill(preamble: str, used: dict, result, *, sections, headings, workdir: Path,
@@ -1971,8 +2006,12 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                         continue
                     parts = [str(x).strip() for x in parts or [] if str(x).strip()]
                     if len(parts) != n or len(others) + n > most:
+                        _fill_log(step="split", label=label, src=src, n=n, parts=parts,
+                                  why="not that many parts")
                         continue
-                    if not _split_ok(parts, src, role_text, others, jd_text, tense):
+                    why = _split_problem(parts, src, role_text, others, jd_text, tense)
+                    _fill_log(step="split", label=label, src=src, n=n, parts=parts, why=why)
+                    if why:
                         continue                               # too thin or off: keep it whole
                     for x in parts:
                         origins[x] = src
@@ -1990,7 +2029,9 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                 new = ""
             if new.strip(". ").upper() == "NONE":
                 new = ""
-            if new and not written_problems(new, role_text, bl, jd_text, listed, budget):
+            why = written_problems(new, role_text, bl, jd_text, listed, budget) if new else ["none"]
+            _fill_log(step="write", label=label, bullet=new, why=why)
+            if new and not why:
                 origins[new] = new                             # traced through the line fit
                 return bl + [new], [dict(rec, bullet=new, kind="written", source="")]
             st["write"] = False
@@ -2088,8 +2129,11 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
             for u in reversed(undo):
                 u()
             full.add(_role_key(entry, role))
+            _fill_log(step="overflow", label=entry_label(entry, role), fill=getattr(r, "fill_ratio", None))
             return False
         result = r
+        _fill_log(step="grew", label=entry_label(entry, role), n=len(role["bullets"]),
+                  fill=r.fill_ratio)
         # A split made again in more parts replaces the parts it made before.
         label = entry_label(entry, role)
         now = {str(b) for b in role["bullets"]}

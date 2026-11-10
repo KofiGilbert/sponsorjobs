@@ -525,8 +525,12 @@ def test_the_line_fit_never_takes_the_point_of_a_bullet_cut_to_fit(monkeypatch):
     out = run({"CSIR, Research Assistant": [cut]})
     assert out.profile["experience"][0]["roles"][0]["bullets"] == [kept]
     assert any("cut to fit" in str(r["claims"]) for r in out.rejected)
-    # without the cut on record the same resize goes through: the test exercises the real path
-    assert run({}).profile["experience"][0]["roles"][0]["bullets"] == [grown]
+    # without the cut on record the resize is not refused for that reason: the test exercises
+    # the real path. (It is refused all the same, as padding: the words it adds are not this
+    # entry's, tailoring/linefit._pads_out.)
+    again = run({})
+    assert not any("cut to fit" in str(r["claims"]) for r in again.rejected)
+    assert any("padding" in str(r["claims"]) for r in again.rejected)
 
 
 # --------------------------------------------------------------------------- restore what fits

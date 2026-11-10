@@ -242,3 +242,27 @@ def test_interests_print_on_a_template_without_an_interests_section(template_sou
     s.essentials["interests"] = ""
     s.set_template(name, tex)
     assert "interests" not in s.sections
+
+
+def test_a_split_part_that_pads_or_takes_a_sibling_s_point_is_refused():
+    """Word for word from the first real build after the staircase change (2026-11-10)."""
+    from tailoring.assembler import _split_problem
+    from tailoring.linefit import _pads_out
+    v0 = ("Analyzed SQL and Excel operational data for a digital fulfillment platform, tracking 250 "
+          "drivers and 5,000+ daily orders.")
+    v1 = ("Turned operational findings into product and operations decisions on capacity and service "
+          "levels for the fulfillment platform.")
+    padded = ["Analyzed operational data in SQL and Excel for a digital fulfillment platform, building "
+              "the data view behind daily operations.",
+              "Tracked 250 drivers and 5,000+ daily orders on the digital fulfillment platform."]
+    assert "padded" in _split_problem(padded, v0, v0 + "\n" + v1, [v1], "", "past")
+    borrowed = ["Analyzed SQL and Excel operational data for a high-velocity digital fulfillment platform.",
+                "Tracked 250 drivers and more than 5,000 daily orders on the digital fulfillment platform, "
+                "turning findings into decisions on capacity and service levels."]
+    assert "point" in _split_problem(borrowed, v0, v0 + "\nhigh-velocity\n" + v1, [v1], "", "past")
+    honest = ["Analyzed SQL and Excel operational data for a high-velocity digital fulfillment platform.",
+              "Tracked 250 drivers and 5,000+ daily orders on the digital fulfillment platform."]
+    assert _split_problem(honest, v0, v0 + "\nhigh-velocity\n" + v1, [v1], "", "past") == ""
+    # the line fit refuses the same padding when it lengthens a bullet
+    assert _pads_out(honest[0], padded[0], "Viva Technologies Ghana\n" + v1, v0)
+    assert not _pads_out(honest[1], honest[1].rstrip(".") + " in SQL and Excel.", v0, v0)

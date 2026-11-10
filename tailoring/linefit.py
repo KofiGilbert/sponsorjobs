@@ -263,20 +263,19 @@ class LineReport:
 
 
 # A resize that lengthens a bullet with this many content words its entry's material never says
-# (and that make up more than ``filler.PAD_SHARE`` of the bullet) pads it out: "owning the
-# function that covers every product line and the data the company uses to track them" on a
-# real build (2026-11-10).
-PAD_NEW_WORDS = 4
+# (and that make up most of what it added) pads it out: "owning the function that covers every
+# product line and the data the company uses to track them", "building the data view behind
+# daily operations" on real builds (2026-11-10).
+PAD_NEW_WORDS = 3
 
 
 def _pads_out(before: str, after: str, grounding: str, source: str = "") -> bool:
-    from .filler import PAD_SHARE, fact_stems
-    mine = set(fact_stems(after))
-    if not mine:
+    from .filler import fact_stems
+    added = set(fact_stems(after)) - set(fact_stems(before))
+    if not added:
         return False
-    known = set(fact_stems(before)) | set(fact_stems(grounding)) | set(fact_stems(source))
-    invented = mine - known
-    return len(invented) >= PAD_NEW_WORDS and len(invented) / len(mine) > PAD_SHARE
+    invented = added - set(fact_stems(grounding)) - set(fact_stems(source))
+    return len(invented) >= PAD_NEW_WORDS and len(invented) / len(added) > 0.5
 
 
 def _bullet_items(profile: dict) -> list[tuple[list, int, str, str, str]]:
