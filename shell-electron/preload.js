@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld("tailorShell", {
   openReleasePage: (url) => ipcRenderer.send("update:open", url),
   // Help and support: open the mail app to support@sponsorjobs.ai (main.js accepts nothing else).
   openSupportMail: (url) => ipcRenderer.send("support:mail", url),
+  // Help and support: Gmail's compose screen in the person's own browser (main.js checks the URL).
+  openSupportGmail: (url) => ipcRenderer.send("support:gmail", url),
   // The Terms of Use, in the person's own browser (the sign-in screen covers the in-app pane).
   openTerms: () => ipcRenderer.send("terms:open"),
   appVersion: () => ipcRenderer.invoke("app:version"),
