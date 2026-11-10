@@ -99,8 +99,10 @@ def test_back_links_name_the_page_the_rail_names():
     assert all("ans.backProfile" not in loc for loc in LOCALES.values())
 
 
-def test_chat_avatar_is_the_product_initial():
-    assert '<div class="msg-avatar">${role === "agent" ? "S" : "Y"}</div>' in APP_JS
+def test_chat_has_no_avatar_per_message():
+    # One response per turn, written like Claude, ChatGPT and Gemini answer (Kofi, 2026-11-10):
+    # no avatar on each message, and never the old "T" initial.
+    assert "msg-avatar" not in APP_JS
     assert '<div class="msg-avatar">T</div>' not in APP_JS
 
 

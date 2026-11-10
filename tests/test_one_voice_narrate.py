@@ -307,3 +307,35 @@ def test_the_broker_client_narrates_at_low_effort(monkeypatch):
     assert llm.narrate("sys", "user") == "Hi."
     assert sent[0]["effort"] == "low" and sent[0]["max_tokens"] == 400
     assert llm.last_narrate_usage == {"input": 300, "output": 20, "model": "claude-sonnet-5-5"}
+
+
+# ------------------------------------------------------------------ the chat renders it safely
+
+def _chat_text_js():
+    """The chat's own renderer (esc, unDash, the markdown blocks, chatText) cut out of app.js."""
+    from pathlib import Path
+    js = (Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js").read_text(encoding="utf-8")
+    esc = js[js.index("  const esc = (s)"):js.index("\n\n", js.index("  const esc = (s)"))]
+    start = js.index("  const unDash = (s)")
+    end = js.index(".split(/\\n{2,}/).map(mdBlock).join(\"\");", start) + len(".split(/\\n{2,}/).map(mdBlock).join(\"\");")
+    return esc + "\n" + js[start:end]
+
+
+@pytest.mark.parametrize("raw,want", [
+    ("Your page is at **62%**.\n\nAdd a project:\n- Route Planner\n- Gate Check",
+     "<p>Your page is at <b>62%</b>.</p><p>Add a project:</p><ul><li>Route Planner</li><li>Gate Check</li></ul>"),
+    ("Line one\nline two", "<p>Line one<br>line two</p>"),
+    ("1. Edit a bullet\n2. Click <b>Accept & Save</b>",
+     "<ol><li>Edit a bullet</li><li>Click <b>Accept &amp; Save</b></li></ol>"),
+    ('<img src=x onerror="alert(1)"> <b onclick="x">hi</b>',
+     "<p>&lt;img src=x onerror=&quot;alert(1)&quot;&gt; &lt;b onclick=&quot;x&quot;&gt;hi</b></p>"),
+])
+def test_the_chat_renders_a_little_markdown_and_never_raw_html(raw, want):
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    src = _chat_text_js() + "\nprocess.stdout.write(chatText(" + json.dumps(raw) + "));"
+    out = subprocess.run(["node", "-e", src], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == want

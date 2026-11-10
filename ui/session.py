@@ -4015,6 +4015,7 @@ class WebIntake:
         return text
 
     _voice_log: list = []
+    _ASK_MARKS = {"ask_required": "required", "nudge_required": "required"}
 
     def _speak(self, turn: dict, out):
         """The end of a turn (_one_voice): everything the app said in it becomes ONE message.
@@ -4070,6 +4071,12 @@ class WebIntake:
         self._voice_log = (list(self._voice_log) + [log])[-50:]
         _voice_logger(log)
         entry = {"role": "agent", "content": final}
+        # Which code-decided questions this message asked, so a reply can be read as the answer
+        # to it whatever words the AI used (_last_agent_said).
+        asked = sorted({self._ASK_MARKS[i["kind"]] for i in turn["items"].values()
+                        if i.get("kind") in self._ASK_MARKS and i.get("point") in said})
+        if asked:
+            entry["asked"] = asked
         if cards:
             entry["card"] = cards[0]
             if len(cards) > 1:
@@ -4235,7 +4242,7 @@ class WebIntake:
             # Only a reply to THAT question: the last thing the chat said before this message
             # was the outside-work ask (a reply to a skeleton question is not an answer to it).
             e = self.essentials
-            if self._last_agent_said(e.get("required_ask_text")):
+            if self._last_agent_said(e.get("required_ask_text"), asked="required"):
                 asked = list(e.get("required_open_at_ask") or self._open_required_sections())
                 e["required_covered"] = sorted(set(e.get("required_covered") or []) | set(asked))
             if _wants_done(message) and not self._open_required_sections():
@@ -4441,10 +4448,12 @@ class WebIntake:
         return self.draft(lead=lead)
 
     # -- the required-sections question (Extracurricular / Interests) ------------------ #
-    def _last_agent_said(self, text) -> bool:
-        """True when the chat's last message before the person's latest one began with ``text``."""
+    def _last_agent_said(self, text, asked: str = "") -> bool:
+        """True when the chat's last message before the person's latest one began with ``text``,
+        or (one voice: the AI words that message) carried the ``asked`` mark _speak puts on a
+        message that asked that question."""
         text = str(text or "").strip()
-        if not text:
+        if not text and not asked:
             return False
         seen_user = False
         for turn in reversed(self.history or []):
@@ -4454,7 +4463,9 @@ class WebIntake:
                 seen_user = True
                 continue
             if turn.get("role") == "agent" and seen_user:
-                return str(turn.get("content") or "").strip().startswith(text[:120])
+                if asked and asked in (turn.get("asked") or []):
+                    return True
+                return bool(text) and str(turn.get("content") or "").strip().startswith(text[:120])
         return False
 
     def _required_labels(self, keys) -> list[str]:
