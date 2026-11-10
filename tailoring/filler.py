@@ -323,9 +323,11 @@ def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = 
 # --------------------------------------------------------------------------- #
 # Stock tails a model reaches a length with: "for stakeholders across the business" on three
 # bullets of one role, "for BlackOrigin Inc.'s products", "at Stanbic Bank Ghana".
+# "to stakeholders across the products" says who the work was for and stays; "for stakeholders"
+# ending the sentence, or "... across the business/organization", says nothing.
 _STOCK_TAIL = re.compile(
     r"\b(?:for|to|with)\s+(?:the\s+|its\s+|their\s+)?(?:key\s+)?stakeholders"
-    r"(?:\s+across\s+the\s+(?:business|company|organi[sz]ation|bank))?\b"
+    r"(?:\s+across\s+the\s+(?:business|company|organi[sz]ation|bank)\b|\s*[.;]?\s*$)"
     r"|\bacross\s+the\s+(?:business|organi[sz]ation)\b", re.I)
 _CORP = re.compile(r"\b(?:inc|llc|ltd|limited|corp|corporation|co|plc|gmbh|group)\.?$", re.I)
 # A run of this many words in a row, with at least two content words, said again on another
@@ -374,15 +376,16 @@ def role_padding(new: str, siblings, employer: str = "", source: str = "",
     ctx = set(_fact_tokens(context))
     for sib in siblings or ():
         st = _fact_tokens(str(sib or ""))
-        if _shared_phrase(mine, st, src, ctx):
-            out.append("repeats a phrase of another bullet")
+        run = _shared_phrase(mine, st, src, ctx)
+        if run:
+            out.append("repeats a phrase of another bullet: " + " ".join(run))
             break
     return out
 
 
-def _shared_phrase(a: list[str], b: list[str], allowed: list[str], ctx=frozenset()) -> bool:
+def _shared_phrase(a: list[str], b: list[str], allowed: list[str], ctx=frozenset()) -> list:
     """A run of ``REPEAT_RUN`` or more words in both ``a`` and ``b``, with two content words,
-    that ``allowed`` does not hold."""
+    that ``allowed`` does not hold (the run; empty when there is none)."""
     allowed_s = " " + " ".join(allowed) + " "
     for i in range(len(a)):
         for j in range(len(b)):
@@ -393,5 +396,5 @@ def _shared_phrase(a: list[str], b: list[str], allowed: list[str], ctx=frozenset
                 run = a[i:i + k]
                 if sum(t not in _FACT_STOP and t not in ctx for t in run) >= 2 and \
                         (" " + " ".join(run[:REPEAT_RUN]) + " ") not in allowed_s:
-                    return True
-    return False
+                    return run
+    return []

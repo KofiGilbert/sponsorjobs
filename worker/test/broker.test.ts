@@ -119,7 +119,9 @@ describe("/llm/complete", () => {
     const r = await call("/llm/complete", { token, body: { prompt: "hi", effort: "low" } });
     expect(r.status).toBe(200);
     expect(r.data).toEqual({ text: "hello", model: "claude-haiku-4-5",
-                             tokens: { used: 42, cap: 400_000, over_cap: false } });
+                             tokens: { used: 42, cap: 400_000, over_cap: false },
+                             stop_reason: null, usage: { input_tokens: 30, output_tokens: 12 },
+                             blocks: ["text"] });
     expect(sent).toHaveLength(1);
     expect(sent[0]!.url).toBe("https://api.anthropic.com/v1/messages");
     expect(sent[0]!.headers["x-api-key"]).toBe("sk-test-not-real");
@@ -299,7 +301,9 @@ describe("/llm/complete tool use (the resume chat agent)", () => {
     const { token } = await newAccount();
     const { sent } = stubAnthropic(toolReply());
     const r = await call("/llm/complete", { token, body: { prompt: "hi" } });
-    expect(Object.keys(r.data).sort()).toEqual(["model", "text", "tokens"]);
+    // The answer, plus why the model stopped and what it spent; never the content blocks.
+    expect(Object.keys(r.data).sort()).toEqual(["blocks", "model", "stop_reason", "text", "tokens", "usage"]);
+    expect(r.data.content).toBeUndefined();
     expect(sent[0]!.body).toEqual({ model: "claude-haiku-4-5", max_tokens: 1024,
                                     messages: [{ role: "user", content: "hi" }] });
   });

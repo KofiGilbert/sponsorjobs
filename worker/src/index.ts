@@ -194,7 +194,11 @@ const llmComplete: Handler = async ({ req, env, now, nowMs }) => {
   // Tool-use callers get the content blocks and the stop reason too (llm/broker_client.py
   // BrokerLLM.agent_turn reads tool calls from them); everyone else, the same answer as before.
   if (ta.tools) return json({ text: out.text, content: out.content, stop_reason: out.stop_reason, model, tokens });
-  return json({ text: out.text, model, tokens });
+  // Why the model stopped and what it spent, so a caller can tell an empty answer cut off by
+  // the token limit (reasoning used the budget) from a real one, and ask again differently.
+  return json({ text: out.text, model, tokens, stop_reason: out.stop_reason,
+                usage: { input_tokens: out.input_tokens, output_tokens: out.output_tokens },
+                blocks: (out.content as any[]).map((b) => String(b?.type ?? "")) });
 };
 
 const llmPackage: Handler = async ({ req, env, now, nowMs }) => {

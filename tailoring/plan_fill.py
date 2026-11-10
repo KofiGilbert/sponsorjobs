@@ -33,6 +33,8 @@ WINDOW_LO, WINDOW_HI = 0.93, 1.0
 TOP_MOST = 6
 # The adjusting pass changes at most this many bullets' line targets.
 ADJUST_MOST = 4
+# Calls that ask only for a bullet still missing after the retry and the adjustment.
+HOLE_TRIES = 2
 
 # An outcome a bullet asserts that the person's material must state to be said: "with none
 # skipped or lost" (a real write, 2026-11-10), "zero errors", "100% accuracy", "never missed".
@@ -125,6 +127,26 @@ def line_share(result, LF) -> tuple[float, float]:
     if not 0.008 <= share <= 0.03:
         return LF.LINE_SHARE, 0.0
     return share, gap
+
+
+def strict(counts: list, floor: int) -> bool:
+    """Every role fewer bullets than the newer one above it, the oldest at ``floor`` or more."""
+    return bool(counts) and counts[-1] >= floor and all(b < a for a, b in zip(counts, counts[1:]))
+
+
+def rebalance(counts: list, floor: int):
+    """The strict staircase nearest ``counts`` that only takes bullets away (each role at most
+    one fewer than the role above), or None when that would take the oldest role under
+    ``floor``: 6/5/5/3 becomes 6/5/4/3; 4/4/3/2 cannot (4/3/2/1)."""
+    out = []
+    for i, c in enumerate(counts):
+        out.append(c if i == 0 else min(c, out[-1] - 1))
+    return out if out and out[-1] >= floor else None
+
+
+def _opening(text: str) -> list:
+    from .filler import _fact_tokens
+    return _fact_tokens(text)[:3]
 
 
 def lines_of(it, text: str, cpl: float) -> int:
@@ -232,15 +254,33 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
             out = llm.write_experience(info, jd_text=jd_text, current=current, only=only,
                                        feedback=feedback)
         except Exception as exc:                             # noqa: BLE001
-            _log(step="plan-error", label="experience", why=str(exc)[:200])
+            _log(step="plan-error", label="experience", why=str(exc)[:800],
+                 n=getattr(llm, "last_meta", None))
             return None
+        _log(step="plan-call", label="experience", n=getattr(llm, "last_meta", None))
         if not isinstance(out, list) or len(out) != len(info):
             _log(step="plan-error", label="experience", why="wrong number of roles")
             return None
         return out
 
+    reasons: dict = {}
+    tried_texts: dict = {}                                   # role -> [(refused text, reasons)]
+
+    def last_resort(i: int, have: list) -> str:
+        """A bullet for a slot the model never filled: the person's own bullet that repeats no
+        fact on the page, else the refused bullet whose only fault was a shared phrase."""
+        for sv in info[i]["saved"]:
+            if sv not in have and not any(same_fact(sv, h) for h in have) \
+                    and not any(_opening(sv) == _opening(h) for h in have):
+                return sv
+        for text, bad in tried_texts.get(i, []):
+            if text and text not in have and all(str(b).startswith("repeats a phrase") for b in bad):
+                return text
+        return ""
+
     def place(out, only=None):
-        """Put the written bullets on the page; returns {role: [(bullet, reasons)]} refused."""
+        """Put the written bullets on the page; returns {role: [bullet index]} refused, with
+        the reasons in ``reasons``."""
         refused: dict = {}
         for i, (_k, e, r) in enumerate(roles):
             want = info[i]["targets"]
@@ -257,11 +297,19 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                     cur[k] = text
                 else:
                     refused.setdefault(i, []).append(k)
-            # A slot still empty takes the person's own bullet (theirs, never refused).
+                    reasons[(i, k)] = bad
+                    tried_texts.setdefault(i, []).append((text, bad))
+            # A slot still empty takes one of the person's own bullets that reads cleanly beside
+            # the others: no stock tail, no employer name, no phrase or opening another says.
             for k in range(len(cur)):
                 if not cur[k]:
+                    others = [c for c in cur if c]
                     spare = [s for s in info[i]["saved"] if s not in cur
-                             and not any(c and same_fact(s, c) for c in cur)]
+                             and not any(same_fact(s, c) for c in others)
+                             and not any(_opening(s) == _opening(c) for c in others)
+                             and not role_padding(s, others, info[i]["company"], "",
+                                                  context=" ".join([info[i]["title"],
+                                                                    info[i]["company"]]))]
                     cur[k] = spare[0] if spare else None
             r["bullets"][:] = [c for c in cur if c]
         return refused
@@ -308,8 +356,10 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
         miss.setdefault(i, [])
         miss[i] = sorted(set(miss[i]) | set(ks))
         for k in ks:
-            why.setdefault((i, k), "failed a check: no new numbers, names, credentials or "
-                                   "claims, no employer name, no stock tail, no repeated phrase")
+            why.setdefault((i, k), "was refused (" + "; ".join(map(str, reasons.get((i, k), [])))
+                           + "): write it again with its own words, no number, name, credential "
+                             "or claim the material does not state, no employer name, no stock "
+                             "tail, and no phrase another bullet of the role uses")
     if miss:
         cur = [list(r["bullets"]) for _k, _e, r in roles]
         fb = {f"{i}:{k}": v for (i, k), v in why.items()}
@@ -323,12 +373,17 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
     # bullets become 2-line in the newest roles, or 2-line become 1-line in the oldest).
     _log(step="plan-check", label="experience", fill=res.fill_ratio,
          why=f"ok={res.ok} pages={res.pages} overfull={res.overfull_count}/{base_overfull}")
-    if res.ok and (res.pages > 1 or (res.fill_ratio or 0) > max_fill
+    # A slot left empty (its bullet refused twice and no saved bullet reads cleanly beside the
+    # others) breaks the staircase: it is asked for once more, in the same call as any adjustment.
+    empty = {i: list(range(len(r["bullets"]), len(info[i]["targets"])))
+             for i, (_k, _e, r) in enumerate(roles) if len(r["bullets"]) < len(info[i]["targets"])}
+    if res.ok and (empty or res.pages > 1 or (res.fill_ratio or 0) > max_fill
                    or (res.fill_ratio or 0) < fill_goal):
         over = res.pages > 1 or (res.fill_ratio or 0) > max_fill
+        under = (res.fill_ratio or 0) < fill_goal
         off = 2 if res.pages > 1 else abs(round((PLAN_TARGET - (res.fill_ratio or 0)) / share))
-        off = max(1, min(off, ADJUST_MOST))
-        picks: dict = {}
+        off = max(1, min(off, ADJUST_MOST)) if (over or under) else 0
+        picks: dict = {i: list(ks) for i, ks in empty.items()}
         order = range(len(info) - 1, -1, -1) if over else range(len(info))
         for i in order:
             row = info[i]["targets"]
@@ -338,15 +393,80 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                     picks.setdefault(i, []).append(k)
                     off -= 1
         if picks:
-            cur = [list(r["bullets"]) for _k, _e, r in roles]
-            fb = {f"{i}:{k}": f"the page needs this bullet on {info[i]['targets'][k]} line(s), "
-                              "the last one full" for i, ks in picks.items() for k in ks}
+            cur = [list(r["bullets"]) + [""] * (len(info[i]["targets"]) - len(r["bullets"]))
+                   for i, (_k, _e, r) in enumerate(roles)]
+            fb = {f"{i}:{k}": (f"this bullet is missing: write a new one on "
+                               f"{info[i]['targets'][k]} line(s), the last one full, that says "
+                               "something the role's other bullets do not"
+                               if k in empty.get(i, []) else
+                               f"the page needs this bullet on {info[i]['targets'][k]} line(s), "
+                               "the last one full")
+                  for i, ks in picks.items() for k in ks}
             out3 = ask(current=cur, only=picks, feedback=fb)
             if out3 is not None:
                 place(out3, only=picks)
                 res = compile_now("plan3")
             _log(step="plan-adjust", label="experience", fill=getattr(res, "fill_ratio", None),
                  why=str(picks))
+    # A HOLE (a slot whose bullet was refused every time) breaks the staircase: up to
+    # HOLE_TRIES more calls ask only for the missing bullets, each told exactly what was refused.
+    for _try in range(HOLE_TRIES):
+        holes = {i: list(range(len(r["bullets"]), len(info[i]["targets"])))
+                 for i, (_k, _e, r) in enumerate(roles) if len(r["bullets"]) < len(info[i]["targets"])}
+        if not holes:
+            break
+        cur = [list(r["bullets"]) + [""] * (len(info[i]["targets"]) - len(r["bullets"]))
+               for i, (_k, _e, r) in enumerate(roles)]
+        fb = {f"{i}:{k}": ("this bullet is missing; the last try was refused ("
+                           + "; ".join(map(str, reasons.get((i, k), []))) + "). Write a new one on "
+                           f"{info[i]['targets'][k]} line(s), the last one full, using no phrase "
+                           "another bullet of the role uses")
+              for i, ks in holes.items() for k in ks}
+        outh = ask(current=cur, only=holes, feedback=fb)
+        if outh is None:
+            break
+        place(outh, only=holes)
+        res = compile_now("plan4")
+        _log(step="plan-holes", label="experience", fill=res.fill_ratio, why=str(holes))
+    # STRICT, WHATEVER THE MODEL LEFT EMPTY. Still a hole: the staircase is rebalanced from the
+    # counts the page has (``rebalance``): lower roles step down under the top, their freed
+    # lines going to 2-line targets, and those bullets are written again in one call. When the
+    # oldest role's floor rules that out, the hole takes the person's own bullet, or the refused
+    # bullet whose only fault was a shared phrase.
+    counts = [len(r["bullets"]) for _k, _e, r in roles]
+    if not strict(counts, A.OLDEST_FLOOR):
+        plan2 = rebalance(counts, A.OLDEST_FLOOR)
+        if plan2 is not None:
+            freed = 0                                        # planned lines no bullet prints
+            for i, (_k, _e, r) in enumerate(roles):
+                del r["bullets"][plan2[i]:]
+                freed += sum(info[i]["targets"][len(r["bullets"]):])
+                info[i]["targets"] = info[i]["targets"][:len(r["bullets"])]
+            grow = {}
+            for i in range(len(info)):
+                for k, n in enumerate(info[i]["targets"]):
+                    if freed > 0 and n == 1:
+                        info[i]["targets"][k] = 2
+                        grow.setdefault(i, []).append(k)
+                        freed -= 1
+            if grow:
+                cur = [list(r["bullets"]) for _k, _e, r in roles]
+                fb = {f"{i}:{k}": "the page needs this bullet on 2 lines, the last one full"
+                      for i, ks in grow.items() for k in ks}
+                outg = ask(current=cur, only=grow, feedback=fb)
+                if outg is not None:
+                    place(outg, only=grow)
+            _log(step="plan-rebalanced", label="experience", n=plan2, why=str(grow))
+        else:
+            for i, (_k, _e, r) in enumerate(roles):
+                need = len(info[i]["targets"]) - len(r["bullets"])
+                for _ in range(max(0, need)):
+                    pick = last_resort(i, r["bullets"])
+                    if pick:
+                        r["bullets"].append(pick)
+            _log(step="plan-last-resort", label="experience",
+                 n=[len(r["bullets"]) for _k, _e, r in roles])
+        res = compile_now("plan5")
     if not (res.ok and res.pages == 1 and res.overfull_count <= base_overfull
             and (res.fill_ratio or 0) <= max_fill + 0.005):
         for (_k, _e, r), bl in zip(roles, before):
