@@ -47,7 +47,9 @@ export TAILOR_OWN_KEY="${TAILOR_OWN_KEY:-1}"   # run on the saved Anthropic key
 # The live account token is kept in its own git-ignored file (config/credentials.live.env), so it
 # never overwrites the local dev broker's token in config/credentials.env and you stay signed in
 # on both. Your saved AI keys are copied over once so tailoring keeps running on them.
-if [ "${TAILOR_LIVE_BROKER:-0}" = "1" ]; then
+# Default ON (Kofi, 2026-11-09): the dev app must look exactly like the installed app, which never
+# asks for an AI key. TAILOR_LIVE_BROKER=0 gives the open-source bring-your-own-key edition.
+if [ "${TAILOR_LIVE_BROKER:-1}" = "1" ]; then
   export TAILOR_EDITION=official
   export TAILOR_BROKER_URL="${TAILOR_BROKER_URL:-https://api.sponsorjobs.ai}"
   repo="$(cd .. && pwd)"
