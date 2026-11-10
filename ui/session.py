@@ -4867,6 +4867,58 @@ class WebIntake:
             pass
         self._conform_essentials()
 
+    # -- switching the template in a running chat (Kofi, test build 13, 2026-11-09) ------ #
+    TEMPLATE_SWITCHED = "Switched to the {name} template."
+    TEMPLATE_REBUILT = "Rebuilt your resume in it."
+    TEMPLATE_FAILED = ("Your resume didn't fit one clean page in the {name} template, so I kept "
+                       "{old}.")
+
+    @_locked
+    def set_template(self, name: str, template_source: str):
+        """Switch this chat's template (the builder's "change", then "Use this template"). The
+        job, the chat, the profile and every answer stay. Built already: rebuild the page in the
+        new template through the normal assemble path, which keeps it one page with no new
+        overfull lines (assemble_cv's self-healing); a page that cannot fit rolls back to the old
+        template and says so. Not built yet: the next build uses it. One short chat line either
+        way. Returns the session state, with ``template_ok``."""
+        from intake.template_manifest import (headings, identity_fields, load_manifest,
+                                               required_sections, sections)
+        keep = {k: getattr(self, k, None) for k in (
+            "template", "template_name", "manifest", "identity_fields", "sections", "headings",
+            "required_fill", "assembled", "profile", "_written", "_pdf_v", "dirty")}
+        old_label = str((self.manifest or {}).get("display_name") or self.template_name or "")
+        man = load_manifest(name)
+        label = str((man or {}).get("display_name") or name)
+        self.template, self.template_name, self.manifest = template_source, name, man
+        self.identity_fields = identity_fields(man)
+        self.sections, self.headings = sections(man), headings(man)
+        self.required_fill = required_sections(man)
+        built = self.assembled is not None
+        if built:
+            try:
+                self._assemble()
+                ok = bool(self.assembled and self.assembled.ok)
+            except Exception:  # noqa: BLE001 - a failed build keeps the old template
+                ok = False
+            if not ok:
+                for k, v in keep.items():
+                    setattr(self, k, v)
+                try:                     # the failed try overwrote the PDF: build the old one again
+                    self._assemble()
+                except Exception:  # noqa: BLE001
+                    for k, v in keep.items():
+                        setattr(self, k, v)
+                st = self._state([])
+                st.update({"template_ok": False,
+                           "template_error": self.TEMPLATE_FAILED.format(name=label, old=old_label)})
+                return st
+        msg = self.TEMPLATE_SWITCHED.format(name=label) + (" " + self.TEMPLATE_REBUILT if built else "")
+        self._append("agent", msg)
+        self._persist()
+        st = self._state([msg])
+        st["template_ok"] = True
+        return st
+
     def _assemble(self, fit_lines: bool = False):
         # Render from a constraint-filtered COPY so a 'do not mention X' never reaches the CV,
         # while self.profile (persisted) stays whole; restore any hidden items into the durable
