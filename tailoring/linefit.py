@@ -3,7 +3,7 @@ that stop short (the owner's layout rule, 2026-11).
 
 The rule. Every written line on the resume runs to the right edge of the page:
 
-  * SKILLS: 5 to 6 category lines ("Analytics & BI: SQL, Python (pandas, NumPy), Power BI,
+  * SKILLS: 4 to 5 category lines, at most 5 counting a Certifications line ("Analytics & BI: SQL, Python (pandas, NumPy), Power BI,
     Tableau, advanced Excel, data visualization, dashboard design"), each ONE line whose last
     item ends in the final ~10% of the text width. Never wrapping to a second line, never
     stopping halfway.
@@ -47,6 +47,8 @@ except Exception:                        # noqa: BLE001 - the engine builds with
 
 # A skills line is FULL when its last item ends within the final 10% of the text width.
 SKILL_LINE_TARGET = 0.90
+# Lines merged to the cap before the page is measured use this share of the estimated width.
+CAP_ESTIMATE_MARGIN = 0.96
 # A bullet's last line is "close to the right edge" from here on. It replaces the sizer's old
 # 45% (one-line) and 58% (last line) acceptance bars (ui/session.py _fit_bullets_to_lines).
 BULLET_LAST_LINE_TARGET = 0.85
@@ -54,9 +56,12 @@ BULLET_LAST_LINE_TARGET = 0.85
 SPILL_TRIM = 0.30
 # A line that reaches this is flush with the margin, whatever the target.
 FLUSH = 0.985
-# The Skills block: 5 to 6 category lines.
-SKILL_LINES_MIN = 5
-SKILL_LINES_MAX = 6
+# The Skills block: 4 to 5 lines (Kofi, 2026-11-10: "at most 5, the space goes to experience
+# bullets"). SKILL_LINES_MAX is the whole block, a Certifications line included; a template's
+# manifest may set its own cap (intake.template_manifest.max_skill_lines). SKILL_LINES_MIN is
+# the category lines the packer builds toward when the person's material allows.
+SKILL_LINES_MIN = 4
+SKILL_LINES_MAX = 5
 # Rounds of the fix loop (the owner asked for 3 to 4).
 FIT_ROUNDS = 3
 # One text line as a share of the text block (10pt type, 12pt leading, a letter page): how
@@ -219,19 +224,19 @@ class LineReport:
     def short_bullets(self) -> list[ItemFit]:
         return [i for i in self.bullets if not i.ok()]
 
-    def skill_count_ok(self, fixed: int = 0) -> bool:
-        n = len(self.skills) - fixed
-        return SKILL_LINES_MIN <= n <= SKILL_LINES_MAX
+    def skill_count_ok(self, fixed: int = 0, cap: int = SKILL_LINES_MAX) -> bool:
+        n = len(self.skills)
+        return min(SKILL_LINES_MIN, max(1, cap - fixed)) <= n - fixed and n <= cap
 
-    def all_ok(self, fixed: int = 0) -> bool:
+    def all_ok(self, fixed: int = 0, cap: int = SKILL_LINES_MAX) -> bool:
         return (not self.short_skills() and not self.short_bullets()
-                and self.skill_count_ok(fixed))
+                and self.skill_count_ok(fixed, cap))
 
-    def score(self, fixed: int = 0) -> float:
+    def score(self, fixed: int = 0, cap: int = SKILL_LINES_MAX) -> float:
         """Higher is better. A wrapped skills line is the worst defect (it breaks the
         one-line-per-category look); then full skills lines, then bullets that land."""
         s = 2.0 * self.skills_full - 3.0 * self.skills_wrapped + 1.0 * self.bullets_ok
-        if self.skill_count_ok(fixed):
+        if self.skill_count_ok(fixed, cap):
             s += 2.0
         # Break ties toward fuller last lines.
         s += 0.01 * sum(min(1.0, i.last_fill) for i in self.items if i.found)
@@ -324,7 +329,7 @@ def measure(pdf_path, profile: dict, lines: list[PdfLine] | None = None) -> Line
 
 
 # --------------------------------------------------------------------------- #
-# The Skills packer: 5 to 6 one-line categories, each reaching the right margin
+# The Skills packer: 4 to 5 one-line lines, each reaching the right margin
 # --------------------------------------------------------------------------- #
 
 _TERM_SPLIT = re.compile(r",(?![^()]*\))")
@@ -466,22 +471,171 @@ class SkillPack:
 
     @property
     def needs_more(self) -> bool:
-        """Not enough real material for 5 full lines: the caller should ask the person."""
+        """Not enough real material for full lines: the caller should ask the person."""
         return bool(self.short) or self.lines < SKILL_LINES_MIN
 
 
+# A catch-all heading names nothing: two lines merged into it keep the other line's name.
+_CATCH_ALL = re.compile(r"^(?:domain knowledge|knowledge|other(?: skills)?|additional skills|"
+                        r"skills|general|misc(?:ellaneous)?)$", re.I)
+
+
 def _merged_label(a: str, b: str) -> str:
+    if _CATCH_ALL.match(str(b).strip()):
+        return a
+    if _CATCH_ALL.match(str(a).strip()):
+        return b
     head = lambda s: s.split(" & ")[0].strip()
     lab = f"{head(a)} & {head(b)}"
     return lab if len(lab) <= 34 else a
 
 
+# A VAGUE skills phrase: several plain words ending in a generic noun, naming no tool, product or
+# acronym ("evidence-based recommendations", "revenue and cost analysis"). On a crowded Skills
+# block these go before concrete tools (Kofi, 2026-11-10).
+_VAGUE_HEADS = frozenset("""analysis analyses analytics recommendations insights insight decisions
+    decision-making improvement improvements management planning thinking solutions strategy
+    strategies skills communication initiatives optimization excellence alignment
+    understanding awareness mindset approach approaches best-practices practices outcomes
+    storytelling problem-solving""".split())
+
+
+def is_vague_skill(term: str) -> bool:
+    """True for a generic multi-word phrase on a skills line ("revenue and cost analysis"),
+    False for a tool, product, acronym or a single word ("Power BI", "KPI frameworks", "SQL")."""
+    raw = re.sub(r"\s*\(.*\)$", "", str(term or "")).strip()
+    words = re.findall(r"[A-Za-z][A-Za-z+#.'&/-]*", raw)
+    if len(words) < 2 or re.search(r"[0-9+#]", raw):
+        return False
+    if any(len(w) >= 2 and w.isupper() for w in words):          # KPI, SQL, CRM, ERP
+        return False
+    if any(any(ch.isupper() for ch in w) for w in words[1:]):     # Power BI, Azure Data Factory
+        return False
+    if term_families(raw) - {"data"}:
+        return False
+    return words[-1].lower() in _VAGUE_HEADS
+
+
+def term_priority(term: str, rel: Callable[[str], bool], keep: set) -> int:
+    """How strongly a term holds its place on a crowded Skills block, lower holds longer: a job
+    term the person supports (0), a term they ADDed themselves (1, their own assertion), a
+    concrete tool or method (2), a vague phrase (3). Ties keep the block's own order."""
+    if rel(term):
+        return 0
+    if _tkey(term) in keep:
+        return 1
+    return 3 if is_vague_skill(term) else 2
+
+
+def _theme_gap(a: set, b: set) -> int:
+    if a & b:
+        return 0
+    if any(_NEIGHBORS.get(t, set()) & b for t in a):
+        return 1
+    return 2
+
+
+def _merge_two(la: "_Line", lb: "_Line", width_fn, avail: float, prio) -> tuple:
+    """Merge two lines into one: the terms in priority order, the lowest shed until it fits."""
+    lab = _merged_label(la.label, lb.label)
+    terms = sorted(la.terms + lb.terms, key=prio)
+    shed: list[str] = []
+    while len(terms) > 1 and width_fn(lab, terms) > avail:
+        shed.insert(0, terms.pop())
+    return lab, terms, shed
+
+
+def _cap_lines(lines: list, cap: int, width_fn, avail: float, prio) -> list[str]:
+    """Merge category lines, closest in meaning first, until at most ``cap`` remain. Each merge
+    is the pair that sheds the fewest job terms, then the fewest ADDed terms, then the closest
+    themes, then the fewest concrete terms; vague phrases go first. Returns the shed terms."""
+    out: list[str] = []
+    while True:
+        cat = [ln for ln in lines if not ln.fixed]
+        if len(cat) <= max(1, cap):
+            return out
+        best = None
+        for i in range(len(cat)):
+            for j in range(i + 1, len(cat)):
+                la, lb = cat[i], cat[j]
+                lab, terms, shed = _merge_two(la, lb, width_fn, avail, prio)
+                n = lambda k: sum(1 for t in shed if prio(t) == k)
+                cost = (n(0), n(1), _theme_gap(la.themes, lb.themes), n(2), n(3),
+                        -width_fn(lab, terms))
+                if best is None or cost < best[0]:
+                    best = (cost, la, lb, lab, terms, shed)
+        _c, la, lb, lab, terms, shed = best
+        la.label, la.terms, la.themes = lab, terms, la.themes | lb.themes
+        lines.remove(lb)
+        out += shed
+
+
+def _rescue(lines: list, terms: list[str], width_fn, avail: float, prio) -> list[str]:
+    """Put each must-keep term (a job term or one the person ADDed) back on a line: the line of
+    its own kind where it fits, else the line where shedding the fewest lower-priority terms
+    makes room. Returns the terms shed to make room, and any term that found no place."""
+    shed_all: list[str] = []
+    for term in terms:
+        cat = [ln for ln in lines if not ln.fixed]
+        if not cat:
+            shed_all.append(term)
+            continue
+        theme = skill_theme(term)
+
+        def kin(ln):
+            return (-_family_affinity(term, ln.label, ln.terms),
+                    0 if theme in ln.themes else (1 if ln.themes & _NEIGHBORS.get(theme, set()) else 2))
+        best = None
+        for ln in cat:
+            new = sorted(ln.terms + [term], key=prio)
+            shed: list[str] = []
+            while width_fn(ln.label, new) > avail:
+                low = [t for t in new if t != term and prio(t) > prio(term)]
+                if not low:
+                    break
+                drop = low[-1]
+                new.remove(drop)
+                shed.insert(0, drop)
+            if width_fn(ln.label, new) > avail:
+                continue
+            cost = ((sum(1 for t in shed if prio(t) < 3),) + kin(ln)
+                    + (len(shed), width_fn(ln.label, ln.terms)))
+            if best is None or cost < best[0]:
+                best = (cost, ln, new, shed)
+        if best is None:
+            shed_all.append(term)
+            continue
+        _c, ln, new, shed = best
+        ln.terms = new
+        shed_all += shed
+    return shed_all
+
+
+def cap_skill_block(skills: dict, max_lines: int = SKILL_LINES_MAX, *, jd_text: str = "",
+                    keep=(), width_fn: Callable[[str, list[str]], float] = estimate_width,
+                    avail: float | None = None) -> dict:
+    """The Skills block at most ``max_lines`` lines (a Certifications line counts), with nothing
+    else changed when it already is. Over the cap, lines closest in meaning merge into one
+    heading; what no longer fits goes in priority order (``term_priority``): vague phrases and
+    terms the job does not ask for first, never a job term or a term the person ADDed while
+    another can go. What goes stays in the person's saved material (the caller keeps it)."""
+    if not isinstance(skills, dict) or len(skills) <= max(1, int(max_lines)):
+        return skills
+    # Merged lines are sized by estimate before the page is measured: a small margin keeps one
+    # from wrapping on the real page (the fit loop later packs them to the edge).
+    return pack_skills(skills, (), width_fn=width_fn, avail=avail, jd_text=jd_text,
+                       min_lines=0, max_lines=max_lines, allow_new_lines=False, keep=keep,
+                       tidy=False, merge_margin=CAP_ESTIMATE_MARGIN).skills
+
+
 def pack_skills(skills: dict, pool=(), *, width_fn: Callable[[str, list[str]], float] = estimate_width,
                 avail: float | None = None, jd_text: str = "", target: float = SKILL_LINE_TARGET,
                 min_lines: int = SKILL_LINES_MIN, max_lines: int = SKILL_LINES_MAX,
-                allow_new_lines: bool = True) -> SkillPack:
-    """Arrange the person's skills into ``min_lines``..``max_lines`` one-line categories, each
-    packed as close to the right margin as their real terms allow.
+                allow_new_lines: bool = True, keep=(), tidy: bool = True,
+                merge_margin: float = 1.0) -> SkillPack:
+    """Arrange the person's skills into at least ``min_lines`` one-line categories and at most
+    ``max_lines`` lines in all (a Certifications line counts), each packed as close to the right
+    margin as their real terms allow.
 
     ``skills`` is the current block; ``pool`` is MORE of the person's own terms (already
     vetted by the caller: stated skills, brain facts, JD terms their material shows). Nothing
@@ -494,6 +648,12 @@ def pack_skills(skills: dict, pool=(), *, width_fn: Callable[[str, list[str]], f
     person instead of padding. ``width_fn(label, terms)`` measures a line in the same units
     as ``avail`` (the estimate at the template's 10pt by default; tailoring/linefit.fit_lines
     passes one calibrated to the real page).
+
+    Over ``max_lines``, the lines closest in meaning merge (``_cap_lines``) and what no longer
+    fits goes in ``term_priority`` order: vague phrases and terms the job does not ask for first.
+    A job term or a term in ``keep`` (the person ADDed it) that was on the block is put back on
+    some line (``_rescue``), so the page's keyword match never falls. ``tidy`` False only caps:
+    no filling from the pool and no merging of short lines (a rebuild after the person's edit).
     """
     from .keywords import term_present
     from .textwidth import TEXTWIDTH_PT
@@ -501,6 +661,8 @@ def pack_skills(skills: dict, pool=(), *, width_fn: Callable[[str, list[str]], f
     goal = target * avail
     jd = str(jd_text or "")
     rel = (lambda t: term_present(_tkey(t) or t, jd)) if jd else (lambda t: False)
+    keep_keys = {_tkey(k) for k in keep or () if _tkey(k)}
+    prio = lambda t: term_priority(t, rel, keep_keys)
 
     lines: list[_Line] = []
     seen: set[str] = set()
@@ -520,14 +682,18 @@ def pack_skills(skills: dict, pool=(), *, width_fn: Callable[[str, list[str]], f
         if t and _tkey(t) not in seen:
             seen.add(_tkey(t))
             spare.append((t, skill_theme(t)))
-    spare.sort(key=lambda x: 0 if rel(x[0]) else 1)      # JD terms first (stable)
+    spare.sort(key=lambda x: prio(x[0]))                 # JD terms first (stable)
 
     w = lambda ln, extra=(): width_fn(ln.label, ln.terms + list(extra))
     cat_lines = lambda: [ln for ln in lines if not ln.fixed]
+    cap = max(1, int(max_lines) - sum(1 for ln in lines if ln.fixed))     # category lines
+    min_lines = min(int(min_lines), cap)
+    must = {_tkey(t) for ln in cat_lines() for t in ln.terms if prio(t) <= 1}
+    was_on = {_tkey(t) for ln in cat_lines() for t in ln.terms}
 
     # 1. JD terms first on every line; a line that wraps sheds its least relevant terms.
     for ln in cat_lines():
-        ln.terms.sort(key=lambda t: 0 if rel(t) else 1)
+        ln.terms.sort(key=prio)
         while len(ln.terms) > 1 and w(ln) > avail:
             t = ln.terms.pop()
             spare.append((t, skill_theme(t)))
@@ -560,8 +726,28 @@ def pack_skills(skills: dict, pool=(), *, width_fn: Callable[[str, list[str]], f
                     continue
                 ln.terms.append(spare.pop(best_k)[0])
 
+    def rescue():
+        nonlocal spare
+        back = [t for t, _th in spare
+                if prio(t) <= 1 and (_tkey(t) in must or _tkey(t) in keep_keys)]
+        if back:
+            spare = [(t, th) for t, th in spare if t not in back]
+            spare.extend((t, skill_theme(t)) for t in _rescue(lines, back, width_fn, avail, prio))
+
+    # 1b. Over the cap: the closest lines in meaning merge, shedding vague and non-job terms
+    # first (they stay in the person's material); then every job term and ADDed term that was
+    # on the block goes back on a line before anything from the pool, so the keyword match never
+    # falls. From here on a line is sized with ``merge_margin`` (an estimate before the page is
+    # measured): a merged or refilled line never runs to the estimated edge.
+    if len(cat_lines()) > cap:
+        avail = avail * merge_margin
+        spare.extend((t, skill_theme(t)) for t in _cap_lines(lines, cap, width_fn, avail, prio))
+        spare.sort(key=lambda x: prio(x[0]))
+        rescue()
+
     # 2. Fill every line from its own themes.
-    fill(cat_lines())
+    if tidy:
+        fill(cat_lines())
 
     # 3. New lines from spare material until there are min_lines, full ones only.
     if allow_new_lines:
@@ -586,10 +772,11 @@ def pack_skills(skills: dict, pool=(), *, width_fn: Callable[[str, list[str]], f
                 break
 
     # 3b. A line still short may take a neighbouring theme's terms.
-    fill(cat_lines(), neighbors=True)
+    if tidy:
+        fill(cat_lines(), neighbors=True)
 
     # 4. Merge two short lines that make one full line (or when there are too many lines).
-    while True:
+    while tidy:
         short = [ln for ln in cat_lines() if w(ln) < goal]
         best = None
         for i in range(len(short)):
@@ -597,7 +784,7 @@ def pack_skills(skills: dict, pool=(), *, width_fn: Callable[[str, list[str]], f
                 la, lb = short[i], short[j]
                 lab = _merged_label(la.label, lb.label)
                 ww = width_fn(lab, la.terms + lb.terms)
-                if ww <= avail and (ww >= goal or len(cat_lines()) > max_lines):
+                if ww <= avail and (ww >= goal or len(cat_lines()) > cap):
                     if best is None or ww > best[0]:
                         best = (ww, la, lb, lab)
         if best is None:
@@ -607,12 +794,19 @@ def pack_skills(skills: dict, pool=(), *, width_fn: Callable[[str, list[str]], f
         lines.remove(lb)
         fill([la])
 
-    # 5. Too many lines: the least relevant one goes (its terms stay in the person's material).
-    while len(cat_lines()) > max_lines:
-        drop = min(reversed(cat_lines()), key=lambda ln: sum(1 for t in ln.terms if rel(t)))
-        lines.remove(drop)
-        spare.extend((t, skill_theme(t)) for t in drop.terms)
+    # 5. Still too many lines (a merge above can only lower the count): cap again. Then every
+    # job term and ADDed term that was on the block goes back on a line.
+    if len(cat_lines()) > cap:
+        spare.extend((t, skill_theme(t)) for t in _cap_lines(lines, cap, width_fn, avail, prio))
+        spare.sort(key=lambda x: prio(x[0]))
         fill(cat_lines())
+    rescue()
+    # A concrete term the block lost goes back in place of vague phrases, never of anything else.
+    if any(prio(t) == 3 for ln in cat_lines() for t in ln.terms):
+        swap = [t for t, _th in spare if prio(t) == 2 and _tkey(t) in was_on]
+        if swap:
+            spare = [(t, th) for t, th in spare if t not in swap]
+            spare.extend((t, skill_theme(t)) for t in _rescue(lines, swap, width_fn, avail, prio))
 
     # 6. Order: the lines the job asks most about first, fixed lines (certifications) last.
     order = sorted(range(len(lines)), key=lambda i: (lines[i].fixed,
@@ -977,7 +1171,8 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
               known_figures: set | None = None, origins: dict | None = None,
               rounds: int = FIT_ROUNDS, fit_bullets: bool = True,
               jobname: str = "cv", trimmed: dict | None = None,
-              fill_goal: float | None = None) -> FitOutcome:
+              fill_goal: float | None = None, skill_cap: int = SKILL_LINES_MAX,
+              skill_keep=()) -> FitOutcome:
     """Measure the compiled page and fix the lines that stop short, for up to ``rounds``
     rounds. Each round: repack the Skills block with widths calibrated to the real page, and
     ask the model to fill or trim each short bullet to a measured character window; compile;
@@ -994,6 +1189,8 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     same thing twice. ``fill_goal``: while the page is shorter than this, a bullet that spills
     a word onto a new line is FILLED to run that line out, never trimmed back (a trim takes a
     line off a page that is already short; white space is never acceptable).
+    ``skill_cap``: the most lines the Skills block may hold (a Certifications line counts);
+    ``skill_keep``: terms the person ADDed, which a repack never sheds while another can go.
     """
     from .fact_gate import gate_rewrite
     from .filler import borrows_from_sibling, is_padded, repeats_sibling, tacked_on_terms
@@ -1016,7 +1213,7 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     tried: dict[int, set] = {}
 
     for rnd in range(max(0, int(rounds))):
-        if best_rep.all_ok(fixed_n(best_rep)):
+        if best_rep.all_ok(fixed_n(best_rep), skill_cap):
             break
         cand = copy.deepcopy(best_p)
         grow: list[int] = []             # slots whose rewrite is longer (may cost height)
@@ -1029,11 +1226,12 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
         # Skills: repack with calibrated widths.
         pack = None
         if (best_rep.short_skills() or best_rep.skills_wrapped
-                or not best_rep.skill_count_ok(fixed_n(best_rep))) and cand.get("skills"):
+                or not best_rep.skill_count_ok(fixed_n(best_rep), skill_cap)) and cand.get("skills"):
             k = calibrate(best_rep)
             pack = pack_skills(cand["skills"], pool,
                                width_fn=lambda lab, terms: k * estimate_width(lab, terms),
-                               avail=best_rep.width - 1.5, jd_text=jd_text)
+                               avail=best_rep.width - 1.5, jd_text=jd_text,
+                               max_lines=skill_cap, keep=skill_keep)
             if pack.skills != cand["skills"]:
                 round_changes.append({"kind": "skills", "label": "Skills",
                                       "before": dict(cand["skills"]), "after": dict(pack.skills)})
@@ -1121,8 +1319,9 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                 p2 = pack_skills(best_p["skills"], pool,
                                  width_fn=lambda lab, terms: k * estimate_width(lab, terms),
                                  avail=best_rep.width - 1.5, jd_text=jd_text,
-                                 allow_new_lines=False,
-                                 min_lines=0, max_lines=max(1, len(best_p["skills"])))
+                                 allow_new_lines=False, keep=skill_keep,
+                                 min_lines=0,
+                                 max_lines=min(skill_cap, max(1, len(best_p["skills"]))))
                 safe["skills"] = p2.skills
             cand = safe
             round_changes = [c for c in round_changes
@@ -1159,7 +1358,7 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
             r, rep = trial(cand, "m")
             if rep is None:
                 continue
-        if rep.score(fixed_n(rep)) <= best_rep.score(fixed_n(best_rep)):
+        if rep.score(fixed_n(rep), skill_cap) <= best_rep.score(fixed_n(best_rep), skill_cap):
             _say("linefit", "Fitting the page", "no better than before, keeping the last version",
                  state="retry", detail=f"round {rnd + 1} of {rounds}")
         else:

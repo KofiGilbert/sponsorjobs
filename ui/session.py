@@ -152,7 +152,7 @@ def _bullet_owner(label) -> str:
     return t if t and t.lower() != "entry" else ""
 
 
-# Roughly how many real skill terms fill 5 to 6 full-width Skills lines (tailoring/linefit.py).
+# Roughly how many real skill terms fill 4 to 5 full-width Skills lines (tailoring/linefit.py).
 # Below this the enrichment interview asks for more tools and skills per area.
 SKILLS_FOR_FULL_LINES = 24
 
@@ -2550,6 +2550,8 @@ class WebIntake:
         """
         rendered = self._restore_hidden(used)          # constraint-hidden items first
         master = self.profile or {}
+        # A skill the page's capped Skills block left off stays in their saved skills.
+        self._keep_dropped_skills(master.get("skills"), rendered.get("skills"))
         if not master.get("experience"):
             return rendered
         if not rendered.get("experience"):
@@ -4914,7 +4916,8 @@ class WebIntake:
                 jobname=self.jobname, tailor=True, sections=self.sections,
                 headings=self.headings, choices=self._choices_plan(),
                 keep=self.kept_trims, material=self._fit_material(),
-                fit_lines=True, skill_pool=self._skill_pool())
+                fit_lines=True, skill_pool=self._skill_pool(),
+                skill_cap=self._skill_cap(), skill_keep=self._skill_keep())
             self._last_reverted = list(getattr(self.assembled, "reverted", None) or [])
             self._written = list(getattr(self.assembled, "written", None) or [])
             self.profile = self._whole_profile_after_render(self.assembled.profile_used)
@@ -5184,17 +5187,53 @@ class WebIntake:
         return out
 
     def _fill_skills(self):
-        """Pack the Skills block into 5 to 6 one-line categories that each reach the right
-        margin (the owner's layout rule, tailoring/linefit.pack_skills), from the person's
-        OWN skills only: the block itself plus ``_skill_pool`` (stated skills, brain facts,
-        the saved profile, and JD terms their genuine material shows). JD terms go first
-        (ATS alignment, CLAUDE.md section 8); nothing is ever invented. This is the estimate
-        pass; the build then measures the real page and corrects it (assembler fit_lines)."""
+        """Pack the Skills block into 4 to 5 one-line lines (at most ``_skill_cap``, a
+        Certifications line included) that each reach the right margin (the owner's layout
+        rule, tailoring/linefit.pack_skills), from the person's OWN skills only: the block
+        itself plus ``_skill_pool`` (stated skills, brain facts, the saved profile, and JD terms
+        their genuine material shows). JD terms go first (ATS alignment, CLAUDE.md section 8),
+        then the terms they ADDed; vague phrases go before concrete tools when the lines are
+        full; nothing is ever invented. A term that no longer fits stays in their saved skills.
+        This is the estimate pass; the build then measures the real page and corrects it
+        (assembler fit_lines)."""
         skills = self.profile.get("skills") or {}
         if not skills:
             return
         from tailoring.linefit import pack_skills
-        self.profile["skills"] = pack_skills(skills, self._skill_pool(), jd_text=self.jd).skills
+        packed = pack_skills(skills, self._skill_pool(), jd_text=self.jd,
+                             max_lines=self._skill_cap(), keep=self._skill_keep()).skills
+        self._keep_dropped_skills(skills, packed)
+        self.profile["skills"] = packed
+
+    def _skill_cap(self) -> int:
+        """The most lines this template's Skills block may hold (5 unless its manifest says)."""
+        from intake.template_manifest import max_skill_lines
+        return max_skill_lines(self.manifest or {})
+
+    def _skill_keep(self) -> list[str]:
+        """Skills the person ADDed from a job's keywords: their own assertions, kept on the page
+        over every term the job does not ask for."""
+        e = self.essentials or {}
+        out = [str(x) for x in (e.get("skills_from_jobs") or []) if str(x).strip()]
+        out += [str(a.get("term")) for a in (getattr(self, "keyword_actions", None) or [])
+                if a.get("kind") == "skill" and str(a.get("term") or "").strip()]
+        return list(dict.fromkeys(out))
+
+    def _keep_dropped_skills(self, before: dict, after: dict) -> None:
+        """A skill the capped Skills block no longer shows stays the person's own: it goes to
+        their stated skills (which every later build reads), never lost."""
+        from tailoring.keywords import is_requirement
+        from tailoring.linefit import split_terms, _tkey
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            return
+        shown = {_tkey(t) for v in after.values() for t in split_terms(v)}
+        si = self.essentials.setdefault("skills_input", [])
+        have = {str(x).lower() for x in si}
+        for v in before.values():
+            for t in split_terms(v):
+                if _tkey(t) not in shown and t.lower() not in have and not is_requirement(t):
+                    si.append(t)
+                    have.add(t.lower())
 
     def _brain_skills(self) -> list[str]:
         """Skills the person told the brain they have (key ``skill``, active)."""
@@ -5482,7 +5521,7 @@ class WebIntake:
                 topics.append(("skills", "the key skills you'd want highlighted"))
             elif (len(e.get("skills_input") or []) < SKILLS_FOR_FULL_LINES
                   and not (declined & {"skills", "skills_more"})):
-                # Thin: 5 to 6 full-width skills lines need roughly 30 real terms. Ask for
+                # Thin: 4 to 5 full-width skills lines need roughly 24 real terms. Ask for
                 # more tools and skills per area, naming what this job asks for.
                 ask = self._missing_jd_skills()[:3] if self.jd else []
                 named = (f" (this role mentions {', '.join(ask[:-1])} and {ask[-1]})"
@@ -5845,6 +5884,7 @@ class WebIntake:
             # A fresh build may write bullets for a short page; a rebuild after the person's
             # own edit never writes behind their back.
             fill_writes=fit_lines,
+            skill_cap=self._skill_cap(), skill_keep=self._skill_keep(),
         )
         if fit_lines:
             self._written = list(getattr(self.assembled, "written", None) or [])
@@ -6328,7 +6368,7 @@ class WebIntake:
         # A skill the person ADDed earlier is never pushed off the page by the next one: Kofi
         # ADDed Azure Data Factory three times because each new ADD shed the last (2026-11-10).
         pl = place_term(self.profile.get("skills") or {}, term, width_fn=width_fn, avail=avail,
-                        jd_text=self.jd, keep=[a["term"] for a in self.keyword_actions])
+                        jd_text=self.jd, keep=self._skill_keep())
         if pl.already and self._term_on_page(term):
             self._persist()
             return self._keyword_result(term, True, "")

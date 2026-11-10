@@ -42,7 +42,7 @@ DOC_END = r"\end{document}"
 # sentence. The one-page self-heal loop remains the guardrail against overflow.
 LENGTH_BUDGET = 1.10
 # The Skills block never shrinks below this many lines to fit the page (linefit.SKILL_LINES_MIN).
-SKILL_LINES_FLOOR = 5
+SKILL_LINES_FLOOR = 4
 FULL_LINE_CHARS = 165   # ~ one full template bullet line
 
 def _bullet_budget(original: str) -> int:
@@ -1371,8 +1371,8 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
             projects.pop(idx)
             return True
 
-    # 7. Skills keep 5 to 6 full-width categories (the owner's layout rule, linefit.py):
-    # drop a line ONLY above the 5-category floor, so it can go 6 -> 5 but never below 5.
+    # 7. Skills keep 4 to 5 full-width lines (the owner's layout rule, linefit.py): drop a line
+    # ONLY above the 4-line floor, so it can go 5 -> 4 but never below 4.
     if len(profile.get("skills", {})) > SKILL_LINES_FLOOR:
         last = next((k for k in reversed(list(profile["skills"]))
                      if not cuts.kept("skills_line", str(k), str(k))), None)
@@ -2257,6 +2257,8 @@ def assemble_cv(
     skill_pool=(),
     fit_rounds: int | None = None,
     fill_writes: bool | None = None,
+    skill_cap: int | None = None,
+    skill_keep=(),
 ) -> AssembleResult:
     """Assemble a one-page CV from ``profile`` in the template's shape.
 
@@ -2270,7 +2272,7 @@ def assemble_cv(
     the fact gate may trace a rewrite to.
 
     ``fit_lines`` runs the full-width line loop (tailoring/linefit.py) on the finished page:
-    5 to 6 one-line Skills categories that reach the right margin, and every bullet's last
+    4 to 5 one-line Skills lines that reach the right margin, and every bullet's last
     line close to the edge, measured on the PDF, never worse than before. ``skill_pool`` is
     more of the person's own skills it may place (the caller vets them; the fact gate checks
     them again). Its rounds show in the live activity feed (ui/activity.py) as "Fitting the
@@ -2289,9 +2291,14 @@ def assemble_cv(
     _dedupe_entry_bullets(full_profile)      # one fact, one bullet, per entry
     # A Skills line shows skills: no degree, certification or years of experience, no "BI"
     # beside "Power BI", no "CI" and "CD" for CI/CD (tailoring/linefit.clean_skill_block).
+    # At most ``skill_cap`` Skills lines (linefit.SKILL_LINES_MAX unless the template's manifest
+    # says otherwise): lines merge by meaning, vague and non-job terms go first, never a job term
+    # or one the person ADDed (``skill_keep``) while another can go (linefit.cap_skill_block).
+    from . import linefit as _lfm
+    cap = int(skill_cap or _lfm.SKILL_LINES_MAX)
     if isinstance(full_profile.get("skills"), dict):
-        from .linefit import clean_skill_block
-        full_profile["skills"] = clean_skill_block(full_profile["skills"])
+        full_profile["skills"] = _lfm.cap_skill_block(
+            _lfm.clean_skill_block(full_profile["skills"]), cap, jd_text=jd_text, keep=skill_keep)
     source_material = full_profile           # every figure the person actually supplied
     # Pick the roles this JD actually cares about BEFORE tailoring. A full career on one
     # page is not a resume, it is an index: every role gets squeezed to a single line and
@@ -2373,8 +2380,8 @@ def assemble_cv(
                 src_role.setdefault("bullets", []).append(rec["source"])
     _say("compile", "Compiling", "the PDF")
 
-    # FULL-WIDTH LINES (tailoring/linefit.py). Measured on the real page: Skills packed into 5
-    # to 6 one-line categories that reach the right margin, each bullet's last line filled or a
+    # FULL-WIDTH LINES (tailoring/linefit.py). Measured on the real page: Skills packed into 4
+    # to 5 one-line lines that reach the right margin, each bullet's last line filled or a
     # one-word spill trimmed. Each round must keep the page clean and score better, so the
     # result is never worse than the page above.
     line_fit = line_before = line_gaps = pre_fit = None
@@ -2395,7 +2402,8 @@ def assemble_cv(
             trimmed=_trimmed_by_label(trims),
             known=known_material(*gate_material), known_figures=source_figures(*gate_material),
             origins=origins, rounds=_lf.FIT_ROUNDS if fit_rounds is None else fit_rounds,
-            fit_bullets=llm is not None, jobname=jobname, fill_goal=FILL_GOAL)
+            fit_bullets=llm is not None, jobname=jobname, fill_goal=FILL_GOAL,
+            skill_cap=cap, skill_keep=skill_keep)
         if fo.result is not result:
             used, result = fo.profile, fo.result
         # A fit rewrite the guards refused never reached the page, so there is nothing for

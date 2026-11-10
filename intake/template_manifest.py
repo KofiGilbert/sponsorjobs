@@ -115,3 +115,15 @@ def headings(manifest: dict) -> dict:
     nursing, or consulting resume. Missing keys keep the renderer's default."""
     h = manifest.get("headings")
     return {str(k): str(v) for k, v in h.items() if str(v).strip()} if isinstance(h, dict) else {}
+
+
+def max_skill_lines(manifest: dict) -> int:
+    """How many lines the template's Skills block may hold, a Certifications line included.
+    At most 5 by default (tailoring/linefit.SKILL_LINES_MAX, Kofi 2026-11-10: the space goes to
+    experience bullets); a manifest sets ``max_skill_lines`` only when its design needs more."""
+    from tailoring.linefit import SKILL_LINES_MAX
+    try:
+        n = int((manifest or {}).get("max_skill_lines") or SKILL_LINES_MAX)
+    except (TypeError, ValueError):
+        n = SKILL_LINES_MAX
+    return max(1, n)
