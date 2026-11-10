@@ -96,7 +96,7 @@ def test_ongoing_role_dates_render_as_range_to_present():
     assert format_dates("December 2025 - February 2020") == ""
     assert format_dates("2020 - 2019") == ""
     assert format_dates("Dec 2020 - Jan 2020") == ""
-    assert format_dates("Feb 2020 - Feb 2020") == "Feb 2020 - Feb 2020"   # equal is fine
+    assert format_dates("Feb 2020 - Feb 2020") == "Feb 2020"   # equal is fine: one month, said once
 
 
 def test_education_program_regular_weight_school_bold(template_source):

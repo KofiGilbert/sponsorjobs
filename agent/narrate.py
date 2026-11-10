@@ -189,6 +189,50 @@ def claims_change(text: str) -> bool:
     return False
 
 
+# A sentence that says something went INTO a named section of the resume ("I've added them to
+# your Extracurricular section", "football now sits under your Interests section"). Kofi's
+# answer to the outside-work question never reached the page, and the message still said it had
+# been added to his Extracurricular section (2026-11-10). The session checks each such claim
+# against the page (WebIntake._section_claims_fix) and retells a false one.
+_SECTION_REF = re.compile(
+    r"\b(?:your|the|its|his|her|their|my|an?)\s+([A-Za-z][A-Za-z&/]*(?:\s+[A-Za-z&/]+){0,2})"
+    r"\s+section\b", re.I)
+_SECTION_VERB = re.compile(
+    r"\b(?:added|adding|put|placed|placing|moved|moving|included|including|listed|listing|"
+    r"filled|filling|saved|saving|went|goes|go|folded|slotted|dropped|landed|lands|"
+    r"now\s+(?:sits?|appears?|shows?|lives?|reads?))\b", re.I)
+_NOT_A_LABEL = frozenset({"a", "an", "the", "this", "that", "each", "every", "whole", "same",
+                          "new", "next", "last", "first", "empty", "other", "another", "any"})
+
+
+def section_claims(text: str) -> list[tuple[str, str]]:
+    """[(sentence, section label)] for every sentence that says something was added to, put in
+    or moved into a named section: not a negated one, not a question."""
+    out = []
+    for sent in re.split(r"(?<=[.!?])\s+", str(text or "")):
+        s = sent.strip()
+        if not s or s.endswith("?") or _NOT.search(s) or not _SECTION_VERB.search(s):
+            continue
+        m = _SECTION_REF.search(s)
+        if not m:
+            continue
+        label = re.sub(r"\s+", " ", m.group(1)).strip()
+        if not label or label.lower() in _NOT_A_LABEL:
+            continue
+        out.append((sent, label))
+    return out
+
+
+def section_not_added(label: str, message: str = "") -> str:
+    """The truth in place of a false "added to your X section" sentence: what the person said
+    was noted, and that section is still empty on the page."""
+    gist = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", str(message or ""))).strip(" .!")
+    noted = (f"I noted what you said ({gist})" if gist and len(gist) <= 80
+             else "I noted what you told me")
+    return (f"{noted}, but nothing went into your {label} section this time, so it is still "
+            f"empty on the page.")
+
+
 def share_to_connect(text: str) -> tuple[str, bool]:
     """("share your GitHub" -> "connect your GitHub with the button below", whether it was said)."""
     if not _SHARE_GITHUB.search(text or ""):

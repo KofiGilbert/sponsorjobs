@@ -57,13 +57,18 @@ def _when(iso: str) -> datetime | None:
 
 
 def dates_from(meta: dict, now: datetime) -> str:
-    """"Mon YYYY - Mon YYYY", or "Mon YYYY - Present" when pushed in the last 60 days."""
+    """"Mon YYYY - Mon YYYY", or "Mon YYYY - Present" when pushed in the last 60 days. A repo
+    created and last pushed in the same month is that one month ("Jul 2026"), never
+    "Jul 2026 - Jul 2026" (Kofi's Last-Mile project, 2026-11-10)."""
     start, end = _when(meta.get("created_at")), _when(meta.get("pushed_at"))
     if not start:
         return ""
     if end and (now - end).days <= RECENT_DAYS:
         return f"{start:%b %Y} - Present"
-    return f"{start:%b %Y} - {(end or start):%b %Y}"
+    end = end or start
+    if (start.year, start.month) == (end.year, end.month):
+        return f"{start:%b %Y}"
+    return f"{start:%b %Y} - {end:%b %Y}"
 
 
 class _Cache:

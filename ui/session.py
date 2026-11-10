@@ -602,6 +602,31 @@ def _and_list(items: list) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
+_REPLY_LEAD = re.compile(
+    r"^(?:(?:well|so|yes|yeah|sure|ok(?:ay)?|mostly|mainly|just|also)[,:\s]+)*"
+    r"(?:(?:i(?:'m| am| also| mostly| mainly| like| enjoy| love| do| play)?|outside (?:of )?work,?|"
+    r"in my (?:spare|free) time,?|at (?:the )?weekends?,?)\s+)*", re.I)
+
+
+def _reply_items(msg: str) -> list[str]:
+    """The things a short reply names, as clean list items: "playing football and swimming"
+    is ["Playing football", "Swimming"]. Split on commas, semicolons, lines and "and"; a lead-in
+    ("I also", "outside work") goes; the first letter is capitalised; nothing is reworded."""
+    text = re.sub(r"\s+", " ", str(msg or "")).strip()
+    text = _REPLY_LEAD.sub("", text)
+    out: list[str] = []
+    for p in re.split(r"\s*(?:[\n;,]|\band\b|&|\+)\s*", text, flags=re.I):
+        p = re.sub(r"^(?:i\s+(?:also\s+)?|also\s+|and\s+)", "", p.strip(" .!-"), flags=re.I).strip()
+        if len(p) > 80:
+            p = p[:80].rsplit(" ", 1)[0].strip(" ,")
+        if len(p) < 2:
+            continue
+        p = p[0].upper() + p[1:]
+        if p.lower() not in {x.lower() for x in out}:
+            out.append(p)
+    return out
+
+
 def _upload_project(p: dict) -> dict:
     """One project read from an uploaded resume, in the essentials' project shape. Its name is
     the heading (``org``); the arrow a PDF shows after the name is dropped from it."""
@@ -4071,6 +4096,9 @@ class WebIntake:
                         "usage": res.get("usage"), "secs": res.get("secs"),
                         "kinds": [i.get("kind") for i in items]})
             final = final or _N.fallback(items) or said[-1]
+        # Whatever wrote the message (the model's one reply, the narrator, the fallback), a claim
+        # that something went into a named section is held to the page.
+        final = self._section_claims_fix(final, turn)
         self._voice_log = (list(self._voice_log) + [log])[-50:]
         _voice_logger(log)
         entry = {"role": "agent", "content": final}
@@ -4115,6 +4143,56 @@ class WebIntake:
                 text = shared
                 if not any(self._connect_buttons(c) for c in cards):
                     cards.append(connect_card())
+        return text
+
+    # Section names as a message may say them -> the profile key, beside the template's own
+    # headings (self.headings), for checking an "added to your X section" claim against the page.
+    _SECTION_NAMES = {"extracurricular": "extracurricular", "extracurriculars": "extracurricular",
+                      "activities": "extracurricular", "leadership": "extracurricular",
+                      "interests": "interests", "additional information": "interests",
+                      "skills": "skills", "technical skills": "skills", "projects": "projects",
+                      "experience": "experience", "work experience": "experience",
+                      "education": "education", "summary": "summary",
+                      "professional summary": "summary", "certifications": "certifications"}
+
+    def _section_key(self, label: str) -> str | None:
+        """The profile key a section name in a message refers to, or None for a name that is
+        not one of the resume's sections."""
+        low = re.sub(r"\s+", " ", str(label or "").replace("&", "and")).strip().lower()
+        heads = self.headings if isinstance(self.headings, dict) else {}
+        for k, h in heads.items():
+            h = str(h or "").replace("\\&", "and").replace("&", "and").replace("\\", "").strip().lower()
+            if h and h == low:
+                return k
+        return self._SECTION_NAMES.get(low)
+
+    def _section_shown(self, key: str) -> bool:
+        """True when the page (the built profile, else what is on file for the next build) holds
+        that section with something in it."""
+        if self.sections and key not in self.sections and key != "certifications":
+            return False
+        a = self.assembled
+        src = (getattr(a, "profile_used", None) or {}) if a is not None else (self.profile or {})
+        v = src.get(key)
+        if not v and a is None:
+            v = (self.essentials or {}).get(key)
+        if isinstance(v, dict):
+            return any(str(x or "").strip() for x in v.values())
+        if isinstance(v, list):
+            return any((x if isinstance(x, dict) else str(x or "").strip()) for x in v)
+        return bool(str(v or "").strip())
+
+    def _section_claims_fix(self, text: str, turn: dict | None = None) -> str:
+        """Every "I've added them to your Extracurricular section" in the message, checked
+        against the page: a section that is still empty gets the truth in that sentence's place
+        (agent/narrate.section_not_added). Kofi's answer was dropped and the AI said it had been
+        added (2026-11-10)."""
+        from agent import narrate as _N
+        for sent, label in _N.section_claims(text):
+            key = self._section_key(label)
+            if key is None or self._section_shown(key):
+                continue
+            text = text.replace(sent, _N.section_not_added(label, (turn or {}).get("message") or ""))
         return text
 
     # Brief kinds that report something the app did in this turn, so the message may say so even
@@ -4479,6 +4557,65 @@ class WebIntake:
             h = str(heads.get(k) or "").replace("\\&", "&").replace("\\", "").strip()
             out.append(h or k.replace("_", " ").capitalize())
         return out
+
+    def _known_required(self, open_req) -> list[tuple[str, str]]:
+        """[(label, gist)] for the template's required sections already on file (essentials or
+        the saved profile) while ``open_req`` are still asked for: what the question says it
+        already has, so nothing on the page reads as invented."""
+        e = self.essentials
+        saved = self.saved_profile or {}
+        out = []
+        for sec in self.required_fill or []:
+            if sec in open_req or not self._section_filled(sec, e, saved):
+                continue
+            v = e.get(sec) if self._section_filled(sec, e) else saved.get(sec)
+            if isinstance(v, list):
+                items = [str(x.get("title") if isinstance(x, dict) else x).strip() for x in v]
+            else:
+                items = [p.strip(" .") for p in re.split(r",|;|\band\b", str(v or "")) if p.strip(" .")]
+            items = [x for x in items if x][:4]
+            if not items:
+                continue
+            short = []
+            for it in items:
+                words = it.split()
+                short.append(" ".join(words[:7]) + ("..." if len(words) > 7 else ""))
+            out.append((self._required_labels([sec])[0], ", ".join(short)))
+        return out
+
+    def _absorb_required_reply(self, message: str, changed: bool) -> list[str]:
+        """A reply to the required-section question goes into the section that was ASKED. Kofi
+        answered "playing football and swimming" to the Extracurricular question; the model's
+        absorb read it as interests, which were already on file, and dropped it, so the page had
+        no Extracurricular section while the chat said it had been added (2026-11-10). When the
+        absorb changed nothing and the asked section is still empty, the reply's items go in as
+        that section's entries, cleaned, verbatim. A decline, a question or "that's everything"
+        is never material. Returns the sections filled."""
+        e = self.essentials
+        asked = [s for s in (e.get("required_open_at_ask") or []) if s in (self.required_fill or [])]
+        if changed or not asked:
+            return []
+        if not self._last_agent_said(e.get("required_ask_text"), asked="required"):
+            return []
+        msg = str(message or "").strip()
+        if not msg or msg.endswith("?") or _bare_decline(msg) or _wants_done(msg):
+            return []
+        items = _reply_items(msg)
+        if not items:
+            return []
+        declined = set(e.get("declined") or [])
+        saved = self.saved_profile or {}
+        for sec in asked:
+            if sec in declined or self._section_filled(sec, e, saved):
+                continue
+            if sec == "extracurricular":
+                e["extracurricular"] = [{"title": t, "date": "", "bullets": []} for t in items[:6]]
+            elif sec == "interests":
+                e["interests"] = _and_list(items[:6])
+            else:
+                e[sec] = msg
+            return [sec]
+        return []
 
     def _required_question_open(self) -> list[str]:
         """The required sections the person has been ASKED for and not yet answered or
@@ -5277,6 +5414,7 @@ class WebIntake:
             self._apply_essentials_locations()  # never drop an experience location (hard rule)
             date_flags = self._flag_placeholder_dates()  # year-only -> flagged placeholder months
             _activity.step("match", "Matching your experience", "to the skills this job asks for")
+            self._reselect_skills()  # this job's block from their whole pool, not the last job's
             self._validate_skills()  # drop any saved skill the person's material can't support
             self._fill_skills()   # foreground supported JD terms (no stretch, ragged if short)
             self._dedupe_skill_groups()  # one term, one line
@@ -5586,13 +5724,85 @@ class WebIntake:
         return max_skill_lines(self.manifest or {})
 
     def _skill_keep(self) -> list[str]:
-        """Skills the person ADDed from a job's keywords: their own assertions, kept on the page
-        over every term the job does not ask for."""
+        """Skills the person ADDed from a job's keywords that hold a place on THIS page: the ones
+        this ad names, and the ones ADDed on this very page. An ADD is the person's own fact and
+        stays in their stated skills for every later job, but it is kept over their other skills
+        only where the job asks for it. Every ADD from the D365 job (X++, Power Apps, Dataverse,
+        Logic Apps) used to be kept on a Google data scientist resume, so its Skills block was
+        another job's stack (Kofi, 2026-11-10)."""
+        from tailoring.keywords import term_present
         e = self.essentials or {}
-        out = [str(x) for x in (e.get("skills_from_jobs") or []) if str(x).strip()]
+        jd = str(self.jd or "")
+        out = [str(x) for x in (e.get("skills_from_jobs") or [])
+               if str(x).strip() and jd and term_present(str(x), jd)]
         out += [str(a.get("term")) for a in (getattr(self, "keyword_actions", None) or [])
                 if a.get("kind") == "skill" and str(a.get("term") or "").strip()]
         return list(dict.fromkeys(out))
+
+    def _reselect_skills(self) -> None:
+        """The Skills block SELECTED for this job, from the person's whole skill pool. The saved
+        block is the LAST job's render (its terms, its order, its group names), and a fresh build
+        from the saved profile carried it over whole: a Google data scientist resume led with
+        X++ under "Power Platform & Analysis" and "Microsoft & Azure Platform", the D365 job's
+        names (Kofi, 2026-11-10). Here the block starts again: the job's terms the person's
+        material shows first, then their strongest skills of the kinds this job asks about most
+        (the themes of the ad's skill terms, then how often their own material shows the term),
+        then the rest. Lines take fresh theme labels, never another job's; a Certifications line
+        stays as it is. pack_skills (_fill_skills) then fills, caps and orders the lines, and
+        _validate_skills still vets every term against their genuine material. Nothing is
+        invented and nothing is lost: a term the block leaves off stays in their stated skills."""
+        from collections import Counter
+        from tailoring.keywords import is_requirement, skill_terms, term_present
+        from tailoring.linefit import (_FIXED_LABEL, _NEIGHBORS, _THEME_LABELS, SKILL_LINE_TERMS,
+                                       _tkey, skill_theme, split_terms)
+        current = self.profile.get("skills") or {}
+        if not isinstance(current, dict):
+            return
+        fixed = {k: v for k, v in current.items() if _FIXED_LABEL.search(str(k))}
+        cands = list(self._skill_pool())
+        for k, v in current.items():
+            if k not in fixed:
+                cands += split_terms(v)
+        jd = str(self.jd or "")
+        rel = (lambda t: term_present(t, jd)) if jd else (lambda t: False)
+        weight = Counter(skill_theme(t) for t in skill_terms(jd)) if jd else Counter()
+        genuine = self._genuine_text().lower()
+
+        def evidence(t: str) -> int:
+            return len(re.findall(r"(?<![a-z0-9])" + re.escape(t.lower()) + r"(?![a-z0-9])", genuine))
+
+        seen: set[str] = set()
+        terms: list[str] = []
+        for t in cands:
+            t = str(t).strip()
+            k = _tkey(t)
+            if t and k and k not in seen and not is_requirement(t):
+                seen.add(k)
+                terms.append(t)
+        if not terms:
+            return
+        order = {t: i for i, t in enumerate(terms)}
+        rank = lambda t: (0 if rel(t) else 1, -weight.get(skill_theme(t), 0), -evidence(t), order[t])
+        terms.sort(key=rank)
+        groups: dict[str, list[str]] = {}
+        for t in terms:
+            groups.setdefault(skill_theme(t), []).append(t)
+        # A theme with one or two terms is not a line of its own ("Methods & Statistics:
+        # business analysis"): it joins a neighbouring theme, else the fullest line.
+        for th in sorted(groups, key=lambda th: len(groups[th])):
+            if len(groups[th]) >= 3 or len(groups) == 1:
+                continue
+            rest = [x for x in groups if x != th]
+            near = [x for x in rest if x in _NEIGHBORS.get(th, set())]
+            into = max(near or rest, key=lambda x: len(groups[x]))
+            groups[into] = sorted(groups[into] + groups.pop(th), key=rank)
+        block: dict[str, str] = {}
+        for th in sorted(groups, key=lambda th: min(rank(t) for t in groups[th])):
+            label = next((a for a in _THEME_LABELS.get(th, ()) if a not in block), None)
+            block[label or th.capitalize()] = ", ".join(groups[th][:SKILL_LINE_TERMS])
+        block.update(fixed)
+        self._keep_dropped_skills(current, block)
+        self.profile["skills"] = block
 
     def _keep_dropped_skills(self, before: dict, after: dict) -> None:
         """A skill the capped Skills block no longer shows stays the person's own: it goes to
@@ -6012,10 +6222,27 @@ class WebIntake:
         what = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
         word = "section" if len(labels) == 1 else "sections"
         them = "it" if len(labels) == 1 else "them"
-        ask = (f"Your template has {what} {word}, and your resume won't look complete without "
-               f"{them}. {ask}")
+        # What the sibling sections already hold is said FIRST. The question for Extracurricular
+        # alone never said his interests were on file, so when the page printed them he took
+        # them for invented (Kofi, 2026-11-10).
+        known = self._known_required(open_req)
+        if known:
+            have = " ".join(f"I already have your {lab.lower()} on file ({gist})."
+                            for lab, gist in known)
+            is_are = "is" if len(labels) == 1 else "are"
+            ask = (f"{have} The {what} {word} {is_are} still empty, and your resume won't look "
+                   f"complete without {them}. {ask}")
+        else:
+            a = "an" if what[:1].lower() in "aeiou" else "a"
+            ask = (f"Your template has {a + ' ' if len(labels) == 1 else ''}{what} {word}, and "
+                   f"your resume won't look complete without {them}. {ask}")
         if narrating:
-            self._fact("ask_required", ask, exact=labels, sections=labels,
+            self._fact("ask_required", ask, exact=labels + [lab for lab, _g in known],
+                       sections=labels,
+                       already_on_file={lab: gist for lab, gist in known} or None,
+                       say_first=("that these sections are already on file, naming what they "
+                                  "hold, so the person knows nothing on the page is invented"
+                                  if known else None),
                        why="the template has these sections and the resume won't look complete "
                            "without them",
                        ask_about=phrases, how_to_ask=self._ask_style(guidance),
@@ -6245,11 +6472,15 @@ class WebIntake:
         return {"light_cv": {"light": True, "suggestions": sugg[:4]}}
 
     def _absorb_enrichment(self, message: str):
-        """Fold a REAL enrichment answer into essentials, then re-conform."""
+        """Fold a REAL enrichment answer into essentials, then re-conform. A reply to the
+        required-section question that the model's absorb left out of the section it asked for
+        goes into that section deterministically (_absorb_required_reply)."""
+        before = self._material_sig()
         try:
             self.essentials = self.llm.absorb_enrichment(self.jd, self.essentials, message)
         except Exception:
             pass
+        self._absorb_required_reply(message, changed=self._material_sig() != before)
         self._conform_essentials()
 
     # -- switching the template in a running chat (Kofi, test build 13, 2026-11-09) ------ #

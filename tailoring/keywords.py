@@ -401,6 +401,9 @@ def _skill_terms_cached(jd_text: str) -> tuple[str, ...]:
                 seen.add(disp.lower())
                 out.append(disp)
     for t in extract_jd_terms(jd_text):
+        # A plural acronym ("LLMs", "APIs") names the acronym itself.
+        if re.fullmatch(r"[A-Z]{2,6}s", t) and _is_acronym_or_symbol(t[:-1]):
+            t = t[:-1]
         if _is_acronym_or_symbol(t) and t.lower() not in seen:
             seen.add(t.lower())
             out.append(t)
@@ -608,23 +611,113 @@ def dedupe_near_terms(terms) -> list[str]:
     return out
 
 
+# One thing asked for in two spellings is ONE keyword. A Google data scientist ad named
+# "Natural Language Processing (NLP)", "Large Language Models (LLMs)", "ML/AI" and "AI/ML", and
+# each spelling counted as a term of its own, so the page's keyword match read 10% of a list
+# that was a third duplicates (2026-11-10). The long form and its acronym, read from the ad's
+# own "Long Form (ACR)" pairs plus the few below, and a slash compound in either order, are one
+# term: present when the page carries either spelling.
+_SAME_TERM = {
+    "machine learning": "ml", "artificial intelligence": "ai",
+    "natural language processing": "nlp", "large language model": "llm",
+    "large language models": "llm", "key performance indicator": "kpi",
+    "key performance indicators": "kpi", "business intelligence": "bi",
+    "extract transform load": "etl", "extract, transform, load": "etl",
+    "continuous integration": "ci", "continuous delivery": "cd", "continuous deployment": "cd",
+    "application programming interface": "api", "application programming interfaces": "api",
+    "user experience": "ux", "user interface": "ui", "search engine optimization": "seo",
+    "customer relationship management": "crm", "enterprise resource planning": "erp",
+}
+_ACRONYM_PAIR = re.compile(
+    r"((?:[A-Za-z][A-Za-z,-]*\s+){0,5}[A-Za-z][A-Za-z-]*)\s*\(\s*([A-Z][A-Za-z]{1,7}?)s?\s*\)")
+_SMALL_WORDS = frozenset({"of", "and", "the", "for", "in", "on", "to", "a", "an", "&"})
+
+
+def acronym_pairs(jd_text: str) -> dict[str, str]:
+    """{long form (lower): acronym (lower)} for every "Long Form (ACR)" the ad writes, where the
+    acronym is the initials of the long form's words (small words skipped)."""
+    out: dict[str, str] = {}
+    for m in _ACRONYM_PAIR.finditer(str(jd_text or "")):
+        words = [w.strip(",-") for w in m.group(1).split()]
+        acr = m.group(2).lower()
+        # The capture may start early ("Experience with Large Language Models"): trim words off
+        # the left until the initials spell the acronym.
+        for i in range(len(words)):
+            if not words[i] or words[i].lower() in _SMALL_WORDS:
+                continue
+            tail = [w for w in words[i:] if w and w.lower() not in _SMALL_WORDS]
+            if tail and "".join(w[0].lower() for w in tail) == acr:
+                out[" ".join(words[i:]).lower()] = acr
+                break
+    return out
+
+
+def same_term_key(term: str, pairs: dict[str, str] | None = None) -> str:
+    """The key two spellings of one term share: an acronym for its long form, a slash compound
+    in either order (ML/AI, AI/ML), a plural acronym for the singular (LLMs)."""
+    low = re.sub(r"\s+", " ", _norm(term))
+    pairs = pairs or {}
+    if low in pairs:
+        return pairs[low]
+    if low in _SAME_TERM:
+        return _SAME_TERM[low]
+    if "/" in low and " " not in low:
+        parts = [pairs.get(p, _SAME_TERM.get(p, p)) for p in low.split("/")]
+        return "/".join(sorted(parts))
+    if re.fullmatch(r"[a-z]{2,7}s", low) and (low[:-1] in pairs.values()
+                                             or low[:-1] in _SAME_TERM.values()):
+        return low[:-1]
+    return low
+
+
+def merge_same_terms(terms, jd_text: str = "") -> list[list[str]]:
+    """``terms`` grouped by ``same_term_key``, order kept: each group is the spellings of one
+    term, the first as the ad wrote it first."""
+    pairs = acronym_pairs(jd_text)
+    groups: dict[str, list[str]] = {}
+    for t in terms or []:
+        groups.setdefault(same_term_key(t, pairs), []).append(t)
+    return list(groups.values())
+
+
+def spellings(forms: list[str], pairs: dict[str, str] | None = None) -> list[str]:
+    """Every spelling of one term that counts as it on a page: the ad's forms, the acronym's
+    long form and the long form's acronym (the ad's own pairs and the known ones), and a plural
+    acronym ("LLMs" for LLM)."""
+    pairs = pairs or {}
+    out = [str(f) for f in forms if str(f).strip()]
+    keys = {same_term_key(f, pairs) for f in out}
+    for long, acr in list(pairs.items()) + list(_SAME_TERM.items()):
+        if acr in keys:
+            out += [long, acr]
+    for f in list(out):
+        if re.fullmatch(r"[A-Za-z]{2,7}", f) and f.upper() == f:
+            out.append(f + "s")
+    return list(dict.fromkeys(out))
+
+
 def build_coverage_report(
     jd_text: str, cv_text: str, profile: dict, terms: list[str] | None = None
 ) -> CoverageReport:
     """Compare JD skill terms against the tailored CV and the source profile. ``terms`` is the
     skill list to measure (the model-read list from llm.extract_jd_skills, or the curated
     skill_terms); the old capitalized-word walk is not used here any more, since it reported
-    sentence words ("These", "Responsible") as skills the person lacks."""
+    sentence words ("These", "Responsible") as skills the person lacks. Two spellings of one
+    term (its long form and its acronym, a slash compound in either order) count once, present
+    when the page carries either (``merge_same_terms``)."""
     terms = clean_jd_terms(list(terms) if terms is not None else skill_terms(jd_text))
     prof = profile_text(profile)
+    pairs = acronym_pairs(jd_text)
     report = CoverageReport()
-    for t in terms:
+    for forms in merge_same_terms(terms, jd_text):
+        t = forms[0]
         if is_requirement(t):
             if t not in report.requirements:
                 report.requirements.append(t)
             continue
-        in_cv = term_present(t, cv_text)
-        in_profile = term_present(t, prof)
+        said = spellings(forms, pairs)
+        in_cv = any(term_present(f, cv_text) for f in said)
+        in_profile = any(term_present(f, prof) for f in said)
         if in_cv:
             report.present.append(t)
         elif in_profile:

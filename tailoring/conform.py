@@ -130,7 +130,12 @@ def format_dates(raw: str) -> str:
             raw = inner
     if not result:
         parts = [p for p in _RANGE_SPLIT.split(raw) if p.strip()]
-        result = _fmt_token(raw) if len(parts) <= 1 else " - ".join(_fmt_token(p) for p in parts[:2])
+        ends = [_fmt_token(p) for p in parts[:2]]
+        # A range that starts and ends in the same month is that one month: "July 2026 - July
+        # 2026" (a project built in one month) renders as "July 2026".
+        if len(ends) == 2 and ends[0] == ends[1] and ends[0]:
+            ends = ends[:1]
+        result = _fmt_token(raw) if len(parts) <= 1 else " - ".join(ends)
     # Still-current role but only a start date parsed -> end it at Present.
     if ongoing and result and " - " not in result and result != "Present":
         result = f"{result} - Present"
