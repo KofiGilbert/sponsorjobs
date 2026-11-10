@@ -535,7 +535,9 @@ class AnthropicLLM:
         )
         user = ("\n\n".join(blocks)
                 + f"\n\nTARGET JOB (context only):\n{str(jd_text)[:2500]}")
-        out = self._complete(system, user, max_tokens=4000, effort="medium") or ""
+        # Low effort and room to answer: at medium effort a reasoning model spent the whole
+        # budget thinking and answered nothing (2026-11-10). This is writing to a plan.
+        out = self._complete(system, user, max_tokens=8000, effort="low") or ""
         got = parse_role_lists(out, len(roles))
         if got is None:
             raise ValueError("write_experience: unreadable answer: " + out[:300].replace("\n", " "))
