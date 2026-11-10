@@ -150,12 +150,17 @@ def test_a_closed_job_opens_as_a_record_and_says_so_once(client):
     app._SESSION_RESTORE["tried"] = True
     st = client.post(f"/api/sessions/{sid}/open").get_json()
     assert st["expired"] is True and st["expired_reason"] == "posting closed"
-    assert st["history"][-1] == {"role": "agent", "content": app.JOB_EXPIRED_MSG}
-    assert "closed" in app.JOB_EXPIRED_MSG and "record" in app.JOB_EXPIRED_MSG
-    assert "\u2014" not in app.JOB_EXPIRED_MSG and "\u2013" not in app.JOB_EXPIRED_MSG
+    first = st["history"][-1]
+    assert first["role"] == "agent"
+    # the AI says it plainly, with the role and company from the job, not invented
+    assert first["content"].startswith("The Data Analyst role at Northwind has closed")
+    assert "record" in first["content"] and st["messages"] == [first["content"]]
+    assert "\u2014" not in first["content"] and "\u2013" not in first["content"]
+    # the note's facts: the company and the day it was found closed
+    assert st["expired_note"]["company"] == "Northwind" and st["expired_note"]["closed_at"]
     again = client.post(f"/api/sessions/{sid}/open").get_json()
     assert again["expired"] is True
-    assert sum(1 for t in again["history"] if t["content"] == app.JOB_EXPIRED_MSG) == 1
+    assert sum(1 for t in again["history"] if "has closed" in (t["content"] or "")) == 1
     # the job is stamped closed with its reason, and NOT moved to Rejected
     card = client.get(f"/api/tracker/job?source_id={jid}").get_json()
     assert card["closed_at"] and card["closed_reason"] == "posting closed"
@@ -166,7 +171,7 @@ def test_a_job_still_open_is_not_expired(client):
     client.post("/api/session/start", json={"jd": "Data Analyst at Northwind. SQL, Python."})
     sid = str(app._SESSION["s"].jobname)
     st = client.post(f"/api/sessions/{sid}/open").get_json()
-    assert st["expired"] is False and app.JOB_EXPIRED_MSG not in [t["content"] for t in st["history"]]
+    assert st["expired"] is False and not any("has closed" in (t["content"] or "") for t in st["history"])
 
 
 def test_erasing_memory_erases_every_kept_chat(client):
@@ -233,3 +238,38 @@ def test_one_job_keeps_every_session_newest_is_current(client):
     st = client.post("/api/tracker/session/open", json={"source_id": jid}).get_json()
     assert st["session_id"] == second and st["expired"] is False
     assert client.post("/api/tracker/session/open", json={"source_id": "nope"}).status_code == 404
+
+
+@requires_latex
+def test_home_continue_lists_jobs_in_progress_then_recent(client):
+    _build(client)                                         # one resume in progress
+    live = app._SESSION["s"]
+    jid = _feed_job("greenhouse::cl-1", "Senior Data Analyst", "ConData")
+    client.post("/api/session/start_job", json={"source_id": jid})
+    w = app._watchlist()
+    try:
+        w.mark_closed(jid, "", "closed")
+    finally:
+        w.close()
+    client.post(f"/api/sessions/{app._SESSION['s'].jobname}/open")      # detects the closed posting
+    d = client.get("/api/tracker/continue").get_json()
+    assert d["count"] == 1
+    assert [x["source_id"] for x in d["in_progress"]] == [live.job_id]
+    row = d["in_progress"][0]
+    assert row["title"] and row["company"] == "Northwind" and isinstance(row["keywords"], int)
+    assert [x["source_id"] for x in d["recent"]] == [jid] and d["recent"][0]["closed_at"]
+    # the card keeps In progress after Accept & Save, until it is applied
+    client.post(f"/api/sessions/{live.jobname}/open")
+    client.post("/api/session/accept")
+    card = client.get(f"/api/tracker/job?source_id={live.job_id}").get_json()
+    assert card["stage"] == "in_progress" and card["session"]["status"] == "saved"
+    recs = client.get("/api/records").get_json()["records"]
+    assert recs[0]["session_id"] == str(live.jobname) and recs[0]["job_id"] == live.job_id
+
+
+def test_a_jobs_page_role_carries_its_session(client):
+    jid = _feed_job()
+    client.post("/api/session/start_job", json={"source_id": jid})
+    rows = app._jobs_with_sessions([{"source_id": jid}, {"source_id": "other::1"}])
+    assert rows[0]["my_session"]["status"] == "in_progress" and rows[0]["my_session"]["updated_at"]
+    assert "my_session" not in rows[1]

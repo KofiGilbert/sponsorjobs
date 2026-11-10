@@ -1884,6 +1884,10 @@ def records_list():
 
     from submit.tracker import effective_stage, follow_up
     today = date.today()
+    try:
+        sess = _session_store().by_record([r["id"] for r in rows])
+    except Exception:      # noqa: BLE001 - the list shows without its sessions
+        sess = {}
     out = []
     for r in rows:
         data = _record_data(r)
@@ -1904,6 +1908,11 @@ def records_list():
             # The layout, as its own field (never in the title), so two variants of one
             # application are still told apart on Resumes.
             "template_label": _template_label(data.get("template")),
+            # The job workspace: the resume session that saved this record (a click opens it,
+            # chat and page), its job, and when it was applied, for "Applied Nov 8".
+            "job_id": _board_key(r)[0],
+            "session_id": (sess.get(int(r["id"])) or {}).get("id"),
+            "applied_at": str(data.get("applied_at") or "")[:10] or None,
         })
     return jsonify({"records": out})
 
@@ -3171,6 +3180,15 @@ JOB_EXPIRED_MSG = ("This job has closed, so this chat is now a record of it. You
                    "download this resume or use it for another job.")
 
 
+def _expired_msg(s) -> str:
+    """The AI's first line when a closed job's chat is reopened: what closed, plainly."""
+    role, co = str(s.role or "").strip(), str(s.company or "").strip()
+    if role and co:
+        return (f"The {role} role at {co} has closed, so this chat is now a record of it. You can "
+                "still download this resume or use it for a similar job.")
+    return JOB_EXPIRED_MSG
+
+
 def _session_store():
     from ui.builder_sessions import SessionStore
     st = _SESSION_STORES.get(DB_PATH)
@@ -3353,7 +3371,25 @@ def _session_payload(s) -> dict:
                         for t in (s.history or [])]
     if getattr(s, "expired_noted", False):
         state["expired"] = True
+        state["expired_note"] = _expired_note(s)
+    state["job_id"] = _session_job_id(s)
     return state
+
+
+def _expired_note(s) -> dict:
+    """The facts the closed-job note states: the company and the day the posting was found
+    closed (the job row's closed_at), never a guess."""
+    sid = _session_job_id(s)
+    row = {}
+    if sid:
+        w = _watchlist()
+        try:
+            row = w.board_job(sid) or {}
+        finally:
+            w.close()
+    return {"company": str(s.company or row.get("company") or ""), "role": str(s.role or ""),
+            "closed_at": str(row.get("closed_at") or "")[:10] or None,
+            "reason": row.get("closed_reason") or "posting closed"}
 
 
 @app.get("/api/sessions")
@@ -3415,13 +3451,13 @@ def _open_payload(s) -> dict:
     reason = _session_job_closed(s)
     if reason and not getattr(s, "expired_noted", False):
         with s.lock:
-            s._append("agent", JOB_EXPIRED_MSG)
+            s._append("agent", _expired_msg(s))
             s.expired_noted = True
     payload = _session_payload(s)
     payload["expired"] = bool(reason)
     payload["expired_reason"] = reason
     if reason:
-        payload["messages"] = [JOB_EXPIRED_MSG]
+        payload["messages"] = [_expired_msg(s)]
     return payload
 
 
@@ -4320,7 +4356,7 @@ def jobs_list():
                     filtered, fit_ranked = _home_fit_rank(filtered)
                 page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1),
                                                             a.get("per_page", 30))
-                page_jobs = _jobs_mark([dict(j) for j in page_jobs])   # never mutate the cached rows
+                page_jobs = _jobs_with_sessions(_jobs_mark([dict(j) for j in page_jobs]))   # never mutate the cached rows
                 saved = _saved_ids()                         # overlay the user's bookmarks onto feed rows
                 if saved:
                     for j in page_jobs:
@@ -4388,7 +4424,7 @@ def jobs_list():
         if a.get("home") == "1":
             filtered, fit_ranked = _home_fit_rank(filtered)
         page_jobs, count, page, per_page = paginate(filtered, a.get("page", 1), a.get("per_page", 30))
-        page_jobs = _jobs_mark([dict(j) for j in page_jobs])
+        page_jobs = _jobs_with_sessions(_jobs_mark([dict(j) for j in page_jobs]))
         refreshed = _sponsors().get_meta("jobs_refreshed_at")
         # An empty local store on a fresh install: start the first-open crawl (only when the feed is
         # genuinely absent, see _first_crawl_allowed) and say so, so the client shows "fetching
@@ -17242,6 +17278,70 @@ def _jobs_personal(rows: list[dict], *, home: bool = False) -> list[dict]:
     if not needs_sponsorship(_load_prefs()):
         return rows
     return [j for j in rows if not closed_to_visa(j, title=True)]
+
+
+def _job_sessions_info(sids) -> dict[str, dict]:
+    """{job id: its current resume session as any page shows it}: the session view (status,
+    keyword match, page fill, template, updated_at, PDF) plus the job's applied, follow-up and
+    closed dates from its tracker row. Jobs with no session are left out."""
+    sids = [str(x) for x in dict.fromkeys(sids or []) if x]
+    if not sids:
+        return {}
+    try:
+        cur = _session_store().current_by_job(sids)
+    except Exception:      # noqa: BLE001
+        return {}
+    if not cur:
+        return {}
+    out: dict[str, dict] = {}
+    w = _watchlist()
+    try:
+        for sid, row in cur.items():
+            b = w.board_job(sid) or {}
+            out[sid] = {**_job_session_view(row), "source_id": sid,
+                        "title": b.get("title") or row.get("role") or "",
+                        "company": b.get("company") or row.get("company") or "",
+                        "stage": b.get("stage"), "applied_at": (b.get("applied_at") or "")[:10] or None,
+                        "follow_up_at": (b.get("follow_up_at") or "")[:10] or None,
+                        "closed_at": (b.get("closed_at") or "")[:10] or None}
+    finally:
+        w.close()
+    return out
+
+
+def _jobs_with_sessions(page_rows: list[dict]) -> list[dict]:
+    """One Jobs page with ``my_session`` on each role that has a resume session (the detail pane's
+    "Open your resume" and the list card's "Your resume · 96%")."""
+    info = _job_sessions_info([j.get("source_id") for j in page_rows])
+    for j in page_rows:
+        if j.get("source_id") in info:
+            j["my_session"] = info[j["source_id"]]
+    return page_rows
+
+
+@app.get("/api/tracker/continue")
+def tracker_continue():
+    """Home's "Continue tailoring" list: jobs whose resume session is not sent yet (newest
+    first), then a few recent ones that were applied to or whose posting closed. One row per job,
+    from its current session."""
+    from ui.builder_sessions import STATUS_APPLIED
+    live = _SESSION.get("s")
+    if live is not None:
+        _save_live_session(live)
+    rows = _session_store().list(limit=500)
+    jobs = list(dict.fromkeys(r["job_id"] for r in rows if r.get("job_id")))
+    info = _job_sessions_info(jobs)
+    going, recent = [], []
+    for sid in jobs:
+        x = info.get(sid)
+        if not x:
+            continue
+        if x["closed_at"] or x["status"] == STATUS_APPLIED or x.get("stage") in (
+                "applied", "interviewing", "offer", "rejected", "archived"):
+            recent.append(x)
+        else:
+            going.append(x)
+    return jsonify({"count": len(going), "in_progress": going[:6], "recent": recent[:3]})
 
 
 def _jobs_mark(page_rows: list[dict]) -> list[dict]:

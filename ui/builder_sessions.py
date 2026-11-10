@@ -256,6 +256,19 @@ class SessionStore:
                     out.setdefault(r["job_id"], self._row(r))
         return out
 
+    def by_record(self, record_ids) -> dict[int, dict]:
+        """{record id: the session that saved it} for the given application records."""
+        ids = [int(r) for r in dict.fromkeys(record_ids or []) if r]
+        out: dict[int, dict] = {}
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            sql = (f"SELECT * FROM builder_sessions WHERE record_id IN ({','.join('?' * len(part))})"
+                   " ORDER BY updated_at DESC")
+            with self._lock:
+                for r in self._conn.execute(sql, part):
+                    out.setdefault(int(r["record_id"]), self._row(r))
+        return out
+
     def latest_unfinished(self) -> dict | None:
         with self._lock:
             r = self._conn.execute("SELECT id FROM builder_sessions WHERE status = ?"

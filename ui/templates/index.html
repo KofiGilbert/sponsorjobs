@@ -93,10 +93,16 @@
                 role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="homeSuggest"
                 placeholder="Paste a job description, or tell me what to do..." data-i18n-ph="home.placeholder"></textarea>
               <div class="home-prompt-foot">
-                <button class="home-examples" id="homeExamples" type="button" data-i18n="home.seeExamples">See examples</button>
+                <span class="home-foot-links">
+                  <button class="home-examples" id="homeExamples" type="button" data-i18n="home.seeExamples">See examples</button>
+                  <!-- The jobs whose resume is not sent yet (their sessions), with the count; hidden at 0. -->
+                  <button class="home-examples" id="homeContinue" type="button" hidden aria-haspopup="listbox"
+                    aria-expanded="false" aria-controls="homeContinueList"></button>
+                </span>
                 <button class="btn btn-primary btn-sm" id="homeGo" type="button" data-i18n="home.start">Start tailoring</button>
               </div>
             </div>
+            <div class="home-suggest home-continue" id="homeContinueList" role="listbox" aria-label="Continue tailoring" hidden></div>
             <div class="home-suggest" id="homeSuggest" role="listbox" aria-labelledby="homeSuggestL" hidden>
               <div class="home-suggest-l" id="homeSuggestL" data-i18n="home.askMeTo">Ask me to</div>
               <div class="home-suggest-row" id="homeSug1" role="option" aria-selected="false" data-i18n="home.try1">Find 5 data analytics roles and apply for me</div>
@@ -108,7 +114,7 @@
           <!-- The prompt stays put; only the roles scroll under it (Kofi, 2026-10-14). -->
           <div class="home-fade home-roles">
             <div class="home-block-head">
-              <h2 class="section-label" style="margin:0" data-i18n="home.today">Today · fresh best-fit roles</h2>
+              <h2 class="section-label" style="margin:0" id="homeTodayLbl" data-i18n="home.today">Today · fresh best-fit roles</h2>
               <button class="link-btn" data-nav-to="jobs" type="button" data-i18n="home.seeall">See all jobs →</button>
             </div>
             <div class="home-roles-scroll">
