@@ -19,43 +19,43 @@ import re
 # (tag, pattern). Patterns are matched case-insensitively on whole words.
 TAGS: tuple[tuple[str, str], ...] = (
     ("Software Engineering", r"software engineer|software develop|backend|back-end|frontend|front-end|full[- ]?stack|web develop|mobile develop|ios|android|api develop"),
-    ("Data Science & Analytics", r"data scien|data analy|analytics|statistic|predictive|forecast|a/b test|experimentation"),
+    ("Data Science & Analytics", r"data scien|data analy|analytics|business intelligence|power bi|bi (?:developer|analyst|engineer|manager|lead|reporting|tools|dashboards?)|statistic|predictive|forecast|a/b test|experimentation"),
     ("Machine Learning & AI", r"machine learning|\bml\b|deep learning|\bai\b|artificial intelligence|\bllm|generative|nlp|computer vision|model training"),
-    ("Data Engineering", r"data engineer|data pipeline|\betl\b|\belt\b|data warehouse|spark|airflow|dbt|snowflake|databricks|kafka"),
+    ("Data Engineering", r"data engineer|data pipeline|\betl\b|\belt\b|data warehouse|spark\b|pyspark|airflow|dbt|snowflake|databricks|kafka"),
     ("Business Analysis", r"business analy|requirements gathering|requirements analysis|user stor|acceptance criteria|process mapping|gap analysis|business requirements|functional requirements"),
-    ("Product Management", r"product manag|product owner|roadmap|product strategy|backlog|product requirements|\bprd\b|product lead|head of product|\bpm\b|\bpm\s+(i{1,3}|iv|v)\b|product vision"),
+    ("Product Management", r"product manag|product owner|roadmap|product strategy|backlog|product requirements|\bprd\b|product lead|head of product|pm\b(?<!\dpm)(?<!\d pm)|\bpm\s+(i{1,3}|iv|v)\b|product vision"),
     ("Project & Program Management", r"project manag|program manag|programme manag|\bpmp\b|project plan|project deliver|portfolio manag|scrum master|agile delivery"),
-    ("Cloud & Infrastructure", r"\baws\b|azure|\bgcp\b|google cloud|kubernetes|docker|terraform|devops|site reliability|\bsre\b|cloud infrastructure|cloud platform|cloud engineer"),
+    ("Cloud & Infrastructure", r"\baws\b|azure|gcp\b(?<!practice \(gcp)(?<!glp, gcp)|google cloud|kubernetes|docker|terraform|devops|site reliability|\bsre\b|cloud infrastructure|cloud platform|cloud engineer"),
     ("Cybersecurity", r"cyber|infosec|information security|security engineer|threat|vulnerabilit|\bsoc\b|penetration|incident response|\biam\b"),
     ("QA & Testing", r"quality assurance|\bqa\b|test automation|software test|test plan|test case|test framework"),
     ("UX & Design", r"\bux\b|\bui\b|user experience|user research|usability|figma|interaction design|visual design|product design|graphic design"),
     ("Systems & Architecture", r"systems engineer|system architect|solutions architect|enterprise architect|systems integration|technical architect|system design"),
     ("Database Administration", r"\bdba\b|database admin|sql server|oracle db|postgres|mysql|database management"),
-    ("Finance & Accounting", r"accountant|accounting|financial report|\bgaap\b|\bifrs\b|audit|reconciliation|month-end|general ledger|controller|\bcpa\b|\bfp&a\b|financial planning"),
+    ("Finance & Accounting", r"accountant|accounting|financial report|\bgaap\b|\bifrs\b|auditor|(?:financial|internal|external|sox|statutory|tax|year-end|corporate) audit|audit (?:committee|firm|procedures|standards|engagement|workpapers|manager|senior|associate)|reconciliation|month-end|general ledger|controller|cpa\b(?![^.\n;]{0,25}\b(?:roas|cpc|ctr|cpm|cac|ltv|conversion)\b)|\bfp&a\b|financial planning"),
     ("Banking & Lending", r"credit analy|underwrit|loan (officer|origination|portfolio|servicing)|lending|mortgage|commercial bank|retail bank|treasury|wealth manag"),
-    ("Investment & Trading", r"investment bank|equity research|trading|portfolio|hedge fund|asset manag|private equity|venture capital|\bm&a\b"),
+    ("Investment & Trading", r"investment bank|equity research|trading|(?:investment|equity|credit|bond|fixed income|securities|loan|wealth) portfolio|portfolio (?:construction|risk|returns|optimization|allocation|analytics)|hedge fund|fixed income|asset manag|private equity|venture capital|\bm&a\b"),
     ("Risk & Compliance", r"risk manag|compliance (team|program|officer|requirements|framework)|regulatory (compliance|requirements|reporting)|\baml\b|\bkyc\b|\bsox\b|internal control|audit readiness"),
     ("Legal", r"attorney|lawyer|general counsel|legal counsel|paralegal|legal (team|department|operations|systems|review)|litigation|contract review|intellectual property"),
     ("Sales", r"sales (engineer|executive|manager|team|cycle|rep|development|quota|target)|account executive|business development|\bbdr\b|\bsdr\b|quota|pipeline generation|closing deals|pre-?sales"),
     ("Customer Success & Support", r"customer success|customer support|customer service|client success|help desk|technical support|account manag|client relationship"),
     ("Marketing", r"marketing (team|manager|campaign|strategy|analytics|automation)|\bseo\b|\bsem\b|content strategy|brand (manag|strategy)|demand generation|social media|growth marketing|go-to-market"),
-    ("Communications & PR", r"public relations|communications|press|media relations|copywrit|editorial"),
-    ("Human Resources", r"human resources|\bhr\b|recruiter|recruiting team|talent acquisition|people operations|employee onboarding|benefits admin|hris|payroll"),
+    ("Communications & PR", r"public relations|communications|press (?:release|coverage|relations|office|inquir|kit)|media relations|copywrit|editorial"),
+    ("Human Resources", r"human resources|hr\b(?<!/hr)(?<!\dhr)(?<!\d hr)|recruiter(?<!your recruiter)(?<!our recruiter)|recruiting team|talent acquisition|people operations|employee onboarding|benefits admin|hris|payroll"),
     ("Operations", r"operations (manag|lead|team|analyst|coordinator|engineer)|business operations|process improvement|operational excellence|\bkpis?\b"),
-    ("Supply Chain & Logistics", r"supply chain|logistics|procurement|strategic sourcing|inventory manag|warehouse|fulfillment center|distribution center"),
+    ("Supply Chain & Logistics", r"supply chain|logistics|procurement|strategic sourcing|inventory manag|warehous(?<!data warehous)|fulfillment center|distribution center"),
     ("Manufacturing Operations", r"manufactur|production line|assembly|plant|\bcnc\b|machin(e|ing) operator|shop floor|lean manufacturing|six sigma"),
     ("Field Service", r"field service|field engineer|on-?site service|customer site|commissioning|service engineer"),
-    ("Maintenance & Repair", r"maintenance (technician|mechanic|engineer|team|work|schedule)|preventive maintenance|equipment repair|field technician|service technician|\bhvac\b|electrician|mechanic"),
-    ("Quality Control", r"quality control|\bqc\b|inspection|\biso\s*9|quality management|\bcapa\b|nonconformance|product safety|safety engineer|\bul\b|\bce\b mark"),
+    ("Maintenance & Repair", r"maintenance (technician|mechanic|engineer|team|work|schedule)|preventive maintenance|equipment repair|field technician|service technician|\bhvac\b|electrician|mechanics?\b|repairs?\b|(?:wind|turbine|hub) technician"),
+    ("Quality Control", r"quality control|\bqc\b|inspection(?<!pipeline inspection)(?<!deal inspection)|\biso\s*9|quality management|\bcapa\b|nonconformance|product safety|safety engineer|\bul\b|\bce\b mark"),
     ("Mechanical Engineering", r"mechanical engineer|\bcad\b|solidworks|thermal|hvac design|mechanical design|\bfea\b"),
-    ("Electrical Engineering", r"electrical engineer|circuit|\bpcb\b|power systems|embedded|firmware|\bfpga\b|signal"),
+    ("Electrical Engineering", r"electrical engineer|circuit|\bpcb\b|power systems|embedded|firmware|\bfpga\b|signal (?:processing|integrity|chain|conditioning)|mixed[- ]signal"),
     ("Civil & Structural Engineering", r"civil engineer|structural|surveyor|surveying|geotechnical|construction engineer|autocad civil|site develop"),
-    ("Chemical & Process Engineering", r"chemical engineer|process engineer|chemical process|refin|polymer"),
+    ("Chemical & Process Engineering", r"chemical engineer|process engineer|chemical process|refiner(?:y|ies)|polymer"),
     ("Aerospace & Defense", r"aerospace|aircraft|avionics|spacecraft|satellite|defense (contractor|industry|sector)|\bdod\b"),
     ("Hardware & Semiconductors", r"semiconductor|silicon|\basic\b|chip design|\brtl\b|verilog|post[- ]silicon|validation engineer|hardware engineer"),
     ("Construction & Facilities", r"construction (project|manag|site|worker|engineer)|facilities (manag|maint|engineer)|general contractor|\bosha\b|jobsite|job site"),
-    ("Healthcare & Nursing", r"\brn\b|nurse|nursing|patient care|clinical|hospital|\bemr\b|\behr\b|bedside"),
-    ("Medical & Physicians", r"physician|\bmd\b|surgeon|medical doctor|residency|attending"),
+    ("Healthcare & Nursing", r"\brn\b|nurse|nursing|patient care|clinical|hospitals?\b|\bemr\b|\behr\b|bedside"),
+    ("Medical & Physicians", r"physician|md\b(?<!, md)(?!\s*\d{5})|surgeon|medical doctor|residency|attending"),
     ("Pharmacy & Life Sciences", r"pharmac|biotech|laboratory|assay|clinical trial|\bgmp\b|\bfda\b|biolog|life science"),
     ("Education & Training", r"teacher|teaching|faculty|professor|instructor|curriculum|training (program|develop|specialist|manager)|tutor|lecturer|learning and development"),
     ("Research", r"research|\bphd\b|publication|experiment|hypothesis|principal investigator"),
@@ -66,10 +66,17 @@ TAGS: tuple[tuple[str, str], ...] = (
     ("Transportation & Driving", r"truck driver|delivery driver|\bcdl\b|trucking|fleet manag|dispatcher|transportation (manag|coordinator|planner)"),
     ("Energy & Utilities", r"energy (sector|industry|company|storage|systems|market)|utility company|utilities|solar|wind (farm|turbine|energy)|battery (storage|systems|cell)|power grid|oil and gas|renewable"),
     ("Insurance", r"insurance (carrier|claims|industry|product|polic)|claims adjust|actuar|policyholder|\bp&c\b|reinsurance"),
-    ("Real Estate", r"real estate|property manag|leasing|tenant|broker"),
+    # Not "tenant" or "broker" alone: software ads say "multi-tenant" and "message broker", and a
+    # bank says "brokerage", which tagged a MongoDB SRE and a Robinhood TPM as Real Estate.
+    ("Real Estate", r"real estate|property manag|leasing (?:agent|consultant|manager|specialist|office)|lease administration|tenant (?:relations|improvement|screening|retention)|landlord|realtor|(?:commercial|residential) propert"),
 )
 # Word-start guard only: many patterns are stems ("product manag", "manufactur") meant to match
 # "Product Manager" and "manufacturing", so the match may run on into the rest of the word.
+# A stem that runs on into a DIFFERENT word carries its own end guard: "mechanics?\b" (not
+# "mechanical"), "hospitals?\b" (not "hospitality"), "spark\b" (not "Sparks, NV"), "press release"
+# (not "pressure"). A short word with a second meaning carries a lookaround for it: "pm" after a
+# time, "hr" in "$20/hr", "MD" as Maryland, "data warehouse", "Good Clinical Practice (GCP)".
+# Measured on 200 random feed ads (2026-11-10): 47 obviously wrong tags before, see the PR.
 _COMPILED = tuple((tag, re.compile(r"(?<![a-z])(?:" + pat + r")", re.I)) for tag, pat in TAGS)
 
 
@@ -171,7 +178,11 @@ MAX_TAGS = 9
 COMMON = frozenset({"Operations", "Research", "Education & Training", "Consulting & Strategy",
                     "Customer Success & Support", "Marketing", "Sales", "Risk & Compliance",
                     "Human Resources", "Legal", "Administration", "Construction & Facilities",
-                    "Energy & Utilities", "Project & Program Management", "Communications & PR"})
+                    "Energy & Utilities", "Project & Program Management", "Communications & PR",
+                    # Retail and EHS ads now carry a hiring line about AI tools ("do not use AI
+                    # tools during interviews") or an "AI data centers" blurb; a portfolio is also
+                    # a product line. Neither makes the job an AI or investing job.
+                    "Machine Learning & AI", "Investment & Trading"})
 
 
 def job_tags(title: str, description: str = "", limit: int = MAX_TAGS) -> list[str]:
