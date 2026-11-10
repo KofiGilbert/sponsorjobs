@@ -33,6 +33,8 @@ WINDOW_LO, WINDOW_HI = 0.93, 1.0
 TOP_MOST = 6
 # The adjusting pass changes at most this many bullets' line targets.
 ADJUST_MOST = 4
+# Calls that ask only for a bullet still missing after the retry and the adjustment.
+HOLE_TRIES = 2
 
 # An outcome a bullet asserts that the person's material must state to be said: "with none
 # skipped or lost" (a real write, 2026-11-10), "zero errors", "100% accuracy", "never missed".
@@ -377,6 +379,26 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                 res = compile_now("plan3")
             _log(step="plan-adjust", label="experience", fill=getattr(res, "fill_ratio", None),
                  why=str(picks))
+    # A HOLE (a slot whose bullet was refused every time) breaks the staircase: up to
+    # HOLE_TRIES more calls ask only for the missing bullets, each told exactly what was refused.
+    for _try in range(HOLE_TRIES):
+        holes = {i: list(range(len(r["bullets"]), len(info[i]["targets"])))
+                 for i, (_k, _e, r) in enumerate(roles) if len(r["bullets"]) < len(info[i]["targets"])}
+        if not holes:
+            break
+        cur = [list(r["bullets"]) + [""] * (len(info[i]["targets"]) - len(r["bullets"]))
+               for i, (_k, _e, r) in enumerate(roles)]
+        fb = {f"{i}:{k}": ("this bullet is missing; the last try was refused ("
+                           + "; ".join(map(str, reasons.get((i, k), []))) + "). Write a new one on "
+                           f"{info[i]['targets'][k]} line(s), the last one full, using no phrase "
+                           "another bullet of the role uses")
+              for i, ks in holes.items() for k in ks}
+        outh = ask(current=cur, only=holes, feedback=fb)
+        if outh is None:
+            break
+        place(outh, only=holes)
+        res = compile_now("plan4")
+        _log(step="plan-holes", label="experience", fill=res.fill_ratio, why=str(holes))
     if not (res.ok and res.pages == 1 and res.overfull_count <= base_overfull
             and (res.fill_ratio or 0) <= max_fill + 0.005):
         for (_k, _e, r), bl in zip(roles, before):

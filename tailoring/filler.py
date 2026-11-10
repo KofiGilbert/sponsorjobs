@@ -376,15 +376,16 @@ def role_padding(new: str, siblings, employer: str = "", source: str = "",
     ctx = set(_fact_tokens(context))
     for sib in siblings or ():
         st = _fact_tokens(str(sib or ""))
-        if _shared_phrase(mine, st, src, ctx):
-            out.append("repeats a phrase of another bullet")
+        run = _shared_phrase(mine, st, src, ctx)
+        if run:
+            out.append("repeats a phrase of another bullet: " + " ".join(run))
             break
     return out
 
 
-def _shared_phrase(a: list[str], b: list[str], allowed: list[str], ctx=frozenset()) -> bool:
+def _shared_phrase(a: list[str], b: list[str], allowed: list[str], ctx=frozenset()) -> list:
     """A run of ``REPEAT_RUN`` or more words in both ``a`` and ``b``, with two content words,
-    that ``allowed`` does not hold."""
+    that ``allowed`` does not hold (the run; empty when there is none)."""
     allowed_s = " " + " ".join(allowed) + " "
     for i in range(len(a)):
         for j in range(len(b)):
@@ -395,5 +396,5 @@ def _shared_phrase(a: list[str], b: list[str], allowed: list[str], ctx=frozenset
                 run = a[i:i + k]
                 if sum(t not in _FACT_STOP and t not in ctx for t in run) >= 2 and \
                         (" " + " ".join(run[:REPEAT_RUN]) + " ") not in allowed_s:
-                    return True
-    return False
+                    return run
+    return []

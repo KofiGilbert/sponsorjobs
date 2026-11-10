@@ -377,9 +377,9 @@ def test_padding_that_adds_no_fact_is_refused():
     from tailoring.filler import role_padding
     bo = "BlackOrigin Inc."
     sibs = ["Led business intelligence across the company's products for stakeholders across the business."]
-    assert "repeats a phrase of another bullet" in role_padding(
+    assert any(x.startswith("repeats a phrase of another bullet") for x in role_padding(
         "Built KPI dashboards that track growth, usage, and unit costs for stakeholders across the business.",
-        sibs, bo)
+        sibs, bo))
     assert any(x.startswith("stock tail") for x in role_padding(
         "Built automated Python and SQL reporting for stakeholders across the business.", [], bo))
     assert "names its own employer" in role_padding(
