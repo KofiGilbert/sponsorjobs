@@ -34,15 +34,15 @@ def test_gate_asks_for_template_elements_and_skips_only_on_decline(template_sour
     # list dumped at once.
     assert sum(k in ask for k in ("address", "github", "linkedin", "blog", "courses")) <= 3
 
-    # Provide the address and explicitly decline the rest — the skeleton is now complete,
-    # so it moves on to the mandatory outside-work sections (still not a build yet).
+    # Provide the address and decline the rest. The outside-work question was already asked,
+    # so this reply answers it too: asked ONCE, never again (Kofi, 2026-11-10), and the resume
+    # builds, skipping only what was declined.
     st2 = s.submit("I live at 12 Maple Ave, Chicago, IL 60601. I don't have a GitHub. No blog. "
                    "No LinkedIn. Skip the courses. No projects.")
-    assert st2["phase"] == "chatting"                    # now asks Extracurricular / Interests
     assert set(s.essentials["declined"]) >= {"github", "blog", "linkedin", "courses", "projects"}
-    # Provide (or decline) those, and the CV builds — skipping only what was declined.
-    st3 = s.submit("I volunteer at a food bank and I enjoy chess and running.")
-    assert st3["phase"] == "review"
+    assert st2["phase"] == "review"
+    said = " ".join(st2["messages"]).lower()
+    assert "before i build, i need your" not in said
     assert s.assembled.compile.pages == 1
 
 
