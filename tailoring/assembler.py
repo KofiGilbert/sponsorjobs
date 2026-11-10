@@ -2527,7 +2527,9 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
                 _fill_log(step="polished", label=label, fill=r.fill_ratio)
             else:
                 role["bullets"][:] = old
-                _fill_log(step="polish-undone", label=label, fill=getattr(r, "fill_ratio", None))
+                _fill_log(step="polish-undone", label=label, fill=getattr(r, "fill_ratio", None),
+                          why={"pages": getattr(r, "pages", None), "clean": clean(r),
+                               "before": result.fill_ratio, "asks": asks, "new": new})
     return result
 
 

@@ -342,12 +342,17 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
     # bullets become 2-line in the newest roles, or 2-line become 1-line in the oldest).
     _log(step="plan-check", label="experience", fill=res.fill_ratio,
          why=f"ok={res.ok} pages={res.pages} overfull={res.overfull_count}/{base_overfull}")
-    if res.ok and (res.pages > 1 or (res.fill_ratio or 0) > max_fill
+    # A slot left empty (its bullet refused twice and no saved bullet reads cleanly beside the
+    # others) breaks the staircase: it is asked for once more, in the same call as any adjustment.
+    empty = {i: list(range(len(r["bullets"]), len(info[i]["targets"])))
+             for i, (_k, _e, r) in enumerate(roles) if len(r["bullets"]) < len(info[i]["targets"])}
+    if res.ok and (empty or res.pages > 1 or (res.fill_ratio or 0) > max_fill
                    or (res.fill_ratio or 0) < fill_goal):
         over = res.pages > 1 or (res.fill_ratio or 0) > max_fill
+        under = (res.fill_ratio or 0) < fill_goal
         off = 2 if res.pages > 1 else abs(round((PLAN_TARGET - (res.fill_ratio or 0)) / share))
-        off = max(1, min(off, ADJUST_MOST))
-        picks: dict = {}
+        off = max(1, min(off, ADJUST_MOST)) if (over or under) else 0
+        picks: dict = {i: list(ks) for i, ks in empty.items()}
         order = range(len(info) - 1, -1, -1) if over else range(len(info))
         for i in order:
             row = info[i]["targets"]
@@ -357,9 +362,15 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                     picks.setdefault(i, []).append(k)
                     off -= 1
         if picks:
-            cur = [list(r["bullets"]) for _k, _e, r in roles]
-            fb = {f"{i}:{k}": f"the page needs this bullet on {info[i]['targets'][k]} line(s), "
-                              "the last one full" for i, ks in picks.items() for k in ks}
+            cur = [list(r["bullets"]) + [""] * (len(info[i]["targets"]) - len(r["bullets"]))
+                   for i, (_k, _e, r) in enumerate(roles)]
+            fb = {f"{i}:{k}": (f"this bullet is missing: write a new one on "
+                               f"{info[i]['targets'][k]} line(s), the last one full, that says "
+                               "something the role's other bullets do not"
+                               if k in empty.get(i, []) else
+                               f"the page needs this bullet on {info[i]['targets'][k]} line(s), "
+                               "the last one full")
+                  for i, ks in picks.items() for k in ks}
             out3 = ask(current=cur, only=picks, feedback=fb)
             if out3 is not None:
                 place(out3, only=picks)

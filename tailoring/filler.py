@@ -323,9 +323,11 @@ def new_bullet_problems(new: str, siblings, material: str = "", restate: bool = 
 # --------------------------------------------------------------------------- #
 # Stock tails a model reaches a length with: "for stakeholders across the business" on three
 # bullets of one role, "for BlackOrigin Inc.'s products", "at Stanbic Bank Ghana".
+# "to stakeholders across the products" says who the work was for and stays; "for stakeholders"
+# ending the sentence, or "... across the business/organization", says nothing.
 _STOCK_TAIL = re.compile(
     r"\b(?:for|to|with)\s+(?:the\s+|its\s+|their\s+)?(?:key\s+)?stakeholders"
-    r"(?:\s+across\s+the\s+(?:business|company|organi[sz]ation|bank))?\b"
+    r"(?:\s+across\s+the\s+(?:business|company|organi[sz]ation|bank)\b|\s*[.;]?\s*$)"
     r"|\bacross\s+the\s+(?:business|organi[sz]ation)\b", re.I)
 _CORP = re.compile(r"\b(?:inc|llc|ltd|limited|corp|corporation|co|plc|gmbh|group)\.?$", re.I)
 # A run of this many words in a row, with at least two content words, said again on another
