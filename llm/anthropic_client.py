@@ -107,7 +107,8 @@ def parse_role_lists(out: str, n_roles: int):
             x = x.get("bullets") or next((v for v in x.values() if isinstance(v, list)), None)
         if not isinstance(x, list):
             return None
-        rows.append([str(b).strip() for b in x])
+        rows.append([[str(v).strip() for v in b] if isinstance(b, list) else str(b).strip()
+                     for b in x])
     return rows if len(rows) == n_roles else None
 
 
@@ -505,8 +506,11 @@ class AnthropicLLM:
                 have = ""
                 if current is not None and i < len(current) and k < len(current[i]):
                     have = f' now: "{current[i][k]}"'
-                want.append(f"  bullet {k + 1}: {lo}-{hi} characters ({n} printed line"
-                            f"{'s' if n > 1 else ''}){mark}{have}")
+                words = (ro.get("words") or [[]] * len(ro["windows"]))[k]
+                size = (f"4 versions of about {', '.join(map(str, words[:-1]))} and {words[-1]} "
+                        f"words" if words else f"{lo}-{hi} characters")
+                want.append(f"  bullet {k + 1}: {size} ({n} printed line{'s' if n > 1 else ''})"
+                            f"{mark}{have}")
             blocks.append(
                 f"ROLE {i + 1}: {ro['title']} at {ro['company']} ({ro['dates']}), "
                 f"{ro['tense']} tense\n"
@@ -515,9 +519,11 @@ class AnthropicLLM:
                 + f"\n  WRITE {len(ro['windows'])} bullets:\n" + "\n".join(want))
         system = (
             "You are a professional resume writer. Write the Experience bullets for each role "
-            "to the plan: exactly the number of bullets asked, each inside its character window "
-            "(a window of 1 printed line means the bullet fills that one line; 2 lines means it "
-            "fills the first line and nearly all of the second). Count characters carefully.\n"
+            "to the plan: exactly the number of bullets asked. For every bullet, write 4 VERSIONS "
+            "of clearly different length, close to the word counts given (shortest to longest). "
+            "All 4 carry the same facts; the longer ones add more real detail (a tool, a scope, "
+            "who it served, what it changed), never filler. The page picks the version that "
+            "fills its lines exactly, so you do not need to hit a length.\n"
             "Sources: the person's own saved bullets and uploaded resume for that role. Reword, "
             "merge, split and expand them, and write new bullets from the role's title and the "
             "duties the TARGET JOB lists for this kind of role.\n"
@@ -531,11 +537,13 @@ class AnthropicLLM:
             "- stock tails like \"for stakeholders across the business\", or the same phrase in "
             "two bullets of a role; each bullet says its own thing;\n"
             "- filler (leveraging, ensuring, robust, comprehensive, seamless), em or en dashes.\n"
-            "Start each bullet with a concrete action verb in the role's tense. Use the job's "
-            "wording where it truly fits the work.\n"
+            "Start each bullet with a concrete action verb in the role's tense and end it with a "
+            "full stop (the window counts it). Use the job's wording where it truly fits the "
+            "work.\n"
             "Work quickly: do not deliberate at length, write the bullets directly.\n"
-            "Return ONLY a JSON array with one array of bullet strings per role, in role order. "
-            "For a bullet marked KEEP AS IS, return its current text unchanged."
+            "Return ONLY a JSON array with one array per role, in role order; in it one array "
+            "of 4 version strings per bullet. For a bullet marked KEEP AS IS, return its current "
+            "text as the only version."
         )
         user = ("\n\n".join(blocks)
                 + f"\n\nTARGET JOB (context only):\n{str(jd_text)[:2500]}")
@@ -557,7 +565,7 @@ class AnthropicLLM:
         raise ValueError("write_experience: no readable answer after " + json.dumps(tries)[:600])
 
     def polish_role(self, role_label: str, bullets: list[str], budgets: list, context: str = "",
-                    jd_text: str = "", only=None) -> list[str]:
+                    jd_text: str = "", only=None, words=None) -> list:
         """Rewrite one role's bullets so each lands in its character window (one full printed
         line, or two), keeping every fact and keeping the bullets distinct
         (tailoring/assembler.py ``_polish_edges``; every rewrite is checked again)."""
@@ -565,7 +573,12 @@ class AnthropicLLM:
         lines = []
         for k, b in enumerate(bullets):
             lo, hi = budgets[k]
-            mark = f"REWRITE to {lo}-{hi} characters" if k in idx else "KEEP AS IS"
+            if k in idx and words:
+                w = words[k]
+                mark = (f"REWRITE as 4 versions of about {', '.join(map(str, w[:-1]))} and "
+                        f"{w[-1]} words")
+            else:
+                mark = f"REWRITE to {lo}-{hi} characters" if k in idx else "KEEP AS IS"
             lines.append(f"{k + 1}. [{mark}] ({len(b)} now) {b}")
         system = (
             "You are a professional resume writer polishing ONE role's bullets so every bullet "
@@ -582,7 +595,11 @@ class AnthropicLLM:
             "this role uses. Each bullet says its own thing.\n"
             "- Start with a concrete action verb in the bullet's tense. No filler (leveraging, "
             "ensuring, robust, comprehensive, seamless), no em or en dashes.\n"
-            "Return ONLY a JSON array with one string per bullet, in order, KEEP AS IS bullets "
+            "For a bullet asked for 4 versions, write 4 of clearly different length near the word "
+            "counts given, all with the same facts (longer ones add real detail); the page picks "
+            "the one that fills its lines. End every version with a full stop.\n"
+            "Return ONLY a JSON array with one entry per bullet, in order: an array of 4 version "
+            "strings for a bullet asked for versions, else one string; KEEP AS IS bullets "
             "unchanged."
         )
         user = (f"ROLE: {role_label}\n\nBULLETS:\n" + "\n".join(lines) + "\n\n"
@@ -592,7 +609,8 @@ class AnthropicLLM:
         if "[" in out and "]" in out:
             try:
                 data = json.loads(out[out.find("["): out.rfind("]") + 1])
-                got = [str(x).strip() for x in data]
+                got = [[str(v).strip() for v in x] if isinstance(x, list) else str(x).strip()
+                       for x in data]
                 if len(got) == len(bullets):
                     return got
             except (json.JSONDecodeError, TypeError):

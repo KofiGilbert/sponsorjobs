@@ -405,7 +405,7 @@ class _Polisher(FakeLLM):
         super().__init__()
         self.calls = 0
 
-    def polish_role(self, role_label, bullets, budgets, context="", jd_text="", only=None):
+    def polish_role(self, role_label, bullets, budgets, context="", jd_text="", only=None, words=None):
         self.calls += 1
         org = role_label.split(", ")[0]
         return [f"{b.rstrip('.')} at {org}, working across every team and function there." for b in bullets]

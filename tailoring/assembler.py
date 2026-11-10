@@ -2447,14 +2447,41 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
         fits = {i.text: i for i in rep.bullets}
         return sum(1 for b in bl if b in fits and not fits[b].ok())
 
+    from . import plan_fill as _pf
+
+    def _polish_ok(cand, k, new, lo, hi) -> bool:
+        from .fact_gate import figures as _figs
+        bl_k = bl_now[k]
+        # A polish keeps every figure the bullet states and ends as a sentence (run 12 dropped
+        # "about 10 drivers" and the full stop).
+        if _figs(bl_k) - _figs(cand) or not cand.rstrip().endswith((".", "!", "?")):
+            _fill_log(step="polish", label=label_now[0], bullet=cand, why="lost a figure or the full stop")
+            return False
+        if not (lo * 0.6 <= len(cand) <= hi * 1.25):
+            return False
+        others = [x for j, x in enumerate(new) if j != k]
+        src = str(origins.get(bl_k, bl_k))
+        why = (gate_rewrite(bl_k, cand, known=known, known_figures=known_figures)
+               + (["filler"] if hollow(cand) or is_padded(bl_k, cand) else [])
+               + role_padding(cand, others, employer_now[0], src + " " + bl_k))
+        if why:
+            _fill_log(step="polish", label=label_now[0], bullet=cand, why=why)
+        return not why
+
+    bl_now: list = []
+    label_now, employer_now = [""], [""]
+
     for attempt in range(tries):
         rep = _lf.measure(getattr(result, "pdf_path", None), used)
         cpl = _chars_per_line(rep)
+        cap = _pf.line_capacity(rep)
         if not cpl:
             return result
         fits = {i.text: i for i in rep.bullets}
         for entry, role, employer, label in list(entries()):
             bl = role["bullets"]
+            bl_now[:] = list(bl)
+            label_now[0], employer_now[0] = label, employer
             todo = [k for k, b in enumerate(bl) if b in fits and not fits[b].ok()]
             if not todo:
                 continue
@@ -2462,20 +2489,25 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
             # run it out to a full last line (run 12: a project bullet tightened to one line took
             # the page from 95.5% to 93.9%).
             at_goal = (result.fill_ratio or 0) - _lf.LINE_SHARE >= FILL_GOAL
-            asks = []
+            asks, lines_for = [], []
             for k in range(len(bl)):
                 it = fits.get(bl[k])
                 by_text = max(1, math.ceil(len(bl[k]) / cpl - 0.15))
                 if it and it.found:
-                    n = min(it.lines, by_text)               # a mislocated line never inflates it
+                    # As printed, unless the measure matched lines not its own; a stub is run
+                    # out to a full last line, or tightened to a line fewer while the page keeps
+                    # the goal without it.
+                    n = it.lines if it.lines <= by_text + 1 else by_text
                     if n >= 2 and it.last_fill < _lf.SPILL_TRIM and at_goal:
-                        n -= 1                               # a stub line: one line fewer
+                        n -= 1
                 else:
                     n = by_text
                 asks.append((int(cpl * n * POLISH_LO), int(cpl * n * POLISH_HI)))
+                lines_for.append(n)
             try:
                 out = llm.polish_role(label, list(bl), asks, context=profile_text_safe(entry),
-                                      jd_text=jd_text, only=todo)
+                                      jd_text=jd_text, only=todo,
+                                      words=[_pf.word_targets(n, cpl) for n in lines_for])
             except Exception as exc:                         # noqa: BLE001 - polish is optional
                 _fill_log(step="polish-error", label=label, why=str(exc)[:200])
                 continue
@@ -2484,27 +2516,19 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
                 continue
             new = list(bl)
             for k in todo:
-                cand = str(out[k] or "").strip()
                 lo, hi = asks[k]
-                if not cand or cand == bl[k]:
+                versions = out[k] if isinstance(out[k], list) else [out[k]]
+                good = []
+                for cand in versions:
+                    cand = str(cand or "").strip()
+                    if cand and cand != bl[k] and _polish_ok(cand, k, new, lo, hi):
+                        good.append(cand)
+                if not good:
                     continue
-                # A polish keeps every figure the bullet states and ends as a sentence (run 12
-                # dropped "about 10 drivers" and the full stop).
-                from .fact_gate import figures as _figs
-                if _figs(bl[k]) - _figs(cand) or not cand.rstrip().endswith((".", "!", "?")):
-                    _fill_log(step="polish", label=label, bullet=cand, why="lost a figure or the full stop")
-                    continue
-                if not (lo * 0.88 <= len(cand) <= hi * 1.06):
-                    _fill_log(step="polish", label=label, bullet=cand, why=f"length {len(cand)} not {lo}-{hi}")
-                    continue
-                others = [x for j, x in enumerate(new) if j != k]
-                src = str(origins.get(bl[k], bl[k]))
-                why = (gate_rewrite(bl[k], cand, known=known, known_figures=known_figures)
-                       + (["filler"] if hollow(cand) or is_padded(bl[k], cand) else [])
-                       + role_padding(cand, others, employer, src + " " + bl[k]))
-                if why:
-                    _fill_log(step="polish", label=label, bullet=cand, why=why)
-                    continue
+                # Versions of different length: the one whose last line lands full on its lines
+                # (tailoring/plan_fill.choose_version), measured against this page.
+                cand, _landed, _way = (_pf.choose_version(good, lines_for[k], cap) if cap
+                                       else (good[0], True, ""))
                 new[k] = cand
             if new == bl:
                 continue
