@@ -3117,10 +3117,12 @@ def session_state():
     # The transcript lives server-side in session.history; the chat bubbles were only ever
     # in the browser. Hand it back or the CV returns to an empty conversation, which still
     # reads as "we weren't working on anything".
-    # A turn's chat card (agent/resume_chat.py) comes back with it, so restore re-renders it.
+    # A turn's chat card (agent/resume_chat.py) comes back with it, so restore re-renders it,
+    # and a build's summary (its steps and what changed) comes back collapsed.
     state["history"] = [{"role": t.get("role"), "content": t.get("content"),
                          **({"card": t["card"]} if t.get("card") else {}),
-                         **({"cards": t["cards"]} if t.get("cards") else {})}
+                         **({"cards": t["cards"]} if t.get("cards") else {}),
+                         **({"build": t["build"]} if t.get("build") else {})}
                         for t in (s.history or [])]
     return jsonify(state)
 

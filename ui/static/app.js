@@ -89,9 +89,11 @@
   function hideOutage() { const b = $("#downModal"); if (b) b.hidden = true; }
 
   async function api(url, body) {
-    // A build request (any POST on the session) shows the builder's live activity line while it
-    // runs (window.__buildFeed, set up next to the agent bar below).
-    const feed = body !== undefined && /^\/api\/session\//.test(url) ? window.__buildFeed : null;
+    // A build request (any POST on the session, or a keyword or put back on the live page) shows
+    // the build's live steps in the chat while it runs (window.__buildFeed, set up next to the
+    // agent bar below).
+    const feed = body !== undefined && (/^\/api\/session\//.test(url)
+      || /^\/api\/cv\/live\/(keyword\/(add|apply|undo)|trim\/restore)$/.test(url)) ? window.__buildFeed : null;
     if (feed) feed.start();
     try { return await apiCall(url, body); } finally { if (feed) feed.stop(); }
   }
@@ -3042,7 +3044,8 @@
     chat.appendChild(m); chat.scrollTop = chat.scrollHeight; return m;
   }
   function working(label) {
-    const m = el("div", "msg agent");
+    // is-working: a build's own live message (renderBuildLive) stands in for it while it runs.
+    const m = el("div", "msg agent is-working");
     m.innerHTML = `<div class="msg-avatar">S</div><div class="msg-bubble"><span class="spin"></span>${label || "Working…"}</div>`;
     chat.appendChild(m); chat.scrollTop = chat.scrollHeight; return m;
   }
@@ -3440,7 +3443,16 @@
     if (!st) return;
     paintTemplateUsed(st);
     paintLiveNav(st);
-    (st.messages || []).forEach(m => bubble("agent", chatText(m)));
+    // The build's own message first (its live steps already sit here while it ran), then
+    // whatever the agent says after it.
+    const said = st.messages || [];
+    const at = st.build ? Math.min(Number(st.build_at) || 0, said.length) : 0;
+    said.slice(0, at).forEach(m => {
+      const b = bubble("agent", chatText(m)), live = chat.querySelector(".build-msg.is-live");
+      if (live) chat.insertBefore(b, live);
+    });
+    if (st.build) finishBuild(st.build);
+    said.slice(at).forEach(m => bubble("agent", chatText(m)));
     (st.cards || []).forEach(renderCard);
     if (st.question) bubble("agent", chatText(st.question));
     if (st.can_autobuild) renderAutobuild();
@@ -3462,9 +3474,9 @@
       if (Array.isArray(st.keyword_actions)) KW_ACTIONS = st.keyword_actions;
       renderCovDetail(st.coverage);
     }
-    if (st.review) renderReview(st.review);
-    if ("changes" in st || "trims" in st || "refine" in st) renderTailorWhat(st);
-    if (st.put_back_ok === false && st.put_back_error) twNote(st.put_back_error);
+    // What changed, the steps and the honesty flag live in the chat now (finishBuild); the
+    // pane is the resume. A put back that could not fit says so in the chat too.
+    if (st.put_back_ok === false && st.put_back_error) bubble("agent", chatText(st.put_back_error));
     if (st.pdf) {
       $("#pdfFrame").src = st.pdf + "&preview=1#toolbar=0&navpanes=0&view=FitH";
       const dl = $("#downloadBtn"); dl.href = st.pdf;
@@ -3495,24 +3507,9 @@
     }
   }
 
-  // Honest pre-send check. The headline is the fabrication guard: any skill on the resume the
-  // profile cannot back is called out first (it is the claim that costs an interview). Opportunities
-  // and honest gaps ride along as guidance, and the one-page fit is noted.
-  // The pre-send review panel is gone (Kofi, 2026-10-08: "remove it"). The ONE check that
-  // protects the person stays, as a single warning line shown only when it fires: a skill on
-  // the page that their own profile cannot back, which is the claim that unravels in an
-  // interview. Everything else (gaps, fit, verdicts) is the preview's job to show, not a panel's.
-  function renderReview(r) {
-    const el = $("#presendReview");
-    if (!el) return;
-    const honesty = (r && r.checks || []).find(c => c.id === "honesty" && c.level === "flag");
-    if (!honesty) { el.hidden = true; el.innerHTML = ""; return; }
-    el.hidden = false;
-    el.innerHTML = `<div class="ps-row ps-lvl-flag"><span class="ps-ic">!</span>`
-      + `<div class="ps-body"><div class="ps-label">${esc(honesty.label)}</div>`
-      + `<div class="ps-items">${(honesty.items || []).map(t => `<span class="ps-term ps-flag">${esc(t)}</span>`).join("")}</div></div></div>`;
-  }
-
+  // The honesty check (a skill on the page the person's own profile cannot back) is the one
+  // line under a build's summary in the chat (buildMsgEl, rec.flag); it needs a look, but it
+  // does not block saving, so it no longer sits over the resume.
   /* "Add this keyword" (the Rezi / Huntr action, on our engine). Every missing term gets an
      Add; the server asks the model whether the person's own profile supports it and drafts a
      rewrite of ONE bullet (or one new line when the page has room). The card shows the
@@ -3659,75 +3656,86 @@
     }
     else if (undo) { e.preventDefault(); kwUndo(undo.dataset.term); }
   });
-  /* What changed (tailoring/changes.py, built in code from the page and the base resume), the
-     refine chips (the coverage gaps the person's material supports; each runs the Add this
-     keyword path, so no model call makes the chip) and the one-page cuts with Put back, which
-     re-runs the fit check on the server. */
-  const twT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
-  function renderTailorWhat(st) {
-    const box = $("#tailorWhat");
-    if (!box) return;
-    const ch = st.changes || {};
-    const pts = ch.points || [];
-    const cuts = st.trims || [];
-    const chips = st.refine || [];
-    box.hidden = !(pts.length || cuts.length || chips.length);
-    const rf = $("#twRefine");
-    rf.hidden = !chips.length;
-    rf.innerHTML = chips.length
-      ? `<span class="tw-lbl">${esc(twT("tw.refine", "Refine"))}</span>` + chips.map(c => { const lab = twT("tw.workIn", "Work in {t}").replace("{t}", c.term); return `<button type="button" class="tw-chip" data-term="${esc(c.term)}" title="${esc(lab)}">${esc(lab)}</button>`; }).join("")
-      : "";
-    const bits = [];
-    if ((ch.reworded || []).length) bits.push(twT("tw.reworded", "{n} reworded").replace("{n}", ch.reworded.length));
-    if ((ch.skills || {}).reordered && (ch.skills.reordered.length || ch.skills.lines_moved)) bits.push(twT("tw.skills", "skills reordered"));
-    if ((ch.hidden || []).length) bits.push(twT("tw.hidden", "{n} hidden by your choice").replace("{n}", ch.hidden.length));
-    if ((ch.terms_added || []).length) bits.push(twT("tw.terms", "{n} job terms added").replace("{n}", ch.terms_added.length));
-    if (cuts.length) bits.push(twT("tw.cut", "{n} cut to fit").replace("{n}", cuts.length));
-    const wrote = ch.written || [];
-    if (wrote.length) bits.push(twT("tw.written", "{n} written for you").replace("{n}", wrote.length));
-    $("#twSum").textContent = bits.join(" · ") || twT("tw.none", "Nothing reworded yet");
-    $("#twPoints").innerHTML = pts.map(p => `<li>${esc(unDash(p))}</li>`).join("");
-    /* Bullets the builder WROTE from the person's own material to fill a short page: each shown
-       with its role, so the person reads every one before sending (edit or delete it on the page). */
-    const ww = $("#twWritten");
-    if (ww) {
-      ww.hidden = !wrote.length;
-      ww.innerHTML = wrote.length
-        ? `<div class="tw-lbl">${esc(twT("tw.writtenHead", "Written from your material, check these"))}</div>` + wrote.map(w =>
-          `<div class="tw-cut"><span class="tw-cut-t"><span class="tw-cut-w">${esc(w.label || "")}</span>${esc(unDash(w.text || ""))}</span></div>`).join("")
-        : "";
+  /* A build told in the chat (ui/session.py _builds), the way Claude shows its tool steps
+     inline and collapsible and ChatGPT canvas leaves an "Edited" note in the chat with the
+     document beside it. While a build runs, ONE agent message: a quiet "Working on your
+     resume…" with a spinner and the steps appearing one by one (no times). When it is done it
+     collapses to one summary line with a chevron, made in code from the change data
+     (tailoring/changes.py). Open, it lists the steps, what changed (each reworded bullet), the
+     bullets written for the person to check and what the fit cut, with Put back on the newest
+     build only. The pane keeps only the resume. */
+  const bmT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  function bmStepsHTML(steps, live) {
+    return `<ol class="bm-steps">` + (steps || []).map((ev) => {
+      const st = ev.state || "done";
+      const now = live && (st === "running" || st === "retry");
+      // A measured summary ("0 of 2 skills lines full") reads after a colon, words after a space.
+      const sum = ev.summary ? (/^\d/.test(ev.summary) ? ": " : " ") + ev.summary : "";
+      const words = (now ? ev.verb : feedPast(ev.verb)) + sum;
+      const mk = now ? `<span class="act-spin" aria-hidden="true"></span>`
+        : `<span class="bm-mk" aria-hidden="true">${st === "retry" ? "↻" : "✓"}</span>`;
+      return `<li class="bm-step${now ? " is-now" : ""}">${mk}<span class="bm-tx">${esc(unDash(words))}</span></li>`;
+    }).join("") + `</ol>`;
+  }
+  function bmRow(label, text, back) {
+    return `<div class="bm-row"><span class="bm-row-t"><span class="bm-row-w">${esc(label)}</span>${esc(unDash(text))}</span>`
+      + (back ? `<button type="button" class="btn btn-ghost btn-sm bm-back" data-id="${esc(back)}">${esc(bmT("tw.putBack", "Put back"))}</button>` : "")
+      + `</div>`;
+  }
+  function buildMsgEl(rec) {
+    const m = el("div", "msg agent build-msg");
+    m.dataset.build = rec.id || "";
+    const steps = rec.steps || [], items = rec.items || [], wrote = rec.written || [], cuts = rec.cuts || [];
+    const foot = [bmT("act.nSteps", "{n} steps").replace("{n}", steps.length)];
+    if (rec.secs) foot.push(bmT("bm.took", "took {s} s").replace("{s}", rec.secs));
+    const flag = rec.flag && (rec.flag.items || []).length
+      ? `<div class="bm-flag"><span class="bm-flag-l">${esc(unDash(rec.flag.label))}</span> ${rec.flag.items.map(t => `<span class="bm-term">${esc(t)}</span>`).join("")}</div>` : "";
+    m.innerHTML = `<div class="msg-avatar">S</div><div class="msg-bubble bm-bubble">`
+      + `<button type="button" class="bm-sum" aria-expanded="false"><span class="bm-ok" aria-hidden="true">✓</span>`
+      + `<span class="bm-sum-t">${esc(unDash(rec.summary || ""))}</span>${feedChevron}</button>${flag}`
+      + `<div class="bm-body" hidden>${bmStepsHTML(steps, false)}`
+      + (items.length ? `<div class="bm-lbl">${esc(bmT("tw.title", "What changed"))}</div><ul class="bm-items">${items.map(t => `<li>${esc(unDash(t))}</li>`).join("")}</ul>` : "")
+      + (wrote.length ? `<div class="bm-lbl">${esc(bmT("tw.writtenHead", "Written from your material, check these"))}</div>` + wrote.map(w => bmRow(w.label || "", w.text || "")).join("") : "")
+      + (cuts.length ? `<div class="bm-lbl">${esc(bmT("tw.cuts", "Cut to fit one page"))}</div>` + cuts.map(c => bmRow((c.what || "") + (c.label ? ", " + c.label : ""), c.text || "", c.id || "")).join("") : "")
+      + `<div class="bm-foot">${esc(foot.join(" · "))}</div></div></div>`;
+    return m;
+  }
+  // Put back acts on the page as it is now, so only the newest build offers it.
+  function bmLatestOnly() {
+    const all = chat.querySelectorAll(".build-msg:not(.is-live)");
+    all.forEach((m, i) => { if (i < all.length - 1) m.querySelectorAll(".bm-back").forEach(b => b.remove()); });
+  }
+  function renderBuildMsg(rec) {
+    chat.appendChild(buildMsgEl(rec));
+    bmLatestOnly();
+  }
+  // The response of a build: its live message (if the steps were showing) becomes the summary.
+  function finishBuild(rec) {
+    const m = buildMsgEl(rec);
+    const live = chat.querySelector(".build-msg.is-live");
+    const same = rec.id ? [...chat.querySelectorAll(".build-msg:not(.is-live)")].find(x => x.dataset.build === rec.id) : null;
+    if (live) live.replaceWith(m); else if (same) same.replaceWith(m); else chat.appendChild(m);
+    chat.querySelectorAll(".msg.is-working").forEach(w => { w.style.display = ""; });
+    if (window.__buildFeed) window.__buildFeed.done(rec.id);
+    bmLatestOnly();
+    chat.scrollTop = chat.scrollHeight;
+  }
+  chat.addEventListener("click", async (e) => {
+    const sum = e.target.closest(".bm-sum");
+    if (sum) {
+      const body = sum.parentElement.querySelector(".bm-body");
+      if (!body) return;
+      body.hidden = !body.hidden;
+      sum.setAttribute("aria-expanded", String(!body.hidden));
+      return;
     }
-    const cw = $("#twCuts");
-    cw.hidden = !cuts.length;
-    cw.innerHTML = cuts.length
-      ? `<div class="tw-lbl">${esc(twT("tw.cuts", "Cut to fit one page"))}</div>` + cuts.map(c =>
-        `<div class="tw-cut"><span class="tw-cut-t"><span class="tw-cut-w">${esc(c.what)}${c.label ? ", " + esc(c.label) : ""}</span>${esc(unDash(c.text))}</span>`
-        + `<button type="button" class="btn btn-ghost btn-sm tw-back" data-id="${esc(c.id)}">${esc(twT("tw.putBack", "Put back"))}</button></div>`).join("")
-      : "";
-  }
-  function twNote(msg) {
-    const body = $("#twBody");
-    if (!body) return;
-    body.querySelector(".tw-note")?.remove();
-    const p = el("p", "tw-note"); p.textContent = unDash(msg);
-    body.prepend(p);
-    body.hidden = false; $("#twToggle").setAttribute("aria-expanded", "true");
-  }
-  $("#twToggle")?.addEventListener("click", () => {
-    const body = $("#twBody");
-    body.hidden = !body.hidden;
-    $("#twToggle").setAttribute("aria-expanded", String(!body.hidden));
-  });
-  $("#tailorWhat")?.addEventListener("click", async (e) => {
-    const chip = e.target.closest(".tw-chip");
-    const back = e.target.closest(".tw-back");
-    if (chip) { e.preventDefault(); kwPreview(chip.dataset.term, null); return; }
+    const back = e.target.closest(".bm-back");
     if (back) {
       e.preventDefault();
-      back.disabled = true; back.textContent = twT("tw.putting", "Checking the fit");
+      back.disabled = true; back.textContent = bmT("tw.putting", "Checking the fit");
       let st;
       try { st = await api("/api/cv/live/trim/restore", { id: back.dataset.id }); }
-      catch (err) { back.disabled = false; back.textContent = twT("tw.putBack", "Put back"); twNote(err.message || ""); return; }
+      catch (err) { back.disabled = false; back.textContent = bmT("tw.putBack", "Put back"); bubble("agent", chatText(err.message || "")); return; }
       applyState(st);
     }
   });
@@ -3763,7 +3771,6 @@
     chat.innerHTML = ""; setStep("details"); setCoverage(0);
     $("#coverage").hidden = true; $("#editToggle").hidden = true;
     $("#covDetail").hidden = true;
-    if ($("#tailorWhat")) { $("#tailorWhat").hidden = true; $("#twBody").hidden = true; $("#twToggle").setAttribute("aria-expanded", "false"); }
     $("#acceptBtn").disabled = true;
     $("#downloadBtn").hidden = true;
     $("#acceptNote").textContent = "Answer a few questions and I’ll draft this for you.";
@@ -3790,6 +3797,8 @@
     resetBuilder();
     $("#jdGate").hidden = true;          // a session exists, don't ask for the JD again
     (st.history || []).forEach(t => {
+      // A build comes back as its collapsed summary (steps and what changed inside).
+      if (t.build) { renderBuildMsg(t.build); return; }
       bubble(t.role === "user" ? "user" : "agent", chatText(t.content || ""));
       (t.cards && t.cards.length ? t.cards : (t.card ? [t.card] : [])).forEach(renderCard);
     });
@@ -10792,51 +10801,49 @@
   }
   const aaFeedHide = () => { const b = $("#bbFeed"); if (b) b.hidden = true; };
 
-  // ---- the resume builder: the same live line above the preview while it builds. Polls
-  // /api/activity while a session request is in flight (the build itself is one request).
+  // ---- the resume builder: the build's live message in the CHAT while it builds (the steps
+  // appear one by one under "Working on your resume…"). Polls /api/activity while a session
+  // request is in flight (the build itself is one request); the response turns the message into
+  // its collapsed summary (finishBuild). A request that only asked a question reads the job and
+  // stops, so nothing shows until a build step starts, and nothing stays behind.
   (function buildFeed() {
-    const B = { inflight: 0, timer: null, since: 0, open: false, hideT: null, runId: "", sig: "" };
-    const box = () => $("#buildLive");
+    const B = { inflight: 0, timer: null, since: 0, sig: "", done: new Set() };
+    const liveEl = () => chat.querySelector(".build-msg.is-live");
     async function tick() {
       let d = null;
       try { d = await fetch("/api/activity?key=builder").then((r) => r.json()); } catch { d = null; }
       render(d && d.run);
     }
-    function hide() { const b = box(); if (b) { b.hidden = true; b.innerHTML = ""; } B.runId = ""; B.sig = ""; }
+    function drop() {
+      liveEl()?.remove();
+      chat.querySelectorAll(".msg.is-working").forEach(w => { w.style.display = ""; });
+      B.sig = "";
+    }
     function render(run) {
-      const b = box();
-      if (!b) return;
-      if (!run || !(run.events || []).length || (run.started || 0) < B.since) { if (!B.inflight && !B.open) hide(); return; }
-      const ended = !!run.ended;
-      // A request that only asked a question (no page was built) leaves no line behind.
-      if (ended && run.ok !== false && !run.events.some((e) => e.phase === "check")) { if (!B.open) hide(); return; }
-      if (run.id !== B.runId) { B.runId = run.id; B.open = false; }
-      const now = feedLast(run.events);
-      const secs = Math.max(1, Math.round((run.ended || Date.now() / 1000) - run.started));
-      const foot = [T("act.nSteps", "{n} steps").replace("{n}", run.events.length),
-                    (ended ? T("act.took", "Took {s} s") : T("act.for", "{s} s so far")).replace("{s}", secs)];
-      const sig = JSON.stringify([run.id, run.ended, run.ok, run.events, B.open, B.open ? secs : 0]);
-      if (sig === B.sig && !b.hidden) return;          // unchanged: no repaint, no repeated announcement
+      if (!B.inflight) { drop(); return; }          // the response decides what stays (finishBuild)
+      if (!run || (run.started || 0) < B.since || B.done.has(run.id)) return;
+      const evs = run.events || [];
+      if (!evs.some((e) => e.phase !== "read")) return;
+      const sig = JSON.stringify([run.id, run.ended, evs.map((e) => [e.verb, e.summary, e.state])]);
+      let m = liveEl();
+      if (m && sig === B.sig) return;              // unchanged: no repaint, no repeated announcement
       B.sig = sig;
-      const head = ended
-        ? `<span class="act-done" aria-hidden="true">${FEED_MARK.done}</span><span class="act-now"><span class="act-verb">${esc(run.ok === false ? T("act.stoppedB", "Stopped") : T("act.built", "Built"))}</span>${run.target ? " " + esc(run.target) : ""}</span>`
-        : `<span class="act-spin" aria-hidden="true"></span><span class="act-now" role="status" aria-live="polite">${feedNowHTML(now)}</span>`
-          + (run.target ? `<span class="act-meta">${esc(run.target)}</span>` : "");
-      b.innerHTML = `<div class="act-row">${head}</div>`
-        + `<div class="act-feed" id="buildFeedList"${B.open ? "" : " hidden"}>${feedListHTML(run.events, foot)}</div>`;
-      b.querySelector(".act-row").appendChild(feedToggle(run.events.length, B.open, "buildFeedList", () => {
-        B.open = !B.open;
-        render(run);
-        if (!B.open && ended) hide();
-      }));
-      b.classList.toggle("is-live", !ended);
-      b.hidden = false;
-      clearTimeout(B.hideT);
-      if (ended && !B.inflight && !B.open) B.hideT = setTimeout(() => { if (!B.open && !B.inflight) hide(); }, 4000);
+      if (!m) {
+        m = el("div", "msg agent build-msg is-live");
+        m.innerHTML = `<div class="msg-avatar">S</div><div class="msg-bubble bm-bubble">`
+          + `<div class="bm-head" role="status" aria-live="polite"><span class="act-spin" aria-hidden="true"></span>`
+          + `<span>${esc(T("bm.working", "Working on your resume…"))}</span></div><div class="bm-live"></div></div>`;
+        chat.appendChild(m);
+      }
+      m.dataset.run = run.id;
+      m.querySelector(".bm-live").innerHTML = bmStepsHTML(evs, true);
+      // The plain "Working…" bubble gives way to the steps while they show.
+      chat.querySelectorAll(".msg.is-working").forEach(w => { w.style.display = "none"; });
+      chat.scrollTop = chat.scrollHeight;
     }
     window.__buildFeed = {
       start() {
-        if (!B.inflight) { B.since = Date.now() / 1000 - 2; clearTimeout(B.hideT); }
+        if (!B.inflight) B.since = Date.now() / 1000 - 2;
         B.inflight++;
         if (!B.timer) B.timer = setInterval(tick, 600);
       },
@@ -10844,8 +10851,11 @@
         B.inflight = Math.max(0, B.inflight - 1);
         if (B.inflight) return;
         clearInterval(B.timer); B.timer = null;
-        tick();
+        // applyState runs before this settles; a live message it did not turn into a summary
+        // (a question, an error) goes.
+        setTimeout(drop, 0);
       },
+      done(id) { if (id) B.done.add(id); },
       _render: render,
     };
   })();

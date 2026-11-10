@@ -632,40 +632,45 @@ button { font-family: inherit; cursor: pointer; }
 .kw-line.after { color: var(--ink); }
 .kw-actions { display: flex; gap: 8px; margin-top: 2px; }
 
-/* What changed (tailoring/changes.py) under the preview toolbar: refine chips, one summary line
-   that opens to the list, and the cuts with Put back. Neutral greys only; the panel's one primary
-   stays Accept & Save, so every control here is a quiet chip or a ghost button. */
-.tw { border-bottom: 1px solid var(--border); background: var(--surface); }
-.tw-refine { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 24px 0; }
-.tw-refine[hidden] { display: none; }
-.tw-lbl { font-size: 10.5px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; margin-right: 2px; }
-.tw-chip { border: 1px solid var(--border-strong); background: transparent; color: var(--ink-2); font: inherit;
-  font-size: 12px; font-weight: 550; line-height: 1; padding: 6px 10px; border-radius: var(--r-pill); cursor: pointer;
-  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
-.tw-chip:hover { color: var(--ink); border-color: var(--ink-2); background: color-mix(in srgb, var(--ink) 5%, transparent); }
-.tw-chip:disabled { color: var(--faint); cursor: default; }
-.tw-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 24px; margin: 0; background: none;
-  border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.tw-title { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink); }
-.tw-sum { flex: 1; min-width: 0; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tw-caret { flex: none; width: 14px; height: 14px; color: var(--muted); transition: transform var(--dur) var(--ease); }
-.tw-head[aria-expanded="true"] .tw-caret { transform: rotate(180deg); }
-.tw-head:hover .tw-caret, .tw-head:hover .tw-sum { color: var(--ink-2); }
-.tw-body { padding: 0 24px 12px; display: grid; gap: 10px; max-height: 38vh; overflow-y: auto; }
-.tw-body[hidden] { display: none; }
-.tw-points { margin: 0; padding: 0 0 0 16px; display: grid; gap: 4px; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); }
-.tw-cuts { display: grid; gap: 6px; }
-.tw-cuts[hidden] { display: none; }
-.tw-cut { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid var(--border);
-  border-radius: 8px; background: var(--surface-2); }
-.tw-cut-t { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.4; color: var(--ink-2);
-  overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.tw-cut-w { color: var(--faint); font-size: 11.5px; margin-right: 6px; }
-.tw-cut .btn { flex: none; }
-.tw-written .tw-cut-t { display: block; overflow: visible; }
-.tw-note { margin: 0; font-size: 12px; color: var(--flag); }
-@media (max-width: 640px) { .tw-refine { padding: 10px 16px 0; } .tw-head { padding: 9px 16px; } .tw-body { padding: 0 16px 12px; } }
+/* A build told in the chat (app.js buildMsgEl): Claude's collapsible tool steps, ChatGPT canvas's
+   "Edited" note. No card of its own: the bubble drops its frame so the steps read as quiet work,
+   not as another message to read. While it runs, a muted "Working on your resume…" with the act
+   spinner and the steps one per line; done, one summary line with a chevron; open, the steps,
+   What changed, the written bullets and the cuts (Put back is a ghost button). Neutral greys. */
+.build-msg { max-width: 92%; width: 92%; }
+.build-msg .msg-bubble.bm-bubble { flex: 1; min-width: 0; background: transparent; border: 0; box-shadow: none;
+  padding: 3px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.bm-head { display: flex; align-items: center; gap: 8px; min-height: 20px; color: var(--muted); }
+.bm-steps { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 3px; }
+.bm-step { display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: 8px; align-items: baseline; color: var(--muted); }
+.bm-step .act-spin { align-self: center; }
+.bm-step.is-now { color: var(--ink-2); }
+.bm-mk { text-align: center; color: var(--faint); font-size: 11.5px; }
+.bm-tx { min-width: 0; overflow-wrap: anywhere; }
+.bm-sum { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 22px; margin: 0; padding: 0;
+  background: none; border: 0; color: var(--ink-2); font: inherit; text-align: left; cursor: pointer; }
+.bm-sum:hover { color: var(--ink); }
+.bm-sum:hover .act-caret { color: var(--ink-2); }
+.bm-sum:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; border-radius: 4px; }
+.bm-ok { flex: none; width: 14px; text-align: center; color: var(--muted); font-size: 12px; }
+.bm-sum-t { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-sum .act-caret { flex: none; }
+.bm-sum[aria-expanded="true"] .act-caret { transform: rotate(180deg); }
+.bm-body { margin: 4px 0 0 22px; padding-left: 12px; border-left: 1px solid var(--border); display: grid; gap: 6px; }
+.bm-body[hidden] { display: none; }
+.bm-body .bm-steps { margin: 2px 0 0; }
+.bm-lbl { margin-top: 6px; font-size: 10.5px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }
+.bm-items { margin: 0; padding: 0 0 0 16px; display: grid; gap: 3px; color: var(--ink-2); }
+.bm-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--surface); }
+.bm-row-t { flex: 1; min-width: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+.bm-row-w { color: var(--faint); font-size: 11.5px; margin-right: 6px; }
+.bm-row .btn { flex: none; }
+.bm-foot { margin-top: 2px; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.bm-flag { margin: 6px 0 0 22px; color: var(--flag); font-size: 12px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.bm-flag-l { font-weight: 600; }
+.bm-term { font-size: 11px; padding: 1px 8px; border-radius: var(--r-pill); background: var(--flag-soft);
+  border: 1px solid color-mix(in srgb, var(--flag) 30%, transparent); }
 
 /* Honest pre-send review: a verdict header + a short checklist. The fabrication guard (level
    "flag") is the loud row; passes are quiet green, opportunities/gaps are neutral guidance. */
@@ -2067,13 +2072,7 @@ mark.jd-gap { text-decoration-color: var(--flag); }
 .bb-fill .act-toggle { padding: 0 8px; }
 .bb-feed { padding: 0 12px 8px 12px; background: var(--surface); border-bottom: 1px solid #2a2a2a; color: var(--ink-2); }
 .bb-feed[hidden] { display: none; }
-/* In the builder: one quiet strip above the preview, in the "What changed" grammar. */
-.build-live { border-bottom: 1px solid var(--border); background: var(--surface); padding: 9px 24px; }
-.build-live[hidden] { display: none; }
-.build-live .act-row { display: flex; align-items: center; gap: 10px; font-size: 12.5px; min-height: 24px; }
-.build-live .act-feed { padding-top: 4px; }
-.build-live .act-feed[hidden] { display: none; }
-@media (max-width: 640px) { .build-live { padding: 9px 16px; } .act-step { grid-template-columns: 64px 14px minmax(0, 1fr); } }
+@media (max-width: 640px) { .act-step { grid-template-columns: 64px 14px minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) {
   .act-spin { animation: none; width: 8px; height: 8px; border: 0; background: var(--accent); }
   .act-caret { transition: none; }
@@ -2191,7 +2190,6 @@ body.panel-open .app { margin-right: calc(var(--panel-w) + 42px); }
 .side-panel.ctx-package .choice-line,
 .side-panel.ctx-package #editToggle,
 .side-panel.ctx-package .coverage,
-.side-panel.ctx-package .tw,
 .side-panel.ctx-package .cov-detail { display: none; }
 
 /* Builder: the chat IS the center now, comfortably readable. */

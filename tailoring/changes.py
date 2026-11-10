@@ -268,3 +268,26 @@ def summary_line(ch: dict, role: str = "", company: str = "", limit: int = 1024)
     if ch.get("missing"):
         text += " Missing: " + ", ".join(ch["missing"][:8]) + "."
     return text[:limit]
+
+
+def readable(ch: dict, terms=(), limit: int = 8) -> list[str]:
+    """The change list as the chat shows it under a build's summary: one line per reworded
+    bullet, naming its employer and the job's terms it now mentions ("Reworded a BlackOrigin
+    bullet to mention Power BI"), then the other kinds of change from ``points``. Bullets the
+    builder wrote and what the fit cut are listed apart (they each need a look), so they are
+    left out here."""
+    from tailoring.keywords import term_present
+    out: list[str] = []
+    rew = list(ch.get("reworded") or [])
+    for r in rew[:limit]:
+        org = str(r.get("label") or "").split(",")[0].strip() or "a"
+        new = [str(t) for t in terms or () if str(t).strip()
+               and term_present(t, r.get("after") or "") and not term_present(t, r.get("before") or "")]
+        who = f"a {org} bullet" if org != "a" else "a bullet"
+        out.append(f"Reworded {who} to mention {_names(new, 2)}." if new
+                   else f"Reworded {who} toward the job.")
+    if len(rew) > limit:
+        out.append(_plural(len(rew) - limit, "more bullet reworded", "more bullets reworded") + ".")
+    rest = dict(ch, reworded=[], written=[], trimmed=[])
+    out += points(rest)
+    return out
