@@ -68,7 +68,11 @@ def test_switching_after_a_build_rebuilds_one_page_in_the_new_template(fake_llm,
     assert st["template_ok"] is True and s.template_name == "data"
     assert s.assembled.ok and s.assembled.compile.pages == 1           # one clean page
     assert s._pdf_v == v + 1 and st["pdf"].endswith(f"v={s._pdf_v}")   # the preview refreshes
-    assert st["messages"] == ["Switched to the Data Scientist template. Rebuilt your resume in it."]
+    # The rebuild is told by its build summary in the chat, naming the template; no second line.
+    assert st["messages"] == []
+    summary = st["build"]["summary"]
+    assert "Data Scientist template" in summary and ("one page" in summary or "% of the page" in summary)
+    assert s.history[-1].get("build", {}).get("id") == st["build"]["id"]
     assert [t for t in s.history if t.get("role") == "user"] == users
 
 

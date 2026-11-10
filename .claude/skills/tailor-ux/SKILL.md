@@ -431,3 +431,21 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   <login>" and the row button becomes Disconnect. Errors are one plain line ("That code expired.
   Try again.", "You cancelled on GitHub.") with Try again. The token box survives only behind
   "Advanced: use a token instead", and as the fallback in a build without the Client ID.
+- 2026-11-09: A build is told in the CHAT, not over the preview (Kofi: "i was expecting to see the
+  updates you are making to the resume in the chat side, similar to how chatgpt and claude work").
+  Claude shows tool steps inline and collapsible; ChatGPT canvas leaves an "Edited" note in the chat
+  with the document beside it. Each build or rebuild (first draft, rebuild after an answer, template
+  switch, keyword ADD, projects added, put back) is ONE agent message: while it runs, a muted
+  "Working on your resume…" with the act spinner and the steps appearing one per line with a check,
+  no times (it stands in for the plain "Working…" bubble); done, one summary line with a chevron,
+  "Built your resume · 5 bullets reworded · 3 written for you · 49% of the page", made in code from
+  the change data. A rebuild names what it did and only the counts that moved ("Updated your resume
+  · Excel added · one page"). Open: the steps, What changed (each reworded bullet, "Reworded a
+  BlackOrigin bullet to mention Power BI"), the bullets written for the person to check, what the
+  fit cut with Put back (newest build only), "7 steps · took 3 s". The honesty flag sits under the
+  summary. The message has no bubble frame. It is kept in the history, so a restored chat shows the
+  summary. The pane is the resume: Live preview, Edit, Keywords, the PDF, Download, Accept & Save;
+  the step strip, the What changed panel, the refine chips (the Keywords panel's Add does the same)
+  and the honesty strip left it. No "Here's a first draft" line repeats the summary; a short page
+  keeps one follow-up, "I'll ask for a few more real things to fill the page." Screens:
+  1440x900 dark, mid build, collapsed, open, rebuild, restored, pane.

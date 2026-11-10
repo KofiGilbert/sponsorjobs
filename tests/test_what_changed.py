@@ -114,10 +114,11 @@ def test_refine_chips_come_from_supported_gaps_without_a_model_call(tmp_path):
     assert "Kubernetes" not in [c["term"] for c in s.refine_chips(cov)]
 
 
-def test_the_builder_renders_chips_changes_and_put_back():
+def test_the_builder_tells_what_changed_in_the_chat_with_put_back():
+    # What changed moved from the pane into each build's chat message (2026-11-09); the pane is
+    # the resume, and the keywords panel keeps the Add path the refine chips duplicated.
     js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     html = (ROOT / "ui" / "templates" / "index.html").read_text(encoding="utf-8")
-    assert 'id="tailorWhat"' in html and 'id="twToggle"' in html
-    assert "function renderTailorWhat(st)" in js
-    assert 'kwPreview(chip.dataset.term, null)' in js            # the chip runs Add this keyword
-    assert '"/api/cv/live/trim/restore"' in js
+    assert 'id="tailorWhat"' not in html
+    assert "function buildMsgEl(rec)" in js and "function finishBuild(rec)" in js
+    assert '"/api/cv/live/trim/restore"' in js and "bm-back" in js

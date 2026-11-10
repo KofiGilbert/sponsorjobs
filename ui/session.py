@@ -852,6 +852,39 @@ def _locked(fn):
     return run
 
 
+def _builds(kind: str):
+    """One build or rebuild of the page, told in the chat (Claude and ChatGPT show their work in
+    the conversation, the document beside it). Opens the live activity run (ui/activity.py) the
+    chat polls while the request runs; when the page was rebuilt and kept, ONE agent turn goes
+    into the history at the point the build started, carrying the steps and what changed
+    (WebIntake._record_build), and the returned state carries it as ``build``. A build inside a
+    build (draft from the build button) is one turn."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def run(self, *a, **kw):
+            if self._bt is not None:
+                return fn(self, *a, **kw)
+            bt = {"kind": kind, "h0": len(self.history), "v0": self._pdf_v, "args": a}
+            self._bt = bt
+            try:
+                with self._build_feed() as r:
+                    out = fn(self, *a, **kw)
+            finally:
+                self._bt = None
+            rec = self._record_build(bt, r, out)
+            if rec is not None:
+                if isinstance(out, dict) and "phase" in out:
+                    out["build"] = rec
+                    # The lines said before the build started ("Building your resume now")
+                    # stay above its message; the rest follow it.
+                    out["build_at"] = int(bt.get("lead") or 0)
+                else:                       # a helper's result: the next state carries it
+                    self._pending_build = rec
+            return out
+        return run
+    return deco
+
+
 class WebIntake:
     def __init__(self, jd_text, template_source, llm, memory, records, workdir,
                  profile_name="default", jobname="cv", palace_dir=None,
@@ -1510,6 +1543,7 @@ class WebIntake:
         st.update({"action_ok": True, "added": added, "skipped": skipped})
         return st
 
+    @_builds("projects")
     def add_projects(self, entries: list, source: str = "github") -> dict:
         """Add project entries the person chose (from a repo_fit card) to this resume's
         essentials and page, the brain (source ``source``) and the saved profile (section 4b),
@@ -3225,6 +3259,10 @@ class WebIntake:
                 s["blocked_finalize"] = True
         if extra:
             s.update(extra)
+        # A build told in the chat by a helper (add_projects inside a chat turn) rides on the
+        # first state after it; a build's own state gets it from _builds.
+        if self._pending_build is not None and self._bt is None:
+            s["build"], self._pending_build = self._pending_build, None
         return s
 
     def _suggested_projects(self) -> list[str]:
@@ -3232,6 +3270,8 @@ class WebIntake:
                 for p in (self.profile.get("projects") or []) if p.get("suggested")]
 
     _pdf_v = 0
+    _bt = None              # the build being told in the chat (_builds)
+    _pending_build = None   # a helper's build, carried by the next state
 
     def start(self):
         # Recall the most relevant prior statements for THIS job from the diary (keyword
@@ -3771,11 +3811,132 @@ class WebIntake:
     def _feed_read_job(self):
         _activity.step("read", "Reading the job")
 
+    # One build told in the chat (``_builds``): the steps it took and what changed, worked out
+    # in code from the same data as the change list (tailoring/changes.py), never by the model.
+    BUILD_FIRST = "Built your resume"
+    SHORT_PAGE_ASK = "I'll ask for a few more real things to fill the page."
+    BUILD_AGAIN = "Updated your resume"
+
+    def _build_failed(self, bt: dict, out) -> bool:
+        """The rebuild was rolled back (no room for a keyword, a cut that cannot fit, a template
+        the page does not fit): the page is as it was, and the reply already says why."""
+        if not isinstance(out, dict):
+            return False
+        if out.get("template_ok") is False or out.get("put_back_ok") is False:
+            return True
+        return bt["kind"] in ("keyword", "keyword_undo") and out.get("ok") is False
+
+    @staticmethod
+    def _build_counts(ch: dict) -> dict:
+        return {"reworded": len(ch.get("reworded") or []), "written": len(ch.get("written") or []),
+                "cut": len(ch.get("trimmed") or [])}
+
+    def _build_bits(self, bt: dict, out, ch: dict, cov: dict | None = None) -> list[str]:
+        """The summary line's parts after the headline, at most three, in counts. A rebuild names
+        what it did ("Excel added") and only the counts that moved since the last build, so the
+        same "13 bullets reworded" is not said again for a keyword."""
+        def n(k, one, many):
+            return f"{k} {one if k == 1 else many}"
+        kind, args = bt["kind"], bt.get("args") or ()
+        cur = self._build_counts(ch)
+        prev = next((t["build"].get("counts") for t in reversed(self.history)
+                     if isinstance(t, dict) and t.get("build")), None) if kind != "draft" else None
+        moved = (lambda k: cur[k] and (prev is None or cur[k] != (prev or {}).get(k)))
+        bits = []
+        if moved("reworded"):
+            bits.append(n(cur["reworded"], "bullet reworded", "bullets reworded"))
+        term = " ".join(str(args[0] if args else "").split())[:60]
+        if kind == "keyword" and term:
+            bits.append(f"{term} added")
+        elif kind == "keyword_undo" and term:
+            bits.append(f"{term} taken out")
+        elif kind == "put_back":
+            bits.append("1 item put back")
+        elif kind == "projects" and isinstance(out, dict) and out.get("added"):
+            bits.append(n(len(out["added"]), "project added", "projects added"))
+        elif kind == "template":
+            label = str((self.manifest or {}).get("display_name") or self.template_name or "").strip()
+            if label:
+                bits.append(f"{label} template")
+        if moved("written"):
+            bits.append(f"{cur['written']} written for you")
+        if moved("cut"):
+            bits.append(f"{cur['cut']} cut to fit")
+        if kind == "draft":
+            terms_total = int((cov or {}).get("terms") or 0)
+            if ch.get("terms_added"):
+                bits.append(n(len(ch["terms_added"]), "job term added", "job terms added"))
+            elif not bits and terms_total:
+                # A first draft from the chat has no base resume to compare with: how much of
+                # the job's language the page carries instead (the Keywords bar's numbers).
+                bits.append(f"{len((cov or {}).get('present') or [])} of {terms_total} job terms")
+            sk = ch.get("skills") or {}
+            if len(bits) < 2 and (sk.get("reordered") or sk.get("lines_moved")):
+                bits.append("skills reordered")
+        return bits[:3]
+
+    def _record_build(self, bt: dict, run: dict | None, out) -> dict | None:
+        """After a build that changed the page and kept it: ONE agent turn at the point the build
+        started, {"role": "agent", "content": <summary>, "build": <record>}. The record holds
+        the steps (verb, summary, state; no times) and the change list, so a restored chat shows
+        the same collapsed summary. None when nothing was built or the build was rolled back."""
+        a = self.assembled
+        if a is None or self._pdf_v == bt["v0"] or self.essentials.get("unattended") \
+                or self._build_failed(bt, out):
+            return None
+        try:
+            ch = self.changes_dict()
+        except Exception:  # noqa: BLE001 - the summary still says what it can
+            ch = {}
+        try:
+            cov = self.coverage_dict() or {}
+        except Exception:  # noqa: BLE001
+            cov = {}
+        terms = [str(t) for t in cov.get("present") or []]
+        from tailoring.changes import readable
+        one_page = bool(a.ok and a.compile is not None and a.compile.pages == 1)
+        fill = getattr(a, "fill_ratio", None)
+        pct = round(fill * 100) if (getattr(a, "underfull", False) and fill) else None
+        first = not any(isinstance(t, dict) and t.get("build") for t in self.history)
+        head = self.BUILD_FIRST if first and bt["kind"] == "draft" else self.BUILD_AGAIN
+        page = (f"{pct}% of the page" if pct else "one page") if one_page else "over one page"
+        summary = " · ".join([head] + self._build_bits(bt, out, ch, cov) + [page])
+        items = readable(ch, terms)
+        if not items and terms:
+            items = ["Job terms on the page: " + ", ".join(terms[:8])
+                     + (f" and {len(terms) - 8} more" if len(terms) > 8 else "") + "."]
+        run = run or {}
+        steps = [{k: ev[k] for k in ("verb", "summary", "state", "detail") if ev.get(k)}
+                 for ev in run.get("events") or []]
+        secs = None
+        if run.get("started") and run.get("ended"):
+            secs = max(1, round(run["ended"] - run["started"]))
+        flag = None
+        try:
+            hon = next((c for c in (self.review_dict() or {}).get("checks") or []
+                        if c.get("id") == "honesty" and c.get("level") == "flag"), None)
+            if hon:
+                flag = {"label": str(hon.get("label") or ""), "items": list(hon.get("items") or [])}
+        except Exception:  # noqa: BLE001
+            flag = None
+        rec = {"id": str(run.get("id") or f"b{self._pdf_v}"), "kind": bt["kind"], "summary": summary,
+               "steps": steps, "secs": secs, "items": items,
+               "written": list(ch.get("written") or []), "cuts": list(ch.get("trimmed") or []),
+               "fill": pct, "one_page": one_page, "flag": flag, "counts": self._build_counts(ch)}
+        turn = {"role": "agent", "content": summary, "build": rec}
+        self.history.insert(min(bt["h0"], len(self.history)), turn)
+        try:
+            self.palace.remember_turn("agent", summary)
+        except Exception:  # noqa: BLE001
+            pass
+        self._persist()
+        return rec
+
     @_locked
+    @_builds("draft")
     def draft(self, lead=None):
-        with self._build_feed():
-            self._feed_read_job()
-            return self._draft(lead)
+        self._feed_read_job()
+        return self._draft(lead)
 
     def _draft(self, lead=None):
         # Gate: never build while a template field is missing. Under an override we
@@ -3820,14 +3981,15 @@ class WebIntake:
         self.stage = "review"
         self._persist()   # the built profile is now remembered for next time
         msgs = list(lead or [])
-        # Never call a short page "a real, one-page resume" (that line sat over a page that was
-        # half empty, 2026-10-07). Say what the page actually is and what happens next.
+        if self._bt is not None:
+            self._bt["lead"] = len(msgs)
+        # The build's own summary in the chat (_builds) says what the page is ("one page", or
+        # "62% of the page" when short; never "a real, one-page resume" over a half page,
+        # 2026-10-07), so no "Here's a first draft" line repeats it. A short page keeps the
+        # one useful part: what happens next.
         fill = getattr(self.assembled, "fill_ratio", None) if self.assembled is not None else None
         if self.assembled is not None and self.assembled.underfull and fill:
-            msgs.append(f"Here's a first draft. It fills about {round(fill * 100)}% of the page, "
-                        "so I'll ask you for a few more real things to fill it properly.")
-        else:
-            msgs.append("Here's your draft, a real, one-page resume.")
+            msgs.append(self.SHORT_PAGE_ASK)
         cut_note = self._trims_note()
         if cut_note:
             msgs.append(cut_note)
@@ -3964,12 +4126,12 @@ class WebIntake:
         return f"Without dates, {who} read as undated; recruiters may weigh them less."
 
     @_locked
+    @_builds("draft")
     def build_from_saved(self):
         """Build directly from the saved profile, tailored to this job, the
         response to "use what you already know about me"."""
-        with self._build_feed():
-            self._feed_read_job()
-            return self._build_from_saved()
+        self._feed_read_job()
+        return self._build_from_saved()
 
     def _build_from_saved(self):
         if self.saved_profile and self.saved_profile.get("experience"):
@@ -4033,9 +4195,9 @@ class WebIntake:
             self._after_build()
             self.stage = "review"
             self._persist()
-            lead = "Building from your saved profile, tailored to this role."
-            self._append("agent", lead)
-            msgs = [lead]
+            # The build's summary in the chat (_builds) says what was built; no lead line
+            # repeats it.
+            msgs = []
             if getattr(self.assembled, "fact_flags", None):
                 from tailoring.fact_gate import describe as _describe_figures
                 msgs.append(_describe_figures(self.assembled.fact_flags))
@@ -4869,11 +5031,11 @@ class WebIntake:
 
     # -- switching the template in a running chat (Kofi, test build 13, 2026-11-09) ------ #
     TEMPLATE_SWITCHED = "Switched to the {name} template."
-    TEMPLATE_REBUILT = "Rebuilt your resume in it."
     TEMPLATE_FAILED = ("Your resume didn't fit one clean page in the {name} template, so I kept "
                        "{old}.")
 
     @_locked
+    @_builds("template")
     def set_template(self, name: str, template_source: str):
         """Switch this chat's template (the builder's "change", then "Use this template"). The
         job, the chat, the profile and every answer stay. Built already: rebuild the page in the
@@ -4912,7 +5074,14 @@ class WebIntake:
                 st.update({"template_ok": False,
                            "template_error": self.TEMPLATE_FAILED.format(name=label, old=old_label)})
                 return st
-        msg = self.TEMPLATE_SWITCHED.format(name=label) + (" " + self.TEMPLATE_REBUILT if built else "")
+        if built:
+            # The rebuild is told in the chat by its own summary (_builds), with the template
+            # named in it, so no second line says the same.
+            self._persist()
+            st = self._state([])
+            st["template_ok"] = True
+            return st
+        msg = self.TEMPLATE_SWITCHED.format(name=label)
         self._append("agent", msg)
         self._persist()
         st = self._state([msg])
@@ -5191,8 +5360,8 @@ class WebIntake:
         n = len(self._written)
         if n:
             parts.append(f"To fill the page I wrote {n} new bullet{'' if n == 1 else 's'} from your "
-                         f"own material. Check {'it' if n == 1 else 'them'} under "
-                         "<b>What changed</b> before you send.")
+                         f"own material. Check {'it' if n == 1 else 'them'} in the summary "
+                         "above before you send.")
         parts += [str(x) for x in (getattr(a, "bullet_notes", None) or []) if str(x).strip()]
         return " ".join(parts)
 
@@ -5202,8 +5371,8 @@ class WebIntake:
         if not n:
             return ""
         if n == 1:
-            return "To fit one page I cut one item. It is under <b>What changed</b>, with Put back."
-        return (f"To fit one page I cut {n} items. They are under <b>What changed</b>, "
+            return "To fit one page I cut one item. It is in the summary above, with Put back."
+        return (f"To fit one page I cut {n} items. They are in the summary above, "
                 "each with Put back.")
 
     REFINE_CHIPS = 4
@@ -5223,6 +5392,7 @@ class WebIntake:
         return out
 
     @_locked
+    @_builds("put_back")
     def put_back(self, trim_id: str) -> dict:
         """Put one cut back on the page and re-run the one-page fit. When it fits (perhaps by
         cutting something else, which is then listed with its own Put back) it stays; when it
@@ -5299,6 +5469,7 @@ class WebIntake:
         return pv.to_dict()
 
     @_locked
+    @_builds("keyword")
     def keyword_apply(self, term: str, draft: str = "") -> dict:
         from tailoring.keyword_action import (apply_keyword_action, check_draft_for,
                                               render_interior)
@@ -5337,6 +5508,7 @@ class WebIntake:
         return self._keyword_result(term, True, "", res)
 
     @_locked
+    @_builds("keyword_undo")
     def keyword_undo(self, term: str) -> dict:
         from tailoring.keyword_action import remove_added_bullet, restore_bullet
         term = " ".join(str(term or "").split())
@@ -5379,6 +5551,7 @@ class WebIntake:
     # and Rezi: on the best-fitting Skills line, in the job's own wording, and saved as their
     # own skill so every later resume treats it as theirs.
     @_locked
+    @_builds("keyword")
     def keyword_add(self, term: str) -> dict:
         """Add ``term`` to the page's Skills block and to the saved profile. The page rebuilds
         through the normal one-page fit (compile, page count, overfull check, shrink). When
