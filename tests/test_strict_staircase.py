@@ -441,3 +441,74 @@ def test_a_split_never_carries_its_source_s_phrase_into_two_bullets():
              "Built KPI dashboards in Power BI that track growth, usage, and unit costs for stakeholders "
              "across the business."]
     assert _split_problem(parts, src, src, [], "", "past", "BlackOrigin Inc.")
+
+
+# --------------------------------------------------------------------------- plan, then write
+_WORDS = ("ledger invoice freight pallet roster audit queue ticket vendor budget forecast inventory "
+          "shipment schedule warehouse route carrier depot clinic patient record survey sample "
+          "batch query report review checklist template workflow handbook training session cohort "
+          "pipeline extract schema table metric threshold alert variance trend sprint backlog "
+          "release staging archive catalog index tracker calendar register summary briefing memo "
+          "dataset column filter rollup chart panel notebook script macro import export upload "
+          "invoice2 margin quote tender contract renewal intake triage escalation handoff").split()
+
+
+class _PlanWriter(FakeLLM):
+    """Writes each planned bullet to its window from words no other bullet uses."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+        self.n = 0
+
+    def _sentence(self, lo, hi):
+        verbs = ["Reviewed", "Prepared", "Organized", "Checked", "Updated", "Mapped", "Sorted"]
+        out = verbs[self.n % len(verbs)]
+        while len(out) < (lo + hi) // 2 - 12:
+            out += " " + _WORDS[self.n % len(_WORDS)] + ("s" if self.n // len(_WORDS) % 2 else "")
+            self.n += 1
+        return out + " each week."
+
+    def write_experience(self, roles, jd_text="", current=None, only=None, feedback=None):
+        self.calls += 1
+        res = []
+        for i, ro in enumerate(roles):
+            row = []
+            for k, (lo, hi, _n) in enumerate(ro["windows"]):
+                if only is not None and k not in (only.get(i) or []) and current and k < len(current[i]):
+                    row.append(current[i][k])
+                else:
+                    row.append(self._sentence(lo, hi))
+            res.append(row)
+        return res
+
+
+def test_the_plan_is_a_strict_staircase_that_adds_up_to_the_lines():
+    from tailoring.plan_fill import plan_counts, plan_lines, windows
+    c = plan_counts(4, 20)
+    assert c == [5, 4, 3, 2]
+    t = plan_lines(c, 20)
+    assert sum(map(sum, t)) == 20 and t[0] == [2, 2, 2, 2, 2] and t[-1] == [1, 1]
+    assert plan_counts(4, 27)[0] == 6                         # the lines need more bullets
+    w = windows([[1, 2]], 100.0)[0]
+    assert w[0] == (93, 100, 1) and w[1] == (193, 200, 2)
+
+
+def test_an_invented_outcome_claim_is_refused():
+    from tailoring.plan_fill import invented_claims
+    assert invented_claims("Processed every one of the 280,000+ daily postings, with none skipped "
+                           "or lost.", "Built a pipeline for 280,000+ daily postings.")
+    assert invented_claims("Cut errors to zero errors in reporting.", "") 
+    assert not invented_claims("Built SQL reports on order volumes for daily reviews.", "")
+
+
+@requires_latex
+def test_plan_then_write_fills_the_experience_section_in_one_call(template_source, workdir):
+    llm = _PlanWriter()
+    res = assemble_cv(template_source, _ladder_profile(), "Data Analyst. SQL, Excel, Tableau.", llm,
+                      workdir, tailor=False, fit_lines=True, fit_rounds=0)
+    assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
+    c = _counts(res.profile_used)
+    assert all(b < a for a, b in zip(c, c[1:])) and c[-1] >= 2, c
+    assert 1 <= llm.calls <= 3
+    assert any(a["kind"] == "written" for a in res.added)

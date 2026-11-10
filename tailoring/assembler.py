@@ -2415,7 +2415,7 @@ def _chars_per_line(rep) -> float:
 
 def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, headings,
                   workdir: Path, jobname: str, origins: dict, known: dict, known_figures: set,
-                  tries: int = 2):
+                  tries: int = 2, projects_only: bool = False):
     """Rewrite each entry's bullets so every one runs to the right edge: one call per entry
     (``llm.polish_role``, every role and every project with a bullet short of the edge) with a
     character window per bullet from the measured width. A bullet that spills a stub line is
@@ -2439,7 +2439,7 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
         for p in used.get("projects") or []:
             if isinstance(p, dict) and isinstance(p.get("bullets"), list):
                 yield p, p, "", entry_label(p)
-        for _rank, e, r in ranked_roles(used):
+        for _rank, e, r in ([] if projects_only else ranked_roles(used)):
             if isinstance(r.get("bullets"), list):
                 yield e, r, str(e.get("org") or e.get("company") or ""), entry_label(e, r)
 
@@ -2822,7 +2822,12 @@ def assemble_cv(
             write=tailor if fill_writes is None else fill_writes, source=source_material,
             material=material, gate_material=gate_material, origins=origins, reverted=reverted,
             trims=trims, keep=keep, state=fill_state)
-    if result and result.ok and result.pages == 1:
+    # PLAN, THEN WRITE (Kofi, 2026-11-10): a fresh build with a backend that writes to a plan
+    # does the Experience section in one planned pass after the line fit
+    # (tailoring/plan_fill.py), so the bullet-by-bullet fill does not run first.
+    planning = bool(fit_lines and llm is not None
+                    and callable(getattr(llm, "write_experience", None)))
+    if result and result.ok and result.pages == 1 and not planning:
         result, added, bullet_notes = fill_page(result)
         # The review's "before" side gets the person's own bullets the fill brought back.
         keys = {entry_label(e, r): _role_key(e, r) for _rank, e, r in ranked_roles(used)}
@@ -2893,6 +2898,7 @@ def assemble_cv(
     # 87.7%, 2026-11-10). White space is never acceptable: the staircase fill runs once more on
     # the fitted page, from the same material and without asking the model anything twice.
     if (result and result.ok and result.pages == 1 and result.fill_ratio is not None
+            and not planning
             and (result.fill_ratio < FILL_GOAL or not staircase_ok(used))):
         result, more, more_notes = fill_page(result)
         added += more
@@ -2912,7 +2918,26 @@ def assemble_cv(
     # THE EDGE POLISH (Kofi, 2026-11-10): one model call per role, every bullet given a
     # character budget from the measured line width (one full line, or two), so no bullet
     # stops short or spills a stub; re-measured, with one targeted retry.
-    if (fit_lines and llm is not None and callable(getattr(llm, "polish_role", None))
+    if planning and result and result.ok and result.pages == 1:
+        from . import plan_fill as _pf
+        from .fact_gate import known_material, source_figures
+        _say("fill", "Planning the page", "every role's bullets, sized to the lines")
+        result, planned = _pf.run_plan(
+            preamble, used, result, llm=llm, jd_text=jd_text, source=source_material,
+            material=material, gate_material=gate_material, sections=sections,
+            headings=headings, workdir=workdir, jobname=jobname, origins=origins,
+            fill_goal=FILL_GOAL, max_fill=MAX_FILL)
+        if planned:
+            added = [a for a in added if a.get("section") != "experience"] + planned
+        if callable(getattr(llm, "polish_role", None)) and result and result.ok:
+            # Projects keep their own bullets; one that stops short is run to the edge.
+            result = _polish_edges(preamble, used, result, llm=llm, jd_text=jd_text,
+                                   sections=sections, headings=headings, workdir=workdir,
+                                   jobname=jobname, origins=origins,
+                                   known=known_material(*gate_material, jd_text),
+                                   known_figures=source_figures(*gate_material),
+                                   projects_only=True)
+    elif (fit_lines and llm is not None and callable(getattr(llm, "polish_role", None))
             and result and result.ok and result.pages == 1):
         from .fact_gate import known_material, source_figures
         pol_known = known_material(*gate_material, jd_text)

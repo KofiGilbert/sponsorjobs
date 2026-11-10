@@ -349,11 +349,14 @@ def employer_names(org: str) -> list[str]:
 
 
 def role_padding(new: str, siblings, employer: str = "", source: str = "",
-                 repeats_from_source: bool = True) -> list[str]:
+                 repeats_from_source: bool = True, context: str = "",
+                 allowed: str = "") -> list[str]:
     """Padding a bullet added to a role carries that states no fact: its own employer's name
     (the role's heading already says it), a stock tail ("for stakeholders across the
     business"), or a phrase another bullet of the role already says. Anything ``source`` (the
-    person's own bullet it came from) already says is theirs and allowed."""
+    person's own bullet it came from) already says is theirs and allowed. For a repeated
+    phrase, the words of ``context`` (the role's title and company) do not count, and a phrase
+    ``allowed`` holds (the role's own saved bullets) may recur."""
     new, source = str(new or ""), str(source or "")
     out: list[str] = []
     for name in employer_names(employer):
@@ -367,16 +370,17 @@ def role_padding(new: str, siblings, employer: str = "", source: str = "",
     mine = _fact_tokens(new)
     # A part of a split may not carry its source's phrase into two bullets: with
     # ``repeats_from_source`` off, the source does not excuse a repeat.
-    src = _fact_tokens(source) if repeats_from_source else []
+    src = (_fact_tokens(source) if repeats_from_source else []) + ["|"] + _fact_tokens(allowed)
+    ctx = set(_fact_tokens(context))
     for sib in siblings or ():
         st = _fact_tokens(str(sib or ""))
-        if _shared_phrase(mine, st, src):
+        if _shared_phrase(mine, st, src, ctx):
             out.append("repeats a phrase of another bullet")
             break
     return out
 
 
-def _shared_phrase(a: list[str], b: list[str], allowed: list[str]) -> bool:
+def _shared_phrase(a: list[str], b: list[str], allowed: list[str], ctx=frozenset()) -> bool:
     """A run of ``REPEAT_RUN`` or more words in both ``a`` and ``b``, with two content words,
     that ``allowed`` does not hold."""
     allowed_s = " " + " ".join(allowed) + " "
@@ -387,7 +391,7 @@ def _shared_phrase(a: list[str], b: list[str], allowed: list[str]) -> bool:
                 k += 1
             if k >= REPEAT_RUN:
                 run = a[i:i + k]
-                if sum(t not in _FACT_STOP for t in run) >= 2 and \
+                if sum(t not in _FACT_STOP and t not in ctx for t in run) >= 2 and \
                         (" " + " ".join(run[:REPEAT_RUN]) + " ") not in allowed_s:
                     return True
     return False

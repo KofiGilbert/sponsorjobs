@@ -452,6 +452,68 @@ class AnthropicLLM:
                 pass
         return [str(text or "").strip()]
 
+    def write_experience(self, roles: list[dict], jd_text: str = "", current=None, only=None,
+                         feedback=None) -> list[list[str]]:
+        """Write the whole Experience section to a plan (tailoring/plan_fill.py): per role, exactly
+        the planned number of bullets, each inside its character window. ``current`` and
+        ``only`` ({role index: [bullet index]}) rewrite just those bullets, with ``feedback``
+        ({"i:k": why}) saying what missed. Every bullet is checked again."""
+        blocks = []
+        for i, ro in enumerate(roles):
+            want = []
+            for k, (lo, hi, n) in enumerate(ro["windows"]):
+                mark = ""
+                if only is not None:
+                    if k not in (only.get(i) or []):
+                        mark = " KEEP AS IS"
+                    elif feedback and feedback.get(f"{i}:{k}"):
+                        mark = " FIX: " + str(feedback[f"{i}:{k}"])
+                have = ""
+                if current is not None and i < len(current) and k < len(current[i]):
+                    have = f' now: "{current[i][k]}"'
+                want.append(f"  bullet {k + 1}: {lo}-{hi} characters ({n} printed line"
+                            f"{'s' if n > 1 else ''}){mark}{have}")
+            blocks.append(
+                f"ROLE {i + 1}: {ro['title']} at {ro['company']} ({ro['dates']}), "
+                f"{ro['tense']} tense\n"
+                "  Their saved bullets:\n" + "\n".join(f"  - {b}" for b in ro["saved"])
+                + (f"\n  Their uploaded resume says:\n  {ro['notes'][:1200]}" if ro.get("notes") else "")
+                + f"\n  WRITE {len(ro['windows'])} bullets:\n" + "\n".join(want))
+        system = (
+            "You are a professional resume writer. Write the Experience bullets for each role "
+            "to the plan: exactly the number of bullets asked, each inside its character window "
+            "(a window of 1 printed line means the bullet fills that one line; 2 lines means it "
+            "fills the first line and nearly all of the second). Count characters carefully.\n"
+            "Sources: the person's own saved bullets and uploaded resume for that role. Reword, "
+            "merge, split and expand them, and write new bullets from the role's title and the "
+            "duties the TARGET JOB lists for this kind of role.\n"
+            "Never:\n"
+            "- a number or percentage the person's material does not state;\n"
+            "- an employer, product or client name they do not state; a degree, certification or "
+            "award;\n"
+            "- an outcome claim they do not make (\"with none skipped or lost\", \"zero errors\", "
+            "\"100% accuracy\");\n"
+            "- the role's own company name inside its bullets;\n"
+            "- stock tails like \"for stakeholders across the business\", or the same phrase in "
+            "two bullets of a role; each bullet says its own thing;\n"
+            "- filler (leveraging, ensuring, robust, comprehensive, seamless), em or en dashes.\n"
+            "Start each bullet with a concrete action verb in the role's tense. Use the job's "
+            "wording where it truly fits the work.\n"
+            "Return ONLY a JSON array with one array of bullet strings per role, in role order. "
+            "For a bullet marked KEEP AS IS, return its current text unchanged."
+        )
+        user = ("\n\n".join(blocks)
+                + f"\n\nTARGET JOB (context only):\n{str(jd_text)[:2500]}")
+        out = self._complete(system, user, max_tokens=3500, effort="medium") or ""
+        if "[" in out and "]" in out:
+            try:
+                data = json.loads(out[out.find("["): out.rfind("]") + 1])
+                if isinstance(data, list) and all(isinstance(x, list) for x in data):
+                    return [[str(b).strip() for b in x] for x in data]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return [list(ro["saved"])[:len(ro["windows"])] for ro in roles]
+
     def polish_role(self, role_label: str, bullets: list[str], budgets: list, context: str = "",
                     jd_text: str = "", only=None) -> list[str]:
         """Rewrite one role's bullets so each lands in its character window (one full printed
