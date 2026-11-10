@@ -5867,6 +5867,10 @@ class WebIntake:
             t = str(t).strip()
             if not t or t.lower() in seen or t.lower() in declined or is_requirement(t):
                 continue
+            # A broken fragment of a longer term ("OpenAI)" from "analytics (Claude, OpenAI)",
+            # a brain fact split on its comma) is not a skill and never goes on the page.
+            if t.count("(") != t.count(")"):
+                continue
             if avoid and any(a & set(re.findall(r"[a-z0-9]+", t.lower())) for a in avoid):
                 continue
             if term_present(t, genuine):

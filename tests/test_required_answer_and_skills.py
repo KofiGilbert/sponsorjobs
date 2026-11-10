@@ -175,6 +175,29 @@ def test_the_answer_goes_into_the_asked_section_and_renders(template_source, wor
     assert "Before I build, I need your" not in said
 
 
+def test_bare_entries_render_each_on_their_own_line():
+    from tailoring.assembler import _extracurricular
+    tex = _extracurricular({"extracurricular": [
+        {"title": "Playing football", "date": "", "bullets": []},
+        {"title": "Swimming", "date": "", "bullets": []}]})
+    first, second = tex.index("Playing football"), tex.index("Swimming")
+    assert "\n\n" in tex[first:second], tex          # a paragraph break between the two titles
+    with_bullets = _extracurricular({"extracurricular": [
+        {"title": "Youth team", "date": "2024", "bullets": ["Coached twelve players."]}]})
+    assert "\\begin{itemize}" in with_bullets
+
+
+def test_a_broken_fragment_never_reaches_the_skills_pool(template_source, workdir):
+    # His brain held the skill fact "OpenAI)" (an old split of "analytics (Claude, OpenAI)"), and
+    # the page printed it on a Skills line (the real run, 2026-11-10).
+    s = _returning(template_source, workdir)
+    s.essentials["skills_input"].append("OpenAI)")
+    assert "OpenAI)" not in s._skill_pool()
+    s.profile = normalize_profile(dict(s.saved_profile))
+    s._reselect_skills()
+    assert "OpenAI)" not in _terms(s.profile["skills"])
+
+
 def test_a_decline_or_a_question_is_never_material(template_source, workdir):
     s = _returning(template_source, workdir)
     s.submit(BUILD_BUTTON)
