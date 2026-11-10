@@ -1271,6 +1271,7 @@ class WebIntake:
             rank_repos=self._rank_for_job, offer=self._offer,
             suggest_ideas=self._ideas if callable(self.ideas_for) else None,
             offer_build=self._offer_build if callable(self.start_build) else None,
+            add_top=self._add_top,
             role=self.role or "", company=self.company or "")
 
     # -- repo ranking and adding (plan PRs 3 and 4) ------------------------------------- #
@@ -1646,6 +1647,143 @@ class WebIntake:
         return (f"{_and_list(best)} {verb} this job best. Tick the ones you want on the card and "
                 f"click {ADD_LABEL}.")
 
+    # -- "add 2 github projects" (Kofi, 2026-11-09) ------------------------------------------ #
+    _github_add_due = 0     # an add asked for while GitHub was not connected: N, carried on after
+    _NUM_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+
+    def _github_add_login(self, login: str = "") -> str:
+        gh = self._github_view()
+        return login or (gh.get("login") if gh.get("connected") else "") or gh.get("resume_login") or ""
+
+    def _add_top(self, n: int, login: str = "") -> dict:
+        """Rank the person's repositories for this job and add the top ``n`` that fit (strong
+        or some fit, never none or unknown; not already on the resume), through add_projects:
+        the same entries and the same add as ticking them on the repo_fit card and clicking its
+        button, then the page is rebuilt (once built). Returns the agent tool's result: what was
+        added and why, ``say`` (the reply), ``fewer``, and the repo_fit card with a fresh token
+        for the fits still to add. No GitHub and no username: the connect card, and the add is
+        remembered so connecting carries on with it."""
+        from agent.resume_chat import _no_github, repo_fit_card
+        from ui.repo_rank import entry_for
+        login = self._github_add_login(login)
+        if not login:
+            self._github_add_due = n
+            return {**_no_github(), "changed": False}
+        try:
+            got = self._rank_for_job(login)
+        except Exception:      # noqa: BLE001 - one polite line, never a trace
+            got = {"ok": False}
+        if not got.get("ok"):
+            return {"ok": False, "changed": False, "error": str(got.get("error") or ""),
+                    "say": "I couldn't read your repos just now. Try again in a moment."}
+        repos = [r for r in got.get("repos") or [] if isinstance(r, dict)]
+        fits = [r for r in repos if r.get("fit") in ("strong", "some")]
+        already = [r.get("name") for r in fits if r.get("on_resume")]
+        pick = [r for r in fits if not r.get("on_resume")][:n]
+        res = self.add_projects([entry_for(r) for r in pick], source="github") if pick else {}
+        names = set(res.get("added") or [])
+        chosen = [r for r in pick if r.get("name") in names]
+        for r in repos:                 # the card shows the new ones as on the resume
+            r["on_resume"] = self._on_resume(r)
+        rest = [r for r in fits if not r.get("on_resume")]
+        token = self._offer(rest) if rest else ""
+        say = self._added_line(n, chosen, already)
+        return {"ok": True, "changed": bool(chosen), "asked_for": n,
+                "added": [{"name": r.get("name"), "fit": r.get("fit"), "skills_it_shows": list(r.get("terms") or [])[:4],
+                           "why": r.get("why") or ""} for r in chosen],
+                "fewer_fit_than_asked": len(chosen) < n, "already_on_resume": already,
+                "say": say, "card": repo_fit_card(got, token)}
+
+    def _added_line(self, n: int, chosen: list, already: list) -> str:
+        """One or two plain lines: which repositories were added and why (the job skills they
+        show), and honestly when fewer fit than were asked for."""
+        names = [str(r.get("name")) for r in chosen]
+        terms: list[str] = []
+        for r in chosen:
+            for t in r.get("terms") or []:
+                if str(t).lower() not in {x.lower() for x in terms}:
+                    terms.append(str(t))
+        one = len(chosen) == 1
+        why = (f" {'It shows' if one else 'They show'} this job's {_and_list(terms[:4])}." if terms else "")
+        on = (f" {_and_list(already)} {'is' if len(already) == 1 else 'are'} already on it."
+              if already else "")
+        where = "and rebuilt your resume" if self.assembled is not None else "to this resume"
+        if not chosen:
+            if already:
+                return (f"The repos that fit this job are already on your resume.{on} I can help you "
+                        "build a project for this job for more.")
+            return ("None of your repos shows this job's skills yet, so I didn't add any. I can help "
+                    "you build a project for this job instead.")
+        if len(chosen) < n:
+            k = n - len(chosen)
+            more = " more" if already else ""
+            count = self._NUM_WORDS.get(len(chosen), str(len(chosen)))
+            other = "the other one" if k == 1 else f"the other {self._NUM_WORDS.get(k, str(k))}"
+            line = (f"Only {count}{more} of your repos {'fits' if one else 'fit'} this job, so I added "
+                    f"{_and_list(names)} {where}.{why}{on} I can help you build a project for this "
+                    f"job for {other}.")
+        else:
+            line = f"I added {_and_list(names)} from your GitHub {where}.{why}{on}"
+        cut = self._trims_note() if self.assembled is not None else ""
+        return line + (f" {cut}" if cut else "")
+
+    BUILD_ONE_SEND = "Suggest a project I could build for this job"
+
+    def _add_from_github(self, n: int, connected_as: str = ""):
+        """The "add N github projects" turn, decided without a model: _add_top, then its line
+        and the repo_fit card (so the person can add others). Fewer fit than asked: a button to
+        get project ideas for this job. Not connected and no username: one line and the Connect
+        GitHub button, and connecting carries on with this same add."""
+        from agent.resume_chat import connect_card, merge_cards
+        msgs: list[str] = []
+        if connected_as:
+            what = "repo" if n == 1 else f"{self._NUM_WORDS.get(n, str(n))} repos"
+            where = f"this {self.role} role" if self.role else "this job"
+            lead = f"Connected as {connected_as}. Adding the {what} that fit {where} best."
+            msgs.append(lead)
+            self._append("agent", lead)
+        out = self._add_top(n)
+        if out.get("github_connected") is False:
+            line = ("GitHub isn't connected yet. Connect it with the button below and I'll add the "
+                    + ("repo" if n == 1 else f"{self._NUM_WORDS.get(n, str(n))} repos")
+                    + " that fit this job best.")
+            card = dict(connect_card(), add=n)
+            msgs.append(line)
+            self._append("agent", line)
+            self.history[-1]["card"] = card
+            self._persist()
+            return self._state(msgs, cards=[card])
+        raw = [out.pop("card")] if out.get("card") else []
+        if out.get("ok") and (out.get("fewer_fit_than_asked") or not out.get("added")):
+            raw.append({"type": "buttons", "buttons": [
+                {"label": "Build a project for this job", "send": self.BUILD_ONE_SEND}]})
+        cards = merge_cards(raw)
+        text = str(out.get("say") or "")
+        msgs.append(text)
+        self._append("agent", text)
+        if cards:
+            self.history[-1]["card"] = cards[0]
+            if len(cards) > 1:
+                self.history[-1]["cards"] = cards
+        self._agent_spoke = True       # a follow-up question stays with the agent
+        self._persist()
+        st = self._state(msgs, cards=cards)
+        st["added"] = [a["name"] for a in out.get("added") or []]
+        return st
+
+    def _connect_add_count(self) -> int:
+        """N from the latest live Connect GitHub card that an "add N github projects" left."""
+        for t in reversed(self.history):
+            if not isinstance(t, dict):
+                continue
+            for c in [t.get("card")] + list(t.get("cards") or []):
+                if self._connect_buttons(c):        # the latest one only
+                    try:
+                        return max(0, int(c.get("add") or 0))
+                    except (TypeError, ValueError):
+                        return 0
+        return 0
+
     def github_connected(self, pending: bool = False) -> dict:
         """GitHub just became connected (the one-click flow, the device flow, a pasted token, in
         Settings or from the chat): when the chat's last word on GitHub was "not connected" (a
@@ -1662,6 +1800,7 @@ class WebIntake:
                 st["resumed"] = False
                 return st
             login = str(gh.get("login") or gh.get("resume_login") or "")
+            add_n = self._connect_add_count()
             due = self._mark_connect_cards(login or "GitHub")
             if pending:
                 due = True
@@ -1669,10 +1808,15 @@ class WebIntake:
                 st = self._state([])
                 st["resumed"] = False
                 return st
+            self._github_add_due = 0     # the card says it (a restored chat too)
             if not due or not self._agent_on():
                 self._persist()
                 st = self._state([])
                 st.update({"resumed": False, "github_login": login})
+                return st
+            if add_n:       # "add 2 github projects" asked before it was connected: do just that
+                st = self._add_from_github(add_n, connected_as=login or "GitHub")
+                st.update({"resumed": True, "github_login": login})
                 return st
             st = self._check_github(connected_as=login or "GitHub")
             st.update({"resumed": True, "github_login": login})
@@ -1704,6 +1848,7 @@ class WebIntake:
 
     def _agent_reply(self, message: str):
         from agent.resume_chat import run_turn
+        self._github_add_due = 0       # the latest request decides what a connect carries on with
         try:
             out = run_turn(self, self._agent_ctx(), message)
         except Exception:      # noqa: BLE001 - the agent failing falls back to today's reply
@@ -1712,6 +1857,10 @@ class WebIntake:
         cards = list(out.get("cards") or [])
         self._agent_spoke = True       # a follow-up question stays with the agent (_submit)
         self._append("agent", text)
+        if self._github_add_due:       # add_github_projects met no GitHub: the connect carries on
+            for c in cards:
+                if self._connect_buttons(c):
+                    c["add"] = self._github_add_due
         if cards:
             self.history[-1]["card"] = cards[0]
             if len(cards) > 1:
@@ -3260,6 +3409,15 @@ class WebIntake:
         # model's choice of it. A typed "check my github" stays with the intake and the agent.
         if self._agent_on() and self._is_check_github(message):
             return self._check_github()
+        # "add 2 github projects": the add itself, before the intake's extractor or enrichment
+        # can take it as material ("send me the repo links", Kofi, 2026-11-09). Ranked for this
+        # job, the top N that fit added like the card's button, even while an intake answer is
+        # pending. A pasted list or link, or a described project, is not such a request.
+        if self._agent_on():
+            from agent.resume_chat import github_add_count
+            n_add = github_add_count(message)
+            if n_add:
+                return self._add_from_github(n_add)
 
         # Flagged-placeholder project controls.
         if _wants_remove_suggested(message) and self._suggested_projects():
@@ -3318,8 +3476,11 @@ class WebIntake:
         # asked before the first draft) is REAL material the skeleton extractor doesn't
         # capture, fold it in here so the required-sections gate below sees it.
         if self.assembled is None and self.essentials.get("asked_required"):
-            # Absorb any real material in this message FIRST (absorb-then-finalize).
-            self._absorb_enrichment(message)
+            # Absorb any real material in this message FIRST (absorb-then-finalize). A request
+            # for the agent ("use my github") is not material, so enrichment never takes it.
+            from agent.resume_chat import wants_agent as _wants_agent
+            if not (self._agent_on() and _wants_agent(message, pending=True)):
+                self._absorb_enrichment(message)
             # Then a bare "none" / "skip", or "that's everything" (which the question itself
             # invites), answers the open question: it declines exactly the required sections
             # STILL empty, recorded like any named decline (and reused next job). A section
