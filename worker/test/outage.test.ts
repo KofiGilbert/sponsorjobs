@@ -202,6 +202,29 @@ describe("/llm/complete on a company outage", () => {
     await complete(token);
     expect(telegram).toHaveLength(2);
   });
+
+  it("an isolate that saw ok BEFORE another isolate's outage still clears it, within a minute", async () => {
+    // 2026-11-10: credits topped up, calls went through, /health kept saying company_outage,
+    // because the isolate serving them had cached "ok" from before and never read the row again.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-10T15:00:00Z"));
+      const { token } = await newAccount();
+      stubBoth(ok);
+      await complete(token);                                   // this isolate now knows "ok"
+      // Another isolate records the outage: only the D1 row changes, not this isolate's cache.
+      await env.DB.prepare("INSERT INTO ai_status(key, state, since, last_seen, last_alert_at, note) " +
+        "VALUES('ai', 'company_outage', ?1, ?1, ?1, 'credit') ON CONFLICT(key) DO UPDATE SET " +
+        "state = 'company_outage', since = ?1, last_seen = ?1, last_alert_at = ?1, note = 'credit'")
+        .bind(Date.parse("2026-11-10T15:00:10Z") / 1000).run();
+      expect((await health()).ai_state).toBe("company_outage");
+      vi.setSystemTime(new Date("2026-11-10T15:01:30Z"));
+      expect((await complete(token)).status).toBe(200);
+      expect((await health()).ai).toBe("ok");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("/llm/complete on a transient failure", () => {

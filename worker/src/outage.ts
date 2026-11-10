@@ -50,9 +50,12 @@ export function describeAi(s: AiStatus): string {
   return s.state;
 }
 
-// Per isolate: once a call has gone through and the row said "ok", a success needs no read at
-// all. An outage recorded by any isolate resets this on the next failure seen here.
-let knownOk = false;
+// Per isolate: once a call has gone through and the row said "ok", a success skips the read for
+// OK_RECHECK seconds. Not forever: an outage recorded by ANOTHER isolate never reaches this one, so
+// an isolate that had seen "ok" before the outage would never clear it after the fix (2026-11-10:
+// credits topped up, calls going through, /health still said company_outage).
+export const OK_RECHECK = 60;
+let knownOkAt: number | null = null;
 
 /** Who to tell: the OWNER_TELEGRAM_CHAT_ID secret, else the first ADMIN_EMAILS address's linked
  * chat. null when neither resolves (the log is then the only alert). */
@@ -111,7 +114,7 @@ export async function sendTestAlert(env: Env, now: number): Promise<string> {
 
 /** Record a failed model call. For a company failure, alert the owner once an hour. */
 export async function recordOutage(env: Env, outage: Outage, now: number): Promise<void> {
-  knownOk = false;
+  knownOkAt = null;
   const state: AiState = outage.reason === "company" ? "company_outage" : "transient";
   // One write: a new state starts a new "since"; the same state keeps it; a transient blip while
   // the key is dead does not clear the outage (only a success does).
@@ -144,14 +147,14 @@ export async function recordOutage(env: Env, outage: Outage, now: number): Promi
 /** Record that a model call went through. Clears an outage, and tells the owner the AI is back
  * when they had been alerted. Costs nothing once this isolate has seen "ok". */
 export async function recordOk(env: Env, now: number): Promise<void> {
-  if (knownOk) return;
+  if (knownOkAt !== null && now - knownOkAt < OK_RECHECK) return;
   const before = await aiStatus(env.DB);
-  if (before.state === "ok") { knownOk = true; return; }
+  if (before.state === "ok") { knownOkAt = now; return; }
   // Only the isolate whose UPDATE flips the state sends the "back" message.
   const flipped = await env.DB.prepare(
     "UPDATE ai_status SET state = 'ok', since = ?1, last_seen = ?1, note = '' WHERE key = 'ai' AND state = ?2 RETURNING key")
     .bind(now, before.state).first();
-  knownOk = true;
+  knownOkAt = now;
   if (!flipped) return;
   if (before.state === "company_outage" && before.last_alert_at !== null) {
     const result = await tell(env, recoveredText(before.since, now));
@@ -162,4 +165,4 @@ export async function recordOk(env: Env, now: number): Promise<void> {
 }
 
 /** Test hook: forget the per-isolate "known ok" so the next success reads the row again. */
-export function resetOutageCache(): void { knownOk = false; }
+export function resetOutageCache(): void { knownOkAt = null; }
