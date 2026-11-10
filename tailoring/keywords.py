@@ -70,8 +70,72 @@ _LEXICON = [
     "rest api", "cloud infrastructure", "back testing", "backtesting",
 ]
 
-# Acronyms / capitalized tool tokens: Python, SQL, ETL, PnL, AWS, C++, .NET
-_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+#.\-]*")
+# Acronyms / capitalized tool tokens: Python, SQL, ETL, PnL, AWS, C++, .NET. A leading dot
+# belongs to the token only when nothing word-like sits before it (".NET", never the end of
+# "experience.Next").
+_TOKEN = re.compile(r"(?:(?<![A-Za-z0-9])\.)?[A-Za-z][A-Za-z0-9+#.\-]*")
+# Two short sides joined by a slash name ONE practice (CI/CD, UI/UX, A/B), never two skills.
+_SLASH_TERM = re.compile(r"(?<![A-Za-z0-9/])([A-Za-z]{1,3}/[A-Za-z]{1,3})(?![A-Za-z0-9/])")
+_SLASH_COMPOUNDS = frozenset({"ci/cd", "ui/ux", "ux/ui", "a/b", "tcp/ip", "pl/sql", "i/o",
+                              "ar/ap", "p/l", "b2b/b2c", "t/sql"})
+# "and" inside these names one thing, not two ("Profit and Loss" is not "Profit" + "Loss").
+_AND_PHRASES = frozenset({"profit and loss", "research and development", "mergers and acquisitions",
+                          "sales and operations planning", "operations and maintenance",
+                          "monitoring and evaluation", "learning and development",
+                          "diversity and inclusion", "health and safety", "trial and error",
+                          "command and control", "extract transform and load"})
+
+
+def is_slash_compound(text: str) -> bool:
+    """True for a slash term that names ONE practice: CI/CD, UI/UX, A/B, TCP/IP, PL/SQL.
+    Both sides at most two characters, or a known compound. "HTML/CSS" and "Tableau/Looker"
+    are two skills each."""
+    t = str(text or "").strip().lower()
+    if t in _SLASH_COMPOUNDS:
+        return True
+    a, sep, b = t.partition("/")
+    return bool(sep) and "/" not in b and 1 <= len(a) <= 2 and 1 <= len(b) <= 2 \
+        and a.isalnum() and b.isalnum()
+
+
+def clean_term(term) -> str:
+    """One job term with sentence punctuation taken off its ends, and nothing else: the dot of
+    .NET and Node.js, the + of C++ and the # of C# stay ("NET" was shown for .NET when the
+    leading dot was stripped as punctuation)."""
+    t = " ".join(str(term or "").split())
+    t = t.strip(",;:!?\"'“”‘’*").rstrip(".").strip()
+    if t.startswith(".") and not re.match(r"\.[A-Za-z]", t):
+        t = t.lstrip(". ")
+    return t
+
+
+def split_jd_item(item) -> list[str]:
+    """One item of a model-read skill list as the skills it names, each kept whole.
+
+    "Tableau or Power BI" and "Power Apps and Power Automate" are two skills each, and
+    "HTML/CSS" too; "CI/CD", "UI/UX", "A/B Testing", ".NET", "C#", "Node.js" and "Profit and
+    Loss" are one (a split turned CI/CD into "CI" and "CD", two chips and two skills)."""
+    text = " ".join(str(item or "").split())
+    if not text:
+        return []
+    low = text.lower()
+    if any(p in low for p in _AND_PHRASES):
+        parts = [text]
+    else:
+        parts = re.split(r"\s+(?:or|and|&)\s+|\s+/\s+|\s*;\s*", text)
+    out: list[str] = []
+    for part in parts:
+        # A slash between two words splits the item there ("Tableau/Looker", "Git/source
+        # control") unless that word is a compound (CI/CD, A/B Testing).
+        pieces = [part]
+        for word in part.split():
+            if "/" in word and not is_slash_compound(word.strip(".,;:()")):
+                a, _, b = part.partition(word)
+                left, _, right = word.partition("/")
+                pieces = [(a + left).strip(), (right + b).strip()]
+                break
+        out.extend(x for x in pieces if x)
+    return [t for t in (clean_term(x) for x in out) if t]
 
 
 def _norm(term: str) -> str:
@@ -103,15 +167,26 @@ def extract_jd_terms(jd_text: str) -> list[str]:
             add(jd_text[idx : idx + len(phrase)])
             phrase_words.update(phrase.split())
 
-    # 2) Single tokens that read like a skill/tool/acronym.
+    # 2) Slash compounds that name one practice (CI/CD, UI/UX), whole, in the JD's casing.
+    slash_parts: set[str] = set()
+    for m in _SLASH_TERM.finditer(jd_text):
+        if is_slash_compound(m.group(1)):
+            add(m.group(1))
+            slash_parts.update(x.lower() for x in m.group(1).split("/"))
+
+    # 3) Single tokens that read like a skill/tool/acronym.
     for m in _TOKEN.finditer(jd_text):
         # Keep internal punctuation (Node.js, C++, .NET) but drop sentence
-        # punctuation clinging to the ends (SQL. -> SQL, backtesting, -> ...).
-        tok = m.group(0).strip(".,;:!?")
-        if not tok:
+        # punctuation clinging to the end (SQL. -> SQL, backtesting, -> ...).
+        tok = m.group(0).rstrip(".,;:!?")
+        if not tok or tok == ".":
             continue
         low = tok.lower()
         if low in _STOPWORDS or _norm(tok) in seen:
+            continue
+        # The sides of a slash compound already captured whole (CI/CD) are not terms of
+        # their own.
+        if low in slash_parts:
             continue
         # Skip a bare word already covered by a captured multi-word phrase
         # (e.g. "REST"/"API" when "REST API" was captured).
@@ -148,6 +223,7 @@ _COMPUTING = [
     "Bash", "MongoDB", "PostgreSQL", "MySQL", "Redis", "Pandas", "NumPy",
     "PyTorch", "TensorFlow", "scikit-learn", "Hive", "REST API", "ETL",
     "Node.js", "React", "Django", "Flask", "FastAPI", "Alteryx", "SAS",
+    ".NET", "ASP.NET", "CI/CD",
 ]
 _KNOWLEDGE = [
     "Machine Learning", "Deep Learning", "Natural Language Processing",
@@ -412,10 +488,19 @@ class CoverageReport:
     present: list[str] = field(default_factory=list)      # in JD and in CV
     missing_supported: list[str] = field(default_factory=list)  # profile has it, CV doesn't
     missing_unsupported: list[str] = field(default_factory=list)  # JD wants, profile lacks
+    # Degrees, certifications, licences, clearances, years of experience the JD asks for
+    # (``is_requirement``): shown as what the job asks for, never a keyword or a skill, and
+    # not counted in the coverage ratio.
+    requirements: list[str] = field(default_factory=list)
 
     @property
     def jd_terms(self) -> list[str]:
         return self.present + self.missing_supported + self.missing_unsupported
+
+    @property
+    def all_terms(self) -> list[str]:
+        """Every term the report was measured on, requirements included (to re-measure)."""
+        return self.jd_terms + self.requirements
 
     @property
     def coverage_ratio(self) -> float:
@@ -427,6 +512,7 @@ class CoverageReport:
             "present": self.present,
             "missing_supported": self.missing_supported,
             "missing_unsupported": self.missing_unsupported,
+            "requirements": self.requirements,
             "coverage_ratio": round(self.coverage_ratio, 3),
         }
 
@@ -477,6 +563,51 @@ def clean_jd_terms(terms) -> list[str]:
     return [t for t in (terms or []) if is_jd_keyword(t)]
 
 
+# What a job REQUIRES a person to hold, as opposed to a skill they show: degrees, certifications,
+# licences, clearances and years of experience. Clicking ADD on a keyword means "I have this
+# skill"; for "Bachelor's degree Computer Science" it put a degree Kofi does not hold into his
+# Skills line (2026-11-10). These are shown as what the job asks for, never added as a skill,
+# never placed on a Skills line, and never counted in the keyword percentage.
+_REQUIREMENT = re.compile(
+    r"\b(?:bachelor|master|doctorate|doctoral|associate'?s?\s+degree|undergraduate\s+degree"
+    r"|graduate\s+degree|degree|diploma|ph\.?\s?d|mba)"
+    r"|^(?:b\.?s\.?c?|b\.?a\.?|m\.?s\.?c?|m\.?a\.?|b\.?eng|m\.?eng)\.?\s+(?:in|of|degree)\b"
+    r"|\bcertifi(?:cation|cations|ed)\b|\bcertificates?\b(?!\s+(?:management|authorit|lifecycle))"
+    r"|\blicen[cs](?:e|es|ed|ure)\b|\bclearance\b"
+    r"|\byears?\s+of\s+(?:\w+\s+)?experience\b|\b\d+\s*\+?\s*(?:years?|yrs?)\b"
+    r"|\bwork\s+authori[sz]ation\b|\bcitizenship\b",
+    re.I)
+
+
+def is_requirement(term) -> bool:
+    """True for a degree, certification, licence, clearance or years of experience: something
+    the job requires a person to hold, never a skill to list (see ``_REQUIREMENT``)."""
+    return bool(_REQUIREMENT.search(" ".join(str(term or "").split())))
+
+
+def _head_key(term: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"\s*\([^)]*\)\s*$", "", str(term or ""))).strip().lower()
+
+
+def dedupe_near_terms(terms) -> list[str]:
+    """``terms`` with near-duplicates dropped, order kept: the same term twice, or a term that
+    is the last word(s) of a longer one on the same block ("BI" beside "Power BI", "Excel"
+    beside "advanced Excel"). The longer, more specific term stays; the dropped one is still
+    on the page inside it, so an ATS reading the page finds it either way."""
+    items = [str(t).strip() for t in terms or () if str(t).strip()]
+    keys = [_head_key(t) for t in items]
+    out: list[str] = []
+    seen: set[str] = set()
+    for t, k in zip(items, keys):
+        if not k or k in seen:
+            continue
+        if any(o != k and o.endswith(" " + k) for o in keys):
+            continue
+        seen.add(k)
+        out.append(t)
+    return out
+
+
 def build_coverage_report(
     jd_text: str, cv_text: str, profile: dict, terms: list[str] | None = None
 ) -> CoverageReport:
@@ -488,6 +619,10 @@ def build_coverage_report(
     prof = profile_text(profile)
     report = CoverageReport()
     for t in terms:
+        if is_requirement(t):
+            if t not in report.requirements:
+                report.requirements.append(t)
+            continue
         in_cv = term_present(t, cv_text)
         in_profile = term_present(t, prof)
         if in_cv:

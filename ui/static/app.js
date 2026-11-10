@@ -3546,6 +3546,13 @@
     if (have.length) html += `<span class="cd-lbl">${esc(kwT("kw.youHave", "You have, not shown"))}</span>` + have.map(t => miss(t, false)).join("");
     html += `<span class="cd-lbl">${esc(kwT("kw.missing", "Missing"))}</span>`
       + (missing.map(t => miss(t, true)).join("") || `<span class="term hit">${esc(kwT("kw.none", "none"))}</span>`);
+    // Degrees, certifications and years of experience: what the job requires a person to hold,
+    // not skills to add. Listed quietly, no Add, outside the keyword percentage.
+    const asks = (cov.requirements || []).slice(0, 8);
+    if (asks.length) {
+      html += `<span class="cd-asks"><span class="cd-lbl">${esc(kwT("kw.jobAsks", "Job asks for"))}</span>`
+        + `<span class="cd-asks-txt">${esc(asks.join(", "))}</span></span>`;
+    }
     $("#covDetail").innerHTML = html;
   }
   $("#covInfo").addEventListener("click", () => { $("#covDetail").hidden = !$("#covDetail").hidden; });

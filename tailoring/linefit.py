@@ -59,6 +59,9 @@ SKILL_LINES_MIN = 5
 SKILL_LINES_MAX = 6
 # Rounds of the fix loop (the owner asked for 3 to 4).
 FIT_ROUNDS = 3
+# One text line as a share of the text block (10pt type, 12pt leading, a letter page): how
+# much a trimmed spill takes off the page's fill.
+LINE_SHARE = 12.0 / 775.0
 
 # Labels whose line is the person's list as given (credentials, spoken languages): the packer
 # never adds to, splits, merges or drops them.
@@ -357,7 +360,8 @@ _THEME_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("tools", ("microsoft", "google ", "excel", "word", "outlook", "powerpoint", "office",
                "sheets", "salesforce", "hubspot", "quickbooks", "sap", "oracle", "workday",
                "zendesk", "slack", "confluence", "notion", "crm", "erp", "vba", "git",
-               "docker", "linux", "windows")),
+               "docker", "linux", "windows", "api", "apis", "rest", "json", "xml", "graphql",
+               "soap", "odata", "azure", "aws", "cloud", "devops", "c#", ".net", "x++")),
     ("people", ("stakeholder", "mentor", "leadership", "leading", "coach", "training", "vendor",
                 "communication", "presentation", "negotiat", "customer service", "customer success",
                 "customer support", "customer onboarding", "customer experience",
@@ -631,6 +635,50 @@ class TermPlacement:
 # A skills line holds at most this many terms (the assembler's one-page fit cuts past it).
 SKILL_LINE_TERMS = 8
 
+# Product families: a term goes with its own kind ("Logic Apps" beside the Azure services, not
+# under "Domain Knowledge"; "Power Apps" beside Power BI and Power Automate). A family is named
+# by a word the terms share ("azure", "power", "aws"), and these names carry the family word
+# they leave out of their own name.
+_FAMILY_WORDS = frozenset({
+    "azure", "power", "microsoft", "dynamics", "d365", "aws", "amazon", "google", "gcp", "sql",
+    "oracle", "sap", "salesforce", "adobe", "atlassian", "python", "java", "javascript",
+    "react", "excel", "tableau", "snowflake", "databricks", "apache", "spark", "hadoop",
+    "kubernetes", "docker", "git", "linux", "data", "cloud", "fabric", "net"})
+_FAMILY_OF = {
+    "logic apps": "azure", "dataverse": "power", "copilot studio": "power", "ssrs": "sql",
+    "ssis": "sql", "ssas": "sql", "t-sql": "sql", "tsql": "sql", "x++": "dynamics",
+    "data management framework": "dynamics", "dmf": "dynamics", "odata": "dynamics",
+    "onelake": "fabric", "synapse": "azure", "cosmos db": "azure", "devops": "azure",
+    "github": "git", "gitlab": "git", "bitbucket": "git", "c#": "net", "asp.net": "net",
+    "vb.net": "net", "entity framework": "net", "pandas": "python", "numpy": "python",
+    "django": "python", "flask": "python", "node.js": "javascript", "typescript": "javascript",
+    "lambda": "aws", "s3": "aws", "redshift": "aws", "bigquery": "google", "looker": "google",
+    "vba": "excel", "power query": "power", "dax": "power", "sharepoint": "microsoft",
+    "outlook": "microsoft", "teams": "microsoft"}
+
+
+def term_families(term: str) -> set[str]:
+    """The product families a skill term belongs to ("Azure Data Factory" -> azure, data;
+    "Logic Apps" -> azure)."""
+    low = _tkey(term)
+    words = set(re.findall(r"[a-z0-9+#]+", low.replace(".net", " net ")))
+    out = {w for w in words if w in _FAMILY_WORDS}
+    for name, fam in _FAMILY_OF.items():
+        if re.search(r"(?<![a-z0-9])" + re.escape(name) + r"(?![a-z0-9])", low):
+            out.add(fam)
+    return out
+
+
+def _family_affinity(term: str, label: str, terms: list[str]) -> int:
+    """How strongly a skills line is ``term``'s own kind: its label names one of the term's
+    families (3), plus one for each term on it from the same family. "data" alone is too broad
+    to decide a line, so it never counts by itself."""
+    fam = term_families(term) - {"data"}
+    if not fam:
+        return 0
+    score = 3 if fam & set(re.findall(r"[a-z0-9]+", str(label).lower())) else 0
+    return score + sum(1 for t in terms if fam & term_families(t))
+
 
 def place_term(skills: dict, term: str, *, width_fn: Callable[[str, list[str]], float] = estimate_width,
                avail: float | None = None, jd_text: str = "", keep=()) -> TermPlacement:
@@ -646,7 +694,11 @@ def place_term(skills: dict, term: str, *, width_fn: Callable[[str, list[str]], 
     ``keep`` (skills the person added earlier) are shed last, after every other term."""
     from .keywords import term_present
     from .textwidth import TEXTWIDTH_PT
+    from .keywords import is_requirement
     term = " ".join(str(term or "").split())
+    if is_requirement(term):
+        # A degree, certification or years of experience is never a skill (clean_skill_block).
+        return TermPlacement(skills=dict(skills or {}), label="", shed=[], already=False)
     avail = float(avail if avail is not None else TEXTWIDTH_PT - 2.0)
     jd = str(jd_text or "")
     rel = (lambda t: term_present(_tkey(t) or t, jd)) if jd else (lambda t: False)
@@ -681,21 +733,38 @@ def place_term(skills: dict, term: str, *, width_fn: Callable[[str, list[str]], 
         th = line_themes(label, terms)
         tier = 0 if theme in th else (1 if th & near else 2)
         ok = fits(label, insert(terms))
-        # Own or neighbouring theme that fits, then own or neighbouring theme with a shed,
-        # then any other line that fits, then any other line with a shed; emptiest first.
-        group = (0 if ok else 2) if tier < 2 else (4 if ok else 5)
-        return (group, tier, width_fn(label, terms))
+        # A line of the term's own product family first (Azure with Azure), then its own or a
+        # neighbouring theme, then any other line; a line it fits on before one that must shed;
+        # emptiest first.
+        aff = _family_affinity(term, label, terms)
+        kin = aff > 0 or tier < 2
+        group = (0 if ok else 2) if kin else (4 if ok else 5)
+        return (group, -aff, tier, width_fn(label, terms))
 
-    label, terms = min(lines, key=rank)
-    new = insert(terms)
-    shed: list[str] = []
     kept = {_tkey(k) for k in keep or ()}
-    while not fits(label, new) and len(new) > 1:
-        movable = [t for t in new if t != term]
-        free = [t for t in movable if _tkey(t) not in kept] or movable
-        drop = next((t for t in reversed(free) if not rel(t)), free[-1])
-        new.remove(drop)
-        shed.insert(0, drop)
+
+    def shed_for(label: str, terms: list[str]) -> tuple[list[str], list[str]]:
+        new = insert(terms)
+        shed: list[str] = []
+        while not fits(label, new) and len(new) > 1:
+            movable = [t for t in new if t != term]
+            free = [t for t in movable if _tkey(t) not in kept] or movable
+            drop = next((t for t in reversed(free) if not rel(t)), free[-1])
+            new.remove(drop)
+            shed.insert(0, drop)
+        return new, shed
+
+    # The best line by meaning, unless making room there would push a term the job asks for
+    # off the page: then the next line that takes it without losing a job term.
+    ranked = sorted(lines, key=rank)
+    label, terms = ranked[0]
+    new, shed = shed_for(label, terms)
+    if any(rel(t) for t in shed):
+        for lab, ts in ranked[1:]:
+            n2, s2 = shed_for(lab, ts)
+            if not any(rel(t) for t in s2):
+                label, new, shed = lab, n2, s2
+                break
     skills[label] = ", ".join(new)
     return TermPlacement(skills=skills, label=label, shed=shed)
 
@@ -725,6 +794,83 @@ def supported_term(term: str, known: dict | None) -> bool:
     if words and not words <= known.get("words", set()):
         return False
     return not new_claims(term, known=known)
+
+
+# Saved terms a split broke apart (an older extraction cut "CI/CD" in two and ".NET" to
+# "NET"): put back together when shown.
+_REJOIN = (("ci", "cd", "CI/CD"), ("ui", "ux", "UI/UX"))
+_BARE_FIX = {"net": ".NET"}
+
+
+def clean_skill_block(skills: dict) -> dict:
+    """The Skills block as it may show on the page: no requirement on a skills line (a degree,
+    certification, licence, clearance or years of experience is not a skill,
+    ``keywords.is_requirement``), no near-duplicate ("BI" beside "Power BI", "Excel" beside
+    "advanced Excel", ``keywords.dedupe_near_terms``), and terms an old split broke put back
+    ("CI" and "CD" as "CI/CD", "NET" as ".NET"). A credentials line (Certifications, Licences)
+    keeps its certifications but never a degree. A line left empty goes."""
+    from .keywords import dedupe_near_terms, is_requirement
+    if not isinstance(skills, dict):
+        return skills
+    lines = [(str(k), split_terms(v)) for k, v in skills.items()]
+    every = {_tkey(t) for _k, terms in lines for t in terms}
+    rejoin = {(a, b): whole for a, b, whole in _REJOIN
+              if (a in every and b in every) or whole.lower() in every}
+    placed: set[str] = set()
+    cleaned: list[tuple[str, list[str]]] = []
+    for label, terms in lines:
+        fixed = bool(_FIXED_LABEL.search(label))
+        keep = []
+        for t in terms:
+            k = _tkey(t)
+            if fixed:
+                if not re.search(r"(?i)\b(?:bachelor|master|degree|diploma|doctorate|ph\.?d|mba)\b", t):
+                    keep.append(t)
+                continue
+            if is_requirement(t):
+                continue
+            pair = next(((a, b) for (a, b) in rejoin if k in (a, b)), None)
+            if pair:
+                if rejoin[pair].lower() not in placed:
+                    placed.add(rejoin[pair].lower())
+                    keep.append(rejoin[pair])
+                continue
+            # Only the bare upper-case form is a broken term ("NET"); a word is left alone.
+            keep.append(_BARE_FIX[k] if k in _BARE_FIX and t.strip().isupper() else t)
+        cleaned.append((label, keep))
+    flat = dedupe_near_terms([t for _l, terms in cleaned for t in terms])
+    allowed = {}
+    for t in flat:
+        allowed.setdefault(t.lower(), 0)
+        allowed[t.lower()] += 1
+    out: dict = {}
+    for label, terms in cleaned:
+        mine = []
+        for t in terms:
+            if allowed.get(t.lower(), 0) > 0:
+                allowed[t.lower()] -= 1
+                mine.append(t)
+        if mine:
+            out[label] = ", ".join(mine)
+    return out
+
+
+def clean_pool(pool, skills: dict) -> list[str]:
+    """The packer's extra skills, as ``clean_skill_block`` would let them show beside the
+    block already on the page: no requirement, no broken split ("NET", "CD"), nothing that
+    repeats or is the tail of a term already there ("Excel" beside "advanced Excel")."""
+    have = [t for v in (skills or {}).values() for t in split_terms(v)]
+    pool = [str(t).strip() for t in pool or () if str(t).strip()]
+    shown = clean_skill_block({"have": ", ".join(have), "pool": ", ".join(pool)})
+    survivors = {_tkey(t) for t in split_terms(shown.get("pool", ""))}
+    have_keys = {_tkey(t) for t in have}
+    out, seen = [], set()
+    for t in pool:
+        k = _tkey(t)
+        if k in survivors and k not in have_keys and k not in seen:
+            seen.add(k)
+            out.append(t)
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -830,7 +976,8 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
               llm=None, jd_text: str = "", skill_pool=(), known: dict | None = None,
               known_figures: set | None = None, origins: dict | None = None,
               rounds: int = FIT_ROUNDS, fit_bullets: bool = True,
-              jobname: str = "cv", trimmed: dict | None = None) -> FitOutcome:
+              jobname: str = "cv", trimmed: dict | None = None,
+              fill_goal: float | None = None) -> FitOutcome:
     """Measure the compiled page and fix the lines that stop short, for up to ``rounds``
     rounds. Each round: repack the Skills block with widths calibrated to the real page, and
     ask the model to fill or trim each short bullet to a measured character window; compile;
@@ -844,7 +991,9 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     ``known`` (the fact gate's view of their material) before it can reach the page.
     ``trimmed`` ({entry label: [bullet text]}) holds what the one-page fit cut from each entry:
     a resize may not take a cut bullet's point either, so putting it back never prints the
-    same thing twice.
+    same thing twice. ``fill_goal``: while the page is shorter than this, a bullet that spills
+    a word onto a new line is FILLED to run that line out, never trimmed back (a trim takes a
+    line off a page that is already short; white space is never acceptable).
     """
     from .fact_gate import gate_rewrite
     from .filler import borrows_from_sibling, is_padded, repeats_sibling, tacked_on_terms
@@ -854,11 +1003,16 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
     out = FitOutcome(profile=profile, result=result, before=before, after=before)
     if not before.items or not before.width:
         return out
-    pool = [t for t in (skill_pool or ()) if supported_term(str(t), known)]
+    pool = clean_pool([t for t in (skill_pool or ()) if supported_term(str(t), known)],
+                      profile.get("skills") or {})
     supported = supported_skills(jd_text, profile) if jd_text else []
 
     best_p, best_r, best_rep = profile, result, before
     fixed_n = lambda rep: sum(1 for i in rep.skills if _FIXED_LABEL.search(i.label))
+
+    def short_page() -> bool:
+        fill = getattr(best_r, "fill_ratio", None)
+        return fill_goal is not None and fill is not None and fill < fill_goal
     tried: dict[int, set] = {}
 
     for rnd in range(max(0, int(rounds))):
@@ -866,6 +1020,10 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
             break
         cand = copy.deepcopy(best_p)
         grow: list[int] = []             # slots whose rewrite is longer (may cost height)
+        # A trim takes a line off the page: only as many as keep the page at ``fill_goal``.
+        fill_now = getattr(best_r, "fill_ratio", None)
+        trims_left = [10 ** 6 if fill_goal is None or fill_now is None
+                      else int((fill_now - fill_goal) / LINE_SHARE + 1e-9)]
         round_changes: list[dict] = []
 
         # Skills: repack with calibrated widths.
@@ -893,10 +1051,14 @@ def fit_lines(profile: dict, result, *, render: Callable[[dict], str],
                 done = tried.setdefault(it.slot, set())
                 spill = it.lines >= 2 and it.last_fill < SPILL_TRIM
                 order = ["trim", "fill"] if spill else (["fill", "trim"] if it.lines >= 2 else ["fill"])
+                if short_page() or (spill and trims_left[0] <= 0):
+                    order = ["fill"]             # a short page keeps every line it has
                 mode = next((m for m in order if (text, m) not in done), None)
                 if mode is None:
                     continue
                 done.add((text, mode))
+                if mode == "trim":
+                    trims_left[0] -= 1
                 _goal, lo, hi = _bullet_targets(it, mode)
                 role_terms = [t for t in supported if term_present(t, grounding)]
                 new = _propose(llm, text, lo, hi, jd_text, grounding, role_terms)

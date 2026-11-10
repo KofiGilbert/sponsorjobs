@@ -210,10 +210,13 @@ def test_a_thin_profile_gets_more_bullets_on_its_most_recent_roles(template_sour
     assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
     assert res.fill_ratio is not None and res.fill_ratio <= MAX_FILL
     c = _counts(res.profile_used)
-    assert c[0] > c[2] and c[0] > c[3]                       # more on the most recent role
-    assert 3 <= c[0] <= 5 and 3 <= c[1] <= 4
-    assert all(2 <= x <= 3 for x in c[2:])
-    assert c[0] >= c[1] >= c[2]
+    # The staircase (Kofi, 2026-11-10): the most recent role carries the most, every older role
+    # strictly fewer than the one above it, down to one.
+    assert c[0] == max(c) and c[0] >= 3
+    assert all(b <= a for a, b in zip(c, c[1:])), c
+    # where a step could only be made by cutting a short page shorter, the note asks for more
+    assert A.staircase_ok(res.profile_used) or any("no more than the older" in n
+                                                   for n in res.bullet_notes)
     # The page keeps the template's own size: a thin page stays short (the invite asks for more)
     assert res.underfull
     # every written bullet is on the page and listed for the person to check
@@ -247,9 +250,14 @@ def test_a_full_page_gets_nothing_added_and_stays_clean(template_source, workdir
     from test_restorable_trims import LONG
     res = assemble_cv(template_source, LONG, LONG_JD, FakeLLM(), workdir, tailor=True)
     assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
-    assert res.fill_ratio <= MAX_FILL and res.added == []
+    assert res.fill_ratio <= MAX_FILL
+    # Only what fits is added (a page short of FILL_GOAL may take one more bullet), and the
+    # bullets step down by recency.
+    assert len(res.added) <= 2
     c = _counts(res.profile_used)
-    assert c[0] >= 3 and c[1] >= 3 and c[0] >= c[-1]
+    assert c[0] >= 3 and c[0] == max(c)
+    assert A.staircase_ok(res.profile_used) or any("no more than the older" in n
+                                                   for n in res.bullet_notes)
 
 
 # --------------------------------------------------------------------------- the builder
@@ -338,14 +346,18 @@ def test_on_a_near_full_page_the_recent_roles_still_get_three_by_trimming_older_
         template_source, workdir):
     prof = _near_full()
     plain = assemble_cv(template_source, prof, JD, None, workdir, jobname="plain", tailor=False)
+    # No more material for the most recent role: stepping the older roles down would only
+    # leave white space, so they keep their bullets and a note asks for more.
     assert _counts(plain.profile_used) == [2, 2, 2, 2] and plain.fill_ratio > 0.88   # nearly full
+    assert any("no more than the older" in n for n in plain.bullet_notes), plain.bullet_notes
     res = assemble_cv(template_source, prof, JD, FakeLLM(), workdir, jobname="cv", tailor=True)
     assert res.ok and res.compile.pages == 1 and res.compile.overfull_count == 0
     assert res.fill_ratio <= MAX_FILL
     c = _counts(res.profile_used)
-    assert c[0] >= 3 and c[1] >= 3 and len(c) == 4                  # no role dropped
-    # room came from project bullets beyond one each (no older role had more than two)
-    assert res.trims and all(t["kind"] == "bullet" and t["section"] == "projects" for t in res.trims)
+    assert c[0] >= 3 and len(c) == 4 and c[0] == max(c)                      # no role dropped
+    # room came from project bullets beyond one each, and the staircase from older roles
+    assert res.trims and all(t["kind"] == "bullet" for t in res.trims)
+    assert all(t["section"] == "projects" or t.get("staircase") for t in res.trims)
     assert all(len(p["bullets"]) >= 1 for p in res.profile_used["projects"])
     assert len(res.profile_used["projects"]) == 2
 
@@ -515,8 +527,14 @@ def test_the_line_fit_never_takes_the_point_of_a_bullet_cut_to_fit(monkeypatch):
 
 # --------------------------------------------------------------------------- restore what fits
 def _room_build(template_source, workdir):
-    res = assemble_cv(template_source, _near_full(), JD, FakeLLM(), workdir, jobname="cv",
-                      tailor=True, fit_lines=True)
+    # The build without its own restore pass, so the room cuts are still on record.
+    real = A._restore_room
+    A._restore_room = lambda pre, used, result, trims, **k: (used, result, trims)
+    try:
+        res = assemble_cv(template_source, _near_full(), JD, FakeLLM(), workdir, jobname="cv",
+                          tailor=True, fit_lines=True)
+    finally:
+        A._restore_room = real
     assert res.ok and any(t.get("room") for t in res.trims), res.trims
     return res
 
@@ -549,10 +567,14 @@ def test_a_room_cut_that_a_later_height_change_made_unnecessary_is_put_back(temp
 @requires_latex
 def test_a_restore_that_would_overflow_is_skipped(template_source, workdir):
     from tailoring.assembler import _restore_room
-    res = _room_build(template_source, workdir)      # the build's own restore pass already ran
+    res = _room_build(template_source, workdir)
     page = copy.deepcopy(res.profile_used)
     pre, r0 = _measure(template_source, workdir, page, "same")
-    after, r, trims = _restore_room(pre, page, r0, res.trims, sections=None, headings=None,
-                                    workdir=workdir, jobname="t")
-    assert trims == res.trims and after == res.profile_used      # nothing fit, nothing changed
-    assert r is r0
+    # One restore pass puts back what fits; what is left on the list would overflow.
+    page, r1, left = _restore_room(pre, page, r0, res.trims, sections=None, headings=None,
+                                   workdir=workdir, jobname="t")
+    before = copy.deepcopy(page)
+    after, r, trims = _restore_room(pre, page, r1, left, sections=None, headings=None,
+                                    workdir=workdir, jobname="t2")
+    assert trims == left and after == before                     # nothing fit, nothing changed
+    assert r is r1

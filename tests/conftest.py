@@ -168,6 +168,9 @@ def _no_first_open_crawl(monkeypatch):
     # Connect GitHub's "is the Worker set up" probe (ui/github_app.py) stays off the network too;
     # tests/test_github_app_connect.py sets it back and replaces its BROKER_FETCH seam.
     monkeypatch.setenv("GITHUB_APP_PROBE", "0")
+    # A build's project-link lookup (ui/session.py _link_projects) stays off the network too;
+    # tests/test_page_fill_links.py sets it back and replaces the FETCH seam.
+    monkeypatch.setenv("GITHUB_LINK_FETCH", "0")
     # The static feed downloads in the background (sourcing/feedclient.py). Fake origins answer at
     # once, so a request may wait longer for that thread here and stay deterministic, and a
     # download is one attempt (the app tests count network calls per back-off window). The retry

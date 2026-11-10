@@ -613,6 +613,9 @@ button { font-family: inherit; cursor: pointer; }
 .cd-lbl { font-size: 10.5px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 2px 0 4px; }
 .cd-lbl:first-child { margin-left: 0; }
 .term { font-size: 11.5px; padding: 2px 8px; border-radius: var(--r-pill); }
+/* "Job asks for": requirements (degrees, certifications, years), plain text, no chip, no Add. */
+.cd-asks { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; margin-top: 4px; }
+.cd-asks-txt { font-size: 11.5px; color: var(--muted); }
 .term.hit { color: var(--good); background: var(--good-soft); }
 .term.miss { color: var(--muted); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 /* "Add this keyword": a quiet Add inside each missing chip, an undo link inside an added one,

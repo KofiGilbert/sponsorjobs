@@ -171,8 +171,10 @@ def _header(profile: dict) -> str:
         e = ident["email"]
         contact_bits.append(f"\\href{{mailto:{_safe_url(e)}}}{{{_esc(e)}}}")
     # "Website" carries a personal venture/portfolio site (e.g. a founder's own
-    # product) for people who have one instead of (or besides) a blog.
-    for label, key in (("LinkedIn", "linkedin"), ("GitHub", "github"),
+    # product) for people who have one instead of (or besides) a blog. LinkedIn shows as the
+    # linked word "In", beside "GitHub" ("... | In | GitHub"), the style Kofi confirmed from his
+    # own resume (2026-11-10); hyperref colours both blue.
+    for label, key in (("In", "linkedin"), ("GitHub", "github"),
                        ("Website", "website"), ("Blog", "blog")):
         if ident.get(key):
             contact_bits.append(f"\\href{{{_link_url(ident[key])}}}{{{label}}}")
@@ -1497,6 +1499,10 @@ MAX_FILL = 0.97
 # role can use. The template's type size, margins and spacing never change to fill a page
 # (the layout steps that did were removed on 2026-11-06).
 FILL_GOAL = 0.95
+# The staircase (``_recency_fill``): the most recent role's bullet count starts at least at
+# STAIR_FIRST (5, 4, 3, 2 for four roles) and rises no higher than STAIR_TOP.
+STAIR_FIRST = 3
+STAIR_TOP = 8
 
 
 @dataclass
@@ -1759,11 +1765,12 @@ def _split_ok(parts: list, src: str, role_text: str, siblings, jd_text: str,
 def _recency_fill(preamble: str, used: dict, result, *, sections, headings, workdir: Path,
                   jobname: str, llm, jd_text: str, tailor: bool, write: bool, source: dict,
                   material=(), gate_material=(), origins: dict | None = None,
-                  reverted: list | None = None, trims: list | None = None, keep=()):
+                  reverted: list | None = None, trims: list | None = None, keep=(),
+                  state: dict | None = None):
     """Give the most recent roles their bullets, then fill a short page with more, re-measuring
     the real page after every bullet. Returns (result, added, notes).
 
-    Recency comes first (Kofi, 2026-11-06). The two most recent roles (and a role the person
+    Recency comes first (Kofi, 2026-11-06). The most recent role (and a role the person
     leads with) reach their fewest bullets (three) even on a page that is already full: when a
     bullet does not fit, room is made from OLDER material, one cut at a time and re-measured
     after each (``_make_room``), stopping as soon as the page is one clean page again. If even
@@ -1771,12 +1778,16 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
     note says so. Every cut is recorded in ``trims`` (Put back), and a cut the person put back
     (``keep``) is never made again.
 
-    Then, while the page is short of ``FILL_GOAL``, two passes over the roles in recency order
-    (``ranked_roles``): every older role up to its fewest bullets, then every role up to its
-    most, so the most recent role is brought toward five first, then the second toward four,
-    then older ones toward three. This part never cuts anything: it stops when the page
-    reaches ``FILL_GOAL`` or the next bullet would overflow (two pages, a new overfull line, or
-    past ``MAX_FILL``); that bullet is taken back off.
+    Then THE STAIRCASE (Kofi, 2026-11-10): while the page is short of ``FILL_GOAL`` the roles
+    grow in recency order toward a strict staircase (5, 4, 3, 2 for four roles; the top count
+    rises while the page is still short, up to ``STAIR_TOP``), each older role at least one
+    bullet below the role above it. Growth stops at ``FILL_GOAL`` or when the next bullet would
+    overflow (two pages, a new overfull line, or past ``MAX_FILL``); that bullet is taken back
+    off. An older role that shows as many bullets as the role above it is cut to the step
+    (``staircase`` in ``trims``, Put back offers it), unless that leaves the page short: white
+    space is never the answer, so the cut is undone, the roles take more of the person's own
+    material up to their recency budget, and a note asks for more about the role that stands
+    too low.
 
     Each bullet comes from, in order: (a) the person's own bullet for that role that selection
     left out (``_reserve``), put back in the author's order and, with ``tailor``, reworded
@@ -1805,7 +1816,8 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
     source_roles = {_role_key(e, r): r for e, r in _experience_roles(source)}
     listed = _listed_skills(source)
     base_overfull = result.overfull_count
-    state: dict = {}
+    # Per role: what was tried (shared by a second pass, so nothing is asked of the model twice).
+    state = state if state is not None else {}
 
     def clean(r) -> bool:
         return bool(r and r.ok and r.pages == 1 and r.overfull_count <= base_overfull
@@ -1817,7 +1829,7 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
         # A role whose bullets were drafted as placeholders (not the person's words) is never
         # split or written from: only the person's own material may seed a new bullet.
         own = not (role.get("drafted_bullets") or entry.get("drafted_bullets"))
-        st = state.setdefault(id(role), {"tried": set(), "write": can_write and own, "dry": False})
+        st = state.setdefault(_role_key(entry, role), {"tried": set(), "write": can_write and own, "dry": False})
         bl = role["bullets"]
         label = entry_label(entry, role)
         rec = {"section": "experience", "label": label}
@@ -1891,10 +1903,12 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
         return compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
                            workdir, jobname=f"{jobname}-fill")
 
-    # 1. The two most recent roles reach their fewest bullets, making room from older material.
+    # 1. The most recent role reaches its fewest bullets, making room from older material.
     blocked: set = set()
     for rank, entry, role in order:
-        if rank >= len(RECENCY_BUDGETS) and not lead(entry, role):
+        # The most recent role (and one the person leads with): under the staircase every older
+        # role shows fewer than the one above it, so room is made for the top of it only.
+        if rank >= 1 and not lead(entry, role):
             continue
         fewest, most = bullet_budget(rank, lead(entry, role))
         role.setdefault("bullets", [])
@@ -1927,41 +1941,145 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
         if blocked:
             break
 
-    # 2. A short page gets more, most recent first, without cutting anything.
+    # 2. THE STAIRCASE (Kofi, 2026-11-10): white space is never acceptable, and the bullets
+    # step down by recency, strictly: the most recent role carries the most, each older role at
+    # least one fewer (5, 4, 3, 2 for four roles), from whatever top count fills the page. The
+    # top count T starts where the page already stands (never below what a role shows) and
+    # rises one at a time while the page is short; each role grows toward min(T - i, the role
+    # above it - 1), most recent first, re-measured after every bullet. Growth stops at
+    # FILL_GOAL or when the next bullet would overflow (taken back off).
+    chain = [(rank, e, r) for rank, e, r in order if not lead(e, r)]
+    for _rank, _e, r in chain:
+        r.setdefault("bullets", [])
     stop = bool(blocked) or result.fill_ratio >= FILL_GOAL
-    for phase in (0, 1):                     # 0: up to the fewest, 1: up to the most
-        for rank, entry, role in order:
-            if id(role) in blocked:
-                continue
-            fewest, most = bullet_budget(rank, lead(entry, role))
-            role.setdefault("bullets", [])
-            while not stop and len(role["bullets"]) < (fewest if phase == 0 else most):
-                step = next_step(entry, role, fewest if phase == 0 else most)
-                if step is None:
+
+    def grow(entry: dict, role: dict, cap: int) -> bool:
+        nonlocal result, added, stop
+        step = next_step(entry, role, cap)
+        if step is None:
+            return False
+        before = list(role["bullets"])
+        role["bullets"][:] = step[0]
+        r = measure()
+        if not clean(r):
+            # This bullet would overflow: it comes back off, and this role takes no more in this
+            # pass. Another role's shorter bullet may still fit the lines that are left.
+            role["bullets"][:] = before
+            full.add(_role_key(entry, role))
+            return False
+        result = r
+        added += step[1]
+        stop = r.fill_ratio >= FILL_GOAL
+        return True
+
+    full: set = set()                       # roles whose next bullet would overflow the page
+
+    def cap_of(i: int, top: int) -> int:
+        if i == 0:
+            return max(1, top)
+        return max(1, min(top - i, len(chain[i - 1][2]["bullets"]) - 1))
+
+    def climb():
+        nonlocal stop
+        top = max([len(r["bullets"]) + i for i, (_k, _e, r) in enumerate(chain)] + [1])
+        top = min(max(top, STAIR_FIRST), STAIR_TOP)
+        while chain and not stop and not blocked:
+            for i, (_rank, entry, role) in enumerate(chain):
+                if id(role) in blocked or _role_key(entry, role) in full:
+                    continue
+                while not stop and len(role["bullets"]) < cap_of(i, top) \
+                        and _role_key(entry, role) not in full:
+                    if not grow(entry, role, cap_of(i, top)):
+                        break
+                if stop:
                     break
-                before = list(role["bullets"])
-                role["bullets"][:] = step[0]
-                r = measure()
-                if not clean(r):
-                    role["bullets"][:] = before        # this bullet would overflow: stop here
-                    stop = True
+            if stop or top >= STAIR_TOP or len(full) >= len(chain):
+                break
+            top += 1
+
+    def hold() -> bool:
+        # The staircase holds: an older role never shows as many bullets as the role above it.
+        # What does not fit the step is cut (Put back offers it; a bullet the person put back is
+        # never cut again), never a role's last bullet.
+        cut = False
+        for i in range(1, len(chain)):
+            _rank, entry, role = chain[i]
+            lim = max(1, len(chain[i - 1][2]["bullets"]) - 1)
+            bl = role["bullets"]
+            label = entry_label(entry, role)
+            while len(bl) > lim:
+                idx = next((k for k in range(len(bl) - 1, -1, -1)
+                            if not cuts.kept("bullet", label, str(bl[k]))), None)
+                if idx is None:
                     break
+                text = bl.pop(idx)
+                cuts.add("bullet", "experience", label, str(text), index=idx, staircase=True)
+                cut = True
+        return cut
+
+    # Grow, then hold the staircase. A cut the staircase makes lets the top grow again; when even
+    # that leaves the page short of FILL_GOAL, the cuts are undone (white space is never the
+    # answer) and a note asks the person for more about the role that stands too low.
+    climb()
+    snap = ([list(r["bullets"]) for _k, _e, r in chain], len(trims) if trims is not None else 0,
+            len(added))
+    if hold():
+        r = measure()
+        if r and r.ok and r.pages == 1 and r.fill_ratio is not None:
+            result = r
+            stop = bool(blocked) or r.fill_ratio >= FILL_GOAL
+            full.clear()                     # the cuts made room: every role may try again
+            climb()
+        if not (result and result.fill_ratio is not None and result.fill_ratio >= FILL_GOAL):
+            for (_k, _e, r), bl in zip(chain, snap[0]):
+                r["bullets"][:] = bl
+            if trims is not None:
+                del trims[snap[1]:]
+            del added[snap[2]:]
+            r = measure()
+            if r and r.ok and r.pages == 1:
                 result = r
-                added += step[1]
-                stop = r.fill_ratio >= FILL_GOAL
+                stop = bool(blocked) or r.fill_ratio >= FILL_GOAL
+    # Still short: the most recent role has no more material, so the staircase cannot take the
+    # page to the bottom. White space is never the answer: every role takes more of the person's
+    # own material up to its recency budget (5 / 4 / 3), most recent first.
+    if not stop and result.fill_ratio < FILL_GOAL:
+        for rank, entry, role in chain:
+            _fewest, most = bullet_budget(rank)
+            while not stop and len(role["bullets"]) < most and _role_key(entry, role) not in full:
+                if not grow(entry, role, most):
+                    break
             if stop:
                 break
-        if stop:
+    for i in range(1, len(chain)):
+        (_a, e0, r0), (_b, e1, r1) = chain[i - 1], chain[i]
+        n0, n1 = len(r0["bullets"]), len(r1["bullets"])
+        if n1 >= n0 and n1 > 1:
+            notes.append(f"{entry_label(e0, r0)} shows {n0} bullet{'' if n0 == 1 else 's'}, "
+                         f"no more than the older {entry_label(e1, r1)}: there is no more "
+                         "of your material for it yet. Tell me more about that role and I "
+                         "will add it.")
             break
     for rank, entry, role in order:
         fewest, _most = bullet_budget(rank, lead(entry, role))
         n = len(role.get("bullets") or [])
         drafted = role.get("drafted_bullets") or entry.get("drafted_bullets")
-        if n < fewest and not drafted and state.get(id(role), {}).get("dry"):
+        named = any(n_.startswith(entry_label(entry, role) + " shows") for n_ in notes)
+        if n < fewest and not drafted and not named \
+                and state.get(_role_key(entry, role), {}).get("dry"):
             notes.append(f"{entry_label(entry, role)} shows {n} bullet{'' if n == 1 else 's'}: "
                          "there is no more of your material for that role yet. Tell me more "
                          "about it and I will add it.")
     return result, added, notes
+
+
+def staircase_ok(profile: dict) -> bool:
+    """Do the bullets step down by recency: every role (but one the person leads with) shows
+    fewer bullets than the more recent role above it, down to one?"""
+    counts = [len(r.get("bullets") or []) for _rank, e, r in
+              sorted(ranked_roles(profile), key=lambda x: x[0])
+              if not (r.get("_lead") or e.get("_lead"))]
+    return all(b < a or b <= 1 for a, b in zip(counts, counts[1:]))
 
 
 def _make_room(profile: dict, cuts: "_Cuts", order: list):
@@ -2169,6 +2287,11 @@ def assemble_cv(
     preamble = extract_preamble(template_source)
     full_profile = normalize_profile(profile)  # tolerate loose LLM-drafted shapes
     _dedupe_entry_bullets(full_profile)      # one fact, one bullet, per entry
+    # A Skills line shows skills: no degree, certification or years of experience, no "BI"
+    # beside "Power BI", no "CI" and "CD" for CI/CD (tailoring/linefit.clean_skill_block).
+    if isinstance(full_profile.get("skills"), dict):
+        from .linefit import clean_skill_block
+        full_profile["skills"] = clean_skill_block(full_profile["skills"])
     source_material = full_profile           # every figure the person actually supplied
     # Pick the roles this JD actually cares about BEFORE tailoring. A full career on one
     # page is not a resume, it is an index: every role gets squeezed to a single line and
@@ -2230,13 +2353,17 @@ def assemble_cv(
     # had to cut", which a fill never does.
     added: list = []
     bullet_notes: list = []
-    if result and result.ok and result.pages == 1:
-        result, added, bullet_notes = _recency_fill(
-            preamble, used, result, sections=sections, headings=headings, workdir=workdir,
+    fill_state: dict = {}
+
+    def fill_page(res):
+        return _recency_fill(
+            preamble, used, res, sections=sections, headings=headings, workdir=workdir,
             jobname=jobname, llm=llm, jd_text=jd_text, tailor=tailor,
             write=tailor if fill_writes is None else fill_writes, source=source_material,
             material=material, gate_material=gate_material, origins=origins, reverted=reverted,
-            trims=trims, keep=keep)
+            trims=trims, keep=keep, state=fill_state)
+    if result and result.ok and result.pages == 1:
+        result, added, bullet_notes = fill_page(result)
         # The review's "before" side gets the person's own bullets the fill brought back.
         keys = {entry_label(e, r): _role_key(e, r) for _rank, e, r in ranked_roles(used)}
         sources = {_role_key(e, r): r for e, r in _experience_roles(selected_source)}
@@ -2268,12 +2395,24 @@ def assemble_cv(
             trimmed=_trimmed_by_label(trims),
             known=known_material(*gate_material), known_figures=source_figures(*gate_material),
             origins=origins, rounds=_lf.FIT_ROUNDS if fit_rounds is None else fit_rounds,
-            fit_bullets=llm is not None, jobname=jobname)
+            fit_bullets=llm is not None, jobname=jobname, fill_goal=FILL_GOAL)
         if fo.result is not result:
             used, result = fo.profile, fo.result
         # A fit rewrite the guards refused never reached the page, so there is nothing for
         # the person to confirm: the bullet simply kept its wording.
         line_fit, line_before, line_gaps = fo.after.as_dict(), fo.before.as_dict(), fo.gaps()
+        # The packer may have drawn a near-duplicate from the pool ("Excel" next to "Microsoft
+        # Excel"): the page shows each skill once. Taking terms off a one-line skills line never
+        # adds height, so the page stays clean; it is recompiled to show it.
+        if isinstance(used.get("skills"), dict):
+            from .linefit import clean_skill_block
+            tidy = clean_skill_block(used["skills"])
+            if tidy != used["skills"]:
+                used["skills"] = tidy
+                r2 = compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
+                                 workdir, jobname=f"{jobname}-tidy")
+                if r2.ok and r2.pages == 1:
+                    result = r2
 
     # RESTORE. The line fit and the resized splits change heights after the room was made, so a
     # cut made for the recency minimums may no longer be needed: put those back, the last cut
@@ -2281,6 +2420,18 @@ def assemble_cv(
     if result and result.ok and result.pages == 1:
         used, result, trims = _restore_room(preamble, used, result, trims, sections=sections,
                                             headings=headings, workdir=workdir, jobname=jobname)
+
+    # FILL AGAIN. The line fit trims a bullet that spills a word onto a new line, so a page the
+    # fill brought to the goal can come out of it short again (a real build went from 95.5% to
+    # 87.7%, 2026-11-10). White space is never acceptable: the staircase fill runs once more on
+    # the fitted page, from the same material and without asking the model anything twice.
+    if (result and result.ok and result.pages == 1 and result.fill_ratio is not None
+            and (result.fill_ratio < FILL_GOAL or not staircase_ok(used))):
+        result, more, more_notes = fill_page(result)
+        added += more
+        bullet_notes = list(dict.fromkeys(list(bullet_notes) + list(more_notes)))
+    if staircase_ok(used):                   # a step the second pass made needs no note
+        bullet_notes = [n for n in bullet_notes if "no more than the older" not in n]
 
     # The grow, fill and restore passes compile under side jobnames (-full, -fill, -restore).
     # Whatever won must also exist under the REAL jobname, because that is the file the app serves (/api/cv.pdf?job=...);

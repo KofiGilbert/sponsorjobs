@@ -46,7 +46,7 @@ def test_coverage_report_lists_present_and_missing(
     )
     cov = res.coverage
     d = cov.to_dict()
-    assert set(d) == {"present", "missing_supported", "missing_unsupported",
+    assert set(d) == {"present", "missing_supported", "missing_unsupported", "requirements",
                       "coverage_ratio"}
 
     # Supported JD terms the profile has (Python, SQL, AWS...) should be present

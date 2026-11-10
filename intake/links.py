@@ -212,3 +212,62 @@ def links_note(links: list[dict] | None) -> str:
         return ""
     return ("\n\nLINKS IN THIS FILE (the text above shows only each link's anchor text; these "
             "are the real addresses):\n" + "\n".join(rows))
+
+
+# --------------------------------------------------------------------------- #
+# A project and its GitHub repository, matched by name (never a guess)
+# --------------------------------------------------------------------------- #
+
+# Short forms a repository name uses for a word the project title spells out.
+_ABBREV = {"ops": "operations", "op": "operations", "mgmt": "management", "mgr": "manager",
+           "sim": "simulator", "db": "database", "viz": "visualization", "vis": "visualization",
+           "app": "app", "apps": "apps", "analytics": "analytics", "eng": "engine",
+           "gen": "generator", "auto": "automation", "ml": "machine learning",
+           "nlp": "natural language processing", "dash": "dashboard", "cli": "cli"}
+_NAME_STOP = frozenset({"the", "a", "an", "of", "for", "and", "my", "app"})
+
+
+def name_words(name: str) -> list[str]:
+    """A project or repository name as plain words: the bracketed tech list a resume adds is
+    dropped, "-", "_", "." and camelCase split ("last-mile-ops-simulator" -> last mile
+    operations simulator, "GateCheck" -> gate check), short forms spelled out."""
+    s = re.sub(r"\([^)]*\)", " ", str(name or ""))
+    for a in _ARROWS:
+        s = s.replace(a, " ")
+    s = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", s)
+    words = re.findall(r"[a-z0-9]+", s.lower())
+    out: list[str] = []
+    for w in words:
+        out.extend(_ABBREV.get(w, w).split())
+    return out
+
+
+def repo_matches(project_name: str, repo_name: str) -> bool:
+    """True only when a resume project and a repository are clearly the same thing by name:
+    the same letters once spaces and punctuation go ("Gate Check" and gatecheck), or the same
+    words once short forms are spelled out ("Last-Mile Operations Simulator" and
+    last-mile-ops-simulator). A shared word or two is not enough: no guessing."""
+    a, b = name_words(project_name), name_words(repo_name)
+    if not a or not b:
+        return False
+    if "".join(a) == "".join(b):
+        return True
+    ka = [w for w in a if w not in _NAME_STOP]
+    kb = [w for w in b if w not in _NAME_STOP]
+    return bool(ka) and ka == kb
+
+
+def match_repo_links(projects: list[dict], repos: list[dict]) -> list[tuple[dict, str]]:
+    """(project, repository URL) for each project with no real link whose name matches exactly
+    ONE public repository (``repo_matches``). Two candidate repositories means no link: the
+    person picks, the app does not guess. ``repos`` are github_repos cards {name, url, private}."""
+    out = []
+    for p in projects or []:
+        if not isinstance(p, dict) or link_ok("link", p.get("link") or p.get("url")):
+            continue
+        name = p.get("org") or p.get("name") or p.get("title") or ""
+        hits = [r for r in repos or [] if isinstance(r, dict) and not r.get("private")
+                and str(r.get("url") or "").strip() and repo_matches(name, str(r.get("name") or ""))]
+        if len(hits) == 1:
+            out.append((p, str(hits[0]["url"]).strip()))
+    return out
