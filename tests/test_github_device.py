@@ -196,4 +196,5 @@ def test_the_chat_card_starts_the_sign_in():
     import agent.resume_chat as rc
     out = rc._t_github_status(type("Ctx", (), {"github_status": staticmethod(lambda: {})})(), {})
     assert out["card"]["buttons"] == [{"label": "Connect GitHub", "nav": "github"}]
-    assert "github" in rc.NAV_TARGETS and "token" not in rc.GITHUB_CONNECT_STEPS.lower()
+    assert "github" in rc.NAV_TARGETS and "token" not in rc.CONNECT_LINE.lower()
+    assert "Settings" not in out["say"] and "approve the code" not in out["say"]

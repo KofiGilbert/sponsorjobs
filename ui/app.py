@@ -3009,6 +3009,21 @@ def start():
     return jsonify(session.start())
 
 
+@app.post("/api/session/template")
+@_guard
+def session_template():
+    """Body {name}. Switch the open resume chat's template (the builder's "change", then "Use
+    this template"): the job and the chat stay, a built page is rebuilt in the new template
+    (one page, no new overfull) and the chat says so (WebIntake.set_template)."""
+    name = str((request.json or {}).get("name") or "").strip()
+    if not name or not (ROOT / "config" / "templates" / f"{name}.json").is_file():
+        return jsonify({"error": "That template isn't available."}), 400
+    tex, tname = _load_template(name)
+    if tname != name:
+        return jsonify({"error": "That template isn't available."}), 400
+    return jsonify(_session().set_template(tname, tex))
+
+
 @app.post("/api/record/<int:rid>/variant")
 @_guard
 def record_variant(rid: int):
@@ -3129,6 +3144,19 @@ def session_action():
         return jsonify({"error": "No card given."}), 400
     args = body.get("args") if isinstance(body.get("args"), dict) else {}
     return jsonify(_session().apply_action(token, str(body.get("choice") or ""), args))
+
+
+@app.post("/api/session/github_connected")
+@_guard
+def session_github_connected():
+    """GitHub became connected (any path: the chat's card, Settings, a pasted token). When the
+    open resume chat's last word on GitHub was "not connected", it carries on by itself: the
+    repo ranking for this job, with no turn from the person (WebIntake.github_connected). Once
+    per connect; with no resume chat open, nothing happens."""
+    s = _SESSION.get("s")
+    if s is None:
+        return jsonify({"resumed": False})
+    return jsonify(_session().github_connected(pending=bool((request.json or {}).get("pending"))))
 
 
 def _receive_upload():
@@ -3333,6 +3361,21 @@ def keyword_apply(cv_id):
         return jsonify({"error": "No keyword given."}), 400
     draft = str((request.json or {}).get("draft") or "")
     return jsonify(s.keyword_apply(term, draft))
+
+
+@app.post("/api/cv/<cv_id>/keyword/add")
+@_guard
+def keyword_add(cv_id):
+    """Body {term}. ADD on a job keyword: the person says they have it, so it goes on the
+    best-fitting Skills line in the job's wording and into their saved profile, and the page
+    recompiles to one clean page. Returns the session state with the new coverage report."""
+    s = _keyword_session(cv_id)
+    if s is None:
+        return jsonify({"error": "Open this resume in the builder first."}), 404
+    term = _keyword_term()
+    if not term:
+        return jsonify({"error": "No keyword given."}), 400
+    return jsonify(s.keyword_add(term))
 
 
 @app.post("/api/cv/<cv_id>/keyword/undo")
@@ -6747,7 +6790,7 @@ def github_status():
     return jsonify({"configured": bool(_cred("GITHUB_TOKEN")), "login": conn.get("login") or "",
                     "connected": bool(conn.get("connected")), "device_flow": available(),
                     "app_flow": app_flow, "manage_url": github_app.manage_url(BROKER_URL),
-                    # a GitHub App user token (ghu_...), so "Choose repos on GitHub" applies
+                    # a GitHub App user token (ghu_...): after Disconnect, "remove the app on GitHub"
                     "via_app": (_cred("GITHUB_TOKEN") or "").startswith("ghu_"),
                     **({"reason": conn["reason"]} if conn.get("reason") else {})})
 

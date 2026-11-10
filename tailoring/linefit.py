@@ -620,6 +620,98 @@ def pack_skills(skills: dict, pool=(), *, width_fn: Callable[[str, list[str]], f
     return SkillPack(skills=out, short=short, lines=len(cat_lines()), spare=[t for t, _c in spare])
 
 
+@dataclass
+class TermPlacement:
+    skills: dict                 # the block with the term in it
+    label: str                   # the line it went on
+    shed: list[str]              # terms moved off that line to keep it one line
+    already: bool = False        # the block listed it already
+
+
+# A skills line holds at most this many terms (the assembler's one-page fit cuts past it).
+SKILL_LINE_TERMS = 8
+
+
+def place_term(skills: dict, term: str, *, width_fn: Callable[[str, list[str]], float] = estimate_width,
+               avail: float | None = None, jd_text: str = "") -> TermPlacement:
+    """Put ONE term the person added on the best-fitting Skills line, in its own wording.
+
+    The line is chosen by theme (``skill_theme`` against ``line_themes``: its own theme first,
+    then a neighbouring one, then any line), preferring a line where it fits without wrapping.
+    The term goes after the line's other job terms (JD terms first, as the packer orders them).
+    When the chosen line would wrap or pass ``SKILL_LINE_TERMS``, it sheds its least relevant
+    terms from the end (never a job term while another can go); the caller keeps those in the
+    person's material. One visible entry per term; certification and language lines are never
+    touched. With no category line at all, the term starts a line named for its theme."""
+    from .keywords import term_present
+    from .textwidth import TEXTWIDTH_PT
+    term = " ".join(str(term or "").split())
+    avail = float(avail if avail is not None else TEXTWIDTH_PT - 2.0)
+    jd = str(jd_text or "")
+    rel = (lambda t: term_present(_tkey(t) or t, jd)) if jd else (lambda t: False)
+    skills = {str(k): str(v) for k, v in (skills or {}).items()}
+    key = _tkey(term)
+    for label, value in skills.items():
+        if any(_tkey(t) == key for t in split_terms(value)):
+            return TermPlacement(skills=skills, label=label, shed=[], already=True)
+
+    theme = skill_theme(term)
+    near = _NEIGHBORS.get(theme, set())
+    lines = [(lab, split_terms(v)) for lab, v in skills.items()
+             if not _FIXED_LABEL.search(lab) and split_terms(v)]
+    if not lines:
+        label = _THEME_LABELS.get(theme, ("Skills",))[0]
+        out = {label: term}
+        out.update(skills)
+        return TermPlacement(skills=out, label=label, shed=[])
+
+    def insert(terms: list[str]) -> list[str]:
+        at = 0
+        for i, t in enumerate(terms):
+            if rel(t):
+                at = i + 1
+        return terms[:at] + [term] + terms[at:]
+
+    def fits(label: str, terms: list[str]) -> bool:
+        return len(terms) <= SKILL_LINE_TERMS and width_fn(label, terms) <= avail
+
+    def rank(item):
+        label, terms = item
+        th = line_themes(label, terms)
+        tier = 0 if theme in th else (1 if th & near else 2)
+        ok = fits(label, insert(terms))
+        # Own or neighbouring theme that fits, then own or neighbouring theme with a shed,
+        # then any other line that fits, then any other line with a shed; emptiest first.
+        group = (0 if ok else 2) if tier < 2 else (4 if ok else 5)
+        return (group, tier, width_fn(label, terms))
+
+    label, terms = min(lines, key=rank)
+    new = insert(terms)
+    shed: list[str] = []
+    while not fits(label, new) and len(new) > 1:
+        movable = [t for t in new if t != term]
+        drop = next((t for t in reversed(movable) if not rel(t)), movable[-1])
+        new.remove(drop)
+        shed.insert(0, drop)
+    skills[label] = ", ".join(new)
+    return TermPlacement(skills=skills, label=label, shed=shed)
+
+
+def remove_term(skills: dict, term: str, label: str = "", restore=()) -> dict:
+    """Undo ``place_term``: take ``term`` off its line and put the shed terms back on it."""
+    key = _tkey(term)
+    out = {}
+    for lab, value in (skills or {}).items():
+        before = split_terms(value)
+        terms = [t for t in before if _tkey(t) != key]
+        if lab == label or (not label and len(terms) != len(before)):
+            have = {_tkey(t) for t in terms}
+            terms += [t for t in restore or () if _tkey(t) not in have]
+        if terms:
+            out[str(lab)] = ", ".join(terms)
+    return out
+
+
 def supported_term(term: str, known: dict | None) -> bool:
     """A skill term may go on the page only when every word of it is in the person's own
     material and it names nothing the fact gate would refuse (no invented tool, credential)."""

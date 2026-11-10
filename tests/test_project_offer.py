@@ -65,6 +65,7 @@ def _offers(s):
 
 def test_offer_has_two_buttons_no_model_call_and_plain_words(template_source, fake_llm, workdir, monkeypatch):
     s = _built(_s(template_source, fake_llm, workdir), monkeypatch)
+    s.github_status = lambda: {"connected": True, "login": "kwame"}     # a check it can do
     fake_llm.agent_script = lambda *a: pytest.fail("the offer must not call the model")
     msgs = []
     cards = s._project_offer(msgs)
@@ -180,3 +181,24 @@ def test_a_route_waits_while_a_chat_turn_holds_the_lock(template_source, fake_ll
         s.lock.release()
     t.join(30)
     assert done.is_set()
+
+
+# -- GitHub is checked before a check is offered (Kofi, test build 13, 2026-11-09) ------------ #
+
+def test_offer_without_github_has_connect_and_no_check_promise(template_source, fake_llm, workdir, monkeypatch):
+    s = _built(_s(template_source, fake_llm, workdir), monkeypatch)    # not connected, no username
+    msgs = []
+    cards = s._project_offer(msgs)
+    assert cards[0]["buttons"] == [{"label": "Connect GitHub", "nav": "github"},
+                                   {"label": "Build a project for this job",
+                                    "send": "Build me a project for this job"}]
+    assert "I can check your GitHub" not in msgs[0] and "Check my GitHub" not in str(cards)
+    assert "Connect your GitHub and I'll check your repos" in msgs[0]
+    assert "Settings" not in msgs[0] and "—" not in msgs[0] and "–" not in msgs[0]
+
+
+def test_offer_with_a_username_on_the_resume_offers_the_check(template_source, fake_llm, workdir, monkeypatch):
+    s = _built(_s(template_source, fake_llm, workdir), monkeypatch)
+    s.essentials["identity"]["github"] = "https://github.com/kwame"   # public repos are readable
+    cards = s._project_offer([])
+    assert [b["label"] for b in cards[0]["buttons"]] == ["Check my GitHub", "Build a project for this job"]

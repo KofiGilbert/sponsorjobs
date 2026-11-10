@@ -95,6 +95,8 @@ def _essentials_from(saved_ess: dict, profile: dict) -> dict:
             # and the ones the person said they don't have: never asked twice.
             "skills_asked": [str(s) for s in (saved_ess.get("skills_asked") or [])],
             "skills_declined": [str(s) for s in (saved_ess.get("skills_declined") or [])],
+            # Skills the person added with ADD on a job's keywords (their provenance).
+            "skills_from_jobs": [str(s) for s in (saved_ess.get("skills_from_jobs") or [])],
             "declined": list(saved_ess.get("declined") or [])}
 
 
@@ -921,6 +923,7 @@ class WebIntake:
         # change to this session runs under this lock; an RLock, so a change that calls
         # another (a click that rebuilds) does not wait on itself.
         self.lock = threading.RLock()
+        self._connect_due = False          # a reply said GitHub is not connected (_reply_with_connect)
         self._project_offered = False      # the one proactive projects offer (_project_offer)
         self.last_cover_letter = ""        # most recent drafted cover letter (bundled on accept)
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
@@ -1163,11 +1166,25 @@ class WebIntake:
                                           app_context=self._app_context()) or "").strip()
         except Exception:
             reply = ""
+        self._connect_due = False
         reply = self._no_false_limits(reply, message)
+        if self._connect_due:
+            return self._reply_with_connect(reply)
         reply = reply or "Noted, I'll remember that."
         self._append("agent", reply)
         self._persist()
         return self._state([reply])
+
+    def _reply_with_connect(self, reply: str):
+        """A reply that says GitHub is not connected, with the Connect GitHub button under it
+        (the button is the way; the chat never lists menu steps)."""
+        from agent.resume_chat import connect_card
+        self._connect_due = False
+        card = connect_card()
+        self._append("agent", reply)
+        self.history[-1]["card"] = card
+        self._persist()
+        return self._state([reply], cards=[card])
 
     # -- the resume chat agent (TAILOR_CHAT_AGENT, agent/resume_chat.py) --------------- #
     def _agent_on(self) -> bool:
@@ -1571,6 +1588,120 @@ class WebIntake:
         except Exception:      # noqa: BLE001
             return False
 
+    # -- checking GitHub from a button, and carrying on once it is connected -------------- #
+    @staticmethod
+    def _is_check_github(message: str) -> bool:
+        from agent.resume_chat import CHECK_GITHUB_SEND
+        norm = lambda t: re.sub(r"[^a-z ]", "", str(t or "").lower()).strip()   # noqa: E731
+        return norm(message) == norm(CHECK_GITHUB_SEND)     # the button's own line only
+
+    def _check_github(self, connected_as: str = ""):
+        """Rank the person's repositories for this job and show the repo_fit card: the offer's
+        "Check my GitHub" button, and the turn that carries on by itself once GitHub is
+        connected (``connected_as``, the login). Not connected and no username: one line and
+        the Connect GitHub button, never steps."""
+        from agent.resume_chat import _t_rank_repos, connect_card, merge_cards
+        gh = self._github_view()
+        login = (gh.get("login") if gh.get("connected") else "") or gh.get("resume_login") or ""
+        msgs: list[str] = []
+        if connected_as:
+            where = f"this {self.role} role" if self.role else "this job"
+            lead = f"Connected as {connected_as}. Checking your repos for {where}."
+            msgs.append(lead)
+            self._append("agent", lead)
+        if not login:
+            msgs.append(self.GITHUB_NOT_CONNECTED)
+            self._append("agent", self.GITHUB_NOT_CONNECTED)
+            card = connect_card()
+            self.history[-1]["card"] = card
+            self._persist()
+            return self._state(msgs, cards=[card])
+        try:
+            out = _t_rank_repos(self._agent_ctx(), {"login": login})
+        except Exception:      # noqa: BLE001 - one polite line, never a trace
+            out = {"ok": False}
+        cards = merge_cards([out.pop("card")]) if out.get("card") else []
+        text = self._rank_takeaway(out)
+        msgs.append(text)
+        self._append("agent", text)
+        if cards:
+            self.history[-1]["card"] = cards[0]
+        self._agent_spoke = True       # a follow-up question stays with the agent
+        self._persist()
+        return self._state(msgs, cards=cards)
+
+    @staticmethod
+    def _rank_takeaway(out: dict) -> str:
+        """One or two plain lines over the repo_fit card (the card lists every repo)."""
+        from agent.resume_chat import ADD_LABEL
+        if not out.get("ok"):
+            return "I couldn't read your repos just now. Try again in a moment."
+        fits = [f for f in out.get("fits") or [] if isinstance(f, dict) and f.get("name")]
+        if not fits:
+            return ("None of your repos shows this job's skills yet. I can help you build a project "
+                    "for this job instead.")
+        best = [f["name"] for f in fits if f.get("fit") == "strong fit"] or [f["name"] for f in fits]
+        best = best[:3]
+        verb = "fits" if len(best) == 1 else "fit"
+        return (f"{_and_list(best)} {verb} this job best. Tick the ones you want on the card and "
+                f"click {ADD_LABEL}.")
+
+    def github_connected(self, pending: bool = False) -> dict:
+        """GitHub just became connected (the one-click flow, the device flow, a pasted token, in
+        Settings or from the chat): when the chat's last word on GitHub was "not connected" (a
+        Connect GitHub button still live), mark those buttons connected and carry on by itself,
+        "Connected as <login>. Checking your repos for this <role> role." and the repo_fit card.
+        No turn from the person is added. Once per connect: a second call finds no live button
+        and changes nothing. ``pending``: the person clicked "Check my GitHub" on a card from
+        before it was connected, and that click started the connect. Returns the state with
+        ``resumed``."""
+        with self.lock:
+            gh = self._github_view()
+            if not gh.get("connected"):
+                st = self._state([])
+                st["resumed"] = False
+                return st
+            login = str(gh.get("login") or gh.get("resume_login") or "")
+            due = self._mark_connect_cards(login or "GitHub")
+            if pending:
+                due = True
+            if due is None:
+                st = self._state([])
+                st["resumed"] = False
+                return st
+            if not due or not self._agent_on():
+                self._persist()
+                st = self._state([])
+                st.update({"resumed": False, "github_login": login})
+                return st
+            st = self._check_github(connected_as=login or "GitHub")
+            st.update({"resumed": True, "github_login": login})
+            return st
+
+    @staticmethod
+    def _connect_buttons(card) -> bool:
+        return isinstance(card, dict) and card.get("type") == "buttons" and not card.get("connected") \
+            and any(isinstance(b, dict) and b.get("nav") == "github" for b in card.get("buttons") or [])
+
+    def _mark_connect_cards(self, login: str):
+        """Mark every live Connect GitHub card in the transcript connected (a restored chat
+        shows them done). None: there was none. True: the last one is the chat's latest word on
+        GitHub (no repo_fit card after it), so the chat should carry on; False: it was already
+        answered another way."""
+        last = None
+        for i, t in enumerate(self.history):
+            if not isinstance(t, dict):
+                continue
+            for c in [t.get("card")] + list(t.get("cards") or []):
+                if self._connect_buttons(c):
+                    c["connected"] = login
+                    last = i
+        if last is None:
+            return None
+        later = [c for t in self.history[last + 1:] if isinstance(t, dict)
+                 for c in [t.get("card")] + list(t.get("cards") or [])]
+        return not any(isinstance(c, dict) and c.get("type") == "repo_fit" for c in later)
+
     def _agent_reply(self, message: str):
         from agent.resume_chat import run_turn
         try:
@@ -1594,9 +1725,10 @@ class WebIntake:
     # or GitHub directly, only what you paste into our chat": false on both counts. The reply
     # model now gets the app's true facts, and a reply that still denies them is replaced by
     # one written from what the app really holds.
-    GITHUB_CONNECT_STEPS = ("click your name at the bottom of the left sidebar, choose "
-                            "Settings, then Connections, click Connect next to GitHub, and "
-                            "approve the code on GitHub")
+    # Not connected: one line, and a Connect GitHub button on the card (agent/resume_chat.py
+    # connect_card). Never menu paths in the chat (Kofi, test build 13, 2026-11-09).
+    GITHUB_NOT_CONNECTED = ("GitHub isn't connected yet. Connect it with the button below and I'll "
+                            "check your repos for this job.")
     _ASKS_FILES = re.compile(r"\b(upload(?:ed|s|ing)?|attach(?:ed|ment)?|the file|my file|that file|"
                              r"pdf|github|repos?|repositor(?:y|ies))\b", re.I)
     _ASKS_SEEN = re.compile(r"\b(see|saw|seen|read|notice\w*|miss\w*|pick\w* up|pull\w*|includ\w*|"
@@ -1674,7 +1806,8 @@ class WebIntake:
             who = f" as {gh['login']}" if gh.get("login") else ""
             lines.append(f"- GitHub is connected{who} (Settings, Connections).")
         elif gh is not None:
-            lines.append("- GitHub is NOT connected. To connect it: " + self.GITHUB_CONNECT_STEPS + ".")
+            lines.append("- GitHub is NOT connected. The chat shows a Connect GitHub button for it. "
+                         "Never describe menus, settings or steps to connect.")
         if mine:
             lines.append(f"- Their GitHub profile link: {mine}.")
         lines.append("- This chat cannot list or browse all of the person's GitHub repositories. "
@@ -1722,9 +1855,8 @@ class WebIntake:
                            "this chat yet, so paste a repository link or tell me about a project and "
                            "I'll add it.")
             else:
-                out.append("GitHub isn't connected yet. To connect it, "
-                           + self.GITHUB_CONNECT_STEPS + ". Until then, paste a repository link or "
-                           "tell me about a project and I'll add it.")
+                out.append(self.GITHUB_NOT_CONNECTED + " Or paste a repository link and I'll add it.")
+                self._connect_due = True
             out.append("The Projects page can also build a project for this job with you and check "
                        "you can explain it with a short quiz before it goes on your resume.")
         return " ".join(out)
@@ -3124,6 +3256,11 @@ class WebIntake:
         followup, self._agent_spoke = bool(getattr(self, "_agent_spoke", False)), False
         self._append("user", message)
 
+        # "Check my GitHub" (the offer's button sends this exact line): the check itself, not a
+        # model's choice of it. A typed "check my github" stays with the intake and the agent.
+        if self._agent_on() and self._is_check_github(message):
+            return self._check_github()
+
         # Flagged-placeholder project controls.
         if _wants_remove_suggested(message) and self._suggested_projects():
             return self.remove_suggested_projects()
@@ -3192,7 +3329,10 @@ class WebIntake:
                 declined_now = self._decline_open_required()
             if _wants_done(message) and not self._open_required_sections():
                 self.essentials["enrich_done"] = True
+        self._connect_due = False
         reply = self._no_false_limits(str(out.get("reply", "")).strip(), message)
+        if self._connect_due:     # a GitHub question answered "not connected": the button, not steps
+            return self._reply_with_connect(reply)
         self._persist()   # remember what was shared, without waiting for Accept
 
         # P1: distill durable facts/preferences/constraints from this turn into the authoritative
@@ -3742,6 +3882,9 @@ class WebIntake:
         {"label": "Check my GitHub", "send": "Check my GitHub for projects that fit this job"},
         {"label": "Build a project for this job", "send": "Build me a project for this job"},
     )
+    # Neither connected nor a username on the resume: nothing to check yet, so the first button
+    # connects (one click), and the chat checks the repos by itself once it is connected.
+    PROJECT_OFFER_CONNECT = {"label": "Connect GitHub", "nav": "github"}
 
     def _project_offer(self, msgs: list) -> list:
         """At the first build in this chat (agent flag on): when the job asks for skills the
@@ -3767,11 +3910,18 @@ class WebIntake:
             return []
         named = missing[:2]
         skills = named[0] if len(named) == 1 else f"{named[0]} and {named[1]}"
-        text = (f"This job asks for {skills}, and your resume does not show "
-                f"{'it' if len(named) == 1 else 'them'} yet. A project can. I can check your "
-                "GitHub for one that fits, or help you build one for this job.")
-        card = {"type": "buttons", "offer": self.PROJECT_OFFER,
-                "buttons": [dict(b) for b in self.PROJECT_OFFER_BUTTONS]}
+        gh = self._github_view()           # checked first: never offer a check it cannot do
+        can_check = bool(gh.get("connected") or gh.get("resume_login"))
+        lead = (f"This job asks for {skills}, and your resume does not show "
+                f"{'it' if len(named) == 1 else 'them'} yet. A project can. ")
+        if can_check:
+            text = lead + "I can check your GitHub for one that fits, or help you build one for this job."
+            buttons = [dict(b) for b in self.PROJECT_OFFER_BUTTONS]
+        else:
+            text = lead + ("Connect your GitHub and I'll check your repos for one that fits, or I can "
+                           "help you build one for this job.")
+            buttons = [dict(self.PROJECT_OFFER_CONNECT), dict(self.PROJECT_OFFER_BUTTONS[1])]
+        card = {"type": "buttons", "offer": self.PROJECT_OFFER, "buttons": buttons}
         msgs.append(text)
         self._append("agent", text)
         self.history[-1]["card"] = card
@@ -4717,6 +4867,58 @@ class WebIntake:
             pass
         self._conform_essentials()
 
+    # -- switching the template in a running chat (Kofi, test build 13, 2026-11-09) ------ #
+    TEMPLATE_SWITCHED = "Switched to the {name} template."
+    TEMPLATE_REBUILT = "Rebuilt your resume in it."
+    TEMPLATE_FAILED = ("Your resume didn't fit one clean page in the {name} template, so I kept "
+                       "{old}.")
+
+    @_locked
+    def set_template(self, name: str, template_source: str):
+        """Switch this chat's template (the builder's "change", then "Use this template"). The
+        job, the chat, the profile and every answer stay. Built already: rebuild the page in the
+        new template through the normal assemble path, which keeps it one page with no new
+        overfull lines (assemble_cv's self-healing); a page that cannot fit rolls back to the old
+        template and says so. Not built yet: the next build uses it. One short chat line either
+        way. Returns the session state, with ``template_ok``."""
+        from intake.template_manifest import (headings, identity_fields, load_manifest,
+                                               required_sections, sections)
+        keep = {k: getattr(self, k, None) for k in (
+            "template", "template_name", "manifest", "identity_fields", "sections", "headings",
+            "required_fill", "assembled", "profile", "_written", "_pdf_v", "dirty")}
+        old_label = str((self.manifest or {}).get("display_name") or self.template_name or "")
+        man = load_manifest(name)
+        label = str((man or {}).get("display_name") or name)
+        self.template, self.template_name, self.manifest = template_source, name, man
+        self.identity_fields = identity_fields(man)
+        self.sections, self.headings = sections(man), headings(man)
+        self.required_fill = required_sections(man)
+        built = self.assembled is not None
+        if built:
+            try:
+                self._assemble()
+                ok = bool(self.assembled and self.assembled.ok)
+            except Exception:  # noqa: BLE001 - a failed build keeps the old template
+                ok = False
+            if not ok:
+                for k, v in keep.items():
+                    setattr(self, k, v)
+                try:                     # the failed try overwrote the PDF: build the old one again
+                    self._assemble()
+                except Exception:  # noqa: BLE001
+                    for k, v in keep.items():
+                        setattr(self, k, v)
+                st = self._state([])
+                st.update({"template_ok": False,
+                           "template_error": self.TEMPLATE_FAILED.format(name=label, old=old_label)})
+                return st
+        msg = self.TEMPLATE_SWITCHED.format(name=label) + (" " + self.TEMPLATE_REBUILT if built else "")
+        self._append("agent", msg)
+        self._persist()
+        st = self._state([msg])
+        st["template_ok"] = True
+        return st
+
     def _assemble(self, fit_lines: bool = False):
         # Render from a constraint-filtered COPY so a 'do not mention X' never reaches the CV,
         # while self.profile (persisted) stays whole; restore any hidden items into the durable
@@ -5143,6 +5345,17 @@ class WebIntake:
         if idx is None or self.assembled is None:
             return self._keyword_result(term, False, f"Nothing to undo for {term}.")
         act = self.keyword_actions[idx]
+        if act["kind"] == "skill":
+            from tailoring.linefit import remove_term
+            self.profile["skills"] = remove_term(self.profile.get("skills") or {}, act["term"],
+                                                 act.get("label", ""), act.get("shed") or ())
+            self._unsave_added_skill(act["term"], act.get("saved") or {})
+            del self.keyword_actions[idx]
+            self._assemble()
+            self._persist()
+            out = self._keyword_result(term, True, "")
+            out["undone"] = True
+            return out
         if act["kind"] == "new":
             res = remove_added_bullet(self.assembled.tex_source, act["tex_after"], self.workdir,
                                       jobname=self.jobname)
@@ -5159,6 +5372,122 @@ class WebIntake:
         out = self._keyword_result(term, True, "", res if res.ok else None)
         out["undone"] = True
         return out
+
+    # ADD on a job keyword. The person clicking ADD is the person saying they have the skill,
+    # the same as typing it into their profile (Kofi, 2026-11-09: "it is still the same person
+    # telling you i have the skill so add it"), so it is added in one click, like Teal, Jobscan
+    # and Rezi: on the best-fitting Skills line, in the job's own wording, and saved as their
+    # own skill so every later resume treats it as theirs.
+    @_locked
+    def keyword_add(self, term: str) -> dict:
+        """Add ``term`` to the page's Skills block and to the saved profile. The page rebuilds
+        through the normal one-page fit (compile, page count, overfull check, shrink). When
+        even that cannot keep it on one page, the page stays as it was, the skill stays saved,
+        and the person is told in one line."""
+        import copy as _copy
+        from tailoring.linefit import place_term
+        term = " ".join(str(term or "").split())[:80]
+        if not term:
+            return self._keyword_result(term, False, "No keyword given.")
+        if self.assembled is None or not self.assembled.tex_source:
+            return self._keyword_result(term, False, "Build the resume first, then add keywords to it.")
+        saved = self._save_added_skill(term)
+        before = _copy.deepcopy(self.profile)
+        width_fn, avail = self._skill_widths()
+        pl = place_term(self.profile.get("skills") or {}, term, width_fn=width_fn, avail=avail,
+                        jd_text=self.jd)
+        if pl.already and self._term_on_page(term):
+            self._persist()
+            return self._keyword_result(term, True, "")
+        self.profile["skills"] = pl.skills
+        self._assemble()
+        a = self.assembled
+        if not (a is not None and a.ok and a.compile is not None and a.compile.pages == 1
+                and self._term_on_page(term)):
+            self.profile = before
+            self._assemble()
+            self._persist()
+            return self._keyword_result(
+                term, False, f"No room on the page for {term}. It is saved to your profile.")
+        # Terms the line gave up to stay one line remain the person's own skills.
+        si = self.essentials.setdefault("skills_input", [])
+        for t in pl.shed:
+            if t.lower() not in {str(x).lower() for x in si}:
+                si.append(t)
+        self.keyword_actions.append({"term": term, "kind": "skill", "label": pl.label,
+                                     "before": "", "after": term, "shed": list(pl.shed),
+                                     "saved": saved})
+        self._persist()
+        return self._keyword_result(term, True, "")
+
+    def _term_on_page(self, term: str) -> bool:
+        from tailoring.assembler import _rendered_cv_text
+        from tailoring.keywords import term_present
+        a = self.assembled
+        if a is None:
+            return False
+        return term_present(term, _rendered_cv_text(a.profile_used or {}, self.sections))
+
+    def _skill_widths(self):
+        """The Skills line width test calibrated to the real page (tailoring/linefit.py), or
+        the template estimate when the page cannot be read."""
+        from tailoring import linefit as _lf
+        try:
+            rep = _lf.measure(getattr(self.assembled, "pdf_path", None),
+                              getattr(self.assembled, "profile_used", None) or {})
+            if rep.items and rep.width:
+                k = _lf.calibrate(rep)
+                return (lambda lab, terms: k * _lf.estimate_width(lab, terms)), rep.width - 1.5
+        except Exception:      # noqa: BLE001 - the estimate is good enough to place a term
+            pass
+        return _lf.estimate_width, None
+
+    def _save_added_skill(self, term: str) -> dict:
+        """Save an ADDed keyword as the person's own skill: their stated skills (which every
+        build reads) with its provenance, and the brain with source "you". Returns what was
+        new, so an undo takes back only that."""
+        e = self.essentials
+        low = term.lower()
+        out = {"input": False, "fact": False}
+        si = e.setdefault("skills_input", [])
+        if low not in {str(x).lower() for x in si}:
+            si.append(term)
+            out["input"] = True
+        src = e.setdefault("skills_from_jobs", [])
+        if low not in {str(x).lower() for x in src}:
+            src.append(term)
+        for k in ("skills_declined", "skills_pending"):
+            if e.get(k):
+                e[k] = [x for x in e[k] if str(x).lower() != low]
+        st = self._brain()
+        if st is not None:
+            try:
+                from applicant import facts as _F
+                from applicant.store import ACTIVE
+                subject = f"skill:{low}"
+                if not any(r["status"] == ACTIVE for r in st.current("skill", subject, "")):
+                    _F.put(st, "skill", term, source="you", subject=subject,
+                           source_ref="job_keywords",
+                           question=f"Added {term} from a job's keywords")
+                    out["fact"] = True
+            except Exception:      # noqa: BLE001 - stated skills still carry it
+                pass
+        return out
+
+    def _unsave_added_skill(self, term: str, saved: dict) -> None:
+        e = self.essentials
+        low = term.lower()
+        if saved.get("input"):
+            e["skills_input"] = [x for x in (e.get("skills_input") or []) if str(x).lower() != low]
+            e["skills_from_jobs"] = [x for x in (e.get("skills_from_jobs") or [])
+                                     if str(x).lower() != low]
+        if saved.get("fact"):
+            st = self._brain()
+            if st is not None:
+                try:
+                    st.forget("skill", f"skill:{low}")
+                except Exception:      # noqa: BLE001
+                    pass
 
     def _keyword_result(self, term: str, ok: bool, reason: str, res=None) -> dict:
         st = self._state()

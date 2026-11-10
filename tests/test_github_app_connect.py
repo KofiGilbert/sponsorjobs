@@ -349,7 +349,10 @@ def test_the_settings_row_has_the_one_click_states():
     for el in ("ghAppWait", "ghAppCancel", "ghAppMsg", "ghManageWrap", "ghManage", "ghToggle", "ghAdvanced"):
         assert f'id="{el}"' in html
     assert "Finish in your browser" in html
-    assert '"Connect GitHub"' in js and "Choose repos on GitHub" in js
+    assert '"Connect GitHub"' in js
+    # a connected row is "Connected as <login>" and Disconnect only, no "Choose repos" link
+    assert "Choose repos on GitHub" not in js and "Choose repos on GitHub" not in html
+    assert "remove the app on GitHub" in html
     assert "/api/github/app/start" in js and "/api/github/app/poll" in js
     # the fallback is wired: a start that says fallback goes on to the device flow / token box
     assert "d.fallback" in js

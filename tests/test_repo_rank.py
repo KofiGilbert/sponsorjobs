@@ -368,7 +368,7 @@ def test_the_chat_status_agrees_with_the_token_the_lookup_uses(template_source, 
     s.github_status = lambda: {"connected": False, "login": ""}      # a stale hook
     s.github_token = lambda: TOKEN
     out = rc.TOOLS["github_status"].run(s._agent_ctx(), {})
-    assert out["connected"] is True and "how_to_connect" not in out
+    assert out["connected"] is True and "card" not in out and "say" not in out
 
 
 def test_a_repo_already_on_the_resume_is_not_offered_again(template_source, fake_llm, workdir, gh):
