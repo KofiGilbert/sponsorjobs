@@ -3979,8 +3979,14 @@ class WebIntake:
             # button in other words.
             if _bare_decline(message) or _wants_done(message):
                 declined_now = self._decline_open_required()
-            # An answer that filled part of the question answers all of it (for this chat).
-            self._settle_required_answer()
+            # Any reply to the question answers it (Kofi, 2026-11-10: ask ONCE, never again).
+            # His "football and travelling" landed in Interests while only Extracurricular had
+            # been asked, and the chat said "Before I build, I need your Extracurricular" right
+            # after he answered. What he didn't give is covered for this chat (not declined), and
+            # the page fill fills the room with more of his recent work.
+            e = self.essentials
+            asked = list(e.get("required_open_at_ask") or self._open_required_sections())
+            e["required_covered"] = sorted(set(e.get("required_covered") or []) | set(asked))
             if _wants_done(message) and not self._open_required_sections():
                 self.essentials["enrich_done"] = True
         self._connect_due = False

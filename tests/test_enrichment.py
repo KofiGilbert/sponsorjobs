@@ -150,10 +150,8 @@ def test_override_still_draws_out_required_template_sections(template_source, fa
     assert s.essentials.get("override") is True
     invite = " ".join(st["messages"]).lower()
     # The outside-work question was asked once already: never asked again after the build
-    # (Kofi got it three times in one chat, 2026-11-10). The light-resume banner still lists it.
+    # (Kofi got it three times in one chat, 2026-11-10).
     assert not any(w in invite for w in ("outside", "volunteer", "club", "hobb"))
-    sugg = " ".join((st.get("light_cv") or {}).get("suggestions") or []).lower()
-    assert "outside work" in sugg or "interests" in sugg
     # The OPTIONAL enrichment (per-role accomplishments) is NOT interrogated.
     assert "blackorigin" not in invite
     # And an answer about outside work later is still absorbed, even under override.
