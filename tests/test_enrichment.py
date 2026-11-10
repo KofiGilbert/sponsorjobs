@@ -142,16 +142,21 @@ def test_override_still_draws_out_required_template_sections(template_source, fa
     (the user's complaint). It builds immediately AND invites the required sections."""
     s = _s(template_source, fake_llm, workdir)
     s.start()
-    s.submit(SKELETON)
+    st0 = s.submit(SKELETON)
+    asked0 = " ".join(st0["messages"]).lower()
+    assert any(w in asked0 for w in ("outside", "volunteer", "club", "team", "interest", "hobb"))
     st = s.submit("just build it with what you have")
     assert st["phase"] == "review"                       # override builds immediately
     assert s.essentials.get("override") is True
     invite = " ".join(st["messages"]).lower()
-    # The required outside-work / interests sections are drawn out even under override…
-    assert any(w in invite for w in ("outside", "volunteer", "club", "team", "interest", "hobb"))
-    # …but the OPTIONAL enrichment (per-role accomplishments) is NOT interrogated.
+    # The outside-work question was asked once already: never asked again after the build
+    # (Kofi got it three times in one chat, 2026-11-10). The light-resume banner still lists it.
+    assert not any(w in invite for w in ("outside", "volunteer", "club", "hobb"))
+    sugg = " ".join((st.get("light_cv") or {}).get("suggestions") or []).lower()
+    assert "outside work" in sugg or "interests" in sugg
+    # The OPTIONAL enrichment (per-role accomplishments) is NOT interrogated.
     assert "blackorigin" not in invite
-    # And an answer to the required-section invite is absorbed even under override.
+    # And an answer about outside work later is still absorbed, even under override.
     s.submit("I volunteer coaching a youth football team on weekends.")
     assert s.essentials.get("extracurricular")
 

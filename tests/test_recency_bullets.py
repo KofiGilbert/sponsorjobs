@@ -264,7 +264,7 @@ def test_the_builder_says_what_it_wrote_and_still_invites_more_when_short(templa
     st = s.build_from_saved()
     assert st["phase"] == "review", st.get("messages")
     said = " ".join(st["messages"])
-    assert "To fill the page I wrote" in said and "summary above" in said
+    assert "I filled the rest with more of your recent work" in said and "summary above" in said
     assert st["build"]["written"] and "written for you" in st["build"]["summary"]
     assert st["changes"]["written"] and all(w["label"] and w["text"] for w in st["changes"]["written"])
     assert s.assembled.underfull and (st.get("light_cv") or {}).get("light") is True

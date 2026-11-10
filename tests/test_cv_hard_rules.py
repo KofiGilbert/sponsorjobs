@@ -263,6 +263,12 @@ def test_built_cv_has_five_to_six_skill_categories_or_asks_for_more(template_sou
     n = len(s.profile.get("skills") or {})
     asked = " ".join(st["messages"])
     assert 2 <= n <= 6, f"got {n} skill categories: {list((s.profile.get('skills') or {}).keys())}"
+    # One question per turn (2026-11-10): the skills question may wait one turn behind the
+    # question for the roles' real bullets.
+    if n < 5 and "This role asks for" not in asked and "tools, software or methods" not in asked:
+        st = s.submit("At BlackOrigin I rebuilt the monthly reporting in SQL and cut close time.")
+        asked = " ".join(st["messages"])
+        n = len(s.profile.get("skills") or {})
     assert 5 <= n or "This role asks for" in asked or "tools, software or methods" in asked, \
         f"{n} skill lines and no question for more: {asked}"
     assert all(s_["lines"] == 1 for s_ in (s.assembled.line_fit or {}).get("skills", [])), \

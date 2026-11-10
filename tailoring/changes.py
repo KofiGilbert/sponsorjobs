@@ -280,7 +280,9 @@ def readable(ch: dict, terms=(), limit: int = 8) -> list[str]:
     out: list[str] = []
     rew = list(ch.get("reworded") or [])
     for r in rew[:limit]:
-        org = str(r.get("label") or "").split(",")[0].strip() or "a"
+        # "Last-Mile Operations Simulator (Python, simulation), ..." names the project, not
+        # "Last-Mile Operations Simulator (Python": bracketed tools go before the comma split.
+        org = re.sub(r"\s*[(\[][^)\]]*[)\]]?", "", str(r.get("label") or "")).split(",")[0].strip() or "a"
         new = [str(t) for t in terms or () if str(t).strip()
                and term_present(t, r.get("after") or "") and not term_present(t, r.get("before") or "")]
         who = f"a {org} bullet" if org != "a" else "a bullet"
