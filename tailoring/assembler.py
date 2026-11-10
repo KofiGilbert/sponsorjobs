@@ -355,12 +355,46 @@ def _experience(profile: dict) -> str:
             + "\\vs\n")
 
 
+def _real_entry(it: dict) -> bool:
+    """An Extracurricular ENTRY (a title with bullets or an organisation), as against a bare
+    word ("Swimming") that reads as a grid cell."""
+    title = str(it.get("title") or "").strip()
+    bl = [b for b in (it.get("bullets") or []) if str(b).strip()]
+    return bool(title and (bl or str(it.get("org") or it.get("organisation") or "").strip()))
+
+
+def hobby_titles(profile: dict, entries_too: bool = False) -> list[str]:
+    """The Extracurricular items that belong on the Interests line: bare words ("Swimming")
+    always; with ``entries_too`` the real entries' titles as well (a template with no
+    Extracurricular section of its own folds them into Interests, "Youth team (Accra FC)")."""
+    out: list[str] = []
+    for it in profile.get("extracurricular", []) or []:
+        if not isinstance(it, dict):
+            continue
+        title = str(it.get("title") or "").strip()
+        if not title:
+            continue
+        if _real_entry(it):
+            if entries_too:
+                org = str(it.get("org") or it.get("organisation") or "").strip()
+                out.append(f"{title} ({org})" if org else title)
+        else:
+            out.append(title)
+    return out
+
+
 def _extracurricular(profile: dict) -> str:
-    items = profile.get("extracurricular", [])
-    if not items:
+    """The Extracurricular block renders ENTRIES only: a title with bullets or an organisation,
+    as the template's title-and-date rows. A bare word ("Playing football", "Swimming") is a
+    hobby: it goes to the Interests line (``_additional``), never into this block as a grid of
+    words spaced across the line (Kofi, 2026-11-10). Template-independent: the same rule under
+    "Leadership & Activities", "Clinical Rotations" or "Extracurricular"."""
+    real = [it for it in (profile.get("extracurricular", []) or [])
+            if isinstance(it, dict) and _real_entry(it)]
+    if not real:
         return ""
     out = [_heading(_label("extracurricular", "Extracurricular")), "\n"]
-    for it in items:
+    for it in real:
         date = _esc(it.get("date", ""))
         if it.get("dates_placeholder") and date:
             date = f"\\textcolor{{red}}{{{date}}}"   # flagged placeholder, like Experience
@@ -368,22 +402,40 @@ def _extracurricular(profile: dict) -> str:
             f"\\noindent \\textbf{{{_esc(it.get('title',''))}}} "
             f"\\hfill \\textbf{{{date}}}\n"
         )
-        bl = it.get("bullets", [])
-        # An entry with no bullets (a hobby given as a title: "Playing football") ends its
-        # paragraph here, so the next entry starts on its own line instead of running on after
-        # the \hfill (Kofi's page showed "Playing football" and "Swimming" on one line, 2026-11-10).
-        out.append(_bullets(bl) if bl else "\n")
+        out.append(_bullets(it.get("bullets", [])))
     out.append("\\vs\n")
     return "".join(out)
 
 
-def _additional(profile: dict) -> str:
+def interests_line(profile: dict, fold_entries: bool = False) -> str:
+    """The one Interests sentence for the page: the Interests on file with the hobby words from
+    Extracurricular folded in without duplicates (tailoring/conform.merge_interests), and the
+    real entries' titles too when the template has no Extracurricular section
+    (``fold_entries``). Empty when the person gave neither."""
+    from tailoring.conform import interest_sentence, merge_interests
     interests = profile.get("interests")
+    if isinstance(interests, list):
+        interests = ", ".join(str(x) for x in interests)
+    interests = str(interests or "").strip()
+    extra = hobby_titles(profile, entries_too=fold_entries)
+    if not extra:
+        return interests
     if not interests:
+        return interest_sentence(extra)
+    return merge_interests(interests, extra)[0]
+
+
+def _additional(profile: dict, fold_entries: bool = False) -> str:
+    """Additional Information: ONE prose Interests line, the single home for hobbies on every
+    template (Kofi, 2026-11-10: "I don't think we need both Extracurricular and Additional Info
+    on one resume"). A template with no Extracurricular section (``fold_entries``) carries the
+    person's activities in it too."""
+    line = interests_line(profile, fold_entries)
+    if not line:
         return ""
     return (
         _heading(_label("additional", "Additional Information"))
-        + f"\n\\noindent \\textbf{{{_label('interests', 'Interests')}:}} {_esc(interests)}\n"
+        + f"\n\\noindent \\textbf{{{_label('interests', 'Interests')}:}} {_esc(line)}\n"
     )
 
 
@@ -997,10 +1049,22 @@ def render_cv(preamble: str, profile: dict, sections=None, probe: bool = False,
     body = [_header(profile)]
     token = _HEADINGS.set(dict(headings or {}))
     try:
+        fold = "extracurricular" not in order
         for name in order:
+            if name == "interests":
+                # One outside-work section: a template without an Extracurricular section
+                # of its own carries the person's activities inside Additional Information.
+                body.append(_additional(profile, fold_entries=fold))
+                continue
             renderer = _SECTION_RENDERERS.get(name)
             if renderer:
                 body.append(renderer(profile))
+        # A template with an activities block but no Interests section of its own still prints
+        # the person's hobbies (the words that never render under "Clinical Rotations" or
+        # "Activities & Honors"), as the one Interests line at the end. A template with neither
+        # section stays as it is.
+        if "interests" not in order and "extracurricular" in order and interests_line(profile):
+            body.append(_additional(profile))
     finally:
         _HEADINGS.reset(token)
     head = f"{preamble}\n{_FILL_PROBE}" if probe else preamble

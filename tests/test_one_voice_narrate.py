@@ -127,11 +127,11 @@ def test_the_outside_work_question_keeps_its_button_and_states_the_sections(
     st = s.submit(BUILD_BUTTON)
     assert s.assembled is None and len(st["messages"]) == 1
     said = st["messages"][0]
-    assert said.startswith("From the AI") and "Extracurricular" in said and "Interests" in said
-    assert [o["label"] for o in st["required_open"]] == ["Extracurricular", "Interests"]  # the button
+    assert said.startswith("From the AI") and "Interests" in said
+    assert [o["label"] for o in st["required_open"]] == ["Interests"]  # the button
     assert not calls, "the question was worded by a second model call"
     item = next(i for i in fake_llm.last_narrate_items if i["kind"] == "ask_required")
-    assert item["sections"] == ["Extracurricular", "Interests"]
+    assert item["sections"] == ["Interests"]
     # Asked again by the build button: the nudge, one message, the button named exactly.
     st = s.submit(BUILD_BUTTON)
     if s.assembled is None:
