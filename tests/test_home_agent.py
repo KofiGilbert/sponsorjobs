@@ -88,7 +88,7 @@ def ag(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "_aa_candidates", lambda focus: ([dict(j) for j in JOBS], meta))
     monkeypatch.setattr(app, "_aa_scorer",
                         lambda rows, deadline=None, network=False: (lambda job: 80))
-    app._AGENT.update(plan=None, intent=None)
+    app._AGENT.update(plan=None, intent=None, pending=None)
 
     def fake_tailor(job, llm, tex, tname, scratch):
         state["tailored"].append(job["source_id"])
@@ -206,9 +206,14 @@ def test_plan_counts_the_verified_site_when_autonomous_is_on(ag):
 
 
 def test_plan_telegram_line_connected_and_not(ag):
+    # Not connected: checked first, one line and the Connect Telegram card, no plan yet
+    # (tests/test_connect_first.py has the whole flow).
     d, _ = _ask(home.EXAMPLES[1])
-    assert ("4. Telegram is not connected yet, so I will show the results here. Connect it in "
-            "Auto-apply to get them on your phone.") in d["text"]
+    assert d["text"] == "Telegram isn't connected yet."
+    assert d["connect"] == {"integration": "telegram", "label": "Connect Telegram"}
+    assert "Auto-apply to get them" not in home.plan_text(
+        n=3, titles=["a"], min_fit=60, auto=0, auto_companies="", auto_reason="off",
+        telegram=True, telegram_connected=False, packages_left=None)
     ag["channel"] = FakeChannel()
     d, _ = _ask(home.EXAMPLES[1])
     assert "4. Message you on Telegram when they are done." in d["text"]

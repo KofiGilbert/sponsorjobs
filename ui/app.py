@@ -16073,7 +16073,111 @@ def _autopilot_act(data: str) -> dict:
 # through the same guarded approve as Approve all (verified allowlist AND autonomous on). The
 # plan is stated first and spends no package; the "can be sent" number is computed, never
 # assumed. The pending plan lives here, server side, so Go ahead runs what was shown.
-_AGENT: dict = {"plan": None, "intent": None}
+_AGENT: dict = {"plan": None, "intent": None, "pending": None}
+_AGENT_LOCK = threading.Lock()
+
+
+# ---- Check first (Kofi, test build 13): a request that needs an integration checks it before
+# anything else. Not connected: one line and an inline Connect button (agent/home.py
+# connect_reply), and the request waits in _AGENT["pending"]. Once it is connected, the client
+# calls /api/agent/connected and the agent carries on with that same request by itself, once.
+def _ext_connected() -> bool:
+    seen = _EXT_SEEN.get("at")
+    return bool(seen and (time.time() - seen) < _EXT_FRESH_SECONDS)
+
+
+def _email_connected() -> bool:
+    if _mail_alias():
+        return True
+    try:
+        box = _current_mailbox()
+    except Exception:                 # noqa: BLE001 - unknown reads as not connected
+        box = None
+    return box is not None
+
+
+def _integration_on(name: str) -> bool:
+    """Is this integration connected right now? Asked fresh each time, never assumed."""
+    try:
+        if name == "telegram":
+            try:
+                _official_status(force=True)   # a link made a moment ago counts now, not in a minute
+            except Exception:         # noqa: BLE001 - the cached answer stands
+                pass
+            return _active_channel() is not None
+        if name == "github":
+            return bool(_github_connection().get("connected"))
+        if name == "email":
+            return _email_connected()
+        if name == "extension":
+            return _ext_connected()
+    except Exception:                 # noqa: BLE001 - a failed check is "not connected"
+        return False
+    return False
+
+
+def _agent_missing(intent: dict) -> str:
+    from agent.home import needs
+    return next((n for n in needs(intent) if not _integration_on(n)), "")
+
+
+def _agent_integration_answer(intent: dict, just: bool) -> dict:
+    """github / email / extension: what the request asked for, once its integration is on."""
+    from agent.home import email_text, extension_text, github_text
+    kind = intent.get("intent")
+    if kind == "github":
+        conn = _github_connection()
+        login = str(conn.get("login") or "")
+        from ui.github_repos import list_repos
+        got = list_repos(login, token=_github_token()) if login else {"ok": False, "repos": []}
+        names = [r.get("name") for r in got.get("repos") or [] if r.get("name")]
+        return {"text": github_text(login, names, ok=bool(got.get("ok")), just=just),
+                "buttons": [{"id": "open_projects", "label": "Open Projects"}]}
+    if kind == "email":
+        return {"text": email_text(_mail_alias(), just=just), "buttons": []}
+    return {"text": extension_text(just=just), "buttons": []}
+
+
+def _agent_answer(intent: dict) -> dict:
+    """The answer to a request whose integrations are all connected."""
+    from agent.home import empty_intent, other_text, tailor_one_text
+    kind = intent.get("intent")
+    if kind == "find_and_apply":
+        _AGENT["intent"] = intent
+        return _agent_plan(intent)
+    if kind == "status":
+        return _agent_status()
+    if kind in ("github", "email", "extension"):
+        return _agent_integration_answer(intent, just=False)
+    if kind == "tailor_one":
+        _AGENT["intent"] = {**empty_intent("find_and_apply"), "titles": intent.get("titles") or []}
+        return {"text": tailor_one_text(intent),
+                "buttons": [{"id": "find", "label": "Find matching roles"}]}
+    return {"text": other_text(), "buttons": []}
+
+
+def _agent_hold(text: str, intent: dict, need: str) -> dict:
+    from agent.home import connect_reply
+    _AGENT["pending"] = {"text": text, "intent": intent, "need": need}
+    _AGENT["plan"] = None
+    return connect_reply(need)
+
+
+def _agent_continue(intent: dict, need: str) -> dict:
+    """Carry on with the held request now that ``need`` is connected. A find and apply whose
+    plan can run starts at once ("next": "go"): the person already asked for exactly this run.
+    A plan that cannot run (no profile, no packages, no match) says why instead."""
+    from agent.home import running_text
+    kind = intent.get("intent")
+    if kind in ("github", "email", "extension"):
+        return _agent_integration_answer(intent, just=True)
+    out = _agent_answer(intent)
+    if kind == "find_and_apply" and any(b.get("id") == "go" for b in out.get("buttons") or []):
+        plan = _AGENT.get("plan") or {}
+        return {"text": running_text(int(plan.get("count") or 0), plan.get("titles") or [],
+                                     bool(plan.get("telegram")) and _integration_on("telegram")),
+                "buttons": [], "next": "go", "plan": out.get("plan")}
+    return {**out, "text": "Connected. " + str(out.get("text") or "")}
 
 
 def _agent_parse(text: str) -> dict:
@@ -16195,7 +16299,7 @@ def agent_ask():
     """One turn of the Home box. {text, change?}. Answers {kind: "jd" | "url"} when the text is
     a posting or a link (the client opens a tailoring session as before), else {kind: "agent",
     intent, text, buttons}. ``change`` merges the text into the last plan's intent and re-plans."""
-    from agent.home import empty_intent, other_text, route, tailor_one_text
+    from agent.home import route
     body = request.json or {}
     text = str(body.get("text") or "").strip()
     if not text:
@@ -16204,6 +16308,7 @@ def agent_ask():
     if kind in ("jd", "url"):
         return jsonify({"ok": True, "kind": kind})
     intent = _agent_parse(text)
+    _AGENT["pending"] = None              # a new request replaces one waiting on a connect
     if body.get("change") and _AGENT.get("intent"):
         prev = _AGENT["intent"]
         merged = dict(prev)
@@ -16212,18 +16317,35 @@ def agent_ask():
                 merged[key] = intent[key]
         merged["telegram"] = prev.get("telegram") or intent.get("telegram")
         intent = {**merged, "intent": "find_and_apply"}
-    if intent["intent"] == "find_and_apply":
-        _AGENT["intent"] = intent
-        out = _agent_plan(intent)
-    elif intent["intent"] == "status":
-        out = _agent_status()
-    elif intent["intent"] == "tailor_one":
-        _AGENT["intent"] = {**empty_intent("find_and_apply"), "titles": intent.get("titles") or []}
-        out = {"text": tailor_one_text(intent),
-               "buttons": [{"id": "find", "label": "Find matching roles"}]}
-    else:
-        out = {"text": other_text(), "buttons": []}
+    need = _agent_missing(intent)         # check first: never plan around a missing connection
+    out = _agent_hold(text, intent, need) if need else _agent_answer(intent)
     return jsonify({"ok": True, "kind": "agent", "intent": intent, **out})
+
+
+@app.post("/api/agent/connected")
+@_guard
+def agent_connected():
+    """An integration may have just been connected (the inline card, Settings, any way). When a
+    request is waiting on it and it is connected now, carry on with that request by itself, with
+    no turn from the person: once (the wait is cleared under a lock, so a second call or a
+    second tab finds nothing). Another integration still missing: its card next. Otherwise
+    {resumed: false}, and the request keeps waiting."""
+    with _AGENT_LOCK:
+        p = _AGENT.get("pending")
+        if not p:
+            return jsonify({"ok": True, "resumed": False})
+        if not _integration_on(p["need"]):
+            return jsonify({"ok": True, "resumed": False, "waiting": p["need"]})
+        _AGENT["pending"] = None
+        intent, done = p["intent"], p["need"]
+        nxt = _agent_missing(intent)
+        if nxt:
+            out = _agent_hold(p["text"], intent, nxt)
+            out["text"] = "Connected. " + out["text"]
+        else:
+            out = _agent_continue(intent, done)
+    return jsonify({"ok": True, "kind": "agent", "resumed": True, "integration": done,
+                    "intent": intent, **out})
 
 
 @app.post("/api/agent/go")
