@@ -368,7 +368,11 @@ def _extracurricular(profile: dict) -> str:
             f"\\noindent \\textbf{{{_esc(it.get('title',''))}}} "
             f"\\hfill \\textbf{{{date}}}\n"
         )
-        out.append(_bullets(it.get("bullets", [])))
+        bl = it.get("bullets", [])
+        # An entry with no bullets (a hobby given as a title: "Playing football") ends its
+        # paragraph here, so the next entry starts on its own line instead of running on after
+        # the \hfill (Kofi's page showed "Playing football" and "Swimming" on one line, 2026-11-10).
+        out.append(_bullets(bl) if bl else "\n")
     out.append("\\vs\n")
     return "".join(out)
 

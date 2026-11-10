@@ -208,14 +208,17 @@ def _session(template_source, workdir, mem=None):
 @requires_latex
 def test_the_cap_holds_across_a_build_two_adds_and_a_template_switch(template_source, workdir):
     s = _session(template_source, workdir)
-    s.essentials["skills_from_jobs"] = ["Firebase"]                   # an earlier ADD
+    # Earlier ADDs: one this job names (SSRS) and one from another job (Firebase). An ADD holds
+    # its place only where the job asks for it; the other stays the person's own skill.
+    s.essentials["skills_from_jobs"] = ["Firebase", "SSRS"]
     s.profile = normalize_profile(_profile_with(D365))
     s.stage = "review"
     s._assemble()
     shown = s.assembled.profile_used["skills"]
     assert s.assembled.ok and len(shown) <= 5
     assert _jd_terms(D365) <= set(_terms(shown))
-    assert "Firebase" in _terms(shown)                                # the ADD stays on the page
+    assert "SSRS" in _terms(shown)                                    # the job's ADD stays on the page
+    assert "Firebase" in _terms(shown) or "Firebase" in (s.essentials.get("skills_input") or [])
     # What the page left off stays the person's own skill.
     dropped = set(_terms(D365)) - set(_terms(shown))
     assert dropped and dropped <= set(s.essentials.get("skills_input") or [])
