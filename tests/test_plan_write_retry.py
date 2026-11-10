@@ -58,3 +58,14 @@ def test_the_broker_client_sends_no_effort_for_none():
     assert b._complete("s", "u", max_tokens=12000, effort="none") == "ok"
     assert sent["effort"] is None and sent["max_tokens"] == 12000
     assert b.last_meta["stop_reason"] == "end_turn"
+
+
+def test_a_polish_never_takes_the_page_under_the_goal_or_drops_a_figure(tmp_path):
+    """Run 12: the project polish tightened "...matching about 10 drivers." to one line without
+    the figure or the full stop, and the page fell from 95.5% to 93.9%."""
+    import inspect
+    from tailoring import assembler as A
+    src = inspect.getsource(A._polish_edges)
+    assert "LINE_SHARE >= FILL_GOAL" in src                    # tighten only with a line to spare
+    assert "lost a figure or the full stop" in src
+    assert ">= FILL_GOAL > (r.fill_ratio or 0)" in src          # never under the goal

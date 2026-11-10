@@ -2458,7 +2458,10 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
             todo = [k for k, b in enumerate(bl) if b in fits and not fits[b].ok()]
             if not todo:
                 continue
-            at_goal = (result.fill_ratio or 0) >= FILL_GOAL
+            # Tighten a stub only when the page keeps the fill goal with a line fewer; otherwise
+            # run it out to a full last line (run 12: a project bullet tightened to one line took
+            # the page from 95.5% to 93.9%).
+            at_goal = (result.fill_ratio or 0) - _lf.LINE_SHARE >= FILL_GOAL
             asks = []
             for k in range(len(bl)):
                 it = fits.get(bl[k])
@@ -2485,6 +2488,12 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
                 lo, hi = asks[k]
                 if not cand or cand == bl[k]:
                     continue
+                # A polish keeps every figure the bullet states and ends as a sentence (run 12
+                # dropped "about 10 drivers" and the full stop).
+                from .fact_gate import figures as _figs
+                if _figs(bl[k]) - _figs(cand) or not cand.rstrip().endswith((".", "!", "?")):
+                    _fill_log(step="polish", label=label, bullet=cand, why="lost a figure or the full stop")
+                    continue
                 if not (lo * 0.88 <= len(cand) <= hi * 1.06):
                     _fill_log(step="polish", label=label, bullet=cand, why=f"length {len(cand)} not {lo}-{hi}")
                     continue
@@ -2507,6 +2516,9 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
             if ok:
                 after = _lf.measure(getattr(r, "pdf_path", None), used)
                 ok = short_in(after, new) < short_in(rep, old)
+            # Never the page under the fill goal when it was at it.
+            if ok and (result.fill_ratio or 0) >= FILL_GOAL > (r.fill_ratio or 0):
+                ok = False
             if ok:
                 result = r
                 for o, n_ in zip(old, new):
