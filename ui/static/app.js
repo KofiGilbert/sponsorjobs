@@ -3900,10 +3900,43 @@
     $("#tplModalFrame").src = "about:blank";   // stop the background PDF rendering
     document.removeEventListener("keydown", tplModalKeys);
   }
-  function useTplFromPreview() {
+  // "change" in the builder comes here, and "Use this template" goes straight back to the same
+  // chat with the template switched (POST /api/session/template): the job and the chat stay, and
+  // a built page is rebuilt in it. From anywhere else it starts a new resume, as before.
+  let TPL_SWITCHING = false;
+  async function useTplFromPreview() {
     const t = CV_TEMPLATES[TPL_IDX];
+    if (!t || TPL_SWITCHING) return;
+    if (TPL_ORIGIN === "builder") {
+      let active = false;
+      try { active = !!(await api("/api/session/state")).active; } catch { /* none: a new one */ }
+      if (active) return switchTemplate(t);
+    }
     closeTplPreview();
-    if (t) openBuilder(t.name);
+    openBuilder(t.name);
+  }
+  async function switchTemplate(t) {
+    TPL_SWITCHING = true;
+    const use = $("#tplModalUse"), label = use ? use.textContent : "";
+    if (use) { use.disabled = true; use.textContent = "Switching…"; }
+    let st = null;
+    try {
+      st = await api("/api/session/template", { name: t.name });
+    } catch (e) {
+      toast(e.message || "Couldn't switch the template. Try again.", null, 8000);
+      return;
+    } finally {
+      TPL_SWITCHING = false;
+      if (use) { use.disabled = false; use.textContent = label; }
+    }
+    if (!st || st.template_ok === false) {        // stays in the picker, the resume as it was
+      toast((st && st.template_error) || "Couldn't switch the template.", null, 8000);
+      return;
+    }
+    closeTplPreview();
+    if (AGENT.on) setAgentMode(false);
+    showView("builder");
+    await restoreSession();      // the same chat, its new line, the new header and preview
   }
   function tplModalKeys(e) {
     if (e.key === "Escape") closeTplPreview();

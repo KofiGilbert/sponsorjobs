@@ -3009,6 +3009,21 @@ def start():
     return jsonify(session.start())
 
 
+@app.post("/api/session/template")
+@_guard
+def session_template():
+    """Body {name}. Switch the open resume chat's template (the builder's "change", then "Use
+    this template"): the job and the chat stay, a built page is rebuilt in the new template
+    (one page, no new overfull) and the chat says so (WebIntake.set_template)."""
+    name = str((request.json or {}).get("name") or "").strip()
+    if not name or not (ROOT / "config" / "templates" / f"{name}.json").is_file():
+        return jsonify({"error": "That template isn't available."}), 400
+    tex, tname = _load_template(name)
+    if tname != name:
+        return jsonify({"error": "That template isn't available."}), 400
+    return jsonify(_session().set_template(tname, tex))
+
+
 @app.post("/api/record/<int:rid>/variant")
 @_guard
 def record_variant(rid: int):
