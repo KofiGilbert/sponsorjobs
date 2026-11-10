@@ -428,3 +428,16 @@ def test_the_edge_polish_runs_per_role_and_refuses_padding(template_source, work
     for _k, e, r in ranked_roles(res.profile_used):
         for b in r["bullets"]:
             assert e["org"] not in b, b
+
+
+def test_a_split_never_carries_its_source_s_phrase_into_two_bullets():
+    """Run 6 (2026-11-10): "for stakeholders across the business" on bullets 1 and 2 of one role,
+    both taken from the person's own bullet."""
+    from tailoring.assembler import _split_problem
+    src = ("Led business intelligence across the company's products, building KPI dashboards that "
+           "track growth, usage, and unit costs for stakeholders across the business.")
+    parts = ["Led business intelligence across the company's products for stakeholders across the "
+             "business, owning the reporting side.",
+             "Built KPI dashboards in Power BI that track growth, usage, and unit costs for stakeholders "
+             "across the business."]
+    assert _split_problem(parts, src, src, [], "", "past", "BlackOrigin Inc.")

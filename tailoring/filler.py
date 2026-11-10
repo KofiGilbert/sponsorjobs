@@ -348,7 +348,8 @@ def employer_names(org: str) -> list[str]:
     return sorted(out, key=len, reverse=True)
 
 
-def role_padding(new: str, siblings, employer: str = "", source: str = "") -> list[str]:
+def role_padding(new: str, siblings, employer: str = "", source: str = "",
+                 repeats_from_source: bool = True) -> list[str]:
     """Padding a bullet added to a role carries that states no fact: its own employer's name
     (the role's heading already says it), a stock tail ("for stakeholders across the
     business"), or a phrase another bullet of the role already says. Anything ``source`` (the
@@ -364,7 +365,9 @@ def role_padding(new: str, siblings, employer: str = "", source: str = "") -> li
     if m and not _STOCK_TAIL.search(source):
         out.append("stock tail: " + m.group(0))
     mine = _fact_tokens(new)
-    src = _fact_tokens(source)
+    # A part of a split may not carry its source's phrase into two bullets: with
+    # ``repeats_from_source`` off, the source does not excuse a repeat.
+    src = _fact_tokens(source) if repeats_from_source else []
     for sib in siblings or ():
         st = _fact_tokens(str(sib or ""))
         if _shared_phrase(mine, st, src):

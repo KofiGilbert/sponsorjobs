@@ -1823,6 +1823,8 @@ SPLIT_MIN_WORDS = 6
 SPLIT_TRIES = 2
 # A written bullet the checks refuse is asked for again, up to this many tries in all.
 WRITE_TRIES = 3
+# A written bullet is at most about one printed line.
+WRITE_MAX_CHARS = 115
 # What to tell the model about a refused split, by the end of the refusal's reason.
 _SPLIT_HINTS = {
     "padded with words the material does not say": "Use only the bullet's own words and ROLE "
@@ -1895,7 +1897,7 @@ def _split_problem(parts: list, src: str, role_text: str, siblings, jd_text: str
         # No padding that states no fact: its own employer's name, a stock tail, a phrase
         # another bullet of the role (or the other part) already says.
         bad += role_padding(part, list(siblings or ()) + [x for k, x in enumerate(parts) if k != n],
-                            employer, src)
+                            employer, src, repeats_from_source=False)
         if bad:
             return f"part {n + 1}: {bad[0]}"
     return ""
@@ -2108,7 +2110,9 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
                     return (rest[:at] + parts + rest[at:],
                             [dict(rec, bullet=x, kind="split", source=src) for x in parts])
         if st["write"]:                                        # (c) written for the role
-            budget = _bullet_budget(max(map(str, bl), key=len) if bl else "")
+            # One full line: it fits the room a short page has left, and the polish runs it to
+            # the edge.
+            budget = min(_bullet_budget(max(map(str, bl), key=len) if bl else ""), WRITE_MAX_CHARS)
             # A professional writer's sources (Kofi, 2026-11-10): the role, the company, the
             # person's skills and projects, and the job's duties for that kind of role.
             extra = "\n".join(
@@ -2458,12 +2462,13 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
             asks = []
             for k in range(len(bl)):
                 it = fits.get(bl[k])
+                by_text = max(1, math.ceil(len(bl[k]) / cpl - 0.15))
                 if it and it.found:
-                    n = it.lines
-                    if it.lines >= 2 and it.last_fill < _lf.SPILL_TRIM and at_goal:
-                        n = it.lines - 1                     # a stub line: one line fewer
+                    n = min(it.lines, by_text)               # a mislocated line never inflates it
+                    if n >= 2 and it.last_fill < _lf.SPILL_TRIM and at_goal:
+                        n -= 1                               # a stub line: one line fewer
                 else:
-                    n = max(1, round(len(bl[k]) / cpl))
+                    n = by_text
                 asks.append((int(cpl * n * POLISH_LO), int(cpl * n * POLISH_HI)))
             try:
                 out = llm.polish_role(label, list(bl), asks, context=profile_text_safe(entry),
