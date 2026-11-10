@@ -3038,15 +3038,19 @@
 
   /* ---------------------------------------------------------------- chat */
   const chat = $("#chatScroll");
+  // One response per turn, written the way Claude, ChatGPT and Gemini show an answer (Kofi,
+  // 2026-11-10: "why don't we let our app write like AI does [instead of] multiple pop ups?"):
+  // the assistant's turn is flowing text across the chat column, no bubble and no avatar, with
+  // its build row and its buttons inline in the same turn. The person's own words stay a pill.
   function bubble(role, html) {
     const m = el("div", "msg " + role);
-    m.innerHTML = `<div class="msg-avatar">${role === "agent" ? "S" : "Y"}</div><div class="msg-bubble">${html}</div>`;
+    m.innerHTML = `<div class="msg-bubble${role === "agent" ? " msg-flow" : ""}">${html}</div>`;
     chat.appendChild(m); chat.scrollTop = chat.scrollHeight; return m;
   }
   function working(label) {
     // is-working: a build's own live message (renderBuildLive) stands in for it while it runs.
     const m = el("div", "msg agent is-working");
-    m.innerHTML = `<div class="msg-avatar">S</div><div class="msg-bubble"><span class="spin"></span>${label || "Working…"}</div>`;
+    m.innerHTML = `<div class="msg-bubble msg-flow msg-wait"><span class="spin"></span>${label || "Working…"}</div>`;
     chat.appendChild(m); chat.scrollTop = chat.scrollHeight; return m;
   }
   async function withWorking(fn, label) {
@@ -3087,10 +3091,31 @@
     .replace(/\s*\u2014\s*/g, ", ")                 // em dash joins clauses: a comma reads right
     .replace(/(\d)\s*\u2013\s*(\d)/g, "$1-$2")     // en dash in a range: 2015-2016
     .replace(/\s*\u2013\s*/g, ", ");
+  //
+  // The assistant writes in a little markdown (one voice, agent/narrate.py): short paragraphs,
+  // **bold**, "- " or "1. " lists, line breaks. Rendered here AFTER escaping, so the only tags
+  // that can appear are the ones made below (p, br, b, ul, ol, li), never raw HTML from a model.
+  const MD_BULLET = /^\s*[-*\u2022]\s+/, MD_NUM = /^\s*\d{1,2}[.)]\s+/;
+  function mdBlock(block) {
+    const out = []; let para = [], list = null, kind = "";
+    const flushPara = () => { if (para.length) out.push(`<p>${para.join("<br>")}</p>`); para = []; };
+    const flushList = () => { if (list) out.push(`<${kind}>${list.map(t => `<li>${t}</li>`).join("")}</${kind}>`); list = null; kind = ""; };
+    block.split("\n").forEach((line) => {
+      const k = MD_BULLET.test(line) ? "ul" : (MD_NUM.test(line) ? "ol" : "");
+      if (!k) { flushList(); if (line.trim()) para.push(line.trim()); return; }
+      flushPara();
+      if (kind !== k) { flushList(); list = []; kind = k; }
+      list.push(line.replace(k === "ul" ? MD_BULLET : MD_NUM, ""));
+    });
+    flushPara(); flushList();
+    return out.join("");
+  }
   const chatText = (s) => esc(unDash(s))
     .replace(/&lt;b&gt;/g, "<b>")
     .replace(/&lt;\/b&gt;/g, "</b>")
-    .replace(/\n/g, "<br>");
+    .replace(/\*\*([^*\n]+?)\*\*/g, "<b>$1</b>")
+    .replace(/\r\n?/g, "\n")
+    .split(/\n{2,}/).map(mdBlock).join("");
 
   // A chat card from the resume chat agent (agent/resume_chat.py), under its reply. "buttons"
   // is the first type: ghost buttons that go to a page or send a fixed turn, nothing else (no
@@ -3697,7 +3722,7 @@
     if (rec.secs) foot.push(bmT("bm.took", "took {s} s").replace("{s}", rec.secs));
     const flag = rec.flag && (rec.flag.items || []).length
       ? `<div class="bm-flag"><span class="bm-flag-l">${esc(unDash(rec.flag.label))}</span> ${rec.flag.items.map(t => `<span class="bm-term">${esc(t)}</span>`).join("")}</div>` : "";
-    m.innerHTML = `<div class="msg-avatar">S</div><div class="msg-bubble bm-bubble">`
+    m.innerHTML = `<div class="msg-bubble bm-bubble">`
       + `<button type="button" class="bm-sum" aria-expanded="false"><span class="bm-ok" aria-hidden="true">✓</span>`
       + `<span class="bm-sum-t">${esc(unDash(rec.summary || ""))}</span>${feedChevron}</button>${flag}`
       + `<div class="bm-body" hidden>${bmStepsHTML(steps, false)}`
@@ -3806,12 +3831,25 @@
     if (!st || !st.active) return false;
     resetBuilder();
     $("#jdGate").hidden = true;          // a session exists, don't ask for the JD again
+    // Consecutive assistant lines from an older chat (before one voice) read as ONE response:
+    // their text joined into one flowing message, then their cards under it.
+    let run = null;
+    const flush = () => {
+      if (!run) return;
+      if (run.text.length) bubble("agent", chatText(run.text.join("\n\n")));
+      run.cards.forEach(renderCard);
+      run = null;
+    };
     (st.history || []).forEach(t => {
+      const cards = t.cards && t.cards.length ? t.cards : (t.card ? [t.card] : []);
       // A build comes back as its collapsed summary (steps and what changed inside).
-      if (t.build) { renderBuildMsg(t.build); return; }
-      bubble(t.role === "user" ? "user" : "agent", chatText(t.content || ""));
-      (t.cards && t.cards.length ? t.cards : (t.card ? [t.card] : [])).forEach(renderCard);
+      if (t.build) { flush(); renderBuildMsg(t.build); return; }
+      if (t.role === "user") { flush(); bubble("user", chatText(t.content || "")); return; }
+      run = run || { text: [], cards: [] };
+      if (String(t.content || "").trim()) run.text.push(String(t.content));
+      run.cards.push(...cards);
     });
+    flush();
     applyState(st);
     chatGithubCheck();       // connected since this chat last spoke of GitHub: carry on now
     return true;
@@ -10840,7 +10878,7 @@
       B.sig = sig;
       if (!m) {
         m = el("div", "msg agent build-msg is-live");
-        m.innerHTML = `<div class="msg-avatar">S</div><div class="msg-bubble bm-bubble">`
+        m.innerHTML = `<div class="msg-bubble bm-bubble">`
           + `<div class="bm-head" role="status" aria-live="polite"><span class="act-spin" aria-hidden="true"></span>`
           + `<span>${esc(T("bm.working", "Working on your resume…"))}</span></div><div class="bm-live"></div></div>`;
         chat.appendChild(m);

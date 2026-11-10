@@ -449,3 +449,14 @@ Sources: hirevue.com/candidates, HireVue Candidate Help Center (Zendesk), platfo
   and the honesty strip left it. No "Here's a first draft" line repeats the summary; a short page
   keeps one follow-up, "I'll ask for a few more real things to fill the page." Screens:
   1440x900 dark, mid build, collapsed, open, rebuild, restored, pane.
+- 2026-11-10: One voice, one response per turn (Kofi: "why don't we let our app write like AI
+  does [instead of] multiple pop ups?"). The code decides WHAT a turn says (a brief of facts:
+  what is missing, the page fill, what changed or was cut, connections, buttons); the AI writes
+  ONE message from it (agent/narrate.py, WebIntake._speak), with the fixed lines only as the
+  fallback. The chat renders that message the way Claude, ChatGPT and Gemini answer: flowing
+  text across the chat column, 14px/1.6 in --ink, no bubble and no avatar on any message; the
+  build row (the quiet "Updated your resume · ..." line) and the buttons and cards sit inline in
+  the same turn with no left indent; the person's words stay the right-aligned pill. A little
+  markdown (paragraphs, bold, "- " and "1. " lists, line breaks) is rendered AFTER escaping, so a
+  model can never put raw HTML on the page. An older saved chat merges consecutive assistant
+  lines into one response when restored. Screens: 1893x1183 at 100% and 76%, dark and light.

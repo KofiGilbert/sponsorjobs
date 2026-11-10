@@ -179,7 +179,8 @@ def test_connecting_in_settings_resumes_the_chat_once(template_source, fake_llm,
     users = [t for t in s.history if t.get("role") == "user"]
     st = s.github_connected()
     assert st["resumed"] is True and st["github_login"] == "janedoe"
-    assert st["messages"][0] == f"Connected as janedoe. Checking your repos for this {ROLE} role."
+    assert len(st["messages"]) == 1          # one voice: the lead and the takeaway, one message
+    assert st["messages"][0].startswith(f"Connected as janedoe. Checking your repos for this {ROLE} role.")
     assert st["cards"][0]["type"] == "repo_fit"
     assert [t for t in s.history if t.get("role") == "user"] == users      # no turn from the person
     assert all(t["role"] == "agent" for t in s.history[turns:])

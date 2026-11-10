@@ -136,7 +136,7 @@ def test_the_pane_is_the_resume_and_the_chat_renders_builds():
     for kept in ('id="pdfFrame"', 'id="editToggle"', 'id="coverage"', 'id="downloadBtn"', 'id="acceptBtn"'):
         assert kept in html
     assert "Working on your resume…" in js
-    assert "if (t.build) { renderBuildMsg(t.build); return; }" in js     # restore shows it collapsed
+    assert "if (t.build) { flush(); renderBuildMsg(t.build); return; }" in js   # restore shows it collapsed
     assert "if (st.build) finishBuild(st.build);" in js
 
 

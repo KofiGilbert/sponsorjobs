@@ -67,6 +67,11 @@ class OpenAILLM(AnthropicLLM):
         self.effort = effort
         self._client = OpenAI(api_key=key)
 
+    def narrate(self, system: str, user: str, max_tokens: int = 400) -> str:
+        """The resume chat's one message (agent/narrate.py), on the person's own OpenAI model."""
+        self.last_narrate_usage = None
+        return self._complete(system, user, max_tokens=max_tokens, effort="low")
+
     def _complete(self, system: str, user: str, max_tokens: int = 1024,
                   effort: str | None = None) -> str:
         resp = self._client.chat.completions.create(

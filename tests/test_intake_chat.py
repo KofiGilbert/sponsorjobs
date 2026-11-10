@@ -234,10 +234,11 @@ def test_asks_for_a_job_when_only_identity_given(template_source, fake_llm, work
     s, mem, recs = _session(template_source, fake_llm, workdir)
     s.start()
     st = s.submit("Hi, I'm Alex Kim, alex@example.com")
-    # Not ready — no work history yet; it should ask, not draft.
+    # Not ready — no work history yet; it should ask, not draft. One message, one question
+    # (the app's own ask stands: the intake reply's question is folded into the turn's message).
     assert st["phase"] == "chatting"
     assert s.assembled is None
-    assert any("work history" in m.lower() or "job" in m.lower() for m in st["messages"])
+    assert len(st["messages"]) == 1 and st["messages"][0].count("?") == 1
 
 
 def test_extractor_echo_cannot_wipe_unmanaged_state(template_source, fake_llm, workdir):

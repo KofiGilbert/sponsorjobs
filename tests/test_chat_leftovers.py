@@ -116,7 +116,8 @@ def test_the_intake_reply_never_asks_for_github(template_source, fake_llm, workd
         assert not gh_cards and s.GITHUB_NOT_CONNECTED not in said
     else:
         assert len(gh_cards) == 1 and s.GITHUB_NOT_CONNECTED in said
-        turn = next(t for t in s.history if t.get("content") == s.GITHUB_NOT_CONNECTED)
+        assert len(st["messages"]) == 1                      # one voice: one message, its card
+        turn = next(t for t in s.history if s.GITHUB_NOT_CONNECTED in str(t.get("content")))
         assert s._connect_buttons(turn.get("card"))          # a reopened chat shows it too
 
 
@@ -140,17 +141,18 @@ def test_the_edit_tip_and_notes_come_back_once_on_reload(template_source, fake_l
         app._SESSION.pop("s", None)
     contents = [t["content"] for t in h1]
     assert h1 == h2, "reading the chat back changed it"
-    assert contents.count(WebIntake.EDIT_TIP) == 1
+    assert sum(c.count(WebIntake.EDIT_TIP) for c in contents) == 1
     for m in live:                                  # everything said live is in the history
         assert m in contents, m
-    assert WebIntake.EDIT_TIP in said_live
-    # The notes sit after the build's row, in the order they were said.
+    assert len(st["messages"]) == 1 and WebIntake.EDIT_TIP in st["messages"][0]
+    # The turn's one message sits after the build's row.
     i = next(k for k, t in enumerate(h1) if t.get("build"))
-    assert contents.index(WebIntake.EDIT_TIP) > i
+    tip = next(k for k, c in enumerate(contents) if WebIntake.EDIT_TIP in c)
+    assert tip > i
     # A later build adds no second tip.
     s.submit("At BlackOrigin I rebuilt the monthly reporting in SQL and cut close time from "
              "five days to two.")
-    assert [t["content"] for t in s.history].count(WebIntake.EDIT_TIP) == 1
+    assert sum(str(t["content"]).count(WebIntake.EDIT_TIP) for t in s.history) == 1
 
 
 def test_a_thrown_away_reply_brings_no_github_card(template_source, fake_llm, workdir, monkeypatch):
