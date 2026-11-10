@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import re
 import shutil
 import threading
@@ -1725,6 +1726,10 @@ class WebIntake:
             e = dict(e, source=source)
             if there(e, cur) or there(e, page):
                 skipped.append(e["org"])
+                # The same project is already on the resume (from the saved profile) without its
+                # link: it takes the repository's link, so the arrow shows.
+                if e.get("link"):
+                    self._give_link(e["org"], str(e["link"]))
                 continue
             cur.append(dict(e))
             # The page's profile too (before a draft it is the saved row this session writes,
@@ -1733,6 +1738,11 @@ class WebIntake:
                 self.profile.setdefault("projects", []).append(dict(e))
             added.append(e)
         if not added:
+            if self._linked_now:
+                self._linked_now = False
+                if self.assembled is not None:
+                    self._assemble()
+                self._persist()
             return {"added": [], "skipped": skipped, "saved": False}
         dec = self.essentials.get("declined")
         if isinstance(dec, list) and "projects" in dec:
@@ -1743,6 +1753,27 @@ class WebIntake:
         self._persist()
         saved = self._save_projects_to_profile(added)
         return {"added": [e["org"] for e in added], "skipped": skipped, "saved": saved}
+
+    _linked_now = False
+
+    def _give_link(self, title: str, url: str) -> bool:
+        """``url`` as the link of every entry named ``title`` that has none (the essentials, the
+        profile and the page). True when one took it."""
+        from intake.links import link_ok
+        from ui.repo_rank import same_project
+        hit = False
+        bags = [self.essentials.get("projects") or [], (self.profile or {}).get("projects") or []]
+        used = getattr(self.assembled, "profile_used", None)
+        if isinstance(used, dict):
+            bags.append(used.get("projects") or [])
+        for bag in bags:
+            for p in bag:
+                if isinstance(p, dict) and not link_ok("link", p.get("link") or p.get("url")) \
+                        and same_project(str(p.get("org") or p.get("name") or p.get("title") or ""), title):
+                    p["link"] = url
+                    hit = True
+        self._linked_now = self._linked_now or hit
+        return hit
 
     def _brain_projects(self, entries: list, source: str):
         st = self._brain()
@@ -1775,6 +1806,139 @@ class WebIntake:
             return True
         except Exception:      # noqa: BLE001
             return False
+
+    # -- project links: each project's GitHub repository, from the person's own material ---- #
+    _UPLOAD_LINKS: dict = {}          # (path, mtime) -> resume_links() of that uploaded file
+
+    def _uploads_dir(self):
+        p = str(getattr(self.memory, "db_path", "") or "")
+        if not p or p == ":memory:":
+            return None
+        d = Path(p).parent / "uploads"
+        return d if d.is_dir() else None
+
+    def _upload_links(self) -> list[dict]:
+        """The links the person's uploaded resumes carry (intake.links.resume_links), newest
+        file first: the real GitHub profile behind a "GitHub" anchor and the repository behind a
+        project's arrow. Read once per file."""
+        d = self._uploads_dir()
+        if d is None:
+            return []
+        from intake.cv_import import pdf_links
+        from intake.links import resume_links
+        out = []
+        files = sorted(d.glob("*.pdf"), key=lambda f: f.stat().st_mtime, reverse=True)[:12]
+        for f in files:
+            key = (str(f), f.stat().st_mtime)
+            got = self._UPLOAD_LINKS.get(key)
+            if got is None:
+                try:
+                    got = resume_links(pdf_links(f))
+                except Exception:      # noqa: BLE001 - an unreadable file carries no links
+                    got = {"identity": {}, "projects": []}
+                self._UPLOAD_LINKS[key] = got
+            out.append(got)
+        return out
+
+    def _github_login_known(self, uploads=()) -> str:
+        """The person's GitHub login from their own material: the link on their resume header
+        (profile or what they told the builder), their connected GitHub, or the GitHub link on
+        an uploaded resume. "" when none says it."""
+        from ui.github_repos import login_from
+        ident = dict((self.profile or {}).get("identity") or {})
+        ident.update({k: v for k, v in (self.essentials.get("identity") or {}).items() if v})
+        login = login_from(ident.get("github") or "")
+        if not login:
+            login = login_from(str((self._github() or {}).get("login") or ""))
+        for got in uploads or ():
+            if login:
+                break
+            login = login_from(str((got.get("identity") or {}).get("github") or ""))
+        return login
+
+    def _link_identity(self, uploads=()) -> None:
+        """The contact line's profile links ("In | GitHub") when the person's own material has
+        them and their profile does not: the LinkedIn and GitHub links on their uploaded resume's
+        header, or their connected GitHub account. Saved with the profile. A link they already
+        have is never replaced, and each link is filled once only (``links_filled``): one they
+        later removed stays removed."""
+        from intake.links import link_ok
+        from ui.github_repos import login_from
+        found: dict = {}
+        for got in uploads or ():
+            for k in ("linkedin", "github"):
+                v = str((got.get("identity") or {}).get(k) or "")
+                if v and k not in found and link_ok(k, v):
+                    found[k] = v
+        if "github" not in found:
+            login = login_from(str((self._github() or {}).get("login") or ""))
+            if login:
+                found["github"] = f"https://github.com/{login}"
+        if not found:
+            return
+        ident_e = self.essentials.setdefault("identity", {})
+        ident_p = (self.profile or {}).setdefault("identity", {}) if isinstance(self.profile, dict) else {}
+        done = self.essentials.setdefault("links_filled", [])
+        for k, v in found.items():
+            if k in done or any(link_ok(k, d.get(k)) for d in (ident_e, ident_p)
+                                if isinstance(d, dict)):
+                continue
+            for d in (ident_e, ident_p):
+                if isinstance(d, dict):
+                    d[k] = v
+            done.append(k)
+
+    def _link_projects(self) -> list[str]:
+        """Give each project on the resume the link to its GitHub repository (the small blue
+        arrow after its name), from the person's own material, and save it so it sticks:
+        first the link their uploaded resume carries on that project's row, then their public
+        repositories (the login from ``_github_login_known``) matched by name
+        (intake.links.repo_matches: the same name, never a guess; two candidates means no
+        link). A project that has a link keeps it. Returns the names linked."""
+        from intake.links import link_ok, match_repo_links, same_title
+        try:
+            uploads = self._upload_links()
+        except Exception:      # noqa: BLE001
+            uploads = []
+        self._link_identity(uploads)
+        bags = [b for b in (self.essentials.get("projects"), (self.profile or {}).get("projects"))
+                if isinstance(b, list)]
+        projects = [p for b in bags for p in b if isinstance(p, dict) and not p.get("suggested")]
+        need = [p for p in projects if not link_ok("link", p.get("link") or p.get("url"))]
+        if not need:
+            return []
+        linked: list[str] = []
+
+        def name(p):
+            return str(p.get("org") or p.get("name") or p.get("title") or "")
+
+        def give(target: dict, url: str):
+            for p in need:
+                if p is target or same_title(name(p), name(target)):
+                    if not link_ok("link", p.get("link") or p.get("url")):
+                        p["link"] = url
+                        if name(p) not in linked:
+                            linked.append(name(p))
+
+        from ui.repo_rank import same_project
+        for got in uploads:
+            for row in got.get("projects") or []:
+                url = str(row.get("link") or "")
+                if "github.com/" not in url.lower():
+                    continue
+                for p in list(need):
+                    if not link_ok("link", p.get("link")) and same_project(name(p), row.get("title")):
+                        give(p, url)
+        need = [p for p in need if not link_ok("link", p.get("link") or p.get("url"))]
+        if need and os.environ.get("GITHUB_LINK_FETCH", "1") != "0":
+            login = self._github_login_known(uploads)
+            if login:
+                from ui import github_repos
+                got = github_repos.list_repos(login, token=self._token())
+                if got.get("ok"):
+                    for p, url in match_repo_links(need, got.get("repos") or []):
+                        give(p, url)
+        return linked
 
     # -- checking GitHub from a button, and carrying on once it is connected -------------- #
     @staticmethod
@@ -2411,10 +2575,15 @@ class WebIntake:
             return []
 
     def _new_build(self):
-        """A fresh build of this resume: the one-line asks may come once more."""
+        """A fresh build of this resume: the one-line asks may come once more, and each project
+        gets its GitHub link when the person's own material names the repository."""
         self._choice_asked = False
         self.choice_ask = None
         self.overlap_ask = None
+        try:
+            self._link_projects()
+        except Exception:      # noqa: BLE001 - a link is a nicety, never a reason to fail a build
+            pass
 
     def _choice_items(self) -> list:
         from applicant import rules as _R
@@ -4970,12 +5139,13 @@ class WebIntake:
                 cands += split_terms(v)
         elif isinstance(sk, list):
             cands += [str(x) for x in sk]
+        from tailoring.keywords import is_requirement
         declined = {str(x).lower() for x in (self.essentials.get("skills_declined") or [])}
         avoid = self._avoid_token_sets()          # an active "do not mention X" wins
         out, seen = [], set()
         for t in cands:
             t = str(t).strip()
-            if not t or t.lower() in seen or t.lower() in declined:
+            if not t or t.lower() in seen or t.lower() in declined or is_requirement(t):
                 continue
             if avoid and any(a & set(re.findall(r"[a-z0-9]+", t.lower())) for a in avoid):
                 continue
@@ -5793,8 +5963,12 @@ class WebIntake:
         ratio = round(len(present) / total * 100) if total else 100
         # ``terms`` is the denominator. With no measurable terms the ratio means nothing, so
         # the Keywords bar is hidden (app.js) rather than claiming 0% or 100% of nothing.
+        # Degrees, certifications and years of experience the job asks for are listed apart
+        # ("Job asks for"), with no ADD and outside the percentage: they are requirements a
+        # person holds or not, never a keyword to add.
         return {"ratio": ratio, "terms": total, "present": present,
-                "missing": missing, "missing_supported": missing_sup}
+                "missing": missing, "missing_supported": missing_sup,
+                "requirements": keep(list(getattr(c, "requirements", None) or []))}
 
     def review_dict(self):
         """An honest pre-send check on the built CV: does every skill shown trace back to the
@@ -5838,7 +6012,11 @@ class WebIntake:
             parts.append(f"I filled the rest with more of your recent work: {n} new "
                          f"bullet{'' if n == 1 else 's'} from your own material. Check "
                          f"{'it' if n == 1 else 'them'} in the summary above before you send.")
-        parts += [str(x) for x in (getattr(a, "bullet_notes", None) or []) if str(x).strip()]
+        notes = [str(x) for x in (getattr(a, "bullet_notes", None) or []) if str(x).strip()]
+        if self.essentials.get("override"):
+            # "Just build it": no per-role asks, only what the page did.
+            notes = [x for x in notes if "Tell me more" not in x]
+        parts += notes
         return " ".join(parts)
 
     def _trims_note(self) -> str:
@@ -6035,11 +6213,19 @@ class WebIntake:
         and the person is told in one line."""
         import copy as _copy
         from tailoring.linefit import place_term
+        from tailoring.keywords import is_requirement
         term = " ".join(str(term or "").split())[:80]
         if not term:
             return self._keyword_result(term, False, "No keyword given.")
         if self.assembled is None or not self.assembled.tex_source:
             return self._keyword_result(term, False, "Build the resume first, then add keywords to it.")
+        if is_requirement(term):
+            # A degree, certification or years of experience is something the job requires a
+            # person to hold, not a skill: never added to Skills, never saved as a skill.
+            return self._keyword_result(
+                term, False, f"{term} is something the job requires, not a skill, so it is not "
+                             "added to your Skills. If you hold it, add it to Education or "
+                             "Certifications on the edit page.")
         saved = self._save_added_skill(term)
         before = _copy.deepcopy(self.profile)
         width_fn, avail = self._skill_widths()
@@ -6185,7 +6371,7 @@ class WebIntake:
         a.ok = True
         a.status = "underfull" if (a.fill_ratio is not None and a.fill_ratio < TARGET_FILL) else "clean"
         a.coverage = build_coverage_report(self.jd, _rendered_cv_text(a.profile_used, self.sections),
-                                           a.profile_used, terms=list(a.coverage.jd_terms))
+                                           a.profile_used, terms=list(a.coverage.all_terms))
         self._pdf_v += 1
 
     # ------------------------------------------------------------------ accept + memory

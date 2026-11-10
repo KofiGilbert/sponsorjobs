@@ -340,12 +340,14 @@ class AnthropicLLM:
         seen: set[str] = set()
         skills: list[str] = []
         flat: list[str] = []
+        from tailoring.keywords import clean_term, split_jd_item
         for it in items:
             # "Tableau or Power BI" is two skills; checked as one phrase it matched neither,
-            # and the report listed it as missing from a profile that had both.
-            flat.extend(re.split(r"\s+(?:or|and|/)\s+|\s*/\s*", str(it)))
+            # and the report listed it as missing from a profile that had both. "CI/CD" and
+            # ".NET" stay whole (split_jd_item, clean_term).
+            flat.extend(split_jd_item(it))
         for it in flat:
-            t = str(it).strip().strip(".,;:")
+            t = clean_term(it)
             if not (1 <= len(t.split()) <= 4) or len(t) > 40:
                 continue
             if t.lower() in seen:
