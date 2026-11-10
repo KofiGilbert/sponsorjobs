@@ -129,4 +129,5 @@ def test_the_line_fit_refuses_a_fill_that_restates_a_sibling(monkeypatch):
     # The same run without the guard takes the copy: the test exercises the real path.
     monkeypatch.setattr(F, "repeats_sibling", lambda *_a, **_k: False)
     monkeypatch.setattr(F, "borrows_from_sibling", lambda *_a, **_k: False)   # its twin guard
+    monkeypatch.setattr(F, "role_padding", lambda *_a, **_k: [])              # and the phrase check
     assert run().profile["projects"][0]["bullets"][1] == COPIED
