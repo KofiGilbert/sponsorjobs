@@ -1403,7 +1403,20 @@ def _session() -> WebIntake:
         s.ideas_for = lambda: _session_ideas(s)               # ideas for THIS job (plan PR 7)
     if getattr(s, "start_build", None) is None:
         s.start_build = _chat_start_build                     # Build from a chat card (plan PR 8)
+    if getattr(s, "telegram_status", None) is None:
+        s.telegram_status = _telegram_connection              # the chat states it truly
     return s
+
+
+def _telegram_connection() -> dict:
+    """Whether Telegram is connected (the official bot linked, or the person's own bot), for the
+    chat. The official status is cached for a minute (_official_status)."""
+    try:
+        linked = bool(_official_status()[0])
+    except Exception:      # noqa: BLE001 - unreachable reads as not linked
+        linked = False
+    own = bool(_cred("TELEGRAM_BOT_TOKEN") and _cred("TELEGRAM_CHAT_ID"))
+    return {"connected": linked or own}
 
 
 def _chat_start_build(idea: dict, for_resume: dict) -> dict:

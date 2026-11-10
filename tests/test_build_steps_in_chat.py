@@ -73,8 +73,10 @@ def test_no_separate_first_draft_line_repeats_the_summary(fake_llm, workdir):
     said = " ".join(st["messages"]) + " ".join(str(t.get("content")) for t in s.history)
     assert "Here's a first draft" not in said and "Here's your draft" not in said
     assert "Building from your saved profile" not in said
+    # A short page is said once, in the summary row; no promise line ("I'll ask for a few more
+    # real things to fill the page.") stands in the chat without a question (2026-11-10).
+    assert "a few more real things" not in said
     if s.assembled.underfull:
-        assert st["messages"].count(WebIntake.SHORT_PAGE_ASK) == 1
         assert "% of the page" in st["build"]["summary"]
 
 

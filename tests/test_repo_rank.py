@@ -204,9 +204,10 @@ def test_readme_text_and_the_token_never_reach_the_agent(template_source, fake_l
     fits = {f["name"]: f for f in card["fits"]}
     assert "kpi-dashboard" in fits and "Power BI" in fits["kpi-dashboard"]["terms"]
     assert [x["name"] for x in card["unknown"]] == ["mystery"]
-    # No tool can spend a card's token. The one tool that changes the resume adds through the
-    # session for a request the person typed ("add 2 github projects"), never through a token.
-    assert [n for n, t in rc.TOOLS.items() if t.mutates] == ["add_github_projects"]
+    # No tool can spend a card's token. The tools that change the resume act through the session
+    # (the add for a request the person typed, "add 2 github projects", and the page fill), never
+    # through a token.
+    assert [n for n, t in rc.TOOLS.items() if t.mutates] == ["add_github_projects", "fill_page"]
     assert "action" not in " ".join(rc.TOOLS)
 
 

@@ -633,7 +633,7 @@ SKILL_LINE_TERMS = 8
 
 
 def place_term(skills: dict, term: str, *, width_fn: Callable[[str, list[str]], float] = estimate_width,
-               avail: float | None = None, jd_text: str = "") -> TermPlacement:
+               avail: float | None = None, jd_text: str = "", keep=()) -> TermPlacement:
     """Put ONE term the person added on the best-fitting Skills line, in its own wording.
 
     The line is chosen by theme (``skill_theme`` against ``line_themes``: its own theme first,
@@ -642,7 +642,8 @@ def place_term(skills: dict, term: str, *, width_fn: Callable[[str, list[str]], 
     When the chosen line would wrap or pass ``SKILL_LINE_TERMS``, it sheds its least relevant
     terms from the end (never a job term while another can go); the caller keeps those in the
     person's material. One visible entry per term; certification and language lines are never
-    touched. With no category line at all, the term starts a line named for its theme."""
+    touched. With no category line at all, the term starts a line named for its theme. Terms in
+    ``keep`` (skills the person added earlier) are shed last, after every other term."""
     from .keywords import term_present
     from .textwidth import TEXTWIDTH_PT
     term = " ".join(str(term or "").split())
@@ -688,9 +689,11 @@ def place_term(skills: dict, term: str, *, width_fn: Callable[[str, list[str]], 
     label, terms = min(lines, key=rank)
     new = insert(terms)
     shed: list[str] = []
+    kept = {_tkey(k) for k in keep or ()}
     while not fits(label, new) and len(new) > 1:
         movable = [t for t in new if t != term]
-        drop = next((t for t in reversed(movable) if not rel(t)), movable[-1])
+        free = [t for t in movable if _tkey(t) not in kept] or movable
+        drop = next((t for t in reversed(free) if not rel(t)), free[-1])
         new.remove(drop)
         shed.insert(0, drop)
     skills[label] = ", ".join(new)

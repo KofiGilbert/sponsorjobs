@@ -111,7 +111,8 @@ def test_the_system_prompt_lists_exactly_the_registered_tools(fake_llm, gh):
     listed = [ln[2:].split(":", 1)[0] for ln in fake_llm.last_agent_system.splitlines()
               if ln.startswith("- ") and ":" in ln and ln[2:].split(":", 1)[0] in rc.TOOLS]
     # A tool whose app piece is not wired (here the ideas and the add) is not offered or described.
-    wired = [n for n in rc.TOOLS if n not in ("suggest_projects_for_jd", "add_github_projects")]
+    wired = [n for n in rc.TOOLS if n not in ("suggest_projects_for_jd", "add_github_projects",
+                                              "fill_page")]
     assert listed == wired
     assert [t["name"] for t in fake_llm.last_agent_tools] == wired
     only = {"github_status": rc.TOOLS["github_status"]}

@@ -3714,9 +3714,12 @@
     const m = buildMsgEl(rec);
     const live = chat.querySelector(".build-msg.is-live");
     const same = rec.id ? [...chat.querySelectorAll(".build-msg:not(.is-live)")].find(x => x.dataset.build === rec.id) : null;
-    if (live) live.replaceWith(m); else if (same) same.replaceWith(m); else chat.appendChild(m);
+    // A run of keyword clicks is one row that updates in place (ui/session.py
+    // _merge_keyword_build): the row it already showed takes the new summary, the live one goes.
+    if (same) { same.replaceWith(m); live?.remove(); }
+    else if (live) live.replaceWith(m); else chat.appendChild(m);
     chat.querySelectorAll(".msg.is-working").forEach(w => { w.style.display = ""; });
-    if (window.__buildFeed) window.__buildFeed.done(rec.id);
+    if (window.__buildFeed) { window.__buildFeed.done(rec.id); if (rec.run) window.__buildFeed.done(rec.run); }
     bmLatestOnly();
     chat.scrollTop = chat.scrollHeight;
   }

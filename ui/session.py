@@ -13,6 +13,7 @@ already knows the background and asks only about what's new or changed.
 from __future__ import annotations
 
 import functools
+import json
 import re
 import shutil
 import threading
@@ -98,6 +99,19 @@ def _essentials_from(saved_ess: dict, profile: dict) -> dict:
             # Skills the person added with ADD on a job's keywords (their provenance).
             "skills_from_jobs": [str(s) for s in (saved_ess.get("skills_from_jobs") or [])],
             "declined": list(saved_ess.get("declined") or [])}
+
+
+# A one-line bullet whose line stops before this much of the width is thin: worth asking about.
+THIN_BULLET = 0.6
+
+
+def _bullet_owner(label) -> str:
+    """The project or employer a bullet sits under, read cleanly from its label ("Last-Mile
+    Operations Simulator (Python, simulation), Analyst" -> "Last-Mile Operations Simulator"):
+    any bracketed tools go first, then the role title after the comma."""
+    t = re.sub(r"\s*[(\[][^)\]]*[)\]]?", "", str(label or ""))
+    t = t.split(",")[0].strip(" -:")
+    return t if t and t.lower() != "entry" else ""
 
 
 # Roughly how many real skill terms fill 5 to 6 full-width Skills lines (tailoring/linefit.py).
@@ -941,6 +955,9 @@ class WebIntake:
         # The stored GitHub token, () -> str, set by the app beside github_status. Only the
         # agent's list_repos callable holds it (ui/github_repos.py); it is never shown or logged.
         self.github_token = None
+        # The app's hook for the Telegram connection, () -> {"connected": bool}, so the chat
+        # states it truly. None in tests and bare sessions.
+        self.telegram_status = None
         # The repo ranking (ui/repo_rank.py): at most three model calls a session, cached by job,
         # repositories and resume projects. And the single-use tokens a repo_fit card's button
         # spends (POST /api/session/action); only the person's click uses one, never a tool.
@@ -1274,7 +1291,10 @@ class WebIntake:
         skills = used.get("skills") or {}
         if isinstance(skills, dict):
             skills = {str(k): str(v)[:200] for k, v in list(skills.items())[:8]}
+        state = self._agent_state()
         return {
+            **{k: state[k] for k in ("page", "job_terms_on_page", "job_terms_not_on_page",
+                                     "keywords_the_person_added", "empty_sections") if k in state},
             "role": self.role, "company": self.company,
             "draft_built": self.assembled is not None,
             "name": str(ident.get("name") or ""),
@@ -1291,10 +1311,143 @@ class WebIntake:
                           if isinstance(e, dict)][:4],
         }
 
+    def _page_fill_pct(self) -> int | None:
+        """The measured fill of the page in percent: 100 once it is full, None with no page."""
+        a = self.assembled
+        if a is None:
+            return None
+        fill = getattr(a, "fill_ratio", None)
+        # The measured number, also above the short-page bar: "100%" over a page with white
+        # space at the bottom was the agent's answer to "why is there so much space?".
+        return min(100, round(fill * 100)) if fill else 100
+
+    def _empty_sections(self, used: dict) -> list[str]:
+        heads = self.headings if isinstance(self.headings, dict) else {}
+        out = []
+        for sec in self.sections or []:
+            if sec in ("projects", "extracurricular", "interests", "certifications", "summary") \
+                    and not self._section_filled(sec, used):
+                out.append(str(heads.get(sec) or sec).replace("\\&", "&").replace("\\", "").strip())
+        return out
+
+    def _agent_state(self) -> dict:
+        """What the page and the app hold right now, for the agent's system prompt every turn, so
+        it never says a job term is missing when it is on the page (Kofi had ADDed X++ and Azure
+        Data Factory and was told the gap was still open, 2026-11-10), and knows the page's
+        measured fill and the connections."""
+        st: dict = {"resume_built": self.assembled is not None}
+        if self.assembled is not None:
+            a = self.assembled
+            try:
+                cov = self.coverage_dict() or {}
+            except Exception:      # noqa: BLE001
+                cov = {}
+            used = getattr(a, "profile_used", None) or self.profile or {}
+            pct = self._page_fill_pct()
+            st["page"] = {"one_page": bool(a.ok and a.compile is not None and a.compile.pages == 1),
+                          "fill_percent": pct,
+                          "short": bool(getattr(a, "underfull", False)) or (pct or 100) < 97}
+            added = [k["term"] for k in self.keyword_actions]
+            low = {t.lower() for t in added}
+            st["job_terms_on_page"] = list(dict.fromkeys(
+                list(cov.get("present") or []) + [t for t in added if self._term_on_page(t)]))
+            st["job_terms_not_on_page"] = [t for t in (list(cov.get("missing_supported") or [])
+                                                       + list(cov.get("missing") or []))
+                                           if t.lower() not in low]
+            st["keywords_the_person_added"] = added
+            st["projects_on_page"] = [
+                {"name": str(p.get("org") or p.get("title") or p.get("name") or "").strip(),
+                 "github_link": "github.com/" in str(p.get("link") or p.get("url") or "").lower()}
+                for p in (used.get("projects") or []) if isinstance(p, dict)
+                and str(p.get("org") or p.get("title") or p.get("name") or "").strip()]
+            st["empty_sections"] = self._empty_sections(used)
+            st["interests_on_page"] = str(used.get("interests") or "").strip()[:200]
+        gh = self._github_view()
+        st["github"] = {"connected": bool(gh.get("connected")), "login": gh.get("login") or "",
+                        "username_on_resume": gh.get("resume_login") or ""}
+        try:
+            tg = self.telegram_status() if callable(self.telegram_status) else None
+        except Exception:      # noqa: BLE001 - unknown is left out, never guessed
+            tg = None
+        if isinstance(tg, dict):
+            st["telegram_connected"] = bool(tg.get("connected"))
+        return st
+
+    @_builds("fill")
+    def _fill_page_now(self) -> dict:
+        """The agent's fill_page tool, for "why is there so much white space?": act, never guess.
+        Re-runs the page fit with the fill (tailoring/assembler.py: full-width lines, bullets
+        written from the person's own material for a short page), keeps it only when it is
+        still one clean page, and returns what changed and, when the page is still short, the
+        real reasons and what real material would fill it."""
+        import copy as _copy
+        if self.assembled is None:
+            return {"ok": False, "error": "There is no resume on the page yet."}
+        before_pct = self._page_fill_pct()
+        before = (self.assembled, _copy.deepcopy(self.profile), list(self._written), self._pdf_v)
+        # The page's files, so a refit that is not kept leaves the PDF the person sees as it was.
+        files = {}
+        for ext in (".pdf", ".tex"):
+            f = self.workdir / f"{self.jobname}{ext}"
+            try:
+                files[f] = f.read_bytes()
+            except OSError:
+                pass
+
+        def roll_back():
+            self.assembled, self.profile, self._written, self._pdf_v = before
+            for f, data in files.items():
+                try:
+                    f.write_bytes(data)
+                except OSError:
+                    pass
+
+        _activity.step("fill", "Filling the page", "from your own material")
+        try:
+            self._assemble(fit_lines=True)
+        except Exception:      # noqa: BLE001 - the page stays as it was
+            roll_back()
+            return {"ok": False, "error": "The fill did not run just now. The page is unchanged."}
+        a = self.assembled
+        if not (a.ok and a.compile is not None and a.compile.pages == 1):
+            roll_back()
+            return {"ok": False, "changed": False, "fill_percent": before_pct,
+                    "error": "Filling it would not fit one page, so the page is unchanged."}
+        after_pct = self._page_fill_pct()
+        if (after_pct or 0) <= (before_pct or 0) and not self._written:
+            # No fuller: the page as it was stays (a refit that came out shorter was kept once,
+            # 92% to 89%, 2026-11-10), and the tool says why it is still short.
+            roll_back()
+            a = self.assembled
+            after_pct = before_pct
+        self._persist()
+        out = {"ok": True, "ran": True, "changed": after_pct != before_pct or bool(self._written),
+               "fill_before_percent": before_pct, "fill_after_percent": after_pct,
+               "bullets_written_from_their_material": [
+                   {"where": str(w.get("label") or ""), "bullet": str(w.get("bullet") or w.get("text") or "")}
+                   for w in self._written[:6] if isinstance(w, dict)],
+               "cut_to_fit": len(getattr(a, "trims", None) or [])}
+        if getattr(a, "underfull", False):
+            used = getattr(a, "profile_used", None) or self.profile or {}
+            why = [str(x) for x in (getattr(a, "bullet_notes", None) or []) if str(x).strip()]
+            gaps = getattr(a, "line_gaps", None) or {}
+            short = [str(x.get("label") or "") for x in gaps.get("short_skills") or [] if x.get("label")]
+            if short:
+                why.append("These skills lines stop short of the margin: " + ", ".join(short[:3]) + ".")
+            empty = self._empty_sections(used)
+            if empty:
+                why.append("These sections are empty: " + ", ".join(empty) + ".")
+            if not why:
+                why.append("Every role and project already uses all the material on file.")
+            out.update({"still_short": True, "why_still_short": why,
+                        "real_material_that_would_fill_it": self._cheapest_gaps_first()[:3]})
+        return out
+
     def _agent_ctx(self):
         from agent.resume_chat import AppContext
         from ui import github_repos
         return AppContext(
+            state=self._agent_state, fill_page=self._fill_page_now,
             llm=self.llm, resume_snapshot=self._snapshot,
             upload_summary=lambda: (self.uploads[-1] if self.uploads else None),
             github_status=self._github_view,
@@ -3483,6 +3636,7 @@ class WebIntake:
         # before acting on the override so the build uses what they just gave, not
         # an empty profile.
         declined_now: list[str] = []
+        material_before = self._material_sig()
         prior_projects = [dict(p) for p in (self.essentials.get("projects") or [])]
         prior_education = [dict(d) for d in (self.essentials.get("education") or [])]
         out = self.llm.extract_intake(self.jd, self.essentials, self.history)
@@ -3528,6 +3682,8 @@ class WebIntake:
             # button in other words.
             if _bare_decline(message) or _wants_done(message):
                 declined_now = self._decline_open_required()
+            # An answer that filled part of the question answers all of it (for this chat).
+            self._settle_required_answer()
             if _wants_done(message) and not self._open_required_sections():
                 self.essentials["enrich_done"] = True
         self._connect_due = False
@@ -3589,23 +3745,77 @@ class WebIntake:
             if not captured and (wants_agent(message, pending=self.assembled is None)
                                  or (followup and is_question(message))):
                 return self._agent_reply(message)
+        else:
+            captured = False
+
+        # After the build, a question to the chat is answered, never taken as material for a
+        # rebuild. Kofi's numbered "1. why have you already listed projects? 2. why is there
+        # so much space?" read as a list of material, ran a whole rebuild ("Working on your
+        # resume...", "29 job terms added") and got the intake model's guess as the answer,
+        # with the question tail after it (2026-11-10).
+        if self.assembled is not None and not captured:
+            from agent.resume_chat import asks_something
+            if asks_something(message):
+                return self._chat_reply(message)
 
         # Enrichment: once a first draft exists, a substantive message is REAL
         # material to fold in (accomplishments/projects/skills/…), not a gate answer;
         # "that's everything" finalizes and stops the invitations.
         if self.stage in ("review", "done"):
             # Absorb any real material in this message FIRST, so content given in the
-            # same breath as "that's everything" is never lost, THEN finalize. This
-            # runs even under an override: the required Extracurricular / Interests
-            # sections are still drawn out post-build, and their answers must land.
+            # same breath as "that's everything" is never lost, THEN finalize.
             self._absorb_enrichment(message)
-            # "That's everything" only finalizes once the page-filling sections are
-            # addressed. If Extracurricular / Interests are still blank and not declined,
-            # a half page isn't finished, we keep insisting instead of accepting "done".
-            if _wants_done(message) and not self._open_required_sections():
+            self._settle_required_answer()
+            if _wants_done(message):
                 self.essentials["enrich_done"] = True
+            # Nothing new for the page (a decline, "that's everything", a thank you): no
+            # rebuild and no questions after it, just the reply.
+            if self.assembled is not None and self._material_sig() == material_before:
+                if _wants_done(message) and getattr(self.assembled, "underfull", False):
+                    return self._finish_short_page()
+                return self._say(self._no_build_reply(reply, message))
 
         return self._funnel_tail(reply)
+
+    # What a turn can add to the page. A turn that changes none of it does not rebuild.
+    _MATERIAL_KEYS = ("identity", "education", "experience", "projects", "extracurricular",
+                      "interests", "skills_input", "certifications")
+
+    def _material_sig(self) -> str:
+        e = self.essentials
+        try:
+            return json.dumps({k: e.get(k) for k in self._MATERIAL_KEYS}, sort_keys=True,
+                              default=str)
+        except (TypeError, ValueError):
+            return repr([e.get(k) for k in self._MATERIAL_KEYS])
+
+    def _finish_short_page(self):
+        """"That's everything" over a short page: never called done while it is half empty
+        (Kofi, 2026-11-10). The page fill runs (more of their recent work, by recency, from
+        their own material) and the chat says in one line what it did, and plainly when the
+        page is still short."""
+        out = self._fill_page_now()
+        lines = []
+        if out.get("ok") and out.get("bullets_written_from_their_material"):
+            lines.append("I filled the rest with more of your recent work. Check the new bullets "
+                         "in the summary above before you send.")
+        if getattr(self.assembled, "underfull", False):
+            lines.append(f"The page is at {self._page_fill_pct()}%, so it isn't finished yet: "
+                         "there is no more of your material on file to fill it. Send me more "
+                         "any time and I'll work it in.")
+        else:
+            lines.append("Check the page, then <b>Accept & Save</b>.")
+        return self._say(" ".join(lines))
+
+    def _no_build_reply(self, reply: str, message: str) -> str:
+        if _wants_done(message):
+            return "That's everything then. Check the page, then <b>Accept & Save</b>."
+        return reply or "Got it."
+
+    def _say(self, text: str):
+        self._append("agent", text)
+        self._persist()
+        return self._state([text])
 
     def _funnel_tail(self, reply: str = ""):
         """The end of a conversation turn: ask for what the gate still needs, or build."""
@@ -3634,10 +3844,27 @@ class WebIntake:
         if self.assembled is None and not self.essentials.get("override"):
             open_req = self._open_required_sections()
             if open_req:
+                # Asked already and not answered: one plain line with the two ways forward,
+                # never the same question again (_nudge_required).
+                if self.essentials.get("asked_required"):
+                    return self._nudge_required(open_req)
                 return self._ask_required_sections(open_req, lead=[reply] if reply else None)
+        saved_path = (self.assembled is None and self.essentials.get("override")
+                      and (self.saved_profile or {}).get("experience"))
+        if saved_path and self.essentials.get("asked_required") and not self.essentials.get(
+                "unattended"):
+            open_req = self._open_required_sections()
+            if open_req:
+                return self._nudge_required(open_req)
         if reply:
             self._append("agent", reply)
         lead = [reply] if reply else None
+        # The person asked to build from their saved profile ("Build it from my saved profile")
+        # and was asked the outside-work question first: their answer carries on with exactly
+        # that build, tailored from the saved profile. It used to fall through to a fresh chat
+        # draft instead (Kofi, 2026-11-10: "1 of 25 job terms").
+        if saved_path:
+            return self.build_from_saved(lead=lead)
         return self.draft(lead=lead)
 
     # -- the required-sections question (Extracurricular / Interests) ------------------ #
@@ -3975,7 +4202,6 @@ class WebIntake:
     # One build told in the chat (``_builds``): the steps it took and what changed, worked out
     # in code from the same data as the change list (tailoring/changes.py), never by the model.
     BUILD_FIRST = "Built your resume"
-    SHORT_PAGE_ASK = "I'll ask for a few more real things to fill the page."
     BUILD_AGAIN = "Updated your resume"
 
     def _build_failed(self, bt: dict, out) -> bool:
@@ -4084,6 +4310,13 @@ class WebIntake:
                "steps": steps, "secs": secs, "items": items,
                "written": list(ch.get("written") or []), "cuts": list(ch.get("trimmed") or []),
                "fill": pct, "one_page": one_page, "flag": flag, "counts": self._build_counts(ch)}
+        if bt["kind"] in self._KEYWORD_KINDS:
+            term = " ".join(str((bt.get("args") or ("",))[0] or "").split())[:60]
+            rec["added"] = [term] if term and bt["kind"] == "keyword" else []
+            rec["removed"] = [term] if term and bt["kind"] == "keyword_undo" else []
+            merged = self._merge_keyword_build(bt, rec, page)
+            if merged is not None:
+                return merged
         turn = {"role": "agent", "content": summary, "build": rec}
         self.history.insert(min(bt["h0"], len(self.history)), turn)
         try:
@@ -4092,6 +4325,55 @@ class WebIntake:
             pass
         self._persist()
         return rec
+
+    # Keyword clicks (ADD on a job term, its undo) come in runs: twenty ADDs posted twenty rows
+    # (Kofi, 2026-11-10). A run of them is ONE row that updates in place, its terms inside.
+    _KEYWORD_KINDS = ("keyword", "keyword_undo")
+
+    def _merge_keyword_build(self, bt: dict, rec: dict, page: str) -> dict | None:
+        """Fold a keyword build into the keyword row right before it (nothing said since), and
+        return that row's record, now carrying both. None when there is no such row."""
+        if bt["h0"] != len(self.history) or not self.history:
+            return None
+        last = self.history[-1]
+        prev = last.get("build") if isinstance(last, dict) else None
+        if not prev or prev.get("kind") not in self._KEYWORD_KINDS:
+            return None
+        added = list(prev.get("added") or [])
+        removed = list(prev.get("removed") or [])
+        low = lambda xs: {str(x).lower() for x in xs}      # noqa: E731
+        for t in rec.get("added") or []:
+            if t.lower() in low(removed):
+                removed = [x for x in removed if x.lower() != t.lower()]
+            elif t.lower() not in low(added):
+                added.append(t)
+        for t in rec.get("removed") or []:
+            if t.lower() in low(added):
+                added = [x for x in added if x.lower() != t.lower()]
+            elif t.lower() not in low(removed):
+                removed.append(t)
+        bits = []
+        if added:
+            bits.append(f"{added[0]} added" if len(added) == 1 else f"{len(added)} keywords added")
+        if removed:
+            bits.append(f"{removed[0]} taken out" if len(removed) == 1
+                        else f"{len(removed)} keywords taken out")
+        if not bits:
+            bits.append("keywords put back as they were")
+        summary = " · ".join([self.BUILD_AGAIN] + bits + [page])
+        items = []
+        if added:
+            items.append("Added to your skills: " + ", ".join(added) + ".")
+        if removed:
+            items.append("Taken out: " + ", ".join(removed) + ".")
+        items += [i for i in rec.get("items") or [] if not str(i).startswith("Job terms on the page")]
+        secs = (prev.get("secs") or 0) + (rec.get("secs") or 0) or None
+        merged = dict(rec, id=prev.get("id") or rec["id"], run=rec["id"], summary=summary,
+                      items=items, added=added, removed=removed, secs=secs)
+        last["build"] = merged
+        last["content"] = summary
+        self._persist()
+        return merged
 
     @_locked
     @_builds("draft")
@@ -4146,58 +4428,78 @@ class WebIntake:
             self._bt["lead"] = len(msgs)
         # The build's own summary in the chat (_builds) says what the page is ("one page", or
         # "62% of the page" when short; never "a real, one-page resume" over a half page,
-        # 2026-10-07), so no "Here's a first draft" line repeats it. A short page keeps the
-        # one useful part: what happens next.
-        fill = getattr(self.assembled, "fill_ratio", None) if self.assembled is not None else None
-        if self.assembled is not None and self.assembled.underfull and fill:
-            msgs.append(self.SHORT_PAGE_ASK)
-        cut_note = self._trims_note()
-        if cut_note:
-            msgs.append(cut_note)
-        fill_note = self._fill_note()
-        if fill_note:
-            msgs.append(fill_note)
+        # 2026-10-07), so no "Here's a first draft" line repeats it.
+        return self._review_tail(msgs, date_flags)
+
+    EDIT_TIP = "Edit any bullet right on the page, then <b>Accept & Save</b>."
+    LIGHT_NOTE = ("Heads up: this resume is on the lighter side. Send me more accomplishments, a "
+                  "project, or interests anytime and I'll work them in.")
+
+    def _review_tail(self, msgs: list, date_flags, saved: bool = False):
+        """What the chat says under a build's summary row, for both build paths (draft and
+        build_from_saved). First the notes that are facts about this page (figures to confirm,
+        what the fit cut, bullets written for the person to check, an aligned title, dates),
+        and the edit tip once per chat. Then at most ONE follow-up: the projects offer at the
+        first build when it applies, else one question for real material (_next_question).
+        One voice per turn: Kofi got the same tip after every build and three questions in a
+        row, two of them the same (2026-11-10)."""
+        e = self.essentials
+        if saved and getattr(self.assembled, "fact_flags", None):
+            from tailoring.fact_gate import describe as _describe_figures
+            msgs.append(_describe_figures(self.assembled.fact_flags))
+        for note in (self._trims_note(), self._fill_note()):
+            if note:
+                msgs.append(note)
         if self.title_flags():
             msgs.append("I aligned a job <b>title</b> to the role, it's highlighted; click it to "
                         "confirm or revert.")
-        msgs.append("Edit any bullet right on the page, then <b>Accept & Save</b>.")
+        if not e.get("edit_tip_said"):
+            e["edit_tip_said"] = True
+            msgs.append(self.EDIT_TIP)
         if date_flags:
             note = self._date_flag_note(date_flags)
             msgs.append(note)
             self._append("agent", note)
-        # Thorough elicitation: keep drawing out REAL material for every template slot
-        # still empty, accomplishments, projects, skills, certs, AND extracurricular /
-        # interests, until each has been offered once (then _enrich_invite stops).
-        # This runs whether or not the CV is "light"; opting out (override/done) skips it.
-        extra = self._post_build_invite(msgs)
-        return self._state(msgs, extra=extra, cards=self._project_offer(msgs))
-
-    def _post_build_invite(self, msgs):
-        """Shared review-message tail for both build paths (draft + build_from_saved):
-        keep drawing out still-empty template slots, under an override, only the
-        required Extracurricular / Interests sections, or flag a light CV once.
-        Returns the `extra` flag for _state so the UI can surface it."""
+        if saved:
+            undated = self.undated_projects_note()
+            if undated:
+                msgs.append(undated)
         extra = self._light_extra()
-        # The full-width line rule: when the page lacks the real material for every line to
-        # run full, ask one targeted question (JD keywords first) instead of padding.
-        if not self.essentials.get("enrich_done"):
-            q = self._line_question()
+        cards = self._project_offer(msgs)
+        if not cards and not e.get("unattended"):
+            q = self._next_question()
             if q:
                 msgs.append(q)
                 self._append("agent", q)
-                self._persist()
-        invite = "" if self.essentials.get("enrich_done") else self._enrich_invite()
-        if invite:
-            msgs.append(invite)
-            self._append("agent", invite)
-        elif extra:
-            # Opted out but still light, flag it once, don't interrogate.
-            note = ("Heads up: this resume is on the lighter side. Send me more "
-                    "accomplishments, a project, or interests anytime and I'll work "
-                    "them in to fill it out like the template.")
-            msgs.append(note)
-            self._append("agent", note)
-        return extra
+            elif extra and not e.get("light_note_said"):
+                # Nothing left to ask and the page is still light: said once, never nagged.
+                e["light_note_said"] = True
+                msgs.append(self.LIGHT_NOTE)
+                self._append("agent", self.LIGHT_NOTE)
+        self._persist()
+        return self._state(msgs, extra=extra, cards=cards)
+
+    def _next_question(self) -> str:
+        """The ONE question after a build, each topic asked once per chat: real bullets for a
+        role that has only drafted ones, or a template section never asked about, first; then
+        the job's skills the person may have, or a genuinely thin bullet (_line_question);
+        then the optional extras (projects, skills, certifications). Empty when the person
+        said that's everything."""
+        if self.essentials.get("enrich_done"):
+            return ""
+        # A template section the person was never asked for (a build that skipped the question,
+        # "just build it"): ONE message asking for all of them, said plainly.
+        asked = set(self.essentials.get("required_asked") or [])
+        never = [sec for sec in self._open_required_sections() if sec not in asked]
+        if never:
+            return self._required_ask_text(never)
+        first = self._enrich_invite(lambda k: k.startswith("bullets:"))
+        if first:
+            return first
+        line = self._line_question()
+        if line:
+            return line
+        return self._enrich_invite()
 
     # -- one proactive offer after the first build (plan PR 10) ------------------------- #
     PROJECT_OFFER = "projects"
@@ -4288,13 +4590,13 @@ class WebIntake:
 
     @_locked
     @_builds("draft")
-    def build_from_saved(self):
+    def build_from_saved(self, lead=None):
         """Build directly from the saved profile, tailored to this job, the
         response to "use what you already know about me"."""
         self._feed_read_job()
-        return self._build_from_saved()
+        return self._build_from_saved(lead)
 
-    def _build_from_saved(self):
+    def _build_from_saved(self, lead=None):
         if self.saved_profile and self.saved_profile.get("experience"):
             # The required-section answers given in THIS chat (asked before the first build)
             # live in essentials; the saved profile may not have them yet. Without this, a
@@ -4357,30 +4659,12 @@ class WebIntake:
             self.stage = "review"
             self._persist()
             # The build's summary in the chat (_builds) says what was built; no lead line
-            # repeats it.
-            msgs = []
-            if getattr(self.assembled, "fact_flags", None):
-                from tailoring.fact_gate import describe as _describe_figures
-                msgs.append(_describe_figures(self.assembled.fact_flags))
-            cut_note = self._trims_note()
-            if cut_note:
-                msgs.append(cut_note)
-            fill_note = self._fill_note()
-            if fill_note:
-                msgs.append(fill_note)
-            if self.title_flags():
-                msgs.append("I aligned a job <b>title</b> to the role, it's highlighted; "
-                            "click it to confirm or revert.")
-            msgs.append("Edit any bullet right on the page, then <b>Accept & Save</b>.")
-            if date_flags:
-                note = self._date_flag_note(date_flags)
-                msgs.append(note)
-                self._append("agent", note)
-            undated = self.undated_projects_note()
-            if undated:
-                msgs.append(undated)
-            extra = self._post_build_invite(msgs)
-            return self._state(msgs, extra=extra, cards=self._project_offer(msgs))
+            # repeats it. What was said before the build (the reply to the answer that let it
+            # start) stays above it.
+            msgs = list(lead or [])
+            if self._bt is not None:
+                self._bt["lead"] = len(msgs)
+            return self._review_tail(msgs, date_flags, saved=True)
         if self.essentials.get("experience"):
             return self.draft(lead=["Using what I already have on file."])
         note = ("I don't have a saved profile yet, tell me your name and work history "
@@ -4756,18 +5040,23 @@ class WebIntake:
                 where = f" for {short}" if short else ""
                 return ("Your skills section needs a little more to fill every line. What other "
                         f"tools, software or methods do you use{where}?")
-        asked = set(e.get("bullets_asked") or [])
+        # A bullet is only asked about when it is genuinely thin: ONE line, well short of the
+        # margin. A bullet whose last line holds a word or two is a fit problem the fit loop
+        # trims, not missing material ("One bullet at Last-Mile Operations Simulator (Python
+        # stops short", Kofi, 2026-11-10). One such question per chat.
+        if e.get("bullets_asked"):
+            return ""
         for b in gaps.get("short_bullets") or []:
             text = str(b.get("text") or "")
-            key = text[:60].lower()
-            if not text or key in asked:
+            if not text or int(b.get("lines") or 1) != 1 or float(b.get("fill") or 0) >= THIN_BULLET:
                 continue
-            e.setdefault("bullets_asked", []).append(key)
+            e.setdefault("bullets_asked", []).append(text[:60].lower())
             words = text.split()
             clip = " ".join(words[:9]) + ("..." if len(words) > 9 else "")
-            org = str(b.get("label") or "").split(",")[0].strip() or "one role"
-            return (f"One bullet at {org} stops short: \"{clip}\". What else did that involve, "
-                    "a tool, a number or the result? I'll only use what you tell me.")
+            name = _bullet_owner(b.get("label"))
+            where = f"Your {name} bullet" if name else "One bullet"
+            return (f"{where} is a bit thin: \"{clip}\". What tool did you use, or what did "
+                    "it change? I'll only use what you tell me.")
         return ""
 
     _YES_ALL = re.compile(r"^\s*(yes|yeah|yep|yup|sure|both|all of them|i have|i've used (?:both|all)|"
@@ -4956,22 +5245,47 @@ class WebIntake:
         opts the section out. A template with no required sections returns []."""
         e = self.essentials
         declined = set(e.get("declined", []))
+        covered = set(e.get("required_covered") or [])
         saved = self.saved_profile or {}   # a returning user's saved profile counts as filled
         return [sec for sec in self.required_fill
                 if not self._section_filled(sec, e, saved)
-                and not (declined & {sec, "extras"})]
+                and not (declined & {sec, "extras"}) and sec not in covered]
+
+    def _settle_required_answer(self) -> None:
+        """The outside-work question asks for Extracurricular and Interests in one breath. An
+        answer that fills either of them answers that question: "football at weekends,
+        travelling, podcasts" went into Interests and the chat then asked about clubs and
+        volunteering twice more (Kofi, 2026-11-10). The rest of what that question asked is
+        covered for this chat (not declined: a later answer still lands, and the next job may
+        ask again)."""
+        e = self.essentials
+        asked = list(e.get("required_open_at_ask") or [])
+        if not asked:
+            return
+        saved = self.saved_profile or {}
+        if any(self._section_filled(sec, e, saved) for sec in asked):
+            e["required_covered"] = sorted(set(e.get("required_covered") or []) | set(asked))
 
     def _ask_required_sections(self, open_req, lead=None):
-        """Ask, BEFORE the first build, for the template's required sections. Phrased from
-        the manifest's elicit leads, insisted upon (re-asked until provided), honoring an
-        explicit decline via the gate so it never loops."""
+        """Ask, BEFORE the first build, for the template's required sections: ONCE, all of
+        them in one message, saying plainly that the resume won't look complete without them
+        (Kofi, 2026-11-10: white space is never acceptable). An answer uses what they give;
+        a skip, a refusal or "that's everything" is never asked again, and the page fill
+        fills the rest with more of their recent work."""
+        ask = self._required_ask_text(open_req)
+        msgs = list(lead or [])
+        msgs.append(ask)
+        self._append("agent", ask)
+        return self._state(msgs)
+
+    def _required_ask_text(self, open_req) -> str:
+        """The one message that asks for every open required section, and records it asked."""
         from intake.template_manifest import elicit_leads
         phrases = []
         for sec in open_req:
             leads = elicit_leads(self.manifest, sec)
             phrases.append(leads[0] if leads else f"your {sec}")
         guidance = self._enrich_guidance(list(open_req))
-        already_asked = bool(self.essentials.get("asked_required"))
         # ANSWERED tells the model to thank the person for what they just added, so it holds
         # only sections that were really filled since the last ask. It used to be a constant
         # ["earlier"] on every re-ask, and the model duly said "Thanks for adding that" when
@@ -4986,63 +5300,64 @@ class WebIntake:
         except Exception:
             ask = ""
         if not ask:                       # deterministic, warm fallback
-            joined = phrases[0] if len(phrases) == 1 else f"{phrases[0]}  And {phrases[1]}"
-            opener = "One more before I build it" if not already_asked else "Whenever you're ready"
-            ask = (f"{opener}, the resume isn't complete without it: {joined}. "
-                   "(If there's genuinely none, tell me and I'll leave that section off.)")
-        self.essentials["asked_required"] = True
-        self.essentials["required_open_at_ask"] = list(open_req)
+            ask = (" ".join(phrases) + " (If there's genuinely none, tell me and I'll leave "
+                   "that off.)")
+        labels = self._required_labels(open_req)
+        what = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+        word = "section" if len(labels) == 1 else "sections"
+        them = "it" if len(labels) == 1 else "them"
+        ask = (f"Your template has {what} {word}, and your resume won't look complete without "
+               f"{them}. {ask}")
+        e = self.essentials
+        e["asked_required"] = True
+        e["required_open_at_ask"] = list(open_req)
+        # Asked once: never asked again, before or after the build (_enrich_invite).
+        e["required_asked"] = sorted(set(e.get("required_asked") or []) | set(open_req))
         self._persist()
-        msgs = list(lead or [])
-        msgs.append(ask)
-        self._append("agent", ask)
-        return self._state(msgs)
+        return ask
 
-    def _enrich_invite(self) -> str:
-        """Draw out the next enrichment topics. The page-filling sections
-        (Extracurricular, Interests) are INSISTED upon: re-offered every turn until the
-        person provides real material or explicitly declines the section -- never
-        one-and-done, because a CV isn't finished while they're blank. Optional extras
-        (extra bullets, certs) are offered once."""
-        asked = set(self.essentials.get("enrich_asked", []))
-        required = set(self.required_fill)
-        open_required = set(self._open_required_sections())
-        # Keep _enrich_topics' priority order (real accomplishments first, then the
-        # page-filling sections). Required topics persist until resolved; optional
-        # topics are offered once.
-        topics = [(k, p) for k, p in self._enrich_topics()
-                  if (k in required and k in open_required)
-                  or (k not in required and k not in asked)]
-        req_topics = [t for t in topics if t[0] in required]
+    def _enrich_invite(self, only=None) -> str:
+        """Draw out the next enrichment topics (at most two), each ONCE per chat. The
+        page-filling sections (Extracurricular, Interests) used to be "insisted upon",
+        re-offered after every build until filled or declined, and Kofi got the same
+        outside-work question three times in one chat after he had answered it with his
+        hobbies (2026-11-10). Now a topic asked before the build counts too, the light-resume
+        banner keeps listing what is still open, and a typed decline still closes a section.
+        ``only`` (key -> bool) limits the topics this call may ask."""
+        e = self.essentials
+        asked = set(e.get("enrich_asked", []))
+        asked |= set(e.get("required_asked") or [])
+        all_topics = self._enrich_topics()
+        if not all_topics:
+            e["enrich_done"] = True
+            return ""
+        topics = [(k, p) for k, p in all_topics if k not in asked and (only is None or only(k))]
         if not topics:
-            self.essentials["enrich_done"] = True
             return ""
         take = topics[:2]
-        answered = bool(asked)   # they've added something since we started asking
-        # Only OPTIONAL topics get marked asked; required ones keep coming back.
-        self.essentials["enrich_asked"] = sorted(
-            asked | {k for k, _ in take if k not in required})
+        # ANSWERED: only what the person really added since the last ask (a topic asked then and
+        # no longer open, not declined), so the model never thanks them for nothing ("Thanks for
+        # rounding out the skills" after he had said nothing about skills).
+        open_now = {k for k, _ in all_topics}
+        declined = set(e.get("declined") or [])
+        answered = [k.split(":", 1)[0] if k.startswith("bullets:") else k
+                    for k in (e.get("enrich_last_ask") or [])
+                    if k not in open_now and k not in declined]
+        e["enrich_asked"] = sorted(set(e.get("enrich_asked", [])) | {k for k, _ in take})
+        e["enrich_last_ask"] = [k for k, _ in take]
         phrases = [p for _k, p in take]
         guidance = self._enrich_guidance([k for k, _ in take])
-        insist = bool(req_topics)   # a required section is still open -> push harder
         try:
-            ask = str(self.llm.ask_enrich(phrases, list(asked) if answered else [],
-                                          self.role, guidance,
+            ask = str(self.llm.ask_enrich(phrases, answered, self.role, guidance,
                                           person=self._who_we_are_asking()) or "").strip()
         except Exception:
             ask = ""
         if not ask:
             joined = phrases[0] if len(phrases) == 1 else f"{phrases[0]}, and {phrases[1]}"
             ack = "Nice, added. " if answered else ""
-            if insist:
-                ask = (f"{ack}A complete resume fills the page, it can't stop at your "
-                       f"experience with the rest blank. I still need {joined} to finish "
-                       "it. Share real details and I'll add them, or tell me to leave a "
-                       "section off if it truly doesn't apply.")
-            else:
-                ask = (f"{ack}To fill your resume out like the template, could you share "
-                       f"{joined}? (Real details only, or say “that's everything” and "
-                       "I'll finalize.)")
+            ask = (f"{ack}To fill your resume out like the template, could you share "
+                   f"{joined}? (Real details only, or say \u201cthat's everything\u201d and "
+                   "I'll finalize.)")
         return ask
 
     def _enrich_guidance(self, keys):
@@ -5520,9 +5835,9 @@ class WebIntake:
         parts = []
         n = len(self._written)
         if n:
-            parts.append(f"To fill the page I wrote {n} new bullet{'' if n == 1 else 's'} from your "
-                         f"own material. Check {'it' if n == 1 else 'them'} in the summary "
-                         "above before you send.")
+            parts.append(f"I filled the rest with more of your recent work: {n} new "
+                         f"bullet{'' if n == 1 else 's'} from your own material. Check "
+                         f"{'it' if n == 1 else 'them'} in the summary above before you send.")
         parts += [str(x) for x in (getattr(a, "bullet_notes", None) or []) if str(x).strip()]
         return " ".join(parts)
 
@@ -5728,8 +6043,10 @@ class WebIntake:
         saved = self._save_added_skill(term)
         before = _copy.deepcopy(self.profile)
         width_fn, avail = self._skill_widths()
+        # A skill the person ADDed earlier is never pushed off the page by the next one: Kofi
+        # ADDed Azure Data Factory three times because each new ADD shed the last (2026-11-10).
         pl = place_term(self.profile.get("skills") or {}, term, width_fn=width_fn, avail=avail,
-                        jd_text=self.jd)
+                        jd_text=self.jd, keep=[a["term"] for a in self.keyword_actions])
         if pl.already and self._term_on_page(term):
             self._persist()
             return self._keyword_result(term, True, "")

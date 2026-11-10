@@ -89,6 +89,12 @@ class AppContext:
     # top ``count`` that fit (strong or some fit), the same add as the repo_fit card's button.
     # Only for a turn where the person asked for it in words ("add 2 github projects").
     add_top: Callable[[int, str], dict] | None = None
+    # () -> what the page and the app hold right now (job terms on the page, measured fill,
+    # projects, connections), put in the system prompt every turn (state_lines).
+    state: Callable[[], dict] = field(default=lambda: {})
+    # () -> re-run the page fill and say what changed (WebIntake._fill_page_now). For a turn
+    # about white space or a page that looks incomplete: act, never guess.
+    fill_page: Callable[[], dict] | None = None
     role: str = ""
     company: str = ""
 
@@ -173,7 +179,7 @@ def _login(ctx: AppContext, inp: dict) -> str:
     return login
 
 
-FIT_WORDS = {"strong": "strong fit", "some": "some fit", "none": "does not fit", "unknown": "could not judge"}
+FIT_WORDS = {"strong": "strong fit", "some": "partial fit", "none": "does not fit", "unknown": "could not judge"}
 ADD_LABEL = "Add selected to this resume"
 BUILD_LABEL = "Build a project for this job instead"
 ADD_HINT = ("The person sees these in a card with checkboxes. To add any, they tick it and click "
@@ -284,6 +290,12 @@ def _t_add_github(ctx: AppContext, inp: dict) -> dict:
     return dict(ctx.add_top(max(1, min(n, MAX_ADD)), _login(ctx, inp)) or {})
 
 
+def _t_fill_page(ctx: AppContext, inp: dict) -> dict:
+    if ctx.fill_page is None:
+        raise RuntimeError("the fill is not wired")
+    return dict(ctx.fill_page() or {})
+
+
 BUILD_LABEL_IDEA = "Build this for this job"
 IDEAS_HINT = ("The person sees these ideas in a card. Each has a \"" + BUILD_LABEL_IDEA + "\" button: "
               "one click has the AI build a small working project for this job (it uses one package "
@@ -387,6 +399,13 @@ TOOLS: dict[str, Tool] = {t.name: t for t in (
              "login": {"type": "string",
                        "description": "A GitHub username the person gave, only if it differs "
                                       "from the one on their resume."}}}),
+    Tool("fill_page",
+         "When the person asks about white space, a short page, a gap at the bottom or a resume "
+         "that looks incomplete: re-run the page fill, which fills the page from their own saved "
+         "material only (never invented), and keeps it one page. Returns the page fill before and "
+         "after, the bullets it wrote from their material, and when the page is still short, why "
+         "and what real material would fill it.",
+         _t_fill_page, mutates=True),
     Tool("suggest_projects_for_jd",
          "When the person wants a project to build for this job (or has none that fits), suggest "
          "small GitHub projects aimed at this job's role and the skills its description asks for. "
@@ -397,9 +416,60 @@ TOOLS: dict[str, Tool] = {t.name: t for t in (
 
 # ----------------------------------------------------------------------------- the prompt
 
-def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "") -> str:
+def _names(xs, n: int = 40) -> str:
+    xs = [str(x) for x in xs or [] if str(x).strip()]
+    return (", ".join(xs[:n]) + (f" and {len(xs) - n} more" if len(xs) > n else "")) if xs else "none"
+
+
+def state_lines(state: dict) -> list[str]:
+    """The page and the app right now, as plain lines for the system prompt."""
+    st = dict(state or {})
+    if not st:
+        return []
+    out = ["", "The resume and the app right now (true as of this message; trust it over "
+               "anything said earlier in the chat):"]
+    if not st.get("resume_built"):
+        out.append("- No resume has been built yet in this chat.")
+    else:
+        page = st.get("page") or {}
+        fill = page.get("fill_percent")
+        out.append("- Page: " + ("one page" if page.get("one_page") else "over one page")
+                   + (f", {fill}% full (short of a full page)" if page.get("short") and fill
+                      else ", full") + ".")
+        on = st.get("job_terms_on_page") or []
+        out.append(f"- Job terms on the page now ({len(on)}): {_names(on)}.")
+        out.append(f"- Job terms not on the page: {_names(st.get('job_terms_not_on_page'))}.")
+        if st.get("keywords_the_person_added"):
+            out.append("- Skills the person added with ADD in the keyword panel. Each ADD is the "
+                       "person saying they have that skill, so it is their own fact, saved to "
+                       "their profile and on the resume: "
+                       + _names(st["keywords_the_person_added"]) + ".")
+        projs = st.get("projects_on_page") or []
+        out.append("- Projects on the page: " + (", ".join(
+            f"{p.get('name')} ({'links to GitHub' if p.get('github_link') else 'no GitHub link'})"
+            for p in projs) if projs else "none") + ".")
+        if st.get("empty_sections"):
+            out.append("- Empty sections: " + _names(st["empty_sections"]) + ".")
+        if st.get("interests_on_page"):
+            out.append(f"- Interests on the page: {st['interests_on_page']}")
+    gh = st.get("github") or {}
+    if gh:
+        if gh.get("connected"):
+            out.append("- GitHub: connected" + (f" as {gh['login']}" if gh.get("login") else "") + ".")
+        elif gh.get("username_on_resume"):
+            out.append(f"- GitHub: not connected; the username on the resume is "
+                       f"{gh['username_on_resume']} (public repos are readable).")
+        else:
+            out.append("- GitHub: not connected and no username known.")
+    if "telegram_connected" in st:
+        out.append("- Telegram: " + ("connected." if st["telegram_connected"] else "not connected."))
+    return out
+
+
+def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "",
+                  state: dict | None = None) -> str:
     """The agent's instructions, built from the registered tools so the chat only describes
-    what it can really do."""
+    what it can really do, and the page's state right now."""
     job = f" for the {role} role" + (f" at {company}" if company else "") if role else ""
     lines = [
         f"You are the resume chat inside the SponsorJobs desktop app, helping the person with "
@@ -435,7 +505,24 @@ def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "") -> 
         "which one fits best and why, or that none fits well) and point to the card.",
         "- Name every repository, project and idea exactly as the tool returned it, spelled the "
         "same, and describe it only with what the tool said about it.",
+        "- Never say a job term is missing, not shown or still a gap when it is listed below as "
+        "on the page. A skill the person added with ADD is their own fact: say it is on their "
+        "resume, and never call it missing or a gap afterwards.",
+        "- Never ask the person to share, send or paste their GitHub. When you want to look at "
+        "their repositories and GitHub is not connected and no username is known, call "
+        "github_status: it gives them a Connect GitHub button.",
+        "- When the message holds several questions, answer each one, in order, in a sentence "
+        "or two. End with at most ONE ask of your own: one question, or the Connect GitHub "
+        "line, never both. Only call github_status when the person asked about GitHub or "
+        "projects from it.",
     ]
+    if "fill_page" in tools:
+        lines.append(
+            "- When the person asks about white space, a short page, a gap at the bottom or a "
+            "resume that looks incomplete, call fill_page; never guess why. Then say in one or two "
+            "plain sentences what changed (the fill before and after). If it is still short, give "
+            "the reason the tool returned and ask ONE specific question for real material that "
+            "would fill it.")
     if "add_github_projects" in tools:
         lines[lines.index("Rules:") + 2] = (
             "- The only change you can make is adding the person's own GitHub repositories with "
@@ -458,6 +545,18 @@ def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "") -> 
             "Say these are ideas for this job, that one click on an idea's button has the AI build "
             "it (one package), and that it reaches the resume only after they learn it and pass "
             "its quiz. Never present an idea as something the person has done.")
+    if "fill_page" in tools:
+        rule = lines.index("Rules:") + 2
+        lines[rule] = lines[rule].replace(
+            "The only change you can make is adding the person's own GitHub repositories with "
+            "add_github_projects, and only when they ask for it.",
+            "The only changes you can make are adding the person's own GitHub repositories with "
+            "add_github_projects, only when they ask for it, and filling the page with fill_page.")
+        lines[rule] = lines[rule].replace(
+            "- You cannot change the resume, add projects,",
+            "- The only change you can make is filling the page with fill_page. You cannot "
+            "otherwise change the resume, add projects,")
+    lines += state_lines(state or {})
     return "\n".join(lines)
 
 
@@ -466,6 +565,12 @@ LAST_ROUND = ("\n\nThis is your last step for this message: answer the person no
 
 
 # ----------------------------------------------------------------------------- honesty
+
+# A claim about the page itself ("I filled the page", "I rebuilt it"), stripped like a save claim
+# when no tool really changed it this turn.
+_PAGE_CLAIM = re.compile(r"\b(?:i['’]?ve|i have|i|we['’]?ve|we have|we)\s+(?:just\s+|now\s+|also\s+)?"
+                         r"(?:filled|refilled|rebuilt|rewrote|reworded|refitted|refit)\b", re.I)
+
 
 def honest(text: str, did: list | None) -> str:
     """The reply without any sentence that claims a save or an addition, when nothing changed
@@ -477,7 +582,7 @@ def honest(text: str, did: list | None) -> str:
     for line in str(text or "").strip().split("\n"):       # a list keeps its lines
         kept = []
         for s in re.split(r"(?<=[.!?])\s+", line):
-            if s.strip() and _CLAIM.search(s) and not _NEG.search(s):
+            if s.strip() and (_CLAIM.search(s) or _PAGE_CLAIM.search(s)) and not _NEG.search(s):
                 dropped = True
                 continue
             kept.append(s)
@@ -650,7 +755,33 @@ def tools_for(ctx: AppContext) -> dict[str, Tool]:
         out.pop("suggest_projects_for_jd", None)
     if ctx.add_top is None:
         out.pop("add_github_projects", None)
+    if ctx.fill_page is None:
+        out.pop("fill_page", None)
     return out
+
+
+# "share your GitHub so I can check": the person cannot share it in the chat; the Connect GitHub
+# button does it (Kofi, 2026-11-10).
+_SHARE_GITHUB = re.compile(
+    r"\b(?:share|send|give|paste|drop)(?:\s+(?:me|us))?\s+(?:your|ur)\s+github"
+    r"(?:\s+(?:link|username|profile|url|handle))?", re.I)
+
+
+def _connect_not_share(text: str, ctx: AppContext, cards: list) -> str:
+    """A reply that asks the person to share their GitHub while it is not connected and no
+    username is known: say connect instead, and give the Connect GitHub button."""
+    if not _SHARE_GITHUB.search(text or ""):
+        return text
+    try:
+        gh = dict(ctx.github_status() or {})
+    except Exception:      # noqa: BLE001
+        gh = {}
+    if gh.get("connected") or gh.get("resume_login"):
+        return text
+    if not any(isinstance(c, dict) and any(isinstance(b, dict) and b.get("nav") == "github"
+                                           for b in c.get("buttons") or []) for c in cards):
+        cards.append(connect_card())
+    return _SHARE_GITHUB.sub("connect your GitHub with the button below", text)
 
 
 def run_turn(session, ctx: AppContext, message: str, tools: dict[str, Tool] | None = None) -> dict:
@@ -659,7 +790,11 @@ def run_turn(session, ctx: AppContext, message: str, tools: dict[str, Tool] | No
     tools = dict(tools_for(ctx) if tools is None else tools)
     role = ctx.role or str(getattr(session, "role", "") or "")
     company = ctx.company or str(getattr(session, "company", "") or "")
-    system = system_prompt(tools, role, company)
+    try:
+        state = dict(ctx.state() or {})
+    except Exception:      # noqa: BLE001 - the turn still runs on its tools
+        state = {}
+    system = system_prompt(tools, role, company, state)
     specs = [t.spec() for t in tools.values()]
     messages = _conversation(ctx, message)
     secrets = [s for s in (ctx.secrets() or []) if s]
@@ -687,7 +822,10 @@ def run_turn(session, ctx: AppContext, message: str, tools: dict[str, Tool] | No
                 if tool is None:
                     raise KeyError(name)
                 out = tool.run(ctx, dict(c.get("input") or {}))
-                if tool.mutates and not (isinstance(out, dict) and out.get("changed") is False):
+                # A tool that acted counts as done, even when it kept the page as it was (the
+                # fill ran and found nothing fuller): "I re-ran the fill" is then true.
+                if tool.mutates and not (isinstance(out, dict) and out.get("changed") is False
+                                         and not out.get("ran")):
                     did.append(name)
                 card = out.pop("card", None) if isinstance(out, dict) else None
                 if card:
@@ -700,6 +838,7 @@ def run_turn(session, ctx: AppContext, message: str, tools: dict[str, Tool] | No
         messages.append({"role": "tool", "results": results})
         text = ""
     text = _scrub(honest(_clean(text), did), secrets) if text.strip() else POLITE_FAIL
+    text = _connect_not_share(text, ctx, cards)
     return {"text": text, "cards": merge_cards(cards), "did": did, "tools": called}
 
 
@@ -775,6 +914,31 @@ _ANSWER_START = re.compile(
 def is_question(message: str) -> bool:
     m = str(message or "")
     return "?" in m or bool(_QUESTION_START.match(m))
+
+
+# "Can you add Docker to my skills?" asks for a change to the page, not an answer: it stays with
+# the intake's capture like any other request for an edit.
+_CHANGE_REQUEST = re.compile(
+    r"^\s*(?:please\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:add|put|include|remove|"
+    r"drop|take out|change|replace|swap|make|rewrite|reword|use|mention|list)\b", re.I)
+_WH_START = re.compile(r"^\s*(?:what|which|how|why|where|who|when)\b", re.I)
+_NUMBERED_ITEM = re.compile(r"(?:^|\n|\s)\d{1,2}[.)]\s+")
+
+
+def asks_something(message: str) -> bool:
+    """After the build: a message that asks the chat something, to be answered, not folded in as
+    material for a rebuild. A question mark, or a sentence (or numbered item) that opens with
+    what, which, how, why, where, who or when. Not an answer ("yes, I've used dbt", "no", "my
+    ..."), not a pasted link, and not a request for an edit ("can you add Docker?")."""
+    m = str(message or "").strip()
+    if not m or _ANSWER_START.match(m) or _CHANGE_REQUEST.match(m):
+        return False
+    if _URL.search(m) and "?" not in m:
+        return False
+    if "?" in m:
+        return True
+    parts = [x for x in _NUMBERED_ITEM.split(m) if x.strip()]
+    return any(_WH_START.match(x) for x in parts)
 
 
 def wants_agent(message: str, pending: bool = False) -> bool:
