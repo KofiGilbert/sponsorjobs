@@ -546,28 +546,41 @@ def _merge_two(la: "_Line", lb: "_Line", width_fn, avail: float, prio) -> tuple:
 
 
 def _cap_lines(lines: list, cap: int, width_fn, avail: float, prio) -> list[str]:
-    """Merge category lines, closest in meaning first, until at most ``cap`` remain. Each merge
-    is the pair that sheds the fewest job terms, then the fewest ADDed terms, then the closest
-    themes, then the fewest concrete terms; vague phrases go first. Returns the shed terms."""
+    """Merge category lines until at most ``cap`` remain. Each merge is tried in full first (the
+    two lines' terms in priority order, the lowest shed to fit, then every job term and ADDed term
+    it shed put back on some line, ``_rescue``) and the pair that LOSES the fewest job terms,
+    then ADDed terms, then is closest in meaning, then loses the fewest concrete terms is taken;
+    vague phrases go first. A catch-all heading ("Domain Knowledge") or a nearly empty line is
+    close to anything. Returns the terms the page lost."""
+    import copy as _copy
     out: list[str] = []
     while True:
-        cat = [ln for ln in lines if not ln.fixed]
+        cat = [k for k, ln in enumerate(lines) if not ln.fixed]
         if len(cat) <= max(1, cap):
             return out
         best = None
-        for i in range(len(cat)):
-            for j in range(i + 1, len(cat)):
-                la, lb = cat[i], cat[j]
+        for x in range(len(cat)):
+            for y in range(x + 1, len(cat)):
+                trial = _copy.deepcopy(lines)
+                la, lb = trial[cat[x]], trial[cat[y]]
                 lab, terms, shed = _merge_two(la, lb, width_fn, avail, prio)
-                n = lambda k: sum(1 for t in shed if prio(t) == k)
-                cost = (n(0), n(1), _theme_gap(la.themes, lb.themes), n(2), n(3),
-                        -width_fn(lab, terms))
+                gap = _theme_gap(la.themes, lb.themes)
+                if (_CATCH_ALL.match(la.label.strip()) or _CATCH_ALL.match(lb.label.strip())
+                        or min(width_fn(la.label, la.terms), width_fn(lb.label, lb.terms))
+                        < 0.5 * avail):
+                    gap = 0
+                la.label, la.terms, la.themes = lab, terms, la.themes | lb.themes
+                trial.remove(lb)
+                must = [t for t in shed if prio(t) <= 1]
+                lost = [t for t in shed if prio(t) > 1]
+                lost += _rescue(trial, must, width_fn, avail, prio) if must else []
+                n = lambda k: sum(1 for t in lost if prio(t) == k)
+                cost = (n(0), n(1), gap, n(2), n(3), -width_fn(lab, terms))
                 if best is None or cost < best[0]:
-                    best = (cost, la, lb, lab, terms, shed)
-        _c, la, lb, lab, terms, shed = best
-        la.label, la.terms, la.themes = lab, terms, la.themes | lb.themes
-        lines.remove(lb)
-        out += shed
+                    best = (cost, trial, lost)
+        _c, trial, lost = best
+        lines[:] = trial
+        out += lost
 
 
 def _rescue(lines: list, terms: list[str], width_fn, avail: float, prio) -> list[str]:
