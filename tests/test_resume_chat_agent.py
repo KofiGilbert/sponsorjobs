@@ -110,8 +110,8 @@ def test_the_system_prompt_lists_exactly_the_registered_tools(fake_llm, gh):
     rc.run_turn(None, _ctx(llm=fake_llm), "what's on my github?")
     listed = [ln[2:].split(":", 1)[0] for ln in fake_llm.last_agent_system.splitlines()
               if ln.startswith("- ") and ":" in ln and ln[2:].split(":", 1)[0] in rc.TOOLS]
-    # A tool whose app piece is not wired (here the ideas) is not offered or described.
-    wired = [n for n in rc.TOOLS if n != "suggest_projects_for_jd"]
+    # A tool whose app piece is not wired (here the ideas and the add) is not offered or described.
+    wired = [n for n in rc.TOOLS if n not in ("suggest_projects_for_jd", "add_github_projects")]
     assert listed == wired
     assert [t["name"] for t in fake_llm.last_agent_tools] == wired
     only = {"github_status": rc.TOOLS["github_status"]}
@@ -158,8 +158,11 @@ ANSWERS = ["No github, no projects", "no github. no projects.", "I don't have pr
            "Projects:\n1. Route Planner\n2. Dock Scheduler"]
 QUESTIONS = ["what's on my github?", "Which repos fit this job?", "can you check my github",
              "what can you do", "Do any of my projects fit?"]
-ASKS = ["check my github", "Check my GitHub for projects that fit this job",
-        "Build me a project for this job", "look at my repos", "connect my github"]
+# An act on GitHub with one of the action verbs leaves the funnel even while an answer is pending
+# (2026-11-09: "add 2 github projects" got "send me the repo links"); other asks wait for it.
+ACTS = ["check my github", "Check my GitHub for projects that fit this job", "add 2 github projects",
+        "use my repos"]
+ASKS = ["Build me a project for this job", "look at my repos", "connect my github"]
 
 
 @pytest.mark.parametrize("pending", [True, False])
@@ -173,6 +176,11 @@ def test_questions_go_to_the_agent_even_while_an_answer_is_pending():
         assert rc.wants_agent(m, pending=True) and rc.wants_agent(m), m
 
 
+def test_acts_go_to_the_agent_even_while_an_answer_is_pending():
+    for m in ACTS:
+        assert rc.wants_agent(m) and rc.wants_agent(m, pending=True), m
+
+
 def test_asks_go_to_the_agent_only_when_no_intake_answer_is_pending():
     for m in ASKS:
         assert rc.wants_agent(m), m
@@ -183,7 +191,7 @@ def test_an_intake_answer_never_reaches_the_agent(template_source, fake_llm, wor
     monkeypatch.setenv(rc.FLAG, "1")
     s = _session(template_source, fake_llm, workdir)
     fake_llm.agent_script = lambda *a: pytest.fail("an intake answer reached the agent")
-    for m in ("No github, no projects", "I don't have projects", "check my github"):
+    for m in ("No github, no projects", "I don't have projects", "I built two projects at school"):
         st = s.submit(m)
         assert not st["cards"], m
 

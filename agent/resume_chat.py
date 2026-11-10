@@ -6,8 +6,11 @@ behaves exactly as before).
 One turn (``run_turn``) is at most MAX_ROUNDS rounds of tool calls, then the answer. Tools only
 READ: the resume being built, the last upload, the GitHub connection, the person's public
 repositories, and how well those and the resume's own projects fit this job (ui/repo_rank.py,
-whose README text never enters this loop). Nothing here changes the resume, so ``did`` is
-always empty and ``honest`` strips any sentence that claims a save or an addition. A tool that
+whose README text never enters this loop). One tool changes the resume: add_github_projects,
+for a turn where the person asked in words to add projects from their GitHub ("add 2 github
+projects"); it adds through the session, the same add as the card's button (``did`` names it).
+Otherwise ``did`` is empty and ``honest`` strips any sentence that claims a save or an
+addition. A tool that
 offers a change (rank_repos_for_jd, propose_add_projects) returns a card with a single-use
 action token; only the person's click spends it (POST /api/session/action ->
 WebIntake.apply_action), and the token never reaches the model.
@@ -32,6 +35,7 @@ FLAG = "TAILOR_CHAT_AGENT"
 MAX_ROUNDS = 4
 MAX_REPOS_TO_MODEL = 40
 MAX_BUTTONS = 3
+MAX_ADD = 6           # at most this many repositories in one "add N github projects"
 
 # Where a card button may take the person (ui/static/app.js renderCard knows the same names).
 NAV_TARGETS = ("projects", "connections", "github", "cvs", "jobs")   # github: Connections + sign-in started
@@ -81,6 +85,10 @@ class AppContext:
     # "Build this for this job" buttons. Only the person's click starts a build (one package).
     suggest_ideas: Callable[[], dict] | None = None
     offer_build: Callable[[list], str] | None = None
+    # (count, login) -> the session ranks the person's repositories for this job and adds the
+    # top ``count`` that fit (strong or some fit), the same add as the repo_fit card's button.
+    # Only for a turn where the person asked for it in words ("add 2 github projects").
+    add_top: Callable[[int, str], dict] | None = None
     role: str = ""
     company: str = ""
 
@@ -266,6 +274,16 @@ def _t_propose_add(ctx: AppContext, inp: dict) -> dict:
     return out
 
 
+def _t_add_github(ctx: AppContext, inp: dict) -> dict:
+    if ctx.add_top is None:
+        raise RuntimeError("adding is not wired")
+    try:
+        n = int((inp or {}).get("count") or 2)
+    except (TypeError, ValueError):
+        n = 2
+    return dict(ctx.add_top(max(1, min(n, MAX_ADD)), _login(ctx, inp)) or {})
+
+
 BUILD_LABEL_IDEA = "Build this for this job"
 IDEAS_HINT = ("The person sees these ideas in a card. Each has a \"" + BUILD_LABEL_IDEA + "\" button: "
               "one click has the AI build a small working project for this job (it uses one package "
@@ -355,6 +373,20 @@ TOOLS: dict[str, Tool] = {t.name: t for t in (
              "names": {"type": "array", "items": {"type": "string"},
                        "description": "The repository names the person asked to add."}},
              "required": ["names"]}),
+    Tool("add_github_projects",
+         "When the person asks you to add projects (or repositories) from their GitHub to this "
+         "resume, for example \"add 2 github projects\": rank their repositories for this job and "
+         "add the top ones that fit (strong or some fit, never a repository that does not fit), "
+         "then rebuild the resume. Returns what was added and why, and the card so they can add "
+         "others. If fewer fit than they asked for, it adds those and says so.",
+         _t_add_github, mutates=True,
+         schema={"type": "object", "properties": {
+             "count": {"type": "integer", "minimum": 1, "maximum": MAX_ADD,
+                       "description": "How many to add: the number the person asked for, 2 if "
+                                      "they gave none."},
+             "login": {"type": "string",
+                       "description": "A GitHub username the person gave, only if it differs "
+                                      "from the one on their resume."}}}),
     Tool("suggest_projects_for_jd",
          "When the person wants a project to build for this job (or has none that fits), suggest "
          "small GitHub projects aimed at this job's role and the skills its description asks for. "
@@ -404,6 +436,22 @@ def system_prompt(tools: dict[str, Tool], role: str = "", company: str = "") -> 
         "- Name every repository, project and idea exactly as the tool returned it, spelled the "
         "same, and describe it only with what the tool said about it.",
     ]
+    if "add_github_projects" in tools:
+        lines[lines.index("Rules:") + 2] = (
+            "- The only change you can make is adding the person's own GitHub repositories with "
+            "add_github_projects, and only when they ask for it. You cannot publish anything or "
+            "connect GitHub yourself, and you never say you saved, added, updated or changed "
+            "anything that a tool did not report as done. For any other change, tell them to say "
+            "it in this chat with the details, or point them to the button you were given. When a "
+            "tool gave them a card with checkboxes, tell them to tick what they want and click its "
+            "button.")
+        lines.append(
+            "- When the person asks to add projects or repositories from GitHub (\"add 2 github "
+            "projects\", \"use my repos\"), call add_github_projects with the number they asked "
+            "for. Never ask them to send repository links or names when GitHub is connected or a "
+            "username is known: the tools read them. Say in one or two sentences which ones were "
+            "added and why, exactly as the tool said, and if fewer fit than they asked for, say so "
+            "and offer to help build a project for this job for the rest.")
     if "suggest_projects_for_jd" in tools:
         lines.append(
             "- When the person wants a project to build for this job, call suggest_projects_for_jd. "
@@ -600,6 +648,8 @@ def tools_for(ctx: AppContext) -> dict[str, Tool]:
     out = dict(TOOLS)
     if ctx.suggest_ideas is None:
         out.pop("suggest_projects_for_jd", None)
+    if ctx.add_top is None:
+        out.pop("add_github_projects", None)
     return out
 
 
@@ -637,7 +687,7 @@ def run_turn(session, ctx: AppContext, message: str, tools: dict[str, Tool] | No
                 if tool is None:
                     raise KeyError(name)
                 out = tool.run(ctx, dict(c.get("input") or {}))
-                if tool.mutates:
+                if tool.mutates and not (isinstance(out, dict) and out.get("changed") is False):
                     did.append(name)
                 card = out.pop("card", None) if isinstance(out, dict) else None
                 if card:
@@ -673,6 +723,48 @@ _ASK = re.compile(
     r"\b(?:check|look (?:at|through)|scan|review|go through|rank|show|list|find|pull|read|"
     r"open|connect|link|suggest|recommend|build me|help me build|make me|create|compare)\b"
     r"[^.?!\n]{0,40}\b(?:github|repos?|repositor(?:y|ies)|portfolio|projects?)\b", re.I)
+# An act on GitHub, repositories or projects: an action verb aimed at them ("add 2 github
+# projects", "use my repos", "pull my projects from GitHub", "check my github"). Unlike a
+# general ask, it leaves the funnel even while an intake answer is pending (Kofi, 2026-11-09:
+# "add 2 github projects" got "send me the repo links" from the intake), unless it is itself
+# material (a list, a link, a project described in it).
+_ACT = re.compile(
+    r"\b(?:add|put|use|include|pull|import|show|rank|check|pick|find)\b"
+    r"[^.?!\n]{0,40}\b(?:github|repos?|repositor(?:y|ies)|projects?)\b", re.I)
+# A project described in the message itself is material for the intake's capture, not a
+# request: "add my project Route Planner, which modeled a 40-truck fleet", "projects: ...".
+_DESCRIBED = re.compile(
+    r"[:;]|\b(?:called|named)\b|\b(?:which|that|where)\s+(?:i\s+)?(?:built|made|wrote|created|"
+    r"designed|modell?ed|analy[sz]ed|automated|tracks?|predicts?|does|did|uses|used|is|was)\b", re.I)
+# The number in "add 2 github projects", "add the top three repos", "add a project from GitHub".
+_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "a couple": 2, "a couple of": 2, "three": 3,
+            "four": 4, "five": 5, "six": 6}
+_ADD_GITHUB = re.compile(
+    r"\b(?:add|put|include|import|pull|use|pick)\b\s+(?:in\s+|on\s+)?(?:me\s+)?"
+    r"(?:(?:the|my|your)\s+)?(?:(?:top|best)\s+)?(?P<n>\d{1,2}|one|two|three|four|five|six|"
+    r"a couple(?: of)?|an?)\s+(?:(?:more|of|my|the|best|top|strongest|good|relevant|github|"
+    r"public)\s+)*(?P<what>github\s+(?:projects?|repos?|repositor(?:y|ies))|projects?|repos?|"
+    r"repositor(?:y|ies))\b", re.I)
+
+
+def github_add_count(message: str) -> int:
+    """How many repositories "add 2 github projects" asks to add from the person's GitHub, or 0
+    when the message is not such a request (no number, no GitHub or repository word, or it is
+    material such as a list, a link or a described project)."""
+    m = str(message or "")
+    if not wants_agent(m, pending=True):
+        return 0
+    hit = _ADD_GITHUB.search(m)
+    if not hit:
+        return 0
+    what = hit.group("what").lower()
+    if "github" not in what and not re.search(r"\b(?:github|repos?|repositor(?:y|ies))\b", m, re.I):
+        return 0
+    raw = hit.group("n").lower()
+    n = int(raw) if raw.isdigit() else _NUMBERS.get(raw, 0)
+    return max(0, min(n, MAX_ADD))
+
+
 # An answer: what a person says back to the intake's question ("no github, no projects",
 # "I don't have projects", "skip", "yes").
 _ANSWER_START = re.compile(
@@ -692,8 +784,9 @@ def wants_agent(message: str, pending: bool = False) -> bool:
     A message that only answers (a decline such as "no github, no projects", "I don't have
     projects", a statement, an explicit list of projects, a pasted link) is material for the
     intake's capture, so it stays there. ``pending`` is True while a required intake answer is
-    pending (before the first build): then only a clear question goes to the agent, never an
-    imperative or a statement, so the funnel's question is always answered first."""
+    pending (before the first build): then a clear question, or an act on GitHub, repositories
+    or projects ("add 2 github projects", "check my github"), goes to the agent; any other
+    imperative or statement stays, so the funnel's question is answered first."""
     m = str(message or "")
     if not m.strip() or _LISTED.search(m):
         return False
@@ -703,6 +796,10 @@ def wants_agent(message: str, pending: bool = False) -> bool:
         return False
     if is_question(m):
         return True
+    if _ANSWER_START.match(m):
+        return False
+    if _ACT.search(m) and not _DESCRIBED.search(m) and len(m.split()) <= 25:
+        return True
     if pending:
         return False
-    return bool(_ASK.search(m)) and not _ANSWER_START.match(m)
+    return bool(_ASK.search(m))
