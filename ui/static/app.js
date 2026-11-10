@@ -1785,7 +1785,7 @@
     det.scrollTop = 0;
     const f = freshness(j);
     const wm = workMode(j);
-    const tags = roleTags(j, 9);   // the detail shows them all
+    const tags = roleTags(j, 4);   // the detail shows four like the list card does, the rest as +N (Kofi 2026-11-09)
     det.innerHTML = `
       <div class="fd-stick" id="fdStick"><div class="fd-stick-in">
         ${companyAvatar(j)}

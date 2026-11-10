@@ -1163,7 +1163,8 @@ button { font-family: inherit; cursor: pointer; }
 /* Category chip (Data & AI, Engineering, ...). It read as indented text because surface-2 + the
    faint border both sit too close to the card; a clear stronger border + a slight ink tint + a
    pill shape make it read as a real bounded tag, like the sponsorship badges. */
-.fr-tag { font-size: 10.5px; font-weight: 600; color: var(--ink);
+.fr-tag { flex: none; white-space: nowrap;   /* a pill never squeezes or wraps into a tall blob */
+  font-size: 10.5px; font-weight: 600; color: var(--ink);
   background: color-mix(in srgb, var(--ink) 7%, transparent);
   border: 1px solid var(--border-strong); border-radius: var(--r-pill); padding: 2px 9px; }
 /* Fact row (salary · work-mode · type · entry-level) with a dot separator, like the competitor's. */
@@ -1222,7 +1223,7 @@ button { font-family: inherit; cursor: pointer; }
 .fd-headrow { display: flex; gap: 13px; align-items: flex-start; }
 .fd-headrow .fr-logo { width: 46px; height: 46px; }
 .fd-headmain { min-width: 0; flex: 1; }
-.fd-tags { margin-top: 11px; }
+.fd-tags { margin-top: 11px; flex-wrap: wrap; overflow: visible; row-gap: 6px; }
 /* The posting, sectioned. LinkedIn puts a thin border round each block of a posting and it
    is the whole reason theirs is scannable and ours was a wall: the structure is already IN
    the text, we were just discarding it. Hairline borders only, no fills, so the segregation
