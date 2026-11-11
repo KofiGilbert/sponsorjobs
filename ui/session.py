@@ -7907,6 +7907,10 @@ class WebIntake:
         self._terms_placed_for = key
         cov = self.coverage_dict()
         before = cov.get("ratio")
+        # An older session's first rebuild selects its Skills block for this job again
+        # (_refresh_for_job); that happens first, so the terms placed now are not thrown away by
+        # it (Kofi's Google chat: both terms placed, then gone with the old block, 2026-11-11).
+        self._refresh_for_job()
         material = with_stated_skills(self.profile, self.essentials)
         literal = [str(t) for t in cov.get("missing_supported") or []]
         ask, _tools = _IS.candidates(cov.get("missing") or [])
@@ -7925,10 +7929,6 @@ class WebIntake:
             self._terms_result = result
             self._persist()
             return result
-        # An older session's first rebuild selects its Skills block for this job again
-        # (_refresh_for_job); that happens first, so the terms placed now are not thrown away by
-        # it (Kofi's Google chat: both terms placed, then gone with the old block, 2026-11-11).
-        self._refresh_for_job()
         snapshot = (_copy.deepcopy(self.profile), list(self.inferred_terms or []),
                     _copy.deepcopy(self.essentials.get("skills_input") or []))
         self.inferred_terms = list(self.inferred_terms or []) + [

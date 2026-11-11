@@ -221,3 +221,22 @@ def test_are_we_done_answers_from_the_page_and_puts_supported_terms_on_it(templa
     s._pdf_v += 1
     again = s.accept()
     assert again["record_id"] == first["record_id"] and len(s.records.list()) == 1
+
+
+@requires_latex
+def test_the_terms_survive_an_older_sessions_skills_reselection(template_source, fake_llm, workdir):
+    # Kofi's Google chat predates the per-job Skills selection: its first rebuild selects the
+    # Skills block again, which threw away the two terms just placed (2026-11-11).
+    fake_llm.infer_script = _infer
+    s = WebIntake(JD, template_source, fake_llm, ConversationMemory(":memory:"), CVRecords(":memory:"),
+                  workdir, jobname="cv", palace_dir=workdir / "p")
+    s.github_status = lambda: {"connected": False, "login": ""}
+    s.github_token = lambda: ""
+    s.start()
+    s.submit(SKELETON)
+    s.submit(EXTRAS)
+    s._skills_job = "another job"          # the next rebuild reselects the Skills block
+    s.inferred_terms = []
+    s._place_job_terms(force=True)
+    assert s._skills_job != "another job"   # the reselection ran
+    assert s._term_on_page("Dashboards") and s._term_on_page("Forecasting")
