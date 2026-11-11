@@ -1370,12 +1370,12 @@ def _drop_trailing_bullet(profile: dict, cuts: "_Cuts | None" = None) -> bool:
     lists = list(_role_lists(profile))
     rank_of = {id(r.get("bullets")): rank for rank, _e, r in ranked_roles(profile)}
 
-    from .filler import figures_of
+    from .filler import has_figure
 
     def droppable(bl, label):
         idx = [i for i in range(len(bl) - 1, 0, -1) if not cuts.kept("bullet", label, str(bl[i]))]
         # A bullet without a distinctive figure goes before one with (``_cut_victim``).
-        return sorted(idx, key=lambda i: 1 if figures_of(str(bl[i])) else 0)
+        return sorted(idx, key=lambda i: 1 if has_figure(str(bl[i])) else 0)
     candidates = [x for x in lists if len(x[0]) > 1 and droppable(x[0], x[2])]
     others = [x for x in candidates if not x[3]]
     if others:
@@ -1385,7 +1385,7 @@ def _drop_trailing_bullet(profile: dict, cuts: "_Cuts | None" = None) -> bool:
     # A project bullet with a figure is never cut while a figureless bullet anywhere on the page
     # can go instead ("a demand-shaped roster beat a flat one by about 5 points ... 10 drivers",
     # Kofi's Google page, 2026-11-10).
-    soft = [x for x in candidates if not figures_of(str(x[0][droppable(x[0], x[2])[0]]))]
+    soft = [x for x in candidates if not has_figure(str(x[0][droppable(x[0], x[2])[0]]))]
     if soft:
         candidates = [x for x in candidates if x in soft or x[1] != "projects"]
     roles = [x for x in candidates if x[1] == "experience" and id(x[0]) in rank_of]
@@ -1413,29 +1413,30 @@ def _all_roles(profile: dict):
 
 def _cut_victim(bl: list, lo: int, cuts: "_Cuts", label: str):
     """The index of the bullet a cut takes from ``bl`` (positions ``lo`` and up, latest first):
-    a bullet WITHOUT a distinctive figure before one with, so "280,000+ job postings a day ...
-    145,000+ sponsorship-matched roles" is never what goes to make room (Kofi, 2026-11-10); a
-    bullet the person put back is never cut again. None when nothing may go."""
-    from .filler import figures_of
+    a bullet WITHOUT a number before one with (``filler.has_figure``), so "280,000+ job postings a
+    day ... 145,000+ sponsorship-matched roles" or "about 5 points of on-time delivery" is never
+    what goes to make room (Kofi, 2026-11-10); a bullet the person put back is never cut again.
+    None when nothing may go."""
+    from .filler import has_figure
     free = [i for i in range(len(bl) - 1, lo - 1, -1) if not cuts.kept("bullet", label, str(bl[i]))]
     for i in free:
-        if not figures_of(str(bl[i])):
+        if not has_figure(str(bl[i])):
             return i
     return free[0] if free else None
 
 
 def _figured_entry(entry: dict) -> bool:
     """Does any bullet of this project or entry carry a distinctive figure?"""
-    from .filler import figures_of
-    return any(figures_of(str(b)) for r in (entry.get("roles") or [entry]) if isinstance(r, dict)
+    from .filler import has_figure
+    return any(has_figure(str(b)) for r in (entry.get("roles") or [entry]) if isinstance(r, dict)
                for b in r.get("bullets") or [])
 
 
 def _figureless_on_page(profile: dict) -> bool:
     """Is there a bullet without a distinctive figure anywhere on the page (any role, project
     or activity)? While there is, a project's figured bullet is never the one cut."""
-    from .filler import figures_of
-    return any(not figures_of(str(b)) for bl, _s, _l, _lead in _role_lists(profile) for b in bl)
+    from .filler import has_figure
+    return any(not has_figure(str(b)) for bl, _s, _l, _lead in _role_lists(profile) for b in bl)
 
 
 def _shrink_once(profile: dict, trims: list | None = None, keep=None,
@@ -1556,12 +1557,12 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
 
     # 9. Drop a remaining single bullet from the last role that has one: a figureless bullet
     # anywhere on the page before a bullet with a figure.
-    from .filler import figures_of
+    from .filler import has_figure
     lists = list(reversed([x for x in _role_lists(profile) if x[1] != "extracurricular" and x[0]]))
     for figured in (False, True):
         for bl, section, label, _lead in lists:
             idx = _cut_victim(bl, 0, cuts, label)
-            if idx is None or (not figured and figures_of(str(bl[idx]))):
+            if idx is None or (not figured and has_figure(str(bl[idx]))):
                 continue
             cuts.add("bullet", section, label, str(bl[idx]), index=idx)
             bl.pop(idx)
@@ -2763,11 +2764,11 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list, older_roles: bool = Tr
         if trims is not None and rec in trims:
             trims.remove(rec)
 
-    from .filler import figures_of
+    from .filler import has_figure
 
     def pop(bl: list, section: str, label: str, keep_n: int, figured: bool = True):
         idx = _cut_victim(bl, keep_n, cuts, label)
-        if idx is None or (not figured and figures_of(str(bl[idx]))):
+        if idx is None or (not figured and has_figure(str(bl[idx]))):
             return None
         text = bl.pop(idx)
         cuts.add("bullet", section, label, str(text), index=idx, room=True)

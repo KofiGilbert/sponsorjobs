@@ -199,6 +199,14 @@ def _numbers(text: str) -> set[str]:
     return out
 
 
+def has_figure(text: str) -> bool:
+    """Does a bullet state a result in numbers? Any number but a year: "280,000+", "6.5%", and
+    also "about 5 points of on-time delivery ... about 10 drivers" (Last-Mile's result bullet,
+    which the page's cuts took because its numbers are small, Kofi's Google page 2026-11-10).
+    The page's cuts keep such a bullet while one without a number can go instead."""
+    return bool(_numbers(text))
+
+
 def _figures(text: str) -> set[str]:
     """The distinctive figures in a bullet (280,000+, 145,000+, 6.5%): three digits or more, or
     a percentage; a year on its own is not one."""

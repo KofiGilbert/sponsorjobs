@@ -593,3 +593,23 @@ def test_the_page_fill_on_an_old_session_rebuilds_with_both(template_source, wor
     page = s.assembled.profile_used
     assert page["interests"] == MERGED
     assert "X++" not in split_terms(page["skills"][list(page["skills"])[0]])[:4]
+
+
+def test_a_project_bullet_the_saved_profile_lost_comes_back_from_the_intake(template_source, workdir):
+    # Saving the deduped Google page wrote Last-Mile's lost result bullet out of the saved
+    # profile; the person's intake material still had it. The next build puts it back.
+    from tests.test_one_fact_per_bullet import SIM_BUILT, SIM_RESULT
+    saved = {**SAVED, "projects": [{"title": "Last-Mile Operations Simulator (Python)", "bullets": [SIM_BUILT]}]}
+    ess = {**ESS, "projects": [{"title": "Last-Mile Operations Simulator (Python)",
+                                "bullets": [SIM_BUILT, SIM_RESULT]}]}
+    s = _returning(template_source, workdir, saved=saved, ess=ess)
+    base = dict(s.saved_profile)
+    assert s._restore_project_bullets(base) == [SIM_RESULT]
+    assert base["projects"][0]["bullets"] == [SIM_BUILT, SIM_RESULT]
+    assert s.saved_profile["projects"][0]["bullets"] == [SIM_BUILT]      # the saved copy untouched
+    # The same fact reworded never comes back twice.
+    again = {**ess, "projects": [{"title": "Last-Mile Operations Simulator (Python)",
+                                  "bullets": [SIM_BUILT.replace("deadlines.", "deadlines each day."), SIM_RESULT]}]}
+    s2 = _returning(template_source, workdir, saved=saved, ess=again)
+    b2 = dict(s2.saved_profile)
+    assert s2._restore_project_bullets(b2) == [SIM_RESULT]

@@ -200,3 +200,17 @@ def test_a_figureless_project_goes_before_a_figured_one():
     trims: list = []
     assert _shrink_once(p, trims)
     assert [x["title"] for x in p["projects"]] == ["Last-Mile Operations Simulator"]
+
+
+def test_a_result_in_small_numbers_counts_as_a_figure_for_the_cuts():
+    # The intake's wording of Last-Mile's result has no large figure ("about 5 points ... about
+    # 10 drivers"), and the one-page fit took it while figureless job bullets stood.
+    from tailoring.assembler import _Cuts, _drop_trailing_bullet
+    assert F.has_figure(SHOWED) and not F.has_figure("Led business analysis for both lines.")
+    assert not F.has_figure("Joined in 2021 as an analyst.")
+    p = _google_profile()
+    p["projects"][0]["bullets"] = [BUILT, SHOWED]
+    p["experience"][0]["roles"][0]["bullets"] = p["experience"][0]["roles"][0]["bullets"][:2]
+    trims: list = []
+    assert _drop_trailing_bullet(p, _Cuts(trims, (), None))
+    assert p["projects"][0]["bullets"] == [BUILT, SHOWED]

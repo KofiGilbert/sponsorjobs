@@ -5561,6 +5561,7 @@ class WebIntake:
                 if self.essentials.get(k):
                     v = self.essentials[k]
                     base[k] = [dict(x) for x in v if isinstance(x, dict)] if isinstance(v, list) else v
+            self._restore_project_bullets(base)
             self.profile = normalize_profile(base)
             # HARD RULE (memory: complete-cv-fills-page): the template's page-filling
             # sections are collected BEFORE the first build and never deferred to post-build
@@ -6794,6 +6795,32 @@ class WebIntake:
         st = self._state([msg])
         st["template_ok"] = True
         return st
+
+    def _restore_project_bullets(self, base: dict) -> list[str]:
+        """A project's own bullets that the saved profile lost come back from the person's intake
+        material (essentials). The entry dedupe once read Last-Mile's result bullet ("about 5
+        points of on-time delivery ... about 10 drivers") as a repeat of its build bullet, the
+        page went out with one, and saving that page wrote the loss into the saved profile
+        (Kofi's Google build, 2026-11-10). A bullet comes back only under the same project, in
+        its own place, and only when it is not the same fact as one already there."""
+        from tailoring.filler import same_fact
+        key = lambda p: re.sub(r"\s*\(.*$", "", str(p.get("title") or p.get("org") or "")).strip().lower()
+        mine = {key(p): p for p in (self.essentials.get("projects") or []) if isinstance(p, dict)}
+        back: list[str] = []
+        projects = [dict(p) if isinstance(p, dict) else p for p in (base.get("projects") or [])]
+        for p in projects:
+            if not isinstance(p, dict) or not key(p) or key(p) not in mine:
+                continue
+            have = [str(b) for b in p.get("bullets") or []]
+            out = list(have)
+            for n, b in enumerate(str(x) for x in mine[key(p)].get("bullets") or []):
+                if b.strip() and b not in out and not any(same_fact(b, h) for h in out):
+                    out.insert(min(n, len(out)), b)
+                    back.append(b)
+            p["bullets"] = out
+        if back:
+            base["projects"] = projects
+        return back
 
     def _jd_key(self) -> str:
         import hashlib
