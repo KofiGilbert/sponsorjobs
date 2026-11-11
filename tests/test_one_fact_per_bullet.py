@@ -131,3 +131,72 @@ def test_the_line_fit_refuses_a_fill_that_restates_a_sibling(monkeypatch):
     monkeypatch.setattr(F, "borrows_from_sibling", lambda *_a, **_k: False)   # its twin guard
     monkeypatch.setattr(F, "role_padding", lambda *_a, **_k: [])              # and the phrase check
     assert run().profile["projects"][0]["bullets"][1] == COPIED
+
+
+# --- A project bullet with a figure is kept like a job bullet (Kofi's Google page, 2026-11-10) ---
+# Both of his saved Last-Mile bullets name the 5,000-order, 250-driver operation; the second adds
+# its own result. The two shared figures made it a "repeat" and it never reached the page.
+SIM_BUILT = ("Built a Python discrete-event simulation of a delivery operation (5,000 orders a "
+             "day, 250 drivers) to size the fleet and test alternative shift designs against "
+             "realistic daily demand patterns, driver availability and delivery deadlines.")
+SIM_RESULT = ("Ran repeated Python simulations of a 5,000-order, 250-driver delivery operation "
+              "showing a demand-shaped roster beat a flat one by about 5 points of on-time "
+              "delivery at equal cost, matching about 10 drivers to actual peak order hours.")
+
+
+def _google_profile():
+    return {
+        "identity": {"name": "Test Person"},
+        "projects": [{"title": "Last-Mile Operations Simulator", "bullets": [SIM_BUILT, SIM_RESULT]},
+                     {"title": "Gate Check", "bullets": [
+                         "Built a gate and yard app that imports the inbound schedule from a photo."]}],
+        "experience": [{"org": "Acme", "roles": [{"title": "Analyst", "bullets": [
+            "Processed 280,000+ job postings a day into 145,000+ matched roles.",
+            "Led business analysis and reporting for the retail and digital lines.",
+            "Owned the KPI frameworks for both banking lines."]}]}],
+        "skills": {"A": "SQL", "B": "Excel", "C": "Python", "D": "Tableau", "E": "Jira"},
+    }
+
+
+def test_a_result_with_its_own_numbers_is_not_a_repeat():
+    assert not F.same_fact(SIM_BUILT, SIM_RESULT)
+    p = _google_profile()
+    assert _dedupe_entry_bullets(p) == 0
+    assert p["projects"][0]["bullets"] == [SIM_BUILT, SIM_RESULT]
+    # The same figures with nothing of its own is still one fact said twice.
+    assert F.same_fact(SIM_BUILT, "Simulated a 5,000-order, 250-driver delivery operation.")
+
+
+def test_making_room_never_takes_a_figured_project_bullet():
+    from tailoring.assembler import _Cuts, _make_room
+    p = _google_profile()
+    trims: list = []
+    undo = _make_room(p, _Cuts(trims, (), None), order=[], older_roles=False)
+    assert undo is not None
+    assert p["projects"][0]["bullets"] == [SIM_BUILT, SIM_RESULT]
+    assert trims[-1]["kind"] == "skills_line"              # a skills line went instead
+    undo()
+    assert len(p["skills"]) == 5
+
+
+def test_the_one_page_shrink_cuts_a_figureless_bullet_before_a_figured_project_one():
+    from tailoring.assembler import _Cuts, _drop_trailing_bullet
+    p = _google_profile()
+    p["experience"][0]["roles"][0]["bullets"] = p["experience"][0]["roles"][0]["bullets"][:2]
+    trims: list = []
+    assert _drop_trailing_bullet(p, _Cuts(trims, (), None))
+    assert p["projects"][0]["bullets"] == [SIM_BUILT, SIM_RESULT]
+    assert trims[-1]["text"].startswith("Led business analysis")
+
+
+def test_a_figureless_project_goes_before_a_figured_one():
+    from tailoring.assembler import _shrink_once
+    p = _google_profile()
+    p["projects"].append(p["projects"].pop(0))            # the figured project is now last
+    for e in p["projects"] + p["experience"]:
+        for r in e.get("roles") or [e]:
+            r["bullets"] = r["bullets"][:1]
+    p["skills"] = {"A": "SQL"}
+    trims: list = []
+    assert _shrink_once(p, trims)
+    assert [x["title"] for x in p["projects"]] == ["Last-Mile Operations Simulator"]

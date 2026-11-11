@@ -1370,14 +1370,24 @@ def _drop_trailing_bullet(profile: dict, cuts: "_Cuts | None" = None) -> bool:
     lists = list(_role_lists(profile))
     rank_of = {id(r.get("bullets")): rank for rank, _e, r in ranked_roles(profile)}
 
+    from .filler import figures_of
+
     def droppable(bl, label):
-        return [i for i in range(len(bl) - 1, 0, -1) if not cuts.kept("bullet", label, str(bl[i]))]
+        idx = [i for i in range(len(bl) - 1, 0, -1) if not cuts.kept("bullet", label, str(bl[i]))]
+        # A bullet without a distinctive figure goes before one with (``_cut_victim``).
+        return sorted(idx, key=lambda i: 1 if figures_of(str(bl[i])) else 0)
     candidates = [x for x in lists if len(x[0]) > 1 and droppable(x[0], x[2])]
     others = [x for x in candidates if not x[3]]
     if others:
         candidates = others
     if not candidates:
         return False
+    # A project bullet with a figure is never cut while a figureless bullet anywhere on the page
+    # can go instead ("a demand-shaped roster beat a flat one by about 5 points ... 10 drivers",
+    # Kofi's Google page, 2026-11-10).
+    soft = [x for x in candidates if not figures_of(str(x[0][droppable(x[0], x[2])[0]]))]
+    if soft:
+        candidates = [x for x in candidates if x in soft or x[1] != "projects"]
     roles = [x for x in candidates if x[1] == "experience" and id(x[0]) in rank_of]
     rest = [x for x in candidates if not (x[1] == "experience" and id(x[0]) in rank_of)]
     extra = [x for x in roles if len(x[0]) > bullet_budget(rank_of[id(x[0])], x[3])[0]]
@@ -1412,6 +1422,20 @@ def _cut_victim(bl: list, lo: int, cuts: "_Cuts", label: str):
         if not figures_of(str(bl[i])):
             return i
     return free[0] if free else None
+
+
+def _figured_entry(entry: dict) -> bool:
+    """Does any bullet of this project or entry carry a distinctive figure?"""
+    from .filler import figures_of
+    return any(figures_of(str(b)) for r in (entry.get("roles") or [entry]) if isinstance(r, dict)
+               for b in r.get("bullets") or [])
+
+
+def _figureless_on_page(profile: dict) -> bool:
+    """Is there a bullet without a distinctive figure anywhere on the page (any role, project
+    or activity)? While there is, a project's figured bullet is never the one cut."""
+    from .filler import figures_of
+    return any(not figures_of(str(b)) for bl, _s, _l, _lead in _role_lists(profile) for b in bl)
 
 
 def _shrink_once(profile: dict, trims: list | None = None, keep=None,
@@ -1483,16 +1507,26 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
             bl.pop(idx)
             return True
 
-    # 6. Drop a trailing project entry (keep at least one).
+    # 6. Drop a trailing project entry (keep at least one), one whose bullets carry no
+    # distinctive figure first; a figured project waits until a skills line and an education
+    # entry have gone (6b).
     projects = profile.get("projects", [])
-    if len(projects) > 1:
-        idx = next((i for i in range(len(projects) - 1, 0, -1)
-                    if not cuts.kept("project", entry_label(projects[i]), entry_label(projects[i]))), None)
-        if idx is not None:
-            label = entry_label(projects[idx])
-            cuts.add("project", "projects", label, label, index=idx, entry=copy.deepcopy(projects[idx]))
-            projects.pop(idx)
-            return True
+
+    def drop_project(figured: bool) -> bool:
+        if len(projects) <= 1:
+            return False
+        # The last project first; a figureless one may go from anywhere in the list.
+        idx = next((i for i in range(len(projects) - 1, 0 if figured else -1, -1)
+                    if not cuts.kept("project", entry_label(projects[i]), entry_label(projects[i]))
+                    and (figured or not _figured_entry(projects[i]))), None)
+        if idx is None:
+            return False
+        label = entry_label(projects[idx])
+        cuts.add("project", "projects", label, label, index=idx, entry=copy.deepcopy(projects[idx]))
+        projects.pop(idx)
+        return True
+    if drop_project(False):
+        return True
 
     # 7. Skills keep 4 to 5 full-width lines (the owner's layout rule, linefit.py): drop a line
     # ONLY above the 4-line floor, so it can go 5 -> 4 but never below 4.
@@ -1516,15 +1550,22 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
             edu.pop(idx)
             return True
 
-    # 9. Drop a remaining single bullet from the last role that has one.
-    for bl, section, label, _lead in reversed([x for x in _role_lists(profile)
-                                                if x[1] != "extracurricular" and x[0]]):
-        idx = _cut_victim(bl, 0, cuts, label)
-        if idx is None:
-            continue
-        cuts.add("bullet", section, label, str(bl[idx]), index=idx)
-        bl.pop(idx)
+    # 6b. A trailing project whose bullets carry a figure.
+    if drop_project(True):
         return True
+
+    # 9. Drop a remaining single bullet from the last role that has one: a figureless bullet
+    # anywhere on the page before a bullet with a figure.
+    from .filler import figures_of
+    lists = list(reversed([x for x in _role_lists(profile) if x[1] != "extracurricular" and x[0]]))
+    for figured in (False, True):
+        for bl, section, label, _lead in lists:
+            idx = _cut_victim(bl, 0, cuts, label)
+            if idx is None or (not figured and figures_of(str(bl[idx]))):
+                continue
+            cuts.add("bullet", section, label, str(bl[idx]), index=idx)
+            bl.pop(idx)
+            return True
 
     # 10. Last resort: drop a trailing experience entry (keep at least one).
     exp = profile.get("experience", [])
@@ -2722,9 +2763,11 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list, older_roles: bool = Tr
         if trims is not None and rec in trims:
             trims.remove(rec)
 
-    def pop(bl: list, section: str, label: str, keep_n: int):
+    from .filler import figures_of
+
+    def pop(bl: list, section: str, label: str, keep_n: int, figured: bool = True):
         idx = _cut_victim(bl, keep_n, cuts, label)
-        if idx is None:
+        if idx is None or (not figured and figures_of(str(bl[idx]))):
             return None
         text = bl.pop(idx)
         cuts.add("bullet", section, label, str(text), index=idx, room=True)
@@ -2741,9 +2784,13 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list, older_roles: bool = Tr
         u = pop(r["bullets"], "experience", entry_label(e, r), max(OLDER_BUDGET[0], OLDEST_FLOOR))
         if u:
             return u
-    for p in reversed(profile.get("projects") or []):                # (2)
+    # (2) A project bullet with a distinctive figure ("about 5 points of on-time delivery ...
+    # about 10 drivers") is never cut while a figureless bullet anywhere on the page could go
+    # instead (Kofi's Google page, 2026-11-10): only figureless project bullets make room here.
+    spare = not _figureless_on_page(profile)
+    for p in reversed(profile.get("projects") or []):
         if isinstance(p, dict) and isinstance(p.get("bullets"), list):
-            u = pop(p["bullets"], "projects", entry_label(p), 1)
+            u = pop(p["bullets"], "projects", entry_label(p), 1, figured=spare)
             if u:
                 return u
     skills = profile.get("skills")                                    # (3)

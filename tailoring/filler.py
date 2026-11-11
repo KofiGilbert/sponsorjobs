@@ -162,6 +162,12 @@ def same_fact(a: str, b: str) -> bool:
     # roles" on a real page (2026-11-10). Two shared distinctive figures, or one with a third of
     # the content words in common, is one fact.
     shared = _figures(a) & _figures(b)
+    if shared and (_numbers(a) ^ _numbers(b)):
+        # Each states a number the other does not: the shared figures are the setting, not the
+        # fact. "Built a simulation of a 5,000-order, 250-driver operation" and "Ran it ... a
+        # demand-shaped roster beat a flat one by about 5 points, matching about 10 drivers" are
+        # two facts (Kofi's Google page lost the second as a repeat, 2026-11-10).
+        return False
     if len(shared) >= 2:
         return True
     # One shared figure counts only when it is a large count (280,000, not 20% or 250), with
@@ -177,6 +183,20 @@ def figures_of(text: str) -> set[str]:
     """The distinctive figures in a bullet (280,000+, 145,000+, 6.5%). A bullet that carries
     one is the strongest fact in its role: the fill and the page's cuts keep it first."""
     return _figures(text)
+
+
+_NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?")
+
+
+def _numbers(text: str) -> set[str]:
+    """Every number a bullet states, small ones too ("about 5 points", "10 drivers"); a year on
+    its own is not one."""
+    out = set()
+    for m in _NUMBER.finditer(str(text or "")):
+        f = m.group(0).replace(",", "").rstrip(".")
+        if f and not re.fullmatch(r"(?:19|20)\d\d", f):
+            out.add(f)
+    return out
 
 
 def _figures(text: str) -> set[str]:
