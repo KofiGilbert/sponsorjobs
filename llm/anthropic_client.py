@@ -361,7 +361,35 @@ class AnthropicLLM:
             return {"supported": False, "reason": "The model gave no usable answer."}
         return data
 
+    # One ad, one skill list (2026-11-11): every rebuild of a page re-read the ad, and the model
+    # gave 18 terms once and 20 the next, so the keyword percentage moved with no change to the
+    # page. The list is kept per ad text for the process; a session seeds it from the page it
+    # restores (``seed_jd_skills``) so a reopened chat measures against the same terms.
+    _JD_SKILLS: dict = {}
+
+    @staticmethod
+    def _jd_key(jd_text: str) -> str:
+        import hashlib
+        return hashlib.sha1(str(jd_text or "").encode("utf-8")).hexdigest()
+
+    def seed_jd_skills(self, jd_text: str, terms: list) -> None:
+        terms = [str(t) for t in terms or [] if str(t).strip()]
+        if jd_text and terms:
+            AnthropicLLM._JD_SKILLS.setdefault(self._jd_key(jd_text), list(terms))
+
     def extract_jd_skills(self, jd_text: str) -> list[str]:
+        key = self._jd_key(jd_text)
+        got = AnthropicLLM._JD_SKILLS.get(key)
+        if got:
+            return list(got)
+        out = self._extract_jd_skills(jd_text)
+        if out:
+            AnthropicLLM._JD_SKILLS[key] = list(out)
+            for old in list(AnthropicLLM._JD_SKILLS)[:-64]:
+                AnthropicLLM._JD_SKILLS.pop(old, None)
+        return out
+
+    def _extract_jd_skills(self, jd_text: str) -> list[str]:
         """Model-read skill list for the coverage report; falls back to the curated vocabulary
         when the model is unavailable or answers badly, so the report never goes blank."""
         import json as _json
@@ -1708,21 +1736,28 @@ class AnthropicLLM:
         if not terms:
             return []
         system = (
-            "You help tailor a job seeker's resume to one job. You are given job terms the "
-            "resume does not carry word for word, and the person's OWN material: roles, titles, "
-            "bullets, education (degrees and courses), projects and skills.\n"
-            "For each term decide: does their material CLEARLY imply they have done it? A "
-            "recruiter reading the material would agree without stretching. Examples: an MBA in "
-            "Business Analytics with Data Visualization coursework and years of analytics work "
-            "imply \"statistical analysis\" and \"data analysis\"; SQL reporting work implies "
-            "\"querying databases\"; building KPI dashboards implies \"dashboards\". Adjacent is "
-            "NOT enough: an AI-assisted data pipeline does not show machine learning, and "
-            "analytics work does not show natural language processing.\n"
-            "Hard rules: a named tool, programming language, library, framework, platform or "
-            "product (R, TensorFlow, PyTorch, scikit-learn, Hugging Face, Tableau) is supported "
-            "ONLY if the material names it; never infer one. A degree, certification or years of "
-            "experience is never supported here. The evidence must be a VERBATIM quote of a "
-            "short phrase from the material (it is checked word for word).\n"
+            "You tailor a job seeker's resume to one job. You are given job terms the resume does "
+            "not carry word for word, and the person's OWN material: roles, titles, bullets, "
+            "education (degrees and courses), projects and skills. Tailoring means the job's own "
+            "words go on the page wherever the person's material backs them, and the person "
+            "reviews the page, so judge like a fair recruiter, not a skeptic.\n"
+            "A term is SUPPORTED when the material shows the same work under another name:\n"
+            "- a degree or coursework in a field backs that field's core methods: an MBA in "
+            "Business Analytics backs \"statistical analysis\", \"statistics\", \"data analysis\" "
+            "and \"analytics\"; Database Management coursework or SQL work backs \"querying "
+            "databases\" and \"relational databases\";\n"
+            "- years of analytics, reporting or business intelligence work back \"data analysis\", "
+            "\"analytics\", \"KPIs\", \"dashboards\", \"reporting\" and \"data visualization\";\n"
+            "- an AI title or AI-assisted work backs \"artificial intelligence\" but NOT machine "
+            "learning, model training, NLP, LLM evaluation or model drift, which need the material "
+            "to show that specific work.\n"
+            "NOT supported: a named tool, programming language, library, framework, platform or "
+            "product (R, TensorFlow, PyTorch, scikit-learn, Hugging Face, Tableau) unless the "
+            "material names it; a degree, certification or years of experience; a field of study "
+            "the person did not study (Computer Science, Engineering); anything only adjacent.\n"
+            "The evidence must be a VERBATIM quote of a short phrase from the material, copied "
+            "exactly (it is checked word for word), for example a degree name, a course list or "
+            "part of a bullet.\n"
             "Return ONLY a JSON array, one object per term, in the order given: "
             "{\"term\": the term exactly as given, \"supported\": true|false, "
             "\"evidence\": \"verbatim quote, or empty\"}."

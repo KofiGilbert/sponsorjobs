@@ -7310,6 +7310,7 @@ class WebIntake:
 
     def _assemble(self, fit_lines: bool = False):
         self._refresh_for_job()
+        self._pin_jd_terms()
         # Render from a constraint-filtered COPY so a 'do not mention X' never reaches the CV,
         # while self.profile (persisted) stays whole; restore any hidden items into the durable
         # profile afterward. With no active constraints both are no-ops (behavior unchanged).
@@ -7336,6 +7337,22 @@ class WebIntake:
         self._pdf_v += 1
         self.dirty = False
         self._after_build()
+
+    def _pin_jd_terms(self) -> None:
+        """The job's term list stays the one this page was measured against: a reopened chat
+        seeds the model's per-ad list from its page's own report, so a rebuild does not move the
+        keyword percentage by reading the ad again."""
+        seed = getattr(self.llm, "seed_jd_skills", None)
+        a = self.assembled
+        if not callable(seed) or a is None or getattr(a, "coverage", None) is None:
+            return
+        c = a.coverage
+        terms = list(c.present) + list(c.missing_supported) + list(c.missing_unsupported) \
+            + list(getattr(c, "requirements", None) or [])
+        try:
+            seed(self.jd, terms)
+        except Exception:      # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------ review actions
     def _roles(self):
