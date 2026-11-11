@@ -976,3 +976,22 @@ def wants_agent(message: str, pending: bool = False) -> bool:
     if pending:
         return False
     return bool(_ASK.search(m))
+
+
+# "Are we done with this resume?", "is it ready to send?", "what's left?": the person asks for
+# the state of the page. Answered with a checklist read from the page (WebIntake._done_reply),
+# never a model's guess (Kofi was told his roles had no titles or dates, 2026-11-11).
+_DONE_ASK = re.compile(
+    r"\b(?:are\s+we|am\s+i|is\s+(?:it|this|the\s+resume|my\s+resume|that|everything))\s+"
+    r"(?:all\s+|now\s+|finally\s+)?(?:done|finished|ready|good\s+to\s+go|complete|good)\b"
+    r"|\b(?:anything|what(?:['’]s|\s+is)?)\s+(?:else\s+)?(?:left|missing|remaining)\b"
+    r"|\bready\s+to\s+(?:send|apply|submit)\b"
+    r"|\bcan\s+i\s+(?:send|submit|apply\s+with)\b"
+    r"|\b(?:done|finished)\s+with\s+(?:this|the|my)\s+resume\b", re.I)
+
+
+def asks_done(message: str) -> bool:
+    """A question about whether the resume is finished (a question mark or a question's start)."""
+    m = str(message or "").strip()
+    return bool(m and _DONE_ASK.search(m) and ("?" in m or _QUESTION_START.match(m)
+                                               or re.match(r"^\s*(?:are|is|am|can)\b", m, re.I)))

@@ -3289,6 +3289,9 @@
   // is the first type: ghost buttons that go to a page or send a fixed turn, nothing else (no
   // card can change the resume yet). The same look as the Home agent's buttons (agentReply).
   const CARD_NAV = {
+    // The done checklist's next action (WebIntake._done_reply): the review footer's own buttons.
+    accept: () => document.getElementById("acceptBtn")?.click(),
+    edit: () => { if ($("#paperWrap").hidden) $("#editToggle")?.click(); },
     projects: () => document.querySelector('[data-nav="projects"]')?.click(),
     cvs: () => document.querySelector('[data-nav="cvs"]')?.click(),
     jobs: () => document.querySelector('[data-nav="jobs"]')?.click(),
@@ -3487,11 +3490,42 @@
     if (card && card.type === "repo_fit") { renderRepoFit(card); return; }
     if (card && card.type === "ideas") { renderIdeasCard(card); return; }
     if (card && card.type === "project_progress") { renderProgressCard(card); return; }
+    if (card && card.type === "keyword_chips") { renderKeywordChips(card); return; }
     if (!card || card.type !== "buttons") return;
-    const acts = (card.buttons || []).filter(b => b && b.label && (CARD_NAV[b.nav] || b.send));
+    const acts = (card.buttons || []).filter(b => b && b.label && (CARD_NAV[b.nav] || b.send || b.token));
     if (!acts.length) return;
     const wrap = el("div", "agent-acts chat-card");
     acts.forEach(b => {
+      // A decided action ([Swap it in], [Build 2 projects]): the card's single-use token at
+      // /api/session/action, the same as the repo and ideas cards. Used once, it says so.
+      if (b.token) {
+        const btn = el("button", "btn btn-sm btn-ghost");
+        btn.type = "button"; btn.textContent = unDash(b.label);
+        if (card.used) { btn.disabled = true; btn.textContent = unDash(b.label) + " (done)"; }
+        btn.addEventListener("click", async () => {
+          if (composerBusy || btn.disabled) return;
+          composerBusy = true; btn.disabled = true;
+          const label = btn.textContent;
+          btn.textContent = "Working";
+          try {
+            await withWorking(async () => {
+              const st = await api("/api/session/action", { token: b.token, choice: b.choice || "" });
+              if (st && st.action_ok === false) {
+                btn.disabled = false; btn.textContent = label;
+                bubble("agent", chatText(st.action_error || "That did not work just now."));
+                return;
+              }
+              btn.textContent = unDash(b.label) + " (done)";
+              applyState(st);
+            }, "…");
+          } catch (err) {
+            btn.disabled = false; btn.textContent = label;
+            bubble("agent", chatText(err.message || "That did not work just now."));
+          } finally { composerBusy = false; }
+        });
+        wrap.appendChild(btn);
+        return;
+      }
       // Connect GitHub: one click starts the connect right here (connectFromChat), and the chat
       // carries on by itself once it is connected. Once connected, the button shows it, done.
       if (b.nav === "github") { wrap.appendChild(chatGhBox(card.connected)); return; }
@@ -3510,6 +3544,33 @@
         }
         wrap.remove();
         sendTurn(b.send, esc(unDash(b.label)));
+      });
+      wrap.appendChild(btn);
+    });
+    chat.appendChild(wrap); chat.scrollTop = chat.scrollHeight;
+  }
+
+  // The job's terms only the person can claim, as tappable chips in the chat (WebIntake._chips_card).
+  // A tap is the keyword panel's ADD (kwAdd): the person saying they have the skill.
+  function renderKeywordChips(card) {
+    const terms = (card.terms || []).filter(t => String(t || "").trim());
+    if (!terms.length) return;
+    const wrap = el("div", "agent-acts chat-card kw-chips");
+    const onPage = new Set((KW_ACTIONS || []).map(a => String(a.term || "").toLowerCase()));
+    terms.forEach(t => {
+      const btn = el("button", "btn btn-sm btn-ghost kw-chip");
+      btn.type = "button";
+      const done = onPage.has(String(t).toLowerCase());
+      btn.textContent = done ? `${unDash(t)} added` : `+ ${unDash(t)}`;
+      btn.disabled = done;
+      btn.addEventListener("click", () => {
+        if (btn.disabled) return;
+        kwAdd(t, btn);
+        KW_QUEUE.then(() => {
+          const added = (KW_ACTIONS || []).some(a => String(a.term || "").toLowerCase() === String(t).toLowerCase());
+          btn.textContent = added ? `${unDash(t)} added` : `+ ${unDash(t)}`;
+          btn.disabled = added;
+        });
       });
       wrap.appendChild(btn);
     });
@@ -3680,7 +3741,9 @@
     }
     // A closed job's chat is a record: nothing to save for sending.
     $("#acceptBtn").hidden = Boolean(st.expired);
-    if (st.phase === "review") {
+    // A built page (in review, or saved and reopened) always offers Accept & Save: a saved
+    // chat reopened read "Answer a few questions" with the button greyed out (2026-11-11).
+    if (st.phase === "review" || (st.phase === "done" && st.pdf)) {
       const blocked = Boolean(st.blocked_finalize);
       $("#acceptBtn").disabled = blocked;
       if (blocked) {

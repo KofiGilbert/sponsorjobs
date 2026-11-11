@@ -4574,6 +4574,13 @@ class WebIntake:
             if n_add:
                 return self._add_from_github(n_add)
 
+        # "Are we done with this resume?": a checklist read from the page, with the job's
+        # supported terms put on it and the projects judged first (never a guess).
+        if self.assembled is not None:
+            from agent.resume_chat import asks_done
+            if asks_done(message):
+                return self._done_reply()
+
         # Flagged-placeholder project controls.
         if _wants_remove_suggested(message) and self._suggested_projects():
             return self.remove_suggested_projects()
@@ -5560,6 +5567,13 @@ class WebIntake:
         One voice per turn: Kofi got the same tip after every build and three questions in a
         row, two of them the same (2026-11-10)."""
         e = self.essentials
+        # The job's terms the person's material backs go on the page now, before anything is
+        # said about it (CLAUDE.md section 8: tailoring mirrors the job's wording).
+        if self._agent_on() and self.assembled is not None:
+            try:
+                self._place_job_terms()
+            except Exception:      # noqa: BLE001 - the page stays as built
+                pass
 
         def say(note):
             # Every line said here goes into the chat's history too, so a reopened chat shows
@@ -5601,6 +5615,15 @@ class WebIntake:
             say(self.undated_projects_note())
         extra = self._light_extra()
         cards = self._project_offer(msgs)
+        chips = self._chips_card() if self._agent_on() and not e.get("unattended") else None
+        if chips:
+            line = self._fact("keyword_chips", self.CHIPS_LINE, exact=None,
+                              job_terms_to_tap=chips["terms"],
+                              how="each is a chip under the message; one tap adds it to the page")
+            msgs.append(line)
+            self._append("agent", line)
+            self.history[-1]["card"] = chips
+            cards = list(cards) + [chips]
         if not cards and not e.get("unattended"):
             q = self._next_question()
             if q:
@@ -5671,6 +5694,99 @@ class WebIntake:
             self.history[-1]["card"] = v["card"]
         self._persist()
         return [v["card"]] if v.get("card") else []
+
+    CHIPS = 8
+    CHIPS_LINE = "This role also asks for the skills below. Tap any you've used and I'll add it."
+
+    def _chips_card(self) -> dict | None:
+        """The job's terms only the person can claim, as tappable ADD chips (the keyword panel's
+        ADD: a tap is the person saying they have it)."""
+        try:
+            un = self._unsupported_terms()
+        except Exception:      # noqa: BLE001
+            return None
+        return {"type": "keyword_chips", "terms": un[: self.CHIPS]} if un else None
+
+    @_one_voice
+    def _done_reply(self) -> dict:
+        """"Are we done with this resume?": the real checklist, read from the page (Kofi,
+        2026-11-11). First the job's supported terms go on the page and the projects are judged;
+        then one message: the page and its fill, the keyword match (before and after), the
+        projects verdict, anything genuinely missing, the terms only the person can claim as
+        chips, and ONE recommended next action with its button."""
+        if self.assembled is None:
+            return self._state()
+        placed = {}
+        try:
+            placed = self._place_job_terms() or {}
+        except Exception:      # noqa: BLE001 - the checklist reads the page as it is
+            placed = {}
+        v = None
+        if self._agent_on():
+            try:
+                v = self._project_verdict()
+            except Exception:      # noqa: BLE001
+                v = None
+        a = self.assembled
+        cov = self.coverage_dict()
+        facts = self._page_facts()
+        fill = self._page_fill_pct()
+        one_page = bool(a.ok and a.compile is not None and a.compile.pages == 1)
+        chips = self._chips_card()
+        lines = []
+        lines.append("- Page: " + (f"one page, {fill}% full." if one_page else "it runs past one page."))
+        kw = (f"- Keywords: {len(cov.get('present') or [])} of {cov.get('terms')} job terms are on "
+              f"the page ({cov.get('ratio')}%")
+        added = [t for t in placed.get("added") or [] if t]
+        if added and placed.get("before") is not None and placed.get("before") != cov.get("ratio"):
+            kw += f", up from {placed['before']}%). I added {self._term_words(added).replace(' or ', ' and ')} from your own material."
+        else:
+            kw += ")."
+        lines.append(kw)
+        if v:
+            lines.append("- Projects: " + v["text"])
+        missing = []
+        if facts.get("roles_without_title"):
+            missing.append("a title for " + ", ".join(facts["roles_without_title"][:3]))
+        if facts.get("roles_without_dates"):
+            missing.append("dates for " + ", ".join(facts["roles_without_dates"][:3]))
+        used = getattr(a, "profile_used", None) or {}
+        for sec in self._empty_sections(used):
+            missing.append(f"your {sec} section is empty")
+        flagged = self._suggested_projects()
+        if flagged:
+            missing.append("a placeholder project to replace: " + ", ".join(flagged))
+        if missing:
+            lines.append("- Still missing: " + "; ".join(missing) + ".")
+        if chips:
+            lines.append("- " + self.CHIPS_LINE)
+        # One recommended next action.
+        action_card = None
+        if not one_page:
+            nxt = "Next: shorten something on the edit page so it fits one page."
+        elif flagged or facts.get("roles_without_title") or facts.get("roles_without_dates"):
+            nxt = "Next: fill in what is missing right on the page."
+            action_card = {"type": "buttons", "buttons": [{"label": "Edit the page", "nav": "edit"}]}
+        elif v and v.get("card"):
+            nxt = f"Next: {v['card']['buttons'][0]['label']} with the button below."
+            action_card = v["card"]
+        elif chips:
+            nxt = "Next: tap the skills above that you've used."
+        else:
+            nxt = "Next: click Accept & Save to keep it in Resumes."
+            action_card = {"type": "buttons", "buttons": [{"label": "Accept & Save", "nav": "accept"}]}
+        pending = bool(v or chips or missing or not one_page)
+        head = "Almost. Here's where it stands:" if pending else "Yes, it's ready. Here's where it stands:"
+        text = head + "\n" + "\n".join(lines) + "\n\n" + nxt
+        cards = [c for c in (chips, action_card) if c]
+        self._model_said(text)            # said exactly as read from the page
+        self._append("agent", text)
+        if cards:
+            self.history[-1]["card"] = cards[0]
+            if len(cards) > 1:
+                self.history[-1]["cards"] = cards
+        self._persist()
+        return self._state([text], cards=cards)
 
     @staticmethod
     def _term_words(terms: list) -> str:
@@ -7977,11 +8093,20 @@ class WebIntake:
         # Idempotent: once this session has produced a record, a second accept() (a
         # double-click, or a client retry on a slow first response) must return the SAME
         # record, not assemble again and add a duplicate row to the application queue.
+        # A page changed since that save (the chat filled it, put the job's terms on it, swapped a
+        # project) is saved again into the SAME record, so Resumes holds what the page shows.
+        resave = None
         if getattr(self, "stage", None) == "done" and getattr(self, "_last_record_id", None):
             job = f"cv-{self._last_record_id}"
-            return {"ok": True, "record_id": self._last_record_id,
-                    "coverage": self.coverage_dict().get("ratio"),
-                    "pdf": f"/api/cv.pdf?job={job}"}
+            try:
+                exists = self.records.get(self._last_record_id) is not None
+            except Exception:      # noqa: BLE001
+                exists = False
+            if not exists or self._saved_v == self._pdf_v:
+                return {"ok": True, "record_id": self._last_record_id,
+                        "coverage": self.coverage_dict().get("ratio"),
+                        "pdf": f"/api/cv.pdf?job={job}"}
+            resave = self._last_record_id
         # A finished/exported CV must never contain an invented project presented
         # as real: block while any flagged placeholder project remains.
         flagged = self._suggested_projects()
@@ -8052,10 +8177,17 @@ class WebIntake:
         label = (self.role or title or "Resume").strip() or "Resume"
         if getattr(self, "variant_of", None):
             data["variant_of"] = self.variant_of
-        rec_id = self.records.add(role=label, company=self.company, coverage=cov,
-                                  pdf_path="", jd_label=self.role, data=data)
+        if resave is not None:
+            # The record keeps its own status (it may be applied already); the page is new.
+            rec_id = resave
+            self.records.merge_data(rec_id, {k: v for k, v in data.items() if k != "status"})
+            self.records.set_coverage(rec_id, cov)
+        else:
+            rec_id = self.records.add(role=label, company=self.company, coverage=cov,
+                                      pdf_path="", jd_label=self.role, data=data)
+            self._record_application(rec_id)
         self._last_record_id = rec_id   # remember it so a repeat accept() is idempotent
-        self._record_application(rec_id)
+        self._saved_v = self._pdf_v
         job = f"cv-{rec_id}"
         if self.assembled.pdf_path and Path(self.assembled.pdf_path).exists():
             shutil.copyfile(self.assembled.pdf_path, self.workdir / f"{job}.pdf")
