@@ -8057,7 +8057,15 @@ class WebIntake:
             for r in (e["roles"] if isinstance(e.get("roles"), list) and e["roles"] else [e]):
                 if isinstance(r, dict) and r.get("bullets"):
                     counts.append(len(r["bullets"]))
+        short = None
+        try:
+            from tailoring import linefit as _lf
+            if getattr(a, "pdf_path", None) and Path(a.pdf_path).exists():
+                short = len(_lf.measure(a.pdf_path, used).short_bullets)
+        except Exception:      # noqa: BLE001 - an unmeasured page is judged on the rest
+            short = None
         return {"counts": counts, "fill": float(getattr(a, "fill_ratio", None) or 0.0),
+                "short": short,
                 "one_page": bool(a.ok and a.compile is not None and a.compile.pages == 1),
                 "strict": bool(counts) and all(y < x for x, y in zip(counts, counts[1:]))
                 and counts[-1] >= 2}
@@ -8073,6 +8081,10 @@ class WebIntake:
         if sum(now["counts"]) < sum(before.get("counts") or []):
             return False
         if before.get("strict") and not now["strict"]:
+            return False
+        # No new bullet that stops short of the edge or spills a stub line ("drivers.").
+        if before.get("short") is not None and now.get("short") is not None \
+                and now["short"] > before["short"]:
             return False
         return now["fill"] >= before.get("fill", 0.0) - 0.005
 

@@ -262,3 +262,9 @@ def test_a_placement_that_costs_a_bullet_or_the_staircase_is_not_kept(template_s
     assert not s._page_kept(before)                       # emptier
     s.assembled = page([5, 4, 3, 2], fill=0.962)
     assert s._page_kept(before)
+    # A new stub line ("drivers.") is a worse page too.
+    now = s._page_shape()
+    s._page_shape = lambda: dict(now, short=2)
+    assert not s._page_kept(dict(before, short=1))
+    s._page_shape = lambda: dict(now, short=1)
+    assert s._page_kept(dict(before, short=1))
