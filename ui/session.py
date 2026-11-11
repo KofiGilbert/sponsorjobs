@@ -1225,6 +1225,14 @@ class WebIntake:
         self.lock = threading.RLock()
         self._connect_due = False          # a reply said GitHub is not connected (_reply_with_connect)
         self._project_offered = False      # the one proactive projects offer (_project_offer)
+        # The job the Skills block was last selected for (_jd_key); None until a build makes it
+        # (the block the person gave for this job is this job's). A rebuild of a page whose block
+        # was selected for another job, or never per job ("", a session saved before 2026-11-11,
+        # ui/builder_sessions.restore), selects it again first (_refresh_for_job).
+        self._skills_job = None
+        # A session restored from before the outside-work merge reads its history once for an
+        # answer the page lost (ui/builder_sessions.restore sets this False for such a session).
+        self._outside_work_checked = True
         self.last_cover_letter = ""        # most recent drafted cover letter (bundled on accept)
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
         self.source_job = {}               # {url, source, source_id} when started from a sourced job
@@ -5926,6 +5934,7 @@ class WebIntake:
         current = self.profile.get("skills") or {}
         if not isinstance(current, dict):
             return
+        self._skills_job = self._jd_key()
         fixed = {k: v for k, v in current.items() if _FIXED_LABEL.search(str(k))}
         cands = list(self._skill_pool())
         for k, v in current.items():
@@ -6786,7 +6795,76 @@ class WebIntake:
         st["template_ok"] = True
         return st
 
+    def _jd_key(self) -> str:
+        import hashlib
+        return hashlib.sha1(" ".join(str(self.jd or "").split()).encode("utf-8")).hexdigest()[:16]
+
+    def _refresh_for_job(self) -> None:
+        """Before any rebuild (the page fill, a keyword ADD or undo, a template switch, a chat
+        edit): the Skills block is this job's. A block selected for another job, or never per job
+        (Kofi's Google session, started before the per-job selection: its fill_page rebuild kept
+        the D365 block, X++ and Logic Apps, at 17% keywords), is selected again from the whole
+        pool, once; after that the person's own edits to it stand. A restored session also gets
+        back an outside-work answer its page lost (``_restore_outside_work``)."""
+        if not self._outside_work_checked:
+            self._outside_work_checked = True
+            try:
+                self._restore_outside_work()
+            except Exception:      # noqa: BLE001 - an odd old history never stops a rebuild
+                pass
+        if self._skills_job is None:
+            self._skills_job = self._jd_key()
+        elif (str(self.jd or "").strip() and self._skills_job != self._jd_key()
+                and isinstance(self.profile.get("skills"), dict) and self.profile.get("skills")):
+            self._reselect_skills()
+            self._validate_skills()
+            self._fill_skills()
+            self._dedupe_skill_groups()
+
+    def _restore_outside_work(self) -> list[str]:
+        """A session from before the outside-work merge (2026-11-10) may hold an answer to the
+        outside-work question that never reached the page: Kofi said "playing football and
+        swimming", the absorb dropped it, and his Interests line has no swimming. Each such reply
+        (the turn right after the asked question, naming hobbies, not a decline or a question)
+        merges into the Interests on file by the same rule as a live answer
+        (tailoring/conform.merge_interests). Returns what was added."""
+        from tailoring.conform import interest_sentence, merge_interests
+        e = self.essentials
+        ask = str(e.get("required_ask_text") or "").strip()
+        hist = list(self.history or [])
+        added: list[str] = []
+        for prev, turn in zip(hist, hist[1:]):
+            if prev.get("role") != "agent" or turn.get("role") != "user":
+                continue
+            said = str(prev.get("content") or "")
+            asked = (ask and said.strip().startswith(ask[:80])) or bool(re.search(
+                r"(?i)\b(?:outside work|interests|hobbies|extracurricular)\b", said) and "?" in said)
+            msg = str(turn.get("content") or "").strip()
+            if (not asked or not msg or msg.endswith("?") or _bare_decline(msg) or _wants_done(msg)
+                    or not self._HOBBY.search(msg) or len(msg.split()) > 30):
+                continue
+            # An answer that became an activity entry is on the page already.
+            entries = " ".join(str(x.get("title") or x.get("org") or "") for x in
+                               (e.get("extracurricular") or []) if isinstance(x, dict)).lower()
+            items = [x for x in _reply_items(msg) if x.lower() not in entries]
+            if not items:
+                continue
+            existing = str(e.get("interests") or "").strip()
+            if existing:
+                sentence, new, _already = merge_interests(existing, items)
+            else:
+                sentence, new = interest_sentence(items[:6]), list(items[:6])
+            if new:
+                e["interests"] = sentence
+                added += new
+        if added:
+            self.profile["interests"] = e["interests"]
+            if isinstance(self.saved_profile, dict) and self.saved_profile.get("interests"):
+                self.saved_profile["interests"] = e["interests"]
+        return added
+
     def _assemble(self, fit_lines: bool = False):
+        self._refresh_for_job()
         # Render from a constraint-filtered COPY so a 'do not mention X' never reaches the CV,
         # while self.profile (persisted) stays whole; restore any hidden items into the durable
         # profile afterward. With no active constraints both are no-ops (behavior unchanged).

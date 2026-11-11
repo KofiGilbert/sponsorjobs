@@ -39,6 +39,7 @@ _FIELDS = (
     "recalled", "rule_proposals", "_pdf_v", "dirty", "variant_of", "choice_ask", "overlap_ask",
     "_choice_asked", "uploads", "action_tokens", "_labels", "_last_record_id", "last_missing",
     "last_declined", "_project_offered", "rank_state", "expired_noted", "job_id",
+    "_skills_job", "_outside_work_checked",
 )
 _SETS = ("kept_trims", "_born_rules")
 # What a restored page does not need and would only bloat the row.
@@ -154,6 +155,12 @@ def restore(data: dict, *, template_source: str, llm, memory, records, workdir, 
             setattr(s, k, data[k])
     if data.get("_last_record_id"):
         s._last_record_id = data["_last_record_id"]
+    if "_outside_work_checked" not in data:
+        # Saved before the per-job Skills selection and the outside-work merge reached a rebuild
+        # (2026-11-11): its first rebuild selects the Skills block for its job and looks for a
+        # lost outside-work answer.
+        s._outside_work_checked = False
+        s._skills_job = ""
     for k in _SETS:
         setattr(s, k, set(data.get(k) or []))
     s.assembled = _load_assembled(data.get("assembled"))
