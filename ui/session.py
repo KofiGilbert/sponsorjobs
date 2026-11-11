@@ -7869,13 +7869,8 @@ class WebIntake:
         if pl.already and self._term_on_page(term):
             self._persist()
             return self._keyword_result(term, True, "")
-        self.profile["skills"] = pl.skills
-        self._assemble()
-        a = self.assembled
-        if not (a is not None and a.ok and a.compile is not None and a.compile.pages == 1
-                and self._term_on_page(term)):
-            self.profile = before
-            self._assemble()
+        if not self._planned_rebuild(lambda: self.profile.__setitem__("skills", pl.skills),
+                                     [term], before):
             self._persist()
             return self._keyword_result(
                 term, False, f"No room on the page for {term}. It is saved to your profile.")
@@ -8176,6 +8171,50 @@ class WebIntake:
         self._terms_result = result
         self._persist()
         return result
+
+    def _planned_rebuild(self, change, terms: list, profile_before: dict) -> bool:
+        """Apply ``change`` (a Skills edit) and rebuild through the plan (the term map, the
+        staircase, every line to the edge), keeping the page only when it is no worse than the
+        one it replaces and ``terms`` show; else the page as it was takes ``terms`` on its Skills
+        lines only; else everything is as it was. A keyword never costs a bullet (Kofi,
+        2026-11-11). True when ``terms`` are on the page."""
+        import copy as _copy
+        files = {}
+        for ext in (".pdf", ".tex"):
+            f = self.workdir / f"{self.jobname}{ext}"
+            try:
+                files[f] = f.read_bytes()
+            except OSError:
+                pass
+        snap = (self.assembled, list(self._written), self._pdf_v)
+        shape0 = self._page_shape()
+
+        def back():
+            self.assembled, self._written, self._pdf_v = snap
+            self.profile = _copy.deepcopy(profile_before)
+            for f, data in files.items():
+                try:
+                    f.write_bytes(data)
+                except OSError:
+                    pass
+
+        change()
+        changed = _copy.deepcopy(self.profile)
+        planned = self.llm is not None and callable(getattr(self.llm, "write_experience", None))
+        try:
+            self._assemble(fit_lines=planned)
+            ok = self._page_kept(shape0) and all(self._term_on_page(t) for t in terms)
+        except Exception as exc:      # noqa: BLE001
+            _log.warning("planned rebuild failed: %s", exc)
+            ok = False
+        if ok:
+            return True
+        back()
+        if self._skills_only_page(list(terms), shape0):
+            self.profile["skills"] = changed.get("skills") or self.profile.get("skills")
+            return True
+        back()
+        return False
 
     def _skills_only_page(self, terms: list, before: dict) -> list:
         """The page as it is, with ``terms`` on its Skills lines and nothing else changed: the
