@@ -5837,7 +5837,9 @@ class WebIntake:
         login = str(gh.get("login") or gh.get("resume_login") or "")
         verdict = None
         if not login:
-            if gaps:
+            cov = self.coverage_dict()
+            if gaps and self._projects_weak_for_job(list(cov.get("present") or [])
+                                                    + list(cov.get("missing_supported") or []) + gaps):
                 verdict = {"text": f"Your projects don't show {gap_words}, which this role asks for. "
                                    + CONNECT_GITHUB_LINE,
                            "card": {"type": "buttons", "offer": self.PROJECT_OFFER,
@@ -5878,7 +5880,8 @@ class WebIntake:
             drop, drop_name = "", ""
             if worst is not None:
                 drop_name = str(worst[0] or "")
-                for it in _R.items(self.profile or {}):
+                page = getattr(self.assembled, "profile_used", None) or {}
+                for it in _R.items(self.profile or {}) + _R.items(page):
                     if it["kind"] == "project" and drop_name and \
                             _R.project_name({"org": it["org"]}).lower() == drop_name.lower():
                         drop = it["id"]
