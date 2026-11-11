@@ -284,6 +284,7 @@ def _essentials_from(saved_ess: dict, profile: dict) -> dict:
 THIN_BULLET = 0.6
 # The whole message was a false "missing" claim: what is left to say.
 POLITE_DONE = "Your page already shows that."
+CONNECT_GITHUB_LINE = "Connect your GitHub and I'll check your repos for one that fits."
 
 
 def _bullet_owner(label) -> str:
@@ -1632,7 +1633,7 @@ class WebIntake:
             st["page"] = {"one_page": bool(a.ok and a.compile is not None and a.compile.pages == 1),
                           "fill_percent": pct,
                           "short": bool(getattr(a, "underfull", False)) or (pct or 100) < 97}
-            added = [k["term"] for k in self.keyword_actions]
+            added = [k["term"] for k in self.keyword_actions if not k.get("inferred")]
             low = {t.lower() for t in added}
             st["job_terms_on_page"] = list(dict.fromkeys(
                 list(cov.get("present") or []) + [t for t in added if self._term_on_page(t)]))
@@ -1881,6 +1882,103 @@ class WebIntake:
         st.update({"action_ok": True, "project": proj})
         return st
 
+    def _mark_card_used(self, token: str, **extra) -> None:
+        for t in reversed(self.history):
+            for c in [t.get("card")] + list(t.get("cards") or []):
+                if isinstance(c, dict) and (c.get("token") == token or any(
+                        isinstance(b, dict) and b.get("token") == token for b in c.get("buttons") or [])):
+                    c["used"] = True
+                    c.update(extra)
+
+    def _apply_swap(self, token: str, rec: dict) -> dict:
+        """[Swap it in] on the projects verdict: the repository that fits this job better goes
+        on the resume, and the weaker project leaves THIS resume (it stays in the person's
+        material; a session choice hides it here only)."""
+        entry, drop, drop_name = dict(rec.get("entry") or {}), str(rec.get("drop") or ""), \
+            str(rec.get("drop_name") or "")
+        if not entry.get("org"):
+            st = self._state([])
+            st.update({"action_ok": False, "action_error": "I can't do that from this card."})
+            return st
+        rec["used"] = True
+        if drop:
+            self.session_choices[drop] = "hide"
+        got = self.add_projects([entry], source="github")
+        added = list(got.get("added") or [])
+        if not added:
+            if drop:
+                self.session_choices.pop(drop, None)
+                if self.assembled is not None:
+                    self._assemble()
+            msg = self._fact("already_on_resume", f"{entry['org']} was already on this resume, so "
+                             "I left it as it was.", exact=[entry["org"]], already_on_resume=[entry["org"]])
+        elif drop_name:
+            msg = self._fact("added_projects", f"I swapped {drop_name} for {added[0]} on this resume.",
+                             exact=[added[0], drop_name], added=added, removed_from_this_resume=drop_name,
+                             rebuilt=self.assembled is not None)
+        else:
+            msg = self._fact("added_projects", f"I added {added[0]} to this resume.", exact=added,
+                             added=added, rebuilt=self.assembled is not None)
+        self._append("agent", msg)
+        self._mark_card_used(token, added=added)
+        self._persist()
+        st = self._state([msg])
+        st.update({"action_ok": True, "added": added})
+        return st
+
+    BUILD_TWO = 2
+
+    def _apply_build_two(self, token: str, rec: dict) -> dict:
+        """[Build 2 projects] on the projects verdict: the AI builds two small projects aimed at
+        this job (one package each), from this job's own ideas (ui/app._session_ideas)."""
+        if not (callable(self.start_build) and callable(self.ideas_for)):
+            st = self._state([])
+            st.update({"action_ok": False, "action_error": "Building projects is not available here."})
+            return st
+        rec["used"] = True
+        try:
+            ideas = [i for i in (self._ideas().get("ideas") or [])
+                     if isinstance(i, dict) and str(i.get("title") or "").strip()][: self.BUILD_TWO]
+        except Exception:      # noqa: BLE001
+            ideas = []
+        if not ideas:
+            rec["used"] = False
+            st = self._state([])
+            st.update({"action_ok": False,
+                       "action_error": "I could not come up with projects for this job just now. Try again in a moment."})
+            return st
+        started, cards, err = [], [], ""
+        for idea in ideas:
+            try:
+                proj = dict(self.start_build(dict(idea), self._for_resume()) or {})
+            except Exception as exc:   # noqa: BLE001 - e.g. no packages left
+                err = str(exc) or "I could not start that build."
+                break
+            title = str(proj.get("title") or idea.get("title") or "")
+            started.append(title)
+            cards.append({"type": "project_progress", "project_id": str(proj.get("id") or ""),
+                          "title": title})
+        if not started:
+            rec["used"] = False
+            st = self._state([])
+            st.update({"action_ok": False, "action_error": err})
+            return st
+        names = " and ".join(started)
+        msg = self._fact("build_started", f"I'm building {names} for this job. Each takes a few "
+                         "minutes; when one is built, learn it and pass its quiz, and it goes on "
+                         "this resume." + (f" The second could not start: {err}" if err else ""),
+                         exact=started, projects=started, takes="a few minutes each")
+        self._append("agent", msg)
+        if cards:
+            self.history[-1]["card"] = cards[0]
+            if len(cards) > 1:
+                self.history[-1]["cards"] = cards
+        self._mark_card_used(token, built=started)
+        self._persist()
+        st = self._state([msg], cards=cards)
+        st.update({"action_ok": True, "projects": started})
+        return st
+
     @_one_voice
     def add_verified_project(self, entry: dict, title: str = "", score=None, total=None,
                              project_id: str = "") -> dict:
@@ -1956,6 +2054,10 @@ class WebIntake:
             return st
         if choice == "build" and rec.get("kind") == "build":
             return self._apply_build(token, rec, args)
+        if choice == "swap" and rec.get("kind") == "swap_project":
+            return self._apply_swap(token, rec)
+        if choice == "build_two" and rec.get("kind") == "build_two":
+            return self._apply_build_two(token, rec)
         if choice != "add" or rec.get("kind") != "add_projects":
             st = self._state([])
             st.update({"action_ok": False, "action_error": "I can't do that from this card."})
@@ -4168,6 +4270,12 @@ class WebIntake:
                 for p in (self.profile.get("projects") or []) if p.get("suggested")]
 
     _pdf_v = 0
+    # The job-terms pass (_place_job_terms): the job's terms put on the page because the person's
+    # material backs them, each with its evidence, and the job it last ran for.
+    inferred_terms: list = []
+    _terms_placed_for = ""
+    _terms_result: dict = {}
+    _saved_v = None              # the page version Accept & Save last saved (accept)
     _bt = None              # the build being told in the chat (_builds)
     _pending_build = None   # a helper's build, carried by the next state
     _turn = None            # the chat turn being said in one message (_one_voice)
@@ -5541,12 +5649,11 @@ class WebIntake:
     PROJECT_OFFER_CONNECT = {"label": "Connect GitHub", "nav": "github"}
 
     def _project_offer(self, msgs: list) -> list:
-        """At the first build in this chat (agent flag on): when the job asks for skills the
-        resume does not show and its projects are weak for this job (none of them names a skill
-        the job asks for, or there are none), ONE message with two buttons, "Check my GitHub"
-        and "Build a project for this job". Decided from what the session holds, so no model
-        call is made until a click (a button sends its line as the person's next message). Never
-        repeated in this session. Returns the cards for this turn's state."""
+        """At the first build in this chat (agent flag on): the projects already judged against
+        this job (``_project_verdict``), said in one line with its button. Never "I can check
+        your GitHub if you'd like": the check is done before the person hears about it (Kofi,
+        2026-11-11). Nothing is said when the projects already fit. Never repeated in this
+        session. Returns the cards for this turn's state."""
         if self._project_offered or not self._agent_on() or self.assembled is None \
                 or self.essentials.get("unattended"):
             return []
@@ -5555,39 +5662,133 @@ class WebIntake:
                if isinstance(t, dict) for c in [t.get("card")] + list(t.get("cards") or [])
                if isinstance(c, dict)):
             return []
-        try:
-            cov = self.coverage_dict()
-        except Exception:      # noqa: BLE001 - no coverage, no offer
+        v = self._project_verdict()
+        if not v:
             return []
-        missing = [str(t) for t in cov.get("missing") or [] if str(t).strip()]
-        if not missing or not self._projects_weak_for_job(
-                list(cov.get("present") or []) + list(cov.get("missing_supported") or []) + missing):
-            return []
-        named = missing[:2]
-        skills = named[0] if len(named) == 1 else f"{named[0]} and {named[1]}"
-        gh = self._github_view()           # checked first: never offer a check it cannot do
-        can_check = bool(gh.get("connected") or gh.get("resume_login"))
-        lead = (f"This job asks for {skills}, and your resume does not show "
-                f"{'it' if len(named) == 1 else 'them'} yet. A project can. ")
-        if can_check:
-            text = lead + "I can check your GitHub for one that fits, or help you build one for this job."
-            buttons = [dict(b) for b in self.PROJECT_OFFER_BUTTONS]
-        else:
-            text = lead + ("Connect your GitHub and I'll check your repos for one that fits, or I can "
-                           "help you build one for this job.")
-            buttons = [dict(self.PROJECT_OFFER_CONNECT), dict(self.PROJECT_OFFER_BUTTONS[1])]
-        card = {"type": "buttons", "offer": self.PROJECT_OFFER, "buttons": buttons}
-        self._fact("project_offer", text, exact=named, job_skills_not_shown=named,
-                   github_can_be_checked=can_check,
-                   buttons_below=[b["label"] for b in buttons],
-                   point_to="a project can show those skills; the buttons below check their "
-                            "GitHub" + ("" if can_check else " once connected") + " or build one "
-                            "for this job")
-        msgs.append(text)
-        self._append("agent", text)
-        self.history[-1]["card"] = card
+        msgs.append(v["text"])
+        self._append("agent", v["text"])
+        if v.get("card"):
+            self.history[-1]["card"] = v["card"]
         self._persist()
-        return [card]
+        return [v["card"]] if v.get("card") else []
+
+    @staticmethod
+    def _term_words(terms: list) -> str:
+        """Job terms as a sentence says them: "machine learning or Natural Language Processing"."""
+        def low(t):
+            t = str(t)
+            w = t.split()
+            return t[0].lower() + t[1:] if len(w) > 1 and w[0][:1].isupper() and w[0][1:].islower() \
+                and all(x.islower() for x in w[1:]) else t
+        xs = [low(t) for t in terms if str(t).strip()]
+        return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " or " + xs[-1] if xs else ""
+
+    def _project_gaps(self) -> list[str]:
+        """The two job terms the page most clearly lacks, for the projects verdict: the job's
+        methods first (machine learning, NLP), its named tools after."""
+        from tailoring.inferred_support import is_named_tool
+        try:
+            un = self._unsupported_terms()
+        except Exception:      # noqa: BLE001
+            return []
+        return ([t for t in un if not is_named_tool(t)] + [t for t in un if is_named_tool(t)])[:2]
+
+    def _project_verdict(self) -> dict | None:
+        """The projects judged against this job, decided, not offered (Kofi, 2026-11-11): the
+        person's public repositories ranked for the job (ui/repo_rank.py: by the connected login,
+        else the GitHub username on the resume, no sign in needed) against the projects on the
+        page. {"text", "card"}, or None when the projects on the page already fit (one is a
+        strong fit) or nothing can be judged.
+
+        - a repository fits better: "Your projects don't show X or Y, which this role asks for.
+          Of your N public repos, R fits better." [Swap it in]
+        - none does: "None of your N public repos shows X or Y. I can build two small projects
+          for this role." [Build 2 projects]
+        - no GitHub known: one line and the Connect GitHub button."""
+        import secrets as _secrets
+        import time as _time
+        from applicant import rules as _R
+        from ui.repo_rank import entry_for
+        if self.assembled is None:
+            return None
+        key = self._job_key() + ":" + str(self._pdf_v)
+        cached = getattr(self, "_verdict_cache", None)
+        if isinstance(cached, dict) and cached.get("key") == key:
+            return cached.get("verdict")
+        gaps = self._project_gaps()
+        gap_words = self._term_words(gaps)
+        gh = self._github_view()
+        login = str(gh.get("login") or gh.get("resume_login") or "")
+        verdict = None
+        if not login:
+            if gaps:
+                verdict = {"text": f"Your projects don't show {gap_words}, which this role asks for. "
+                                   + CONNECT_GITHUB_LINE,
+                           "card": {"type": "buttons", "offer": self.PROJECT_OFFER,
+                                    "buttons": [dict(self.PROJECT_OFFER_CONNECT)]}}
+            self._verdict_cache = {"key": key, "verdict": verdict}
+            return verdict
+        try:
+            got = self._rank_for_job(login)
+        except Exception:      # noqa: BLE001 - nothing judged, nothing said
+            got = {"ok": False}
+        if not got.get("ok"):
+            self._verdict_cache = {"key": key, "verdict": None}
+            return None
+        rank_of = {"strong": 0, "some": 1, "none": 2, "unknown": 3}
+        repos = [r for r in got.get("repos") or [] if isinstance(r, dict)]
+        n = len(repos)
+        current = [(p.get("name"), p.get("fit") or "unknown") for p in got.get("projects") or []]
+        current += [(r.get("name"), r.get("fit") or "unknown") for r in repos if r.get("on_resume")]
+        if any(f == "strong" for _n, f in current):
+            self._verdict_cache = {"key": key, "verdict": None}
+            return None
+        worst = max(current, key=lambda x: rank_of.get(x[1], 3)) if current else None
+        gap_low = {g.lower() for g in gaps}
+        cands = [
+            r for r in repos if not r.get("on_resume") and r.get("fit") in ("strong", "some")
+            and (worst is None or rank_of[r["fit"]] < rank_of.get(worst[1], 3)
+                 or gap_low & {str(t).lower() for t in r.get("terms") or []})]
+        if not gaps and not cands:
+            self._verdict_cache = {"key": key, "verdict": None}
+            return None
+        if cands:
+            best = cands[0]
+            shows = [str(t) for t in best.get("terms") or []][:2]
+            lead = (f"Your projects don't show {gap_words}, which this role asks for. " if gaps
+                    else "Your projects are a weak fit for this role. ")
+            text = (lead + f"Of your {n} public repos, {best['name']} fits better"
+                    + (f": it shows {self._term_words(shows).replace(' or ', ' and ')}." if shows else "."))
+            drop, drop_name = "", ""
+            if worst is not None:
+                drop_name = str(worst[0] or "")
+                for it in _R.items(self.profile or {}):
+                    if it["kind"] == "project" and drop_name and \
+                            _R.project_name({"org": it["org"]}).lower() == drop_name.lower():
+                        drop = it["id"]
+                        break
+                if not drop:
+                    drop_name = ""
+            tok = _secrets.token_urlsafe(18)
+            self.action_tokens[tok] = {"kind": "swap_project", "entry": entry_for(best), "drop": drop,
+                                       "drop_name": drop_name, "used": False, "at": _time.time()}
+            label = "Swap it in" if drop else "Add it"
+            verdict = {"text": text, "card": {"type": "buttons", "offer": self.PROJECT_OFFER,
+                                               "buttons": [{"label": label, "token": tok, "choice": "swap"}]}}
+        else:
+            text = f"None of your {n} public repos shows {gap_words}."
+            card = None
+            if callable(self.start_build) and callable(self.ideas_for):
+                text += " I can build two small projects for this role."
+                tok = _secrets.token_urlsafe(18)
+                self.action_tokens[tok] = {"kind": "build_two", "used": False, "at": _time.time()}
+                card = {"type": "buttons", "offer": self.PROJECT_OFFER,
+                        "buttons": [{"label": "Build 2 projects", "token": tok, "choice": "build_two"}]}
+            verdict = {"text": text, "card": card}
+        for old in list(self.action_tokens)[:-20]:
+            self.action_tokens.pop(old, None)
+        self._verdict_cache = {"key": key, "verdict": verdict}
+        return verdict
 
     def _projects_weak_for_job(self, terms: list) -> bool:
         """True when this resume has no project, or none of its projects names any of the job's
@@ -6000,6 +6201,10 @@ class WebIntake:
                if str(x).strip() and jd and term_present(str(x), jd)]
         out += [str(a.get("term")) for a in (getattr(self, "keyword_actions", None) or [])
                 if a.get("kind") == "skill" and str(a.get("term") or "").strip()]
+        # The job's own terms the person's material backs, put on this page by the job-terms
+        # pass (_place_job_terms): this job asks for each of them by name.
+        out += [str(i.get("term")) for i in (getattr(self, "inferred_terms", None) or [])
+                if isinstance(i, dict) and str(i.get("term") or "").strip()]
         return list(dict.fromkeys(out))
 
     def _reselect_skills(self) -> None:
@@ -7379,6 +7584,11 @@ class WebIntake:
     @_locked
     @_builds("keyword")
     def keyword_apply(self, term: str, draft: str = "") -> dict:
+        return self._keyword_apply_now(term, draft)
+
+    def _keyword_apply_now(self, term: str, draft: str = "", inferred: bool = False) -> dict:
+        """keyword_apply's work, for a caller already inside a build (the job-terms pass,
+        ``_place_job_terms``, weaves an inferred term into one bullet this way)."""
         from tailoring.keyword_action import (apply_keyword_action, check_draft_for,
                                               render_interior)
         from tailoring.latex_template import LatexTemplate
@@ -7410,6 +7620,7 @@ class WebIntake:
             "term": pv.term, "kind": pv.kind, "ref": pv.ref, "label": pv.label,
             "before": pv.before, "after": res.final_text, "anchor": pv.anchor,
             "tex_before": tex_before, "tex_after": render_interior(res.final_text, bold),
+            **({"inferred": True} if inferred else {}),
         })
         self._keyword_previews.pop(term.lower(), None)
         self._persist()
@@ -7510,6 +7721,114 @@ class WebIntake:
                                      "saved": saved})
         self._persist()
         return self._keyword_result(term, True, "")
+
+    # -- the job's terms on the page (2026-11-11) --------------------------------------- #
+    # Tailoring means the job's own words go on the page wherever the person's material backs
+    # them (CLAUDE.md section 8). Kofi's Google page had 3 of 18 job terms, and the chat asked him
+    # "if you've really used statistical analysis, tell me which and where", over an MBA in
+    # Business Analytics. Now: a term the material says (missing_supported) or clearly implies
+    # (tailoring/inferred_support.py, model judgment with a verbatim-evidence check, never a
+    # named tool) goes on in the job's wording, in Skills and woven into one bullet where it
+    # truly fits. The rest are the person's to claim: ADD chips in the chat.
+    WEAVE_TERMS = 2
+
+    def _job_key(self) -> str:
+        import hashlib
+        return hashlib.sha1(str(self.jd or "").encode("utf-8")).hexdigest()[:12]
+
+    def _unsupported_terms(self, cov: dict | None = None) -> list[str]:
+        """The job's terms still off the page that only the person can claim (ADD chips)."""
+        from tailoring.keywords import is_requirement
+        cov = cov if cov is not None else self.coverage_dict()
+        done = {str(a.get("term") or "").lower() for a in self.keyword_actions}
+        return [str(t) for t in (cov.get("missing") or []) + (cov.get("missing_supported") or [])
+                if str(t).strip() and not is_requirement(t) and str(t).lower() not in done]
+
+    @_builds("keywords")
+    def _place_job_terms(self, force: bool = False) -> dict:
+        """Put the job's terms the person's material backs on the page, once per job. Returns
+        {"before", "after" (keyword %), "added": [terms now on the page], "inferred":
+        [{"term", "evidence"}], "woven": [terms worked into a bullet]}; {} with no page."""
+        import copy as _copy
+        from tailoring import inferred_support as _IS
+        from tailoring.keywords import with_stated_skills
+        from tailoring.linefit import place_term
+        a = self.assembled
+        if a is None or not a.ok or not getattr(a, "tex_source", None):
+            return {}
+        key = self._job_key()
+        if self._terms_placed_for == key and not force:
+            return dict(self._terms_result or {})
+        self._terms_placed_for = key
+        cov = self.coverage_dict()
+        before = cov.get("ratio")
+        material = with_stated_skills(self.profile, self.essentials)
+        literal = [str(t) for t in cov.get("missing_supported") or []]
+        ask, _tools = _IS.candidates(cov.get("missing") or [])
+        inferred: list = []
+        if ask and self.llm is not None and callable(getattr(self.llm, "infer_term_support", None)):
+            _activity.step("terms", "Reading the job's terms", "against your own material")
+            try:
+                inferred = _IS.vet(self.llm.infer_term_support(self.jd, ask, material), ask, material)
+            except Exception:      # noqa: BLE001 - no inference: the literal terms still go on
+                inferred = []
+        evidence = {i["term"].lower(): i["evidence"] for i in inferred}
+        terms = list(dict.fromkeys(literal + [i["term"] for i in inferred]))[:_IS.MAX_INFERRED + 4]
+        result = {"before": before, "after": before, "added": [], "inferred": [], "woven": []}
+        if not terms:
+            self._terms_result = result
+            self._persist()
+            return result
+        snapshot = (_copy.deepcopy(self.profile), list(self.inferred_terms or []),
+                    _copy.deepcopy(self.essentials.get("skills_input") or []))
+        self.inferred_terms = list(self.inferred_terms or []) + [
+            {"term": t, "evidence": evidence.get(t.lower(), ""), "job": key} for t in terms
+            if t.lower() not in {str(x.get("term") or "").lower() for x in self.inferred_terms or []}]
+        width_fn, avail = self._skill_widths()
+        skills = dict(self.profile.get("skills") or {})
+        shed: list = []
+        for t in terms:
+            pl = place_term(skills, t, width_fn=width_fn, avail=avail, jd_text=self.jd,
+                            keep=self._skill_keep())
+            skills = pl.skills
+            shed += [x for x in pl.shed if x not in shed]
+        self.profile["skills"] = skills
+        _activity.step("terms", "Putting the job's terms on the page", ", ".join(terms[:4]))
+        self._assemble()
+        b = self.assembled
+        ok = bool(b is not None and b.ok and b.compile is not None and b.compile.pages == 1)
+        on = [t for t in terms if ok and self._term_on_page(t)]
+        if not on:
+            self.profile, self.inferred_terms, si = snapshot
+            self.essentials["skills_input"] = si
+            self._assemble()
+            self._terms_result = result
+            self._persist()
+            return result
+        # What a line gave up to keep the job's terms stays the person's own skill.
+        si = self.essentials.setdefault("skills_input", [])
+        for t in shed:
+            if t.lower() not in {str(x).lower() for x in si}:
+                si.append(t)
+        self.inferred_terms = [i for i in self.inferred_terms
+                               if i.get("job") != key or i["term"] in on]
+        # One bullet carries each of the first few, in the job's wording, where the same role
+        # backs it (keyword_action: verbatim evidence in that role, the fact gate, the budget).
+        woven = []
+        for t in [x for x in on if x.lower() in evidence or x in literal][: self.WEAVE_TERMS]:
+            try:
+                got = self._keyword_apply_now(t, inferred=True)
+            except Exception:      # noqa: BLE001 - the term is on the page in Skills already
+                continue
+            if got.get("ok"):
+                woven.append(t)
+        result.update({"after": self.coverage_dict().get("ratio"), "added": on,
+                       "inferred": [{"term": t, "evidence": evidence[t.lower()]} for t in on
+                                    if t.lower() in evidence],
+                       "woven": woven})
+        self._terms_result = result
+        self._persist()
+        return result
 
     def _term_on_page(self, term: str) -> bool:
         from tailoring.assembler import _rendered_cv_text

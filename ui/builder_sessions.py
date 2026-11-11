@@ -39,7 +39,8 @@ _FIELDS = (
     "recalled", "rule_proposals", "_pdf_v", "dirty", "variant_of", "choice_ask", "overlap_ask",
     "_choice_asked", "uploads", "action_tokens", "_labels", "_last_record_id", "last_missing",
     "last_declined", "_project_offered", "rank_state", "expired_noted", "job_id",
-    "_skills_job", "_outside_work_checked",
+    "_skills_job", "_outside_work_checked", "inferred_terms", "_terms_placed_for", "_terms_result",
+    "_saved_v",
 )
 _SETS = ("kept_trims", "_born_rules")
 # What a restored page does not need and would only bloat the row.
