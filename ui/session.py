@@ -5688,6 +5688,11 @@ class WebIntake:
         v = self._project_verdict()
         if not v:
             return []
+        labels = [b["label"] for b in (v.get("card") or {}).get("buttons") or []]
+        self._fact("project_offer", v["text"], exact=list(v.get("exact") or []),
+                   verdict=v["text"], buttons_below=labels,
+                   point_to="the projects were already judged against this job; say the verdict "
+                            "in one line and point to the button below, never offer to check")
         msgs.append(v["text"])
         self._append("agent", v["text"])
         if v.get("card"):
@@ -5892,8 +5897,9 @@ class WebIntake:
             self.action_tokens[tok] = {"kind": "swap_project", "entry": entry_for(best), "drop": drop,
                                        "drop_name": drop_name, "used": False, "at": _time.time()}
             label = "Swap it in" if drop else "Add it"
-            verdict = {"text": text, "card": {"type": "buttons", "offer": self.PROJECT_OFFER,
-                                               "buttons": [{"label": label, "token": tok, "choice": "swap"}]}}
+            verdict = {"text": text, "exact": [best["name"]],
+                       "card": {"type": "buttons", "offer": self.PROJECT_OFFER,
+                                "buttons": [{"label": label, "token": tok, "choice": "swap"}]}}
         else:
             text = f"None of your {n} public repos shows {gap_words}."
             card = None

@@ -982,7 +982,7 @@ def wants_agent(message: str, pending: bool = False) -> bool:
 # the state of the page. Answered with a checklist read from the page (WebIntake._done_reply),
 # never a model's guess (Kofi was told his roles had no titles or dates, 2026-11-11).
 _DONE_ASK = re.compile(
-    r"\b(?:are\s+we|am\s+i|is\s+(?:it|this|the\s+resume|my\s+resume|that|everything))\s+"
+    r"\b(?:are\s+we|am\s+i|is\s+(?:it|(?:this|the|my)\s+resume|this|that|everything))\s+"
     r"(?:all\s+|now\s+|finally\s+)?(?:done|finished|ready|good\s+to\s+go|complete|good)\b"
     r"|\b(?:anything|what(?:['’]s|\s+is)?)\s+(?:else\s+)?(?:left|missing|remaining)\b"
     r"|\bready\s+to\s+(?:send|apply|submit)\b"

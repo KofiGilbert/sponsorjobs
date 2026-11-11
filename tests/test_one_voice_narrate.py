@@ -148,7 +148,7 @@ def test_the_project_offer_keeps_its_buttons(template_source, fake_llm, workdir)
     offer = [c for c in st["cards"] if c.get("offer") == WebIntake.PROJECT_OFFER]
     if offer:            # the job asks for skills the page does not show
         labels = [b["label"] for b in offer[0]["buttons"]]
-        assert "Build a project for this job" in labels
+        assert labels == ["Connect GitHub"]          # no GitHub known: the verdict needs it first
         turn = s.history[-1]
         assert turn.get("card") is offer[0] or offer[0] in (turn.get("cards") or [])
         it = next(i for i in fake_llm.last_narrate_items if i["kind"] == "project_offer")
