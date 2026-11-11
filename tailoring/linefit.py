@@ -424,8 +424,16 @@ _THEME_LABELS = {
     "methods": ("Methods & Statistics", "Methods & Frameworks", "Techniques"),
     "people": ("Leadership & Collaboration", "People & Communication"),
     "delivery": ("Project Delivery", "Process & Delivery"),
-    "business": ("Business & Finance", "Business Operations", "Domain Knowledge"),
+    "business": ("Business & Analysis", "Business & Finance", "Business Operations",
+                 "Domain Knowledge"),
 }
+
+# A phrase whose head noun names analysis or requirements work is business analysis whatever
+# tool it mentions: "enterprise CRM requirements" sat under Languages & Tools because of "CRM"
+# (Kofi's Google page, 2026-11-10).
+_ANALYSIS_HEAD = frozenset("requirement requirements analysis analyses gathering recommendation "
+                           "recommendations decision decisions planning strategy improvement "
+                           "framework frameworks governance".split())
 
 
 # Themes close enough to share a line once a line's own theme has nothing left that fits
@@ -439,6 +447,9 @@ def skill_theme(term: str) -> str:
     """The theme a skill term belongs to: people, delivery, business, methods, data or tools."""
     from .keywords import classify_skill
     low = " " + re.sub(r"[^a-z0-9/&+#. ]", " ", str(term).lower()) + " "
+    parts = low.split()
+    if len(parts) >= 2 and parts[-1] in _ANALYSIS_HEAD:
+        return "business"
     for theme, words in _THEME_WORDS:
         for w in words:
             # Short words match whole ("bi", "sap"); longer ones match a word's start

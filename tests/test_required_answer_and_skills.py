@@ -188,6 +188,65 @@ def test_the_same_figures_are_one_fact_however_reworded():
                          "Analyzed SQL and Excel data for a platform of 250 drivers.")
 
 
+def test_a_bullet_with_a_figure_is_never_the_one_cut():
+    # The page's cuts (the staircase's hold, making room, the one-page shrink) take a figureless
+    # bullet first; "280,000+ ... 145,000+" is the last thing to go, and only when nothing else can.
+    from tailoring.assembler import _cut_victim
+    from tailoring.filler import figures_of
+
+    class _Cuts:
+        def kept(self, *a):
+            return False
+    bl = ["Built an AI-assisted data pipeline that processed 280,000+ job postings a day.",
+          "Led business intelligence across the company's products.",
+          "Translated analysis into roadmap and spend recommendations."]
+    assert _cut_victim(bl, 0, _Cuts(), "x") == 2
+    assert _cut_victim(bl[:1], 0, _Cuts(), "x") == 0            # nothing else: it may go
+    assert figures_of(bl[0]) == {"280000"} and not figures_of(bl[1])
+    assert figures_of("Grew margin 20% in 2021.") == {"20%"}       # a year alone is not a figure
+
+
+def test_the_plan_pins_a_saved_figured_bullet_in_place_of_a_figureless_one():
+    # tailoring/plan_fill.place: a saved bullet whose figures are missing from the role's written
+    # set replaces the last figureless written bullet, in the person's own words.
+    from tailoring.filler import figures_of
+    saved = ["Built an AI-assisted data pipeline that processed 280,000+ job postings a day into "
+             "145,000+ sponsorship-matched roles.", "Led business intelligence across products."]
+    cur = ["Led business intelligence across the company's products, giving owners one view.",
+           "Defined the metrics behind each product's dashboards.",
+           "Translated analysis into recommendations on roadmap and spend."]
+    for s in saved:                                                  # the pin, as place() runs it
+        fs = figures_of(s)
+        if not fs or any(fs & figures_of(c) for c in cur if c):
+            continue
+        k = next((j for j in range(len(cur) - 1, -1, -1) if cur[j] and not figures_of(cur[j])), None)
+        if k is not None:
+            cur[k] = s
+    assert cur[2] == saved[0] and cur[0].startswith("Led business intelligence")
+    src = open("tailoring/plan_fill.py").read()
+    assert "plan-pinned" in src and "figures_of" in src
+
+
+def test_the_interests_line_lands_on_one_line_or_fills_the_second():
+    from tailoring.assembler import compact_interests
+    from tailoring.textwidth import TEXTWIDTH_PT, text_width_pt
+    line = MERGED
+    out = compact_interests(line)
+    w = text_width_pt("Interests:", bold=True) + text_width_pt(" " + out)
+    assert out == ("Football on weekends and swimming, travelling to see the world, and podcasts "
+                   "such as The Diary of a CEO (DOAC).")
+    assert w <= TEXTWIDTH_PT - 2.0 or (w % (TEXTWIDTH_PT - 2.0)) >= 0.4 * (TEXTWIDTH_PT - 2.0)
+    assert compact_interests("Chess and hiking.") == "Chess and hiking."    # short: untouched
+
+
+def test_analysis_phrases_are_business_not_tools():
+    from tailoring.linefit import _THEME_LABELS, skill_theme
+    assert skill_theme("enterprise CRM requirements") == "business"
+    assert skill_theme("requirements gathering") == "business"
+    assert skill_theme("SQL Server") == "tools" and skill_theme("Power BI") == "data"
+    assert _THEME_LABELS["business"][0] == "Business & Analysis"
+
+
 def test_merge_interests_adds_without_duplicates():
     from tailoring.conform import interest_sentence, merge_interests
     sentence, added, already = merge_interests(INTERESTS, ["Playing football", "Swimming"])
@@ -216,7 +275,8 @@ def test_activities_merge_into_interests_and_the_chat_says_exactly_that(template
     tex = (workdir / "cv.tex").read_text(encoding="utf-8")
     assert "Extracurricular" not in tex
     assert tex.count("swimming") == 1 and "\\textbf{Swimming}" not in tex
-    assert "Interests:} " + MERGED[:40] in tex.replace("\\&", "&")
+    # Printed compacted so it lands on one line; the saved text stays MERGED.
+    assert "Interests:} Football on weekends and swimming, travelling" in tex.replace("\\&", "&")
 
 
 @requires_latex

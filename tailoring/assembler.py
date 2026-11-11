@@ -418,11 +418,46 @@ def interests_line(profile: dict, fold_entries: bool = False) -> str:
         interests = ", ".join(str(x) for x in interests)
     interests = str(interests or "").strip()
     extra = hobby_titles(profile, entries_too=fold_entries)
-    if not extra:
-        return interests
-    if not interests:
-        return interest_sentence(extra)
-    return merge_interests(interests, extra)[0]
+    if extra:
+        interests = interest_sentence(extra) if not interests else merge_interests(interests, extra)[0]
+    return compact_interests(interests)
+
+
+def compact_interests(line: str, label: str = "Interests") -> str:
+    """The Interests sentence as the page prints it: when it would run a few words onto a
+    second line ("CEO (DOAC)." alone, Kofi's page 2026-11-10), the items are compacted, in
+    steps, until it fits one line or fills most of the second: a leading gerund goes
+    ("Playing football" to "football", "watching podcasts" to "podcasts"), then a purpose
+    tail ("travelling to see the world" to "travelling"). The saved text is never changed;
+    only what prints."""
+    from .textwidth import TEXTWIDTH_PT, text_width_pt
+    line = str(line or "").strip()
+    if not line:
+        return ""
+    avail = TEXTWIDTH_PT - 2.0
+
+    def width(s: str) -> float:
+        return text_width_pt(f"{label}:", bold=True) + text_width_pt(" " + s)
+
+    def fine(s: str) -> bool:
+        w = width(s)
+        return w <= avail or (w % avail) >= 0.4 * avail
+
+    if fine(line):
+        return line
+    steps = (
+        lambda s: re.sub(r"(?i)(^|, |,? and )(playing|watching|doing|going|reading|listening to|"
+                         r"following)\s+", lambda m: m.group(1), s),
+        lambda s: re.sub(r"(?i)\s+to\s+(?:see|explore|visit|watch|learn|meet|stay)\b[^,.]*", "", s),
+    )
+    for step in steps:
+        new = step(line).strip()
+        new = (new[0].upper() + new[1:]) if new else new
+        if new != line:
+            line = new
+            if fine(line):
+                return line
+    return line
 
 
 def _additional(profile: dict, fold_entries: bool = False) -> str:
@@ -1366,6 +1401,19 @@ def _all_roles(profile: dict):
             yield r
 
 
+def _cut_victim(bl: list, lo: int, cuts: "_Cuts", label: str):
+    """The index of the bullet a cut takes from ``bl`` (positions ``lo`` and up, latest first):
+    a bullet WITHOUT a distinctive figure before one with, so "280,000+ job postings a day ...
+    145,000+ sponsorship-matched roles" is never what goes to make room (Kofi, 2026-11-10); a
+    bullet the person put back is never cut again. None when nothing may go."""
+    from .filler import figures_of
+    free = [i for i in range(len(bl) - 1, lo - 1, -1) if not cuts.kept("bullet", label, str(bl[i]))]
+    for i in free:
+        if not figures_of(str(bl[i])):
+            return i
+    return free[0] if free else None
+
+
 def _shrink_once(profile: dict, trims: list | None = None, keep=None,
                  origins: dict | None = None) -> bool:
     """Reduce content by ONE step so the CV fits one page, keeping every bullet a
@@ -1471,8 +1519,7 @@ def _shrink_once(profile: dict, trims: list | None = None, keep=None,
     # 9. Drop a remaining single bullet from the last role that has one.
     for bl, section, label, _lead in reversed([x for x in _role_lists(profile)
                                                 if x[1] != "extracurricular" and x[0]]):
-        idx = next((i for i in range(len(bl) - 1, -1, -1)
-                    if not cuts.kept("bullet", label, str(bl[i]))), None)
+        idx = _cut_victim(bl, 0, cuts, label)
         if idx is None:
             continue
         cuts.add("bullet", section, label, str(bl[idx]), index=idx)
@@ -2094,6 +2141,11 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
         rec = {"section": section, "label": label}
         src_role = source_roles.get(_role_key(entry, role))
         reserve = role.get("_reserve") or []
+        if reserve:
+            # Their own bullets with a distinctive figure come back first: the strongest fact in
+            # a role is the first thing kept, never the last thing written for.
+            from .filler import figures_of
+            reserve.sort(key=lambda s: 0 if figures_of(str(s)) else 1)
         while reserve:                                         # (a) their own, left out
             src = str(reserve.pop(0))
             if any(same_fact(src, str(origins.get(b, b))) for b in bl):
@@ -2402,8 +2454,7 @@ def _recency_fill(preamble: str, used: dict, result, *, sections, headings, work
             bl = role["bullets"]
             label = entry_label(entry, role)
             while len(bl) > lim:
-                idx = next((k for k in range(len(bl) - 1, -1, -1)
-                            if not cuts.kept("bullet", label, str(bl[k]))), None)
+                idx = _cut_victim(bl, 0, cuts, label)
                 if idx is None:
                     break
                 text = bl.pop(idx)
@@ -2672,8 +2723,7 @@ def _make_room(profile: dict, cuts: "_Cuts", order: list, older_roles: bool = Tr
             trims.remove(rec)
 
     def pop(bl: list, section: str, label: str, keep_n: int):
-        idx = next((i for i in range(len(bl) - 1, keep_n - 1, -1)
-                    if not cuts.kept("bullet", label, str(bl[i]))), None)
+        idx = _cut_victim(bl, keep_n, cuts, label)
         if idx is None:
             return None
         text = bl.pop(idx)
