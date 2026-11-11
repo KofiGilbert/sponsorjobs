@@ -72,7 +72,134 @@ def _voice_logger(row: dict) -> None:
             pass
 
 
+# A company name as an ad writes it: capitalised words on one line, with "of", "and", "&",
+# "for" between ("Smithsonian Institution", "Bank of America", "Johnson & Johnson").
+_CO_NAME = r"(?:[A-Z][\w&.'-]*)(?:[ \t]+(?:[A-Z0-9][\w&.'-]*|of|and|&|for|de))" + "{0,5}"
+# Words that open a sentence about the role or the reader, never a company's name.
+_CO_NOT = frozenset("we our you your this that it they he she who the a an job role team "
+                    "position candidate ideal company organization employer department "
+                    "applicant applicants successful incumbent individual person manager "
+                    "hiring us join apply send about overview summary responsibilities "
+                    "requirements qualifications benefits remote hybrid onsite full part "
+                    "time contract".split())
+# Job boards, ATSs and mail hosts: a link or address on them names no employer.
+_CO_HOSTS = frozenset("gmail yahoo hotmail outlook icloud aol proton protonmail mail linkedin "
+                      "indeed glassdoor greenhouse lever ashbyhq ashby workable smartrecruiters "
+                      "recruitee myworkdayjobs workday icims taleo successfactors jobvite "
+                      "bamboohr breezy jazzhr ziprecruiter monster dice usajobs google bit "
+                      "forms docs careers jobs apply boards www".split())
+
+
+def _co_clean(name: str) -> str:
+    """A matched name, or "" when it is a sentence's subject and not a company."""
+    name = re.sub(r"\s+", " ", str(name or "")).strip(" .,;:*#-")
+    name = re.sub(r"^The\s+", "", name)
+    words = name.split()
+    if not words or len(name) > 60 or len(words) > 6:
+        return ""
+    if words[0].lower() in _CO_NOT or all(w.lower() in _CO_NOT for w in words):
+        return ""
+    if _TITLE_WORDS.search(name) or any(j in name.lower() for j in _JD_JUNK):
+        return ""
+    return name
+
+
+def _named_again(name: str, text: str, skip: str = "") -> bool:
+    rest = text.replace(skip, "", 1) if skip else text
+    return bool(re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", rest))
+
+
+def _jd_lines(jd_text: str) -> list[str]:
+    return [x for x in (ln.strip(" \t*#>") for ln in str(jd_text or "").splitlines()) if x]
+
+
+def _jd_company(jd_text: str, role: str = "") -> str:
+    """The employer a pasted ad names, from the shapes ads use, or "" when none matches. Never
+    a guess (the Smithsonian D365 paste showed the title alone, 2026-11-10):
+    1. a "Company:" / "Employer:" / "Organization:" label;
+    2. "<Company> is seeking / hiring / looking for ...";
+    3. an "About <Company>" heading ("About us", "About the role" are not names);
+    4. "<Company> is an Equal Opportunity Employer" / "<Company> provides reasonable
+       accommodation";
+    5. a line that is just a name, right above or below the title, when the ad names it again;
+    6. the address or link's domain ("careers@ridgelinehealth.com"), when the ad spells that
+       name out in words ("Ridgeline Health")."""
+    text = str(jd_text or "")
+    lines = _jd_lines(text)
+    body = "\n".join(lines)
+    for ln in lines[:40]:                                                       # 1
+        m = re.match(r"^(?:company|employer|organi[sz]ation|hiring (?:company|organi[sz]ation)|"
+                     r"company name|agency)\s*[:|]\s*(.+)$", ln, re.I)
+        if m:
+            name = _co_clean(re.split(r"\s+[|·•-]\s+|\s{2,}", m.group(1))[0])
+            if name:
+                return name
+    start = r"(?:^|(?<=[.!?:]\s))"
+    for pat in (                                                                # 2, 3, 4
+            start + "(" + _CO_NAME + r")[ \t]+(?:is|are)[ \t]+(?:currently[ \t]+|now[ \t]+)?"
+            r"(?:seeking|hiring|looking for|searching for|recruiting)\b",
+            r"^About[ \t]+(" + _CO_NAME + r")[ \t]*:?[ \t]*$",
+            start + "(" + _CO_NAME + r")[ \t]+(?:is an?|is proud to be an?)[ \t]+"
+            r"(?:equal opportunity|equal employment opportunity|EEO|affirmative action)",
+            start + "(" + _CO_NAME + r")[ \t]+provides reasonable accommodation"):
+        for m in re.finditer(pat, body, re.M):
+            name = _co_clean(m.group(1))
+            if name:
+                return name
+    if role:                                                                    # 5
+        at = next((k for k, ln in enumerate(lines[:12]) if role.lower() in ln.lower()), None)
+        for k in ((at - 1, at + 1) if at is not None else ()):
+            if not 0 <= k < len(lines):
+                continue
+            ln = lines[k]
+            if (len(ln) > 50 or _JD_META.search(ln) or re.search(r"[.!?:;,]|\d", ln)
+                    or not re.fullmatch(_CO_NAME, ln)):
+                continue
+            name = _co_clean(ln)
+            if name and _named_again(name, body, skip=ln):
+                return name
+    words = list(re.finditer(r"[A-Z][\w&'-]*", body))                         # 6
+    for m in re.finditer(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)|https?://([\w-]+(?:\.[\w-]+)+)", body):
+        host = (m.group(1) or m.group(2) or "").lower()
+        labels = [x for x in host.split(".")[:-1] if x not in _CO_HOSTS and len(x) >= 3]
+        if not labels:
+            continue
+        want = re.sub(r"[^a-z0-9]", "", labels[-1])
+        for i in range(len(words)):
+            got = ""
+            for j in range(i, min(i + 4, len(words))):
+                if j > i and body[words[j - 1].end():words[j].start()] not in (" ", " & "):
+                    break
+                got += re.sub(r"[^a-z0-9]", "", words[j].group(0).lower())
+                if got == want:
+                    name = _co_clean(body[words[i].start():words[j].end()])
+                    if name:
+                        return name
+                if len(got) >= len(want):
+                    break
+    return ""
+
+
 def _jd_label(jd_text: str) -> tuple[str, str]:
+    """(role, company) from a JD: ``_jd_role_company``, then, when the top names no company,
+    the employer the ad names elsewhere (``_jd_company``). A first line that is only a name the
+    ad repeats, above a line that reads as a title, is the company ("Duolingo" over "Senior
+    Data Scientist")."""
+    role, company = _jd_role_company(jd_text)
+    if role and not company and not _TITLE_WORDS.search(role):
+        lines = _jd_lines(jd_text)
+        at = next((k for k, ln in enumerate(lines[:8]) if ln.startswith(role)), None)
+        nxt = lines[at + 1] if at is not None and at + 1 < len(lines) else ""
+        if (nxt and len(nxt) <= 60 and _TITLE_WORDS.search(nxt) and not _JD_META.search(nxt)
+                and re.fullmatch(_CO_NAME, role) and _co_clean(role)
+                and _named_again(role, "\n".join(lines), skip=lines[at])):
+            return re.split(r"[.,;]", nxt)[0].strip(), _co_clean(role)
+    if not company:
+        company = _jd_company(jd_text, role)
+    return role, company
+
+
+def _jd_role_company(jd_text: str) -> tuple[str, str]:
     """Best-effort (role, company) from the top of a JD. Skips scraped boilerplate
     ('Company logo for …') and the posting's metadata lines ('OPEN DATE: November 9, 2026')
     so the greeting never reads 'the Company logo for role' or 'the OPEN DATE: November 9
