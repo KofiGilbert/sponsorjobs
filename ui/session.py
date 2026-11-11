@@ -5866,6 +5866,11 @@ class WebIntake:
         rank_of = {"strong": 0, "some": 1, "none": 2, "unknown": 3}
         repos = [r for r in got.get("repos") or [] if isinstance(r, dict)]
         n = len(repos)
+        if not n:
+            # GitHub could not be read (its hourly limit without sign in) or there are no repos:
+            # nothing true to say about them.
+            self._verdict_cache = {"key": key, "verdict": None}
+            return None
         current = [(p.get("name"), p.get("fit") or "unknown") for p in got.get("projects") or []]
         current += [(r.get("name"), r.get("fit") or "unknown") for r in repos if r.get("on_resume")]
         if any(f == "strong" for _n, f in current):

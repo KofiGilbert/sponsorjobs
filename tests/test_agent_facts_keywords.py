@@ -240,3 +240,25 @@ def test_the_terms_survive_an_older_sessions_skills_reselection(template_source,
     s._place_job_terms(force=True)
     assert s._skills_job != "another job"   # the reselection ran
     assert s._term_on_page("Dashboards") and s._term_on_page("Forecasting")
+
+
+def test_a_placement_that_costs_a_bullet_or_the_staircase_is_not_kept(template_source, fake_llm, workdir):
+    # The "are we done?" rebuild once left BlackOrigin at 4 bullets beside Stanbic's 4.
+    s = _session(template_source, fake_llm, workdir)
+
+    def page(counts, fill=0.96):
+        exp = [{"org": f"o{i}", "roles": [{"title": "t", "bullets": ["b."] * n}]} for i, n in enumerate(counts)]
+        p = _Page({"experience": exp})
+        p.fill_ratio = fill
+        p.compile = type("C", (), {"pages": 1})()
+        return p
+
+    s.assembled = page([5, 4, 3, 2])
+    before = s._page_shape()
+    assert before["strict"] and before["counts"] == [5, 4, 3, 2]
+    s.assembled = page([4, 4, 3, 2])
+    assert not s._page_kept(before)                       # a bullet gone, the staircase tied
+    s.assembled = page([5, 4, 3, 2], fill=0.93)
+    assert not s._page_kept(before)                       # emptier
+    s.assembled = page([5, 4, 3, 2], fill=0.962)
+    assert s._page_kept(before)
