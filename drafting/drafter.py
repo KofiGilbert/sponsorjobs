@@ -10,13 +10,27 @@ from __future__ import annotations
 
 import re
 
+from llm import textguard
 from tailoring.keywords import supported_skills
+
+
+def _guard(jd_text: str):
+    """Strip what a person cannot see out of the posting before a model reads it.
+
+    The posting is third-party text going in front of a model next to the person's
+    own history (llm/textguard.py). Returns the cleaned text and what was found, so
+    every draft here can show the person what was taken out.
+    """
+    guarded = textguard.clean(jd_text)
+    return guarded.text, [f.detail + (f" -> {f.quote}" if f.quote else "")
+                          for f in guarded.findings]
 
 
 def cover_letter(jd_text: str, profile: dict, llm, role: str = "", company: str = "",
                  tone: str = "professional") -> dict:
     """Draft one cover letter. Returns the letter text plus the grounding report
     (which JD-relevant skills the profile genuinely supports) and a word count."""
+    jd_text, posting_findings = _guard(jd_text)
     text = (llm.draft_cover_letter(jd_text, profile, role=role, company=company,
                                    tone=tone) or "").strip()
     from drafting.cover_review import review_cover_letter
@@ -29,6 +43,7 @@ def cover_letter(jd_text: str, profile: dict, llm, role: str = "", company: str 
         # An honest craft check (hook, names the company, length, no unbacked claim) the UI shows
         # under the letter, so the person sends something sharp and true, not just plausible.
         "review": review_cover_letter(text, company=company, profile=profile, jd_text=jd_text),
+        "posting_findings": posting_findings,
     }
 
 
@@ -38,6 +53,7 @@ def referral_message(role: str, company: str, profile: dict, llm, jd_text: str =
     target company. Returns the message text, a word count, and the JD-relevant skills the
     profile genuinely supports (so the person can see what it is leaning on). The applicant
     finds the recipient and sends it themselves; nothing is scraped or auto-sent."""
+    jd_text, posting_findings = _guard(jd_text)
     text = (llm.draft_referral_message(role, company, profile, jd_text=jd_text,
                                        recipient_name=recipient_name,
                                        relationship=relationship) or "").strip()
@@ -47,6 +63,7 @@ def referral_message(role: str, company: str, profile: dict, llm, jd_text: str =
         "company": company,
         "skills_used": supported_skills(jd_text, profile) if jd_text else [],
         "word_count": len(text.split()),
+        "posting_findings": posting_findings,
     }
 
 
@@ -85,9 +102,11 @@ def screening_answers(jd_text: str, profile: dict, llm, questions) -> dict:
     Blank/whitespace questions are dropped; the rest keep their order. Each answer
     carries ``knockout`` (a category or None) so the review can single out the
     questions a wrong answer would auto-reject on."""
+    jd_text, posting_findings = _guard(jd_text)
     questions = [str(q).strip() for q in (questions or []) if str(q).strip()]
     answers = llm.answer_screening_questions(jd_text, profile, questions) if questions else []
     paired = [{"question": q, "answer": (a or "").strip(), "knockout": knockout_kind(q)}
               for q, a in zip(questions, answers)]
     return {"answers": paired, "grounded_skills": supported_skills(jd_text, profile),
-            "knockouts": [p for p in paired if p["knockout"]]}
+            "knockouts": [p for p in paired if p["knockout"]],
+            "posting_findings": posting_findings}
