@@ -507,3 +507,119 @@ def test_a_project_built_in_one_month_shows_one_month():
     assert format_dates("July 2026 - July 2026") == "July 2026"
     assert format_dates("Jul 2026 - Jul 2026") == "July 2026"
     assert format_dates("July 2018 to July 2021") == "July 2018 - July 2021"
+
+
+# ------------------------------- a session saved before the fixes, rebuilt on main (2026-11-11)
+# Kofi's Google session was started before the per-job Skills selection and the outside-work
+# merge. "why is there white space?" rebuilt it with fill_page: the D365 Skills block stayed
+# (keywords 17%) and his "playing football and swimming" never reached the Interests line.
+
+ASK = ("Your template has Extracurricular section, and your resume won't look complete without "
+       "it. Could you tell me anything you do outside work, like volunteering, clubs or teams? "
+       "If there's none, say so and I'll leave it off.")
+
+
+def _old_session(template_source, workdir):
+    """The Google session as it was saved before the fixes, restored."""
+    from ui import builder_sessions as BS
+    s = _returning(template_source, workdir)
+    s.profile = normalize_profile(dict(s.saved_profile))   # the D365 block, as the old build left it
+    s.essentials["required_ask_text"] = ASK[:200]
+    s.essentials["asked_required"] = True
+    s.history = [{"role": "agent", "content": "Welcome back, Kofi."},
+                 {"role": "user", "content": BUILD_BUTTON},
+                 {"role": "agent", "content": ASK},
+                 {"role": "user", "content": ANSWER},
+                 {"role": "agent", "content": KOFI_CLAIM},
+                 {"role": "user", "content": "why is there white space?"}]
+    data = BS.dump(s)
+    for k in ("_skills_job", "_outside_work_checked"):      # fields a pre-fix save never had
+        data.pop(k, None)
+    r = BS.restore(data, template_source=template_source, llm=FakeLLM(), memory=s.memory,
+                   records=s.records, workdir=workdir, palace_dir=workdir / "p")
+    r.github_status = lambda: {"connected": False, "login": ""}
+    r.github_token = lambda: ""
+    return r
+
+
+def test_an_old_sessions_first_rebuild_selects_the_skills_for_this_job(template_source, workdir):
+    s = _old_session(template_source, workdir)
+    assert list(s.profile["skills"]) == list(D365_BLOCK)
+    s._refresh_for_job()                                     # what every rebuild runs first
+    labels = list(s.profile["skills"])
+    assert not ({"Power Platform & Analysis", "Microsoft & Azure Platform"} & set(labels)), labels
+    first = split_terms(s.profile["skills"][labels[0]])
+    assert "X++" not in first[:4] and {"Python", "SQL"} & set(first[:2]), s.profile["skills"]
+    # Once selected for this job, the person's own edit to the block stands on later rebuilds.
+    s.profile["skills"][labels[0]] = "Python, SQL, Tableau"
+    s._refresh_for_job()
+    assert s.profile["skills"][labels[0]] == "Python, SQL, Tableau"
+    # Another job's description: selected again for it.
+    s.jd = D365_JD
+    s._refresh_for_job()
+    assert "X++" in _terms(s.profile["skills"])
+
+
+def test_an_old_sessions_lost_outside_work_answer_joins_the_interests(template_source, workdir):
+    s = _old_session(template_source, workdir)
+    assert "swimming" not in s.profile["interests"]
+    s._refresh_for_job()
+    assert s.essentials["interests"] == MERGED and s.profile["interests"] == MERGED
+    # Once only, and a session saved after the fix never looks back at its history.
+    s.essentials["interests"] = INTERESTS
+    s._refresh_for_job()
+    assert s.essentials["interests"] == INTERESTS
+    fresh = _returning(template_source, workdir)
+    fresh.history = list(s.history)
+    fresh._refresh_for_job()
+    assert "swimming" not in fresh.essentials["interests"]
+
+
+def test_a_declined_or_unasked_reply_is_never_merged(template_source, workdir):
+    s = _old_session(template_source, workdir)
+    s.history[3] = {"role": "user", "content": "none, leave it off"}
+    s._refresh_for_job()
+    assert s.essentials["interests"] == INTERESTS
+    s = _old_session(template_source, workdir)
+    s.history[2] = {"role": "agent", "content": "Built your resume."}       # not the question
+    s._refresh_for_job()
+    assert s.essentials["interests"] == INTERESTS
+
+
+@requires_latex
+def test_the_page_fill_on_an_old_session_rebuilds_with_both(template_source, workdir):
+    s = _old_session(template_source, workdir)
+    s._assemble()
+    page = s.assembled.profile_used
+    assert page["interests"] == MERGED
+    assert "X++" not in split_terms(page["skills"][list(page["skills"])[0]])[:4]
+
+
+def test_a_project_bullet_the_saved_profile_lost_comes_back_from_the_intake(template_source, workdir):
+    # Saving the deduped Google page wrote Last-Mile's lost result bullet out of the saved
+    # profile; the person's intake material still had it. The next build puts it back.
+    from tests.test_one_fact_per_bullet import SIM_BUILT, SIM_RESULT
+    saved = {**SAVED, "projects": [{"title": "Last-Mile Operations Simulator (Python)", "bullets": [SIM_BUILT]}]}
+    ess = {**ESS, "projects": [{"title": "Last-Mile Operations Simulator (Python)",
+                                "bullets": [SIM_BUILT, SIM_RESULT]}]}
+    s = _returning(template_source, workdir, saved=saved, ess=ess)
+    base = dict(s.saved_profile)
+    assert s._restore_project_bullets(base) == [SIM_RESULT]
+    assert base["projects"][0]["bullets"] == [SIM_BUILT, SIM_RESULT]
+    assert s.saved_profile["projects"][0]["bullets"] == [SIM_BUILT]      # the saved copy untouched
+    # The same fact reworded never comes back twice.
+    again = {**ess, "projects": [{"title": "Last-Mile Operations Simulator (Python)",
+                                  "bullets": [SIM_BUILT.replace("deadlines.", "deadlines each day."), SIM_RESULT]}]}
+    s2 = _returning(template_source, workdir, saved=saved, ess=again)
+    b2 = dict(s2.saved_profile)
+    assert s2._restore_project_bullets(b2) == [SIM_RESULT]
+
+
+def test_an_old_sessions_first_rebuild_brings_back_a_lost_project_bullet(template_source, workdir):
+    from tests.test_one_fact_per_bullet import SIM_BUILT, SIM_RESULT
+    proj = "Last-Mile Operations Simulator (Python)"
+    s = _old_session(template_source, workdir)
+    s.essentials["projects"] = [{"title": proj, "bullets": [SIM_BUILT, SIM_RESULT]}]
+    s.profile["projects"] = [{"title": proj, "bullets": [SIM_BUILT]}]
+    s._refresh_for_job()
+    assert s.profile["projects"][0]["bullets"] == [SIM_BUILT, SIM_RESULT]

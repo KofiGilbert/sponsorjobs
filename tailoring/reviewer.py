@@ -8,7 +8,7 @@ whether the page fits. The output is a verdict plus a categorized checklist the 
 """
 from __future__ import annotations
 
-from tailoring.keywords import profile_text, term_present
+from tailoring.keywords import profile_text, term_backed
 
 
 def review_resume(profile: dict, coverage: dict, status: str = "clean",
@@ -28,7 +28,9 @@ def review_resume(profile: dict, coverage: dict, status: str = "clean",
     # THE headline check. A term is in ``present`` because it appears on the resume; if the profile
     # cannot back it, the tailor introduced a claim the person cannot defend. Whole-token match, so
     # this is conservative -- it fires rarely, and when it does it is worth a look before sending.
-    unverified = [t for t in present if not term_present(t, prof)]
+    # An abbreviation and its long form are one term: "Artificial Intelligence" on the page is
+    # backed by "AI" in the profile, and the other way round.
+    unverified = [t for t in present if not term_backed(t, prof)]
 
     checks: list[dict] = []
     checks.append({

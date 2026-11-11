@@ -88,3 +88,30 @@ def test_every_new_label_is_in_all_five_languages_and_never_uses_resume_as_a_ver
     for k in keys:
         assert not re.search(r"\bResume (your|this|the|where|tailoring|editing)\b", en[k]), k
         assert "—" not in en[k] and "–" not in en[k]
+
+
+def test_a_closed_applied_jobs_note_says_the_application_stands():
+    note = _fn("renderClosedNote")
+    assert "n.applied" in note and "chat.closedApplied" in note and "chat.closedAppliedTitle" in note
+
+
+def test_a_tracker_card_with_a_session_has_a_details_link_to_the_side_panel():
+    card = _fn("trkCardHtml")
+    assert card.count("trkDetailsLink()") == 2          # in progress, and applied or closed
+    assert "tracker.postingClosed" in card              # "Posting closed Nov 10" on the meta
+    board = _fn("renderTrackerBoard")
+    i = board.index("[data-trk-details]")
+    assert "openTrackerPanel(card.dataset.sid)" in board[i:i + 200]
+    # Card click still opens the workspace.
+    assert 'card.hasAttribute("data-session")' in board and "openJobWorkspace" in board
+
+
+def test_the_new_labels_are_in_all_five_languages():
+    import json
+    from pathlib import Path
+    for lang in ("en", "de", "es", "fr", "pt"):
+        d = json.loads(Path(f"ui/static/locales/{lang}.json").read_text())
+        for k in ("tracker.details", "chat.closedApplied", "chat.closedAppliedNoDate",
+                  "chat.closedAppliedTitle"):
+            assert d.get(k), (lang, k)
+            assert "—" not in d[k] and "–" not in d[k]

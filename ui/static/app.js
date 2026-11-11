@@ -4033,7 +4033,13 @@
   function renderClosedNote(st) {
     const n = st.expired_note || {};
     const co = n.company || st.company || "";
-    const body = n.closed_at
+    // Already applied: the posting closed after the application, which still stands.
+    const body = n.applied
+      ? (n.closed_at
+        ? sjT("chat.closedApplied", "{company} stopped taking new applications on {date}. Your application still stands, and this chat is kept with it.")
+        : sjT("chat.closedAppliedNoDate", "{company} stopped taking new applications. Your application still stands, and this chat is kept with it."))
+          .replace("{company}", co || sjT("chat.theEmployer", "The employer")).replace("{date}", n.closed_at ? sessDay(n.closed_at) : "")
+      : n.closed_at
       ? sjT("chat.closedBody", "{company} stopped taking applications on {date}. This chat is kept as a record. Your resume can still be downloaded or reused for a similar job.")
           .replace("{company}", co || sjT("chat.theEmployer", "The employer")).replace("{date}", sessDay(n.closed_at))
       : sjT("chat.closedBodyNoDate", "{company} stopped taking applications. This chat is kept as a record. Your resume can still be downloaded or reused for a similar job.")
@@ -4041,7 +4047,7 @@
     const note = el("div", "chat-closed-note");
     note.setAttribute("role", "note");
     note.innerHTML = `<span class="ccn-dot" aria-hidden="true"></span><div class="ccn-main">
-        <div class="ccn-txt"><b>${esc(sjT("chat.closedTitle", "This job has closed."))}</b> ${esc(body)}</div>
+        <div class="ccn-txt"><b>${esc(n.applied ? sjT("chat.closedAppliedTitle", "This posting has closed.") : sjT("chat.closedTitle", "This job has closed."))}</b> ${esc(body)}</div>
         <div class="ccn-acts">
           <button class="btn btn-ghost btn-sm" type="button" data-ccn-reuse>${esc(sjT("chat.reuse", "Reuse for a similar job"))}</button>
           ${st.pdf ? `<a class="btn btn-ghost btn-sm" data-ccn-dl href="${esc(st.pdf)}" download>${esc(sjT("chat.download", "Download resume"))}</a>` : ""}
@@ -5465,7 +5471,7 @@
     if (sess && !c.applied_at && !c.closed_at) {
       const score = sessScore(sess);
       const lines = [score ? `<div class="trk-card-meta trk-sess">${esc(score)}</div>` : "",
-        `<div class="trk-card-meta trk-sess">${esc(trkT("tracker.chatAgo", "Chat \u00b7 {t}").replace("{t}", sessAgo(sess.updated_at)))}</div>`];
+        `<div class="trk-card-meta trk-sess"><span>${esc(trkT("tracker.chatAgo", "Chat \u00b7 {t}").replace("{t}", sessAgo(sess.updated_at)))}</span>${trkDetailsLink()}</div>`];
       return trkCardShell(c, lines.join(""));
     }
     if (closed) meta.push(closed);
@@ -5475,6 +5481,9 @@
     if (pdf) meta.push(`<a href="${esc(pdf)}" target="_blank" rel="noopener">${esc(trkT("tracker.resume", "Resume"))}${rec && rec.count > 1 ? ` (${rec.count})` : ""}</a>`);
     if (sess) meta.push(`<a href="#" data-trk-chat>${esc(trkT("tracker.chat", "Chat"))}</a>`);
     if (c.has_notes) meta.push(`<span>${esc(trkT("tracker.hasNotes", "Notes"))}</span>`);
+    // A card with a session opens its workspace on click: "Details" opens the side panel
+    // (notes, contacts, follow-up), which a click no longer reaches.
+    if (sess) meta.push(trkDetailsLink());
     const chips = trkChips(c);
     // How it was sent, or why it came back (submit/stages.py). Only said where it adds news:
     // an auto-submit, or an approved application that is back with the person.
@@ -5485,6 +5494,9 @@
     return trkCardShell(c, `${st}
       ${chips ? `<div class="trk-card-chips">${chips}</div>` : ""}
       ${meta.length ? `<div class="trk-card-meta">${meta.join("")}</div>` : ""}`);
+  }
+  function trkDetailsLink() {
+    return `<a href="#" class="trk-details" data-trk-details>${esc(trkT("tracker.details", "Details"))}</a>`;
   }
   function trkCardShell(c, inner) {
     return `<div class="trk-card" draggable="true" data-sid="${esc(c.source_id)}"${c.has_session ? " data-session" : ""} role="button" tabindex="0">
@@ -5534,6 +5546,7 @@
         : openTrackerPanel(card.dataset.sid);
       card.addEventListener("click", (e) => {
         if (e.target.closest("[data-trk-chat]")) { e.preventDefault(); openJobWorkspace(card.dataset.sid); return; }
+        if (e.target.closest("[data-trk-details]")) { e.preventDefault(); e.stopPropagation(); openTrackerPanel(card.dataset.sid); return; }
         if (e.target.closest("a")) return;
         open();
       });

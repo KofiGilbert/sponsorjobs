@@ -72,7 +72,134 @@ def _voice_logger(row: dict) -> None:
             pass
 
 
+# A company name as an ad writes it: capitalised words on one line, with "of", "and", "&",
+# "for" between ("Smithsonian Institution", "Bank of America", "Johnson & Johnson").
+_CO_NAME = r"(?:[A-Z][\w&.'-]*)(?:[ \t]+(?:[A-Z0-9][\w&.'-]*|of|and|&|for|de))" + "{0,5}"
+# Words that open a sentence about the role or the reader, never a company's name.
+_CO_NOT = frozenset("we our you your this that it they he she who the a an job role team "
+                    "position candidate ideal company organization employer department "
+                    "applicant applicants successful incumbent individual person manager "
+                    "hiring us join apply send about overview summary responsibilities "
+                    "requirements qualifications benefits remote hybrid onsite full part "
+                    "time contract".split())
+# Job boards, ATSs and mail hosts: a link or address on them names no employer.
+_CO_HOSTS = frozenset("gmail yahoo hotmail outlook icloud aol proton protonmail mail linkedin "
+                      "indeed glassdoor greenhouse lever ashbyhq ashby workable smartrecruiters "
+                      "recruitee myworkdayjobs workday icims taleo successfactors jobvite "
+                      "bamboohr breezy jazzhr ziprecruiter monster dice usajobs google bit "
+                      "forms docs careers jobs apply boards www".split())
+
+
+def _co_clean(name: str) -> str:
+    """A matched name, or "" when it is a sentence's subject and not a company."""
+    name = re.sub(r"\s+", " ", str(name or "")).strip(" .,;:*#-")
+    name = re.sub(r"^The\s+", "", name)
+    words = name.split()
+    if not words or len(name) > 60 or len(words) > 6:
+        return ""
+    if words[0].lower() in _CO_NOT or all(w.lower() in _CO_NOT for w in words):
+        return ""
+    if _TITLE_WORDS.search(name) or any(j in name.lower() for j in _JD_JUNK):
+        return ""
+    return name
+
+
+def _named_again(name: str, text: str, skip: str = "") -> bool:
+    rest = text.replace(skip, "", 1) if skip else text
+    return bool(re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", rest))
+
+
+def _jd_lines(jd_text: str) -> list[str]:
+    return [x for x in (ln.strip(" \t*#>") for ln in str(jd_text or "").splitlines()) if x]
+
+
+def _jd_company(jd_text: str, role: str = "") -> str:
+    """The employer a pasted ad names, from the shapes ads use, or "" when none matches. Never
+    a guess (the Smithsonian D365 paste showed the title alone, 2026-11-10):
+    1. a "Company:" / "Employer:" / "Organization:" label;
+    2. "<Company> is seeking / hiring / looking for ...";
+    3. an "About <Company>" heading ("About us", "About the role" are not names);
+    4. "<Company> is an Equal Opportunity Employer" / "<Company> provides reasonable
+       accommodation";
+    5. a line that is just a name, right above or below the title, when the ad names it again;
+    6. the address or link's domain ("careers@ridgelinehealth.com"), when the ad spells that
+       name out in words ("Ridgeline Health")."""
+    text = str(jd_text or "")
+    lines = _jd_lines(text)
+    body = "\n".join(lines)
+    for ln in lines[:40]:                                                       # 1
+        m = re.match(r"^(?:company|employer|organi[sz]ation|hiring (?:company|organi[sz]ation)|"
+                     r"company name|agency)\s*[:|]\s*(.+)$", ln, re.I)
+        if m:
+            name = _co_clean(re.split(r"\s+[|·•-]\s+|\s{2,}", m.group(1))[0])
+            if name:
+                return name
+    start = r"(?:^|(?<=[.!?:]\s))"
+    for pat in (                                                                # 2, 3, 4
+            start + "(" + _CO_NAME + r")[ \t]+(?:is|are)[ \t]+(?:currently[ \t]+|now[ \t]+)?"
+            r"(?:seeking|hiring|looking for|searching for|recruiting)\b",
+            r"^About[ \t]+(" + _CO_NAME + r")[ \t]*:?[ \t]*$",
+            start + "(" + _CO_NAME + r")[ \t]+(?:is an?|is proud to be an?)[ \t]+"
+            r"(?:equal opportunity|equal employment opportunity|EEO|affirmative action)",
+            start + "(" + _CO_NAME + r")[ \t]+provides reasonable accommodation"):
+        for m in re.finditer(pat, body, re.M):
+            name = _co_clean(m.group(1))
+            if name:
+                return name
+    if role:                                                                    # 5
+        at = next((k for k, ln in enumerate(lines[:12]) if role.lower() in ln.lower()), None)
+        for k in ((at - 1, at + 1) if at is not None else ()):
+            if not 0 <= k < len(lines):
+                continue
+            ln = lines[k]
+            if (len(ln) > 50 or _JD_META.search(ln) or re.search(r"[.!?:;,]|\d", ln)
+                    or not re.fullmatch(_CO_NAME, ln)):
+                continue
+            name = _co_clean(ln)
+            if name and _named_again(name, body, skip=ln):
+                return name
+    words = list(re.finditer(r"[A-Z][\w&'-]*", body))                         # 6
+    for m in re.finditer(r"[\w.+-]+@([\w-]+(?:\.[\w-]+)+)|https?://([\w-]+(?:\.[\w-]+)+)", body):
+        host = (m.group(1) or m.group(2) or "").lower()
+        labels = [x for x in host.split(".")[:-1] if x not in _CO_HOSTS and len(x) >= 3]
+        if not labels:
+            continue
+        want = re.sub(r"[^a-z0-9]", "", labels[-1])
+        for i in range(len(words)):
+            got = ""
+            for j in range(i, min(i + 4, len(words))):
+                if j > i and body[words[j - 1].end():words[j].start()] not in (" ", " & "):
+                    break
+                got += re.sub(r"[^a-z0-9]", "", words[j].group(0).lower())
+                if got == want:
+                    name = _co_clean(body[words[i].start():words[j].end()])
+                    if name:
+                        return name
+                if len(got) >= len(want):
+                    break
+    return ""
+
+
 def _jd_label(jd_text: str) -> tuple[str, str]:
+    """(role, company) from a JD: ``_jd_role_company``, then, when the top names no company,
+    the employer the ad names elsewhere (``_jd_company``). A first line that is only a name the
+    ad repeats, above a line that reads as a title, is the company ("Duolingo" over "Senior
+    Data Scientist")."""
+    role, company = _jd_role_company(jd_text)
+    if role and not company and not _TITLE_WORDS.search(role):
+        lines = _jd_lines(jd_text)
+        at = next((k for k, ln in enumerate(lines[:8]) if ln.startswith(role)), None)
+        nxt = lines[at + 1] if at is not None and at + 1 < len(lines) else ""
+        if (nxt and len(nxt) <= 60 and _TITLE_WORDS.search(nxt) and not _JD_META.search(nxt)
+                and re.fullmatch(_CO_NAME, role) and _co_clean(role)
+                and _named_again(role, "\n".join(lines), skip=lines[at])):
+            return re.split(r"[.,;]", nxt)[0].strip(), _co_clean(role)
+    if not company:
+        company = _jd_company(jd_text, role)
+    return role, company
+
+
+def _jd_role_company(jd_text: str) -> tuple[str, str]:
     """Best-effort (role, company) from the top of a JD. Skips scraped boilerplate
     ('Company logo for …') and the posting's metadata lines ('OPEN DATE: November 9, 2026')
     so the greeting never reads 'the Company logo for role' or 'the OPEN DATE: November 9
@@ -1098,6 +1225,14 @@ class WebIntake:
         self.lock = threading.RLock()
         self._connect_due = False          # a reply said GitHub is not connected (_reply_with_connect)
         self._project_offered = False      # the one proactive projects offer (_project_offer)
+        # The job the Skills block was last selected for (_jd_key); None until a build makes it
+        # (the block the person gave for this job is this job's). A rebuild of a page whose block
+        # was selected for another job, or never per job ("", a session saved before 2026-11-11,
+        # ui/builder_sessions.restore), selects it again first (_refresh_for_job).
+        self._skills_job = None
+        # A session restored from before the outside-work merge reads its history once for an
+        # answer the page lost (ui/builder_sessions.restore sets this False for such a session).
+        self._outside_work_checked = True
         self.last_cover_letter = ""        # most recent drafted cover letter (bundled on accept)
         self.last_screening = []           # most recent drafted screening Q/A (bundled on accept)
         self.source_job = {}               # {url, source, source_id} when started from a sourced job
@@ -5426,6 +5561,7 @@ class WebIntake:
                 if self.essentials.get(k):
                     v = self.essentials[k]
                     base[k] = [dict(x) for x in v if isinstance(x, dict)] if isinstance(v, list) else v
+            self._restore_project_bullets(base)
             self.profile = normalize_profile(base)
             # HARD RULE (memory: complete-cv-fills-page): the template's page-filling
             # sections are collected BEFORE the first build and never deferred to post-build
@@ -5799,6 +5935,7 @@ class WebIntake:
         current = self.profile.get("skills") or {}
         if not isinstance(current, dict):
             return
+        self._skills_job = self._jd_key()
         fixed = {k: v for k, v in current.items() if _FIXED_LABEL.search(str(k))}
         cands = list(self._skill_pool())
         for k, v in current.items():
@@ -6659,7 +6796,104 @@ class WebIntake:
         st["template_ok"] = True
         return st
 
+    def _restore_project_bullets(self, base: dict) -> list[str]:
+        """A project's own bullets that the saved profile lost come back from the person's intake
+        material (essentials). The entry dedupe once read Last-Mile's result bullet ("about 5
+        points of on-time delivery ... about 10 drivers") as a repeat of its build bullet, the
+        page went out with one, and saving that page wrote the loss into the saved profile
+        (Kofi's Google build, 2026-11-10). A bullet comes back only under the same project, in
+        its own place, and only when it is not the same fact as one already there."""
+        from tailoring.filler import same_fact
+        key = lambda p: re.sub(r"\s*\(.*$", "", str(p.get("title") or p.get("org") or "")).strip().lower()
+        mine = {key(p): p for p in (self.essentials.get("projects") or []) if isinstance(p, dict)}
+        back: list[str] = []
+        projects = [dict(p) if isinstance(p, dict) else p for p in (base.get("projects") or [])]
+        for p in projects:
+            if not isinstance(p, dict) or not key(p) or key(p) not in mine:
+                continue
+            have = [str(b) for b in p.get("bullets") or []]
+            out = list(have)
+            for n, b in enumerate(str(x) for x in mine[key(p)].get("bullets") or []):
+                if b.strip() and b not in out and not any(same_fact(b, h) for h in out):
+                    out.insert(min(n, len(out)), b)
+                    back.append(b)
+            p["bullets"] = out
+        if back:
+            base["projects"] = projects
+        return back
+
+    def _jd_key(self) -> str:
+        import hashlib
+        return hashlib.sha1(" ".join(str(self.jd or "").split()).encode("utf-8")).hexdigest()[:16]
+
+    def _refresh_for_job(self) -> None:
+        """Before any rebuild (the page fill, a keyword ADD or undo, a template switch, a chat
+        edit): the Skills block is this job's. A block selected for another job, or never per job
+        (Kofi's Google session, started before the per-job selection: its fill_page rebuild kept
+        the D365 block, X++ and Logic Apps, at 17% keywords), is selected again from the whole
+        pool, once; after that the person's own edits to it stand. A restored session also gets
+        back an outside-work answer its page lost (``_restore_outside_work``)."""
+        if not self._outside_work_checked:
+            self._outside_work_checked = True
+            try:
+                self._restore_outside_work()
+                # The page's project bullets the old entry dedupe dropped come back too.
+                self._restore_project_bullets(self.profile)
+            except Exception:      # noqa: BLE001 - an odd old history never stops a rebuild
+                pass
+        if self._skills_job is None:
+            self._skills_job = self._jd_key()
+        elif (str(self.jd or "").strip() and self._skills_job != self._jd_key()
+                and isinstance(self.profile.get("skills"), dict) and self.profile.get("skills")):
+            self._reselect_skills()
+            self._validate_skills()
+            self._fill_skills()
+            self._dedupe_skill_groups()
+
+    def _restore_outside_work(self) -> list[str]:
+        """A session from before the outside-work merge (2026-11-10) may hold an answer to the
+        outside-work question that never reached the page: Kofi said "playing football and
+        swimming", the absorb dropped it, and his Interests line has no swimming. Each such reply
+        (the turn right after the asked question, naming hobbies, not a decline or a question)
+        merges into the Interests on file by the same rule as a live answer
+        (tailoring/conform.merge_interests). Returns what was added."""
+        from tailoring.conform import interest_sentence, merge_interests
+        e = self.essentials
+        ask = str(e.get("required_ask_text") or "").strip()
+        hist = list(self.history or [])
+        added: list[str] = []
+        for prev, turn in zip(hist, hist[1:]):
+            if prev.get("role") != "agent" or turn.get("role") != "user":
+                continue
+            said = str(prev.get("content") or "")
+            asked = (ask and said.strip().startswith(ask[:80])) or bool(re.search(
+                r"(?i)\b(?:outside work|interests|hobbies|extracurricular)\b", said) and "?" in said)
+            msg = str(turn.get("content") or "").strip()
+            if (not asked or not msg or msg.endswith("?") or _bare_decline(msg) or _wants_done(msg)
+                    or not self._HOBBY.search(msg) or len(msg.split()) > 30):
+                continue
+            # An answer that became an activity entry is on the page already.
+            entries = " ".join(str(x.get("title") or x.get("org") or "") for x in
+                               (e.get("extracurricular") or []) if isinstance(x, dict)).lower()
+            items = [x for x in _reply_items(msg) if x.lower() not in entries]
+            if not items:
+                continue
+            existing = str(e.get("interests") or "").strip()
+            if existing:
+                sentence, new, _already = merge_interests(existing, items)
+            else:
+                sentence, new = interest_sentence(items[:6]), list(items[:6])
+            if new:
+                e["interests"] = sentence
+                added += new
+        if added:
+            self.profile["interests"] = e["interests"]
+            if isinstance(self.saved_profile, dict) and self.saved_profile.get("interests"):
+                self.saved_profile["interests"] = e["interests"]
+        return added
+
     def _assemble(self, fit_lines: bool = False):
+        self._refresh_for_job()
         # Render from a constraint-filtered COPY so a 'do not mention X' never reaches the CV,
         # while self.profile (persisted) stays whole; restore any hidden items into the durable
         # profile afterward. With no active constraints both are no-ops (behavior unchanged).
