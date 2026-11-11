@@ -15,6 +15,11 @@ the whole section first, from the measured page, and then writes it in ONE model
    number, employer, product, client, degree or certification the person's material does not
    state, no invented outcome claim, no filler, no padding (its own employer's name, a stock
    tail, a phrase another bullet repeats), and distinct from the role's other bullets.
+   Each role also carries the job's terms its own material backs (``role_terms``, the term
+   map the session builds from the ad and tailoring/inferred_support.py): the bullets show the
+   person doing that work, in the job's exact wording (Kofi, 2026-11-11: "the bullets must use
+   the keywords to demonstrate the qualification"). A term a role's bullets still do not show
+   is asked for again with the reason, like any refused bullet.
 3. VERIFY. Compile and measure. Every bullet that misses its line count, stops short or failed
    a check gets ONE retry, in a single call for all of them. If the page is then over one page
    or short of the goal, the plan moves by one line and that bullet is written once more. A
@@ -219,10 +224,21 @@ def _log(**rec):
     _fill_log(**rec)
 
 
+def terms_for(role_terms, entry: dict, role: dict) -> list[str]:
+    """The job terms the term map gives this role: keyed by "employer, title" or by employer,
+    lower case (the session's map, ui/session.py ``_role_terms``)."""
+    if not role_terms:
+        return []
+    org = str(entry.get("org") or entry.get("name") or entry.get("company") or "").strip().lower()
+    title = str(role.get("title") or "").strip().lower()
+    got = role_terms.get(f"{org}, {title}") or role_terms.get(org) or []
+    return [str(t) for t in got if str(t).strip()]
+
+
 def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: dict,
              material=(), gate_material=(), sections=None, headings=None, workdir=None,
              jobname: str = "cv", origins: dict | None = None, fill_goal: float = 0.95,
-             max_fill: float = 0.97):
+             max_fill: float = 0.97, role_terms: dict | None = None):
     """Plan the Experience bullets from the measured page, write them in one call, verify,
     retry once, adjust once. Returns (result, added): the page's compile result and one record
     per bullet written. The section is left as it was when the plan cannot make a clean page."""
@@ -281,11 +297,14 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
         info.append({"label": A.entry_label(e, r), "title": str(r.get("title") or ""),
                      "company": org, "dates": str(r.get("dates") or e.get("dates") or ""),
                      "tense": A._role_tense(r, e, saved), "saved": saved, "notes": notes,
-                     "targets": list(row)})
+                     "targets": list(row),
+                     "terms": terms_for(role_terms, e, r)[:max(1, len(row) - 1)]})
 
     def problems(i: int, text: str, siblings) -> list[str]:
         ro = info[i]
-        own = "\n".join(ro["saved"] + [ro["notes"]])
+        # The job's terms this role's material backs are the role's own words here: a bullet
+        # that shows the person doing that work, in the job's wording, is the point.
+        own = "\n".join(ro["saved"] + [ro["notes"]] + list(ro.get("terms") or []))
         bad = sorted(figures(text) - figs)
         bad += new_claims(text, known=known)
         bad += invented_claims(text, own)
@@ -450,6 +469,28 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                                      + ("longer" if need > 0 else "shorter") + " than this one")
         return out, notes
 
+    from .keywords import term_present
+
+    def unshown():
+        """{role: [bullet index]} and feedback for each role whose bullets do not yet show one
+        of its terms: the role's last bullet with no figure (a figured bullet is the person's
+        strongest fact and stays) is asked to show it, in the job's wording."""
+        from .filler import figures_of
+        out: dict = {}
+        notes: dict = {}
+        for i, (_k, _e, r) in enumerate(roles):
+            bl = r["bullets"]
+            gone = [t for t in info[i].get("terms") or [] if not any(term_present(t, b) for b in bl)]
+            if not gone or not bl:
+                continue
+            free = [k for k in range(len(bl) - 1, -1, -1) if not figures_of(bl[k])] or [len(bl) - 1]
+            for t, k in zip(gone, free):
+                out.setdefault(i, []).append(k)
+                notes[(i, k)] = (f"show the person doing \"{t}\" in this bullet, in exactly "
+                                 f"those words, as real work of this role (its material backs "
+                                 "it); keep every fact, add no number, name or tool")
+        return out, notes
+
     before = copy.deepcopy([list(r["bullets"]) for _k, _e, r in roles])
     before_result = result
     out = ask()
@@ -464,6 +505,11 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
         miss, why = {}, {}
     _log(step="plan-verify", label="experience", fill=res.fill_ratio, n=res.pages,
          why=[f"{i}:{k} {why.get((i, k), '')}" for i, ks in miss.items() for k in ks])
+    shown_miss, shown_why = unshown()
+    for i, ks in shown_miss.items():
+        miss[i] = sorted(set(miss.get(i, [])) | set(ks))
+    for key_, v in shown_why.items():
+        why[key_] = (why[key_] + "; also " + v) if key_ in why else v
     for i, ks in refused.items():
         miss.setdefault(i, [])
         miss[i] = sorted(set(miss[i]) | set(ks))
@@ -484,6 +530,16 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
             _log(step="plan-retry", label="experience", fill=res.fill_ratio, n=res.pages,
                  why=str(misses(res)[1])[:600] if res.ok and res.pages == 1 else "")
         miss, why = misses(res) if (res.ok and res.pages == 1) else ({}, {})
+        shown_miss, shown_why = unshown()
+        for i, ks in shown_miss.items():
+            miss[i] = sorted(set(miss.get(i, [])) | set(ks))
+        for key_, v in shown_why.items():
+            why[key_] = (why[key_] + "; also " + v) if key_ in why else v
+    _log(step="plan-terms", label="experience",
+         why={info[i]["label"]: {"asked": info[i]["terms"],
+                                 "shown": [t for t in info[i]["terms"]
+                                           if any(term_present(t, b) for b in r["bullets"])]}
+              for i, (_k, _e, r) in enumerate(roles) if info[i]["terms"]})
     # ADJUST, up to ADJUST_ROUNDS times: over a page (or past the most a page may hold) by k
     # lines, k 2-line targets become 1-line, the oldest roles first and the newest last; short by
     # k lines, k 1-line targets become 2-line, the newest roles first. Each changed slot takes

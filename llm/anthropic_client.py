@@ -559,6 +559,8 @@ class AnthropicLLM:
                 f"{ro['tense']} tense\n"
                 "  Their saved bullets:\n" + "\n".join(f"  - {b}" for b in ro["saved"])
                 + (f"\n  Their uploaded resume says:\n  {ro['notes'][:1200]}" if ro.get("notes") else "")
+                + (f"\n  SHOW THESE JOB TERMS (their material backs each one): "
+                   + "; ".join(f'"{t}"' for t in ro["terms"]) if ro.get("terms") else "")
                 + f"\n  WRITE {len(ro['windows'])} bullets:\n" + "\n".join(want))
         system = (
             "You are a professional resume writer. Write the Experience bullets for each role "
@@ -583,6 +585,13 @@ class AnthropicLLM:
             "Start each bullet with a concrete action verb in the role's tense and end it with a "
             "full stop (the window counts it). Use the job's wording where it truly fits the "
             "work.\n"
+            "SHOW THESE JOB TERMS: a role may list job terms its material backs. Each one must "
+            "appear, in exactly that wording, in at least one of the role's bullets, as work the "
+            "person did in that role (\"Applied statistical analysis to retail banking data to "
+            "...\"), woven into what the bullet says, never tacked on as a list or a closing "
+            "\"using X, Y and Z\". One or two terms per bullet at most. The facts stay theirs: "
+            "the term names the kind of work, it never adds a number, tool, employer or outcome. "
+            "Keep each figured bullet's figures.\n"
             "Work quickly: do not deliberate at length, write the bullets directly.\n"
             "Return ONLY a JSON array with one array per role, in role order; in it one array "
             "of 4 version strings per bullet. For a bullet marked KEEP AS IS, return its current "
