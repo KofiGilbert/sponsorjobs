@@ -154,8 +154,35 @@ def same_fact(a: str, b: str) -> bool:
     ta, tb = _fact_tokens(a), _fact_tokens(b)
     if not ta or not tb:
         return False
-    return (_longest_shared_run(ta, tb) >= SHARED_RUN
-            and _content_overlap(ta, tb) >= SAME_FACT_OVERLAP)
+    if _longest_shared_run(ta, tb) >= SHARED_RUN and _content_overlap(ta, tb) >= SAME_FACT_OVERLAP:
+        return True
+    # The same figures tell the same fact however it is reworded: "Built an AI-assisted pipeline
+    # that turns 280,000+ daily job postings into 145,000+ sponsorship-matched roles" was written
+    # beside "...processed 280,000+ job postings a day ... producing 145,000+ sponsorship-matched
+    # roles" on a real page (2026-11-10). Two shared distinctive figures, or one with a third of
+    # the content words in common, is one fact.
+    shared = _figures(a) & _figures(b)
+    if len(shared) >= 2:
+        return True
+    # One shared figure counts only when it is a large count (280,000, not 20% or 250), with
+    # a third of the content words in common: two different 20% results are two facts.
+    one = next(iter(shared), "")
+    return bool(one and one.isdigit() and len(one) >= 4 and _content_overlap(ta, tb) >= 0.34)
+
+
+_FIGURE = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d{3,}|\d+(?:\.\d+)?%)\+?")
+
+
+def _figures(text: str) -> set[str]:
+    """The distinctive figures in a bullet (280,000+, 145,000+, 6.5%): three digits or more, or
+    a percentage; a year on its own is not one."""
+    out = set()
+    for m in _FIGURE.finditer(str(text or "")):
+        f = m.group(1).replace(",", "")
+        if re.fullmatch(r"(?:19|20)\d\d", f):
+            continue
+        out.add(f)
+    return out
 
 
 # A rewrite that BORROWS this many words in a row from a sibling (more than the bullet it

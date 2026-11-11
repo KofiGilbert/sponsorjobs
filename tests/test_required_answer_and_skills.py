@@ -169,8 +169,23 @@ def test_reply_items_are_clean_list_items():
     assert _reply_items("") == []
 
 
-MERGED = ("Playing football on weekends, travelling to see the world, watching podcasts such as "
-          "The Diary of a CEO (DOAC), and swimming.")
+MERGED = ("Playing football on weekends and swimming, travelling to see the world, and watching "
+          "podcasts such as The Diary of a CEO (DOAC).")
+
+
+def test_the_same_figures_are_one_fact_however_reworded():
+    # The page fill wrote a sixth BlackOrigin bullet that restated the third with the same
+    # 280,000+ and 145,000+ figures (the real run, 2026-11-10). One fact never prints twice.
+    from tailoring.filler import same_fact
+    third = ("Built an AI-assisted data pipeline that processed 280,000+ job postings a day and "
+             "matched them against government sponsorship records, producing 145,000+ "
+             "sponsorship-matched roles that fed the company's products and its reporting.")
+    sixth = ("Built an AI-assisted pipeline that turns 280,000+ daily job postings into "
+             "145,000+ sponsorship-matched roles.")
+    assert same_fact(third, sixth)
+    assert not same_fact("Grew revenue 20% in 2021.", "Grew margin 20% in 2022.")
+    assert not same_fact("Tracked 5,000+ daily orders using SQL and Excel.",
+                         "Analyzed SQL and Excel data for a platform of 250 drivers.")
 
 
 def test_merge_interests_adds_without_duplicates():

@@ -443,7 +443,16 @@ def merge_interests(existing: str, items: list[str]) -> tuple[str, list[str], li
         return existing, added, already
     parts = [p.strip(" .") for p in re.split(r",\s*(?:and\s+)?|;\s*|\s+and\s+", existing)
              if p.strip(" .")]
-    return interest_sentence(parts + added), added, already
+    # A short new item ("swimming") joins the first item ("Playing football on weekends and
+    # swimming") rather than trailing the sentence as a one-word stub on its own line; a
+    # longer one goes at the end as an item of its own.
+    short = [a for a in added if len(a.split()) <= 2]
+    long_ = [a for a in added if len(a.split()) > 2]
+    if short and parts and " and " not in parts[0]:
+        parts[0] = parts[0] + " and " + " and ".join(_lower_item(a) for a in short)
+    else:
+        long_ = short + long_
+    return interest_sentence(parts + long_), added, already
 
 
 def fit_courses(courses: str, budget: int = 175) -> str:
