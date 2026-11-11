@@ -273,3 +273,40 @@ def test_a_jobs_page_role_carries_its_session(client):
     rows = app._jobs_with_sessions([{"source_id": jid}, {"source_id": "other::1"}])
     assert rows[0]["my_session"]["status"] == "in_progress" and rows[0]["my_session"]["updated_at"]
     assert "my_session" not in rows[1]
+
+
+def test_an_applied_job_whose_posting_closes_stays_applied_and_says_so(client):
+    # The application stands when a posting closes after it: the card stays in Applied with
+    # "Posting closed ...", and the chat reopens with the closed note, worded for an application.
+    jid = _feed_job()
+    assert client.post("/api/session/start_job", json={"source_id": jid}).status_code == 200
+    client.post("/api/session/answer", json={"text": "I'm Kwame Asante."})
+    sid = str(app._SESSION["s"].jobname)
+    w = app._watchlist()
+    try:
+        w.move_stage(jid, "applied")
+        w.mark_closed(jid, "", "no longer accepting")
+    finally:
+        w.close()
+    _restart()
+    app._SESSION_RESTORE["tried"] = True
+    st = client.post(f"/api/sessions/{sid}/open").get_json()
+    assert st["expired"] is True and st["expired_note"]["applied"] is True
+    assert st["expired_note"]["closed_at"]
+    first = st["history"][-1]["content"]
+    assert first.startswith("The posting for the Data Analyst role at Northwind has closed")
+    assert "application still stands" in first
+    assert "—" not in first and "–" not in first and "CV" not in first
+    card = client.get(f"/api/tracker/job?source_id={jid}").get_json()
+    assert card["stage"] == "applied" and card["closed_at"]
+    board = client.get("/api/tracker/board").get_json()
+    cards = [c for c in board["columns"]["applied"] if c["source_id"] == jid]
+    assert cards and cards[0]["closed_at"] and not board["columns"]["archived"]
+    for stage in ("interviewing", "offer"):
+        w = app._watchlist()
+        try:
+            w.move_stage(jid, stage)
+            app._close_posting_on_board(w, jid)
+            assert w.stage_of(jid) == stage
+        finally:
+            w.close()

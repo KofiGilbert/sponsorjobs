@@ -3180,9 +3180,33 @@ JOB_EXPIRED_MSG = ("This job has closed, so this chat is now a record of it. You
                    "download this resume or use it for another job.")
 
 
+# Stages where the application was sent: a posting that closes after it leaves the job where it
+# is (the application stands), stamped closed, never moved to Closed.
+_SENT_STAGES = ("applied", "interviewing", "offer")
+
+
+def _session_job_stage(s) -> str:
+    """The tracker stage of the job this session belongs to, or ""."""
+    sid = _session_job_id(s)
+    if not sid:
+        return ""
+    w = _watchlist()
+    try:
+        return str(w.stage_of(sid) or "")
+    except Exception:      # noqa: BLE001 - no stage is "not applied", never an error
+        return ""
+    finally:
+        w.close()
+
+
 def _expired_msg(s) -> str:
-    """The AI's first line when a closed job's chat is reopened: what closed, plainly."""
+    """The AI's first line when a closed job's chat is reopened: what closed, plainly. For a job
+    already applied to, the application still stands."""
     role, co = str(s.role or "").strip(), str(s.company or "").strip()
+    if _session_job_stage(s) in _SENT_STAGES:
+        what = f"the {role} role at {co}" if role and co else "this job"
+        return (f"The posting for {what} has closed, but your application still stands. This chat "
+                "is kept with it, and you can still download this resume.")
     if role and co:
         return (f"The {role} role at {co} has closed, so this chat is now a record of it. You can "
                 "still download this resume or use it for a similar job.")
@@ -3389,7 +3413,8 @@ def _expired_note(s) -> dict:
             w.close()
     return {"company": str(s.company or row.get("company") or ""), "role": str(s.role or ""),
             "closed_at": str(row.get("closed_at") or "")[:10] or None,
-            "reason": row.get("closed_reason") or "posting closed"}
+            "reason": row.get("closed_reason") or "posting closed",
+            "applied": str(row.get("stage") or "") in _SENT_STAGES}
 
 
 @app.get("/api/sessions")
