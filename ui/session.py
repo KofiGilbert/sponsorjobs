@@ -5768,7 +5768,7 @@ class WebIntake:
             nxt = "Next: fill in what is missing right on the page."
             action_card = {"type": "buttons", "buttons": [{"label": "Edit the page", "nav": "edit"}]}
         elif v and v.get("card"):
-            nxt = f"Next: {v['card']['buttons'][0]['label']} with the button below."
+            nxt = f"Next: tap {v['card']['buttons'][0]['label']} below."
             action_card = v["card"]
         elif chips:
             nxt = "Next: tap the skills above that you've used."

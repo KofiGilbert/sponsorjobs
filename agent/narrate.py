@@ -258,9 +258,9 @@ _ASK_CUE = re.compile(r"^\s*(?:tell|give|send|share|let)\s+me\b|\bstart\s+with\b
                       re.I)
 # A "titles or dates" claim names the fields; "Your roles have no titles" names "roles" as the
 # owner, not as a missing field.
-_OWNER = re.compile(r"\b(?:your|the|his|her|their|each|every|all|some|these|those)\s+(?:roles|jobs|"
-                    r"positions|experience\w*|entries)\s+(?:have|has|show|shows|list|lists|are|is|"
-                    r"don['’]?t|do|doesn['’]?t|does)\b", re.I)
+_OWNER = re.compile(r"\b(?:your|the|his|her|their|each|every|all|some|these|those|its)\s+(?:roles|jobs|"
+                    r"positions|experience\w*|entries|projects?|education|degrees?)\s+(?:have|has|show|"
+                    r"shows|list|lists|are|is|don['’]?t|do|doesn['’]?t|does|lacks?|miss(?:es)?)\b", re.I)
 _LIST_ITEM = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+")
 _COUNT_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six"}
 _COUNT_RE = re.compile(r"\b(one|two|three|four|five|six)\s+(things?|points?|items?|changes?|gaps?)\b", re.I)
@@ -277,8 +277,10 @@ def missing_claims(text: str) -> list[tuple[str, str]]:
         owner = _OWNER.search(s)
         for field, rx in _FIELD_RES.items():
             for m in rx.finditer(s):
-                if field == "experience" and owner and m.start() < owner.end():
-                    continue
+                if owner and owner.start() <= m.start() < owner.end():
+                    continue          # "Your projects don't show X": the owner, not the gap
+                if s[m.end():m.end() + 1] == ":":
+                    continue          # "Projects: ...": a label
                 out.append((sent, field))
                 break
     return out
