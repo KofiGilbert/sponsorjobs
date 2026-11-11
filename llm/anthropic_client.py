@@ -1738,7 +1738,7 @@ class AnthropicLLM:
             })
         return {"ideas": out}
 
-    def infer_term_support(self, jd_text: str, terms: list, material: dict) -> list:
+    def infer_term_support(self, jd_text: str, terms: list, material: dict, roles=None) -> list:
         """Which job terms the person's own material clearly implies, though it never says them
         word for word. tailoring/inferred_support.vet checks every answer (no named tool, the
         evidence verbatim in the material), so this is a proposal, never the law."""
@@ -1767,14 +1767,19 @@ class AnthropicLLM:
             "The evidence must be a VERBATIM quote of a short phrase from the material, copied "
             "exactly (it is checked word for word), for example a degree name, a course list or "
             "part of a bullet.\n"
+            "For each supported term also name the ROLES (from the list given, copied exactly) "
+            "where the person did that work, most fitting first, at most two; a term backed by "
+            "a degree goes to the roles whose work used it (analytics roles for statistical "
+            "analysis).\n"
             "Return ONLY a JSON array, one object per term, in the order given: "
             "{\"term\": the term exactly as given, \"supported\": true|false, "
-            "\"evidence\": \"verbatim quote, or empty\"}."
+            "\"evidence\": \"verbatim quote, or empty\", \"roles\": [role labels]}."
         )
         compact = {k: material.get(k) for k in ("summary", "experience", "projects", "skills",
                                                  "education", "extracurricular", "certifications")
                    if isinstance(material, dict) and material.get(k)}
         user = (f"JOB TERMS:\n{json.dumps(list(terms), ensure_ascii=False)}\n\n"
+                f"ROLES:\n{json.dumps(list(roles or []), ensure_ascii=False)}\n\n"
                 f"JOB AD (context):\n{(jd_text or '')[:2000]}\n\n"
                 f"THE PERSON'S MATERIAL:\n{json.dumps(compact, ensure_ascii=False)[:9000]}")
         raw = self._complete(system, user, max_tokens=900, effort="medium")

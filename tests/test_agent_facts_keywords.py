@@ -206,7 +206,7 @@ def test_are_we_done_answers_from_the_page_and_puts_supported_terms_on_it(templa
     # material clearly implies (inferred, with its evidence) and one it says outright.
     assert s._term_on_page("Dashboards") and s._term_on_page("Forecasting")
     assert [i["term"] for i in s._terms_result["inferred"]] == ["Dashboards"]
-    assert s._terms_result["after"] > s._terms_result["before"]
+    assert s._terms_result["before"] is None and s._terms_result["after"]   # planned from the start
     st = s.submit("are we done with this resume ?")
     text = st["messages"][-1]
     assert "Page: one page" in text and "Keywords:" in text

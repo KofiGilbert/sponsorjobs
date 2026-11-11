@@ -5546,9 +5546,11 @@ class WebIntake:
         self._dedupe_skill_groups() # one term, one line -- no duplicate Computing/Knowledge rows
         self._apply_memory_selection()  # P1: record why these belong (reasoning only, surfaced)
         self._new_build()
+        self._terms_before_build()
         # renders a constraint-filtered copy; durable profile stays whole. fit_lines: every
         # skills line and bullet measured on the PDF and filled to the right edge (linefit.py).
         self._assemble(fit_lines=True)
+        self._terms_after_build()
         self.stage = "review"
         self._persist()   # the built profile is now remembered for next time
         msgs = list(lead or [])
@@ -5752,6 +5754,10 @@ class WebIntake:
             kw += f", up from {placed['before']}%). I added {self._term_words(added).replace(' or ', ' and ')} from your own material."
         else:
             kw += ")."
+        shown = list((self.term_report() or {}).get("in_bullets") or [])
+        if shown:
+            kw += (f" {len(shown)} of them {'is' if len(shown) == 1 else 'are'} shown as work in "
+                   f"your bullets: {self._term_words(shown[:6]).replace(' or ', ' and ')}.")
         lines.append(kw)
         if v:
             lines.append("- Projects: " + v["text"])
@@ -6029,13 +6035,16 @@ class WebIntake:
             self._new_build()
             import copy as _copy
             self._change_base = _copy.deepcopy(normalize_profile(self.saved_profile))
+            self._terms_before_build()
             self.assembled = assemble_cv(
                 self.template, self._render_profile(), self.jd, self.llm, self.workdir,
                 jobname=self.jobname, tailor=True, sections=self.sections,
                 headings=self.headings, choices=self._choices_plan(),
                 keep=self.kept_trims, material=self._fit_material(),
                 fit_lines=True, skill_pool=self._skill_pool(),
-                skill_cap=self._skill_cap(), skill_keep=self._skill_keep())
+                skill_cap=self._skill_cap(), skill_keep=self._skill_keep(),
+                role_terms=self._role_terms())
+            self._terms_after_build()
             self._last_reverted = list(getattr(self.assembled, "reverted", None) or [])
             self._written = list(getattr(self.assembled, "written", None) or [])
             self.profile = self._whole_profile_after_render(self.assembled.profile_used)
@@ -7342,6 +7351,7 @@ class WebIntake:
             # own edit never writes behind their back.
             fill_writes=fit_lines,
             skill_cap=self._skill_cap(), skill_keep=self._skill_keep(),
+            role_terms=self._role_terms() if fit_lines else None,
         )
         if fit_lines:
             self._written = list(getattr(self.assembled, "written", None) or [])
@@ -7902,15 +7912,187 @@ class WebIntake:
         return [str(t) for t in (cov.get("missing") or []) + (cov.get("missing_supported") or [])
                 if str(t).strip() and not is_requirement(t) and str(t).lower() not in done]
 
+    # -- the term map (Kofi, 2026-11-11: "the bullets must use the keywords to demonstrate the
+    # qualification") ------------------------------------------------------------------ #
+    TERMS_PER_ROLE_ASSIGN = 2          # a term is shown in at most this many roles
+
+    def _jd_terms(self) -> list[str]:
+        """The job's terms, most central first (the model's read of the ad, cached per ad)."""
+        from tailoring.keywords import is_requirement, skill_terms
+        try:
+            terms = list(self.llm.extract_jd_skills(self.jd)) if self.llm is not None else []
+        except Exception:      # noqa: BLE001
+            terms = []
+        terms = terms or skill_terms(self.jd or "")
+        role, company = _jd_label(self.jd)
+        drop = {w.lower() for seg in (role, company) for w in re.findall(r"[A-Za-z]+", seg or "")}
+        return [t for t in dict.fromkeys(str(x) for x in terms)
+                if t.strip() and not is_requirement(t) and t.lower() not in drop]
+
+    def _role_texts(self) -> list[tuple[str, str, str]]:
+        """(key "employer, title" lower case, label, everything the person said in that role)."""
+        out = []
+        for e in (self.profile or {}).get("experience") or []:
+            if not isinstance(e, dict):
+                continue
+            org = str(e.get("org") or e.get("company") or "").strip()
+            for r in (e["roles"] if isinstance(e.get("roles"), list) and e["roles"] else [e]):
+                if not isinstance(r, dict):
+                    continue
+                title = str(r.get("title") or "").strip()
+                text = " ".join([title] + [str(b.get("text") if isinstance(b, dict) else b)
+                                           for b in r.get("bullets") or []])
+                out.append((f"{org.lower()}, {title.lower()}", f"{title} at {org}".strip(), text))
+        return out
+
+    def _infer_terms(self, force: bool = False) -> list[dict]:
+        """The job's terms the person's material clearly implies though it never says them
+        (tailoring/inferred_support.py), each with its verbatim evidence and the roles where the
+        person did that work; once per job, kept in ``inferred_terms``."""
+        from tailoring import inferred_support as _IS
+        from tailoring.keywords import profile_text, term_backed, with_stated_skills
+        key = self._job_key()
+        have = [i for i in self.inferred_terms or [] if i.get("job") == key]
+        if have and not force:
+            return have
+        material = with_stated_skills(self.profile, self.essentials)
+        text = profile_text(material)
+        ask, _tools = _IS.candidates([t for t in self._jd_terms() if not term_backed(t, text, self.jd)])
+        got: list = []
+        if ask and self.llm is not None and callable(getattr(self.llm, "infer_term_support", None)):
+            _activity.step("terms", "Reading the job's terms", "against your own material")
+            labels = [lab for _k, lab, _t in self._role_texts()]
+            try:
+                got = _IS.vet(self.llm.infer_term_support(self.jd, ask, material, roles=labels),
+                              ask, material, roles=labels)
+            except Exception as exc:      # noqa: BLE001 - no inference: the literal terms still count
+                _log.warning("job terms: inference failed: %s", exc)
+                got = []
+        keep = [i for i in self.inferred_terms or [] if i.get("job") != key]
+        self.inferred_terms = keep + [dict(i, job=key) for i in got]
+        return [dict(i, job=key) for i in got]
+
+    def _role_terms(self) -> dict:
+        """The term map: {"employer, title" lower case: [job terms]} for the plan writer, the
+        job's most central terms first. A term goes to the roles whose own words show it, or to
+        the roles the inference named for it (its evidence), at most TERMS_PER_ROLE_ASSIGN."""
+        from tailoring.inferred_support import is_named_tool
+        from tailoring.keywords import term_backed
+        if not str(self.jd or "").strip():
+            return {}
+        roles = self._role_texts()
+        inferred = {str(i.get("term") or "").lower(): i for i in self.inferred_terms or []
+                    if i.get("job") == self._job_key()}
+        out: dict = {}
+        for t in self._jd_terms():
+            hit = [k for k, _lab, text in roles if term_backed(t, text, self.jd)]
+            inf = inferred.get(t.lower())
+            if not hit and inf:
+                labs = {str(x).lower() for x in inf.get("roles") or []}
+                hit = [k for k, lab, _text in roles if lab.lower() in labs]
+            if not hit:
+                continue
+            # A named tool is shown where the person named it; a method in its newest role(s).
+            for k in hit[: (1 if is_named_tool(t) else self.TERMS_PER_ROLE_ASSIGN)]:
+                out.setdefault(k, []).append(t)
+        return out
+
+    def _terms_into_skills(self, terms: list) -> list:
+        """Put ``terms`` on the page's Skills lines in the job's wording, sized by the measured
+        line width; returns what the lines gave up (the person's own skills, kept saved)."""
+        from tailoring.linefit import place_term
+        width_fn, avail = self._skill_widths()
+        skills = dict(self.profile.get("skills") or {})
+        shed: list = []
+        for t in terms:
+            pl = place_term(skills, t, width_fn=width_fn, avail=avail, jd_text=self.jd,
+                            keep=self._skill_keep())
+            skills = pl.skills
+            shed += [x for x in pl.shed if x not in shed]
+        self.profile["skills"] = skills
+        si = self.essentials.setdefault("skills_input", [])
+        for t in shed:
+            if t.lower() not in {str(x).lower() for x in si}:
+                si.append(t)
+        return shed
+
+    def _supported_terms(self) -> list[str]:
+        """The job's terms the person's material backs, said or clearly implied, most central first."""
+        from tailoring.keywords import profile_text, term_backed, with_stated_skills
+        text = profile_text(with_stated_skills(self.profile, self.essentials))
+        inferred = {str(i.get("term") or "").lower() for i in self.inferred_terms or []
+                    if i.get("job") == self._job_key()}
+        return [t for t in self._jd_terms() if t.lower() in inferred or term_backed(t, text, self.jd)]
+
+    def _prepare_terms(self) -> list[str]:
+        """Before a planned build: infer, then put every supported term the page's Skills do not
+        list yet on them. Returns the supported terms. The plan then sizes the bullets around
+        the Skills block, so a term never costs a bullet."""
+        self._infer_terms()
+        sup = self._supported_terms()
+        skills_text = " ".join(str(v) for v in (self.profile.get("skills") or {}).values())
+        from tailoring.keywords import term_present
+        self._terms_into_skills([t for t in sup if not term_present(t, skills_text)][:8])
+        return sup
+
+    def _terms_before_build(self) -> None:
+        """A first build plans its page around the job's terms from the start (one plan, no
+        second build after it): infer, put the supported terms in Skills, and mark this job's
+        terms pass done (agent flag on)."""
+        if not self._agent_on() or self.essentials.get("unattended"):
+            return
+        try:
+            self._prepare_terms()
+        except Exception as exc:      # noqa: BLE001 - the build goes ahead without the map
+            _log.warning("job terms: before the build: %s", exc)
+            return
+        self._terms_placed_for = self._job_key()
+        self._terms_result = {"first_build": True}
+
+    def _terms_after_build(self) -> None:
+        if not (self._terms_result or {}).get("first_build") or self.assembled is None:
+            return
+        try:
+            cov = self.coverage_dict()
+            rep = self.term_report()
+        except Exception:      # noqa: BLE001
+            return
+        key = self._job_key()
+        self._terms_result = {
+            "before": None, "after": cov.get("ratio"), "added": list(cov.get("present") or []),
+            "inferred": [{"term": i["term"], "evidence": i.get("evidence") or ""}
+                         for i in self.inferred_terms or [] if i.get("job") == key],
+            "in_bullets": list(rep.get("in_bullets") or [])}
+
+    def term_report(self) -> dict:
+        """The job's terms by where the page shows them: in a bullet (the work demonstrated),
+        only in Skills, or not at all (the person's to claim: ADD chips)."""
+        from tailoring.keywords import term_backed
+        a = self.assembled
+        if a is None:
+            return {}
+        used = getattr(a, "profile_used", None) or {}
+        bullets = " ".join(str(b) for e in used.get("experience") or [] if isinstance(e, dict)
+                           for r in (e.get("roles") or [e]) if isinstance(r, dict)
+                           for b in r.get("bullets") or [])
+        bullets += " " + " ".join(str(b) for p in used.get("projects") or [] if isinstance(p, dict)
+                                  for b in p.get("bullets") or [])
+        cov = self.coverage_dict()
+        present = list(cov.get("present") or [])
+        in_bullets = [t for t in present if term_backed(t, bullets, self.jd)]
+        return {"in_bullets": in_bullets,
+                "skills_only": [t for t in present if t not in in_bullets],
+                "unsupported": self._unsupported_terms(cov)}
+
     @_builds("keywords")
     def _place_job_terms(self, force: bool = False) -> dict:
-        """Put the job's terms the person's material backs on the page, once per job. Returns
-        {"before", "after" (keyword %), "added": [terms now on the page], "inferred":
-        [{"term", "evidence"}], "woven": [terms worked into a bullet]}; {} with no page."""
+        """The job's supported terms on the page through the plan (the term map), once per job:
+        the bullets of the roles that back each term are written to show it, Skills list the
+        rest, all inside one planned page. Kept only when the page is no worse; else the page as
+        it was takes the terms on its Skills lines only. Returns {"before", "after" (keyword %),
+        "added": [terms newly on the page], "inferred": [{"term", "evidence"}], "in_bullets":
+        [terms a bullet shows]}; {} with no page."""
         import copy as _copy
-        from tailoring import inferred_support as _IS
-        from tailoring.keywords import with_stated_skills
-        from tailoring.linefit import place_term
         a = self.assembled
         if a is None or not a.ok or not getattr(a, "tex_source", None):
             return {}
@@ -7920,29 +8102,12 @@ class WebIntake:
         self._terms_placed_for = key
         cov = self.coverage_dict()
         before = cov.get("ratio")
+        before_present = {str(t).lower() for t in cov.get("present") or []}
+        before_bullets = set((self.term_report() or {}).get("in_bullets") or [])
         # An older session's first rebuild selects its Skills block for this job again
         # (_refresh_for_job); that happens first, so the terms placed now are not thrown away by
         # it (Kofi's Google chat: both terms placed, then gone with the old block, 2026-11-11).
         self._refresh_for_job()
-        material = with_stated_skills(self.profile, self.essentials)
-        literal = [str(t) for t in cov.get("missing_supported") or []]
-        ask, _tools = _IS.candidates(cov.get("missing") or [])
-        inferred: list = []
-        if ask and self.llm is not None and callable(getattr(self.llm, "infer_term_support", None)):
-            _activity.step("terms", "Reading the job's terms", "against your own material")
-            try:
-                inferred = _IS.vet(self.llm.infer_term_support(self.jd, ask, material), ask, material)
-            except Exception as exc:      # noqa: BLE001 - no inference: the literal terms still go on
-                _log.warning("job terms: inference failed: %s", exc)
-                inferred = []
-        evidence = {i["term"].lower(): i["evidence"] for i in inferred}
-        terms = list(dict.fromkeys(literal + [i["term"] for i in inferred]))[:_IS.MAX_INFERRED + 4]
-        result = {"before": before, "after": before, "added": [], "inferred": [], "woven": []}
-        if not terms:
-            self._terms_result = result
-            self._persist()
-            return result
-        # The page as it is now, to come back to exactly when the new one is not at least as good.
         files = {}
         for ext in (".pdf", ".tex"):
             f = self.workdir / f"{self.jobname}{ext}"
@@ -7965,69 +8130,49 @@ class WebIntake:
                 except OSError:
                     pass
 
-        self.inferred_terms = list(self.inferred_terms or []) + [
-            {"term": t, "evidence": evidence.get(t.lower(), ""), "job": key} for t in terms
-            if t.lower() not in {str(x.get("term") or "").lower() for x in self.inferred_terms or []}]
-        width_fn, avail = self._skill_widths()
-        skills = dict(self.profile.get("skills") or {})
-        shed: list = []
-        for t in terms:
-            pl = place_term(skills, t, width_fn=width_fn, avail=avail, jd_text=self.jd,
-                            keep=self._skill_keep())
-            skills = pl.skills
-            shed += [x for x in pl.shed if x not in shed]
-        self.profile["skills"] = skills
-        # One bullet carries each of the first few, in the job's wording, where the same role
-        # backs it (keyword_action: verbatim evidence in that role, the fact gate, the budget).
-        # The draft goes into the person's material and reaches the page through the same fit
-        # as a full build, never as a surgical edit after it.
-        woven = self._weave_terms([x for x in terms if x.lower() in evidence or x in literal])
-        _activity.step("terms", "Putting the job's terms on the page", ", ".join(terms[:4]))
-        # The full build's fit (the plan writer, the recency staircase, every line to the edge):
-        # placing a term never costs a bullet or a full line (2026-11-11: a plain rebuild here
-        # left BlackOrigin at 4 bullets beside Stanbic's 4 and a one-word line under Last-Mile).
+        sup = self._prepare_terms()
+        inferred = [i for i in self.inferred_terms or [] if i.get("job") == key]
+        evidence = {str(i["term"]).lower(): i.get("evidence") or "" for i in inferred}
+        result = {"before": before, "after": before, "added": [], "inferred": [], "in_bullets": []}
+        if not sup:
+            roll_back()
+            self._terms_result = result
+            self._persist()
+            return result
+        whole_skills = _copy.deepcopy(self.profile.get("skills") or {})
+        inferred_now = list(self.inferred_terms or [])
+        _activity.step("terms", "Writing the job's terms into your bullets", ", ".join(sup[:4]))
+        # The planned build (the plan writer with the term map, the recency staircase, every
+        # line to the edge): the same path as a full build, never a patch after it.
         try:
             self._assemble(fit_lines=True)
-        except Exception:      # noqa: BLE001 - the page stays as it was
+            kept = self._page_kept(shape0)
+        except Exception as exc:      # noqa: BLE001 - the page stays as it was
+            _log.warning("job terms: planned build failed: %s", exc)
+            kept = False
+        if not kept:
+            # The planned page came out worse than the one it replaces (a bullet lost, a stub
+            # line, emptier): back to that page exactly, and only its Skills lines take the terms.
+            _log.warning("job terms: planned page not kept")
             roll_back()
-            self._terms_result = result
-            self._persist()
-            return result
-        ok = self._page_kept(shape0)
-        on = [t for t in terms if ok and self._term_on_page(t)]
-        if not on:
-            # The full fit came out worse than the page it replaces (a bullet lost, a stub line,
-            # emptier): back to that page exactly, and only its Skills lines take the terms.
-            _log.warning("job terms: full fit not kept for %s", terms)
-            roll_back()
-            woven = []
-            whole = _copy.deepcopy(self.profile)
-            whole["skills"] = skills
-            on = self._skills_only_page(terms, shape0)
-            if on:
-                self.profile["skills"] = whole["skills"]
-                self.inferred_terms = list(self.inferred_terms or []) + [
-                    {"term": t, "evidence": evidence.get(t.lower(), ""), "job": key} for t in on
-                    if t.lower() not in {str(x.get("term") or "").lower() for x in self.inferred_terms or []}]
-        if not on:
-            _log.warning("job terms: not kept for %s", terms)
-            roll_back()
-            self._terms_result = result
-            self._persist()
-            return result
-        # What a line gave up to keep the job's terms stays the person's own skill.
-        si = self.essentials.setdefault("skills_input", [])
-        for t in shed:
-            if t.lower() not in {str(x).lower() for x in si}:
-                si.append(t)
-        self.inferred_terms = [i for i in self.inferred_terms
-                               if i.get("job") != key or i["term"] in on]
-        page_text = self._page_text()
-        woven = [t for t, draft in woven if draft.lower()[:60] in page_text]
-        result.update({"after": self.coverage_dict().get("ratio"), "added": on,
-                       "inferred": [{"term": t, "evidence": evidence[t.lower()]} for t in on
-                                    if t.lower() in evidence],
-                       "woven": woven})
+            new = [t for t in sup if t.lower() not in before_present]
+            on = self._skills_only_page(new, shape0) if new else []
+            if not on:
+                roll_back()
+                self._terms_result = result
+                self._persist()
+                return result
+            self.profile["skills"] = whole_skills
+            self.inferred_terms = inferred_now
+        cov2 = self.coverage_dict()
+        rep = self.term_report()
+        on = [t for t in cov2.get("present") or [] if str(t).lower() not in before_present]
+        result.update({"after": cov2.get("ratio"), "added": on,
+                       "inferred": [{"term": t, "evidence": evidence[t.lower()]}
+                                    for t in cov2.get("present") or [] if t.lower() in evidence],
+                       "in_bullets": list(rep.get("in_bullets") or []),
+                       "new_in_bullets": [t for t in rep.get("in_bullets") or []
+                                          if t not in before_bullets]})
         self._terms_result = result
         self._persist()
         return result
@@ -8076,26 +8221,6 @@ class WebIntake:
         if not on:
             self.assembled = orig
         return on
-
-    def _weave_terms(self, terms: list) -> list:
-        """[(term, draft)] for up to WEAVE_TERMS of ``terms`` that one bullet of the same role can
-        carry (tailoring/keyword_action: verbatim evidence in that role, the fact gate, the
-        length budget); each draft replaces its bullet in the person's material only."""
-        from tailoring.keyword_action import preview_keyword_action
-        out = []
-        a = self.assembled
-        for t in terms:
-            if len(out) >= self.WEAVE_TERMS or a is None or not a.tex_source:
-                break
-            try:
-                pv = preview_keyword_action(t, a.tex_source, self._page_profile(), self.jd, self.llm,
-                                            fill_ratio=a.fill_ratio, evidence_profile=self.profile)
-            except Exception:      # noqa: BLE001 - the term is in Skills already
-                continue
-            if pv.ok and pv.kind == "rewrite" and pv.after:
-                self._mirror_keyword(pv, pv.after)
-                out.append((t, pv.after))
-        return out
 
     def _page_text(self) -> str:
         from tailoring.assembler import _rendered_cv_text
