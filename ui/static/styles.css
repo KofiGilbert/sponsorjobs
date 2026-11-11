@@ -714,6 +714,12 @@ button { font-family: inherit; cursor: pointer; }
 .ps-items { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 5px; }
 .ps-term { font-size: 11px; padding: 1.5px 8px; border-radius: var(--r-pill); color: var(--ink-2); background: color-mix(in srgb, var(--ink) 5%, transparent); border: 1px solid var(--border); }
 .ps-term.ps-flag { color: var(--flag); background: var(--flag-soft); border-color: color-mix(in srgb, var(--flag) 30%, transparent); font-weight: 600; }
+/* A sentence that was hidden in the posting, decoded (llm/textguard.py). Not a pill: it is a
+   whole sentence, so it takes the full row and wraps. The row's own icon already carries the
+   warning tone, so the quote itself stays muted rather than adding a second pop of colour. */
+.ps-quote { flex: 1 1 100%; font-size: 11.5px; line-height: 1.45; color: var(--muted);
+  padding: 4px 9px; border-radius: var(--r-sm); word-break: break-word;
+  background: color-mix(in srgb, var(--ink) 4%, transparent); border: 1px solid var(--border); }
 
 /* Cover-letter craft check: reuses the pre-send review rows, in a boxed panel under the letter. */
 .cl-review { margin-top: 10px; padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-2); }

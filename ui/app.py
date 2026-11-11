@@ -2747,8 +2747,18 @@ def record_cover_letter(rid):
     review = review_cover_letter(text, company=company, profile=_saved_full_profile(), jd_text=jd)
     skills_used = supported_skills(jd, _saved_full_profile()) if jd else []
     has_pdf = (WORKDIR / f"cover-{rid}.pdf").exists()
+    # What llm/textguard.py took out of the posting before a model read it. Computed from the
+    # JD rather than taken from the draft call, so the line stays under a letter the person
+    # has since edited by hand: it says what the POSTING carried, not what this draft did.
+    # Structured rather than one joined string: the panel leads with the sentence that was
+    # hidden, because that is the part the person needs to read, and keeps the character
+    # count as the quiet half (tailor-ux: few words).
+    from llm import textguard
+    findings = [{"detail": f.detail, "quote": f.quote}
+                for f in textguard.clean(jd).findings] if jd else []
     return jsonify({"ok": True, "cover_letter": text, "pdf": has_pdf,
-                    "review": review, "skills_used": skills_used})
+                    "review": review, "skills_used": skills_used,
+                    "posting_findings": findings})
 
 
 def _durable_profile() -> dict:

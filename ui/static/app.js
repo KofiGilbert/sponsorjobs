@@ -1329,7 +1329,7 @@
     try {
       const r = await api(`/api/record/${PKG_ID}/cover_letter`, { text: $("#pkgCl").value });
       pkgSetPdfLink(!!($("#pkgCl").value || "").trim());
-      renderClReview(r.review, r.skills_used);
+      renderClReview(r.review, r.skills_used, r.posting_findings);
       pkgFlash($("#pkgClMsg"), r.pdf ? "Saved · PDF updated." : "Saved.");
     } catch { pkgFlash($("#pkgClMsg"), "Couldn't save."); }
   });
@@ -1338,10 +1338,38 @@
   // plus the real experiences it leans on, mirroring the resume's pre-send review.
   const CL_VERDICT = { ready: ["Ready to send", "good"], review: ["Worth a tweak", "mid"],
     check: ["Check before sending", "low"] };
-  function renderClReview(r, skillsUsed) {
+  // One quiet line per thing llm/textguard.py took out of the posting before a model read
+  // it, in the warning tone the letter check already uses. The decoded sentence is quoted,
+  // because the point is that the person gets to read what was aimed at the model. It only
+  // ever tells them something; nothing here blocks a draft.
+  function postingFindingsHTML(findings) {
+    // A finding is {detail, quote}; a plain string (an older response) still renders.
+    const list = (findings || []).map((f) => {
+      if (typeof f === "string") return { quote: f, detail: "" };
+      return { quote: String((f && f.quote) || ""), detail: String((f && f.detail) || "") };
+    }).filter((f) => (f.quote || f.detail).trim());
+    if (!list.length) return "";
+    // The sentence leads; what it was made of rides along as the hover, not as more words.
+    const items = list.map((f) => {
+      const shown = f.quote || f.detail;
+      const title = f.quote && f.detail ? ` title="${esc(f.detail)}"` : "";
+      return `<span class="ps-quote"${title}>${esc(shown)}</span>`;
+    }).join("");
+    return `<div class="ps-row ps-lvl-warn"><span class="ps-ic">~</span><div class="ps-body">`
+      + `<div class="ps-label">This posting contained hidden text, removed before drafting:</div>`
+      + `<div class="ps-items">${items}</div></div></div>`;
+  }
+
+  function renderClReview(r, skillsUsed, postingFindings) {
     const el = $("#pkgClReview");
     if (!el) return;
-    if (!r || !r.checks) { el.hidden = true; el.innerHTML = ""; return; }
+    const hidden = postingFindingsHTML(postingFindings);
+    if (!r || !r.checks) {
+      // The posting can carry hidden text whether or not there is a letter check to show.
+      el.hidden = !hidden;
+      el.innerHTML = hidden;
+      return;
+    }
     const v = CL_VERDICT[r.verdict] || ["Letter check", "mid"];
     const rows = (r.checks || []).map(c => {
       const items = (c.items || []).length
@@ -1357,7 +1385,7 @@
       : "";
     el.hidden = false;
     el.innerHTML = `<div class="ps-head ps-${esc(v[1])}"><span class="ps-verdict">${esc(v[0])}</span>`
-      + `<span class="ps-headline">${esc(r.headline || "")}</span></div>${rows}${draws}`;
+      + `<span class="ps-headline">${esc(r.headline || "")}</span></div>${rows}${hidden}${draws}`;
   }
 
   let coverDrafting = false;
@@ -1374,7 +1402,7 @@
       if (PKG_ID !== id) return;                       // navigated away mid-draft
       $("#pkgCl").value = r.cover_letter || "";
       pkgSetPdfLink(!!(r.cover_letter || "").trim());
-      renderClReview(r.review, r.skills_used);
+      renderClReview(r.review, r.skills_used, r.posting_findings);
       pkgFlash($("#pkgClMsg"), auto ? "Cover letter ready, review and edit." : "Drafted, review and edit.", 4000);
     } catch {
       if (PKG_ID === id) pkgFlash($("#pkgClMsg"), "Couldn't draft, the app needs your API key + internet.", 5000);
