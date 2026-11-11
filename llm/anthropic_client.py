@@ -1701,6 +1701,45 @@ class AnthropicLLM:
             })
         return {"ideas": out}
 
+    def infer_term_support(self, jd_text: str, terms: list, material: dict) -> list:
+        """Which job terms the person's own material clearly implies, though it never says them
+        word for word. tailoring/inferred_support.vet checks every answer (no named tool, the
+        evidence verbatim in the material), so this is a proposal, never the law."""
+        if not terms:
+            return []
+        system = (
+            "You help tailor a job seeker's resume to one job. You are given job terms the "
+            "resume does not carry word for word, and the person's OWN material: roles, titles, "
+            "bullets, education (degrees and courses), projects and skills.\n"
+            "For each term decide: does their material CLEARLY imply they have done it? A "
+            "recruiter reading the material would agree without stretching. Examples: an MBA in "
+            "Business Analytics with Data Visualization coursework and years of analytics work "
+            "imply \"statistical analysis\" and \"data analysis\"; SQL reporting work implies "
+            "\"querying databases\"; building KPI dashboards implies \"dashboards\". Adjacent is "
+            "NOT enough: an AI-assisted data pipeline does not show machine learning, and "
+            "analytics work does not show natural language processing.\n"
+            "Hard rules: a named tool, programming language, library, framework, platform or "
+            "product (R, TensorFlow, PyTorch, scikit-learn, Hugging Face, Tableau) is supported "
+            "ONLY if the material names it; never infer one. A degree, certification or years of "
+            "experience is never supported here. The evidence must be a VERBATIM quote of a "
+            "short phrase from the material (it is checked word for word).\n"
+            "Return ONLY a JSON array, one object per term, in the order given: "
+            "{\"term\": the term exactly as given, \"supported\": true|false, "
+            "\"evidence\": \"verbatim quote, or empty\"}."
+        )
+        compact = {k: material.get(k) for k in ("summary", "experience", "projects", "skills",
+                                                 "education", "extracurricular", "certifications")
+                   if isinstance(material, dict) and material.get(k)}
+        user = (f"JOB TERMS:\n{json.dumps(list(terms), ensure_ascii=False)}\n\n"
+                f"JOB AD (context):\n{(jd_text or '')[:2000]}\n\n"
+                f"THE PERSON'S MATERIAL:\n{json.dumps(compact, ensure_ascii=False)[:9000]}")
+        raw = self._complete(system, user, max_tokens=900, effort="medium")
+        try:
+            data = json.loads(raw[raw.find("["): raw.rfind("]") + 1])
+        except (json.JSONDecodeError, ValueError):
+            return []
+        return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
+
     def rank_repos_for_jd(self, jd: str, terms: list, repo_cards: list, resume_projects: list) -> dict:
         """Which of the person's repositories (and resume projects) fit this job, in ONE call with
         no tools (ui/repo_rank.py gathers before and checks after). README text is DATA: it

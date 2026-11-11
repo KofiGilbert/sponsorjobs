@@ -139,6 +139,13 @@ class LLMBackend(Protocol):
         so far (agent/narrate.py builds both). Sets ``last_narrate_usage``."""
         ...
 
+    def infer_term_support(self, jd_text: str, terms: list, material: dict) -> list:
+        """Which of the job's ``terms`` the person's own ``material`` clearly implies though it
+        never says them word for word (an MBA in Business Analytics implies statistical
+        analysis). [{"term", "supported", "evidence"}], the evidence a verbatim quote from the
+        material. tailoring/inferred_support.vet checks every answer."""
+        ...
+
     def rank_repos_for_jd(self, jd: str, terms: list, repo_cards: list,
                           resume_projects: list) -> dict:
         """One tool-less call judging the person's repositories and resume projects for one job:
@@ -937,6 +944,26 @@ class FakeLLM:
         if isinstance(script, str):
             return script
         return fallback(items)
+
+    def infer_term_support(self, jd_text: str, terms: list, material: dict) -> list:
+        """Deterministic: a term is supported when every word of it (four letters or more, its
+        stem) is in one sentence of the material; that sentence is the evidence. A test sets
+        ``infer_script`` (a list, or a callable of the same arguments) to script the answer."""
+        self.infer_calls = getattr(self, "infer_calls", 0) + 1
+        script = getattr(self, "infer_script", None)
+        if callable(script):
+            return script(jd_text, terms, material)
+        if isinstance(script, list):
+            return script
+        from tailoring.keywords import profile_text
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", profile_text(material or {}))
+                     if s.strip()]
+        out = []
+        for t in terms or []:
+            stems = [w[:6] for w in re.findall(r"[a-z]{4,}", str(t).lower())]
+            hit = next((s for s in sentences if stems and all(x in s.lower() for x in stems)), "")
+            out.append({"term": t, "supported": bool(hit), "evidence": hit})
+        return out
 
     def rank_repos_for_jd(self, jd: str, terms: list, repo_cards: list,
                           resume_projects: list) -> dict:

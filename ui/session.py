@@ -1103,6 +1103,24 @@ def _builds(kind: str):
     return deco
 
 
+def page_roles(experience) -> list[dict]:
+    """Every role on the page, one per line: {org, title, dates, location}. An employer entry
+    holds its titles and dates under ``roles`` (one or more); a flat entry holds them itself."""
+    out = []
+    for e in experience or []:
+        if not isinstance(e, dict):
+            continue
+        org = str(e.get("org") or e.get("company") or "").strip()
+        roles = e["roles"] if isinstance(e.get("roles"), list) and e["roles"] else [e]
+        for r in roles:
+            if not isinstance(r, dict):
+                continue
+            out.append({"org": org, "title": str(r.get("title") or "").strip(),
+                        "dates": str(r.get("dates") or r.get("date") or e.get("dates") or "").strip(),
+                        "location": str(r.get("location") or e.get("location") or "").strip()})
+    return out
+
+
 def _one_voice(fn):
     """One chat turn, said in ONE message written by the AI (Kofi, 2026-11-10). The code inside
     the turn decides what happens and what must be said, and says it as before: a fixed line, or
@@ -1545,10 +1563,10 @@ class WebIntake:
                     return str(t).strip()[:180]
             return ""
 
-        exp = [{"title": str(e.get("title") or ""), "org": str(e.get("org") or ""),
-                "dates": str(e.get("dates") or e.get("date") or "")}
-               for e in (used.get("experience") or self.essentials.get("experience") or [])
-               if isinstance(e, dict)][:8]
+        # Each role as the page prints it: an employer's titles and dates live under its
+        # ``roles``, so reading only the entry's own title and dates told the agent "your roles
+        # have no titles or dates" over a page that showed every one (Kofi, 2026-11-11).
+        exp = page_roles(used.get("experience") or self.essentials.get("experience") or [])[:8]
         projs = [e for e in (used.get("projects") or []) if isinstance(e, dict) and label(e)]
         names = {label(e).lower() for e in projs}
         projs += [e for e in (self.essentials.get("projects") or [])
