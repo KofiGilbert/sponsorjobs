@@ -268,3 +268,32 @@ def test_a_placement_that_costs_a_bullet_or_the_staircase_is_not_kept(template_s
     assert not s._page_kept(dict(before, short=1))
     s._page_shape = lambda: dict(now, short=1)
     assert s._page_kept(dict(before, short=1))
+
+
+@requires_latex
+def test_a_worse_full_fit_falls_back_to_the_same_page_with_only_skills_changed(
+        template_source, fake_llm, workdir, monkeypatch):
+    fake_llm.infer_script = _infer
+    s = WebIntake(JD, template_source, fake_llm, ConversationMemory(":memory:"), CVRecords(":memory:"),
+                  workdir, jobname="cv", palace_dir=workdir / "p")
+    s.github_status = lambda: {"connected": False, "login": ""}
+    s.github_token = lambda: ""
+    s.start()
+    monkeypatch.setenv(rc.FLAG, "0")         # build without the pass, then run it by hand
+    s.submit(SKELETON)
+    s.submit(EXTRAS)
+    monkeypatch.setenv(rc.FLAG, "1")
+    bullets = [b for e in s.assembled.profile_used["experience"] for r in e.get("roles") or [e]
+               for b in r.get("bullets") or []]
+    real = s._page_kept
+    calls = []
+
+    def first_fit_is_worse(before):
+        calls.append(1)
+        return False if len(calls) == 1 else real(before)
+    monkeypatch.setattr(s, "_page_kept", first_fit_is_worse)
+    got = s._place_job_terms(force=True)
+    assert "Dashboards" in got["added"] and s._term_on_page("Dashboards")
+    after = [b for e in s.assembled.profile_used["experience"] for r in e.get("roles") or [e]
+             for b in r.get("bullets") or []]
+    assert after == bullets                   # every bullet exactly as it was

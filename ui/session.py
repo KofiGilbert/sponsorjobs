@@ -7996,7 +7996,21 @@ class WebIntake:
         ok = self._page_kept(shape0)
         on = [t for t in terms if ok and self._term_on_page(t)]
         if not on:
-            _log.warning("job terms: not kept (page kept: %s) for %s", ok, terms)
+            # The full fit came out worse than the page it replaces (a bullet lost, a stub line,
+            # emptier): back to that page exactly, and only its Skills lines take the terms.
+            _log.warning("job terms: full fit not kept for %s", terms)
+            roll_back()
+            woven = []
+            whole = _copy.deepcopy(self.profile)
+            whole["skills"] = skills
+            on = self._skills_only_page(terms, shape0)
+            if on:
+                self.profile["skills"] = whole["skills"]
+                self.inferred_terms = list(self.inferred_terms or []) + [
+                    {"term": t, "evidence": evidence.get(t.lower(), ""), "job": key} for t in on
+                    if t.lower() not in {str(x.get("term") or "").lower() for x in self.inferred_terms or []}]
+        if not on:
+            _log.warning("job terms: not kept for %s", terms)
             roll_back()
             self._terms_result = result
             self._persist()
@@ -8017,6 +8031,51 @@ class WebIntake:
         self._terms_result = result
         self._persist()
         return result
+
+    def _skills_only_page(self, terms: list, before: dict) -> list:
+        """The page as it is, with ``terms`` on its Skills lines and nothing else changed: the
+        same roles, bullets and lines, rendered and compiled again. Kept when it is one page, no
+        worse (``_page_kept``) and the terms show; returns the terms on the page, [] otherwise
+        (the caller rolls back)."""
+        import copy as _copy
+        from tailoring.assembler import _rendered_cv_text, extract_preamble, render_cv
+        from tailoring.compiler import compile_tex
+        from tailoring.keywords import build_coverage_report
+        from tailoring.linefit import place_term
+        a = self.assembled
+        if a is None:
+            return []
+        used = _copy.deepcopy(getattr(a, "profile_used", None) or {})
+        width_fn, avail = self._skill_widths()
+        sk = dict(used.get("skills") or {})
+        for t in terms:
+            sk = place_term(sk, t, width_fn=width_fn, avail=avail, jd_text=self.jd,
+                            keep=self._skill_keep() + list(terms)).skills
+        used["skills"] = sk
+        pre = extract_preamble(self.template)
+        try:
+            r = compile_tex(render_cv(pre, used, self.sections, probe=True, headings=self.headings),
+                            self.workdir, jobname=self.jobname)
+        except Exception:      # noqa: BLE001
+            return []
+        base_over = getattr(getattr(a, "compile", None), "overfull_count", 0) or 0
+        if not (r and r.ok and r.pages == 1 and (r.overfull_count or 0) <= base_over):
+            return []
+        orig = a
+        a = _copy.copy(orig)                 # the page as it was stays whole for a roll back
+        a.profile_used = used
+        a.tex_source = render_cv(pre, used, self.sections, headings=self.headings)
+        a.compile = r
+        a.pdf_path = r.pdf_path
+        a.fill_ratio = r.fill_ratio
+        a.coverage = build_coverage_report(self.jd, _rendered_cv_text(used, self.sections), used,
+                                           terms=list(a.coverage.all_terms))
+        self.assembled = a
+        self._pdf_v += 1
+        on = [t for t in terms if self._term_on_page(t)] if self._page_kept(before) else []
+        if not on:
+            self.assembled = orig
+        return on
 
     def _weave_terms(self, terms: list) -> list:
         """[(term, draft)] for up to WEAVE_TERMS of ``terms`` that one bullet of the same role can
