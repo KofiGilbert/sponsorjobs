@@ -282,6 +282,8 @@ def _essentials_from(saved_ess: dict, profile: dict) -> dict:
 
 # A one-line bullet whose line stops before this much of the width is thin: worth asking about.
 THIN_BULLET = 0.6
+# The whole message was a false "missing" claim: what is left to say.
+POLITE_DONE = "Your page already shows that."
 
 
 def _bullet_owner(label) -> str:
@@ -1644,6 +1646,9 @@ class WebIntake:
                 for p in (used.get("projects") or []) if isinstance(p, dict)
                 and str(p.get("org") or p.get("title") or p.get("name") or "").strip()]
             st["empty_sections"] = self._empty_sections(used)
+            # Every role exactly as the page prints it, so the agent never says a title or a date
+            # is missing when the page shows it (Kofi, 2026-11-11).
+            st["roles_on_page"] = page_roles(used.get("experience") or [])
             st["interests_on_page"] = str(used.get("interests") or "").strip()[:200]
         gh = self._github_view()
         st["github"] = {"connected": bool(gh.get("connected")), "login": gh.get("login") or "",
@@ -4252,6 +4257,9 @@ class WebIntake:
         # Whatever wrote the message (the model's one reply, the narrator, the fallback), a claim
         # that something went into a named section is held to the page.
         final = self._section_claims_fix(final, turn)
+        # ... and a claim that a field is missing from the page ("your roles have no titles or
+        # dates") is held to the rendered page too.
+        final = self._missing_claims_fix(final)
         self._voice_log = (list(self._voice_log) + [log])[-50:]
         _voice_logger(log)
         entry = {"role": "agent", "content": final}
@@ -4347,6 +4355,66 @@ class WebIntake:
                 continue
             text = text.replace(sent, _N.section_not_added(label, (turn or {}).get("message") or ""))
         return text
+
+    def _page_facts(self) -> dict:
+        """What the rendered page (the current build's ``profile_used``) really holds, field by
+        field: the facts the chat may state about it, and the test every "your roles have no
+        titles" claim must pass before it is shown."""
+        used = getattr(self.assembled, "profile_used", None) if self.assembled is not None else None
+        if not isinstance(used, dict):
+            return {}
+        roles = page_roles(used.get("experience") or [])
+        ident = dict(used.get("identity") or {})
+        edu = [e for e in used.get("education") or [] if isinstance(e, dict)
+               and (e.get("school") or e.get("degree"))]
+        projs = [p for p in used.get("projects") or [] if isinstance(p, dict)
+                 and (p.get("org") or p.get("title") or p.get("name"))]
+        return {
+            "roles": len(roles),
+            "roles_without_title": [r["org"] or "a role" for r in roles if not r["title"]],
+            "roles_without_dates": [(r["title"] or r["org"] or "a role") for r in roles if not r["dates"]],
+            "roles_without_location": [(r["title"] or r["org"] or "a role") for r in roles
+                                       if not r["location"]],
+            "has_email": bool(str(ident.get("email") or "").strip()),
+            "has_phone": bool(str(ident.get("phone") or "").strip()),
+            "education": len(edu),
+            "projects": len(projs),
+        }
+
+    def _missing_field_shown(self, field: str, facts: dict) -> bool:
+        """Is ``field`` (a narrate.missing_claims field) on the page in full, so a claim that it
+        is missing is false?"""
+        if not facts:
+            return False
+        return {"titles": facts["roles"] > 0 and not facts["roles_without_title"],
+                "dates": facts["roles"] > 0 and not facts["roles_without_dates"],
+                "locations": facts["roles"] > 0 and not facts["roles_without_location"],
+                "email": facts["has_email"], "phone": facts["has_phone"],
+                "education": facts["education"] > 0, "projects": facts["projects"] > 0,
+                "experience": facts["roles"] > 0}.get(field, False)
+
+    def _missing_claims_fix(self, text: str) -> str:
+        """Every sentence that says a field is missing from the page ("Your roles have no titles
+        or dates"), checked against the rendered page: a false one is dropped, with the ask that
+        rode on it and any question that comes back to it (Kofi, 2026-11-11)."""
+        from agent import narrate as _N
+        claims = _N.missing_claims(text)
+        if not claims:
+            return text
+        facts = self._page_facts()
+        false_fields: set = set()
+        false_sents: set = set()
+        by_sent: dict = {}
+        for sent, field in claims:
+            by_sent.setdefault(sent, []).append(field)
+        for sent, fields in by_sent.items():
+            # A sentence is false when every field it calls missing is on the page.
+            if all(self._missing_field_shown(f, facts) for f in fields):
+                false_sents.add(sent)
+                false_fields |= set(fields)
+        if not false_sents:
+            return text
+        return _N.drop_claims(text, false_fields, false_sents) or POLITE_DONE
 
     # Brief kinds that report something the app did in this turn, so the message may say so even
     # when the page itself did not change (a saved choice, a project build started).

@@ -233,6 +233,109 @@ def section_not_added(label: str, message: str = "") -> str:
             f"empty on the page.")
 
 
+# A sentence that says a field is MISSING from the page ("Your roles have no titles or dates",
+# "there are no dates on your roles"). Kofi's page showed every title and date, and the chat told
+# him to type them in (2026-11-11). The session checks each such claim against the rendered page
+# (WebIntake._missing_claims_fix) and drops a false one, with the ask that rode on it.
+_FIELD_WORDS = {
+    "titles": r"(?:job\s+)?titles?",
+    "dates": r"dates?",
+    "locations": r"locations?",
+    "email": r"e-?mail(?:\s+address)?",
+    "phone": r"phone(?:\s+number)?",
+    "education": r"education|degrees?",
+    "projects": r"projects?",
+    "experience": r"(?:work\s+)?experience|roles|jobs",
+}
+_FIELD_RES = {k: re.compile(r"(?<![A-Za-z])(?:" + v + r")(?![A-Za-z])", re.I)
+              for k, v in _FIELD_WORDS.items()}
+_MISSING_CUE = re.compile(
+    r"\b(?:no|missing|lacks?|lacking|without|empty|blank|"
+    r"(?:don['’]?t|do\s+not|doesn['’]?t|does\s+not)\s+(?:have|show|list|include)|"
+    r"(?:aren['’]?t|are\s+not|isn['’]?t|is\s+not)\s+(?:shown|listed|there|on|filled|included|given)|"
+    r"(?:need|needs)\s+(?:a|an|the|your)?\s*(?:job\s+)?(?:titles?|dates?))\b", re.I)
+_ASK_CUE = re.compile(r"^\s*(?:tell|give|send|share|let)\s+me\b|\bstart\s+with\b|\b(?:what|which)\s+(?:are|were)\b",
+                      re.I)
+# A "titles or dates" claim names the fields; "Your roles have no titles" names "roles" as the
+# owner, not as a missing field.
+_OWNER = re.compile(r"\b(?:your|the|his|her|their|each|every|all|some|these|those)\s+(?:roles|jobs|"
+                    r"positions|experience\w*|entries)\s+(?:have|has|show|shows|list|lists|are|is|"
+                    r"don['’]?t|do|doesn['’]?t|does)\b", re.I)
+_LIST_ITEM = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s+")
+_COUNT_WORDS = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six"}
+_COUNT_RE = re.compile(r"\b(one|two|three|four|five|six)\s+(things?|points?|items?|changes?|gaps?)\b", re.I)
+
+
+def missing_claims(text: str) -> list[tuple[str, str]]:
+    """[(sentence, field)] for every sentence that says a page field is missing: not a question,
+    each field once per sentence."""
+    out = []
+    for sent in re.split(r"(?<=[.!?])\s+|\n+", str(text or "")):
+        s = _LIST_ITEM.sub("", sent).strip()
+        if not s or s.endswith("?") or not _MISSING_CUE.search(s):
+            continue
+        owner = _OWNER.search(s)
+        for field, rx in _FIELD_RES.items():
+            for m in rx.finditer(s):
+                if field == "experience" and owner and m.start() < owner.end():
+                    continue
+                out.append((sent, field))
+                break
+    return out
+
+
+def drop_claims(text: str, fields: set[str], false_sentences: set[str]) -> str:
+    """``text`` without the sentences in ``false_sentences``, the ask right after each (\"Tell me
+    them here\"), any question that comes back to one of ``fields`` (\"Do you want to start with
+    the titles and dates?\"), and a list item holding any of them. A count of the list (\"Three
+    things\") follows the items left."""
+    if not false_sentences:
+        return text
+    out_lines, dropped_items = [], 0
+    for line in str(text or "").split("\n"):
+        is_item = bool(_LIST_ITEM.match(line))
+        sents = re.split(r"(?<=[.!?])\s+", line)
+        kept, skip_ask, hit = [], False, False
+        for sent in sents:
+            st = sent.strip()
+            if not st:
+                continue
+            if sent in false_sentences or st in false_sentences \
+                    or _LIST_ITEM.sub("", st).strip() in {_LIST_ITEM.sub("", f).strip() for f in false_sentences}:
+                hit, skip_ask = True, True
+                continue
+            if skip_ask and _ASK_CUE.search(st):
+                continue
+            skip_ask = False
+            if st.endswith("?") and any(_FIELD_RES[f].search(st) for f in fields if f in _FIELD_RES) \
+                    and not any(_FIELD_RES[f].search(st) for f in _FIELD_RES if f not in fields):
+                continue
+            kept.append(sent)
+        if is_item and hit:
+            dropped_items += 1
+            continue
+        joined = " ".join(k.strip() for k in kept)
+        if is_item and not joined:
+            continue
+        if line.strip() and not joined:
+            continue
+        out_lines.append(joined if line.strip() else "")
+    out = re.sub(r"\n{3,}", "\n\n", "\n".join(out_lines)).strip()
+    # Renumber the numbered list that is left, and say its new count.
+    n, lines = 0, []
+    for line in out.split("\n"):
+        m = re.match(r"^(\s*)\d+([.)])\s+", line)
+        if m:
+            n += 1
+            line = f"{m.group(1)}{n}{m.group(2)} " + line[m.end():]
+        lines.append(line)
+    out = "\n".join(lines)
+    if dropped_items and n and n in _COUNT_WORDS:
+        out = _COUNT_RE.sub(lambda m: (_COUNT_WORDS[n] if m.group(1)[0].isupper() else _COUNT_WORDS[n].lower())
+                            + " " + (m.group(2) if n > 1 else m.group(2).rstrip("s")), out, count=1)
+    return out
+
+
 def share_to_connect(text: str) -> tuple[str, bool]:
     """("share your GitHub" -> "connect your GitHub with the button below", whether it was said)."""
     if not _SHARE_GITHUB.search(text or ""):
