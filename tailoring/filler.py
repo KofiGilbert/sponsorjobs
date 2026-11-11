@@ -173,6 +173,12 @@ def same_fact(a: str, b: str) -> bool:
 _FIGURE = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d{3,}|\d+(?:\.\d+)?%)\+?")
 
 
+def figures_of(text: str) -> set[str]:
+    """The distinctive figures in a bullet (280,000+, 145,000+, 6.5%). A bullet that carries
+    one is the strongest fact in its role: the fill and the page's cuts keep it first."""
+    return _figures(text)
+
+
 def _figures(text: str) -> set[str]:
     """The distinctive figures in a bullet (280,000+, 145,000+, 6.5%): three digits or more, or
     a percentage; a year on its own is not one."""

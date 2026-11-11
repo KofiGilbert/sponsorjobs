@@ -399,6 +399,22 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                                                   context=" ".join([info[i]["title"],
                                                                     info[i]["company"]]))]
                     cur[k] = spare[0] if spare else None
+            # A saved bullet with a distinctive figure is the role's strongest fact and is never
+            # left off for a figureless written one: the model's plan for BlackOrigin dropped
+            # "280,000+ job postings a day ... 145,000+ sponsorship-matched roles" and wrote
+            # three long Stanbic bullets instead (the real page, 2026-11-10). Its figures go on
+            # the page in the person's own words, in place of the last figureless bullet.
+            from .filler import figures_of
+            for s in info[i]["saved"]:
+                fs = figures_of(s)
+                if not fs or any(fs & figures_of(c) for c in cur if c):
+                    continue
+                k = next((j for j in range(len(cur) - 1, -1, -1)
+                          if cur[j] and not figures_of(cur[j])), None)
+                if k is None:
+                    break
+                _log(step="plan-pinned", label=info[i]["label"], n=k, bullet=s, why=cur[k])
+                cur[k] = s
             r["bullets"][:] = [c for c in cur if c]
         return refused
 
