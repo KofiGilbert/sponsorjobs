@@ -297,3 +297,55 @@ def test_a_worse_full_fit_falls_back_to_the_same_page_with_only_skills_changed(
     after = [b for e in s.assembled.profile_used["experience"] for r in e.get("roles") or [e]
              for b in r.get("bullets") or []]
     assert after == bullets                   # every bullet exactly as it was
+
+
+# ------------------------------------------------------------ 6. the plan writes the terms in
+
+def test_the_term_map_gives_each_role_the_terms_its_material_backs(template_source, fake_llm, workdir,
+                                                                    monkeypatch):
+    s = _session(template_source, fake_llm, workdir)
+    s.profile = {"experience": KOFI_EXPERIENCE, "education": KOFI_EDUCATION, "skills": {"Data": "SQL"}}
+    s.jd = "Data Scientist. Requires statistical analysis, SQL, KPI frameworks and TensorFlow."
+    monkeypatch.setattr(s, "_jd_terms", lambda: ["Statistical analysis", "SQL", "TensorFlow", "KPI dashboards"])
+    s.inferred_terms = [{"term": "Statistical analysis", "evidence": "MBA - Business Analytics",
+                         "roles": ["Senior Business Analyst at Stanbic Bank Ghana"], "job": s._job_key()}]
+    m = s._role_terms()
+    assert m["stanbic bank ghana, senior business analyst"] == ["Statistical analysis"]
+    assert m["viva technologies ghana, product and operations analyst"] == ["SQL"]   # a tool: where named
+    assert m["blackorigin inc., ai senior business intelligence manager"] == ["KPI dashboards"]
+    assert not any("TensorFlow" in v for v in m.values())                          # backed nowhere
+
+
+@requires_latex
+def test_the_plan_writes_a_roles_terms_into_its_bullets_and_asks_again_for_a_missed_one(template_source, workdir):
+    import importlib
+    st = importlib.import_module("test_strict_staircase")
+    from tailoring.assembler import assemble_cv
+
+    class Writer(st._PlanWriter):
+        """Leaves the term out the first time; puts it in each slot it is told to show it in."""
+        def write_experience(self, roles, jd_text="", current=None, only=None, feedback=None):
+            self.seen = getattr(self, "seen", []) + [dict(feedback or {})]
+            asked = {key for key, v in (feedback or {}).items() if "show the person doing" in v}
+            self.asked = getattr(self, "asked", set()) | asked
+            out = super().write_experience(roles, jd_text, current, only, feedback)
+            for i, ro in enumerate(roles):
+                for k in range(len(out[i])):
+                    if f"{i}:{k}" in self.asked and ro.get("terms") and (only is None or k in (only.get(i) or [])):
+                        t = ro["terms"][0]
+                        lo, hi, _n = ro["windows"][k]
+                        text = f"Applied {t} to clinic wait-time records"
+                        while len(text) < (lo + hi) // 2 - 12:
+                            self.n += 1
+                            text += f" ward{self.n}"
+                        out[i][k] = text + " each month."
+            return out
+
+    llm = Writer()
+    res = assemble_cv(template_source, st._ladder_profile(), "Data Analyst. Statistical analysis, SQL.",
+                      llm, workdir, tailor=False, fit_lines=True, fit_rounds=0,
+                      role_terms={"northside health, reporting analyst": ["statistical analysis"]})
+    north = next(r for e in res.profile_used["experience"] if e["org"] == "Northside Health"
+                 for r in e["roles"])
+    assert any("statistical analysis" in b.lower() for b in north["bullets"]), north["bullets"]
+    assert any(any("show the person doing" in v for v in fb.values()) for fb in llm.seen)
