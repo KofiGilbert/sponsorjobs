@@ -1906,7 +1906,7 @@ class WebIntake:
         rec["used"] = True
         if drop:
             self.session_choices[drop] = "hide"
-        got = self.add_projects([entry], source="github")
+        got = self.add_projects([entry], source="github", fit_lines=True)
         added = list(got.get("added") or [])
         if not added:
             if drop:
@@ -2101,7 +2101,7 @@ class WebIntake:
         return st
 
     @_builds("projects")
-    def add_projects(self, entries: list, source: str = "github") -> dict:
+    def add_projects(self, entries: list, source: str = "github", fit_lines: bool = False) -> dict:
         """Add project entries the person chose (from a repo_fit card) to this resume's
         essentials and page, the brain (source ``source``) and the saved profile (section 4b),
         then rebuild the page. An entry already there by name, link or repo is skipped, so
@@ -2151,7 +2151,9 @@ class WebIntake:
             self.essentials["declined"] = [d for d in dec if d != "projects"]
         self._brain_projects(added, source)
         if self.assembled is not None:
-            self._assemble()
+            # A swap from the projects verdict rebuilds through the full build's fit, so the new
+            # project's lines reach the edge and the roles keep their staircase.
+            self._assemble(fit_lines=fit_lines)
         self._persist()
         saved = self._save_projects_to_profile(added)
         return {"added": [e["org"] for e in added], "skipped": skipped, "saved": saved}
@@ -7935,8 +7937,29 @@ class WebIntake:
             self._terms_result = result
             self._persist()
             return result
-        snapshot = (_copy.deepcopy(self.profile), list(self.inferred_terms or []),
-                    _copy.deepcopy(self.essentials.get("skills_input") or []))
+        # The page as it is now, to come back to exactly when the new one is not at least as good.
+        files = {}
+        for ext in (".pdf", ".tex"):
+            f = self.workdir / f"{self.jobname}{ext}"
+            try:
+                files[f] = f.read_bytes()
+            except OSError:
+                pass
+        snapshot = (self.assembled, _copy.deepcopy(self.profile), list(self.inferred_terms or []),
+                    _copy.deepcopy(self.essentials.get("skills_input") or []), list(self._written),
+                    self._pdf_v)
+        shape0 = self._page_shape()
+
+        def roll_back():
+            (self.assembled, self.profile, self.inferred_terms, si, self._written,
+             self._pdf_v) = snapshot
+            self.essentials["skills_input"] = si
+            for f, data in files.items():
+                try:
+                    f.write_bytes(data)
+                except OSError:
+                    pass
+
         self.inferred_terms = list(self.inferred_terms or []) + [
             {"term": t, "evidence": evidence.get(t.lower(), ""), "job": key} for t in terms
             if t.lower() not in {str(x.get("term") or "").lower() for x in self.inferred_terms or []}]
@@ -7949,16 +7972,27 @@ class WebIntake:
             skills = pl.skills
             shed += [x for x in pl.shed if x not in shed]
         self.profile["skills"] = skills
+        # One bullet carries each of the first few, in the job's wording, where the same role
+        # backs it (keyword_action: verbatim evidence in that role, the fact gate, the budget).
+        # The draft goes into the person's material and reaches the page through the same fit
+        # as a full build, never as a surgical edit after it.
+        woven = self._weave_terms([x for x in terms if x.lower() in evidence or x in literal])
         _activity.step("terms", "Putting the job's terms on the page", ", ".join(terms[:4]))
-        self._assemble()
-        b = self.assembled
-        ok = bool(b is not None and b.ok and b.compile is not None and b.compile.pages == 1)
+        # The full build's fit (the plan writer, the recency staircase, every line to the edge):
+        # placing a term never costs a bullet or a full line (2026-11-11: a plain rebuild here
+        # left BlackOrigin at 4 bullets beside Stanbic's 4 and a one-word line under Last-Mile).
+        try:
+            self._assemble(fit_lines=True)
+        except Exception:      # noqa: BLE001 - the page stays as it was
+            roll_back()
+            self._terms_result = result
+            self._persist()
+            return result
+        ok = self._page_kept(shape0)
         on = [t for t in terms if ok and self._term_on_page(t)]
         if not on:
-            _log.warning("job terms: none stayed on the page (one page: %s) for %s", ok, terms)
-            self.profile, self.inferred_terms, si = snapshot
-            self.essentials["skills_input"] = si
-            self._assemble()
+            _log.warning("job terms: not kept (page kept: %s) for %s", ok, terms)
+            roll_back()
             self._terms_result = result
             self._persist()
             return result
@@ -7969,16 +8003,8 @@ class WebIntake:
                 si.append(t)
         self.inferred_terms = [i for i in self.inferred_terms
                                if i.get("job") != key or i["term"] in on]
-        # One bullet carries each of the first few, in the job's wording, where the same role
-        # backs it (keyword_action: verbatim evidence in that role, the fact gate, the budget).
-        woven = []
-        for t in [x for x in on if x.lower() in evidence or x in literal][: self.WEAVE_TERMS]:
-            try:
-                got = self._keyword_apply_now(t, inferred=True)
-            except Exception:      # noqa: BLE001 - the term is on the page in Skills already
-                continue
-            if got.get("ok"):
-                woven.append(t)
+        page_text = self._page_text()
+        woven = [t for t, draft in woven if draft.lower()[:60] in page_text]
         result.update({"after": self.coverage_dict().get("ratio"), "added": on,
                        "inferred": [{"term": t, "evidence": evidence[t.lower()]} for t in on
                                     if t.lower() in evidence],
@@ -7986,6 +8012,64 @@ class WebIntake:
         self._terms_result = result
         self._persist()
         return result
+
+    def _weave_terms(self, terms: list) -> list:
+        """[(term, draft)] for up to WEAVE_TERMS of ``terms`` that one bullet of the same role can
+        carry (tailoring/keyword_action: verbatim evidence in that role, the fact gate, the
+        length budget); each draft replaces its bullet in the person's material only."""
+        from tailoring.keyword_action import preview_keyword_action
+        out = []
+        a = self.assembled
+        for t in terms:
+            if len(out) >= self.WEAVE_TERMS or a is None or not a.tex_source:
+                break
+            try:
+                pv = preview_keyword_action(t, a.tex_source, self._page_profile(), self.jd, self.llm,
+                                            fill_ratio=a.fill_ratio, evidence_profile=self.profile)
+            except Exception:      # noqa: BLE001 - the term is in Skills already
+                continue
+            if pv.ok and pv.kind == "rewrite" and pv.after:
+                self._mirror_keyword(pv, pv.after)
+                out.append((t, pv.after))
+        return out
+
+    def _page_text(self) -> str:
+        from tailoring.assembler import _rendered_cv_text
+        a = self.assembled
+        return " ".join(_rendered_cv_text(getattr(a, "profile_used", None) or {}, self.sections).lower().split()) \
+            if a is not None else ""
+
+    def _page_shape(self) -> dict:
+        """The page's measured shape: bullets per role in page order, the fill, one page."""
+        a = self.assembled
+        if a is None:
+            return {}
+        used = getattr(a, "profile_used", None) or {}
+        counts = []
+        for e in used.get("experience") or []:
+            if not isinstance(e, dict):
+                continue
+            for r in (e["roles"] if isinstance(e.get("roles"), list) and e["roles"] else [e]):
+                if isinstance(r, dict) and r.get("bullets"):
+                    counts.append(len(r["bullets"]))
+        return {"counts": counts, "fill": float(getattr(a, "fill_ratio", None) or 0.0),
+                "one_page": bool(a.ok and a.compile is not None and a.compile.pages == 1),
+                "strict": bool(counts) and all(y < x for x, y in zip(counts, counts[1:]))
+                and counts[-1] >= 2}
+
+    def _page_kept(self, before: dict) -> bool:
+        """Is the new page at least as good as ``before``: one page, no fewer bullets, the
+        staircase still strict when it was, and no emptier (a hair of rounding aside)?"""
+        now = self._page_shape()
+        if not now.get("one_page"):
+            return False
+        if not before:
+            return True
+        if sum(now["counts"]) < sum(before.get("counts") or []):
+            return False
+        if before.get("strict") and not now["strict"]:
+            return False
+        return now["fill"] >= before.get("fill", 0.0) - 0.005
 
     def _term_on_page(self, term: str) -> bool:
         from tailoring.assembler import _rendered_cv_text
