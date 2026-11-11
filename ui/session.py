@@ -58,6 +58,9 @@ _TITLE_WORDS = re.compile(
     re.I)
 
 
+_log = __import__("logging").getLogger("tailor.session")
+
+
 def _voice_logger(row: dict) -> None:
     """One line per chat turn's message: whether the AI wrote it, why not, and its tokens. To the
     log, and to TAILOR_VOICE_LOG (a file) when set, for measuring what one voice costs."""
@@ -7912,7 +7915,8 @@ class WebIntake:
             _activity.step("terms", "Reading the job's terms", "against your own material")
             try:
                 inferred = _IS.vet(self.llm.infer_term_support(self.jd, ask, material), ask, material)
-            except Exception:      # noqa: BLE001 - no inference: the literal terms still go on
+            except Exception as exc:      # noqa: BLE001 - no inference: the literal terms still go on
+                _log.warning("job terms: inference failed: %s", exc)
                 inferred = []
         evidence = {i["term"].lower(): i["evidence"] for i in inferred}
         terms = list(dict.fromkeys(literal + [i["term"] for i in inferred]))[:_IS.MAX_INFERRED + 4]
@@ -7921,6 +7925,10 @@ class WebIntake:
             self._terms_result = result
             self._persist()
             return result
+        # An older session's first rebuild selects its Skills block for this job again
+        # (_refresh_for_job); that happens first, so the terms placed now are not thrown away by
+        # it (Kofi's Google chat: both terms placed, then gone with the old block, 2026-11-11).
+        self._refresh_for_job()
         snapshot = (_copy.deepcopy(self.profile), list(self.inferred_terms or []),
                     _copy.deepcopy(self.essentials.get("skills_input") or []))
         self.inferred_terms = list(self.inferred_terms or []) + [
@@ -7941,6 +7949,7 @@ class WebIntake:
         ok = bool(b is not None and b.ok and b.compile is not None and b.compile.pages == 1)
         on = [t for t in terms if ok and self._term_on_page(t)]
         if not on:
+            _log.warning("job terms: none stayed on the page (one page: %s) for %s", ok, terms)
             self.profile, self.inferred_terms, si = snapshot
             self.essentials["skills_input"] = si
             self._assemble()
