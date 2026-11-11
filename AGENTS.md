@@ -11,6 +11,9 @@ and is the only agent that merges. Read `CLAUDE.md` first; every rule in it appl
 - If an assignment comes from the owner directly, Claude Code will turn it into an issue; until then,
   ask the owner to confirm the scope with Claude Code.
 - One issue, one branch, one pull request.
+- **Work order:** take the open `openhands` issue with the lowest priority number in its title
+  (P1 before P2, and so on). One issue at a time: start the next only after Claude Code has merged
+  the previous one or asked you to move on. Issues with no P number come after all numbered ones.
 
 ## Branches and pull requests
 
