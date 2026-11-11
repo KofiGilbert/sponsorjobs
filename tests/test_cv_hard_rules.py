@@ -159,7 +159,7 @@ def test_decline_button_records_a_real_decline_and_builds(template_source, fake_
     s.submit(BUILD_BUTTON)
     assert s.assembled is None
     st = s.decline_required()
-    assert {"extracurricular", "interests"} <= set(s.essentials.get("declined") or [])
+    assert "interests" in set(s.essentials.get("declined") or [])   # Classic's one outside-work section
     assert s.assembled is not None and st["phase"] == "review"
     assert not st.get("required_open")
     assert not s.profile.get("extracurricular"), "a decline must never invent content"
@@ -172,7 +172,7 @@ def test_typed_bare_none_declines_the_open_required_sections(template_source, fa
     s.start()
     s.submit(BUILD_BUTTON)
     st = s.submit("None")
-    assert {"extracurricular", "interests"} <= set(s.essentials.get("declined") or [])
+    assert "interests" in set(s.essentials.get("declined") or [])
     assert s.assembled is not None and st["phase"] == "review"
 
 
@@ -187,7 +187,7 @@ def test_thats_everything_while_required_open_declines_and_builds(msg, template_
     s.start()
     s.submit(BUILD_BUTTON)
     st = s.submit(msg)
-    assert {"extracurricular", "interests"} <= set(s.essentials.get("declined") or [])
+    assert "interests" in set(s.essentials.get("declined") or [])
     assert s.assembled is not None and st["phase"] == "review"
     assert not s.profile.get("extracurricular"), "a decline must never invent content"
 
@@ -203,7 +203,7 @@ def test_content_with_thats_everything_is_kept_and_only_the_empty_section_declin
     st = s.submit("I enjoy chess and hiking. That's everything.")
     assert "chess" in str(s.essentials.get("interests") or "")
     dec = set(s.essentials.get("declined") or [])
-    assert "interests" not in dec and "extracurricular" in dec
+    assert "interests" not in dec                   # it got content; nothing else was open
     assert s.assembled is not None and st["phase"] == "review"
     assert "chess" in str(s.profile.get("interests") or "")
 

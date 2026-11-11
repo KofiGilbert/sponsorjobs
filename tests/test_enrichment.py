@@ -111,7 +111,7 @@ def test_that_is_everything_at_the_required_question_declines_them_never_invents
     invite = " ".join(st0["messages"]).lower()
     assert any(w in invite for w in ("outside", "volunteer", "club", "team", "interest", "hobb"))
     st = s.submit("that's everything")
-    assert {"extracurricular", "interests"} <= set(s.essentials.get("declined") or [])
+    assert "interests" in set(s.essentials.get("declined") or [])   # Classic's one outside-work section
     assert st["phase"] == "review"
     assert not s.profile.get("extracurricular")                    # never fabricated
     assert not str(s.profile.get("interests") or "").strip()

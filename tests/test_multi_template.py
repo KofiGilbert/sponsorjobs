@@ -34,12 +34,14 @@ SKELETON = (
 
 def test_manifests_declare_distinct_shapes_and_questions():
     shetty, summ = load_manifest("shetty"), load_manifest("summary")
-    assert sections(shetty)[-2:] == ["extracurricular", "interests"]
-    assert required_sections(shetty) == ["extracurricular", "interests"]
-    # The summary template leads with Summary and now also carries Extracurricular + Interests so
-    # the CV fills a full page (it used to end at Experience, leaving the bottom third empty).
+    # One outside-work section per resume (Kofi, 2026-11-10): Classic ends with Interests, the
+    # single home for hobbies; activities fold into that line as prose.
+    assert sections(shetty)[-2:] == ["experience", "interests"]
+    assert required_sections(shetty) == ["interests"]
+    # The summary template leads with Summary and carries Interests so the CV fills a full page
+    # (it used to end at Experience, leaving the bottom third empty).
     assert sections(summ) == ["summary", "education", "skills", "projects", "experience",
-                              "extracurricular", "interests"]
+                              "interests"]
     assert required_sections(summ) == []    # still optional, so they never gate a build
     assert "blog" not in identity_fields(summ)                 # summary template has no blog slot
     assert "blog" in identity_fields(shetty)
@@ -88,8 +90,9 @@ def test_summary_template_builds_after_skeleton_with_a_summary(fake_llm, workdir
 
 @requires_latex
 def test_shetty_template_still_requires_extracurricular_and_interests(template_source, fake_llm, workdir):
+    # One outside-work section (2026-11-10): Classic requires Interests, the home for hobbies.
     s = _s(template_source, fake_llm, workdir, "shetty")
-    assert s.required_fill == ["extracurricular", "interests"]
+    assert s.required_fill == ["interests"]
     s.start()
     st = s.submit(SKELETON)
     assert st["phase"] == "chatting"                          # NOT built — still asks

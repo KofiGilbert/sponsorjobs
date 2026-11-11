@@ -101,11 +101,14 @@ def _flags(monkeypatch):
     monkeypatch.setenv(N.FLAG, "1")
 
 
-def _returning(template_source, workdir, jd=JD):
+def _returning(template_source, workdir, jd=JD, template="shetty", saved=None, ess=None):
     mem = ConversationMemory(":memory:")
-    mem.save("default", SAVED, ESS, [])
+    mem.save("default", saved or SAVED, ess or ESS, [])
+    if template != "shetty":
+        from ui.app import _load_template
+        template_source, template = _load_template(template)
     s = WebIntake(jd, template_source, FakeLLM(), mem, CVRecords(":memory:"), workdir,
-                  jobname="cv", palace_dir=workdir / "p", template_name="shetty")
+                  jobname="cv", palace_dir=workdir / "p", template_name=template)
     s.github_status = lambda: {"connected": False, "login": ""}
     s.github_token = lambda: ""
     s.start()
@@ -118,32 +121,42 @@ def _terms(skills: dict) -> list[str]:
 
 # ------------------------------------------------------------- 1. the question says what it has
 
-def test_the_question_names_what_is_already_on_file(template_source, workdir):
+def test_classic_asks_nothing_when_interests_are_on_file_and_builds(template_source, workdir):
+    # One outside-work section per resume: Classic has only Interests, and they are on file.
     s = _returning(template_source, workdir)
+    assert s.required_fill == ["interests"] and "extracurricular" not in s.sections
+    st = s.submit(BUILD_BUTTON)
+    assert s.assembled is not None and st["phase"] == "review", st["messages"]
+    assert "Extracurricular" not in " ".join(st["messages"])
+
+
+def test_the_question_names_what_is_already_on_file(template_source, workdir):
+    # The MBA template keeps Leadership & Activities beside Languages & Interests (they hold
+    # different things): with the interests on file and Leadership empty, the question says so.
+    s = _returning(template_source, workdir, template="mba")
     st = s.submit(BUILD_BUTTON)
     assert s.assembled is None
     said = " ".join(st["messages"])
-    assert "I already have your interests on file (" in said, said
+    assert "I already have your languages & interests on file (" in said, said
     assert "football" in said.lower() and "travelling" in said.lower(), said
-    assert "Extracurricular section is still empty" in said, said
+    assert "Leadership & Activities section is still empty" in said, said
     # The brief the AI writes from carries the same facts, so a written message can say them.
     items = getattr(s.llm, "last_narrate_items", None) or []
     ask = next((i for i in items if i.get("kind") == "ask_required"), None)
-    assert ask is not None and "Interests" in ask.get("already_on_file", {}), items
-    assert "football" in ask["already_on_file"]["Interests"].lower()
-    assert "Interests" in ask.get("exact", [])
+    assert ask is not None and "Languages & Interests" in ask.get("already_on_file", {}), items
+    assert "football" in ask["already_on_file"]["Languages & Interests"].lower()
 
 
-def test_a_template_with_nothing_on_file_asks_plainly(template_source, workdir):
-    mem = ConversationMemory(":memory:")
+def test_a_template_with_nothing_on_file_asks_one_outside_work_question(template_source, workdir):
     bare = dict(SAVED, interests="", extracurricular=[])
-    mem.save("default", bare, dict(ESS, interests=""), [])
-    s = WebIntake(JD, template_source, FakeLLM(), mem, CVRecords(":memory:"), workdir,
-                  jobname="cv", palace_dir=workdir / "p", template_name="shetty")
-    s.start()
+    s = _returning(template_source, workdir, saved=bare, ess=dict(ESS, interests=""))
     said = " ".join(s.submit(BUILD_BUTTON)["messages"])
     assert "already have your" not in said
-    assert "Extracurricular and Interests sections" in said, said
+    assert "Interests section" in said and "Extracurricular" not in said, said
+    assert said.count("?") == 1
+    s.submit("football at weekends and travelling")
+    assert s.essentials["interests"] == "Football at weekends and travelling."
+    assert s.assembled is not None
 
 
 # ----------------------------------------------------- 2a. the answer lands in the asked section
@@ -156,35 +169,127 @@ def test_reply_items_are_clean_list_items():
     assert _reply_items("") == []
 
 
+MERGED = ("Playing football on weekends and swimming, travelling to see the world, and watching "
+          "podcasts such as The Diary of a CEO (DOAC).")
+
+
+def test_the_same_figures_are_one_fact_however_reworded():
+    # The page fill wrote a sixth BlackOrigin bullet that restated the third with the same
+    # 280,000+ and 145,000+ figures (the real run, 2026-11-10). One fact never prints twice.
+    from tailoring.filler import same_fact
+    third = ("Built an AI-assisted data pipeline that processed 280,000+ job postings a day and "
+             "matched them against government sponsorship records, producing 145,000+ "
+             "sponsorship-matched roles that fed the company's products and its reporting.")
+    sixth = ("Built an AI-assisted pipeline that turns 280,000+ daily job postings into "
+             "145,000+ sponsorship-matched roles.")
+    assert same_fact(third, sixth)
+    assert not same_fact("Grew revenue 20% in 2021.", "Grew margin 20% in 2022.")
+    assert not same_fact("Tracked 5,000+ daily orders using SQL and Excel.",
+                         "Analyzed SQL and Excel data for a platform of 250 drivers.")
+
+
+def test_merge_interests_adds_without_duplicates():
+    from tailoring.conform import interest_sentence, merge_interests
+    sentence, added, already = merge_interests(INTERESTS, ["Playing football", "Swimming"])
+    assert sentence == MERGED and added == ["Swimming"] and already == ["Playing football"]
+    same, added2, already2 = merge_interests(INTERESTS, ["football"])
+    assert same == INTERESTS and not added2 and already2 == ["football"]
+    assert interest_sentence(["Football at weekends", "travelling"]) == "Football at weekends and travelling."
+    assert interest_sentence(["Chess"]) == "Chess."
+
+
 @requires_latex
-def test_the_answer_goes_into_the_asked_section_and_renders(template_source, workdir):
+def test_activities_merge_into_interests_and_the_chat_says_exactly_that(template_source, workdir):
+    # Kofi's answer over interests already on file: one Interests line, swimming added, football
+    # left as it was, and the message says so. Nothing lands in an Extracurricular grid.
     s = _returning(template_source, workdir)
     s.submit(BUILD_BUTTON)
+    assert s.assembled is not None
     st = s.submit(ANSWER)
-    titles = [x["title"] for x in s.essentials.get("extracurricular") or []]
-    assert titles == ["Playing football", "Swimming"], s.essentials.get("extracurricular")
-    assert s.essentials.get("interests") == INTERESTS            # untouched
-    assert s.assembled is not None and s.assembled.ok and st["phase"] == "review"
-    page = s.assembled.profile_used
-    assert [x["title"] for x in page.get("extracurricular") or []] == ["Playing football", "Swimming"]
-    tex = (workdir / "cv.tex").read_text(encoding="utf-8") if (workdir / "cv.tex").exists() else ""
-    rendered = tex or str(getattr(s.assembled, "tex", "") or "")
-    assert "Swimming" in rendered and "Extracurricular" in rendered
+    assert s.essentials["interests"] == MERGED
+    assert not (s.essentials.get("extracurricular") or [])
     said = " ".join(st["messages"])
-    assert "nothing went into your Extracurricular section" not in said
+    assert "I added swimming to your interests; playing football was already there." in said, said
+    assert "Extracurricular" not in said
+    page = s.assembled.profile_used
+    assert page.get("interests") == MERGED
+    tex = (workdir / "cv.tex").read_text(encoding="utf-8")
+    assert "Extracurricular" not in tex
+    assert tex.count("swimming") == 1 and "\\textbf{Swimming}" not in tex
+    assert "Interests:} " + MERGED[:40] in tex.replace("\\&", "&")
+
+
+@requires_latex
+def test_a_leadership_ask_answered_with_hobbies_files_them_in_interests(template_source, workdir):
+    # MBA: Leadership & Activities is a block of entries. Bare hobby words never go into it;
+    # they join the Interests line, and the question counts as answered.
+    s = _returning(template_source, workdir, template="mba")
+    s.submit(BUILD_BUTTON)
+    st = s.submit(ANSWER)
+    assert s.essentials["interests"] == MERGED
+    assert not (s.essentials.get("extracurricular") or [])
+    assert s.assembled is not None and st["phase"] == "review", st["messages"]
+    tex = (workdir / "cv.tex").read_text(encoding="utf-8")
+    assert "Leadership" not in tex.split("Languages")[0].split("Education")[-1] or \
+        "\\textbf{Swimming}" not in tex
+    assert "\\textbf{Swimming}" not in tex and "swimming" in tex
+    said = " ".join(st["messages"])
+    assert "I added swimming to your interests; playing football was already there." in said, said
     assert "Before I build, I need your" not in said
 
 
-def test_bare_entries_render_each_on_their_own_line():
-    from tailoring.assembler import _extracurricular
-    tex = _extracurricular({"extracurricular": [
-        {"title": "Playing football", "date": "", "bullets": []},
-        {"title": "Swimming", "date": "", "bullets": []}]})
-    first, second = tex.index("Playing football"), tex.index("Swimming")
-    assert "\n\n" in tex[first:second], tex          # a paragraph break between the two titles
+def test_every_template_keeps_hobbies_out_of_a_grid():
+    """No template renders bare hobby words as a spaced grid beside an Interests line: entries
+    (a title with bullets or an organisation) render in the template's activities block when it
+    has one, hobby words only ever on the one Interests line."""
+    import glob
+    import json
+
+    from intake.template_manifest import headings, sections
+    from tailoring.assembler import render_cv
+    profile = {
+        "identity": {"name": "A Person", "email": "a@example.com"},
+        "education": [{"school": "U", "degree": "BSc", "date": "2020", "location": "Accra, GH"}],
+        "experience": [{"org": "Co", "location": "Accra, GH", "roles": [
+            {"title": "Analyst", "dates": "Jan 2021 - Present", "bullets": ["Did the work."]}]}],
+        "skills": {"Tools": "SQL"},
+        "interests": "Travelling and chess.",
+        "extracurricular": [{"title": "Playing football", "date": "", "bullets": []},
+                            {"title": "Swimming", "date": "", "bullets": []},
+                            {"title": "Youth team", "org": "Accra FC", "date": "2022",
+                             "bullets": ["Coached twelve players."]}],
+    }
+    manifests = sorted(glob.glob("config/templates/*.json"))
+    assert manifests
+    for p in manifests:
+        m = json.load(open(p))
+        secs, heads = sections(m), headings(m)
+        tex = render_cv("\\documentclass{article}\\begin{document}", profile, secs, headings=heads)
+        assert "\\textbf{Swimming}" not in tex and "\\textbf{Playing football}" not in tex, p
+        if "extracurricular" not in secs and "interests" not in secs:
+            assert "swimming" not in tex and "Youth team" not in tex, p   # neither section: nothing
+            continue
+        label = heads.get("interests", "Interests").replace("\\&", "&")
+        assert tex.count("swimming") == 1 and f"{label}:" in tex.replace("\\&", "&"), p
+        if "extracurricular" in secs:
+            assert "\\textbf{Youth team}" in tex and "Coached twelve players." in tex, p
+        else:
+            assert "\\textbf{Youth team}" not in tex and "youth team (Accra FC)" in tex, p
+        # Never both an activities grid and the hobby words elsewhere: each hobby word once.
+        assert tex.count("laying football") == 1, p
+
+
+def test_bare_words_never_render_as_an_activities_grid():
+    from tailoring.assembler import _additional, _extracurricular
+    bare = {"extracurricular": [{"title": "Playing football", "date": "", "bullets": []},
+                                {"title": "Swimming", "date": "", "bullets": []}]}
+    assert _extracurricular(bare) == ""                       # no block of spaced words
+    assert "Interests:} Playing football and swimming." in _additional(bare)
     with_bullets = _extracurricular({"extracurricular": [
         {"title": "Youth team", "date": "2024", "bullets": ["Coached twelve players."]}]})
-    assert "\\begin{itemize}" in with_bullets
+    assert "\\begin{itemize}" in with_bullets and "\\textbf{Youth team}" in with_bullets
+    with_org = _extracurricular({"extracurricular": [{"title": "Treasurer", "org": "Chess Club"}]})
+    assert "\\textbf{Treasurer}" in with_org
 
 
 def test_a_broken_fragment_never_reaches_the_skills_pool(template_source, workdir):
@@ -227,11 +332,10 @@ def test_section_claims_are_detected_and_retold():
 
 
 @requires_latex
-def test_a_claim_of_an_add_that_did_not_happen_is_retold_from_the_page(template_source, workdir,
-                                                                      monkeypatch):
-    # Exactly Kofi's transcript: the answer is dropped (the absorb path before this fix) and the
-    # AI writes that it was added to the Extracurricular section.
-    monkeypatch.setattr(WebIntake, "_absorb_required_reply", lambda self, m, changed: [])
+def test_a_claim_of_an_add_that_did_not_happen_is_retold_from_the_page(template_source, workdir):
+    # Exactly Kofi's transcript: the AI writes that football and swimming were added to the
+    # Extracurricular section. Classic has no such section (the hobbies went to Interests), so
+    # the sentence is retold from the page.
     s = _returning(template_source, workdir)
     s.submit(BUILD_BUTTON)
     s.llm.narrate_script = lambda system, user, items: KOFI_CLAIM + " " + N.fallback(items)
@@ -248,11 +352,12 @@ def test_a_claim_of_an_add_that_did_not_happen_is_retold_from_the_page(template_
 def test_a_true_claim_of_an_add_stands(template_source, workdir):
     s = _returning(template_source, workdir)
     s.submit(BUILD_BUTTON)
-    s.llm.narrate_script = lambda system, user, items: KOFI_CLAIM + " " + N.fallback(items)
+    claim = "I've added swimming to your Interests section, next to football."
+    s.llm.narrate_script = lambda system, user, items: claim + " " + N.fallback(items)
     st = s.submit(ANSWER)
-    assert [x["title"] for x in s.assembled.profile_used.get("extracurricular") or []]
+    assert "swimming" in str(s.assembled.profile_used.get("interests") or "")
     said = " ".join(st["messages"])
-    assert "added them to your Extracurricular section" in said, said
+    assert claim in said, said
     assert "nothing went into" not in said
 
 

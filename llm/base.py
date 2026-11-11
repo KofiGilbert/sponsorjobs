@@ -404,15 +404,19 @@ class FakeLLM:
         jd_text: str,
     ) -> str:
         original_text = original_text.strip()
-        # Only surface terms the bullet's own material plausibly supports:
-        # a term the original already mentions, or one we can lead with while
-        # keeping the original substance. We never invent unsupported claims.
-        lead = ", ".join(dict.fromkeys(supported_jd_terms))  # de-dupe, keep order
-        if lead:
-            candidate = f"{lead}: {original_text}"
+        # Only surface terms the bullet's own material plausibly supports, woven in at the
+        # end of the sentence the way the real model does ("..., using Python and SQL."),
+        # never as a "Python, SQL:" lead: that prefix read as keyword stuffing on a test page
+        # Kofi reviewed (2026-11-10). A term the bullet already carries is not repeated. We
+        # never invent unsupported claims.
+        from tailoring.keywords import term_present
+        terms = [t for t in dict.fromkeys(supported_jd_terms) if not term_present(t, original_text)]
+        tail = (", ".join(terms[:-1]) + " and " + terms[-1]) if len(terms) > 1 else "".join(terms)
+        if tail:
+            candidate = f"{original_text.rstrip('.')}, using {tail}."
         else:
             candidate = original_text
-        return _trim_to_len(candidate, max(target_len_chars, len(lead) + 2))
+        return _trim_to_len(candidate, max(target_len_chars, len(tail) + 9))
 
     def expand_bullets(
         self, role_title: str, bullets: list[str], jd_text: str

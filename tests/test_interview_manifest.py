@@ -28,11 +28,13 @@ def _s(template_source, fake_llm, workdir):
 
 
 def test_manifest_ships_question_bank_for_extracurricular_and_interests():
+    # One outside-work section per resume (2026-11-10): Classic renders Interests, the single
+    # home for hobbies, and asks about nothing it does not render.
     m = load_manifest("shetty")
-    assert "extracurricular" in m.get("sections", [])
+    assert "extracurricular" not in m.get("sections", [])
     assert "interests" in m.get("sections", [])
-    assert elicit_leads(m, "extracurricular")            # warm leading questions exist
-    assert elicit_leads(m, "interests")
+    assert not elicit_leads(m, "extracurricular")
+    assert elicit_leads(m, "interests")                  # warm leading questions exist
     # Style guidance is present so the LLM phrases naturally.
     assert "friend" in m.get("interview_style", "").lower()
 
@@ -42,7 +44,7 @@ def test_enrichment_topics_include_extracurricular_and_interests(template_source
     s.essentials["experience"] = [{"org": "Meridian", "title": "Analyst", "dates": "2021 - Present",
                                    "location": "Chicago, IL", "bullets": ["Real work done"]}]
     keys = [k for k, _ in s._enrich_topics()]
-    assert "extracurricular" in keys and "interests" in keys
+    assert "interests" in keys and "extracurricular" not in keys
 
 
 def test_invite_for_extracurricular_is_indirect_not_robotic(template_source, fake_llm, workdir):
@@ -57,8 +59,9 @@ def test_invite_for_extracurricular_is_indirect_not_robotic(template_source, fak
     invite = s._enrich_invite()
     low = invite.lower()
     assert "list your extracurricular" not in low            # never the robotic ask
-    assert any(p in low for p in ("outside of work", "outside work", "throw yourself",
-                                  "proud of", "started or organized"))   # a manifest lead
+    assert "list your interests" not in low
+    assert any(p in low for p in ("lose a few hours", "talk about for hours", "oh, nice",
+                                  "not working"))                      # a manifest lead
 
 
 @__import__("conftest", fromlist=["requires_latex"]).requires_latex

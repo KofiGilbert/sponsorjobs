@@ -394,6 +394,67 @@ def format_location(loc: str) -> str:
     return f"{city}, {code}" if code else f"{city}, {region}"
 
 
+_INTEREST_STOP = frozenset("playing play doing going watching the a an on at in and to of with "
+                           "such as like my weekends weekend some also".split())
+
+
+def _lower_item(x: str) -> str:
+    return x if (len(x) > 1 and x[:2].isupper()) else x[0].lower() + x[1:]
+
+
+def interest_sentence(items: list[str]) -> str:
+    """One sentence from interest items: "Playing football on weekends, travelling, and
+    swimming." Never a grid, never two words spaced across a line."""
+    parts = [str(x).strip(" .") for x in items if str(x).strip(" .")]
+    if not parts:
+        return ""
+    low = [parts[0]] + [_lower_item(p) for p in parts[1:]]
+    s = low[0] if len(low) == 1 else (", ".join(low[:-1]) + (", and " if len(low) > 2 else " and ")
+                                      + low[-1])
+    return s[0].upper() + s[1:] + "."
+
+
+def merge_interests(existing: str, items: list[str]) -> tuple[str, list[str], list[str]]:
+    """Fold ``items`` ("Playing football", "Swimming") into the Interests sentence already on
+    file without duplicates: an item whose own words are already there (football) is left as
+    it is, the rest are added. Returns (sentence, added, already there). Nothing is reworded:
+    the existing items keep their words and order."""
+    existing = str(existing or "").strip()
+    low = existing.lower()
+
+    def words(s: str) -> set[str]:
+        return {w for w in re.findall(r"[a-z]+", s.lower()) if len(w) > 2 and w not in _INTEREST_STOP}
+
+    def there(w: str) -> bool:
+        stems = {w, w[:-1] if w.endswith("s") else w, w[:-3] if w.endswith("ing") else w}
+        return any(re.search(r"(?<![a-z])" + re.escape(st), low) for st in stems if len(st) > 2)
+
+    added: list[str] = []
+    already: list[str] = []
+    seen: set[str] = set()
+    for it in items or []:
+        it = str(it).strip(" .")
+        if not it or it.lower() in seen:
+            continue
+        seen.add(it.lower())
+        ws = words(it)
+        (already if (ws and any(there(w) for w in ws)) else added).append(it)
+    if not added:
+        return existing, added, already
+    parts = [p.strip(" .") for p in re.split(r",\s*(?:and\s+)?|;\s*|\s+and\s+", existing)
+             if p.strip(" .")]
+    # A short new item ("swimming") joins the first item ("Playing football on weekends and
+    # swimming") rather than trailing the sentence as a one-word stub on its own line; a
+    # longer one goes at the end as an item of its own.
+    short = [a for a in added if len(a.split()) <= 2]
+    long_ = [a for a in added if len(a.split()) > 2]
+    if short and parts and " and " not in parts[0]:
+        parts[0] = parts[0] + " and " + " and ".join(_lower_item(a) for a in short)
+    else:
+        long_ = short + long_
+    return interest_sentence(parts + long_), added, already
+
+
 def fit_courses(courses: str, budget: int = 175) -> str:
     """Keep the most-relevant courses that fit the template's ~2-line course line —
     dropping WHOLE trailing courses (courses are ordered most-relevant-first), never

@@ -4198,7 +4198,7 @@ class WebIntake:
     # Brief kinds that report something the app did in this turn, so the message may say so even
     # when the page itself did not change (a saved choice, a project build started).
     _DONE_KINDS = ("added_projects", "added_from_github", "passed_quiz", "build_started",
-                   "keep_choice", "note", "github_connected")
+                   "keep_choice", "note", "github_connected", "interests_merged")
 
     def _said_done(self, items: list) -> bool:
         return any(i.get("kind") in self._DONE_KINDS for i in items)
@@ -4418,8 +4418,34 @@ class WebIntake:
                 if _wants_done(message) and getattr(self.assembled, "underfull", False):
                     return self._finish_short_page()
                 return self._say(self._no_build_reply(reply, message))
+            # Only the outside-work lines changed (swimming merged into Interests): the page
+            # is rebuilt in place with the new line, never redrafted from scratch, which threw
+            # away the Skills block selected for this job and the saved base (2026-11-10).
+            if self.assembled is not None and self._only_outside_work_changed(material_before):
+                return self._rebuild_outside_work()
 
         return self._funnel_tail(reply)
+
+    def _only_outside_work_changed(self, before_sig: str) -> bool:
+        try:
+            old = json.loads(before_sig)
+        except (TypeError, ValueError):
+            return False
+        e = self.essentials
+        changed = {k for k in self._MATERIAL_KEYS if (old.get(k) or None) != (e.get(k) or None)}
+        return bool(changed) and changed <= {"interests", "extracurricular"}
+
+    @_builds("outside_work")
+    def _rebuild_outside_work(self):
+        """The page again with the Interests line and activities as the chat now holds them;
+        every other part of the page stays as it was (no new tailoring, no new skills block)."""
+        e = self.essentials
+        self.profile["interests"] = e.get("interests") or ""
+        self.profile["extracurricular"] = [dict(x) for x in (e.get("extracurricular") or [])
+                                           if isinstance(x, dict)]
+        self._assemble()
+        self._persist()
+        return self._state([])
 
     # What a turn can add to the page. A turn that changes none of it does not rebuild.
     _MATERIAL_KEYS = ("identity", "education", "experience", "projects", "extracurricular",
@@ -4605,13 +4631,26 @@ class WebIntake:
             return []
         declined = set(e.get("declined") or [])
         saved = self.saved_profile or {}
+        from tailoring.conform import interest_sentence, merge_interests
         for sec in asked:
             if sec in declined or self._section_filled(sec, e, saved):
                 continue
-            if sec == "extracurricular":
-                e["extracurricular"] = [{"title": t, "date": "", "bullets": []} for t in items[:6]]
-            elif sec == "interests":
-                e["interests"] = _and_list(items[:6])
+            if sec == "interests":
+                e["interests"] = interest_sentence(items[:6])
+            elif sec == "extracurricular":
+                # Bare words ("playing football and swimming") are hobbies: they go to the
+                # Interests line, the one home for hobbies on every template, never into a
+                # Leadership or Clinical Rotations block as a grid of words (2026-11-10).
+                existing = str(e.get("interests") or "").strip()
+                if existing:
+                    sentence, added, already = merge_interests(existing, items[:6])
+                    if added:
+                        e["interests"] = sentence
+                    self._merge_note(added, already)
+                else:
+                    e["interests"] = interest_sentence(items[:6])
+                e["required_covered"] = sorted(set(e.get("required_covered") or []) | {sec})
+                return ["interests"]
             else:
                 e[sec] = msg
             return [sec]
@@ -5382,7 +5421,9 @@ class WebIntake:
             # returning person's "I enjoy chess and hiking" was asked for and then dropped.
             base = dict(self.saved_profile)
             for k in ("extracurricular", "interests"):
-                if not base.get(k) and self.essentials.get(k):
+                # What this chat holds wins over the saved copy: an answer merged into the
+                # Interests on file ("... and swimming") used to build from the old line.
+                if self.essentials.get(k):
                     v = self.essentials[k]
                     base[k] = [dict(x) for x in v if isinstance(x, dict)] if isinstance(v, list) else v
             self.profile = normalize_profile(base)
@@ -5782,7 +5823,13 @@ class WebIntake:
         if not terms:
             return
         order = {t: i for i, t in enumerate(terms)}
-        rank = lambda t: (0 if rel(t) else 1, -weight.get(skill_theme(t), 0), -evidence(t), order[t])
+        # Among the terms the job does not name, a general skill from the curated vocabulary
+        # (Python, Power BI, Git, Excel) goes before a niche stack term (X++, SSRS, Dataverse):
+        # the saved bullets carry the last job's ADDed terms word for word, so evidence alone
+        # could not tell the person's strongest skills from that job's stack.
+        from tailoring.keywords import _SKILL_DISPLAY as _GENERAL
+        rank = lambda t: (0 if rel(t) else 1, -weight.get(skill_theme(t), 0),
+                          0 if t.lower() in _GENERAL else 1, -evidence(t), order[t])
         terms.sort(key=rank)
         groups: dict[str, list[str]] = {}
         for t in terms:
@@ -6484,8 +6531,73 @@ class WebIntake:
             self.essentials = self.llm.absorb_enrichment(self.jd, self.essentials, message)
         except Exception:
             pass
-        self._absorb_required_reply(message, changed=self._material_sig() != before)
+        filled = self._absorb_required_reply(message, changed=self._material_sig() != before)
+        if not filled and self._material_sig() == before and self._interests_like(message):
+            self._merge_interests(message)
         self._conform_essentials()
+
+    # Words that make a short message read as interests or activities ("playing football and
+    # swimming"), so they merge into the Interests line instead of vanishing.
+    _HOBBY = re.compile(
+        r"\b(?:play(?:ing)?|football|soccer|swim(?:ming)?|hik(?:e|ing)|chess|read(?:ing)?|"
+        r"travel(?:ling|ing)?|podcasts?|cycling|running|gym|cook(?:ing)?|music|guitar|piano|"
+        r"photograph\w*|gaming|tennis|basketball|golf|yoga|volunteer\w*|coach(?:ing)?|club|"
+        r"hobb(?:y|ies)|interests?|weekends?)\b", re.I)
+
+    def _interests_like(self, message: str) -> bool:
+        """A reply to the outside-work question, or a short message naming hobbies or
+        activities with no figures or employers in it."""
+        msg = str(message or "").strip()
+        if not msg or msg.endswith("?") or _bare_decline(msg) or _wants_done(msg):
+            return False
+        if self._last_agent_said(self.essentials.get("required_ask_text"), asked="required"):
+            return True
+        if len(msg.split()) > 14 or re.search(r"\d", msg):
+            return False
+        return bool(self._HOBBY.search(msg) or re.match(r"(?i)^i\s+(?:enjoy|like|love)\b", msg))
+
+    def _merge_interests(self, message: str) -> tuple[list[str], list[str]]:
+        """Fold the activities a message names into the Interests already on file, without
+        duplicates, as one sentence (tailoring/conform.merge_interests): "playing football and
+        swimming" over "Playing football on weekends, travelling ..." adds swimming and leaves
+        football as it is. The chat says exactly that ("I added swimming to your interests;
+        football was already there"). Returns (added, already there)."""
+        from tailoring.conform import merge_interests
+        e = self.essentials
+        existing = str(e.get("interests") or "").strip()
+        items = _reply_items(message)
+        if not existing or not items:
+            return [], []
+        sentence, added, already = merge_interests(existing, items)
+        if not added and not already:
+            return [], []
+        if added:
+            e["interests"] = sentence
+        self._merge_note(added, already)
+        return added, already
+
+    def _merge_note(self, added: list[str], already: list[str]) -> str:
+        """The one line that says exactly what the merge did: "I added swimming to your
+        interests; football was already there." Empty when nothing was named."""
+        if not added and not already:
+            return ""
+        e = self.essentials
+        low = lambda xs: _and_list([x if (len(x) > 1 and x[:2].isupper()) else x[0].lower() + x[1:]
+                                    for x in xs])
+        if added and already:
+            line = (f"I added {low(added)} to your interests; {low(already)} "
+                    f"{'was' if len(already) == 1 else 'were'} already there.")
+        elif added:
+            line = f"I added {low(added)} to your interests."
+        else:
+            s = low(already)
+            line = (f"{s[0].upper()}{s[1:]} {'is' if len(already) == 1 else 'are'} already in "
+                    "your interests, so nothing changed there.")
+        self._fact("interests_merged", line, exact=[low([x]) for x in added + already],
+                   added=added or None, already_there=already or None,
+                   interests_now=e.get("interests"))
+        self._append("agent", line)
+        return line
 
     # -- switching the template in a running chat (Kofi, test build 13, 2026-11-09) ------ #
     TEMPLATE_SWITCHED = "Switched to the {name} template."

@@ -347,8 +347,9 @@ def test_missing_sections_are_asked_once_together_and_said_plainly(template_sour
     s.start()
     st = s.submit(SKELETON)
     said = " ".join(st["messages"])
-    assert "won't look complete without them" in said
-    assert "Extracurricular" in said and "Interests" in said     # both, in one message
+    # One outside-work section per resume (2026-11-10): Classic asks for Interests only.
+    assert "won't look complete without it" in said
+    assert "Interests" in said and "Extracurricular" not in said
     assert sum("won't look complete" in m for m in st["messages"]) == 1
 
 
