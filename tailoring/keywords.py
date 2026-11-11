@@ -696,6 +696,18 @@ def spellings(forms: list[str], pairs: dict[str, str] | None = None) -> list[str
     return list(dict.fromkeys(out))
 
 
+def term_backed(term: str, text: str, jd_text: str = "") -> bool:
+    """Does ``text`` show ``term`` in any of its spellings? "Artificial Intelligence" is backed
+    by "AI Senior Business Intelligence Manager" and "AI-assisted", and "ML" by "machine
+    learning": an abbreviation and its long form are one supported term (Kofi's Google page
+    flagged "Artificial Intelligence" as a claim his AI work did not back, 2026-11-10)."""
+    pairs = acronym_pairs(jd_text)
+    acrs = set(pairs.values()) | set(_SAME_TERM.values())
+    forms = spellings([term], pairs)
+    forms += [f + "s" for f in forms if f.lower() in acrs]          # "LLMs" for llm
+    return any(term_present(s, text) for s in forms)
+
+
 def build_coverage_report(
     jd_text: str, cv_text: str, profile: dict, terms: list[str] | None = None
 ) -> CoverageReport:
