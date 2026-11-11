@@ -61,22 +61,69 @@ def _offers(s):
     return [t for t in s.history if (t.get("card") or {}).get("offer") == "projects"]
 
 
-# -- the offer ---------------------------------------------------------------------------- #
+# -- the offer: projects decided, not offered (2026-11-11) ----------------------------------- #
 
-def test_offer_has_two_buttons_no_model_call_and_plain_words(template_source, fake_llm, workdir, monkeypatch):
-    s = _built(_s(template_source, fake_llm, workdir), monkeypatch)
-    s.github_status = lambda: {"connected": True, "login": "kwame"}     # a check it can do
-    fake_llm.agent_script = lambda *a: pytest.fail("the offer must not call the model")
+def _repos(monkeypatch, repos):
+    from ui import github_repos, repo_rank
+    monkeypatch.setattr(github_repos, "list_repos", lambda login, token="": {
+        "ok": True, "login": login, "repos": [dict(r, full_name=f"{login}/{r['name']}",
+                                                   url=f"https://github.com/{login}/{r['name']}",
+                                                   pushed_at="2026-09-01T00:00:00Z",
+                                                   created_at="2026-08-01T00:00:00Z") for r in repos]})
+    readmes = {f"{r['name']}": r.get("readme", "") for r in repos}
+    monkeypatch.setattr(repo_rank, "fetch_details", lambda full, pushed_at, token="", now=None: {
+        "readme": readmes.get(full.split("/")[-1], ""), "languages": [], "paths": []})
+
+
+WEAK = [{"org": "Chess Club Site", "tools": "HTML", "bullets": ["Made a club website."]}]
+
+
+def test_a_better_repo_is_named_with_a_swap_button_and_no_model_call_from_the_agent(
+        template_source, fake_llm, workdir, monkeypatch):
+    s = _built(_s(template_source, fake_llm, workdir), monkeypatch, projects=WEAK)
+    s.github_status = lambda: {"connected": True, "login": "kwame"}
+    _repos(monkeypatch, [{"name": "etl-forecasts", "description": "An ETL job and forecasting in Python",
+                          "readme": "Built an ETL job and forecasting models in Python for daily sales."},
+                         {"name": "notes", "description": "My notes"}])
+    fake_llm.agent_script = lambda *a: pytest.fail("the verdict must not call the agent")
     msgs = []
     cards = s._project_offer(msgs)
-    assert [b["label"] for b in cards[0]["buttons"]] == ["Check my GitHub", "Build a project for this job"]
-    assert all(b.get("send") for b in cards[0]["buttons"])
-    assert msgs == [s.history[-1]["content"]] and "ETL and forecasting" in msgs[0]
-    text = " ".join([msgs[0]] + [b["label"] + b["send"] for b in cards[0]["buttons"]])
-    assert "—" not in text and "–" not in text and "CV" not in text
+    assert msgs[0].startswith("Your projects don't show ETL or forecasting, which this role asks for.")
+    assert "Of your 2 public repos, etl-forecasts fits better" in msgs[0]
+    assert "I can check your GitHub" not in msgs[0] and "if you'd like" not in msgs[0]
+    (b,) = cards[0]["buttons"]
+    assert b["label"] == "Swap it in" and b["choice"] == "swap" and b["token"] in s.action_tokens
+    assert "—" not in msgs[0] and "–" not in msgs[0] and "CV" not in msgs[0]
     assert s.history[-1]["card"] is cards[0]
     # judged once per session: never again, even if the next build still has gaps
     assert s._project_offer([]) == [] and len(_offers(s)) == 1
+
+
+def test_no_repo_fits_so_two_projects_are_offered_as_one_button(template_source, fake_llm, workdir, monkeypatch):
+    s = _built(_s(template_source, fake_llm, workdir), monkeypatch, projects=WEAK)
+    s.github_status = lambda: {"connected": False, "login": ""}
+    s.essentials["identity"]["github"] = "https://github.com/kwame"   # public repos, no sign in
+    s.start_build = lambda idea, cv: {"id": "p1", "title": idea["title"]}
+    s.ideas_for = lambda: {"ok": True, "ideas": [{"title": "Forecast Lab"}, {"title": "ETL Kit"}]}
+    _repos(monkeypatch, [{"name": "notes", "description": "My notes"}])
+    msgs = []
+    cards = s._project_offer(msgs)
+    assert msgs[0] == ("None of your 1 public repos shows ETL or forecasting. I can build two small "
+                       "projects for this role.")
+    assert cards[0]["buttons"][0]["label"] == "Build 2 projects"
+    monkeypatch.setattr(s, "_state", lambda msgs=None, extra=None, cards=None: {
+        "phase": "review", "messages": list(msgs or []), "cards": list(cards or [])})
+    st = s.apply_action(cards[0]["buttons"][0]["token"], "build_two")
+    assert st["action_ok"] and st["projects"] == ["Forecast Lab", "ETL Kit"]
+
+
+def test_projects_that_already_fit_say_nothing(template_source, fake_llm, workdir, monkeypatch):
+    fit = [{"org": "Sales Pipeline", "tools": "Python, ETL, forecasting",
+            "bullets": ["Built a nightly ETL job with forecasting."]}]
+    s = _built(_s(template_source, fake_llm, workdir), monkeypatch, projects=fit)
+    s.github_status = lambda: {"connected": True, "login": "kwame"}
+    _repos(monkeypatch, [{"name": "notes", "description": "My notes"}])
+    assert s._project_offer([]) == []
 
 
 def test_no_offer_when_nothing_is_missing_or_the_projects_fit(template_source, fake_llm, workdir, monkeypatch):
@@ -189,16 +236,19 @@ def test_offer_without_github_has_connect_and_no_check_promise(template_source, 
     s = _built(_s(template_source, fake_llm, workdir), monkeypatch)    # not connected, no username
     msgs = []
     cards = s._project_offer(msgs)
-    assert cards[0]["buttons"] == [{"label": "Connect GitHub", "nav": "github"},
-                                   {"label": "Build a project for this job",
-                                    "send": "Build me a project for this job"}]
+    assert cards[0]["buttons"] == [{"label": "Connect GitHub", "nav": "github"}]
     assert "I can check your GitHub" not in msgs[0] and "Check my GitHub" not in str(cards)
     assert "Connect your GitHub and I'll check your repos" in msgs[0]
     assert "Settings" not in msgs[0] and "—" not in msgs[0] and "–" not in msgs[0]
 
 
-def test_offer_with_a_username_on_the_resume_offers_the_check(template_source, fake_llm, workdir, monkeypatch):
-    s = _built(_s(template_source, fake_llm, workdir), monkeypatch)
-    s.essentials["identity"]["github"] = "https://github.com/kwame"   # public repos are readable
-    cards = s._project_offer([])
-    assert [b["label"] for b in cards[0]["buttons"]] == ["Check my GitHub", "Build a project for this job"]
+def test_a_repo_with_no_bullet_to_show_is_never_swapped_in(template_source, fake_llm, workdir, monkeypatch):
+    # Kofi's real run: the swap put "Data-Analytics-Projects" on the page as one bare "Built with
+    # Jupyter Notebook, Python." line in place of Gate Check and its real bullet (2026-11-11).
+    s = _built(_s(template_source, fake_llm, workdir), monkeypatch, projects=WEAK)
+    s.github_status = lambda: {"connected": True, "login": "kwame"}
+    _repos(monkeypatch, [{"name": "etl-forecasts", "description": "An ETL job and forecasting in Python"}])
+    msgs = []
+    cards = s._project_offer(msgs)
+    assert "Swap it in" not in str(cards) and "fits better" not in msgs[0]
+    assert "none of your 1 public repos describes one well enough" in msgs[0]

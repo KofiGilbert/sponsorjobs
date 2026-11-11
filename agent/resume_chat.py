@@ -444,6 +444,14 @@ def state_lines(state: dict) -> list[str]:
                        "person saying they have that skill, so it is their own fact, saved to "
                        "their profile and on the resume: "
                        + _names(st["keywords_the_person_added"]) + ".")
+        roles = [r for r in st.get("roles_on_page") or [] if isinstance(r, dict)]
+        if roles:
+            out.append(f"- Roles on the page ({len(roles)}), each as printed: " + "; ".join(
+                ", ".join(x for x in (r.get("title") or "no title", r.get("org"),
+                                      r.get("dates") or "no dates") if x) for r in roles[:10]) + ".")
+            if all(r.get("title") and r.get("dates") for r in roles):
+                out.append("- Every role on the page has its title and dates. Never say one is "
+                           "missing.")
         projs = st.get("projects_on_page") or []
         out.append("- Projects on the page: " + (", ".join(
             f"{p.get('name')} ({'links to GitHub' if p.get('github_link') else 'no GitHub link'})"
@@ -968,3 +976,22 @@ def wants_agent(message: str, pending: bool = False) -> bool:
     if pending:
         return False
     return bool(_ASK.search(m))
+
+
+# "Are we done with this resume?", "is it ready to send?", "what's left?": the person asks for
+# the state of the page. Answered with a checklist read from the page (WebIntake._done_reply),
+# never a model's guess (Kofi was told his roles had no titles or dates, 2026-11-11).
+_DONE_ASK = re.compile(
+    r"\b(?:are\s+we|am\s+i|is\s+(?:it|(?:this|the|my)\s+resume|this|that|everything))\s+"
+    r"(?:all\s+|now\s+|finally\s+)?(?:done|finished|ready|good\s+to\s+go|complete|good)\b"
+    r"|\b(?:anything|what(?:['’]s|\s+is)?)\s+(?:else\s+)?(?:left|missing|remaining)\b"
+    r"|\bready\s+to\s+(?:send|apply|submit)\b"
+    r"|\bcan\s+i\s+(?:send|submit|apply\s+with)\b"
+    r"|\b(?:done|finished)\s+with\s+(?:this|the|my)\s+resume\b", re.I)
+
+
+def asks_done(message: str) -> bool:
+    """A question about whether the resume is finished (a question mark or a question's start)."""
+    m = str(message or "").strip()
+    return bool(m and _DONE_ASK.search(m) and ("?" in m or _QUESTION_START.match(m)
+                                               or re.match(r"^\s*(?:are|is|am|can)\b", m, re.I)))

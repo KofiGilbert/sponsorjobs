@@ -361,7 +361,35 @@ class AnthropicLLM:
             return {"supported": False, "reason": "The model gave no usable answer."}
         return data
 
+    # One ad, one skill list (2026-11-11): every rebuild of a page re-read the ad, and the model
+    # gave 18 terms once and 20 the next, so the keyword percentage moved with no change to the
+    # page. The list is kept per ad text for the process; a session seeds it from the page it
+    # restores (``seed_jd_skills``) so a reopened chat measures against the same terms.
+    _JD_SKILLS: dict = {}
+
+    @staticmethod
+    def _jd_key(jd_text: str) -> str:
+        import hashlib
+        return hashlib.sha1(str(jd_text or "").encode("utf-8")).hexdigest()
+
+    def seed_jd_skills(self, jd_text: str, terms: list) -> None:
+        terms = [str(t) for t in terms or [] if str(t).strip()]
+        if jd_text and terms:
+            AnthropicLLM._JD_SKILLS.setdefault(self._jd_key(jd_text), list(terms))
+
     def extract_jd_skills(self, jd_text: str) -> list[str]:
+        key = self._jd_key(jd_text)
+        got = AnthropicLLM._JD_SKILLS.get(key)
+        if got:
+            return list(got)
+        out = self._extract_jd_skills(jd_text)
+        if out:
+            AnthropicLLM._JD_SKILLS[key] = list(out)
+            for old in list(AnthropicLLM._JD_SKILLS)[:-64]:
+                AnthropicLLM._JD_SKILLS.pop(old, None)
+        return out
+
+    def _extract_jd_skills(self, jd_text: str) -> list[str]:
         """Model-read skill list for the coverage report; falls back to the curated vocabulary
         when the model is unavailable or answers badly, so the report never goes blank."""
         import json as _json
@@ -1700,6 +1728,52 @@ class AnthropicLLM:
                 "search": str(s.get("search", "")).strip(),
             })
         return {"ideas": out}
+
+    def infer_term_support(self, jd_text: str, terms: list, material: dict) -> list:
+        """Which job terms the person's own material clearly implies, though it never says them
+        word for word. tailoring/inferred_support.vet checks every answer (no named tool, the
+        evidence verbatim in the material), so this is a proposal, never the law."""
+        if not terms:
+            return []
+        system = (
+            "You tailor a job seeker's resume to one job. You are given job terms the resume does "
+            "not carry word for word, and the person's OWN material: roles, titles, bullets, "
+            "education (degrees and courses), projects and skills. Tailoring means the job's own "
+            "words go on the page wherever the person's material backs them, and the person "
+            "reviews the page, so judge like a fair recruiter, not a skeptic.\n"
+            "A term is SUPPORTED when the material shows the same work under another name:\n"
+            "- a degree or coursework in a field backs that field's core methods: an MBA in "
+            "Business Analytics backs \"statistical analysis\", \"statistics\", \"data analysis\" "
+            "and \"analytics\"; Database Management coursework or SQL work backs \"querying "
+            "databases\" and \"relational databases\";\n"
+            "- years of analytics, reporting or business intelligence work back \"data analysis\", "
+            "\"analytics\", \"KPIs\", \"dashboards\", \"reporting\" and \"data visualization\";\n"
+            "- an AI title or AI-assisted work backs \"artificial intelligence\" but NOT machine "
+            "learning, model training, NLP, LLM evaluation or model drift, which need the material "
+            "to show that specific work.\n"
+            "NOT supported: a named tool, programming language, library, framework, platform or "
+            "product (R, TensorFlow, PyTorch, scikit-learn, Hugging Face, Tableau) unless the "
+            "material names it; a degree, certification or years of experience; a field of study "
+            "the person did not study (Computer Science, Engineering); anything only adjacent.\n"
+            "The evidence must be a VERBATIM quote of a short phrase from the material, copied "
+            "exactly (it is checked word for word), for example a degree name, a course list or "
+            "part of a bullet.\n"
+            "Return ONLY a JSON array, one object per term, in the order given: "
+            "{\"term\": the term exactly as given, \"supported\": true|false, "
+            "\"evidence\": \"verbatim quote, or empty\"}."
+        )
+        compact = {k: material.get(k) for k in ("summary", "experience", "projects", "skills",
+                                                 "education", "extracurricular", "certifications")
+                   if isinstance(material, dict) and material.get(k)}
+        user = (f"JOB TERMS:\n{json.dumps(list(terms), ensure_ascii=False)}\n\n"
+                f"JOB AD (context):\n{(jd_text or '')[:2000]}\n\n"
+                f"THE PERSON'S MATERIAL:\n{json.dumps(compact, ensure_ascii=False)[:9000]}")
+        raw = self._complete(system, user, max_tokens=900, effort="medium")
+        try:
+            data = json.loads(raw[raw.find("["): raw.rfind("]") + 1])
+        except (json.JSONDecodeError, ValueError):
+            return []
+        return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
 
     def rank_repos_for_jd(self, jd: str, terms: list, repo_cards: list, resume_projects: list) -> dict:
         """Which of the person's repositories (and resume projects) fit this job, in ONE call with
