@@ -70,8 +70,9 @@ def _repos(monkeypatch, repos):
                                                    url=f"https://github.com/{login}/{r['name']}",
                                                    pushed_at="2026-09-01T00:00:00Z",
                                                    created_at="2026-08-01T00:00:00Z") for r in repos]})
-    monkeypatch.setattr(repo_rank, "fetch_details",
-                        lambda full, pushed_at, token="", now=None: {"readme": "", "languages": [], "paths": []})
+    readmes = {f"{r['name']}": r.get("readme", "") for r in repos}
+    monkeypatch.setattr(repo_rank, "fetch_details", lambda full, pushed_at, token="", now=None: {
+        "readme": readmes.get(full.split("/")[-1], ""), "languages": [], "paths": []})
 
 
 WEAK = [{"org": "Chess Club Site", "tools": "HTML", "bullets": ["Made a club website."]}]
@@ -81,7 +82,8 @@ def test_a_better_repo_is_named_with_a_swap_button_and_no_model_call_from_the_ag
         template_source, fake_llm, workdir, monkeypatch):
     s = _built(_s(template_source, fake_llm, workdir), monkeypatch, projects=WEAK)
     s.github_status = lambda: {"connected": True, "login": "kwame"}
-    _repos(monkeypatch, [{"name": "etl-forecasts", "description": "An ETL job and forecasting in Python"},
+    _repos(monkeypatch, [{"name": "etl-forecasts", "description": "An ETL job and forecasting in Python",
+                          "readme": "Built an ETL job and forecasting models in Python for daily sales."},
                          {"name": "notes", "description": "My notes"}])
     fake_llm.agent_script = lambda *a: pytest.fail("the verdict must not call the agent")
     msgs = []
@@ -238,3 +240,15 @@ def test_offer_without_github_has_connect_and_no_check_promise(template_source, 
     assert "I can check your GitHub" not in msgs[0] and "Check my GitHub" not in str(cards)
     assert "Connect your GitHub and I'll check your repos" in msgs[0]
     assert "Settings" not in msgs[0] and "—" not in msgs[0] and "–" not in msgs[0]
+
+
+def test_a_repo_with_no_bullet_to_show_is_never_swapped_in(template_source, fake_llm, workdir, monkeypatch):
+    # Kofi's real run: the swap put "Data-Analytics-Projects" on the page as one bare "Built with
+    # Jupyter Notebook, Python." line in place of Gate Check and its real bullet (2026-11-11).
+    s = _built(_s(template_source, fake_llm, workdir), monkeypatch, projects=WEAK)
+    s.github_status = lambda: {"connected": True, "login": "kwame"}
+    _repos(monkeypatch, [{"name": "etl-forecasts", "description": "An ETL job and forecasting in Python"}])
+    msgs = []
+    cards = s._project_offer(msgs)
+    assert "Swap it in" not in str(cards) and "fits better" not in msgs[0]
+    assert "none of your 1 public repos describes one well enough" in msgs[0]

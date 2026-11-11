@@ -5873,6 +5873,9 @@ class WebIntake:
         gap_low = {g.lower() for g in gaps}
         cands = [
             r for r in repos if not r.get("on_resume") and r.get("fit") in ("strong", "some")
+            # a repository whose README gave no checked bullet would go on the page as one bare
+            # "Built with" line: never swapped in for a project with real bullets
+            and r.get("bullets")
             and (worst is None or rank_of[r["fit"]] < rank_of.get(worst[1], 3)
                  or gap_low & {str(t).lower() for t in r.get("terms") or []})]
         if not gaps and not cands:
@@ -5904,7 +5907,10 @@ class WebIntake:
                        "card": {"type": "buttons", "offer": self.PROJECT_OFFER,
                                 "buttons": [{"label": label, "token": tok, "choice": "swap"}]}}
         else:
-            text = f"None of your {n} public repos shows {gap_words}."
+            shown_elsewhere = any(gap_low & {str(t).lower() for t in r.get("terms") or []} for r in repos)
+            text = (f"Your projects don't show {gap_words}, which this role asks for, and none of your "
+                    f"{n} public repos describes one well enough to put on the page." if shown_elsewhere
+                    else f"None of your {n} public repos shows {gap_words}.")
             card = None
             if callable(self.start_build) and callable(self.ideas_for):
                 text += " I can build two small projects for this role."
