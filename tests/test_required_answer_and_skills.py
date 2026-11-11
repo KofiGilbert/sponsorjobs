@@ -613,3 +613,13 @@ def test_a_project_bullet_the_saved_profile_lost_comes_back_from_the_intake(temp
     s2 = _returning(template_source, workdir, saved=saved, ess=again)
     b2 = dict(s2.saved_profile)
     assert s2._restore_project_bullets(b2) == [SIM_RESULT]
+
+
+def test_an_old_sessions_first_rebuild_brings_back_a_lost_project_bullet(template_source, workdir):
+    from tests.test_one_fact_per_bullet import SIM_BUILT, SIM_RESULT
+    proj = "Last-Mile Operations Simulator (Python)"
+    s = _old_session(template_source, workdir)
+    s.essentials["projects"] = [{"title": proj, "bullets": [SIM_BUILT, SIM_RESULT]}]
+    s.profile["projects"] = [{"title": proj, "bullets": [SIM_BUILT]}]
+    s._refresh_for_job()
+    assert s.profile["projects"][0]["bullets"] == [SIM_BUILT, SIM_RESULT]

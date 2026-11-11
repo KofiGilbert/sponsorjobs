@@ -6837,6 +6837,8 @@ class WebIntake:
             self._outside_work_checked = True
             try:
                 self._restore_outside_work()
+                # The page's project bullets the old entry dedupe dropped come back too.
+                self._restore_project_bullets(self.profile)
             except Exception:      # noqa: BLE001 - an odd old history never stops a rebuild
                 pass
         if self._skills_job is None:
