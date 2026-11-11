@@ -2619,6 +2619,8 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
             _fill_log(step="polish", label=label_now[0], bullet=cand, why="lost a figure or the full stop")
             return False
         if not (lo * 0.6 <= len(cand) <= hi * 1.25):
+            _fill_log(step="polish", label=label_now[0], bullet=cand,
+                      why=f"length {len(cand)} outside {int(lo * 0.6)}-{int(hi * 1.25)}")
             return False
         others = [x for j, x in enumerate(new) if j != k]
         src = str(origins.get(bl_k, bl_k))
@@ -2645,6 +2647,8 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
             bl_now[:] = list(bl)
             label_now[0], employer_now[0] = label, employer
             todo = [k for k, b in enumerate(bl) if b in fits and not fits[b].ok()]
+            _fill_log(step="polish-todo", label=label, n=attempt, why={
+                "todo": todo, "unmeasured": [b[:40] for b in bl if b not in fits]})
             if not todo:
                 continue
             # Tighten a stub only when the page keeps the fill goal with a line fewer; otherwise
