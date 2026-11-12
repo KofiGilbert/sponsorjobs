@@ -87,7 +87,7 @@ def candidates(terms) -> tuple[list[str], list[str]]:
     return list(dict.fromkeys(ask))[:MAX_TERMS], list(dict.fromkeys(tools))
 
 
-def vet(answer, asked: list[str], material: dict) -> list[dict]:
+def vet(answer, asked: list[str], material: dict, roles=None) -> list[dict]:
     """The model's answer, checked: [{"term", "evidence"}] for each asked term it marked
     supported with a verbatim quote from ``material``, in the order asked. Anything else
     (a term not asked, a named tool, a quote not in the material, a requirement) is dropped."""
@@ -98,19 +98,23 @@ def vet(answer, asked: list[str], material: dict) -> list[dict]:
             continue
         term = " ".join(str(row.get("term") or "").split())
         quote = " ".join(str(row.get("evidence") or "").split())
+        where = [str(x) for x in row.get("roles") or [] if isinstance(x, str)]
         if term and quote:
-            by_term.setdefault(term.lower(), (term, quote))
+            by_term.setdefault(term.lower(), (term, quote, where))
     out = []
     for t in asked or []:
         got = by_term.get(t.lower())
         if not got:
             continue
-        _term, quote = got
+        _term, quote, where = got
         if is_named_tool(t) or is_requirement(t):
             continue
         if not quote_in(quote, text):
             continue
-        out.append({"term": t, "evidence": quote[:200]})
+        # The roles where the person did that work: only labels that were offered.
+        offered = {str(r).lower(): str(r) for r in roles or []}
+        out.append({"term": t, "evidence": quote[:200],
+                    "roles": [offered[w.lower()] for w in where if w.lower() in offered][:2]})
         if len(out) >= MAX_INFERRED:
             break
     return out

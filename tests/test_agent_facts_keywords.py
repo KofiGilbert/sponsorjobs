@@ -206,7 +206,7 @@ def test_are_we_done_answers_from_the_page_and_puts_supported_terms_on_it(templa
     # material clearly implies (inferred, with its evidence) and one it says outright.
     assert s._term_on_page("Dashboards") and s._term_on_page("Forecasting")
     assert [i["term"] for i in s._terms_result["inferred"]] == ["Dashboards"]
-    assert s._terms_result["after"] > s._terms_result["before"]
+    assert s._terms_result["before"] is None and s._terms_result["after"]   # planned from the start
     st = s.submit("are we done with this resume ?")
     text = st["messages"][-1]
     assert "Page: one page" in text and "Keywords:" in text
@@ -240,3 +240,112 @@ def test_the_terms_survive_an_older_sessions_skills_reselection(template_source,
     s._place_job_terms(force=True)
     assert s._skills_job != "another job"   # the reselection ran
     assert s._term_on_page("Dashboards") and s._term_on_page("Forecasting")
+
+
+def test_a_placement_that_costs_a_bullet_or_the_staircase_is_not_kept(template_source, fake_llm, workdir):
+    # The "are we done?" rebuild once left BlackOrigin at 4 bullets beside Stanbic's 4.
+    s = _session(template_source, fake_llm, workdir)
+
+    def page(counts, fill=0.96):
+        exp = [{"org": f"o{i}", "roles": [{"title": "t", "bullets": ["b."] * n}]} for i, n in enumerate(counts)]
+        p = _Page({"experience": exp})
+        p.fill_ratio = fill
+        p.compile = type("C", (), {"pages": 1})()
+        return p
+
+    s.assembled = page([5, 4, 3, 2])
+    before = s._page_shape()
+    assert before["strict"] and before["counts"] == [5, 4, 3, 2]
+    s.assembled = page([4, 4, 3, 2])
+    assert not s._page_kept(before)                       # a bullet gone, the staircase tied
+    s.assembled = page([5, 4, 3, 2], fill=0.93)
+    assert not s._page_kept(before)                       # emptier
+    s.assembled = page([5, 4, 3, 2], fill=0.962)
+    assert s._page_kept(before)
+    # A new stub line ("drivers.") is a worse page too.
+    now = s._page_shape()
+    s._page_shape = lambda: dict(now, short=2)
+    assert not s._page_kept(dict(before, short=1))
+    s._page_shape = lambda: dict(now, short=1)
+    assert s._page_kept(dict(before, short=1))
+
+
+@requires_latex
+def test_a_worse_full_fit_falls_back_to_the_same_page_with_only_skills_changed(
+        template_source, fake_llm, workdir, monkeypatch):
+    fake_llm.infer_script = _infer
+    s = WebIntake(JD, template_source, fake_llm, ConversationMemory(":memory:"), CVRecords(":memory:"),
+                  workdir, jobname="cv", palace_dir=workdir / "p")
+    s.github_status = lambda: {"connected": False, "login": ""}
+    s.github_token = lambda: ""
+    s.start()
+    monkeypatch.setenv(rc.FLAG, "0")         # build without the pass, then run it by hand
+    s.submit(SKELETON)
+    s.submit(EXTRAS)
+    monkeypatch.setenv(rc.FLAG, "1")
+    bullets = [b for e in s.assembled.profile_used["experience"] for r in e.get("roles") or [e]
+               for b in r.get("bullets") or []]
+    real = s._page_kept
+    calls = []
+
+    def first_fit_is_worse(before):
+        calls.append(1)
+        return False if len(calls) == 1 else real(before)
+    monkeypatch.setattr(s, "_page_kept", first_fit_is_worse)
+    got = s._place_job_terms(force=True)
+    assert "Dashboards" in got["added"] and s._term_on_page("Dashboards")
+    after = [b for e in s.assembled.profile_used["experience"] for r in e.get("roles") or [e]
+             for b in r.get("bullets") or []]
+    assert after == bullets                   # every bullet exactly as it was
+
+
+# ------------------------------------------------------------ 6. the plan writes the terms in
+
+def test_the_term_map_gives_each_role_the_terms_its_material_backs(template_source, fake_llm, workdir,
+                                                                    monkeypatch):
+    s = _session(template_source, fake_llm, workdir)
+    s.profile = {"experience": KOFI_EXPERIENCE, "education": KOFI_EDUCATION, "skills": {"Data": "SQL"}}
+    s.jd = "Data Scientist. Requires statistical analysis, SQL, KPI frameworks and TensorFlow."
+    monkeypatch.setattr(s, "_jd_terms", lambda: ["Statistical analysis", "SQL", "TensorFlow", "KPI dashboards"])
+    s.inferred_terms = [{"term": "Statistical analysis", "evidence": "MBA - Business Analytics",
+                         "roles": ["Senior Business Analyst at Stanbic Bank Ghana"], "job": s._job_key()}]
+    m = s._role_terms()
+    assert m["stanbic bank ghana, senior business analyst"] == ["Statistical analysis"]
+    assert m["viva technologies ghana, product and operations analyst"] == ["SQL"]   # a tool: where named
+    assert m["blackorigin inc., ai senior business intelligence manager"] == ["KPI dashboards"]
+    assert not any("TensorFlow" in v for v in m.values())                          # backed nowhere
+
+
+@requires_latex
+def test_the_plan_writes_a_roles_terms_into_its_bullets_and_asks_again_for_a_missed_one(template_source, workdir):
+    import importlib
+    st = importlib.import_module("test_strict_staircase")
+    from tailoring.assembler import assemble_cv
+
+    class Writer(st._PlanWriter):
+        """Leaves the term out the first time; puts it in each slot it is told to show it in."""
+        def write_experience(self, roles, jd_text="", current=None, only=None, feedback=None):
+            self.seen = getattr(self, "seen", []) + [dict(feedback or {})]
+            asked = {key for key, v in (feedback or {}).items() if "show the person doing" in v}
+            self.asked = getattr(self, "asked", set()) | asked
+            out = super().write_experience(roles, jd_text, current, only, feedback)
+            for i, ro in enumerate(roles):
+                for k in range(len(out[i])):
+                    if f"{i}:{k}" in self.asked and ro.get("terms") and (only is None or k in (only.get(i) or [])):
+                        t = ro["terms"][0]
+                        lo, hi, _n = ro["windows"][k]
+                        text = f"Applied {t} to clinic wait-time records"
+                        while len(text) < (lo + hi) // 2 - 12:
+                            self.n += 1
+                            text += f" ward{self.n}"
+                        out[i][k] = text + " each month."
+            return out
+
+    llm = Writer()
+    res = assemble_cv(template_source, st._ladder_profile(), "Data Analyst. Statistical analysis, SQL.",
+                      llm, workdir, tailor=False, fit_lines=True, fit_rounds=0,
+                      role_terms={"northside health, reporting analyst": ["statistical analysis"]})
+    north = next(r for e in res.profile_used["experience"] if e["org"] == "Northside Health"
+                 for r in e["roles"])
+    assert any("statistical analysis" in b.lower() for b in north["bullets"]), north["bullets"]
+    assert any(any("show the person doing" in v for v in fb.values()) for fb in llm.seen)

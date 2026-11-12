@@ -2933,6 +2933,7 @@ def assemble_cv(
     fill_writes: bool | None = None,
     skill_cap: int | None = None,
     skill_keep=(),
+    role_terms: dict | None = None,
 ) -> AssembleResult:
     """Assemble a one-page CV from ``profile`` in the template's shape.
 
@@ -3147,7 +3148,7 @@ def assemble_cv(
             preamble, used, result, llm=llm, jd_text=jd_text, source=source_material,
             material=material, gate_material=gate_material, sections=sections,
             headings=headings, workdir=workdir, jobname=jobname, origins=origins,
-            fill_goal=FILL_GOAL, max_fill=MAX_FILL)
+            fill_goal=FILL_GOAL, max_fill=MAX_FILL, role_terms=role_terms)
         if planned:
             added = [a for a in added if a.get("section") != "experience"] + planned
         elif result and result.ok and result.pages == 1:

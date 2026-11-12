@@ -139,11 +139,12 @@ class LLMBackend(Protocol):
         so far (agent/narrate.py builds both). Sets ``last_narrate_usage``."""
         ...
 
-    def infer_term_support(self, jd_text: str, terms: list, material: dict) -> list:
+    def infer_term_support(self, jd_text: str, terms: list, material: dict, roles=None) -> list:
         """Which of the job's ``terms`` the person's own ``material`` clearly implies though it
         never says them word for word (an MBA in Business Analytics implies statistical
-        analysis). [{"term", "supported", "evidence"}], the evidence a verbatim quote from the
-        material. tailoring/inferred_support.vet checks every answer."""
+        analysis). [{"term", "supported", "evidence", "roles"}], the evidence a verbatim quote from
+        the material and ``roles`` the offered role labels where the person did that work.
+        tailoring/inferred_support.vet checks every answer."""
         ...
 
     def rank_repos_for_jd(self, jd: str, terms: list, repo_cards: list,
@@ -945,14 +946,17 @@ class FakeLLM:
             return script
         return fallback(items)
 
-    def infer_term_support(self, jd_text: str, terms: list, material: dict) -> list:
+    def infer_term_support(self, jd_text: str, terms: list, material: dict, roles=None) -> list:
         """Deterministic: a term is supported when every word of it (four letters or more, its
         stem) is in one sentence of the material; that sentence is the evidence. A test sets
         ``infer_script`` (a list, or a callable of the same arguments) to script the answer."""
         self.infer_calls = getattr(self, "infer_calls", 0) + 1
         script = getattr(self, "infer_script", None)
         if callable(script):
-            return script(jd_text, terms, material)
+            try:
+                return script(jd_text, terms, material, roles)
+            except TypeError:
+                return script(jd_text, terms, material)
         if isinstance(script, list):
             return script
         from tailoring.keywords import profile_text
@@ -962,7 +966,8 @@ class FakeLLM:
         for t in terms or []:
             stems = [w[:6] for w in re.findall(r"[a-z]{4,}", str(t).lower())]
             hit = next((s for s in sentences if stems and all(x in s.lower() for x in stems)), "")
-            out.append({"term": t, "supported": bool(hit), "evidence": hit})
+            out.append({"term": t, "supported": bool(hit), "evidence": hit,
+                        "roles": list(roles or [])[:1] if hit else []})
         return out
 
     def rank_repos_for_jd(self, jd: str, terms: list, repo_cards: list,
