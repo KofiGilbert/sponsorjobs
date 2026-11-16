@@ -39,10 +39,19 @@ class SubmissionEvidence:
     # Auto fires ONLY when a maintainer sets this True AND applicant_usable is True. Both
     # flags must agree — a maintainer can never enable a non-applicant-usable site.
     auto_enabled: bool = False
+    # The date (YYYY-MM-DD) the vendor has announced the path stops being applicant-usable, e.g.
+    # an employer token becoming required. From that day the entry is ASSISTED with no release
+    # needed, so a stale entry can never auto-submit past its evidence.
+    auto_until: str | None = None
 
     @property
     def auto_eligible(self) -> bool:
-        return self.auto_enabled and self.applicant_usable
+        if not (self.auto_enabled and self.applicant_usable):
+            return False
+        if self.auto_until:
+            import datetime as _dt
+            return _dt.date.today().isoformat() < self.auto_until
+        return True
 
 
 # Automation-PROHIBITED hosts: their terms ban programmatic/bot submission (or logged-in
@@ -73,12 +82,18 @@ REGISTRY: tuple[SubmissionEvidence, ...] = (
                 "this API is like a candidate applying for a job.' Sanctioned, applicant-usable."),
         verified_on="2026-07-14",
         auto_enabled=True,      # the ONE verified auto-eligible ATS
+        # Re-read 2026-11-16 (docs/allowlist-research.md): the apply operation still declares no
+        # security, but Recruitee's authentication page lists /offers/:offer_slug/candidates under
+        # the Careers Site token's scope (X-Careers-Sites-Token, generated in the EMPLOYER's
+        # account) with "Deadline for introducing the token to calls is 10 February 2027". From
+        # then it needs the employer's credential, so it is not applicant-usable.
+        auto_until="2027-02-10",
     ),
     SubmissionEvidence(
         ats="Greenhouse",
         hosts=("greenhouse.io",),
         endpoint="POST https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{id}",
-        doc_url="https://developers.greenhouse.io/job-board.html",
+        doc_url="https://docs.greenhouse.io/job-board.html",
         auth_model="employer_api_key",
         applicant_usable=False,
         reason=("Official submit API, but it needs the employer's secret Job Board API key "
