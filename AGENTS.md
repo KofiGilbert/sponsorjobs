@@ -12,8 +12,10 @@ and is the only agent that merges. Read `CLAUDE.md` first; every rule in it appl
   ask the owner to confirm the scope with Claude Code.
 - One issue, one branch, one pull request.
 - **Work order:** take the open `openhands` issue with the lowest priority number in its title
-  (P1 before P2, and so on). One issue at a time: start the next only after Claude Code has merged
-  the previous one or asked you to move on. Issues with no P number come after all numbered ones.
+  (P1 before P2, and so on). Do not wait for a review: as soon as your PR for one issue is open
+  and its checks pass, start the next issue on a fresh branch from the latest `main`. Come back to
+  an earlier PR only when Claude Code asks for changes in it. Issues with no P number come after
+  all numbered ones. When none are left, say so in a comment on your last PR.
 
 ## Branches and pull requests
 
