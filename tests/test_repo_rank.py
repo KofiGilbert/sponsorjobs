@@ -35,7 +35,7 @@ def _repo(name, **kw):
 
 
 READMES = {
-    "kpi-dashboard": "# KPI dashboard\nBuilt KPI dashboards in Power BI from SQL views for the sales team. "
+    "kpi-dashboard": "# Sales KPI dashboard\nBuilt KPI dashboards in Power BI from SQL views for the sales team. "
                      "Python scripts refresh the data nightly. " + MARKER,
     "sql-notes": "Notes on SQL window functions.",
     "game-of-life": "A Rust toy.",
@@ -487,3 +487,13 @@ def test_one_job_skill_alone_does_not_lift_a_doesnt_fit(monkeypatch):
         "repos": [{"id": c["id"], "fit": "none", "terms": [], "why": "A game.", "bullets": []}
                   for c in repos], "projects": []}
     assert _rank(llm)["repos"][0]["fit"] == "none"
+
+
+def test_a_repo_prints_under_its_readme_name_when_that_is_the_same_name():
+    from ui.repo_rank import display_name, readme_title
+    assert readme_title("# SponsorJobs\n\nA free job-hunt agent") == "SponsorJobs"
+    assert readme_title("intro\n## **Gate Check**\n") == "Gate Check"
+    assert display_name("sponsorjobs", "SponsorJobs") == "SponsorJobs"
+    assert display_name("gatecheck", "Gate Check") == "Gate Check"
+    assert display_name("kyc-ubo-analyzer", "Welcome to my project") == "kyc-ubo-analyzer"
+    assert display_name("notes", "") == "notes"

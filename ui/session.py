@@ -5963,7 +5963,8 @@ class WebIntake:
             shows = [str(t) for t in best.get("terms") or []][:2]
             lead = (f"Your projects don't show {gap_words}, which this role asks for. " if gaps
                     else "Your projects are a weak fit for this role. ")
-            text = (lead + f"Of your {n} public repos, {best['name']} fits better"
+            bname = str(best.get("display") or best["name"])
+            text = (lead + f"Of your {n} public repos, {bname} fits better"
                     + (f": it shows {self._term_words(shows).replace(' or ', ' and ')}." if shows else "."))
             drop, drop_name = "", ""
             if worst is not None:
@@ -5980,7 +5981,7 @@ class WebIntake:
             self.action_tokens[tok] = {"kind": "swap_project", "entry": entry_for(best), "drop": drop,
                                        "drop_name": drop_name, "used": False, "at": _time.time()}
             label = "Swap it in" if drop else "Add it"
-            verdict = {"text": text, "exact": [best["name"]],
+            verdict = {"text": text, "exact": [bname],
                        "card": {"type": "buttons", "offer": self.PROJECT_OFFER,
                                 "buttons": [{"label": label, "token": tok, "choice": "swap"}]}}
         else:

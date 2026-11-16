@@ -153,6 +153,26 @@ def pre_score(card: dict, terms: list[str], now: datetime | None = None) -> floa
 
 # ----------------------------------------------------------------------------- GitHub reads
 
+def readme_title(raw: str) -> str:
+    """The README's first heading ("# SponsorJobs"), plain text, or ""."""
+    import re as _re
+    for line in str(raw or "").splitlines()[:40]:
+        m = _re.match(r"^\s{0,3}#{1,2}\s+(.+?)\s*#*\s*$", line)
+        if m:
+            return _re.sub(r"[*_`\[\]]|\(http[^)]*\)", "", m.group(1)).strip()[:80]
+    return ""
+
+
+def display_name(repo_name: str, title: str = "") -> str:
+    """How a repository's name prints on a resume: the README's own heading when it is the same
+    name written properly ("sponsorjobs" -> "SponsorJobs", "last-mile-ops" stays as is unless the
+    README spells it out), else the repository name (Kofi, 2026-11-16)."""
+    import re as _re
+    fold = lambda x: _re.sub(r"[^a-z0-9]", "", str(x or "").lower())
+    name = str(repo_name or "")
+    return title if title and fold(title) == fold(name) else name
+
+
 def fetch_details(full: str, pushed_at: str, token: str = "", now: float | None = None) -> dict:
     """{"readme": plain text (first README_CHARS), "languages": [by bytes], "paths": [top-level
     names, only when the README is short], "ok": bool} for one repository, cached by
@@ -175,6 +195,7 @@ def fetch_details(full: str, pushed_at: str, token: str = "", now: float | None 
         except (ValueError, TypeError):
             raw = ""
         out["readme"] = strip_markdown(raw)[:README_CHARS]
+        out["title"] = readme_title(raw)
     elif status not in (200, 404):
         out["ok"] = False                      # rate limited or offline: not cached
     try:
@@ -332,6 +353,7 @@ def rank(llm, jd: str, repos: list[dict], resume_projects: list[dict], *, login:
         d = details.get(fn) or {}
         langs = d.get("languages") or ([r["language"]] if r.get("language") else [])
         return {"key": fn.lower(), "name": r["name"], "full_name": fn,
+                "display": display_name(r["name"], d.get("title") or ""),
                 "url": "" if r.get("private") else str(r.get("url") or ""),
                 "private": bool(r.get("private")), "tools": langs[:3],
                 "dates": dates_from({"created_at": r.get("created_at"), "pushed_at": r.get("pushed_at")}, now),
@@ -389,7 +411,9 @@ def entry_for(repo: dict) -> dict:
     tools = [t for t in repo.get("tools") or [] if t]
     if len(bullets) < 2 and tools:
         bullets.append(f"Built with {', '.join(tools[:3])}.")
-    return {"org": str(repo["name"]),            # the name as it is on GitHub, so it matches the repo
+    # The README's spelling of the repo's own name ("SponsorJobs"), else the name as it is on
+    # GitHub; matching against the page is case and punctuation blind either way.
+    return {"org": str(repo.get("display") or repo["name"]),
             "title": "", "dates": "", "location": "Personal Project",   # no GitHub dates on the page
             "bullets": bullets, "personal": True,
             "link": "" if repo.get("private") else str(repo.get("url") or ""),
