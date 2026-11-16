@@ -5655,7 +5655,13 @@ class WebIntake:
             self.history[-1]["card"] = chips
             cards = list(cards) + [chips]
         if not cards and not e.get("unattended"):
-            q = self._next_question()
+            # After a build the page speaks for itself: the person says in the chat what they
+            # want changed (Kofi, 2026-11-16, "if the user feels they want to change, add or
+            # remove something, they will say in the chat, simple"). The one question left is
+            # his own rule: a template section never asked about is asked for once.
+            asked = set(e.get("required_asked") or [])
+            never = [sec for sec in self._open_required_sections() if sec not in asked]
+            q = self._required_ask_text(never) if never and not e.get("enrich_done") else ""
             if q:
                 msgs.append(q)
                 self._append("agent", q)
