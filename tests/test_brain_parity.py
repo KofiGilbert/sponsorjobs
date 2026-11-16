@@ -96,7 +96,7 @@ def test_the_planner_gives_identical_answers_from_both_libraries(data, decline, 
         assert got["salary_lam"] == got["salary_new"] == got["salary_old"] == "130000"   # the newer salary
         assert got["cuba"] == "No" and got["cit"] == "Ghana" and got["sql"] == "Yes, 3 years in production."
         assert got["auth"] == "Yes" and got["sponsor"] == "Yes"
-        assert ("gender" in got) == decline
+        assert "gender" in got        # declined by default when nothing is saved (2026-11-16)
         if not decline:
             assert got["race"] == "Asian"
 

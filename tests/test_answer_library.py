@@ -125,7 +125,10 @@ def test_planner_order_and_sources(tmp_path):
     assert by["g"].origin == "drafted" and "clusters" in by["g"].value
     assert by["h"].origin == "letter"
     left = {f.ref for f in res.left}
-    assert {"i", "j", "k", "m"} <= left                 # facts and free text nobody answered: theirs
+    # Self-ID with no saved answer takes the form's decline (2026-11-16, Kofi: never asked per
+    # application); facts and free text nobody answered stay theirs.
+    assert by["i"].origin == "eeo_decline" and by["j"].origin == "eeo_decline"
+    assert {"k", "m"} <= left
     assert [f.ref for f in res.rest] == ["l"]           # only a plain choice may go to the model
 
 
@@ -145,7 +148,9 @@ def test_model_never_answers_facts():
     by = {a.ref: a for a in res.actions}
     assert seen["refs"] == ["c", "l"]                   # never the fact or free-text fields
     assert by["l"].value == "New York" and by["l"].origin == "ai"
-    for ref in ("d", "e", "f", "g", "i", "j", "k"):
+    for ref in ("i", "j"):                              # declined, never a model answer
+        assert by[ref].origin == "eeo_decline"
+    for ref in ("d", "e", "f", "g", "k"):
         assert ref not in by                            # no profile -> left, never invented
     assert "c" not in by                                # the model may not fill a file with text
 
@@ -247,4 +252,8 @@ def test_eeo_decline_only_when_chosen():
     res = plan_known(f, KnownContext(eeo_decline=True))
     assert [(a.ref, a.value) for a in res.actions] == [("g", "I don't wish to answer")]
     assert [x.ref for x in res.left] == ["v"]            # no decline option: theirs
-    assert plan_known(f, KnownContext()).actions == []    # not chosen: never answered
+    # 2026-11-16: a self-ID question with no saved answer takes the form's decline by default;
+    # one with no decline option is still theirs. A real answer is never guessed.
+    d = plan_known(f, KnownContext())
+    assert [(a.ref, a.value) for a in d.actions] == [("g", "I don't wish to answer")]
+    assert [x.ref for x in d.left] == ["v"]
