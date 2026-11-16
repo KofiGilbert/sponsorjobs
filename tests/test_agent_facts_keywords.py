@@ -349,3 +349,14 @@ def test_the_plan_writes_a_roles_terms_into_its_bullets_and_asks_again_for_a_mis
                  for r in e["roles"])
     assert any("statistical analysis" in b.lower() for b in north["bullets"]), north["bullets"]
     assert any(any("show the person doing" in v for v in fb.values()) for fb in llm.seen)
+
+
+def test_a_job_term_mid_sentence_reads_as_prose_not_as_the_list():
+    from tailoring.plan_fill import prose_case
+    jd = "Experience with statistical analysis and querying databases in Python and SQL."
+    terms = ["Statistical analysis", "Querying databases", "Python", "SQL"]
+    assert prose_case("Applied Statistical analysis to usage data with Python.", terms, jd) == \
+        "Applied statistical analysis to usage data with Python."
+    assert prose_case("Statistical analysis of usage data in SQL.", terms, jd) == \
+        "Statistical analysis of usage data in SQL."            # a sentence start keeps its capital
+    assert prose_case("Built Python jobs.", ["Python"], "Python is a plus") == "Built Python jobs."

@@ -224,6 +224,24 @@ def _log(**rec):
     _fill_log(**rec)
 
 
+def prose_case(text: str, terms, jd_text: str = "") -> str:
+    """A job term written mid-sentence in the list's capitals ("applying Statistical analysis")
+    reads as pasted in. Where the job ad itself writes the term in lower case, the bullet does
+    too; names and acronyms (Python, SQL) are never lower case in the ad, so they keep theirs.
+    Matching is case-insensitive, so coverage is unchanged."""
+    import re as _re
+    for t in terms or []:
+        low = str(t).lower()
+        if not t or str(t) == low or low not in (jd_text or ""):
+            continue
+        pat = _re.compile(r"(?<![A-Za-z0-9])" + _re.escape(str(t)) + r"(?![A-Za-z0-9])")
+        def fix(m):
+            before = text[:m.start()].rstrip()
+            return m.group(0) if (not before or before.endswith((".", "!", "?"))) else low
+        text = pat.sub(fix, text)
+    return text
+
+
 def terms_for(role_terms, entry: dict, role: dict) -> list[str]:
     """The job terms the term map gives this role: keyed by "employer, title" or by employer,
     lower case (the session's map, ui/session.py ``_role_terms``)."""
@@ -367,7 +385,7 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                 # only versions that pass every check are measured.
                 vers = []
                 for v in (got[k] if k < len(got) else []):
-                    v = str(v or "").strip()
+                    v = prose_case(str(v or "").strip(), info[i].get("terms") or [], jd_text)
                     if v and not v.endswith((".", "!", "?")):
                         v = v.rstrip(" ,;:") + "."
                     if v and not problems(i, v, sibs):
@@ -486,9 +504,11 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
             free = [k for k in range(len(bl) - 1, -1, -1) if not figures_of(bl[k])] or [len(bl) - 1]
             for t, k in zip(gone, free):
                 out.setdefault(i, []).append(k)
-                notes[(i, k)] = (f"show the person doing \"{t}\" in this bullet, in exactly "
-                                 f"those words, as real work of this role (its material backs "
-                                 "it); keep every fact, add no number, name or tool")
+                notes[(i, k)] = (f"show the person doing \"{t}\" in this bullet, in those "
+                                 f"words as a grammatical part of the sentence (lower case "
+                                 "unless it is a name or acronym), as real work of this role "
+                                 "(its material backs it); keep every fact, add no number, "
+                                 "name or tool")
         return out, notes
 
     before = copy.deepcopy([list(r["bullets"]) for _k, _e, r in roles])
