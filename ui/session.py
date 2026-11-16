@@ -5752,6 +5752,7 @@ class WebIntake:
         chips, and ONE recommended next action with its button."""
         if self.assembled is None:
             return self._state()
+        self.refresh_render()
         placed = {}
         try:
             placed = self._place_job_terms() or {}
@@ -5847,6 +5848,45 @@ class WebIntake:
             return []
         return ([t for t in un if not is_named_tool(t)] + [t for t in un if is_named_tool(t)])[:2]
 
+    def _projects_settled(self) -> bool:
+        """The person already acted on a projects offer in this chat (Swap it in, Add it, Build):
+        the projects are decided, so no further swap is offered. A second offer, for another
+        repo, read as the same question asked again (Kofi, 2026-11-16)."""
+        for t in self.history or []:
+            for c in [t.get("card")] + list(t.get("cards") or []):
+                if isinstance(c, dict) and c.get("offer") == self.PROJECT_OFFER and c.get("used"):
+                    return True
+        return False
+
+    def refresh_render(self) -> bool:
+        """Render the page again from what is on it, with no model call, when the renderer has
+        changed since it was built (a restored chat kept the old PDF: project dates still showed
+        after the fix that drops them). Kept only when it is still one page and no worse. Returns
+        True when the page changed."""
+        from tailoring.assembler import extract_preamble, render_cv
+        from tailoring.compiler import compile_tex
+        a = self.assembled
+        if a is None or not getattr(a, "profile_used", None):
+            return False
+        try:
+            pre = extract_preamble(self.template)
+            now = render_cv(pre, a.profile_used, self.sections, headings=self.headings)
+            if now == (a.tex_source or ""):
+                return False
+            r = compile_tex(render_cv(pre, a.profile_used, self.sections, probe=True,
+                                      headings=self.headings), self.workdir, jobname=self.jobname)
+        except Exception:      # noqa: BLE001 - the page stays as it was
+            return False
+        base_over = getattr(getattr(a, "compile", None), "overfull_count", 0) or 0
+        if not (r and r.ok and r.pages == 1 and (r.overfull_count or 0) <= base_over):
+            return False
+        a.tex_source, a.compile, a.pdf_path = now, r, r.pdf_path
+        if r.fill_ratio is not None:
+            a.fill_ratio = r.fill_ratio
+        self._pdf_v += 1
+        self._persist()
+        return True
+
     def _project_verdict(self) -> dict | None:
         """The projects judged against this job, decided, not offered (Kofi, 2026-11-11): the
         person's public repositories ranked for the job (ui/repo_rank.py: by the connected login,
@@ -5864,6 +5904,8 @@ class WebIntake:
         from applicant import rules as _R
         from ui.repo_rank import entry_for
         if self.assembled is None:
+            return None
+        if self._projects_settled():
             return None
         key = self._job_key() + ":" + str(self._pdf_v)
         cached = getattr(self, "_verdict_cache", None)

@@ -170,6 +170,10 @@ def restore(data: dict, *, template_source: str, llm, memory, records, workdir, 
     # The diary reloads every turn ever said, this session's too: keep only the earlier ones.
     mine = {(t.get("role"), t.get("content")) for t in s.history or []}
     s.prior_history = [t for t in s.prior_history if (t.get("role"), t.get("content")) not in mine]
+    try:
+        s.refresh_render()          # the page as today's renderer prints it (no model call)
+    except Exception:               # noqa: BLE001 - a restore never fails on this
+        pass
     return s
 
 
