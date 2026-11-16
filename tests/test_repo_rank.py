@@ -35,7 +35,7 @@ def _repo(name, **kw):
 
 
 READMES = {
-    "kpi-dashboard": "# KPI dashboard\nBuilt KPI dashboards in Power BI from SQL views for the sales team. "
+    "kpi-dashboard": "# Sales KPI dashboard\nBuilt KPI dashboards in Power BI from SQL views for the sales team. "
                      "Python scripts refresh the data nightly. " + MARKER,
     "sql-notes": "Notes on SQL window functions.",
     "game-of-life": "A Rust toy.",

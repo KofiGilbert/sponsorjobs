@@ -157,7 +157,7 @@ def readme_title(raw: str) -> str:
     """The README's first heading ("# SponsorJobs"), plain text, or ""."""
     import re as _re
     for line in str(raw or "").splitlines()[:40]:
-        m = _re.match(r"^\s{0,3}#\s+(.+?)\s*#*\s*$", line)
+        m = _re.match(r"^\s{0,3}#{1,2}\s+(.+?)\s*#*\s*$", line)
         if m:
             return _re.sub(r"[*_`\[\]]|\(http[^)]*\)", "", m.group(1)).strip()[:80]
     return ""
@@ -352,7 +352,8 @@ def rank(llm, jd: str, repos: list[dict], resume_projects: list[dict], *, login:
     def base(r: dict, fn: str) -> dict:
         d = details.get(fn) or {}
         langs = d.get("languages") or ([r["language"]] if r.get("language") else [])
-        return {"key": fn.lower(), "name": display_name(r["name"], d.get("title") or ""), "full_name": fn,
+        return {"key": fn.lower(), "name": r["name"], "full_name": fn,
+                "display": display_name(r["name"], d.get("title") or ""),
                 "url": "" if r.get("private") else str(r.get("url") or ""),
                 "private": bool(r.get("private")), "tools": langs[:3],
                 "dates": dates_from({"created_at": r.get("created_at"), "pushed_at": r.get("pushed_at")}, now),
@@ -410,7 +411,9 @@ def entry_for(repo: dict) -> dict:
     tools = [t for t in repo.get("tools") or [] if t]
     if len(bullets) < 2 and tools:
         bullets.append(f"Built with {', '.join(tools[:3])}.")
-    return {"org": str(repo["name"]),            # the name as it is on GitHub, so it matches the repo
+    # The README's spelling of the repo's own name ("SponsorJobs"), else the name as it is on
+    # GitHub; matching against the page is case and punctuation blind either way.
+    return {"org": str(repo.get("display") or repo["name"]),
             "title": "", "dates": "", "location": "Personal Project",   # no GitHub dates on the page
             "bullets": bullets, "personal": True,
             "link": "" if repo.get("private") else str(repo.get("url") or ""),
