@@ -110,6 +110,8 @@ _FILLER = re.compile(
 # "What is your race?", "Gender (optional)"), for the questions that must match as a WHOLE label.
 _ASK = r"^(please )?((select|choose|indicate|specify|state|enter|provide|identify) )?(what is |what's )?(your )?"
 _TAIL = r"( (optional|required|voluntary|if any))*$"
+# A "(please select one)" the label carries, read as words once _clean opens the brackets.
+_PICK = r"( (please )?(select|choose|check|mark) (one|all that apply))?"
 
 # Canonical keys for the questions that recur on nearly every form, worded many ways. A
 # question that matches one of these (as its whole intent) gets that key.
@@ -168,6 +170,23 @@ _CANON: list[tuple[str, re.Pattern]] = [
     # The CC-305 question, never "Do you have a disability that requires an accommodation?".
     ("disability", re.compile(_ASK + r"disability( status)?" + _TAIL + r"|^do you have an? disability" + _TAIL
                               + r"|^voluntary self identification of disability( form)?( cc 305)?$")),
+    # The three a few forms add (Greenhouse at Gusto, 2026-11-16): "I identify as transgender
+    # (please select one):", "I identify my sexual orientation as (please select one):", "I
+    # identify as a first-generation professional (please select one):". Never "Gender"
+    # (whole-label above), and never a first-generation COLLEGE student, which is another fact.
+    # Only the words planner._EEO reads as self-identification ("transgender", "sexual
+    # orientation", "first-generation professional"), so every one is answered by its EEO rules.
+    ("transgender", re.compile(_ASK + r"(i )?(identify as |am )?(a )?transgender( identity| status| person)?"
+                               + _PICK + _TAIL
+                               + r"|^(are you|do you identify as|do you consider yourself( to be)?)( a)? transgender"
+                               r"( person)?" + _PICK + _TAIL)),
+    ("sexual_orientation", re.compile(_ASK + r"(i identify my )?sexual orientation( as)?" + _PICK + _TAIL
+                                      + r"|^how (would you|do you) (describe|identify) your sexual orientation"
+                                      + _PICK + _TAIL)),
+    ("first_gen", re.compile(_ASK + r"(i )?(identify as |am )?(a )?first generation professional( status)?"
+                             + _PICK + _TAIL
+                             + r"|^(are you|do you identify as|do you consider yourself( to be)?)( a)? first generation"
+                             r" professional" + _PICK + _TAIL)),
     # A second country of citizenship ("Second country of citizenship", "Other nationality"):
     # before the first, whose pattern would take it. "Do you hold dual citizenship?" is a yes/no.
     # A bare "Dual citizenship" is a yes/no question, never the second country.
@@ -195,7 +214,8 @@ _CANON: list[tuple[str, re.Pattern]] = [
                                      r"|(ever )?(worked|interned|been employed) (for|at|by|with) (us|this|our|the company)")),
 ]
 
-_EEO_KEYS = frozenset({"@gender", "@sex", "@race", "@ethnicity", "@hispanic_latino", "@veteran", "@disability"})
+_EEO_KEYS = frozenset({"@gender", "@sex", "@race", "@ethnicity", "@hispanic_latino", "@veteran", "@disability",
+                       "@transgender", "@sexual_orientation", "@first_gen"})
 _COUNTRY_KEYS = frozenset({"@citizenship", "@citizenship2"})
 # A yes/no reply is never a country ("Dual citizenship?" Yes).
 _NOT_A_COUNTRY = re.compile(r"(yes|no|y|n|none|nil|n/?a|not applicable|true|false)\W*", re.I)

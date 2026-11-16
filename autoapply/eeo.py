@@ -1,7 +1,9 @@
 """Voluntary self-identification (EEO): the person's saved answer, on each form's own wording.
 
 The person answers gender, Hispanic or Latino, race, veteran status and disability ONCE (on Your
-answers, or when the agent asks). Every form words the same choice differently: "Male" is "Man"
+answers, or when the agent asks), and, on the memory page, the three questions some forms add
+(Greenhouse's "I identify as transgender", sexual orientation and "first-generation
+professional"). Every form words the same choice differently: "Male" is "Man"
 or "M", "I am not a protected veteran" is a plain "No" to "Are you a protected veteran?", and
 Workday's "Ethnicity" is one COMBINED list of races and the Hispanic or Latino choice ("Asian (Not
 Hispanic or Latino) (United States of America)"). ``choose`` maps the saved answers to the one
@@ -29,7 +31,10 @@ DECLINE = re.compile(r"decline|prefer not|do not wish|don['’]?t wish|not wish 
 # The canonical question for each self-identification key (how the library is asked for it).
 QUESTIONS = {"@gender": "Gender", "@sex": "Sex", "@race": "Race", "@ethnicity": "Ethnicity",
              "@hispanic_latino": "Are you Hispanic or Latino?",
-             "@veteran": "Veteran status", "@disability": "Disability status"}
+             "@veteran": "Veteran status", "@disability": "Disability status",
+             # Asked by some forms only (Greenhouse at Gusto, 2026-11-16): saved on the memory page.
+             "@transgender": "Transgender", "@sexual_orientation": "Sexual orientation",
+             "@first_gen": "First-generation professional"}
 # The keys a race or ethnicity question reads together (a combined list needs both halves).
 RACE_KEYS = ("@race", "@ethnicity", "@hispanic_latino")
 KEYS = tuple(QUESTIONS)
@@ -163,6 +168,81 @@ def disability_class(text: str) -> str | None:
     return None
 
 
+_ORIENTATION = (
+    ("heterosexual", re.compile(_I_AM + r"(heterosexual|straight)(( or | and | )(heterosexual|straight))?")),
+    ("gay", re.compile(_I_AM + r"gay( man| men| person)?")),
+    ("lesbian", re.compile(_I_AM + r"lesbian( woman| women)?")),
+    ("bisexual", re.compile(_I_AM + r"bi ?sexual|bi")),
+    ("queer", re.compile(_I_AM + r"queer")),
+    ("asexual", re.compile(_I_AM + r"a ?sexual|ace")),
+    ("pansexual", re.compile(_I_AM + r"pan ?sexual|pan")),
+    # A sexual orientation the list does not name. Never "I prefer to self-describe": that asks
+    # for the person's own words in a box, which a saved choice does not have.
+    ("another", re.compile(_I_AM + r"((another|other|a different)( sexual)?( orientation)?( not listed)?"
+                           r"|not listed|(i )?identify differently)")),
+)
+
+
+def orientation_class(text: str) -> str | None:
+    """heterosexual, gay, lesbian, bisexual, queer, asexual, pansexual, another or decline for a
+    sexual orientation answer or option; None otherwise (an option that names several)."""
+    if DECLINE.search(str(text or "")):
+        return "decline"
+    c = _core(text)
+    for cls, rx in _ORIENTATION:
+        if rx.fullmatch(c):
+            return cls
+    return None
+
+
+_LIST_GLUE = {"and", "or", "i", "am", "m", "identify", "as", "a", "an"}
+
+
+def orientation_classes(text: str) -> frozenset:
+    """Every sexual orientation an option names: one for "Heterosexual / Straight", several for
+    Greenhouse's "Gay and/or lesbian" and "Bisexual, pansexual and/or queer". Empty when any of
+    its words is not an orientation (or it is the decline or "another")."""
+    one = orientation_class(text)
+    if one:
+        return frozenset() if one in ("decline", "another") else frozenset({one})
+    words = [w for w in _core(text).split() if w not in _LIST_GLUE]
+    got = [orientation_class(w) for w in words]
+    if not got or any(g in (None, "decline", "another") for g in got):
+        return frozenset()
+    return frozenset(got)
+
+
+# The yes / no self-identification questions, and the words that say the topic in an option
+# ("I identify as transgender", "I am not a first-generation professional").
+_YES_NO_TOPIC = {
+    "@transgender": re.compile(r"\btrans ?gender\b|\btrans\b"),
+    "@first_gen": re.compile(r"\bfirst gen(eration)? professionals?\b"),
+}
+# "Cisgender" says no to the transgender question.
+_CIS = re.compile(_I_AM + r"cis ?gender( man| woman| male| female| person)?")
+
+
+def yes_no_class(key: str, text: str) -> str | None:
+    """yes, no or decline for a yes / no self-identification question (``key`` is @transgender or
+    @first_gen): a plain Yes or No, or an option that says it in words ("I do not identify as
+    transgender", "Yes, I am a first-generation professional"). None for anything else ("I don't
+    know")."""
+    t = str(text or "")
+    if DECLINE.search(t):
+        return "decline"
+    c = _core(t)
+    if re.match(r"yes\b", c):
+        return "yes"
+    if re.match(r"no\b", c):
+        return "no"
+    topic = _YES_NO_TOPIC.get(key)
+    if topic is not None and topic.search(c):
+        return "no" if re.search(r"\b(not|don t|do not|dont|non)\b", c) else "yes"
+    if key == "@transgender" and _CIS.fullmatch(c):
+        return "no"
+    return None
+
+
 def value_class(key: str, text: str, *, saved: bool = False) -> str | None:
     """The choice an answer or option makes on the question ``key`` ("@gender" ...), or None."""
     if not str(text or "").strip():
@@ -177,6 +257,10 @@ def value_class(key: str, text: str, *, saved: bool = False) -> str | None:
         return veteran_class(text, saved=saved)
     if key == "@disability":
         return disability_class(text)
+    if key == "@sexual_orientation":
+        return orientation_class(text)
+    if key in _YES_NO_TOPIC:
+        return yes_no_class(key, text)
     return "decline" if DECLINE.search(str(text)) else None
 
 
@@ -203,10 +287,16 @@ def person(answers: dict) -> tuple[str | None, str | None]:
 # The topic of a self-identification question worded as a sentence, which the library's whole-label
 # keys do not catch: Greenhouse's "How would you describe your gender identity (please select one)?",
 # "I identify my race/ethnicity as (mark all that apply):", "Veteran Status (please select one):",
-# "I have a disability (please select one):" (Gusto, 2026-11-16). Only the five topics the person
-# can save an answer for; transgender, sexual orientation and the like have no saved key and get
-# the page's decline (autoapply/planner.py).
+# "I have a disability (please select one):", "I identify as transgender (please select one):",
+# "I identify my sexual orientation as (please select one):", "I identify as a first-generation
+# professional (please select one):" (Gusto, 2026-11-16). Only the topics the person can save an
+# answer for; anything else (a first-generation COLLEGE student, pronouns) gets the page's decline
+# (autoapply/planner.py).
 _TOPICS = (
+    # (the words of planner._EEO, so each of these is read as a self-identification question)
+    ("@transgender", re.compile(r"\btransgender\b", re.I)),
+    ("@sexual_orientation", re.compile(r"\bsexual orientation\b", re.I)),
+    ("@first_gen", re.compile(r"\bfirst[- ]generation professionals?\b", re.I)),
     ("@hispanic_latino", re.compile(r"^(?!.*\brac(e|ial)\b).*\b(hispanic|latin[oax]|latine)\b", re.I)),
     ("@race", re.compile(r"\brac(e|ial)\b|\bethnicity\b|\bethnic (group|background|origin|identity)\b", re.I)),
     ("@gender", re.compile(r"^(?!.*\b(trans ?gender|pronouns?|sexual|orientation)\b).*\bgender\b", re.I)),
@@ -352,5 +442,11 @@ def choose(key: str, options, answers: dict, question: str = "") -> str | None:
         return None
     if key == "@veteran":
         return _veteran(want, opts, a, question)
+    if key == "@sexual_orientation" and want != "another":
+        # the option that names it alone, else the one option of several names that includes it
+        # ("Gay and/or lesbian" for a saved "Lesbian")
+        sets = {o: orientation_classes(o) for o in opts}
+        hits = [o for o in opts if sets[o] == {want}] or [o for o in opts if want in sets[o]]
+        return _one(hits, prefer=lambda o: _core(o) == _core(a))
     hits = [o for o in opts if value_class(key, o) == want]
     return _one(hits, prefer=lambda o: _core(o) == _core(a))

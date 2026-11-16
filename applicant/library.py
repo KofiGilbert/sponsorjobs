@@ -60,7 +60,8 @@ def _code(lkey: str, answer: str) -> str:
         if lkey in ("@citizenship", "@citizenship2"):
             from autoapply import countries
             return countries.canonical(a)
-        if lkey in ("@gender", "@sex", "@race", "@ethnicity", "@hispanic_latino", "@veteran", "@disability"):
+        if lkey in ("@gender", "@sex", "@race", "@ethnicity", "@hispanic_latino", "@veteran", "@disability",
+                    "@transgender", "@sexual_orientation", "@first_gen"):
             from autoapply import eeo
             if lkey == "@hispanic_latino":
                 return eeo.hispanic_class(a) or ""

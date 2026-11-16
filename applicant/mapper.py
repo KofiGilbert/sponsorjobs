@@ -74,6 +74,9 @@ KEYS: dict[str, str] = {
     "@ethnicity": "ethnicity (voluntary self-identification)",
     "@veteran": "protected veteran status (voluntary self-identification)",
     "@disability": "disability status (voluntary self-identification)",
+    "@transgender": "identifies as transgender (voluntary self-identification)",
+    "@sexual_orientation": "sexual orientation (voluntary self-identification)",
+    "@first_gen": "first-generation professional (voluntary self-identification)",
 }
 
 # The confirm line names the question the person answered before, in plain words.

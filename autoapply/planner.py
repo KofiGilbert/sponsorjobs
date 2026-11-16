@@ -425,8 +425,10 @@ def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None)
         v = eeo_option(answers.get(key, ""), f.options, key, answers, question=label) if answers else None
         if v:
             return FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True), _used(key, rows)
-        # (2026-11-16, Gusto on Greenhouse) Nothing saved fits this question (transgender, sexual
-        # orientation, first-generation professional, or a saved answer none of the choices says):
+        # (2026-11-16, Gusto on Greenhouse) Nothing saved fits this question (one with no saved
+        # answer, such as a first-generation college student, or a saved answer none of the
+        # choices says; transgender, sexual orientation and first-generation professional are
+        # saved on the memory page and answered above like the other five):
         # self-identification is voluntary, so the page's own decline choice, never a question
         # per application. The Ready to send summary says it was declined.
         v = decline_option(f.options)

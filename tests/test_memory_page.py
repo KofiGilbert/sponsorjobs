@@ -280,6 +280,49 @@ def test_self_identification_values_stay_out_of_the_page_until_show(env):
     assert shown == {"gender": "Female", "race": "Asian"}
 
 
+def test_the_three_more_self_identification_answers_save_show_and_forget(env):
+    """Transgender, sexual orientation and first-generation professional: saved once on the
+    Self-identification card, "Saved" until Show, a decline as "Prefer not to say", Forget works.
+    Not counted in the answers every form asks."""
+    A, c = env
+    d = _page(c)
+    eeo = {r["field"]: r for r in d["eeo"]}
+    assert [eeo[f]["state"] for f in ("transgender", "orientation", "first_gen")] == ["", "", ""]
+    assert [ch["code"] for ch in d["eeo_choices"]["orientation"]][-1] == "decline"
+    assert {ch["code"] for ch in d["eeo_choices"]["transgender"]} == {"yes", "no", "decline"}
+    # invented answers, for the test only
+    r = c.post("/api/answers/basics", json={"fields": {"transgender": "no", "orientation": "bisexual",
+                                                        "first_gen": "decline"}})
+    assert r.status_code == 200
+    d = _page(c)
+    eeo = {r["field"]: r for r in d["eeo"]}
+    assert eeo["transgender"]["state"] == "saved" and eeo["orientation"]["state"] == "saved"
+    assert eeo["first_gen"]["state"] == "declined" and eeo["orientation"]["own"]
+    assert d["basics"]["total"] == 7                                # optional: never counted
+    d.pop("eeo_choices")
+    assert "bisexual" not in json.dumps(d).lower()
+    lib = json.dumps(c.get("/api/answers?view=memory").get_json()["answers"]).lower()
+    assert "bisexual" not in lib
+    shown = c.get("/api/memory/reveal").get_json()["values"]
+    assert shown["transgender"] == "No" and shown["orientation"] == "Bisexual"
+    assert shown["first_gen"] == "Prefer not to say"
+    # where the agent reads them: the library, under their own keys
+    lb = A._answer_lib()
+    try:
+        assert lb.lookup("I identify my sexual orientation as (please select one):")["answer"] == "Bisexual"
+        assert lb.best("@transgender")["answer"] == "No"
+    finally:
+        lb.close()
+    # an edit replaces, Forget removes
+    c.post("/api/answers/basics", json={"fields": {"orientation": "queer"}})
+    assert c.get("/api/memory/reveal").get_json()["values"]["orientation"] == "Queer"
+    out = c.post("/api/memory/forget", json={"id": "eeo:orientation"}).get_json()
+    assert out["forgotten"] >= 1
+    eeo = {r["field"]: r for r in out["eeo"]}
+    assert eeo["orientation"]["state"] == "" and eeo["transgender"]["state"] == "saved"
+    assert "orientation" not in c.get("/api/memory/reveal").get_json()["values"]
+
+
 def test_forget_the_salary_clears_every_copy(env):
     A, c = env
     out = c.post("/api/memory/forget", json={"id": "key:@salary"}).get_json()
