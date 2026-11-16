@@ -7,16 +7,22 @@ First person, plain. No hashtags wall, no emoji wall, no "excited to announce".
 
 I built a job-hunt tool for international students, and today it is free and open source.
 
-I am an international student. Job hunting in the US on a visa means three extra problems: you need employers who actually sponsor, your résumé has to fit the American one-page style, and you have to be ready for US-style interviews. Most tools that help charge a monthly fee to people who often cannot legally earn money yet.
+I am an international student. Job hunting in the US on a visa adds three problems on top of the normal ones: you need employers who actually sponsor, your resume has to fit the American one-page style, and you have to be ready for US-style interviews. Most tools that help charge a monthly fee to people who often cannot legally earn money yet.
 
-SponsorJobs runs on your own computer. It pulls jobs from official public job boards and tags each employer with its sponsorship record from public US government data (H-1B, PERM, E-Verify for STEM OPT), and it flags postings that say "no sponsorship". For each job it rewrites your résumé toward the job's language while keeping it on one page, and it never adds a skill to a role where you did not use it. It drafts the cover letter, runs a recorded practice screen and a simulated interview from the real job description, and fills application forms for you to review and submit yourself.
+SponsorJobs runs on your own computer. It pulls jobs from official public job boards and tags each employer with its sponsorship record from public US government data: H-1B, green card (PERM), and E-Verify for STEM OPT. Postings that say "no sponsorship" are flagged too.
 
-Your data stays on your machine. The AI runs on your own key.
+Pick a job and it opens a workspace for it. The app rewrites your resume toward that job's language, writing the posting's keywords into your bullets using only material you actually gave it, and keeps the whole thing on one page. It never adds a skill to a role where you did not use it. From the same place it drafts the cover letter, runs a recorded practice screen and a live interview from the real job description, and fills the application form. Where a site's own rules allow an application to be submitted programmatically, it can send it; everywhere else it stops at the submit button and you click it. You can review and approve from Telegram if you are away from your desk.
 
-It is AGPL-3.0. Downloads for macOS and Windows, and the source, are here: [[TODO: website URL]]
+The AI is included. There is no API key to set up: you sign in and it works. Your resumes, your profile and your applications stay on your machine, and the only thing our service sees is how much you have used. If you would rather own the whole stack, the community edition runs from source with your own key and no limits.
 
-If you hire international students, I would like to hear what would make the résumés you receive easier to read. If you are one, tell me what is missing.
+Free covers every job and 3 tailored applications a month. If you are in a heavy week there is a pass: $29 once for 30 days, or $69 once for 90. Nothing auto-renews, and a pass ending just puts you back on Free with everything you made still on your computer.
+
+AGPL-3.0. Downloads for macOS and Windows: https://sponsorjobs.ai
+Source: https://github.com/KofiGilbert/sponsorjobs
+
+If you hire international students, I would like to hear what would make the resumes you receive easier to read. If you are one, tell me what is missing.
 
 ---
 
-Word count: about 240 (trim the middle paragraph if LinkedIn truncates early).
+Word count: about 330. LinkedIn truncates around 200 characters, so the first two lines carry it.
+If it needs to be shorter, cut the paragraph about pricing and leave the link to do that work.
