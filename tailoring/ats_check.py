@@ -119,21 +119,26 @@ def extract_text(pdf: str | Path) -> str | None:
         import pypdfium2 as pdfium
     except ImportError:
         return None
-    try:
-        doc = pdfium.PdfDocument(str(pdf))
-    except Exception:
-        return None
-    try:
-        return "\n".join(
-            doc[i].get_textpage().get_text_range() for i in range(len(doc))
-        )
-    except Exception:
-        return None
-    finally:
+    # PDFium is not thread-safe: two reads at once crashed the whole engine (2026-11-16, a
+    # segfault in FPDF_LoadPage once this check ran on every chat build). Every call holds the
+    # app's one lock (tailoring/preview.py).
+    from .preview import PDFIUM_LOCK
+    with PDFIUM_LOCK:
         try:
-            doc.close()
+            doc = pdfium.PdfDocument(str(pdf))
         except Exception:
-            pass
+            return None
+        try:
+            return "\n".join(
+                doc[i].get_textpage().get_text_range() for i in range(len(doc))
+            )
+        except Exception:
+            return None
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
 
 
 def fold(text: str) -> str:
