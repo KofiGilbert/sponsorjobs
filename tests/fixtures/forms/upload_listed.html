@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Resume upload (Workday-style fixture)</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<!-- Workday keeps a draft application across visits and clears its file input after each upload;
+     the upload area lists what it holds by name and size, each with its own Delete button. -->
+<h3>My Experience</h3>
+<div role="group" aria-labelledby="rh"><h4 id="rh">Resume/CV</h4>
+  <label for="file">Upload a file (5MB max)</label>
+  <div data-automation-id="file-upload-drop-zone"><span>Drop files here</span> or <button type="button">Select files</button>
+    <input type="file" id="file" data-automation-id="file-upload-input-ref" style="opacity:0;width:1px;height:1px"></div>
+  <div id="list"></div>
+</div>
+<div role="group" aria-labelledby="ch"><h4 id="ch">Cover letter</h4><label for="cl">Cover letter</label><input type="file" id="cl"></div>
+<script>
+  window.addFile = (name, size) => {
+    const row = document.createElement("div");
+    row.innerHTML = `<span>${name}</span> <span>${size}</span> <span>Successfully Uploaded!</span>`;
+    const del = document.createElement("button"); del.type = "button"; del.setAttribute("aria-label", "Delete " + name); del.textContent = "Delete";
+    del.addEventListener("click", () => row.remove()); row.appendChild(del);
+    document.getElementById("list").appendChild(row);
+  };
+  window.fxCount = () => document.querySelectorAll("#list > div").length;
+</script>
+</body></html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Self Identify (CC-305 fixture)</title>
+<link rel="stylesheet" href="style.css">
+<style>.cb{width:0;height:0;opacity:0;position:absolute;margin:0;padding:0;border:0}.spin{width:40px}</style></head>
+<body>
+<!-- Modelled on Workday's "Voluntary Self-Identification of Disability" (form CC-305) page
+     (Uline, 2026-11-16, the real nesting): Name, a "Date" made of Month / Day / Year spinbuttons with a Calendar
+     button, and "Please check one of the boxes below:" as the legend of an OUTER fieldset over an inner,
+     legend-less fieldset holding three nameless checkboxes (drawn here as 0x0 inputs). ONE
+     question, one answer. -->
+<h3>Self Identify</h3>
+<h3>Voluntary Self-Identification of Disability</h3>
+<div><label for="name">Name*</label><input type="text" id="name" aria-required="true"></div>
+<div><label for="emp">Employee ID (if applicable)</label><input type="text" id="emp"></div>
+<fieldset id="date"><legend><label>Date*</label></legend>
+  <div role="group">
+    <input class="spin" type="text" role="spinbutton" aria-label="Month" aria-required="true" id="sid--dateSignedOn-dateSectionMonth-input">
+    <input class="spin" type="text" role="spinbutton" aria-label="Day" aria-required="true" id="sid--dateSignedOn-dateSectionDay-input">
+    <input class="spin" type="text" role="spinbutton" aria-label="Year" aria-required="true" id="sid--dateSignedOn-dateSectionYear-input">
+  </div>
+  <button type="button">Calendar</button>
+</fieldset>
+<h4>Why are you being asked to complete this form?</h4>
+<p>We are a federal contractor or subcontractor. Completing this form is voluntary.</p>
+<fieldset id="dis"><legend><label>Please check one of the boxes below:<abbr>*</abbr></label></legend>
+  <div><span data-automation-id="rows_3"><fieldset data-automation-id="disabilityStatus-CheckboxGroup">
+  <div><div role="grid">
+    <div role="row"><div role="row"><div role="cell"><div><div><input class="cb" type="checkbox" aria-required="true" id="d1-disabilityStatus"><label for="d1-disabilityStatus">Yes, I have a disability, or have had one in the past</label></div></div></div></div></div>
+    <div role="row"><div role="row"><div role="cell"><div><div><input class="cb" type="checkbox" aria-required="true" id="d2-disabilityStatus"><label for="d2-disabilityStatus">No, I do not have a disability and have not had one in the past</label></div></div></div></div></div>
+    <div role="row"><div role="row"><div role="cell"><div><div><input class="cb" type="checkbox" aria-required="true" id="d3-disabilityStatus"><label for="d3-disabilityStatus">I do not want to answer</label></div></div></div></div></div>
+  </div></div>
+  </fieldset></span></div>
+</fieldset>
+<button type="button">Back</button><button type="button">Next</button>
+<script>window.fxValues = () => ({ boxes: ["d1", "d2", "d3"].map((i) => document.getElementById(i + "-disabilityStatus").checked) });</script>
+</body></html>

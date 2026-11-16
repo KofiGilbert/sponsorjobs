@@ -503,7 +503,8 @@ def parse_reply(raw: str, view_indices: set) -> dict | None:
 # to the same boundary as everything else: no personal value, no self-identification choice.
 _PH_ANY = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}", re.I)
 _PH_WORDS = {"portal_email": "your sign-in email", "portal_password": "your password",
-             "email_code": "the emailed code", "work_auth_note": "your work status note"}
+             "email_code": "the emailed code", "work_auth_note": "your work status note",
+             "current_company": "your current company", "current_title": "your current title"}
 _EMAIL_RE = re.compile(r"\S+@\S+")
 _URL_RE = re.compile(r"https?://\S+|www\.\S+", re.I)
 _SUMMARY_MAX = 90

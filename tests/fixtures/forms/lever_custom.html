@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Lever application (custom questions fixture)</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<!-- The markup of a real Lever application form's location question and custom questions
+     (jobs.lever.co, 2026-11-16): the question is a sibling div.application-label with no <label for>,
+     and "required" is only a "✱" span in that text (and a required-field class). -->
+<form id="application-form">
+<ul>
+<li class="application-question" data-qa="opportunity-location-question"><div class="application-label">Which location are you applying for?<span class="required"> ✱</span></div><div class="application-field"><div class="application-dropdown"><select name="opportunityLocationId" class="opportunity-location" required>
+<option value="">Select...</option><option value="a">McLean, VA</option><option value="b">New York, NY</option><option value="c">Boston, MA</option><option value="d">Chicago, IL</option><option value="e">Dallas, TX</option></select></div></div></li>
+<li class="application-question"><label><div class="application-label">Current company <span class="required">✱</span></div><div class="application-field"><input type="text" data-qa="org-input" name="org" required></div></label></li>
+</ul>
+<ul><li class="application-question custom-question"><div><div class="application-label full-width textarea"><div class="text">If you require sponsorship or visa-related assistance, please specify your current visa type and any future sponsorship needs.<span class="required">✱</span></div></div><div class="application-field full-width required-field"><textarea class="card-field-input" name="cards[x][field3]"></textarea></div></div></li>
+<li class="application-question custom-question"><div><div class="application-label full-width dropdown"><div class="text">Are you able to work a hybrid schedule (2-3 days/week in office) from one of the locations below? If so, please select one.<span class="required">✱</span></div></div><div class="application-field full-width required-field"><div class="application-dropdown"><select name="cards[x][field4]">
+<option value="">Select...</option><option value="DC">DC</option><option value="NYC">NYC</option><option value="Boston">Boston</option><option value="Dallas">Dallas</option><option value="Chicago">Chicago</option><option value="None of these locations">None of these locations</option></select></div></div></div></li>
+<li class="application-question custom-question"><div><div class="application-label full-width"><div class="text">Anything else you would like to share?</div></div><div class="application-field full-width"><textarea name="cards[x][field5]"></textarea></div></div></li>
+</ul>
+</form>
+</body></html>

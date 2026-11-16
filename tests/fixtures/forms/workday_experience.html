@@ -1,0 +1,105 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>My Experience (Workday-style fixture)</title>
+<link rel="stylesheet" href="style.css"><script src="widgets.js"></script>
+<style>.wd-pop{position:absolute;left:10px;top:10px;background:#fff;border:1px solid #999;z-index:5}
+.spin{width:40px}.cb{width:0;height:0;opacity:0;position:absolute}</style></head>
+<body>
+<!-- Modelled on Uline's Workday "Apply Manually" My Experience page (2026-11-16): repeating
+     "Work Experience N" / "Education N" groups with "Add Another", Month / Year spinbutton dates,
+     a Degree listbox button, and multiselect search prompts (Field of Study, Skills) whose list
+     is portalled to <body>, draws a radio in every option row, ignores Escape and blur, closes
+     only on a mousedown outside its own box and list, and filters only on a REAL Enter. -->
+<h3>My Experience</h3>
+<div id="work" role="group" aria-labelledby="wh"><h4 id="wh">Work Experience</h4><div id="workList"></div>
+  <button type="button" id="addWork">Add Another</button></div>
+<div id="edu" role="group" aria-labelledby="eh"><h4 id="eh">Education</h4><div id="eduList"></div>
+  <button type="button" id="addEdu">Add Another</button></div>
+<div role="group" aria-labelledby="sk"><h4 id="sk">Skills</h4><div id="skills"></div></div>
+<button type="button" data-automation-id="pageFooterNextButton">Next</button>
+<script>
+  let seq = 0;
+  const h = (tag, attrs, kids) => { const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) { if (k === "text") e.textContent = v; else e.setAttribute(k, v); }
+    for (const c of kids || []) e.appendChild(c); return e; };
+  const field = (label, input) => { const id = "f" + (seq++); input.id = id;
+    return h("div", { "data-automation-id": "formField" }, [h("label", { for: id, text: label }), input]); };
+  function dateGroup(legend, prefix) {
+    const fs = h("fieldset", {}, [h("legend", { text: legend + "*" })]);
+    for (const part of ["Month", "Year"]) fs.appendChild(h("input", { type: "text", role: "spinbutton", class: "spin",
+      "aria-label": part, "aria-required": "true", id: prefix + "-dateSection" + part + "-input" }));
+    return fs;
+  }
+  // Multiselect search prompt (Field of Study, Skills)
+  window.MultiPrompt = function (host, cfg) {
+    const input = h("input", { type: "text", "data-uxi-widget-type": "selectinput", "data-automation-id": "searchBox",
+                               enterkeyhint: "search", placeholder: "Search" });
+    const pills = h("ul", { role: "listbox", "aria-label": "items selected" });
+    const id = "f" + (seq++); input.id = id;
+    const box = h("div", { "data-automation-id": "multiSelectContainer" }, [pills, input]);
+    host.appendChild(h("div", { "data-automation-id": "formField" }, [h("label", { for: id, text: cfg.label }), box]));
+    let pop = null, list = cfg.options.slice(0, 11);
+    const chosen = [];
+    const render = () => {
+      if (pop) pop.remove();
+      const ul = h("ul", { role: "listbox", "aria-label": "Options Expanded" });
+      for (const o of list) {
+        const li = h("li", { role: "option", "aria-label": o + " not checked" }, [h("div", {}, [h("input", { type: "radio" }), h("span", { text: o })])]);
+        li.addEventListener("click", () => { chosen.push(o); pills.appendChild(h("li", { role: "option", text: o })); });
+        ul.appendChild(li);
+      }
+      pop = h("div", { "data-automation-id": "activeListContainer", class: "wd-pop" }, [ul]);
+      document.body.appendChild(pop);
+    };
+    input.addEventListener("click", render);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.isTrusted) {          // a script's Enter filters nothing
+        const q = input.value.toLowerCase();
+        list = cfg.options.filter((o) => o.toLowerCase().includes(q));
+        render();
+      }
+    });
+    document.addEventListener("mousedown", (e) => {
+      if (pop && !box.contains(e.target) && !pop.contains(e.target)) { pop.remove(); pop = null; }
+    });
+    return { get value() { return chosen.slice(); }, get open() { return !!pop; }, input };
+  };
+  function workSection(n) {
+    const g = h("div", { role: "group", "aria-labelledby": "w" + n }, [h("h5", { id: "w" + n, text: "Work Experience " + n })]);
+    g.appendChild(field("Job Title*", h("input", { type: "text", "aria-required": "true", name: "jobTitle" })));
+    g.appendChild(field("Company*", h("input", { type: "text", "aria-required": "true", name: "companyName" })));
+    g.appendChild(field("Location", h("input", { type: "text", name: "location" })));
+    const cbid = "cw" + n;
+    g.appendChild(h("div", {}, [h("input", { type: "checkbox", id: cbid, name: "currentlyWorkHere" }), h("label", { for: cbid, text: "I currently work here" })]));
+    g.appendChild(dateGroup("From", "workExperience-" + n + "--startDate"));
+    g.appendChild(dateGroup("To", "workExperience-" + n + "--endDate"));
+    g.appendChild(field("Role Description", h("textarea", {})));
+    document.getElementById("workList").appendChild(g);
+  }
+  window.fx = { fos: [] };
+  function eduSection(n) {
+    const g = h("div", { role: "group", "aria-labelledby": "e" + n }, [h("h5", { id: "e" + n, text: "Education " + n })]);
+    g.appendChild(field("School or University*", h("input", { type: "text", "aria-required": "true", name: "schoolName" })));
+    document.getElementById("eduList").appendChild(g);
+    window.fx["degree" + n] = window.FixtureWidgets.WorkdayListbox(g, { aid: "degree", label: "Degree",
+      options: ["No High School Diploma or GED Equivalent", "GED", "High School", "Associates", "Bachelors", "Masters", "Doctorate"] });
+    window.fx.fos.push(window.MultiPrompt(g, { label: "Field of Study", options: ["Accounting", "Actuarial Science",
+      "Advertising", "Aerospace Engineering", "African Studies", "Agricultural Business and Management", "Agricultural Economics",
+      "Business Administration/Management", "Business Communications", "Economics", "International Business", "Sociology"] }));
+  }
+  let works = 0, edus = 0;
+  workSection(++works); eduSection(++edus);
+  document.getElementById("addWork").addEventListener("click", () => setTimeout(() => workSection(++works), 120));
+  document.getElementById("addEdu").addEventListener("click", () => setTimeout(() => eduSection(++edus), 120));
+  window.fx.skills = window.MultiPrompt(document.getElementById("skills"), { label: "Type to Add Skills",
+    options: ["Agile", "Analytics", "Excel", "Power BI", "SQL", "Tableau"] });
+  window.fxValues = () => ({
+    works, edus,
+    titles: [...document.querySelectorAll("[name=jobTitle]")].map((e) => e.value),
+    companies: [...document.querySelectorAll("[name=companyName]")].map((e) => e.value),
+    current: [...document.querySelectorAll("[name=currentlyWorkHere]")].map((e) => e.checked),
+    schools: [...document.querySelectorAll("[name=schoolName]")].map((e) => e.value),
+    degrees: Object.keys(window.fx).filter((k) => /^degree/.test(k)).map((k) => window.fx[k].value),
+    open: !!document.querySelector("[data-automation-id=activeListContainer]"),
+  });
+</script>
+</body></html>

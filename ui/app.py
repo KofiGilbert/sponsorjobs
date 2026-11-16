@@ -6344,10 +6344,36 @@ def profile_autofill():
             recs.close()
     except Exception:
         pass
+    # The work history and education for a form's repeating sections (Workday's "Work Experience
+    # 1", "Education 1"): this application's tailored resume when the shell names the record, so
+    # the form says what the uploaded resume says, else the saved profile (autoapply/history.py).
+    from autoapply.history import form_history
+    hist = {"history": [], "education": [], "skills": []}
+    try:
+        prof = {}
+        rid = request.args.get("record_id")
+        if rid not in (None, ""):
+            rec = _get_record(rid)
+            if rec:
+                d = _record_data(rec)
+                prof = d.get("render_profile") or d.get("profile") or {}
+        full = _saved_full_profile() or {}
+        if not prof.get("experience"):
+            prof = dict(prof, experience=full.get("experience") or [])
+        if not prof.get("education"):
+            prof = dict(prof, education=full.get("education") or [])
+        if not prof.get("skills"):
+            prof = dict(prof, skills=full.get("skills") or {})
+        hist = form_history(prof)
+    except Exception:                                     # noqa: BLE001 - the contact fill still runs
+        pass
     return _nostore(jsonify({
         "ok": True,
         "loaded": bool(name or fields["email"]),
         "fields": {k: v for k, v in fields.items() if v},
+        "history": hist["history"],
+        "education": hist["education"],
+        "skills": hist["skills"],
         "screening": screening,
         "answers": answers,
         "eeo": {"decline": bool(prefs.get("eeo_decline"))},
