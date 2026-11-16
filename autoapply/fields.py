@@ -125,11 +125,13 @@ def applicant_from_record(record_data: dict, memory: dict | None = None) -> dict
     return {k: v for k, v in out.items() if v}
 
 
-def resolve_plan(actions: list[FillAction], applicant: dict, *, resume_path: str = "") -> list[ConcreteOp]:
+def resolve_plan(actions: list[FillAction], applicant: dict, *, resume_path: str = "",
+                 letter_path: str = "") -> list[ConcreteOp]:
     """Join the model's PII-free plan to the person's REAL data, LOCALLY. The model never saw these
     values; they are attached here, at the last moment, right before the executor types them.
 
-    - op ``upload`` -> the résumé path (only when we have one).
+    - op ``upload`` -> the résumé path (only when we have one); the cover letter's for an
+      upload the planner made for a cover letter box (origin ``letter``).
     - a ``source`` key -> the real personal value looked up from ``applicant`` (marked sensitive).
     - a ``value`` literal -> used as-is (a non-personal choice the model made).
     - empty resolutions (a key we don't hold) are dropped, never filled with a guess.
@@ -138,9 +140,13 @@ def resolve_plan(actions: list[FillAction], applicant: dict, *, resume_path: str
     for a in actions:
         if a.op == "skip":
             continue
+        if "{{" in str(a.value) or "}}" in str(a.value):   # never an unrendered placeholder
+            continue
         if a.op == "upload":
-            if resume_path:
-                ops.append(ConcreteOp(a.ref, "upload", path=resume_path, origin=a.origin))
+            # the cover letter box gets the cover letter, every other upload the resume
+            path = letter_path if a.origin == "letter" else resume_path
+            if path:
+                ops.append(ConcreteOp(a.ref, "upload", path=path, origin=a.origin))
             continue
         if a.source:                             # personal-data key -> real value, resolved locally
             val = str(applicant.get(a.source, "")).strip()

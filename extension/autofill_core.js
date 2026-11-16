@@ -806,6 +806,26 @@
 
   // A résumé/CV file input we can SEE but cannot fill (browsers block setting file inputs
   // from script). Surface it so the person attaches their tailored PDF themselves.
+  // The resume's own file box, still empty: one whose label says resume or CV, else the only empty
+  // box that is not a cover letter's. Never a cover letter box: on Greenhouse the filled resume
+  // box goes away, and "the first file input" was then the Cover Letter's (Gusto, 2026-11-16).
+  const LETTER_BOX_RE = /cover.?letter|letter of (interest|motivation)|motivation(al)? letter/i;
+  const RESUME_BOX_RE = /r[eé]sum[eé]|\bcv\b|curriculum/i;
+  function fileBoxWords(f) {
+    let own = "";
+    try { own = rawLabel(f) || ""; } catch (e) { own = ""; }
+    return own + " " + (f.name || "") + " " + (f.id || "") + " " + (f.getAttribute("aria-label") || "");
+  }
+  function isLetterBox(f) { return !!f && LETTER_BOX_RE.test(fileBoxWords(f)); }
+  function resumeInput() {
+    const boxes = qsaDeep('input[type="file"]').filter((f) => !f.disabled && !(f.files && f.files.length));
+    const named = boxes.find((f) => !isLetterBox(f) && RESUME_BOX_RE.test(fileBoxWords(f)));
+    if (named) return named;
+    const rest = boxes.filter((f) => !isLetterBox(f));
+    return rest.length === 1 ? rest[0] : null;
+  }
+  function resumeInputOpen() { return !!resumeInput(); }
+
   function hasResumeUpload() {
     for (const f of qsaDeep('input[type="file"]')) {
       if (f.disabled) continue;
@@ -1790,7 +1810,7 @@
 
   window.TailorAutofill = {
     fill, pageBlocker, applicationForm, applyButtonLabel, siteSearch, planFill, applyFill, fillScreening, fillTextAnswers, answerKeyForLabel,
-    fillEeo, hasResumeUpload, candidates, categorize, signature, setNativeValue, markFilled,
+    fillEeo, hasResumeUpload, resumeInput, resumeInputOpen, isLetterBox, candidates, categorize, signature, setNativeValue, markFilled,
     rawLabel, answerableTextareas, pageJobContext, screeningAnswer,
     extractForm, applyOps, fieldRef,                                         // AI-planned autoapply
     // deep DOM + custom widgets + multi-page (desktop shell)

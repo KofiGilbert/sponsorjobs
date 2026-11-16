@@ -1516,5 +1516,6 @@
   "builder.applyAlready": "Du hast dich schon auf diese Stelle beworben. Sie steht im Tracker.",
   "builder.applyingAt": "Bewerbung als {role} bei {company}",
   "builder.applyingTo": "Bewerbung als {role}",
-  "builder.thisJob": "diese Stelle"
+  "builder.thisJob": "diese Stelle",
+  "aa.agent.readLetter": "Anschreiben lesen"
 }

@@ -35,7 +35,7 @@ _VALID_OPS = {"fill", "select", "check", "upload", "skip"}
 # --------------------------------------------------------------------------- the fact gate
 # A question about the PERSON: only their own saved material may answer it, never the model.
 _FACT = re.compile(
-    r"gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender"
+    r"gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|first[- ]generation"
     r"|pronoun|date of birth|birth ?date|\bage\b|criminal|convict|felony|background check|drug"
     r"|salary|compensation|\bpay\b|\brate\b|start|notice|years|experience|degree|\bgpa\b|graduat"
     r"|school|universit|education|clearance|citizen|visa|sponsor|authori[sz]|eligib|relocat"
@@ -83,7 +83,7 @@ def contact_key(label: str) -> str:
 
 
 _EEO = re.compile(r"gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation"
-                  r"|transgender|pronoun", re.I)
+                  r"|transgender|pronoun|first[- ]generation (professional|college|student)", re.I)
 # The "decline to self-identify" choice in its usual wordings (autoapply/eeo.py, where the
 # self-identification matching lives). Mirrored in shell-electron/agent.js DECLINE_RE.
 _DECLINE = eeo.DECLINE
@@ -187,6 +187,49 @@ def listed_citizenship(question: str, library, options=(), field_type: str = "te
 _RESUME = re.compile(r"r[ée]sum[ée]|\bcv\b|curriculum", re.I)
 _LETTER = re.compile(r"cover\s*letter|letter of (interest|motivation)|motivation(al)? letter", re.I)
 
+# "Have you ever, or are you currently working at Gusto or Symmetry in any capacity?": a worked-here
+# question that names the company instead of saying "this company". Never one about someone else
+# ("Do you have a relative working at ...", "Do you know anyone who works at ...").
+_WORKED_AT = re.compile(r"\b(work(ed|ing)?|been employed|employed|interned|contract(ed|ing))\b[^?]{0,40}?"
+                        r"\b(at|for|by|with)\s+(?P<who>[^?]{2,80})", re.I)
+_SOMEONE_ELSE = re.compile(r"relative|family|friend|spouse|anyone|someone|know|refer|partner", re.I)
+_CO_SUFFIX = re.compile(r"\b(inc|incorporated|llc|l l c|ltd|limited|corp|corporation|co|company|plc|gmbh|ag|sa"
+                        r"|group|holdings?|technologies|labs)\b", re.I)
+
+
+def worked_here_question(label: str, company: str) -> bool:
+    """True when ``label`` asks whether the person works or worked at ``company`` by its name."""
+    lbl, core = str(label or ""), _n(_CO_SUFFIX.sub(" ", _n(company)))
+    if len(core) < 3 or _SOMEONE_ELSE.search(lbl) or not re.search(r"\b(have|are|were|did|do) you\b", lbl, re.I):
+        return False
+    return any(re.search(r"\b" + re.escape(core) + r"\b", _n(m.group("who"))) for m in _WORKED_AT.finditer(lbl))
+
+
+# "Do you currently reside in one of the following locations?" with places as the choices
+# ("Yes - Denver, CO", "Yes - New York, NY", "No - None of the above").
+_RESIDE_Q = re.compile(r"\b(reside|live|living|located|based)\b.{0,40}\b(following|these|listed|any of|one of)\b", re.I)
+_NONE_OF = re.compile(r"\bnone of (the|these)\b|^no\b|\bnot in (any|one)\b|\bother location\b")
+
+
+def residence_option(label: str, options, applicant: dict) -> str | None:
+    """The choice that says where the person lives, from the profile's city and state: the option
+    naming their city, else the one "No / None of the above" when no option names their city or
+    their state. None when the profile has no city or the choices are unclear (theirs to answer)."""
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    if not opts or not _RESIDE_Q.search(str(label or "")):
+        return None
+    city = _n((applicant or {}).get("city") or "")
+    state = _n((applicant or {}).get("state") or "")
+    if not city:
+        return None
+    named = [o for o in opts if re.search(r"\b" + re.escape(city) + r"\b", _n(o)) and workauth.polarity(o) is not False]
+    if named:
+        return named[0] if len(named) == 1 else None
+    if state and any(re.search(r"\b" + re.escape(state) + r"\b", _n(o)) for o in opts):
+        return None                                   # their state is listed: only they know
+    no = [o for o in opts if _NONE_OF.search(_n(o))]
+    return no[0] if len(no) == 1 else None
+
 
 # --------------------------------------------------------------------------- option matching
 def _n(s: str) -> str:
@@ -207,6 +250,9 @@ _NEUTRAL = frozenset("a an the and or s job jobs online internet web website web
 _GENERIC_BOARD = re.compile(r"^((online|internet|web) )?job (board|site|website|posting)s?( (site|website))?$"
                             r"|^(online|internet|web) (job )?(board|site|posting|search)s?$|^(the )?(internet|online|web)$")
 _GENERIC_OTHER = re.compile(r"^other( source| sources| please specify)?$")
+# Job boards by name, the general ones first (generic_source's last resort for a "Job board" answer).
+_NAMED_BOARDS = ("indeed", "glassdoor", "ziprecruiter", "monster", "careerbuilder", "simplyhired", "dice",
+                 "handshake", "wellfound", "angellist", "built in", "linkedin", "linkedin jobs")
 _BOARDISH = frozenset("job jobs board boards online internet web website websites site sites posting postings "
                       "search engine".split())
 
@@ -229,7 +275,17 @@ def generic_source(answer: str, options) -> str | None:
         hit = next((o for o in opts if _GENERIC_BOARD.match(_n(o))), None)
         if hit:
             return hit
-    return next((o for o in opts if _GENERIC_OTHER.match(_n(o))), None)
+    hit = next((o for o in opts if _GENERIC_OTHER.match(_n(o))), None)
+    if hit or not (words and words <= _BOARDISH):
+        return hit
+    # (2026-11-16, Gusto on Greenhouse: LinkedIn, Glassdoor, Indeed, Facebook, ... and no "Job board"
+    # or "Other") A job-board answer on a list of named sources only: the closest is a job board
+    # the list names, the general boards first, by its exact name (never "Built In Colorado").
+    for board in _NAMED_BOARDS:
+        hit = next((o for o in opts if _n(o) == board), None)
+        if hit:
+            return hit
+    return None
 
 
 def match_option(answer: str, options, *, strict: bool = False) -> str | None:
@@ -358,6 +414,8 @@ def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None)
         v = eeo_option(answers.get(key, ""), group, key, answers, question=q) if answers else None
         if v and v == opt:
             return FillAction(f.ref, "check", value="Yes", origin="library", sensitive=True), _used(key, rows)
+        if not v and decline_option(group) == opt:          # nothing saved fits: the decline
+            return FillAction(f.ref, "check", value="Yes", origin="eeo_decline", sensitive=True), []
         return None
     if f.options or t in ("select", "radio"):
         if ctx.eeo_decline:
@@ -367,7 +425,12 @@ def _eeo_fill(f: FormField, label: str, t: str, ctx, groups: dict | None = None)
         v = eeo_option(answers.get(key, ""), f.options, key, answers, question=label) if answers else None
         if v:
             return FillAction(f.ref, _op_for(f), value=v, origin="library", sensitive=True), _used(key, rows)
-        return None
+        # (2026-11-16, Gusto on Greenhouse) Nothing saved fits this question (transgender, sexual
+        # orientation, first-generation professional, or a saved answer none of the choices says):
+        # self-identification is voluntary, so the page's own decline choice, never a question
+        # per application. The Ready to send summary says it was declined.
+        v = decline_option(f.options)
+        return (FillAction(f.ref, _op_for(f), value=v, origin="eeo_decline", sensitive=True), []) if v else None
     # No choices read (a text box, or a dropdown whose list opens later)
     if ctx.eeo_decline:
         return None
@@ -411,6 +474,7 @@ class KnownContext:
     library: object = None                       # an AnswerLibrary (or anything with .lookup)
     drafted: list = field(default_factory=list)  # [{"question","answer"}] for THIS application
     cover_letter: str = ""
+    cover_letter_path: str = ""                  # the drafted cover letter as a PDF, for a file box
     applicant: dict = field(default_factory=dict)
     resume_path: str = ""
     job_country: str = "US"
@@ -531,7 +595,13 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
 
         if t == "file":                                    # the tailored resume, nothing else
             if _LETTER.search(label):
-                out.left.append(f)
+                # (2026-11-16) a cover letter box gets the cover letter drafted for this job, never
+                # the resume; with none, an optional box stays empty (never asked), a required one
+                # is the person's.
+                if ctx.cover_letter_path:
+                    out.actions.append(FillAction(f.ref, "upload", origin="letter"))
+                elif f.required:
+                    out.left.append(f)
             elif _RESUME.search(label) and ctx.resume_path:
                 out.actions.append(FillAction(f.ref, "upload", origin="resume"))
             else:
@@ -577,8 +647,17 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                 out.left.append(f)                         # theirs to answer
             continue
 
-        # 1b. "Have you worked here before?": for THIS company (applicant/facts.py worked_here)
+        # 1a. "Do you currently reside in one of the following locations?": the profile's city
+        v = residence_option(label, f.options, ctx.applicant)
+        if v:
+            out.actions.append(FillAction(f.ref, _op_for(f), value=v, origin="profile", sensitive=True))
+            continue
+
+        # 1b. "Have you worked here before?": for THIS company (applicant/facts.py worked_here),
+        #     also when the question names the company ("... working at Gusto or Symmetry ...")
         qkey0 = normalize(label)
+        if ctx.per_company and qkey0 != "@previously_worked" and worked_here_question(label, ctx.company):
+            qkey0 = "@previously_worked"
         if ctx.per_company and qkey0 == "@previously_worked":
             # (Phase 4) a Yes read from the resume waits for the person's one tap per company
             wh = ctx.worked_here if ctx.worked_here and ctx.worked_here[1] != "confirm" else None
@@ -588,6 +667,21 @@ def plan_known(fields: list[FormField], ctx: KnownContext) -> KnownResult:
                                               sensitive=True))
             else:
                 out.left.append(f)
+            continue
+
+        # 1c. one box of a checkbox group ("How did you hear about this opportunity?: Indeed"):
+        #     the group's ONE choice from the saved answer, only that box ticked (2026-11-16: every
+        #     box was ticked from the answer's Yes/No polarity)
+        q, sep, opt = label.partition(": ")
+        if t == "checkbox" and sep and opt.strip() and len(groups.get(q) or []) > 1:
+            hit = ctx.library.lookup(q) if ctx.library is not None else None
+            v = literal_for(normalize(q), hit["answer"], groups[q]) if hit and str(hit.get("answer") or "").strip() else None
+            if v == opt:
+                out.actions.append(FillAction(f.ref, "check", value="Yes", origin="library", sensitive=True))
+                if hit.get("key") and hit["key"] not in out.used_library:
+                    out.used_library.append(hit["key"])
+            elif v is None and f.required and not any(x.label.partition(": ")[0] == q for x in out.left):
+                out.left.append(f)                         # one line for the group: theirs
             continue
 
         # 2. the answer library (a free-text citizenship question that asks for each country

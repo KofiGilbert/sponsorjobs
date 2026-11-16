@@ -497,8 +497,10 @@ def test_c_the_planner_never_maps_an_eeo_answer_by_yes_no_or_prefix(tmp_path):
                                  "interview process?", "radio", ["Yes", "No"]),
                   FormField("g", "Gender", "select", ["Male", "Female", "Decline to self-identify"])]
         res = plan_known(fields, KnownContext(library=lib))
-        assert [(a.ref, a.value) for a in res.actions] == [("g", "Decline to self-identify")]
-        assert {f.ref for f in res.left} == {"v", "a"}
+        # A plain "Yes" to "Are you a veteran?" is not a protected-veteran choice: the page's
+        # decline, never a guess and never a question (2026-11-16); the accommodation stays theirs.
+        assert [(a.ref, a.value) for a in res.actions] == [("v", "I don't wish to answer"), ("g", "Decline to self-identify")]
+        assert {f.ref for f in res.left} == {"a"}
     finally:
         lib.close()
 
@@ -626,7 +628,9 @@ def test_m1_raw_replies_survive_the_rekey_unused_until_the_person_replaces_them(
         assert AK.known_answer("Gender", GENDER_OPTS, library=lib) is None
         res = plan_known([FormField("g", "Gender", "text"), FormField("e", "Ethnicity", "select", ETH_OPTS)],
                          KnownContext(library=lib))
-        assert res.actions == [] and {f.ref for f in res.left} == {"g", "e"}
+        # never used; a list with a decline choice gets the decline (2026-11-16), a text box is theirs
+        assert [(a.ref, a.value) for a in res.actions] == [("e", "I don't wish to answer")]
+        assert {f.ref for f in res.left} == {"g"}
         assert lib.save("Ethnicity", "What are the options?", "you") is None   # never saved anew
         assert lib.save("Gender", "Male", "you")["answer"] == "Male"           # the person's answer replaces it
         assert lib.lookup("Gender")["answer"] == "Male" and lib.count() == 3
@@ -655,7 +659,8 @@ def test_m1_the_apps_readers_skip_a_raw_reply(A):
     assert mod._known_answers_for(["Gender"], None, {}, {}) == {}
     r = mod.app.test_client().post("/api/autoapply/agent/ask", json={"known_only": True, "questions": [
         {"question": "Gender", "options": GENDER_OPTS}]}, headers=H).get_json()
-    assert r["open"] == ["Gender"] and r["answers"] == {}
+    # the raw reply is never the answer: the page's decline is (2026-11-16, never asked)
+    assert r["open"] == [] and r["answers"] == {"Gender": "I don't wish to answer"}
 
 
 def test_e_a_usable_answer_wins_the_new_key_and_good_answers_stay_usable(tmp_path):
@@ -782,7 +787,13 @@ def test_e_known_only_reports_what_is_still_open(A):
         lib.close()
     r = mod.app.test_client().post("/api/autoapply/agent/ask", json={"known_only": True, "questions": [
         {"question": "Gender", "options": GENDER_OPTS}, {"question": "Ethnicity", "options": ETH_OPTS}]}, headers=H).get_json()
-    assert r["ok"] is False and r["answers"] == {"Gender": "Male"} and r["open"] == ["Ethnicity"] and sent == []
+    # (2026-11-16) a self-identification question nothing saved answers takes the page's decline,
+    # never a question; a non-EEO question nothing answers is still open.
+    assert r["answers"] == {"Gender": "Male", "Ethnicity": "I don't wish to answer"} and r["open"] == [] and sent == []
+    r = mod.app.test_client().post("/api/autoapply/agent/ask", json={"known_only": True, "questions": [
+        {"question": "Gender", "options": GENDER_OPTS}, {"question": "What is your notice period?", "options": []}]},
+        headers=H).get_json()
+    assert r["ok"] is False and r["answers"] == {"Gender": "Male"} and r["open"] == ["What is your notice period?"]
 
 
 def test_e_separate_questions_never_overwrite_each_other(A):
@@ -947,7 +958,9 @@ PHX_HEARD = ["College Job Board", "Indeed", "LinkedIn", "Company Website", "Empl
 
 @pytest.mark.parametrize("options,want", [
     (PHX_HEARD, "Other"),
-    (["College Job Board", "Indeed", "LinkedIn"], None),                       # nothing safe: asked
+    (["College Job Board", "Indeed", "LinkedIn"], "Indeed"),                  # (2026-11-16) a named job board, general first
+    (["LinkedIn", "Glassdoor", "Indeed", "Built In Colorado", "Gusto Blog"], "Indeed"),   # Gusto on Greenhouse
+    (["College Job Board", "Employee Referral"], None),                         # nothing safe: asked
     (["College Job Board", "Job Board", "Other"], "Job Board"),
     (["Select...", "College Job Board", "Online Job Board", "Other"], "Online Job Board"),
     (["College Job Board", "Internet", "Referral", "Other"], "Internet"),

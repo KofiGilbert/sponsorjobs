@@ -159,7 +159,7 @@ def test_autoapply_plan_upload_op_carries_named_path(tmp_path, monkeypatch):
                         lambda fields, llm, **k: {"f1": "resume"})
     seen = {}
 
-    def fake_resolve(plan, applicant, resume_path=""):
+    def fake_resolve(plan, applicant, resume_path="", **_kw):
         seen["path"] = resume_path
         return []
     monkeypatch.setattr(autoapply, "resolve_plan", fake_resolve)

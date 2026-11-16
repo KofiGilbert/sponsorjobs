@@ -163,7 +163,9 @@ def redact(text: str, values: dict) -> str:
 # view (extension/agent_view.js) already prints such a control as answered or not, never which
 # choice; this is the same rule on the engine side, for any view that still carries the choice.
 _SELF_ID = re.compile(r"gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab"
-                      r"|sexual orientation|transgender|pronoun|self[- ]?identif", re.I)
+                      r"|sexual orientation|transgender|pronoun|self[- ]?identif|first[- ]generation (professional|college|student)", re.I)
+# A cover letter upload box, by its line's words (autoapply/planner.py _LETTER).
+_LETTER_BOX = re.compile(r"cover\s*letter|letter of (interest|motivation)|motivation(al)? letter", re.I)
 _VIEW_LINE = re.compile(r'^(\*?\[\d+\]<)(select|combobox|radio|checkbox)\b([^\n]*)$', re.M)
 _ATTR_LABEL = re.compile(r'label="((?:[^"\\]|\\.)*)"')
 
@@ -779,7 +781,7 @@ def _call(llm, user: str, image: str = "") -> str:
 
 
 def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeholders: list | None = None,
-         resume_path: str = "", withheld=(), sleep=None) -> dict:
+         resume_path: str = "", letter_path: str = "", withheld=(), sleep=None) -> dict:
     """One step of the agent: build the prompt, ask the model (up to RETRIES calls on an empty or
     garbled reply, with backoff and a nudge), validate, guard, resolve. Returns {ok, memory,
     evaluation, plan, actions, done, notes, cost, tries}; {ok: False, reason: "no-reply"} when
@@ -868,9 +870,31 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
         kept.append(a)
     reply["actions"] = kept
     actions = resolve_actions(reply["actions"], applicant, portal, labels, notes)
+    # Nothing unrendered ever reaches the page: an action whose text, option or file still holds
+    # "{{" or "}}" after the placeholders were resolved is dropped (2026-11-16, belt and braces).
+    clean = []
     for a in actions:
-        if a.get("op") == "upload" and resume_path:
-            a["path"] = resume_path
+        if any(("{{" in str(a.get(k) or "") or "}}" in str(a.get(k) or "")) for k in ("text", "option", "path")):
+            notes.append("an unrendered placeholder was never typed; dropped")
+            continue
+        clean.append(a)
+    actions = clean
+    # An upload goes into the chosen field's own box: a cover letter box takes this job's cover
+    # letter, never the resume (2026-11-16, Gusto: the resume landed in "Cover Letter"); with no
+    # letter the upload is dropped and the box stays empty. The shell checks the box itself too.
+    kept = []
+    for a in actions:
+        if a.get("op") == "upload":
+            letter_box = bool(_LETTER_BOX.search(_line_name(lines.get(a.get("index")) or {})))
+            path = letter_path if letter_box else resume_path
+            if letter_box and not path:
+                notes.append("the cover letter box was left empty (no cover letter yet); never the resume")
+                continue
+            if path:
+                a["path"] = path
+                a["file"] = "cover_letter" if letter_box else "resume"
+        kept.append(a)
+    actions = kept
     summary = clean_summary(reply.get("summary", ""), actions, lines, reply["done"], values, withheld)
     out = {"ok": True, "memory": reply["memory"], "evaluation": reply["evaluation"],
            "summary": summary, "plan": reply.get("plan") or [], "actions": actions, "done": reply["done"],
@@ -882,7 +906,7 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
 
 
 # --------------------------------------------------------------------------- the critic
-CRITIC_PROMPT = """You check a job application just before it is handed to the person at its Submit button. You get the review page as numbered lines (a filled box reads value="(filled)", never its contents), the plan of pages, and the fields the engine left open. List anything blank, wrong or suspicious: a required field still empty, an error shown on the page, no resume attached where one was asked, a page of the plan still todo, a box that reads (filled) under an error that says it is required. Do not list what is fine. Never mention a personal value. Reply with JSON only: {"ok": true|false, "issues": ["short line", "..."]}. ok is true when nothing is wrong."""
+CRITIC_PROMPT = """You check a job application just before it is handed to the person at its Submit button. You get the review page as numbered lines (a filled box reads value="(filled)", never its contents), the plan of pages, and the fields the engine left open. List anything blank, wrong or suspicious: a required field still empty, an error shown on the page, no resume attached where one was asked, a page of the plan still todo, a box that reads (filled) under an error that says it is required. Do not list what is fine. A word in double braces like {{city}} or {{full_name}} is the person's own value, hidden from you on purpose (in text and file names alike): it is filled, never a template left unrendered, so never list it. When the view was cut, the rest of the page follows it under "[Rest of the page]". Never mention a personal value. Reply with JSON only: {"ok": true|false, "issues": ["short line", "..."]}. ok is true when nothing is wrong."""
 
 
 def critic(req: dict, llm, values: dict | None = None, withheld=()) -> dict:

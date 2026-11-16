@@ -1516,5 +1516,6 @@
   "builder.applyAlready": "Vous avez déjà postulé à cette offre. Elle est dans le Suivi.",
   "builder.applyingAt": "Candidature à {role} chez {company}",
   "builder.applyingTo": "Candidature à {role}",
-  "builder.thisJob": "cette offre"
+  "builder.thisJob": "cette offre",
+  "aa.agent.readLetter": "Lire la lettre de motivation"
 }
