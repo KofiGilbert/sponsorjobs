@@ -54,7 +54,9 @@ def test_the_page_says_saving_then_toasts_and_opens_resumes():
     js = (ROOT / "ui" / "static" / "app.js").read_text(encoding="utf-8")
     h = js.split('$("#acceptBtn").addEventListener("click"', 1)[1].split("\n  });\n", 1)[0]
     assert 'btn.textContent = "Saving…"' in h and "btn.disabled = true" in h
-    assert 'toast("Saved to Resumes", { label: "Open"' in h
+    # Translated since #257; pin the toast and its Open action by their keys, not by the
+    # English, so a translation can never look like a regression here.
+    assert 'toast(agentT("agent.savedToResumes"' in h and 'label: agentT("agent.open"' in h
     assert 'Panel.close()' in h and "refreshLiveNav()" in h and "showSavedResume(r.record_id)" in h
     # a blocked save is a toast, never only a chat bubble
     blocked = h.split("r.ok === false", 1)[1].split("return;", 1)[0]
