@@ -5645,9 +5645,12 @@ class WebIntake:
                                "reverts it"))
         if not e.get("edit_tip_said"):
             e["edit_tip_said"] = True
-            say(self._fact("edit_tip", self.EDIT_TIP, exact=["Accept & Save"],
-                           tip="they can edit any bullet right on the page, then click "
-                               "Accept & Save"))
+            # A chat that came from a job ends in Apply (the review footer's primary), so the tip
+            # names the button the person will actually press.
+            act = "Apply" if (self.source_job or {}).get("url") else "Accept & Save"
+            tip = self.EDIT_TIP.replace("Accept & Save", act)
+            say(self._fact("edit_tip", tip, exact=[act],
+                           tip=f"they can edit any bullet right on the page, then click {act}"))
         if date_flags:
             say(self._fact("placeholder_dates", self._date_flag_note(date_flags), exact=date_flags,
                            entries=date_flags,
