@@ -215,3 +215,11 @@ def test_the_link_is_asked_for_once():
     assert r.index("APPLY.ask = false") < r.index("https?:")   # cleared on any reply
     sub = APP_JS.split('$("#composer").addEventListener("submit"', 1)[1].split("\n  });\n", 1)[0]
     assert "if (applyLinkReply(val)) return;" in sub
+
+
+def test_a_decline_that_also_says_build_it_is_a_decline_and_never_a_project():
+    from ui.session import _bare_decline
+    assert _bare_decline("None, leave it off. Build it.")
+    assert _bare_decline("None, leave it off")
+    assert _bare_decline("no thanks, just build it")
+    assert not _bare_decline("Built a churn model in Python")

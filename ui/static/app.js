@@ -4750,6 +4750,7 @@
       return;
     }
     refreshLiveNav();
+    await builderTermsLine();
     if (r.submitted) { bubble("agent", esc(T("builder.applyAlready", "You already applied to this job. It is on the Tracker."))); return; }
     applyChatStart(r.record_id, r.item || {});
     if (AA_AGENT) { applyChatEnd(T("aa.agentBusy", "One application at a time. Stop the current one first."), false); return; }
@@ -4768,6 +4769,24 @@
     }
   }
 
+  // The Terms line the Auto-apply page shows on a first visit, said once in the chat before the
+  // first Apply from here. Showing it records the version (the same /api/terms/notice), which is
+  // what lets the agent create a portal account; skipping it left a fresh app stuck on the
+  // mock's create-account page (e2e 2026-11-16). Turn off opens the memory page, as there.
+  async function builderTermsLine() {
+    if (TOU_LINE) return;
+    let st = null;
+    try { st = await api("/api/terms/status"); } catch { st = null; }
+    if (!st || st.accepted) return;
+    try { await api("/api/terms/notice", {}); } catch { return; }
+    TOU_LINE = true;
+    try { aaPaintMay(); } catch { /* the Auto-apply page is not open */ }
+    const m = bubble("agent", esc(T("tou.notice", "Our Terms now cover accepting site notices for you.")) +
+      ` <button class="link-btn" type="button" data-tou-off>${esc(T("tou.off", "Turn off"))}</button>`);
+    (m && m.querySelector ? m : document).querySelector("[data-tou-off]")
+      ?.addEventListener("click", () => openMemory({ origin: "builder", focus: "may" }));
+  }
+
   // The answer to "Paste the link to the application": a message with a web address starts Apply
   // with it. Any other message clears the ask and goes to the chat as a normal turn.
   function applyLinkReply(val) {
@@ -4783,9 +4802,13 @@
   // The apply run in the chat: one message, live while it runs (the steps from the run's activity
   // feed, and the one thing it waits on), then one summary line with the steps folded under it.
   function applyChatStart(rid, item, said) {
-    const job = said || item.role && item.company
-      ? T("builder.applyingAt", "Applying to {role} at {company}").replace("{role}", item.role).replace("{company}", item.company)
-      : T("builder.applyingTo", "Applying to {role}").replace("{role}", item.role || item.company || T("builder.thisJob", "this job"));
+    // A run picked up again passes its own heading (``said``); a new one names the job, falling
+    // back to this chat's role and company (a record row may carry neither).
+    const role = item.role || $("#builderRole")?.textContent?.trim() || "";
+    const company = item.company || "";
+    const job = said || (role && company
+      ? T("builder.applyingAt", "Applying to {role} at {company}").replace("{role}", role).replace("{company}", company)
+      : T("builder.applyingTo", "Applying to {role}").replace("{role}", role || company || T("builder.thisJob", "this job")));
     const m = el("div", "msg agent apply-msg is-live");
     m.dataset.record = String(rid);
     m.innerHTML = `<div class="msg-bubble bm-bubble">`

@@ -632,7 +632,9 @@ _BARE_DECLINE = re.compile(
     r"(?:i\s+)?(?:do\s*n['’]?t|dont)\s+have\s+(?:any|one|those|them)(?:\s+of\s+(?:those|them))?|"
     r"nothing\s+to\s+add|none\s+of\s+(?:those|them)|"
     r"(?:none,?\s+)?leave\s+(?:it|them|both)\s+off|skip(?:\s+(?:it|them|both))?|"
-    r"(?:none|no),?\s+(?:thanks|thank\s+you))\s*[.!]*\s*$", re.I)
+    r"(?:none|no),?\s+(?:thanks|thank\s+you))\s*[.!]*"
+    # "None, leave it off. Build it.": a decline that also asks for the build is still a decline.
+    r"(?:[\s,.!]*(?:just\s+)?(?:build|make)\s+(?:it|the\s+resume)(?:\s+now)?\s*[.!]*)?\s*$", re.I)
 
 
 def _bare_decline(message: str) -> bool:
@@ -5017,6 +5019,11 @@ class WebIntake:
                 e["required_covered"] = sorted(set(e.get("required_covered") or []) | {sec})
                 return ["interests"]
             else:
+                # A list section (projects, certifications...) takes entries, never a raw reply:
+                # "None, leave it off. Build it." once landed in projects as a string and the
+                # next turn crashed (2026-11-16). The model's absorb is what structures those.
+                if isinstance(e.get(sec), list) or isinstance(saved.get(sec), list) or sec == "projects":
+                    continue
                 e[sec] = msg
             return [sec]
         return []
@@ -5301,6 +5308,12 @@ class WebIntake:
         'December 2025', full degree names, 'City, XX' locations, clean job titles."""
         from tailoring.conform import (clean_title, fit_courses, format_dates,
                                         format_degree, format_location, format_school)
+        # Entries are dicts: a stray string (a raw chat reply) is dropped, never crashes a turn.
+        for _sec in ("projects", "experience", "education"):
+            if _sec in self.essentials and not isinstance(self.essentials.get(_sec), list):
+                self.essentials[_sec] = []
+            elif isinstance(self.essentials.get(_sec), list):
+                self.essentials[_sec] = [x for x in self.essentials[_sec] if isinstance(x, dict)]
         _normalize_identity(self.essentials.get("identity") or {})
         for e in self.essentials.get("education", []) or []:
             if isinstance(e, dict):
