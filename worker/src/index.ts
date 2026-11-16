@@ -36,7 +36,7 @@ import {
   recordAvatarSession, recordLlm, takeFreePackage, takePassPackage,
 } from "./store";
 import { emailStart, emailVerify, googleCallback, googleStart } from "./signin";
-import { githubAvailable, githubCallback, githubClaim, githubConnect, githubRefresh } from "./github";
+import { githubAvailable, githubCallback, githubClaim, githubConnect, githubRefresh, githubRevoke } from "./github";
 import * as tg from "./telegram";
 import { createConversation, endConversation, transcript } from "./tavus";
 
@@ -452,6 +452,8 @@ const ROUTES: Route[] = [
   ["GET", /^\/github\/callback$/, ({ req, env, now }) => githubCallback(req, env, now)],
   ["POST", /^\/github\/claim$/, ({ req, env, now }) => githubClaim(req, env, now)],
   ["POST", /^\/github\/refresh$/, ({ req, env, now }) => githubRefresh(req, env, now)],
+  // Disconnect GitHub: revoke the user token on GitHub itself, not only forget it locally.
+  ["POST", /^\/github\/revoke$/, ({ req, env, now }) => githubRevoke(req, env, now)],
   ["POST", /^\/avatar\/session\/start$/, avatarStart],
   ["POST", /^\/avatar\/heartbeat$/, avatarHeartbeat],
   ["POST", /^\/avatar\/session\/end$/, avatarEnd],

@@ -230,3 +230,29 @@ def refresh(broker: str, refresh_token: str) -> dict:
     if data.get("reason") == "bad_refresh_token":
         return {"ok": False, "reason": "expired"}
     return {"ok": False, "reason": "error"}
+
+
+def revoke(broker: str, token: str) -> dict:
+    """Ask the Worker to revoke this App token on GitHub itself.
+
+    Disconnecting used to forget the token here and leave the authorization live on
+    github.com, so the App could still act until the person removed it by hand. Revoking needs
+    the App's client secret, which only the Worker has, so the token goes there once and is
+    never stored by it.
+
+    ``{'ok': True, 'already': bool}`` when GitHub has dropped it (``already`` when GitHub had no
+    such token, which is the same end state), else ``{'ok': False, 'reason'}``: ``'offline'``,
+    ``'not_configured'`` (this broker has no GitHub App set up), ``'no_token'`` or ``'error'``.
+    A failure never means "stay connected": the caller forgets the token locally either way.
+    """
+    if not token:
+        return {"ok": False, "reason": "no_token"}
+    status_code, data = BROKER_FETCH("POST", f"{broker}/github/revoke", {"access_token": token})
+    if status_code == 0:
+        return {"ok": False, "reason": "offline"}
+    data = data if isinstance(data, dict) else {}
+    if status_code == 200 and data.get("ok"):
+        return {"ok": True, "already": bool(data.get("already"))}
+    if status_code == 503:
+        return {"ok": False, "reason": "not_configured"}
+    return {"ok": False, "reason": str(data.get("reason") or "error")}

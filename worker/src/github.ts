@@ -38,7 +38,16 @@ export const MANAGE_URL = "https://github.com/settings/installations";
 export const STATE_COOKIE = "sj_ghstate";
 export const CONNECT_TTL_SECONDS = 15 * 60;     // time to authorize and pick repositories
 export const READY_TTL_SECONDS = 5 * 60;        // a sealed token waits at most this long
-export const LIMITS = { connect: 30, claim: 120, refresh: 120 } as const;   // per network per hour
+export const LIMITS = { connect: 30, claim: 120, refresh: 120, revoke: 120 } as const;   // per network per hour
+
+/**
+ * "Delete an app token": GitHub revokes the user token an App was issued.
+ * DELETE /applications/{client_id}/token, basic auth with the App's client id and secret,
+ * body {access_token}. 204 No Content on success, 422 on validation failure.
+ * https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-token
+ */
+export const revokeUrl = (clientId: string) =>
+  `https://api.github.com/applications/${encodeURIComponent(clientId)}/token`;
 
 const STATE_RE = /^[A-Za-z0-9_-]{43}$/;          // base64url of a 32-byte sha256, no padding
 
@@ -340,4 +349,48 @@ export async function githubRefresh(req: Request, env: Env, now: number): Promis
     return json({ error: "sign in again", reason: "bad_refresh_token" }, 400);
   }
   return json({ ok: true, ...t });
+}
+
+/**
+ * POST /github/revoke {access_token} -> {ok: true, already?: boolean}
+ *
+ * "Disconnect GitHub" in the app used to forget the token locally, which left the person's
+ * authorization live on github.com: the App could still act until they removed it by hand.
+ * This is the half only the Worker can do, because revoking needs the client secret and a
+ * secret shipped in a desktop app is not a secret.
+ *
+ * The app sends the token it holds; nothing here stores it, logs it, or puts it in a response.
+ * A revoke is idempotent on purpose: GitHub answering "no such token" means the thing the
+ * caller wanted is already true, so that counts as success rather than an error to show.
+ */
+export async function githubRevoke(req: Request, env: Env, now: number): Promise<Response> {
+  if (!githubOn(env)) return off();
+  if (!(await allow(env.DB, "revoke", clientIp(req), now))) return limited();
+  const token = String((await body(req)).access_token ?? "");
+  if (!token || token.length > 512) return json({ error: "bad token", reason: "bad_token" }, 400);
+
+  const clientId = env.GITHUB_APP_CLIENT_ID!;
+  const basic = btoa(`${clientId}:${env.GITHUB_APP_CLIENT_SECRET!}`);
+  let res: Response;
+  try {
+    res = await fetch(revokeUrl(clientId), {
+      method: "DELETE",
+      headers: {
+        Authorization: `Basic ${basic}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "SponsorJobs",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({ access_token: token }),
+    });
+  } catch {
+    return json({ error: "github is unreachable", reason: "unreachable" }, 502);
+  }
+  if (res.status === 204) return json({ ok: true });
+  // GitHub has no such token: already revoked, or it expired. The authorization is gone either
+  // way, which is what was asked for.
+  if (res.status === 404) return json({ ok: true, already: true });
+  console.error(`github revoke failed: http_${res.status}`);     // the status only, never the token
+  return json({ error: "github refused the revoke", reason: `http_${res.status}` }, 502);
 }

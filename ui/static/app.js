@@ -10259,7 +10259,8 @@
   });
   async function ghDisconnect() {
     GH_GONE = GH_VIA_APP;      // then the row says where to remove the App on GitHub
-    await fetch("/api/github/disconnect", { method: "POST" });
+    const r = await fetch("/api/github/disconnect", { method: "POST" }).then((x) => x.json()).catch(() => ({}));
+    if (r && r.revoked === false && r.message) toast(r.message);   // access still live on GitHub
     const f = $("#ghForm"); if (f) { f.reset(); f.hidden = true; }
     await renderConnections();
     document.dispatchEvent(new CustomEvent("tailor:github"));
