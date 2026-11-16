@@ -369,3 +369,11 @@ def test_each_job_term_is_asked_of_one_role_and_one_of_a_same_meaning_set():
         ["Python", "SQL", "Statistical analysis"]
     assert spread_terms(["Statistical analysis", "Statistics", "Querying databases"], taken) == \
         ["Querying databases"]
+
+
+def test_a_field_name_is_lower_case_mid_sentence_even_when_the_ad_capitalises_it():
+    from tailoring.plan_fill import prose_case
+    jd = "Degree in Computer Science; Artificial Intelligence experience; Python."
+    assert prose_case("Built an Artificial Intelligence assisted pipeline in Python.",
+                      ["Artificial Intelligence", "Python"], jd) == \
+        "Built an artificial intelligence assisted pipeline in Python."

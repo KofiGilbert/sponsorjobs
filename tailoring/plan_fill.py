@@ -244,6 +244,14 @@ def spread_terms(terms, taken: set) -> list:
     return out
 
 
+# Fields of study and methods that are lower case in running prose even when a job ad writes them
+# with capitals ("Built an Artificial Intelligence assisted pipeline" reads as pasted in).
+PROSE_LOWER = {"artificial intelligence", "machine learning", "computer science", "data science",
+               "deep learning", "natural language processing", "statistics", "mathematics",
+               "statistical analysis", "data analysis", "data analytics", "operations research",
+               "business intelligence", "data visualization", "data engineering", "economics"}
+
+
 def prose_case(text: str, terms, jd_text: str = "") -> str:
     """A job term written mid-sentence in the list's capitals ("applying Statistical analysis")
     reads as pasted in. Where the job ad itself writes the term in lower case, the bullet does
@@ -252,7 +260,7 @@ def prose_case(text: str, terms, jd_text: str = "") -> str:
     import re as _re
     for t in terms or []:
         low = str(t).lower()
-        if not t or str(t) == low or low not in (jd_text or ""):
+        if not t or str(t) == low or (low not in (jd_text or "") and low not in PROSE_LOWER):
             continue
         pat = _re.compile(r"(?<![A-Za-z0-9])" + _re.escape(str(t)) + r"(?![A-Za-z0-9])")
         def fix(m):
