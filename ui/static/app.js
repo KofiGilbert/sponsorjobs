@@ -1473,7 +1473,7 @@
         </div>`;
       $("#extCopy").addEventListener("click", async (e) => {
         try { await navigator.clipboard.writeText(folder); e.target.textContent = "Copied"; }
-        catch { e.target.textContent = "Select the path above and copy it"; }
+        catch { e.target.textContent = I18N.t("agent.selectPath", "Select the path above and copy it"); }
       });
       $("#extHide").addEventListener("click", () => { el.hidden = true; });
     });
@@ -5494,7 +5494,7 @@
       const res = await fetch("/api/profile/photo", { method: "POST", body: fd });
       const r = await res.json().catch(() => ({}));
       if (!res.ok || r.error) throw new Error(r.error || ("HTTP " + res.status));
-      loadPhoto(); toast("Photo updated.");
+      loadPhoto(); toast(MT("acct.photoUpdated", "Photo updated."));
     } catch (err) { toast(err.message || "Couldn't save that photo."); }
     finally { e.target.value = ""; }
   });
@@ -7318,7 +7318,7 @@
       <span class="proj-empty-mark" aria-hidden="true">${PROJ_ICO.code.replace(/width="16" height="16"/, 'width="26" height="26"')}<span class="proj-empty-badge">${PROJ_ICO.check}</span></span>
       <h2 class="proj-empty-h" id="projEmptyH">Show what you can build</h2>
       <p class="proj-empty-sub">A project you can explain is proof employers trust.</p>
-      <ol class="proj-flow" aria-label="How it works">
+      <ol class="proj-flow" aria-label="${esc(PT("projects.howItWorks", "How it works"))}">
         ${node(0, PROJ_ICO.plus, "Add")}${node(1, PROJ_ICO.steps, "Build")}${node(2, PROJ_ICO.talk, "Defend")}${node(3, PROJ_ICO.check, "Verified")}
       </ol>
       <div class="proj-empty-acts">
@@ -7842,7 +7842,7 @@
   async function startBuildGuide(p) {
     if (!p) return;
     BUILD = { id: p.id, title: p.title, milestones: p.plan?.milestones || [], done: new Set(p.done || []) };
-    $("#projBuildTitle").textContent = `Build: ${p.title}`;
+    $("#projBuildTitle").textContent = PT("projects.buildTitle", "Build: {t}").replace("{t}", p.title);
     $("#projList").hidden = true; $("#projForm").hidden = true; $("#projIdeas").hidden = true; $("#projBuild").hidden = false;
     $("#projBuildFoot").hidden = true;
     if (BUILD.milestones.length) { renderPlan(); }
@@ -7907,7 +7907,7 @@
     ansBox.hidden = false; ansBox.textContent = "…";
     try {
       const d = await api(`/api/projects/${BUILD.id}/coach`, { index: i, question: q });
-      ansBox.textContent = d.answer || "No answer came back.";
+      ansBox.textContent = d.answer || PT("projects.noAnswer", "No answer came back.");
     } catch (err) { ansBox.textContent = err.message || "Couldn't answer right now."; }
     finally { btn.disabled = false; btn.textContent = "Ask"; }
   }
@@ -7917,7 +7917,7 @@
   async function startDefend(p) {
     if (!p) return;
     DEFEND_ID = p.id;
-    $("#projTestTitle").textContent = `Defend: ${p.title}`;
+    $("#projTestTitle").textContent = PT("projects.defendTitle", "Defend: {t}").replace("{t}", p.title);
     $("#projResult").hidden = true; $("#projSubmit").hidden = true;
     $("#projQuestions").innerHTML = `<div class="empty">Preparing your questions…</div>`;
     $("#projList").hidden = true; $("#projForm").hidden = true; $("#projTest").hidden = false;
@@ -7927,7 +7927,7 @@
       $("#projQuestions").innerHTML = DEFEND_QS.map((q, i) => `
         <div class="proj-q">
           <div class="proj-q-t">${i + 1}. ${esc(q)}</div>
-          <textarea class="fld proj-q-a" rows="3" data-i="${i}" placeholder="Answer in your own words, as you would in an interview…"></textarea>
+          <textarea class="fld proj-q-a" rows="3" data-i="${i}" placeholder="${esc(PT("projects.answerPh", "Answer in your own words, as you would in an interview…"))}"></textarea>
         </div>`).join("");
       $("#projSubmit").hidden = false;
     } catch (err) {
@@ -7940,7 +7940,7 @@
     const btn = $("#projSubmit"); btn.disabled = true; btn.textContent = "Reviewing…";
     try { renderDefendResult(await api(`/api/projects/${DEFEND_ID}/grade`, { answers })); }
     catch (err) { const b = $("#projResult"); b.hidden = false; b.innerHTML = `<div class="proj-verdict fail">Couldn't review this right now.</div>`; }
-    finally { btn.disabled = false; btn.textContent = "Submit for review"; }
+    finally { btn.disabled = false; btn.textContent = PT("projects.submitReview", "Submit for review"); }
   });
   function renderDefendResult(r) {
     const box = $("#projResult"); box.hidden = false;
@@ -7954,12 +7954,13 @@
         ${r.pass ? `<button class="btn btn-primary btn-sm" id="projResultCv" type="button">Add to Resume</button>` : `<button class="btn btn-primary btn-sm" id="projRetry" type="button">Try again</button>`}
         <button class="btn btn-ghost btn-sm" id="projResultBack" type="button">Back to projects</button>
       </div>`;
-    $("#projResultCv")?.addEventListener("click", async () => { await fetch(`/api/projects/${DEFEND_ID}/tocv`, { method: "POST" }); toast("Added to your resume material."); $("#projTest").hidden = true; $("#projList").hidden = false; loadProjects(); });
+    $("#projResultCv")?.addEventListener("click", async () => { await fetch(`/api/projects/${DEFEND_ID}/tocv`, { method: "POST" }); toast(PT("projects.addedToCv", "Added to your resume material.")); $("#projTest").hidden = true; $("#projList").hidden = false; loadProjects(); });
     $("#projRetry")?.addEventListener("click", () => startDefend(PROJECTS.find(x => x.id === DEFEND_ID)));
     $("#projResultBack")?.addEventListener("click", () => { $("#projTest").hidden = true; $("#projList").hidden = false; loadProjects(); });
   }
   async function addToCv(p) {
-    try { const r = await fetch(`/api/projects/${p.id}/tocv`, { method: "POST" }); toast(r.ok ? "Added to your resume material." : "Pass the understanding test first."); }
+    try { const r = await fetch(`/api/projects/${p.id}/tocv`, { method: "POST" }); toast(r.ok ? PT("projects.addedToCv", "Added to your resume material.")
+                                            : PT("projects.passFirst", "Pass the understanding test first.")); }
     catch { toast("Couldn't add to resume."); }
   }
   async function publishToGithub(p, btn) {
@@ -7967,7 +7968,7 @@
     if (btn) { btn.disabled = true; btn.textContent = "Publishing…"; }
     try {
       await api(`/api/projects/${p.id}/publish`, {});   // {} body -> POST
-      toast(p.repo_url ? PT("projects.nowPublic", "Your repo is public now.") : "Published to GitHub.");
+      toast(p.repo_url ? PT("projects.nowPublic", "Your repo is public now.") : PT("projects.published", "Published to GitHub."));
       loadProjects();   // re-render: the GitHub mark beside the title loses its lock
     } catch (err) {
       toast(err.message || "Couldn't publish to GitHub.");
@@ -9395,7 +9396,7 @@
       AI_CONFIGURED = !!s.configured;
       if (s.provider) AI_PROVIDER_SEL = s.provider;
       $("#aiDot")?.classList.toggle("on", AI_CONFIGURED);
-      const lbl = $("#aiChipLabel"); if (lbl) lbl.textContent = AI_CONFIGURED ? "AI connected" : "Connect AI";
+      const lbl = $("#aiChipLabel"); if (lbl) lbl.textContent = AI_CONFIGURED ? T("ai.connected", "AI connected") : T("ai.connect", "Connect AI");
       const mk = $("#aiMasked"); if (mk) mk.textContent = s.masked || "";
       const sl = $("#setKeyLabel"); if (sl) sl.textContent = `${s.provider_label || "Anthropic"} API key`;
       // Official edition with the managed AI up: no key talk anywhere. The key stays reachable
@@ -9407,7 +9408,7 @@
       document.documentElement.classList.toggle("is-managed", MANAGED_AI);
       const gk = $("#menuGetKey"); if (gk) gk.hidden = MANAGED_AI;
       if (MANAGED_AI) {
-        if (sl) sl.textContent = "Advanced: your own AI key";
+        if (sl) sl.textContent = T("ai.ownKey", "Advanced: your own AI key");
         const st = $("#setKeyState");
         if (st && !s.configured) st.textContent = "Optional. SponsorJobs' AI is included.";
       }
@@ -9442,7 +9443,7 @@
       hideOutage();
       if (lastCall) await api(lastCall.url, lastCall.body).catch(() => {});
     } catch { /* the outage screen stays up and re-states the reason */ }
-    btn.disabled = false; btn.textContent = "Try again";
+    btn.disabled = false; btn.textContent = T("common.tryAgain", "Try again");
   });
 
   /* ------------------------------------------------- account menu + settings */
@@ -10042,7 +10043,7 @@
   $("#memOpenSettings")?.addEventListener("click", () => { closeSettings(); openMemory({ origin: "settings" }); });
   $("#memAddBtn")?.addEventListener("click", async () => {
     const ta = $("#memAddText"), text = (ta?.value || "").trim();
-    if (!text) { toast("Write something for me to remember."); return; }
+    if (!text) { toast(MT("mem.writeSomething", "Write something for me to remember.")); return; }
     const btn = $("#memAddBtn"); btn.disabled = true; btn.textContent = "Saving…";
     try {
       await api("/api/memory/ingest", { text });
@@ -10055,12 +10056,12 @@
   $("#memAssessBtn")?.addEventListener("click", async () => {
     const text = ($("#memAddText")?.value || "").trim();
     const out = $("#memAssessOut"); if (!out) return;
-    if (!text) { toast("Write something to check first."); return; }
+    if (!text) { toast(MT("mem.writeToCheck", "Write something to check first.")); return; }
     const btn = $("#memAssessBtn"); btn.disabled = true; btn.textContent = "Checking…";
     out.hidden = false; out.innerHTML = `<div class="empty">Reading it…</div>`;
     let a;
     try { a = (await api("/api/memory/assess", { text })).assessment || {}; }
-    catch (err) { out.innerHTML = `<div class="empty">${esc(err.message || "Couldn't check that.")}</div>`; btn.disabled = false; btn.textContent = "Is this resume-worthy?"; return; }
+    catch (err) { out.innerHTML = `<div class="empty">${esc(err.message || MT("mem.checkFailed", "Couldn't check that."))}</div>`; btn.disabled = false; btn.textContent = "Is this resume-worthy?"; return; }
     btn.disabled = false; btn.textContent = "Is this resume-worthy?";
     if (a.worthy) {
       out.innerHTML = `<div class="mem-assess-yes"><b>Yes, this belongs on your resume.</b> ${esc(a.reason || "")}
@@ -10070,11 +10071,11 @@
       $("#memHighlight")?.addEventListener("click", async () => {
         try { await api("/api/memory/ingest", { text, source: "highlight" });
           if ($("#memAddText")) $("#memAddText").value = "";
-          out.hidden = true; toast("Saved as a highlight."); memLoad();
+          out.hidden = true; toast(MT("mem.savedHighlight", "Saved as a highlight.")); memLoad();
         } catch (err) { toast(err.message || "Couldn't save."); }
       });
     } else {
-      out.innerHTML = `<div class="mem-assess-no">${esc(a.reason || "Not quite resume-worthy yet, add a concrete action and a result.")}</div>`;
+      out.innerHTML = `<div class="mem-assess-no">${esc(a.reason || MT("mem.notWorthy", "Not quite resume-worthy yet, add a concrete action and a result."))}</div>`;
     }
   });
   $("#memAddFile")?.addEventListener("change", async (e) => {
@@ -10224,7 +10225,7 @@
   }
   function connPill(el, ok, onText, offText) {
     if (!el) return;
-    el.textContent = ok ? (onText || "Connected") : (offText || "Not connected");
+    el.textContent = ok ? (onText || helpT("conn.on", "Connected")) : (offText || helpT("conn.off", "Not connected"));
     el.classList.toggle("on", !!ok);
   }
   async function renderConnections() {
@@ -10240,9 +10241,10 @@
       const alias = g.alias || "";
       const on = !!(g.configured || g.method);
       connPill($("#gmStatus"), on, alias ? alias : (g.email ? `Connected, ${g.email}` : "Connected"), "Not connected");
-      if ($("#gmAlias")) { $("#gmAlias").textContent = alias ? "Stop using it" : "Get an address"; $("#gmAlias").dataset.on = alias ? "1" : ""; }
+      if ($("#gmAlias")) { $("#gmAlias").textContent = alias ? helpT("mail.stop", "Stop using it") : helpT("mail.get", "Get an address"); $("#gmAlias").dataset.on = alias ? "1" : ""; }
       const imapOn = g.method === "imap";
-      if ($("#gmHelp")) { $("#gmHelp").textContent = imapOn ? "Disconnect your own inbox" : "Advanced: use your own inbox instead"; $("#gmHelp").dataset.on = imapOn ? "1" : ""; }
+      if ($("#gmHelp")) { $("#gmHelp").textContent = imapOn ? helpT("mail.disconnectOwn", "Disconnect your own inbox")
+                                          : helpT("mail.useOwn", "Advanced: use your own inbox instead"); $("#gmHelp").dataset.on = imapOn ? "1" : ""; }
       if ($("#gmDetail")) { $("#gmDetail").textContent = alias
         ? "Applications use this address. Codes and links reach the agent; the full emails and recruiter replies land in your real inbox."
         : (imapOn ? "SponsorJobs reads only your applications' verification codes, links and recruiter replies. It never sends mail." : "");
@@ -10279,7 +10281,7 @@
       } else {
         const r = await fetch("/api/inbox/alias", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         const d = await r.json().catch(() => ({}));
-        if (!r.ok || d.ok === false) toast(d.error || "Could not create the address.");
+        if (!r.ok || d.ok === false) toast(d.error || helpT("mail.createFailed", "Could not create the address."));
       }
     } finally { b.disabled = false; }
     renderConnections();
@@ -10563,7 +10565,7 @@
         if (!LOCK_BOOTED) { LOCK_BOOTED = true; boot(); }
         else { loadDashboard(); api("/api/profile").then(paintAccount).catch(() => {}); }
       } else {
-        if (err) { err.textContent = "That passcode is not correct."; err.hidden = false; }
+        if (err) { err.textContent = helpT("lock.wrong", "That passcode is not correct."); err.hidden = false; }
         if (inp) { inp.value = ""; inp.focus(); }
       }
     } catch {
@@ -10590,14 +10592,14 @@
       ? "On. SponsorJobs asks for your passcode when it starts, and your API key is encrypted at rest."
       : "Off. Anyone who opens SponsorJobs on this computer can use it and see your data.";
     if (btn) {
-      btn.textContent = st.enabled ? "Change passcode" : "Set passcode";
+      btn.textContent = st.enabled ? helpT("lock.change", "Change passcode") : helpT("lock.set", "Set passcode");
       // Primary/filled when it's the pane's main action (off); recede to ghost once set.
       btn.classList.toggle("btn-primary", !st.enabled);
       btn.classList.toggle("btn-ghost", st.enabled);
     }
     if ($("#lockCurrent")) $("#lockCurrent").hidden = !st.enabled;
     if ($("#lockRemove")) $("#lockRemove").hidden = !st.enabled;
-    if ($("#lockSave")) $("#lockSave").textContent = st.enabled ? "Change" : "Turn on";
+    if ($("#lockSave")) $("#lockSave").textContent = st.enabled ? helpT("lock.changeBtn", "Change") : helpT("lock.turnOn", "Turn on");
   }
   function lockMsg(t, cls) { const m = $("#lockMsg"); if (m) { m.textContent = t; m.className = "lock-form-msg " + cls; m.hidden = false; } }
   $("#setLockBtn")?.addEventListener("click", () => {
@@ -10655,7 +10657,7 @@
     aiFlash(`Checking your key with ${AI_PROVIDERS[AI_PROVIDER_SEL].label}…`, true);
     try {
       const r = await api("/api/apikey", { key, provider: AI_PROVIDER_SEL });
-      if (r.ok) { await loadApiKeyStatus(); closeAiModal(); toast("Connected. Try that again and it will work."); }
+      if (r.ok) { await loadApiKeyStatus(); closeAiModal(); toast(helpT("ai.connectedRetry", "Connected. Try that again and it will work.")); }
     } catch (e) { aiFlash(e.message || "Couldn't save the key.", false); }
     finally { btn.disabled = false; btn.textContent = "Connect"; }
   });
@@ -13404,7 +13406,7 @@
       const a = document.getElementById("updateNote");
       if (!a || !info || !info.url) return;
       a.href = info.url;
-      a.textContent = `Version ${info.version} is out. Download it`;
+      a.textContent = ST("update.available", "Version {v} is out. Download it").replace("{v}", info.version);
       a.hidden = false;
       a.onclick = (e) => { if (shell.openReleasePage) { e.preventDefault(); shell.openReleasePage(info.url); } };
     });
