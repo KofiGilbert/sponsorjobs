@@ -7,9 +7,10 @@ tailored PDF alongside a JD keyword coverage report.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from llm import textguard
 from llm.base import LLMBackend
 from .compiler import CompileResult, compile_tex
 from .keywords import CoverageReport, build_coverage_report, supported_terms
@@ -33,6 +34,9 @@ class TailorResult:
     heal: HealResult
     diff: str
     edits: dict[str, str]
+    # What llm/textguard.py removed from the posting before any model saw it. Empty
+    # on an ordinary posting; a line per finding when there was something hidden.
+    posting_findings: list = field(default_factory=list)
 
     def summary(self) -> str:
         lines = [
@@ -66,6 +70,13 @@ def tailor_resume(
     """
     workdir = Path(workdir)
     template = LatexTemplate(template_source)
+
+    # The posting is third-party text and it is about to be put in front of a model
+    # next to the person's own material. Strip what a person cannot see but a model
+    # can read (llm/textguard.py) before anything downstream touches it, and keep
+    # what was found so the result can show the person.
+    guarded = textguard.clean(jd_text)
+    jd_text = guarded.text
 
     # Escape every value the LLM returns so real prose (with %, &, $, ...) can't
     # break the compile; also feed the model clean, unescaped originals.
@@ -126,5 +137,6 @@ def tailor_resume(
         coverage=coverage,
         heal=heal,
         diff=diff,
+        posting_findings=guarded.findings,
         edits=final_edits,
     )

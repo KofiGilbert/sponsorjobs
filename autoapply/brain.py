@@ -22,6 +22,8 @@ import json
 import re
 
 from autoapply.planner import is_fact_question
+from llm import textguard
+from llm.textguard import clean_text
 
 # Under 60 lines, the short "flash" shape: rules first, then the exact output schema. The person
 # never reads this, but the model copies what it sees, so no dashes (tests/test_no_dashes.py).
@@ -306,6 +308,12 @@ def build_user_message(req: dict, placeholders: list, nudges: list, values: dict
     view = str(req.get("view") or "").strip()
     hist = _history_lines(req.get("history") or [])
     view = mask_values(mask_self_id(view), withheld)
+    # The page is third-party text. agent_view.js drops what a person cannot SEE;
+    # this drops what a person cannot see INSIDE text that is visible to them
+    # (llm/textguard.py). It runs before redact so the prompt only ever carries
+    # cleaned text, whatever path the caller took to get here.
+    view = clean_text(view)
+    hist = [clean_text(h) for h in hist]
     if values:
         view = redact(view, values)
         hist = [redact(h, values) for h in hist]
@@ -315,7 +323,7 @@ def build_user_message(req: dict, placeholders: list, nudges: list, values: dict
     max_steps = int(req.get("max_steps") or 40)
     today = str(req.get("today") or _dt.date.today().isoformat())
     plan = clean_plan(req.get("plan"))
-    obs = observation_lines(req.get("observations"))
+    obs = [clean_text(o) for o in observation_lines(req.get("observations"))]
     if values:
         obs = [redact(o, values) for o in obs]
     portal = req.get("portal") if isinstance(req.get("portal"), dict) else {}
@@ -844,6 +852,12 @@ def step(req: dict, llm, applicant: dict, portal: dict | None = None, *, placeho
         reply["actions"] = []
         reply["done"] = {"outcome": "ready_to_submit", "reason": "the application is at its submit button"}
     notes: list[str] = []
+    # What the guard took out of this page, so the person sees it rather than only
+    # the model benefiting from it. It advises: nothing here stops the run.
+    guard = textguard.clean(str(req.get("view") or ""))
+    for finding in guard.findings:
+        notes.append(f"hidden text on this page ({finding.kind}): {finding.detail}"
+                     + (f' -> {finding.quote}' if finding.quote else ""))
     # LinkedIn is never driven (CLAUDE.md section 7): a click on it is dropped here as well as
     # refused in the shell.
     kept = []

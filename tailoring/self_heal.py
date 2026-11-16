@@ -3,11 +3,14 @@
 Given a template, a set of proposed bullet edits, and a baseline compile of the
 untouched template, iterate:
 
-  splice -> compile -> check (exit 0, page count unchanged, no NEW overfull hbox)
+  splice -> compile -> check (exit 0, page count unchanged, no NEW overfull hbox,
+                              and the PDF still reads as text to an ATS)
   -> if failing, identify the offending bullet(s), shorten them, recompile
   -> cap retries; on exhaustion roll back to the last known-good source.
 
-We never ship an output that hasn't passed all three checks.
+We never ship an output that hasn't passed all four checks. The fourth one
+(tailoring/ats_check.py) is the only one that opens the PDF: the other three
+read the LaTeX log, which cannot tell us whether the text layer survived.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from llm.base import LLMBackend
+from .ats_check import check_pdf
 from .compiler import CompileResult, compile_tex
 from .latex_template import Bullet, LatexTemplate
 
@@ -57,6 +61,25 @@ def _new_overfulls(baseline: CompileResult, candidate: CompileResult) -> list:
     return fresh, max(surplus, 0)
 
 
+def _ats_reasons(candidate: CompileResult) -> list[str]:
+    """What an ATS would fail to read in the candidate PDF (tailoring/ats_check.py).
+
+    The LaTeX log says nothing about the text layer, so a resume can clear the
+    other three checks and still import as noise. The source is read back from
+    the compile's own ``tex_path`` rather than passed in, so every caller of
+    ``_checks`` gets the full check without having to thread it through.
+    """
+    if not candidate.ok or candidate.pdf_path is None:
+        return []     # nothing to read; the compile failure is already reported
+    source = ""
+    if candidate.tex_path is not None:
+        try:
+            source = Path(candidate.tex_path).read_text(encoding="utf-8")
+        except OSError:
+            source = ""
+    return check_pdf(candidate.pdf_path, source).reasons()
+
+
 def _checks(baseline: CompileResult, candidate: CompileResult):
     """Return (passed, reasons, fresh_overfulls, extra_overfull_count)."""
     reasons: list[str] = []
@@ -73,6 +96,7 @@ def _checks(baseline: CompileResult, candidate: CompileResult):
     fresh, extra = _new_overfulls(baseline, candidate)
     if fresh or extra:
         reasons.append(f"{len(fresh) + extra} new overfull hbox warning(s)")
+    reasons.extend(_ats_reasons(candidate))
     return (not reasons), reasons, fresh, extra
 
 

@@ -2747,8 +2747,18 @@ def record_cover_letter(rid):
     review = review_cover_letter(text, company=company, profile=_saved_full_profile(), jd_text=jd)
     skills_used = supported_skills(jd, _saved_full_profile()) if jd else []
     has_pdf = (WORKDIR / f"cover-{rid}.pdf").exists()
+    # What llm/textguard.py took out of the posting before a model read it. Computed from the
+    # JD rather than taken from the draft call, so the line stays under a letter the person
+    # has since edited by hand: it says what the POSTING carried, not what this draft did.
+    # Structured rather than one joined string: the panel leads with the sentence that was
+    # hidden, because that is the part the person needs to read, and keeps the character
+    # count as the quiet half (tailor-ux: few words).
+    from llm import textguard
+    findings = [{"detail": f.detail, "quote": f.quote}
+                for f in textguard.clean(jd).findings] if jd else []
     return jsonify({"ok": True, "cover_letter": text, "pdf": has_pdf,
-                    "review": review, "skills_used": skills_used})
+                    "review": review, "skills_used": skills_used,
+                    "posting_findings": findings})
 
 
 def _durable_profile() -> dict:
@@ -7239,12 +7249,28 @@ def github_save():
 @app.post("/api/github/disconnect")
 @_guard
 def github_disconnect():
-    """Forget the token here. The App stays installed on GitHub until the person removes it
-    there, so the answer carries where to do that."""
+    """Revoke the token on GitHub, then forget it here.
+
+    Forgetting it locally was never enough: the person's authorization stayed live on
+    github.com until they removed it by hand, so "Disconnect" did less than it said. The
+    revoke goes first, through the Worker (only it has the client secret).
+
+    A revoke we could not do never blocks the disconnect. Offline, or against a broker with no
+    GitHub App set up, the local credential still goes and the answer says plainly that access
+    is still live over there, with the link to remove it. The App install itself always stays
+    until the person removes it; the answer carries where to do that either way.
+    """
     from ui import github_app
+    token = _cred("GITHUB_TOKEN") or ""
+    out = github_app.revoke(BROKER_URL, token) if token else {"ok": True, "already": True}
     _forget_github()
     github_app.cancel()
-    return jsonify({"ok": True, "manage_url": github_app.manage_url(BROKER_URL)})
+    answer = {"ok": True, "revoked": bool(out.get("ok")),
+              "manage_url": github_app.manage_url(BROKER_URL)}
+    if not out.get("ok"):
+        answer["reason"] = out.get("reason") or "error"
+        answer["message"] = "Disconnected here; remove access on GitHub too."
+    return jsonify(answer)
 
 
 # ---- Sign in with GitHub (the default way to connect): GitHub's OAuth device flow, the way

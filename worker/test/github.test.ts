@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import {
-  GITHUB_AUTHORIZE, GITHUB_INSTALLATIONS, GITHUB_TOKEN, LIMITS, READY_TTL_SECONDS, s256, STATE_COOKIE, seal, unseal,
+  GITHUB_AUTHORIZE, GITHUB_INSTALLATIONS, GITHUB_TOKEN, LIMITS, READY_TTL_SECONDS, revokeUrl, s256, STATE_COOKIE, seal, unseal,
 } from "../src/github";
 import { call, env, freshIp } from "./helpers";
 
@@ -289,5 +289,94 @@ describe("sealing", () => {
     const s = await seal("key-one", "hello");
     expect(await unseal("key-one", s)).toBe("hello");
     expect(await unseal("key-two", s)).toBeNull();
+  });
+});
+
+// ---- Disconnect GitHub really revokes (issue #255) ------------------------------------------
+// The app used to forget the token locally and leave the authorization live on github.com.
+// /github/revoke is the half only the Worker can do, because it needs the client secret.
+describe("POST /github/revoke", () => {
+  const CLIENT_ID = APP.GITHUB_APP_CLIENT_ID!;
+
+  /** Stub GitHub's "Delete an app token" with a status, recording what we sent it. */
+  function stubRevoke(status: number) {
+    const seen: { url: string; method: string; auth: string; body: unknown }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const req = new Request(input as RequestInfo, init as RequestInit);
+      seen.push({ url: req.url, method: req.method, auth: req.headers.get("authorization") ?? "",
+                  body: await req.json().catch(() => null) });
+      return new Response(null, { status });
+    });
+    return seen;
+  }
+
+  const revoke = (body: unknown, e: Partial<Env> = APP, ip = freshIp()) =>
+    call("/github/revoke", { body, env: e, headers: { "CF-Connecting-IP": ip } });
+
+  it("revokes the token with the App's own credentials", async () => {
+    const seen = stubRevoke(204);
+    const r = await revoke({ access_token: ACCESS });
+    expect(r.status).toBe(200);
+    expect(r.data).toEqual({ ok: true });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.url).toBe(revokeUrl(CLIENT_ID));
+    expect(seen[0]!.method).toBe("DELETE");
+    // Basic auth with the client id and secret, which is what the endpoint requires.
+    expect(seen[0]!.auth).toBe(`Basic ${btoa(`${CLIENT_ID}:${APP.GITHUB_APP_CLIENT_SECRET}`)}`);
+    expect(seen[0]!.body).toEqual({ access_token: ACCESS });
+  });
+
+  it("treats a token GitHub does not know as already revoked", async () => {
+    stubRevoke(404);
+    const r = await revoke({ access_token: ACCESS });
+    expect(r.status).toBe(200);
+    expect(r.data).toEqual({ ok: true, already: true });
+  });
+
+  it("reports a refusal rather than pretending it worked", async () => {
+    stubRevoke(422);
+    const r = await revoke({ access_token: ACCESS });
+    expect(r.status).toBe(502);
+    expect(r.data.reason).toBe("http_422");
+  });
+
+  it("says unreachable when GitHub cannot be reached", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => { throw new Error("network"); });
+    const r = await revoke({ access_token: ACCESS });
+    expect(r.status).toBe(502);
+    expect(r.data.reason).toBe("unreachable");
+  });
+
+  it("never calls GitHub without a usable token", async () => {
+    const seen = stubRevoke(204);
+    for (const body of [{}, { access_token: "" }, { access_token: "x".repeat(513) }]) {
+      const r = await revoke(body);
+      expect(r.status).toBe(400);
+      expect(r.data.reason).toBe("bad_token");
+    }
+    expect(seen).toHaveLength(0);
+  });
+
+  it("is 503 until the App is configured, and touches nothing", async () => {
+    const seen = stubRevoke(204);
+    const r = await revoke({ access_token: ACCESS },
+                           { GITHUB_APP_CLIENT_ID: undefined, GITHUB_APP_CLIENT_SECRET: undefined,
+                             GITHUB_APP_SLUG: undefined });
+    expect(r.status).toBe(503);
+    expect(r.data.reason).toBe("not_configured");
+    expect(seen).toHaveLength(0);
+  });
+
+  it("rate limits one network, and the token is in no response", async () => {
+    stubRevoke(204);
+    const ip = freshIp();
+    const texts: string[] = [];
+    for (let i = 0; i <= LIMITS.revoke; i++) {
+      const r = await revoke({ access_token: ACCESS }, APP, ip);
+      texts.push(r.text);
+      if (i === LIMITS.revoke) expect(r.status).toBe(429);
+    }
+    for (const t of texts) expect(t).not.toContain(ACCESS);
   });
 });
