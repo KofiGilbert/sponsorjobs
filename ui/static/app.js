@@ -3083,6 +3083,8 @@
     renderChoiceLine(CHOICES);
     if (st.choice_saved) toast(st.choice_saved);
     if (st.choice_error) toast(st.choice_error);
+    if (st.posting_findings) toast(st.posting_findings);
+    if (st.ats_note) toast(st.ats_note);
   }
   async function choiceCall(url, body, btn) {
     document.querySelectorAll("#cvBody .cv-sw, #cvBody .cv-swap, #choiceLine button").forEach(b => { b.disabled = true; });
@@ -3748,6 +3750,8 @@
     renderChoiceLine(CHOICES);
     renderProposals(st.rule_proposals);
     if (st.choice_saved) toast(st.choice_saved);
+    if (st.posting_findings) toast(st.posting_findings);   // hidden text removed from the posting
+    if (st.ats_note) toast(st.ats_note);                     // the PDF as an ATS reads it
 
     if (st.coverage) {
       // No measurable job terms: the percentage would be of nothing, so the bar stays hidden.

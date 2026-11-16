@@ -1687,6 +1687,8 @@ class AssembleResult:
     profile_used: dict
     empty_template_source: str = ""  # the original template (shape/placeholder)
     fill_ratio: float | None = None  # share of the text block used; None if unmeasured
+    # What an ATS would fail to read in the shipped PDF (tailoring/ats_check.py); empty is clean.
+    ats_issues: list = field(default_factory=list)
     # Figures in the tailored bullets with no origin in the person's material. Flagged
     # for the review, never a reason to fail the build (tailoring/fact_gate.py).
     fact_flags: list = field(default_factory=list)
@@ -3246,6 +3248,21 @@ def assemble_cv(
         jd_skills = None
     coverage = build_coverage_report(jd_text, cv_text, used, terms=jd_skills)
     one_page = bool(result and result.ok and result.pages == 1)
+    # Read the finished PDF the way an ATS does (tailoring/ats_check.py): text missing from the
+    # layer, a date range on a Unicode dash, ligatures. The chat builder ships this PDF, so the
+    # same check the tailor's self-heal runs must run here too; a finding is reported, never a
+    # reason to lose the page.
+    ats_issues: list = []
+    if one_page and result.pdf_path:
+        try:
+            from .ats_check import check_pdf
+            src = Path(result.tex_path).read_text(encoding="utf-8") if getattr(
+                result, "tex_path", None) else tex
+            ats_issues = check_pdf(result.pdf_path, src).reasons()
+        except Exception as exc:                         # noqa: BLE001 - a check, never the build
+            _fill_log(step="ats-error", label="page", why=str(exc)[:200])
+        if ats_issues:
+            _fill_log(step="ats", label="page", why=ats_issues)
     # Fill is only meaningful on a one-page compile (\pagetotal reports the LAST page).
     fill = result.fill_ratio if (result and one_page) else None
     underfull = fill is not None and fill < TARGET_FILL
@@ -3260,6 +3277,7 @@ def assemble_cv(
                 else "clean"),
         tex_source=tex,
         pdf_path=result.pdf_path if result else None,
+        ats_issues=ats_issues,
         coverage=coverage,
         compile=result,
         attempts=attempts,

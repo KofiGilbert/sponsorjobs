@@ -1177,7 +1177,14 @@ class WebIntake:
     def __init__(self, jd_text, template_source, llm, memory, records, workdir,
                  profile_name="default", jobname="cv", palace_dir=None,
                  template_name=None):
-        self.jd = jd_text
+        # The posting is cleaned of what a person cannot see (llm/textguard.py) before any model
+        # or the keyword list reads it: hidden instructions, zero-width and bidi characters. The
+        # finding is said once, in the first state the chat shows.
+        from llm import textguard
+        _guard = textguard.clean(jd_text or "")
+        self.jd = _guard.text
+        self.posting_findings = _guard.summary()
+        self._ats_told = None
         self.template = template_source
         # The selected template's interview config, slot schema + question bank the
         # LLM draws on to converse naturally (one template today; future picker passes
@@ -4170,6 +4177,16 @@ class WebIntake:
                               "about what is missing")
 
     # ------------------------------------------------------------------ client state
+    def _ats_note(self) -> str:
+        """One line when the shipped PDF has something an ATS would not read
+        (tailoring/ats_check.py), said once per set of findings."""
+        ats = list(getattr(self.assembled, "ats_issues", None) or [])
+        if not ats or ats == getattr(self, "_ats_told", None):
+            return ""
+        self._ats_told = ats
+        return ("An applicant tracking system may not read all of this page: "
+                + "; ".join(a.replace("ATS text layer: ", "") for a in ats[:2]) + ".")
+
     def _state(self, messages=None, extra=None, cards=None):
         s = {
             "phase": self.stage,
@@ -4206,6 +4223,12 @@ class WebIntake:
                                   in zip(req_open, self._required_labels(req_open))]
         if self.recalled:
             s["recalled"] = self.recalled
+        if getattr(self, "posting_findings", ""):
+            s["posting_findings"] = self.posting_findings
+            self.posting_findings = ""
+        note = self._ats_note()
+        if note:
+            s["ats_note"] = note
         if self.rule_proposals:
             s["rule_proposals"] = list(self.rule_proposals)
         # P1: why these choices, so the person sees the reasoning and can override on the page.
