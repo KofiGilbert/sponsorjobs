@@ -5731,7 +5731,8 @@ class WebIntake:
         return [v["card"]] if v.get("card") else []
 
     CHIPS = 8
-    CHIPS_LINE = "This role also asks for the skills below. Tap any you've used and I'll add it."
+    CHIPS_LINE = ("Optional: the job also asks for the skills below. If you've used any, tap it "
+                  "and I'll add it.")
 
     def _chips_card(self) -> dict | None:
         """The job's terms only the person can claim, as tappable ADD chips (the keyword panel's
@@ -5806,18 +5807,16 @@ class WebIntake:
         elif flagged or facts.get("roles_without_title") or facts.get("roles_without_dates"):
             nxt = "Next: fill in what is missing right on the page."
             action_card = {"type": "buttons", "buttons": [{"label": "Edit the page", "nav": "edit"}]}
-        elif v and v.get("card"):
-            nxt = f"Next: tap {v['card']['buttons'][0]['label']} below."
-            action_card = v["card"]
-        elif chips:
-            nxt = "Next: tap the skills above that you've used."
         else:
-            nxt = "Next: click Accept & Save to keep it in Resumes."
+            # The page is done: say so. A better project and the skills only the person can claim
+            # are offered, never set as tasks (Kofi, 2026-11-16: "You keep giving me work to do").
+            nxt = "It's ready to send. Click Accept & Save to keep it in Resumes."
             action_card = {"type": "buttons", "buttons": [{"label": "Accept & Save", "nav": "accept"}]}
-        pending = bool(v or chips or missing or not one_page)
+        pending = bool(missing or not one_page)
         head = "Almost. Here's where it stands:" if pending else "Yes, it's ready. Here's where it stands:"
         text = head + "\n" + "\n".join(lines) + "\n\n" + nxt
-        cards = [c for c in (chips, action_card) if c]
+        cards = [c for c in (chips, (v or {}).get("card") if one_page and not missing else None,
+                             action_card) if c]
         self._model_said(text)            # said exactly as read from the page
         self._append("agent", text)
         if cards:
@@ -5986,7 +5985,9 @@ class WebIntake:
         used = getattr(self.assembled, "profile_used", None) or self.profile or {}
         names = [str(p.get("title") or p.get("org") or "").strip()
                  for p in (used.get("projects") or []) if isinstance(p, dict)
-                 and not str(p.get("dates") or "").strip()]
+                 and not str(p.get("dates") or "").strip()
+                 # a personal project (repo link) prints no dates by design: nothing to nag about
+                 and not (p.get("link") or p.get("url") or p.get("personal"))]
         names = [n for n in names if n]
         if not names:
             return ""

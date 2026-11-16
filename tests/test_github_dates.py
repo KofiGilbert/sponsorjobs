@@ -77,7 +77,8 @@ def test_the_token_is_used_when_saved(gh, tmp_path):
     assert gh.calls[0][1] == "ghp_x"
 
 
-def test_import_fills_from_github_before_asking(gh, tmp_path, monkeypatch):
+def test_import_never_fills_project_dates_from_github(gh, tmp_path, monkeypatch):
+    # 2026-11-16 (Kofi): dates on a project only when the person gives them; GitHub's are not his.
     from docx import Document
     monkeypatch.setattr(app, "DB_PATH", str(tmp_path / "m.db"))
     monkeypatch.setattr(app, "UPLOADS_DIR", tmp_path / "up")
@@ -99,8 +100,7 @@ def test_import_fills_from_github_before_asking(gh, tmp_path, monkeypatch):
         d = app.app.test_client().post("/api/profile/from_cv", data={"file": (f, "r.docx")},
                                        content_type="multipart/form-data").get_json()
     saved = {p["title"]: p for p in app._memory().load("default")["profile"]["projects"]}
-    assert saved["Gate Check"]["dates"].startswith("Jan 2024")       # filled from the repo
-    assert [s["q"] for s in d["missing"]] == ['the dates for your project "Notes App"']   # only the rest
+    assert not saved["Gate Check"].get("dates")                       # nothing from the repo
 
 
 # --- the build's honest line -----------------------------------------------------------------
@@ -134,3 +134,18 @@ def test_build_from_saved_adds_the_line():
     # tail in _review_tail (saved=True) since both build paths share one (2026-11-10).
     src = inspect.getsource(WebIntake._build_from_saved) + inspect.getsource(WebIntake._review_tail)
     assert "saved=True" in src and "say(self.undated_projects_note())" in src
+
+
+def test_a_personal_project_prints_no_dates_and_is_not_nagged_about_them():
+    from tailoring.assembler import project_row
+    row = project_row({"org": "sponsorjobs", "tools": "Python, JavaScript, TypeScript",
+                       "dates": "Oct 2026 - Present", "link": "https://github.com/k/sponsorjobs",
+                       "personal": True})
+    assert row["right"] == "Python, JavaScript, TypeScript" and not row["dates"]
+    row = project_row({"title": "Last-Mile Operations Simulator (Python, simulation)",
+                       "dates": "July 2026", "link": "https://github.com/k/last-mile"})
+    assert row == {"name": "Last-Mile Operations Simulator", "right": "Python, simulation",
+                   "role": "", "dates": ""}
+    s = _session([{"title": "Gate Check", "link": "https://github.com/k/gatecheck"}],
+                 ["experience", "projects"])
+    assert s.undated_projects_note() == ""

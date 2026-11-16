@@ -3529,7 +3529,9 @@
       // A decided action ([Swap it in], [Build 2 projects]): the card's single-use token at
       // /api/session/action, the same as the repo and ideas cards. Used once, it says so.
       if (b.token) {
-        const btn = el("button", "btn btn-sm btn-ghost");
+        // A filled button, so it never reads as one more keyword chip beside the "+ skill" chips
+        // (Kofi, 2026-11-16: "the button should differentiate itself from the keywords").
+        const btn = el("button", "btn btn-sm btn-primary agent-act");
         btn.type = "button"; btn.textContent = unDash(b.label);
         if (card.used) { btn.disabled = true; btn.textContent = unDash(b.label) + " (done)"; }
         btn.addEventListener("click", async () => {
