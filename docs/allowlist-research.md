@@ -376,3 +376,12 @@ with a read-only script.
   only a signed agreement settles what is permitted, and none exists.
 - `robots.txt` governs crawling and is recorded as context only. It is never a basis for a verdict
   here, and should not become one.
+
+## Maintainer note, 2026-11-16 (Claude Code)
+
+Re-read Recruitee's authentication page: it lists `/offers/:offer_slug/candidates` under the
+Careers Site token's scope and states "Deadline for introducing the token to calls is
+10 February 2027". The token is generated in the employer's account, so from that date the path
+is not applicant-usable. Decision: Recruitee stays AUTO until then (the apply operation still
+declares no security today) and turns ASSISTED on 2027-02-10 by itself (`auto_until` in
+`submit/allowlist.py`). Greenhouse's `doc_url` now points at docs.greenhouse.io.
