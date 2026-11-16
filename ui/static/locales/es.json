@@ -1507,5 +1507,14 @@
   "agent.waitExtension": "Esperando la extensión",
   "agent.waitOwnBot": "Esperando tu bot",
   "agent.waitSignIn": "Termina de iniciar sesión",
-  "agent.waitTelegram": "Pulsa Iniciar en Telegram"
+  "agent.waitTelegram": "Pulsa Iniciar en Telegram",
+  "builder.apply": "Postular",
+  "builder.applyNote": "¿Se ve bien? Postula y relleno la solicitud por ti.",
+  "builder.applySaving": "Guardando…",
+  "builder.applyFail": "No se pudo iniciar la solicitud. Inténtalo de nuevo.",
+  "builder.applyAsk": "Pega el enlace de la solicitud y yo me encargo.",
+  "builder.applyAlready": "Ya postulaste a este empleo. Está en el Seguimiento.",
+  "builder.applyingAt": "Postulando a {role} en {company}",
+  "builder.applyingTo": "Postulando a {role}",
+  "builder.thisJob": "este empleo"
 }

@@ -4263,6 +4263,7 @@ class WebIntake:
             except Exception:  # noqa: BLE001 - the page works without its switches
                 pass
             s["one_page"] = bool(self.assembled.ok and self.assembled.compile.pages == 1)
+            s["apply"] = self.apply_target()     # the footer's Apply (ui/app.py session_apply)
             # Flagged placeholder projects block finalization until resolved.
             sugg = self._suggested_projects()
             if sugg:
@@ -8525,6 +8526,21 @@ class WebIntake:
         out = _screening_answers(self.jd, self._drafting_profile(), self.llm, questions)
         self.last_screening = out.get("answers", [])
         return out
+
+    _APPLY_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+", re.I)
+
+    def apply_target(self) -> dict:
+        """Where the review footer's Apply sends this resume: the posting's link when the chat
+        came from a job (start_job), else the first link in the pasted description. ``need_url``
+        when neither is known, so Apply asks once in the chat for the application link."""
+        sj = self.source_job or {}
+        url = str(sj.get("url") or "").strip()
+        src = "job" if url else ""
+        if not url:
+            m = self._APPLY_URL_RE.search(self.jd or "")
+            if m:
+                url, src = m.group(0).rstrip(".,;:"), "pasted"
+        return {"url": url, "from": src, "need_url": not url}
 
     @_locked
     def accept(self):

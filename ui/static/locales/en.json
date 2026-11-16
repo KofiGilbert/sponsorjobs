@@ -1507,5 +1507,14 @@
   "agent.waitExtension": "Waiting for the extension",
   "agent.waitOwnBot": "Waiting for your bot",
   "agent.waitSignIn": "Finish signing in",
-  "agent.waitTelegram": "Press Start in Telegram"
+  "agent.waitTelegram": "Press Start in Telegram",
+  "builder.apply": "Apply",
+  "builder.applyNote": "Looks good? Apply, and I fill in the application for you.",
+  "builder.applySaving": "Saving…",
+  "builder.applyFail": "Couldn't start the application. Try again.",
+  "builder.applyAsk": "Paste the link to the application and I take it from there.",
+  "builder.applyAlready": "You already applied to this job. It is on the Tracker.",
+  "builder.applyingAt": "Applying to {role} at {company}",
+  "builder.applyingTo": "Applying to {role}",
+  "builder.thisJob": "this job"
 }

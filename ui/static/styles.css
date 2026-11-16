@@ -653,8 +653,8 @@ button { font-family: inherit; cursor: pointer; }
    not as another message to read. While it runs, a muted "Working on your resume…" with the act
    spinner and the steps one per line; done, one summary line with a chevron; open, the steps,
    What changed, the written bullets and the cuts (Put back is a ghost button). Neutral greys. */
-.build-msg { max-width: 100%; width: 100%; }
-.build-msg .msg-bubble.bm-bubble { flex: 1; min-width: 0; background: transparent; border: 0; box-shadow: none;
+.build-msg, .apply-msg { max-width: 100%; width: 100%; }
+.build-msg .msg-bubble.bm-bubble, .apply-msg .msg-bubble.bm-bubble { flex: 1; min-width: 0; background: transparent; border: 0; box-shadow: none;
   padding: 3px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
 .bm-head { display: flex; align-items: center; gap: 8px; min-height: 20px; color: var(--muted); }
 .bm-steps { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 3px; }
@@ -683,6 +683,12 @@ button { font-family: inherit; cursor: pointer; }
 .bm-row-w { color: var(--faint); font-size: 11.5px; margin-right: 6px; }
 .bm-row .btn { flex: none; }
 .bm-foot { margin-top: 2px; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+/* Apply after tailoring (app.js applyChat*): the apply agent's run told in the chat in the same
+   grammar as a build. Live: a spinner, "Applying to <role> at <company>", the steps, and one muted
+   line for what it waits on (a question, Send), which sits on the bar above the page. Done: one
+   summary line with the steps folded under it. */
+.ap-now { margin: 6px 0 0 22px; color: var(--ink-2); overflow-wrap: anywhere; }
+.ap-now:empty { display: none; }
 .bm-flag { margin: 6px 0 0 22px; color: var(--flag); font-size: 12px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .bm-flag-l { font-weight: 600; }
 .bm-term { font-size: 11px; padding: 1px 8px; border-radius: var(--r-pill); background: var(--flag-soft);

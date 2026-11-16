@@ -1507,5 +1507,14 @@
   "agent.waitExtension": "Warte auf die Erweiterung",
   "agent.waitOwnBot": "Warte auf deinen Bot",
   "agent.waitSignIn": "Schließe die Anmeldung ab",
-  "agent.waitTelegram": "Drücke in Telegram auf Start"
+  "agent.waitTelegram": "Drücke in Telegram auf Start",
+  "builder.apply": "Bewerben",
+  "builder.applyNote": "Sieht gut aus? Bewerben, und ich fülle die Bewerbung für dich aus.",
+  "builder.applySaving": "Wird gespeichert…",
+  "builder.applyFail": "Die Bewerbung konnte nicht gestartet werden. Versuch es noch einmal.",
+  "builder.applyAsk": "Füge den Link zur Bewerbung ein, dann übernehme ich.",
+  "builder.applyAlready": "Du hast dich schon auf diese Stelle beworben. Sie steht im Tracker.",
+  "builder.applyingAt": "Bewerbung als {role} bei {company}",
+  "builder.applyingTo": "Bewerbung als {role}",
+  "builder.thisJob": "diese Stelle"
 }

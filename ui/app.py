@@ -3739,6 +3739,85 @@ def accept():
     return jsonify(_session().accept())
 
 
+_LINK_RE = re.compile(r"^https?://[^\s<>\"']+$", re.I)
+
+
+@app.post("/api/session/apply")
+@_guard
+def session_apply():
+    """The review footer's Apply: step two after tailoring (Kofi, 2026-11-16: "that is only step
+    one, what about the applying for the job part?"). It saves this resume exactly as Accept &
+    Save does (the record and its PDF), makes that record the Auto-apply package for this job
+    (approved: Waiting on you, the Tracker's Approved column), and returns its Auto-apply row so
+    the page starts Apply for me on it in the Browser tab, the same run as the Auto-apply queue.
+
+    Body {url?}: the application link the person gave in the chat, for a pasted description that
+    had none. With no known link nothing is saved and the reply says ``need_url`` (the chat asks
+    once). Submitting follows the agent's own rules, unchanged: it stops at Submit for Send; only
+    the verified allowlist with Autonomous submit on sends by itself; LinkedIn and every
+    automation-prohibited site stay the person's to drive."""
+    from submit.stages import app_stage, approved_patch
+    s = _session()
+    if getattr(s, "expired_noted", False):
+        return jsonify({"ok": False, "reason": JOB_CLOSED_MSG, "closed": True}), 409
+    given = " ".join(str((request.json or {}).get("url") or "").split())
+    if given:
+        if not _LINK_RE.match(given):
+            return jsonify({"ok": False, "need_url": True,
+                            "reason": "That is not a link. Paste the web address of the application."}), 400
+        s.source_job = {**(s.source_job or {}), "url": given}
+    target = s.apply_target()
+    if target["need_url"]:
+        return jsonify({"ok": False, "need_url": True})
+    url = target["url"]
+    if not (s.source_job or {}).get("url"):
+        s.source_job = {**(s.source_job or {}), "url": url}     # a link found in the pasted text
+    r = s.accept()
+    if not r.get("ok"):
+        return jsonify(r)                     # blocked: the same reason Accept & Save gives
+    rid = int(r["record_id"])
+    recs = _records()
+    try:
+        rec = recs.get(rid)
+        if rec is None:
+            return jsonify({"ok": False, "reason": "The saved resume was not found. Try again."}), 404
+        data = _record_data(rec)
+        sj = data.get("source_job") if isinstance(data.get("source_job"), dict) else {}
+        if (sj.get("url") or "") != url:      # a repeat accept() keeps the bag it saved before
+            data = recs.merge_data(rid, {"source_job": {**sj, **(s.source_job or {}), "url": url}})
+        stage = app_stage(data)["stage"]
+        if stage in ("queued", "skipped"):
+            data = recs.merge_data(rid, {**approved_patch(), "approved_at": _now_iso()})
+        rec = recs.get(rid)
+    finally:
+        recs.close()
+    if stage != "submitted":
+        _board_forward(rec, "approved")
+    item = _aa_row(rec, data, _aa_job_index([rec]))
+    return jsonify({"ok": True, "record_id": rid, "pdf": r.get("pdf"), "item": item,
+                    "submitted": stage == "submitted", "autonomous": _autonomous_on()})
+
+
+def _board_forward(rec: dict, stage: str) -> None:
+    """Move one record's Tracker job forward to ``stage``, never back (an Applied or closed card
+    stays where it is). Best-effort, like _board_follow_record: the board also catches up on its
+    next read (_board_reconcile)."""
+    try:
+        from sourcing.board import RANK
+        sid, snap = _board_key(rec)
+        w = _watchlist()
+        try:
+            cur = w.stage_of(sid)
+            if cur is None:
+                w.track_job(sid, stage, note="Approved", job=None if w.get_job(sid) else snap)
+            elif cur not in ("rejected", "archived") and RANK[stage] > RANK[cur]:
+                w.move_stage(sid, stage, note="Approved")
+        finally:
+            w.close()
+    except Exception:  # noqa: BLE001 - the record is saved; the board catches up on read
+        traceback.print_exc()
+
+
 # ------------------------------------------------------------------ "Add this keyword"
 # One missing JD term from the coverage report -> one honest, reviewable edit of one bullet
 # (tailoring/keyword_action.py). The resume id is the live builder ("live"), the session's

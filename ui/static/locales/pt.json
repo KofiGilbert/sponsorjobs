@@ -1507,5 +1507,14 @@
   "agent.waitExtension": "Aguardando a extensão",
   "agent.waitOwnBot": "Aguardando seu bot",
   "agent.waitSignIn": "Conclua o login",
-  "agent.waitTelegram": "Toque em Iniciar no Telegram"
+  "agent.waitTelegram": "Toque em Iniciar no Telegram",
+  "builder.apply": "Candidatar",
+  "builder.applyNote": "Ficou bom? Candidate-se e eu preencho a candidatura para você.",
+  "builder.applySaving": "Salvando…",
+  "builder.applyFail": "Não foi possível iniciar a candidatura. Tente de novo.",
+  "builder.applyAsk": "Cole o link da candidatura e eu cuido do resto.",
+  "builder.applyAlready": "Você já se candidatou a esta vaga. Ela está no Acompanhamento.",
+  "builder.applyingAt": "Candidatando-se a {role} na {company}",
+  "builder.applyingTo": "Candidatando-se a {role}",
+  "builder.thisJob": "esta vaga"
 }
