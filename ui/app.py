@@ -17072,11 +17072,13 @@ def autoapply_board():
 def _pdf_pages(path) -> int | None:
     try:
         import pypdfium2 as pdfium
-        doc = pdfium.PdfDocument(str(path))
-        try:
-            return len(doc)
-        finally:
-            doc.close()
+        from tailoring.preview import PDFIUM_LOCK          # PDFium is not thread-safe
+        with PDFIUM_LOCK:
+            doc = pdfium.PdfDocument(str(path))
+            try:
+                return len(doc)
+            finally:
+                doc.close()
     except Exception:   # noqa: BLE001 - unknown page count is left out, not guessed
         return None
 
