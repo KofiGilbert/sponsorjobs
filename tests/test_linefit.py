@@ -210,9 +210,12 @@ def _returning(template_source, workdir, saved, monkeypatch=None, brain=None):
 
 
 @requires_latex
-def test_builder_asks_about_the_jobs_keywords_and_saves_the_answer(template_source, workdir,
-                                                                   tmp_path, monkeypatch):
-    from applicant.store import ACTIVE, open_store
+def test_builder_asks_nothing_after_the_build_and_shows_the_line_check(template_source, workdir,
+                                                                      tmp_path, monkeypatch):
+    # 2026-11-16 (Kofi): after a build the page speaks for itself; the person says in the chat
+    # what they want changed. The job's unclaimed skills are offered as tap-to-add chips (agent
+    # on), never as a question.
+    from applicant.store import open_store
     brain = open_store(tmp_path / "applicant.db")
     s = _returning(template_source, workdir, THIN, monkeypatch, brain)
     s.start()
@@ -220,26 +223,12 @@ def test_builder_asks_about_the_jobs_keywords_and_saves_the_answer(template_sour
     st = s.build_from_saved()
     assert st["phase"] == "review"
     msg = " ".join(st["messages"])
-    assert "This role asks for" in msg and "Have you used either?" in msg, msg
-    asked = list(s.essentials["skills_pending"])
-    assert len(asked) == 2
+    assert "This role asks for" not in msg and "Have you used" not in msg, msg
     # The live activity feed (ui/activity.py) shows the line check with its real numbers.
     from ui import activity as ACT
     verbs = [e["verb"] for e in ACT.snapshot("builder")["events"]]
     assert "Fitting the page" in verbs and verbs[-1] == "Checking every line", verbs
     assert "skills lines full" in ACT.snapshot("builder")["events"][-1]["summary"]
-
-    st2 = s.submit(f"Yes, I've used {asked[0]} at the bank, not {asked[1]} though.")
-    si = [x.lower() for x in s.essentials["skills_input"]]
-    assert asked[0].lower() in si and asked[1].lower() not in si
-    assert asked[1] in s.essentials["skills_declined"]
-    facts = [r["value"] for r in brain.facts(store="", key="skill", status=ACTIVE)]
-    assert asked[0] in facts, "the answer must be saved to the brain as the person's own fact"
-    placed = " ".join((s.profile.get("skills") or {}).values()).lower()
-    assert asked[0].lower() in placed, "a skill the person confirmed belongs on the page"
-    assert asked[1].lower() not in placed
-    # Never asked about the same keyword twice.
-    assert asked[1] not in " ".join(st2["messages"])
 
 
 @requires_latex
