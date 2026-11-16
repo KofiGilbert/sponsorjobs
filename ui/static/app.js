@@ -282,7 +282,7 @@
     const stage = c.stage || (c.status === "applied" ? "applied" : "saved");
     const opts = CV_STAGES.map(([v, lbl]) =>
       `<option value="${v}"${v === stage ? " selected" : ""}>${lbl}</option>`).join("");
-    const nudge = c.follow_up_is_due ? `<span class="cv-followup" title="It has been a few days, a short follow-up helps">Follow up due</span>` : "";
+    const nudge = c.follow_up_is_due ? `<span class="cv-followup" title="${esc(I18N.t("cvs.followUpTip", "It has been a few days, a short follow-up helps"))}">${esc(I18N.t("cvs.followUpDue", "Follow up due"))}</span>` : "";
     const sub = [esc(c.company || ""), esc(c.template_label || ""), c.match != null ? `${c.match}% match` : "",
       c.applied_at ? esc(sjT("cvs.appliedOn", "Applied {d}").replace("{d}", sessDay(c.applied_at))) : ""].filter(Boolean).join("  \u00b7  ");
     // A resume made in a session reopens it (chat and page); the small glyph says it has one.
@@ -293,11 +293,11 @@
         <div class="cv-row-name cv-name-line">${esc(c.role)}${glyph}</div>
         <div class="cv-row-sub">${sub}${nudge}</div>
       </div>
-      <select class="cv-stage cv-stage-${stage}" data-id="${c.id}" title="Application status" aria-label="Application status">${opts}</select>
+      <select class="cv-stage cv-stage-${stage}" data-id="${c.id}" title="${esc(I18N.t("cvs.stage", "Application status"))}" aria-label="${esc(I18N.t("cvs.stage", "Application status"))}">${opts}</select>
       <span class="cv-row-date">${esc(c.when || "")}</span>
       <div class="cv-actions">
         <a class="cv-act" data-act="download" href="/api/cv.pdf?job=cv-${c.id}" download title="${esc(sjT("cvs.download", "Download"))}" aria-label="${esc(sjT("cvs.download", "Download"))}"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M8 2.5v8M4.8 7.6 8 10.8l3.2-3.2M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
-        <button class="cv-act" data-act="rename" type="button" title="Rename (F2)">&#9998;</button>
+        <button class="cv-act" data-act="rename" type="button" title="${esc(I18N.t("cvs.rename", "Rename (F2)"))}">&#9998;</button>
         <button class="cv-act" data-act="menu" type="button" title="More">&#8943;</button>
       </div>
     </article>`;
@@ -376,7 +376,7 @@
     if (more) {
       if (!CV_QUERY && recs.length > LIMIT) {
         more.hidden = false;
-        more.textContent = CV_EXPANDED ? "Show fewer" : `More Resumes (${recs.length - LIMIT}) \u2192`;
+        more.textContent = CV_EXPANDED ? I18N.t("cvs.showFewer", "Show fewer") : `More Resumes (${recs.length - LIMIT}) \u2192`;
       } else more.hidden = true;
     }
     wireCvManager(root);
@@ -506,7 +506,7 @@
     if (document.querySelector(".cvf-new")) { document.querySelector(".cvf-new input").focus(); return; }
     const wrap = document.createElement("div");
     wrap.className = "cvf-new";
-    wrap.innerHTML = `<input class="fld" placeholder="New folder name, Enter to create" aria-label="New folder name" />`;
+    wrap.innerHTML = `<input class="fld" placeholder="${esc(I18N.t("cvs.newFolderPh", "New folder name, Enter to create"))}" aria-label="${esc(I18N.t("cvs.newFolder", "New folder name"))}" />`;
     $("#cvManager").prepend(wrap);
     const input = wrap.querySelector("input");
     input.focus();
@@ -955,8 +955,9 @@
     const applied = status === "applied";
     const s = $("#pkgStatus");
     s.className = "pkg-status " + (applied ? "applied" : "ready");
-    s.textContent = applied ? "Applied" : "Ready to submit";
-    $("#pkgApplied").textContent = applied ? "Mark as not applied" : "Mark as applied";
+    s.textContent = applied ? I18N.t("pkg.applied", "Applied") : I18N.t("pkg.readyToSubmit", "Ready to submit");
+    $("#pkgApplied").textContent = applied ? I18N.t("pkg.markNotApplied", "Mark as not applied")
+                                           : I18N.t("pkg.markApplied", "Mark as applied");
   }
 
   function pkgCoverage(cov) {
@@ -1033,7 +1034,7 @@
 
     const sub = p.submission || {};
     $("#pkgTier").className = "pkg-tier-pill " + (sub.tier || "assisted");
-    $("#pkgTier").textContent = sub.label || "Assisted, you review and click submit";
+    $("#pkgTier").textContent = sub.label || I18N.t("pkg.assisted", "Assisted, you review and click submit");
     $("#pkgSubmitMsg").textContent = (sub.result && sub.result.message) || "";
     PKG_APPLY_URL = p.apply_url || "";
     $("#pkgSubmitBtn").textContent = sub.tier === "auto" ? "Auto-submit"
@@ -1055,7 +1056,7 @@
     $("#pkgScr").innerHTML = PKG_SCR.map((qa, i) =>
       `<div class="pkg-qa${qa.knockout ? " pkg-qa-knockout" : ""}" data-i="${i}">
          <div class="pkg-q">${esc(qa.question)}${qa.knockout
-           ? ` <span class="pkg-knockout" title="Employers auto-reject on this question. Check the answer yourself.">auto-reject question, check this one</span>`
+           ? ` <span class="pkg-knockout" title="${esc(I18N.t("pkg.knockoutTip", "Employers auto-reject on this question. Check the answer yourself."))}">auto-reject question, check this one</span>`
            : ""}</div>
          <div class="pkg-a">${esc(qa.answer)}</div>
          <div class="pkg-qa-acts"><button class="link-btn" type="button" data-scr="edit">${esc(I18N.t("aa.edit", "Edit"))}</button>
@@ -1133,7 +1134,7 @@
     const exclude = [...document.querySelectorAll("[data-var-org]")]
       .filter(cb => !cb.checked).map(cb => cb.dataset.varOrg);
     const btn = $("#pkgVarBtn"); btn.disabled = true;
-    note.textContent = "Building the variant…";
+    note.textContent = I18N.t("pkg.buildingVariant", "Building the variant…");
     try {
       showView("builder"); $("#jdGate").hidden = true;
       await withWorking(async () => { applyState(await api(`/api/record/${PKG_ID}/variant`, { template, exclude_orgs: exclude })); });
@@ -1210,7 +1211,7 @@
     const url = (PKG_FILL_URL || $("#pkgAssistUrl").value || "").trim();
     if (!here && !/^https?:\/\//i.test(url)) {
       $("#pkgAssistUrl").hidden = false; $("#pkgAssistUrl").focus();
-      note.textContent = "Paste the application link first.";
+      note.textContent = I18N.t("pkg.pasteLink", "Paste the application link first.");
       return;
     }
     const btn = here ? $("#pkgFillHereBtn") : $("#pkgFillBtn");
@@ -1233,7 +1234,7 @@
     if (old) old.remove();
     const b = document.createElement("button");
     b.type = "button"; b.className = "btn btn-ghost btn-sm assist-learn";
-    b.textContent = "Save what I changed to my profile";
+    b.textContent = I18N.t("pkg.saveChanges", "Save what I changed to my profile");
     b.addEventListener("click", async () => {
       b.disabled = true;
       const r = await window.tailorShell.assistLearn();
@@ -1335,7 +1336,7 @@
 
   $("#pkgClCopy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText($("#pkgCl").value); pkgFlash($("#pkgClMsg"), "Copied."); }
-    catch { pkgFlash($("#pkgClMsg"), "Select the text to copy."); }
+    catch { pkgFlash($("#pkgClMsg"), I18N.t("pkg.selectToCopy", "Select the text to copy.")); }
   });
 
   $("#pkgClSave").addEventListener("click", async () => {
@@ -1344,14 +1345,17 @@
       const r = await api(`/api/record/${PKG_ID}/cover_letter`, { text: $("#pkgCl").value });
       pkgSetPdfLink(!!($("#pkgCl").value || "").trim());
       renderClReview(r.review, r.skills_used, r.posting_findings);
-      pkgFlash($("#pkgClMsg"), r.pdf ? "Saved · PDF updated." : "Saved.");
+      pkgFlash($("#pkgClMsg"), r.pdf ? I18N.t("pkg.savedPdf", "Saved · PDF updated.")
+                                     : I18N.t("pkg.saved", "Saved."));
     } catch { pkgFlash($("#pkgClMsg"), "Couldn't save."); }
   });
 
   // Honest craft check on the cover letter (hook, names the company, length, no unbacked claim),
   // plus the real experiences it leans on, mirroring the resume's pre-send review.
-  const CL_VERDICT = { ready: ["Ready to send", "good"], review: ["Worth a tweak", "mid"],
-    check: ["Check before sending", "low"] };
+  // Keyed, not literal, so the verdict reads in the person's language (#257).
+  const CL_VERDICT = { ready: ["cl.ready", "Ready to send", "good"],
+    review: ["cl.review", "Worth a tweak", "mid"],
+    check: ["cl.check", "Check before sending", "low"] };
   // One quiet line per thing llm/textguard.py took out of the posting before a model read
   // it, in the warning tone the letter check already uses. The decoded sentence is quoted,
   // because the point is that the person gets to read what was aimed at the model. It only
@@ -1370,7 +1374,7 @@
       return `<span class="ps-quote"${title}>${esc(shown)}</span>`;
     }).join("");
     return `<div class="ps-row ps-lvl-warn"><span class="ps-ic">~</span><div class="ps-body">`
-      + `<div class="ps-label">This posting contained hidden text, removed before drafting:</div>`
+      + `<div class="ps-label">${esc(I18N.t("cl.hiddenText", "This posting contained hidden text, removed before drafting:"))}</div>`
       + `<div class="ps-items">${items}</div></div></div>`;
   }
 
@@ -1384,7 +1388,8 @@
       el.innerHTML = hidden;
       return;
     }
-    const v = CL_VERDICT[r.verdict] || ["Letter check", "mid"];
+    const vd = CL_VERDICT[r.verdict] || ["cl.letterCheck", "Letter check", "mid"];
+    const v = [I18N.t(vd[0], vd[1]), vd[2]];
     const rows = (r.checks || []).map(c => {
       const items = (c.items || []).length
         ? `<div class="ps-items">${c.items.map(t => `<span class="ps-term ps-${esc(c.level)}">${esc(t)}</span>`).join("")}</div>`
@@ -1395,7 +1400,7 @@
     }).join("");
     const grounds = (skillsUsed || []).slice(0, 12);
     const draws = grounds.length
-      ? `<div class="cl-draws"><span class="cl-draws-lbl">Draws on:</span> ${grounds.map(s => `<span class="fd-gap">${esc(s)}</span>`).join("")}</div>`
+      ? `<div class="cl-draws"><span class="cl-draws-lbl">${esc(I18N.t("cl.drawsOn", "Draws on:"))}</span> ${grounds.map(s => `<span class="fd-gap">${esc(s)}</span>`).join("")}</div>`
       : "";
     el.hidden = false;
     el.innerHTML = `<div class="ps-head ps-${esc(v[1])}"><span class="ps-verdict">${esc(v[0])}</span>`
@@ -1409,15 +1414,17 @@
     coverDrafting = true;
     const btn = $("#pkgClGen"), label = btn.textContent;
     btn.disabled = true; btn.textContent = "Drafting…";
-    $("#pkgClMsg").textContent = auto ? "Drafting your cover letter from your profile…"
-                                      : "Writing a cover letter from your profile…";
+    $("#pkgClMsg").textContent = auto
+      ? I18N.t("cl.drafting", "Drafting your cover letter from your profile…")
+      : I18N.t("cl.writing", "Writing a cover letter from your profile…");
     try {
       const r = await api(`/api/record/${id}/cover_letter`, {});
       if (PKG_ID !== id) return;                       // navigated away mid-draft
       $("#pkgCl").value = r.cover_letter || "";
       pkgSetPdfLink(!!(r.cover_letter || "").trim());
       renderClReview(r.review, r.skills_used, r.posting_findings);
-      pkgFlash($("#pkgClMsg"), auto ? "Cover letter ready, review and edit." : "Drafted, review and edit.", 4000);
+      pkgFlash($("#pkgClMsg"), auto ? I18N.t("cl.ready2", "Cover letter ready, review and edit.")
+                                    : I18N.t("cl.drafted", "Drafted, review and edit."), 4000);
     } catch {
       if (PKG_ID === id) pkgFlash($("#pkgClMsg"), "Couldn't draft, the app needs your API key + internet.", 5000);
     } finally { btn.disabled = false; btn.textContent = label; coverDrafting = false; }
@@ -3181,7 +3188,7 @@
       const st = await api(url, { ref, text });
       if (st && st.edit_ok === false) {
         el.textContent = el.dataset.last || "";
-        toast(st.edit_error || "That change was not kept.");
+        toast(st.edit_error || I18N.t("cv.editNotKept", "That change was not kept."));
         return;
       }
       el.dataset.last = text;
@@ -3230,7 +3237,7 @@
     document.querySelectorAll(".cv-flag").forEach(f => {
       f.onclick = (ev) => {
         popRole = f.dataset.role;
-        pop.querySelector('[data-dec="keep"]').textContent = `Keep “${f.dataset.sugg}”`;
+        pop.querySelector('[data-dec="keep"]').textContent = I18N.t("cv.keepSugg", "Keep “{s}”").replace("{s}", f.dataset.sugg);
         pop.querySelector('[data-dec="revert"]').textContent = f.dataset.orig
           ? `Use my title “${f.dataset.orig}”` : "Use my original title";
         const rect = f.getBoundingClientRect();
@@ -5976,7 +5983,7 @@
         <div class="trk-contact-who"><b>${esc(c.name)}</b>${c.role ? ` <span class="prof-dim">${esc(c.role)}</span>` : ""}
           <div class="trk-contact-links">${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ""}${c.linkedin ? `<a href="${esc(c.linkedin)}" target="_blank" rel="noopener">LinkedIn</a>` : ""}</div>
         </div>
-        <button class="btn btn-danger-ghost btn-sm" data-rm-contact="${c.id}" type="button" aria-label="Remove contact">&times;</button>
+        <button class="btn btn-danger-ghost btn-sm" data-rm-contact="${c.id}" type="button" aria-label="${esc(trkT("tracker.removeContact", "Remove contact"))}">&times;</button>
       </div>`).join("") || `<p class="prof-dim">${esc(trkT("tracker.noContacts", "No contacts yet."))}</p>`;
     const files = (j.records || []).map(r => `<div class="trk-file">
         <span>${esc(r.role || trkT("tracker.resume", "Resume"))} <span class="prof-dim">${esc(trkDay(r.when))}</span></span>
@@ -6534,7 +6541,7 @@
              <button class="btn btn-ghost btn-sm" data-act="tocv" type="button">Add to resume</button>`
           : `<button class="btn btn-quiet btn-sm" data-act="guide" type="button">${esc(guideLabel)}</button>
              <button class="btn btn-ghost btn-sm" data-act="defend" type="button">Defend it</button>`}
-        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="Delete ${esc(p.title)}" title="Delete">${PROJ_ICO.trash}</button>
+        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="${esc(PT("projects.deleteNamed", "Delete {t}").replace("{t}", p.title))}" title="${esc(PT("projects.delete", "Delete"))}">${PROJ_ICO.trash}</button>
       </div>
     </article>`;
   }
@@ -6613,7 +6620,7 @@
       </div>
       <div class="proj-card-acts">
         ${part.acts}${dl}
-        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="Delete ${esc(p.title)}" title="Delete">${PROJ_ICO.trash}</button>
+        <button class="proj-icon-btn" data-act="delete" type="button" aria-label="${esc(PT("projects.deleteNamed", "Delete {t}").replace("{t}", p.title))}" title="${esc(PT("projects.delete", "Delete"))}">${PROJ_ICO.trash}</button>
       </div>
     </article>`;
   }

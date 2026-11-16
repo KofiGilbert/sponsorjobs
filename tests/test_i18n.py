@@ -47,17 +47,38 @@ APP_JS = Path(__file__).resolve().parents[1] / "ui" / "static" / "app.js"
 _T_CALL = re.compile(r'(?:\b\w*T|I18N\.t)\(\s*(["\'])([A-Za-z0-9_.]+)\1\s*,')
 
 KNOWN_MISSING = {
-    # Auto-apply bar and its asks (a later #257 batch).
-    "aa.act.continue", "aa.agent.answer", "aa.agent.back", "aa.agent.change", "aa.agent.changeA",
-    "aa.agent.pageGone", "aa.agent.qOf", "aa.agent.sendAnswer", "aa.agent.thanks",
-    "aa.agent.yourAnswers", "aa.applyAll", "aa.batch.see", "aa.batch.start", "aa.parked.busy",
-    "aa.parked.gone", "aa.parked.queued", "aa.send.start", "aa.st.paused", "aa.st.readySend",
-    # Home agent leftovers, the build message, the inbox strip and Tracker (later batches).
-    "agent.connectFailed", "agent.signInFirst", "bm.took", "bm.working",
-    "inbox.draft.body", "inbox.draft.gap1", "inbox.draft.gaps", "inbox.strip.autoMoved",
-    "inbox.strip.done", "inbox.strip.draftReply", "inbox.strip.ok", "inbox.strip.when",
-    "tracker.fromInbox", "tracker.furthest", "tracker.movedTo", "tracker.undo", "tracker.undoFail",
-    "tracker.undoLast", "tracker.undoneOff", "tracker.undoneTo",
+    # Auto-apply bar and its asks, the build message and the inbox strip: batch 3.
+    "aa.act.continue",
+    "aa.agent.answer",
+    "aa.agent.back",
+    "aa.agent.change",
+    "aa.agent.changeA",
+    "aa.agent.pageGone",
+    "aa.agent.qOf",
+    "aa.agent.sendAnswer",
+    "aa.agent.thanks",
+    "aa.agent.yourAnswers",
+    "aa.applyAll",
+    "aa.batch.see",
+    "aa.batch.start",
+    "aa.parked.busy",
+    "aa.parked.gone",
+    "aa.parked.queued",
+    "aa.send.start",
+    "aa.st.paused",
+    "aa.st.readySend",
+    "agent.connectFailed",
+    "agent.signInFirst",
+    "bm.took",
+    "bm.working",
+    "inbox.draft.body",
+    "inbox.draft.gap1",
+    "inbox.draft.gaps",
+    "inbox.strip.autoMoved",
+    "inbox.strip.done",
+    "inbox.strip.draftReply",
+    "inbox.strip.ok",
+    "inbox.strip.when",
 }
 
 
