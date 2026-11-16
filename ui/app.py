@@ -5441,8 +5441,10 @@ def _profile_missing_slots(include_soft: bool = True) -> list[dict]:
 
 
 def _autofill_saved_project_dates() -> list[str]:
-    """Fill the saved profile's undated projects from their GitHub repos (ui/github_dates.py),
-    before anyone is asked for them. Returns the projects filled; never raises (offline-safe)."""
+    """Off (2026-11-16): a personal project prints no dates (tailoring.assembler.project_row), so
+    filling them from GitHub only put dates on the page the person never gave. Kept as a no-op so
+    its callers stay simple."""
+    return []
     try:
         from ui.github_dates import fill_project_dates
         mem = _memory()

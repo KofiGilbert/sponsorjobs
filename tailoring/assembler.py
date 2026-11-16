@@ -304,7 +304,11 @@ def project_row(e: dict) -> dict:
     dates = str(e.get("dates") or "").strip()
     right = tools or place
     if dates and not role:
-        right = f"{right} | {dates}" if right else dates
+        # A personal project (a repo link, or flagged personal) prints no dates: Kofi's reference
+        # resume has the name and its tools only, and the dates such a project carried were filled
+        # from GitHub, never given by him ("I don't remember adding dates", 2026-11-16).
+        if not (e.get("link") or e.get("url") or e.get("personal")):
+            right = f"{right} | {dates}" if right else dates
         dates = ""
     return {"name": name, "right": right, "role": role, "dates": dates}
 

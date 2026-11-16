@@ -393,3 +393,11 @@ def test_the_change_list_names_a_project_cleanly():
 def test_a_page_claim_without_a_change_is_not_said():
     assert rc.honest("I filled the page from your material.", did=[]) == rc.NOT_CHANGED
     assert rc.honest("I filled the page.", did=["fill_page"]) == "I filled the page."
+
+
+def test_a_message_that_asks_what_the_brief_never_asked_is_not_shown():
+    from agent import narrate as N
+    items = [N.item("swapped_project", "I swapped in sponsorjobs for Gate Check.", exact=["sponsorjobs"])]
+    assert N.check("I swapped in sponsorjobs for Gate Check. Is sponsorjobs the project you want "
+                   "featured here?", items) == "a question the brief does not ask"
+    assert N.check("I swapped in sponsorjobs for Gate Check.", items) == ""

@@ -390,7 +390,7 @@ def entry_for(repo: dict) -> dict:
     if len(bullets) < 2 and tools:
         bullets.append(f"Built with {', '.join(tools[:3])}.")
     return {"org": str(repo["name"]),            # the name as it is on GitHub, so it matches the repo
-            "title": "", "dates": str(repo.get("dates") or ""), "location": "Personal Project",
+            "title": "", "dates": "", "location": "Personal Project",   # no GitHub dates on the page
             "bullets": bullets, "personal": True,
             "link": "" if repo.get("private") else str(repo.get("url") or ""),
             "tools": ", ".join(tools[:3]), "source": "github", "repo": repo.get("full_name") or ""}

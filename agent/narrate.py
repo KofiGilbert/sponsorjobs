@@ -165,6 +165,10 @@ def check(text: str, items: list[dict], context: str = "") -> str:
             return f"number {n} not in the brief"
     if questions(t) > 1:
         return "more than one question"
+    # "Is sponsorjobs the project you want featured here?" after a swap the person had just
+    # asked for: a question nobody needed is more work for them (Kofi, 2026-11-16).
+    if questions(t) and not any(str(it.get("kind") or "").startswith(ASK_KINDS) for it in items):
+        return "a question the brief does not ask"
     return ""
 
 

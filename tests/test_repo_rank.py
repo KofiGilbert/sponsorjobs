@@ -239,7 +239,7 @@ def test_the_action_token_is_single_use_and_adding_twice_is_a_no_op(template_sou
     assert st["action_ok"] and st["added"] == ["kpi-dashboard"]
     entry = next(p for p in s.essentials["projects"] if p["org"] == "kpi-dashboard")
     assert entry["link"] == "https://github.com/janedoe/kpi-dashboard" and entry["source"] == "github"
-    assert entry["dates"] == "Mar 2025 - Oct 2026" or entry["dates"].startswith("Mar 2025")
+    assert entry["dates"] == ""          # no GitHub dates on the page (Kofi, 2026-11-16)
     assert "Python" in entry["tools"]
     assert "I added kpi-dashboard" in st["messages"][0]
     again = s.apply_action(card["token"], "add", {"keys": [key]})
