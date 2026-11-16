@@ -1507,5 +1507,14 @@
   "agent.waitExtension": "En attente de l'extension",
   "agent.waitOwnBot": "En attente de votre bot",
   "agent.waitSignIn": "Terminez la connexion",
-  "agent.waitTelegram": "Appuyez sur Démarrer dans Telegram"
+  "agent.waitTelegram": "Appuyez sur Démarrer dans Telegram",
+  "builder.apply": "Postuler",
+  "builder.applyNote": "Ça vous va ? Postulez et je remplis la candidature pour vous.",
+  "builder.applySaving": "Enregistrement…",
+  "builder.applyFail": "Impossible de lancer la candidature. Réessayez.",
+  "builder.applyAsk": "Collez le lien de la candidature et je m'occupe du reste.",
+  "builder.applyAlready": "Vous avez déjà postulé à cette offre. Elle est dans le Suivi.",
+  "builder.applyingAt": "Candidature à {role} chez {company}",
+  "builder.applyingTo": "Candidature à {role}",
+  "builder.thisJob": "cette offre"
 }

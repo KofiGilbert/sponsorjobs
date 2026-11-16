@@ -107,6 +107,9 @@
     if (feed) feed.start();
     try { return await apiCall(url, body); } finally { if (feed) feed.stop(); }
   }
+  // The builder's Apply (step two after tailoring, paintApply / builderApply): ``ask`` while the
+  // chat waits for the application link, ``chat`` the message that tells the apply run.
+  const APPLY = { busy: false, ask: false, chat: null };
   async function apiCall(url, body) {
     lastCall = { url, body };
     const r = await fetch(url, {
@@ -1251,6 +1254,7 @@
       if (!info || !info.message) return;
       if (info.agent) {
         aaAgentBar(info);
+        applyChatProgress(info);      // a run the builder's Apply started is told in its chat too
         if (/^(ready|submitted|stopped|parked|batch-done)$/.test(info.state || "")) {
           if ($("#view-autoapply")?.classList.contains("is-active")) loadAutoApply();
         }
@@ -3810,6 +3814,7 @@
       }
     }
     if (st.expired) $("#acceptNote").textContent = sjT("chat.recordNote", "Kept as a record. The job has closed.");
+    paintApply(st);
   }
 
   // The honesty check (a skill on the page the person's own profile cannot back) is the one
@@ -4089,6 +4094,8 @@
     $("#acceptBtn").disabled = true;
     $("#downloadBtn").hidden = true;
     $("#acceptNote").textContent = "Answer a few questions and I’ll draft this for you.";
+    paintApply({});
+    APPLY.ask = false; APPLY.chat = null;
     $("#pdfFrame").removeAttribute("src");
     // Before a build there's no PDF yet, show the placeholder, never a drifting HTML CV.
     $("#pdfPlaceholder").hidden = false;
@@ -4396,6 +4403,7 @@
     if (!val) return;
     composerInput.value = ""; autoGrow();
     if (AGENT.on) { agentAsk(val); return; }       // assistant mode: not a resume-session turn
+    if (applyLinkReply(val)) return;               // the link Apply asked for
     sendTurn(val, esc(val).replace(/\n/g, "<br>"));
   });
 
@@ -4687,6 +4695,171 @@
     await showSavedResume(r.record_id);
     toast(agentT("agent.savedToResumes", "Saved to Resumes"), { label: agentT("agent.open", "Open"), run: () => openPackage(r.record_id) });
   });
+  /* Apply, step two after tailoring (Kofi, 2026-11-16: "that is only step one, what about the
+     applying for the job part?"). A built one-page resume in the desktop app offers Apply as the
+     footer's one primary; Accept & Save steps back to ghost and Download stays. Apply saves the
+     resume exactly as Accept & Save does, makes it this job's Auto-apply package (Waiting on you)
+     and starts Apply for me on it in the Browser tab: the same aaFill run as the Auto-apply queue,
+     with the same stops (Send at Submit, questions on the bar, captcha and sign-in walls handed
+     to the person, LinkedIn and bot-banning sites never driven). The run is told in the chat. A
+     pasted description with no link asks once in the chat for the application link. */
+  function paintApply(st) {
+    const btn = $("#applyBtn"), acc = $("#acceptBtn");
+    if (!btn || !acc) return;
+    const built = st.phase === "review" || (st.phase === "done" && !!st.pdf);
+    const on = !!(st.apply && built && !st.expired && st.one_page !== false
+                  && window.tailorShell && window.tailorShell.agentRun);
+    btn.hidden = !on;
+    btn.textContent = I18N.t("builder.apply", "Apply") + " \u2192";
+    btn.disabled = !!st.blocked_finalize || APPLY.busy;
+    acc.classList.toggle("btn-primary", !on);
+    acc.classList.toggle("btn-ghost", on);
+    if (on && !st.blocked_finalize) {
+      $("#acceptNote").textContent = I18N.t("builder.applyNote", "Looks good? Apply, and I fill in the application for you.");
+    }
+  }
+  $("#applyBtn")?.addEventListener("click", () => builderApply(""));
+
+  async function builderApply(url) {
+    const btn = $("#applyBtn");
+    if (APPLY.busy) return;
+    APPLY.busy = true;
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = T("builder.applySaving", "Saving…");
+    let r = null;
+    try {
+      r = await api("/api/session/apply", url ? { url } : {});
+    } catch (e) {
+      r = e.data && (e.data.need_url || e.data.ok === false) ? e.data : null;
+      if (!r && (!e.reason || !OUTAGE[e.reason])) toast(e.message || T("builder.applyFail", "Couldn't start the application. Try again."), null, 8000);
+      if (!r) return;
+    } finally {
+      APPLY.busy = false; btn.disabled = false; btn.textContent = label;
+    }
+    if (r.need_url) {
+      // Asked ONCE: the next message with a link answers it; any other message is a normal turn.
+      APPLY.ask = true;
+      bubble("agent", esc(r.reason || T("builder.applyAsk", "Paste the link to the application and I take it from there.")));
+      $("#composerInput").focus();
+      return;
+    }
+    if (r.ok === false) {          // blocked: the reason Accept & Save gives (a placeholder, not one page)
+      const why = r.reason || T("builder.applyFail", "Couldn't start the application. Try again.");
+      toast(why, null, 9000);
+      bubble("agent", esc(why));
+      return;
+    }
+    refreshLiveNav();
+    await builderTermsLine();
+    if (r.submitted) { bubble("agent", esc(T("builder.applyAlready", "You already applied to this job. It is on the Tracker."))); return; }
+    applyChatStart(r.record_id, r.item || {});
+    if (AA_AGENT) { applyChatEnd(T("aa.agentBusy", "One application at a time. Stop the current one first."), false); return; }
+    const res = await aaFill(r.record_id, { item: r.item, autonomous: !!r.autonomous });
+    // The run's own progress lines told the chat how it ended; a run that never started did not.
+    if (APPLY.chat && !APPLY.chat.done && res && res.gated) {
+      // The answers every form asks come first (aaBasicsGate, on the bar); "Apply anyway" starts
+      // the run, whose first line opens a fresh live message here.
+      const bar = $("#bbFill");
+      applyChatEnd(bar && !bar.hidden ? bar.querySelector(".bb-fill-text")?.textContent || "" : "", null);
+    } else if (APPLY.chat && !APPLY.chat.done && res) {
+      const bar = $("#bbFill");
+      applyChatEnd(res.ok === false ? applyMessage(res) : (bar && !bar.hidden ? bar.textContent : ""), false);
+    } else if (APPLY.chat && !APPLY.chat.done && !res) {
+      applyChatEnd(T("aa.agent.failed", "Could not run this one. Open it and apply by hand."), false);
+    }
+  }
+
+  // The Terms line the Auto-apply page shows on a first visit, said once in the chat before the
+  // first Apply from here. Showing it records the version (the same /api/terms/notice), which is
+  // what lets the agent create a portal account; skipping it left a fresh app stuck on the
+  // mock's create-account page (e2e 2026-11-16). Turn off opens the memory page, as there.
+  async function builderTermsLine() {
+    if (TOU_LINE) return;
+    let st = null;
+    try { st = await api("/api/terms/status"); } catch { st = null; }
+    if (!st || st.accepted) return;
+    try { await api("/api/terms/notice", {}); } catch { return; }
+    TOU_LINE = true;
+    try { aaPaintMay(); } catch { /* the Auto-apply page is not open */ }
+    const m = bubble("agent", esc(T("tou.notice", "Our Terms now cover accepting site notices for you.")) +
+      ` <button class="link-btn" type="button" data-tou-off>${esc(T("tou.off", "Turn off"))}</button>`);
+    (m && m.querySelector ? m : document).querySelector("[data-tou-off]")
+      ?.addEventListener("click", () => openMemory({ origin: "builder", focus: "may" }));
+  }
+
+  // The answer to "Paste the link to the application": a message with a web address starts Apply
+  // with it. Any other message clears the ask and goes to the chat as a normal turn.
+  function applyLinkReply(val) {
+    if (!APPLY.ask) return false;
+    APPLY.ask = false;
+    const m = /https?:\/\/[^\s<>"')\]]+/i.exec(val);
+    if (!m) return false;
+    bubble("user", esc(val).replace(/\n/g, "<br>"));
+    builderApply(m[0].replace(/[.,;:]+$/, ""));
+    return true;
+  }
+
+  // The apply run in the chat: one message, live while it runs (the steps from the run's activity
+  // feed, and the one thing it waits on), then one summary line with the steps folded under it.
+  function applyChatStart(rid, item, said) {
+    // A run picked up again passes its own heading (``said``); a new one names the job, falling
+    // back to this chat's role and company (a record row may carry neither).
+    const role = item.role || $("#builderRole")?.textContent?.trim() || "";
+    const company = item.company || "";
+    const job = said || (role && company
+      ? T("builder.applyingAt", "Applying to {role} at {company}").replace("{role}", role).replace("{company}", company)
+      : T("builder.applyingTo", "Applying to {role}").replace("{role}", role || company || T("builder.thisJob", "this job")));
+    const m = el("div", "msg agent apply-msg is-live");
+    m.dataset.record = String(rid);
+    m.innerHTML = `<div class="msg-bubble bm-bubble">`
+      + `<div class="bm-head" role="status" aria-live="polite"><span class="act-spin" aria-hidden="true"></span>`
+      + `<span class="ap-head-t">${esc(job)}</span></div><div class="bm-live"></div><div class="ap-now"></div></div>`;
+    chat.appendChild(m);
+    chat.scrollTop = chat.scrollHeight;
+    APPLY.chat = { rid: String(rid), el: m, job, done: false, events: [] };
+  }
+  function applyChatEnd(message, ok) {
+    const c = APPLY.chat;
+    if (!c || c.done || !document.contains(c.el)) return;
+    c.done = true;
+    const steps = c.events || [];
+    const m = el("div", "msg agent apply-msg");
+    m.dataset.record = c.rid;
+    m.innerHTML = `<div class="msg-bubble bm-bubble">`
+      + `<button type="button" class="bm-sum" aria-expanded="false"><span class="bm-ok" aria-hidden="true">${ok ? "✓" : ok === null ? "·" : "!"}</span>`
+      + `<span class="bm-sum-t">${esc(unDash(message || c.job))}</span>${steps.length ? feedChevron : ""}</button>`
+      + (steps.length ? `<div class="bm-body" hidden>${bmStepsHTML(steps, false)}`
+        + `<div class="bm-foot">${esc(bmT("act.nSteps", "{n} steps").replace("{n}", steps.length))}</div></div>` : "")
+      + `</div>`;
+    c.el.replaceWith(m);
+    c.el = m;
+    chat.scrollTop = chat.scrollHeight;
+  }
+  function applyChatProgress(info) {
+    const c = APPLY.chat;
+    if (!c || info.record_id == null || String(info.record_id) !== c.rid) return;
+    if (!document.contains(c.el)) { APPLY.chat = null; return; }   // a new resume chat since
+    if (info.activity && (info.activity.events || []).length) c.events = info.activity.events;
+    const st = info.state || "";
+    if (c.done) {
+      // A paused job carrying on after its answer starts a fresh live message; Send's result
+      // (Sent, or why not) is one line under the summary.
+      if (st === "running") { applyChatStart(c.rid, {}, c.job); applyChatProgress(info); return; }
+      if (st === "submitted" && info.message) bubble("agent", esc(unDash(info.message)));
+      return;
+    }
+    if (/^(ready|submitted|stopped|parked)$/.test(st) && !(st === "parked" && info.ask)) {
+      applyChatEnd(info.message || "", st === "ready" || st === "submitted");
+      if (st === "submitted" || st === "ready") refreshLiveNav();
+      return;
+    }
+    const live = c.el.querySelector(".bm-live");
+    if (live && c.events.length) live.innerHTML = bmStepsHTML(c.events, st === "running");
+    const now = c.el.querySelector(".ap-now");
+    if (now) now.textContent = st === "running" ? "" : unDash(info.message || "");
+    chat.scrollTop = chat.scrollHeight;
+  }
+
   // Resumes, with the one just saved highlighted and in view.
   async function showSavedResume(id) {
     document.querySelectorAll(".nav-item").forEach(x => x.classList.toggle("is-active", x.dataset.nav === "cvs"));
@@ -10805,11 +10978,13 @@
   // only a site on the verified auto-submit list is ever clicked, and here only with Autonomous
   // submit on; everywhere else it fills and stops for the person's click.
   async function aaFill(id, opts) {
-    const it = (AA.item && AA.item.id === id) ? AA.item : aaFind(id);
-    if (!it) return;
+    // ``opts.item``: a row the caller already has (the builder's Apply gets it from
+    // /api/session/apply, with the Auto-apply board not loaded); ``opts.autonomous`` with it.
+    const it = (opts && opts.item) || ((AA.item && AA.item.id === id) ? AA.item : aaFind(id));
+    if (!it) return null;
     const here = !!(opts && opts.here);
-    if (!here && !/^https?:\/\//i.test(it.apply_url || "")) { aaNote(id, T("aa.noLink", "This application has no link. Open the package to add one.")); return; }
-    if (!window.tailorShell) { window.open(it.apply_url, "_blank", "noopener"); return; }
+    if (!here && !/^https?:\/\//i.test(it.apply_url || "")) { aaNote(id, T("aa.noLink", "This application has no link. Open the package to add one.")); return null; }
+    if (!window.tailorShell) { window.open(it.apply_url, "_blank", "noopener"); return null; }
     // The drawer is a modal, and the in-app browser hides under any modal: filling from the
     // drawer loaded and filled the site out of sight, so it looked like nothing happened
     // (Kofi, 10-27). Step out of the way first; the result goes on the bar above the page.
@@ -10817,10 +10992,12 @@
     // Once per session, before the agent's first run: the answers every form asks, if some are
     // missing (aaBasicsGate). "Apply anyway" comes back here and runs as before.
     if (AA_HAS_AGENT() && !here && !AA_AGENT && !(opts && opts.basicsDone)
-        && await aaBasicsGate(() => aaFill(id, Object.assign({}, opts, { basicsDone: true })))) return;
+        && await aaBasicsGate(() => aaFill(id, Object.assign({}, opts, { basicsDone: true })))) return { gated: true };
     const btn = opts && opts.btn && document.contains(opts.btn) && opts.btn.offsetParent ? opts.btn : null;
     if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = T("aa.filling", "Filling…"); }
-    const auto = it.lane === "auto" && !!(AA.board && AA.board.today && AA.board.today.autonomous);
+    const autoOn = opts && "autonomous" in opts ? !!opts.autonomous
+      : !!(AA.board && AA.board.today && AA.board.today.autonomous);
+    const auto = it.lane === "auto" && autoOn;
     if (AA_HAS_AGENT() && !here) {
       if (btn) btn.textContent = T("aa.applying", "Applying\u2026");
       const r = await aaAgentRun(id, it, auto);
@@ -10829,7 +11006,7 @@
         await api(`/api/record/${id}/status`, { status: "applied" }).catch(() => {});
         loadAutoApply();
       }
-      return;
+      return r;
     }
     const r = await applyInPane({ url: it.apply_url, recordId: id, resumePath: it.cv_path || "", submit: auto, here });
     if (btn) { btn.disabled = false; btn.textContent = btn.dataset.label; }
@@ -10838,6 +11015,7 @@
       await api(`/api/record/${id}/status`, { status: "applied" }).catch(() => {});   // off the to-do
       loadAutoApply();
     }
+    return r;
   }
   // Before the agent's first run of an app session: when some of the answers every form asks
   // are missing (the five self-identification ones count as answered while the person declines

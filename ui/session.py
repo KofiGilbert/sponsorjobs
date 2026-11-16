@@ -632,7 +632,9 @@ _BARE_DECLINE = re.compile(
     r"(?:i\s+)?(?:do\s*n['’]?t|dont)\s+have\s+(?:any|one|those|them)(?:\s+of\s+(?:those|them))?|"
     r"nothing\s+to\s+add|none\s+of\s+(?:those|them)|"
     r"(?:none,?\s+)?leave\s+(?:it|them|both)\s+off|skip(?:\s+(?:it|them|both))?|"
-    r"(?:none|no),?\s+(?:thanks|thank\s+you))\s*[.!]*\s*$", re.I)
+    r"(?:none|no),?\s+(?:thanks|thank\s+you))\s*[.!]*"
+    # "None, leave it off. Build it.": a decline that also asks for the build is still a decline.
+    r"(?:[\s,.!]*(?:just\s+)?(?:build|make)\s+(?:it|the\s+resume)(?:\s+now)?\s*[.!]*)?\s*$", re.I)
 
 
 def _bare_decline(message: str) -> bool:
@@ -4263,6 +4265,7 @@ class WebIntake:
             except Exception:  # noqa: BLE001 - the page works without its switches
                 pass
             s["one_page"] = bool(self.assembled.ok and self.assembled.compile.pages == 1)
+            s["apply"] = self.apply_target()     # the footer's Apply (ui/app.py session_apply)
             # Flagged placeholder projects block finalization until resolved.
             sugg = self._suggested_projects()
             if sugg:
@@ -5016,6 +5019,11 @@ class WebIntake:
                 e["required_covered"] = sorted(set(e.get("required_covered") or []) | {sec})
                 return ["interests"]
             else:
+                # A list section (projects, certifications...) takes entries, never a raw reply:
+                # "None, leave it off. Build it." once landed in projects as a string and the
+                # next turn crashed (2026-11-16). The model's absorb is what structures those.
+                if isinstance(e.get(sec), list) or isinstance(saved.get(sec), list) or sec == "projects":
+                    continue
                 e[sec] = msg
             return [sec]
         return []
@@ -5300,6 +5308,12 @@ class WebIntake:
         'December 2025', full degree names, 'City, XX' locations, clean job titles."""
         from tailoring.conform import (clean_title, fit_courses, format_dates,
                                         format_degree, format_location, format_school)
+        # Entries are dicts: a stray string (a raw chat reply) is dropped, never crashes a turn.
+        for _sec in ("projects", "experience", "education"):
+            if _sec in self.essentials and not isinstance(self.essentials.get(_sec), list):
+                self.essentials[_sec] = []
+            elif isinstance(self.essentials.get(_sec), list):
+                self.essentials[_sec] = [x for x in self.essentials[_sec] if isinstance(x, dict)]
         _normalize_identity(self.essentials.get("identity") or {})
         for e in self.essentials.get("education", []) or []:
             if isinstance(e, dict):
@@ -5631,9 +5645,12 @@ class WebIntake:
                                "reverts it"))
         if not e.get("edit_tip_said"):
             e["edit_tip_said"] = True
-            say(self._fact("edit_tip", self.EDIT_TIP, exact=["Accept & Save"],
-                           tip="they can edit any bullet right on the page, then click "
-                               "Accept & Save"))
+            # A chat that came from a job ends in Apply (the review footer's primary), so the tip
+            # names the button the person will actually press.
+            act = "Apply" if (self.source_job or {}).get("url") else "Accept & Save"
+            tip = self.EDIT_TIP.replace("Accept & Save", act)
+            say(self._fact("edit_tip", tip, exact=[act],
+                           tip=f"they can edit any bullet right on the page, then click {act}"))
         if date_flags:
             say(self._fact("placeholder_dates", self._date_flag_note(date_flags), exact=date_flags,
                            entries=date_flags,
@@ -8525,6 +8542,21 @@ class WebIntake:
         out = _screening_answers(self.jd, self._drafting_profile(), self.llm, questions)
         self.last_screening = out.get("answers", [])
         return out
+
+    _APPLY_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+", re.I)
+
+    def apply_target(self) -> dict:
+        """Where the review footer's Apply sends this resume: the posting's link when the chat
+        came from a job (start_job), else the first link in the pasted description. ``need_url``
+        when neither is known, so Apply asks once in the chat for the application link."""
+        sj = self.source_job or {}
+        url = str(sj.get("url") or "").strip()
+        src = "job" if url else ""
+        if not url:
+            m = self._APPLY_URL_RE.search(self.jd or "")
+            if m:
+                url, src = m.group(0).rstrip(".,;:"), "pasted"
+        return {"url": url, "from": src, "need_url": not url}
 
     @_locked
     def accept(self):
