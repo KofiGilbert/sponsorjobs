@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (cover letter box fixture)</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- Two plain upload boxes, the shape Ashby and many company portals use: the chosen file is only
+     in the input itself (no filename shown on the page). The test attaches the files with CDP, the
+     way the shell does. The resume's file name says neither "resume" nor "cover letter", so only
+     the run's own resume file name tells them apart. No personal values. -->
+<form onsubmit="return false">
+  <div class="field"><label for="resume">Resume *</label><input type="file" id="resume" required accept=".pdf"></div>
+  <div class="field"><label for="letter">Cover letter</label><input type="file" id="letter" accept=".pdf"></div>
+  <div class="field"><label for="why">Why do you want to work here?</label><textarea id="why"></textarea></div>
+  <button type="submit">Submit</button>
+</form>
+</body></html>

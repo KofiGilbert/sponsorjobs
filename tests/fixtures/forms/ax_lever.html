@@ -1,0 +1,77 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (Lever form check fixture)</title>
+<link rel="stylesheet" href="style.css">
+<style>.hidden { display: none; } ul { list-style: none; padding: 0; }</style>
+</head>
+<body>
+<!-- Markup patterns seen on jobs.lever.co/.../apply (November 2026): the required mark is a
+     "✱" span inside div.application-label and most controls carry NO required attribute, so
+     neither the DOM's required flag nor the accessibility tree says required; the question wraps
+     its control in a <label>; checkbox and radio options each have their own label; the attached
+     resume shows as the filename in span.filename. ?state=bug: Email and Phone empty, the
+     work-authorization radios unanswered, "Have you worked here before?" Yes AND No ticked;
+     ?state=clean: all answered. "Which teams interest you" allows several. No personal values. -->
+<form id="application-form" onsubmit="return false">
+  <ul>
+    <li class="application-question resume"><label>
+      <div class="application-label">Resume/CV<span class="required">✱</span></div>
+      <div class="application-field"><a class="postings-btn">ATTACH RESUME/CV<input type="file" name="resume" id="resume-upload-input" style="position:absolute;opacity:0;width:1px;height:1px"></a>
+        <span class="resume-upload-working hidden">Analyzing resume...</span>
+        <span class="resume-upload-success"><span class="filename">resume.pdf</span> Success!</span></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Full name<span class="required">✱</span></div>
+      <div class="application-field"><input type="text" name="name" id="name"></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Email<span class="required">✱</span></div>
+      <div class="application-field"><input type="email" name="email" id="email"></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Phone<span class="required">✱</span></div>
+      <div class="application-field"><input type="text" name="phone" id="phone"></div>
+    </label></li>
+    <li class="application-question"><label>
+      <div class="application-label">Current company</div>
+      <div class="application-field"><input type="text" name="org" id="org"></div>
+    </label></li>
+  </ul>
+  <div class="application-question custom-question">
+    <div class="application-label">Are you legally authorized to work in the United States?<span class="required">✱</span></div>
+    <div class="application-field"><ul>
+      <li><label><input type="radio" name="cards[a][field0]" value="Yes" id="auth_yes"><span class="application-answer-alternative">Yes</span></label></li>
+      <li><label><input type="radio" name="cards[a][field0]" value="No" id="auth_no"><span class="application-answer-alternative">No</span></label></li>
+    </ul></div>
+  </div>
+  <div class="application-question custom-question">
+    <div class="application-label">Have you worked here before?<span class="required">✱</span></div>
+    <div class="application-field"><ul>
+      <li><label><input type="checkbox" name="cards[b][field0]" value="No" id="before_no"><span class="application-answer-alternative">No</span></label></li>
+      <li><label><input type="checkbox" name="cards[b][field0]" value="Yes" id="before_yes"><span class="application-answer-alternative">Yes</span></label></li>
+    </ul></div>
+  </div>
+  <div class="application-question custom-question">
+    <div class="application-label">Which teams interest you?</div>
+    <div class="application-field"><ul>
+      <li><label><input type="checkbox" name="cards[c][field0]" value="Data" id="team_data"><span class="application-answer-alternative">Data</span></label></li>
+      <li><label><input type="checkbox" name="cards[c][field0]" value="Finance" id="team_fin"><span class="application-answer-alternative">Finance</span></label></li>
+      <li><label><input type="checkbox" name="cards[c][field0]" value="Operations" id="team_ops"><span class="application-answer-alternative">Operations</span></label></li>
+    </ul></div>
+  </div>
+  <button type="button" id="btn-submit" class="template-btn-submit">Submit application</button>
+</form>
+<script>
+  const st = new URLSearchParams(location.search).get("state") || "bug";
+  document.getElementById("name").value = "Test Applicant";
+  document.getElementById("before_no").checked = true;
+  document.getElementById("team_data").checked = true;
+  document.getElementById("team_fin").checked = true;
+  if (st === "bug") {
+    document.getElementById("before_yes").checked = true;
+  } else {
+    document.getElementById("email").value = "applicant@example.com";
+    document.getElementById("phone").value = "555 0100";
+    document.getElementById("auth_yes").checked = true;
+  }
+</script>
+</body></html>

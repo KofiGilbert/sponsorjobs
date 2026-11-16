@@ -1,0 +1,76 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply (Workday form check fixture)</title>
+<link rel="stylesheet" href="style.css">
+<style>[data-automation-id="file-upload-item"] { border: 1px solid #888; padding: 4px; margin: 4px 0; width: 300px; }
+.wd-list { border: 1px solid #333; background: #fff; width: 280px; }</style>
+</head>
+<body>
+<!-- Markup patterns seen on *.myworkdayjobs.com "My Experience" and "Application Questions"
+     (November 2026): the Resume/CV section is a drop zone whose file input (multiple) is hidden
+     and whose uploaded files are listed as file-upload-item rows (name + Delete); the input itself
+     is emptied after each upload, so only the rows say what was attached. Labels end with an
+     <abbr title="required">*</abbr>. A listbox button (aria-haspopup=listbox) opens a popup list
+     at the end of the body. ?state=bug: the resume listed three times, "How Did You Hear About
+     Us?" left open, Address Line 1 empty and the Postal Code marked invalid; ?state=clean: one
+     resume, closed, filled. No personal values. -->
+<h2>My Experience</h2>
+<div data-automation-id="applyFlowMyExpPage">
+  <div data-automation-id="formField-addressLine1">
+    <label for="address--addressLine1" data-automation-id="formLabel">Address Line 1<abbr title="required">*</abbr></label>
+    <input type="text" id="address--addressLine1" aria-required="true" data-automation-id="addressSection_addressLine1">
+  </div>
+  <div data-automation-id="formField-postalCode">
+    <label for="address--postalCode" data-automation-id="formLabel">Postal Code<abbr title="required">*</abbr></label>
+    <input type="text" id="address--postalCode" aria-required="true" aria-describedby="postal-error" data-automation-id="addressSection_postalCode">
+    <div id="postal-error" data-automation-id="errorMessage" role="alert" hidden>Error: Enter a valid postal code.</div>
+  </div>
+  <div data-automation-id="formField-source">
+    <label id="source-label" data-automation-id="formLabel">How Did You Hear About Us?<abbr title="required">*</abbr></label>
+    <button type="button" id="source" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="source-label source"
+      aria-required="true" data-automation-id="sourceDropdown">Company Website</button>
+  </div>
+  <section data-automation-id="attachments-FileUpload" aria-labelledby="resume-heading">
+    <h3 id="resume-heading">Resume/CV<abbr title="required">*</abbr></h3>
+    <div data-automation-id="file-upload-drop-zone">
+      <p>Drop files here</p>
+      <button type="button" data-automation-id="select-files">Select files</button>
+      <input type="file" multiple data-automation-id="file-upload-input-ref" id="resume-files" aria-labelledby="resume-heading"
+        style="position:absolute;opacity:0;width:1px;height:1px">
+    </div>
+    <div data-automation-id="file-upload-list" id="file-list"></div>
+  </section>
+  <button type="button" data-automation-id="bottom-navigation-next-button">Save and Continue</button>
+  <button type="button" data-automation-id="pageFooterSubmitButton">Submit</button>
+</div>
+<script>
+  const st = new URLSearchParams(location.search).get("state") || "bug";
+  const row = (name) => {
+    const d = document.createElement("div");
+    d.setAttribute("data-automation-id", "file-upload-item");
+    d.innerHTML = '<div data-automation-id="file-upload-item-name"></div><div>Successfully Uploaded!</div>'
+      + '<button type="button" data-automation-id="delete-file">Delete</button>';
+    d.firstChild.textContent = name;
+    document.getElementById("file-list").appendChild(d);
+  };
+  document.getElementById("address--postalCode").value = "00000";
+  row("resume.pdf");
+  if (st === "bug") {
+    row("resume.pdf"); row("resume.pdf");
+    const b = document.getElementById("source");
+    b.setAttribute("aria-expanded", "true");
+    b.setAttribute("aria-controls", "source-list");
+    const list = document.createElement("div");
+    list.className = "wd-list"; list.id = "source-list"; list.setAttribute("role", "listbox");
+    for (const o of ["Company Website", "Indeed", "LinkedIn", "Referral"]) {
+      const d = document.createElement("div"); d.setAttribute("role", "option"); d.setAttribute("data-automation-id", "promptOption");
+      d.setAttribute("aria-selected", o === "Company Website" ? "true" : "false"); d.textContent = o; list.appendChild(d);
+    }
+    document.body.appendChild(list);
+    const pc = document.getElementById("address--postalCode");
+    pc.setAttribute("aria-invalid", "true");
+    document.getElementById("postal-error").hidden = false;
+  } else {
+    document.getElementById("address--addressLine1").value = "1 Main Street";
+  }
+</script>
+</body></html>
