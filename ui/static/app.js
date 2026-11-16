@@ -13,48 +13,54 @@
      show the matching screen. Anything else stays an ordinary error for the caller. */
   const OUTAGE = {
     offline: {
-      h: "You're offline",
+      hk: "outage.offline.h", h: "You're offline",
+      pk: "outage.offline.p",
       p: "SponsorJobs writes with the real model, so it needs a connection. Reconnect and try again.",
     },
     no_account: {
-      h: "Couldn't set up your free account",
+      hk: "outage.noAccount.h", h: "Couldn't set up your free account",
+      pk: "outage.noAccount.p",
       p: "Too many new sign-ups came from this network today, or the service is busy. Try again in a while.",
     },
     no_key: {
-      h: "Connect your AI key",
+      hk: "outage.noKey.h", h: "Connect your AI key",
+      pk: "outage.noKey.p",
       p: "SponsorJobs runs on your own Anthropic key. Add it once and it stays on this machine.",
-      btn: "Add your key",
+      btnk: "outage.noKey.btn", btn: "Add your key",
     },
     no_credit: {
-      h: "Your Anthropic credit has run out",
+      hk: "outage.noCredit.h", h: "Your Anthropic credit has run out",
       p: "SponsorJobs runs on your own key at cost, so nothing can be written until you top up. Add credit at Anthropic, then try again. Tip: turn on auto-reload so it never stops mid-run.",
       link: "https://platform.claude.com/settings/billing",
-      linkLabel: "Add credits",
+      linkLabelk: "outage.noCredit.linkLabel", linkLabel: "Add credits",
     },
     rate_limited: {
-      h: "Too many requests",
+      hk: "outage.rateLimited.h", h: "Too many requests",
+      pk: "outage.rateLimited.p",
       p: "Anthropic is rate-limiting your key right now. Wait a moment, then try again.",
     },
     busy: {
-      h: "Anthropic is busy",
+      hk: "outage.busy.h", h: "Anthropic is busy",
+      pk: "outage.busy.p",
       p: "The model is overloaded at the moment. This usually clears in a minute.",
     },
     // Bundled (managed AI) paywall: the person used the tailored packages on their tier (Free: 3 a
     // month; a pass: its balance). Different from no_credit (a bring-your-own-key wallet); the fix
     // is a pass or their own key, so the button opens the passes panel, not the add-a-key modal.
     upgrade_required: {
-      h: "You've used your tailored packages",
+      hk: "outage.upgrade.h", h: "You've used your tailored packages",
       p: "Free includes 3 tailored packages a month. A Job Hunt Pass or a Season Pass gives you many more, paid once with no auto-renew.",
-      btn: "See passes",
+      btnk: "outage.upgrade.btn", btn: "See passes",
     },
     service_down: {
-      h: "SponsorJobs' AI is briefly unavailable",
+      hk: "outage.serviceDown.h", h: "SponsorJobs' AI is briefly unavailable",
+      pk: "outage.serviceDown.p",
       p: "Our AI service is having a moment. Please try again in a minute.",
     },
     // OUR outage: the company AI key failed (no credit, disabled). The broker has already alerted
     // the owner. No button and no link: nothing the person can buy or add fixes it, and their pass
-    // and packages are untouched. The copy is translated (hk/pk), unlike the bring-your-own-key
-    // screens above, because every person on the bundled AI sees it.
+    // and packages are untouched. Every screen in this table carries its key (#257), so the
+    // whole modal translates; this one is kept apart only because it has no button and no link.
     ai_company: {
       hk: "outage.aiCompany.h", h: "SponsorJobs' AI is temporarily unavailable",
       pk: "outage.aiCompany.p", p: "Your pass and packages are not affected. We have been alerted; try again in a little while.",
@@ -78,9 +84,13 @@
     $("#downP").textContent = outageText(o.pk, o.p);
     const link = $("#downFix"), btn = $("#downFixBtn");
     link.hidden = !o.link;
-    if (o.link) { link.href = o.link; link.textContent = o.linkLabel || "Fix it"; }
+    if (o.link) {
+      link.href = o.link;
+      link.textContent = o.linkLabel ? outageText(o.linkLabelk, o.linkLabel)
+                                     : outageText("outage.fix", "Fix it");
+    }
     btn.hidden = !o.btn;
-    if (o.btn) btn.textContent = o.btn;
+    if (o.btn) btn.textContent = outageText(o.btnk, o.btn);
     // Retrying cannot fix a used-up allowance or a missing key; the button would only fail again.
     const retry = $("#downRetry");
     if (retry) retry.hidden = ["upgrade_required", "no_key", "no_credit", "no_account"].includes(reason);
@@ -145,7 +155,7 @@
     appEl?.classList.toggle("is-rail", on);
     const t = $("#railToggle");
     if (t) {
-      t.title = on ? "Expand menu" : "Collapse menu";
+      t.title = on ? I18N.t("nav.expand", "Expand menu") : I18N.t("nav.collapse", "Collapse menu");
       t.setAttribute("aria-label", t.title);
       t.setAttribute("aria-expanded", String(!on));
     }
@@ -821,7 +831,7 @@
   function feedDownloadText() { return "Loading jobs\u2026"; }
   const feedFailed = (st) => !!(st && st.configured && !st.downloading && !st.has_cache && st.failing);
   function feedLoadingHtml() {
-    return `<div role="status" aria-label="Loading jobs">${jobSkeleton()}</div>`;
+    return `<div role="status" aria-label="${esc(I18N.t("jobs.loading", "Loading jobs"))}">${jobSkeleton()}</div>`;
   }
   function feedFailHtml() {
     return `<div class="feed-dl is-failed" role="alert"><span>Couldn't download the job list. Check your connection and try again.</span>` +
@@ -897,7 +907,7 @@
             <div class="fr-main">
               <div class="tc-co">${esc(coName(j))}</div>
               <div class="tc-title">${esc(j.title)}</div>
-              <div class="tc-loc">${esc(usLocation(j.location) || "Location not listed")}</div>
+              <div class="tc-loc">${esc(usLocation(j.location) || I18N.t("jobs.noLocation", "Location not listed"))}</div>
             </div>
             ${f.label ? `<span class="tc-fresh">${esc(f.label)}</span>` : ""}
           </div>
@@ -1506,7 +1516,7 @@
     const stated = j.ad_stance === "offered"
       ? `<span class="vbadge vb-stated" title="This job ad says visa sponsorship is available for the role (for a US new hire that usually means H-1B, but the ad does not name the visa).${quote}">Sponsorship available</span>`
       : j.ad_stance === "not_offered"
-        ? `<span class="vbadge vb-no" title="This job ad says it will not sponsor a visa for the role.${quote}">No sponsorship</span>`
+        ? `<span class="vbadge vb-no" title="${esc(I18N.t("jobs.noSponsorTip", "This job ad says it will not sponsor a visa for the role."))}${quote}">No sponsorship</span>`
         : j.ad_stance === "restricted"
           ? `<span class="vbadge vb-no vb-restricted" title="This job ad requires US citizenship, permanent residency, or a security clearance, so it is closed to a visa holder.${quote}">Citizenship or clearance required</span>`
           : "";
@@ -1789,7 +1799,9 @@
   // The sponsorship dropdown label reflects how many options are selected.
   function updateVisaSummary() {
     const s = $("#jfVisaSummary");
-    if (s) s.textContent = VISA_SET.size ? `Sponsorship (${VISA_SET.size})` : "Sponsorship";
+    if (s) s.textContent = VISA_SET.size
+      ? I18N.t("jobs.sponsorshipN", "Sponsorship ({n})").replace("{n}", VISA_SET.size)
+      : I18N.t("jobs.sponsorship", "Sponsorship");
   }
 
 
@@ -2288,7 +2300,7 @@
       ${!hasSponsor ? `<div class="fd-fit-note fit-warn">No public sponsorship record for this employer, worth confirming before you apply.</div>` : ""}
       ${reqMiss.length ? `<div class="fd-gaps"><span class="fd-gaps-lbl">Missing must-haves:</span> ${reqMiss.map(g => `<span class="fd-gap fd-gap-req">${esc(g)}</span>`).join("")}</div>` : ""}
       ${optMiss.length ? `<div class="fd-gaps"><span class="fd-gaps-lbl">Nice-to-haves to weave in:</span> ${optMiss.map(g => `<span class="fd-gap">${esc(g)}</span>`).join("")}</div>` : ""}
-      ${gaps.length ? `<button class="fd-upskill-btn" data-upskill type="button">How do I close these gaps? →</button>
+      ${gaps.length ? `<button class="fd-upskill-btn" data-upskill type="button">${esc(empT("emp.planCta", "How do I close these gaps? →"))}</button>
         <div class="fd-upskill" id="fdUpskill"></div>` : ""}`;
     el.querySelector("[data-upskill]")?.addEventListener("click", e => loadUpskill(gaps, e.currentTarget, reqMiss));
   }
@@ -2300,13 +2312,13 @@
   async function loadUpskill(gaps, btn, required) {
     const box = $("#fdUpskill");
     const j = LAST_JOBS.find(x => x.source_id === SELECTED_SID) || {};
-    btn.disabled = true; btn.textContent = "Building your plan…";
+    btn.disabled = true; btn.textContent = empT("emp.planBuilding", "Building your plan…");
     try {
       const r = await api("/api/jobs/upskill", { gaps, role: j.title || "", required: required || [] });
       const plan = (r && r.plan) || [];
       if (!plan.length) {
         box.innerHTML = `<div class="us-empty">Couldn't build a plan right now, try again in a moment.</div>`;
-        btn.disabled = false; btn.textContent = "How do I close these gaps? →";
+        btn.disabled = false; btn.textContent = empT("emp.planCta", "How do I close these gaps? →");
         return;
       }
       const mustN = plan.filter(p => p.priority === "must-have").length;
@@ -2326,8 +2338,8 @@
         </div>`).join("");
       btn.remove();
     } catch (e) {
-      btn.disabled = false; btn.textContent = "How do I close these gaps? →";
-      box.innerHTML = `<div class="us-empty">${esc((e && e.message) || "Something went wrong.")}</div>`;
+      btn.disabled = false; btn.textContent = empT("emp.planCta", "How do I close these gaps? →");
+      box.innerHTML = `<div class="us-empty">${esc((e && e.message) || empT("emp.planFailed", "Something went wrong."))}</div>`;
     }
   }
 
@@ -4081,7 +4093,7 @@
     // Before a build there's no PDF yet, show the placeholder, never a drifting HTML CV.
     $("#pdfPlaceholder").hidden = false;
     $("#pdfFrame").hidden = true; $("#paperWrap").hidden = true;
-    $("#builderRole").textContent = "New Resume";
+    $("#builderRole").textContent = I18N.t("agent.newResume", "New Resume");
     CHOICES = null;
     renderChoiceLine(null);
     renderPreview({});
@@ -4406,7 +4418,7 @@
     view.classList.toggle("agent-mode", on);
     const kicker = view.querySelector(".builder-kicker");
     if (kicker) kicker.textContent = on ? agentT("agent.kicker", "Assistant") : BUILDER_WORDS.kicker;
-    $("#builderRole").textContent = on ? "" : "New Resume";
+    $("#builderRole").textContent = on ? "" : agentT("agent.newResume", "New Resume");
     $("#steps").hidden = on;
     $("#builderTpl").hidden = true;
     const sub = view.querySelector(".chat-head-sub");
@@ -4673,7 +4685,7 @@
     if (window.Panel && Panel.isOpen("cv")) Panel.close();
     await refreshLiveNav();
     await showSavedResume(r.record_id);
-    toast("Saved to Resumes", { label: "Open", run: () => openPackage(r.record_id) });
+    toast(agentT("agent.savedToResumes", "Saved to Resumes"), { label: agentT("agent.open", "Open"), run: () => openPackage(r.record_id) });
   });
   // Resumes, with the one just saved highlighted and in view.
   async function showSavedResume(id) {
