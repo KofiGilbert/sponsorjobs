@@ -15,6 +15,10 @@
 // helpers it already has (`deps`), the same way frames.js takes a CDP adapter.
 "use strict";
 
+// EXPERIMENT, off unless SJ_HANDS=agent-browser: the brain's eyes and hands through agent-browser
+// (shell-electron/abhands.js, docs/agent-hands-eval.md). Off, nothing below changes.
+const abhands = require("./abhands");
+
 // Budgets (docs/apply-agent.md section 15): steps and dollars per application, both overridable.
 const MAX_STEPS = Math.max(10, Number(process.env.SJ_AGENT_MAX_STEPS) || 60);
 const COST_CAP_USD = Number(process.env.SJ_AGENT_COST_CAP_USD) > 0 ? Number(process.env.SJ_AGENT_COST_CAP_USD) : 0.80;
@@ -441,7 +445,26 @@ function createAgent(deps) {
     while ((m = re.exec(text))) out.push(Number(m[1]));
     return out;
   };
+  let abPrev = null;                                       // agent-browser refs of the last view (the * mark)
   async function view(wc, fr) {
+    const ours = await viewOurs(wc, fr);
+    if (!abhands.ENABLED) return ours;
+    // (Experiment) agent-browser's snapshot is what the brain reads; our own view stays built
+    // underneath, so the shell's helpers (page check, saved answers, readers) keep their elements.
+    try {
+      await wc.executeJavaScript(abhands.TAG_JS, true);
+      const ab = await guard(abhands.snapshotView({ url: wc.getURL() || "", title: wc.getTitle() || "",
+        appOrigin: "http://127.0.0.1:" + (Number(process.env.TAILOR_PORT) || 57000), ourText: ours.text, prev: abPrev }), 40000, "agent-browser");
+      if (ab && ab.text) {
+        abPrev = ab.refs;
+        dlog("agent-browser view:", ab.stats);
+        return { text: ab.text, indices: ab.indices, frameOf: new Map(), abRefs: ab.refOf, ours };
+      }
+      dlog("agent-browser view failed, our view used:", ab && ab.error);
+    } catch (e) { if (e && e.stopped) throw e; dlog("agent-browser view error, our view used:", String(e && e.message || e)); }
+    return ours;
+  }
+  async function viewOurs(wc, fr) {
     const main = await wc.executeJavaScript("window.TailorAgent.view({ indexBase: 1 })", true);
     let text = (main && main.text) || "";
     const indices = new Set(indicesIn(text));
@@ -572,6 +595,10 @@ function createAgent(deps) {
     }
     const expr = `window.TailorAgent.act(${JSON.stringify(a)})`;
     const ctx = v.frameOf.get(a.index);
+    if (v.abRefs) {
+      const abr = await actAgentBrowser(wc, v, a, resumePath);
+      if (abr) return abr;
+    }
     if (a.op === "upload") return upload(wc, fr, ctx, a.index, resumePath, a);
     // Where a person's real pointer and keys matter: typeahead boxes (type for real so the
     // list opens) and the options they show (click for real). Plain fields and buttons keep
@@ -639,6 +666,38 @@ function createAgent(deps) {
       if (real) return real;
     }
     return out;
+  }
+
+  // (Experiment, SJ_HANDS=agent-browser) The brain's action on the element's agent-browser ref.
+  // The same refusals as ours (Submit, LinkedIn and social sign-ins, the resume never in a cover
+  // letter box). A saved answer ({{answer_N}}) typed into a list stays on OUR known-answers pick
+  // (the planner path) when we know the element; null hands the action back to our own path.
+  async function actAgentBrowser(wc, v, a, resumePath) {
+    const line = viewLine(v.text, a.index);
+    if (a.op === "scroll") return guard(abhands.scroll(a.direction), ACTION_MS, "scroll");
+    const ref = v.abRefs.get(a.index);
+    if (!ref || !["click", "type", "select", "upload"].includes(a.op)) return null;
+    const known = v.ours && v.ours.indices.has(a.index);
+    if (a.op === "type" && known && /^answer_\d+$/.test(String(a.placeholder || "")) && /<(combobox|select)\b/.test(line)) return null;
+    if (a.op === "click") {
+      const name = lineName(line);
+      if (SUBMIT_RE.test(String(name || "").trim())) return { ok: false, note: "submit-guard" };
+      const social = socialRefused(name, v.text);
+      if (social) return { ok: false, note: "refused: " + social };
+    }
+    let info = null;
+    if (a.op === "upload") {
+      const letterBox = /cover.?letter|letter of (interest|motivation)|motivation(al)? letter/i.test(line);
+      const wantLetter = a.file === "cover_letter";
+      info = { file: letterBox ? (wantLetter ? a.path : "") : (wantLetter ? "" : (a.path || resumePath || "")) };
+    }
+    try {
+      return await guard(abhands.act(a, ref, line, info), ACTION_MS + 5000, "agent-browser " + a.op, { nav: true });
+    } catch (e) {
+      if (e && e.stopped) throw e;
+      if (e && e.navigated) return { ok: true, note: "page changed", changed: true };
+      return { ok: false, note: String(e && e.message || e).slice(0, 120) };
+    }
   }
 
   // ``a.path``/``a.file`` come from the brain (autoapply/brain.py): the cover letter for a cover
@@ -2286,7 +2345,16 @@ function createAgent(deps) {
   const isReady = (recordId) => ready.has(recordId);
   const busy = () => !!(current || batchOn);
 
-  return { run, batch, send, stop, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
+  // Debug log only: each run's start (with the hands in use) and its outcome, so a run can be
+  // measured from the log (docs/agent-hands-eval.md). Behaviour is unchanged.
+  const runLogged = async (recordId, opts) => {
+    dlog("run start", { record_id: recordId, hands: abhands.ENABLED ? "agent-browser" : "ours" });
+    abPrev = null;
+    const out = await run(recordId, opts);
+    dlog("run end", out && typeof out === "object" ? { ok: out.ok, state: out.state, reason: out.reason, message: String(out.message || "").slice(0, 200) } : out);
+    return out;
+  };
+  return { run: runLogged, batch, send, stop, isReady, busy, pollParked, continueParked, startPolling, MAX_STEPS,
            _test: { askLong, parked, epoch: () => paneEpoch, feeds, guard } };
 }
 
