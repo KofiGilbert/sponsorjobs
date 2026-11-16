@@ -2732,6 +2732,37 @@ def _polish_edges(preamble, used: dict, result, *, llm, jd_text: str, sections, 
                 _fill_log(step="polish-undone", label=label, fill=getattr(r, "fill_ratio", None),
                           why={"pages": getattr(r, "pages", None), "clean": clean(r),
                                "before": result.fill_ratio, "asks": asks, "new": new})
+    # STILL A STUB after every try: the bullet takes back the text it was written from (the
+    # person's own, which printed full before) when that leaves fewer short lines and keeps the
+    # fill goal (run w3: a rewritten project bullet ended one word into its second line and no
+    # polish version passed).
+    rep = _lf.measure(getattr(result, "pdf_path", None), used)
+    fits = {i.text: i for i in getattr(rep, "bullets", []) or []}
+    for entry, role, employer, label in list(entries()):
+        bl = role["bullets"]
+        back = {k: origins.get(b) for k, b in enumerate(bl)
+                if b in fits and not fits[b].ok() and origins.get(b) and origins.get(b) != b
+                and origins.get(b) not in bl}
+        if not back:
+            continue
+        old = list(bl)
+        for k, o in back.items():
+            bl[k] = o
+        r = compile_tex(render_cv(preamble, used, sections, probe=True, headings=headings),
+                        workdir, jobname=f"{jobname}-polish")
+        ok = clean(r)
+        if ok:
+            ok = short_in(_lf.measure(getattr(r, "pdf_path", None), used), bl) < short_in(rep, old)
+        if ok and (result.fill_ratio or 0) >= FILL_GOAL > (r.fill_ratio or 0):
+            ok = False
+        if ok:
+            result = r
+            rep = _lf.measure(getattr(r, "pdf_path", None), used)
+            fits = {i.text: i for i in getattr(rep, "bullets", []) or []}
+        else:
+            bl[:] = old
+        _fill_log(step="polish-own", label=label, fill=getattr(r, "fill_ratio", None),
+                  why={"kept": ok, "slots": sorted(back)})
     return result
 
 
@@ -2933,6 +2964,7 @@ def assemble_cv(
     fill_writes: bool | None = None,
     skill_cap: int | None = None,
     skill_keep=(),
+    role_terms: dict | None = None,
 ) -> AssembleResult:
     """Assemble a one-page CV from ``profile`` in the template's shape.
 
@@ -3147,7 +3179,7 @@ def assemble_cv(
             preamble, used, result, llm=llm, jd_text=jd_text, source=source_material,
             material=material, gate_material=gate_material, sections=sections,
             headings=headings, workdir=workdir, jobname=jobname, origins=origins,
-            fill_goal=FILL_GOAL, max_fill=MAX_FILL)
+            fill_goal=FILL_GOAL, max_fill=MAX_FILL, role_terms=role_terms)
         if planned:
             added = [a for a in added if a.get("section") != "experience"] + planned
         elif result and result.ok and result.pages == 1:
