@@ -1865,7 +1865,7 @@
             <div class="fr-co-name">${esc(coName(j))}</div>
             ${f.label ? `<span class="fr-fresh ${f.cls}">${f.cls ? "● " : ""}${esc(f.label)}</span>` : ""}
           </div>
-          <div class="fr-role">${esc(j.title)} ${isNew}${j.my_session && j.my_session.keywords != null ? ` <span class="fr-mine">${esc(sjT("jobs.mineChip", "Your resume \u00b7 {n}%").replace("{n}", j.my_session.keywords))}</span>` : ""}</div>
+          <div class="fr-role"><span class="slide-t">${esc(j.title)}</span> ${isNew}${j.my_session && j.my_session.keywords != null ? ` <span class="fr-mine">${esc(sjT("jobs.mineChip", "Your resume \u00b7 {n}%").replace("{n}", j.my_session.keywords))}</span>` : ""}</div>
           <div class="fr-loc">${esc(usLocation(j.location))}</div>
           <div class="fr-tags">${tags}</div>
           <div class="fr-meta">
@@ -13213,4 +13213,40 @@
       open("browser");
     });
   }
+})();
+
+
+// ONE line for a job title, never a clumsy wrap (Kofi, 2026-11-16): a long title ends in "...", and
+// under the pointer it slides slowly to show the rest, the way music apps show a long track name.
+// Off under prefers-reduced-motion, where the full title is the hover tooltip instead.
+(function slidingTitles() {
+  const SEL = ".tc-title, .slide-t";
+  const PX_PER_S = 45;
+  const still = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function inner(t) {
+    let s = t.querySelector(":scope > .slide-in");
+    if (!s) { s = document.createElement("span"); s.className = "slide-in"; s.textContent = t.textContent; t.textContent = ""; t.appendChild(s); }
+    return s;
+  }
+  document.addEventListener("mouseover", (ev) => {
+    const t = ev.target && ev.target.closest && ev.target.closest(SEL);
+    if (!t || t.dataset.sliding === "1") return;
+    const over = t.scrollWidth - t.clientWidth;
+    if (over <= 2) return;
+    if (!t.title) t.title = t.textContent.trim();
+    if (still()) return;
+    t.dataset.sliding = "1";
+    t.classList.add("sliding");
+    const s = inner(t);
+    s.style.transition = `transform ${Math.max(1.2, over / PX_PER_S).toFixed(2)}s linear 0.35s`;
+    s.style.transform = `translateX(-${over}px)`;
+    const back = (e2) => {
+      if (e2 && t.contains(e2.relatedTarget)) return;
+      t.removeEventListener("mouseout", back);
+      s.style.transition = "transform 0.25s ease-out";
+      s.style.transform = "translateX(0)";
+      setTimeout(() => { t.classList.remove("sliding"); delete t.dataset.sliding; }, 260);
+    };
+    t.addEventListener("mouseout", back);
+  });
 })();
