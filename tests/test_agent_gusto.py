@@ -131,9 +131,88 @@ def test_self_identification_topics_on_sentence_wordings():
     assert eeo.topic_key("Veteran Status (please select one):") == "@veteran"
     assert eeo.topic_key("I have a disability (please select one):") == "@disability"
     assert eeo.topic_key("Are you of Hispanic or Latino origin?") == "@hispanic_latino"
-    assert eeo.topic_key("I identify as transgender (please select one):").startswith("@") is False
     assert eeo.topic_key("Gender pronouns") != "@gender"
     assert eeo.topic_key("Do you need an accommodation for a disability?") != "@disability"
+
+
+# --- the three questions the person can now save once (Memory > Self-identification) ----------------
+def test_the_three_greenhouse_wordings_name_their_own_keys():
+    assert eeo.topic_key("I identify as transgender (please select one):") == "@transgender"
+    assert eeo.topic_key("I identify my sexual orientation as (please select one):") == "@sexual_orientation"
+    assert eeo.topic_key("I identify as a first-generation professional (please select one):") == "@first_gen"
+    for _ref, label, _opts in GUSTO_EEO:                           # the engine's cut labels too
+        if _ref in ("trans", "orient", "first"):
+            assert eeo.topic_key(label) == {"trans": "@transgender", "orient": "@sexual_orientation",
+                                            "first": "@first_gen"}[_ref]
+    # never the gender question, and a first-generation COLLEGE student is another fact
+    assert eeo.topic_key("How would you describe your gender identity (please select one)?") == "@gender"
+    assert eeo.topic_key("Are you a first-generation college student?") != "@first_gen"
+    # the saved question is the key the library stores it under
+    from autoapply.answers import normalize
+    for k, q in eeo.QUESTIONS.items():
+        assert normalize(q) == k
+
+
+ORIENT = ["Asexual", "Bisexual", "Gay", "Heterosexual / Straight", "Lesbian", "Queer", "Pansexual",
+          "I prefer to self-describe", DECLINE]
+YES_NO = ["Yes", "No", DECLINE]
+
+
+@pytest.mark.parametrize("key,options,saved,want", [
+    ("@sexual_orientation", ORIENT, "Heterosexual or straight", "Heterosexual / Straight"),
+    ("@sexual_orientation", ORIENT, "Lesbian", "Lesbian"),
+    ("@sexual_orientation", ORIENT, "Pansexual", "Pansexual"),
+    ("@sexual_orientation", ORIENT, "Prefer not to say", DECLINE),
+    # Gusto's own grouped choices: the one option that names it
+    ("@sexual_orientation", GUSTO_EEO[2][2], "Gay", "Gay and/or lesbian"),
+    ("@sexual_orientation", GUSTO_EEO[2][2], "Queer", "Bisexual, pansexual and/or queer"),
+    ("@sexual_orientation", GUSTO_EEO[2][2], "Heterosexual or straight", "Heterosexual"),
+    ("@transgender", YES_NO, "No", "No"),
+    ("@transgender", YES_NO, "Yes", "Yes"),
+    ("@transgender", ["I identify as transgender", "I do not identify as transgender", DECLINE], "No",
+     "I do not identify as transgender"),
+    ("@transgender", YES_NO, "Prefer not to say", DECLINE),
+    ("@first_gen", YES_NO, "Yes", "Yes"),
+    ("@first_gen", ["Yes, I am a first-generation professional", "No, I am not a first-generation professional",
+                    DECLINE], "No", "No, I am not a first-generation professional"),
+])
+def test_a_saved_answer_picks_the_one_option_that_says_it(key, options, saved, want):
+    assert eeo.choose(key, options, {key: saved}) == want
+
+
+@pytest.mark.parametrize("key,options,saved", [
+    # "another" is never "I prefer to self-describe" (that asks for the person's own words)
+    ("@sexual_orientation", ORIENT, "Another sexual orientation"),
+    ("@sexual_orientation", ["Heterosexual", "Gay", "Lesbian", DECLINE], "Asexual"),
+    ("@transgender", ["Yes", DECLINE], "No"),
+    ("@first_gen", ["Yes", "No"], "Prefer not to say"),             # no decline offered: left open
+    ("@transgender", ["Yes", "No", "I don't know"], ""),
+])
+def test_no_option_says_it_so_none_is_chosen(key, options, saved):
+    assert eeo.choose(key, options, {key: saved} if saved else {}) is None
+
+
+def test_the_saved_three_fill_the_gusto_form_and_an_unmatched_one_declines(lib):
+    # invented answers, for the test only
+    lib.save("Transgender", "No", "you")
+    lib.save("Sexual orientation", "Lesbian", "you")
+    lib.save("First-generation professional", "Yes", "you")
+    res = plan_known(_gusto_fields(), _ctx(lib))
+    by = {a.ref: (a.value, a.origin, a.sensitive) for a in res.actions}
+    assert by["trans"] == ("No", "library", True)
+    assert by["orient"] == ("Gay and/or lesbian", "library", True)
+    assert by["first"] == ("Yes", "library", True)
+    assert "@transgender" in res.used_library and "@first_gen" in res.used_library
+    # a saved answer none of the choices says: the page's decline, never a guess
+    lib.save("Sexual orientation", "Another sexual orientation", "you")
+    by = {a.ref: (a.value, a.origin) for a in plan_known(_gusto_fields(), _ctx(lib)).actions}
+    assert by["orient"] == (DECLINE, "eeo_decline")
+    # the shell's ask path reads the same saved answers
+    assert known_answer(GUSTO_EEO[1][1], GUSTO_EEO[1][2], library=lib) == ("No", "library")
+    assert known_answer(GUSTO_EEO[6][1], GUSTO_EEO[6][2], library=lib) == ("Yes", "library")
+    # the standing decline comes first and alone
+    by = {a.ref: (a.value, a.origin) for a in plan_known(_gusto_fields(), _ctx(lib, eeo_decline=True)).actions}
+    assert by["trans"] == (DECLINE, "eeo") and by["first"] == (DECLINE, "eeo")
 
 
 def test_the_shells_known_only_check_declines_and_a_plain_ask_still_asks(lib):

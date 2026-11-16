@@ -281,6 +281,20 @@ def test_b_a_message_with_eeo_answers_never_reaches_the_model(known):
     assert reply == AS.EEO_POINTER and "saved" not in reply.lower()
 
 
+@pytest.mark.parametrize("text, eeo", [
+    ("1. Bisexual\n2. Not transgender\n3. First-generation professional: yes", True),
+    ("Heterosexual / straight", True),
+    ("I identify as transgender", True),
+    ("I am cisgender", True),
+    ("I am a first-generation professional", True),
+    ("I went straight to the interview", False),
+    ("Yes, send it", False),
+    ("Is this a first-generation product?", False),
+])
+def test_b_the_three_more_self_identification_answers_stay_out_of_the_model(text, eeo):
+    assert AS.carries_eeo(text) is eeo
+
+
 def test_b_the_chat_through_the_service_says_where_things_go(known):
     from notify.service import NotifyService
     mod, rec = known

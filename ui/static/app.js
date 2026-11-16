@@ -5024,7 +5024,8 @@
       const shown = MEM.show && MEM.eeo && MEM.eeo[r.field];
       const word = r.state === "saved" ? (shown ? esc(MEM.eeo[r.field]) : `<span class="mem-hidden">${esc(MT("mem.saved", "Saved"))}</span>`)
         : r.state === "declined" ? esc(MT("ans.ch.decline", "Prefer not to say")) : `<span class="mem-dim">${esc(MT("mem.notAnswered", "Not answered"))}</span>`;
-      const label = MT("ans." + ({ gender: "gender", hispanic: "hispanic", race: "race", veteran: "veteran", disability: "disability" })[r.field], r.label);
+      const label = MT("ans." + ({ gender: "gender", hispanic: "hispanic", race: "race", veteran: "veteran", disability: "disability",
+                                   transgender: "transgender", orientation: "orientation", first_gen: "firstGen" })[r.field], r.label);
       return memRow(Object.assign({}, r, { label }), { value: word, noForget: !r.own,
         editor: x => memEditor(x, "choice", MEM.eeo ? MEM.eeoCodes && MEM.eeoCodes[x.field] : "") });
     }).join("");

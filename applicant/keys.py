@@ -107,6 +107,10 @@ REGISTRY: dict[str, Key] = {k.name: k for k in (
     _k("@ethnicity", "choice", EEO, ask="Ethnicity"),
     _k("@veteran", "choice", EEO, ask="Veteran status"),
     _k("@disability", "choice", EEO, ask="Disability status"),
+    # asked by a few forms only (Greenhouse); saved on the memory page's Self-identification card
+    _k("@transgender", "choice", EEO, ask="Transgender"),
+    _k("@sexual_orientation", "choice", EEO, ask="Sexual orientation"),
+    _k("@first_gen", "choice", EEO, ask="First-generation professional"),
     _k("@eeo_decline", "yes_no", EEO, legacy=("app_prefs.json:eeo_decline",)),
     # ---- career (open facts; subject = item id)
     _k("role", "json", multi=True), _k("school", "json", multi=True), _k("project", "json", multi=True),

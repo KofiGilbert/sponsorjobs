@@ -206,7 +206,12 @@ def carries_eeo(text: str) -> bool:
                 or (re.search(r"disab", seg, re.I)
                     and EEO.value_class("@disability", seg) not in (None, "decline"))
                 or (re.search(r"veteran", seg, re.I)
-                    and EEO.value_class("@veteran", seg) not in (None, "decline"))):
+                    and EEO.value_class("@veteran", seg) not in (None, "decline"))
+                or EEO.orientation_class(seg) not in (None, "decline")
+                or (re.search(r"\b(trans|cis) ?gender\b", seg, re.I)
+                    and EEO.yes_no_class("@transgender", seg) not in (None, "decline"))
+                or (re.search(r"first[- ]?gen(eration)? professional", seg, re.I)
+                    and EEO.yes_no_class("@first_gen", seg) not in (None, "decline"))):
             return True
     return False
 

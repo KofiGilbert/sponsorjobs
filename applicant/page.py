@@ -258,7 +258,10 @@ def one_question(rows: list[dict]) -> list[dict]:
 
 # ---------------------------------------------------------------------------- Self-identification
 EEO = (("gender", "Gender"), ("hispanic", "Hispanic or Latino"), ("race", "Race"),
-       ("veteran", "Veteran status"), ("disability", "Disability"))
+       ("veteran", "Veteran status"), ("disability", "Disability"),
+       # a few forms only (Greenhouse); saved here, not on the form answers card
+       ("transgender", "Transgender"), ("orientation", "Sexual orientation"),
+       ("first_gen", "First-generation professional"))
 
 
 def eeo_rows(st: Store | None, lib, decline: bool) -> list[dict]:

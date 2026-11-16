@@ -1,5 +1,7 @@
 """The answers every form asks: country of citizenship, desired salary and the five voluntary
-self-identification questions, answered once on Your answers ("Answers every form asks").
+self-identification questions, answered once on Your answers ("Answers every form asks"). The
+three a few forms add (transgender, sexual orientation, first-generation professional) are saved
+the same way, on the memory page's Self-identification card, and are not counted.
 
 They live in the answer library (autoapply/answers.py) under their canonical keys, as the
 person's own answers, so the planner, the agent's known answers and its asks all find them; the
@@ -32,10 +34,16 @@ FIELDS: tuple[tuple[str, str, str], ...] = (
     ("race", "@race", "Race"),
     ("veteran", "@veteran", "Veteran status"),
     ("disability", "@disability", "Disability status"),
+    ("transgender", "@transgender", "Transgender"),
+    ("orientation", "@sexual_orientation", "Sexual orientation"),
+    ("first_gen", "@first_gen", "First-generation professional"),
 )
 KEY = {f: k for f, k, _ in FIELDS}
 QUESTION = {f: q for f, _, q in FIELDS}
 EEO_FIELDS = ("gender", "hispanic", "race", "veteran", "disability")
+# Asked by a few forms only (Greenhouse): optional, so never in the count below.
+MORE_EEO_FIELDS = ("transgender", "orientation", "first_gen")
+SELF_ID_FIELDS = EEO_FIELDS + MORE_EEO_FIELDS
 # What "6 of 7 form answers saved" counts. A second citizenship is optional.
 COUNTED = ("citizenship", "salary") + EEO_FIELDS
 
@@ -51,6 +59,11 @@ CHOICES: dict[str, tuple[tuple[str, str], ...]] = {
     "veteran": (("not", "I am not a protected veteran"), ("protected", "I am a protected veteran"),
                 ("decline", DECLINE)),
     "disability": (("no", "No"), ("yes", "Yes"), ("decline", DECLINE)),
+    "transgender": (("no", "No"), ("yes", "Yes"), ("decline", DECLINE)),
+    "orientation": (("heterosexual", "Heterosexual or straight"), ("gay", "Gay"), ("lesbian", "Lesbian"),
+                    ("bisexual", "Bisexual"), ("queer", "Queer"), ("asexual", "Asexual"), ("pansexual", "Pansexual"),
+                    ("another", "Another sexual orientation"), ("decline", DECLINE)),
+    "first_gen": (("no", "No"), ("yes", "Yes"), ("decline", DECLINE)),
 }
 # A bare "Yes" or "No" says nothing on its own once it is typed into a box: the Hispanic or
 # Latino answer is saved in words that name it.
@@ -139,7 +152,7 @@ def read(lib, *, eeo_decline: bool = False, salary_fallback="") -> dict:
     if saved["salary"] and not sal:
         other.append("salary")
     halves = _halves(lib)
-    for f in EEO_FIELDS:
+    for f in SELF_ID_FIELDS:
         a = saved[f]
         code = halves[f][0] if f in halves else (_code(f, a) if a else "")
         if code:

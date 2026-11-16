@@ -170,6 +170,21 @@ def test_the_prefs_view_round_trips_the_prefs_answers(st):
 
 
 # --------------------------------------------------------------------------- redact
+def test_the_three_more_self_identification_keys_are_eeo(st):
+    """Transgender, sexual orientation and first-generation professional are as private as gender:
+    EEO-sensitive, refused from chat or a resume, withheld from a model payload."""
+    for key in ("@transgender", "@sexual_orientation", "@first_gen"):
+        assert K.sensitivity(key) == K.EEO
+        with pytest.raises(RefusedWrite):
+            st.add_fact(key, "Yes", source="chat")
+    st.add_fact("@sexual_orientation", "Pansexual", source="you")      # invented, for the test only
+    vals = redact.sensitive_values(st)
+    assert "Pansexual" in vals
+    payload = {"note": "The person is pansexual", "fields": [{"label": "Sexual orientation", "options": ["Gay"]}]}
+    clean = redact.for_model(payload, vals, ["Sexual orientation", "Gay"])
+    assert "pansexual" not in json.dumps(clean).lower()
+
+
 def test_redact_finds_and_withholds_stored_values_outside_the_forms_own_text(st):
     st.add_fact("@gender", "Female", source="you")
     st.add_fact("@race", "Asian", source="you")
