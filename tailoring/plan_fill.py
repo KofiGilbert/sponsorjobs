@@ -224,6 +224,26 @@ def _log(**rec):
     _fill_log(**rec)
 
 
+def term_key(term: str) -> str:
+    """Terms that say the same thing share a key ("Statistics", "statistical analysis")."""
+    w = (str(term).lower().split() or [""])[0]
+    return w[:7] if len(w) > 7 else w
+
+
+def spread_terms(terms, taken: set) -> list:
+    """Each job term is asked of ONE role, the first (most recent) whose material backs it, and
+    one of a set that says the same thing. Run w2 (real model) asked "statistics" of two roles
+    and got it in four bullets, one a CRM requirements bullet: keyword stuffing. Skills still
+    carries every supported term, so coverage does not depend on repeating it."""
+    out = []
+    for t in terms or []:
+        k = term_key(t)
+        if k and k not in taken:
+            taken.add(k)
+            out.append(t)
+    return out
+
+
 def prose_case(text: str, terms, jd_text: str = "") -> str:
     """A job term written mid-sentence in the list's capitals ("applying Statistical analysis")
     reads as pasted in. Where the job ad itself writes the term in lower case, the bullet does
@@ -307,6 +327,7 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
     known = known_material(*gate_material, jd_text)
     figs = source_figures(*gate_material)
     info = []
+    taken: set = set()                       # each job term goes to one role only
     for (_k, e, r), row in zip(roles, targets):
         org = str(e.get("org") or e.get("company") or "")
         saved = [str(x) for x in (src_roles.get(A._role_key(e, r)) or {}).get("bullets") or []]
@@ -316,7 +337,7 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
                      "company": org, "dates": str(r.get("dates") or e.get("dates") or ""),
                      "tense": A._role_tense(r, e, saved), "saved": saved, "notes": notes,
                      "targets": list(row),
-                     "terms": terms_for(role_terms, e, r)[:max(1, len(row) - 1)]})
+                     "terms": spread_terms(terms_for(role_terms, e, r), taken)[:max(1, len(row) - 1)]})
 
     def problems(i: int, text: str, siblings) -> list[str]:
         ro = info[i]
@@ -555,6 +576,28 @@ def run_plan(preamble: str, used: dict, result, *, llm, jd_text: str, source: di
             miss[i] = sorted(set(miss.get(i, [])) | set(ks))
         for key_, v in shown_why.items():
             why[key_] = (why[key_] + "; also " + v) if key_ in why else v
+    # A bullet still off its lines after the retries (a one-word spill) takes back the person's
+    # own bullet for that slot when that measures better: a full page beats a keyword.
+    if res.ok and res.pages == 1:
+        left, _w = misses(res)
+        swapped = []
+        for i, ks in left.items():
+            bl = roles[i][2]["bullets"]
+            for k in ks:
+                if k < len(bl) and k < len(before[i]) and before[i][k] not in bl:
+                    swapped.append((i, k, bl[k]))
+                    bl[k] = before[i][k]
+        if swapped:
+            res2 = compile_now("plan-own")
+            left2, _w2 = misses(res2) if (res2.ok and res2.pages == 1) else ({0: [0] * 99}, {})
+            if sum(map(len, left2.values())) < sum(map(len, left.values())):
+                res = res2
+            else:
+                for i, k, text in swapped:
+                    roles[i][2]["bullets"][k] = text
+                res = compile_now("plan-own-undo")
+            _log(step="plan-own", label="experience", fill=res.fill_ratio,
+                 why=str([(i, k) for i, k, _t in swapped]))
     _log(step="plan-terms", label="experience",
          why={info[i]["label"]: {"asked": info[i]["terms"],
                                  "shown": [t for t in info[i]["terms"]

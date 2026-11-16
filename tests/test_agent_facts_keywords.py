@@ -360,3 +360,12 @@ def test_a_job_term_mid_sentence_reads_as_prose_not_as_the_list():
     assert prose_case("Statistical analysis of usage data in SQL.", terms, jd) == \
         "Statistical analysis of usage data in SQL."            # a sentence start keeps its capital
     assert prose_case("Built Python jobs.", ["Python"], "Python is a plus") == "Built Python jobs."
+
+
+def test_each_job_term_is_asked_of_one_role_and_one_of_a_same_meaning_set():
+    from tailoring.plan_fill import spread_terms
+    taken: set = set()
+    assert spread_terms(["Python", "SQL", "Statistical analysis", "Statistics"], taken) == \
+        ["Python", "SQL", "Statistical analysis"]
+    assert spread_terms(["Statistical analysis", "Statistics", "Querying databases"], taken) == \
+        ["Querying databases"]
