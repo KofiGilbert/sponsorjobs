@@ -56,8 +56,9 @@ def client(tmp_path, monkeypatch):
 class Worker:
     """A scripted api.sponsorjobs.ai: /github/available, /github/claim, /github/refresh."""
 
-    def __init__(self, configured=True, claim=None, refresh=None):
+    def __init__(self, configured=True, claim=None, refresh=None, revoke=None):
         self.configured = configured
+        self.revoke = revoke or (200, {"ok": True})
         self.claim = claim or (200, {"ok": True, "access_token": ACCESS, "refresh_token": REFRESH,
                                      "expires_in": 28800, "refresh_token_expires_in": 15897600})
         self.refresh = refresh or (200, {"ok": True, "access_token": NEW_ACCESS,
@@ -75,6 +76,8 @@ class Worker:
             return self.claim
         if url == f"{BROKER}/github/refresh":
             return self.refresh
+        if url == f"{BROKER}/github/revoke":
+            return self.revoke
         raise AssertionError(f"unexpected Worker call {url}")
 
 
@@ -330,7 +333,8 @@ def test_disconnect_forgets_everything_and_says_where_to_remove_the_app(client, 
     _connected(A, 28800)
     c.get("/api/github/status")              # the probe learns the manage URL
     r = c.post("/api/github/disconnect").get_json()
-    assert r == {"ok": True, "manage_url": "https://github.com/settings/installations"}
+    assert r == {"ok": True, "revoked": True,
+                 "manage_url": "https://github.com/settings/installations"}
     for name in ("GITHUB_TOKEN", "GITHUB_LOGIN", "GITHUB_REFRESH_TOKEN", "GITHUB_TOKEN_EXPIRES"):
         assert A._cred(name) == ""
     assert c.get("/api/github/status").get_json()["configured"] is False
@@ -362,3 +366,91 @@ def test_no_secret_lives_in_the_desktop_app():
     for path in ("ui/github_app.py", "config/github_oauth.py"):
         text = (ROOT / path).read_text(encoding="utf-8").lower()
         assert "client_secret" not in text.replace("client_secret,", "")
+
+
+# ---- Disconnect revokes on GitHub, it does not only forget here (issue #255) ----------------
+# Forgetting the token locally left the person's authorization live on github.com: the App
+# could still act until they removed it by hand, so "Disconnect" did less than it said.
+
+def test_disconnect_revokes_the_token_on_github_before_forgetting_it(client, monkeypatch):
+    A, c, H, opened = client
+    worker = Worker()
+    _wire(monkeypatch, H, worker)
+    _connected(A, 28800)
+
+    r = c.post("/api/github/disconnect").get_json()
+    assert r["ok"] is True and r["revoked"] is True
+    assert "message" not in r, "a revoke that worked has nothing to warn about"
+
+    sent = [b for m, url, b in worker.calls if url == f"{BROKER}/github/revoke"]
+    assert sent == [{"access_token": ACCESS}], worker.calls
+    for name in ("GITHUB_TOKEN", "GITHUB_LOGIN", "GITHUB_REFRESH_TOKEN", "GITHUB_TOKEN_EXPIRES"):
+        assert A._cred(name) == ""
+
+
+def test_a_token_github_no_longer_knows_still_counts_as_disconnected(client, monkeypatch):
+    A, c, H, opened = client
+    _wire(monkeypatch, H, Worker(revoke=(200, {"ok": True, "already": True})))
+    _connected(A, 28800)
+    assert c.post("/api/github/disconnect").get_json()["revoked"] is True
+
+
+@pytest.mark.parametrize("answer", [
+    (0, None),                                                   # offline
+    (503, {"reason": "not_configured"}),                         # this broker has no App set up
+    (502, {"reason": "unreachable"}),                            # the Worker could not reach GitHub
+    (502, {"reason": "http_422"}),                               # GitHub refused it
+])
+def test_a_revoke_it_could_not_do_never_blocks_the_disconnect(client, monkeypatch, answer):
+    """The local credential goes either way, and the answer says plainly what is still live."""
+    A, c, H, opened = client
+    _wire(monkeypatch, H, Worker(revoke=answer))
+    _connected(A, 28800)
+    c.get("/api/github/status")                  # the probe learns the manage URL
+
+    r = c.post("/api/github/disconnect").get_json()
+    assert r["ok"] is True, "the disconnect itself always succeeds"
+    assert r["revoked"] is False
+    assert r["message"] == "Disconnected here; remove access on GitHub too."
+    assert r["manage_url"] == "https://github.com/settings/installations"
+    for name in ("GITHUB_TOKEN", "GITHUB_LOGIN", "GITHUB_REFRESH_TOKEN", "GITHUB_TOKEN_EXPIRES"):
+        assert A._cred(name) == "", "a failed revoke must not keep the token here"
+
+
+def test_disconnect_with_nothing_connected_calls_the_worker_at_all(client, monkeypatch):
+    A, c, H, opened = client
+    worker = Worker()
+    _wire(monkeypatch, H, worker)
+    r = c.post("/api/github/disconnect").get_json()
+    assert r["ok"] is True and r["revoked"] is True
+    assert not [u for _m, u, _b in worker.calls if u.endswith("/github/revoke")]
+
+
+def test_no_token_is_ever_in_the_disconnect_answer(client, monkeypatch):
+    A, c, H, opened = client
+    _wire(monkeypatch, H, Worker(revoke=(502, {"reason": "http_422"})))
+    _connected(A, 28800)
+    body = c.post("/api/github/disconnect").get_data(as_text=True)
+    assert ACCESS not in body and REFRESH not in body
+
+
+@pytest.mark.parametrize("answer, reason", [
+    ((0, None), "offline"),
+    ((503, {"reason": "not_configured"}), "not_configured"),
+    ((502, {"reason": "unreachable"}), "unreachable"),
+    ((400, {"reason": "bad_token"}), "bad_token"),
+    ((200, {}), "error"),                       # a 200 that does not say ok is not a revoke
+])
+def test_github_app_revoke_names_what_went_wrong(monkeypatch, answer, reason):
+    import ui.github_app as H
+    monkeypatch.setattr(H, "BROKER_FETCH", lambda *a, **k: answer)
+    out = H.revoke(BROKER, ACCESS)
+    assert out == {"ok": False, "reason": reason}
+
+
+def test_github_app_revoke_never_calls_the_worker_without_a_token(monkeypatch):
+    import ui.github_app as H
+    calls = []
+    monkeypatch.setattr(H, "BROKER_FETCH", lambda *a, **k: calls.append(a) or (200, {"ok": True}))
+    assert H.revoke(BROKER, "") == {"ok": False, "reason": "no_token"}
+    assert calls == []
