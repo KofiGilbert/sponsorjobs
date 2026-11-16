@@ -7,7 +7,7 @@
 // What it pins: indices in document order from indexBase; `*` on an element that was not in
 // the previous view; no personal VALUE in value= (a filled email reads "(filled)", a password
 // never shows its contents); select options count and first four; a file input at opacity 0
-// still listed; the submit guard; a covered element clicked with note "covered"; the 12000
+// still listed; the submit guard; a covered element NOT clicked (the step names the cover); the 12000
 // char cap with its tail; the multipage fixture's step 2 fields marked new after Next; a
 // cross-origin frame viewed with its own index base.
 "use strict";
@@ -312,7 +312,7 @@ test("the submit guard refuses Submit; submitButton() still finds it for the she
   await p2.close();
 });
 
-test("a covered element is still clicked, with note covered; an uncovered one has no note", async ({ open }) => {
+test("a covered element is not clicked: the step fails and names the cover; an uncovered one has no note", async ({ open }) => {
   const page = await open("job_page.html");
   await page.evaluate(AGENT);
   await page.evaluate(() => {
@@ -332,11 +332,98 @@ test("a covered element is still clicked, with note covered; an uncovered one ha
     document.body.appendChild(o);
   });
   const cov = await page.evaluate(`window.TailorAgent.act({op: "click", index: ${apply}})`);
-  assert.deepStrictEqual([cov.ok, cov.note], [true, "covered"], JSON.stringify(cov));
-  assert.strictEqual(await page.evaluate("window.__applied"), 2);
+  // (agent-browser's interaction.rs does the same) a click an overlay would swallow fails and says
+  // what covers the element, so the brain dismisses it instead of believing the click landed.
+  assert.strictEqual(cov.ok, false, JSON.stringify(cov));
+  assert.ok(/^covered by div#cookie-banner "We use cookies"/.test(cov.note), cov.note);
+  assert.strictEqual(await page.evaluate("window.__applied"), 1);
   // The site's own search boxes are listed but flagged, so the brain can ignore them.
   assert.ok(/<input type=text label="Search for jobs by title or keyword" value="" search=true>/.test(v.text), v.text);
   assert.ok(/<combobox label="City, state, or country" value="" expanded=false search=true>/.test(v.text), v.text);
+  await page.close();
+});
+
+// ------------------------------------------------------------------ verified actions (2026-11-16)
+// From a study of vercel-labs/agent-browser (Apache-2.0): hidden-input cards are promoted into the
+// view, required groups show in the page check, clicks on boxes are read back, and a dropdown pick
+// reads only its own list, waits for a late one, and is read back (an async popup, a decoy listbox
+// and a disabled option, as in its e2e widget tests).
+test("card-style choices with hidden inputs are listed with their state, and a click lands through the card", async ({ open }) => {
+  const page = await open("verify_widgets.html");
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const basic = indices(v.text).find((i) => /<radio [^>]*option="Basic"/.test(line(v.text, i)));
+  const pro = indices(v.text).find((i) => /<radio [^>]*option="Pro"/.test(line(v.text, i)));
+  assert.ok(basic && pro, v.text);
+  assert.ok(/checked=false/.test(line(v.text, pro)), line(v.text, pro));
+  const r = await page.evaluate(`window.TailorAgent.act({op: "click", index: ${pro}})`);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(await page.evaluate("document.querySelector('input[value=pro]').checked"), true);
+  const v2 = await page.evaluate("window.TailorAgent.view()");
+  assert.ok(/checked=true/.test(line(v2.text, pro)), line(v2.text, pro));
+  await page.close();
+});
+
+test("required radio and checkbox groups show in the page check until one is chosen", async ({ open }) => {
+  const page = await open("verify_widgets.html");
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  let pc = await page.evaluate("window.TailorAgent.pageCheck()");
+  assert.ok(pc.required_empty.includes("Which plan do you want?"), JSON.stringify(pc));
+  assert.ok(pc.required_empty.includes("Which days can you work?"), JSON.stringify(pc));
+  const mon = indices(v.text).find((i) => /<checkbox label="Monday"/.test(line(v.text, i)));
+  const basic = indices(v.text).find((i) => /<radio [^>]*option="Basic"/.test(line(v.text, i)));
+  assert.ok(/required/.test(line(v.text, mon)), line(v.text, mon));     // required from its fieldset
+  await page.evaluate(`window.TailorAgent.act({op: "click", index: ${mon}})`);
+  await page.evaluate(`window.TailorAgent.act({op: "click", index: ${basic}})`);
+  pc = await page.evaluate("window.TailorAgent.pageCheck()");
+  assert.deepStrictEqual(pc.required_empty, [], JSON.stringify(pc));
+  await page.close();
+});
+
+test("a box whose click does not take is reported, never ok", async ({ open }) => {
+  const page = await open("verify_widgets.html");
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const stuck = indices(v.text).find((i) => /<checkbox label="A box that ignores clicks"/.test(line(v.text, i)));
+  const r = await page.evaluate(`window.TailorAgent.act({op: "click", index: ${stuck}})`);
+  assert.deepStrictEqual([r.ok, /did not change/.test(r.note)], [false, true], JSON.stringify(r));
+  await page.close();
+});
+
+test("a dropdown pick waits for a late list, reads only its own, skips a disabled choice, and is read back", async ({ open }) => {
+  const page = await open("verify_widgets.html");
+  await page.evaluate(AGENT);                                   // the plain path (no engine)
+  const v = await page.evaluate("window.TailorAgent.view()");
+  const fruit = indices(v.text).find((i) => /<combobox label="Favourite fruit"/.test(line(v.text, i)));
+  const tier = indices(v.text).find((i) => /<combobox label="Tier"/.test(line(v.text, i)));
+  assert.ok(fruit && tier, v.text);
+  // the sidebar's "Apple" (a decoy listbox) is never clicked; the popup's comes 600 ms late
+  const r = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${fruit}, option: "Apple"})`);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.deepStrictEqual(await page.evaluate("[window.fruit, window.sideClicks]"), ["Apple", 0]);
+  // a disabled option is not offered: the step fails with the choices it has
+  const t = await page.evaluate(`window.TailorAgent.act({op: "select", index: ${tier}, option: "Premium"})`);
+  assert.strictEqual(t.ok, false, JSON.stringify(t));
+  assert.ok(/options: Basic/.test(t.note) && !/Premium/.test(t.note.replace(/^.*options:/, "")), t.note);
+  assert.strictEqual(await page.evaluate("window.tier"), "");
+  await page.close();
+});
+
+test("a view cut by the cap still names the form's Submit further down (the ready gate needs it)", async ({ open }) => {
+  const page = await open("verify_widgets.html");
+  await page.evaluate(() => {
+    const f = document.getElementById("f");
+    const jd = document.createElement("div");
+    for (let i = 0; i < 400; i++) { const p = document.createElement("p"); p.textContent = "About the role " + i + " with a long sentence about the team."; jd.appendChild(p); }
+    for (let i = 0; i < 150; i++) { const b = document.createElement("button"); b.type = "button"; b.textContent = "Option " + i; jd.appendChild(b); }
+    document.body.insertBefore(jd, f);
+    const s = document.createElement("button"); s.textContent = "Submit application"; f.appendChild(s);
+  });
+  await page.evaluate(AGENT);
+  const v = await page.evaluate("window.TailorAgent.view()");
+  assert.ok(v.truncated, "the view should be cut");
+  assert.ok(/The page's submit, further down:\n\[\d+\]<button>Submit application<\/button>/.test(v.text), v.text.slice(-600));
   await page.close();
 });
 

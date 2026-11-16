@@ -28,6 +28,8 @@ const PRECHECK_MS = 25000;
 // skeleton Workday page never returned and the loop froze for 8 minutes with Stop dead). A call
 // that does not answer in PANE_MS is a hang observation and the ladder takes over.
 const PANE_MS = Math.max(1000, Number(process.env.SJ_AGENT_PANE_MS) || 20000);
+// Writing a cover letter for a cover letter box: one model call and a PDF build.
+const LETTER_MS = Number(process.env.SJ_AGENT_LETTER_MS) > 0 ? Number(process.env.SJ_AGENT_LETTER_MS) : 120000;
 const FILL_MS = Number(process.env.SJ_AGENT_FILL_MS) > 0 ? Number(process.env.SJ_AGENT_FILL_MS) : Math.max(PANE_MS, 40000);
 // A page with nothing to do on it (a skeleton, "Loading", no fields) for this long is a hang.
 const HANG_MS = Math.max(1000, (Number(process.env.SJ_AGENT_HANG_S) || 45) * 1000);
@@ -460,18 +462,30 @@ function createAgent(deps) {
   // up to three ancestors away, else the page's first file input.
   const TEXT_JS = (i) => `(() => { const el = window.TailorAgent.element(${i});
     return el ? String(el.innerText || el.value || el.getAttribute("aria-label") || "").trim().slice(0, 80) : ""; })()`;
+  // The upload goes into the chosen field's OWN box: the element itself, a file input inside it,
+  // the label's control, or the one file input of its field group (up to three levels up, and
+  // only while that group holds exactly one). Never "the page's first file input": once
+  // Greenhouse's resume box was filled and gone, that was the Cover Letter box (Gusto,
+  // 2026-11-16). Also says whether the box is a cover letter's, so the resume never lands there.
   const FILE_JS = (i) => `(() => {
     const isFile = (x) => x && x.tagName === "INPUT" && (x.type || "").toLowerCase() === "file";
     const el = window.TailorAgent.element(${i});
     if (!el) return null;
     if (isFile(el)) return el;
-    const inside = el.querySelector && el.querySelector('input[type="file"]'); if (inside) return inside;
+    if (el.control && isFile(el.control)) return el.control;
+    const inside = el.querySelectorAll ? el.querySelectorAll('input[type="file"]') : [];
+    if (inside.length === 1) return inside[0];
     let node = el;
     for (let up = 0; node && up < 3; up++) {
       node = node.parentElement; if (!node) break;
-      const f = node.querySelector && node.querySelector('input[type="file"]'); if (f) return f;
+      const fs = node.querySelectorAll ? node.querySelectorAll('input[type="file"]') : [];
+      if (fs.length === 1) return fs[0];
+      if (fs.length > 1) return null;
     }
-    return document.querySelector('input[type="file"]') || null; })()`;
+    return null; })()`;
+  const LETTER_BOX_JS = `(function () { const E = window.TailorAutofill;
+    return !!(E && E.isLetterBox ? E.isLetterBox(this)
+      : /cover.?letter|letter of (interest|motivation)|motivation(al)? letter/i.test(((this.closest("fieldset,[class*=field],label") || this.parentElement || this).innerText || "") + " " + (this.name || "") + " " + (this.id || ""))); })`;
 
   // ---- actions -----------------------------------------------------------------------------
   // Routed by index range to the main frame or the embedded frame it came from. Upload goes
@@ -492,8 +506,17 @@ function createAgent(deps) {
     try {
       // An element inside a same-origin frame (the view walks into those): its box is relative to
       // that frame, so each frame's own place on the page above it is added.
-      const r = await wc.executeJavaScript(`(() => { const el = window.TailorAgent.element(${index}); if (!el) return null;
-        el.scrollIntoView({ block: "center", inline: "nearest" }); const b = el.getBoundingClientRect();
+      // Scrolled instantly (a smooth scroll is still moving when the box is read), then measured
+      // until two reads agree (at most five rounds), so the click lands where the element IS.
+      const r = await wc.executeJavaScript(`(async () => { const el = window.TailorAgent.element(${index}); if (!el) return null;
+        try { el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (e) { el.scrollIntoView(); }
+        let b = el.getBoundingClientRect();
+        for (let k = 0; k < 5; k++) {
+          await new Promise((res) => setTimeout(res, 20));
+          const n = el.getBoundingClientRect();
+          const same = Math.abs(n.left - b.left) < 1 && Math.abs(n.top - b.top) < 1 && Math.abs(n.width - b.width) < 1 && Math.abs(n.height - b.height) < 1;
+          b = n; if (same) break;
+        }
         let x = b.left + b.width / 2, y = b.top + b.height / 2;
         let w = el.ownerDocument && el.ownerDocument.defaultView;
         for (let i = 0; w && w !== window && i < 8; i++) {
@@ -542,9 +565,14 @@ function createAgent(deps) {
   }
 
   async function act(wc, fr, v, a, resumePath) {
+    // Nothing unrendered is ever typed, picked or attached: the engine resolves every
+    // placeholder before an action leaves it, and this refuses anything that slipped through.
+    if (["text", "option", "path"].some((k) => /\{\{|\}\}/.test(String(a[k] == null ? "" : a[k])))) {
+      return { ok: false, note: "refused: an unrendered placeholder" };
+    }
     const expr = `window.TailorAgent.act(${JSON.stringify(a)})`;
     const ctx = v.frameOf.get(a.index);
-    if (a.op === "upload") return upload(wc, fr, ctx, a.index, resumePath);
+    if (a.op === "upload") return upload(wc, fr, ctx, a.index, resumePath, a);
     // Where a person's real pointer and keys matter: typeahead boxes (type for real so the
     // list opens) and the options they show (click for real). Plain fields and buttons keep
     // the in-page path, which is faster and already proven on the mock and live forms.
@@ -613,15 +641,31 @@ function createAgent(deps) {
     return out;
   }
 
-  async function upload(wc, fr, ctx, index, resumePath) {
-    if (!resumePath) return { ok: false, note: "no resume file" };
+  // ``a.path``/``a.file`` come from the brain (autoapply/brain.py): the cover letter for a cover
+  // letter line, else the resume. The box itself decides too: a box whose words say cover letter
+  // takes only the cover letter; with none, it stays empty and the step says so.
+  async function upload(wc, fr, ctx, index, resumePath, a) {
     const finder = FILE_JS(index);
+    const pick = async (send, objectId) => {
+      let letterBox = false;
+      try {
+        const r = await send("Runtime.callFunctionOn", { functionDeclaration: LETTER_BOX_JS, objectId, returnByValue: true });
+        letterBox = !!(r && r.result && r.result.value);
+      } catch (e) { letterBox = false; }
+      const wantLetter = !!(a && a.file === "cover_letter");
+      if (letterBox) return wantLetter && a.path ? a.path : "";
+      return wantLetter ? "" : ((a && a.path) || resumePath || "");
+    };
+    const noFile = (letterBox) => ({ ok: false, note: "the cover letter box takes a cover letter, never the resume; left empty" });
     if (ctx) {
       try {
+        const send = (m, p) => guard(fr.cdp.send(m, Object.assign({}, p), ctx.sessionId), 6000, "frame");
         const r = await guard(fr.cdp.send("Runtime.evaluate", { expression: finder, contextId: ctx.contextId }, ctx.sessionId), 6000, "frame");
         const objectId = r && r.result && r.result.objectId;
-        if (!objectId) return { ok: false, note: "no file input near " + index };
-        await guard(fr.cdp.send("DOM.setFileInputFiles", { files: [resumePath], objectId }, ctx.sessionId), 10000, "frame upload");
+        if (!objectId) return { ok: false, note: "no file input of its own at " + index + "; upload on the field's own box" };
+        const file = await pick(send, objectId);
+        if (!file) return noFile();
+        await guard(fr.cdp.send("DOM.setFileInputFiles", { files: [file], objectId }, ctx.sessionId), 10000, "frame upload");
         return { ok: true, note: "uploaded" };
       } catch (e) { return { ok: false, note: "upload failed" }; }
     }
@@ -632,8 +676,10 @@ function createAgent(deps) {
       await cmd(dbg, "DOM.enable");
       const ev = await cmd(dbg, "Runtime.evaluate", { expression: finder });
       const objectId = ev && ev.result && ev.result.objectId;
-      if (!objectId) return { ok: false, note: "no file input near " + index };
-      await cmd(dbg, "DOM.setFileInputFiles", { files: [resumePath], objectId }, 10000);
+      if (!objectId) return { ok: false, note: "no file input of its own at " + index + "; upload on the field's own box" };
+      const file = await pick((m, p) => cmd(dbg, m, p), objectId);
+      if (!file) return noFile();
+      await cmd(dbg, "DOM.setFileInputFiles", { files: [file], objectId }, 10000);
       return { ok: true, note: "uploaded" };
     } catch (e) { return { ok: false, note: "upload failed" }; }
     finally { release(); }
@@ -1360,8 +1406,30 @@ function createAgent(deps) {
           toolFill = false;                                   // the brain fills this page itself
           left = [];
         } else {
-          const rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true }), FILL_MS, "fill");
+          let rep = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true }), FILL_MS, "fill");
           dlog("step " + step + " fill:", rep);
+          // A cover letter box and no letter yet: write one for this job (the Review page's
+          // drafter), then fill again so it is attached, never the resume. Once per run; a
+          // failure leaves an optional box empty and asks nothing (2026-11-16, Gusto).
+          if (rep && rep.declined) terms.declined = Math.max(terms.declined || 0, rep.declined);
+          if (rep && rep.wants_letter && !terms.letterTried) {
+            terms.letterTried = true;
+            feed.push("letter", "Writing", "your cover letter for this job");
+            progress(recordId, "running", "Writing your cover letter", { step });
+            const cl = await guard(deps.postApp("/api/autoapply/agent/cover-letter", { record_id: recordId }), LETTER_MS, "cover letter")
+              .catch((e) => { if (e && e.stopped) throw e; return null; });
+            dlog("step " + step + " cover letter:", cl);
+            if (cl && cl.ok) {
+              const again = await guard(deps.runAutoApplyOnPane(recordId, { page, fromWatch: true, quiet: true }), FILL_MS, "fill")
+                .catch((e) => { if (e && e.stopped) throw e; return null; });
+              if (again && again.ok) rep = Object.assign({}, again, { filled: ((rep && rep.ok && rep.filled) || 0) + (again.filled || 0),
+                                                                  uploaded: ((rep && rep.uploaded) || 0) + (again.uploaded || 0) });
+            } else {
+              feed.push("letter", "Left the cover letter empty", "it is optional", { state: "done" });
+            }
+          }
+          if (rep && rep.letter_attached) terms.letter = true;
+          if (rep && rep.declined) terms.declined = Math.max(terms.declined || 0, rep.declined);
           // "Could not plan this form" still names what is open: keep its left list either way.
           if (rep && rep.ok) filled = rep.filled || 0;
           left = (rep && rep.left) || [];
@@ -1372,7 +1440,8 @@ function createAgent(deps) {
             // The page has a resume box the plan did not reach (a hidden input behind an
             // Upload button): attach the file to it directly, as assisted apply does.
             let wants = false;
-            try { wants = await wc.executeJavaScript("window.TailorAutofill.hasResumeUpload()", true); } catch (e) { if (e && e.stopped) throw e; wants = false; }
+            // Only the resume's own empty box (never a cover letter box, never one already filled).
+            try { wants = await wc.executeJavaScript("window.TailorAutofill.resumeInputOpen()", true); } catch (e) { if (e && e.stopped) throw e; wants = false; }
             if (wants && await guard(deps.attachResume(wc, opts.resumePath), 15000, "attach").catch((e) => { if (e && e.stopped) throw e; return false; })) { filled += 1; attached = true; }
           }
           if (filled > 0) feedFill(feed, page, fromMemory, attached) && say(recordId, "fill", "", "", { refresh: true });
@@ -1591,11 +1660,22 @@ function createAgent(deps) {
           }
           // Then the critic (one cheap call): anything blank or suspicious gets the brain one
           // more round; after that the hand-over goes ahead and names what was noted.
-          if (!checkedPages.has("critic|" + reviewSig(v.text))) {
+          // One round only: after the critic's issues went back to the brain once, the hand-over
+          // goes ahead and names them (Gusto, 2026-11-16: a second check ran on the same form).
+          if (!checkedPages.has("critic|" + reviewSig(v.text)) && !checkedPages.has("critic-issues|" + recordId)) {
             checkedPages.add("critic|" + reviewSig(v.text));
+            // The whole review page: a view the cap cut goes with the rest of its lines, so the
+            // check never says "the view is cut off, the rest could not be checked".
+            let whole = v.text;
+            const cut = /read_page offset (\d+) shows them/.exec(v.text);
+            if (cut) {
+              const rest = await guard(wc.executeJavaScript("window.TailorAgent.readPage(" + Number(cut[1]) + ", 8000)", true), PANE_MS, "read page")
+                .catch((e) => { if (e && e.stopped) throw e; return null; });
+              if (rest && rest.text) whole += "\n[Rest of the page]\n" + rest.text;
+            }
             feed.push("check", "Checking", "the application before handing it over", { transient: true });
             progress(recordId, "running", lastMsg.get(fkey) || "Checking", { step });
-            const c = await guard(deps.postApp("/api/autoapply/agent/critic", { record_id: recordId, view: v.text, plan, left }), 45000, "critic").catch((e) => { if (e && e.stopped) throw e; return null; });
+            const c = await guard(deps.postApp("/api/autoapply/agent/critic", { record_id: recordId, view: whole, plan, left }), 45000, "critic").catch((e) => { if (e && e.stopped) throw e; return null; });
             if (c && c.cost) { spent += Number(c.cost) || 0; feed.cost = spent; }
             const issues = (c && Array.isArray(c.issues) ? c.issues : []).map((x) => String(x).slice(0, 160)).filter(Boolean);
             if (issues.length) {
@@ -1608,7 +1688,7 @@ function createAgent(deps) {
             }
             feed.push("check", "Checked", "the application: nothing blank or wrong", { state: "done" });
           }
-          return handOver(recordId, wc, url, opts, step, terms.accepted, v.text, terms.criticIssues || []);
+          return handOver(recordId, wc, url, opts, step, terms.accepted, v.text, terms.criticIssues || [], terms);
         }
         if (done && done.outcome === "blocked" && done.reason === "needs-consent") {
           // The model saw a notice to accept that the shell has not handled: the shell asks the
@@ -2107,7 +2187,7 @@ function createAgent(deps) {
   }
 
   // ---- Submit: the shell's decision, never the model's --------------------------------------
-  async function handOver(recordId, wc, url, opts, step, accepted, viewText, noted) {
+  async function handOver(recordId, wc, url, opts, step, accepted, viewText, noted, wrote) {
     if (current && current.disarmSigning) current.disarmSigning();
     const now = await deps.applyDecision(opts.url || url, url);
     const auto = !!opts.autonomous && now.click_submit === true;
@@ -2127,11 +2207,19 @@ function createAgent(deps) {
     }
     deps.postApp("/api/autoapply/agent/ready", { record_id: recordId, sig, accepted: (accepted || []).slice(), run: runOpts(keep) }).catch(() => null);
     const notes = (noted || []).slice(0, 3);
-    const notedLine = notes.length ? "A check noted: " + notes.join("; ") + "." : "";
-    if (fd) { fd.close(); fd.push("ready", "Ready to send", "", { state: "done", detail: notedLine || said || "check it, then press Send" }); }
+    // The bar stays ONE short line (2026-11-16, the owner: the Gusto line ran on for five
+    // sentences). What the agent wrote or chose and what the check noted go to Steps, one line
+    // each; the bar says how many to look at, and Read cover letter opens the letter.
+    const notedLine = notes.length ? "A check noted " + (notes.length === 1 ? "1 thing" : notes.length + " things") + ": see Steps." : "";
+    if (fd) {
+      fd.close();
+      for (const w of wroteLines(wrote)) fd.push("wrote", w.verb, w.summary, { state: "done", detail: w.detail });
+      for (const n of notes) fd.push("check", "Check noted", n, { state: "done" });
+      fd.push("ready", "Ready to send", "", { state: "done", detail: said || "check it, then press Send" });
+    }
     progress(recordId, "ready", (opts.mode === "batch" && opts.batchAt ? "Application " + opts.batchAt.i + " of " + opts.batchAt.n + ": " : "")
              + "Ready to send. " + (said ? said + " " : "") + (notedLine ? notedLine + " " : "") + "Check it, then press Send.",
-             { step, ready: true, accepted: (accepted || []).slice(), noted: notes });
+             { step, ready: true, accepted: (accepted || []).slice(), noted: notes, letter: !!(wrote && wrote.letter) });
     current = null;
     setTimeout(() => { pollParked().catch(() => {}); }, 50);     // a parked job may be waiting its turn
     return { ok: true, ready: true, steps: step };
@@ -2480,7 +2568,7 @@ function indexFor(viewText, label) {
 // Voluntary self-identification questions (the planner's _EEO) and the decline choice
 // (autoapply/eeo.py DECLINE, with the federal form's "I do not want to answer" and Workday's
 // "Not Declared"): on such a question the decline option is offered FIRST, never a guess.
-const EEO_RE = /gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun/i;
+const EEO_RE = /gender|\bsex\b|race|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun|first[- ]generation (professional|college|student)/i;
 const DECLINE_RE = /decline|prefer not|do not wish|don['\u2019]?t wish|not wish to|(?:do not|don['\u2019]?t) want to (?:answer|disclose|say|self[- ]?identify|provide)|choose not|rather not|not to (?:say|answer|disclose)|not declared/i;
 // A dropdown's prompt entry, never a choice. Only a pure prompt: "Choose not to disclose" (a
 // decline) and "Search engine" are real choices (autoapply/asks.py has the same rule).
@@ -2515,6 +2603,19 @@ const TERMS_CHOICES = ["Accept for all applications", "Just this one", "Stop"];
 const possessive = (company, title) => (String(company || "").trim() ? String(company).trim() + "'s " : "the site's ") + String(title || "terms");
 const needsLine = (company, title) => (String(company || "").trim() || "This site") + " needs you to accept its " + String(title || "terms") + " to apply.";
 const termsQuestion = (company, title) => needsLine(company, title) + " Accept it?";
+// What the agent wrote or chose for the person on this form, for the Ready to send summary: the
+// cover letter it drafted and attached (read it before Send), and the self-identification
+// questions it declined because nothing saved answers them (set them once in Memory).
+function wroteLines(w) {
+  if (!w) return [];
+  const out = [];
+  if (w.letter) out.push({ verb: "Wrote", summary: "a cover letter for this job and attached it", detail: "read it before you send" });
+  const n = Number(w.declined) || 0;
+  if (n > 0) out.push({ verb: "Declined", summary: "to self-identify on " + (n === 1 ? "1 question" : n + " questions") + " you have not answered",
+                        detail: "set your answers once in Memory" });
+  return out;
+}
+
 // The Ready to send summary's line: "Accepted Lam Research's Data Privacy Agreement for you."
 function acceptedLine(company, titles) {
   const t = [...new Set((titles || []).map((x) => String(x || "").trim()).filter(Boolean))];
@@ -2570,4 +2671,4 @@ function blockedMessage(reason, left) {
 module.exports = { createAgent, createFeed, splitSummary, failWords, blockedMessage, applyReword, stillOpen, orderOptions, cleanOptions, sameLabel, questionsFor, cleanQuestion, guardNoteLine,
                    optionsFor, indexFor, contextFor, SUBMIT_RE, ATS_HOSTS, MAX_STEPS, COST_CAP_USD, EEO_RE,
                    TERMS_CHOICES, termsQuestion, acceptedLine, noteAbove, reviewSig, notReady, lineName, safeReply, STRATEGIES,
-                   closedJob, socialRefused };
+                   closedJob, socialRefused, wroteLines };

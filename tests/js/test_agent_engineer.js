@@ -309,7 +309,9 @@ const walk = (P, a) => {
     const round = stepBodies(posts).find((b) => (b.nudges || []).some((n) => /Before I hand over, a check found: required and still empty: Country/.test(n)));
     assert(round, "the critic's issues gave the brain one more round");
     const last = progress[progress.length - 1];
-    assert(last.state === "ready" && /A check noted: required and still empty: Country/.test(last.message), "the hand-over names what was noted " + last.message);
+    // (2026-11-16) the bar stays one short line; each noted issue is its own line on Steps
+    assert(last.state === "ready" && /A check noted 1 thing: see Steps\./.test(last.message), "the hand-over says a check noted something " + last.message);
+    assert((last.activity.events || []).some((e) => e.verb === "Check noted" && /required and still empty: Country/.test(e.summary)), "the note is on Steps");
     const snap = last.activity;
     assert(snap.cost > 0 && snap.cost_cap === 0.5 && Array.isArray(snap.plan) && snap.plan.length === 4, "the snapshot carries the spend and the plan " + JSON.stringify({ c: snap.cost, p: snap.plan }));
   }

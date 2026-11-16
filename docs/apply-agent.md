@@ -588,6 +588,62 @@ parks at the next step with "This one took too long (12 minutes): <the feed's la
 the batch moves on; Continue re-runs it later. Single runs have no cap (the person is watching
 and can Stop; the pane caps above make a hang impossible anyway).
 
+## 17. The first real Greenhouse run (Gusto, 2026-11-16)
+
+The owner's run on a live Greenhouse posting (Gusto, Lead CX Business Intelligence Analyst)
+uploaded the resume into the optional Cover Letter box, ticked every "How did you hear" box, and
+asked about questions the person's own material answers. What changed:
+
+- **Uploads go into the chosen box only.** The plan names the file per box (`resolve_plan`
+  `letter_path`; main.js `cdpUploadFiles` takes a ref -> path), the brain's `upload` carries `path`
+  and `file` (`resume` | `cover_letter`) by the line it names, and the shell's `upload()` finds the
+  element's OWN file input (itself, its label's control, the one file input of its field group;
+  never "the page's first") and refuses the resume in a box whose words say cover letter.
+  `attachResume` uses `TailorAutofill.resumeInput()` (a resume box, never a cover letter box, never
+  one already holding a file); the fill's fallback asks `resumeInputOpen()`. `cdpUploadFiles` sets
+  the file by objectId (its `DOM.requestNode` needed `DOM.getDocument` first and failed quietly).
+- **A cover letter is written, not asked.** The plan reply says `wants_letter` when the form has a
+  cover letter box (file or text) and the application has no letter; the shell then calls
+  `/api/autoapply/agent/cover-letter` once per run (the Review page's drafter, from the person's
+  history and this job; saved on the application with its PDF, `<Name> Cover Letter.pdf` under
+  `uploads/<id>/cover/`) and fills again, so the box gets the letter. A failure leaves an optional
+  box empty and asks nothing; a required one is the person's. The bar has **Read cover letter**.
+- **Ready to send is one short line** ("Ready to send. Check it, then press Send.", plus "A check
+  noted N things: see Steps." when the critic found any). What the agent wrote or chose (the cover
+  letter, the declined self-identification questions) and each noted issue are their own lines on
+  Steps. The critic reads the WHOLE form (a view the cap cut goes with `readPage` of the rest),
+  runs one round only, and is told that `{{city}}`-style words are the person's values redacted
+  from it, never a template left on the page (the Gusto check said so of the location and the file
+  names; the page itself had the real values).
+- **Nothing unrendered is ever typed, picked or attached**: `brain.step` drops an action whose
+  text, option or file still holds `{{` or `}}`, `resolve_plan` drops such a value, and the shell's
+  `act()` refuses one.
+- **The Submit past the cap is named**: a view cut by its 12 000-char cap ends with "The page's
+  submit, further down:" and its line, so the ready gate finds it (a long job description above a
+  one-page Greenhouse form hid it, and every ready was refused).
+- **Answered from the person's material:** "Do you currently reside in one of the following
+  locations?" from the profile's city (`planner.residence_option`: the option naming the city, else
+  the one "No / None of the above" when neither city nor state is listed); "Have you ever ... worked
+  at <company>" when the question names the company (`worked_here_question`, never a relative or
+  "anyone who works at"), from the employment history; a checkbox group ticks exactly ONE box from
+  the saved answer (never every box from its Yes/No polarity), and a saved "Job board" on a list of
+  named sources only picks a named job board, general ones first (Indeed, Glassdoor, ...), after a
+  generic "Job board" / "Internet" / "Other".
+- **Self-identification is never asked per application.** The five saved answers (Memory >
+  Self-identification) answer sentence wordings too (`eeo.topic_key`: "How would you describe your
+  gender identity?" is `@gender`). A question nothing saved fits (transgender, sexual orientation,
+  first-generation professional, or a saved answer none of the choices says) gets the page's own
+  decline choice (`origin: eeo_decline`, in the planner and in the shell's known-only check
+  `known_answer(eeo_fallback=True)`), and Steps says "Declined to self-identify on N questions you
+  have not answered".
+- **Verified actions** (from a study of vercel-labs/agent-browser, Apache-2.0): a card-style radio
+  or checkbox whose input is hidden is listed with its state and clicked through its card; required
+  radio and checkbox groups (required on the group's container too) show in the page check; a click
+  on a box is read back (a label.control retry, then a failure); a click an overlay would swallow
+  fails and names the cover; a dropdown pick reads only its own list (`aria-controls`), waits up to
+  2 s for a late one, never offers a disabled choice, and is read back; `realClick` scrolls
+  instantly and re-measures until the box is still.
+
 ## 10. Milestones
 
 1. **One job, visible.** Apply for me on a queued Workday job -> job page -> Apply -> sign in or

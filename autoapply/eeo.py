@@ -200,12 +200,41 @@ def person(answers: dict) -> tuple[str | None, str | None]:
     return race, hisp
 
 
+# The topic of a self-identification question worded as a sentence, which the library's whole-label
+# keys do not catch: Greenhouse's "How would you describe your gender identity (please select one)?",
+# "I identify my race/ethnicity as (mark all that apply):", "Veteran Status (please select one):",
+# "I have a disability (please select one):" (Gusto, 2026-11-16). Only the five topics the person
+# can save an answer for; transgender, sexual orientation and the like have no saved key and get
+# the page's decline (autoapply/planner.py).
+_TOPICS = (
+    ("@hispanic_latino", re.compile(r"^(?!.*\brac(e|ial)\b).*\b(hispanic|latin[oax]|latine)\b", re.I)),
+    ("@race", re.compile(r"\brac(e|ial)\b|\bethnicity\b|\bethnic (group|background|origin|identity)\b", re.I)),
+    ("@gender", re.compile(r"^(?!.*\b(trans ?gender|pronouns?|sexual|orientation)\b).*\bgender\b", re.I)),
+    ("@veteran", re.compile(r"\bveteran", re.I)),
+    ("@disability", re.compile(r"^(?!.*accommodat).*\bdisabilit(y|ies)\b", re.I)),
+)
+
+
+def topic_key(question: str) -> str:
+    """The self-identification key a question asks about: its library key when the whole label is
+    one ("Gender"), else the key its topic words name ("How would you describe your gender
+    identity?" is "@gender"), else its plain library key."""
+    k = normalize(question) if question else ""
+    if k in KEYS:
+        return k
+    q = str(question or "")
+    for key, rx in _TOPICS:
+        if rx.search(q):
+            return key
+    return k
+
+
 def saved(library, question: str = "") -> tuple[str, dict, dict]:
     """(the question's key, {key: answer}, {key: library row key}) for the person's usable
     self-identification answers, plus the answer to ``question`` itself when it has one."""
     answers: dict = {}
     rows: dict = {}
-    key = normalize(question) if question else ""
+    key = topic_key(question) if question else ""
     if library is None:
         return key, answers, rows
     asks = dict(QUESTIONS)

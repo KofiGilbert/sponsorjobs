@@ -562,17 +562,34 @@ async function armCorrections(wc) {
 // scripts may not set a file input's files -- so it goes through CDP, the same mechanism a
 // human's drag-and-drop uses. Without it every "applied" form still needs the résumé
 // dragged in by hand, which is the one step that makes the rest pointless.
+const RESUME_INPUT_JS = `(() => {
+  const E = window.TailorAutofill;
+  if (E && typeof E.resumeInput === "function") return E.resumeInput();
+  const boxes = [...document.querySelectorAll('input[type="file"]')].filter((f) => !f.disabled && !(f.files && f.files.length));
+  const words = (f) => ((f.closest("label,fieldset,[class*=field],[class*=upload]") || f.parentElement || f).innerText || "")
+    + " " + (f.name || "") + " " + (f.id || "") + " " + (f.getAttribute("aria-label") || "");
+  const letter = (f) => /cover.?letter|letter of (interest|motivation)|motivation(al)? letter/i.test(words(f));
+  const named = boxes.find((f) => !letter(f) && /r[eé]sum[eé]|\\bcv\\b|curriculum/i.test(words(f)));
+  if (named) return named;
+  const rest = boxes.filter((f) => !letter(f));
+  return rest.length === 1 ? rest[0] : null;
+})()`;
+
 async function attachResume(wc, filePath) {
   if (!filePath || !fs.existsSync(filePath)) return false;
   let attached = false;
   const release = acquireDebugger(wc);
   if (!release) return false;
   try {
-    const { root } = await wc.debugger.sendCommand("DOM.getDocument", { depth: -1 });
-    const { nodeId } = await wc.debugger.sendCommand("DOM.querySelector", {
-      nodeId: root.nodeId, selector: 'input[type=file]' });
-    if (nodeId) {
-      await wc.debugger.sendCommand("DOM.setFileInputFiles", { nodeId, files: [filePath] });
+    // The resume's own box: one whose words say resume or CV, else the only box that does not say
+    // cover letter. Never a cover letter box (2026-11-16, Gusto on Greenhouse: once the resume box
+    // was filled and gone, "the page's first file input" was the cover letter's) and never a box
+    // already holding a file.
+    await wc.debugger.sendCommand("DOM.enable");
+    const ev = await wc.debugger.sendCommand("Runtime.evaluate", { expression: RESUME_INPUT_JS });
+    const objectId = ev && ev.result && ev.result.objectId;
+    if (objectId) {
+      await wc.debugger.sendCommand("DOM.setFileInputFiles", { objectId, files: [filePath] });
       attached = true;
     }
   } catch (e) {
@@ -644,7 +661,10 @@ function submitScript(click) {
 // model, only field structure + placeholder keys -- then fill it in the pane and STOP for the person
 // to review and submit. Résumé upload is fulfilled here via CDP (script can't set a file input).
 // Never clicks submit; drops to the person on any captcha/auth wall or a prohibited site (section 7).
+// ``filePath`` is one path for every ref, or a function ref -> path (the plan names the file per
+// box: the cover letter box gets the cover letter, every other box the resume).
 async function cdpUploadFiles(wc, refs, filePath) {
+  const pathOf = typeof filePath === "function" ? filePath : () => filePath;
   const dbg = wc.debugger;
   const release = acquireDebugger(wc);
   if (!release) return 0;                // devtools already attached -> leave the résumé for the person
@@ -657,8 +677,11 @@ async function cdpUploadFiles(wc, refs, filePath) {
         const ev = await dbg.sendCommand("Runtime.evaluate", { expression: "document.querySelector(" + sel + ")" });
         const objectId = ev && ev.result && ev.result.objectId;
         if (!objectId) continue;
-        const node = await dbg.sendCommand("DOM.requestNode", { objectId });
-        await dbg.sendCommand("DOM.setFileInputFiles", { files: [filePath], nodeId: node.nodeId });
+        const file = pathOf(ref);
+        if (!file) continue;
+        // By objectId: DOM.requestNode needs DOM.getDocument first, and without it every
+        // upload here failed quietly (found on the real Gusto form, 2026-11-16).
+        await dbg.sendCommand("DOM.setFileInputFiles", { files: [file], objectId });
         done++;
       } catch (e) { /* skip this one input; the person can still attach it */ }
     }
@@ -787,7 +810,7 @@ async function runAutoApplyOnPane(recordId, opts) {
     for (const ctx of liveFrames) fields = fields.concat((await fr.eval(ctx, extract)) || []);
 
     let applied = { filled: 0, uploaded: 0, pending_upload: 0, skipped: 0 };
-    let planReason = "";
+    let planReason = "", wantsLetter = false, letterAttached = false, declined = 0;
     if (fields.length) {
       let plan = null;
       try {
@@ -798,10 +821,14 @@ async function runAutoApplyOnPane(recordId, opts) {
         });
         plan = resp.ok ? await resp.json() : null;
       } catch (e) { plan = null; }
+      wantsLetter = !!(plan && plan.wants_letter);
       if (plan && plan.ok) {
         const ops = plan.ops || [];
         const routed = frames.routeOps(ops, liveFrames);
-        const resumePath = (ops.find((o) => o.op === "upload") || {}).path || "";
+        const uploadPath = new Map(ops.filter((o) => o.op === "upload" && o.path).map((o) => [o.ref, o.path]));
+        const resumePath = uploadPath.size ? (ref) => uploadPath.get(ref) || "" : "";
+        letterAttached = ops.some((o) => o.op === "upload" && o.from === "letter");
+        declined = ops.filter((o) => o.from === "eeo_decline").length;
         const runOps = (list) => `window.TailorAutofill.applyOpsAsync(${JSON.stringify(list)})`;
         const reports = [];
         if (routed.main.length) {
@@ -815,7 +842,9 @@ async function runAutoApplyOnPane(recordId, opts) {
           const rep = await fr.eval(ctx, runOps(list));
           reports.push(rep);
           if (rep && (rep.uploads || []).length && resumePath) {
-            applied.uploaded += await frames.uploadInFrame(fr.cdp, ctx, rep.uploads, resumePath);
+            for (const ref of rep.uploads) {
+              applied.uploaded += await frames.uploadInFrame(fr.cdp, ctx, [ref], resumePath(ref));
+            }
           }
         }
         for (const rep of reports) {
@@ -845,12 +874,13 @@ async function runAutoApplyOnPane(recordId, opts) {
       if (blocker === "captcha") return { ok: false, reason: "blocked", blocker, page };
       return { ok: false, reason: "no-fields", page };
     }
-    if (!filled && !applied.uploaded && planReason) return { ok: false, reason: planReason, page, left };
+    if (!filled && !applied.uploaded && planReason) return { ok: false, reason: planReason, page, left, wants_letter: wantsLetter };
     const report = { page, url: wc.getURL() || url, filled, left, system: pre.system };
     recordFillReport(recordId, report);
     if (!opts.quiet) sendProgress(Object.assign({ record_id: recordId || null, message: pageMessage(page, filled, left) }, report));
     return { ok: true, filled, uploaded: applied.uploaded, pending_upload: applied.pending_upload,
-             skipped: applied.skipped, left, page,
+             skipped: applied.skipped, left, page, wants_letter: wantsLetter, letter_attached: letterAttached,
+             declined,
              system: pre.system, system_name: pre.system_name, next_page: pre.next_page,
              continue_hint: pre.continue_hint, submit_highlighted: pre.submit_highlighted,
              captcha: pre.captcha };

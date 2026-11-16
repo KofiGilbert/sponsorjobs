@@ -46,7 +46,7 @@
   // A voluntary self-identification question (the planner's _EEO; autoapply/brain.py _SELF_ID).
   // Its chosen option is the person's gender, race, veteran or disability answer, and it never
   // leaves the machine: the view says such a control is answered, never which choice it holds.
-  const SELF_ID_RE = /gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun|self[- ]?identif/i;
+  const SELF_ID_RE = /gender|\bsex\b|\brac(e|ial)\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun|self[- ]?identif|first[- ]generation (professional|college|student)/i;
   const TEXT_TYPES = new Set(["text", "email", "tel", "url", "search", "password", "number", "date", "datetime-local",
                               "month", "week", "time", "color", "range", ""]);
   const BUTTON_TYPES = new Set(["submit", "button", "reset", "image"]);
@@ -300,8 +300,16 @@
     return /search (for )?jobs|job search|keyword|search by (title|keyword)/i.test(
       [el.name, el.id, attrOf(el, "placeholder"), attrOf(el, "aria-label")].filter(Boolean).join(" "));
   }
+  // A radio or checkbox group often carries "required" on its container (a fieldset or role=
+  // radiogroup / group with aria-required), not on each box.
+  function groupOf(el) {
+    return (el && el.closest) ? el.closest("fieldset, [role='radiogroup'], [role='group']") : null;
+  }
   function isRequired(el) {
-    return !!(el.required || attrOf(el, "aria-required") === "true");
+    if (el.required || attrOf(el, "aria-required") === "true") return true;
+    const toggle = isToggleInput(el) || /^(radio|checkbox)$/.test(norm(attrOf(el, "role")));
+    const g = toggle ? groupOf(el) : null;
+    return !!(g && (attrOf(g, "aria-required") === "true" || g.hasAttribute("required")));
   }
   function isDisabled(el) {
     return !!(el.disabled || attrOf(el, "aria-disabled") === "true");
@@ -551,6 +559,14 @@
         return;
       }
       const file = isFileInput(el);
+      if (isToggleInput(el) && (selfHidden(el) || !boxShown(el, true))) {
+        // A card-style choice: the real radio or checkbox is hidden (display none, no box) inside
+        // or beside the card the person clicks. List the input with its checked state, so the
+        // question does not vanish from the view; a click on it lands on the card (doClick).
+        // (Adapted from vercel-labs/agent-browser snapshot.rs promote_hidden_inputs, Apache-2.0.)
+        if (toggleCard(el) && !honeypotField(el)) pushEl(el, kindOf(el));
+        return;
+      }
       if (!file && selfHidden(el)) return;
       const kind = kindOf(el);
       if (kind && honeypotField(el)) return;            // a honeypot: never listed, never filled
@@ -611,6 +627,11 @@
       const next = lines.slice(cutAt).find((l) => l.kind === "el");
       const at = next ? (/^\*?\[(\d+)\]/.exec(next.s) || [])[1] : "";
       out.push(`(${refs.length - shownEls} more elements below${at ? "; read_page offset " + at + " shows them" : ""})\n`);
+      // The form's own Submit past the cut is named anyway: the ready gate (shell notReady,
+      // brain.not_ready) looks for it in the view, and a long job description above a one-page
+      // Greenhouse form put it out of sight (Gusto, 2026-11-16: "no Submit control" every step).
+      const sub = lines.slice(cutAt).filter((l) => l.kind === "el" && l.el && submitLike(l.el)).slice(0, 2);
+      if (sub.length) out.push("The page's submit, further down:\n" + sub.map((l) => l.s + "\n").join(""));
       out.push("[End of view]");
     } else out.push(foot);
 
@@ -644,6 +665,24 @@
     const y = Math.min(Math.max(r.top + r.height / 2, 0), (v.innerHeight || 1) - 1);
     return { x, y };
   }
+  // The visible card a hidden radio or checkbox belongs to: its own label (wrapping or for=),
+  // else the nearest ancestor (three levels up) that is shown, has words, and holds only this
+  // one choice. null when there is none (the input is really hidden).
+  function toggleCard(el) {
+    const shown = (n) => n && !selfHidden(n) && boxShown(n);
+    try {
+      for (const lab of Array.from(el.labels || [])) if (shown(lab)) return lab;
+    } catch (e) { /* no labels list */ }
+    const wrap = el.closest && el.closest("label");
+    if (shown(wrap)) return wrap;
+    let n = el.parentElement;
+    for (let up = 0; n && up < 3; up++, n = n.parentElement) {
+      if (n === document.body) break;
+      if (n.querySelectorAll("input[type=radio], input[type=checkbox]").length !== 1) break;
+      if (shown(n) && cleanText(n.innerText || n.textContent || "")) return n;
+    }
+    return null;
+  }
   function controlOfLabel(lab) {
     if (lab.control) return lab.control;
     const id = attrOf(lab, "for");
@@ -675,13 +714,25 @@
       const r = rootOf(el);
       hit = (r.elementFromPoint ? r.elementFromPoint(x, y) : null) || viewOf(el).document.elementFromPoint(x, y);
     } catch (e) { hit = null; }
-    if (!hit) return false;                       // off screen: not a cover, the click still lands
-    if (hit === el || composedContains(el, hit) || composedContains(hit, el)) return false;
+    if (!hit) return null;                        // off screen: not a cover, the click still lands
+    if (hit === el || composedContains(el, hit) || composedContains(hit, el)) return null;
     const lab = hit.closest && hit.closest("label");
-    if (lab && (controlOfLabel(lab) === el)) return false;
+    if (lab && (controlOfLabel(lab) === el)) return null;
     const myLab = labelFor(el) || (el.closest && el.closest("label"));
-    if (myLab && composedContains(myLab, hit)) return false;
-    return true;
+    if (myLab && composedContains(myLab, hit)) return null;
+    return hit;                                   // the element drawn over it
+  }
+  // A short name for an element that covers another ("dialog \"Cookie settings\"", "div.banner").
+  function coverName(n) {
+    const box = (n.closest && n.closest("[role=dialog],[aria-modal=true],[class*=cookie],[id*=cookie],[class*=consent],"
+      + "[class*=banner],[class*=modal],[class*=overlay]")) || n;
+    const role = attrOf(box, "role");
+    const words = cleanText(attrOf(box, "aria-label") || (box.innerText || "")).slice(0, 40);
+    const cls = String(box.className || "").split(/\s+/).filter(Boolean)[0] || "";
+    return (role || tagOf(box).toLowerCase() + (box.id ? "#" + box.id : cls ? "." + cls : "")) + (words ? ' "' + words + '"' : "");
+  }
+  function toggleOn(el) {
+    return tagOf(el) === "INPUT" ? !!el.checked : attrOf(el, "aria-checked") === "true";
   }
   // A cheap fingerprint to answer "did the page change": the URL, how many controls are
   // listed, and how much text there is. The shell's settle() is the real judge; this is the
@@ -724,17 +775,33 @@
     if (policyLink(el)) return { ok: false, note: "policy-link: tick the box instead, never open the notice", changed: false };
     if (isDisabled(el)) return { ok: false, note: "disabled", changed: false };
     const before = fingerprint();
-    try { if (el.scrollIntoView) el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e) { /* fine */ }
+    // A radio or checkbox: its state is read back after the click. A hidden one (a card-style
+    // choice) is clicked through the card the person sees.
+    const toggle = isToggleInput(el) || /^(radio|checkbox|switch)$/.test(norm(attrOf(el, "role")));
+    const was = toggle ? toggleOn(el) : null;
+    const target = isToggleInput(el) && (selfHidden(el) || !boxShown(el, true)) ? (toggleCard(el) || el) : el;
+    try { if (target.scrollIntoView) target.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (e) { /* fine */ }
     await sleep(40);
-    const cov = covered(el);
-    const { x, y } = centre(el);
+    const cov = covered(target);
+    if (cov) return { ok: false, note: "covered by " + coverName(cov) + ": close or dismiss it first", changed: false };
+    const { x, y } = centre(target);
     const init = { button: 0, buttons: 1, clientX: x, clientY: y };
-    try { if (el.focus) el.focus({ preventScroll: true }); } catch (e) { /* fine */ }
-    fire(el, "pointerdown", init); fire(el, "mousedown", init);
-    fire(el, "pointerup", Object.assign({}, init, { buttons: 0 })); fire(el, "mouseup", Object.assign({}, init, { buttons: 0 }));
-    if (typeof el.click === "function") el.click(); else fire(el, "click", init);
+    try { if (target.focus) target.focus({ preventScroll: true }); } catch (e) { /* fine */ }
+    fire(target, "pointerdown", init); fire(target, "mousedown", init);
+    fire(target, "pointerup", Object.assign({}, init, { buttons: 0 })); fire(target, "mouseup", Object.assign({}, init, { buttons: 0 }));
+    if (typeof target.click === "function") target.click(); else fire(target, "click", init);
     await sleep(200);
-    return { ok: true, note: cov ? "covered" : "", changed: fingerprint() !== before };
+    if (toggle) {
+      const radio = String(el.type || "").toLowerCase() === "radio" || norm(attrOf(el, "role")) === "radio";
+      const done = () => (radio ? toggleOn(el) : toggleOn(el) !== was);
+      if (!done()) {
+        // The click did not take: try the box's own label once (label.control), then say so.
+        const lab = target === el ? (Array.from(el.labels || [])[0] || (el.closest && el.closest("label"))) : null;
+        if (lab && typeof lab.click === "function") { lab.click(); await sleep(150); }
+      }
+      if (!done()) return { ok: false, note: (radio ? "the choice is still not selected" : "the box did not change") + "; inspect it", changed: fingerprint() !== before };
+    }
+    return { ok: true, note: "", changed: fingerprint() !== before };
   }
 
   async function doType(el, text) {
@@ -826,14 +893,14 @@
       fire(el, "pointerup", { button: 0 }); fire(el, "mouseup", { button: 0 });
       if (typeof el.click === "function") el.click(); else fire(el, "click", { button: 0 });
     }
-    await sleep(300);
-    let opts = visibleOptions();
+    // The box's own list (aria-controls / aria-owns), polled up to 2 s for a list that renders
+    // late; another question's open list is never read as this one's (a decoy listbox).
+    let opts = await waitOptions(el, 2000);
     if (!opts.length && tagOf(el) === "INPUT") {
       // A type-to-search box shows options only after typing. Type the option text (it is
       // the site's option, not the person's data), then look again.
       setValue(el, want);
-      await sleep(400);
-      opts = visibleOptions();
+      opts = await waitOptions(el, 2000);
     }
     const hit = choiceFor(opts, want, (o) => o.textContent);
     if (!hit) {
@@ -846,8 +913,45 @@
     fire(hit, "pointerdown", { button: 0 }); fire(hit, "mousedown", { button: 0 });
     fire(hit, "pointerup", { button: 0 }); fire(hit, "mouseup", { button: 0 });
     if (typeof hit.click === "function") hit.click(); else fire(hit, "click", { button: 0 });
-    await sleep(150);
-    return { ok: true, note: "", changed: fingerprint() !== before };
+    // Read the choice back: the box (or its control) now shows the option's words.
+    const said = cleanText(hit.textContent);
+    for (let i = 0; i < 10; i++) {
+      await sleep(150);
+      if (comboShows(el, said)) return { ok: true, note: "", changed: fingerprint() !== before };
+    }
+    return { ok: false, note: "picked \"" + said.slice(0, 40) + "\" but the box does not show it; options: " + optionList(opts),
+             changed: fingerprint() !== before };
+  }
+  // The options of THIS box's popup: the list its aria-controls / aria-owns names when it has
+  // one, else every visible option (one popup open at a time is the usual case). Disabled
+  // options are never offered (visibleOptions). Polled until some show or ``ms`` runs out.
+  function ownOptions(el, anyList) {
+    const all = visibleOptions();
+    const ids = String(attrOf(el, "aria-controls") || attrOf(el, "aria-owns") || "").split(/\s+/).filter(Boolean);
+    const lists = ids.map((id) => byId(el, id)).filter(Boolean);
+    if (!ids.length || (!lists.length && anyList)) return all;
+    return all.filter((o) => lists.some((l) => l === o || composedContains(l, o)));
+  }
+  async function waitOptions(el, ms) {
+    const until = Date.now() + ms;
+    let opts = ownOptions(el, false);
+    while (!opts.length && Date.now() < until) { await sleep(100); opts = ownOptions(el, false); }
+    // The list it names never appeared (a stale aria-controls): the options on screen, as before.
+    return opts.length ? opts : ownOptions(el, true);
+  }
+  function comboShows(el, said) {
+    const want = norm(said);
+    if (!want) return true;
+    const E = T();
+    let v = "";
+    try { v = E && typeof E.comboValue === "function" ? String(E.comboValue(el) || "") : ""; } catch (e) { v = ""; }
+    if (!v) v = String(el.value || "");
+    // The value, the control's own words (a Workday button shows its choice), and its field box
+    // (react-select shows the choice beside the input).
+    const box = (el.closest && el.closest("[class*='select'], [class*='combobox'], [class*='dropdown'], [role='combobox']"))
+      || el.parentElement;
+    const shown = norm(v) + " " + norm(el.innerText || el.textContent || "") + " " + norm(box ? box.innerText || "" : "");
+    return shown.includes(want) || (want.length > 30 && shown.includes(want.slice(0, 30)));
   }
 
   function scrollableAncestor(el) {
@@ -1035,6 +1139,17 @@
       const el = l.kind === "el" ? l.el : null;
       if (!el || !el.isConnected) continue;
       const kind = kindOf(el);
+      if (kind === "radio" || kind === "checkbox") {
+        // A required choice group (or a single required box): empty while nothing in it is on.
+        if (isDisabled(el) || !isRequired(el) || honeypotField(el)) continue;
+        const on = kind === "radio" ? groupAnswered(el) : (boxGroupAnswered(el) ?? toggleOn(el));
+        if (on) continue;
+        const g = groupOf(el);
+        const lg = g && (g.querySelector("legend") || (attrOf(g, "aria-labelledby") ? byId(g, attrOf(g, "aria-labelledby")) : null));
+        const lab = cleanLabel(lg ? lg.textContent : (g && attrOf(g, "aria-label")) || labelOf(el)).slice(0, 80) || kind;
+        if (!seen.has(lab)) { seen.add(lab); empty.push(lab); }
+        continue;
+      }
       if (!kind || !/^(input|textarea|select|combobox|file)$/.test(kind)) continue;
       if (kind === "input" && !TEXT_TYPES.has(String(el.type || "text").toLowerCase())) continue;
       if (isDisabled(el) || !isRequired(el) || isSiteSearch(el) || honeypotField(el)) continue;

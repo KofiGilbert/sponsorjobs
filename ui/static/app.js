@@ -11596,6 +11596,15 @@
           loadAutoApply();
         }
       });
+      if (info.letter) {
+        // The cover letter the agent wrote and attached: the person reads it before Send.
+        const a = document.createElement("a");
+        a.className = "btn btn-sm btn-ghost bb-letter";
+        a.href = `/api/record/${info.record_id}/cover_letter.pdf?v=${Date.now()}`;
+        a.target = "_blank"; a.rel = "noopener";
+        a.textContent = T("aa.agent.readLetter", "Read cover letter");
+        bar.appendChild(a);
+      }
     } else if (info.state === "parked" && info.record_id != null && info.parked && /^(captcha|person)$/.test(info.parked.kind || "")) {
       btn(T("aa.act.continue", "Continue"), "btn-primary bb-send", async (e) => { e.target.disabled = true; await aaContinueParked(info.record_id); });
     } else if (info.state === "batch-done" && info.batch && info.batch.parked) {

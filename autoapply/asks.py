@@ -31,7 +31,8 @@ from autoapply import eeo as EEO
 from autoapply import workauth
 from autoapply.answers import normalize
 from autoapply.planner import (_DECLINE, _EEO, _n, both_halves, citizenship_text, decline_option, eeo_option,
-                               listed_citizenship, literal_for, match_option, residence_withheld)
+                               listed_citizenship, literal_for, match_option, residence_withheld,
+                               worked_here_question)
 
 MAX_OPTIONS = 8          # choices offered as buttons
 MAX_ALL = 40             # choices kept to match a saved answer or a reply against
@@ -102,7 +103,8 @@ def same_question(a, b) -> bool:
 def known_answer(question: str, options, *, partial: bool = False, library=None, work_auth=None,
                  eeo_decline: bool = False, job_country: str = "US", hint: str = "",
                  per_company: bool = False, worked_here=None, hold=frozenset(), mapped=None, confirm=None,
-                 withhold=frozenset(), job_salary: str = "", wa_ended=None) -> tuple[str, str] | None:
+                 withhold=frozenset(), job_salary: str = "", wa_ended=None,
+                 company: str = "", eeo_fallback: bool = False) -> tuple[str, str] | None:
     """(answer, origin) when the person's own material answers this question, else None.
     Origins: "library", "workauth", "eeo_decline". ``options`` is every choice the page has (or
     as many as were read; ``partial`` says the list is cut). With options, the answer is the
@@ -131,7 +133,9 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
         return None
     opts = clean_options(options)
     key = normalize(q)
-    if key in (hold or ()) or q in (confirm or {}):
+    if per_company and key != "@previously_worked" and worked_here_question(q, company):
+        key = "@previously_worked"          # "Have you ever worked at <this company>?" (planner)
+    elif key in (hold or ()) or q in (confirm or {}):
         return None
     from autoapply.planner import KnownContext, _newer, keyed, mapped_value
     from autoapply.fields import FormField
@@ -178,7 +182,12 @@ def known_answer(question: str, options, *, partial: bool = False, library=None,
             return v, "library"
         if partial and own and (qkey not in ("@race", "@ethnicity") or both_halves(own)):
             return own, "library"
-        return None
+        # (2026-11-16) ``eeo_fallback`` (the shell's known-only check before it asks): nothing saved
+        # fits, so the page's own decline choice. Self-identification is voluntary and never
+        # asked per application (autoapply/planner.py _eeo_fill does the same); a decline that
+        # did not stick comes back as a forced question and is asked for real.
+        v = decline_option(opts) if eeo_fallback else None
+        return (v, "eeo_decline") if v else None
     if per_company and key == "@previously_worked":
         ok = worked_here and worked_here[1] != "confirm" and fit(worked_here[0])
         return (fit(worked_here[0]), worked_here[1] or "library") if ok else None

@@ -5321,6 +5321,24 @@ def _resume_upload_path(rec: dict) -> str:
         return str(cv)
 
 
+def _cover_upload_path(rec: dict) -> str:
+    """This application's cover letter as a PDF named after the person (WORKDIR/uploads/<id>/cover/<Name>
+    Cover Letter.pdf), for a cover letter file box on the form. Rendered from the saved letter when
+    the PDF is missing. '' when the application has no cover letter (or no PDF could be built)."""
+    rid = int(rec["id"])
+    text = str(_record_data(rec).get("cover_letter") or "").strip()
+    if not text:
+        return ""
+    pdf = WORKDIR / f"cover-{rid}.pdf"
+    if not pdf.exists() and not _render_cover_pdf(rid, text):
+        return ""
+    try:
+        # its own folder: upload_copy keeps one file per folder, and the resume's is uploads/<id>
+        return str(upload_copy(pdf, WORKDIR / "uploads" / str(rid) / "cover", export_filename(_person_name(rec), "cover")))
+    except OSError:
+        return str(pdf)
+
+
 def _saved_full_profile() -> dict:
     """The person's full saved PROFILE (identity, skills, experience, ...) for drafting
     cover letters / screening answers. Prefers a live builder session's working profile,
@@ -13457,6 +13475,7 @@ def autoapply_plan():
     if _application_email():
         applicant["email"] = _application_email()       # the alias, when the person took one
     resume = _resume_upload_path(rec) if rec else ""   # named after the person, not cv-<id>.pdf
+    letter = _cover_upload_path(rec) if rec else ""    # the cover letter drafted for this job
     # The person's own answers first (work authorization, the answer library, this record's
     # drafted screening answers, the cover letter, contact fields); the model only for what is
     # left, behind the fact gate (autoapply/planner.py). None of these answers reach the model.
@@ -13464,9 +13483,9 @@ def autoapply_plan():
     try:
         ctx = KnownContext(work_auth=_work_auth(), library=lib,
                            drafted=[x for x in (data.get("screening") or []) if isinstance(x, dict)],
-                           cover_letter=str(data.get("cover_letter") or ""), applicant=applicant,
-                           resume_path=resume, job_country=_job_country(data), company=company,
-                           eeo_decline=_eeo_decline(), **_recall_ctx(company, data))
+                           cover_letter=str(data.get("cover_letter") or ""), cover_letter_path=letter,
+                           applicant=applicant, resume_path=resume, job_country=_job_country(data),
+                           company=company, eeo_decline=_eeo_decline(), **_recall_ctx(company, data))
         res = plan_known(fields, ctx)
         open_ = res.left + [f for f in res.rest if (f.type or "").lower() != "file"]
         if open_ and ctx.per_company:
@@ -13494,18 +13513,23 @@ def autoapply_plan():
     finally:
         lib.close()
     plan = res.actions
+    # A cover letter box (a file or a text box) and no letter for this application yet: the shell
+    # asks /api/autoapply/agent/cover-letter to write one, then fills again (2026-11-16, Gusto).
+    from autoapply.planner import _LETTER
+    wants_letter = bool(rec) and not str(data.get("cover_letter") or "").strip() and any(
+        _LETTER.search(f.label or "") and (f.type or "").lower() in ("file", "textarea", "text") for f in fields)
     if not plan:
-        return jsonify({"ok": False, "needs_assist": True,
+        return jsonify({"ok": False, "needs_assist": True, "wants_letter": wants_letter,
                         "reason": "Could not plan this form confidently. Fill it in and I'll help.",
                         "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
-    ops = resolve_plan(plan, applicant, resume_path=resume)
+    ops = resolve_plan(plan, applicant, resume_path=resume, letter_path=letter)
     if rec:                                 # (Phase 6) the memory page's history: filled from memory
         from applicant import page as _Pg
         by_ref = {f.ref: f.label for f in fields}
         _brain_do(_Pg.record_fills, rec.get("id"),
                   [(by_ref.get(o.ref, ""), o.origin) for o in ops
                    if o.origin in ("library", "eeo", "workauth", "derived", "eeo_decline") and o.ref in by_ref])
-    return jsonify({"ok": True, "filled": len(ops),
+    return jsonify({"ok": True, "filled": len(ops), "wants_letter": wants_letter,
                     "ops": [{"ref": o.ref, "op": o.op, "text": o.text, "path": o.path,
                              "sensitive": o.is_sensitive, "from": o.origin} for o in ops],
                     "left": [{"ref": f.ref, "label": f.label} for f in res.left]})
@@ -14234,9 +14258,11 @@ def autoapply_agent_ask():
             for it in unforced:
                 k = AK.known_answer(it["question"], it["page_options"], partial=it["partial"], library=lib,
                                     work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"],
-                                    mapped=mapped, confirm=confirm, **recall) if recall else \
+                                    mapped=mapped, confirm=confirm, company=company,
+                                    eeo_fallback=bool(b.get("known_only")), **recall) if recall else \
                     AK.known_answer(it["question"], it["page_options"], partial=it["partial"], library=lib,
-                                    work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"])
+                                    work_auth=wa, eeo_decline=eeo_decline, job_country=country, hint=it["hint"],
+                                    eeo_fallback=bool(b.get("known_only")))
                 if k:
                     it["answer"], it["origin"] = k
         finally:
@@ -15429,7 +15455,7 @@ def autoapply_agent_step():
         return jsonify({"ok": False, "reason": "no-reply", "fatal": kind, "error": kind + ": " + str(exc)[:200],
                         "message": brain.unavailable_message(kind), "tries": 0, "cost": 0.0})
     out = brain.step(req, llm, values, portal, placeholders=placeholders, resume_path=resume,
-                     withheld=withheld)
+                     letter_path=_cover_upload_path(rec) if rec else "", withheld=withheld)
     out["placeholders"] = placeholders
     return jsonify(out)
 
@@ -15726,6 +15752,46 @@ def autoapply_agent_sign():
         return jsonify({"ok": False, "reason": str(out.get("error") or "unsigned")})
     return jsonify({"ok": True, "signature_input": out.get("signature_input"), "signature": out.get("signature"),
                     "signature_agent": out.get("signature_agent") or '"https://sponsorjobs.ai"'})
+
+
+@app.post("/api/autoapply/agent/cover-letter")
+@_guard
+def autoapply_agent_cover_letter():
+    """The apply agent met a cover letter box: write this application's cover letter (the Review
+    page's drafter, from the person's real history and this job), save it on the application and
+    build its PDF, so the next fill attaches it (a file box) or pastes it (a text box). body
+    {record_id}. Reply {ok, drafted, pdf, words} or {ok: false, reason}; a letter already saved is
+    kept as is. A failure is never a question: an optional box then stays empty (2026-11-16)."""
+    b = request.json or {}
+    try:
+        rid = int(b.get("record_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "reason": "no-record"}), 400
+    recs = _records()
+    try:
+        rec = recs.get(rid)
+        if not rec:
+            return jsonify({"ok": False, "reason": "no-record"}), 404
+        data = _record_data(rec)
+        text = str(data.get("cover_letter") or "").strip()
+        drafted = False
+        if not text:
+            jd = data.get("jd_text") or rec.get("jd_label") or rec.get("role") or ""
+            try:
+                from drafting import cover_letter as _cover_letter
+                text = str(_cover_letter(jd, _saved_full_profile(), _make_llm(), role=rec.get("role") or "",
+                                         company=rec.get("company") or "").get("cover_letter") or "").strip()
+            except Exception as e:   # noqa: BLE001 - no letter: the box stays empty
+                return jsonify({"ok": False, "reason": "draft-failed", "error": str(e)[:200]})
+            if not text:
+                return jsonify({"ok": False, "reason": "draft-failed"})
+            (WORKDIR / f"cover-{rid}.txt").write_text(text, encoding="utf-8")
+            recs.merge_data(rid, {"cover_letter": text, "cover_letter_by": "agent"})
+            drafted = True
+        pdf = _render_cover_pdf(rid, text) if drafted or not (WORKDIR / f"cover-{rid}.pdf").exists() else True
+    finally:
+        recs.close()
+    return jsonify({"ok": True, "drafted": drafted, "pdf": bool(pdf), "words": len(text.split())})
 
 
 @app.get("/api/autoapply/agent/portal-account")

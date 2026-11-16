@@ -347,8 +347,9 @@ def test_the_planner_fills_a_workday_combined_list_from_two_saved_answers(tmp_pa
         fields += [FormField(f"d{i}", "Disability Status: " + o, "checkbox") for i, o in enumerate(WD_DISABILITY)]
         res = plan_known(fields, KnownContext(library=lib))
         by = {a.ref: a.value for a in res.actions}
-        assert by == {"e": WD_ETHNICITY[1], "g": "Man", "d1": "Yes"}
-        assert {f.ref for f in res.left} == {"v", "d0", "d2"}          # veteran not saved: theirs
+        # veteran not saved: the page's decline (2026-11-16: self-identification is never asked)
+        assert by == {"e": WD_ETHNICITY[1], "g": "Man", "d1": "Yes", "v": "I do not wish to self-identify"}
+        assert {f.ref for f in res.left} == {"d0", "d2"}
         assert sorted(res.used_library) == ["@disability", "@gender", "@hispanic_latino", "@race"]
 
 
@@ -935,8 +936,9 @@ def test_clearing_a_race_read_from_a_combined_pick_sticks(app):
     try:
         assert AK.known_answer("Race", LV_RACE, library=lib) is None                # race unknown: asked
         assert AK.known_answer("Ethnicity", WD_ETHNICITY, library=lib) is None
+        # the planner declines it rather than ask (2026-11-16: self-identification is never asked)
         res = plan_known([FormField("r", "Race", "select", LV_RACE)], KnownContext(library=lib))
-        assert [f.ref for f in res.left] == ["r"]
+        assert res.left == [] and [(a.value, a.origin) for a in res.actions] == [("Decline to self-identify", "eeo_decline")]
     finally:
         lib.close()
 

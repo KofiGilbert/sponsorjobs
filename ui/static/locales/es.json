@@ -1516,5 +1516,6 @@
   "builder.applyAlready": "Ya postulaste a este empleo. Está en el Seguimiento.",
   "builder.applyingAt": "Postulando a {role} en {company}",
   "builder.applyingTo": "Postulando a {role}",
-  "builder.thisJob": "este empleo"
+  "builder.thisJob": "este empleo",
+  "aa.agent.readLetter": "Leer carta de presentación"
 }

@@ -66,6 +66,11 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, "..");
 const PY = process.env.TAILOR_PYTHON || "/Users/kofigilbert/code/resume-agent/.venv/bin/python";
 const FIX_PORT = 57434;
+// The engine and CDP ports (TAILOR_PORT / TAILOR_CDP_PORT, as main.js reads them), so the test
+// can run beside an installed app (57000 / 9223) and a dev window (57010 / 9233).
+const PORT = Number(process.env.TAILOR_PORT) || 57000;
+const CDP = Number(process.env.TAILOR_CDP_PORT) || 9223;
+const ENGINE = "http://127.0.0.1:" + PORT;
 const results = [];
 const check = (name, pass, detail = "") => {
   results.push({ name, pass, detail });
@@ -156,7 +161,7 @@ let engineErr = "";
 engine.stderr.on("data", (d) => { engineErr += d.toString(); });
 let up = false;
 for (let i = 0; i < 60 && !up; i++) {
-  try { up = (await fetch("http://127.0.0.1:57000/api/health").catch(() => null))?.ok || (await fetch("http://127.0.0.1:57000/").catch(() => null))?.ok; } catch { up = false; }
+  try { up = (await fetch(ENGINE + "/api/health").catch(() => null))?.ok || (await fetch(ENGINE + "/").catch(() => null))?.ok; } catch { up = false; }
   if (!up) await sleep(1000);
 }
 check("engine up on the test model", up, up ? "" : engineErr.slice(-400));
@@ -164,7 +169,7 @@ const stopEngine = () => { try { engine.kill(); } catch {} };
 process.on("exit", stopEngine);
 
 // The applicant brain migrated the legacy answer stores at start-up (counts only), and kept them.
-const brain = await fetch("http://127.0.0.1:57000/api/brain/status").then((r) => r.json()).catch(() => null);
+const brain = await fetch(ENGINE + "/api/brain/status").then((r) => r.json()).catch(() => null);
 const rep = (brain && brain.report) || {};
 check("the brain migrated the legacy answers",
       !!(brain && brain.active && (rep["answers.db"] || {}).active >= 1 && (rep["app_prefs.json"] || {}).active >= 1),
@@ -175,7 +180,7 @@ check("the legacy files are still there", prefsKept && fs.existsSync(path.join(D
       && fs.readdirSync(DATA).some((f) => f.startsWith("brain-backup-")), fs.readdirSync(DATA).join(", "));
 
 const app = await electron.launch({
-  args: [HERE],
+  args: [HERE, "--user-data-dir=" + path.join(DATA, "electron")],   // its own profile, never the dev window's
   cwd: HERE,
   env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined, PATH: "/opt/homebrew/bin:" + process.env.PATH,
          TAILOR_PYTHON: PY, RESUME_AGENT_DATA_DIR: DATA, RESUME_AGENT_DEV: "1", RESUME_AGENT_FAKE_LLM: "1",
@@ -188,9 +193,9 @@ await win.waitForFunction(() => !!document.querySelector(".sidebar"), null, { ti
 check("app window opens", true, await win.title());
 
 const paneEval = async (expr) => {
-  // The pane is a separate CDP page target on 9223; evaluate there.
-  const list = await fetch("http://127.0.0.1:9223/json/list").then((r) => r.json());
-  const p = list.find((t) => t.type === "page" && !t.url.startsWith("http://127.0.0.1:57000"));
+  // The pane is a separate CDP page target on the shell's CDP port; evaluate there.
+  const list = await fetch("http://127.0.0.1:" + CDP + "/json/list").then((r) => r.json());
+  const p = list.find((t) => t.type === "page" && !t.url.startsWith(ENGINE));
   if (!p) return null;
   const ws = new WebSocket(p.webSocketDebuggerUrl);
   return new Promise((resolve) => {
@@ -203,7 +208,7 @@ const paneEval = async (expr) => {
 await win.evaluate(() => { window.__agentLog = []; window.tailorShell.onAutoApplyProgress((i) => {
   if (i && i.agent) window.__agentLog.push({ s: i.state, r: i.record_id, m: i.message, a: i.activity || null }); }); });
 const agentLog = () => win.evaluate(() => window.__agentLog.slice());
-const api = (url, body) => fetch("http://127.0.0.1:57000" + url, body === undefined ? { headers: { "X-Tailor-Extension": "1" } }
+const api = (url, body) => fetch(ENGINE + url, body === undefined ? { headers: { "X-Tailor-Extension": "1" } }
   : { method: "POST", headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" }, body: JSON.stringify(body) })
   .then((r) => r.json()).catch(() => null);
 const rowOf = async (id) => {
@@ -334,7 +339,7 @@ check("nothing submitted on the captcha run", !log3.includes("submitted"), JSON.
 // ---- 7. the site emails a code: the mailbox hands it over, the run carries on ---------------
 // The engine runs a fake mailbox (RESUME_AGENT_FAKE_MAILBOX=1); the test plays the site's mail
 // server, delivering the message while the agent is waiting on /api/inbox/await.
-const deliver = (msg) => fetch("http://127.0.0.1:57000/api/inbox/dev/deliver", { method: "POST",
+const deliver = (msg) => fetch(ENGINE + "/api/inbox/dev/deliver", { method: "POST",
   headers: { "Content-Type": "application/json", "X-Tailor-Extension": "1" }, body: JSON.stringify(msg) }).then((r) => r.ok).catch(() => false);
 await win.waitForSelector(`.aa-row[data-id="${RID_CODE}"]`, { timeout: 30_000 });
 await clickRow(RID_CODE);
@@ -479,7 +484,7 @@ check("nothing was submitted on the address run", !log8.includes("submitted"), J
 // "What base pay are you targeting for this position?" (required) matches no rule. The label
 // mapper makes ONE model call for it (the test model counts calls in /api/brain/status), the
 // saved salary fills it, and the next application with the same wording makes no call at all.
-const mapperCalls = async () => ((await fetch("http://127.0.0.1:57000/api/brain/status").then((r) => r.json()).catch(() => null)) || {}).mapper || {};
+const mapperCalls = async () => ((await fetch(ENGINE + "/api/brain/status").then((r) => r.json()).catch(() => null)) || {}).mapper || {};
 const salCard = await win.evaluate(() => fetch("/api/answers/basics", { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ fields: { salary: "95000" } }) }).then((r) => r.json()));
 check("the salary is saved on the form answers card", String((salCard.values || {}).salary || "") === "95000", JSON.stringify(salCard.values || salCard));
@@ -510,7 +515,7 @@ check("nothing was submitted on the base pay runs", !log9.includes("submitted") 
 // Forget, then the in-row confirm), and the next application with the base pay question asks.
 const zipCheck = spawnSync(PY, ["-c", `
 import io, json, sys, urllib.request, zipfile
-z = zipfile.ZipFile(io.BytesIO(urllib.request.urlopen("http://127.0.0.1:57000/api/memory/export.zip").read()))
+z = zipfile.ZipFile(io.BytesIO(urllib.request.urlopen("${ENGINE}/api/memory/export.zip").read()))
 names = z.namelist()
 mem = z.read("memory.json").decode()
 diary = "".join(z.read(n).decode() for n in names if n.startswith("diary/"))

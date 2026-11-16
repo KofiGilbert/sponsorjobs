@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Verify widgets</title>
+<!-- Small widgets for the agent's verified actions (tests/test_agent_view.js). The async popup,
+     the decoy listbox and the disabled option follow vercel-labs/agent-browser's e2e widget tests
+     (cli/src/native/e2e_tests.rs, Apache-2.0); the card choices are the hidden-input pattern its
+     snapshot promotes (snapshot.rs promote_hidden_inputs). -->
+<style>
+  body { font: 14px sans-serif; margin: 20px; }
+  .card { display: inline-block; border: 1px solid #999; padding: 10px 14px; margin: 4px; cursor: pointer; }
+  .card input { display: none; }
+  .card.on { border-color: #06c; background: #eef5ff; }
+  [role=listbox] { border: 1px solid #ccc; padding: 4px; list-style: none; margin: 4px 0; }
+  [role=option] { padding: 4px; cursor: pointer; }
+  .cb { display: inline-block; border: 1px solid #999; padding: 6px 10px; min-width: 120px; }
+</style>
+</head>
+<body>
+<form id="f" onsubmit="return false">
+  <fieldset id="plan" role="radiogroup" aria-required="true">
+    <legend>Which plan do you want?</legend>
+    <label class="card"><input type="radio" name="plan" value="basic"> Basic</label>
+    <label class="card"><input type="radio" name="plan" value="pro"> Pro</label>
+  </fieldset>
+
+  <fieldset id="days" aria-required="true">
+    <legend>Which days can you work?</legend>
+    <label><input type="checkbox" name="days" value="mon"> Monday</label>
+    <label><input type="checkbox" name="days" value="tue"> Tuesday</label>
+  </fieldset>
+
+  <label><input type="checkbox" id="stuck"> A box that ignores clicks</label>
+
+  <ul role="listbox" id="sidebar" aria-label="Fruit of the week">
+    <li role="option">Apple</li>
+    <li role="option">Pro</li>
+  </ul>
+
+  <div>
+    <span id="fruitLabel">Favourite fruit</span>
+    <div class="cb" role="combobox" id="fruit" tabindex="0" aria-labelledby="fruitLabel" aria-expanded="false"
+         aria-controls="fruitPopup">Choose</div>
+    <div id="fruitHost"></div>
+  </div>
+
+  <div>
+    <span id="tierLabel">Tier</span>
+    <div class="cb" role="combobox" id="tier" tabindex="0" aria-labelledby="tierLabel" aria-expanded="false"
+         aria-controls="tierPopup">Choose</div>
+    <div id="tierHost"></div>
+  </div>
+</form>
+<script>
+  // card styling follows the hidden input
+  document.querySelectorAll(".card input").forEach((i) => i.addEventListener("change", () => {
+    document.querySelectorAll(".card").forEach((c) => c.classList.toggle("on", c.querySelector("input").checked));
+  }));
+  document.getElementById("stuck").addEventListener("click", (e) => e.preventDefault());
+  window.sideClicks = 0;
+  document.querySelectorAll("#sidebar [role=option]").forEach((o) => o.addEventListener("click", () => { window.sideClicks++; }));
+
+  // An async popup: its list renders 600 ms after the click.
+  window.fruit = "";
+  const fruit = document.getElementById("fruit");
+  fruit.addEventListener("click", () => {
+    if (fruit.getAttribute("aria-expanded") === "true") return;
+    fruit.setAttribute("aria-expanded", "true");
+    setTimeout(() => {
+      const host = document.getElementById("fruitHost");
+      host.innerHTML = '<ul role="listbox" id="fruitPopup"><li role="option">Apple</li><li role="option">Banana</li></ul>';
+      host.querySelectorAll("[role=option]").forEach((o) => o.addEventListener("click", () => {
+        window.fruit = o.textContent; fruit.textContent = o.textContent;
+        host.innerHTML = ""; fruit.setAttribute("aria-expanded", "false");
+      }));
+    }, 600);
+  });
+
+  // A disabled option: clicking it does nothing.
+  window.tier = "";
+  const tier = document.getElementById("tier");
+  tier.addEventListener("click", () => {
+    if (tier.getAttribute("aria-expanded") === "true") return;
+    tier.setAttribute("aria-expanded", "true");
+    const host = document.getElementById("tierHost");
+    host.innerHTML = '<ul role="listbox" id="tierPopup"><li role="option">Basic</li><li role="option" aria-disabled="true">Premium</li></ul>';
+    host.querySelectorAll("[role=option]").forEach((o) => o.addEventListener("click", () => {
+      if (o.getAttribute("aria-disabled") === "true") return;
+      window.tier = o.textContent; tier.textContent = o.textContent;
+      host.innerHTML = ""; tier.setAttribute("aria-expanded", "false");
+    }));
+  });
+</script>
+</body>
+</html>
