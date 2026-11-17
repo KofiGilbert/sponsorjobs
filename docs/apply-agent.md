@@ -903,7 +903,36 @@ planner and in the ask route's known check, before the grounded call:
   park file no longer holds the entry (`/parked/<id>/take`).
 - Tests: tests/test_phoenix_asks.py.
 
-## 24. Fill-through: never a question mid-form; one batch at the end (2026-11-17)
+## 24. Apply setup: answer the usual questions once, before the first form (2026-11-17)
+
+The agent kept stopping to ask questions a one-time setup could answer. AIApply's onboarding (studied
+in the owner's account) collects them up front; we do the same in seven short, skippable steps, and
+avoid what they get wrong (fake previews and countdowns, answers sent unreviewed, half-written answers
+like "In" for a link, invented claims). Every step is pre-filled from what the app already knows and
+saves into the store that already owns the answer; the setup has no store of its own beyond its place
+(`apply_setup`: seen, step, done) and the wants no other store holds (`apply_wants`).
+
+| Step | Saves into |
+|---|---|
+| 1. Resume and contact | profile + essentials identity (name, email, phone, street, city, state, ZIP, country, links), the brain's contact facts; a link the person has none of goes on `essentials.declined` (answered No, never half-written); "apply with my SponsorJobs email" (`apply_with_alias`) |
+| 2. Work authorization | `work_auth` (prefs store) and the country of citizenship (`@citizenship`, `@citizenship2`); the "please explain" sentence (`workauth.note`) previews live |
+| 3. What you want | `aa_focus` titles and places (Auto-apply's picks), "Never apply to" (`aa_learn.json` exclude), `work_auth.relocate`, `@start_date` + `earliest_start`, `@notice_period`, `@salary` + `desired_salary`; level, job type, work style, distance and industries in `apply_wants` |
+| 4. Form questions | `@heard_about` + `hear_about_us`, `@over_18`, `@restrictive_covenants`, `@marketing_optin` (default No), `@forced_consent` (default ask), `accept_required_terms`, `@security_clearance`, `@drivers_license`, `@gpa`, `@related_degree`, `@current_salary`, `@current_bonus`, `@current_equity`; worked-here is shown as answered from the work history |
+| 5. Self-identification | the eight keys of `autoapply/basics.py`, and `eeo_decline` |
+| 6. How to apply | the autonomous switch (allowlisted sites only), `daily_cap`, `autopilot_per_day` |
+| 7. Finish | nothing: "The agent can now answer N of the M questions forms usually ask", from `autoapply/setup.py` `coverage()` over the real stores, each open item with a jump to its step |
+
+New canonical keys (answer library `_CANON`, brain registry, label mapper): `@current_salary`,
+`@current_bonus`, `@current_equity`, `@security_clearance` (held, never "able to obtain"),
+`@drivers_license`, `@gpa`, `@related_degree` (only when the person sets it) and `@forced_consent`
+(a required opt-in with no way to decline: asked unless the person saved a standing yes,
+`consents.saved_forced`).
+
+It opens by itself once, the first launch after sign-in (`suMaybeFirstRun` in app.js, from `boot()` and
+right after sign-in), and resumes at the saved step; My profile and Auto-apply each have an "Apply
+setup" button. Stop on Auto-apply ends the application in progress before its next step and the rest
+of the list; the review or autonomous choice applies to the next list started (the batch reads it once).
+## 25. Fill-through: never a question mid-form; one batch at the end (2026-11-17)
 
 The owner: "ours must never stop to ask questions" mid-application. Until now a required question
 the planner and the brain left open parked the run on the bar ("Question 1 of N", "After X, the

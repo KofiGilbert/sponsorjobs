@@ -116,6 +116,18 @@ _PICK = r"( (please )?(select|choose|check|mark) (one|all that apply))?"
 # Canonical keys for the questions that recur on nearly every form, worded many ways. A
 # question that matches one of these (as its whole intent) gets that key.
 _CANON: list[tuple[str, re.Pattern]] = [
+    # (2026-11-17, Apply setup) What the person is paid NOW, before the desired salary: "What is
+    # your current annual salary?", "Current base compensation", "Most recent bonus". Only ever
+    # filled when a form asks it; never the salary a job is offered at.
+    ("current_salary", re.compile(
+        r"^(what (is|was) )?(your )?(current|present|most recent|last) (annual |yearly |base |total )*"
+        r"(salary|compensation|pay|base salary|base pay)( \(?(usd|annual|per year|yearly|in usd)\)?)*$")),
+    ("current_bonus", re.compile(
+        r"^(what (is|was) )?(your )?(current|present|most recent|last) (annual |yearly |target )*bonus"
+        r"( target| amount)?( \(?(usd|annual|per year|yearly|in usd)\)?)*$")),
+    ("current_equity", re.compile(
+        r"^(what (is|was) )?(your )?(current|present|most recent|last) (annual |yearly )*"
+        r"(equity|stock|rsus?)( compensation| grant| value)?( \(?(usd|annual|per year|yearly|in usd)\)?)*$")),
     ("salary", re.compile(
         r"^(what (is|are) )?(your )?((desired|expected|target|minimum|annual|yearly|base) )*"
         r"(salary|compensation|pay|base salary|base pay|total compensation|rate)"
@@ -222,6 +234,21 @@ _CANON: list[tuple[str, re.Pattern]] = [
                                      r"|previously (an? )?(employee|contractor|intern|employed|worked)\b"
                                      r"|(former|past|prior) (employee|employment|contractor|intern)\b"
                                      r"|(ever )?(worked|interned|been employed) (for|at|by|with) (us|this|our|the company)")),
+    # (2026-11-17, Apply setup) Standing answers the setup saves once. A security clearance the
+    # person HOLDS (never "Are you able to obtain one?"), a driver's license, the GPA, and a degree
+    # "in X, Y or a related field" (the person's own call, saved only when they set it).
+    ("security_clearance", re.compile(
+        r"^(?!.*\b(obtain|eligible|willing|able to (get|obtain)|apply for|sponsor)\b)"
+        r".*\b((security|government|federal|dod|active) clearance|clearance level|hold an? (active )?clearance)\b")),
+    ("drivers_license", re.compile(r"^(?!.*\b(willing|able to obtain)\b).*\b(driver'?s'?|driving) licen[cs]e\b")),
+    ("gpa", re.compile(r"^(what (is|was) )?(your )?((cumulative|overall|undergraduate|graduate|current|final|college"
+                       r"|university|latest) )*(gpa|grade point average)( (out of|on a) [\w. ]+| scale)?$")),
+    ("related_degree", re.compile(
+        r"^(?!.*\b(willing|pursuing|currently enrolled|expected)\b)"
+        r".*\bdegree\b.*\brelated (field|discipline|area|major)\b")),
+    # The standing choice on a REQUIRED consent whose only choice is yes (autoapply/consents.py),
+    # saved by its own wording only, like the marketing opt-in.
+    ("forced_consent", re.compile(r"^accept (a )?required consents? whose only choice is yes$")),
 ]
 
 _EEO_KEYS = frozenset({"@gender", "@sex", "@race", "@ethnicity", "@hispanic_latino", "@veteran", "@disability",

@@ -5021,3 +5021,59 @@ a.cv-act { display: inline-flex; align-items: center; justify-content: center; t
 .ccn-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .ccn-acts a.btn { text-decoration: none; }
 .home-examples:focus-visible { outline: 1px solid var(--border-strong); outline-offset: 3px; border-radius: 4px; }
+
+/* ---------------------------------------------------------------- Apply setup
+   One card on the 1040 column, the Your answers card's own controls inside, a quiet step row
+   above it and "Step n of 7" with a 3px bar in the page head (the quiz's rail). The one primary
+   is Save and continue; Back and Skip are ghost buttons, so every step can be left as it is. */
+.su-col { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; padding-bottom: 48px; }
+.su-prog { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.su-bar { width: 120px; flex: none; height: 3px; border-radius: 3px; background: var(--border-strong); overflow: hidden; }
+.su-bar i { display: block; height: 100%; width: 0; background: var(--ink-2); border-radius: 3px; transition: width var(--dur) var(--ease); }
+.su-steps { display: flex; flex-wrap: wrap; gap: 4px; }
+.su-step { border: 0; background: none; font: inherit; font-size: 12.5px; color: var(--muted); padding: 5px 10px; border-radius: var(--r-sm); cursor: pointer; }
+.su-step:hover { color: var(--ink-2); }
+.su-step.is-past { color: var(--ink-2); }
+.su-step.is-on { color: var(--ink); background: var(--surface-2); font-weight: 600; }
+.su-step:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.su-card { padding: 28px 32px; }
+.su-lede { margin-top: -10px; }
+.su-body { display: flex; flex-direction: column; gap: 4px; }
+.su-grid { margin-bottom: 6px; }
+.su-subh { margin: 22px 0 12px; }
+.su-note { margin: 6px 0 4px; }
+.su-info { margin-left: 0; }
+.su-check { margin-top: 10px; }
+.su-link .su-lab { display: flex; flex-direction: column; gap: 7px; }
+.su-link .su-lab > span { font-size: 12.5px; color: var(--muted); }
+.su-link .ans-check { margin-top: 2px; font-size: 12.5px; }
+.su-link .fld:disabled { opacity: 0.5; }
+.su-rows { display: flex; flex-direction: column; }
+.su-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; flex-wrap: wrap; }
+.su-row + .su-row, .su-note + .su-row { border-top: 1px solid var(--border); }
+.su-row > span { color: var(--ink-2); font-size: 13px; }
+.su-row .fld { width: auto; min-width: 240px; }
+.su-implied { height: 36px; display: flex; align-items: center; font-size: 13px; color: var(--ink-2); }
+.su-cc { margin-bottom: 16px; }
+.su-preview { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-2); }
+.su-preview-h { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.su-preview-t { font-size: 13.5px; color: var(--ink); line-height: 1.5; }
+.su-noresume { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r); font-size: 13px; color: var(--ink-2); }
+.su-foot .su-msg { flex: 1; text-align: right; }
+.su-foot .su-msg.is-bad { color: var(--flag); }
+.su-score { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+.su-score-n { font-size: 30px; font-weight: 660; letter-spacing: -0.02em; color: var(--ink); }
+.su-score-m { font-size: 16px; color: var(--muted); margin-right: 8px; }
+.su-score-t { font-size: 13.5px; color: var(--ink-2); }
+.su-links { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r); margin-bottom: 4px; }
+.su-link-row { display: flex; gap: 16px; padding: 10px 16px; font-size: 13px; }
+.su-link-row + .su-link-row { border-top: 1px solid var(--border); }
+.su-link-k { width: 90px; flex: none; color: var(--muted); }
+.su-link-v { min-width: 0; overflow-wrap: anywhere; color: var(--ink-2); }
+.su-all { margin-top: 16px; }
+@media (max-width: 760px) {
+  .su-card { padding: 22px 18px; }
+  .su-prog .su-bar { width: 72px; }
+  .su-row .fld { min-width: 0; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .su-bar i { transition: none; } }

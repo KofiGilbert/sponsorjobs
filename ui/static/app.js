@@ -5215,6 +5215,431 @@
     if (b) document.querySelector(`[data-jump="${b.dataset.jumpTo}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" });
   });
 
+  /* ---------------------------------------------------------------- Apply setup
+     Seven short steps that answer up front what the apply agent would otherwise stop to ask
+     (autoapply/setup.py). Each step is pre-filled from what the app already knows
+     (GET /api/apply-setup) and saves only what the person changed into the store that owns it
+     (POST /api/apply-setup/save). It opens by itself once after sign-in (suMaybeFirstRun), resumes
+     at the step the person left, and is reachable from My profile and Auto-apply. Every step can
+     be skipped. No countdowns, no pressure: the finish step counts real saved answers only. */
+  const suT = (k, f) => (window.I18N ? I18N.t(k, f) : f);
+  const SU = { d: null, step: "contact", origin: "", init: {}, wa: null, cc: "US", busy: false, prevTimer: 0 };
+  const SU_STEPS = [["contact", "setup.s.contact", "Resume and contact"], ["workauth", "setup.s.workauth", "Work authorization"],
+                    ["wants", "setup.s.wants", "What you want"], ["forms", "setup.s.forms", "Form questions"],
+                    ["selfid", "setup.s.selfid", "Self-identification"], ["apply", "setup.s.apply", "How to apply"],
+                    ["finish", "setup.s.finish", "Finish"]];
+  const SU_LEDE = {
+    contact: ["setup.l.contact", "From your resume. Check it once and every form gets the same details."],
+    workauth: ["setup.l.workauth", "Forms ask this a hundred ways. Every one gets the same answer."],
+    wants: ["setup.l.wants", "Auto-apply picks roles by your titles and places, and skips the companies you name."],
+    forms: ["setup.l.forms", "Questions most forms ask. Leave any blank and I ask you when a form needs it."],
+    selfid: ["setup.l.selfid", "Only you see these, on this computer. Forms get them; no model, server or chat ever does."],
+    apply: ["setup.l.apply", "You can change this any time on Auto-apply."],
+    finish: ["setup.l.finish", "What is still open, I ask when a form needs it."],
+  };
+  const SU_BACK = { profile: ["acct.myProfile", "My profile"], autoapply: ["nav.autoapply", "Auto-apply"] };
+  const SU_YN = [["Yes", "ans.yes", "Yes"], ["No", "ans.no", "No"]];
+  const SU_CC = ["US", "UK", "CA", "AU", "EU"];
+
+  async function openApplySetup(opts) {
+    const o = opts || {};
+    SU.origin = o.origin || "";
+    let d;
+    try { d = await api("/api/apply-setup"); }
+    catch (e) { toast(e.message || suT("setup.loadFail", "Couldn't open the setup.")); return; }
+    SU.d = d;
+    const steps = SU_STEPS.map(s => s[0]);
+    SU.step = steps.includes(o.step) ? o.step : (d.state.done ? "contact" : d.state.step) || "contact";
+    const back = SU_BACK[SU.origin];
+    $("#suBack").hidden = !back;
+    if (back) $("#suBackLbl").textContent = suT(back[0], back[1]);
+    showView("setup");
+    document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("is-active"));
+    window.scrollTo(0, 0);
+    if (!d.state.seen) api("/api/apply-setup/state", { seen: true }).catch(() => {});
+    suPaint();
+  }
+  // Opens by itself ONCE: the first launch after sign-in, while the setup was never shown.
+  async function suMaybeFirstRun() {
+    try {
+      const s = await api("/api/account/status");
+      if (!s || !s.email) return;
+      const d = await api("/api/apply-setup");
+      if (d.state.seen || d.state.done) return;
+      if (!$("#wizard")?.hidden || $("#view-builder")?.classList.contains("is-active")) return;
+      openApplySetup({});
+    } catch { /* never blocks the app */ }
+  }
+  function suLeave() {
+    if (SU.origin === "profile") openMemory({});
+    else if (SU.origin === "autoapply") document.querySelector('[data-nav="autoapply"]')?.click();
+    else document.querySelector('[data-nav="dashboard"]')?.click();
+  }
+  $("#suBack")?.addEventListener("click", suLeave);
+  document.addEventListener("i18n:changed", () => { if (SU.d && $("#view-setup")?.classList.contains("is-active")) suPaint(); });
+  $("#memSetup")?.addEventListener("click", () => openApplySetup({ origin: "profile" }));
+  $("#aaSetup")?.addEventListener("click", () => openApplySetup({ origin: "autoapply" }));
+
+  // ---- the controls (the Your answers card's own classes)
+  const suId = s => esc(s);
+  function suField(label, inner, cls) { return `<div class="ans-field${cls ? " " + cls : ""}"><span>${esc(label)}</span>${inner}</div>`; }
+  function suInput(id, label, val, o) {
+    const x = o || {};
+    return `<label class="ans-field${x.cls ? " " + x.cls : ""}"><span>${esc(label)}</span><input class="fld" data-su="${suId(id)}" type="${x.type || "text"}"
+      value="${esc(val == null ? "" : val)}" maxlength="${x.max || 200}" autocomplete="off" spellcheck="false"${x.ph ? ` placeholder="${esc(x.ph)}"` : ""}${x.num ? ' inputmode="numeric"' : ""}${x.min != null ? ` min="${x.min}" max="${x.maxv}"` : ""} /></label>`;
+  }
+  function suSeg(id, val, choices, multi) {
+    const on = v => multi ? (val || []).includes(v) : val === v;
+    return `<div class="ans-seg" data-su-seg="${suId(id)}"${multi ? " data-multi" : ""} role="group">${choices.map(([v, k, f]) =>
+      `<button type="button" class="ans-seg-b${on(v) ? " is-on" : ""}" data-v="${esc(v)}" aria-pressed="${on(v)}">${esc(suT(k, f))}</button>`).join("")}</div>`;
+  }
+  function suSelect(id, val, opts, blank) {
+    const list = opts.slice();
+    if (val && !list.some(o => o[0] === val)) list.push([val, "", val]);
+    return `<select class="fld" data-su="${suId(id)}">${blank ? `<option value="">${esc(blank)}</option>` : ""}${list.map(([v, k, f]) =>
+      `<option value="${esc(v)}"${v === val ? " selected" : ""}>${esc(k ? suT(k, f) : f)}</option>`).join("")}</select>`;
+  }
+  function suCheck(id, label, on) {
+    return `<label class="ans-check su-check"><input type="checkbox" data-su-check="${suId(id)}"${on ? " checked" : ""} /> <span>${esc(label)}</span></label>`;
+  }
+  const suNote = (k, f) => `<p class="ans-eeo-note su-note">${esc(suT(k, f))}</p>`;
+  const suSub = (k, f) => `<h3 class="mem-h3 su-subh">${esc(suT(k, f))}</h3>`;
+  const suCountries = (id, val, blank) => suSelect(id, val, (SU.d.countries || []).map(n => [n, "", n]), blank);
+
+  // ---- the steps
+  function suContact() {
+    const c = SU.d.contact;
+    const link = (id, label, ph) => `<div class="ans-field su-link"><label class="su-lab"><span>${esc(label)}</span>
+        <input class="fld" data-su="${id}" type="url" value="${esc(c[id])}" placeholder="${esc(ph)}" maxlength="200" autocomplete="off" spellcheck="false"${c.none[id] ? " disabled" : ""} /></label>
+        ${suCheck("none_" + id, suT("setup.noLink", "I don't have one"), c.none[id] && !c[id])}</div>`;
+    return (SU.d.has_profile ? "" : `<div class="su-noresume"><span>${esc(suT("setup.noResume", "No resume yet. Add it and I fill these in for you."))}</span>
+        <button class="btn btn-ghost btn-sm" type="button" id="suAddResume">${esc(suT("aa.addResume", "Add your resume"))}</button></div>`) +
+      `<div class="ans-grid su-grid">
+        ${suInput("name", suT("mem.f.name", "Name"), c.name, { cls: "ans-span2" })}
+        ${suInput("phone", suT("mem.f.phone", "Phone"), c.phone, { type: "tel" })}
+        ${suInput("email", suT("mem.f.email", "Email"), c.email, { type: "email", cls: "ans-span2" })}
+        <span></span>
+        ${suInput("street", suT("setup.street", "Street"), c.street, { cls: "ans-span2" })}
+        ${suInput("city", suT("setup.city", "City"), c.city)}
+        ${suInput("state", suT("setup.state", "State"), c.state)}
+        ${suInput("postal_code", suT("setup.zip", "ZIP or postal code"), c.postal_code, { max: 20 })}
+        ${suField(suT("setup.country", "Country"), suCountries("country", c.country, " "))}
+      </div>
+      ${suSub("setup.links", "Links")}
+      <div class="ans-grid su-grid">
+        ${link("linkedin", "LinkedIn", "https://www.linkedin.com/in/...")}
+        ${link("github", "GitHub", "https://github.com/...")}
+        ${link("website", suT("mem.f.blog", "Website"), "https://...")}
+      </div>
+      ${suNote("setup.linksNote", "A link you don't have is answered No, never left half-written.")}
+      ${c.alias ? suCheck("apply_with_alias", suT("setup.alias", "Apply with {email}, so codes and links reach the agent").replace("{email}", c.alias), c.apply_with_alias) : ""}`;
+  }
+
+  function suWaEntry() { return Object.assign({ status: "", authorized: "", sponsor_now: "", sponsor_future: "", auth_end: "" }, ((SU.wa.countries || {})[SU.cc]) || {}); }
+  function suWorkauth() {
+    const w = SU.d.workauth, e = suWaEntry();
+    const cdef = (w.countries || []).find(c => c.code === SU.cc) || { statuses: [] };
+    const implied = (w.implied || []).includes(e.status), dated = (w.dated || []).includes(e.status);
+    const has = cc => !!((SU.wa.countries || {})[cc]);
+    return `<div class="ans-seg su-cc" id="suCc" role="group" aria-label="${esc(suT("setup.country", "Country"))}">${SU_CC.map(cc =>
+        `<button type="button" class="ans-seg-b${cc === SU.cc ? " is-on" : ""}" data-cc="${cc}" aria-pressed="${cc === SU.cc}">${esc(suT("ans.ccShort." + cc, cc))}${has(cc) && cc !== SU.cc ? " ·" : ""}</button>`).join("")}</div>
+      <div class="ans-grid su-grid">
+        ${suField(suT("ans.status", "Current status"), suSelect("wa_status", e.status, cdef.statuses.map(s => [s.code, "ans.st." + s.code, s.label]), " "), "ans-span2")}
+        <span></span>
+        ${suField(suT("ans.authorized", "Authorized to work here"), implied ? `<div class="su-implied">${esc(suT("ans.yes", "Yes"))}</div>` : suSeg("wa_authorized", e.authorized, SU_YN))}
+        ${suField(suT("ans.sponsorNow", "Need sponsorship now"), implied ? `<div class="su-implied">${esc(suT("ans.no", "No"))}</div>` : suSeg("wa_sponsor_now", e.sponsor_now, SU_YN))}
+        ${suField(suT("ans.sponsorFuture", "Need sponsorship in the future"), implied ? `<div class="su-implied">${esc(suT("ans.no", "No"))}</div>` : suSeg("wa_sponsor_future", e.sponsor_future, SU_YN))}
+        ${dated ? suInput("wa_auth_end", suT("ans.authEnd", "Work permit ends"), e.auth_end, { type: "date" }) : ""}
+      </div>
+      <div class="su-preview"><div class="su-preview-h">${esc(suT("setup.preview", "How forms will be answered"))}</div>
+        <div class="su-preview-t" id="suPreview">${esc((w.preview || {})[SU.cc] || suT("setup.previewNone", "Pick a status and I show the sentence here."))}</div></div>
+      ${suSub("ans.citizenship", "Country of citizenship")}
+      <div class="ans-grid su-grid">
+        ${suField(suT("ans.citizenship", "Country of citizenship"), suCountries("citizenship", w.citizenship, " "))}
+        ${suField(suT("ans.citizenship2", "Second country of citizenship"), suCountries("citizenship2", w.citizenship2, suT("setup.none", "None")))}
+      </div>`;
+  }
+  // The draft entry for the country on screen, from the controls (citizen or permanent resident:
+  // authorized and no sponsorship, as forms read it).
+  function suWaRead() {
+    const body = $("#suBody");
+    if (!body || SU.step !== "workauth" || !SU.wa) return;
+    const e = suWaEntry();
+    const st = body.querySelector('[data-su="wa_status"]');
+    if (st) e.status = st.value;
+    for (const k of ["authorized", "sponsor_now", "sponsor_future"]) {
+      const seg = body.querySelector(`[data-su-seg="wa_${k}"]`);
+      if (seg) e[k] = seg.querySelector(".is-on")?.dataset.v || "";
+    }
+    const end = body.querySelector('[data-su="wa_auth_end"]');
+    e.auth_end = end ? end.value : "";
+    if ((SU.d.workauth.implied || []).includes(e.status)) Object.assign(e, { authorized: "Yes", sponsor_now: "No", sponsor_future: "No" });
+    if (!(SU.d.workauth.dated || []).includes(e.status)) e.auth_end = "";
+    SU.wa.countries = SU.wa.countries || {};
+    if (Object.values(e).some(Boolean)) SU.wa.countries[SU.cc] = e; else delete SU.wa.countries[SU.cc];
+  }
+  function suPreview() {
+    clearTimeout(SU.prevTimer);
+    SU.prevTimer = setTimeout(async () => {
+      suWaRead();
+      try {
+        const r = await api("/api/apply-setup/preview", { work_auth: SU.wa, country: SU.cc });
+        const el = $("#suPreview");
+        if (el) el.textContent = r.text || suT("setup.previewNone", "Pick a status and I show the sentence here.");
+      } catch { /* the preview is a nicety */ }
+    }, 250);
+  }
+
+  const SU_LEVELS = [["internship", "setup.lv.internship", "Internship"], ["entry", "setup.lv.entry", "Entry level"],
+                     ["mid", "setup.lv.mid", "Mid level"], ["senior", "setup.lv.senior", "Senior"], ["lead", "setup.lv.lead", "Lead or manager"]];
+  const SU_TYPES = [["full_time", "setup.jt.full_time", "Full-time"], ["part_time", "setup.jt.part_time", "Part-time"],
+                    ["contract", "setup.jt.contract", "Contract"], ["internship", "setup.jt.internship", "Internship"]];
+  const SU_STYLES = [["remote", "setup.ws.remote", "Remote"], ["hybrid", "setup.ws.hybrid", "Hybrid"], ["onsite", "setup.ws.onsite", "On-site"]];
+  function suWants() {
+    const w = SU.d.wants;
+    const radius = [["0", "setup.r.any", "Any distance"], ["10", "setup.r.10", "10 miles"], ["25", "setup.r.25", "25 miles"],
+                    ["50", "setup.r.50", "50 miles"], ["100", "setup.r.100", "100 miles"]];
+    return `<div class="ans-grid su-grid">
+        ${suInput("titles", suT("setup.titles", "Job titles"), (w.titles || []).join(", "), { cls: "ans-span2", ph: suT("setup.titlesPh", "Data analyst, BI analyst"), max: 400 })}
+        ${suInput("salary", suT("setup.salary", "Desired salary (USD a year)"), w.salary, { num: true, max: 14, ph: "120000" })}
+        ${suField(suT("setup.level", "Level"), suSeg("level", w.level, SU_LEVELS, true), "ans-span2")}
+        <span></span>
+        ${suField(suT("setup.jobType", "Job type"), suSeg("job_types", w.job_types, SU_TYPES, true), "ans-span2")}
+        <span></span>
+        ${suField(suT("setup.style", "Work style"), suSeg("work_style", w.work_style, SU_STYLES, true), "ans-span2")}
+        <span></span>
+        ${suInput("locations", suT("setup.places", "Cities you can commute to"), (w.locations || []).join(", "), { cls: "ans-span2", ph: suT("setup.placesPh", "Chicago, Remote"), max: 400 })}
+        ${suField(suT("setup.radius", "Within"), suSelect("radius", String(w.radius || 0), radius))}
+        ${suField(suT("ans.relocate", "Willing to relocate"), suSeg("relocate", w.relocate, SU_YN))}
+        ${suInput("start_date", suT("setup.start", "When you can start"), w.start_date, { ph: suT("setup.startPh", "Two weeks after an offer"), max: 60 })}
+        ${suInput("notice", suT("setup.notice", "Notice period"), w.notice, { ph: suT("setup.noticePh", "Two weeks"), max: 60 })}
+        ${suInput("industries", suT("setup.industries", "Industries"), (w.industries || []).join(", "), { cls: "ans-span2", ph: suT("setup.industriesPh", "Fintech, health care"), max: 400 })}
+        <span></span>
+        ${suInput("avoid", suT("setup.avoid", "Companies to never apply to"), (w.avoid || []).join(", "), { cls: "ans-span2", max: 600 })}
+      </div>
+      ${suNote("setup.wantsNote", "Level, job type, work style, distance and industries are saved for matching to use later. Today the picks use titles, places and the companies to avoid.")}`;
+  }
+
+  const SU_CLEAR = [["None", "setup.cl.none", "None"], ["Public Trust", "", "Public Trust"], ["Confidential", "", "Confidential"],
+                    ["Secret", "", "Secret"], ["Top Secret", "", "Top Secret"], ["TS/SCI", "", "TS/SCI"]];
+  function suForms() {
+    const f = SU.d.forms;
+    const emp = f.employers || [];
+    return `<div class="ans-grid su-grid">
+        ${suInput("heard", suT("setup.heard", "How you heard about the job"), f.heard || suT("setup.heardDefault", "Job board"), { max: 60 })}
+        ${suField(suT("setup.over18", "At least 18 years old"), suSeg("over_18", f.over_18, SU_YN))}
+        ${suField(suT("setup.covenants", "A non-compete or other restrictive covenant"), suSeg("covenants", f.covenants, SU_YN))}
+      </div>
+      <p class="ans-eeo-note su-note su-info">${esc(emp.length
+        ? suT("setup.worked", "Worked here before? Answered from your history: Yes at {list}, No everywhere else.").replace("{list}", emp.join(", "))
+        : suT("setup.workedNone", "Worked here before? Answered from your history once your resume lists your employers."))}</p>
+      ${suSub("setup.consents", "Notices and messages")}
+      <div class="su-rows">
+        ${suField(suT("setup.terms", "Background checks and notices a site requires"), suSeg("terms", f.terms, [["ask", "mem.termsAsk", "Ask me on each site"], ["always", "setup.accept", "Accept"]]), "su-row")}
+        ${suNote("setup.termsS", "A background check as a condition of the job, a privacy notice, at-will terms. Each one I accept is named before you send.")}
+        ${suField(suT("setup.marketing", "Marketing texts and newsletters"), suSeg("marketing", f.marketing, [["No", "setup.decline", "Decline"], ["Yes", "setup.accept", "Accept"]]), "su-row")}
+        ${suField(suT("setup.forced", "A required box whose only choice is yes"), suSeg("forced", f.forced, [["ask", "setup.askMe", "Ask me"], ["always", "setup.accept", "Accept"]]), "su-row")}
+        ${suNote("setup.forcedS", "Like texts about this application, with no way to say no.")}
+      </div>
+      ${suSub("setup.more", "Asked by some forms")}
+      <div class="ans-grid su-grid">
+        ${suField(suT("setup.clearance", "Security clearance"), suSelect("clearance", f.clearance, SU_CLEAR, " "))}
+        ${suField(suT("setup.license", "Valid driver's license"), suSeg("license", f.license, SU_YN))}
+        ${suField(suT("setup.related", "Degree in a related field"), suSeg("related_degree", f.related_degree, SU_YN))}
+        ${suInput("gpa", suT("setup.gpa", "GPA"), f.gpa, { max: 10, ph: "3.7" })}
+        ${suInput("gpa_scale", suT("setup.gpaScale", "Out of"), f.gpa_scale, { max: 10, ph: "4.0" })}
+        <span></span>
+      </div>
+      ${suNote("setup.relatedS", "For \"a degree in X or a related field\" questions. Leave it blank and I ask you each time.")}
+      ${suSub("setup.pay", "What you are paid now")}
+      <div class="ans-grid su-grid">
+        ${suInput("current_salary", suT("setup.curSalary", "Current salary"), f.current_salary, { max: 40 })}
+        ${suInput("current_bonus", suT("setup.curBonus", "Bonus"), f.current_bonus, { max: 40 })}
+        ${suInput("current_equity", suT("setup.curEquity", "Equity"), f.current_equity, { max: 40 })}
+      </div>
+      ${suNote("setup.payS", "Optional. The agent uses these only when a form asks.")}`;
+  }
+
+  const SU_SELFID = [["gender", "ans.gender", "Gender"], ["hispanic", "ans.hispanic", "Hispanic or Latino"], ["race", "ans.race", "Race"],
+                     ["veteran", "ans.veteran", "Veteran status"], ["disability", "ans.disability", "Disability"],
+                     ["transgender", "ans.transgender", "Transgender"], ["orientation", "ans.orientation", "Sexual orientation"],
+                     ["first_gen", "ans.firstGen", "First-generation professional"]];
+  function suSelfid() {
+    const s = SU.d.selfid;
+    const ch = f => (s.choices[f] || []).map(c => [c.code, c.code === "decline" ? "ans.ch.decline" : "ans.ch." + c.code, c.label]);
+    const long = ["race", "veteran", "orientation"];
+    return `${suCheck("eeo_decline", suT("profile.answers.eeo", "On EEO and demographic questions, pick \"Decline to self-identify\""), s.eeo_decline)}
+      ${suNote("ans.eeoNote", "Gender, ethnicity, race, veteran and disability are declined. A form with no decline choice asks you.")}
+      <div class="su-rows su-eeo"${s.eeo_decline ? " hidden" : ""}>
+        ${SU_SELFID.map(([f, k, l]) => suField(suT(k, l), long.includes(f) ? suSelect(f, s.values[f] || "", ch(f), " ") : suSeg(f, s.values[f] || "", ch(f)), "su-row")).join("")}
+      </div>`;
+  }
+
+  function suApply() {
+    const a = SU.d.apply;
+    const sites = (a.auto_sites || []).join(", ");
+    return `<div class="su-rows">
+        ${suField(suT("setup.mode", "How applications go out"), suSeg("autonomous", a.autonomous ? "auto" : "review",
+          [["review", "setup.review", "I review every one"], ["auto", "setup.auto", "Send for me where the site allows it"]]), "su-row")}
+        <p class="ans-eeo-note su-note">${esc(!(a.auto_sites || []).length
+          ? suT("setup.autoS0", "Today no site allows it, so I fill the form and you click Submit. Never on LinkedIn.")
+          : ((a.auto_sites || []).length === 1
+          ? suT("setup.autoS1", "Today that is one site, {sites}. Everywhere else I fill the form and you click Submit. Never on LinkedIn.")
+          : suT("setup.autoSN", "Today that is {sites}. Everywhere else I fill the form and you click Submit. Never on LinkedIn.")).replace("{sites}", sites))}</p>
+      </div>
+      <div class="ans-grid su-grid">
+        ${suInput("daily_cap", suT("setup.cap", "Most applications sent a day"), a.daily_cap, { type: "number", min: 1, maxv: 100, num: true, max: 3 })}
+        ${suInput("autopilot_per_day", suT("setup.perDay", "Resumes Autopilot prepares a day"), a.autopilot_per_day, { type: "number", min: 1, maxv: 10, num: true, max: 2 })}
+        <span></span>
+      </div>
+      ${suNote("setup.stopS", "Stop on Auto-apply ends the application in progress before its next step, and the rest of the list. A change here applies to the next list you start.")}`;
+  }
+
+  function suFinish() {
+    const c = SU.d.count, k = SU.d.contact;
+    const stepName = id => { const s = SU_STEPS.find(x => x[0] === id); return s ? suT(s[1], s[2]) : ""; };
+    const linkRow = (label, v, none) => `<div class="su-link-row"><span class="su-link-k">${esc(label)}</span>
+      <span class="su-link-v">${v ? esc(v) : none ? esc(suT("setup.noneSaved", "None")) : `<span class="mem-dim">${esc(suT("mem.notAnswered", "Not answered"))}</span>`}</span></div>`;
+    return `<div class="su-score"><span class="su-score-n">${c.answered}</span><span class="su-score-m">/ ${c.total}</span>
+        <span class="su-score-t">${esc(suT("setup.score", "The agent can now answer {n} of the {m} questions forms usually ask.").replace("{n}", c.answered).replace("{m}", c.total))}</span></div>
+      <div class="su-links">${linkRow("LinkedIn", k.linkedin, k.none.linkedin)}${linkRow("GitHub", k.github, k.none.github)}${linkRow(suT("mem.f.blog", "Website"), k.website, k.none.website)}</div>
+      ${c.open.length ? `${suSub("setup.open", "Still open")}<div class="ans-list su-open">${c.open.map(o =>
+        `<div class="ans-row su-open-row"><div class="ans-row-main"><div class="ans-q">${esc(suT("setup.q." + o.id, o.label))}</div>
+          <div class="ans-meta">${esc(stepName(o.step))}</div></div>
+          <div class="ans-row-acts"><button class="btn btn-ghost btn-sm" type="button" data-su-go="${esc(o.step)}">${esc(suT("setup.answer", "Answer"))}</button></div></div>`).join("")}</div>`
+        : `<p class="mem-note su-all">${esc(suT("setup.allSet", "Every question on the list is answered."))}</p>`}`;
+  }
+
+  const SU_BODY = { contact: suContact, workauth: suWorkauth, wants: suWants, forms: suForms, selfid: suSelfid, apply: suApply, finish: suFinish };
+
+  function suPaint() {
+    const i = SU_STEPS.findIndex(s => s[0] === SU.step), s = SU_STEPS[i];
+    $("#suProgT").textContent = suT("setup.stepOf", "Step {n} of {m}").replace("{n}", i + 1).replace("{m}", SU_STEPS.length);
+    $("#suBar").style.width = Math.round(((i + 1) / SU_STEPS.length) * 100) + "%";
+    $("#suSteps").innerHTML = SU_STEPS.map(([id, k, f], j) =>
+      `<button type="button" class="su-step${j === i ? " is-on" : ""}${j < i ? " is-past" : ""}" data-su-go="${id}"${j === i ? ' aria-current="step"' : ""}>${esc(suT(k, f))}</button>`).join("");
+    $("#suH").textContent = suT(s[1], s[2]);
+    const l = SU_LEDE[SU.step];
+    $("#suLede").textContent = suT(l[0], l[1]);
+    if (SU.step === "workauth") { SU.wa = JSON.parse(JSON.stringify(SU.d.workauth.work_auth || { countries: {} })); }
+    $("#suBody").innerHTML = SU_BODY[SU.step]();
+    SU.init = suCollect();
+    $("#suPrev").hidden = i === 0;
+    $("#suSkip").hidden = SU.step === "finish";
+    $("#suNext").textContent = SU.step === "finish" ? suT("setup.done", "Done") : suT("setup.next", "Save and continue");
+    suMsg("");
+  }
+  function suMsg(t, bad) { const m = $("#suMsg"); m.textContent = t || ""; m.classList.toggle("is-bad", !!bad); }
+
+  // What the controls on screen say: {field: value}, a multi choice as a list.
+  function suCollect() {
+    const body = $("#suBody"), out = {};
+    if (!body) return out;
+    body.querySelectorAll("[data-su]").forEach(el => { if (!el.dataset.su.startsWith("wa_")) out[el.dataset.su] = el.value.trim(); });
+    body.querySelectorAll("[data-su-seg]").forEach(el => {
+      const id = el.dataset.suSeg;
+      if (id.startsWith("wa_")) return;
+      const on = [...el.querySelectorAll(".is-on")].map(b => b.dataset.v);
+      out[id] = el.hasAttribute("data-multi") ? on : (on[0] || "");
+    });
+    body.querySelectorAll("[data-su-check]").forEach(el => { out[el.dataset.suCheck] = el.checked; });
+    if (SU.step === "workauth") { suWaRead(); out.work_auth = JSON.stringify(SU.wa); }
+    return out;
+  }
+  // Only what the person changed, in the shape the route takes.
+  function suChanges() {
+    const now = suCollect(), was = SU.init, out = {};
+    for (const [k, v] of Object.entries(now)) if (JSON.stringify(v) !== JSON.stringify(was[k])) out[k] = v;
+    if (SU.step === "contact") {
+      const none = {};
+      for (const k of ["linkedin", "github", "website"]) if ("none_" + k in out) { none[k] = out["none_" + k]; delete out["none_" + k]; }
+      if (Object.keys(none).length) out.none = none;
+    }
+    if (SU.step === "workauth" && out.work_auth) out.work_auth = JSON.parse(out.work_auth);
+    if (SU.step === "apply" && "autonomous" in out) out.autonomous = out.autonomous === "auto";
+    // a default on screen the person kept is their answer too (how you heard, marketing)
+    if (SU.step === "forms") {
+      const f = SU.d.forms;
+      if (!f.heard && now.heard) out.heard = now.heard;
+    }
+    return out;
+  }
+
+  async function suGo(step, save) {
+    if (SU.busy) return;
+    const steps = SU_STEPS.map(s => s[0]);
+    if (save && SU.step !== "finish") {
+      const fields = suChanges();
+      SU.busy = true; $("#suNext").disabled = true;
+      try { SU.d = await api("/api/apply-setup/save", { step: SU.step, fields, next: step }); }
+      catch (e) { suMsg(e.message || suT("tracker.saveFail", "Couldn't save that, try again."), true); return; }
+      finally { SU.busy = false; $("#suNext").disabled = false; }
+    } else {
+      api("/api/apply-setup/state", { seen: true, step }).catch(() => {});
+      try { SU.d = await api("/api/apply-setup"); } catch { /* keep what is on screen */ }
+    }
+    SU.step = steps.includes(step) ? step : "contact";
+    suPaint();
+    window.scrollTo(0, 0);
+  }
+  function suNextStep() { const i = SU_STEPS.findIndex(s => s[0] === SU.step); return (SU_STEPS[i + 1] || SU_STEPS[i])[0]; }
+  $("#suNext")?.addEventListener("click", async () => {
+    if (SU.step === "finish") {
+      try { await api("/api/apply-setup/state", { seen: true, done: true, step: "finish" }); } catch { /* */ }
+      toast(suT("setup.saved", "Saved. The agent uses these on every form."));
+      suLeave();
+      return;
+    }
+    suGo(suNextStep(), true);
+  });
+  $("#suSkip")?.addEventListener("click", () => suGo(suNextStep(), false));
+  $("#suPrev")?.addEventListener("click", () => {
+    const i = SU_STEPS.findIndex(s => s[0] === SU.step);
+    if (i > 0) suGo(SU_STEPS[i - 1][0], false);
+  });
+  $("#view-setup")?.addEventListener("click", e => {
+    const go = e.target.closest("[data-su-go]");
+    if (go) { suGo(go.dataset.suGo, false); return; }
+    if (e.target.closest("#suAddResume")) { openResumeBox(); return; }
+    const cc = e.target.closest("[data-cc]");
+    if (cc) {
+      suWaRead();
+      SU.cc = cc.dataset.cc;
+      const keep = SU.init;
+      $("#suBody").innerHTML = suWorkauth();
+      SU.init = keep;
+      suPreview();
+      return;
+    }
+    const b = e.target.closest(".ans-seg-b");
+    const seg = b && b.closest("[data-su-seg]");
+    if (!seg) return;
+    if (seg.hasAttribute("data-multi")) {
+      b.classList.toggle("is-on"); b.setAttribute("aria-pressed", String(b.classList.contains("is-on")));
+    } else {
+      const was = b.classList.contains("is-on");
+      seg.querySelectorAll(".ans-seg-b").forEach(x => { x.classList.remove("is-on"); x.setAttribute("aria-pressed", "false"); });
+      if (!was) { b.classList.add("is-on"); b.setAttribute("aria-pressed", "true"); }   // a second tap clears it
+    }
+    if (seg.dataset.suSeg.startsWith("wa_")) suPreview();
+  });
+  $("#view-setup")?.addEventListener("change", e => {
+    const t = e.target;
+    if (t.dataset && t.dataset.su === "wa_status") {
+      suWaRead();
+      const keep = SU.init;
+      $("#suBody").innerHTML = suWorkauth();
+      SU.init = keep;
+      suPreview();
+    } else if (t.dataset && t.dataset.su === "wa_auth_end") suPreview();
+    else if (t.dataset && t.dataset.suCheck && t.dataset.suCheck.startsWith("none_")) {
+      const inp = $(`#suBody [data-su="${t.dataset.suCheck.slice(5)}"]`);
+      if (inp) { inp.disabled = t.checked; if (t.checked) inp.value = ""; }
+    } else if (t.dataset && t.dataset.suCheck === "eeo_decline") {
+      const g = $("#suBody .su-eeo"); if (g) g.hidden = t.checked;
+    }
+  });
+
   // The answers every form asks that are still open: the one card (also setup's last step),
   // showing only those rows, with its own Save.
   function memBasicsOpen() {
@@ -9848,7 +10273,7 @@
     await loadAccount();
     if (buy && buy.kind === "pass") { toast(T("signin.toStripe", "Signed in. Opening checkout...")); await doCheckout(buy.id); }
     else if (buy && buy.kind === "pack") { toast(T("signin.toStripe", "Signed in. Opening checkout...")); await buyPack(buy.id); }
-    else toast(T("signin.done", "Signed in as {email}").replace("{email}", ACCT_EMAIL || ""));
+    else { toast(T("signin.done", "Signed in as {email}").replace("{email}", ACCT_EMAIL || "")); suMaybeFirstRun(); }
   }
   async function adoptToken(token) {
     try { await api("/api/account/adopt", { token }); await signedIn(); }
@@ -13183,6 +13608,7 @@
       // A new install lands on the live jobs: the thing that works with no setup at all.
       if (!off) { document.querySelector('.nav-item[data-nav="jobs"]')?.click(); $("#firstBanner").hidden = false; }
     }
+    suMaybeFirstRun();      // Apply setup, once, the first launch after sign-in
   }
   // App Lock gate: if a passcode is set and we're locked, show the lock screen and boot only
   // after a correct passcode. If there's no lock (the default), boot straight away.
