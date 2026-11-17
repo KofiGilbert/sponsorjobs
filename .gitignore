@@ -55,3 +55,10 @@ dist-data/*
 # The bundled LaTeX (packaging/install_tinytex.py) and local scratch output: built, never committed.
 .tinytex/
 .scratch/
+
+# Developer-only Midscene "human" UI tests (tests/human/): deps, keys, and run output stay local.
+tests/human/node_modules/
+tests/human/.env
+tests/human/midscene_run/
+tests/human/test-results/
+tests/human/playwright-report/

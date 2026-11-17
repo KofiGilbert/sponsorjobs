@@ -1,0 +1,19 @@
+{
+  "name": "sponsorjobs-human-tests",
+  "private": true,
+  "description": "Developer-only plain-English UI tests (Midscene.js + Playwright) that drive an already-running SponsorJobs dev window over CDP. Not part of the shipped app.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "playwright test",
+    "list": "playwright test --list",
+    "typecheck": "tsc -p tsconfig.json",
+    "report": "open midscene_run/report"
+  },
+  "devDependencies": {
+    "@midscene/web": "1.18.1",
+    "@playwright/test": "1.65.1",
+    "@types/node": "26.6.6",
+    "dotenv": "16.6.1",
+    "typescript": "7.0.2"
+  }
+}
