@@ -1154,7 +1154,20 @@ function qsaSafe(sel, root) {
   // Only a captcha the person can SEE is a wall. Invisible reCAPTCHA v3 / Turnstile score checks
   // load a zero-size, hidden frame on many career sites (Lam Research) and never ask anything:
   // stopping on them sent people looking for a captcha that was not there.
+  // The reCAPTCHA v3 / Enterprise BADGE ("protected by reCAPTCHA", bottom right) is a visible
+  // 256x60 frame but asks nothing: the score check runs by itself, usually at submit. Treating
+  // it as a wall parked a real run before a single field was filled (Octane Lending, Greenhouse
+  // embed, 2026-11-17). Only a challenge the person must act on (the "I'm not a robot" box, an
+  // image puzzle) is a wall; a real challenge that appears at submit is still caught there.
+  function badgeFrame(f) {
+    try {
+      const src = norm(f.getAttribute && f.getAttribute("src"));
+      if (/[?&]size=invisible\b/.test(src)) return true;
+      return !!(f.closest && f.closest(".grecaptcha-badge, .grecaptcha-logo"));
+    } catch (e) { return false; }
+  }
   function shownFrame(f) {
+    if (badgeFrame(f)) return false;
     try {
       const r = f.getBoundingClientRect();
       if (r.width < 20 || r.height < 20) return false;
